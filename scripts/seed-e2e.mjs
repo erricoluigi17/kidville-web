@@ -184,9 +184,16 @@ async function main() {
 
   // Bridge parents.auth_user_id: per il genitore puro e per il profilo doppio
   // (utenti educator + parents → picker multi-profilo al login).
+  //
+  // consensi_gdpr: { privacy, termini } — il seed crea i genitori DIRETTAMENTE
+  // (bypassando l'onboarding reale), quindi senza questo campo la guardia C5
+  // `assertTerminiAccettatiSeGenitore` in POST /api/chat/messages li blocca
+  // con 403 (nessun genitore di seed ha mai "accettato" i Termini). Non è un
+  // valore magico: è lo stesso stato che l'onboarding reale scrive.
+  const CONSENSI_E2E = { privacy: true, termini: true };
   must('parents', await db.from('parents').upsert([
-    { id: IDS.P_GENITORE, first_name: 'Gaia', last_name: 'Genitore-E2E', auth_user_id: IDS.GENITORE },
-    { id: IDS.P_DOPPIO, first_name: 'Duccio', last_name: 'Doppio-E2E', auth_user_id: IDS.DOPPIO },
+    { id: IDS.P_GENITORE, first_name: 'Gaia', last_name: 'Genitore-E2E', auth_user_id: IDS.GENITORE, consensi_gdpr: CONSENSI_E2E },
+    { id: IDS.P_DOPPIO, first_name: 'Duccio', last_name: 'Doppio-E2E', auth_user_id: IDS.DOPPIO, consensi_gdpr: CONSENSI_E2E },
   ], { onConflict: 'id' }));
 
   // 5. Alunni + legami (legame_genitori_alunni.genitore_id → utenti.id)

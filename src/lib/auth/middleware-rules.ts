@@ -27,6 +27,11 @@ const PUBLIC_PREFIXES = [
   '/privacy', // informativa GDPR pubblica (Privacy Policy URL per lo store)
   '/termini', // termini di servizio pubblici
   '/assistenza', // pagina di supporto pubblica (Support URL per lo store)
+  // Cancellazione account via risorsa web pubblica (Google Play Data safety): DEVE essere
+  // raggiungibile senza login — l'utente potrebbe aver già disinstallato l'app. Il prefisso
+  // copre anche /cancellazione-account/conferma (magic-link). La pagina NON cancella: registra
+  // una richiesta pending che la Direzione evade, come il percorso in-app.
+  '/cancellazione-account',
   // Ripiego offline pre-cachato dal Service Worker. DEVE essere pubblica: senza,
   // il pre-cache in `install` scaricherebbe il 307 verso /auth/login invece
   // della pagina, e offline l'app mostrerebbe un redirect al posto del ripiego.

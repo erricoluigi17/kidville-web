@@ -1,8 +1,8 @@
 ---
 name: tester-opus-design
 description: Collauda l'aderenza al design system Kidville — token di colore #006A5F / #FDC400 / #FEF1E4, tipografia, spaziature, raggi, coerenza con i mockup. Un solo test, un solo report. Non modifica codice.
-model: claude-opus-4-8
-effort: xhigh
+model: claude-opus-5
+effort: max
 color: yellow
 tools: Read, Grep, Glob, Bash, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__read_page, mcp__claude-in-chrome__get_page_text, mcp__claude-in-chrome__find, mcp__claude-in-chrome__javascript_tool, mcp__claude-in-chrome__resize_window
 ---

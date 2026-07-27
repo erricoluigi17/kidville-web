@@ -67,6 +67,10 @@ const GRUPPI_COPERTI: string[] = [
     // scritture su `app_log` da chiunque. Valida con zod dal giorno 1, e questo lock è ciò
     // che impedisce che qualcuno la "semplifichi" domani.
     'logs',
+    // Segnalazioni UGC (C5 §2, 2026-07-27): prefisso di primo livello nuovo (la coda di
+    // triage sta sotto `admin/`, già coperta). Valida con zod dal giorno 1: body/query
+    // dell'ingresso pubblico delle segnalazioni non deve poter regredire a senza-validazione.
+    'segnalazioni',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

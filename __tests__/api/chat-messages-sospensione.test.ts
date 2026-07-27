@@ -30,9 +30,14 @@ const adminClient = {
     const b: Record<string, unknown> = {}
     b.select = () => b
     b.eq = () => b
+    b.is = () => b
     b.maybeSingle = async () => {
       if (table === 'chat_threads') return { data: h.thread, error: null }
       if (table === 'utenti') return { data: { scuola_id: 'sc-1' }, error: null }
+      // Guardie C5: conversazione non sospesa + genitore con Termini accettati,
+      // così questa suite isola il SOLO gate morosità.
+      if (table === 'conversazioni_sospensioni') return { data: null, error: null }
+      if (table === 'parents') return { data: { consensi_gdpr: { privacy: true, termini: true } }, error: null }
       return { data: null, error: null }
     }
     b.insert = (row: Record<string, unknown>) => {

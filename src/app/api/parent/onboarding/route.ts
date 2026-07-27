@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { consensiMancanti, CONSENSI_RICHIESTI } from '@/lib/onboarding/consensi'
+import { VERSIONE_PRIVACY, VERSIONE_TERMINI } from '@/lib/legal/versioni'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
@@ -46,17 +47,75 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
     }
 
     const admin = await createAdminClient()
-    const { data: parent } = await admin
+    // `auth.user.id` (dal gate) è l'id della riga `utenti` con ruolo genitore,
+    // NON `parents.id` (riga di anagrafica separata): il ponte è
+    // `parents.auth_user_id`. Un `.eq('id', auth.user.id)` non ha MAI trovato
+    // la riga giusta — verificato in produzione: 0 genitori su 46 risultavano
+    // onboardati, perché ogni update qui aggiornava zero righe e rispondeva
+    // comunque successo. Corretto insieme alla stessa svista in
+    // parent/account/richiesta-cancellazione e in onboarding/consensi.ts (C5).
+    const { data: parent, error: updateErr } = await admin
       .from('parents')
       .update({ consensi_gdpr: consensi, onboarded_at: new Date().toISOString() })
-      .eq('id', auth.user.id)
+      .eq('auth_user_id', auth.user.id)
       .select('id, auth_user_id')
       .maybeSingle()
+
+    // PostgREST non lancia: senza questo controllo un update fallito veniva
+    // ignorato e la risposta dichiarava comunque successo. Con il gate C5 in
+    // chat/messages (che legge consensi_gdpr.termini) questo non è più solo
+    // un dato di onboarding incompleto: è un genitore che crede di aver
+    // accettato i Termini e riceve un 403 permanente senza alcuna diagnosi.
+    if (updateErr) {
+      logErrore({ operazione: 'parent/onboarding:POST', stato: 500, evento: 'db' }, updateErr)
+      return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
+    }
+    // Un UPDATE che non trova righe non è un `{ error }` per PostgREST (0 righe
+    // aggiornate è un esito valido, non un guasto) — va quindi controllato a
+    // parte: senza questo, un genitore senza riga `parents` agganciata
+    // riceverebbe comunque "successo" e non saprebbe mai perché la chat
+    // continua a rifiutarlo.
+    if (!parent) {
+      logErrore(
+        { operazione: 'parent/onboarding:POST', stato: 404, evento: 'db' },
+        new Error('nessuna riga parents con questo auth_user_id'),
+      )
+      return NextResponse.json({ error: 'Profilo genitore non trovato' }, { status: 404 })
+    }
 
     // Imposta la password sulla sessione Supabase Auth solo se il genitore è
     // bindato (auth_user_id) e ha fornito una password.
     if (password && parent?.auth_user_id) {
       await admin.auth.admin.updateUserById(parent.auth_user_id as string, { password: String(password) })
+    }
+
+    // C5 — Prova d'accettazione append-only (art. 1341 c.c.): una riga in
+    // `consensi_accettazioni` per ogni consenso ACCETTATO fra quelli richiesti, con
+    // la VERSIONE decisa SERVER-SIDE (mai dal client: un client datato o malevolo
+    // spedirebbe una versione arbitraria, svuotando il valore probatorio) e la data
+    // dal DB (default now()). Best-effort: un fallimento NON fa fallire l'onboarding
+    // (loggato, mai swallow). PostgREST non lancia → si controlla { error }. Degrada
+    // pulito sul DB E2E non migrato (tabella assente → warn, onboarding comunque ok).
+    if (parent?.id) {
+      const versioni: Record<string, string> = { privacy: VERSIONE_PRIVACY, termini: VERSIONE_TERMINI }
+      const righe = CONSENSI_RICHIESTI
+        .filter((tipo) => consensi[tipo] === true)
+        .map((tipo) => ({ parent_id: parent.id as string, tipo, versione: versioni[tipo] }))
+      if (righe.length > 0) {
+        const { error: consErr } = await admin.from('consensi_accettazioni').insert(righe)
+        if (consErr) {
+          logEvento('gdpr', 'warn', {
+            operazione: 'parent/onboarding:POST',
+            esito: 'prova-consenso-non-registrata',
+          }, consErr)
+        } else {
+          logEvento('gdpr', 'info', {
+            operazione: 'parent/onboarding:POST',
+            esito: 'prova-consenso-registrata',
+            n: righe.length,
+          })
+        }
+      }
     }
 
     // Notifica alla segreteria: onboarding completato (best-effort).

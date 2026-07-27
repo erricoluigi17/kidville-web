@@ -147,9 +147,12 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: Reque
     const op = 'admin/gdpr/richieste:POST'
 
     // 1. Anonimizza il genitore richiedente.
-    const { newsVisualizzazioniRimosse } = await anonimizzaParent(admin, parentId, at, op)
+    const rParent = await anonimizzaParent(admin, parentId, at, op)
+    const newsVisualizzazioniRimosse = rParent.newsVisualizzazioniRimosse
+    let segnalazioni = rParent.segnalazioniBonificate
+    let sospensioni = rParent.sospensioniBonificate
 
-    // 2. Anonimizza i figli NON iscritti + bonifica finanziaria collegata.
+    // 2. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
     let ricon = 0
     let incassi = 0
     let cassa = 0
@@ -160,6 +163,8 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: Reque
       incassi += r.incassi
       cassa += r.cassa
       file += r.file
+      segnalazioni += r.segnalazioniBonificate
+      sospensioni += r.sospensioniBonificate
     }
 
     const esito = {
@@ -170,6 +175,8 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: Reque
       incassi_bonificati: incassi,
       cassa_bonificati: cassa,
       file_rimossi: file,
+      segnalazioni_bonificate: segnalazioni,
+      sospensioni_bonificate: sospensioni,
     }
 
     // 3. Marca la richiesta come evasa.

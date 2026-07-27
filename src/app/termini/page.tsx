@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { VERSIONE_TERMINI } from '@/lib/legal/versioni';
 
 // Pagina PUBBLICA (nessun login): termini di servizio. Server component
 // statico. I riferimenti societari sono quelli reali del Titolare (dati
@@ -144,9 +145,16 @@ export default function TerminiPage() {
               Per informazioni sui presenti termini è possibile contattare{' '}
               <strong>Scuola dell&rsquo;Infanzia La Favola Soc. Coop.</strong>, Via Silvio Pellico
               7, 81030 Cesa (CE), P.IVA 03394870616, all&rsquo;indirizzo{' '}
-              <strong>lerrico7@gmail.com</strong> oppure rivolgersi alla Segreteria.
+              <strong>info@kidville.it</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>
+
+          {/* Versione del testo: stessa costante usata dall'INSERT in
+              consensi_accettazioni, così il testo mostrato e quello registrato
+              come accettato non possono mai divergere nel tempo (art. 1341 c.c.). */}
+          <p className="mt-8 border-t border-kidville-line pt-4 font-maven text-xs text-kidville-muted">
+            Versione: {VERSIONE_TERMINI}
+          </p>
         </article>
       </div>
     </main>

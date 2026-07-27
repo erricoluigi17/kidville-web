@@ -270,6 +270,15 @@ Premesse valide per **tutte** le righe:
 | Log applicativi ed errori (tabella `app_log`, redatta) | **Diagnostica → Altri dati diagnostici** | Sì | No | Funzionalità dell'app — diagnosi dei guasti |
 | Errori di rete / prestazioni | **Diagnostica → Dati sulle prestazioni** | Sì | No | Funzionalità dell'app |
 
+> 🔴 **CORREZIONE (2026-07-26) — questa sezione è SUPERATA.** La mappa dei dati valida è
+> **`docs/submission/A2-app-privacy-labels.md`**, che elenca **18 categorie** contro le 13
+> di qui, ha in mano il testo letterale di Apple, e risolve le decisioni lasciate aperte.
+> In particolare **la nota qui sotto sulle righe finanziarie è sbagliata nel merito**: Apple
+> definisce *Payment Info* come *«such as **form of payment**…»*, e `incassi.metodo` è
+> letteralmente la forma del pagamento. La soluzione non è togliere *Payment Info*, è
+> **aggiungere *Other Financial Info* accanto**. Il modulo Data Safety di Play si compila
+> da A2 — vedi `docs/submission/C4-conformita-pubblico.md` §1.
+
 **Note sulle due righe finanziarie.** L'app **non tratta carte di credito e non ha un
 gestore di pagamento**: non c'è Stripe, non ci sono acquisti in-app, i metodi previsti sono
 contanti, bonifico, POS e assegno (`src/lib/pagamenti/fiscale.ts`) e il pagamento avviene
@@ -339,9 +348,18 @@ attualmente previsto per `PrivacyInfo.xcprivacy`.
   `app.kidville.it` e Supabase; su Android il traffico in chiaro è bloccato in release da
   `network_security_config.xml`);
 - va dichiarato se l'utente può **chiedere la cancellazione**: sì, in-app da
-  «Profilo e deleghe» (`/parent/profilo`), con evasione da parte della Direzione. Play
-  chiede anche un **URL di cancellazione account**: si può usare `https://app.kidville.it/assistenza`,
-  che spiega la procedura;
+  «Profilo e deleghe» (`/parent/profilo`), con evasione da parte della Direzione.
+  > 🔴 **CORREZIONE (2026-07-26).** Questo punto diceva che come **URL di cancellazione
+  > account** si poteva usare `https://app.kidville.it/assistenza`, «che spiega la
+  > procedura». **È falso**: la pagina è stata riletta riga per riga e **la parola
+  > «cancellazione» non vi compare**. Indicarla produce il rifiuto *«Invalid account/data
+  > deletion link on your Data safety»*. **NON usare `/assistenza`.**
+  >
+  > ✅ **RISOLTO (2026-07-27, C5 §1).** Esiste ora la **pagina pubblica dedicata**
+  > **`https://app.kidville.it/cancellazione-account`** (senza login, bilingue IT/EN,
+  > verifica d'identità via magic-link email; non cancella, registra una richiesta che la
+  > Direzione evade). **È questo l'URL da incollare nel campo cancellazione del modulo Data
+  > safety** — non `/assistenza`. Vedi **`docs/submission/C5-sviluppo-obbligatorio.md` §1**.
 - la sezione **«App per famiglie / Norme sui minori»**: l'app non è rivolta ai bambini
   (l'utente è un adulto), ma tratta dati di minori — la scheda va compilata di
   conseguenza, e il target d'età dichiarato deve essere adulto.

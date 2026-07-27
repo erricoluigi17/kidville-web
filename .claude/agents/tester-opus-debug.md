@@ -1,8 +1,8 @@
 ---
 name: tester-opus-debug
 description: Caccia la CAUSA RADICE dei difetti di Kidville, non il sintomo — riproduce, isola, bisectiona, formula e falsifica ipotesi. Un solo test, un solo report. Non modifica codice.
-model: claude-opus-4-8
-effort: xhigh
+model: claude-opus-5
+effort: max
 color: red
 tools: Read, Grep, Glob, Bash, mcp__supabase__execute_sql, mcp__supabase__get_logs, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__read_console_messages, mcp__claude-in-chrome__read_network_requests, mcp__claude-in-chrome__javascript_tool
 ---

@@ -19,8 +19,9 @@ Esempio: `/ship-cycle aggiungi la giustifica dell'assenza con firma OTP del geni
 ## Cosa succede
 
 Il **direttore d'orchestra è `fable-5`** (il modello del comando): fa il brainstorming, conduce
-l'intervista, tiene insieme il loop e dà il via al rilascio. Il lavoro pesante è su `opus-4.8`
-al massimo effort (implementazione e collaudo).
+l'intervista, tiene insieme il loop e dà il via al rilascio. Il lavoro pesante è sul **modello
+Opus più forte disponibile, sempre al massimo effort** (implementazione e collaudo) — oggi
+`claude-opus-5` · `max`.
 
 L'unica fase interattiva è all'inizio: prima la skill **`brainstorming`** di superpowers (esplora
 l'intento), poi **l'intervista** a raffica (scope, casi limite, cosa non toccare, priorità).
@@ -57,8 +58,8 @@ Il **comando stesso** (il direttore) gira su `claude-fable-5` e usa la skill `br
 | Agente | Modello | Ruolo |
 |---|---|---|
 | `scrittore-di-piani` | `claude-fable-5` | Scrive il piano e i piani di correzione (skill `writing-plans`, `systematic-debugging`). Non scrive codice. |
-| `esecutore-opus-1..N` | `claude-opus-4-8` · `xhigh` | Implementa seguendo **superpowers** (skill `test-driven-development`, `systematic-debugging`, `verification-before-completion`). Con **migrazioni**, **variabili d'ambiente** (solo nomi) e **logging**. |
-| `tester-opus-backend` | `claude-opus-4-8` · `xhigh` | Route, gate di ruolo, zod, PostgREST, migrazioni |
+| `esecutore-opus-1..N` | `claude-opus-5` · `max` | Implementa seguendo **superpowers** (skill `test-driven-development`, `systematic-debugging`, `verification-before-completion`). Con **migrazioni**, **variabili d'ambiente** (solo nomi) e **logging**. |
+| `tester-opus-backend` | `claude-opus-5` · `max` | Route, gate di ruolo, zod, PostgREST, migrazioni |
 | `tester-opus-frontend` | idem | Rendering, hydration, stati, browser vero |
 | `tester-opus-design` | idem | Token Clay Village: `#006A5F` · `#FDC400` · `#FEF1E4` |
 | `tester-opus-debug` | idem | Causa radice, non il sintomo |

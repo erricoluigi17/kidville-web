@@ -59,6 +59,12 @@
   "messaggiNessunMessaggioConv": "No messages in this conversation.",
   "messaggiRuoloInsegnante": "Teacher",
   "messaggiRuoloGenitore": "Parent",
+  "messaggiSospesa": "Suspended",
+  "messaggiSospesaBanner": "This conversation has been suspended.",
+  "messaggiSospesaMotivo": "Reason: {motivo}",
+  "messaggiRiapri": "Reopen",
+  "messaggiRiapriInCorso": "Reopening…",
+  "messaggiRiapriErrore": "Reopening failed.",
 
   "newsTitolo": "News",
   "newsSottotitolo": "Blog, announcements, Instagram posts and a monthly digest to families.",

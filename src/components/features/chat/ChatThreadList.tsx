@@ -4,6 +4,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { MessageSquare } from 'lucide-react';
 
+/** Sospensione attiva di una conversazione (C5). `motivo` è visibile solo a chi
+ *  ha sospeso (l'API lo azzera per l'altra parte). */
+export interface SospensioneInfo {
+    sospesaDa: string;
+    sospesaVerso: string;
+    motivo: string | null;
+    sospesaIl: string;
+}
+
 export interface ChatThread {
     id: string;
     teacher_id: string;
@@ -14,6 +23,8 @@ export interface ChatThread {
     student: { nome: string; cognome: string; classe_sezione: string };
     last_message: { content: string; sender_id: string; created_at: string } | null;
     unread_count: number;
+    /** Sospensione attiva (null/assente = conversazione libera). */
+    sospensione?: SospensioneInfo | null;
 }
 
 interface Props {

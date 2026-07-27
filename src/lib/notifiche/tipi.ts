@@ -244,6 +244,18 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     descrizione: 'Quando un genitore richiede la cancellazione del proprio account (da evadere in Privacy & Oblio)',
     sicurezza: true,
   },
+  segnalazione_contenuto: {
+    label: 'Segnalazione da moderare',
+    gruppo: 'staff',
+    descrizione: 'Quando un utente segnala un contenuto o un altro utente (da gestire in Moderazione)',
+    sicurezza: true,
+  },
+  conversazione_sospesa: {
+    label: 'Conversazione sospesa',
+    gruppo: 'staff',
+    descrizione: 'Quando un utente sospende una conversazione in chat (da mediare in Moderazione)',
+    sicurezza: true,
+  },
   fattura_scartata: {
     label: 'Fattura scartata (SDI)',
     gruppo: 'staff',

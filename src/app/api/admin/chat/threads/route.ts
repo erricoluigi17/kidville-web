@@ -4,8 +4,9 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { schemaAssente } from '@/lib/news/schema-assente';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // GET /api/admin/chat/threads?teacher_id=&parent_id=&classe=
 // Vista di supervisione (sola lettura) di TUTTE le conversazioni genitore↔insegnante,
@@ -48,6 +49,35 @@ export const GET = withRoute('admin/chat/threads:GET', async (request: NextReque
     const uMap = new Map((utenti ?? []).map((u) => [u.id, u]));
     const aMap = new Map((alunni ?? []).map((a) => [a.id, a]));
 
+    // Sospensioni ATTIVE (C5 §2) in UNA sola query batched `thread_id IN (...)` —
+    // MAI una query per-thread (sarebbe un N+1). Vista Direzione: il `motivo`
+    // (testo libero) è mostrato in chiaro perché è uno strumento interno di
+    // moderazione, non un log. Degrada pulito sul DB E2E CI non migrato.
+    const threadIds = [...new Set(rows.map((t) => t.id as string).filter(Boolean))];
+    const sospMap = new Map<string, { sospesaIl: string; sospesaDa: string; motivo: string | null }>();
+    if (threadIds.length > 0) {
+      const { data: sosp, error: sospErr } = await supabase
+        .from('conversazioni_sospensioni')
+        .select('thread_id, sospesa_da, motivo, sospesa_il')
+        .in('thread_id', threadIds)
+        .is('riaperta_il', null);
+      if (sospErr) {
+        // Tabella assente = nessuna sospensione. Un errore vero si logga (senza
+        // PII) ma NON fa fallire la supervisione: degrada a "nessuna".
+        if (!schemaAssente(sospErr)) {
+          logEvento('chat', 'error', { operazione: 'admin/chat/threads:GET', esito: 'sospensioni-lettura-fallita' }, sospErr);
+        }
+      } else {
+        for (const s of sosp ?? []) {
+          sospMap.set(s.thread_id as string, {
+            sospesaIl: s.sospesa_il as string,
+            sospesaDa: s.sospesa_da as string,
+            motivo: (s.motivo as string | null) ?? null,
+          });
+        }
+      }
+    }
+
     const nome = (u?: { nome?: string | null; cognome?: string | null }) =>
       `${u?.cognome ?? ''} ${u?.nome ?? ''}`.trim() || '—';
 
@@ -61,6 +91,7 @@ export const GET = withRoute('admin/chat/threads:GET', async (request: NextReque
         teacher: teacher ? { id: teacher.id, nome: nome(teacher), ruolo: teacher.role || teacher.ruolo } : null,
         parent: parent ? { id: parent.id, nome: nome(parent) } : null,
         student: student ? { nome: `${student.nome ?? ''} ${student.cognome ?? ''}`.trim(), classe: student.classe_sezione as string | null } : null,
+        sospensione: sospMap.get(t.id as string) ?? null,
       };
     });
 

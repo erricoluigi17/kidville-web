@@ -14,6 +14,7 @@ import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
+import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
 // (narrativa, etichetta del giorno) definite fuori dal componente, dove gli
@@ -193,7 +194,7 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
 
 // ─── Componenti ───────────────────────────────────────────────────────────────
 
-function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
+export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
     const t = useTranslations('diario');
     const f = useDateFormat();
     const eventLabel = useEventLabel();
@@ -253,6 +254,17 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                         </p>
                     </div>
                 )}
+            </div>
+
+            {/* Segnalazione voce di diario (C5 §2): etichetta testuale sempre visibile. */}
+            <div className="mt-3 flex justify-end border-t border-kidville-line/50 pt-2">
+                <SegnalaContenuto
+                    tipoOggetto="voce_diario"
+                    oggettoId={entry.id}
+                    label={t('segnalaVoce')}
+                    ariaLabel={t('segnalaVoceAria')}
+                    variant="inline"
+                />
             </div>
         </motion.div>
     );

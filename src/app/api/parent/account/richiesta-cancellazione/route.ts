@@ -57,12 +57,16 @@ export const POST = withRoute('parent/account/richiesta-cancellazione:POST', asy
 
   try {
     const admin = await createAdminClient()
-    // L'utente deve essere davvero un genitore (parents.id == auth.user.id).
+    // L'utente deve essere davvero un genitore. `auth.user.id` è l'id della riga
+    // `utenti` (ruolo genitore), NON `parents.id`: il ponte è `parents.auth_user_id`
+    // (vedi lo stesso refuso corretto in parent/onboarding e onboarding/consensi.ts).
+    // Con `.eq('id', auth.user.id)` questa query non trovava MAI la riga: ogni
+    // richiesta di cancellazione in-app veniva rifiutata con 403, sempre.
     // NB: `parents` non ha `scuola_id` (la sede si ricava dall'identità utente).
     const { data: parent, error: errP } = await admin
       .from('parents')
       .select('id, anonimizzato_il')
-      .eq('id', auth.user.id)
+      .eq('auth_user_id', auth.user.id)
       .maybeSingle()
     if (errP && !schemaAssente(errP)) {
       logErrore({ operazione: 'parent/account/richiesta-cancellazione:POST', stato: 500 }, errP)

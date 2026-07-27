@@ -10,6 +10,8 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
+import { assertConversazioneNonSospesa } from '@/lib/chat/sospensione-conversazione';
+import { assertTerminiAccettatiSeGenitore } from '@/lib/onboarding/consensi';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -174,6 +176,27 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
                 { status: 403 }
             );
         }
+
+        // ── Guardie UGC 1:1 (C5) — dopo l'autorizzazione al thread, prima dell'insert ──
+        // (a) Conversazione SOSPESA (bidirezionale, dichiarata): chi è `sospesa_verso`
+        //     non può inviare nuovi messaggi; chi ha sospeso sì. Storico append-only in
+        //     `conversazioni_sospensioni`. Solo la SCRITTURA: la lettura resta libera.
+        const conversazioneSospesaErr = await assertConversazioneNonSospesa(
+            supabase,
+            thread_id,
+            sender_id
+        );
+        if (conversazioneSospesaErr) return conversazioneSospesaErr;
+
+        // (b) Gate TERMINI (art. 1341 c.c.): un genitore che non ha accettato i Termini
+        //     non produce UGC. Trasparente per lo staff (docente scrive solo alla propria
+        //     sezione, gate a monte). Identità e ruolo dal gate, MAI dal body.
+        const terminiErr = await assertTerminiAccettatiSeGenitore(
+            supabase,
+            sender_id,
+            auth.user.role
+        );
+        if (terminiErr) return terminiErr;
 
         // Inserisci messaggio (sender_id = utente del gate, mai dal body)
         const { data, error } = await supabase

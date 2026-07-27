@@ -18,6 +18,7 @@ import {
   MessageCircle,
   Stamp,
   Newspaper,
+  Flag,
 } from 'lucide-react';
 
 /**
@@ -92,6 +93,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
       { href: '/admin/modulistica', label: 'Modulistica', labelKey: 'nav_modulistica', icon: FileText },
       { href: '/admin/gdpr', label: 'Privacy & GDPR', labelKey: 'nav_gdpr', icon: ShieldCheck },
+      // Moderazione UGC (C5 §2): coda segnalazioni. Riservata alla Direzione
+      // (admin/coordinator); il gate vero è nelle API admin/segnalazioni.
+      { href: '/admin/moderazione', label: 'Moderazione', labelKey: 'nav_moderazione', icon: Flag, roles: ['admin', 'coordinator'] },
     ],
   },
   {

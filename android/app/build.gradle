@@ -1,12 +1,33 @@
 apply plugin: 'com.android.application'
 
+// Chiave di upload Play: env var (CI) prima del file locale (gitignorato), mai nel repo.
+def ksProps = new Properties()
+def ksFile = rootProject.file('keystore.properties')
+if (ksFile.exists()) { ksFile.withInputStream { ksProps.load(it) } }
+def kvStore   = System.getenv('KV_UPLOAD_STORE_FILE')     ?: ksProps['storeFile']
+def kvStorePw = System.getenv('KV_UPLOAD_STORE_PASSWORD') ?: ksProps['storePassword']
+def kvAlias   = System.getenv('KV_UPLOAD_KEY_ALIAS')      ?: ksProps['keyAlias']
+def kvKeyPw   = System.getenv('KV_UPLOAD_KEY_PASSWORD')   ?: ksProps['keyPassword']
+
 android {
     namespace = "it.kidville.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    signingConfigs {
+        release {
+            if (kvStore) {
+                storeFile file(kvStore); storePassword kvStorePw
+                keyAlias kvAlias;        keyPassword kvKeyPw
+            }
+        }
+    }
     defaultConfig {
         applicationId "it.kidville.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
+        // versionCode: contatore progressivo indipendente per Android (NON agganciato al
+        // build number iOS — spazi di numerazione di store diversi). Si incrementa di 1 a
+        // ogni .aab caricato su Play, anche solo su Internal testing: Play non riaccetta
+        // mai un versionCode già usato, nemmeno se l'upload precedente è stato eliminato.
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -18,6 +39,10 @@ android {
     }
     buildTypes {
         release {
+            // Nessun fallback silenzioso sulla chiave di debug: se la chiave di upload
+            // manca, la build fallisce — meglio di un .aab che Play rifiuta solo dopo
+            // l'upload, quando il tempo è già bruciato.
+            signingConfig kvStore ? signingConfigs.release : null
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

@@ -30,6 +30,15 @@ node_modules/
 .DS_Store
 *.pem
 
+# chiavi di firma Android (Play) — mai nel repo, a qualunque profondità
+*.jks
+*.keystore
+keystore.properties
+key.properties
+*.p12
+*.pfx
+*.pepk
+
 # debug
 npm-debug.log*
 yarn-debug.log*

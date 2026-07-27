@@ -175,6 +175,46 @@ dopo.
 
 Gate verde: eslint 0 · `tsc --noEmit` 0 · vitest **390 file / 3228 test** · build ok.
 
+### C2 — build `.aab` firmata per Google Play
+
+Lavoro tecnico di [`docs/submission/C2-build-aab.md`], sullo stesso branch (deroga esplicita
+dell'utente alla regola "un branch alla volta": interventi scollegati — fix GDPR vs
+infrastruttura di firma Play — con revisione/merge indipendenti in mente, ma un solo branch
+fisico). Nessuna modifica applicativa: solo `android/**`.
+
+**Buco chiuso prima di generare qualunque chiave.** `android/.gitignore` aveva le regole
+`*.jks`/`*.keystore` **commentate** dal template Capacitor mai adattato; il `.gitignore` di
+radice non ne aveva nessuna. Un `keytool` in `android/` seguito da un `git add` avrebbe
+committato la chiave di firma **senza un solo avviso**. Corretto in entrambi i file
+(+ `keystore.properties`, `key.properties`, `*.p12`, `*.pfx`, `*.pepk`), verificato con una prova
+attiva (`git check-ignore -v` su file di prova, prima e dopo) — non solo dichiarato.
+
+**Chiave di upload generata FUORI dal repo** (`~/Documenti/kidville-play/kidville-upload.jks`,
+PKCS12, RSA 4096, validità 10.000 giorni → scade 2053-12-12, DN della cooperativa), con copia
+offline in `~/Documenti/kidville-play-backup/`. La password è stata generata e scritta
+**solo su file locali** (mai in questa conversazione, mai in un report d'agente — un primo
+tentativo di delegare la generazione a un sub-agente è stato bloccato dal classificatore di
+sicurezza proprio perché istruito a scrivere la password nel proprio report finale, che finisce
+in trascrizione: correzione applicata, rifatto a mano con redirect di shell che non emettono mai
+il valore in nessun output visibile). Sta in `~/Documenti/kidville-play/.upload-pw` e in
+`android/keystore.properties` (gitignorato, `chmod 600`): **da spostare nel gestore di
+credenziali del titolare e poi ripulire le copie su disco**.
+
+**Gradle configurato**: `signingConfigs.release` legge env var (`KV_UPLOAD_STORE_FILE` e affini,
+priorità CI) prima del file locale; `buildTypes.release.signingConfig` è un ternario che lascia
+`null` se la chiave manca — build che fallisce, mai una firma silenziosa con la chiave di debug.
+`versionCode`: contatore progressivo indipendente per Android (non agganciato al build number
+iOS), documentato con un commento sopra `versionCode 1` in `build.gradle` per la prossima volta
+che si carica un `.aab`.
+
+**Build verificata**: `CAP_SERVER_URL=https://app.kidville.it npx cap sync android` + verifica
+obbligatoria del `capacitor.config.json` sincronizzato (url/cleartext/errorPath/loggingBehavior
+tutti corretti) **prima** di `./gradlew bundleRelease` (BUILD SUCCESSFUL, 32s). Firma verificata
+con `jarsigner -verify -certs` (schema di firma dei bundle, non `apksigner`, che verifica APK):
+`jar verified`, certificato con lo stesso CN della cooperativa, scadenza 2053-12-12.
+`.aab` prodotto in `android/app/build/outputs/bundle/release/app-release.aab` (7,4 MB),
+correttamente gitignorato (pattern `build/` già esistente).
+
 ## 🗓️ Changelog — C5: cancellazione account pubblica + moderazione UGC (segnalazioni, sospensione conversazione, gate Termini) 2026-07-27 (branch `feat/dossier-submission`)
 
 Il codice che sblocca la fase C (`docs/submission/C5-sviluppo-obbligatorio.md`) — l'unica parte

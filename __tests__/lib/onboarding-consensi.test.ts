@@ -8,12 +8,14 @@ import {
 // P4/DL-045 — onboarding genitore: i consensi GDPR obbligatori devono essere accettati.
 
 // Fake supabase: programma { data, error } per la lettura puntuale di parents.
-function fakeSupabase(resp: { data?: unknown; error?: unknown }) {
+// `eqCalls`, se passato, registra ogni `.eq(col, val)` — usato per provare CHE
+// colonna viene interrogata (non solo che la funzione "funziona" a prescindere).
+function fakeSupabase(resp: { data?: unknown; error?: unknown }, eqCalls?: [string, unknown][]) {
   return {
     from() {
       const b: Record<string, unknown> = {}
       b.select = () => b
-      b.eq = () => b
+      b.eq = (col: string, val: unknown) => { eqCalls?.push([col, val]); return b }
       b.maybeSingle = async () => ({ data: resp.data ?? null, error: resp.error ?? null })
       return b
     },
@@ -83,5 +85,12 @@ describe('assertTerminiAccettatiSeGenitore', () => {
   it('degrada a null se la colonna/tabella non esiste (DB E2E non migrato, 42703)', async () => {
     const sb = fakeSupabase({ error: { code: '42703' } })
     expect(await assertTerminiAccettatiSeGenitore(sb, PARENT, 'genitore')).toBeNull()
+  })
+
+  it('interroga parents per auth_user_id, MAI per id (senderId è utenti.id, non parents.id — verificato in produzione: 0 righe coincidono)', async () => {
+    const eqCalls: [string, unknown][] = []
+    const sb = fakeSupabase({ data: { consensi_gdpr: { privacy: true, termini: true } } }, eqCalls)
+    await assertTerminiAccettatiSeGenitore(sb, PARENT, 'genitore')
+    expect(eqCalls).toEqual([['auth_user_id', PARENT]])
   })
 })

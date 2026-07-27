@@ -42,8 +42,16 @@ function negatoTermini(): NextResponse {
  * PostgREST ritorna `{ error }` (42703/PGRST205) e si degrada a `null` (non blocca).
  * PostgREST NON lancia: si controlla il valore di ritorno.
  *
- * Per un genitore, `senderId` (l'id applicativo dal gate) coincide con `parents.id`
- * (vedi `parent/onboarding` e `parent/account/richiesta-cancellazione`).
+ * Per un genitore, `senderId` (l'id applicativo dal gate, vedi `requireUser` /
+ * `resolveAppIdFromAuthUid`) è l'id della riga `utenti` con `ruolo='genitore'`
+ * — NON `parents.id`, che è una riga di anagrafica separata. Il ponte è
+ * `parents.auth_user_id = senderId` (stesso pattern di `src/app/api/me/route.ts`
+ * e di `getFigliDiGenitore`/`accountGenitoriDiAlunni` in `pagamenti/sospensione.ts`).
+ * Verificato in produzione: 0 righe `parents` hanno `id` uguale a un `utenti.id`
+ * di ruolo genitore — un `.eq('id', senderId)` qui non troverebbe MAI la riga
+ * giusta e bloccherebbe ogni genitore, sempre. (`parent/onboarding` e
+ * `parent/account/richiesta-cancellazione` avevano lo stesso refuso: corretto
+ * insieme a questo file.)
  */
 export async function assertTerminiAccettatiSeGenitore(
   supabase: SupabaseClient,
@@ -55,7 +63,7 @@ export async function assertTerminiAccettatiSeGenitore(
   const { data, error } = await supabase
     .from('parents')
     .select('consensi_gdpr')
-    .eq('id', senderId)
+    .eq('auth_user_id', senderId)
     .maybeSingle()
 
   if (error) {

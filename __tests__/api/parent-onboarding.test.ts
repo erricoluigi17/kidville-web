@@ -10,7 +10,9 @@ import { VERSIONE_TERMINI } from '@/lib/legal/versioni'
 const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   parent: { id: 'p1', auth_user_id: 'auth-1' } as Record<string, unknown> | null,
+  parentNotFound: false,
   updates: [] as Array<Record<string, unknown>>,
+  eqCalls: [] as Array<[string, unknown]>,
   pwUpdates: [] as Array<{ uid: string; attrs: unknown }>,
   consensiInserts: [] as Array<Record<string, unknown>>,
   consensiInsertErr: null as unknown,
@@ -24,9 +26,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
     from: (table: string) => {
       const b: Record<string, unknown> = {}
       b.update = (row: Record<string, unknown>) => { h.updates.push(row); return b }
-      b.eq = () => b
+      b.eq = (col: string, val: unknown) => { if (table === 'parents') h.eqCalls.push([col, val]); return b }
       b.select = () => b
-      b.maybeSingle = async () => ({ data: h.parentUpdateErr ? null : h.parent, error: h.parentUpdateErr })
+      b.maybeSingle = async () => ({
+        data: h.parentUpdateErr || h.parentNotFound ? null : h.parent,
+        error: h.parentUpdateErr,
+      })
       b.insert = (rows: Record<string, unknown> | Record<string, unknown>[]) => {
         const arr = Array.isArray(rows) ? rows : [rows]
         if (table === 'consensi_accettazioni') h.consensiInserts.push(...arr)
@@ -46,7 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireUser.mockResolvedValue({ user: { id: 'p1', role: 'genitore' } })
   h.parent = { id: 'p1', auth_user_id: 'auth-1' }
-  h.updates = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null
+  h.updates = []; h.eqCalls = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null; h.parentNotFound = false
 })
 
 describe('POST /api/parent/onboarding', () => {
@@ -108,6 +113,18 @@ describe('POST /api/parent/onboarding', () => {
     const res = await POST(req({ consensi: { privacy: true, termini: true } }))
     expect(res.status).toBe(200)
     expect((await res.json()).onboarded).toBe(true)
+  })
+
+  it('aggiorna parents per auth_user_id, MAI per id (auth.user.id è utenti.id, non parents.id — verificato in produzione: 0 genitori su 46 coincidevano, onboarding non ha mai scritto nulla)', async () => {
+    await POST(req({ consensi: { privacy: true, termini: true } }))
+    expect(h.eqCalls).toEqual([['auth_user_id', 'p1']])
+  })
+
+  it('404 se nessuna riga parents ha questo auth_user_id — non dichiara successo su un update che non ha aggiornato nulla', async () => {
+    h.parentNotFound = true
+    const res = await POST(req({ consensi: { privacy: true, termini: true } }))
+    expect(res.status).toBe(404)
+    expect(h.consensiInserts).toHaveLength(0)
   })
 
   it('500 se l update di parents fallisce (PostgREST {error}) — non dichiara successo (segnalato dal tester log C5)', async () => {

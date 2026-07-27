@@ -12,6 +12,8 @@
   "umoreAttesaPer": "The teacher will soon be able to note how it went for {nome}.",
   "entrataLabel": "Arrival",
   "notaPerTe": "A note for you",
+  "segnalaVoce": "Report",
+  "segnalaVoceAria": "Report this diary entry",
   "fotoTitolo": "Today's photos",
   "fotoScattate": "{count, plural, one {# photo} other {# photos}} taken by the teacher",
   "footerVisibilita": "📋 Entries are visible for the previous 14 days.",

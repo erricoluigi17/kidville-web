@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { logClient } from '@/lib/logging/client';
 import { Download, Share2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
+import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 
 // Il traduttore va passato a timeAgo(), che è module-level (fuori dal componente).
 type Traduttore = ReturnType<typeof useTranslations>;
@@ -400,6 +401,13 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
                                 </button>
+                                {/* Segnalazione contenuto (C5 §2): sempre etichettata, lato genitore. */}
+                                <SegnalaContenuto
+                                    tipoOggetto="media_galleria"
+                                    oggettoId={lightbox.id}
+                                    label={t('mediaSegnala')}
+                                    variant="pill"
+                                />
                             </div>
                         )}
 

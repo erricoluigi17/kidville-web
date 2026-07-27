@@ -236,22 +236,22 @@ Nessuna delle due nasce dalla submission su App Store, ed è per questo che non 
 ## §4 — Checklist
 
 **Pagina di cancellazione**
-- [ ] Decisa la rotta: `/cancellazione-account` *(o sezione prominente di `/assistenza`)*
-- [ ] Testo riusato da `messages/it/profilo.json` → `eliminaSpiegazione`, IT + EN
-- [ ] Aggiunta a `PUBLIC_PREFIXES`
-- [ ] La pagina **registra una richiesta**, non cancella — con verifica via email
-- [ ] Riporta il nome dell'app come appare sulla scheda
-- [ ] Corretto `docs/store-submission.md` §3, che oggi indica `/assistenza` **sbagliando**
-- [ ] URL incollato nel modulo Data safety ([C4](C4-conformita-pubblico.md))
+- [x] Decisa la rotta: `/cancellazione-account` (2026-07-27)
+- [x] Testo riusato da `messages/it/profilo.json` → `eliminaSpiegazione`, IT + EN (2026-07-27)
+- [x] Aggiunta a `PUBLIC_PREFIXES` (2026-07-27)
+- [x] La pagina **registra una richiesta**, non cancella — con verifica via email (magic-link, riuso `otp-ticket.ts`) (2026-07-27)
+- [x] Riporta il nome dell'app come appare sulla scheda (2026-07-27)
+- [x] Corretto `docs/store-submission.md` §3, che oggi indica `/assistenza` **sbagliando** (2026-07-27)
+- [ ] URL incollato nel modulo Data safety ([C4](C4-conformita-pubblico.md)) — **resta da fare in Play Console**, fuori da questo repo
 
 **UGC**
 - [x] ~~Decisione sul «blocco»~~ → ✅ **B: sospensione + notifica alla Direzione, dichiarata** (2026-07-26)
-- [ ] Segnalazione **contenuto** in-app (galleria, diario, chat)
-- [ ] Segnalazione **utente** in-app
-- [ ] Blocco / sospensione conversazione, secondo la decisione presa
-- [ ] Entrambe visibili e chiaramente etichettate
-- [ ] **Gate dei Termini non saltabile** prima del primo invio di UGC
-- [ ] Registrazione di **data e versione** dei Termini accettati → chiude anche **A3 lacuna E**
-- [ ] `/termini` rivisto col legale perché definisca i contenuti vietati ([A3](A3-dossier-legale.md))
-- [ ] Gate verde: eslint · tsc · vitest · build
-- [ ] PRD aggiornato
+- [x] Segnalazione **contenuto** in-app (galleria, diario, chat) (2026-07-27)
+- [x] Segnalazione **utente** in-app (2026-07-27)
+- [x] Blocco / sospensione conversazione, secondo la decisione presa (2026-07-27)
+- [x] Entrambe visibili e chiaramente etichettate (2026-07-27, verificato dal tester frontend)
+- [x] **Gate dei Termini non saltabile** prima del primo invio di UGC (2026-07-27, guardia server-side in `POST /api/chat/messages`, non solo la checkbox)
+- [x] Registrazione di **data e versione** dei Termini accettati → chiude anche **A3 lacuna E** (2026-07-27, tabella append-only `consensi_accettazioni`)
+- [ ] `/termini` rivisto col legale perché definisca i contenuti vietati ([A3](A3-dossier-legale.md)) — **resta lavoro del legale**, non di sviluppo
+- [x] Gate verde: eslint · tsc · vitest · build (2026-07-27 — 387 file / 3181 test, build 382 route)
+- [x] PRD aggiornato (2026-07-27)

@@ -62,9 +62,14 @@ const adminClient = {
     b.order = () => b
     b.eq = (col: string, val: unknown) => { state.filters[col] = val; return b }
     b.in = (col: string, val: unknown) => { state.filters[col] = val; return b }
+    b.is = (col: string, val: unknown) => { state.filters[col] = val; return b }
     b.maybeSingle = async () => {
       if (table === 'chat_threads') return { data: h.thread, error: h.threadErr }
       if (table === 'utenti') return { data: { scuola_id: 'sc-1' }, error: null }
+      // Guardie C5 (POST): conversazione non sospesa + genitore onboardato (Termini
+      // accettati), così questa suite resta focalizzata su identità/partecipante.
+      if (table === 'conversazioni_sospensioni') return { data: null, error: null }
+      if (table === 'parents') return { data: { consensi_gdpr: { privacy: true, termini: true } }, error: null }
       return { data: null, error: null }
     }
     b.range = async () => ({ data: h.messages, count: h.messages.length, error: null })

@@ -5,8 +5,18 @@ import { requireUser } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
+import { schemaAssente } from '@/lib/news/schema-assente';
+
+/** Sospensione attiva di una conversazione, esposta al partecipante. Il `motivo`
+ *  (testo libero) torna SOLO a chi ha sospeso, mai all'altra parte. */
+interface SospensioneThread {
+    sospesaDa: string;
+    sospesaVerso: string;
+    motivo: string | null;
+    sospesaIl: string;
+}
 
 // Gap auth chiuso in M9: `?userId=` legacy accettato dallo schema ma IGNORATO,
 // l'identità è quella del gate (pattern M4 "parent_id legacy strippato").
@@ -48,10 +58,38 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
         // Aprire la lista consegna TUTTI i messaggi ricevuti nei propri thread (delivered_at).
         // I thread sono già filtrati per teacher_id/parent_id: nessun rischio cross-account.
         // UPDATE separato e best-effort (degrada da solo se la colonna non c'è sul DB E2E).
-        await marcaConsegnati(supabase, {
-            userId,
-            threadIds: (threads ?? []).map((t) => t.id as string),
-        });
+        const threadIds = (threads ?? []).map((t) => t.id as string);
+        await marcaConsegnati(supabase, { userId, threadIds });
+
+        // Sospensioni ATTIVE (C5) in UNA sola query batched `thread_id IN (...)` —
+        // MAI una query per-thread dentro il Promise.all (sarebbe un N+1). Degrada
+        // pulito sul DB E2E CI non migrato (tabella assente → nessuna sospensione).
+        const sospensioniMap = new Map<string, SospensioneThread>();
+        if (threadIds.length > 0) {
+            const { data: sosp, error: sospErr } = await supabase
+                .from('conversazioni_sospensioni')
+                .select('thread_id, sospesa_da, sospesa_verso, motivo, sospesa_il')
+                .in('thread_id', threadIds)
+                .is('riaperta_il', null);
+            if (sospErr) {
+                // Tabella assente = nessuna sospensione. Un errore vero si logga (senza PII)
+                // ma NON fa fallire la lista chat: la sospensione degrada a "nessuna".
+                if (!schemaAssente(sospErr)) {
+                    logEvento('chat', 'error', { operazione: 'chat/threads:GET', esito: 'sospensioni-lettura-fallita' }, sospErr);
+                }
+            } else {
+                for (const s of sosp ?? []) {
+                    const sospesaDa = s.sospesa_da as string;
+                    sospensioniMap.set(s.thread_id as string, {
+                        sospesaDa,
+                        sospesaVerso: s.sospesa_verso as string,
+                        // PRIVACY: il motivo (testo libero) torna solo all'autore della sospensione.
+                        motivo: userId === sospesaDa ? ((s.motivo as string | null) ?? null) : null,
+                        sospesaIl: s.sospesa_il as string,
+                    });
+                }
+            }
+        }
 
         // Arricchisci con nomi degli interlocutori e conteggio non letti
         const enrichedThreads = await Promise.all(
@@ -99,6 +137,7 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
                     student: student ?? { nome: '?', cognome: '?', classe_sezione: '?' },
                     last_message: lastMsg ?? null,
                     unread_count: unreadCount ?? 0,
+                    sospensione: sospensioniMap.get(thread.id as string) ?? null,
                 };
             })
         );

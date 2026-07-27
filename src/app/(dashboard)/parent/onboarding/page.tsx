@@ -16,6 +16,9 @@ function Inner() {
 
   const [password, setPassword] = useState('');
   const [privacy, setPrivacy] = useState(false);
+  // C5 — consenso ai Termini di servizio: checkbox INDIPENDENTE dalla privacy,
+  // bloccante lato client (il gate reale resta il 422 semantico server-side).
+  const [termini, setTermini] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,6 +26,7 @@ function Inner() {
     e.preventDefault();
     setError(null);
     if (!privacy) { setError(t('erroreAccettaPrivacy')); return; }
+    if (!termini) { setError(t('erroreAccettaTermini')); return; }
     if (password && password.length < 8) { setError(t('errorePasswordCorta')); return; }
     if (!parentId) { setError(t('erroreIdentita')); return; }
     setSaving(true);
@@ -30,7 +34,7 @@ function Inner() {
       const res = await fetch('/api/parent/onboarding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
-        body: JSON.stringify({ consensi: { privacy }, password: password || undefined }),
+        body: JSON.stringify({ consensi: { privacy, termini }, password: password || undefined }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -75,6 +79,20 @@ function Inner() {
               privacy: (chunks) => (
                 <strong>
                   <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">{chunks}</a>
+                </strong>
+              ),
+            })}{' '}
+            <span className="text-kidville-error">*</span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input type="checkbox" checked={termini} onChange={e => setTermini(e.target.checked)} className="mt-1 h-4 w-4 rounded text-kidville-green focus:ring-kidville-green" />
+          <span className="font-maven text-sm text-kidville-ink leading-snug">
+            {t.rich('consensoTermini', {
+              termini: (chunks) => (
+                <strong>
+                  <a href="/termini" target="_blank" rel="noopener noreferrer" className="underline">{chunks}</a>
                 </strong>
               ),
             })}{' '}

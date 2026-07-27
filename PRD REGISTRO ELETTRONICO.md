@@ -29,7 +29,10 @@
 > | `pagamenti_transazioni` | Contenitore «incasso unico di famiglia»: un versamento → più voci di più figli + ricariche mensa (pagante = `parents.id`, metodo, riferimento/CRO, data valuta, note, annullo tracciato) | ✅ RLS + policy service_role |
 > | `crediti_famiglia` | Ledger del credito di famiglia (causali eccedenza/utilizzo/rettifica/storno con `saldo_dopo`, ancorato a `parents.id`) — visibile **solo alla segreteria** | ✅ RLS + policy service_role |
 > | `cassa_movimenti` (+ `cassa_categorie`, `cassa_chiusure`, `admin_settings.cassa_config`) | Registro di cassa contanti per sede: ledger **immutabile** (entrata/uscita/prelievo/rettifica, solo storno tracciato), entrate auto dagli incassi contanti calcolate a query-time, svuotamento con differenza + prelievo (RPC atomica `registra_chiusura_cassa`), categorie di uscita con seed («Versamento in banca» `is_sistema`), giustificativo su Storage **privato**. Saldo/«entrato oggi»/totali/report/svuotamento **solo admin** | ✅ RLS service_role (RPC SECURITY DEFINER, REVOKE anon/authenticated) |
-> | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app, la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `segnalazioni` | Coda di triage UGC (C5, Google Play): segnalazione **contenuto** (chat/galleria/diario, discriminante `tipo_oggetto`+`oggetto_id` polimorfico) o **utente** (`segnalato_id`), categoria, motivo libero, stato/gestione. Nessuna FK utente: la riga sopravvive a un'eventuale anonimizzazione | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
 > ### Moduli Implementati
 > | Modulo | Stato | Pagine | API Routes |
@@ -46,6 +49,7 @@
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
+> | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
 >
 > ### 🎓 Moduli Normativi Scuola Primaria (gap da colmare)
 > Requisiti derivati da L. 150/2024, O.M. 3 del 9/1/2025 (All. A), note MIM 5274/2024 e 2773/2025,
@@ -63,6 +67,81 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🗓️ Changelog — C5: cancellazione account pubblica + moderazione UGC (segnalazioni, sospensione conversazione, gate Termini) 2026-07-27 (branch `feat/dossier-submission`)
+
+Il codice che sblocca la fase C (`docs/submission/C5-sviluppo-obbligatorio.md`) — l'unica parte
+del dossier di submission Google Play che è vero sviluppo, non un modulo da compilare. Due
+requisiti Google Play che oggi non esistevano nel codice.
+
+**§1 — Pagina pubblica di cancellazione account.** La User Data policy richiede un percorso
+raggiungibile **senza login**, oltre a quello in-app (`/parent/profilo`) già esistente. Nuova
+rotta **`/cancellazione-account`** (+ `/conferma`), bilingue, in `PUBLIC_PREFIXES`. Flusso:
+email → link magic (riuso delle primitive HMAC di `otp-ticket.ts`, TTL 1h, anti-replay) →
+conferma → INSERT in `richieste_cancellazione` (nuova colonna `canale='pubblico_email'`) →
+notifica Direzione. **Non cancella nulla direttamente**: registra una richiesta `pending` che la
+Direzione evade da `/admin/gdpr` come oggi. Risposta **sempre 200 generica** all'invio
+(anti-enumerazione: mai rivelare se un'email è associata a un account). Testo riusato
+letteralmente da `messages/{it,en}/profilo.json` → `eliminaSpiegazione` (copre già prerequisiti
+e retention).
+
+**§2 — UGC: segnalazione, sospensione conversazione, gate Termini.** Il grafo della chat non è
+quello di un social (verificato nel codice, non ipotizzato): nessun genitore↔genitore, un
+docente scrive solo alla propria sezione. **Decisione già presa dal titolare (2026-07-26)**:
+sospensione della conversazione (non blocco stile social) + notifica dichiarata alla Direzione,
+mai silenziosa. Implementato:
+- **Segnalazione** contenuto (chat/galleria/diario) e utente — tabella `segnalazioni`, route
+  `POST /api/segnalazioni` + `/api/admin/segnalazioni`, menu "⋮" sempre etichettato testualmente
+  (mai solo icona) su chat/galleria/diario.
+- **Sospensione conversazione** — tabella `conversazioni_sospensioni` (storico append-only, al
+  più una sospensione attiva per thread via indice unico parziale), route
+  `POST /api/chat/threads/[id]/{sospendi,riapri}`, guardia server-side
+  `assertConversazioneNonSospesa` in `POST /api/chat/messages`. Riapertura da chi ha sospeso o
+  dalla Direzione (`/admin/moderazione`, nuova pagina). Scoping **per conversazione**, non per
+  utente: due figli in sezioni diverse restano indipendenti. Avvisi/giustifiche/diario/galleria/
+  push **non toccati** — dimostrato con un test dedicato.
+- **Gate Termini non saltabile** — `CONSENSI_RICHIESTI` esteso a `['privacy','termini']`, nuova
+  tabella append-only `consensi_accettazioni` (data+versione, **server-side, mai spoofabile dal
+  client** — chiude anche la lacuna E di [A3](docs/submission/A3-dossier-legale.md): oggi
+  nessuno accetta i Termini, quindi la clausola di limitazione di responsabilità probabilmente
+  non produce effetto). Il vero gate **non è la checkbox in onboarding** (aggirabile chiamando
+  l'API): è la guardia `assertTerminiAccettatiSeGenitore` dentro `POST /api/chat/messages`,
+  l'unico punto in cui un genitore produce UGC (galleria e diario restano `requireDocente`).
+
+**Come è stato costruito.** Due filoni in un Dynamic Workflow — cancellazione pubblica (isolata)
+e moderazione UGC (sequenziale sugli stessi file: guardie chat/messages, poi UI, poi pannello
+Direzione) — 8 `esecutore-opus` in TDD, poi 5 `tester-opus` mirati (backend · sicurezza ·
+privacy · frontend · log) in parallelo. **Tutti PASS.** Corretti nella stessa sessione due gap
+segnalati dai tester: (1) `parent/onboarding/route.ts` non controllava `{ error }`
+sull'`update` di `parents` — con la nuova guardia un update silenziosamente fallito avrebbe
+lasciato un genitore permanentemente bloccato in chat senza alcuna diagnosi; (2) i successi di
+sospensione/riapertura/segnalazione/cancellazione/consenso non erano in `EVENTI_PERSISTITI`
+(regola 5 `AGENTS.md`: i successi degli eventi critici si loggano anche loro) — aggiunti i
+canali `chat`/`gdpr`/`segnalazione`.
+
+**Oblio GDPR esteso al testo libero UGC — decisione presa con l'utente.** Il tester privacy
+aveva trovato un buco reale: `segnalazioni.motivo`/`note_gestione` e
+`conversazioni_sospensioni.motivo` sono testo libero che può citare il nome di un minore o un
+dato sanitario, e `src/lib/gdpr/esegui.ts` non li toccava — sopravvivevano per sempre
+all'anonimizzazione del genitore/alunno (nessuna FK verso `parents`/`alunni`, per progetto). Alla
+domanda esplicita, l'utente ha scelto **di estenderlo subito**. Fatto: `anonimizzaParent` ora
+scrub-a `segnalazioni`/`conversazioni_sospensioni` dove il genitore è
+segnalante/segnalato/sospendente/sospeso; `anonimizzaAlunno` risale al contenuto dell'alunno
+(voci di diario, media di galleria taggati, thread di chat del figlio) e scrub-a le segnalazioni
+e sospensioni collegate — copre anche il caso dei **due genitori**, quando solo uno dei due
+chiede la cancellazione ma il figlio ha una conversazione con l'altro genitore o con la maestra.
+Conteggi `segnalazioni_bonificate`/`sospensioni_bonificate` aggiunti a `richieste_cancellazione.esito`.
+Gate rieseguito verde (387 file / 3181 test).
+
+Altri warning minori dei tester, **non affrontati in questa sessione, restano annotati**: un
+docente può segnalare contenuti fuori dalla propria sezione (scope di scrittura non ristretto);
+latenza come debole canale laterale sull'anti-enumerazione email di `/cancellazione-account`; PII
+reale di staff (due indirizzi Gmail) in due file di `docs/submission/` già tracciati — segnalato
+dal tester perché `CLAUDE.md` dichiara ancora il repository pubblico, mentre altre note lo danno
+come reso privato il 2026-07-26: da chiarire, e nel dubbio da bonificare comunque.
+
+⚠️ **Nulla è stato committato**: modifiche sul branch `feat/dossier-submission`, in attesa di
+richiesta esplicita.
 
 ## 🗓️ Changelog — Recapito legale sul dominio dell'ente + dossier di submission A1·A2·A3 2026-07-26 (branch `feat/scheda-app-store`)
 

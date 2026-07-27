@@ -353,8 +353,13 @@ attualmente previsto per `PrivacyInfo.xcprivacy`.
   > account** si poteva usare `https://app.kidville.it/assistenza`, «che spiega la
   > procedura». **È falso**: la pagina è stata riletta riga per riga e **la parola
   > «cancellazione» non vi compare**. Indicarla produce il rifiuto *«Invalid account/data
-  > deletion link on your Data safety»*. Serve una **pagina pubblica dedicata**, che oggi
-  > non esiste: vedi **`docs/submission/C5-sviluppo-obbligatorio.md` §1**.
+  > deletion link on your Data safety»*. **NON usare `/assistenza`.**
+  >
+  > ✅ **RISOLTO (2026-07-27, C5 §1).** Esiste ora la **pagina pubblica dedicata**
+  > **`https://app.kidville.it/cancellazione-account`** (senza login, bilingue IT/EN,
+  > verifica d'identità via magic-link email; non cancella, registra una richiesta che la
+  > Direzione evade). **È questo l'URL da incollare nel campo cancellazione del modulo Data
+  > safety** — non `/assistenza`. Vedi **`docs/submission/C5-sviluppo-obbligatorio.md` §1**.
 - la sezione **«App per famiglie / Norme sui minori»**: l'app non è rivolta ai bambini
   (l'utente è un adulto), ma tratta dati di minori — la scheda va compilata di
   conseguenza, e il target d'età dichiarato deve essere adulto.

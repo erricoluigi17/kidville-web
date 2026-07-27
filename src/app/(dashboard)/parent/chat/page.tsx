@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
-import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
+import { ChatThreadList, ChatThread, SospensioneInfo } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
+import { ChatConversationMenu } from '@/components/features/chat/ChatConversationMenu';
+import { ChatSuspensionBanner } from '@/components/features/chat/ChatSuspensionBanner';
 import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
@@ -49,6 +51,14 @@ function ParentChatContent() {
     // ID del primo messaggio non letto: calcolato al caricamento del thread
     // e "bloccato" finché l'utente non invia un messaggio o cambia chat.
     const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+    // Gate Termini (C5): il POST messaggio ha risposto 403 termini_non_accettati.
+    // Mostra il CTA verso /parent/onboarding invece di un errore generico.
+    const [termsBlocked, setTermsBlocked] = useState(false);
+
+    // Aggiorna in-place la sospensione di un thread (dopo sospendi/riapri).
+    const applySospensione = useCallback((threadId: string, sospensione: SospensioneInfo | null) => {
+        setThreads(prev => prev.map(t => (t.id === threadId ? { ...t, sospensione } : t)));
+    }, []);
 
     // Ref stabile per selectedThread (evita re-render nei callback realtime)
     const selectedThreadRef = useRef<ChatThread | null>(null);
@@ -289,11 +299,27 @@ function ParentChatContent() {
                 setMessages(prev => [...prev, newMsg]);
                 // L'utente ha inviato → il separatore non serve più
                 setFirstUnreadId(null);
+                setTermsBlocked(false);
                 setThreads(prev => prev.map(t =>
                     t.id === selectedThread.id
                         ? { ...t, last_message: { content, sender_id: parentId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
                         : t
                 ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
+                return;
+            }
+            if (res.status === 403) {
+                // Guardie UGC (C5): il server rifiuta la scrittura. Il client mostra il
+                // CTA giusto invece di un errore muto (il testo del messaggio non entra
+                // mai nei log lato client — vedi catch sotto).
+                const data = await res.json().catch(() => null);
+                const motivo = (data as { motivo?: string } | null)?.motivo;
+                if (motivo === 'termini_non_accettati') {
+                    setTermsBlocked(true);
+                } else if (motivo === 'conversazione_sospesa') {
+                    // Sospensione rilevata server-side: ricarica i thread così il banner
+                    // "Conversazione sospesa" compare e il composer si disabilita.
+                    await loadThreads();
+                }
             }
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/parent/chat' });
@@ -309,6 +335,56 @@ function ParentChatContent() {
     if (!ready || loading || !parentId) {
         return <ChatListSkeleton />;
     }
+
+    // Stato sospensione DERIVATO dai thread (non da selectedThread, che resta
+    // stabile): così un refresh dei thread — polling o dopo un 403 in invio —
+    // fa comparire da sé il banner e disabilita il composer.
+    const activeThread = selectedThread ? (threads.find(t => t.id === selectedThread.id) ?? selectedThread) : null;
+    const susp = activeThread?.sospensione ?? null;
+    const suspendedToMe = !!susp && susp.sospesaVerso === parentId;
+    const controparteId = activeThread ? (activeThread.teacher_id === parentId ? activeThread.parent_id : activeThread.teacher_id) : '';
+    const lastIncomingMessageId = messages.length
+        ? ([...messages].reverse().find(m => m.sender_id !== parentId)?.id ?? null)
+        : null;
+
+    const menuTriggerLight = 'flex h-9 w-9 items-center justify-center rounded-full text-kidville-muted transition-colors hover:bg-kidville-neutral-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-green';
+    const menuTriggerOnGreen = 'flex h-9 w-9 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-yellow';
+
+    const conversationMenu = (triggerClassName: string) => activeThread ? (
+        <ChatConversationMenu
+            t={t}
+            currentUserId={parentId}
+            threadId={activeThread.id}
+            controparteId={controparteId}
+            lastIncomingMessageId={lastIncomingMessageId}
+            isSuspended={!!susp}
+            onSuspended={(s) => applySospensione(activeThread.id, s)}
+            triggerClassName={triggerClassName}
+        />
+    ) : null;
+
+    const suspensionBanner = activeThread && susp ? (
+        <ChatSuspensionBanner
+            t={t}
+            currentUserId={parentId}
+            threadId={activeThread.id}
+            sospensione={susp}
+            onReopened={() => applySospensione(activeThread.id, null)}
+        />
+    ) : null;
+
+    const terminiCta = termsBlocked ? (
+        <div className="border-t border-kidville-yellow/40 bg-kidville-yellow-soft px-4 py-3">
+            <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow-dark">{t('ugcTermsBlockedTitle')}</p>
+            <p className="mb-2 font-maven text-xs text-kidville-yellow-dark/80">{t('ugcTermsBlockedBody')}</p>
+            <a
+                href="/parent/onboarding"
+                className="inline-flex items-center rounded-full bg-kidville-green px-4 py-2 font-barlow text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-kidville-green-dark"
+            >
+                {t('ugcTermsBlockedCta')}
+            </a>
+        </div>
+    ) : null;
 
     return (
         <div className="px-4 pt-5 pb-24">
@@ -382,7 +458,9 @@ function ParentChatContent() {
                                         {t('teacherRole')} • {selectedThread.student.classe_sezione}
                                     </p>
                                 </div>
+                                <div className="ml-auto">{conversationMenu(menuTriggerLight)}</div>
                             </div>
+                            {suspensionBanner}
                             <ChatMessageArea
                                 messages={messages}
                                 currentUserId={parentId}
@@ -391,7 +469,8 @@ function ParentChatContent() {
                                 firstUnreadId={firstUnreadId}
                                 onMarkRead={handleMarkRead}
                             />
-                            <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholderTeacher')} />
+                            {terminiCta}
+                            <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholderTeacher')} disabled={suspendedToMe} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -436,7 +515,9 @@ function ParentChatContent() {
                                 </p>
                                 <p className="truncate font-maven text-[11.5px] text-white/75">{selectedThread.student.nome}</p>
                             </div>
+                            <div className="ml-auto">{conversationMenu(menuTriggerOnGreen)}</div>
                         </div>
+                        {suspensionBanner}
                         <ChatMessageArea
                             messages={messages}
                             currentUserId={parentId}
@@ -445,7 +526,8 @@ function ParentChatContent() {
                             firstUnreadId={firstUnreadId}
                             onMarkRead={handleMarkRead}
                         />
-                        <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholder')} />
+                        {terminiCta}
+                        <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholder')} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>

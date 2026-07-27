@@ -23,6 +23,10 @@ describe('middleware-rules', () => {
         '/privacy',
         '/termini',
         '/assistenza',
+        // Pagina pubblica di cancellazione account (Google Play Data safety): niente login,
+        // il prefisso copre anche la pagina di conferma via magic-link.
+        '/cancellazione-account',
+        '/cancellazione-account/conferma',
         // Il ripiego offline pre-cachato dal Service Worker: se non fosse
         // pubblica, `install` scaricherebbe il 307 verso il login invece della
         // pagina, e offline l'app mostrerebbe un redirect al posto del ripiego.
@@ -47,6 +51,7 @@ describe('middleware-rules', () => {
       expect(isPublicPath('/privacyfoo')).toBe(false);
       expect(isPublicPath('/terminifoo')).toBe(false);
       expect(isPublicPath('/assistenzafoo')).toBe(false);
+      expect(isPublicPath('/cancellazione-accountx')).toBe(false);
     });
   });
 

@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { MessageCircle, Users, Send, Loader2, Eye } from 'lucide-react';
 import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
 
 interface OversightThread {
   id: string;
@@ -12,6 +13,7 @@ interface OversightThread {
   teacher: { id: string; nome: string; ruolo?: string } | null;
   parent: { id: string; nome: string } | null;
   student: { nome: string; classe: string | null } | null;
+  sospensione: SospensioneInfo | null;
 }
 interface Filtri { docenti: { id: string; nome: string }[]; genitori: { id: string; nome: string }[]; classi: string[] }
 interface Msg { id: string; sender_id: string; content: string; created_at: string }
@@ -26,7 +28,11 @@ function fmtWhen(iso: string | null, locale: string) {
 function MessaggiInner() {
   const t = useTranslations('adminComunicazioni');
   const locale = useLocale();
-  const { userId } = useSessionIdentity();
+  const { userId, role } = useSessionIdentity();
+  const canReopen = role === 'admin' || role === 'coordinator';
+  // Etichetta risolta fuori dal `.map(t => …)` dei thread, dove `t` è ombreggiato
+  // dalla variabile del thread (non è più la funzione di traduzione).
+  const sospesaLabel = t('messaggiSospesa');
   const [tab, setTab] = useState<'genitori' | 'tutti'>('genitori');
 
   // ── Tab "Tutti i messaggi" (supervisione, sola lettura) ──
@@ -40,6 +46,8 @@ function MessaggiInner() {
   // Parte true (niente setState sincrono negli effect); i refetch da filtro non
   // rimostrano lo spinner, come il resto del cockpit.
   const [loadingThreads, setLoadingThreads] = useState(true);
+  const [riapriBusy, setRiapriBusy] = useState(false);
+  const [riapriErr, setRiapriErr] = useState('');
 
   const fetchThreads = useCallback(() => {
     const params = new URLSearchParams();
@@ -58,10 +66,37 @@ function MessaggiInner() {
   const openOversight = (t: OversightThread) => {
     setSelThread(t);
     setOversightMsgs([]);
+    setRiapriErr('');
     fetch(`/api/admin/chat/messages?thread_id=${t.id}`)
       .then(r => r.json())
       .then(j => { if (j.success) setOversightMsgs(j.data); })
       .catch(() => {});
+  };
+
+  // Riapertura di una conversazione sospesa (C5 §2). La Direzione media dalla
+  // supervisione: POST /api/chat/threads/[id]/riapri (il gate vero è nella route).
+  const riapri = async () => {
+    if (!selThread?.sospensione) return;
+    setRiapriBusy(true);
+    setRiapriErr('');
+    try {
+      const res = await fetch(`/api/chat/threads/${selThread.id}/riapri`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (res.ok) {
+        setSelThread(prev => (prev ? { ...prev, sospensione: null } : prev));
+        fetchThreads();
+      } else {
+        setRiapriErr(t('messaggiRiapriErrore'));
+      }
+    } catch {
+      // Errore di rete: feedback all'utente (mai swallow silenzioso).
+      setRiapriErr(t('messaggiRiapriErrore'));
+    } finally {
+      setRiapriBusy(false);
+    }
   };
 
   // ── Tab "Con i genitori" (chat segreteria↔genitore) ──
@@ -229,7 +264,12 @@ function MessaggiInner() {
                   onClick={() => openOversight(t)}
                   className={`w-full text-left rounded-input px-3 py-2.5 mb-1 transition-colors ${selThread?.id === t.id ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream'}`}
                 >
-                  <p className="font-maven text-sm font-semibold text-kidville-ink">{t.parent?.nome ?? '—'} ↔ {t.teacher?.nome ?? '—'}</p>
+                  <p className="font-maven text-sm font-semibold text-kidville-ink flex items-center gap-2">
+                    <span>{t.parent?.nome ?? '—'} ↔ {t.teacher?.nome ?? '—'}</span>
+                    {t.sospensione && (
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-kidville-warn-soft px-2 py-0.5 font-barlow text-[9px] font-bold uppercase tracking-wide text-kidville-warn">{sospesaLabel}</span>
+                    )}
+                  </p>
                   <p className="font-maven text-xs text-kidville-muted">{t.student?.nome ?? ''}{t.student?.classe ? ` · ${t.student.classe}` : ''} · {fmtWhen(t.last_message_at, locale)}</p>
                 </button>
               ))}
@@ -248,6 +288,13 @@ function MessaggiInner() {
                     </div>
                     <span className="font-maven text-[11px] text-kidville-muted inline-flex items-center gap-1"><Eye size={12} /> {t('messaggiSolaLettura')}</span>
                   </div>
+                  <ThreadSospensioneBanner
+                    sospensione={selThread.sospensione}
+                    canReopen={canReopen}
+                    onRiapri={riapri}
+                    busy={riapriBusy}
+                  />
+                  {riapriErr && <p className="mb-2 font-maven text-xs text-kidville-error">{riapriErr}</p>}
                   <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                     {oversightMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">{t('messaggiNessunMessaggioConv')}</p>}
                     {oversightMsgs.map(m => {

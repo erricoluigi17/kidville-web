@@ -3,9 +3,11 @@
 import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
-import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
+import { ChatThreadList, ChatThread, SospensioneInfo } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
+import { ChatConversationMenu } from '@/components/features/chat/ChatConversationMenu';
+import { ChatSuspensionBanner } from '@/components/features/chat/ChatSuspensionBanner';
 import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
@@ -41,6 +43,11 @@ function TeacherChatContent() {
     const [unreadCount, setUnreadCount] = useState(0);
     // ID del primo messaggio non letto: bloccato all'apertura del thread
     const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+
+    // Aggiorna in-place la sospensione di un thread (dopo sospendi/riapri).
+    const applySospensione = useCallback((threadId: string, sospensione: SospensioneInfo | null) => {
+        setThreads(prev => prev.map(t => (t.id === threadId ? { ...t, sospensione } : t)));
+    }, []);
 
     // Ref stabile per selectedThread (evita re-render nei callback realtime)
     const selectedThreadRef = useRef<ChatThread | null>(null);
@@ -258,6 +265,16 @@ function TeacherChatContent() {
                         ? { ...t, last_message: { content, sender_id: teacherId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
                         : t
                 ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
+                return;
+            }
+            if (res.status === 403) {
+                // Guardia UGC (C5): se la conversazione è stata sospesa, ricarica i thread
+                // così il banner compare e il composer si disabilita. (Il gate Termini non
+                // scatta mai per un docente: guardia trasparente per lo staff.)
+                const data = await res.json().catch(() => null);
+                if ((data as { motivo?: string } | null)?.motivo === 'conversazione_sospesa') {
+                    await loadThreads();
+                }
             }
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
@@ -271,6 +288,43 @@ function TeacherChatContent() {
     if (!ready || loading || !teacherId) {
         return <ChatListSkeleton />;
     }
+
+    // Stato sospensione DERIVATO dai thread (vedi parent/chat): un refresh dei
+    // thread fa comparire il banner e disabilita il composer senza toccare
+    // selectedThread.
+    const activeThread = selectedThread ? (threads.find(t => t.id === selectedThread.id) ?? selectedThread) : null;
+    const susp = activeThread?.sospensione ?? null;
+    const suspendedToMe = !!susp && susp.sospesaVerso === teacherId;
+    const controparteId = activeThread ? (activeThread.teacher_id === teacherId ? activeThread.parent_id : activeThread.teacher_id) : '';
+    const lastIncomingMessageId = messages.length
+        ? ([...messages].reverse().find(m => m.sender_id !== teacherId)?.id ?? null)
+        : null;
+
+    const menuTriggerLight = 'flex h-9 w-9 items-center justify-center rounded-full text-kidville-muted transition-colors hover:bg-kidville-neutral-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-green';
+    const menuTriggerOnGreen = 'flex h-9 w-9 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-yellow';
+
+    const conversationMenu = (triggerClassName: string) => activeThread ? (
+        <ChatConversationMenu
+            t={t}
+            currentUserId={teacherId}
+            threadId={activeThread.id}
+            controparteId={controparteId}
+            lastIncomingMessageId={lastIncomingMessageId}
+            isSuspended={!!susp}
+            onSuspended={(s) => applySospensione(activeThread.id, s)}
+            triggerClassName={triggerClassName}
+        />
+    ) : null;
+
+    const suspensionBanner = activeThread && susp ? (
+        <ChatSuspensionBanner
+            t={t}
+            currentUserId={teacherId}
+            threadId={activeThread.id}
+            sospensione={susp}
+            onReopened={() => applySospensione(activeThread.id, null)}
+        />
+    ) : null;
 
     return (
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
@@ -337,7 +391,9 @@ function TeacherChatContent() {
                                         {t('chatGenitoreDi', { nome: selectedThread.student.nome, cognome: selectedThread.student.cognome })}
                                     </p>
                                 </div>
+                                <div className="ml-auto">{conversationMenu(menuTriggerLight)}</div>
                             </div>
+                            {suspensionBanner}
                             <ChatMessageArea
                                 messages={messages}
                                 currentUserId={teacherId}
@@ -346,7 +402,7 @@ function TeacherChatContent() {
                                 firstUnreadId={firstUnreadId}
                                 onMarkRead={handleMarkRead}
                             />
-                            <ChatInput onSend={handleSendMessage} />
+                            <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -395,7 +451,9 @@ function TeacherChatContent() {
                                 </p>
                                 <p className="truncate font-maven text-[11.5px] text-white/75">{selectedThread.student.nome}</p>
                             </div>
+                            <div className="ml-auto">{conversationMenu(menuTriggerOnGreen)}</div>
                         </div>
+                        {suspensionBanner}
                         <ChatMessageArea
                             messages={messages}
                             currentUserId={teacherId}
@@ -404,7 +462,7 @@ function TeacherChatContent() {
                             firstUnreadId={firstUnreadId}
                             onMarkRead={handleMarkRead}
                         />
-                        <ChatInput onSend={handleSendMessage} />
+                        <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>

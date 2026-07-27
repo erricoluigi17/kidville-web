@@ -1,8 +1,8 @@
 ---
 name: tester-opus-mobile-android
 description: Collauda l'app nativa Android (Capacitor) di Kidville con un percorso utente reale via Maestro sull'emulatore — login, dashboard, presenze, comunicazioni. Un solo test, un solo report. Non modifica codice.
-model: claude-opus-4-8
-effort: xhigh
+model: claude-opus-5
+effort: max
 color: green
 tools: Read, Grep, Glob, Bash
 skills: [maestro-mobile-testing]

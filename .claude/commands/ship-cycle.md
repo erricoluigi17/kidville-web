@@ -1,6 +1,6 @@
 ---
 name: ship-cycle
-description: Ciclo autonomo che inizia con superpowers (brainstorming → intervista → piano), implementa con TDD, collauda con gli 11 tester-opus e corregge fino a PASS su ogni categoria (o stop dopo 8 cicli), poi merge + deploy + migrazioni. Direttore su fable-5, lavoro su opus-4.8.
+description: Ciclo autonomo che inizia con superpowers (brainstorming → intervista → piano), implementa con TDD, collauda con gli 11 tester-opus e corregge fino a PASS su ogni categoria (o stop dopo 8 cicli), poi merge + deploy + migrazioni. Direttore su fable-5, lavoro su opus-5 al massimo effort.
 argument-hint: <obiettivo>
 model: claude-fable-5
 effort: xhigh
@@ -27,8 +27,13 @@ dai il via al rilascio. Il **lavoro pesante non lo fai tu**: lo affidi agli agen
 |---|---|---|
 | **tu** (questo comando) | `claude-fable-5` | brainstorming · intervista · regia del loop · rilascio |
 | `scrittore-di-piani` | `claude-fable-5` | il piano e i piani di correzione (skill `writing-plans`, `systematic-debugging`) |
-| `esecutore-opus-1..N` | `claude-opus-4-8` · `xhigh` | implementa seguendo **superpowers** (TDD, systematic-debugging, verification) |
-| gli 11 `tester-opus-*` | `claude-opus-4-8` · `xhigh` | collaudano, un test ciascuno |
+| `esecutore-opus-1..N` | `claude-opus-5` · `max` | implementa seguendo **superpowers** (TDD, systematic-debugging, verification) |
+| gli 11 `tester-opus-*` | `claude-opus-5` · `max` | collaudano, un test ciascuno |
+
+> Regola permanente: gli agenti che lavorano su Opus usano **sempre il modello Opus più forte
+> disponibile**, a **massimo effort**. Oggi è `claude-opus-5`/`max`; quando ne esce uno più
+> forte, questa tabella, il frontmatter dei 12 agenti in `.claude/agents/` e gli `agent()` dello
+> STEP 3 vanno aggiornati insieme.
 
 ## Cosa stai per fare
 
@@ -127,8 +132,8 @@ dei tester** e produce il *piano di correzione*.
 
 ### b. `esecutore-opus` → l'implementazione (seguendo superpowers)
 
-Implementa con un **Dynamic Workflow** lanciato con la keyword **`ultracode`** (che porta già
-l'effort a `xhigh`), su `claude-opus-4-8`. Gli agenti si chiamano **`esecutore-opus-1`,
+Implementa con un **Dynamic Workflow** lanciato con la keyword **`ultracode`**, su
+`claude-opus-5` a **massimo effort** (`max`, impostato esplicitamente nello script sotto). Gli agenti si chiamano **`esecutore-opus-1`,
 `esecutore-opus-2`, …** — numerali. Ognuno segue **superpowers in tutto e per tutto**: le sue
 skill precaricate sono `test-driven-development` (prima il test che fallisce, poi il codice),
 `systematic-debugging` e `verification-before-completion`.
@@ -153,8 +158,8 @@ const esiti = await parallel(STEP.map((s, i) => () =>
     agentType: 'esecutore-opus',
     label: `esecutore-opus-${i + 1}`,
     phase: 'Implementa',
-    model: 'opus',
-    effort: 'xhigh',
+    model: 'claude-opus-5',
+    effort: 'max',
   })
 ))
 
@@ -173,7 +178,7 @@ Ogni esecutore, oltre al codice, deve consegnare:
 
 ### c. Gli 11 `tester-opus` → i report
 
-**Girano in parallelo**, sempre su `claude-opus-4-8` a impegno massimo (`effort: xhigh`).
+**Girano in parallelo**, sempre su `claude-opus-5` a impegno massimo (`effort: max`).
 Un agente per test: **ognuno fa UN SOLO test**. I due tester mobile hanno precaricata la skill
 **`maestro-mobile-testing`** (selettori per testo italiano, perché l'app è una WebView).
 
@@ -246,8 +251,8 @@ const report = await parallel(CATEGORIE.map((c) => () =>
     agentType: `tester-opus-${c}`,
     label: `tester-opus-${c}`,
     phase: 'Collaudo',
-    model: 'opus',
-    effort: 'xhigh',
+    model: 'claude-opus-5',
+    effort: 'max',
     schema: REPORT,
   })
 ))
@@ -282,7 +287,7 @@ cinque sintomi dello stesso errore, il piano ha **un** fix, non cinque. È l'uni
 bruciare otto cicli girando a vuoto.
 
 Di norma la correzione **riparte da (a) e (b)**: nuovo piano (fable-5) + implementazione
-(opus-4.8). **Ma se ti incagli** — la stessa causa resiste, oppure il fix giusto dipende da una
+(opus-5). **Ma se ti incagli** — la stessa causa resiste, oppure il fix giusto dipende da una
 scelta che solo l'utente può fare — allora **rifà il brainstorming** (skill `brainstorming`) e,
 se serve, **fai una domanda mirata all'utente** con `AskUserQuestion`. Poi riprendi il loop.
 Ricorda: fare una domanda non conta come fermarsi, e il gate resta armato.
@@ -393,7 +398,7 @@ ti serve davvero una decisione dell'utente.
 
 - **Italiano**, sempre, con l'utente e nei report.
 - **La parte interattiva** (brainstorming, intervista, regia) gira su **fable-5**; l'implementazione
-  e i tester su **opus-4.8 al massimo effort**.
+  e i tester su **il modello Opus più forte disponibile al massimo effort** (oggi `claude-opus-5`/`max`).
 - **Mai committare su `main`.** Mai `git push --force`.
 - **Il PRD si aggiorna insieme al codice**, non dopo (`AGENTS.md` §2).
 - **Ogni modifica porta i propri log** (`AGENTS.md` §4). Un `catch` muto è un bug.

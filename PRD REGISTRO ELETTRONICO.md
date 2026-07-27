@@ -126,6 +126,55 @@ test sul consumatore `/admin/gdpr` (route corretta, quindi verde da subito) è s
 
 Gate verde: eslint 0 · `tsc --noEmit` 0 · vitest **390 file / 3221 test** · build ok.
 
+### Secondo giro — i due difetti che il fix ha «svegliato»
+
+Un collaudo adversariale sul branch corretto (tre tester indipendenti, tutti `PASS`) ha trovato
+due difetti **adiacenti**: non li ha introdotti il fix, li ha resi **raggiungibili**. Prima il
+percorso era inerte, e un percorso morto non ha bug visibili. Nessuna migrazione, nessuna colonna.
+
+**1. `anonimizzaParent` — lo stesso refuso, in direzione opposta.** La bonifica del testo libero
+UGC introdotto da C5 filtrava `segnalazioni` e `conversazioni_sospensioni` con il `parentId`
+(`parents.id`), ma quelle colonne sono scritte **con l'identità del gate**, cioè `auth.user.id`:
+`segnalazioni.segnalante_id` ← `segnalante.id` (`api/segnalazioni:POST`),
+`conversazioni_sospensioni.sospesa_da` ← `auth.user.id` (`chat/threads/[id]/sospendi`), e
+`sospesa_verso` ← `chat_threads.parent_id`, a sua volta confrontato con `auth.user.id` alla
+creazione del thread. Il filtro non poteva **mai** trovare una riga: `motivo` e `note_gestione` —
+testo libero che può citare il nome di un minore o un'allergia — non venivano anonimizzati da
+questo percorso, e la Direzione leggeva «0 bonificate» credendo che non ci fosse nulla da
+bonificare. È lo stesso errore del round 1, ma di segno inverso: là si usava un `utenti.id` dove
+serviva un `parents.id`, qui un `parents.id` dove serve un `utenti.id`. Corretto usando
+l'`authUserId` già raccolto in cima alla funzione (lo stesso ponte di `news_visualizzazioni`);
+se il genitore non è mai stato bridgeato il ramo si **salta**, coerentemente con la DELETE news:
+senza ponte non è raggiungibile in spazio-id `utenti`, e filtrare su un id che in quelle colonne
+non comparirà mai sarebbe solo una finta. La UPDATE su `parents` resta — correttamente — su
+`parents.id`. `anonimizzaAlunno` non è stato toccato: aggancia per **oggetto** segnalato
+(diario/media/thread), ed era già giusto.
+
+**2. `/api/public/cancellazione-account` (POST) — email-bombing.** Finché la route non trovava mai
+un genitore non spediva mai niente, e l'assenza di rate-limit era innocua. Resa funzionante, 8 POST
+consecutivi hanno prodotto 8 × 200 e nessun 429: chiunque, senza login, poteva riempire la casella
+di una famiglia di email «Conferma la richiesta di cancellazione». Aggiunto il limite **5 richieste
+/ 10 minuti per IP** (`rateLimit`/`clientIp`, gli stessi di `forms/send-otp`, ma più stretto: là il
+reinvio di un codice da ritrascrivere è un gesto legittimo e ripetuto), come **prima istruzione**
+del `POST` — prima di `parseBody` e della risoluzione del genitore. L'ordine è il punto: applicato
+dopo, l'email sarebbe già partita e l'abuso resterebbe nascosto dietro la `{ok:true}` generica
+dell'anti-enumerazione, che qui è la regola giusta ma è anche un ottimo mimetismo. Il 429 non
+richiede log espliciti: `withRoute` persiste già ogni 429 a livello `warn`, trattandolo come
+anomalia e non come 4xx di routine.
+
+**Test.** `__tests__/lib/gdpr-esegui.test.ts` **asseriva il comportamento sbagliato**
+(`segnalante_id.eq.p-1`): le asserzioni sono state riscritte sull'auth id e verificate **rosse**
+contro il codice pre-fix — un test che passa su un filtro impossibile è un test che descrive il
+bug, non il requisito. Aggiunti: genitore senza `auth_user_id` → nessuna UPDATE su
+segnalazioni/sospensioni; e sei casi di rate-limit in
+`__tests__/api/public-cancellazione-account.test.ts` (limite raggiunto → 429 con `Retry-After` e
+**nessuna** chiamata a `createAdminClient`/`sendEmail`, cioè il limite blocca *prima* della logica
+e non maschera una 200 già calcolata; IP distinti non condividono il contatore; anti-enumerazione
+intatta sotto il limite; il 400 di validazione invariato). 7 test nuovi, tutti rossi prima e verdi
+dopo.
+
+Gate verde: eslint 0 · `tsc --noEmit` 0 · vitest **390 file / 3228 test** · build ok.
+
 ## 🗓️ Changelog — C5: cancellazione account pubblica + moderazione UGC (segnalazioni, sospensione conversazione, gate Termini) 2026-07-27 (branch `feat/dossier-submission`)
 
 Il codice che sblocca la fase C (`docs/submission/C5-sviluppo-obbligatorio.md`) — l'unica parte

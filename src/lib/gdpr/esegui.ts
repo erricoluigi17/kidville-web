@@ -80,28 +80,45 @@ export async function anonimizzaParent(
   //    motivo/note_gestione possono citare il nome di un minore o un dato
   //    sanitario. Nessuna FK verso parents → serve lo scrub esplicito. Degrada
   //    se lo schema C5 è assente (DB E2E CI non migrato).
+  //
+  //    ⚠️ SPAZIO-ID: queste colonne NON contengono `parents.id`. Sono scritte
+  //    con l'identità del gate, cioè `auth.user.id` (= `utenti.id`):
+  //      - `segnalazioni.segnalante_id`  ← `segnalante.id` (api/segnalazioni:POST)
+  //      - `segnalazioni.segnalato_id`   ← id utente segnalato
+  //      - `conversazioni_sospensioni.sospesa_da`    ← `auth.user.id`
+  //      - `conversazioni_sospensioni.sospesa_verso` ← `chat_threads.parent_id`/
+  //        `teacher_id`, a loro volta confrontati con `auth.user.id` alla
+  //        creazione del thread.
+  //    Filtrando per `parentId` il match era impossibile: lo scrub non trovava
+  //    MAI una riga e la Direzione leggeva «0 bonificate» credendo non ci fosse
+  //    nulla da bonificare. Si usa quindi l'`authUserId` raccolto al punto 1 —
+  //    stesso ponte già usato per `news_visualizzazioni`, e se manca si salta il
+  //    ramo per la stessa ragione: senza bridge il genitore non è raggiungibile
+  //    in spazio-id `utenti`.
   let segnalazioniBonificate = 0
-  const { data: segDel, error: errSeg } = await supabase
-    .from('segnalazioni')
-    .update({ motivo: null, note_gestione: null })
-    .or(`segnalante_id.eq.${parentId},segnalato_id.eq.${parentId}`)
-    .select('id')
-  if (errSeg) {
-    if (!schemaAssente(errSeg)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_parent' }, errSeg)
-  } else {
-    segnalazioniBonificate = (segDel ?? []).length
-  }
-
   let sospensioniBonificate = 0
-  const { data: sospDel, error: errSosp } = await supabase
-    .from('conversazioni_sospensioni')
-    .update({ motivo: null })
-    .or(`sospesa_da.eq.${parentId},sospesa_verso.eq.${parentId}`)
-    .select('id')
-  if (errSosp) {
-    if (!schemaAssente(errSosp)) logErrore({ operazione: op, evento: 'oblio_sospensioni_parent' }, errSosp)
-  } else {
-    sospensioniBonificate = (sospDel ?? []).length
+  if (authUserId) {
+    const { data: segDel, error: errSeg } = await supabase
+      .from('segnalazioni')
+      .update({ motivo: null, note_gestione: null })
+      .or(`segnalante_id.eq.${authUserId},segnalato_id.eq.${authUserId}`)
+      .select('id')
+    if (errSeg) {
+      if (!schemaAssente(errSeg)) logErrore({ operazione: op, evento: 'oblio_segnalazioni_parent' }, errSeg)
+    } else {
+      segnalazioniBonificate = (segDel ?? []).length
+    }
+
+    const { data: sospDel, error: errSosp } = await supabase
+      .from('conversazioni_sospensioni')
+      .update({ motivo: null })
+      .or(`sospesa_da.eq.${authUserId},sospesa_verso.eq.${authUserId}`)
+      .select('id')
+    if (errSosp) {
+      if (!schemaAssente(errSosp)) logErrore({ operazione: op, evento: 'oblio_sospensioni_parent' }, errSosp)
+    } else {
+      sospensioniBonificate = (sospDel ?? []).length
+    }
   }
 
   return { newsVisualizzazioniRimosse, segnalazioniBonificate, sospensioniBonificate }

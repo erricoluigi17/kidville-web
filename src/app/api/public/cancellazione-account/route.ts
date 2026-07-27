@@ -8,6 +8,7 @@ import {
   costruisciLinkConferma,
   risolviGenitorePerEmail,
 } from '@/lib/gdpr/cancellazione-pubblica'
+import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -22,14 +23,43 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 //
 // ANTI-ENUMERAZIONE: la risposta è SEMPRE la stessa 200 generica, che l'email
 // esista o meno. Rivelare l'esistenza di un account è una fuga d'informazione.
+//
+// RATE-LIMIT: route pubblica, senza login, che INVIA UN'EMAIL all'indirizzo
+// ricevuto → senza limite è un'arma di email-bombing verso la casella di una
+// famiglia. Il limite è la PRIMA istruzione, prima di `parseBody` e della
+// risoluzione del genitore: applicarlo dopo significherebbe far partire l'email
+// e poi nascondere l'abuso dietro la 200 generica dell'anti-enumerazione.
 // =============================================================================
 
 const postBodySchema = z.object({ email: z.string().email() })
+
+// 5 richieste / 10 minuti per IP. Più stretto degli 8 di `forms/send-otp`: là il
+// reinvio di un codice da ritrascrivere è un gesto legittimo e ripetuto (codice
+// non arrivato, secondo firmatario), qui chi vuole cancellare il proprio account
+// riceve un link valido un'ora — oltre le prime richieste non c'è più un uso
+// buono, solo qualcuno che riempie la casella di un altro.
+const RL_LIMITE = 5
+const RL_FINESTRA_MS = 10 * 60 * 1000
 
 // Risposta unica: identica in ogni ramo, così il client non può dedurre nulla.
 const risposta = () => NextResponse.json({ ok: true })
 
 export const POST = withRoute('public/cancellazione-account:POST', async (request: Request) => {
+  // Prima di tutto il resto: nessuna lettura del body, nessuna query, nessuna
+  // email. Il rifiuto NON va loggato qui a mano — `withRoute` persiste già ogni
+  // 429 a livello `warn` (è un'anomalia, non un 4xx di routine), come per
+  // `forms/send-otp`: un log esplicito sarebbe solo un doppione.
+  const rl = rateLimit(`cancellazione-account:${clientIp(request)}`, {
+    limit: RL_LIMITE,
+    windowMs: RL_FINESTRA_MS,
+  })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Troppe richieste. Riprova tra qualche minuto.' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+    )
+  }
+
   const b = await parseBody(request, postBodySchema)
   if ('response' in b) return b.response
   const email = b.data.email

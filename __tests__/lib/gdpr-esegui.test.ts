@@ -138,10 +138,13 @@ describe('anonimizzaParent', () => {
     expect(segUpd).toBeTruthy()
     expect(segUpd!.motivo).toBeNull()
     expect(segUpd!.note_gestione).toBeNull()
-    // Il filtro .or copre entrambi i ruoli del genitore.
+    // Il filtro .or copre entrambi i ruoli del genitore, e lo fa con l'AUTH id:
+    // `segnalazioni.segnalante_id/segnalato_id` sono scritte da
+    // `api/segnalazioni/route.ts` con `auth.user.id` (spazio-id `utenti`), NON
+    // con `parents.id`. Filtrare per parentId non trova mai nulla.
     const segFilter = f.orFilters.find((o) => o.table === 'segnalazioni')?.filter ?? ''
-    expect(segFilter).toContain('segnalante_id.eq.p-1')
-    expect(segFilter).toContain('segnalato_id.eq.p-1')
+    expect(segFilter).toContain('segnalante_id.eq.auth-1')
+    expect(segFilter).toContain('segnalato_id.eq.auth-1')
     expect(r.segnalazioniBonificate).toBe(3)
   })
 
@@ -151,10 +154,27 @@ describe('anonimizzaParent', () => {
     const sospUpd = f.updates.find((u) => u.table === 'conversazioni_sospensioni')
     expect(sospUpd).toBeTruthy()
     expect(sospUpd!.motivo).toBeNull()
+    // Stesso spazio-id delle segnalazioni: `sospesa_da` è `auth.user.id`
+    // (chat/threads/[id]/sospendi) e `sospesa_verso` è `chat_threads.parent_id`,
+    // a sua volta confrontato con `auth.user.id` alla creazione del thread.
     const sospFilter = f.orFilters.find((o) => o.table === 'conversazioni_sospensioni')?.filter ?? ''
-    expect(sospFilter).toContain('sospesa_da.eq.p-1')
-    expect(sospFilter).toContain('sospesa_verso.eq.p-1')
+    expect(sospFilter).toContain('sospesa_da.eq.auth-1')
+    expect(sospFilter).toContain('sospesa_verso.eq.auth-1')
     expect(r.sospensioniBonificate).toBe(2)
+  })
+
+  it('genitore senza auth_user_id → nessuna UPDATE su segnalazioni/sospensioni', async () => {
+    // Senza il ponte `parents.auth_user_id` il genitore non è raggiungibile in
+    // spazio-id `utenti`: lo scrub UGC si salta, esattamente come la DELETE news.
+    // Meglio saltare che filtrare su un id che non comparirà mai in quelle colonne.
+    const f = makeFake({ parentAuth: null, segnalazioni: [{ id: 's1' }], sospensioni: [{ id: 'x1' }] })
+    const r = await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    expect(f.updates.some((u) => u.table === 'segnalazioni')).toBe(false)
+    expect(f.updates.some((u) => u.table === 'conversazioni_sospensioni')).toBe(false)
+    expect(f.orFilters.some((o) => o.table === 'segnalazioni')).toBe(false)
+    expect(f.orFilters.some((o) => o.table === 'conversazioni_sospensioni')).toBe(false)
+    expect(r.segnalazioniBonificate).toBe(0)
+    expect(r.sospensioniBonificate).toBe(0)
   })
 
   it('degrada in silenzio se lo schema C5 (segnalazioni/sospensioni) è assente', async () => {

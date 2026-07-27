@@ -64,6 +64,48 @@
 
 ---
 
+## 🗓️ Changelog — Recapito legale sul dominio dell'ente + dossier di submission A1·A2·A3 2026-07-26 (branch `feat/scheda-app-store`)
+
+Il recapito pubblicato sulle tre pagine legali era **`lerrico7@gmail.com`**, una casella **personale**, indicata come contatto del **Titolare del trattamento** e come **Support URL** per gli store. Faceva apparire una persona fisica come punto di contatto di una società cooperativa, ed esponeva il legale rappresentante a titolo personale. Ora è **`info@kidville.it`**, sul dominio dell'ente.
+
+Non è solo igiene: Apple richiede, per l'iscrizione **Organization**, *«a work email address […] associated with your organization's domain name»* — una Gmail **non è accettabile**, e senza quell'indirizzo l'iscrizione dell'ente non parte.
+
+- **`info@kidville.it`** sostituisce la casella personale in `/privacy` (3 punti), `/termini` e `/assistenza`.
+- Il lock `__tests__/architecture/pagine-legali.test.ts` **non cabla l'indirizzo**: verifica che le tre pagine ne espongano **uno solo e lo stesso**, e che non sia una PEC. La sostituzione lo attraversa senza modifiche al test — ed è il test a garantire che le tre pagine non divergano.
+
+**Nuovo dossier `docs/submission/`** — i tre bloccanti pre-submission, ognuno con la ricerca chiusa e le decisioni motivate: **A1** stato di operatore commerciale (DSA), **A1-bis** D-U-N-S e conversione dell'account, **A2** App Privacy labels, **A3** dossier per il legale.
+
+Tre risultati che cambiano il quadro:
+
+1. **Linea guida 5.1.1(ix)** — un'app che tratta *sensitive user information* (qui: dati sanitari di **minori**) *«should be submitted by a legal entity […] and not by an individual developer»*. L'account è oggi a nome di persona fisica.
+2. **L'account non si rifà, si converte.** Apple: *«If you have enrolled as an individual and need to convert your individual account to an organization account, please contact us.»* Non è un *App Transfer* — che per un'app mai pubblicata **non è nemmeno disponibile**. Restano validi i 99 € già pagati e, secondo fonti secondarie concordi (**da farsi confermare per iscritto**), Team ID, certificato, bundle ID, scheda app e build su TestFlight.
+3. **I Termini di servizio non vengono accettati da nessuno**: la casella dell'onboarding copre solo la privacy. La clausola di limitazione di responsabilità della §6 **con ogni probabilità non produce effetto** — e si somma all'art. 1341 c.c. e agli artt. 33-36 del Codice del Consumo.
+
+Registrate inoltre in A3, per il legale: l'informativa dichiara il trattamento **nello SEE** mentre le push transitano da **Google (FCM)** e **Apple (APNs)**, entrambe USA; e l'ente ha **tre sedi** (Cesa, Aversa, Giugliano) sotto un'unica P.IVA, mentre le pagine ne nominano una.
+
+> ⚠️ **Resta** la validazione legale di informativa e termini, e la verifica che `info@kidville.it` sia una casella **realmente presidiata**: è il recapito su cui il revisore Apple chiede chiarimenti e su cui arrivano le richieste GDPR.
+
+**Fase C — Google Play (`docs/submission/C1`…`C5`).** Ricerca chiusa con 11 agenti, 3 dei quali avversariali sui claim che determinano il calendario. **Due dei tre claim di partenza erano sbagliati**, e uno dei due nella direzione che costa di più:
+
+- **Il D-U-N-S vale per entrambi gli store.** Google lo richiede per gli account organizzazione esattamente come Apple, e **il numero è lo stesso**: *«You will not be able to create a developer account for an organization without one»*. La richiesta inviata stasera dallo sportello Apple sblocca due store. ⚠️ Numero unico, **pratiche di verifica distinte** — e mai aprirne una seconda su D&B: i duplicati bloccano la verifica su entrambi.
+- **Il gate dei tester non è 20: sono 12**, dall'11 dicembre 2024, e riguarda gli account **personali** creati dopo il 13/11/2023. ⚠️ Ma **l'esenzione delle organizzazioni non è scritta da nessuna parte**: grep di `organi[sz]ation` sulla pagina Google → zero occorrenze. È esenzione **per silenzio, delimitata dall'ambito**. Vanno tenute **2 settimane di riserva** anche con l'account organizzazione.
+- 🔴 **Due lavori di prodotto che oggi NON esistono e bloccano la pubblicazione** (`C5`): la **pagina pubblica di cancellazione account** — quella in-app non basta, e `docs/store-submission.md` §3 indicava `/assistenza`, che **non nomina mai la cancellazione** (documento corretto) — e **segnalazione, blocco utente e gate dei Termini non saltabile** richiesti dalla UGC policy, di cui Kidville è l'esempio nominato (gruppo chiuso con registrazione offline). **Non sono moduli da spuntare: è sviluppo.**
+- **Il gate dei Termini chiude due problemi trovati per strade opposte**: il requisito UGC di Google e la lacuna E di `A3` (i Termini non li accetta nessuno → la clausola di limitazione di responsabilità è probabilmente inefficace).
+- **La categoria è Istruzione, mai «Social»**: la Child Safety Standards policy si applica **per categoria dichiarata, non per pubblico** — *«the presence or absence of child users in your app is irrelevant to this policy»*. Una voce di menu a tendina che vale settimane di lavoro.
+- **Il pubblico va dichiarato 18+**, ma la dichiarazione **non è autocertificante**: *«regardless of what you identify in the Google Play Console»*, Google può riclassificare in base a *«youthful animation or young characters in the graphic assets»*. L'app si chiama **Kid**ville e ha una mascotte cartoon: grafica sobria, screenshot dell'interfaccia gestionale, **niente volti di bambini**.
+- **La Health apps declaration è obbligatoria** per tutte le app pubblicate, closed testing incluso — e per Kidville la risposta onesta non è «nessuna funzione sanitaria»: allergie, certificati e flag BES/DSA la attivano davvero.
+- **Il buco che committa la chiave**: in `android/.gitignore` le regole `*.jks` e `*.keystore` sono **commentate**, e il `.gitignore` di radice non le ha. Un `keytool` nel posto ovvio seguito da `git add` committa la chiave di upload **senza un avviso**.
+- **Verde dove conta**: `targetSdk 36` già conforme alla scadenza del 31 agosto 2026, allineamento 16 KB soddisfatto, `allowBackup="false"`, **nessun permesso CAMERA/READ_MEDIA_IMAGES** nel manifest fuso — un vantaggio da proteggere, perché dichiararli aprirebbe la Photo and Video Permissions policy su un'app che gestisce foto di bambini.
+- **Sanata la contraddizione** fra `store-submission.md` §3 e `A2` sulla riga «Informazioni di pagamento»: vale A2 — `incassi.metodo` *è* «form of payment», quindi *Payment Info* **più** *Other Financial Info*.
+
+> ⚠️ **Trappola tecnica da non dimenticare**: un `.aab` costruito dopo un `cap sync` senza `CAP_SERVER_URL` **si installa, si apre e mostra una schermata morta**. Il file è gitignorato: il difetto non è visibile in git, né nel gate, né in un build che riesce benissimo.
+
+**✅ D-U-N-S ottenuto — `432360401`**, intestato a *SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA*. **Esisteva già**: D&B lo aveva assegnato d'ufficio all'iscrizione al registro imprese, quindi **attesa zero** invece dei 5-7 giorni lavorativi di Apple o dei fino a 30 giorni dichiarati da Google. Sblocca **entrambi** gli store: il passaggio Apple Individual→Organization e la creazione dell'account Play organizzazione. Resta da confermare la *legal binding authority* (chi è il legale rappresentante).
+
+**✅ Decisione presa sul blocco UGC (`C5`).** Il grafo della chat è stato verificato nel codice, non ipotizzato: il docente scrive solo ai genitori della **sua** sezione, il genitore solo alle maestre della sezione dei **suoi** figli, **genitore↔genitore non esiste**, e in galleria carica solo chi passa `requireDocente`. **In Kidville non esiste UGC fra pari**: lo scenario che la policy di Google ha in mente — lo sconosciuto che molesta — è strutturalmente impossibile. L'unica coppia 1:1 è genitore↔maestra del proprio figlio.
+
+Scelta: **sospensione della conversazione con notifica alla Direzione, dichiarata** (non blocco silenzioso). Il blocco stile social soddisfarebbe Google alla lettera ma produrrebbe una **rottura silenziosa**: la maestra continua a scrivere nel vuoto e nessuno se ne accorge finché non emerge un problema sul bambino. Regge perché **avvisi, circolari, giustifiche e notifiche viaggiano su un canale diverso dalla chat**: sospendere una conversazione non impedisce alla scuola di comunicare. La sospensione è **per conversazione** (`${parent.id}:${student.id}`), non per utente; la notifica passa dal Centro Notifiche esistente; il motivo è testo libero e va **redatto nei log**.
+
 ## 🗓️ Changelog — Scheda App Store compilata: 12 screenshot, dati demo, e la classe TEST che era vuota 2026-07-26 (branch `feat/scheda-app-store`)
 
 La scheda dell'app **non è più vuota**. Su App Store Connect ci sono ora: **12 screenshot** (6 iPhone a **1320×2868**, 6 iPad a **2064×2752**, tutti `assetDeliveryState: COMPLETE`), descrizione, keyword, testo promozionale, URL di assistenza, categoria **Istruzione**, classificazione per età compilata, note di review in inglese con l'**account demo**, e la **build `1.0 (1)` agganciata alla versione** — che è un passo a sé: caricare una build non la seleziona.

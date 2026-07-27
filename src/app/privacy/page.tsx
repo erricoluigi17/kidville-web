@@ -49,7 +49,7 @@ export default function PrivacyPage() {
               <strong>03394870616</strong>, con sede in{' '}
               <strong>Via Silvio Pellico 7, 81030 Cesa (CE)</strong>. Per ogni richiesta relativa
               al trattamento dei dati è possibile scrivere a{' '}
-              <strong>lerrico7@gmail.com</strong>.
+              <strong>info@kidville.it</strong>.
             </p>
           </section>
 
@@ -212,7 +212,7 @@ export default function PrivacyPage() {
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               La <strong>cancellazione dell&rsquo;account</strong> può essere avviata direttamente
               dall&rsquo;app, nella sezione <strong>&laquo;Profilo e deleghe&raquo;</strong>. Per
-              le altre richieste è possibile scrivere a <strong>lerrico7@gmail.com</strong>.
+              le altre richieste è possibile scrivere a <strong>info@kidville.it</strong>.
             </p>
           </section>
 
@@ -235,7 +235,7 @@ export default function PrivacyPage() {
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Per ogni informazione relativa alla presente informativa e al trattamento dei dati è
               possibile contattare il Titolare all&rsquo;indirizzo{' '}
-              <strong>lerrico7@gmail.com</strong> oppure rivolgersi alla Segreteria.
+              <strong>info@kidville.it</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>
         </article>

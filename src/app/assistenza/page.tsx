@@ -46,7 +46,7 @@ export default function AssistenzaPage() {
             </p>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Email di supporto:{' '}
-              <strong className="text-kidville-green">lerrico7@gmail.com</strong>
+              <strong className="text-kidville-green">info@kidville.it</strong>
             </p>
           </section>
 

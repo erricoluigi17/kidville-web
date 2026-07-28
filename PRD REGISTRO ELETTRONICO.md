@@ -68,6 +68,42 @@
 
 ---
 
+## 🗓️ Changelog — Chiave di servizio di produzione in chiaro nel repository: quattro script rimossi 2026-07-28 (branch `fix/gdpr-oblio-parent-id-space`)
+
+Scoperto mentre si verificavano i presupposti per gli screenshot Play. **Quattro** script committati
+contenevano in chiaro una chiave `sb_secret_…` del progetto di **produzione** più il suo URL:
+`scripts/seed_armadietto_rest.mjs`, `scripts/seed_mock_data.mjs`, `scripts/apply_migration.mjs`,
+`scripts/apply_fase3_migration.mjs`. Tracciati da git **dal 2026-05-12** (commit `ee4fc70`), con il
+repository **pubblico fino al 2026-07-26**: circa due mesi e mezzo di esposizione di una credenziale
+che scavalca tutte le RLS su un database che contiene dati di minori.
+
+**Aggravante.** In produzione esiste `public.exec_sql`, funzione `SECURITY DEFINER` di proprietà di
+`postgres` che esegue SQL arbitrario. È correttamente ristretta (`postgres=X/postgres |
+service_role=X/postgres`: né `anon` né `authenticated`), ma è esattamente il ruolo che quella chiave
+conferisce — quindi la fuga della chiave non dava solo accesso ai dati, dava esecuzione di SQL
+arbitrario come `postgres`.
+
+**Seconda esposizione, indipendente.** Due di quegli script contenevano anche **nome e cognome di
+due bambini reali** in chiaro (commento: «Alunni reali trovati nel DB»), in violazione della regola
+di progetto che vieta PII reali nel codice.
+
+**Rimedio applicato.** Tutti e quattro gli script sono stati **eliminati**, non riparati: erano
+codice morto. Puntavano a due `alunni` con uuid cablati che **non esistono più** (verificato in
+produzione: 0 e 0) e alla classe «Girasoli», anteriore al reset del 2026-07-04; le migrazioni si
+applicano da tempo con lo strumento MCP `apply_migration`, come impone `CLAUDE.md`.
+`seed_armadietto_rest.mjs` per giunta faceva `DELETE` seguito da `INSERT` ciechi su produzione,
+ignorando ogni variabile d'ambiente.
+
+**Non chiuso da questo intervento** — la **rotazione** della chiave richiede la dashboard Supabase:
+`supabase projects api-keys` sa elencare ma non creare né revocare. L'elenco odierno del progetto
+mostra solo `anon` legacy, `service_role` legacy e una `publishable`, **nessuna chiave di tipo
+`secret` attiva**, il che suggerisce che quella esposta sia già stata revocata — ma va **confermato
+a schermo**. Le due route che chiamano `exec_sql` (`admin/apply-migration`,
+`admin/apply-enrollment-migration`) sono sigillate da `sealDangerous`, che in produzione risponde
+404: non sono una falla viva.
+
+---
+
 ## 🗓️ Changelog — L'oblio self-service non anonimizzava nessuno: spazio-id `parents.id` vs `auth.user.id` 2026-07-27 (branch `fix/gdpr-oblio-parent-id-space`)
 
 Il diritto alla cancellazione (art. 17 GDPR, App Store 5.1.1(v), Google Play Data safety) era

@@ -68,6 +68,224 @@
 
 ---
 
+## 🗓️ Changelog — Chiave di servizio di produzione in chiaro nel repository: quattro script rimossi 2026-07-28 (branch `fix/gdpr-oblio-parent-id-space`)
+
+Scoperto mentre si verificavano i presupposti per gli screenshot Play. **Quattro** script committati
+contenevano in chiaro una chiave `sb_secret_…` del progetto di **produzione** più il suo URL:
+`scripts/seed_armadietto_rest.mjs`, `scripts/seed_mock_data.mjs`, `scripts/apply_migration.mjs`,
+`scripts/apply_fase3_migration.mjs`. Tracciati da git **dal 2026-05-12** (commit `ee4fc70`), con il
+repository **pubblico fino al 2026-07-26**: circa due mesi e mezzo di esposizione di una credenziale
+che scavalca tutte le RLS su un database che contiene dati di minori.
+
+**Aggravante.** In produzione esiste `public.exec_sql`, funzione `SECURITY DEFINER` di proprietà di
+`postgres` che esegue SQL arbitrario. È correttamente ristretta (`postgres=X/postgres |
+service_role=X/postgres`: né `anon` né `authenticated`), ma è esattamente il ruolo che quella chiave
+conferisce — quindi la fuga della chiave non dava solo accesso ai dati, dava esecuzione di SQL
+arbitrario come `postgres`.
+
+**Seconda esposizione, indipendente.** Due di quegli script contenevano anche **nome e cognome di
+due bambini reali** in chiaro (commento: «Alunni reali trovati nel DB»), in violazione della regola
+di progetto che vieta PII reali nel codice.
+
+**Rimedio applicato.** Tutti e quattro gli script sono stati **eliminati**, non riparati: erano
+codice morto. Puntavano a due `alunni` con uuid cablati che **non esistono più** (verificato in
+produzione: 0 e 0) e alla classe «Girasoli», anteriore al reset del 2026-07-04; le migrazioni si
+applicano da tempo con lo strumento MCP `apply_migration`, come impone `CLAUDE.md`.
+`seed_armadietto_rest.mjs` per giunta faceva `DELETE` seguito da `INSERT` ciechi su produzione,
+ignorando ogni variabile d'ambiente.
+
+**Non chiuso da questo intervento** — la **rotazione** della chiave richiede la dashboard Supabase:
+`supabase projects api-keys` sa elencare ma non creare né revocare. L'elenco odierno del progetto
+mostra solo `anon` legacy, `service_role` legacy e una `publishable`, **nessuna chiave di tipo
+`secret` attiva**, il che suggerisce che quella esposta sia già stata revocata — ma va **confermato
+a schermo**. Le due route che chiamano `exec_sql` (`admin/apply-migration`,
+`admin/apply-enrollment-migration`) sono sigillate da `sealDangerous`, che in produzione risponde
+404: non sono una falla viva.
+
+---
+
+## 🗓️ Changelog — L'oblio self-service non anonimizzava nessuno: spazio-id `parents.id` vs `auth.user.id` 2026-07-27 (branch `fix/gdpr-oblio-parent-id-space`)
+
+Il diritto alla cancellazione (art. 17 GDPR, App Store 5.1.1(v), Google Play Data safety) era
+**funzionante solo in apparenza**, su **entrambi** i canali. Nessuna migrazione, nessuna colonna
+nuova: è un difetto di sola logica applicativa, e il residuo dello stesso refuso già corretto in
+`parent/onboarding` e `onboarding/consensi.ts` con C5.
+
+**Causa radice — due spazi-id confusi per uno.** `parents.id` è un uuid indipendente
+(`gen_random_uuid()`); `auth.user.id` è l'id della riga `utenti` con `ruolo='genitore'`. Non
+coincidono mai: verificato in produzione (sola lettura) — **46 righe `parents`, 35 con
+`auth_user_id` valorizzato, 0 coincidenze fra un `parents.id` e un `utenti.id` qualsiasi**. Il
+ponte è `parents.auth_user_id`, ed è il pattern già in produzione in `/api/me` e in
+`lib/pagamenti/intestatari.ts`. `richieste_cancellazione.parent_id` è per contratto un
+**`parents.id`**: è così che lo leggono `/admin/gdpr` e `anonimizzaParent`.
+
+**Cosa era rotto.**
+- **Canale in-app** (`/api/parent/account/richiesta-cancellazione`): il `POST` risolveva già
+  correttamente la riga `parents` dal ponte, ma poi **inseriva `parent_id: auth.user.id`** —
+  una richiesta che la Direzione avrebbe evaso anonimizzando *un id che non esiste in `parents`*,
+  cioè nessuno, riportando comunque «fatto». `GET` e `DELETE` filtravano per `auth.user.id`:
+  il genitore non vedeva mai la propria richiesta e non poteva revocarla.
+- **Canale pubblico** (`/cancellazione-account`, il requisito Google Play): la risoluzione
+  email → genitore interrogava `parents` con `.eq('id', utente.id)` e restituiva
+  `parentId: utente.id`. Non trovava **mai** un genitore reale → il magic-link di conferma non
+  partiva per nessuno. E siccome la risposta è **sempre `{ok:true}` per anti-enumerazione**, il
+  guasto era **invisibile dall'esterno**: la pagina richiesta da Google Play era, di fatto, un
+  fondale. È la scoperta più seria dell'intervento.
+
+**Nessun incidente reale.** `richieste_cancellazione` ha **0 righe in produzione**: nessuna
+falsa evasione è mai avvenuta, e non serve alcun backfill. Il difetto era **latente ma totale** —
+la funzionalità era morta per ogni utente reale, non degradata.
+
+**Correzione.** Il ponte `parents.auth_user_id` in un punto solo per tutti e tre gli handler
+in-app (helper `risolviParent`, così i tre non possono più divergere) e `parent.id` sia in
+scrittura sia nei filtri; `risolviGenitorePerEmail` interroga il ponte e restituisce l'id della
+riga `parents` trovata. Comportamenti graziosi mantenuti: `GET` senza riga `parents` risponde
+`{richiesta: null}` (è una probe di stato che il Profilo esegue a ogni apertura, non un'azione),
+`DELETE` risponde `{ok:true, revocate:0}`, e lo schema assente sul DB E2E non migrato (`42703`
+sulla colonna ponte) degrada senza 500. `src/lib/gdpr/esegui.ts` e `/api/admin/gdpr/richieste`
+**non sono stati toccati**: erano già corretti, si aspettavano un `parents.id` — erano i
+produttori a mentire.
+
+**Perché nessun test lo aveva visto** (la lezione che vale più del fix). I fake Supabase dei test
+esistenti **ignorano la colonna passata a `.eq()`** e restituiscono sempre la riga configurata, e
+i fixture usavano **lo stesso uuid** per `utenti.id` e `parents.id`: con quel doppio appiattimento
+una query giusta e una sbagliata sono *letteralmente indistinguibili*. 2859+ test verdi non
+potevano cogliere questo bug nemmeno in linea di principio. I tre nuovi file
+(`__tests__/lib/gdpr-cancellazione-pubblica.test.ts`,
+`__tests__/api/parent-richiesta-cancellazione-route.test.ts`,
+`__tests__/api/admin-gdpr-richieste-route.test.ts`) modellano i filtri **per davvero** (eq per
+colonna, semantica ILIKE con escape) e tengono i due spazi-id **distinti**; uno dei casi prova il
+danno peggiore — un `parents.id` che collide con l'`utenti.id` di un'altra famiglia farebbe
+anonimizzare **la famiglia sbagliata**. TDD: 10 test rossi sul codice pre-fix, verdi dopo. Il
+test sul consumatore `/admin/gdpr` (route corretta, quindi verde da subito) è stato validato
+**rimettendo il bug** e verificando che diventasse rosso.
+
+Gate verde: eslint 0 · `tsc --noEmit` 0 · vitest **390 file / 3221 test** · build ok.
+
+### Secondo giro — i due difetti che il fix ha «svegliato»
+
+Un collaudo adversariale sul branch corretto (tre tester indipendenti, tutti `PASS`) ha trovato
+due difetti **adiacenti**: non li ha introdotti il fix, li ha resi **raggiungibili**. Prima il
+percorso era inerte, e un percorso morto non ha bug visibili. Nessuna migrazione, nessuna colonna.
+
+**1. `anonimizzaParent` — lo stesso refuso, in direzione opposta.** La bonifica del testo libero
+UGC introdotto da C5 filtrava `segnalazioni` e `conversazioni_sospensioni` con il `parentId`
+(`parents.id`), ma quelle colonne sono scritte **con l'identità del gate**, cioè `auth.user.id`:
+`segnalazioni.segnalante_id` ← `segnalante.id` (`api/segnalazioni:POST`),
+`conversazioni_sospensioni.sospesa_da` ← `auth.user.id` (`chat/threads/[id]/sospendi`), e
+`sospesa_verso` ← `chat_threads.parent_id`, a sua volta confrontato con `auth.user.id` alla
+creazione del thread. Il filtro non poteva **mai** trovare una riga: `motivo` e `note_gestione` —
+testo libero che può citare il nome di un minore o un'allergia — non venivano anonimizzati da
+questo percorso, e la Direzione leggeva «0 bonificate» credendo che non ci fosse nulla da
+bonificare. È lo stesso errore del round 1, ma di segno inverso: là si usava un `utenti.id` dove
+serviva un `parents.id`, qui un `parents.id` dove serve un `utenti.id`. Corretto usando
+l'`authUserId` già raccolto in cima alla funzione (lo stesso ponte di `news_visualizzazioni`);
+se il genitore non è mai stato bridgeato il ramo si **salta**, coerentemente con la DELETE news:
+senza ponte non è raggiungibile in spazio-id `utenti`, e filtrare su un id che in quelle colonne
+non comparirà mai sarebbe solo una finta. La UPDATE su `parents` resta — correttamente — su
+`parents.id`. `anonimizzaAlunno` non è stato toccato: aggancia per **oggetto** segnalato
+(diario/media/thread), ed era già giusto.
+
+**2. `/api/public/cancellazione-account` (POST) — email-bombing.** Finché la route non trovava mai
+un genitore non spediva mai niente, e l'assenza di rate-limit era innocua. Resa funzionante, 8 POST
+consecutivi hanno prodotto 8 × 200 e nessun 429: chiunque, senza login, poteva riempire la casella
+di una famiglia di email «Conferma la richiesta di cancellazione». Aggiunto il limite **5 richieste
+/ 10 minuti per IP** (`rateLimit`/`clientIp`, gli stessi di `forms/send-otp`, ma più stretto: là il
+reinvio di un codice da ritrascrivere è un gesto legittimo e ripetuto), come **prima istruzione**
+del `POST` — prima di `parseBody` e della risoluzione del genitore. L'ordine è il punto: applicato
+dopo, l'email sarebbe già partita e l'abuso resterebbe nascosto dietro la `{ok:true}` generica
+dell'anti-enumerazione, che qui è la regola giusta ma è anche un ottimo mimetismo. Il 429 non
+richiede log espliciti: `withRoute` persiste già ogni 429 a livello `warn`, trattandolo come
+anomalia e non come 4xx di routine.
+
+**Test.** `__tests__/lib/gdpr-esegui.test.ts` **asseriva il comportamento sbagliato**
+(`segnalante_id.eq.p-1`): le asserzioni sono state riscritte sull'auth id e verificate **rosse**
+contro il codice pre-fix — un test che passa su un filtro impossibile è un test che descrive il
+bug, non il requisito. Aggiunti: genitore senza `auth_user_id` → nessuna UPDATE su
+segnalazioni/sospensioni; e sei casi di rate-limit in
+`__tests__/api/public-cancellazione-account.test.ts` (limite raggiunto → 429 con `Retry-After` e
+**nessuna** chiamata a `createAdminClient`/`sendEmail`, cioè il limite blocca *prima* della logica
+e non maschera una 200 già calcolata; IP distinti non condividono il contatore; anti-enumerazione
+intatta sotto il limite; il 400 di validazione invariato). 7 test nuovi, tutti rossi prima e verdi
+dopo.
+
+Gate verde: eslint 0 · `tsc --noEmit` 0 · vitest **390 file / 3228 test** · build ok.
+
+### C2 — build `.aab` firmata per Google Play
+
+Lavoro tecnico di [`docs/submission/C2-build-aab.md`], sullo stesso branch (deroga esplicita
+dell'utente alla regola "un branch alla volta": interventi scollegati — fix GDPR vs
+infrastruttura di firma Play — con revisione/merge indipendenti in mente, ma un solo branch
+fisico). Nessuna modifica applicativa: solo `android/**`.
+
+**Buco chiuso prima di generare qualunque chiave.** `android/.gitignore` aveva le regole
+`*.jks`/`*.keystore` **commentate** dal template Capacitor mai adattato; il `.gitignore` di
+radice non ne aveva nessuna. Un `keytool` in `android/` seguito da un `git add` avrebbe
+committato la chiave di firma **senza un solo avviso**. Corretto in entrambi i file
+(+ `keystore.properties`, `key.properties`, `*.p12`, `*.pfx`, `*.pepk`), verificato con una prova
+attiva (`git check-ignore -v` su file di prova, prima e dopo) — non solo dichiarato.
+
+**Chiave di upload generata FUORI dal repo** (`~/Documenti/kidville-play/kidville-upload.jks`,
+PKCS12, RSA 4096, validità 10.000 giorni → scade 2053-12-12, DN della cooperativa), con copia
+offline in `~/Documenti/kidville-play-backup/`. La password è stata generata e scritta
+**solo su file locali** (mai in questa conversazione, mai in un report d'agente — un primo
+tentativo di delegare la generazione a un sub-agente è stato bloccato dal classificatore di
+sicurezza proprio perché istruito a scrivere la password nel proprio report finale, che finisce
+in trascrizione: correzione applicata, rifatto a mano con redirect di shell che non emettono mai
+il valore in nessun output visibile). Sta in `~/Documenti/kidville-play/.upload-pw` e in
+`android/keystore.properties` (gitignorato, `chmod 600`): **da spostare nel gestore di
+credenziali del titolare e poi ripulire le copie su disco**.
+
+**Gradle configurato**: `signingConfigs.release` legge env var (`KV_UPLOAD_STORE_FILE` e affini,
+priorità CI) prima del file locale; `buildTypes.release.signingConfig` è un ternario che lascia
+`null` se la chiave manca — build che fallisce, mai una firma silenziosa con la chiave di debug.
+`versionCode`: contatore progressivo indipendente per Android (non agganciato al build number
+iOS), documentato con un commento sopra `versionCode 1` in `build.gradle` per la prossima volta
+che si carica un `.aab`.
+
+**Build verificata**: `CAP_SERVER_URL=https://app.kidville.it npx cap sync android` + verifica
+obbligatoria del `capacitor.config.json` sincronizzato (url/cleartext/errorPath/loggingBehavior
+tutti corretti) **prima** di `./gradlew bundleRelease` (BUILD SUCCESSFUL, 32s). Firma verificata
+con `jarsigner -verify -certs` (schema di firma dei bundle, non `apksigner`, che verifica APK):
+`jar verified`, certificato con lo stesso CN della cooperativa, scadenza 2053-12-12.
+`.aab` prodotto in `android/app/build/outputs/bundle/release/app-release.aab` (7,4 MB),
+correttamente gitignorato (pattern `build/` già esistente).
+
+### C3 (parziale) — icona e feature graphic per Google Play
+
+Testi della scheda (titolo, descrizione breve, descrizione completa) **approvati dal titolare
+così come in bozza** in `docs/submission/C3-scheda-testi-grafica.md` §1, nessuna modifica.
+
+**Decisione sulla mascotte**: C4 §2 raccomanda grafica **sobria, senza mascotte cartoon**, per il
+rischio di riclassificazione Google (*"youthful animation or young characters"*). Nel repo
+**non esiste alcun asset di brand senza mascotte** (icona, logo e mascotte la mostrano tutti).
+Il titolare ha scelto consapevolmente di **mantenere la mascotte** anche sulla scheda Play,
+accettando il rischio segnalato da C4 §2.
+
+**Icona 512×512 e feature graphic — v1 (scartata) e v2 (attuale).** Prima versione: icona
+ritagliata da `public/mascot.png` (sfondo pieno, nessun mockup) + feature graphic disegnata da
+zero (pannello bicolore Clay Village). **Il titolare l'ha giudicata "bruttissima" a confronto
+con l'icona iOS** e ha chiesto esplicitamente di riusare la stessa immagine (2026-07-28).
+
+**v2, attuale**: entrambi gli asset derivano ora da
+`ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png` — la stessa icona già in
+produzione su App Store. `play-icon-512.png` (307 KB, PNG RGBA) è quell'immagine ridimensionata
+1:1 a 512×512, nessun'altra modifica. `play-feature-graphic-1024x500.png` (271 KB, PNG RGB senza
+alpha) è la stessa immagine scalata a 500×500 e centrata su tela 1024×500, con padding laterale
+nel teal `(5,107,102)` campionato dalla banda inferiore dell'icona stessa (fusione praticamente
+invisibile, nessun bordo visibile fra icona e sfondo).
+
+⚠️ **Nota tecnica che resta valida, il titolare ne è consapevole**: quell'icona è un mockup con
+angoli arrotondati e ombra dipinti nei pixel (non nel canale alpha). Google Play applica la
+propria maschera/ombra sopra qualunque immagine caricata → risultato con **doppio bordo
+arrotondato** visibile. Stesso trattamento già in produzione su App Store (coerenza fra le due
+schede), ma non l'ideale per Play. Se in review risulta un problema, la correzione è tornare
+alla v1 (da `public/mascot.png`, piena tela) — recuperabile dalla history del branch. Dettagli
+in `docs/submission/assets/README.md`.
+
+**Resta**: 8 screenshot telefono 1080×1920 + 4 tablet — rimandati a un intervento successivo
+(richiedono emulatore Android, dati demo della classe TEST rinfrescati, flow Maestro).
+
 ## 🗓️ Changelog — C5: cancellazione account pubblica + moderazione UGC (segnalazioni, sospensione conversazione, gate Termini) 2026-07-27 (branch `feat/dossier-submission`)
 
 Il codice che sblocca la fase C (`docs/submission/C5-sviluppo-obbligatorio.md`) — l'unica parte

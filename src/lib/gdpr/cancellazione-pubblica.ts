@@ -119,10 +119,16 @@ export async function risolviGenitorePerEmail(
   ) as { id: string; scuola_id: string | null } | undefined
   if (!utente) return { genitore: null, error: null }
 
+  // ⚠️ SPAZIO-ID: `utente.id` è l'id della riga `utenti` (ruolo genitore), NON
+  // `parents.id` — che è un uuid indipendente (`gen_random_uuid()`). Il ponte è
+  // `parents.auth_user_id` (stesso bridge di /api/me e lib/pagamenti/intestatari.ts).
+  // Con `.eq('id', utente.id)` questa query non trovava MAI un genitore reale: il
+  // magic-link non partiva per nessuno, e la risposta restava `{ok:true}` per
+  // anti-enumerazione — cioè il canale pubblico era morto in modo invisibile.
   const { data: parent, error: errP } = await admin
     .from('parents')
     .select('id, anonimizzato_il')
-    .eq('id', utente.id)
+    .eq('auth_user_id', utente.id)
     .maybeSingle()
   if (errP) {
     if (schemaAssente(errP)) return { genitore: null, error: null }
@@ -132,5 +138,12 @@ export async function risolviGenitorePerEmail(
     return { genitore: null, error: null }
   }
 
-  return { genitore: { parentId: utente.id, scuolaId: utente.scuola_id ?? null }, error: null }
+  // `parentId` è l'id della riga `parents` appena trovata: è ciò che
+  // `richieste_cancellazione.parent_id` significa per /admin/gdpr e per
+  // `anonimizzaParent`. Restituire `utente.id` produrrebbe una richiesta
+  // inevadibile.
+  return {
+    genitore: { parentId: (parent as { id: string }).id, scuolaId: utente.scuola_id ?? null },
+    error: null,
+  }
 }

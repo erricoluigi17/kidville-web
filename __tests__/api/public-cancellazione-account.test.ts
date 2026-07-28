@@ -51,15 +51,24 @@ vi.mock('@/lib/notifiche/destinatari', () => ({
 import { POST as POST_INIT } from '@/app/api/public/cancellazione-account/route'
 import { POST as POST_CONF } from '@/app/api/public/cancellazione-account/conferma/route'
 import { creaTicketCancellazione } from '@/lib/gdpr/cancellazione-pubblica'
+import { createAdminClient } from '@/lib/supabase/server-client'
+import { resetRateLimit } from '@/lib/security/rate-limit'
 
 const PARENT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01'
 const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
 
-function req(path: string, body: unknown): Request {
+// Il rate-limiter è un Map di modulo condiviso da tutti i test del file: senza
+// reset, il budget consumato da un test farebbe fallire il successivo.
+const LIMITE_POST = 5
+
+function req(path: string, body: unknown, ip?: string): Request {
   return new Request(`http://localhost${path}`, {
     method: 'POST',
     body: JSON.stringify(body),
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(ip ? { 'x-forwarded-for': ip } : {}),
+    },
   })
 }
 
@@ -70,6 +79,7 @@ const parentAttivo = { data: { id: PARENT_ID, anonimizzato_il: null }, error: nu
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetRateLimit()
   h.state.queues = {}
   h.state.used = {}
   h.state.inserts = []
@@ -102,6 +112,82 @@ describe('POST /api/public/cancellazione-account — risposta generica (anti-enu
     const res = await POST_INIT(req('/api/public/cancellazione-account', { email: 'non-una-email' }))
     expect(res.status).toBe(400)
     expect(sendEmail).not.toHaveBeenCalled()
+  })
+})
+
+// =============================================================================
+// Rate-limit. Questo endpoint è PUBBLICO (nessun login) e spedisce un'email
+// all'indirizzo indicato: senza limite è un'arma di email-bombing verso la
+// casella di una famiglia, ripetibile all'infinito. Il limite deve scattare
+// PRIMA della risoluzione del genitore — altrimenti la risposta generica
+// dell'anti-enumerazione (sempre 200) maschererebbe l'abuso invece di fermarlo.
+// Indirizzi IP dai range di documentazione (TEST-NET-2/3): non sono dati reali.
+// =============================================================================
+describe('POST /api/public/cancellazione-account — rate-limit anti email-bombing', () => {
+  const PATH = '/api/public/cancellazione-account'
+  const IP_A = '203.0.113.9'
+  const IP_B = '198.51.100.7'
+
+  it(`le prime ${LIMITE_POST} richieste dallo stesso IP passano (200 generico)`, async () => {
+    for (let i = 0; i < LIMITE_POST; i++) {
+      const res = await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ ok: true })
+    }
+  })
+
+  it('sotto il limite l’anti-enumerazione resta intatta: email esistente e inesistente → stessa 200', async () => {
+    h.state.queues = { utenti: [utenteMatch()], parents: [parentAttivo] }
+    const esistente = await POST_INIT(req(PATH, { email: 'genitore@example.com' }, IP_A))
+    const inesistente = await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+    expect(esistente.status).toBe(200)
+    expect(inesistente.status).toBe(200)
+    expect(await esistente.json()).toEqual(await inesistente.json())
+  })
+
+  it(`la richiesta ${LIMITE_POST + 1} dallo stesso IP → 429 con Retry-After, senza toccare DB né email`, async () => {
+    for (let i = 0; i < LIMITE_POST; i++) {
+      await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+    }
+    // Azzera i contatori DOPO aver esaurito il budget: quello che segue deve
+    // dimostrare che la richiesta in eccesso non esegue NESSUNA logica.
+    vi.mocked(createAdminClient).mockClear()
+    sendEmail.mockClear()
+
+    const res = await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+    expect(res.status).toBe(429)
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0)
+    expect(createAdminClient).not.toHaveBeenCalled() // → né risolviGenitorePerEmail
+    expect(sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('il limite vale anche per un’email ESISTENTE (è il caso che fa male alla famiglia)', async () => {
+    h.state.queues = { utenti: [], parents: [] } // code vuote: irrilevante, non si arriva al DB
+    for (let i = 0; i < LIMITE_POST; i++) {
+      await POST_INIT(req(PATH, { email: 'genitore@example.com' }, IP_A))
+    }
+    sendEmail.mockClear()
+    const res = await POST_INIT(req(PATH, { email: 'genitore@example.com' }, IP_A))
+    expect(res.status).toBe(429)
+    expect(sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('IP diversi non condividono il contatore', async () => {
+    for (let i = 0; i < LIMITE_POST; i++) {
+      await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+    }
+    expect((await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))).status).toBe(429)
+    expect((await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_B))).status).toBe(200)
+  })
+
+  it('il 429 non menziona OTP (non è quel contesto) ed è in italiano', async () => {
+    for (let i = 0; i < LIMITE_POST; i++) {
+      await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+    }
+    const res = await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
+    const body = (await res.json()) as { error?: string }
+    expect(res.status).toBe(429)
+    expect(body.error).toBe('Troppe richieste. Riprova tra qualche minuto.')
   })
 })
 

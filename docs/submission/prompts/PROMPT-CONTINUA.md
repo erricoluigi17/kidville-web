@@ -1,7 +1,7 @@
 # 🔁 Super prompt — continuare la submission in una nuova chat
 
 > Autosufficiente. Da incollare in una chat nuova aperta su `/Users/lerri/kidville-web`.
-> Aggiornato al **2026-07-26, sera**.
+> Aggiornato al **2026-07-28**.
 
 ---
 
@@ -12,17 +12,17 @@ Riprendiamo la submission di Kidville su App Store e Google Play. Parli SOLO in 
 PRIMA DI RISPONDERE QUALSIASI COSA — leggi in quest'ordine
 ═══════════════════════════════════════════════════════════════════
 1. AGENTS.md e CLAUDE.md            → le regole di progetto, tutte vincolanti
-2. docs/submission/README.md         → l'indice del dossier e l'ordine dei lavori
-3. docs/submission/A1b-duns-richiesta.md   → D-U-N-S e conversione account Apple
-4. docs/submission/C1..C5            → tutta la partita Google Play
-Gli altri (A1, A2, A3) leggili quando tocchi quel pezzo, non prima.
+2. La mia memoria persistente su questo progetto, se il tuo harness la espone
+   (cerca "submission", "gdpr_oblio", "c2_c3_play_2026" o simili)
+3. docs/submission/README.md         → l'indice del dossier e l'ordine dei lavori
+4. docs/submission/assets/README.md  → cosa esiste già in grafica Play e perché
+5. docs/submission/C3-scheda-testi-grafica.md §2-§3 → il prossimo lavoro (screenshot)
 
-NON rifare la ricerca: è stata fatta con 11 agenti, 3 dei quali avversariali, ed è
-tutta dentro quei documenti con le fonti. Se una cosa ti sembra sbagliata, VERIFICALA
-e dimmelo — ma non ripartire da zero.
+NON rifare la ricerca del dossier A1-A3/C1-C5: è già tutta nei documenti con le fonti.
+Se una cosa ti sembra sbagliata, VERIFICALA e dimmelo — ma non ripartire da zero.
 
 ═══════════════════════════════════════════════════════════════════
-DOVE SIAMO — stato reale, non desiderato
+DOVE SIAMO — stato reale, 2026-07-28
 ═══════════════════════════════════════════════════════════════════
 Prodotto: "Kidville", registro elettronico di una scuola dell'infanzia.
 Next.js + Supabase, app nativa Capacitor (WebView su https://app.kidville.it).
@@ -30,148 +30,225 @@ Bilingue it/en. Tratta dati di MINORI, inclusi dati sanitari.
 
 Titolare: SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA
 P.IVA 03394870616 · REA CE 240763 · Via Silvio Pellico 7, 81030 Cesa (CE)
-Tre sedi operative (Cesa, Aversa, Giugliano) sotto un'unica P.IVA.
-Sito pubblico www.kidville.it (mostra ragione sociale, P.IVA e REA).
 
-APP STORE — avanti
+APP STORE — invariato dalla sessione precedente
   ✓ scheda compilata, 12 screenshot, build 1.0(1) su TestFlight (scade 2026-10-24)
   ✓ firma di distribuzione ok, aps-environment = production
-  ✗ DSA (operatore commerciale) da compilare
-  ✗ App Privacy labels da compilare
-  ✗ validazione legale di /privacy e /termini
-  ✗ conversione account Individual → Organization
+  ✗ DSA (operatore commerciale), App Privacy labels, validazione legale di
+    /privacy e /termini, conversione account Individual → Organization
+    — tutti bloccanti UMANI/legali, non lavoro da agente
+  ✗ Due prove su iPhone FISICO (push in production, offline in aereo) — mai fatte
 
-GOOGLE PLAY — scheda vuota, nulla di fatto
+GOOGLE PLAY — C5 in prod, C2 fatto, C3 a metà
+  ✅ C5 (cancellazione pubblica + moderazione UGC) — IN PRODUZIONE dal 2026-07-27,
+     PR #52 commit 3e8eb79. Sblocca C4 (l'URL di cancellazione ora esiste).
+  ✅ C2 (build .aab firmata) — FATTO ma NON pushato, sul branch
+     fix/gdpr-oblio-parent-id-space (vedi sotto). Chiave di upload generata fuori dal
+     repo, .aab prodotto e verificato con jarsigner.
+  🟡 C3 — testi approvati dal titolare; icona 512×512 e feature graphic 1024×500
+     pronte in docs/submission/assets/ (v2: STESSA immagine dell'icona iOS, non più
+     generate da zero — v1 scartata perché giudicata brutta). Mancano ANCORA:
+     8 screenshot telefono 1080×1920 + 4 tablet — MAI FATTI, è il prossimo lavoro.
+  ✗ C1 (decisione sull'account Play personale esistente) — lavoro tuo
+  ✗ C4 (moduli Data safety/Health apps/IARC in Console) — lavoro tuo, tutto già
+     deciso nel documento, ma va compilato a schermo
 
-DECISIONI GIÀ PRESE — non riaprirle, sono del titolare
-  • D-U-N-S ottenuto: 432360401. ESISTEVA GIÀ, attesa zero. Vale per ENTRAMBI gli store.
-    ⚠️ NON aprirne un secondo su D&B: i duplicati bloccano la verifica ovunque.
-  • Recapito pubblico: info@kidville.it — già sostituito in /privacy, /termini, /assistenza
-    al posto di una Gmail personale. ⚠️ Va verificato che la casella sia presidiata.
-  • Sede da usare ovunque: Via Silvio Pellico 7 (sede LEGALE).
-    Mai Via Filippo Turati 2, che è operativa.
-  • Ragione sociale sempre PER ESTESO: "SOCIETA' COOPERATIVA", mai "Soc. Coop."
-    Apple e Google rifiutano abbreviazioni e nomi commerciali.
-  • Account: ORGANIZZAZIONE su entrambi gli store, mai personale.
-  • Categoria Play: Istruzione. MAI "Social" (farebbe scattare Child Safety Standards).
-  • Pubblico Play: solo 18+.
-  • Blocco UGC: sospensione conversazione + notifica alla Direzione, DICHIARATA.
-    Spec completa in C5.
-
-VINCOLO DI PERSONE — importante, non aggirarlo
-  Il legale rappresentante della cooperativa è ERRICO CESARIO.
-  L'utente (Luigi Errico) è SOCIO e agisce su DELEGA SCRITTA.
-  Nelle pratiche Apple/Google NON va dichiarato legale rappresentante: la visura lo
-  smentirebbe. Va dichiarata la situazione vera, con Errico Cesario come reference.
+DECISIONI GIÀ PRESE — non riaprirle
+  Le stesse della sessione del 26/07 (D-U-N-S 432360401, sede legale, ragione sociale
+  per esteso, account Organizzazione, categoria Istruzione, pubblico 18+, sospensione
+  UGC dichiarata) — vedi in fondo a questo prompt se serve il dettaglio completo, o
+  docs/submission/README.md. PIÙ, dal 2026-07-28:
+  • Icona/feature graphic Play: STESSA immagine dell'icona iOS (mockup con angoli
+    arrotondati/ombra dipinti nei pixel). Il titolare l'ha scelta esplicitamente dopo
+    aver visto (e scartato) una versione "pulita" fatta da zero. Comporta un
+    doppio-arrotondamento quando Play applica la propria maschera — accettato,
+    coerente con quanto già in produzione su App Store. NON rifare la versione pulita
+    a meno che Play la rifiuti in review.
+  • Mascotte su Play: mantenuta ovunque (icona, feature graphic), nonostante C4 §2
+    raccomandi il contrario per il rischio di riclassificazione "app per bambini".
+    Rischio accettato dal titolare, non riaprire la domanda.
+  • versionCode Android: contatore progressivo INDIPENDENTE dal build number iOS
+    (commentato in android/app/build.gradle sopra `versionCode 1`).
+  • Deroga alla regola "un branch alla volta" di AGENTS.md: il fix GDPR (bug di
+    sicurezza) e C2/C3 (submission Play) sono sullo STESSO branch fisico
+    (fix/gdpr-oblio-parent-id-space) per scelta esplicita del titolare, pur essendo
+    interventi scollegati — non aprirne uno nuovo per continuare C3, resta lì finché
+    non si mergia.
 
 ═══════════════════════════════════════════════════════════════════
-STATO DEL REPO
+STATO DEL REPO — leggilo con attenzione, non è come l'ultima volta
 ═══════════════════════════════════════════════════════════════════
-Branch: feat/dossier-submission  (creato perché il lavoro stava per finire su main)
-Non committato: PRD, le 3 pagine legali (sostituzione email), docs/submission/ (nuovo)
-Ultimo gate verde DOPO la modifica al codice:
-  eslint 0 · tsc 0 · vitest 365 file / 3041 test · build ok
-Da allora sono cambiati solo file .md.
-Niente è stato committato: chiedi prima di farlo.
+Branch: fix/gdpr-oblio-parent-id-space (locale, NON pushato, 5 commit sopra origin/main):
+  3f3b783 fix(gdpr): usa il ponte parents.auth_user_id nell'oblio self-service
+  5f0c586 fix(gdpr): lo scrub UGC filtrava con l'id sbagliato, canale pubblico bombardabile
+  c2d6e95 build(android): C2 — chiave di firma Play fuori dal repo, .aab verificato
+  556ae4c docs(submission): C3 (parziale) — icona/feature graphic v1, testi approvati
+  644ee3f docs(submission): C3 — v2, riusa l'icona iOS
+
+I primi due commit sono un bug GDPR reale (auto-scoperto durante C5, non annunciato
+all'inizio di quella sessione): l'oblio self-service (sia canale in-app sia pubblico)
+non anonimizzava MAI davvero un genitore, per uno spazio-id sbagliato
+(`parents.id` vs `auth.user.id`). Corretto, testato con TDD, verificato 5/5 PASS da
+tester indipendenti su dati di produzione reali (sola lettura). Zero incidenti reali:
+la tabella `richieste_cancellazione` aveva 0 righe quando il bug è stato scoperto.
+Dettagli completi nel PRD, changelog del 2026-07-27.
+
+Working tree pulito salvo `.vscode/settings.json` (preesistente, non toccarlo).
+Ultimo gate verde: eslint 0 · tsc 0 · vitest 390 file/3228 test · build ok
+(quel gate copre solo i primi due commit — GDPR; C2/C3 non toccano src/, non serve
+rilanciarlo per quelli, ma rilancialo comunque se aggiungi altro codice applicativo).
+
+⚠️ Il branch NON è stato mergiato né pushato: prima di qualunque `git push`/merge,
+chiedi conferma esplicita al titolare — l'ultima volta ha scelto esplicitamente di
+lasciarlo "in sospeso" per continuare su altro.
+
+⚠️ La password della chiave di firma Play (generata per C2) NON è in questa
+conversazione né in git: sta in `~/Documenti/kidville-play/.upload-pw` e in
+`android/keystore.properties` (gitignorato) sul disco del titolare. Se non l'ha ancora
+spostata nel suo gestore di credenziali, ricordaglielo.
+
+⚠️ Esiste un ramo remoto residuo `origin/feat/dossier-submission` (storia pre-squash
+di C5, già confluita in main col commit 3e8eb79) — andrebbe eliminato per la regola 3
+di AGENTS.md ("dopo un deploy riuscito, elimina i branch secondari"), ma è un'azione
+visibile su un repo condiviso: chiedi prima di farlo, non farlo di tua iniziativa.
 
 ═══════════════════════════════════════════════════════════════════
 LA CODA DI LAVORO, IN ORDINE
 ═══════════════════════════════════════════════════════════════════
 
-▸ LAVORO TUO — 1. C5, ed è il vero blocco
-  docs/submission/C5-sviluppo-obbligatorio.md, spec completa e già approvata.
-  Prompt dedicato pronto: docs/submission/prompts/prompt-c5-sviluppo.md
-  Tre cose: pagina pubblica /cancellazione-account · segnalazione contenuti e utenti ·
-  sospensione conversazione con notifica alla Direzione · gate dei Termini non saltabile.
-  È l'unica parte che non corre in parallelo a nient'altro.
-  ⚠️ Il gate dei Termini chiude anche la lacuna E di A3: oggi i Termini non li accetta
-  nessuno, quindi la clausola di limitazione di responsabilità non produce effetto.
+▸ LAVORO TUO — 1. Screenshot Play (resto di C3), il prossimo passo naturale
+  8 screenshot telefono 1080×1920 + 4 tablet. Serve: emulatore Android acceso,
+  login come test.inf.genitore1@kidville.test (MAI test.segreteria/test.pri.segreteria/
+  test.cuoca — leggono l'anagrafica REALE della sede), dati demo della classe TEST
+  Infanzia rinfrescati (`creato_il` retrodatato, finestra di visibilità diario
+  10 minuti). Leggi le "quattro trappole" già documentate in
+  docs/submission/C3-scheda-testi-grafica.md §3 PRIMA di scrivere un flow Maestro:
+  deep link → alert nativo che blocca la navigazione; etichetta breve "MENSA" che
+  colpisce anche la bottom-nav dietro l'overlay; waitForAnimationToEnd non aspetta i
+  dati; l'aria-label del menu è "Menu · tutte le sezioni", non "MENU". Selettori
+  Maestro Android ≠ iOS anche per la stessa trappola.
+  ⏰ I dati demo sono datati 2026-07-26, il diario mostra 14 giorni indietro: dopo il
+  2026-08-09 le schermate sono vuote. Verifica la data di oggi prima di partire.
+  🔴 MAI committare gli screenshot catturati in e2e/*/run/screenshots/ o cartelle
+  simili non pensate per lo store: sono catture di collaudo su PRODUZIONE.
 
-▸ LAVORO TUO — 2. Build .aab firmato (C2, ~1 ora)
-  ⚠️ PRIMA chiudi il buco: in android/.gitignore le regole *.jks e *.keystore sono
-  COMMENTATE e il .gitignore di radice non le ha. Un keytool nel posto ovvio + git add
-  committa la chiave di upload senza un avviso.
-  Poi: keystore fuori dal repo, keystore.properties gitignorato, signingConfig che legge
-  da env-poi-file, e la sequenza di build del documento.
+▸ LAVORO TUO — 2. Lingua predefinita Play Console → it-IT
+  Prima di caricare QUALUNQUE grafica (icona/feature graphic/screenshot) in Play
+  Console: Gestisci traduzioni → Cambia lingua predefinita, da en-US a it-IT. Se resta
+  en-US, ogni locale non tradotta mostra testo E GRAFICHE in inglese anche a utenti
+  italiani. Questo è lavoro a schermo, guidalo tu o fallo fare al titolare.
 
-▸ LAVORO TUO — 3. Grafica e scheda Play (C3)
-  8 screenshot a 1080×1920 (gli screenshot iOS NON si riusano: rapporto d'aspetto fuori
-  norma), icona 512×512 CON alpha, immagine in evidenza 1024×500 SENZA alpha.
-  ⚠️ Leggi C4 §2 PRIMA di disegnare: l'app si chiama "Kid"ville e ha una mascotte cartoon,
-  e Google può riclassificarla come app per bambini in base alla grafica. Niente mascotte,
-  niente volti di bambini, screenshot dell'interfaccia gestionale.
-  ⏰ SCADENZA REALE: i dati demo del diario scadono il 2026-08-09 (finestra di 14 giorni).
-  Dopo quella data le schermate escono vuote e vanno riseminati retrodatando creato_il.
+▸ DA DECIDERE COL TITOLARE — 3. Merge del branch fix/gdpr-oblio-parent-id-space
+  È verde, verificato, pronto. Chiedi esplicitamente: revisiona lui il diff? Vuole
+  push+PR ora o aspetta che anche gli screenshot siano dentro allo stesso branch?
+  Ricorda che due interventi scollegati (fix sicurezza + submission Play) condividono
+  lo stesso branch per sua scelta esplicita — occhio alla descrizione della PR quando
+  arriva quel momento, deve rendere conto di entrambi separatamente nel corpo.
 
-▸ DA VERIFICARE — account Google Play già esistente come PERSONALE
-  L'utente ha già un account Play, di tipo personale. Serve sapere:
-  (a) la data di creazione — se dopo il 13/11/2023 scatta il gate 12 tester × 14 giorni;
-  (b) se in Console compare già la richiesta di production access;
-  (c) se convenga convertirlo in organizzazione o aprirne uno nuovo come ente.
-  ⚠️ La conversione richiede comunque D-U-N-S + verifica del sito + 72 ore di attesa, e
-  NON è documentato che un gate già scattato venga annullato. Va deciso con l'utente.
+▸ LAVORO TUO — 4. C1 — account Google Play
+  docs/submission/C1-account-play-e-tempi.md. Il titolare ha già un account Play
+  personale esistente: va deciso se convertirlo o aprirne uno nuovo come
+  organizzazione, e verificato se il gate "12 tester × 14 giorni" (per account creati
+  dopo il 13/11/2023) è già scattato.
 
-▸ LAVORO DELL'UTENTE — non farlo tu, ricordaglielo
-  1. Ticket Apple di conversione Individual → Organization.
-     Prompt pronto: docs/submission/prompts/prompt-ticket-apple.md
-     Serve la delega scritta di Errico Cesario.
-  2. Consegnare A3 al legale. È la catena più lunga e sta su ENTRAMBI gli store.
-  3. Google Account ISTITUZIONALE della cooperativa (non una casella personale):
-     solo il proprietario può completare la verifica d'identità.
-  4. DNS/Search Console di kidville.it — è dell'agenzia ma l'utente ha accesso.
-  5. Due prove su iPhone FISICO: push in ambiente production, offline in modalità aereo.
-     Non sono osservabili da simulatore.
+▸ LAVORO DEL TITOLARE — non farlo tu, guidalo/ricordaglielo
+  1. C4 — Compilare in Play Console: Data safety (fonte: A2, NON store-submission.md
+     §3 né PrivacyInfo.xcprivacy — si contraddicono, vale A2), Health apps declaration
+     (obbligatoria anche solo per closed testing — la maggior parte degli sviluppatori
+     la scopre dopo il rigetto), classificazione IARC (dichiarando chat e UGC: non
+     abbassa il rating, nasconderla costa l'account), target audience 18+, Families
+     Policy NON spuntata, Restrict Minor Access NON attivata.
+  2. Ticket Apple di conversione Individual → Organization (prompt pronto in
+     docs/submission/prompts/prompt-ticket-apple.md, serve delega scritta di Errico
+     Cesario, legale rappresentante — l'utente Luigi Errico è socio con delega, non
+     va MAI dichiarato legale rappresentante nelle pratiche Apple/Google).
+  3. Consegna del dossier A3 al legale — è la catena più lunga, sblocca sia A2 (Play
+     Data safety) sia il Passo 5 del DSA su Apple.
+  4. Due prove su iPhone FISICO (invito TestFlight già mandato a lerrico7@icloud.com):
+     push in ambiente production, offline in modalità aereo. Non osservabili da
+     simulatore, restano aperte da tre changelog.
+  5. Password della chiave di firma Play: spostarla dal disco al gestore di
+     credenziali (vedi sopra).
 
 ═══════════════════════════════════════════════════════════════════
 SEQUENZE DA NON INVERTIRE
 ═══════════════════════════════════════════════════════════════════
-• NON compilare il DSA prima che la conversione Apple sia riuscita: oggi l'account è a
-  nome di persona fisica, e il DSA pubblica indirizzo e telefono SULLA SCHEDA. Si possono
-  solo sostituire, mai togliere.
-• NON firmare il Passo 5 del DSA (certificazione di conformità al diritto UE) prima del
-  parere del legale: è una dichiarazione sostanziale resa per iscritto a un terzo.
-• NON caricare l'URL di cancellazione su Play prima che la pagina esista (C5 parte 1).
-• Le App Privacy labels e ios/App/App/PrivacyInfo.xcprivacy si toccano INSIEME: è la
-  divergenza fra i due che si paga.
+• NON caricare nessuna grafica Play prima di aver cambiato la lingua predefinita a it-IT.
+• NON compilare il DSA Apple prima che la conversione Individual→Organization sia
+  riuscita: il DSA pubblica indirizzo e telefono SULLA SCHEDA, con un account
+  Individual è il nominativo personale del titolare.
+• NON firmare il Passo 5 del DSA prima del parere del legale (A3).
+• NON pushare/mergiare fix/gdpr-oblio-parent-id-space senza conferma esplicita.
+• Le App Privacy labels (Apple) e ios/App/App/PrivacyInfo.xcprivacy si toccano
+  INSIEME: è la divergenza fra i due che si paga.
 
 ═══════════════════════════════════════════════════════════════════
 FATTI COSTOSI DA RISCOPRIRE
 ═══════════════════════════════════════════════════════════════════
-• Un .aab costruito dopo un cap sync senza CAP_SERVER_URL si installa, si apre e mostra
-  una SCHERMATA MORTA. Il file è gitignorato: invisibile in git, nel gate e in un build
-  che riesce. Verificare col cat del JSON dopo ogni sync, prima di ogni upload.
-• JAVA_HOME va esportato in OGNI shell sulla JBR 21: il java di sistema è JDK 25 e
-  Gradle 8.14 dà "Unsupported class file major version 69".
+• parents.id ≠ auth.user.id, MAI. Il ponte è SEMPRE parents.auth_user_id. Se scrivi
+  o leggi codice nuovo che tocca `parents` a partire da un'identità autenticata
+  (`requireUser`/`auth.user.id`), usa il bridge — è il refuso che ha reso l'oblio
+  self-service inerte per settimane, corretto in due punti indipendenti nella stessa
+  sessione (uno in ciascuna direzione dello stesso errore).
+• I fake Supabase nei test che ignorano la COLONNA passata a `.eq()` (restituiscono
+  sempre la riga configurata a prescindere dal filtro) nascondono esattamente questa
+  classe di bug. Se scrivi un test su una query `parents`, il fake deve modellare
+  `id` e `auth_user_id` come DUE valori diversi, mai lo stesso uuid riciclato.
+• Un sub-agente istruito a generare un segreto reale (password, chiave) e scriverlo
+  nel proprio report finale viene bloccato dal classificatore di sicurezza: il report
+  finisce in trascrizione, è materializzazione di credenziali. Genera i segreti in
+  prima persona con redirect di shell (`comando > file`, mai capturato in output
+  visibile), mai stampati, mai passati come argomento di riga di comando.
+• `keytool -list -v` va in crash su questa macchina con locale italiana
+  (`MissingFormatArgumentException: Format specifier '%2$s'`, bug JDK noto). Aggiungi
+  `-J-Duser.language=en -J-Duser.country=US` a QUALUNQUE comando keytool che stampi
+  un certificato.
+• Per verificare la firma di un `.aab` usa `jarsigner -verify -certs`, NON
+  `apksigner` (che verifica APK, non bundle — schema di firma diverso).
+• Un `.aab` costruito dopo un `cap sync` senza `CAP_SERVER_URL` si installa, si apre
+  e mostra una SCHERMATA MORTA. Verifica SEMPRE col `cat` del
+  capacitor.config.json sincronizzato, prima di ogni `bundleRelease`.
+• JAVA_HOME va esportato in OGNI shell sulla JBR 21 (Android Studio): il java di
+  sistema è JDK 25, Gradle 8.14 dà "Unsupported class file major version 69".
+• Tutti gli asset di brand esistenti (`assets/icon-only.png`, `assets/logo.png`,
+  `assets/icon-foreground.png`, e ora anche l'icona iOS riusata per Play) sono mockup
+  con angoli arrotondati e ombra DIPINTI NEI PIXEL, non nel canale alpha — un resize
+  diretto su Play produce un doppio-arrotondamento quando Play applica la propria
+  maschera. Il titolare ne è consapevole e ha accettato il compromesso per l'icona
+  attuale; non è un bug da correggere di tua iniziativa.
 • versionCode 1 si brucia al PRIMO upload, anche solo su Internal testing, e non si
   riusa nemmeno cancellando l'upload.
-• Al revisore va SOLO test.inf.genitore1@kidville.test. MAI test.segreteria, test.pri.
-  segreteria o test.cuoca: leggono l'anagrafica REALE della sede, famiglie e bambini veri.
-• La password degli account TEST non va scritta in nessun file del repo: c'è un lock
-  (__tests__/architecture/niente-password-nel-repo.test.ts) che fa fallire il gate.
-• NON lanciare npm run e2e in locale: .env.local punta al DB di PRODUZIONE.
-• Lanciare SEMPRE npx tsc --noEmit prima del push: la CI lo fa sui __tests__, e build e
-  vitest locali non lo colgono.
-• Le 51 immagini in e2e/collaudo-giornata/run/screenshots/ sembrano riusabili per gli
-  store: sono catture di PRODUZIONE con anagrafica reale. Mai.
-• PostgREST non lancia: ritorna { error }. Un try/catch attorno a supabase.from(…) non
-  scatta mai.
-• docs/store-submission.md contiene due errori GIÀ CORRETTI ma da non reintrodurre:
-  /assistenza NON è un URL valido di cancellazione account, e la mappa dei dati valida
-  è docs/submission/A2, non la §3 di quel file.
+• Al revisore va SOLO test.inf.genitore1@kidville.test. MAI test.segreteria/test.pri.
+  segreteria/test.cuoca: leggono l'anagrafica REALE della sede, famiglie e bambini veri.
+• La password degli account TEST non va scritta in nessun file del repo: lock
+  `__tests__/architecture/niente-password-nel-repo.test.ts`.
+• NON lanciare `npm run e2e`/`npm run e2e:seed` in locale: `.env.local` punta al DB
+  di PRODUZIONE.
+• Lanciare SEMPRE `npx tsc --noEmit` prima del push: la CI lo fa sui `__tests__`,
+  build e vitest locali non lo colgono.
+• PostgREST non lancia: ritorna `{ error }`. Un try/catch attorno a `supabase.from(…)`
+  non scatta mai.
 
 ═══════════════════════════════════════════════════════════════════
 COME LAVORARE
 ═══════════════════════════════════════════════════════════════════
-Branch secondario, mai main. PRD aggiornato nello stesso lavoro. Logging obbligatorio
-(withRoute su ogni route, niente console.* in src/, catch che loggano, redazione a lista
-bianca). Validazione zod. Migrazioni con lo strumento MCP apply_migration + get_advisors
-a 0 ERROR. i18n su ENTRAMBE le lingue. TDD.
+Il branch è già aperto (fix/gdpr-oblio-parent-id-space) — NON crearne uno nuovo per
+continuare C3/screenshot, resta lì. PRD aggiornato nello stesso lavoro (stessa voce di
+changelog 2026-07-27/28, aggiungi in coda). Logging obbligatorio dove applicabile
+(screenshot/grafica non toccano src/, quindi probabilmente non serve). Validazione zod
+se scrivi codice. Migrazioni con lo strumento MCP apply_migration + get_advisors a 0
+ERROR — non dovrebbero servirne per quello che resta. TDD se scrivi codice applicativo
+(gli screenshot/Maestro non sono codice applicativo, ma se tocchi flow esistenti
+verificali).
 
-Gate prima di dire "fatto": eslint --max-warnings 0 · tsc --noEmit · vitest run · build.
+Gate prima di dire "fatto" (solo se hai toccato src/): eslint --max-warnings 0 ·
+tsc --noEmit · vitest run · build. NON lanciare npm run e2e in locale.
 
-Non committare e non pushare senza che te lo chieda l'utente.
-Se una specifica di questi documenti si rivela sbagliata o impossibile, FERMATI e dillo
-invece di aggirarla.
+Prima di push/merge/deploy, chiedi conferma esplicita: l'ultima sessione si è fermata
+apposta prima di quel passo.
+
+Se una specifica di questi documenti si rivela sbagliata o impossibile, FERMATI e
+dillo invece di aggirarla.
 
 Comincia dicendomi da dove riparti e perché.
 ```

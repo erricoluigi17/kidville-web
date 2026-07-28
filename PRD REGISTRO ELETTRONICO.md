@@ -68,6 +68,85 @@
 
 ---
 
+## 🗓️ Changelog — Informativa privacy riscritta sull'art. 13 · App Privacy labels pubblicate · incidente chiave di servizio chiuso 2026-07-28 (branch `feat/screenshot-play-store`)
+
+Sessione di lavoro sulle console (Supabase, GitHub, Apple) più il lavoro sul repo che ne è
+disceso. Tre cose meritano di stare in cima.
+
+**1. L'informativa privacy era incompleta, e su un punto diceva il falso.** Un confronto puntuale
+di `/privacy` con l'art. 13 GDPR, le linee guida trasparenza **WP260**, la sentenza **CGUE
+C-154/21** e la *User Data policy* di Google Play ha trovato **nove lacune**. La più seria non era
+un'omissione: la pagina affermava che *«i dati sono trattati all'interno dello Spazio Economico
+Europeo»* e che i trasferimenti erano «eventuali». È vero per la banca dati — la region Supabase è
+`eu-west-1`, Irlanda, verificata in dashboard — ma **Google LLC** (notifiche push) e **Resend**
+sono soggetti statunitensi: il trasferimento è strutturale, non eventuale. Un'informativa
+*inesatta* è un problema diverso, e peggiore, di una incompleta.
+
+Riscritta di conseguenza (`src/app/privacy/page.tsx`, `VERSIONE_PRIVACY` → `2026-07-28`):
+
+| Rif. | Cosa mancava | Ora |
+|---|---|---|
+| 13(1)(a) | ragione sociale **abbreviata** in `Soc. Coop.` | per esteso: `SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA` + REA. Google pretende che l'entità della scheda store **compaia** nell'informativa: era una discrepanza banale da contestare, e stessa correzione in `/termini` |
+| 13(1)(c) | base giuridica dei dati sanitari solo come «consenso» | condizione **art. 9(2)(a)** esplicitata, con l'interesse vitale (lett. c) per le emergenze |
+| 13(1)(e) | destinatari solo per categoria | **nominati**: Supabase, Vercel, Google/FCM, Resend, Aruba/SDI. WP260 vuole i nomi quando identificarli è possibile; le categorie si ammettono solo quando è *impossibile* (C-154/21) |
+| 13(1)(f) | «dati nello SEE», trasferimenti «eventuali» | sezione veritiera: banca dati in Irlanda, fornitori USA dichiarati, garanzie del Capo V (adeguatezza / clausole tipo) |
+| 13(2)(a) | nessun tempo di conservazione | **numeri**: log 30 giorni, cache sul dispositivo 7 giorni, contabili **10 anni** (art. 2220 c.c.) |
+| 13(2)(e) | **assente** | nuova sezione «Natura del conferimento»: cosa è obbligatorio, cosa facoltativo, conseguenze del rifiuto |
+| 13(2)(f) | **assente** | nuova sezione: nessuna decisione automatizzata né profilazione (art. 22) |
+| Play | nessuna sezione sulla sicurezza | nuova sezione «Misure di sicurezza» (art. 32) |
+| Play | nessun ancoraggio | `id="cancellazione"` + `scroll-mt`, con entrambe le vie (in-app e pagina pubblica) |
+
+🔴 **Il testo NON è validato dal legale.** Restano da confermare a un professionista: la
+condizione dell'art. 9(2) scelta per i dati sanitari, **se la Scuola debba nominare un RPD/DPO**
+(le fonti trattano gli istituti scolastici, anche paritari, come organismi di diritto pubblico ai
+fini dell'art. 37 — per questo la sezione DPO **non è stata scritta**: non si dichiara ciò che non
+si sa), e i tempi di conservazione qui fissati. Il Passo 5 del DSA resta bloccato da questo.
+
+**2. App Privacy labels pubblicate su App Store Connect**, e il manifest allineato. Erano
+**mai state compilate**, e anche l'URL dell'informativa era **vuoto**. Pubblicate **20 tipologie**
+— Health, Sensitive Info e Product Interaction incluse, per decisione del titolare — tutte con
+*Tracking = No*, unico scopo *App Functionality*, e *Linked to You = Yes* su tutte, diagnostica
+compresa. `ios/App/App/PrivacyInfo.xcprivacy` passa da 8 a **20** voci: **parità raggiunta**, che
+è la verifica che conta. ⚠️ Il manifest viaggia dentro l'`.ipa`: perché Apple lo veda serve una
+**build nuova**. Nella stessa sessione: età **4+** in 172 paesi confermata, e chiusa la domanda
+nuova *«Social media disabilitati per minori di 13 anni»* (scadenza **7 settembre 2026**) con
+**No** — rispondere Sì avrebbe significato dichiarare di aver implementato l'**API Declared Age
+Range**, che non usiamo.
+
+**3. L'incidente della chiave di servizio è chiuso.** Verificato in dashboard: *«No secret API
+keys found»*, nessuna chiave `secret` attiva. Resta viva la **`service_role` legacy** (JWT), che è
+la credenziale su cui gira oggi la produzione — ⚠️ **non premere «Disable legacy API keys»**:
+`SUPABASE_SERVICE_ROLE_KEY` la contiene, e disabilitarla spegnerebbe tutte le route admin. La
+legacy **non è mai finita nel repo**: decodificati tutti i JWT dei 553 commit, sono `"role":"anon"`.
+
+Altro, in breve:
+
+- **Android**: il `domain-config` cleartext verso `10.0.2.2`/`localhost`/`127.0.0.1` è stato
+  spostato da `src/main/res/xml/` a **`src/debug/res/xml/`**. Erano indirizzi irraggiungibili da un
+  telefono vero, quindi innocui nei fatti — ma è la riga che uno scanner automatico segnala, e la
+  dichiarazione «tutti i dati cifrati in transito» del modulo Sicurezza dei dati ora regge anche a
+  un'analisi statica dell'AAB. ⚠️ **L'AAB va ricompilato** (`versionCode 1` non è ancora bruciato).
+- **`docs/store-submission.md`**: chiusa l'ambiguità sulle righe finanziarie. Vale A2, e il repo
+  ora dichiara tutte e tre — `PaymentInfo`, `OtherFinancialInfo`, `PurchaseHistory`.
+- **`docs/submission/assets/README.md`**: diceva ancora «8 screenshot non prodotti». Sul disco ce
+  ne sono **5**, verificati 1080×1920 RGB senza alpha.
+- **GitHub**: repo di nuovo **pubblico** per scelta del titolare, dopo aver verificato che nella
+  storia non resta nessun segreto vivo. Ripristinate le protezioni che il piano Free non concedeva
+  ai repo privati: **Required reviewers** su `production` (il gate che mancava a `migrate.yml` sul
+  DB di produzione) e branch protection su `main` con `approvals: 1` + `enforce_admins`.
+  ⚠️ Con un solo sviluppatore **nessuna PR è mergiabile** senza abbassare temporaneamente il
+  conteggio delle approvazioni.
+- **Ticket Apple** per la conversione Individual → Organization **inviato**: pratica
+  **`20000121958970`**.
+
+🔴 **Bloccante nuovo, da correggere a mano prima dell'invio**: il campo *Password* dell'account
+demo su App Store Connect contiene un valore **diverso** da quello dedicato al revisore
+(confrontato per hash, senza mai leggerlo), e la password comune dei 41 account TEST è stata
+ruotata il 2026-07-26. Se l'app partisse così, il revisore **non riuscirebbe ad accedere** — il
+motivo di rigetto più comune in assoluto.
+
+---
+
 ## 🗓️ Changelog — L'account del revisore non funzionava · 5 screenshot Play catturati 2026-07-28 (branch `feat/screenshot-play-store`)
 
 **Il difetto più grave non era negli screenshot.** `test.inf.genitore1@kidville.test` — l'account

@@ -11,7 +11,15 @@ import { VERSIONE_PRIVACY } from '@/lib/legal/versioni';
 // un interessato può esercitare i suoi diritti scrivendo da un indirizzo
 // qualunque (una PEC rifiuterebbe la posta ordinaria e la richiesta rimbalzerebbe).
 //
-// RESTA DA FARE prima della submission: la validazione legale del testo.
+// La ragione sociale è scritta PER ESTESO e non abbreviata: la User Data policy di
+// Google Play pretende che «l'entità nominata nella scheda dello store compaia
+// nell'informativa», e la scheda porta il nome come risulta da visura. Un
+// «Soc. Coop.» qui e un nome completo là è una discrepanza che si paga in review.
+//
+// RESTA DA FARE prima della submission: la validazione legale del testo (dossier A3).
+// In particolare vanno confermati da un professionista: la condizione dell'art. 9(2)
+// scelta per i dati sanitari, l'obbligo o meno di nominare un RPD/DPO, e i tempi di
+// conservazione qui dichiarati.
 export const metadata: Metadata = {
   title: 'Informativa sulla privacy — Kidville',
   description:
@@ -46,11 +54,14 @@ export default function PrivacyPage() {
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Il Titolare del trattamento è{' '}
-              <strong>Scuola dell&rsquo;Infanzia La Favola Soc. Coop.</strong>, P.IVA{' '}
-              <strong>03394870616</strong>, con sede in{' '}
-              <strong>Via Silvio Pellico 7, 81030 Cesa (CE)</strong>. Per ogni richiesta relativa
-              al trattamento dei dati è possibile scrivere a{' '}
-              <strong>info@kidville.it</strong>.
+              <strong>SCUOLA DELL&rsquo;INFANZIA LA FAVOLA SOCIETA&rsquo; COOPERATIVA</strong>{' '}
+              (di seguito anche &laquo;la Scuola&raquo;), P.IVA e codice fiscale{' '}
+              <strong>03394870616</strong>, iscritta al Registro delle Imprese al n. REA{' '}
+              <strong>CE 240763</strong>, con sede legale in{' '}
+              <strong>Via Silvio Pellico 7, 81030 Cesa (CE), Italia</strong>. La Scuola è
+              l&rsquo;ente che eroga il servizio educativo e che pubblica l&rsquo;applicazione
+              <strong> Kidville</strong>. Per ogni richiesta relativa al trattamento dei dati è
+              possibile scrivere a <strong>info@kidville.it</strong>.
             </p>
           </section>
 
@@ -64,23 +75,33 @@ export default function PrivacyPage() {
             </p>
             <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
               <li>
-                dati anagrafici del minore e dei genitori/tutori (nome, cognome, data di nascita,
-                recapiti, codice fiscale);
+                dati anagrafici del minore e dei genitori/tutori (nome, cognome, data e luogo di
+                nascita, indirizzo di residenza, recapiti telefonici ed email, codice fiscale,
+                estremi di un documento d&rsquo;identità);
               </li>
-              <li>presenze, assenze, entrate e uscite;</li>
+              <li>dati sulla frequenza: presenze, assenze, entrate e uscite, giustifiche;</li>
               <li>
-                comunicazioni scuola-famiglia e diario delle attività educative e didattiche;
-              </li>
-              <li>
-                eventuali <strong>dati sanitari o relativi ad allergie e intolleranze</strong>,
-                forniti dai genitori quando necessari per la cura e la sicurezza del minore;
+                comunicazioni scuola-famiglia, messaggi con le insegnanti e diario delle attività
+                educative e didattiche;
               </li>
               <li>
-                <strong>fotografie</strong> del minore, solo se espressamente autorizzate dai
-                genitori;
+                eventuali <strong>dati relativi alla salute</strong> — allergie e intolleranze
+                alimentari, certificati medici, indicazioni per la somministrazione dei pasti,
+                informazioni su bisogni educativi speciali — forniti dai genitori quando necessari
+                per la cura, la sicurezza e l&rsquo;inclusione del minore;
               </li>
               <li>
-                dati tecnici e log di accesso al servizio, per finalità di sicurezza e diagnosi.
+                <strong>fotografie e video</strong> del minore, solo se espressamente autorizzati
+                dai genitori;
+              </li>
+              <li>
+                dati amministrativi e contabili: rette dovute, pagamenti registrati, metodo di
+                pagamento e riferimento dell&rsquo;operazione, ticket mensa;
+              </li>
+              <li>
+                dati tecnici: identificativi dell&rsquo;account e del dispositivo (compreso il
+                token per le notifiche push), log di accesso e di utilizzo del servizio, dati
+                diagnostici sul funzionamento dell&rsquo;applicazione.
               </li>
             </ul>
           </section>
@@ -91,9 +112,20 @@ export default function PrivacyPage() {
             </h2>
             <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
               <li>gestione del servizio educativo e organizzazione delle attività;</li>
-              <li>comunicazioni tra scuola e famiglia;</li>
-              <li>adempimenti amministrativi, contabili e fiscali connessi al rapporto.</li>
+              <li>comunicazioni tra scuola e famiglia, incluse le notifiche sul dispositivo;</li>
+              <li>
+                tutela della salute e della sicurezza del minore durante la permanenza a scuola;
+              </li>
+              <li>adempimenti amministrativi, contabili e fiscali connessi al rapporto;</li>
+              <li>
+                sicurezza del servizio, diagnosi dei malfunzionamenti e assistenza agli utenti.
+              </li>
             </ul>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              I dati <strong>non</strong> sono utilizzati per pubblicità, marketing, profilazione o
+              analisi del comportamento. L&rsquo;applicazione non contiene inserzioni pubblicitarie
+              né strumenti di analisi statistica di terze parti.
+            </p>
           </section>
 
           <section className="mt-8 space-y-3">
@@ -102,18 +134,45 @@ export default function PrivacyPage() {
             </h2>
             <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
               <li>
-                <strong>esecuzione di un contratto</strong> o di misure precontrattuali, per
-                l&rsquo;erogazione del servizio educativo;
+                <strong>esecuzione di un contratto</strong> o di misure precontrattuali (art. 6,
+                par. 1, lett. b GDPR), per l&rsquo;erogazione del servizio educativo;
               </li>
               <li>
-                <strong>obbligo legale</strong>, per gli adempimenti amministrativi, contabili e
-                fiscali;
+                <strong>obbligo legale</strong> (art. 6, par. 1, lett. c GDPR), per gli adempimenti
+                amministrativi, contabili e fiscali;
               </li>
               <li>
-                <strong>consenso</strong>, per il trattamento delle fotografie e dei dati
-                particolari (ad esempio dati sanitari/allergie), revocabile in qualsiasi momento.
+                <strong>consenso</strong> (art. 6, par. 1, lett. a GDPR) per la pubblicazione di
+                fotografie e video del minore nella galleria di classe, revocabile in qualsiasi
+                momento;
+              </li>
+              <li>
+                per i <strong>dati relativi alla salute</strong>, che rientrano fra le categorie
+                particolari di dati, il <strong>consenso esplicito</strong> dei genitori o degli
+                esercenti la responsabilità genitoriale (art. 9, par. 2, lett. a GDPR); nelle
+                situazioni di emergenza il trattamento può fondarsi sulla tutela di un interesse
+                vitale del minore (art. 9, par. 2, lett. c GDPR).
               </li>
             </ul>
+          </section>
+
+          <section className="mt-8 space-y-3">
+            <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
+              Natura del conferimento
+            </h2>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Il conferimento dei dati anagrafici, di quelli sulla frequenza e di quelli
+              amministrativi è <strong>necessario</strong>: senza di essi la Scuola non può
+              iscrivere il minore né erogare il servizio, e l&rsquo;accesso
+              all&rsquo;applicazione non può essere attivato.
+            </p>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              È invece <strong>facoltativo</strong> il conferimento delle fotografie e dei video,
+              così come dei dati sanitari non indispensabili: il rifiuto non pregiudica
+              l&rsquo;iscrizione, ma impedisce alla Scuola di erogare le prestazioni che li
+              richiedono — per esempio la predisposizione di un pasto alternativo in caso di
+              allergia non comunicata, o la pubblicazione di immagini nella galleria della sezione.
+            </p>
           </section>
 
           <section className="mt-8 space-y-3">
@@ -121,10 +180,59 @@ export default function PrivacyPage() {
               Destinatari dei dati
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
-              I dati sono accessibili al solo personale autorizzato e opportunamente istruito.
-              Possono essere trattati da fornitori tecnici che agiscono come responsabili del
-              trattamento, quali servizi di hosting e infrastruttura, invio di email e notifiche.
-              I dati non sono ceduti a terzi per finalità commerciali.
+              I dati sono accessibili al solo personale autorizzato e opportunamente istruito, nei
+              limiti delle mansioni di ciascuno. Per far funzionare il servizio la Scuola si avvale
+              di fornitori tecnici che agiscono come <strong>responsabili del trattamento</strong>{' '}
+              ai sensi dell&rsquo;art. 28 GDPR, nominati con apposito accordo:
+            </p>
+            <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
+              <li>
+                <strong>Supabase</strong> — banca dati e autenticazione degli account. I dati sono
+                ospitati su infrastruttura situata in <strong>Irlanda</strong>.
+              </li>
+              <li>
+                <strong>Vercel</strong> — pubblicazione ed esecuzione dell&rsquo;applicazione web.
+              </li>
+              <li>
+                <strong>Google</strong> (servizio Firebase Cloud Messaging) — recapito delle
+                notifiche push sul dispositivo.
+              </li>
+              <li>
+                <strong>Resend</strong> — invio dei messaggi di posta elettronica di servizio
+                (credenziali, avvisi, comunicazioni).
+              </li>
+              <li>
+                <strong>Aruba</strong> — trasmissione dei documenti fiscali al Sistema di
+                Interscambio dell&rsquo;Agenzia delle Entrate, quando dovuta.
+              </li>
+            </ul>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              I dati possono inoltre essere comunicati alle autorità e agli enti pubblici cui la
+              Scuola è tenuta a trasmetterli per obbligo di legge. I dati{' '}
+              <strong>non sono ceduti o venduti a terzi</strong> per finalità commerciali, e non
+              sono condivisi con intermediari pubblicitari o data broker.
+            </p>
+          </section>
+
+          <section className="mt-8 space-y-3">
+            <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
+              Luogo del trattamento e trasferimenti
+            </h2>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              La banca dati del servizio è ospitata all&rsquo;interno dello{' '}
+              <strong>Spazio Economico Europeo</strong>, su infrastruttura situata in Irlanda.
+            </p>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Alcuni dei fornitori indicati sopra — in particolare quelli che curano il recapito
+              delle notifiche push e dei messaggi di posta elettronica — sono società stabilite
+              negli <strong>Stati Uniti d&rsquo;America</strong> o appartenenti a gruppi
+              statunitensi. Nei limiti in cui ciò comporta un trasferimento di dati personali verso
+              un Paese terzo, il trasferimento avviene sulla base delle garanzie previste dal Capo V
+              del GDPR: <strong>decisione di adeguatezza</strong> della Commissione europea relativa
+              al quadro UE-USA per la protezione dei dati, ove il fornitore vi abbia aderito,
+              oppure <strong>clausole contrattuali tipo</strong> adottate dalla Commissione europea.
+              Copia delle garanzie adottate può essere richiesta scrivendo a{' '}
+              <strong>info@kidville.it</strong>.
             </p>
           </section>
 
@@ -133,11 +241,53 @@ export default function PrivacyPage() {
               Conservazione dei dati
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
-              I dati sono conservati per la durata del rapporto e, successivamente, per il tempo
-              necessario ad adempiere agli obblighi di legge (ad esempio quelli amministrativi e
-              fiscali). I log tecnici sono conservati per un periodo limitato, funzionale alla
-              sicurezza e alla diagnosi. Al termine dei periodi previsti i dati sono cancellati o
-              anonimizzati.
+              I dati sono conservati per il tempo strettamente necessario alle finalità per cui sono
+              stati raccolti, secondo i criteri seguenti:
+            </p>
+            <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
+              <li>
+                <strong>dati anagrafici, didattici e sulla frequenza</strong>: per tutta la durata
+                del rapporto con la famiglia e, successivamente, per il tempo imposto dagli obblighi
+                di conservazione documentale della Scuola;
+              </li>
+              <li>
+                <strong>documenti contabili e fiscali</strong>: <strong>dieci anni</strong>, come
+                previsto dall&rsquo;art. 2220 del Codice civile e dalla normativa tributaria;
+              </li>
+              <li>
+                <strong>log tecnici di accesso e di utilizzo</strong>: <strong>30 giorni</strong>,
+                dopodiché sono cancellati automaticamente;
+              </li>
+              <li>
+                <strong>copia locale dei dati sul dispositivo</strong> (funzionamento senza
+                connessione): <strong>sette giorni</strong>, e comunque fino all&rsquo;uscita
+                dall&rsquo;account;
+              </li>
+              <li>
+                <strong>dati particolari</strong>, come quelli sulla salute: fino alla revoca del
+                consenso o al venir meno della necessità che ne ha giustificato la raccolta.
+              </li>
+            </ul>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Al termine dei periodi indicati i dati sono cancellati oppure resi anonimi in modo
+              irreversibile.
+            </p>
+          </section>
+
+          <section className="mt-8 space-y-3">
+            <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
+              Misure di sicurezza
+            </h2>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              La Scuola adotta misure tecniche e organizzative adeguate a proteggere i dati (art. 32
+              GDPR). In particolare: le comunicazioni tra l&rsquo;applicazione e i server sono
+              <strong> cifrate in transito</strong>; l&rsquo;accesso richiede credenziali personali
+              ed è <strong>limitato per ruolo</strong>, così che ciascuno veda soltanto i dati di
+              propria competenza; l&rsquo;accesso alla banca dati è regolato da politiche di
+              sicurezza applicate a livello di singola riga; gli accessi e le operazioni sono
+              <strong> registrati</strong> per finalità di sicurezza; i dati personali sono{' '}
+              <strong>oscurati nei registri tecnici</strong>, che non contengono nomi, recapiti,
+              contenuti dei messaggi né informazioni sulla salute.
             </p>
           </section>
 
@@ -194,6 +344,18 @@ export default function PrivacyPage() {
 
           <section className="mt-8 space-y-3">
             <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
+              Decisioni automatizzate
+            </h2>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Il servizio <strong>non adotta processi decisionali automatizzati</strong>, compresa
+              la profilazione, che producano effetti giuridici o incidano in modo analogamente
+              significativo sugli interessati (art. 22 GDPR). Le valutazioni educative e le
+              decisioni amministrative sono sempre assunte da persone.
+            </p>
+          </section>
+
+          <section className="mt-8 space-y-3">
+            <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
               Diritti dell&rsquo;interessato
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
@@ -208,24 +370,51 @@ export default function PrivacyPage() {
               </li>
               <li>limitazione e opposizione al trattamento;</li>
               <li>portabilità dei dati;</li>
-              <li>reclamo all&rsquo;Autorità Garante per la protezione dei dati personali.</li>
+              <li>
+                <strong>revoca del consenso</strong> in qualsiasi momento, senza che ciò pregiudichi
+                la liceità del trattamento effettuato prima della revoca;
+              </li>
+              <li>
+                reclamo al <strong>Garante per la protezione dei dati personali</strong>{' '}
+                (www.garanteprivacy.it).
+              </li>
             </ul>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
-              La <strong>cancellazione dell&rsquo;account</strong> può essere avviata direttamente
-              dall&rsquo;app, nella sezione <strong>&laquo;Profilo e deleghe&raquo;</strong>. Per
-              le altre richieste è possibile scrivere a <strong>info@kidville.it</strong>.
+              Le richieste si inviano a <strong>info@kidville.it</strong> e ricevono riscontro entro
+              i termini di legge.
             </p>
           </section>
 
-          <section className="mt-8 space-y-3">
+          <section id="cancellazione" className="mt-8 scroll-mt-6 space-y-3">
             <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
-              Luogo del trattamento e trasferimenti
+              Cancellazione dell&rsquo;account e dei dati
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
-              I dati sono trattati all&rsquo;interno dello Spazio Economico Europeo. Eventuali
-              trasferimenti verso Paesi terzi avvengono solo in presenza di adeguate garanzie
-              previste dal GDPR (ad esempio decisioni di adeguatezza o clausole contrattuali
-              standard).
+              La <strong>cancellazione dell&rsquo;account</strong> può essere richiesta in due modi:
+            </p>
+            <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
+              <li>
+                dall&rsquo;interno dell&rsquo;app, nella sezione{' '}
+                <strong>&laquo;Profilo e deleghe&raquo;</strong>;
+              </li>
+              <li>
+                dalla{' '}
+                <Link
+                  href="/cancellazione-account"
+                  className="font-semibold text-kidville-green underline"
+                >
+                  pagina pubblica di cancellazione
+                </Link>
+                , utilizzabile <strong>anche senza accedere all&rsquo;app</strong> e anche dopo
+                averla disinstallata.
+              </li>
+            </ul>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              La richiesta viene registrata ed evasa dalla Direzione. Vengono cancellati o resi
+              anonimi i dati dell&rsquo;account e i contenuti a esso collegati. Restano conservati,
+              per il tempo imposto dalla legge, i soli documenti che la Scuola è obbligata a
+              custodire — in particolare quelli <strong>contabili e fiscali</strong>, per i dieci
+              anni previsti dall&rsquo;art. 2220 del Codice civile.
             </p>
           </section>
 
@@ -237,17 +426,6 @@ export default function PrivacyPage() {
               Per ogni informazione relativa alla presente informativa e al trattamento dei dati è
               possibile contattare il Titolare all&rsquo;indirizzo{' '}
               <strong>info@kidville.it</strong> oppure rivolgersi alla Segreteria.
-            </p>
-            {/* Google Play pretende che l'URL di cancellazione sia raggiungibile
-                ANCHE da chi non ha (più) l'app installata: il modulo Data safety
-                chiede un link pubblico, e l'informativa è la pagina pubblica che
-                il revisore apre per prima. */}
-            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
-              Per chiedere la cancellazione dell&rsquo;account e dei dati associati è disponibile la{' '}
-              <Link href="/cancellazione-account" className="font-semibold text-kidville-green underline">
-                pagina dedicata
-              </Link>
-              , utilizzabile anche senza accedere all&rsquo;app.
             </p>
           </section>
 

@@ -290,6 +290,15 @@ di conto). Se in `PrivacyInfo.xcprivacy` l'altro passaggio dichiara
 `NSPrivacyCollectedDataTypePaymentInfo`, le due dichiarazioni vanno riconciliate su una
 sola lettura.
 
+> ✅ **RICONCILIATO (2026-07-28).** La lettura buona è quella di **A2**, e il repo ora la
+> segue senza ambiguità: `ios/App/App/PrivacyInfo.xcprivacy` dichiara **tutte e tre** le
+> righe — `PaymentInfo` (la *forma* del pagamento: contanti, bonifico, POS, assegno),
+> `OtherFinancialInfo` (il debito: importi, scadenze, morosità, sconti, pro-rata) e
+> `PurchaseHistory` (lo storico di quanto è stato pagato) — e le stesse tre sono state
+> pubblicate nell'etichetta App Privacy su App Store Connect il 2026-07-28.
+> Il capoverso qui sopra («**non** *Informazioni di pagamento*») **è superato**: resta come
+> traccia del ragionamento, non va più applicato.
+
 ### Dati che l'app NON raccoglie (da lasciare deselezionati)
 
 - **Posizione** — nessun uso di geolocalizzazione, nessuna `NSLocation*UsageDescription`

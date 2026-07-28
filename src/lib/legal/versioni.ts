@@ -10,7 +10,7 @@
 // spedire una versione arbitraria, svuotando il valore probatorio del consenso.
 
 /** Versione corrente dei Termini di servizio. */
-export const VERSIONE_TERMINI = '2026-07-27'
+export const VERSIONE_TERMINI = '2026-07-28'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-07-27'
+export const VERSIONE_PRIVACY = '2026-07-28'

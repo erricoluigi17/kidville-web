@@ -143,8 +143,9 @@ export default function TerminiPage() {
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Per informazioni sui presenti termini è possibile contattare{' '}
-              <strong>Scuola dell&rsquo;Infanzia La Favola Soc. Coop.</strong>, Via Silvio Pellico
-              7, 81030 Cesa (CE), P.IVA 03394870616, all&rsquo;indirizzo{' '}
+              <strong>SCUOLA DELL&rsquo;INFANZIA LA FAVOLA SOCIETA&rsquo; COOPERATIVA</strong>,
+              con sede legale in Via Silvio Pellico 7, 81030 Cesa (CE), P.IVA e codice fiscale
+              03394870616, REA CE 240763, all&rsquo;indirizzo{' '}
               <strong>info@kidville.it</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>

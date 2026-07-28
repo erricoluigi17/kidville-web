@@ -68,6 +68,39 @@
 
 ---
 
+## 🗓️ Changelog — L'account del revisore non funzionava · 5 screenshot Play catturati 2026-07-28 (branch `feat/screenshot-play-store`)
+
+**Il difetto più grave non era negli screenshot.** `test.inf.genitore1@kidville.test` — l'account
+che questo PRD, `docs/store-submission.md` e le note di review indicano di consegnare ai revisori
+Apple e Google — **esisteva in `auth.users` ma non in `utenti`**: si autenticava e restava senza
+identità applicativa (`ensureParentIdentity` è invocata solo dalle route admin, mai al login).
+E, difetto indipendente, **nessuno dei 10 alunni della sezione TEST Infanzia era collegato ad
+alcun genitore**: ogni account genitore Infanzia vedeva un'app **vuota**. Un revisore avrebbe
+fatto login e trovato il nulla.
+
+Corretto con `scripts/seed-screenshot-play.mjs`: riga `utenti` creata, 10 alunni collegati,
+consensi GDPR e onboarding impostati (senza, il genitore finisce sul flusso di onboarding invece
+che sulla home, e il gate Termini di C5 blocca la chat). L'account demo ha ora una **password
+dedicata**, fuori dal repository, così ruotarla dopo la review non romperà gli altri 40.
+
+**Screenshot Play** — 5 catturati a **1080×1920** esatti (avvisi, diario, presenze, mensa,
+pagamenti), su AVD `KV-play-phone`. Play ne chiede minimo 2 per pubblicare e 4 a ≥1080 px in 9:16
+per l'idoneità alle promozioni: la soglia è superata. Mancano modulistica, news e profilo.
+
+**Lezioni pagate, tutte nuove.**
+- Gli AVD vanno **clonati** da uno funzionante: `avdmanager create` lascia `avd.id = <build>` e
+  `disk.dataPartition.path = <temp>` non sostituiti e l'emulatore si chiude durante il boot.
+- **La bottom nav non è raggiungibile per testo**: le sue etichette non compaiono nell'albero di
+  accessibilità. `tapOn: "MENU"` fallisce; `tapOn: "Avvisi"` non naviga ma l'asserzione successiva
+  passa lo stesso (il testo atteso esiste più in basso nella pagina corrente) → **si cattura la
+  schermata sbagliata senza accorgersene**. Si apre il foglio con un tap a coordinate.
+- Maestro fa **full-match**: `visible: "Ecco le novità di oggi"` non trova il nodo
+  «Ecco le novità di oggi 🌈». Tutti i marcatori vanno avvolti in `.*…*`.
+- Il foglio MENU va aperto **dalla home**: aprirlo da una pagina interna fallisce.
+- `mensa_menu_rotazione.settimana` è l'indice di **rotazione** 1..N, non la settimana dell'anno.
+- `presenze.giustificata` è NOT NULL: va valorizzata anche sulle presenze.
+- Il menù mensa è per **scuola**: pubblicato per la foto e **rimosso subito dopo** (24 righe).
+
 ## 🗓️ Changelog — Chiave di servizio di produzione in chiaro nel repository: quattro script rimossi 2026-07-28 (branch `fix/gdpr-oblio-parent-id-space`)
 
 Scoperto mentre si verificavano i presupposti per gli screenshot Play. **Quattro** script committati

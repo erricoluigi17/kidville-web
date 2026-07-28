@@ -1,0 +1,250 @@
+# =============================================================================
+# Kidville · ANDROID — cattura degli screenshot per la scheda Google Play (C3)
+#
+# NON è uno smoke-test: è un flow di CATTURA. Fallisce apposta se una schermata
+# non ha finito di caricare, perché una cattura con «Caricamento…» impressa
+# dentro è peggio di nessuna cattura.
+#
+# Prerequisiti
+#   - AVD `KV-play-phone` (1080×1920) oppure `KV-play-tablet` (1440×2560).
+#     La risoluzione NON è un dettaglio estetico: Play impone «lato max ≤ 2× lato
+#     min», quindi il classico 1080×2400 viene RIFIUTATO.
+#     ⚠️ Gli AVD vanno CLONATI da uno funzionante, non creati con `avdmanager`:
+#     la creazione lascia `avd.id = <build>` e `disk.dataPartition.path = <temp>`
+#     non sostituiti e l'emulatore si chiude durante il boot.
+#   - server sull'host, avviato con `npx next start` (build di PRODUZIONE): con
+#     `next dev` l'HMR-websocket non completa l'handshake via il bridge 10.0.2.2
+#     e la WebView non idrata.
+#   - APK buildato con CAP_SERVER_URL="http://10.0.2.2:<porta>" e installato.
+#   - dati di scena presenti: `node scripts/seed-screenshot-play.mjs --apply`
+#
+# Esecuzione
+#   export MAESTRO_KV_EMAIL_GENITORE=test.inf.genitore1@kidville.test
+#   export MAESTRO_KV_PASSWORD="$(cat ~/Documenti/kidville-play/.demo-revisore-pw)"
+#   export MAESTRO_KV_SHOT_DIR=$PWD/docs/submission/assets/playstore/screenshots/phone
+#   maestro test .claude/maestro-flows/android-screenshot-playstore.yaml
+#
+# Scelta delle schermate — non è estetica, è conformità.
+#   C4 §2 avverte che Google può riclassificare l'app sotto la Families Policy in
+#   base a «youthful animation or young characters in the graphic assets». Il set
+#   privilegia quindi le schermate GESTIONALI e lascia fuori Home, Chat e
+#   Armadietto (dove compare la mascotte). Fuori anche la Galleria: mostrerebbe
+#   volti di bambini su una scheda pubblica e indicizzata.
+#
+# ─── LE TRAPPOLE VERE, misurate su questo emulatore il 2026-07-28 ────────────
+#
+# 1. 🔴 LA BOTTOM NAV NON È RAGGIUNGIBILE PER TESTO. Le sue etichette (HOME,
+#    DIARIO, AVVISI, CHAT, MENU) sono renderizzate a schermo ma NON compaiono
+#    nell'albero di accessibilità che Maestro interroga: `tapOn: "MENU"` fallisce
+#    con «Element not found», e `tapOn: "Avvisi"` non naviga (l'asserzione
+#    successiva passa lo stesso, perché il testo atteso esiste più in basso nella
+#    pagina corrente → si cattura la schermata SBAGLIATA senza accorgersene).
+#    → Si apre il foglio MENU con un tap a COORDINATE e si naviga SEMPRE da lì.
+#    Le voci del foglio, invece, sono contenuto vero e si toccano per testo.
+#
+# 2. Le voci del foglio si toccano per SOTTOTITOLO, mai per label: `Diario`,
+#    `Avvisi` e `Chat` collidono con le etichette della bottom nav e con le
+#    scorciatoie della home («DIARIO DI OGGI»). I sottotitoli sono univoci.
+#
+# 3. `waitForAnimationToEnd` NON aspetta i dati. E non esiste un solo testo di
+#    caricamento: ne convivono sette, con ellissi tipografica `…` (U+2026) e tre
+#    punti ASCII mescolati. Una guardia scritta con l'ellissi sbagliata sembra
+#    funzionare e non protegge. → regex tollerante + attesa di un testo che
+#    esiste solo a dati caricati.
+#
+# 4. I deep link `kidville://` aprono un alert nativo che blocca la navigazione.
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — screenshot per Google Play
+tags:
+  - android
+  - store
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_GENITORE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+  SHOT: ${MAESTRO_KV_SHOT_DIR}
+---
+- launchApp:
+    clearState: true
+
+# ── Lingua ───────────────────────────────────────────────────────────────────
+# La lingua vive nel cookie KV_LOCALE, letto server-side; il default in assenza
+# di cookie è 'it'. `clearState` lo azzera, ma il tap rende il flow deterministico
+# anche su un dispositivo dove qualcuno ha scelto EN. L'etichetta "Italiano" è
+# identica in IT e in EN, quindi è idempotente.
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 90000
+- runFlow:
+    when:
+      visible: "Italiano"
+    commands:
+      - tapOn: "Italiano"
+      - extendedWaitUntil:
+          visible: "Accedi al tuo account Kidville"
+          timeout: 30000
+
+# ── Login ────────────────────────────────────────────────────────────────────
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+- tapOn: "Accedi"
+
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# Home caricata: il saluto compare solo dopo che il nome del figlio è stato
+# risolto dall'API, quindi è un marcatore di dati, non di rendering.
+- extendedWaitUntil:
+    visible: ".*Ecco le novità di oggi.*"
+    timeout: 90000
+
+# ── 1. AVVISI ────────────────────────────────────────────────────────────────
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible: "Circolari e adesioni"
+    timeout: 30000
+- tapOn: "Circolari e adesioni"
+- extendedWaitUntil:
+    visible: ".*Comunicazioni.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/01-avvisi
+
+# ── 2. DIARIO ────────────────────────────────────────────────────────────────
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible: "Routine e attività"
+    timeout: 30000
+- tapOn: "Routine e attività"
+- extendedWaitUntil:
+    visible: ".*Umore della giornata.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*Un attimo.*"
+- takeScreenshot: ${SHOT}/02-diario
+
+# ── 3. PRESENZE ──────────────────────────────────────────────────────────────
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible: "Assenze e giustifiche"
+    timeout: 30000
+- tapOn: "Assenze e giustifiche"
+- extendedWaitUntil:
+    visible: ".*Segnala assenza.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/03-presenze
+
+# ── 4. MENSA ─────────────────────────────────────────────────────────────────
+# `mensa_class_menu_assignment` è vuota: la scuola lavora in «menù unico» e il
+# server filtra `menu_config_id IS NULL`. Una riga di rotazione con
+# `menu_config_id` valorizzato viene esclusa IN SILENZIO e la pagina continua a
+# dire «menu non ancora pubblicato» — per questo qui si asserisce il contrario.
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible: "Menu e ticket pasto"
+    timeout: 30000
+- tapOn: "Menu e ticket pasto"
+- extendedWaitUntil:
+    visible: ".*Prenota pranzo.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/04-mensa
+
+# ── 5. PAGAMENTI ─────────────────────────────────────────────────────────────
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      text: "Rette e scadenze"
+    direction: DOWN
+    timeout: 30000
+- tapOn: "Rette e scadenze"
+- extendedWaitUntil:
+    visible: ".*Totale da saldare.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/05-pagamenti
+
+# ── 6. MODULISTICA ───────────────────────────────────────────────────────────
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      text: "Firme e certificati"
+    direction: DOWN
+    timeout: 30000
+- tapOn: "Firme e certificati"
+- extendedWaitUntil:
+    visible: ".*Modulistica.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/06-modulistica
+
+# ── 7. NEWS ──────────────────────────────────────────────────────────────────
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      text: "Novità e comunicati"
+    direction: DOWN
+    timeout: 30000
+- tapOn: "Novità e comunicati"
+- extendedWaitUntil:
+    visible: ".*News.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/07-news
+
+# ── 8. PROFILO ───────────────────────────────────────────────────────────────
+# Mostra anche la cancellazione dell'account: è la funzione che Google pretende
+# sia raggiungibile dall'app (C5), e vederla in scheda non fa male.
+- tapOn:
+    point: "87%,90%"
+- waitForAnimationToEnd:
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      text: "Account, privacy e cancellazione"
+    direction: DOWN
+    timeout: 30000
+- tapOn: "Account, privacy e cancellazione"
+- extendedWaitUntil:
+    visible: ".*Elimina account.*"
+    timeout: 60000
+- assertNotVisible:
+    text: ".*[Cc]aricamento.*"
+- takeScreenshot: ${SHOT}/08-profilo

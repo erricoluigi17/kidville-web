@@ -286,6 +286,37 @@ Si cattura sulla classe **TEST Infanzia** `219cab6a-2bf3-48d6-a443-b7aecda40f42`
 > retrodata `creato_il` di tre ore e riempie diario, presenze e menù. Non serve più preoccuparsi
 > della scadenza del 2026-08-09: lo script ripopola sempre «oggi».
 
+
+### 🔴 La trappola dei falsi positivi — pagata due volte il 2026-07-28
+
+Un marcatore debole **matcha la voce del foglio MENU appena toccata**: `.*[Nn]ews.*` trova «NEWS»
+nel foglio stesso, l'asserzione passa mentre il foglio è ancora aperto, e **si fotografa il menu
+invece della pagina**. Lo stesso vale per `.*[Mm]odul.*` e `.*[Pp]rofilo.*`.
+
+Stessa famiglia di errore, più insidiosa: `tapOn: "Avvisi"` non naviga (la bottom nav non è
+raggiungibile per testo), ma l'asserzione successiva su «Comunicazioni» **passa lo stesso**,
+perché quel testo esiste più in basso nella pagina corrente. Risultato: uno screenshot della
+schermata sbagliata, con il flow tutto verde.
+
+> **La guardia vera è pretendere che l'intestazione del foglio — `TUTTE LE SEZIONI`, che esiste
+> SOLO lì — sia SPARITA**, prima di scattare:
+> ```yaml
+> - extendedWaitUntil: { notVisible: ".*[Tt]utte le sezioni.*", timeout: 30000 }
+> ```
+> Vale la regola generale: **un'asserzione che può essere vera anche sulla schermata sbagliata
+> non è un'asserzione.** Va sempre accompagnata da una che è vera SOLO a destinazione.
+
+### Stato della cattura al 2026-07-28
+
+**5 screenshot su 8** catturati a 1080×1920 esatti, in
+`docs/submission/assets/playstore/screenshots/phone/`: avvisi, diario, presenze, mensa, pagamenti.
+Play ne chiede **minimo 2** per pubblicare e **4 a ≥1080 px in 9:16** per l'idoneità alle
+promozioni: **la soglia è superata**.
+
+Mancano modulistica, news e profilo. Le loro voci stanno in fondo al foglio MENU e lì il `tapOn`
+per testo **non naviga**: `scrollUntilVisible` le trova, il tap parte, il foglio resta aperto.
+Restano da fare anche i 4 screenshot per schermi grandi, con l'AVD `KV-play-tablet` (1440×2560).
+
 ### 🔴 Le 51 immagini in `e2e/collaudo-giornata/run/screenshots/` — MAI
 
 Sono le uniche immagini «di app» presenti sul filesystem e **sembrano pronte all'uso**.

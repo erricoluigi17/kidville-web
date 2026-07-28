@@ -226,23 +226,26 @@ rischio di riclassificazione Google (*"youthful animation or young characters"*)
 Il titolare ha scelto consapevolmente di **mantenere la mascotte** anche sulla scheda Play,
 accettando il rischio segnalato da C4 §2.
 
-**Icona 512×512** (`docs/submission/assets/play-icon-512.png`, 254 KB, PNG RGBA). Gli asset
-esistenti (`assets/icon-only.png`, `assets/logo.png`, `assets/icon-foreground.png`) si sono
-rivelati **inutilizzabili direttamente**: non sono ritagli puliti ma mockup con angoli
-arrotondati e ombra **dipinti nei pixel stessi** (non nel canale alpha — verificato: alpha
-opaco already a 4px dal bordo, l'arrotondamento è nel colore) — usarli avrebbe prodotto il
-doppio-arrotondamento/doppio-alone che [C2 §6](C2-build-aab.md) segnala per gli screenshot.
-Usato invece `public/mascot.png` (sfondo giallo pieno **#F3C744**, vicino al token Clay Village
-`#FDC400`, nessun arrotondamento/ombra: verificato pixel per pixel sui quattro angoli),
-ritagliato a quadrato dall'alto (792×792, busto+cilindro+cartellino "KIDVILLE") e ridimensionato
-a 512×512. Quadrato pieno, nessuna trasparenza reale (alpha=255 ovunque, canale presente per il
-formato richiesto).
+**Icona 512×512 e feature graphic — v1 (scartata) e v2 (attuale).** Prima versione: icona
+ritagliata da `public/mascot.png` (sfondo pieno, nessun mockup) + feature graphic disegnata da
+zero (pannello bicolore Clay Village). **Il titolare l'ha giudicata "bruttissima" a confronto
+con l'icona iOS** e ha chiesto esplicitamente di riusare la stessa immagine (2026-07-28).
 
-**Feature graphic 1024×500** (`docs/submission/assets/play-feature-graphic-1024x500.png`,
-166 KB, PNG RGB senza alpha). Disegnata da zero: pannello bicolore Clay Village, teal `#006A5F`
-a sinistra (~60%), mascotte (da `public/mascot.png`, scalata all'altezza piena) sul lato destro.
-Nessun testo/tagline (zero rischio sul limite del 20%), nessuna cornice di dispositivo, nessun
-marchio di terzi.
+**v2, attuale**: entrambi gli asset derivano ora da
+`ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png` — la stessa icona già in
+produzione su App Store. `play-icon-512.png` (307 KB, PNG RGBA) è quell'immagine ridimensionata
+1:1 a 512×512, nessun'altra modifica. `play-feature-graphic-1024x500.png` (271 KB, PNG RGB senza
+alpha) è la stessa immagine scalata a 500×500 e centrata su tela 1024×500, con padding laterale
+nel teal `(5,107,102)` campionato dalla banda inferiore dell'icona stessa (fusione praticamente
+invisibile, nessun bordo visibile fra icona e sfondo).
+
+⚠️ **Nota tecnica che resta valida, il titolare ne è consapevole**: quell'icona è un mockup con
+angoli arrotondati e ombra dipinti nei pixel (non nel canale alpha). Google Play applica la
+propria maschera/ombra sopra qualunque immagine caricata → risultato con **doppio bordo
+arrotondato** visibile. Stesso trattamento già in produzione su App Store (coerenza fra le due
+schede), ma non l'ideale per Play. Se in review risulta un problema, la correzione è tornare
+alla v1 (da `public/mascot.png`, piena tela) — recuperabile dalla history del branch. Dettagli
+in `docs/submission/assets/README.md`.
 
 **Resta**: 8 screenshot telefono 1080×1920 + 4 tablet — rimandati a un intervento successivo
 (richiedono emulatore Android, dati demo della classe TEST rinfrescati, flow Maestro).

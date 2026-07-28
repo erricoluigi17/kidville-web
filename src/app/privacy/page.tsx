@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { VERSIONE_PRIVACY } from '@/lib/legal/versioni';
 
 // Pagina PUBBLICA (nessun login): informativa GDPR. Serve anche come
 // "Privacy Policy URL" per gli store. È un server component statico: nessun
@@ -237,7 +238,25 @@ export default function PrivacyPage() {
               possibile contattare il Titolare all&rsquo;indirizzo{' '}
               <strong>info@kidville.it</strong> oppure rivolgersi alla Segreteria.
             </p>
+            {/* Google Play pretende che l'URL di cancellazione sia raggiungibile
+                ANCHE da chi non ha (più) l'app installata: il modulo Data safety
+                chiede un link pubblico, e l'informativa è la pagina pubblica che
+                il revisore apre per prima. */}
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Per chiedere la cancellazione dell&rsquo;account e dei dati associati è disponibile la{' '}
+              <Link href="/cancellazione-account" className="font-semibold text-kidville-green underline">
+                pagina dedicata
+              </Link>
+              , utilizzabile anche senza accedere all&rsquo;app.
+            </p>
           </section>
+
+          {/* Versione del testo: stessa costante usata dall'INSERT in
+              consensi_accettazioni, così il testo mostrato e quello registrato
+              come accettato non possono mai divergere nel tempo. */}
+          <p className="mt-8 border-t border-kidville-line pt-4 font-maven text-xs text-kidville-muted">
+            Versione: {VERSIONE_PRIVACY}
+          </p>
         </article>
       </div>
     </main>

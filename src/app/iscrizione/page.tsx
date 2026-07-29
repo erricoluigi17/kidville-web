@@ -10,13 +10,19 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 }
 
-// Link pubblico per-scuola: /iscrizione?scuola=<id>. Se assente, l'API risolve la
-// scuola reale del deployment (esclude la scuola di test E2E).
+// Il link da diffondere è UNO: `/iscrizione`, uguale per tutti i plessi — è il
+// genitore a scegliere la sede al primo passo del wizard.
+// `?scuola=<id>` resta una scorciatoia che salta quel passo (link "targato").
+//
+// `?scuola=` senza valore vale come ASSENTE: la stringa vuota è falsy ma non null,
+// e passata giù verrebbe scambiata per "sede già decisa" — il genitore sceglierebbe
+// il plesso e l'invio partirebbe comunque senza.
 export default async function IscrizionePage({
   searchParams,
 }: {
   searchParams: Promise<{ scuola?: string }>
 }) {
   const sp = await searchParams
-  return <EnrollmentWizard scuolaId={sp.scuola ?? null} />
+  const scuola = sp.scuola?.trim()
+  return <EnrollmentWizard scuolaId={scuola && scuola.length > 0 ? scuola : null} />
 }

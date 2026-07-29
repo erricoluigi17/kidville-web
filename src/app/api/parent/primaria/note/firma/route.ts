@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
@@ -59,14 +60,12 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
       .maybeSingle()
     if (!nota) return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 })
 
-    // Solo un genitore COLLEGATO all'alunno della nota può firmarne la presa visione.
-    const { data: legame } = await supabase
-      .from('legame_genitori_alunni')
-      .select('alunno_id')
-      .eq('genitore_id', userId)
-      .eq('alunno_id', nota.alunno_id)
-      .maybeSingle()
-    if (!legame) {
+    // Solo un genitore COLLEGATO all'alunno della nota può firmarne la presa
+    // visione. Unione runtime + anagrafica: col solo legame runtime la firma
+    // (che ha valore legale, CAD art. 20) era impossibile proprio a chi doveva
+    // apporla, e la nota restava per sempre "non presa in visione".
+    const collegato = await genitoreHasFiglio(supabase, userId, nota.alunno_id)
+    if (!collegato) {
       return NextResponse.json({ error: 'Accesso negato: alunno non collegato al genitore' }, { status: 403 })
     }
 

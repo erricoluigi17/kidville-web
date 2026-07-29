@@ -10,7 +10,12 @@ const h = vi.hoisted(() => ({
   toggles: {} as Record<string, boolean>,
   inserts: [] as Array<Record<string, unknown>>,
   deletes: [] as Array<Record<string, unknown>>,
-  legami: [{ genitore_id: 'p1' }, { genitore_id: 'p2' }] as Array<Record<string, unknown>>,
+  // `alunno_id` presente: la risoluzione dei genitori passa ora dall'unione
+  // runtime+anagrafica (`getGenitoriDiAlunni`), che mappa alunno → genitori.
+  legami: [
+    { alunno_id: 'a1', genitore_id: 'p1' },
+    { alunno_id: 'a1', genitore_id: 'p2' },
+  ] as Array<Record<string, unknown>>,
   alunniClasse: [{ id: 'a1' }, { id: 'a2' }] as Array<Record<string, unknown>>,
   thread: { teacher_id: 't1', parent_id: 'p1' } as Record<string, unknown> | null,
   utenti: [
@@ -89,7 +94,7 @@ describe('notificaEvento', () => {
     h.legami = []
     await notificaEvento(makeClient() as never, { tipo: 'avviso', scuolaId: 's1', alunnoIds: ['a1'], titolo: 'T' })
     expect(h.inserts).toHaveLength(0)
-    h.legami = [{ genitore_id: 'p1' }, { genitore_id: 'p2' }]
+    h.legami = [{ alunno_id: 'a1', genitore_id: 'p1' }, { alunno_id: 'a1', genitore_id: 'p2' }]
   })
 })
 

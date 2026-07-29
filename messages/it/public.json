@@ -43,5 +43,9 @@
   "wizardRiepilogo": "Riepilogo",
   "wizardRiepilogoConteggio": "Stai iscrivendo <n>{bambini}</n> {bambini, plural, one {bambino} other {bambini}} con <n>{adulti}</n> {adulti, plural, one {adulto} other {adulti}} di riferimento.",
   "wizardRiepilogoNota": "Premi <b>Invia richiesta</b> per trasmettere i dati alla segreteria. Riceverai conferma e credenziali di accesso dopo la verifica.",
-  "wizardRiepilogoSub": "Controlla e invia la richiesta"
+  "wizardRiepilogoSub": "Controlla e invia la richiesta",
+  "wizardSede": "Sede",
+  "wizardSedeErrore": "Scegli una sede per proseguire",
+  "wizardSedeLegenda": "Sede di iscrizione",
+  "wizardSedeSub": "Scegli il plesso a cui vuoi iscrivere tuo figlio"
 }

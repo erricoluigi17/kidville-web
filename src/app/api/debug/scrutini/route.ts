@@ -22,6 +22,9 @@ export const GET = withRoute('debug/scrutini:GET', async (request: NextRequest) 
     const result: Record<string, unknown> = {}
 
     // 1. Figli collegati al genitore
+    // ⚠️ GREZZA DI PROPOSITO (A6): route diagnostica. Deve mostrare il contenuto
+    // REALE di `legame_genitori_alunni`, non l'unione con `student_parents`:
+    // serve proprio a vedere quando le due sorgenti non coincidono.
     const { data: legami } = await supabase
       .from('legame_genitori_alunni')
       .select('alunno_id')
@@ -63,6 +66,8 @@ export const GET = withRoute('debug/scrutini:GET', async (request: NextRequest) 
     result.tuttiScrutini = tutti
 
     // 5. Cosa restituisce /api/parent/students (auto-resolve)
+    // ⚠️ GREZZA DI PROPOSITO (A6), come sopra: `/api/parent/students` usa ormai
+    // l'unione, e qui si vuole vedere la differenza fra le due — non nasconderla.
     const { data: studentsApi } = await supabase
       .from('legame_genitori_alunni')
       .select('alunno_id, alunni(id, nome, cognome, section_id, classe_sezione)')

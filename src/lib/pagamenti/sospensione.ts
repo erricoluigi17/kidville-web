@@ -18,7 +18,7 @@
  */
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
+import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { residuoEffettivo, statoEffettivo, type AgingPagamento } from '@/lib/pagamenti/aging'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { logEvento } from '@/lib/logging/logger'
@@ -164,27 +164,18 @@ export async function famigliaDiAlunno(
 
 // ── Reverse: da alunni → account genitori coinvolti (unione legami) ───────────
 
+/**
+ * Account genitore (`utenti.id`) coinvolti da un insieme di alunni.
+ *
+ * Era una COPIA locale dell'unione runtime+anagrafica: stessa semantica di
+ * `getGenitoriDiAlunni`, ma con una differenza che contava — scartava l'`error`
+ * di PostgREST (che non lancia), quindi una lettura fallita si presentava come
+ * «nessun genitore coinvolto» e la sospensione, o la sua revoca, non toccava
+ * nessuno in silenzio. Ora delega all'unica fonte, che quell'errore lo logga.
+ */
 export async function accountGenitoriDiAlunni(supabase: SupabaseClient, alunnoIds: string[]): Promise<string[]> {
-  const accounts = new Set<string>()
-  const { data: runtime } = await supabase
-    .from('legame_genitori_alunni')
-    .select('genitore_id')
-    .in('alunno_id', alunnoIds)
-  for (const r of runtime ?? []) if (r.genitore_id) accounts.add(r.genitore_id as string)
-
-  const { data: sp } = await supabase
-    .from('student_parents')
-    .select('parent_id')
-    .in('student_id', alunnoIds)
-  const parentIds = [...new Set((sp ?? []).map((r) => r.parent_id as string).filter(Boolean))]
-  if (parentIds.length > 0) {
-    const { data: parents } = await supabase
-      .from('parents')
-      .select('auth_user_id')
-      .in('id', parentIds)
-    for (const p of parents ?? []) if (p.auth_user_id) accounts.add(p.auth_user_id as string)
-  }
-  return [...accounts]
+  const perAlunno = await getGenitoriDiAlunni(supabase, alunnoIds)
+  return [...new Set([...perAlunno.values()].flat())]
 }
 
 /**

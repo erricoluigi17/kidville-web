@@ -1,0 +1,310 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+
+/**
+ * Passo 0 del wizard pubblico: la scelta della SEDE.
+ *
+ * Da tre plessi in su un link unico non basta più — ma il passo deve comparire
+ * SOLO quando serve. La non-regressione (una sola sede, oppure ?scuola= nel link
+ * → flusso identico a prima) è la parte più importante di questo file.
+ */
+
+vi.mock('framer-motion', async () => {
+  const React = await import('react')
+  const strip = (props: Record<string, unknown>) => {
+    const {
+      initial, animate, exit, variants, transition, custom,
+      whileHover, whileTap, layout, layoutId, ...rest
+    } = props
+    void initial; void animate; void exit; void variants; void transition
+    void custom; void whileHover; void whileTap; void layout; void layoutId
+    return rest
+  }
+  const motion = new Proxy(
+    {},
+    {
+      get: (_t, tag: string) =>
+        React.forwardRef(function M(
+          { children, ...props }: { children?: React.ReactNode },
+          ref: React.Ref<HTMLElement>,
+        ) {
+          return React.createElement(tag, { ...strip(props), ref }, children)
+        }),
+    },
+  )
+  return {
+    motion,
+    AnimatePresence: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+  }
+})
+
+import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
+
+const GIUGLIANO = { id: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529', nome: 'Kidville Giugliano' }
+const AVERSA = { id: '11111111-1111-4111-8111-111111111111', nome: 'Kidville Aversa' }
+const CESA = { id: '22222222-2222-4222-8222-222222222222', nome: 'Kidville Cesa' }
+
+const modelSchema = {
+  schema: {
+    version: '1',
+    pages: [
+      {
+        id: 'bambino',
+        title: 'Dati del bambino',
+        fields: [{ id: 'nome', type: 'text', label: 'Nome', required: true, placeholder: 'Nome bimbo' }],
+      },
+      {
+        id: 'adulto',
+        title: 'Adulto',
+        fields: [{ id: 'first_name', type: 'text', label: 'Nome adulto', required: true, placeholder: 'Nome adulto' }],
+      },
+    ],
+  },
+}
+
+const fetchMock = vi.fn()
+const postBodies: unknown[] = []
+
+/**
+ * `sedi`: elenco restituito da /api/iscrizione/sedi.
+ * `null` = la fetch va in eccezione (rete giù); `'http500'` = risposta non-ok.
+ */
+function mockFetch(sedi: { id: string; nome: string }[] | null | 'http500') {
+  fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    if (url.includes('/api/iscrizione/model')) {
+      return Promise.resolve({ ok: true, json: async () => modelSchema })
+    }
+    if (url.includes('/api/iscrizione/sedi')) {
+      if (sedi === null) return Promise.reject(new Error('rete giù'))
+      if (sedi === 'http500') {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ success: true, data: sedi }) })
+    }
+    if (url.includes('/api/iscrizione') && init?.method === 'POST') {
+      postBodies.push(JSON.parse(String(init.body)))
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'x' }) })
+    }
+    return Promise.resolve({ ok: true, json: async () => ({}) })
+  })
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  postBodies.length = 0
+  vi.stubGlobal('fetch', fetchMock)
+})
+
+describe('EnrollmentWizard — passo 0: scelta della sede', () => {
+  it('TRE sedi e nessun ?scuola= → il primo passo è la scelta della sede', async () => {
+    mockFetch([AVERSA, CESA, GIUGLIANO])
+    render(<EnrollmentWizard />)
+
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Kidville Aversa' })).toBeInTheDocument())
+    expect(screen.getByRole('radio', { name: 'Kidville Cesa' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Kidville Giugliano' })).toBeInTheDocument()
+    // Non è ancora sui dati del bambino.
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
+    // «Indietro» disabilitato = la sede è davvero il PRIMO passo, non uno interposto.
+    expect(screen.getByRole('button', { name: /indietro/i })).toBeDisabled()
+  })
+
+  it('"Avanti" senza aver scelto la sede → non avanza e lo dice', async () => {
+    mockFetch([AVERSA, CESA, GIUGLIANO])
+    render(<EnrollmentWizard />)
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Kidville Aversa' })).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+
+    expect(await screen.findByText('Scegli una sede per proseguire')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
+  })
+
+  it('sede scelta → si prosegue col bambino e il POST porta lo scuola_id scelto', async () => {
+    mockFetch([AVERSA, CESA, GIUGLIANO])
+    render(<EnrollmentWizard />)
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Kidville Cesa' })).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Kidville Cesa' }))
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+
+    // «Indietro» riporta alla sede e la scelta è conservata.
+    fireEvent.click(screen.getByRole('button', { name: /indietro/i }))
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: 'Kidville Cesa' })).toBeChecked(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByPlaceholderText('Nome bimbo'), { target: { value: 'Tino' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
+    await waitFor(() => expect(postBodies).toHaveLength(1))
+    expect((postBodies[0] as { scuola_id?: string }).scuola_id).toBe(CESA.id)
+  })
+
+  it('NON-REGRESSIONE — con ?scuola= nel link: nessun passo sede, si parte dal bambino', async () => {
+    mockFetch([AVERSA, CESA, GIUGLIANO])
+    render(<EnrollmentWizard scuolaId={AVERSA.id} />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByRole('radio', { name: 'Kidville Cesa' })).not.toBeInTheDocument()
+    // Il bambino è il PRIMO passo, come prima di questa modifica.
+    expect(screen.getByRole('button', { name: /indietro/i })).toBeDisabled()
+
+    fireEvent.change(screen.getByPlaceholderText('Nome bimbo'), { target: { value: 'Tino' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
+
+    await waitFor(() => expect(postBodies).toHaveLength(1))
+    expect((postBodies[0] as { scuola_id?: string }).scuola_id).toBe(AVERSA.id)
+  })
+
+  it('NON-REGRESSIONE — una sola sede reale: nessun passo sede, comportamento identico a oggi', async () => {
+    mockFetch([GIUGLIANO])
+    render(<EnrollmentWizard />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /indietro/i })).toBeDisabled()
+  })
+
+  it('NON-REGRESSIONE — elenco sedi vuoto (DB E2E della CI): nessun passo sede', async () => {
+    mockFetch([])
+    render(<EnrollmentWizard />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+  })
+
+  it('DEGRADO — se /api/iscrizione/sedi fallisce, il genitore non resta bloccato', async () => {
+    mockFetch(null)
+    render(<EnrollmentWizard />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+
+    // Il modulo resta compilabile e inviabile: sarà il 400 del server a parlare.
+    fireEvent.change(screen.getByPlaceholderText('Nome bimbo'), { target: { value: 'Tino' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
+  })
+
+  it('?scuola= VUOTO nel link → vale come assente: si sceglie la sede e il POST la porta', async () => {
+    // `/iscrizione?scuola=` produce la stringa vuota, non `null`: se il wizard la
+    // trattasse come "sede già decisa", il genitore sceglierebbe un plesso e
+    // l'invio partirebbe comunque senza sede.
+    mockFetch([AVERSA, CESA, GIUGLIANO])
+    render(<EnrollmentWizard scuolaId="" />)
+
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Kidville Aversa' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('radio', { name: 'Kidville Aversa' }))
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByPlaceholderText('Nome bimbo'), { target: { value: 'Tino' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
+
+    await waitFor(() => expect(postBodies).toHaveLength(1))
+    expect((postBodies[0] as { scuola_id?: string }).scuola_id).toBe(AVERSA.id)
+  })
+
+  it('DEGRADO — se /api/iscrizione/sedi risponde 500, il genitore non resta bloccato', async () => {
+    // Una risposta non-ok NON è un\'eccezione: se il codice guardasse solo il
+    // `catch`, questo caso passerebbe inosservato.
+    mockFetch('http500')
+    render(<EnrollmentWizard />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+  })
+
+  it('col passo sede in testa, «Aggiungi un altro figlio» apre la pagina del figlio 2', async () => {
+    // Gli indici dei passi sono tutti spostati di 1 dalla sede: senza compensazione
+    // il bottone porterebbe alla pagina sbagliata (l\'adulto, o il figlio 1).
+    mockFetch([AVERSA, CESA, GIUGLIANO])
+    render(<EnrollmentWizard />)
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Kidville Cesa' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('radio', { name: 'Kidville Cesa' }))
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByText('Bambino 1')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /aggiungi un altro figlio/i }))
+
+    await waitFor(() => expect(screen.getByText('Bambino 2')).toBeInTheDocument())
+    expect(screen.queryByText('Bambino 1')).not.toBeInTheDocument()
+  })
+
+  it('col passo sede in testa, un 400 sull\'ADULTO riporta all\'adulto (non al bambino)', async () => {
+    // `mappaErroriServer` calcola il passo dall\'indice del record: con la sede in
+    // testa, senza offset manderebbe il genitore sulla pagina sbagliata — e i
+    // messaggi d\'errore resterebbero invisibili.
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/api/iscrizione/model')) {
+        return Promise.resolve({ ok: true, json: async () => modelSchema })
+      }
+      if (url.includes('/api/iscrizione/sedi')) {
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, data: [AVERSA, CESA, GIUGLIANO] }) })
+      }
+      if (url.includes('/api/iscrizione') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          json: async () => ({
+            error: 'Alcuni campi non sono validi.',
+            campi: { adults: { '0': { first_name: 'Nome adulto rifiutato' } } },
+          }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(<EnrollmentWizard />)
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Kidville Cesa' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('radio', { name: 'Kidville Cesa' }))
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Nome bimbo'), { target: { value: 'Tino' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
+    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
+
+    await waitFor(() => expect(screen.getByText('Nome adulto rifiutato')).toBeInTheDocument())
+    expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
+  })
+
+  it('accessibilità: ogni sede ha un radio collegato alla propria etichetta', async () => {
+    mockFetch([AVERSA, GIUGLIANO])
+    render(<EnrollmentWizard />)
+
+    const radio = await screen.findByRole('radio', { name: 'Kidville Aversa' })
+    expect(radio).toHaveAttribute('type', 'radio')
+    // Stesso `name`: le frecce della tastiera scorrono il gruppo.
+    const altro = screen.getByRole('radio', { name: 'Kidville Giugliano' })
+    expect((radio as HTMLInputElement).name).toBe((altro as HTMLInputElement).name)
+    fireEvent.click(radio)
+    expect((radio as HTMLInputElement).checked).toBe(true)
+  })
+})

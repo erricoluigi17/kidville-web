@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
 import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
+import { defaultAdminSettingsRow } from '@/lib/scuole/admin-settings-default'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -25,6 +26,13 @@ const DIREZIONE = ['admin', 'coordinator'] as const
 // (PGRST202 sul DB E2E non migrato, o client di test senza `.rpc`): il chiamante
 // degrada al doppio insert. `{ error }` = errore reale da propagare.
 type RpcProvision = { id?: string; error?: { message: string; code?: string } }
+
+// Schema non migrato (DB E2E della CI): tabella/colonna assenti. PostgREST non
+// lancia, ritorna `{ error }` — 42P01 relazione inesistente, 42703 colonna
+// inesistente (SELECT), PGRST204 colonna assente su INSERT/UPDATE, PGRST205
+// tabella fuori dal cache dello schema. Su questi si degrada; su tutto il resto
+// si grida.
+const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
 
 async function provisionaSedeViaRpc(
   supabase: { rpc?: unknown },
@@ -154,6 +162,44 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
         }
         return NextResponse.json({ error: scuoleErr.message }, { status: 500 })
       }
+      // ── admin_settings: il registro elettronico della sede nuova ────────────
+      // Stesso inserimento che fa la RPC `provisiona_sede`
+      // (20260729120000_provisiona_sede_admin_settings.sql), qui replicato per il
+      // ramo senza RPC. NON è un accessorio: senza questa riga `loadGradoContext`
+      // legge `matrice = {}` e `requireFunzione` risponde 403 su TUTTE le funzioni
+      // docente della sede (require-grado.ts:36-44 e :64-86) — una sede che nasce
+      // col registro spento, in silenzio.
+      const { error: settingsErr } = await supabase.from('admin_settings').insert(defaultAdminSettingsRow(newId))
+      if (settingsErr) {
+        if (SCHEMA_ASSENTE.has(settingsErr.code ?? '')) {
+          // DB E2E non migrato: `admin_settings` (o una sua colonna) non c'è. È
+          // ignorabile — lì nessuno apre il registro — ma va detto, non taciuto.
+          logEvento(
+            'multi_sede',
+            'info',
+            { operazione: 'admin/schools:POST', esito: 'admin-settings-non-disponibile', sede_id: newId },
+            settingsErr,
+          )
+        } else {
+          // Configurazione mancante = `error` (AGENTS.md §4): la sede esiste ma i
+          // suoi docenti prenderanno 403 finché qualcuno non crea la riga da
+          // Impostazioni. NON si risponde 500: la sede è già in schools+scuole e
+          // un retry del client ne creerebbe una SECONDA.
+          logEvento(
+            'multi_sede',
+            'error',
+            { operazione: 'admin/schools:POST', esito: 'admin-settings-fallito', sede_id: newId },
+            settingsErr,
+          )
+        }
+      } else {
+        logEvento('multi_sede', 'info', {
+          operazione: 'admin/schools:POST',
+          esito: 'admin-settings-creato',
+          sede_id: newId,
+        })
+      }
+
       // Collega gli admin (best-effort: la sede esiste comunque).
       for (const aid of adminIds) {
         const { error: linkErr } = await supabase

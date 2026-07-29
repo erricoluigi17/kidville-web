@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -20,38 +21,47 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
 
   try {
     const supabase = await createAdminClient();
-    const { data: legami, error } = await supabase
-      .from('legame_genitori_alunni')
-      .select('genitore_id, alunno_id');
+    // Si parte dagli ALUNNI, non da `legame_genitori_alunni`: i legami arrivano
+    // dall'unione runtime + anagrafica (`student_parents` via ponte
+    // `parents.auth_user_id`), come già fa il gemello `/api/chat/contacts` lato
+    // docente. Con la sola tabella runtime la Segreteria non poteva aprire una
+    // conversazione con i genitori arrivati dal form pubblico: semplicemente non
+    // comparivano in elenco.
+    const { data: alunni, error } = await supabase
+      .from('alunni')
+      .select('id, nome, cognome, classe_sezione');
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const rows = legami ?? [];
-    const genitoreIds = [...new Set(rows.map((l) => l.genitore_id).filter(Boolean))];
-    const alunnoIds = [...new Set(rows.map((l) => l.alunno_id).filter(Boolean))];
+    const righeAlunni = alunni ?? [];
+    if (righeAlunni.length === 0) return NextResponse.json({ success: true, data: [] });
+
+    const perAlunno = await getGenitoriDiAlunni(supabase, righeAlunni.map((a) => a.id as string));
+    const genitoreIds = [...new Set([...perAlunno.values()].flat())];
     if (genitoreIds.length === 0) return NextResponse.json({ success: true, data: [] });
 
-    const [{ data: utenti }, { data: alunni }] = await Promise.all([
-      supabase.from('utenti').select('id, nome, cognome').in('id', genitoreIds).eq('ruolo', 'genitore'),
-      alunnoIds.length ? supabase.from('alunni').select('id, nome, cognome, classe_sezione').in('id', alunnoIds) : Promise.resolve({ data: [] }),
-    ]);
+    const { data: utenti } = await supabase
+      .from('utenti')
+      .select('id, nome, cognome')
+      .in('id', genitoreIds)
+      .eq('ruolo', 'genitore');
     const uMap = new Map((utenti ?? []).map((u) => [u.id, u]));
-    const aMap = new Map((alunni ?? []).map((a) => [a.id, a]));
 
     const seen = new Set<string>();
     const contatti: { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null }[] = [];
-    for (const l of rows) {
-      if (seen.has(l.genitore_id)) continue;
-      const u = uMap.get(l.genitore_id);
-      if (!u) continue; // solo genitori con account di login
-      seen.add(l.genitore_id);
-      const a = aMap.get(l.alunno_id);
-      contatti.push({
-        parentUserId: u.id,
-        parentName: `${u.cognome ?? ''} ${u.nome ?? ''}`.trim() || '—',
-        studentId: l.alunno_id,
-        studentName: a ? `${a.nome ?? ''} ${a.cognome ?? ''}`.trim() : '',
-        classe: (a?.classe_sezione as string | null) ?? null,
-      });
+    for (const a of righeAlunni) {
+      for (const genitoreId of perAlunno.get(a.id as string) ?? []) {
+        if (seen.has(genitoreId)) continue;
+        const u = uMap.get(genitoreId);
+        if (!u) continue; // solo genitori con account di login
+        seen.add(genitoreId);
+        contatti.push({
+          parentUserId: u.id,
+          parentName: `${u.cognome ?? ''} ${u.nome ?? ''}`.trim() || '—',
+          studentId: a.id as string,
+          studentName: `${a.nome ?? ''} ${a.cognome ?? ''}`.trim(),
+          classe: (a.classe_sezione as string | null) ?? null,
+        });
+      }
     }
     contatti.sort((x, y) => x.parentName.localeCompare(y.parentName));
 

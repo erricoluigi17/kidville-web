@@ -12,6 +12,9 @@ describe('middleware-rules', () => {
         '/iscrizione/step-2',
         '/api/iscrizione',
         '/api/iscrizione/upload',
+        // Elenco delle sedi per il selettore del wizard: il genitore non è loggato,
+        // e senza questa il modulo pubblico non saprebbe a quale plesso iscrivere.
+        '/api/iscrizione/sedi',
         '/api/forms/send-otp',
         '/api/panic-alert',
         '/forms/abc',

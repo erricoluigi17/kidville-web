@@ -103,8 +103,11 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
 
         const supabase = await createAdminClient();
 
-        // IDOR: si risponde SOLO per i propri figli (staff non è in
-        // legame_genitori_alunni → 403: non forgia prese-visione delle famiglie).
+        // IDOR: si risponde SOLO per i propri figli. `genitoreHasFiglio` unisce
+        // le due sorgenti (runtime `legame_genitori_alunni` + anagrafica
+        // `student_parents` via ponte `parents.auth_user_id`), quindi vale anche
+        // per i genitori arrivati dall'import iscrizioni; lo staff non compare in
+        // nessuna delle due → 403: non forgia prese-visione delle famiglie.
         const suoFiglio = await genitoreHasFiglio(supabase, parent_id, student_id);
         if (!suoFiglio) {
             return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });

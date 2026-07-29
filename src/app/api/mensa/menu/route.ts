@@ -108,7 +108,8 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
     if (alunnoId) {
       // Flusso per-alunno: la scuola è quella DELL'ALUNNO (server-derived, mai
       // dal client). Il genitore può vedere solo i propri figli (stesso pattern
-      // di mensa/prenotazioni: legame_genitori_alunni).
+      // di mensa/prenotazioni: `genitoreHasFiglio`, unione runtime
+      // `legame_genitori_alunni` + anagrafica `student_parents`).
       const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
       if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
       if (user.role === 'genitore') {

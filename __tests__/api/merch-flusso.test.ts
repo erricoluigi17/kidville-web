@@ -141,7 +141,8 @@ describe('POST /api/admin/merch/ordini-fornitore/checkin', () => {
     h.rowsFor.divise_ordini_righe = [
       { id: R1, stato: 'ordinato', ordine_id: 'o1', ordine_fornitore_id: 'po1', articolo_nome: 'Polo', ordine: { scuola_id: 'sc-1', alunno_id: 'al-1', alunni: { nome: 'Ada', cognome: 'B' } } },
     ]
-    h.rowsFor.legame_genitori_alunni = [{ genitore_id: 'g1' }]
+    // `alunno_id` presente: destinatari dall'unione runtime+anagrafica.
+    h.rowsFor.legame_genitori_alunni = [{ alunno_id: 'al-1', genitore_id: 'g1' }]
   })
 
   it('200 segna arrivato + notifica i genitori', async () => {

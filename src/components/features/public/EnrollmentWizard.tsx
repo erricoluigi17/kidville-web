@@ -6,7 +6,7 @@ import { useForm, FieldValues } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, ArrowRight, Check, Loader2, PartyPopper, Baby, Users,
-  Plus, Trash2, UserPlus, Info,
+  Plus, Trash2, UserPlus, Info, MapPin,
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import {
@@ -27,9 +27,30 @@ const slide = {
 }
 
 type Step =
+  | { kind: 'sede' }
   | { kind: 'child'; index: number }
   | { kind: 'adult'; index: number }
   | { kind: 'review' }
+
+interface Sede {
+  id: string
+  nome: string
+}
+
+/** Estrae `[{ id, nome }]` dalla risposta di /api/iscrizione/sedi, scartando
+ *  qualunque forma inattesa: il wizard non deve rompersi per un payload strano. */
+function sediValide(payload: unknown): Sede[] {
+  const data = (payload as { data?: unknown } | null)?.data
+  if (!Array.isArray(data)) return []
+  return data
+    .filter(
+      (s): s is Sede =>
+        s !== null && typeof s === 'object' &&
+        typeof (s as Sede).id === 'string' && (s as Sede).id.length > 0 &&
+        typeof (s as Sede).nome === 'string' && (s as Sede).nome.length > 0,
+    )
+    .map((s) => ({ id: s.id, nome: s.nome }))
+}
 
 function nsFields(prefix: string, fields: FormField[]): FormField[] {
   return fields.map(f => ({ ...f, id: `${prefix}.${f.id}` }))
@@ -44,6 +65,10 @@ function resolveError(errors: FieldValues, path: string): unknown {
 
 export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null } = {}) {
   const t = useTranslations('public')
+  // Sede arrivata dal link (?scuola=). La stringa VUOTA vale come assente: è falsy
+  // ma non null, e trattata come "sede già decisa" farebbe partire l'invio senza
+  // sede pur avendo fatto scegliere il plesso al genitore.
+  const sedeDaLink = scuolaId !== null && scuolaId.trim().length > 0 ? scuolaId.trim() : null
   const [childCount, setChildCount] = useState(1)
   const [adultCount, setAdultCount] = useState(1)
   const [step, setStep] = useState(0)
@@ -56,6 +81,13 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const [childFields, setChildFields] = useState<FormField[]>(CHILD_FIELDS)
   const [adultFields, setAdultFields] = useState<FormField[]>(ADULT_FIELDS)
 
+  // Sedi selezionabili. Il passo di scelta compare SOLO se il link non porta già
+  // la sede (?scuola=) e ce n'è più d'una: con un plesso solo — o sul DB E2E,
+  // dove l'elenco pubblico è vuoto — il flusso resta identico a prima.
+  const [sedi, setSedi] = useState<Sede[]>([])
+  const [sedeScelta, setSedeScelta] = useState<string | null>(null)
+  const [erroreSede, setErroreSede] = useState(false)
+
   useEffect(() => {
     fetch('/api/iscrizione/model')
       .then(r => r.json())
@@ -67,18 +99,69 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       .catch(() => {})
   }, [])
 
+  useEffect(() => {
+    // Col link già "targato" (?scuola=) la scelta non serve: niente fetch inutile.
+    if (sedeDaLink) return
+    let annullato = false
+    fetch('/api/iscrizione/sedi')
+      .then(r => {
+        if (r.ok) return r.json()
+        // Non è un'eccezione, quindi il `catch` qui sotto non scatterebbe — ma il
+        // genitore resterebbe senza scelta della sede e finirebbe sul 400 del POST.
+        // Un degrado che nessuno vede è indistinguibile dal funzionamento normale.
+        if (!annullato) {
+          logClient({
+            livello: 'error',
+            evento: 'fetch',
+            messaggio: 'iscrizione-sedi-non-caricate',
+            stato: r.status,
+          })
+        }
+        return null
+      })
+      .then(j => {
+        if (annullato) return
+        const lista = sediValide(j)
+        // Il passo si aggiunge in TESTA: se l'elenco arrivasse a genitore già
+        // avanzato (rete lentissima), `step` va compensato o si tornerebbe
+        // indietro di una pagina sotto le sue mani.
+        if (lista.length > 1) {
+          setSedi(lista)
+          setStep(s => (s > 0 ? s + 1 : 0))
+        }
+      })
+      .catch(err => {
+        // Degrado, non blocco: si prosegue senza scelta e — se il server non sa
+        // dedurre la sede — sarà il suo 400 a parlare. Ma il silenzio no: un
+        // catch che non logga è un bug, e `logClient` non lancia.
+        logClient({
+          livello: 'error',
+          evento: 'fetch',
+          messaggio: `iscrizione-sedi-non-caricate: ${nomeErrore(err)}`,
+          stack: err instanceof Error ? err.stack : undefined,
+        })
+      })
+    return () => { annullato = true }
+  }, [sedeDaLink])
+
   const {
     register, control, trigger, getValues, setValue, setFocus, setError,
     formState: { errors },
   } = useForm<FieldValues>({ mode: 'onTouched' })
 
+  // La sede si sceglie solo quando c'è davvero qualcosa da scegliere.
+  const mostraSede = !sedeDaLink && sedi.length > 1
+  /** Scostamento introdotto dal passo sede: sposta di 1 gli indici di tutti i passi. */
+  const offset = mostraSede ? 1 : 0
+
   const steps: Step[] = useMemo(() => {
     const s: Step[] = []
+    if (mostraSede) s.push({ kind: 'sede' })
     for (let i = 0; i < childCount; i++) s.push({ kind: 'child', index: i })
     for (let i = 0; i < adultCount; i++) s.push({ kind: 'adult', index: i })
     s.push({ kind: 'review' })
     return s
-  }, [childCount, adultCount])
+  }, [mostraSede, childCount, adultCount])
 
   const current = steps[Math.min(step, steps.length - 1)]
   const isLast = step === steps.length - 1
@@ -121,8 +204,9 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         }
       }
     }
-    applica('children', c.children, i => i)
-    applica('adults', c.adults, i => childCount + i)
+    // `offset`: col passo sede in testa, il bambino i-esimo non è più il passo i.
+    applica('children', c.children, i => offset + i)
+    applica('adults', c.adults, i => offset + childCount + i)
     if (primoStep === -1) return false
     if (primoStep !== step) {
       setDirection(primoStep < step ? -1 : 1)
@@ -132,6 +216,18 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   }
 
   async function goNext() {
+    // Passo sede: nessun campo del modulo da validare, ma la scelta è obbligatoria.
+    if (current.kind === 'sede') {
+      if (!sedeScelta) {
+        setErroreSede(true)
+        return
+      }
+      setErroreSede(false)
+      setDirection(1)
+      setStep(s => s + 1)
+      return
+    }
+
     const fields = currentNsFields()
     // Provincia: normalizza i nomi riconosciuti in sigla PRIMA di validare
     // ("Napoli" → "NA"), così passa anche senza blur; l'irriconoscibile resta e
@@ -151,6 +247,16 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       return
     }
     if (isLast) {
+      // Ultima difesa lato client: se il passo sede esiste ma nessuna sede è stata
+      // scelta (può accadere solo se l'elenco è arrivato a genitore già avanzato),
+      // non si invia alla cieca — si torna a farla scegliere. Un'iscrizione finita
+      // nel plesso sbagliato è peggio di un passo in più.
+      if (mostraSede && !sedeScelta) {
+        setErroreSede(true)
+        setDirection(-1)
+        setStep(0)
+        return
+      }
       await handleSubmit()
     } else {
       setDirection(1)
@@ -174,7 +280,9 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       const res = await fetch('/api/iscrizione', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data, scuola_id: scuolaId ?? undefined }),
+        // Priorità al link (?scuola=), poi alla scelta del genitore. Se nessuna
+        // delle due c'è, il server risolve la sede da solo (o risponde 400).
+        body: JSON.stringify({ data, scuola_id: sedeDaLink ?? sedeScelta ?? undefined }),
       })
       const json = await res.json()
       if (!res.ok) {
@@ -204,20 +312,22 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     if (childCount >= ENROLLMENT_LIMITS.maxChildren) return
     setChildCount(c => c + 1)
     setDirection(1)
-    setStep(childCount) // vai alla nuova pagina figlio (inserita in coda ai figli)
+    setStep(offset + childCount) // vai alla nuova pagina figlio (in coda ai figli)
   }
   function addAdult() {
     if (adultCount >= ENROLLMENT_LIMITS.maxAdults) return
     setAdultCount(a => a + 1)
     setDirection(1)
-    setStep(childCount + adultCount) // nuova pagina adulto
+    setStep(offset + childCount + adultCount) // nuova pagina adulto
   }
 
   // Header dinamico. Il numero dell'istanza è un VALORE composto in JS (il
   // sostantivo è tradotto, la posizione del numero è identica in it/en); i
   // plurali veri restano ICU nel riepilogo.
   const heading =
-    current.kind === 'child'
+    current.kind === 'sede'
+      ? { icon: MapPin, title: t('wizardSede'), sub: t('wizardSedeSub') }
+      : current.kind === 'child'
       ? { icon: Baby, title: `${t('wizardBambino')} ${current.index + 1}`, sub: t('wizardBambinoSub') }
       : current.kind === 'adult'
       ? {
@@ -274,7 +384,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
             <div className="flex-1 relative overflow-hidden">
               <AnimatePresence mode="wait" custom={direction}>
                 <motion.div
-                  key={`${current.kind}-${current.kind === 'review' ? 'r' : current.index}`}
+                  key={`${current.kind}-${current.kind === 'child' || current.kind === 'adult' ? current.index : 'x'}`}
                   custom={direction}
                   variants={slide}
                   initial="enter"
@@ -292,6 +402,46 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                       <p className="text-sm text-kidville-muted">{heading.sub}</p>
                     </div>
                   </div>
+
+                  {/* SEDE step — compare solo con più sedi e senza ?scuola= nel link */}
+                  {current.kind === 'sede' && (
+                    <fieldset className="space-y-3">
+                      <legend className="sr-only">{t('wizardSedeLegenda')}</legend>
+                      {sedi.map(s => {
+                        const scelta = sedeScelta === s.id
+                        return (
+                          <label
+                            key={s.id}
+                            htmlFor={`sede-${s.id}`}
+                            className={`flex items-center gap-3 px-4 py-3.5 rounded-xl border cursor-pointer transition-all focus-within:ring-2 focus-within:ring-kidville-green focus-within:ring-offset-2 ${
+                              scelta
+                                ? 'border-kidville-green bg-kidville-green-soft'
+                                : 'border-kidville-line bg-kidville-white hover:border-kidville-green/40'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              id={`sede-${s.id}`}
+                              name="sede"
+                              value={s.id}
+                              checked={scelta}
+                              onChange={() => { setSedeScelta(s.id); setErroreSede(false) }}
+                              className="w-4 h-4 accent-kidville-green"
+                            />
+                            <MapPin className={`w-4 h-4 flex-shrink-0 ${scelta ? 'text-kidville-green' : 'text-kidville-muted'}`} />
+                            <span className={`text-sm ${scelta ? 'text-kidville-green font-semibold' : 'text-kidville-ink'}`}>
+                              {s.nome}
+                            </span>
+                          </label>
+                        )
+                      })}
+                      {erroreSede && (
+                        <p role="alert" className="text-xs text-kidville-error-strong">
+                          {t('wizardSedeErrore')}
+                        </p>
+                      )}
+                    </fieldset>
+                  )}
 
                   {/* CHILD step */}
                   {current.kind === 'child' && (

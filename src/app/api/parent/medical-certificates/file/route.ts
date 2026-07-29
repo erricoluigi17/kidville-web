@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -36,13 +37,10 @@ export const GET = withRoute('parent/medical-certificates/file:GET', async (requ
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria' || user.role === 'educator'
     if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', cert.alunno_id)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      // Unione runtime + anagrafica. Il perimetro NON si allarga: chi non è
+      // collegato in nessuna delle due sorgenti resta fuori dal dato sanitario.
+      const ok = await genitoreHasFiglio(supabase, user.id, cert.alunno_id)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
     const { data: file, error } = await supabase.storage.from(BUCKET).download(cert.file_path)

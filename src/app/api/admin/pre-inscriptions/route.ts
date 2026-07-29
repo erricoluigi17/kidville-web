@@ -298,7 +298,12 @@ export const PATCH = withRoute('admin/pre-inscriptions:PATCH', async (request: N
           continue;
         }
 
-        // Inserisci il legame genitore-alunno
+        // Inserisci il legame genitore-alunno.
+        // ⚠️ NON passa da `@/lib/anagrafiche/legami` DI PROPOSITO (A6): quello
+        // è il modulo delle LETTURE (unione runtime+anagrafica), questa è una
+        // SCRITTURA del flusso legacy di pre-iscrizione, che qui crea proprio la
+        // riga runtime — con intestatario e percentuale al 100%, che l'unione
+        // non saprebbe derivare.
         if (newChild) {
           const legameRecord = {
             genitore_id: userId,

@@ -5,6 +5,7 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
+import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
@@ -115,12 +116,11 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       // del client serve solo a restringere DENTRO quell'insieme, mai ad allargarlo.
       sediAttive = await resolveScuoleAttive(request, supabase, user)
     } else {
-      // genitore: solo i propri figli
-      const { data: legami } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-      figli = (legami || []).map((l) => l.alunno_id)
+      // genitore: solo i propri figli. Unione runtime (`legame_genitori_alunni`)
+      // + anagrafica (`student_parents` via ponte `parents.auth_user_id`): con la
+      // sola tabella runtime i genitori arrivati dall'import iscrizioni vedevano
+      // una lista vuota — nessuna retta, nessuna scadenza, nessun sollecito.
+      figli = await getFigliDiGenitore(supabase, user.id)
       if (figli.length === 0) return NextResponse.json({ success: true, data: [] })
     }
 

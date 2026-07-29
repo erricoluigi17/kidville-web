@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -36,10 +37,11 @@ export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) =>
     const supabase = await createAdminClient()
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
     if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni').select('alunno_id')
-        .eq('genitore_id', user.id).eq('alunno_id', alunnoId).maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      // Unione runtime (`legame_genitori_alunni`) + anagrafica (`student_parents`
+      // via ponte `parents.auth_user_id`): col solo runtime il genitore arrivato
+      // dal form pubblico non vedeva il saldo mensa del PROPRIO figlio.
+      const ok = await genitoreHasFiglio(supabase, user.id, alunnoId)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
     const { data } = await supabase

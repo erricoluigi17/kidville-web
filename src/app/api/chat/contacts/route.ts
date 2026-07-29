@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -92,14 +93,15 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
                 const students = allStudents ?? [];
                 const studentIds = students.map(s => s.id);
 
-                const { data: legami } = studentIds.length > 0
-                    ? await supabase
-                        .from('legame_genitori_alunni')
-                        .select('alunno_id, genitore_id')
-                        .in('alunno_id', studentIds)
-                    : { data: [] };
+                // Verso inverso dell'unione (alunno → account genitore): con la
+                // sola `legame_genitori_alunni` la maestra non vedeva i genitori
+                // dei bambini importati dal form pubblico. Query in blocco, come
+                // prima: `getGenitoriDiAlunni` non introduce N+1.
+                const genitoriPerAlunno = studentIds.length > 0
+                    ? await getGenitoriDiAlunni(supabase, studentIds)
+                    : new Map<string, string[]>();
 
-                const parentIds = [...new Set((legami ?? []).map(l => l.genitore_id))];
+                const parentIds = [...new Set([...genitoriPerAlunno.values()].flat())];
                 const { data: parents } = parentIds.length > 0
                     ? await supabase
                         .from('utenti')
@@ -107,33 +109,31 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
                         .in('id', parentIds)
                     : { data: [] };
 
-                const studentById = new Map(students.map(s => [s.id, s]));
                 const parentById = new Map((parents ?? []).map(p => [p.id, p]));
                 const seen = new Set<string>();
-                for (const legame of legami ?? []) {
-                    const student = studentById.get(legame.alunno_id);
-                    const parent = parentById.get(legame.genitore_id);
-                    if (!student || !parent) continue;
-                    const key = `${parent.id}:${student.id}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    contacts.push({
-                        user_id: parent.id,
-                        user_name: `${parent.first_name || parent.nome} ${parent.last_name || parent.cognome}`,
-                        user_role: 'genitore',
-                        student_id: student.id,
-                        student_name: `${student.nome} ${student.cognome}`,
-                        sezione: student.classe_sezione ?? '',
-                    });
+                for (const student of students) {
+                    for (const genitoreId of genitoriPerAlunno.get(student.id) ?? []) {
+                        const parent = parentById.get(genitoreId);
+                        if (!parent) continue;
+                        const key = `${parent.id}:${student.id}`;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        contacts.push({
+                            user_id: parent.id,
+                            user_name: `${parent.first_name || parent.nome} ${parent.last_name || parent.cognome}`,
+                            user_role: 'genitore',
+                            student_id: student.id,
+                            student_name: `${student.nome} ${student.cognome}`,
+                            sezione: student.classe_sezione ?? '',
+                        });
+                    }
                 }
             }
         } else if (role === 'genitore') {
             // Genitore: figli → docenti delle loro sezioni, tutto batched (niente N+1).
-            const { data: legami } = await supabase
-                .from('legame_genitori_alunni')
-                .select('alunno_id')
-                .eq('genitore_id', userId);
-            const alunnoIds = [...new Set((legami ?? []).map(l => l.alunno_id))];
+            // I figli vengono dall'unione runtime+anagrafica: con la sola tabella
+            // runtime il genitore importato dal form pubblico non aveva contatti.
+            const alunnoIds = await getFigliDiGenitore(supabase, userId);
 
             const { data: studentsData } = alunnoIds.length > 0
                 ? await supabase

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendEmail } from '@/lib/email/send'
+import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logErrore } from '@/lib/logging/logger'
@@ -181,8 +182,12 @@ export async function sollecitaPagamenti(
             adultIds = ((data || []) as { adult_id: string }[]).map((q) => q.adult_id)
         }
         if (adultIds.length === 0) {
-            const { data } = await supabase.from('legame_genitori_alunni').select('genitore_id').eq('alunno_id', pag.alunno_id)
-            adultIds = ((data || []) as { genitore_id: string }[]).map((l) => l.genitore_id)
+            // Unione runtime (`legame_genitori_alunni`) + anagrafica
+            // (`student_parents` via ponte `parents.auth_user_id`): con la sola
+            // runtime il sollecito di una retta scaduta non raggiungeva nessuno
+            // e l'esito restava «nessun destinatario collegato» — la morosità
+            // cresceva senza che la famiglia ricevesse mai una riga.
+            adultIds = await getGenitoriDiAlunno(supabase, pag.alunno_id)
         }
         let destinatari: { id: string; email?: string | null }[] = []
         if (adultIds.length > 0) {

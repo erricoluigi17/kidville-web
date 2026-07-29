@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
+import { getGenitoriDiAlunni, getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -43,15 +44,14 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
         if (!alunno) return NextResponse.json(null);
 
-        // Recupera i genitori
-        const { data: legami } = await supabase
-            .from('legame_genitori_alunni')
-            .select('genitore_id')
-            .eq('alunno_id', alunno.id);
+        // Recupera i genitori — unione runtime (`legame_genitori_alunni`) +
+        // anagrafica (`student_parents` via ponte `parents.auth_user_id`): con la
+        // sola runtime i bambini importati dal form pubblico risultavano senza
+        // alcun genitore (nessun contatto per la maestra).
+        const parentIds = await getGenitoriDiAlunno(supabase, alunno.id);
 
         let parents: { id: string; nome: string; cognome: string; email: string }[] = [];
-        if (legami && legami.length > 0) {
-            const parentIds = legami.map(l => l.genitore_id);
+        if (parentIds.length > 0) {
             const { data: utenti } = await supabase
                 .from('utenti')
                 .select('id, nome, cognome, email')
@@ -95,16 +95,14 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
 
     const alunnoIds = alunni.map(a => a.id);
 
-    // Recupera i legami per questi alunni
-    const { data: legami } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id, genitore_id')
-        .in('alunno_id', alunnoIds);
+    // Legami per questi alunni, in BLOCCO e dall'unione delle due sorgenti
+    // (runtime + anagrafica): 3 query fisse come prima, mai una per alunno.
+    const genitoriPerAlunno = await getGenitoriDiAlunni(supabase, alunnoIds);
 
     // Recupera tutti i genitori collegati
     const parentsMap: Record<string, { id: string; nome: string; cognome: string; email: string }[]> = {};
-    if (legami && legami.length > 0) {
-        const parentIds = [...new Set(legami.map(l => l.genitore_id))];
+    const parentIds = [...new Set([...genitoriPerAlunno.values()].flat())];
+    if (parentIds.length > 0) {
         const { data: utenti } = await supabase
             .from('utenti')
             .select('id, nome, cognome, email')
@@ -112,20 +110,21 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
 
         if (utenti) {
             const utentiMap = new Map(utenti.map(u => [u.id, u]));
-            legami.forEach(l => {
-                const parent = utentiMap.get(l.genitore_id);
-                if (parent) {
-                    if (!parentsMap[l.alunno_id]) {
-                        parentsMap[l.alunno_id] = [];
+            for (const [alunnoId, genitoreIds] of genitoriPerAlunno) {
+                for (const genitoreId of genitoreIds) {
+                    const parent = utentiMap.get(genitoreId);
+                    if (!parent) continue;
+                    if (!parentsMap[alunnoId]) {
+                        parentsMap[alunnoId] = [];
                     }
-                    parentsMap[l.alunno_id].push({
+                    parentsMap[alunnoId].push({
                         id: parent.id,
                         nome: parent.nome,
                         cognome: parent.cognome,
                         email: parent.email
                     });
                 }
-            });
+            }
         }
     }
 

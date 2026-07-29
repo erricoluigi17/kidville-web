@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -32,13 +33,10 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
 
     // scope: il genitore deve essere collegato all'alunno (lo staff passa dal ruolo)
     if (auth.user.role === 'genitore') {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', auth.user.id)
-        .eq('alunno_id', studentId)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      // Unione runtime + anagrafica: col solo legame runtime il registro del
+      // proprio figlio (lezioni, valutazioni, note, assenze) era inaccessibile.
+      const ok = await genitoreHasFiglio(supabase, auth.user.id, studentId)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
     const { data: alunno } = await supabase

@@ -92,6 +92,8 @@
   "ricevutiVuoto": "No enrollment requests received.",
   "ricevutiListaHeader": "Pending ({attesa}) · Total {totale}",
   "ricevutiFallbackNome": "Enrollment",
+  "ricevutiSede": "Location:",
+  "ricevutiSedeSconosciuta": "Location not specified",
   "ricevutiSelezionaDettagli": "Select a request for details.",
   "ricevutiIndietro": "Back",
   "ricevutiBambini": "Children ({count})",
@@ -133,6 +135,7 @@
   "inviabiliPubblica": "Publish",
   "inviabiliResetConferma": "Reset the standard enrollment form to its default values? Any changes made will be discarded.",
   "inviabiliResetSuccess": "Standard enrollment form restored to its default values.",
+  "inviabiliStandardSediNota": "One link for all locations: the parent chooses the site in the first step of the form.",
 
   "protTitle": "Protocol register",
   "protSubtitle": "Incoming and outgoing correspondence and internal records — numbering compliant with Presidential Decree 445/2000",

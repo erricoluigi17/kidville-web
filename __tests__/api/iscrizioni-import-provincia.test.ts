@@ -43,6 +43,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.in = () => b
       b.limit = () => b
       b.order = async () => ({ data: [], error: null })
+      // Letture "a lista" attese sul builder: il pre-flight sezione (A5) legge le
+      // `sections` della sede di scrittura prima di qualunque insert.
+      b.then = (res: (v: unknown) => unknown) =>
+        Promise.resolve(
+          table === 'sections' ? { data: [{ name: 'Girasoli' }], error: null } : { data: [], error: null },
+        ).then(res)
       b.maybeSingle = async () => {
         if (table === 'enrollment_submissions') return { data: h.sub, error: null }
         return { data: null, error: null } // no dedup: forza la creazione

@@ -68,6 +68,117 @@
 
 ---
 
+## 🗓️ Changelog — Multi-sede reale: il modulo pubblico, il legame genitore↔figlio e la sede che nasceva mutilata 2026-07-29 (branch `feat/screenshot-play-store`)
+
+Preparazione all'onboarding degli alunni **reali** in produzione, con l'apertura di Aversa e Cesa
+accanto a Giugliano. Il lavoro è nato come collaudo della catena *link → modulo → segreteria →
+credenziali → alunno in classe → genitore che vede il figlio*, e il collaudo ha trovato cinque
+difetti che esistevano da mesi ma che **si manifestano solo quando le sedi diventano più di una**
+o quando il genitore arriva dal modulo pubblico invece che dal seed.
+
+### 1. Il modulo pubblico si sarebbe spento all'arrivo della seconda sede
+
+`src/app/api/iscrizione/route.ts` risolveva la scuola così: se il body non porta `scuola_id`,
+scarta le scuole di collaudo e usa **l'unica reale rimasta**; con più di una, `400 «Specificare la
+scuola»`. Con una sola sede funzionava. Con tre, ogni genitore avrebbe ricevuto un errore secco —
+e il bottone «Copia link» della segreteria copiava proprio l'URL nudo, senza parametro.
+
+Scelta: **selettore di sede dentro il modulo**, non un link diverso per plesso. Un unico
+indirizzo da diffondere; è il genitore a scegliere la sede al primo passo, e `?scuola=<uuid>`
+resta come scorciatoia che quel passo lo salta. Il passo compare **solo** con più di una sede
+reale: con una sola il flusso è identico a prima, ed è ciò che tiene verde l'E2E in CI, dove il
+DB ha una scuola sola.
+
+- Nuovo `src/lib/scuole/reali.ts` — fonte unica del predicato «sede reale» (esclude le sedi di
+  collaudo, scarta le disattivate **fail-open**). Prima quel predicato era duplicato inline in due
+  punti; ora è uno solo, e `src/lib/notifiche/destinatari.ts` ci è stato ricondotto.
+- Nuova `GET /api/iscrizione/sedi`, anonima e rate-limited, che espone **solo id e nome**.
+- Il `400` resta come ultima difesa per chi invia fuori dal wizard: un'iscrizione finita nella
+  scuola sbagliata è peggio di un errore.
+
+Un bug è emerso **scrivendo i test**, non leggendo il codice: `?scuola=` *vuoto* produceva `''`,
+falsy ma non `null`, e `scuolaId ?? sedeScelta` restituiva `''` — il POST sarebbe partito
+ignorando la sede appena scelta dal genitore.
+
+### 2. Il genitore importato non vedeva il proprio figlio (e non riceveva gli avvisi)
+
+Il legame genitore↔bambino vive in **due tabelle in spazi-id diversi**: `legame_genitori_alunni`
+(`genitore_id` = account) e `student_parents` (`parent_id` = anagrafica, legata all'account solo
+dal ponte `parents.auth_user_id`). L'accettazione di un'iscrizione scriveva **solo la seconda**,
+mentre mezza applicazione leggeva **solo la prima**.
+
+Misurato sul database di produzione prima dell'intervento: 35 coppie runtime, 22 anagrafiche,
+**10 coppie esistenti solo come anagrafica**. Quei dieci genitori prendevano **403 sulla galleria
+del proprio figlio**, e non lo vedevano in agenda, chat, diario, pagamenti. Ogni famiglia in
+arrivo dal modulo pubblico sarebbe finita nella stessa condizione.
+
+Peggio ancora la **direzione inversa** (*alunno → genitori destinatari*): `notifiche/destinatari`,
+mensa, merchandise, primaria, solleciti e uscite leggevano tutte la sola tabella runtime — un
+genitore importato non avrebbe ricevuto **nemmeno gli avvisi**.
+
+- L'import ora scrive **entrambe** le righe, con `ignoreDuplicates` perché un re-import non deve
+  mai sovrascrivere una quota corretta a mano dalla segreteria. Solo per gli adulti che hanno
+  davvero un account: un `parents` senza email non ne ha uno, e non se ne inventa uno.
+- Ventiquattro file convertiti agli helper di unione già esistenti in `src/lib/anagrafiche/legami.ts`,
+  più i nuovi `getGenitoriDiAlunni`/`getGenitoriDiAlunno` per il verso inverso (batch, mai N+1).
+- Nuovo `sincronizzaLegamiRuntime`, chiamato dopo ogni emissione di credenziali riuscita: è così
+  che gli **11 `parents` senza account** si riparano **da soli** il giorno in cui ne ricevono uno.
+- Restano volutamente sulla lettura grezza: i due endpoint diagnostici (devono poter *mostrare* la
+  divergenza), le due scritture, e `pagamenti/tutori` che usa un embed PostgREST con le colonne di
+  ripartizione, che l'unione non saprebbe ricostruire.
+- Le **policy RLS** del baseline su `pagamenti`, `incassi` e `note_disciplinari` fanno il join
+  proprio su `legame_genitori_alunni`: nessuna riga di TypeScript le corregge, si sanano solo
+  popolando la tabella. È l'argomento per cui la scrittura non era opzionale.
+
+Quattro difetti gemelli, non previsti, sono emersi durante la conversione: lo split 50/50 fra
+genitori separati **saltava** e la fattura finiva intestata a una persona sola
+(`src/lib/pagamenti/intestatari.ts`); la segreteria non poteva aprire una chat con i genitori
+arrivati dal modulo pubblico, che non comparivano proprio in elenco; il modulo cartaceo veniva
+archiviato con `parent_id` nullo; e `src/lib/pagamenti/sospensione.ts` conteneva una **copia
+locale** dell'unione che **scartava l'errore PostgREST**, presentando una lettura fallita come
+«nessun genitore coinvolto».
+
+### 3. Una sede nuova nasceva senza registro
+
+Né la RPC `provisiona_sede` né il suo fallback creavano la riga `admin_settings` della nuova sede.
+Senza quella riga la matrice delle funzioni è vuota e **ogni funzione docente risponde 403**:
+Aversa e Cesa sarebbero nate senza registro elettronico. La riga ora la crea la RPC, che è l'unico
+collo di bottiglia del provisioning — nella route sarebbe stata una quarta scrittura non
+transazionale dopo una RPC già committata, cioè di nuovo una sede a metà.
+
+I **solleciti nascono spenti** sulle sedi nuove, ed è una decisione, non una dimenticanza:
+le prime rette di un import hanno scadenze retrodatate e il primo livello scatta a un giorno,
+quindi col cron acceso il primo giro delle 06:00 manderebbe **solleciti di morosità veri a
+famiglie vere** per debiti che sono un artefatto dell'import. Si accendono a mano da Impostazioni,
+a dati verificati. La configurazione è stata inoltre riscritta **per insieme**: nessuna migrazione
+nuova contiene più l'uuid di una sede, e un lock lo impedisce d'ora in poi.
+
+### 4. L'accettazione poteva archiviare l'alunno nella sede sbagliata, in silenzio
+
+Il `PATCH` di accettazione caricava l'invio **per id, senza alcun filtro di scope**, e passava la
+sede dell'invio a `resolveScuolaScrittura`. Ma per un utente `segreteria` le sedi accessibili sono
+solo la propria: la sede preferita non risultava accessibile, si ricadeva sull'unica accessibile e
+**il bambino veniva creato nella sede dell'operatore**, senza il minimo errore. Ora l'invio di
+un'altra sede risponde **403** — per l'accettazione *e* per il rifiuto, che aveva lo stesso buco.
+
+### 5. Una sezione dal nome non combaciante lasciava l'alunno senza classe
+
+La classe assegnata all'import è **testo**; un trigger risolve la sezione confrontando il nome
+dentro la stessa scuola, e se non lo trova lascia il collegamento **nullo senza dire niente**. Con
+tre sedi e sezioni quasi omonime era la ricetta per alunni senza classe. Ora un pre-flight rifiuta
+come bloccante una sezione inesistente in quella sede **prima di ogni scrittura**, replicando alla
+lettera la normalizzazione del trigger; e la tendina della segreteria mostra solo le sezioni della
+sede dell'invio, con il nome della sede visibile su ogni riga.
+
+### Gate
+
+`eslint --max-warnings 0` · `tsc --noEmit` · **410 file, 3411 test** · `build` — tutti verdi.
+Due migrazioni applicate, advisors **0 ERROR**. Quattro nuovi lock di architettura: nessuna
+migrazione nuova può cablare l'uuid di una sede, e il default della matrice funzioni resta gemello
+fra SQL e TypeScript.
+
+---
+
 ## 🗓️ Changelog — Informativa privacy riscritta sull'art. 13 · App Privacy labels pubblicate · incidente chiave di servizio chiuso 2026-07-28 (branch `feat/screenshot-play-store`)
 
 Sessione di lavoro sulle console (Supabase, GitHub, Apple) più il lavoro sul repo che ne è

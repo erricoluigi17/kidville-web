@@ -22,6 +22,16 @@ interface LegameTutoreRow {
 // GET /api/pagamenti/tutori?userId=&alunno_id=  (staff)
 // Tutori (account `utenti`) collegati all'alunno via legame_genitori_alunni,
 // con percentuale_pagamento — base per le quote split dei genitori separati.
+//
+// ⚠️ QUESTA LETTURA RESTA GREZZA, DI PROPOSITO (A6). Non passa per
+// `getGenitoriDiAlunni`: qui non servono solo gli id dei tutori, ma le COLONNE
+// DI SPLIT della riga (`percentuale_pagamento`, `intestatario_fattura`) e
+// l'embed PostgREST `utenti:genitore_id(...)`. Sono dati che esistono soltanto
+// in `legame_genitori_alunni` e che l'unione non saprebbe inventare per un
+// legame presente solo in `student_parents` — anzi: restituirebbe tutori con
+// percentuale `null`, cioè una ripartizione fatturata a caso. Diventa corretta
+// da sé quando la tabella runtime è completa, cosa che ora fanno l'import
+// iscrizioni e `sincronizzaLegamiRuntime`.
 export const GET = withRoute('pagamenti/tutori:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)

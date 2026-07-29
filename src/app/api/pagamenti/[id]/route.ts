@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
@@ -81,13 +82,10 @@ export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, cont
     // scoping genitore
     let ownQuotaId: string | null = null
     if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', pag.alunno_id)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      // Unione runtime + anagrafica (la lista `/api/pagamenti` la usa già): senza,
+      // il genitore vedeva la retta in elenco e poi 403 aprendone il dettaglio.
+      const ok = await genitoreHasFiglio(supabase, user.id, pag.alunno_id)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
 
       // visibilità ritardata: il genitore non può aprire un pagamento non ancora pubblicato
       const oggi = new Date().toISOString().slice(0, 10)

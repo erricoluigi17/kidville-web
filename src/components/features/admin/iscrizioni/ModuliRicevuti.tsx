@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl'
 import { useDateFormat } from '@/lib/i18n/date'
 import {
   Baby, Users, FileText, CheckCircle2, XCircle, Loader2,
-  ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star,
+  ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star, MapPin,
 } from 'lucide-react'
 import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
@@ -33,9 +33,12 @@ interface SubmissionRow {
   assigned_classes?: Record<string, string>
   credentials?: { email: string; password: string } | null
   created_at: string
+  // Sede per cui la famiglia ha fatto domanda (scelta al passo 0 del wizard).
+  // La GET fa `select('*')`: il campo c'è già nel payload, mancava solo nel tipo.
+  scuola_id?: string | null
 }
 
-interface Section { id: string; name: string }
+interface Section { id: string; name: string; scuola_id?: string | null }
 
 export function ModuliRicevuti() {
   const t = useTranslations('adminAltro')
@@ -49,7 +52,13 @@ export function ModuliRicevuti() {
   const [working, setWorking] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
 
-  const { reFetchKey } = useSediAttive()
+  const { reFetchKey, sedi } = useSediAttive()
+
+  // Con tre plessi la domanda va letta insieme alla sua sede: importare "alla cieca"
+  // significa archiviare un bambino di Aversa a Giugliano. L'uuid non dice niente a
+  // nessuno, quindi si risolve nel nome del plesso.
+  const nomeSede = (scuolaId?: string | null) =>
+    sedi.find((s) => s.id === scuolaId)?.nome ?? t('ricevutiSedeSconosciuta')
 
   useEffect(() => { load(reFetchKey) }, [reFetchKey])
 
@@ -129,11 +138,29 @@ export function ModuliRicevuti() {
     if (!confirm(t('ricevutiConfermaRifiuto'))) return
     setWorking(true)
     try {
-      await fetch('/api/admin/iscrizioni', {
+      const res = await fetch('/api/admin/iscrizioni', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: selected.id, action: 'reject' }),
       })
+      // L'esito NON si butta via: il server può rispondere 403 (domanda di un'altra
+      // sede). Ricaricare e chiudere il pannello senza guardare significherebbe dire
+      // all'operatore "fatto" su un rifiuto che non è mai avvenuto.
+      if (!res.ok) {
+        // Un corpo illeggibile non deve far sparire l'avviso all'operatore: si
+        // ripiega sul messaggio generico, ma l'anomalia si logga (mai un catch muto).
+        const json = await res.json().catch((e: unknown) => {
+          logClient({
+            livello: 'warn',
+            evento: 'react',
+            messaggio: `iscrizione-rifiuto-corpo-illeggibile: ${nomeErrore(e)}`,
+            route: '/admin/iscrizioni',
+          })
+          return {} as { error?: string }
+        })
+        alert(json.error ?? t('ricevutiImportFallito'))
+        return
+      }
       await load(reFetchKey)
       setSelected(null)
     } finally {
@@ -199,10 +226,13 @@ export function ModuliRicevuti() {
                     </span>
                     <StatusBadge status={row.status} />
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven">
+                  <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven flex-wrap">
                     <span className="flex items-center gap-1"><Baby size={13} /> {nChildren}</span>
                     <span className="flex items-center gap-1"><Users size={13} /> {nAdults}</span>
                     <span>{f.dataBreve(row.created_at)}</span>
+                    <span className="flex items-center gap-1 text-kidville-green font-semibold">
+                      <MapPin size={13} /> {nomeSede(row.scuola_id)}
+                    </span>
                   </div>
                 </button>
               )
@@ -219,6 +249,7 @@ export function ModuliRicevuti() {
               <DetailPanel
                 row={selected}
                 sections={sections}
+                nomeSede={nomeSede(selected.scuola_id)}
                 assignments={assignments}
                 setAssignments={setAssignments}
                 referenteIndex={referenteIndex}
@@ -250,11 +281,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function DetailPanel({
-  row, sections, assignments, setAssignments, referenteIndex, setReferenteIndex,
+  row, sections, nomeSede, assignments, setAssignments, referenteIndex, setReferenteIndex,
   working, result, onImport, onReject, onViewDoc, onBack,
 }: {
   row: SubmissionRow
   sections: Section[]
+  nomeSede: string
   assignments: Record<string, string>
   setAssignments: (a: Record<string, string>) => void
   referenteIndex: number
@@ -270,12 +302,24 @@ function DetailPanel({
   const children = row.data?.children ?? []
   const adults = row.data?.adults ?? []
   const done = row.status !== 'pending'
+  // Le sezioni sono per plesso e i nomi si ripetono fra sedi ("3 ANNI" esiste in
+  // tutte e tre): offrire quelle delle altre sedi porta dritti a un `section_id`
+  // NULL, perché il trigger DB risolve il nome SOLO dentro la scuola dell'alunno.
+  // Se l'invio non ha sede (storico) non c'è niente su cui filtrare: si mostrano tutte.
+  const sezioniSede = row.scuola_id
+    ? sections.filter((s) => s.scuola_id === row.scuola_id)
+    : sections
 
   return (
     <div className="bg-kidville-white rounded-card border border-kidville-line p-5 space-y-5">
       <button onClick={onBack} className="md:hidden flex items-center gap-1 text-sm text-kidville-muted">
         <ChevronLeft size={16} /> {t('ricevutiIndietro')}
       </button>
+
+      {/* Per quale scuola si sta importando: prima di ogni altro dato. */}
+      <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
+        <MapPin size={14} /> {t('ricevutiSede')} <strong>{nomeSede}</strong>
+      </p>
 
       {/* Bambini */}
       <section>
@@ -303,7 +347,7 @@ function DetailPanel({
                     className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
                   >
                     <option value="">{t('ricevutiSelezionaSezione')}</option>
-                    {sections.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                    {sezioniSede.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                   </select>
                 </div>
               )}

@@ -78,7 +78,8 @@ beforeEach(() => {
   }]
   h.sollecitiEsistenti = []
   h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'Kidville' }, aruba_config: {} }
-  h.legami = [{ genitore_id: 'g-1' }]
+  // `alunno_id` presente: i tutori si risolvono sull'unione runtime+anagrafica.
+  h.legami = [{ alunno_id: 'al-1', genitore_id: 'g-1' }]
   h.utenti = [{ id: 'g-1', email: 'genitore@test.it', nome: 'Giulia', cognome: 'Farina' }]
   h.quote = []
 })

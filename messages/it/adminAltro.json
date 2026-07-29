@@ -92,6 +92,8 @@
   "ricevutiVuoto": "Nessuna richiesta di iscrizione ricevuta.",
   "ricevutiListaHeader": "In attesa ({attesa}) · Totale {totale}",
   "ricevutiFallbackNome": "Iscrizione",
+  "ricevutiSede": "Sede:",
+  "ricevutiSedeSconosciuta": "Sede non indicata",
   "ricevutiSelezionaDettagli": "Seleziona una richiesta per i dettagli.",
   "ricevutiIndietro": "Indietro",
   "ricevutiBambini": "Bambini ({count})",
@@ -133,6 +135,7 @@
   "inviabiliPubblica": "Pubblica",
   "inviabiliResetConferma": "Reimpostare il Modulo d'iscrizione standard ai valori di base? Le modifiche fatte verranno annullate.",
   "inviabiliResetSuccess": "Modulo d'iscrizione standard ripristinato ai valori di base.",
+  "inviabiliStandardSediNota": "Link unico per tutte le sedi: è il genitore a scegliere il plesso nel primo passo del modulo.",
 
   "protTitle": "Registro protocolli",
   "protSubtitle": "Corrispondenza in arrivo, in partenza e atti interni — numerazione a norma DPR 445/2000",

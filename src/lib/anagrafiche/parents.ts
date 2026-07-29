@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
+import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
 import { logEvento } from '@/lib/logging/logger';
 
@@ -196,6 +197,11 @@ export async function linkOrCreateParent(
     const identita = await ensureParentIdentity(supabase, identityInput, {
       scuolaId: actor.scuola_id ?? null,
     });
+    // Ora che un account esiste, il legame anagrafico scritto al punto 3 può
+    // avere il suo gemello runtime (`legame_genitori_alunni`, FK su `utenti.id`).
+    // Serve alle policy RLS del baseline, che quella tabella la leggono ancora e
+    // non si toccano. Best-effort e idempotente: non tocca le quote esistenti.
+    if (identita.ok) await sincronizzaLegamiRuntime(supabase, parentId);
     if (identita.ok && (identita.createdAuth || identita.createdUtenti || identita.boundNow)) {
       // Account APPENA creato → invio AUTOMATICO delle credenziali (nessun
       // passaggio manuale della Segreteria). Un account riusato ha già le sue.

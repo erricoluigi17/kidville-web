@@ -9,12 +9,17 @@ const h = vi.hoisted(() => {
     const qb: Record<string, unknown> = {}
     qb.select = () => qb
     qb.eq = () => qb
+    // `.in('scuola_id', …)`: lo scope di sede (B1, luglio 2026) filtra sia la
+    // risoluzione del nome-classe sia gli alunni. Senza questo metodo il mock
+    // lancerebbe e la route risponderebbe 500 — cioè il test direbbe «rotto»
+    // per un difetto del mock, non del codice.
+    qb.in = () => qb
     qb.maybeSingle = () =>
       Promise.resolve({ data: { id: 'f1', title: 'Modulo', description: '', fields: [] }, error: null })
-    // alunni / forms_submissions sono awaited direttamente (thenable) → liste vuote.
+    // `sections` deve risolvere la classe DENTRO il plesso dell'utente, altrimenti
+    // lo scope nega 403; alunni / forms_submissions restano liste vuote.
     ;(qb as { then: unknown }).then = (res: (v: { data: unknown; error: null }) => unknown) =>
-      res({ data: [], error: null })
-    void table
+      res({ data: table === 'sections' ? [{ id: 'sec1' }] : [], error: null })
     return qb
   })
   return { requireStaff: vi.fn(), fromSpy }

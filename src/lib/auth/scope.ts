@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from './require-staff'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
+import { logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // Scoping per tenant (plesso) e per classe delle funzioni docente.
@@ -137,11 +138,24 @@ export async function assertSezioneInScope(
  * plesso dell'utente. Per i moduli 0-6/trasversali keyed sul nome sezione: il
  * nome viene risolto SOLO entro i plessi consentiti, così non porta mai
  * cross-tenant (i nomi sono unici solo per scuola_id). 403 se fuori scope.
+ *
+ * ⚠️ Da quando le sedi sono TRE il nome-classe NON è più una chiave univoca:
+ * «2 ANNI» e «5 ANNI» esistono sia ad Aversa sia a Cesa. Questo assert impedisce
+ * di *nominare* una classe altrui, ma non filtra le righe: chi legge alunni per
+ * `classe_sezione` deve comunque restringere la query per sede
+ * (`.in('scuola_id', …)`), altrimenti l'omonimia porta dentro i bambini
+ * dell'altra sede. Gate e filtro, sempre entrambi.
+ *
+ * @param opts.soloSezioniAssegnate  per `educator` (e chiunque non veda tutte le
+ *   classi del plesso, cfr. `vedeTutteLeClassi`) esige che la classe sia fra
+ *   quelle assegnate in `utenti_sezioni`. Non tocca admin/coordinator/segreteria,
+ *   che per progetto vedono TUTTE le classi del proprio plesso.
  */
 export async function assertClasseNomeInScope(
   supabase: SupabaseClient,
   user: AppUser,
   classeNome: string | null | undefined,
+  opts?: { soloSezioniAssegnate?: boolean },
 ): Promise<NextResponse | null> {
   if (!classeNome) {
     return NextResponse.json({ error: 'classe (nome) obbligatoria' }, { status: 400 })
@@ -150,14 +164,40 @@ export async function assertClasseNomeInScope(
   if (plessi.length === 0) {
     return NextResponse.json({ error: 'Nessun plesso associato' }, { status: 403 })
   }
-  const { data } = await supabase
+  // Niente `.limit(1)`: con `soloSezioniAssegnate` servono TUTTE le sezioni
+  // omonime dentro i propri plessi per intersecarle con quelle del docente.
+  // L'insieme è comunque minuscolo (una riga per sede accessibile).
+  const { data, error } = await supabase
     .from('sections')
     .select('id')
     .eq('name', classeNome)
     .in('scuola_id', plessi)
-    .limit(1)
-  if (!data || data.length === 0) {
+  if (error) {
+    // PostgREST non lancia: senza questo controllo un guasto di lettura
+    // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.
+    logEvento('auth', 'error', { tipo: 'scope-classe-non-risolta', sezione: classeNome }, error)
+    return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+  }
+  if (data.length === 0) {
+    // `warn` → persistito: «qualcuno ha chiesto una classe che non è nei suoi
+    // plessi» è un segnale di sicurezza, non rumore. Solo uuid utente, ruolo e
+    // nome-classe (in lista bianca): nessun dato di minori.
+    logEvento('auth', 'warn', {
+      tipo: 'classe-fuori-sede', azione: 'assertClasseNomeInScope',
+      utente: user.id, ruolo: user.role, sezione: classeNome,
+    })
     return NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
+  }
+
+  if (opts?.soloSezioniAssegnate && !vedeTutteLeClassi(user)) {
+    const mie = new Set(await sezioniDiUtente(supabase, user.id))
+    if (!data.some((s) => mie.has(s.id as string))) {
+      logEvento('auth', 'warn', {
+        tipo: 'classe-non-assegnata', azione: 'assertClasseNomeInScope',
+        utente: user.id, ruolo: user.role, sezione: classeNome,
+      })
+      return NextResponse.json({ error: 'Classe non assegnata al docente' }, { status: 403 })
+    }
   }
   return null
 }

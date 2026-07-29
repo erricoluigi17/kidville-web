@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
 import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -85,11 +86,20 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
 
             // Senza sezione risolta la lista resta vuota: niente default arbitrari.
             if (teacherSection) {
+                // Isolamento per sede: la sezione è risolta dai legami del docente,
+                // ma il nome-classe non è una chiave (con tre sedi «2 ANNI» esiste
+                // sia ad Aversa sia a Cesa). Senza questo filtro la maestra si
+                // ritrovava fra i contatti i GENITORI dei bambini dell'altra sede,
+                // con la chat già apribile. Fail-closed: nessun plesso → nessun
+                // contatto (in produzione ogni utente di staff ha una sede).
+                const plessi = await scuoleDiUtente(supabase, auth.user);
+
                 // 3 query batched: alunni della sezione → legami → genitori (niente N+1).
                 const { data: allStudents } = await supabase
                     .from('alunni')
                     .select('id, nome, cognome, classe_sezione')
-                    .eq('classe_sezione', teacherSection);
+                    .eq('classe_sezione', teacherSection)
+                    .in('scuola_id', plessi);
                 const students = allStudents ?? [];
                 const studentIds = students.map(s => s.id);
 

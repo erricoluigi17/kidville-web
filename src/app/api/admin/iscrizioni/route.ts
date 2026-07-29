@@ -378,6 +378,111 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }
     }
 
+    // ─── PRE-FLIGHT dedup alunno: quel codice fiscale è di QUESTA sede? ──────────
+    // La dedup per CF era GLOBALE, senza vincolo di sede. Due danni, entrambi reali:
+    //
+    //  1) ACCESSO. Il modulo pubblico accetta qualunque codice fiscale senza verificarlo,
+    //     e il CF italiano si DEDUCE da nome, cognome, data e luogo di nascita e sesso —
+    //     esattamente i dati che il genitore di un compagno di classe conosce. Se quel CF
+    //     combaciava con un bambino GIÀ iscritto, la dedup riusava quel record e l'adulto
+    //     della nuova domanda gli veniva agganciato: `student_parents` E
+    //     `legame_genitori_alunni`. Quest'ultima è la tabella su cui fanno join le policy
+    //     RLS di pagamenti/incassi/note disciplinari, ed è ciò che rende autorevole
+    //     `getFigliDiGenitore`/`genitoreHasFiglio` in decine di rotte: non un difetto
+    //     anagrafico, ma accesso reale ai dati di un minore altrui.
+    //  2) INTEGRITÀ. L'`update` sovrascriveva `classe_sezione` con una classe di un'ALTRA
+    //     sede. Il trigger `sync_alunno_section_id()` risolve il nome DENTRO la stessa
+    //     `scuola_id`: non trovandolo lascia `section_id` NULL in silenzio, e il bambino
+    //     sparisce dal registro della propria sede. Con «2 ANNI» e «5 ANNI» presenti sia ad
+    //     Aversa sia a Cesa, l'omonimia fra sezioni non è più un'ipotesi di scuola.
+    //
+    // `assertInvioInScope` non copre nulla di tutto questo: guarda la sede della DOMANDA,
+    // non quella del BAMBINO riusato — una segreteria resta formalmente in scope.
+    // Quindi: (A) la dedup si restringe alla sede di scrittura; (B) lo stesso CF trovato
+    // ALTROVE non si ignora in silenzio (è un trasferimento legittimo o un tentativo di
+    // aggancio: in entrambi i casi l'import si ferma e decide una persona).
+    // Sta nel PRE-FLIGHT come province e sezione, e non nel ciclo dei figli, per una
+    // ragione precisa: gli adulti si scrivono PRIMA dei bambini, quindi bloccare più a
+    // valle avrebbe comunque creato il `parents`, l'account e spedito le credenziali a chi
+    // sta tentando l'aggancio. Qui non si scrive niente: l'invio resta 'pending'.
+    const dedupCf: (string | null)[] = children.map(() => null)
+    for (let ci = 0; ci < children.length; ci++) {
+      const cf = (children[ci] as EnrollmentChild).codice_fiscale
+      if (!cf) continue
+
+      // (A) La dedup vera e propria, RISTRETTA alla sede: un bambino con lo stesso CF in
+      // un'altra sede NON è il record da riusare in questo import.
+      const { data: inSede, error: inSedeErr } = await supabase
+        .from('alunni')
+        .select('id')
+        .eq('codice_fiscale', cf)
+        .eq('scuola_id', scuolaId)
+        .maybeSingle()
+      if (inSedeErr) {
+        // PostgREST non lancia: prima l'errore spariva (`const { data: existing }` da solo).
+        // Non si boccia un'iscrizione per una lettura fallita — si prosegue senza dedup, e
+        // un eventuale doppione lo intercetta l'INSERT (23505 → errore bloccante).
+        const codice = (inSedeErr as { code?: string }).code ?? null
+        logEvento('db', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'dedup-cf-non-disponibile',
+          entita: 'bambino',
+          indice: ci + 1,
+          error_code: codice,
+        }, inSedeErr)
+        continue
+      }
+      if (inSede?.id) {
+        dedupCf[ci] = inSede.id as string
+        continue
+      }
+
+      // (B) Nessun record in sede: lo stesso CF esiste ALTROVE? Questa lettura non produce
+      // MAI un riuso — distingue soltanto «bambino nuovo» da «bambino di un'altra sede»,
+      // che fino a ieri finivano nello stesso ramo.
+      const { data: altrove, error: altroveErr } = await supabase
+        .from('alunni')
+        .select('scuola_id')
+        .eq('codice_fiscale', cf)
+      if (altroveErr || !Array.isArray(altrove)) {
+        // Come sopra: non sapere non può voler dire bocciare l'iscrizione. `info` quando è
+        // schema assente (DB E2E della CI non migrato), `error`/`warn` altrimenti.
+        const codice = (altroveErr as { code?: string } | null)?.code ?? null
+        logEvento(
+          'db',
+          altroveErr ? (codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error') : 'warn',
+          {
+            operazione: 'admin/iscrizioni:PATCH',
+            esito: 'cf-altre-sedi-non-verificabile',
+            entita: 'bambino',
+            indice: ci + 1,
+            error_code: codice,
+          },
+          altroveErr ?? undefined,
+        )
+        continue
+      }
+      const altraSede = (altrove as { scuola_id?: unknown }[]).find(
+        (r) => typeof r?.scuola_id === 'string' && r.scuola_id !== scuolaId,
+      )
+      if (!altraSede) continue
+      errors.push({
+        dove: `Bambino ${ci + 1}`,
+        messaggio:
+          'Questo codice fiscale risulta già iscritto in un\'altra sede: serve un trasferimento, non una nuova iscrizione. Verificare con la sede di provenienza prima di procedere; se il codice fiscale è stato digitato male, correggerlo nella domanda.',
+      })
+      // Solo uuid e indice: il CF e il nome sono dati di un minore, e per giunta di un
+      // minore che qui è la potenziale VITTIMA dell'aggancio. Mai in `app_log`.
+      logEvento('multi_sede', 'error', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'cf-gia-iscritto-altra-sede',
+        entita: 'bambino',
+        indice: ci + 1,
+        sede_id: scuolaId,
+        sede_esistente_id: String(altraSede.scuola_id),
+      })
+    }
+
     if (errors.length > 0) {
       logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'import-bloccato-preflight', bloccanti: errors.length })
       return NextResponse.json({ success: false, errors, warnings }, { status: 200 })
@@ -402,7 +507,17 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       let parentId: string | null = null
       let parentAuthId: string | null = null
 
-      // Dedup per codice fiscale
+      // Dedup per codice fiscale — DELIBERATAMENTE cross-sede, al contrario di quella dei
+      // bambini qui sotto, e la differenza non è una svista: un adulto PUÒ avere figli in
+      // sedi diverse (Giugliano, Aversa, Cesa sono la stessa cooperativa) ed è un caso
+      // normale, mentre lo stesso bambino iscritto in due sedi non lo è. Restringere anche
+      // questa alla sede creerebbe un secondo `parents` per lo stesso genitore, e con esso
+      // una seconda identità: due anagrafiche, fatture intestate a metà, e — quando
+      // `ensureParentIdentity` legasse l'account all'una o all'altra — un genitore che non
+      // vede uno dei suoi figli. `parents` inoltre non ha nemmeno una `scuola_id` su cui
+      // filtrare: la sede di un adulto è un attributo dei suoi LEGAMI, non suo.
+      // Il riuso qui non concede alcun accesso da sé: l'accesso nasce dal legame
+      // genitore↔alunno, ed è quello che va difeso (vedi il pre-flight sui CF dei bambini).
       if (a.fiscal_code) {
         const { data: existing } = await supabase
           .from('parents')
@@ -537,29 +652,27 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     for (let ci = 0; ci < children.length; ci++) {
       const c = children[ci] as EnrollmentChild
       const classe = assignments[String(ci)]
-      let studentId: string | null = null
+      // Dedup per CF: già risolta nel PRE-FLIGHT e vincolata alla sede di scrittura. Qui
+      // si usa solo l'esito, e non si rilegge: se quel CF fosse di un'altra sede l'import
+      // sarebbe già stato fermato prima di qualunque scrittura.
+      let studentId: string | null = dedupCf[ci] ?? null
 
-      if (c.codice_fiscale) {
-        const { data: existing } = await supabase
-          .from('alunni')
-          .select('id')
-          .eq('codice_fiscale', c.codice_fiscale)
-          .maybeSingle()
-        if (existing) {
-          studentId = existing.id
-          await supabase.from('alunni').update({ classe_sezione: classe }).eq('id', studentId)
-          await logScrittura(supabase, {
-            attore: auth.user,
-            entitaTipo: 'alunni',
-            entitaId: studentId,
-            azione: 'update',
-            scuolaId,
-            valoreDopo: { classe_sezione: classe },
-          })
-        }
+      if (studentId) {
+        await supabase.from('alunni').update({ classe_sezione: classe }).eq('id', studentId)
+        await logScrittura(supabase, {
+          attore: auth.user,
+          entitaTipo: 'alunni',
+          entitaId: studentId,
+          azione: 'update',
+          scuolaId,
+          valoreDopo: { classe_sezione: classe },
+        })
       }
 
       // Dedup SOFT per gli alunni SENZA codice fiscale (nome+cognome+data_nascita+scuola).
+      // Il vincolo `.eq('scuola_id', scuolaId)` c'è dalla nascita di questo blocco e va
+      // tenuto: è ciò che impedisce alla dedup soft lo stesso difetto che aveva quella per
+      // CF (due bambini omonimi e coetanei in sedi diverse non sono lo stesso bambino).
       // Serve al RE-IMPORT dopo un fallimento parziale: senza CF non c'è chiave forte, e un
       // secondo import ricreerebbe lo stesso bambino. Guardia stretta — attiva SOLO con tutti
       // e tre i campi identificativi presenti — per non fondere per errore due bambini omonimi

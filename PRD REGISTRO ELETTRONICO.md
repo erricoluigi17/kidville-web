@@ -121,6 +121,53 @@ gli stessi `200` — e sarebbe stato molto peggio del difetto.
 > Non è una colpa dei test: è il limite di collaudare una condizione che l'ambiente di prova non
 > sa riprodurre.
 
+### Il collaudo degli 11 tester: sette route perdevano dati di minori fra sedi
+
+Gli 11 tester-opus hanno riportato **FAIL su tutte le categorie** e quattro bloccanti. Tre erano
+falle di **isolamento fra sedi**, tutte con la stessa firma: la query filtrava gli alunni per
+**nome della classe** senza vincolo di `scuola_id`, su route che girano con service-role — quindi
+con la RLS scavalcata e il gate applicativo come unico presidio.
+
+**Erano latenti da sempre e le ha attivate l'apertura delle sedi nuove**: con un plesso solo il
+nome della classe era di fatto una chiave univoca; con tre plessi «2 ANNI» esiste sia ad Aversa sia
+a Cesa, «5 ANNI» pure, e quel nome ha smesso di identificare una classe sola.
+
+L'audit sistematico delle **17** occorrenze dello schema ne ha trovate **sette** da correggere —
+cinque oltre le due segnalate:
+
+| Route | Cosa perdeva |
+|---|---|
+| `admin/documents-merge` | nome, cognome e **codice fiscale** dei minori di un'altra sede |
+| `teacher/modulistica` (GET) | nome e cognome; bastava il ruolo `educator` di qualunque plesso |
+| `teacher/modulistica` (POST) | si allegava una scansione al fascicolo di un bambino di un'altra sede |
+| `attendance/daily` | nomi e presenze |
+| `attendance/delegates` | delegati al ritiro, con **numero di documento** |
+| `chat/contacts` | i **genitori** dell'altra sede fra i contatti, chat già apribile |
+| `register/lessons` (GET) | registro: argomenti, compiti, firme |
+| `pagamenti/genera` (POST) | **scrittura**: `alunno_ids` non validati, sede del client non verificata |
+
+Corrette estendendo `assertClasseNomeInScope` (che ora sa anche restringere l'`educator` alle
+proprie sezioni, senza toccare segreteria/coordinator/admin che per progetto vedono tutte le classi
+del plesso) e aggiungendo il filtro per sede sulle query — gate e filtro insieme, perché il primo
+impedisce di *nominare* una classe altrui e il secondo impedisce che l'omonimia porti dentro i
+bambini dell'altra sede.
+
+**Quarto bloccante — la dedup dell'alunno per codice fiscale era globale.** Il modulo pubblico
+accetta qualunque CF senza verificarlo, e il codice fiscale italiano si deduce da nome, cognome,
+data e luogo di nascita: i dati che il genitore di un compagno di classe conosce. Su
+corrispondenza la dedup riusava il bambino e ne **sovrascriveva la classe** con una sezione di
+un'altra sede — che il trigger non risolve, lasciando `section_id` NULL e facendo sparire
+l'alunno dal registro della propria sede. Fino a stamattina era un difetto anagrafico; da quando
+l'import scrive anche `legame_genitori_alunni` (la tabella su cui fanno il join le policy RLS di
+pagamenti, incassi e note disciplinari) era diventato **accesso reale**. La dedup è ora vincolata
+alla sede, e un CF già iscritto altrove è un **errore bloccante** che dice all'operatore che serve
+un trasferimento, non un'iscrizione.
+
+> **Nota di metodo.** Nessuna di queste falle era visibile al gate formale: 3424 test verdi ed E2E
+> verde convivevano con sette route che perdevano dati di minori fra plessi. Le ha trovate un
+> collaudo condotto *sapendo* che le sedi erano diventate tre — cioè cercando la classe di difetti
+> che quel cambiamento poteva attivare, non rieseguendo i test esistenti.
+
 ### Restano aperti (decisioni del titolare, non difetti)
 
 - `admin.e2e@kidville.test` è un account di collaudo con password nota che, per effetto di

@@ -180,7 +180,7 @@ export async function linkOrCreateParent(
     await logScrittura(supabase, {
       attore: actor,
       entitaTipo: 'legame',
-      entitaId: `${studentId}:${parentId}`,
+      entitaId: studentId,
       azione: 'insert',
       valoreDopo: { student_id: studentId, parent_id: parentId, relation_type: role || 'delegate' },
     });

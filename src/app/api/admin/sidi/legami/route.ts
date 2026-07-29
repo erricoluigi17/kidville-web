@@ -63,10 +63,10 @@ export const PATCH = withRoute('admin/sidi/legami:PATCH', async (request: NextRe
       await logScrittura(supabase, {
         attore: auth.user,
         entitaTipo: 'legame_sidi',
-        entitaId: `${student_id}:${parent_id}`,
+        entitaId: student_id,
         azione: 'update',
         scuolaId: auth.user.scuola_id ?? null,
-        valoreDopo: { validato_sidi: validato },
+        valoreDopo: { student_id, parent_id, validato_sidi: validato },
       })
       return NextResponse.json({ success: true })
     } catch (err) {

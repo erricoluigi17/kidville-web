@@ -3,6 +3,9 @@ import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { isScuolaE2E } from '@/lib/scuole/reali'
 import { logEvento } from '@/lib/logging/logger'
 
+/** Codici PostgREST/Postgres di «schema non ancora migrato» (DB E2E della CI). */
+const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+
 // =============================================================================
 // Risoluzione destinatari per le notifiche (id utenti). Tutte le funzioni sono
 // best-effort: su errore tornano [] (la notifica semplicemente non parte).
@@ -73,6 +76,13 @@ export async function genitoriDiScuola(supabase: SupabaseClient, scuolaId: strin
 /**
  * Staff della scuola con uno dei ruoli dati (schema legacy doppio: il ruolo può
  * stare su `role` O `ruolo` — stesso pattern di panic-alert e mensa).
+ *
+ * Multi-sede: NON basta `utenti.scuola_id`. La Direzione è multi-plesso attraverso
+ * la tabella ponte `utenti_scuole` (è la stessa definizione che usa `scuoleDiUtente`
+ * per decidere su quali plessi un utente può operare). Guardando la sola colonna,
+ * una sede appena aperta — dove nessuno ha ancora quella sede come primaria —
+ * risultava SENZA staff: le iscrizioni arrivavano e non le annunciava nessuno,
+ * perché `notificaEvento` con zero destinatari esce in silenzio.
  */
 export async function staffScuola(
   supabase: SupabaseClient,
@@ -82,11 +92,62 @@ export async function staffScuola(
   if (!scuolaId || ruoli.length === 0) return []
   try {
     const ammessi = new Set(ruoli)
-    const { data } = await supabase.from('utenti').select('id, role, ruolo').eq('scuola_id', scuolaId)
-    return (data ?? [])
-      .filter((u) => ammessi.has((u.role as string) ?? '') || ammessi.has((u.ruolo as string) ?? ''))
-      .map((u) => u.id as string)
-  } catch {
+    const ids = new Set<string>()
+
+    const { data: primari, error: errPrimari } = await supabase
+      .from('utenti').select('id, role, ruolo').eq('scuola_id', scuolaId)
+    if (errPrimari) {
+      logEvento('notifica', 'error', {
+        operazione: 'staffScuola', esito: 'utenti-non-letti', sede_id: scuolaId,
+      }, errPrimari)
+    }
+    for (const u of primari ?? []) {
+      if (ammessi.has((u.role as string) ?? '') || ammessi.has((u.ruolo as string) ?? '')) {
+        ids.add(u.id as string)
+      }
+    }
+
+    // Ponte multi-plesso. Se la tabella non esiste (DB E2E non migrato) si degrada
+    // ai soli primari: `42P01`/`42703` non sono un incidente, l'assenza di risposta sì.
+    const { data: ponte, error: errPonte } = await supabase
+      .from('utenti_scuole').select('utente_id').eq('scuola_id', scuolaId)
+    if (errPonte) {
+      const codice = (errPonte as { code?: string }).code ?? ''
+      logEvento('notifica', SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
+        operazione: 'staffScuola', esito: 'ponte-non-letto', sede_id: scuolaId,
+      }, errPonte)
+    }
+    const daPonte = (ponte ?? []).map((r) => r.utente_id as string).filter(Boolean)
+    if (daPonte.length > 0) {
+      const { data: utentiPonte, error: errUtentiPonte } = await supabase
+        .from('utenti').select('id, role, ruolo').in('id', daPonte)
+      if (errUtentiPonte) {
+        logEvento('notifica', 'error', {
+          operazione: 'staffScuola', esito: 'utenti-ponte-non-letti', sede_id: scuolaId,
+        }, errUtentiPonte)
+      }
+      for (const u of utentiPonte ?? []) {
+        if (ammessi.has((u.role as string) ?? '') || ammessi.has((u.ruolo as string) ?? '')) {
+          ids.add(u.id as string)
+        }
+      }
+    }
+
+    // Zero destinatari non è un errore in sé (può esserlo il ruolo richiesto), ma
+    // `notificaEvento` esce in silenzio: senza questa riga «nessuno è stato avvisato»
+    // e «tutto a posto» sono indistinguibili nei log. Solo uuid, ruoli e conteggi.
+    if (ids.size === 0) {
+      logEvento('notifica', 'warn', {
+        operazione: 'staffScuola', esito: 'nessun-destinatario',
+        sede_id: scuolaId, ruoli: ruoli.join(','),
+      })
+    }
+    return [...ids]
+  } catch (e) {
+    // Un catch muto qui significa notifiche che non partono senza che nessuno lo sappia.
+    logEvento('notifica', 'error', {
+      operazione: 'staffScuola', esito: 'eccezione', sede_id: scuolaId,
+    }, e)
     return []
   }
 }

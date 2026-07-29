@@ -68,6 +68,60 @@
 
 ---
 
+## 🗓️ Changelog — Aversa e Cesa aperte, 33 sezioni · e il wizard che si inchiodava al primo passo 2026-07-29 (branch `fix/wizard-congelato-main`)
+
+### Le tre sedi sono in produzione
+
+Create **Kidville Aversa** e **Kidville Cesa** con la RPC `provisiona_sede` (che dopo la correzione
+dello stesso giorno crea anche `admin_settings`, quindi non nascono senza registro). Verificato per
+entrambe: riga in `schools` e in `scuole` **con lo stesso id**, `attiva`, matrice funzioni popolata
+per infanzia e primaria, due admin collegati, **solleciti spenti** di proposito.
+
+**33 sezioni** create dall'*ordine bracciali definitivo a.s. 2026/2027*: Cesa 12, Aversa 5,
+Giugliano 16 — che si affiancano alle due sezioni TEST di Giugliano, lasciate intatte perché
+servono ai revisori Apple e Google. Due normalizzazioni rispetto al file sorgente, entrambe
+confermate dal titolare: la `VI` della primaria di Giugliano è un refuso per `IV`, e Aversa non ha
+primaria attiva quest'anno. Nessun nome ambiguo dentro la stessa sede — condizione necessaria
+perché il trigger agganci l'alunno alla classe giusta. *(I nomi delle sezioni non sono riportati
+qui: alcuni contengono il nome di battesimo della docente e il repository è pubblico.)*
+
+**Backfill dei legami**: `legame_genitori_alunni` passa da 35 a 45 righe, coppie orfane residue
+**0**. Le 11 non convertibili (anagrafiche senza account) restano tali di proposito e si
+ripareranno da sole al primo invio di credenziali. Controllo di sicurezza contabile eseguito
+**prima**: zero alunni con genitori separati coinvolti, quindi nessuna fattura è passata da
+intestatario unico a 50/50.
+
+### Il wizard si inchiodava al primo passo — trovato collaudando in produzione
+
+Aperte le due sedi, il modulo pubblico è diventato **inutilizzabile**: scelta la sede e premuto
+«Avanti», il contatore avanzava e il pannello no.
+
+Causa radice, misurata nel browser: lo stato React era **corretto** (`step` 0→1→2, passo corrente
+sede→bambino→adulto) mentre il DOM restava fermo sulla sede. I pannelli stavano dentro
+`AnimatePresence mode="wait"`, che monta il pannello nuovo **solo dopo** che l'uscita del vecchio si
+è conclusa; quell'uscita non si concludeva mai, e il contatore — fuori dall'animazione — avanzava da
+solo.
+
+**La parte grave non è l'estetica**: il pannello mai montato non registra i propri campi in
+react-hook-form, quindi la validazione non trovava nulla da validare e rispondeva "valido". Un
+genitore sarebbe arrivato all'invio con **bambini e adulti vuoti**, fermato solo dal 400 del server.
+
+Corretto togliendo `AnimatePresence` da attorno ai passi — *un'animazione non può decidere se un
+modulo funziona* — e non dipingendo alcun passo finché non si sa se il passo sede esiste (secondo
+innesco indipendente dello stesso guasto).
+
+**Perché 3411 test verdi e l'E2E non lo vedevano**: il difetto richiede **due o più sedi**, e né
+jsdom né il DB della CI ne hanno mai avute due. Il test di regressione non asserisce «il pannello
+cambia» (in jsdom le animazioni risolvono all'istante e passerebbe anche col bug) ma l'invariante
+che rende il difetto impossibile.
+
+> **Lezione operativa**: durante il collaudo il service worker ha servito per un po' codice vecchio
+> dalla cache `kidville-shell-v3`, facendo sembrare inefficace una correzione che invece funzionava.
+> È lo stesso inganno già registrato per `/offline`. Prima di misurare qualunque cosa nel browser:
+> disiscrivere il service worker e svuotare le cache.
+
+---
+
 ## 🗓️ Changelog — Multi-sede reale: il modulo pubblico, il legame genitore↔figlio e la sede che nasceva mutilata 2026-07-29 (branch `feat/screenshot-play-store`)
 
 Preparazione all'onboarding degli alunni **reali** in produzione, con l'apertura di Aversa e Cesa

@@ -39,6 +39,7 @@
   "wizardInviataCorpo": "La tua richiesta di iscrizione è stata ricevuta. La segreteria la esaminerà e ti contatterà con le credenziali di accesso.",
   "wizardInvioInCorso": "Invio…",
   "wizardPassoDi": "Passo {corrente} di {totale}",
+  "wizardCaricamento": "Caricamento…",
   "wizardRimuovi": "Rimuovi",
   "wizardRiepilogo": "Riepilogo",
   "wizardRiepilogoConteggio": "Stai iscrivendo <n>{bambini}</n> {bambini, plural, one {bambino} other {bambini}} con <n>{adulti}</n> {adulti, plural, one {adulto} other {adulti}} di riferimento.",

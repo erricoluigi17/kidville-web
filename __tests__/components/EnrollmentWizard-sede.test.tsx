@@ -151,6 +151,53 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     expect((postBodies[0] as { scuola_id?: string }).scuola_id).toBe(CESA.id)
   })
 
+  /**
+   * REGRESSIONE 2026-07-29 — il wizard si congelava sul bambino, in produzione.
+   *
+   * Col vecchio codice il primo render dipingeva SUBITO il bambino (sedi ancora
+   * vuote → nessun passo sede). All'arrivo dell'elenco `steps` cambiava forma, e
+   * con essa la `key` dentro `AnimatePresence mode="wait"`: l'uscita del pannello
+   * vecchio non si completava mai e il genitore restava inchiodato sul bambino,
+   * mentre il contatore dei passi — che sta FUORI dall'animazione — continuava ad
+   * avanzare. Con tre sedi vere il modulo pubblico era inutilizzabile.
+   *
+   * Qui non si può assertare «il pannello cambia»: il mock di framer-motion
+   * risolve tutto all'istante e passerebbe anche col bug. Si asserisce invece
+   * l'INVARIANTE che rende il difetto impossibile: finché la forma dei passi non
+   * è decisa, NESSUN passo viene dipinto.
+   */
+  it('REGRESSIONE — nessun passo è dipinto finché l\'elenco sedi non è risolto', async () => {
+    let sbloccaSedi: (() => void) | null = null
+    const attesa = new Promise<void>(r => { sbloccaSedi = r })
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/api/iscrizione/model')) {
+        return Promise.resolve({ ok: true, json: async () => modelSchema })
+      }
+      if (url.includes('/api/iscrizione/sedi')) {
+        return attesa.then(() => ({
+          ok: true,
+          json: async () => ({ success: true, data: [AVERSA, CESA, GIUGLIANO] }),
+        }))
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+
+    render(<EnrollmentWizard />)
+
+    // Sedi ancora in volo: né bambino né contatore. Col bug, «Nome bimbo» era già lì.
+    await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument())
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Passo \d+ di \d+/)).not.toBeInTheDocument()
+
+    sbloccaSedi!()
+
+    // Risolto l'elenco, la forma è definitiva e il primo passo è la sede.
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: 'Kidville Aversa' })).toBeInTheDocument(),
+    )
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
+  })
+
   it('NON-REGRESSIONE — con ?scuola= nel link: nessun passo sede, si parte dal bambino', async () => {
     mockFetch([AVERSA, CESA, GIUGLIANO])
     render(<EnrollmentWizard scuolaId={AVERSA.id} />)

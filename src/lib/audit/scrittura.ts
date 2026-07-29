@@ -16,6 +16,54 @@ import { logEvento } from '@/lib/logging/logger'
 
 export type AzioneScrittura = 'insert' | 'update' | 'delete'
 
+/** `audit_scritture_docente.entita_id` è una colonna **uuid**. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Alcune entità sono RELAZIONI e un uuid proprio non ce l'hanno: il legame
+ * genitore↔figlio, l'assegnazione docente↔sezione. Sei punti della codebase
+ * passavano una chiave composta (`"studentId:parentId"`), Postgres rifiutava
+ * l'INSERT — e l'audit non veniva scritto **affatto**. Per quelle entità non è
+ * mai esistita una riga di audit: su dati di minori, la tracciabilità di chi ha
+ * collegato chi a chi non è un dettaglio.
+ *
+ * I chiamanti ora passano l'uuid primario, ma la rete resta: una chiave non-uuid
+ * non fa più perdere la riga. Finisce nel valore — dove è comunque interrogabile —
+ * e si vede nei log, invece di sparire.
+ */
+function normalizzaEntita(input: LogScritturaInput): {
+  entitaId: string | null
+  valorePrima: unknown
+  valoreDopo: unknown
+  chiaveNonUuid: string | null
+} {
+  const grezzo = input.entitaId ?? null
+  if (grezzo === null || UUID.test(grezzo)) {
+    return {
+      entitaId: grezzo,
+      valorePrima: input.valorePrima ?? null,
+      valoreDopo: input.valoreDopo ?? null,
+      chiaveNonUuid: null,
+    }
+  }
+  const arricchisci = (v: unknown): unknown =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+      ? { ...(v as Record<string, unknown>), entita_chiave: grezzo }
+      : v
+  const prima = input.valorePrima ?? null
+  const dopo = input.valoreDopo ?? null
+  // Se non c'è nessun valore in cui infilarla, la chiave si porta da sola.
+  if (prima === null && dopo === null) {
+    return { entitaId: null, valorePrima: null, valoreDopo: { entita_chiave: grezzo }, chiaveNonUuid: grezzo }
+  }
+  return {
+    entitaId: null,
+    valorePrima: arricchisci(prima),
+    valoreDopo: arricchisci(dopo),
+    chiaveNonUuid: grezzo,
+  }
+}
+
 export interface LogScritturaInput {
   /** Chi sta scrivendo (da requireDocente: auth.user). */
   attore: AppUser
@@ -46,16 +94,27 @@ export async function logScrittura(
     // scattava mai, quindi un audit rifiutato (RLS, colonna mancante, vincolo)
     // spariva in silenzio — e questo è il registro immodificabile delle
     // scritture: se tace, non si distingue "nessuna scrittura" da "audit rotto".
+    const n = normalizzaEntita(input)
+    if (n.chiaveNonUuid !== null) {
+      // Non è un errore fatale (la riga si scrive lo stesso), ma non è nemmeno
+      // normale: significa che un chiamante non ha un uuid da dare. Va visto.
+      logEvento('audit', 'warn', {
+        operazione: 'logScrittura',
+        entita_tipo: input.entitaTipo,
+        azione: input.azione,
+        esito: 'chiave-non-uuid',
+      })
+    }
     const res = await supabase.from('audit_scritture_docente').insert({
       attore_id: input.attore.id,
       attore_ruolo: input.attore.role ?? null,
       scuola_id: input.scuolaId ?? input.attore.scuola_id ?? null,
       section_id: input.sectionId ?? null,
       entita_tipo: input.entitaTipo,
-      entita_id: input.entitaId ?? null,
+      entita_id: n.entitaId,
       azione: input.azione,
-      valore_prima: (input.valorePrima ?? null) as never,
-      valore_dopo: (input.valoreDopo ?? null) as never,
+      valore_prima: n.valorePrima as never,
+      valore_dopo: n.valoreDopo as never,
     })
     if (res?.error) {
       logEvento(

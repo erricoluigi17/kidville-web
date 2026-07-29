@@ -132,7 +132,7 @@ export async function applySidiRecords(
       await logScrittura(supabase, {
         attore,
         entitaTipo: 'legame',
-        entitaId: `${studentId}:${parentId}`,
+        entitaId: studentId,
         azione: 'insert',
         scuolaId,
         valoreDopo: { student_id: studentId, parent_id: parentId },

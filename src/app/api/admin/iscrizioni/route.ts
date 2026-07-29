@@ -661,7 +661,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         await logScrittura(supabase, {
           attore: auth.user,
           entitaTipo: 'legame',
-          entitaId: `${studentId}:${link.parentId}`,
+          entitaId: studentId,
           azione: 'insert',
           scuolaId,
           valoreDopo: { student_id: studentId, parent_id: link.parentId, relation_type: link.role },

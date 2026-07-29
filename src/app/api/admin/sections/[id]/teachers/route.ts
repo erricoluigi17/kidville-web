@@ -90,7 +90,9 @@ export const POST = withRoute('admin/sections/[id]/teachers:POST', async (reques
     await logScrittura(supabase, {
       attore: auth.user,
       entitaTipo: 'sezione_docente',
-      entitaId: `${sectionId}:${utente_id}`,
+      // L'entità è la RELAZIONE: l'uuid interrogabile è il docente, la sezione
+      // ha già la sua colonna. La coppia resta per intero in `valoreDopo`.
+      entitaId: utente_id,
       azione: 'insert',
       sectionId,
       valoreDopo: { section_id: sectionId, utente_id },
@@ -124,7 +126,7 @@ export const DELETE = withRoute('admin/sections/[id]/teachers:DELETE', async (re
     await logScrittura(supabase, {
       attore: auth.user,
       entitaTipo: 'sezione_docente',
-      entitaId: `${sectionId}:${utente_id}`,
+      entitaId: utente_id,
       azione: 'delete',
       sectionId,
       valorePrima: { section_id: sectionId, utente_id },

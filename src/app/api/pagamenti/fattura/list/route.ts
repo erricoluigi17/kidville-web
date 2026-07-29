@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -10,7 +11,7 @@ import { logErrore } from '@/lib/logging/logger'
 // GET /api/pagamenti/fattura/list?pagamento_id=  — elenco delle fatture (quote)
 // emesse per un pagamento. Usato dalla UI quando un pagamento ha PIÙ fatture
 // (genitori separati) per offrire un download per intestatario. Staff o genitore
-// del bambino (scoping legame_genitori_alunni).
+// del bambino (scoping sull'unione runtime + anagrafica: `genitoreHasFiglio`).
 
 const getQuerySchema = z.object({ pagamento_id: zUuid })
 
@@ -46,13 +47,8 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
     if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', pag.alunno_id)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      const ok = await genitoreHasFiglio(supabase, user.id, pag.alunno_id)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
     const { data, error } = await supabase

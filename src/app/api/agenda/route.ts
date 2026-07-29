@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, requireUser, type AppUser } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, scuoleDiUtente } from '@/lib/auth/scope'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 import { rateLimit } from '@/lib/security/rate-limit'
@@ -100,14 +101,12 @@ export const GET = withRoute('agenda:GET', async (request: Request) => {
       if (!alunnoId) {
         return NextResponse.json({ error: 'alunno_id obbligatorio' }, { status: 400 })
       }
-      // Legame runtime genitore↔alunno (student_parents è solo ETL/anagrafica).
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', alunnoId)
-        .maybeSingle()
-      if (!legame) {
+      // Legame genitore↔alunno dall'UNIONE delle due sorgenti storiche: runtime
+      // (`legame_genitori_alunni`) e anagrafica (`student_parents` via ponte
+      // `parents.auth_user_id`). Con la sola runtime i genitori arrivati
+      // dall'import iscrizioni ricevevano 403 sull'agenda del PROPRIO figlio.
+      const collegato = await genitoreHasFiglio(supabase, user.id, alunnoId)
+      if (!collegato) {
         return NextResponse.json({ error: 'Accesso negato: alunno non associato' }, { status: 403 })
       }
       const { data: alunno } = await supabase

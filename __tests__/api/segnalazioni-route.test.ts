@@ -219,7 +219,11 @@ describe('POST /api/segnalazioni — verifica del rapporto legittimo', () => {
   })
 
   it('403 voce_diario: la voce non è di un figlio del genitore → nessun insert', async () => {
+    // Nessun legame in NESSUNA delle due sorgenti (runtime + anagrafica): il
+    // predicato è l'unione, quindi svuotare la sola tabella runtime non basta
+    // più a descrivere «non è suo figlio».
     h.legameSingle = null
+    h.legamiList = []
     const res = await POST(postReq({ tipo_oggetto: 'voce_diario', oggetto_id: VOCE, categoria: 'informazione_falsa' }))
     expect(res.status).toBe(403)
     expect(h.inserted.segnalazioni).toBeUndefined()

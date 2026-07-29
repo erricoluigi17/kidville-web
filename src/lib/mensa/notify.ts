@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendPush } from '@/lib/push/web-push'
+import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
@@ -120,12 +121,11 @@ export async function notificaSaldoBasso(
     const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', opts.alunnoId).maybeSingle()
     if (!(await isNotificaAbilitata(supabase, 'mensa_saldo_basso', (alunno?.scuola_id as string | undefined) ?? null))) return
 
-    // genitori legati all'alunno
-    const { data: legami } = await supabase
-      .from('legame_genitori_alunni')
-      .select('genitore_id')
-      .eq('alunno_id', opts.alunnoId)
-    const genitori = (legami ?? []).map(l => l.genitore_id as string)
+    // genitori legati all'alunno — unione runtime (`legame_genitori_alunni`) +
+    // anagrafica (`student_parents` via ponte `parents.auth_user_id`): con la
+    // sola runtime il tutore di un bambino importato dal form pubblico non
+    // riceveva MAI l'avviso di saldo mensa in esaurimento.
+    const genitori = await getGenitoriDiAlunno(supabase, opts.alunnoId)
     if (genitori.length === 0) return
 
     const titolo = 'Saldo mensa in esaurimento'

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -37,13 +38,11 @@ export const POST = withRoute('notes/sign:POST', async (request: Request) => {
             return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 });
         }
 
-        const { data: legame } = await supabase
-            .from('legame_genitori_alunni')
-            .select('alunno_id')
-            .eq('genitore_id', userId)
-            .eq('alunno_id', nota.alunno_id)
-            .maybeSingle();
-        if (!legame) {
+        // Unione runtime (`legame_genitori_alunni`) + anagrafica
+        // (`student_parents` via ponte `parents.auth_user_id`): col solo legame
+        // runtime il genitore non poteva firmare la nota del proprio figlio.
+        const collegato = await genitoreHasFiglio(supabase, userId, nota.alunno_id);
+        if (!collegato) {
             return NextResponse.json(
                 { error: 'Accesso negato: la nota non riguarda i tuoi figli' },
                 { status: 403 }

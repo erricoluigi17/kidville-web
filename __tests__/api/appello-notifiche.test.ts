@@ -27,7 +27,9 @@ function chain(table: string) {
     if (table === 'sections') return { data: { scuola_id: 's1' }, error: null }
     if (table === 'admin_settings') return { data: { notifiche_config: { toggles: {} } }, error: null }
     if (table === 'alunni') return { data: [{ id: 'a1', nome: 'Sofia' }], error: null }
-    if (table === 'legame_genitori_alunni') return { data: [{ genitore_id: 'p1' }], error: null }
+    // `alunno_id` presente: i genitori si risolvono ora sull'unione
+    // runtime+anagrafica, che mappa alunno → genitori.
+    if (table === 'legame_genitori_alunni') return { data: [{ alunno_id: 'a1', genitore_id: 'p1' }], error: null }
     return { data: [], error: null }
   }
   const b: Record<string, unknown> = {}

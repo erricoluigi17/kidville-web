@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -117,13 +118,10 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     // scoping genitore
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
     if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', pag.alunno_id)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      // Unione runtime + anagrafica: la fattura di un bambino importato dal form
+      // pubblico non era scaricabile da nessuno dei suoi genitori.
+      const ok = await genitoreHasFiglio(supabase, user.id, pag.alunno_id)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
     const al = pag.alunni as unknown as { nome?: string; cognome?: string }
     const alunnoNome = `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim()

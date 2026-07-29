@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -90,18 +91,16 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
 
         const supabase = await createAdminClient();
 
-        // Validazione genitore-studente PRIMA di leggere i media
+        // Validazione genitore-studente PRIMA di leggere i media.
+        // `genitoreHasFiglio` fa l'UNIONE delle due sorgenti storiche: la sola
+        // `legame_genitori_alunni` rispondeva 403 ai genitori arrivati dall'import
+        // iscrizioni, che hanno il legame solo in `student_parents` (anagrafica).
+        // Il gate non si allenta: chi non è collegato in NESSUNA delle due resta 403.
         if (studentId) {
             const parentId = q.data.parentId;
             if (parentId) {
-                const { data: link } = await supabase
-                    .from('legame_genitori_alunni')
-                    .select('genitore_id')
-                    .eq('genitore_id', parentId)
-                    .eq('alunno_id', studentId)
-                    .maybeSingle();
-
-                if (!link) {
+                const collegato = await genitoreHasFiglio(supabase, parentId, studentId);
+                if (!collegato) {
                     return NextResponse.json(
                         { error: 'Non sei autorizzato a visualizzare i media di questo studente' },
                         { status: 403 }

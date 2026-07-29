@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 
 // =============================================================================
 // Risolutore intestatari fattura + ripartizione in quote (genitori separati).
@@ -164,13 +165,12 @@ export async function determinaQuoteFatturazione(
         totale,
       )
     }
-    // 2c) 50/50 sui due tutori noti.
+    // 2c) 50/50 sui due tutori noti — unione runtime (`legame_genitori_alunni`)
+    //     + anagrafica (`student_parents` via ponte `parents.auth_user_id`).
+    //     Con la sola runtime i due tutori "non risultavano", la ripartizione
+    //     50/50 saltava e la fattura finiva intestata a una persona sola.
     if (alunno.id) {
-      const { data: tutori } = await supabase
-        .from('legame_genitori_alunni')
-        .select('genitore_id')
-        .eq('alunno_id', alunno.id)
-      const ids = (tutori ?? []).map((t) => t.genitore_id as string)
+      const ids = await getGenitoriDiAlunno(supabase, alunno.id)
       if (ids.length >= 2) {
         return ripartisci(ids.slice(0, 2).map((id, i) => ({ adultId: id, peso: 1, label: i === 0 ? 'Genitore 1' : 'Genitore 2' })), totale)
       }

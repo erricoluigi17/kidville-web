@@ -33,9 +33,17 @@ changelog PRD del 2026-07-27 (sezione "C3 (parziale)").
 
 ## Cosa manca ancora a C3
 
-- 8 screenshot telefono 1080×1920 + 4 tablet — non prodotti in questa sessione. Richiedono
-  emulatore Android, dati demo della classe TEST rinfrescati (`creato_il` retrodatato), e un
-  flow Maestro che eviti le quattro trappole già documentate in
-  `docs/submission/C3-scheda-testi-grafica.md` §3.
+- ✅ **5 screenshot telefono PRODOTTI** (aggiornato il 2026-07-28) in
+  `playstore/screenshots/phone/`: `01-avvisi` · `02-diario` · `03-presenze` · `04-mensa` ·
+  `05-pagamenti`. Tutti **1080×1920 esatti** e **RGB senza canale alpha**, verificati uno per
+  uno con `sips -g hasAlpha` (le prime tre erano state catturate con `adb exec-out screencap`,
+  che produce RGBA, e sono state riconvertite: l'alpha su uno screenshot è l'errore di upload
+  più comune e il messaggio di Play non è esplicito).
+  Sono **sopra la soglia**: il minimo per pubblicare è 2, quello per l'idoneità alle promozioni
+  è 4 a ≥1080 px in 9:16. La scheda è caricabile così com'è.
+- Mancano ancora **3 schermate telefono** (modulistica, news, profilo — stanno in fondo al
+  foglio MENU, dove il tap automatico non naviga) e i **4 screenshot tablet**. Non bloccano la
+  pubblicazione; da verificare a schermo se Play pretenda i tablet per pubblicare o solo per
+  l'idoneità ai dispositivi grandi.
 - Lingua predefinita Play Console → **it-IT** (oggi presumibilmente `en-US`): da cambiare
   **prima** di caricare qualunque grafica ([C3 §0](../C3-scheda-testi-grafica.md)).

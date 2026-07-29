@@ -16,8 +16,21 @@ vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: vi.fn().mockResolve
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
-      if (table === 'schools') {
-        return { select: async () => ({ data: [{ id: 'scuola-reale', nome: 'Kidville Giugliano' }], error: null }) }
+      // `schools` e `scuole` sono lette da `sediReali` con catene diverse
+      // (.select().order() e .select().in()): il builder è thenable, così
+      // `await` risolve comunque nel risultato preparato.
+      if (table === 'schools' || table === 'scuole') {
+        const risultato =
+          table === 'schools'
+            ? { data: [{ id: 'scuola-reale', nome: 'Kidville Giugliano' }], error: null }
+            : { data: [{ id: 'scuola-reale', attiva: true }], error: null }
+        const b: Record<string, unknown> = {}
+        b.select = () => b
+        b.order = () => b
+        b.in = () => b
+        b.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
+          Promise.resolve(risultato).then(res, rej)
+        return b
       }
       if (table === 'form_models') {
         const b: Record<string, unknown> = {}

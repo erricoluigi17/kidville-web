@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { requireEnv } from '@/lib/security/require-env';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
 import { ensureParentIdentity, firstEmail, randomPassword } from '@/lib/auth/parent-identity';
+import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -101,6 +102,13 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
     authId = identita.authUserId;
     identitaCreata = identita.createdAuth || identita.createdUtenti || identita.boundNow;
+
+    // Il genitore ha (finalmente) un account: allinea al runtime i legami che
+    // vivono solo in `student_parents`. È il momento in cui gli 11 `parents`
+    // senza account della produzione si riparano da soli — non appena la
+    // Segreteria manda loro le credenziali. Idempotente, non sovrascrive le
+    // quote impostate a mano, e un errore qui non blocca l'invio.
+    await sincronizzaLegamiRuntime(admin, targetId);
 
     // Guard anti-lockout: se l'email dell'anagrafica corrisponde a un account
     // STAFF (incluso il caso docente-che-è-anche-genitore), il reset da qui

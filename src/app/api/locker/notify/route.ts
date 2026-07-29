@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -42,14 +43,11 @@ export const POST = withRoute('locker/notify:POST', async (request: Request) => 
   try {
     const supabase = await createAdminClient()
 
-    // scope: il genitore deve essere collegato all'alunno
-    const { data: legame } = await supabase
-      .from('legame_genitori_alunni')
-      .select('alunno_id')
-      .eq('genitore_id', user.id)
-      .eq('alunno_id', alunnoId)
-      .maybeSingle()
-    if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    // scope: il genitore deve essere collegato all'alunno — unione runtime
+    // (`legame_genitori_alunni`) + anagrafica (`student_parents` via ponte
+    // `parents.auth_user_id`).
+    const collegato = await genitoreHasFiglio(supabase, user.id, alunnoId)
+    if (!collegato) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
 
     const { data: alunno } = await supabase
       .from('alunni')

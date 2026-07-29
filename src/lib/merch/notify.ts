@@ -1,33 +1,24 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
+import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { logEvento } from '@/lib/logging/logger'
 
 // Notifiche Merchandise ai genitori (arrivo/consegna). Best-effort: gli errori
-// non bloccano il flusso logistico. Destinatari = tutori dell'alunno
-// (legame_genitori_alunni.genitore_id = utenti.id). Il feed è bufferizzato e il
-// push parte col cron di dispatch (pattern P1 enqueueNotifiche). Link al genitore
-// verso /parent/pagamenti (dove vede l'addebito dell'ordine).
+// non bloccano il flusso logistico. Destinatari = tutori dell'alunno, risolti
+// sull'UNIONE runtime (`legame_genitori_alunni`) + anagrafica
+// (`student_parents` via ponte `parents.auth_user_id`): con la sola runtime il
+// genitore di un bambino importato dal form pubblico non veniva mai avvisato che
+// il materiale era arrivato — restava a scuola senza che nessuno lo sapesse.
+// Il feed è bufferizzato e il push parte col cron di dispatch (pattern P1
+// enqueueNotifiche). Link al genitore verso /parent/pagamenti (dove vede
+// l'addebito dell'ordine).
+//
+// Gli errori di lettura NON si perdono: `getGenitoriDiAlunno` li logga da sé
+// (PostgREST non lancia, ritorna `{ error }`), col conteggio e il codice.
 
 async function genitoriDiAlunno(supabase: SupabaseClient, alunnoId: string): Promise<string[]> {
   try {
-    // PostgREST NON lancia: l'errore sta in `{ error }`. Senza questo controllo
-    // "nessun destinatario" e "lettura fallita" erano indistinguibili, ed è la
-    // differenza fra «l'alunno non ha tutori a sistema» e «la notifica non è
-    // partita per un guasto».
-    const { data, error } = await supabase
-      .from('legame_genitori_alunni')
-      .select('genitore_id')
-      .eq('alunno_id', alunnoId)
-    if (error) {
-      logEvento(
-        'notifica',
-        'error',
-        { operazione: 'merch/notify:genitoriDiAlunno', esito: 'destinatari-non-letti', alunno_id: alunnoId },
-        error,
-      )
-      return []
-    }
-    return (data ?? []).map((l) => l.genitore_id as string).filter(Boolean)
+    return await getGenitoriDiAlunno(supabase, alunnoId)
   } catch (err) {
     // Un catch muto è un bug (AGENTS.md): qui si degrada a "nessun destinatario",
     // ma la ragione va scritta da qualche parte.

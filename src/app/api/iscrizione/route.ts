@@ -14,6 +14,7 @@ import {
   STANDARD_ENROLLMENT_MODEL_ID,
 } from '@/lib/forms/enrollment-default-schema'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { sediReali } from '@/lib/scuole/reali'
 import type {
   EnrollmentSubmissionData,
   FormField,
@@ -163,22 +164,29 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
     // Salva i dati NORMALIZZATI (province già ridotte a sigla).
     const dataNormalizzata = { ...(data as Record<string, unknown>), children, adults }
 
-    // Scuola dell'iscrizione: dal link (?scuola=) se indicata e valida; altrimenti
-    // la scuola REALE del deployment. La scuola di test E2E (id e2e00000…) è
-    // esclusa dalla risoluzione automatica, così in prod (E2E + reale) si sceglie
-    // sempre quella reale. Con più scuole reali e nessuna indicata → 400.
-    const { data: scuole } = await supabase.from('schools').select('id, nome')
-    const tutte = (scuole ?? []) as { id: string; nome: string }[]
+    // Scuola dell'iscrizione: dalla scelta del genitore nel wizard (o dal link
+    // ?scuola=) se indicata e valida; altrimenti la scuola REALE del deployment.
+    // La scuola di test E2E (id e2e00000…) è esclusa dalla risoluzione automatica,
+    // così in prod (E2E + reale) si sceglie sempre quella reale.
+    //
+    // Il predicato "scuola reale" sta in `@/lib/scuole/reali`, condiviso con
+    // `GET /api/iscrizione/sedi` che alimenta il selettore del wizard: se i due
+    // divergessero, il genitore sceglierebbe una sede che questo POST rifiuta.
+    //
+    // Con più scuole reali e nessuna indicata → 400, e DEVE restare così: è
+    // l'ultima difesa per chi invia fuori dal wizard. Un default silenzioso
+    // manderebbe l'iscrizione nel plesso sbagliato, che è peggio di un errore.
+    const { tutte, reali } = await sediReali(supabase, 'iscrizione:POST')
     const richiesta = (b.data.scuola_id as string | undefined) || undefined
     let scuolaId: string | undefined
+    // La validazione della sede richiesta usa `tutte` (E2E incluse): i test E2E
+    // inviano proprio con l'id della sede di prova.
     if (richiesta && tutte.some((s) => s.id === richiesta)) {
       scuolaId = richiesta
-    } else {
-      const isE2E = (s: { id: string; nome: string }) =>
-        s.id.startsWith('e2e00000') || /e2e/i.test(s.nome)
-      const reali = tutte.filter((s) => !isE2E(s))
-      if (reali.length === 1) scuolaId = reali[0].id
-      else if (tutte.length === 1) scuolaId = tutte[0].id
+    } else if (reali.length === 1) {
+      scuolaId = reali[0].id
+    } else if (tutte.length === 1) {
+      scuolaId = tutte[0].id
     }
     if (!scuolaId) {
       return NextResponse.json({ error: 'Specificare la scuola per l\'iscrizione' }, { status: 400 })

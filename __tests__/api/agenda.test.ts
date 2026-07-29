@@ -103,9 +103,22 @@ describe('GET /api/agenda', () => {
     expect((await GET(req('alunno_id=abc'))).status).toBe(400)
   })
 
-  it('genitore: 403 senza legame runtime', async () => {
+  it('genitore: 403 senza legame in NESSUNA delle due sorgenti', async () => {
     h.rows['legame_genitori_alunni'] = []
     expect((await GET(req(`alunno_id=${ALUNNO}`))).status).toBe(403)
+  })
+
+  it('genitore: 200 col legame SOLO anagrafico (student_parents)', async () => {
+    // Caso reale post-import iscrizioni: il legame esiste solo nello spazio-id
+    // anagrafica, e prima dell'unione l'agenda del proprio figlio dava 403.
+    h.rows['legame_genitori_alunni'] = []
+    h.rows['parents'] = [{ id: 'p1' }]
+    h.rows['student_parents'] = [{ student_id: ALUNNO }]
+    h.rows['alunni'] = [{ id: ALUNNO, section_id: SEZIONE, scuola_id: 'sc-1' }]
+    h.rows['eventi_agenda'] = [{ id: EVENTO, titolo: 'Recita', tipo: 'evento', data: '2026-07-10' }]
+    const res = await GET(req(`alunno_id=${ALUNNO}`))
+    expect(res.status).toBe(200)
+    expect((await res.json()).data).toHaveLength(1)
   })
 
   it('genitore: 200 con eventi plesso+sezione del figlio', async () => {

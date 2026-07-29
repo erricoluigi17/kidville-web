@@ -29,6 +29,10 @@ export const GET = withRoute('admin/debug-mensa-auth:GET', async (request: Reque
     { data: tickets },
   ] = await Promise.all([
     supabase.from('utenti').select('id, nome, cognome, ruolo, role').eq('id', userId).maybeSingle(),
+    // ⚠️ GREZZA DI PROPOSITO (A6): questo è uno strumento diagnostico e deve
+    // mostrare la tabella runtime COM'È. Sostituirla con l'unione
+    // runtime+anagrafica toglierebbe l'unica cosa che serve davvero qui —
+    // vedere se le due sorgenti divergono, e di quanto.
     supabase.from('legame_genitori_alunni').select('genitore_id, alunno_id').eq('genitore_id', userId),
     supabase.from('alunni').select('id, nome, cognome, classe_sezione, scuola_id').limit(10),
     supabase.from('ticket_mensa').select('alunno_id, saldo_ticket').limit(10),

@@ -92,6 +92,10 @@ export function ModuliInviabili() {
               <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-muted">{t('inviabiliPredefinito')}</span>
             </p>
             <p className="font-maven text-xs text-kidville-muted">{t('inviabiliStandardDesc')}</p>
+            {/* Il link copiato è `/iscrizione` senza parametro: con più plessi la sede
+                la sceglie il genitore nel primo passo del wizard. Scriverlo qui evita
+                che la segreteria si inventi tre link diversi, uno per sede. */}
+            <p className="font-maven text-xs text-kidville-green mt-1 max-w-md">{t('inviabiliStandardSediNota')}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link href={`/admin/forms/builder?id=${STANDARD_ENROLLMENT_MODEL_ID}`} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-muted hover:text-kidville-green">

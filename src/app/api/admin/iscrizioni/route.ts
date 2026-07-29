@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
+import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { ensureParentIdentity } from '@/lib/auth/parent-identity'
+import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -69,6 +70,64 @@ function descriviErroreDb(
   return { messaggio: `Creazione non riuscita: ${rawMsg}`, campo, codice }
 }
 
+/**
+ * Normalizza un nome di sezione ESATTAMENTE come il trigger DB
+ * `sync_alunno_section_id()` (supabase/migrations/20260704120000_baseline.sql):
+ *
+ *   lower(replace(s.name, ' ', '')) = lower(replace(NEW.classe_sezione, ' ', ''))
+ *
+ * Cioè: via TUTTI gli spazi (non un `trim`, che lascerebbe quelli interni) e
+ * minuscolo. La formula va replicata alla lettera, non "a senso": se il pre-flight
+ * normalizzasse anche solo un carattere in più del trigger accetterebbe nomi che il
+ * trigger poi NON risolve — e il bug tornerebbe identico (`section_id` NULL, in
+ * silenzio); se ne normalizzasse uno in meno boccerebbe assegnazioni valide.
+ */
+function normalizzaNomeSezione(nome: unknown): string {
+  return String(nome ?? '').replace(/ /g, '').toLowerCase()
+}
+
+/**
+ * Codici PostgREST/Postgres che significano «qui lo schema non c'è» (il DB E2E
+ * della CI non è migrato): non sono guasti, sono un ambiente diverso.
+ *  42P01 tabella assente · 42703 colonna assente (SELECT) · PGRST205 tabella non
+ *  in cache. Su questi il pre-flight sezione si SALTA (livello `info`): non si
+ *  blocca l'iscrizione di un bambino per un problema d'infrastruttura del DB di test.
+ */
+const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST205'])
+
+/**
+ * Gate di SCOPE sull'invio (multi-sede). Fino a tre sedi (Giugliano, Aversa, Cesa)
+ * questa era una IDOR silenziosa: l'invio si carica PER ID, senza filtro, e per una
+ * `segreteria` `scuoleDiUtente` torna solo `utenti.scuola_id` — quindi la sede
+ * dell'invio NON è "accessibile", `resolveScuolaScrittura` cadeva su
+ * `accessibili.length === 1` e l'alunno veniva creato NELLA SEDE DELL'OPERATORE.
+ * Nessun errore, nessun log: il bambino di Aversa finiva a Giugliano.
+ *
+ * Ritorna una 403 pronta (con il rimedio scritto dentro) oppure `null`.
+ * Invii storici senza `scuola_id` non sono vincolati: non c'è una sede da violare.
+ */
+async function assertInvioInScope(
+  supabase: Parameters<typeof scuoleDiUtente>[0],
+  user: Parameters<typeof scuoleDiUtente>[1],
+  invioScuolaId: string | null,
+  azione: string,
+): Promise<NextResponse | null> {
+  if (!invioScuolaId) return null
+  const accessibili = await scuoleDiUtente(supabase, user)
+  if (accessibili.includes(invioScuolaId)) return null
+  // Nel log solo uuid e metadati: mai nomi, mai email della famiglia.
+  logEvento('multi_sede', 'warn', {
+    operazione: 'admin/iscrizioni:PATCH',
+    esito: 'invio-di-altra-sede',
+    azione,
+    sede_id: invioScuolaId,
+  })
+  return NextResponse.json(
+    { error: 'Questa domanda appartiene a un\'altra sede: selezionala nel menù delle sedi per aprirla.' },
+    { status: 403 },
+  )
+}
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
   doc: z.string().optional(), // path storage → signed URL
@@ -127,6 +186,22 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
 
     const supabase = await createAdminClient()
 
+    // ─── L'invio si carica UNA volta, PRIMA di qualunque scrittura ─────────────
+    // Vale per entrambe le azioni: `reject` aveva lo stesso buco di `import` (update
+    // per id, nessun controllo di sede), e rifiutare la domanda di un'altra sede è
+    // altrettanto grave che importarla.
+    const { data: sub, error: subErr } = await supabase
+      .from('enrollment_submissions')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle()
+    if (subErr || !sub) {
+      return NextResponse.json({ error: 'Invio non trovato' }, { status: 404 })
+    }
+    const invioScuolaId = (sub as { scuola_id?: string | null }).scuola_id ?? null
+    const fuoriScope = await assertInvioInScope(supabase, auth.user, invioScuolaId, action)
+    if (fuoriScope) return fuoriScope
+
     if (action === 'reject') {
       const { data, error } = await supabase
         .from('enrollment_submissions')
@@ -181,22 +256,23 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     const assignments: Record<string, string> = b.data.assignments || {}
     const referenteIndex: number = typeof b.data.referenteIndex === 'number' ? b.data.referenteIndex : 0
 
-    // 1. Carica l'invio
-    const { data: sub, error: subErr } = await supabase
-      .from('enrollment_submissions')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle()
-    if (subErr || !sub) {
-      return NextResponse.json({ error: 'Invio non trovato' }, { status: 404 })
-    }
-
+    // 1. L'invio è già caricato e verificato in scope qui sopra.
     const data = sub.data as EnrollmentSubmissionData
     // scuola_id: risolto dallo scope dell'admin (una sola sede), preferendo
     // quella dell'invio se accessibile.
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, sub.scuola_id ?? undefined)
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, invioScuolaId ?? undefined)
     if (sw.response) return sw.response
     const scuolaId = sw.scuolaId as string
+    // La sede dell'invio è accessibile (gate sopra) ma la scrittura sta andando
+    // altrove: non è un abuso, ma è un import che archivia il bambino in una sede
+    // diversa da quella per cui la famiglia ha fatto domanda. Deve lasciare traccia.
+    if (invioScuolaId && invioScuolaId !== scuolaId) {
+      logEvento('multi_sede', 'warn', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'import-sede-diversa-da-invio',
+        sede_id: scuolaId,
+      })
+    }
     const children = data.children || []
     const adults = data.adults || []
 
@@ -245,6 +321,63 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }
       childProv.push({ residence: res.ok ? res.value : null, birth: bir.ok ? bir.value : null })
     }
+
+    // ─── PRE-FLIGHT sezione: la classe assegnata esiste NELLA SEDE di scrittura? ───
+    // `assignments` è TESTO e finisce in `alunni.classe_sezione`; è il trigger
+    // `sync_alunno_section_id()` a risolvere `section_id`, cercando il nome dentro la
+    // STESSA `scuola_id`. Se non lo trova lascia `section_id` NULL e non dice niente:
+    // l'alunno risulta iscritto ma è fuori da appello, registro e classe. Con tre sedi
+    // che hanno sezioni quasi omonime ("3 ANNI", "2 ANNI A") succede al primo errore di
+    // tendina. Qui si controlla PRIMA di ogni scrittura, con la stessa normalizzazione
+    // del trigger — niente insert parziali, l'invio resta 'pending'.
+    const { data: sezioniSede, error: sezErr } = await supabase
+      .from('sections')
+      .select('name')
+      .eq('scuola_id', scuolaId)
+    if (sezErr) {
+      // Il controllo si salta, l'import prosegue: il DB E2E della CI non è migrato e
+      // un'iscrizione non si blocca per un problema d'infrastruttura. `info` quando è
+      // schema assente (ambiente diverso), `error` negli altri casi (guasto vero).
+      const codice = (sezErr as { code?: string }).code ?? null
+      logEvento('db', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'sezioni-non-leggibili',
+        entita_tipo: 'sections',
+        error_code: codice,
+      }, sezErr)
+    } else if (!Array.isArray(sezioniSede)) {
+      // PostgREST senza errore torna SEMPRE un array (al più vuoto): qui la risposta
+      // non è conforme, quindi non si sa nulla — e non sapere non può voler dire
+      // bocciare l'iscrizione. Si salta, ma si lascia traccia.
+      logEvento('db', 'warn', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'sezioni-non-leggibili',
+        entita_tipo: 'sections',
+        error_code: null,
+      })
+    } else {
+      const nomiInSede = new Set(
+        (sezioniSede as { name?: unknown }[]).map((s) => normalizzaNomeSezione(s?.name)),
+      )
+      for (let ci = 0; ci < children.length; ci++) {
+        const classe = assignments[String(ci)]
+        if (nomiInSede.has(normalizzaNomeSezione(classe))) continue
+        errors.push({
+          dove: `Bambino ${ci + 1}`,
+          messaggio: `La sezione «${classe}» non esiste nella sede selezionata: scegliere una sezione della sede della domanda.`,
+        })
+        // Solo l'INDICE del bambino: il nome è un dato di un minore. Nemmeno il nome
+        // della sezione, che in `campi` finirebbe comunque redatto (chiave fuori lista).
+        logEvento('db', 'error', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'sezione-inesistente-in-sede',
+          entita: 'bambino',
+          indice: ci + 1,
+          sede_id: scuolaId,
+        })
+      }
+    }
+
     if (errors.length > 0) {
       logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'import-bloccato-preflight', bloccanti: errors.length })
       return NextResponse.json({ success: false, errors, warnings }, { status: 200 })
@@ -255,7 +388,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     let referenteUserId: string | null = null
 
     // 2. ADULTI → parents (dedup per CF) + account per il referente
-    const parentLinks: { parentId: string; role: string; isReferente: boolean }[] = []
+    // `accountId` è l'`utenti.id` (spazio-id ACCOUNT) dell'adulto, quando ne ha uno:
+    // serve a scrivere anche il legame runtime `legame_genitori_alunni` (vedi punto 3).
+    const parentLinks: { parentId: string; accountId: string | null; role: string; isReferente: boolean }[] = []
+    // Conteggi per il log riassuntivo dei legami runtime (una riga per import, non una per coppia).
+    let legamiScritti = 0
+    let legamiSenzaAccount = 0
+    let legamiFalliti = 0
 
     for (let ai = 0; ai < adults.length; ai++) {
       const a = adults[ai] as EnrollmentAdult
@@ -353,7 +492,16 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }, { scuolaId })
         if (identita.ok) {
           referenteUserId = identita.authUserId
+          parentAuthId = identita.authUserId
           credentials = { email: adultEmail, password: identita.password ?? '(account già esistente)' }
+
+          // Il genitore ha ORA un account: è il momento in cui i suoi legami
+          // anagrafici PREESISTENTI (dedup per CF: un fratello già iscritto) possono
+          // finalmente diventare righe `legame_genitori_alunni`, che è la tabella
+          // interrogata dalle policy RLS di pagamenti/incassi/note. Prima non esisteva
+          // un `utenti.id` da mettere in `genitore_id`. I legami di QUESTO import li
+          // scrive il punto 3 qui sotto. Best-effort: logga da sé, non blocca l'import.
+          await sincronizzaLegamiRuntime(supabase, parentId)
 
           // Invio automatico delle credenziali (solo per un account appena creato)
           if (identita.createdAuth && identita.password) {
@@ -372,7 +520,15 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
       }
 
-      if (parentId) parentLinks.push({ parentId, role: a.ruolo || 'delegate', isReferente })
+      // Account degli adulti NON referenti: si RIUSA il ponte `parents.auth_user_id`
+      // già presente (dedup per CF), non si chiama `ensureParentIdentity`.
+      // Perché: `ensureParentIdentity` CREA l'account `auth.users` quando manca, e
+      // l'invio credenziali qui sopra è — e deve restare — riservato al solo
+      // referente. Chiamarla per tutti creerebbe account con password casuale che
+      // nessuno riceverà mai: login impossibile, e nessuno se ne accorgerebbe.
+      // Un adulto senza ponte semplicemente non ha un `utenti.id`, e senza quello
+      // la riga in `legame_genitori_alunni` (FK su `utenti.id`) non è scrivibile.
+      if (parentId) parentLinks.push({ parentId, accountId: parentAuthId, role: a.ruolo || 'delegate', isReferente })
     }
 
     // 3. FIGLI → alunni (dedup per CF) + collegamento a tutti gli adulti
@@ -510,8 +666,77 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           scuolaId,
           valoreDopo: { student_id: studentId, parent_id: link.parentId, relation_type: link.role },
         })
+
+        // ─── Legame RUNTIME, accanto a quello anagrafico ────────────────────
+        // `student_parents` vive nello spazio-id ANAGRAFICA (parents.id); galleria,
+        // agenda, chat, diario e pagamenti leggono `legame_genitori_alunni`, che vive
+        // nello spazio-id ACCOUNT (utenti.id). Scrivere solo la prima significava
+        // importare famiglie che poi non vedevano il proprio figlio da nessuna parte.
+        // `genitore_id` è un `utenti.id`: l'unico valore corretto è l'account
+        // dell'adulto (ponte `parents.auth_user_id`), MAI il `parents.id`.
+        if (!link.accountId) {
+          legamiSenzaAccount++
+          continue
+        }
+        const legameRecord: Record<string, unknown> = {
+          genitore_id: link.accountId,
+          alunno_id: studentId,
+          // Intestazione fatture invariata rispetto a oggi: un solo intestatario al
+          // 100% (il referente), gli altri a 0. Con i default della tabella
+          // (true/100) ogni adulto sarebbe intestatario dell'intero importo.
+          intestatario_fattura: link.isReferente,
+          percentuale_pagamento: link.isReferente ? 100 : 0,
+        }
+        // `ignoreDuplicates: true` → ON CONFLICT DO NOTHING: idempotente (la PK è
+        // `(genitore_id, alunno_id)`) e non sovrascrive quote/intestazione che la
+        // segreteria potrebbe aver già corretto a mano su un legame esistente.
+        const scriviLegame = () =>
+          supabase
+            .from('legame_genitori_alunni')
+            .upsert(legameRecord, { onConflict: 'genitore_id,alunno_id', ignoreDuplicates: true })
+        let lRes = await scriviLegame()
+        // Degrado sul DB E2E CI non migrato (colonna assente → PGRST204/42703):
+        // stesso schema di retry degli insert parents/alunni qui sopra.
+        let lAttempts = 0
+        while (lRes.error && ['PGRST204', '42703'].includes((lRes.error as { code?: string }).code ?? '') && lAttempts < 4) {
+          const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(lRes.error.message)
+          const col = m?.[1] ?? m?.[2]
+          if (!col || !(col in legameRecord)) break
+          delete legameRecord[col]
+          lRes = await scriviLegame()
+          lAttempts++
+        }
+        if (lRes.error) {
+          // `warn`, non `info`: un legame runtime mancante è un genitore che, da
+          // domani, non vede suo figlio in galleria/agenda/chat/diario/pagamenti.
+          // Non blocca l'import (l'anagrafica è scritta e il backfill può recuperare),
+          // ma deve lasciare traccia — con il codice PostgREST, non solo "è fallito".
+          legamiFalliti++
+          const d = descriviErroreDb(lRes.error as { code?: string; message?: string })
+          logEvento('db', 'warn', {
+            operazione: 'admin/iscrizioni:PATCH',
+            esito: 'legame-runtime-non-scritto',
+            entita_tipo: 'legame_genitori_alunni',
+            error_code: d.codice,
+          }, lRes.error)
+          warnings.push('Legame genitore↔figlio non registrato per un adulto: il genitore potrebbe non vedere il figlio in app. Segnalare all\'assistenza.')
+        } else {
+          legamiScritti++
+        }
       }
     }
+
+    // Evento critico → si logga anche il SUCCESSO, in UNA riga per import (mai una
+    // per coppia): senza, "nessun log" non distinguerebbe "legami scritti" da "non
+    // è mai partito niente". `saltati_senza_account` dice il PERCHÉ dei mancanti:
+    // sono adulti senza email e quindi senza account (non c'è alcun `utenti.id`).
+    logEvento('db', legamiFalliti > 0 ? 'warn' : 'info', {
+      operazione: 'admin/iscrizioni:PATCH',
+      esito: 'legami-runtime',
+      scritti: legamiScritti,
+      saltati_senza_account: legamiSenzaAccount,
+      falliti: legamiFalliti,
+    })
 
     // 4. Esito. Se durante gli INSERT c'è stato ALMENO un errore bloccante (referente o un
     // figlio non creati), l'invio NON passa ad 'approved': resta 'pending', così l'operatore

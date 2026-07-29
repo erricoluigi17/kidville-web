@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -60,15 +61,15 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
     const alunniList = [...targetAlunni]
     if (alunniList.length === 0) return NextResponse.json({ success: true, data: [] })
 
-    // autorizzazione firmata: un genitore collegato ha una form_submission firmata
-    const { data: legami } = await supabase
-      .from('legame_genitori_alunni').select('alunno_id, genitore_id').in('alunno_id', alunniList)
-    const genitoriByAlunno = new Map<string, string[]>()
+    // Autorizzazione firmata: un genitore collegato ha una form_submission
+    // firmata. I legami arrivano dall'UNIONE runtime (`legame_genitori_alunni`)
+    // + anagrafica (`student_parents` via ponte `parents.auth_user_id`) — in
+    // BLOCCO sull'intera lista (3 query fisse, mai una per bambino): con la sola
+    // runtime un bambino importato dal form pubblico risultava SEMPRE "non
+    // autorizzato" alla gita, anche col modulo firmato dal genitore.
+    const genitoriByAlunno = await getGenitoriDiAlunni(supabase, alunniList)
     const allGenitori = new Set<string>()
-    for (const l of legami || []) {
-      const arr = genitoriByAlunno.get(l.alunno_id) || []
-      arr.push(l.genitore_id); genitoriByAlunno.set(l.alunno_id, arr); allGenitori.add(l.genitore_id)
-    }
+    for (const genitori of genitoriByAlunno.values()) for (const g of genitori) allGenitori.add(g)
     const firmatari = new Set<string>()
     if (allGenitori.size > 0) {
       let subsQuery = supabase

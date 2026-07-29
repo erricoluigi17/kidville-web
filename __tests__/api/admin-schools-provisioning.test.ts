@@ -13,6 +13,9 @@ const h = vi.hoisted(() => ({
   logScrittura: vi.fn(),
   scuoleDiUtente: vi.fn(),
   rpc: vi.fn(),
+  // Spie sul logger: il ramo degradato NON può tacere (AGENTS.md §6).
+  logErrore: vi.fn(),
+  logEvento: vi.fn(),
   // knobs (risultati per tabella/operazione)
   adminsResult: { data: [{ id: 'admin-1' }, { id: 'admin-2' }], error: null } as { data: unknown; error: unknown },
   schoolsSelect: { data: [] as unknown[], error: null } as { data: unknown; error: unknown },
@@ -21,6 +24,7 @@ const h = vi.hoisted(() => ({
   scuoleUpdate: { data: { id: 'sc-1', nome: 'X' }, error: null } as { data: unknown; error: unknown },
   schoolsInsertError: null as { message: string; code?: string } | null,
   scuoleInsertError: null as { message: string; code?: string } | null,
+  adminSettingsInsertError: null as { message: string; code?: string } | null,
   schoolsDeleteError: null as { message: string; code?: string } | null,
   upsertError: null as { message: string; code?: string } | null,
   // recorders
@@ -33,6 +37,10 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: h.scuoleDiUtente }))
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logErrore: h.logErrore, logEvento: h.logEvento }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     rpc: h.rpc,
@@ -53,6 +61,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         h.inserts.push({ table, row })
         if (table === 'schools') return { error: h.schoolsInsertError }
         if (table === 'scuole') return { error: h.scuoleInsertError }
+        if (table === 'admin_settings') return { error: h.adminSettingsInsertError }
         return { error: null }
       }
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, row }); return b }
@@ -84,6 +93,7 @@ beforeEach(() => {
   h.scuoleUpdate = { data: { id: 'sc-1', nome: 'X' }, error: null }
   h.schoolsInsertError = null
   h.scuoleInsertError = null
+  h.adminSettingsInsertError = null
   h.schoolsDeleteError = null
   h.upsertError = null
   h.inserts = []; h.updates = []; h.upserts = []; h.deletes = []
@@ -115,6 +125,63 @@ describe('POST /api/admin/schools — provisioning', () => {
     expect(j.id).toBe(h.inserts[0]?.row.id)
     // Fallback collega comunque gli admin in utenti_scuole.
     expect(h.inserts.filter((i) => i.table === 'utenti_scuole')).toHaveLength(2)
+  })
+
+  // A3 — Senza la riga `admin_settings` la sede nasce col registro spento:
+  // `loadGradoContext` legge `matrice = {}` e `requireFunzione` risponde 403 su
+  // TUTTE le funzioni docente (require-grado.ts:36-44 e :64-86).
+  it('degrade PGRST202 → crea ANCHE admin_settings, con la matrice funzioni della sede', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'not found' } })
+    const res = await POST(reqBody({ nome: 'Kidville Aversa' }, 'POST'))
+    expect(res.status).toBe(201)
+    const settings = h.inserts.find((i) => i.table === 'admin_settings')
+    expect(settings, 'la riga admin_settings deve essere creata').toBeDefined()
+    expect(settings?.row.scuola_id).toBe(h.inserts[0]?.row.id)
+    const matrice = settings?.row.funzioni_matrice as Record<string, Record<string, boolean>>
+    expect(matrice.primaria?.registro).toBe(true)
+    expect(matrice.infanzia?.diario).toBe(true)
+    expect(matrice.nido?.appello).toBe(true)
+    // A4 — i solleciti automatici nascono SPENTI (scelta esplicita, opt-in dalla UI).
+    expect(settings?.row.solleciti_config).toEqual({ enabled: false })
+    // Evento critico → si logga anche il SUCCESSO.
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'multi_sede',
+      'info',
+      expect.objectContaining({ operazione: 'admin/schools:POST', esito: 'admin-settings-creato' }),
+    )
+  })
+
+  it.each(['PGRST204', '42703', 'PGRST205', '42P01'])(
+    'DB non migrato (%s su admin_settings) → la sede si crea lo stesso, senza 500 e senza gridare',
+    async (code) => {
+      h.rpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'not found' } })
+      h.adminSettingsInsertError = { code, message: 'colonna/tabella assente' }
+      const res = await POST(reqBody({ nome: 'Sede CI' }, 'POST'))
+      expect(res.status).toBe(201)
+      // Degrade previsto: si logga a `info` (spiegando perché è ignorabile), mai `error`.
+      expect(h.logEvento).toHaveBeenCalledWith(
+        'multi_sede',
+        'info',
+        expect.objectContaining({ esito: 'admin-settings-non-disponibile' }),
+        expect.anything(),
+      )
+      expect(h.logErrore).not.toHaveBeenCalled()
+    },
+  )
+
+  it('errore VERO su admin_settings → sede creata (201) ma il guasto è gridato a error', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'not found' } })
+    h.adminSettingsInsertError = { code: '23503', message: 'violates foreign key constraint' }
+    const res = await POST(reqBody({ nome: 'Sede Rotta' }, 'POST'))
+    // La sede esiste già in schools+scuole: un 500 qui inviterebbe a un retry che
+    // creerebbe una SECONDA sede. Si risponde 201 e si grida nel log.
+    expect(res.status).toBe(201)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'multi_sede',
+      'error',
+      expect.objectContaining({ esito: 'admin-settings-fallito' }),
+      expect.anything(),
+    )
   })
 
   it('degrade: insert scuole fallito → cleanup della riga schools + 500', async () => {

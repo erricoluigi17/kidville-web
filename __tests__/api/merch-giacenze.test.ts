@@ -74,7 +74,7 @@ describe('POST /api/admin/merch/evadi-magazzino', () => {
   beforeEach(() => {
     h.singleFor.divise_ordini_righe = { id: R1, stato: 'da_ordinare', ordine_id: 'o1', articolo_id: ART, articolo_nome: 'Polo', taglia: 'M', quantita: 2, ordine: { scuola_id: 'sc-1', alunno_id: 'al-1' } }
     h.rowsFor.divise_ordini_righe = [] // nessun movimento magazzino pregresso
-    h.rowsFor.legame_genitori_alunni = [{ genitore_id: 'g1' }]
+    h.rowsFor.legame_genitori_alunni = [{ alunno_id: 'al-1', genitore_id: 'g1' }]
   })
 
   it('409 se disponibilità insufficiente', async () => {
@@ -123,7 +123,7 @@ describe('POST /api/admin/merch/consegna', () => {
     h.rowsFor.divise_ordini_righe = [
       { id: R1, stato: 'arrivato', ordine_id: 'o1', articolo_nome: 'Polo', ordine: { id: 'o1', scuola_id: 'sc-1', alunno_id: 'al-1', pagamento: { stato: 'da_pagare' }, alunni: { nome: 'Ada', cognome: 'B' } } },
     ]
-    h.rowsFor.legame_genitori_alunni = [{ genitore_id: 'g1' }]
+    h.rowsFor.legame_genitori_alunni = [{ alunno_id: 'al-1', genitore_id: 'g1' }]
   })
 
   it('200 consegna + warning "non pagato" (non bloccante) + notifica', async () => {

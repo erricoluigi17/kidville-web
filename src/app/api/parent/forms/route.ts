@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -23,21 +24,17 @@ export const GET = withRoute('parent/forms:GET', async (request: NextRequest) =>
 
     const supabase = await createAdminClient();
 
-    // 1. Recupera gli alunni collegati al genitore
-    const { data: legami, error: legamiErr } = await supabase
-      .from('legame_genitori_alunni')
-      .select('alunno_id')
-      .eq('genitore_id', parentId);
+    // 1. Recupera gli alunni collegati al genitore — unione runtime
+    //    (`legame_genitori_alunni`) + anagrafica (`student_parents` via ponte
+    //    `parents.auth_user_id`). Con la sola runtime i genitori arrivati dal
+    //    form pubblico non vedevano NESSUN modulo da firmare: né l'autorizzazione
+    //    all'uscita, né i consensi — e nessuno se ne accorgeva, perché una lista
+    //    vuota è indistinguibile da «non c'è niente da firmare».
+    const studentIds = await getFigliDiGenitore(supabase, parentId);
 
-    if (legamiErr) {
-      return NextResponse.json({ error: legamiErr.message }, { status: 500 });
-    }
-
-    if (!legami || legami.length === 0) {
+    if (studentIds.length === 0) {
       return NextResponse.json([]);
     }
-
-    const studentIds = legami.map(l => l.alunno_id);
 
     const { data: students, error: studErr } = await supabase
       .from('alunni')

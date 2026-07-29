@@ -43,5 +43,9 @@
   "wizardRiepilogo": "Summary",
   "wizardRiepilogoConteggio": "You are enrolling <n>{bambini}</n> {bambini, plural, one {child} other {children}} with <n>{adulti}</n> {adulti, plural, one {adult} other {adults}} as reference contacts.",
   "wizardRiepilogoNota": "Press <b>Submit request</b> to send your details to the office. You will receive confirmation and login credentials after review.",
-  "wizardRiepilogoSub": "Review and submit your request"
+  "wizardRiepilogoSub": "Review and submit your request",
+  "wizardSede": "Location",
+  "wizardSedeErrore": "Choose a location to continue",
+  "wizardSedeLegenda": "Enrollment location",
+  "wizardSedeSub": "Choose the site where you want to enroll your child"
 }

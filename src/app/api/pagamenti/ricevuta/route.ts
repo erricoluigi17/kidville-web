@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { emettiORecuperaRicevuta, type PagamentoPerRicevuta } from '@/lib/pagamenti/ricevute'
@@ -43,13 +44,10 @@ export const GET = withRoute('pagamenti/ricevuta:GET', async (request: Request) 
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
     if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', pag.alunno_id)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      // Unione runtime + anagrafica: la ricevuta serve al genitore per la
+      // detrazione fiscale, e col solo legame runtime restava irraggiungibile.
+      const ok = await genitoreHasFiglio(supabase, user.id, pag.alunno_id)
+      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
     if (pag.stato !== 'pagato') {

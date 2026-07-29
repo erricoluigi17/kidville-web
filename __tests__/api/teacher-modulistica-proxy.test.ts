@@ -7,7 +7,9 @@ const h = vi.hoisted(() => ({
   logScrittura: vi.fn(),
   uploads: [] as Array<{ bucket: string; path: string }>,
   inserts: [] as Record<string, unknown>[],
-  legame: { genitore_id: 'gen-1' } as Record<string, unknown> | null,
+  // Il genitore si risolve ora sull'unione runtime (`legame_genitori_alunni`) +
+  // anagrafica (`student_parents` → `parents.auth_user_id`): mock per TABELLA.
+  righe: {} as Record<string, Record<string, unknown>[]>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
@@ -15,13 +17,16 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
+      const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      b.in = () => b
       b.limit = () => b
-      b.maybeSingle = async () => ({ data: table === 'legame_genitori_alunni' ? h.legame : null, error: null })
+      b.maybeSingle = async () => ({ data: righe()[0] ?? null, error: null })
       b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
       b.single = async () => ({ data: { id: 'sub-cart' }, error: null })
+      b.then = (res: (v: { data: unknown; error: null }) => unknown) => res({ data: righe(), error: null })
       return b
     },
     storage: {
@@ -45,7 +50,12 @@ function proxyReq(fields: Record<string, string>, file?: File) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.uploads = []; h.inserts = []; h.legame = { genitore_id: 'gen-1' }
+  h.uploads = []; h.inserts = []
+  h.righe = {
+    legame_genitori_alunni: [{ alunno_id: 'al-1', genitore_id: 'gen-1' }],
+    student_parents: [],
+    parents: [],
+  }
   h.requireDocente.mockResolvedValue({ user: { id: 'doc-1', role: 'educator', scuola_id: 'sc-1' } })
 })
 
@@ -79,5 +89,14 @@ describe('POST /api/teacher/modulistica — proxy upload cartaceo', () => {
     expect(row.pdf_path).toBe(h.uploads[0].path)
     expect(row.parent_id).toBe('gen-1')
     expect(h.logScrittura).toHaveBeenCalled()
+  })
+
+  it('201 col legame presente SOLO in anagrafica: parent_id valorizzato lo stesso', async () => {
+    h.righe.legame_genitori_alunni = []
+    h.righe.student_parents = [{ student_id: 'al-1', parent_id: 'p1' }]
+    h.righe.parents = [{ id: 'p1', auth_user_id: 'gen-9' }]
+    const res = await POST(proxyReq({ form_id: 'f-1', student_id: 'al-1' }, pdf()))
+    expect(res.status).toBe(201)
+    expect(h.inserts[0].parent_id).toBe('gen-9')
   })
 })

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio, getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { periodoValido } from '@/lib/certificati/stato'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -49,14 +50,11 @@ export const POST = withRoute('parent/medical-certificates:POST', async (request
 
     const supabase = await createAdminClient()
 
-    // scope: il genitore deve essere collegato all'alunno
-    const { data: legame } = await supabase
-      .from('legame_genitori_alunni')
-      .select('alunno_id')
-      .eq('genitore_id', user.id)
-      .eq('alunno_id', studentId)
-      .maybeSingle()
-    if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    // scope: il genitore deve essere collegato all'alunno (unione runtime +
+    // anagrafica: col solo legame runtime non poteva caricare il certificato
+    // del proprio figlio, e il bambino restava fuori dalla mensa).
+    const ok = await genitoreHasFiglio(supabase, user.id, studentId)
+    if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
 
     const ext = (file.name.split('.').pop() || 'pdf').toLowerCase()
     const path = `${studentId}/${randomUUID()}.${ext}`
@@ -101,11 +99,7 @@ export const GET = withRoute('parent/medical-certificates:GET', async (request: 
 
     const supabase = await createAdminClient()
 
-    const { data: legami } = await supabase
-      .from('legame_genitori_alunni')
-      .select('alunno_id')
-      .eq('genitore_id', user.id)
-    const alunnoIds = ((legami ?? []) as { alunno_id: string }[]).map((l) => l.alunno_id)
+    const alunnoIds = await getFigliDiGenitore(supabase, user.id)
     if (alunnoIds.length === 0) return NextResponse.json({ success: true, data: [] })
 
     const { data } = await supabase

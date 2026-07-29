@@ -6,7 +6,9 @@ import { determinaQuoteFatturazione } from '@/lib/pagamenti/intestatari'
 // divise_ordini.parent_id = NULL → intestatari.ts NON deve assegnare la quota
 // unica "Divise", ma ricadere sullo split/intestatario standard dell'alunno.
 
-function mockSupabase(opts: { ordine: { parent_id: string | null } | null; quote?: unknown[]; tutori?: { genitore_id: string }[] }): SupabaseClient {
+// `tutori` sono ora righe dell'unione runtime: portano anche `alunno_id`, perché
+// il predicato passa da `getGenitoriDiAlunno` (runtime + anagrafica).
+function mockSupabase(opts: { ordine: { parent_id: string | null } | null; quote?: unknown[]; tutori?: { alunno_id: string; genitore_id: string }[] }): SupabaseClient {
   return {
     from(table: string) {
       const b: Record<string, unknown> = {}
@@ -39,7 +41,7 @@ describe('determinaQuoteFatturazione — parent_id NULL (ordini segreteria)', ()
   })
 
   it('parent_id NULL + genitori separati → split 50/50 sui tutori', async () => {
-    const sb = mockSupabase({ ordine: { parent_id: null }, tutori: [{ genitore_id: 'a' }, { genitore_id: 'b' }] })
+    const sb = mockSupabase({ ordine: { parent_id: null }, tutori: [{ alunno_id: 'al-1', genitore_id: 'a' }, { alunno_id: 'al-1', genitore_id: 'b' }] })
     const quote = await determinaQuoteFatturazione(sb, pagamento, { id: 'al-1', genitori_separati: true })
     expect(quote).toHaveLength(2)
     expect(quote.reduce((s, q) => s + q.importo, 0)).toBe(36)

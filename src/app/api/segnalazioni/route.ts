@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser, type AppUser } from '@/lib/auth/require-staff'
+import { getFigliDiGenitore, genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
@@ -45,13 +46,14 @@ interface EsitoAccesso {
   scuolaId?: string | null
 }
 
-/** Alunni di cui il genitore è tutore (id distinti). */
+/**
+ * Alunni di cui il genitore è tutore (id distinti), unione runtime + anagrafica.
+ * È il predicato con cui si decide se una segnalazione è legittima: con la sola
+ * `legame_genitori_alunni` un genitore importato dal form pubblico non poteva
+ * segnalare NIENTE — né una foto del proprio figlio, né un messaggio ricevuto.
+ */
 async function figliDi(supabase: SupabaseClient, genitoreId: string): Promise<string[]> {
-  const { data } = await supabase
-    .from('legame_genitori_alunni')
-    .select('alunno_id')
-    .eq('genitore_id', genitoreId)
-  return [...new Set((data ?? []).map((l) => l.alunno_id as string).filter(Boolean))]
+  return getFigliDiGenitore(supabase, genitoreId)
 }
 
 /**
@@ -150,13 +152,8 @@ async function verificaAccesso(
       .maybeSingle()
     if (!voce?.alunno_id) return { ok: false }
     if (isGenitore) {
-      const { data: link } = await supabase
-        .from('legame_genitori_alunni')
-        .select('genitore_id')
-        .eq('genitore_id', uid)
-        .eq('alunno_id', voce.alunno_id as string)
-        .maybeSingle()
-      if (!link) return { ok: false }
+      const collegato = await genitoreHasFiglio(supabase, uid, voce.alunno_id as string)
+      if (!collegato) return { ok: false }
     }
     return { ok: true }
   }

@@ -192,31 +192,130 @@ dell'estetica.**
 
 ## §3 — La cattura degli screenshot
 
-### Le quattro trappole già pagate su iOS — trasferibili
+### Le trappole — ⚠️ due delle quattro erano SBAGLIATE per Android
 
-Da `docs/store-submission.md` §4:
+> **Corretto il 2026-07-28**, verificando i selettori sul codice e sull'emulatore. Le quattro
+> trappole qui sotto erano state ricavate da **iOS** e trascritte come se valessero ovunque. Due
+> di esse sono **false su Android** — cioè proprio sulla piattaforma per cui esiste questo
+> documento. Un flow scritto seguendo la versione precedente fallisce al primo tap e non produce
+> nessuno screenshot oltre il login.
+>
+> Il flow corretto e funzionante è `.claude/maestro-flows/android-screenshot-playstore.yaml`.
 
-1. I deep link `kidville://` aprono un **alert nativo** che si accoda e blocca la navigazione →
-   navigare con la bottom nav e il foglio MENU.
-2. Nel foglio MENU il titolo breve `MENSA` colpisce **anche la bottom nav dietro l'overlay** →
-   usare l'etichetta completa `MENSA Menu e ticket pasto`.
-3. `waitForAnimationToEnd` **non aspetta i dati** → una cattura ha colto «Caricamento…».
-4. Il pulsante menu espone l'aria-label completo `Menu · tutte le sezioni`, non `MENU`.
+1. ✅ **Vera.** I deep link `kidville://` aprono un **alert nativo** che si accoda e blocca la
+   navigazione → navigare con la bottom nav e il foglio MENU.
+2. ❌ **Falsa nell'area genitore.** «Nel foglio MENU il titolo breve `MENSA` colpisce anche la
+   bottom nav dietro l'overlay» — la bottom nav del **genitore** non ha alcuna voce «Mensa»: ha
+   Home · Diario · Avvisi · Chat · Menu. Quel tab esiste solo nel cockpit **segreteria**.
+   Le collisioni vere sono su `Diario`, `Avvisi`, `Chat` e `Menu`, ambigui a foglio aperto perché
+   la bottom nav è `z-50` **sopra** l'overlay `z-40`.
+   → **Si tocca sempre il SOTTOTITOLO della voce, mai la label.**
+3. ✅ **Vera, e la più insidiosa.** `waitForAnimationToEnd` **non aspetta i dati**. Ma non basta
+   sapere: non esiste **un** testo di caricamento, ne convivono almeno sette, con ellissi
+   tipografica `…` (U+2026) e tre punti ASCII `...` mescolati — «Caricamento…», «Caricamento...»,
+   «Un attimo...», «Caricamento foto...», «Caricamento armadietto...». Una guardia scritta con
+   l'ellissi sbagliata **sembra funzionare e non protegge**.
+   → Usare una regex tollerante (`.*[Cc]aricamento.*` **e** `.*Un attimo.*`) e, prima di ogni
+   scatto, attendere un testo che compare **solo a dati caricati**.
+4. ❌ **Falsa su Android.** «Il pulsante menu espone l'aria-label `Menu · tutte le sezioni`, non
+   `MENU`». L'aria-label esiste davvero nel codice (`nav.ariaMenu`, con middle dot U+00B7), ma la
+   **WebView Android collassa il `<button>` col suo `<span>` figlio e pubblica solo il testo
+   visibile**: l'aria-label NON diventa `contentDescription`.
+   → Su Android il selettore è `tapOn: { text: "MENU" }`. Su iOS, e solo lì, vale la stringa
+   concatenata.
 
-⚠️ **I selettori Maestro Android ≠ iOS**: le trappole sono le stesse, i selettori no.
+**Sottotitoli da usare come selettori su Android** (da `messages/it/nav.json`, univoci):
+`Assenze e giustifiche` · `Menu e ticket pasto` · `Rette e scadenze` · `Firme e certificati` ·
+`Novità e comunicati` · `Account, privacy e cancellazione` · `Scorte e materiale` ·
+`Galleria della classe`.
 
-### Dati demo: due regole che rendono invisibili i dati appena inseriti
+**Marcatori «dati caricati»** da attendere prima di scattare: Diario `Umore della giornata` ·
+Mensa `Prenota pranzo` · Presenze `Segnala assenza` · Pagamenti `Totale da saldare` ·
+Avvisi `Comunicazioni` · Profilo `Elimina account`.
+
+**Lingua.** Vive nel cookie `KV_LOCALE` letto server-side; il default in assenza di cookie è `it`.
+`clearState: true` lo azzera, ma un `tapOn: "Italiano"` sulla pagina di login rende il flow
+deterministico ed è idempotente (l'etichetta è identica in IT e in EN).
+
+⚠️ **I selettori Maestro Android ≠ iOS**: le trappole sono in parte le stesse, i selettori mai.
+
+### 🔴 L'account del revisore NON funzionava — corretto il 2026-07-28
+
+Questo documento, `store-submission.md` e le note di review dicono tutti di consegnare al revisore
+**`test.inf.genitore1@kidville.test`**. Verificato in produzione il 2026-07-28: quell'account
+**esisteva in `auth.users` ma non in `utenti`**. Si autenticava e restava **senza identità
+applicativa** — `ensureParentIdentity` è invocata solo dalle route admin, mai al login, quindi non
+si auto-riparava.
+
+E c'era di peggio, indipendente dal primo difetto: **nessuno dei 10 alunni della sezione TEST
+Infanzia era collegato ad alcun genitore** (`student_parents`: 0 righe per quella sezione). Ogni
+account genitore Infanzia — non solo il primo — vedeva un'app **vuota**. Un revisore avrebbe fatto
+login e trovato il nulla.
+
+**Corretto** da `scripts/seed-screenshot-play.mjs`: riga `utenti` creata, 10 alunni collegati ai
+rispettivi genitori di test, consensi GDPR e onboarding impostati (senza, il genitore finisce sul
+flusso di onboarding invece che sulla home, e il gate Termini di C5 blocca la chat).
+
+> L'account demo ha ora una **password dedicata**, non più quella comune ai 41 account di test:
+> ruotarla dopo la review non romperà nient'altro. Vive fuori dal repository, in
+> `~/Documenti/kidville-play/.demo-revisore-pw` (il lock `niente-password-nel-repo` vieta di
+> scriverla qui). **Va trascritta nel gestore di credenziali e incollata nelle note di review.**
+
+### Dati demo: le regole che rendono invisibili i dati appena inseriti
 
 Si cattura sulla classe **TEST Infanzia** `219cab6a-2bf3-48d6-a443-b7aecda40f42` in produzione.
 
 1. Il diario ha una **finestra di correzione**: il genitore vede una voce solo dopo
-   `buffer_visibilita_min` minuti (default **10**) da `creato_il` → **il seed va retrodatato**.
+   `buffer_visibilita_min` minuti da `creato_il` → **il seed va retrodatato**. Il buffer non è
+   fisso: è `admin_settings.diario_config.buffer_visibilita_min`, **assente per Giugliano**, quindi
+   vale il fallback di 10 minuti (`src/app/api/diary/entries/route.ts`). Il filtro è **doppio**:
+   `creato_il` dev'essere più vecchio della soglia **e** `orario_inizio` dentro la finestra
+   richiesta (default 14 giorni).
 2. `mensa_class_menu_assignment` è **VUOTA**: la scuola lavora in «menù unico» e il server filtra
    `menu_config_id IS NULL`. Una riga con `menu_config_id` valorizzato viene **esclusa in
    silenzio**, e la pagina continua a dire «menu non ancora pubblicato».
+3. ⚠️ `mensa_menu_rotazione.settimana` **non è la settimana dell'anno**: è l'indice di rotazione
+   `1..N` (`rotationWeekIndex` = `((settimanaISO - 1) % N) + 1`, con un vincolo `CHECK 1..8`).
+   Scriverci la settimana ISO fa fallire l'inserimento. Per Giugliano `N = 4`, giorni attivi 1-6.
+4. ⚠️ **Il menù è per SCUOLA, non per classe**: pubblicarlo per una foto lo rende visibile anche
+   alle famiglie reali. `node scripts/seed-screenshot-play.mjs --revert` lo rimuove — va lanciato
+   **subito dopo** la cattura.
+5. `presenze.giustificata` è **NOT NULL**: va valorizzata su ogni riga, non solo sulle assenze.
 
-> ⏰ **I contenuti sono datati 2026-07-26 e il diario mostra 14 giorni indietro: dopo il
-> 2026-08-09 le schermate sono vuote.** Rinfrescare prima della cattura, retrodatando `creato_il`.
+> ⏰ I dati di scena si rigenerano con `node scripts/seed-screenshot-play.mjs --apply`, che
+> retrodata `creato_il` di tre ore e riempie diario, presenze e menù. Non serve più preoccuparsi
+> della scadenza del 2026-08-09: lo script ripopola sempre «oggi».
+
+
+### 🔴 La trappola dei falsi positivi — pagata due volte il 2026-07-28
+
+Un marcatore debole **matcha la voce del foglio MENU appena toccata**: `.*[Nn]ews.*` trova «NEWS»
+nel foglio stesso, l'asserzione passa mentre il foglio è ancora aperto, e **si fotografa il menu
+invece della pagina**. Lo stesso vale per `.*[Mm]odul.*` e `.*[Pp]rofilo.*`.
+
+Stessa famiglia di errore, più insidiosa: `tapOn: "Avvisi"` non naviga (la bottom nav non è
+raggiungibile per testo), ma l'asserzione successiva su «Comunicazioni» **passa lo stesso**,
+perché quel testo esiste più in basso nella pagina corrente. Risultato: uno screenshot della
+schermata sbagliata, con il flow tutto verde.
+
+> **La guardia vera è pretendere che l'intestazione del foglio — `TUTTE LE SEZIONI`, che esiste
+> SOLO lì — sia SPARITA**, prima di scattare:
+> ```yaml
+> - extendedWaitUntil: { notVisible: ".*[Tt]utte le sezioni.*", timeout: 30000 }
+> ```
+> Vale la regola generale: **un'asserzione che può essere vera anche sulla schermata sbagliata
+> non è un'asserzione.** Va sempre accompagnata da una che è vera SOLO a destinazione.
+
+### Stato della cattura al 2026-07-28
+
+**5 screenshot su 8** catturati a 1080×1920 esatti, in
+`docs/submission/assets/playstore/screenshots/phone/`: avvisi, diario, presenze, mensa, pagamenti.
+Play ne chiede **minimo 2** per pubblicare e **4 a ≥1080 px in 9:16** per l'idoneità alle
+promozioni: **la soglia è superata**.
+
+Mancano modulistica, news e profilo. Le loro voci stanno in fondo al foglio MENU e lì il `tapOn`
+per testo **non naviga**: `scrollUntilVisible` le trova, il tap parte, il foglio resta aperto.
+Restano da fare anche i 4 screenshot per schermi grandi, con l'AVD `KV-play-tablet` (1440×2560).
 
 ### 🔴 Le 51 immagini in `e2e/collaudo-giornata/run/screenshots/` — MAI
 

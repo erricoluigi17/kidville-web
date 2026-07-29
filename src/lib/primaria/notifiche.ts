@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
+import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { logEvento } from '@/lib/logging/logger'
@@ -45,12 +46,11 @@ export async function enqueueNotifichePerAlunni(
   const scuola = scuolaId !== undefined ? scuolaId : await scuolaDiAlunno(supabase, alunnoIds[0])
   if (!(await isNotificaAbilitata(supabase, tipo, scuola))) return
 
-  const { data: legami } = await supabase
-    .from('legame_genitori_alunni')
-    .select('genitore_id, alunno_id')
-    .in('alunno_id', alunnoIds)
-
-  const genitori = [...new Set((legami ?? []).map((l) => l.genitore_id as string))]
+  // Destinatari sull'UNIONE runtime + anagrafica (`student_parents` via ponte
+  // `parents.auth_user_id`). In BLOCCO su tutti gli alunni: 3 query fisse, mai
+  // una per bambino — questo percorso serve anche intere sezioni.
+  const perAlunno = await getGenitoriDiAlunni(supabase, alunnoIds)
+  const genitori = [...new Set([...perAlunno.values()].flat())]
   if (genitori.length === 0) return
 
   // Delega l'insert al core generico del servizio push (buffer condiviso).

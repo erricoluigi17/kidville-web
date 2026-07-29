@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseData, parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
@@ -128,14 +129,13 @@ export const POST = withRoute('teacher/modulistica:POST', async (request: Reques
       return NextResponse.json({ error: upErr.message }, { status: 500 });
     }
 
-    // 2. Trova il genitore collegato all'alunno (scope legacy classe).
-    const { data: legame } = await supabase
-      .from('legame_genitori_alunni')
-      .select('genitore_id')
-      .eq('alunno_id', studentId)
-      .limit(1)
-      .maybeSingle();
-    const parentId = legame?.genitore_id || null;
+    // 2. Trova il genitore collegato all'alunno (scope legacy classe) sull'unione
+    //    runtime (`legame_genitori_alunni`) + anagrafica (`student_parents` via
+    //    ponte `parents.auth_user_id`): col solo legame runtime il modulo
+    //    cartaceo di un bambino importato dal form pubblico veniva archiviato
+    //    con `parent_id` nullo — cioè senza il firmatario che rappresenta.
+    const genitori = await getGenitoriDiAlunno(supabase, studentId);
+    const parentId = genitori[0] ?? null;
 
     // 3. Evidenza strutturata (NON finge una FES digitale): acquisizione cartacea
     //    validata dallo staff, con tracciamento di chi/quando.

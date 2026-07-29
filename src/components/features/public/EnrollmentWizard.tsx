@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { useForm, FieldValues } from 'react-hook-form'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import {
   ArrowLeft, ArrowRight, Check, Loader2, PartyPopper, Baby, Users,
   Plus, Trash2, UserPlus, Info, MapPin,
@@ -87,6 +87,18 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const [sedi, setSedi] = useState<Sede[]>([])
   const [sedeScelta, setSedeScelta] = useState<string | null>(null)
   const [erroreSede, setErroreSede] = useState(false)
+  /**
+   * L'elenco sedi è stato risolto (con successo o in degrado)?
+   *
+   * Serve a NON dipingere nessun passo finché non si sa se il passo sede esiste.
+   * Senza questa attesa il primo render monta il bambino, poi l'arrivo delle sedi
+   * cambia la FORMA di `steps` e quindi la `key` dentro `AnimatePresence mode="wait"`:
+   * l'uscita del pannello vecchio non si completa e il wizard resta congelato sul
+   * bambino per sempre, mentre il contatore — che sta fuori dall'animazione —
+   * continua ad avanzare. Il difetto si manifesta solo con DUE o più sedi, che è
+   * esattamente la condizione che né jsdom né il DB di CI hanno mai avuto.
+   */
+  const [sediRisolte, setSediRisolte] = useState(false)
 
   useEffect(() => {
     fetch('/api/iscrizione/model')
@@ -122,13 +134,10 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       .then(j => {
         if (annullato) return
         const lista = sediValide(j)
-        // Il passo si aggiunge in TESTA: se l'elenco arrivasse a genitore già
-        // avanzato (rete lentissima), `step` va compensato o si tornerebbe
-        // indietro di una pagina sotto le sue mani.
-        if (lista.length > 1) {
-          setSedi(lista)
-          setStep(s => (s > 0 ? s + 1 : 0))
-        }
+        // Nessuna compensazione dello `step`: il primo passo non viene dipinto
+        // finché `sediRisolte` non è vero, quindi `steps` non può più cambiare
+        // forma sotto le mani del genitore.
+        if (lista.length > 1) setSedi(lista)
       })
       .catch(err => {
         // Degrado, non blocco: si prosegue senza scelta e — se il server non sa
@@ -141,6 +150,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           stack: err instanceof Error ? err.stack : undefined,
         })
       })
+      // Anche in degrado la forma è DECISA: si prosegue senza passo sede.
+      .finally(() => { if (!annullato) setSediRisolte(true) })
     return () => { annullato = true }
   }, [sedeDaLink])
 
@@ -151,6 +162,11 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
 
   // La sede si sceglie solo quando c'è davvero qualcosa da scegliere.
   const mostraSede = !sedeDaLink && sedi.length > 1
+  /**
+   * La FORMA di `steps` è ormai definitiva e si può dipingere il primo passo.
+   * Col link già targato non c'è nessuna fetch da attendere.
+   */
+  const formaDecisa = !!sedeDaLink || sediRisolte
   /** Scostamento introdotto dal passo sede: sposta di 1 gli indici di tutti i passi. */
   const offset = mostraSede ? 1 : 0
 
@@ -358,14 +374,26 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
             <UserPlus className="w-3.5 h-3.5" />
             <span className="uppercase tracking-widest font-semibold">{t('wizardEyebrow')}</span>
           </div>
-          {!done && (
+          {!done && formaDecisa && (
             <p className="text-xs text-kidville-muted font-medium">
               {t('wizardPassoDi', { corrente: step + 1, totale: steps.length })}
             </p>
           )}
         </div>
 
-        {done ? (
+        {!formaDecisa ? (
+          // Attesa dell'elenco sedi: nessun passo viene dipinto finché non si sa se
+          // il passo sede esiste. Dipingerne uno adesso e cambiarlo dopo congelerebbe
+          // `AnimatePresence mode="wait"` (vedi il commento su `sediRisolte`).
+          <div
+            className="flex-1 flex items-center justify-center"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 className="w-6 h-6 animate-spin text-kidville-green" aria-hidden="true" />
+            <span className="sr-only">{t('wizardCaricamento')}</span>
+          </div>
+        ) : done ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -382,16 +410,25 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         ) : (
           <>
             <div className="flex-1 relative overflow-hidden">
-              <AnimatePresence mode="wait" custom={direction}>
-                <motion.div
-                  key={`${current.kind}-${current.kind === 'child' || current.kind === 'adult' ? current.index : 'x'}`}
-                  custom={direction}
-                  variants={slide}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  transition={{ type: 'spring', damping: 30, stiffness: 260, opacity: { duration: 0.2 } }}
-                >
+              {/*
+                NIENTE `AnimatePresence mode="wait"` qui, ed è una scelta pagata cara.
+                Con `mode="wait"` il pannello nuovo si monta solo DOPO che l'uscita del
+                vecchio si è conclusa: quando quell'uscita non si concludeva, il wizard
+                restava inchiodato al primo passo mentre `step` avanzava lo stesso —
+                e il pannello mai montato non registra i propri campi in react-hook-form,
+                quindi la validazione passava a vuoto e si arrivava all'invio con
+                bambini e adulti VUOTI. Un'animazione non può decidere se un modulo
+                funziona. Qui il cambio di `key` smonta e rimonta subito: si perde
+                l'animazione d'uscita, si guadagna un modulo che non può bloccarsi.
+              */}
+              <motion.div
+                key={`${current.kind}-${current.kind === 'child' || current.kind === 'adult' ? current.index : 'x'}`}
+                custom={direction}
+                variants={slide}
+                initial="enter"
+                animate="center"
+                transition={{ type: 'spring', damping: 30, stiffness: 260, opacity: { duration: 0.2 } }}
+              >
                   {/* Step header */}
                   <div className="mb-5 flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-kidville-success-soft flex items-center justify-center flex-shrink-0">
@@ -548,8 +585,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                       </p>
                     </div>
                   )}
-                </motion.div>
-              </AnimatePresence>
+              </motion.div>
             </div>
 
             {/* Navigation */}

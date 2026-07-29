@@ -39,6 +39,7 @@
   "wizardInviataCorpo": "Your enrollment request has been received. The office will review it and contact you with your login credentials.",
   "wizardInvioInCorso": "Sending…",
   "wizardPassoDi": "Step {corrente} of {totale}",
+  "wizardCaricamento": "Loading…",
   "wizardRimuovi": "Remove",
   "wizardRiepilogo": "Summary",
   "wizardRiepilogoConteggio": "You are enrolling <n>{bambini}</n> {bambini, plural, one {child} other {children}} with <n>{adulti}</n> {adulti, plural, one {adult} other {adults}} as reference contacts.",

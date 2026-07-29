@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 
 import itShared from '../../messages/it/shared.json'
 import enShared from '../../messages/en/shared.json'
@@ -102,8 +102,12 @@ describe('EnrollmentWizard — stringhe dal namespace public', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ json: async () => ({}) })))
   })
 
-  it('eyebrow, heading e navigazione usano le chiavi wizard*', () => {
+  it('eyebrow, heading e navigazione usano le chiavi wizard*', async () => {
     render(<EnrollmentWizard scuolaId={null} />)
+    // Il wizard non dipinge nessun passo finché non sa se il passo sede esiste
+    // (qui la fetch delle sedi degrada: nessuna sede → si parte dal bambino).
+    // Senza questa attesa si guarderebbe il caricamento, non il modulo.
+    await waitFor(() => expect(screen.getByText('Bambino 1')).toBeInTheDocument())
     // L'heading compone il numero in JS (mock-safe): "Bambino 1" esatto.
     expect(screen.getByText('Iscrizione Nuovo Alunno')).toBeInTheDocument()
     expect(screen.getByText('Bambino 1')).toBeInTheDocument()

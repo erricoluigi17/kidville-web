@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope } from '@/lib/auth/scope';
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -170,6 +172,21 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
 
     try {
         const supabase = await createAdminClient();
+
+        // Essere partecipante non basta: `student_id` arriva dal client e non era
+        // verificato. Una conversazione si apre SEMPRE «su un bambino», e quel
+        // bambino dev'essere di chi la apre — altrimenti bastava passare l'uuid di
+        // un minore di un'altra sede per aprirci sopra un thread (e comparire
+        // nella supervisione come interlocutore legittimo).
+        if (auth.user.role === 'genitore') {
+            const suo = await genitoreHasFiglio(supabase, auth.user.id, student_id);
+            if (!suo) {
+                return NextResponse.json({ error: 'Accesso negato: non è tuo figlio' }, { status: 403 });
+            }
+        } else {
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, student_id);
+            if (fuoriScope) return fuoriScope;
+        }
 
         // Cerca se esiste già un thread per questa combinazione
         const { data: existing } = await supabase

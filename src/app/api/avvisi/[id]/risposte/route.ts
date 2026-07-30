@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { notificaEvento } from '@/lib/notifiche/triggers';
@@ -33,6 +34,17 @@ export const GET = withRoute('avvisi/[id]/risposte:GET', async (request: Request
         const avvisoId = pId.data;
 
         const supabase = await createAdminClient();
+
+        // Isolamento per sede: l'avviso appartiene a un plesso (`avvisi.scuola_id`)
+        // e le risposte portano nome dei genitori e dei bambini. Senza questo si
+        // leggevano le adesioni di un avviso di un'altra sede.
+        const { data: avviso } = await supabase
+            .from('avvisi').select('id, scuola_id').eq('id', avvisoId).maybeSingle();
+        if (!avviso) return NextResponse.json({ error: 'Avviso non trovato' }, { status: 404 });
+        const plessiAvviso = await scuoleDiUtente(supabase, auth.user);
+        if (!avviso.scuola_id || !plessiAvviso.includes(avviso.scuola_id as string)) {
+            return NextResponse.json({ error: 'Avviso fuori dal tuo plesso' }, { status: 403 });
+        }
 
         const { data, error } = await supabase
             .from('avvisi_risposte')

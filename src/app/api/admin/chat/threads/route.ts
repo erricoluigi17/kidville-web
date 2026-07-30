@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { schemaAssente } from '@/lib/news/schema-assente';
@@ -32,7 +33,18 @@ export const GET = withRoute('admin/chat/threads:GET', async (request: NextReque
 
   try {
     const supabase = await createAdminClient();
-    let query = supabase.from('chat_threads').select('*').order('last_message_at', { ascending: false });
+    // Isolamento per sede. `chat_threads` non ha `scuola_id`, ma `student_id` è FK
+    // verso `alunni` che ce l'ha: la sede si deriva dal join, e NON serve una
+    // migrazione. Senza questo filtro la supervisione mostrava a qualunque
+    // segreteria TUTTE le conversazioni genitore↔docente delle tre sedi, coi nomi
+    // dei minori e la loro classe. `!inner` perché il filtro sulla risorsa
+    // embedded scarti davvero la riga padre; scope vuoto ⇒ nessun thread.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+    let query = supabase
+      .from('chat_threads')
+      .select('*, alunni!inner(scuola_id)')
+      .in('alunni.scuola_id', plessi)
+      .order('last_message_at', { ascending: false });
     if (q.data.teacher_id) query = query.eq('teacher_id', q.data.teacher_id);
     if (q.data.parent_id) query = query.eq('parent_id', q.data.parent_id);
     const { data: threads, error } = await query;

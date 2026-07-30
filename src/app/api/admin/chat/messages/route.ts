@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -22,6 +23,22 @@ export const GET = withRoute('admin/chat/messages:GET', async (request: NextRequ
 
   try {
     const supabase = await createAdminClient();
+
+    // Isolamento per sede. `thread_id` è un uuid preso dalla richiesta: senza
+    // questa verifica bastava conoscerlo per leggere il CONTENUTO di una
+    // conversazione fra un genitore e una maestra di un'altra sede. Qui il gate è
+    // anche il filtro — il thread è identificato da un uuid, non da un nome, e
+    // l'omonimia non c'entra: verificato l'alunno del thread, la query per
+    // `thread_id` non può portare dentro nient'altro.
+    const { data: thread } = await supabase
+      .from('chat_threads')
+      .select('student_id')
+      .eq('id', q.data.thread_id)
+      .maybeSingle();
+    if (!thread) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 });
+    const fuoriScope = await assertAlunnoInScope(supabase, auth.user, thread.student_id as string);
+    if (fuoriScope) return fuoriScope;
+
     const { data, error } = await supabase
       .from('chat_messages')
       .select('id, sender_id, content, attachment_url, attachment_type, created_at')

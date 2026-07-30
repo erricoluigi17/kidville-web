@@ -9,6 +9,15 @@ const mocks = vi.hoisted(() => ({
   enqueueNotifichePerAlunni: vi.fn(),
 }));
 
+// Il Panic Alert ora richiede il ruolo docente/staff e il vincolo di plesso:
+// prima bastava una sessione qualunque (anche di un genitore). Qui i due gate
+// sono concessivi — l'oggetto del file e' il salvataggio e l'accodamento
+// dell'allarme — e l'isolamento e' provato in
+// `__tests__/api/galleria-mensa-scope-sede.test.ts`.
+vi.mock('@/lib/auth/require-staff', () => ({
+  requireDocente: vi.fn(async () => ({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } })),
+}))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: vi.fn(async () => null) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createClient: vi.fn().mockResolvedValue({
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'teacher-1' } }, error: null }) },

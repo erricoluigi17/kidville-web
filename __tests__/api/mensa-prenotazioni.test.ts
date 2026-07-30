@@ -30,6 +30,10 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
+// Scope di sede concessivo: l'oggetto di questo file sono le regole della mensa
+// (cutoff, saldo, sospensione, origine), non l'isolamento fra sedi — quello sta
+// in `__tests__/api/galleria-mensa-scope-sede.test.ts`.
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: vi.fn(async () => null) }))
 vi.mock('@/lib/mensa/server', () => ({
   loadMensaConfig: async () => ({ cutoffOra: '09:30', giorniAttivi: [1, 2, 3, 4, 5], settimaneRotazione: 4, sogliaSaldoBasso: 5 }),
   loadResolveOptions: async () => ({}),

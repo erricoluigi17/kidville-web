@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -70,6 +71,12 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
 
     const supabase = await createAdminClient()
 
+    // Isolamento per sede: il gate di ruolo non bastava — si operava sulle rette
+    // di un'altra sede conoscendo l'uuid del pagamento. `pagamenti` ha gia'
+    // `scuola_id`, che per la contabilita' e' il dato che conta.
+    const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamento_id)
+    if (fuoriScopePag) return fuoriScopePag
+
     // causale personalizzata dalla Segreteria → persistita prima dell'emissione
     if (typeof causale === 'string' && causale.trim()) {
       await supabase.from('pagamenti').update({ fattura_causale: causale.trim() }).eq('id', pagamento_id)
@@ -106,6 +113,12 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     const { pagamento_id: pagamentoId, fattura_id: fatturaId } = q.data
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: il gate di ruolo non bastava — si operava sulle rette
+    // di un'altra sede conoscendo l'uuid del pagamento. `pagamenti` ha gia'
+    // `scuola_id`, che per la contabilita' e' il dato che conta.
+    const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamentoId)
+    if (fuoriScopePag) return fuoriScopePag
     const { data: pag } = await supabase
       .from('pagamenti')
       .select(

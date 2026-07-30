@@ -5,7 +5,6 @@
   "rimuoviFiltri": "Clear filters",
   "obbligatorio": "Required",
   "colFirma": "Signature",
-
   "fieldTypeText": "Short Text",
   "fieldTypeTextarea": "Long Text",
   "fieldTypeNumber": "Number",
@@ -20,27 +19,21 @@
   "fieldTypeSignature": "Signature",
   "fieldTypeSectionHeader": "Section Header",
   "fieldTypeParagraph": "Paragraph",
-
   "esitoAmmesso": "Admitted",
   "esitoListaAttesa": "Waiting list",
   "esitoNonAmmesso": "Not admitted",
-
   "statusBozza": "Draft",
   "statusInAttesaFirma": "Awaiting signature",
   "statusCompletato": "Completed",
-
   "modNd": "N/A",
-
   "draggablePunti": "+{points}pt",
   "draggableEliminaCampo": "Delete field",
-
   "cnvAggiungiPagina": "Add page",
   "cnvStep": "Step {n} / {tot}",
   "cnvCanvasVuoto": "Empty canvas",
   "cnvCanvasVuotoDesc": "Drag fields from the library on the left to get started.",
   "cnvRilasciaQui": "Drop here to add",
   "cnvCampiInPagina": "{count, plural, one {# field} other {# fields}} on this page · Drag to reorder",
-
   "ppOpEq": "is equal to",
   "ppOpNeq": "is different from",
   "ppOpContains": "contains",
@@ -79,7 +72,6 @@
   "ppId": "ID:",
   "ppNessunCampo": "No field selected",
   "ppNessunCampoDesc": "Click a field on the canvas to edit its properties.",
-
   "radjErrEsito": "Unable to update the outcome",
   "radjErrDelta": "Enter a value other than zero",
   "radjErrMotivazione": "The reason is required",
@@ -93,7 +85,6 @@
   "radjMotivazione": "Reason",
   "radjMotivazionePlaceholder": "E.g. Sibling already enrolled",
   "radjApplica": "Apply",
-
   "rnkCandidato": "Candidate",
   "rnkDeliberaConfirm": "Finalize with {posti} places and threshold {soglia}? Outcomes will be (re)assigned.",
   "rnkDeliberaFallita": "Finalization failed",
@@ -112,7 +103,6 @@
   "rnkColPunti": "Points",
   "rnkPageTitle": "Rankings",
   "rnkPageSubtitle": "Rankings with automatically calculated scores — click a row to adjust",
-
   "subCercaPlaceholder": "Search by form or content…",
   "subTuttiStati": "All statuses",
   "subTuttiModelli": "All forms",
@@ -131,20 +121,17 @@
   "subNo": "No",
   "subPageTitle": "Received Submissions",
   "subPageSubtitle": "View, filter and export all responses to dynamic forms",
-
   "sdsCompilazione": "Submission",
   "sdsFirmato": "Signed",
   "sdsNessunDato": "No data to display",
   "sdsRiportaNonGestita": "Mark as not handled",
   "sdsSegnaComeGestita": "Mark as handled",
-
   "modFormTypeSondaggio": "Survey",
   "modFormTypeSondaggioDesc": "Open or multiple-choice questions. No signature required.",
   "modFormTypeGradimento": "Satisfaction",
   "modFormTypeGradimentoDesc": "Ratings and feedback (1-5 scale). No signature.",
   "modFormTypeAutorizzazione": "Authorization",
   "modFormTypeAutorizzazioneDesc": "Consent with OTP signature via email (legally binding).",
-
   "modInputTestoBreve": "Short text",
   "modInputTestoLungo": "Long text",
   "modInputSceltaSingola": "Single choice",
@@ -153,7 +140,6 @@
   "modInputCommento": "Comment",
   "modInputConsenso": "Consent (Yes/No)",
   "modInputTesto": "Text",
-
   "modToastTitoloRichiesto": "❌ Form title required",
   "modToastModuloCreato": "✅ Form created successfully!",
   "modErroreSalvataggio": "Save error",
@@ -180,7 +166,6 @@
   "modErroreCaricamentoMerge": "Error loading data for merge",
   "modToastReportScaricato": "✅ Cumulative PDF report downloaded!",
   "modErroreEsportazione": "Export error",
-
   "modPdfTitolo": "CUMULATIVE AUTHORIZATIONS REPORT — {classe}",
   "modPdfModulo": "Form: {titolo}",
   "modPdfNessuna": "None",
@@ -195,7 +180,6 @@
   "modPdfHashFes": "FES Hash (SHA-256): {hash}",
   "modPdfStatoNonAutorizzato": "STATUS: NOT AUTHORIZED (SIGNATURE MISSING)",
   "modPdfInAttesa": "Awaiting completion and FES signature by the parent.",
-
   "modPageTitle": "Forms & Onboarding",
   "modPageSubtitle": "Manage consent forms, pre-enrollment waiting room and letterhead.",
   "modNuovoModuloGenitori": "New Parent Form",
@@ -289,7 +273,6 @@
   "modInCorso": "In progress…",
   "modProtocolla": "Register",
   "modProtocollaHint": "Each form is registered as INCOMING in the protocol register with a number and stamping band.",
-
   "bldConsensoDefaultLabel": "Consent to data processing",
   "bldConsensoDefaultTesto": "I declare that I have read the privacy notice and consent to the processing of my data.",
   "bldOpzione1": "Option 1",
@@ -319,5 +302,7 @@
   "bldSalvataggio": "Saving…",
   "bldSalvato": "Saved!",
   "bldErrore": "Error",
-  "bldSalvaModello": "Save Template"
+  "bldSalvaModello": "Save Template",
+  "bldSedeTutte": "All sites",
+  "bldSedeLabel": "Target site for the form"
 }

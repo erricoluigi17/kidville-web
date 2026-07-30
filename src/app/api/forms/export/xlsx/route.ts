@@ -6,6 +6,8 @@ import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.ty
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -37,17 +39,34 @@ export const GET = withRoute('forms/export/xlsx:GET', async (request: NextReques
   const { ids, form_id: formId, status: statusFilter } = q.data
 
   const supabase = await createAdminClient()
+  // Isolamento per sede. Prima non esisteva NESSUN modo di sapere a quale plesso
+  // appartenesse una compilazione (nessuna colonna, e `user_id` senza FK): elenchi,
+  // graduatorie ed export mostravano i dati delle famiglie delle tre sedi a
+  // qualunque segreteria. La colonna esiste dalla migrazione
+  // `modulistica_sede_su_modelli_e_compilazioni` (2026-07-30) ed è scritta
+  // all'invio. Scope vuoto ⇒ nessuna riga.
+  const plessi = await resolveScuoleAttive(request, supabase, auth.user)
 
-  let query = supabase
-    .from('form_submissions')
-    .select('*, form_model:form_models(id, title, schema)')
-    .order('created_at', { ascending: false })
+  const costruisci = (conSede: boolean) => {
+    let query = supabase
+      .from('form_submissions')
+      .select('*, form_model:form_models(id, title, schema)')
+      .order('created_at', { ascending: false })
+    if (conSede) query = query.in('scuola_id', plessi)
+    if (ids && ids.length > 0) query = query.in('id', ids)
+    if (formId) query = query.eq('model_id', formId)
+    if (statusFilter) query = query.eq('status', statusFilter as FormSubmissionStatus)
+    return query
+  }
 
-  if (ids && ids.length > 0) query = query.in('id', ids)
-  if (formId) query = query.eq('model_id', formId)
-  if (statusFilter) query = query.eq('status', statusFilter as FormSubmissionStatus)
-
-  const { data: submissions, error } = await query
+  let res = await costruisci(true)
+  if (colonnaSedeAssente(res.error)) {
+    if (!(await degradoSedeLecito(supabase, 'forms/export/xlsx:GET'))) {
+      return NextResponse.json({ error: 'Isolamento per sede non disponibile' }, { status: 500 })
+    }
+    res = await costruisci(false)
+  }
+  const { data: submissions, error } = res
 
   if (error || !submissions) {
     return NextResponse.json({ error: 'Errore recupero compilazioni' }, { status: 500 })

@@ -86,7 +86,11 @@ const req = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 'sc-1' } })
-  h.alunno = { id: 'al-1', nome: 'Marco', cognome: 'Rossi', stato: 'non_iscritto', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null }
+  // `scuola_id` allineata a quella dell'attore: da quando la route verifica lo
+  // scope di sede prima di anonimizzare, un alunno senza sede è (correttamente)
+  // un 403. L'oggetto di questo file resta l'anonimizzazione, non il gate: quello
+  // sta in `__tests__/api/gdpr-scope-sede.test.ts`.
+  h.alunno = { id: 'al-1', nome: 'Marco', cognome: 'Rossi', stato: 'non_iscritto', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null, scuola_id: 'sc-1', section_id: 'sez-1' }
   h.links = [{ parent_id: 'p-1' }]
   h.parentChildren = { 'p-1': [] } // orfano
   h.updates = []; h.removed = []

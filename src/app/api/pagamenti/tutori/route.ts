@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -42,6 +43,10 @@ export const GET = withRoute('pagamenti/tutori:GET', async (request: Request) =>
     const alunnoId = q.data.alunno_id
 
     const supabase = await createAdminClient()
+    // Isolamento per sede: `?alunno_id=` arrivava dal client senza verifica, e
+    // la risposta contiene nome, cognome ed EMAIL dei tutori del bambino.
+    const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId)
+    if (fuoriScope) return fuoriScope
     const { data, error } = await supabase
       .from('legame_genitori_alunni')
       .select('genitore_id, percentuale_pagamento, intestatario_fattura, utenti:genitore_id ( id, nome, cognome, email )')

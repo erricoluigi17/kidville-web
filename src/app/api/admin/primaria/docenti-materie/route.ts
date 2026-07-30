@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -69,6 +70,11 @@ export const POST = withRoute('admin/primaria/docenti-materie:POST', async (requ
 
     const supabase = await createAdminClient()
 
+    // Isolamento per sede: `sectionId` arriva dal client e non era verificato —
+    // si assegnavano docenti e materie a sezioni di un'altra sede.
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
     // Garantisce anche il legame docente↔sezione (utenti_sezioni canonico).
     await supabase
       .from('utenti_sezioni')
@@ -102,6 +108,15 @@ export const DELETE = withRoute('admin/primaria/docenti-materie:DELETE', async (
     const { id } = q.data
 
     const supabase = await createAdminClient()
+
+    // La riga da cancellare porta con sé la sezione: si risale e si verifica il
+    // plesso prima di toccarla.
+    const { data: riga } = await supabase
+      .from('utenti_sezioni_materie').select('id, section_id').eq('id', id).maybeSingle()
+    if (!riga) return NextResponse.json({ error: 'Assegnazione non trovata' }, { status: 404 })
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, riga.section_id as string)
+    if (fuoriScopeSez) return fuoriScopeSez
+
     const { error } = await supabase.from('utenti_sezioni_materie').delete().eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })

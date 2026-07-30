@@ -17,6 +17,18 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
+// Scope di sede concessivo: qui si verifica che l'AUDIT venga scritto, non
+// l'isolamento fra sedi (che sta in `__tests__/api/anagrafica-scope-sede.test.ts`).
+// `importOriginal` e non un oggetto nudo: queste route usano ANCHE
+// `resolveScuolaScrittura`/`resolveScuoleAttive`, e sostituire l'intero modulo
+// le renderebbe `undefined` (500 invece di 201 — un test verde per il motivo
+// sbagliato). Si sovrascrivono solo i tre assert nuovi.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
+  assertAlunnoInScope: vi.fn(async () => null),
+  assertParentInScope: vi.fn(async () => null),
+  assertUtenteInScope: vi.fn(async () => null),
+}))
 
 // Builder chainable: registra le mutazioni e restituisce dati plausibili.
 function makeClient() {

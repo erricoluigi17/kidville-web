@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
 import { assertClasseNomeInScope, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope';
+import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY, vincoloConflittoAssente } from '@/lib/registro/chiave-orario';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
@@ -123,23 +124,37 @@ export const POST = withRoute('register/lessons:POST', async (request: Request) 
             sezioneRow?.scuola_id ??
             plessi[0];
 
-        // UPSERT su registro_orario
-        const { data: registroRow, error: registroError } = await supabase
+        // UPSERT su registro_orario. La chiave di conflitto include la SEDE: senza,
+        // il «2 ANNI» di Aversa e quello di Cesa scrivevano sulla stessa riga.
+        // Vedi `src/lib/registro/chiave-orario.ts` per il perché e per il ripiego
+        // sul DB E2E non migrato.
+        const riga = {
+            scuola_id: finalScuolaId,
+            classe_sezione: classeSezione,
+            data,
+            ora_lezione: oraLezione,
+            materia,
+            argomento: argomento || null,
+            compiti: compiti || null,
+            data_consegna_compiti: dataConsegnaCompiti || null,
+        };
+        let upsertRes = await supabase
             .from('registro_orario')
-            .upsert({
-                scuola_id: finalScuolaId,
-                classe_sezione: classeSezione,
-                data,
-                ora_lezione: oraLezione,
-                materia,
-                argomento: argomento || null,
-                compiti: compiti || null,
-                data_consegna_compiti: dataConsegnaCompiti || null,
-            }, {
-                onConflict: 'classe_sezione,data,ora_lezione',
-            })
+            .upsert(riga, { onConflict: CHIAVE_REGISTRO })
             .select()
             .single();
+        if (vincoloConflittoAssente(upsertRes.error)) {
+            logEvento('registro', 'info', {
+                operazione: 'register/lessons:POST',
+                esito: 'vincolo-per-sede-assente-ripiego-legacy',
+            });
+            upsertRes = await supabase
+                .from('registro_orario')
+                .upsert(riga, { onConflict: CHIAVE_REGISTRO_LEGACY })
+                .select()
+                .single();
+        }
+        const { data: registroRow, error: registroError } = upsertRes;
 
         if (registroError) {
             logErrore({ operazione: 'register/lessons:POST', stato: 500, evento: 'db' }, registroError);

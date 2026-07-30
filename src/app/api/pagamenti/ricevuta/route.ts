@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -35,6 +36,12 @@ export const GET = withRoute('pagamenti/ricevuta:GET', async (request: Request) 
     const { pagamento_id: pagamentoId } = q.data
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: il gate di ruolo non bastava — si operava sulle rette
+    // di un'altra sede conoscendo l'uuid del pagamento. `pagamenti` ha gia'
+    // `scuola_id`, che per la contabilita' e' il dato che conta.
+    const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamentoId)
+    if (fuoriScopePag) return fuoriScopePag
     const { data: pag } = await supabase
       .from('pagamenti')
       .select('id, descrizione, importo, importo_pagato, stato, scadenza, periodo_competenza, alunno_id, scuola_id, alunni:alunno_id ( nome, cognome )')

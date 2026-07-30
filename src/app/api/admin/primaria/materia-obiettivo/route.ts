@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -30,11 +31,23 @@ const postBodySchema = z.object({
 // GET /api/admin/primaria/materia-obiettivo?sectionId=
 // Ritorna la mappa materia_id → obiettivo_id per la sezione.
 export const GET = withRoute('admin/primaria/materia-obiettivo:GET', async (request: NextRequest) => {
+  // Gate MANCANTE, non solo lo scope: questo GET rispondeva 200 a chiunque, senza
+  // alcuna credenziale (verificato in produzione il 2026-07-30). Non espone dati
+  // di minori — materie, orari e obiettivi sono configurazione — ma è un
+  // endpoint amministrativo, e la POST gemella il gate ce l'aveva già.
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { sectionId } = q.data
   try {
     const supabase = await createAdminClient()
+    // Isolamento per sede: `sectionId` arrivava dal client senza verifica — si
+    // leggevano e si scrivevano materie, orari, obiettivi e certificati delle
+    // competenze su sezioni di un'altra sede.
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
     const { data, error } = await supabase
       .from('sezione_materia_obiettivo')
       .select('materia_id, obiettivo_id')
@@ -61,6 +74,12 @@ export const POST = withRoute('admin/primaria/materia-obiettivo:POST', async (re
     const { sectionId, materiaId, obiettivoId } = b.data
 
     const supabase = await createAdminClient()
+    // Isolamento per sede: `sectionId` arrivava dal client senza verifica — si
+    // leggevano e si scrivevano materie, orari, obiettivi e certificati delle
+    // competenze su sezioni di un'altra sede.
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
 
     if (!obiettivoId) {
       const { error } = await supabase

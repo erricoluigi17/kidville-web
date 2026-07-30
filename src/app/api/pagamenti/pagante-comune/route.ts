@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -33,6 +34,14 @@ export const GET = withRoute('pagamenti/pagante-comune:GET', async (request: Nex
     const alunni = q.data.alunni
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: la lista di uuid arriva dal client. Un id fuori scope
+    // fa fallire l'intera richiesta — la risposta e' un elenco di genitori, e
+    // servirla «in parte» sarebbe peggio di un rifiuto.
+    for (const aid of alunni) {
+      const fuoriScope = await assertAlunnoInScope(supabase, auth.user, aid)
+      if (fuoriScope) return fuoriScope
+    }
 
     // Legami anagrafici parents↔alunni (student_parents.parent_id == parents.id,
     // lo stesso spazio che GET /api/pagamenti/famiglia accetta come parent_id).

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertParentInScope } from '@/lib/auth/scope';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -28,6 +29,13 @@ export const GET = withRoute('admin/parents/[id]:GET', async (
         // policy → il client con RLS (createClient) tornava sempre vuoto qui,
         // causando il "campi genitore vuoti alla riapertura".
         const supabase = await createAdminClient();
+
+        // Isolamento per sede: il fascicolo del genitore porta con sé i FIGLI
+        // (`alunni (*)`) e i co-genitori. Senza questo, chiunque fosse staff
+        // otteneva, con un uuid, l'anagrafica completa di una famiglia di
+        // un'altra sede. Lo scope passa dai figli — vedi `assertParentInScope`.
+        const fuoriScope = await assertParentInScope(supabase, auth.user, id);
+        if (fuoriScope) return fuoriScope;
 
         // Recuperiamo il genitore con tutti i figli associati (alunni)
         // e per ogni figlio, recuperiamo tutti i genitori associati (student_parents -> parents)

@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -24,7 +25,12 @@ const getQuerySchema = z.object({
 // diario). Nessuna mappa hardcoded: senza riscontri → [].
 async function getEducatorSectionNames(
     supabase: Awaited<ReturnType<typeof createAdminClient>>,
-    userId: string
+    userId: string,
+    // Plessi dell'utente: l'euristica legacy sui media taggati risaliva alla
+    // classe partendo dagli alunni, senza vincolo di sede — bastava un vecchio
+    // tag su un bambino di un altro plesso per farsi comparire in elenco il NOME
+    // della sua classe. Vuoto ⇒ nessuna sezione.
+    plessi: string[],
 ): Promise<string[]> {
     // Method 0 (canonico): legame docente↔sezione in utenti_sezioni → sections.name.
     const canonicalNames = await nomiSezioniDiUtente(supabase, userId);
@@ -46,7 +52,11 @@ async function getEducatorSectionNames(
         const { data: students } = await supabase
             .from('alunni')
             .select('classe_sezione')
-            .in('id', myTaggedIds);
+            .in('id', myTaggedIds)
+            // Anche l'euristica sui media taggati resta dentro i propri plessi:
+            // altrimenti bastava un vecchio tag su un bambino di un'altra sede
+            // per farsi comparire in elenco il NOME della sua classe.
+            .in('scuola_id', plessi);
 
         const classNames = [...new Set(
             (students ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
@@ -79,7 +89,7 @@ async function getEducatorSectionNames(
 // Returns the section names that the authenticated educator is assigned to.
 // `?userId=` (sezioni di un ALTRO utente) è onorato solo per admin/coordinator;
 // per tutti gli altri l'identità è quella della sessione.
-export const GET = withRoute('educator-sections:GET', async (request: Request) => {
+export const GET = withRoute('educator-sections:GET', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -91,6 +101,10 @@ export const GET = withRoute('educator-sections:GET', async (request: Request) =
         const userId = canQueryOthers && requestedId ? requestedId : auth.user.id;
 
         const supabase = await createAdminClient();
+        // Isolamento per sede: il ramo «manager» elencava le sezioni di TUTTE le
+        // sedi, e l'euristica sui nomi-classe le derivava dagli alunni senza
+        // filtro. Le sezioni visibili sono quelle dei propri plessi.
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
 
         // Get role from utenti
         const { data: utente } = await supabase
@@ -114,6 +128,7 @@ export const GET = withRoute('educator-sections:GET', async (request: Request) =
             const { data: sections } = await supabase
                 .from('sections')
                 .select('name, school_type')
+                .in('scuola_id', plessi)
                 .order('name');
             // `sections[].school_type` è additivo: `sectionNames` resta invariato
             // per i consumer esistenti; il nuovo campo serve a /teacher/diary per
@@ -126,7 +141,7 @@ export const GET = withRoute('educator-sections:GET', async (request: Request) =
         }
 
         // Educators: derive their sections dynamically
-        const sectionNames = await getEducatorSectionNames(supabase, userId);
+        const sectionNames = await getEducatorSectionNames(supabase, userId, plessi);
 
         // Arricchimento school_type per nome (i 4 metodi di derivazione producono
         // solo nomi): un'unica query risolve il grado di ogni sezione.
@@ -135,6 +150,7 @@ export const GET = withRoute('educator-sections:GET', async (request: Request) =
             const { data: gradi } = await supabase
                 .from('sections')
                 .select('name, school_type')
+                .in('scuola_id', plessi)
                 .in('name', sectionNames);
             schoolTypeByName = new Map((gradi ?? []).map((s: { name: string; school_type: string | null }) => [s.name, s.school_type]));
         }

@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server'
+
+// Scope di sede concessivo: l'oggetto di questo file sono i gate di ruolo e i
+// filtri applicativi della modulistica, non l'isolamento fra sedi — quello sta
+// in `__tests__/api/modulistica-scope-sede.test.ts`, dove gli helper girano
+// davvero contro un finto DB che filtra.
+vi.mock('@/lib/auth/scope', () => ({
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  assertAlunnoInScope: vi.fn(async () => null),
+}))
 
 // P0 (DL-035): le viste admin form (graduatorie/compilazioni) leggono via route
 // server gated (requireStaff), non più dal client anon. La modifica punteggio è
@@ -24,6 +33,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       }
       b.select = () => b
       b.eq = () => b
+      // `.in()` è servito da quando le route filtrano per sede: il finto client
+      // non lo emula (qui non è l'oggetto del test), ma deve almeno esistere o la
+      // catena si spezza con «is not a function».
+      b.in = () => b
       b.gte = () => b
       b.lte = () => b
       b.order = () => b
@@ -57,10 +70,10 @@ beforeEach(() => {
 describe('GET /api/admin/forms/models', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue(denied())
-    expect((await modelsGET(new Request('http://localhost/x'))).status).toBe(403)
+    expect((await modelsGET(new NextRequest('http://localhost/x'))).status).toBe(403)
   })
   it('200 lista modelli', async () => {
-    const res = await modelsGET(new Request('http://localhost/x'))
+    const res = await modelsGET(new NextRequest('http://localhost/x'))
     expect(res.status).toBe(200)
     expect(await res.json()).toHaveLength(1)
   })
@@ -69,10 +82,10 @@ describe('GET /api/admin/forms/models', () => {
 describe('GET /api/admin/forms/rankings', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue(denied())
-    expect((await rankingsGET(new Request('http://localhost/x'))).status).toBe(403)
+    expect((await rankingsGET(new NextRequest('http://localhost/x'))).status).toBe(403)
   })
   it('200 graduatoria', async () => {
-    const res = await rankingsGET(new Request('http://localhost/x?modelId=m-1'))
+    const res = await rankingsGET(new NextRequest('http://localhost/x?modelId=m-1'))
     expect(res.status).toBe(200)
     expect(Array.isArray(await res.json())).toBe(true)
   })
@@ -81,10 +94,10 @@ describe('GET /api/admin/forms/rankings', () => {
 describe('GET /api/admin/forms/submissions', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue(denied())
-    expect((await submissionsGET(new Request('http://localhost/x'))).status).toBe(403)
+    expect((await submissionsGET(new NextRequest('http://localhost/x'))).status).toBe(403)
   })
   it('200 compilazioni', async () => {
-    const res = await submissionsGET(new Request('http://localhost/x?status=completed'))
+    const res = await submissionsGET(new NextRequest('http://localhost/x?status=completed'))
     expect(res.status).toBe(200)
   })
 })
@@ -93,7 +106,7 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue(denied())
     const res = await submissionPATCH(
-      new Request('http://localhost/x', { method: 'PATCH', body: '{}' }),
+      new NextRequest('http://localhost/x', { method: 'PATCH', body: '{}' }),
       ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(403)
@@ -101,7 +114,7 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
   it('200 aggiorna manual_adjustments + audit', async () => {
     const body = { manual_adjustments: [{ delta: 2, reason: 'fratello', at: '2026-01-01' }] }
     const res = await submissionPATCH(
-      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify(body) }),
+      new NextRequest('http://localhost/x', { method: 'PATCH', body: JSON.stringify(body) }),
       ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(200)
@@ -115,7 +128,7 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
   // M5.2: "Segna gestita" — il server deriva gestita_il/gestita_da, mai dal body
   it('200 gestita=true imposta gestita_il e gestita_da dall’utente autenticato', async () => {
     const res = await submissionPATCH(
-      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: true }) }),
+      new NextRequest('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: true }) }),
       ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(200)
@@ -127,7 +140,7 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
 
   it('200 gestita=false azzera gestita_il e gestita_da', async () => {
     const res = await submissionPATCH(
-      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: false }) }),
+      new NextRequest('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: false }) }),
       ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(200)
@@ -136,7 +149,7 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
 
   it('400 gestita non booleano', async () => {
     const res = await submissionPATCH(
-      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: 'sì' }) }),
+      new NextRequest('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: 'sì' }) }),
       ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(400)

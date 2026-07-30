@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser, type AppRole } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
@@ -156,7 +157,15 @@ export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) 
     const alunnoId = q.data.alunno_id
 
     const supabase = await createAdminClient()
+    // Isolamento per sede sul ramo STAFF. Il genitore era gia' vincolato ai
+    // propri figli; lo staff no: `STAFF_FORZA` leggeva, prenotava e disdiceva il
+    // pasto di QUALUNQUE alunno di QUALUNQUE sede. Ora lo staff resta libero di
+    // forzare allo sportello, ma solo dentro il proprio plesso.
     const isStaff = STAFF_FORZA.includes(user.role)
+    if (isStaff) {
+      const fuoriScope = await assertAlunnoInScope(supabase, user, alunnoId)
+      if (fuoriScope) return fuoriScope
+    }
     if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
@@ -209,6 +218,13 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
 
     const supabase = await createAdminClient()
     const isStaff = STAFF_FORZA.includes(user.role)
+    // Isolamento per sede sul ramo STAFF, come in GET e DELETE: prenotare il
+    // pasto di un bambino di un'altra sede non e' «forzare allo sportello», e'
+    // scrivere nel plesso sbagliato.
+    if (isStaff) {
+      const fuoriScope = await assertAlunnoInScope(supabase, user, alunnoId)
+      if (fuoriScope) return fuoriScope
+    }
     const origine = isStaff ? 'segreteria' : 'genitore'
     let sospeso = false
     if (!isStaff) {
@@ -352,7 +368,15 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
     const { alunno_id: alunnoId, data } = q.data
 
     const supabase = await createAdminClient()
+    // Isolamento per sede sul ramo STAFF. Il genitore era gia' vincolato ai
+    // propri figli; lo staff no: `STAFF_FORZA` leggeva, prenotava e disdiceva il
+    // pasto di QUALUNQUE alunno di QUALUNQUE sede. Ora lo staff resta libero di
+    // forzare allo sportello, ma solo dentro il proprio plesso.
     const isStaff = STAFF_FORZA.includes(user.role)
+    if (isStaff) {
+      const fuoriScope = await assertAlunnoInScope(supabase, user, alunnoId)
+      if (fuoriScope) return fuoriScope
+    }
     if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }

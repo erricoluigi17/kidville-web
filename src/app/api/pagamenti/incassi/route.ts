@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { applyOverpaymentSpill } from '@/lib/pagamenti/spill'
 import { residuoEffettivo } from '@/lib/pagamenti/aging'
 import { accreditaEccedenza, creditoDisponibile } from '@/lib/pagamenti/credito'
@@ -56,6 +57,11 @@ export const GET = withRoute('pagamenti/incassi:GET', async (request: Request) =
     const pagamentoId = q.data.pagamento_id
 
     const supabase = await createAdminClient()
+    // Isolamento per sede: si leggeva e si registrava un incasso su una retta di
+    // un'altra sede conoscendo l'uuid del pagamento. `pagamenti.scuola_id` e' il
+    // dato che conta per la contabilita'.
+    const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamentoId)
+    if (fuoriScopePag) return fuoriScopePag
     const { data, error } = await supabase
       .from('incassi')
       .select('id, pagamento_id, importo, data_incasso, metodo, note, quota_id, registrato_da, creato_il')
@@ -102,6 +108,11 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
     const { pagamento_id } = body
 
     const supabase = await createAdminClient()
+    // Isolamento per sede: si leggeva e si registrava un incasso su una retta di
+    // un'altra sede conoscendo l'uuid del pagamento. `pagamenti.scuola_id` e' il
+    // dato che conta per la contabilita'.
+    const fuoriScopeIns = await assertPagamentoInScope(supabase, auth.user, pagamento_id)
+    if (fuoriScopeIns) return fuoriScopeIns
 
     // Verifica esistenza pagamento + legge `sconto` (retry senza su DB non migrato).
     let pag: PagIncassoRow | null = null

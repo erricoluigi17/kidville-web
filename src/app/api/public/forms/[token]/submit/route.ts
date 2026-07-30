@@ -6,7 +6,7 @@ import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consens
 import { accessoConsentito } from '@/lib/forms/publish'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // Submission ANONIMA di un modello pubblicato (DL-030). Token-scoped, service-role.
@@ -46,7 +46,7 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
     const supabase = await createAdminClient()
     const { data: model } = await supabase
       .from('form_models')
-      .select('id, published_at, access_mode, schema')
+      .select('id, published_at, access_mode, schema, scuola_id')
       .eq('public_token', token)
       .maybeSingle()
 
@@ -68,17 +68,28 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
     }
 
     const consents_log = estraiConsensi(pages, data as Record<string, unknown>, new Date().toISOString())
-    const { data: submission, error } = await supabase
-      .from('form_submissions')
-      .insert({
-        model_id: model.id,
-        user_id: null,
-        data,
-        status: 'completed',
-        consents_log: consents_log.length > 0 ? consents_log : null,
+    // Invio anonimo da link pubblico: l'unica sede conoscibile è quella dichiarata
+    // sul MODELLO. Se il modello vale per tutte le sedi resta `null` — la riga è
+    // visibile alla sola Direzione, che è la risposta onesta: non c'è nessun dato
+    // da cui dedurre da quale plesso arrivi chi ha aperto il link.
+    const rigaInvio: Record<string, unknown> = {
+      model_id: model.id,
+      user_id: null,
+      data,
+      status: 'completed',
+      consents_log: consents_log.length > 0 ? consents_log : null,
+      scuola_id: (model as { scuola_id?: string | null }).scuola_id ?? null,
+    }
+    let insRes = await supabase.from('form_submissions').insert(rigaInvio).select('id').single()
+    if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
+      // DB E2E della CI non migrato: una sede sola, nessun isolamento da riaprire.
+      logEvento('modulistica', 'info', {
+        operazione: 'public/forms/[token]/submit:POST', esito: 'colonna-sede-assente-degrado',
       })
-      .select('id')
-      .single()
+      delete rigaInvio.scuola_id
+      insRes = await supabase.from('form_submissions').insert(rigaInvio).select('id').single()
+    }
+    const { data: submission, error } = insRes
 
     if (error || !submission) {
       return NextResponse.json(

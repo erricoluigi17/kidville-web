@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
+import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
@@ -413,6 +413,22 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
             return NextResponse.json({ error: 'Media non trovato' }, { status: 404 });
         }
 
+        // Isolamento per sede, PRIMA di qualunque valutazione dei permessi.
+        // L'autorizzazione qui sotto si basa sull'INTERSEZIONE DEI NOMI di classe
+        // fra il media e le classi del docente: con tre sedi «2 ANNI» esiste sia
+        // ad Aversa sia a Cesa, quindi la maestra di Aversa risultava autorizzata
+        // a modificare (e cancellare) le foto dei bambini di Cesa. Il media ha la
+        // sua `scuola_id`: si confronta quella, e i nomi contano solo dopo.
+        {
+            const plessi = await scuoleDiUtente(supabase, auth.user);
+            const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
+            // `sedeMedia` nullo = riga anteriore alla colonna: la si tratta come
+            // fuori scope per tutti tranne chi non ha vincoli di plesso.
+            if (sedeMedia !== null && !plessi.includes(sedeMedia)) {
+                return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
+            }
+        }
+
         // 2. Recupera il ruolo dell'utente da utenti
         const { data: utentiRecord } = await supabase
             .from('utenti')
@@ -546,6 +562,22 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
 
         if (mediaErr || !media) {
             return NextResponse.json({ error: 'Media non trovato' }, { status: 404 });
+        }
+
+        // Isolamento per sede, PRIMA di qualunque valutazione dei permessi.
+        // L'autorizzazione qui sotto si basa sull'INTERSEZIONE DEI NOMI di classe
+        // fra il media e le classi del docente: con tre sedi «2 ANNI» esiste sia
+        // ad Aversa sia a Cesa, quindi la maestra di Aversa risultava autorizzata
+        // a modificare (e cancellare) le foto dei bambini di Cesa. Il media ha la
+        // sua `scuola_id`: si confronta quella, e i nomi contano solo dopo.
+        {
+            const plessi = await scuoleDiUtente(supabase, auth.user);
+            const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
+            // `sedeMedia` nullo = riga anteriore alla colonna: la si tratta come
+            // fuori scope per tutti tranne chi non ha vincoli di plesso.
+            if (sedeMedia !== null && !plessi.includes(sedeMedia)) {
+                return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
+            }
         }
 
         // 2. Recupera il ruolo dell'utente da utenti

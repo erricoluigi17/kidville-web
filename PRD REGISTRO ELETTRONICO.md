@@ -68,6 +68,132 @@
 
 ---
 
+## 🗓️ Changelog — Audit sistematico dell'isolamento fra sedi: chat, GDPR, anagrafica e il vincolo che sovrascriveva il registro 2026-07-30 (branch `fix/isolamento-audit`)
+
+Seguito dell'hotfix qui sotto. Inventario completo delle **282 route** in
+`docs/audit/2026-07-30-isolamento-fra-sedi.md`: **59 da proteggere**, di cui 12 chiuse in questo
+rilascio, più la migrazione che chiude l'unico difetto che *corrompe* dati.
+
+**Il modello, verificato prima di applicarlo.** Le due regole decise dal titolare — segreteria
+sulla sola propria sede, educator sulle sole sezioni assegnate — **erano già scritte negli helper**:
+`scuoleDiUtente` restituisce solo la sede propria a chi non è admin, e `vedeTutteLeClassi` esclude
+l'`educator`. Non è stato toccato il cuore dell'autorizzazione: è stato **applicato** alle route che
+non lo chiamavano.
+
+### Il vincolo che faceva sovrascrivere il registro fra sedi — migrazione `registro_orario_unique_per_sede`
+
+```sql
+-- prima: UNIQUE (classe_sezione, data, ora_lezione)          ← senza sede
+-- dopo:  UNIQUE (scuola_id, classe_sezione, data, ora_lezione)
+```
+Gli upsert di `register/lessons:139` e `primaria/registro:245` **scrivevano sulla stessa riga**:
+argomento, compiti e firme del «2 ANNI» di Aversa sovrascrivevano quelli di Cesa, **in silenzio**.
+È l'unico difetto dell'audit che corrompe dati invece di esporli, ed era invisibile in lettura
+perché il gate di scope sulle due route c'era già. Al momento della migrazione: **14 righe, 0
+collisioni** — nulla da riconciliare. Advisors Supabase **0 ERROR**.
+Chiave centralizzata in `src/lib/registro/chiave-orario.ts`, con ripiego `42P10` per il **solo** DB
+E2E non migrato (che ha una sede sola, quindi le due chiavi vi coincidono). Lock architetturale
+`__tests__/architecture/chiave-registro-per-sede.test.ts`: nessun file di `src/` può usare una
+chiave di conflitto che parte da `classe_sezione`.
+
+### Chat e GDPR (7 route)
+
+- **`admin/chat/contacts`** — nome e classe di **tutti** i minori delle tre sedi e dei loro genitori,
+  a qualunque segreteria, con la chat già apribile. ⚠️ La correzione del 29/07 aveva toccato il
+  **gemello** `chat/contacts` (lato docente): questa route non era mai stata guardata.
+- **`admin/chat/threads`** — tutte le conversazioni genitore↔docente delle tre sedi. `chat_threads`
+  non ha `scuola_id` e **non serve**: `student_id` è FK verso `alunni`, la sede si deriva dal join.
+- **`admin/chat/messages`** — bastava l'uuid di un thread per leggere il **contenuto** dei messaggi.
+- **`chat/threads:POST`** — essere partecipante non basta: `student_id` arrivava dal client e non era
+  verificato.
+- **`admin/gdpr/erase`** — **anonimizzazione irreversibile** di un minore e dei suoi genitori di un
+  altro plesso, autorizzata dal solo ruolo. Il gate scatta prima di ogni effetto, dry-run compreso.
+- **`admin/gdpr/candidates`** e **`admin/gdpr/richieste`** — quest'ultima **leggeva** `scuola_id` e
+  non lo confrontava con niente.
+
+### Anagrafica (5 route) — l'insieme di PII più ampio del sistema
+
+`admin/students/[id]` (`select *` + CF + note mediche + `parents (*)` con documento d'identità e
+recapiti + `delegates (*)` col numero di documento di chi ritira), `admin/parents` GET/POST/PATCH,
+`admin/parents/[id]`, `admin/regenerate-credentials` (reset password **e invio credenziali per
+email** a un genitore o a un collega di un'altra sede).
+
+**Due primitivi nuovi in `src/lib/auth/scope.ts`**, perché mancavano davvero:
+- `assertParentInScope` — `parents` **non ha** `scuola_id` e **non deve averlo**: un genitore può
+  avere figli in due sedi, quindi «la sua sede» non esiste. Lo scope si deriva dai **figli**. Un
+  genitore senza legami non è raggiungibile da nessuno: è la risposta giusta, non c'è modo di
+  stabilire il plesso.
+- `assertUtenteInScope` — per le operazioni su un collega (reset credenziali, assegnazioni).
+
+**Regola confermata**: scope vuoto ⇒ `.in(…, [])` ⇒ nessuna riga. Si **nega**, non si apre.
+
+**Test**: 25 casi nuovi su `finto-supabase`. **Prova di validità su ogni blocco**: rimessi i
+difetti, 10/12 (chat+GDPR) e 6/8 (anagrafica) tornano rossi — i verdi sono i casi di accesso
+legittimo, ed è corretto che restino verdi. Dieci test preesistenti adeguati: dove il gate nuovo è
+mockato concessivo, la ragione è scritta accanto col rinvio al file che quel gate lo prova. Usato
+`importOriginal` e non un mock nudo — sostituire l'intero modulo di scope rendeva `undefined`
+funzioni già in uso, e due test diventavano verdi per il motivo sbagliato (successo al primo
+tentativo, corretto).
+
+### Il resto dell'audit: note e voti, modulistica, galleria, mensa, contabilità, registro
+
+- **Note disciplinari e valutazioni** (4 route) — `?alunnoId=` era libero e **senza
+  parametro** tornava tutto di tutte le sedi; la POST scriveva su `alunnoIds` arbitrari e
+  **notificava i genitori**. Qui entra anche la seconda regola decisa dal titolare: primitivo
+  `sezioniVisibili`, l'`educator` vede le **sole sezioni assegnate**. Fail-closed: senza sezioni
+  assegnate l'elenco è vuoto, non è tutto il plesso.
+- **Modulistica** (7 route + 2 migrazioni) — l'unico caso in cui l'isolamento **non era
+  rimediabile in codice**: non esisteva nessun dato da cui dedurre la sede di una compilazione.
+  Migrazione `modulistica_sede_su_modelli_e_compilazioni` (sede sul modello, `null` = tutte; sede
+  sulla compilazione, scritta all'invio) + `..._backfill_sede_compilazioni_storiche`: le 4 righe
+  preesistenti sono del 7-9 luglio, quando esisteva **una sola sede reale** — la loro sede non è
+  un'ipotesi. Zero righe orfane. Più il **selettore di sede nel costruttore di moduli**, con la
+  scelta ri-validata server-side.
+- **Galleria** (2) — l'autorizzazione passava dal ramo `isAdmin`, che include la **segreteria** e
+  concedeva qualunque media di qualunque sede; per l'educator si basava sull'intersezione dei
+  **nomi** di classe. **Mensa** (1) — il ramo staff prenotava e disdiceva per qualunque alunno.
+- **Contabilità** (12) — si incassava, stornava, scontava e fatturava sulle rette di un altro
+  plesso. Primitivo `assertPagamentoInScope`: una retta appartiene a un **plesso**. Il **credito**
+  invece è della **famiglia** e passa da `assertParentInScope` — un genitore non ha una sede
+  propria. Sugli elenchi di uuid un solo id fuori scope fa fallire l'**intera** richiesta.
+- **Registro primaria e competenze** (10) — `sectionId` non era verificato: si assegnavano docenti
+  e materie, si generavano e si **scaricavano** certificati delle competenze (documenti nominativi
+  di minori) su sezioni altrui; `fascicolo-audit` rivelava **quali** minori hanno un PEI/PDP/104.
+- **Migrazione `locker_config_per_sezione`** — era l'unica tabella con la sede **non deducibile**
+  (classe = nome libero): la configurazione dell'armadietto di «2 ANNI» era *una sola*, condivisa
+  fra Aversa e Cesa. Ora punta alla sezione vera. Tabella vuota: nessun backfill.
+
+### Quattro difetti fuori perimetro, corretti su decisione del titolare
+
+`primaria/allegati` creava il bucket **pubblico e senza scadenza** (compiti, verifiche, foto di
+lavagne coi nomi dei bambini leggibili da chiunque avesse l'URL) → bucket privato + link firmati a
+10 minuti; `panic-alert` chiedeva una sessione ma **non il ruolo** (un genitore poteva far scattare
+l'allarme «ritiro non autorizzato» su qualunque bambino); `pagamenti/genera` scartava l'esito
+dell'audit con `.then(() => {}, () => {})`; `pre-inscriptions` non scrive più `password_segreta` in
+chiaro (la colonna in produzione **non esiste**: falliva già in silenzio).
+
+### Tre GET completamente aperti, trovati durante il lavoro
+
+`admin/primaria/materie`, `/orario`, `/materia-obiettivo` rispondevano **200 senza credenziali**
+(verificato in produzione). Non espongono dati di minori — sono configurazione — e le POST gemelle
+il gate ce l'avevano già: un'asimmetria che nessun test coglieva.
+
+### Il lock che impedisce la ricomparsa
+
+`__tests__/architecture/isolamento-sede-coverage.test.ts`: ogni route service-role che legge
+tabelle di persone **deve** dichiarare uno scope, o comparire in un'allowlist **con la ragione
+scritta accanto**. Copertura totale, nessuna lista di prefissi. Appena scritto ha trovato **9 route
+che l'inventario non copriva**: tre corrette (fra cui `educator-sections`, che derivava i nomi di
+classe dai media taggati senza vincolo di sede), sei legittime e motivate.
+
+**Prova di validità su ogni blocco.** In due casi ha smascherato test **falsi verdi**: quelli della
+galleria passavano anche col difetto rimesso, perché usavano il ruolo sbagliato e un campo con una
+guardia propria. Riscritti. Un test che non si è visto fallire non è una prova.
+
+**Gate**: eslint **0** · tsc **0** · vitest **3525 / 428 file** · build ok · advisors **0 ERROR**.
+
+---
+
 ## 🗓️ Changelog — Tre dati sanitari di minori autorizzati male, uno **senza alcuna autenticazione** 2026-07-30 (branch `fix/isolamento-hotfix-sanitari`)
 
 Primo tempo dell'audit sistematico dell'isolamento fra sedi (piano completo in

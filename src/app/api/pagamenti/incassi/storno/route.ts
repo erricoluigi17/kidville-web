@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
@@ -171,6 +172,21 @@ export const POST = withRoute('pagamenti/incassi/storno:POST', async (request: R
     const { incasso_id, motivo } = b.data
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede, PRIMA dello storno. L'incasso non ha una sede propria:
+    // si risale al pagamento, che ce l'ha. Senza questo si stornava un incasso
+    // registrato in un'altra sede — e uno storno e' un movimento contabile
+    // definitivo, non una lettura.
+    const { data: incassoDaStornare } = await supabase
+      .from('incassi').select('pagamento_id').eq('id', incasso_id).maybeSingle()
+    if (!incassoDaStornare) {
+      return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
+    }
+    const fuoriScopeStorno = await assertPagamentoInScope(
+      supabase, user, incassoDaStornare.pagamento_id as string,
+    )
+    if (fuoriScopeStorno) return fuoriScopeStorno
+
     const esito = await eseguiStornoIncasso(supabase, { incassoId: incasso_id, motivo, userId: user.id })
 
     // Hook di revoca sospensione (best-effort, coerente con gli altri punti). Uno

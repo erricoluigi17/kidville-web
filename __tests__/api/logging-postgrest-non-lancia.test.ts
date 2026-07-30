@@ -25,6 +25,17 @@ import { NextRequest } from 'next/server'
 
 // ── Le spie sul logger (silenzioso sotto vitest: si osservano le CHIAMATE) ───
 const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
+// Scope di sede concessivo: qui si verificano numerazione, causali e gestione
+// degli errori PostgREST, non l'isolamento fra sedi (che sta in
+// `__tests__/api/contabilita-scope-sede.test.ts`).
+vi.mock('@/lib/auth/scope', () => ({
+  assertPagamentoInScope: vi.fn(async () => null),
+  assertAlunnoInScope: vi.fn(async () => null),
+  assertParentInScope: vi.fn(async () => null),
+  scuoleDiUtente: vi.fn(async () => ['sc-1']),
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  resolveScuolaScrittura: vi.fn(async () => ({ scuolaId: 'sc-1' })),
+}))
 vi.mock('@/lib/logging/logger', () => log)
 
 const h = vi.hoisted(() => ({

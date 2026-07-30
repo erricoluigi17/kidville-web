@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
@@ -35,7 +36,7 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
     const supabase = await createAdminClient()
     const { data: pag, error: pErr } = await supabase
       .from('pagamenti')
-      .select('id, alunno_id, importo, importo_pagato, tipo')
+      .select('id, alunno_id, scuola_id, importo, importo_pagato, tipo')
       .eq('id', id)
       .maybeSingle()
     if (pErr) {
@@ -43,6 +44,16 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
       return NextResponse.json({ error: 'Errore nel recupero del pagamento' }, { status: 500 })
     }
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+
+    // Isolamento per sede. `pagamenti` ha gia' `scuola_id`: il gate di ruolo non
+    // bastava, si applicava uno sconto a una retta di un'altra sede conoscendo
+    // l'uuid del pagamento. Il confronto e' diretto sulla sede del pagamento, che
+    // e' il dato che conta anche per la contabilita'.
+    const plessiSconto = await scuoleDiUtente(supabase, auth.user)
+    const sedePag = (pag as { scuola_id?: string | null }).scuola_id ?? null
+    if (!sedePag || !plessiSconto.includes(sedePag)) {
+      return NextResponse.json({ error: 'Pagamento fuori dal tuo plesso' }, { status: 403 })
+    }
 
     const importo = Number((pag as { importo: number }).importo)
     const pagato = Number((pag as { importo_pagato: number | null }).importo_pagato ?? 0)

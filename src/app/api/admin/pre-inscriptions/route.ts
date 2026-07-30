@@ -198,10 +198,15 @@ export const PATCH = withRoute('admin/pre-inscriptions:PATCH', async (request: N
       }
 
       // 2. Inserisci il genitore in utenti (compatibilità legacy)
+      // `password_segreta` NON viene più scritta. Era salvata in chiaro «per
+      // comodità di visualizzazione»: una password in chiaro nel database è una
+      // password compromessa il giorno in cui qualcuno legge quella tabella, e
+      // qui si tratta degli account dei genitori. La password temporanea viene
+      // mostrata UNA VOLTA a chi la sta generando (nella risposta qui sotto):
+      // chi la perde usa «Rigenera credenziali», che è la procedura corretta.
       const utentiRecord = {
         id: userId,
         email: pre.parent_email,
-        password_segreta: tempPassword, // Salvata in chiaro per comodità della demo burocratica/visualizzazione credenziali
         nome: pre.parent_first_name,
         cognome: pre.parent_last_name,
         cellulare: pre.parent_phone || null,

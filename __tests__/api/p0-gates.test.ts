@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 
 // Un singolo mock del modulo auth pilota sia i gate docente sia quelli staff.
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -19,8 +19,10 @@ import * as seedDb from '@/app/api/seed-db/route';
 const denied = () =>
   ({ response: NextResponse.json({ error: 'denied' }, { status: 403 }) }) as never;
 
+// NextRequest: alcune di queste route leggono ora il cookie `sedi_attive` per
+// filtrare per sede. Qui il gate nega comunque prima, ma il TIPO deve reggere.
 function req() {
-  return new Request('http://localhost', { method: 'POST', body: '{}' });
+  return new NextRequest('http://localhost', { method: 'POST', body: '{}' });
 }
 
 describe('P0/S3 — gate wiring sugli endpoint docente', () => {

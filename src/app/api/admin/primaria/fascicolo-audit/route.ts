@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -27,9 +28,21 @@ export const GET = withRoute('admin/primaria/fascicolo-audit:GET', async (reques
     const limit = Math.min(q.data.limit ?? 100, 500)
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede. Questo elenco non contiene il fascicolo, ma rivela
+    // QUALI minori ne hanno uno — cioè chi ha un PEI, un PDP o una 104 — e con
+    // nome e cognome. Su tutte le sedi era un'informazione che non doveva
+    // uscire dal plesso. `!inner` perché il filtro sull'alunno embedded scarti
+    // davvero la riga di audit.
+    if (alunnoId) {
+      const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId)
+      if (fuoriScope) return fuoriScope
+    }
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     let query = supabase
       .from('fascicolo_accessi_audit')
-      .select('id, alunno_id, documento_id, utente_id, azione, finalita, ip, creato_il, utenti:utente_id(nome, cognome, ruolo, role), alunni:alunno_id(nome, cognome)')
+      .select('id, alunno_id, documento_id, utente_id, azione, finalita, ip, creato_il, utenti:utente_id(nome, cognome, ruolo, role), alunni:alunno_id!inner(nome, cognome, scuola_id)')
+      .in('alunni.scuola_id', plessi)
       .order('creato_il', { ascending: false })
       .limit(limit)
     if (alunnoId) query = query.eq('alunno_id', alunnoId)

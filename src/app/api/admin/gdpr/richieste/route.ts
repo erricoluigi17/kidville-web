@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaParent, anonimizzaAlunno, type AlunnoOblio } from '@/lib/gdpr/esegui'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -25,14 +26,19 @@ const postBodySchema = z.object({
   confirm: z.unknown().optional(),
 })
 
-export const GET = withRoute('admin/gdpr/richieste:GET', async (request: Request) => {
+export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
   try {
     const admin = await createAdminClient()
+    // Isolamento per sede: la colonna `scuola_id` c'era già su questa tabella e
+    // veniva LETTA nella POST, ma non confrontata con niente — e qui non era
+    // nemmeno letta. Scope vuoto ⇒ nessuna richiesta.
+    const plessi = await resolveScuoleAttive(request, admin, auth.user)
     const { data: richieste, error } = await admin
       .from('richieste_cancellazione')
       .select('id, parent_id, creata_il')
+      .in('scuola_id', plessi)
       .eq('stato', 'pending')
       .order('creata_il', { ascending: true })
     if (error) {
@@ -80,7 +86,7 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: Request
   }
 })
 
-export const POST = withRoute('admin/gdpr/richieste:POST', async (request: Request) => {
+export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextRequest) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -101,6 +107,18 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: Reque
       return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
     }
     if (!richiesta) return NextResponse.json({ error: 'Richiesta non trovata' }, { status: 404 })
+
+    // Isolamento per sede, PRIMA di anonimizzare: `scuola_id` era letto e mai
+    // confrontato. Una sede nulla ⇒ si NEGA, non si apre: non c'è modo di
+    // stabilire il plesso e questa operazione è irreversibile. In produzione la
+    // tabella è vuota (verificato il 2026-07-30), quindi la regola stretta non
+    // lascia indietro nessuna richiesta già presentata.
+    const plessi = await resolveScuoleAttive(request, admin, auth.user)
+    const sedeRichiesta = (richiesta.scuola_id as string | null) ?? null
+    if (!sedeRichiesta || !plessi.includes(sedeRichiesta)) {
+      return NextResponse.json({ error: 'Richiesta fuori dal tuo plesso' }, { status: 403 })
+    }
+
     if (richiesta.stato !== 'pending') {
       return NextResponse.json({ error: 'Richiesta già gestita' }, { status: 409 })
     }

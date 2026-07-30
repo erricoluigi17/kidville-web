@@ -55,7 +55,9 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     // Carica lo schema del modello per snapshot consensi + guard server-side.
     const { data: model } = await supabase
       .from('form_models')
-      .select('schema, title')
+      // `scuola_id` serve a dare una sede alla compilazione quando chi compila
+      // non ne ha una propria (link pubblico, genitore senza plesso).
+      .select('schema, title, scuola_id')
       .eq('id', modelId)
       .maybeSingle()
     const pages = ((model?.schema as FormSchemaConfig | undefined)?.pages) ?? []
@@ -71,17 +73,41 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     const acceptedAt = new Date().toISOString()
     const consents_log = estraiConsensi(pages, data as Record<string, unknown>, acceptedAt)
 
-    const { data: submission, error: insertErr } = await supabase
-      .from('form_submissions')
-      .insert({
-        model_id: modelId,
-        user_id: userId ?? null,
-        data,
-        status: 'completed',
-        consents_log: consents_log.length > 0 ? consents_log : null,
+    // Sede della COMPILAZIONE, scritta all'invio. Era calcolata già qui sotto,
+    // ma solo per decidere a chi mandare la notifica — e poi buttata via: la riga
+    // restava senza sede, e nessun elenco poteva più filtrarla. Ordine di
+    // risoluzione: la sede di chi compila → quella dichiarata sul modello →
+    // l'unica sede reale (se ce n'è una sola). Se resta ambigua si scrive `null`
+    // e la riga è visibile alla sola Direzione: inventarle una sede sarebbe
+    // peggio che ammettere di non saperla.
+    let scuolaId: string | null = null
+    if (userId) {
+      const { data: u } = await supabase.from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
+      scuolaId = (u?.scuola_id as string | undefined) ?? null
+    }
+    if (!scuolaId) scuolaId = (model as { scuola_id?: string | null } | null)?.scuola_id ?? null
+    if (!scuolaId) scuolaId = await scuolaUnicaReale(supabase)
+
+    const rigaInvio: Record<string, unknown> = {
+      model_id: modelId,
+      user_id: userId ?? null,
+      data,
+      status: 'completed',
+      consents_log: consents_log.length > 0 ? consents_log : null,
+      scuola_id: scuolaId,
+    }
+    let insRes = await supabase.from('form_submissions').insert(rigaInvio).select('id').single()
+    // DB E2E della CI non migrato: la colonna `scuola_id` non c'è ancora
+    // (PGRST204/42703). Si riprova senza — quel database ha una sede sola, quindi
+    // non c'è nessun isolamento da riaprire.
+    if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
+      logEvento('modulistica', 'info', {
+        operazione: 'forms/submit:POST', esito: 'colonna-sede-assente-degrado',
       })
-      .select('id')
-      .single()
+      delete rigaInvio.scuola_id
+      insRes = await supabase.from('form_submissions').insert(rigaInvio).select('id').single()
+    }
+    const { data: submission, error: insertErr } = insRes
 
     if (insertErr || !submission) {
       return NextResponse.json(
@@ -93,12 +119,8 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     // Notifica alla segreteria: modulo compilato (best-effort). Debounce per
     // modello + buffer 60' → una notifica riassuntiva, non una per invio.
     try {
-      let scuolaId: string | null = null
-      if (userId) {
-        const { data: u } = await supabase.from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
-        scuolaId = (u?.scuola_id as string | undefined) ?? null
-      }
-      if (!scuolaId) scuolaId = await scuolaUnicaReale(supabase)
+      // Stessa sede appena scritta sulla riga: la notifica va allo staff di QUEL
+      // plesso, non a quello di tutti.
       const destinatari = await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'segreteria'])
       await notificaEvento(supabase, {
         tipo: 'modulo_compilato',

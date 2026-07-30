@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -45,6 +45,22 @@ const deleteQuerySchema = z.object({
  * Ritorna i materiali configurati per la classe.
  * Se la tabella non esiste ancora, ritorna i materiali di default.
  */
+/**
+ * Sezioni dell'utente che portano un dato NOME di classe. È il ponte fra il nome
+ * (che il client manda, e che fra sedi NON è univoco) e la sezione vera, che ha
+ * la sua `scuola_id`. Vuoto ⇒ nessuna sezione: si nega, non si allarga.
+ */
+async function sezioniConNome(
+    admin: Awaited<ReturnType<typeof createAdminClient>>,
+    user: Parameters<typeof assertClasseNomeInScope>[1],
+    nome: string,
+): Promise<string[]> {
+    const plessi = await scuoleDiUtente(admin, user);
+    if (plessi.length === 0) return [];
+    const { data } = await admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    return (data ?? []).map((s) => s.id as string);
+}
+
 export const GET = withRoute('locker/materials:GET', async (request: NextRequest) => {
     // m1 — ferma l'enumerazione anonima della configurazione materiali. Qualsiasi
     // utente autenticato (genitore incluso) continua a leggere.
@@ -63,7 +79,16 @@ export const GET = withRoute('locker/materials:GET', async (request: NextRequest
             .eq('attivo', true)
             .order('ordine', { ascending: true });
 
-        if (classeSezione) q = q.eq('classe_sezione', classeSezione);
+        // Isolamento per sede. `locker_config` era l'unica tabella in cui la sede
+        // non era deducibile: la classe era un NOME libero, quindi «2 ANNI» era
+        // una configurazione SOLA condivisa fra Aversa e Cesa. Dalla migrazione
+        // `locker_config_per_sezione` la riga punta alla sezione vera: si filtra
+        // su quella, risolta dentro i propri plessi.
+        if (classeSezione) {
+            const sezioni = await sezioniConNome(admin, auth.user, classeSezione);
+            if (sezioni.length === 0) return NextResponse.json([]);
+            q = q.in('section_id', sezioni);
+        }
 
         const { data, error } = await q;
 
@@ -118,7 +143,12 @@ export const POST = withRoute('locker/materials:POST', async (request: NextReque
                 const scopeErr = await assertClasseNomeInScope(admin, auth.user, classe);
                 if (scopeErr) return scopeErr;
             }
-            const rows = uniche.map((classe) => ({ ...base, classe_sezione: classe }));
+            // Anche qui la sezione vera, non solo il nome: la riga deve sapere a
+            // quale plesso appartiene.
+            const rows = await Promise.all(uniche.map(async (classe) => {
+                const sez = await sezioniConNome(admin, auth.user, classe);
+                return { ...base, classe_sezione: classe, section_id: sez[0] ?? null };
+            }));
             const { data, error } = await admin.from('locker_config').insert(rows).select();
             if (error) throw error;
             await logScrittura(admin, {
@@ -134,7 +164,16 @@ export const POST = withRoute('locker/materials:POST', async (request: NextReque
             if (scopeErr) return scopeErr;
         }
 
-        const payload = { ...base, classe_sezione: body.classe_sezione ?? null };
+        // Si valorizza ANCHE `section_id`: `classe_sezione` resta per
+        // compatibilità col DB E2E non migrato, ma la chiave vera è la sezione.
+        const sezioniPost = body.classe_sezione
+            ? await sezioniConNome(admin, auth.user, body.classe_sezione)
+            : [];
+        const payload = {
+            ...base,
+            classe_sezione: body.classe_sezione ?? null,
+            section_id: sezioniPost[0] ?? null,
+        };
 
         let result;
         if (body.id) {

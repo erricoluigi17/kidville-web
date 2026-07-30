@@ -6,6 +6,8 @@ import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.ty
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -30,12 +32,30 @@ export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest
   const { id } = q.data
 
   const supabase = await createAdminClient()
+  // Isolamento per sede. Prima non esisteva NESSUN modo di sapere a quale plesso
+  // appartenesse una compilazione (nessuna colonna, e `user_id` senza FK): elenchi,
+  // graduatorie ed export mostravano i dati delle famiglie delle tre sedi a
+  // qualunque segreteria. La colonna esiste dalla migrazione
+  // `modulistica_sede_su_modelli_e_compilazioni` (2026-07-30) ed è scritta
+  // all'invio. Scope vuoto ⇒ nessuna riga.
+  const plessi = await resolveScuoleAttive(request, supabase, auth.user)
 
-  const { data: submission, error } = await supabase
-    .from('form_submissions')
-    .select('*, form_model:form_models(id, title, schema)')
-    .eq('id', id)
-    .maybeSingle()
+  const leggi = (conSede: boolean) => {
+    let q = supabase
+      .from('form_submissions')
+      .select('*, form_model:form_models(id, title, schema)')
+      .eq('id', id)
+    if (conSede) q = q.in('scuola_id', plessi)
+    return q.maybeSingle()
+  }
+  let res = await leggi(true)
+  if (colonnaSedeAssente(res.error)) {
+    if (!(await degradoSedeLecito(supabase, 'forms/export/pdf:GET'))) {
+      return NextResponse.json({ error: 'Isolamento per sede non disponibile' }, { status: 500 })
+    }
+    res = await leggi(false)
+  }
+  const { data: submission, error } = res
 
   if (error || !submission) {
     return NextResponse.json({ error: 'Compilazione non trovata' }, { status: 404 })

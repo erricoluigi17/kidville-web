@@ -9,12 +9,25 @@ const ALUNNO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
+  requireUser: vi.fn(),
   scuoleDiUtente: vi.fn(),
+  assertAlunnoInScope: vi.fn(),
   righe: {} as Record<string, Record<string, unknown>[]>,
 }))
 
-vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
-vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: h.scuoleDiUtente }))
+// `requireUser` e `assertAlunnoInScope` servono da quando il ramo `?id=` ha un
+// gate (prima non ne aveva alcuno: rispondeva a chiunque con le note mediche del
+// minore). Qui sono concessivi di proposito — l'oggetto di QUESTO test è
+// l'unione dei legami genitore↔figlio, non l'autorizzazione: quella sta in
+// `__tests__/api/diary-students-id-gate.test.ts`.
+vi.mock('@/lib/auth/require-staff', () => ({
+  requireDocente: h.requireDocente,
+  requireUser: h.requireUser,
+}))
+vi.mock('@/lib/auth/scope', () => ({
+  scuoleDiUtente: h.scuoleDiUtente,
+  assertAlunnoInScope: h.assertAlunnoInScope,
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -37,7 +50,9 @@ const req = (qs: string) =>
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireDocente.mockResolvedValue({ user: { id: 'doc1', role: 'educator', scuola_id: 'sc-1' } })
+  h.requireUser.mockResolvedValue({ user: { id: 'doc1', role: 'educator', scuola_id: 'sc-1' } })
   h.scuoleDiUtente.mockResolvedValue(['sc-1'])
+  h.assertAlunnoInScope.mockResolvedValue(null)
   h.righe = {
     alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', note_mediche: null, consenso_privacy: true }],
     legame_genitori_alunni: [],

@@ -68,6 +68,69 @@
 
 ---
 
+## 🗓️ Changelog — Tre dati sanitari di minori autorizzati male, uno **senza alcuna autenticazione** 2026-07-30 (branch `fix/isolamento-hotfix-sanitari`)
+
+Primo tempo dell'audit sistematico dell'isolamento fra sedi (piano completo in
+`docs/prompts/PROMPT-ISOLAMENTO-SEDI.md`). Perimetro deliberatamente **minimo**: solo i tre punti
+in cui un dato sanitario di un minore era leggibile da chi non doveva, isolati in una PR a sé per
+poter andare in produzione **subito**, senza aspettare le altre 56 route dell'audit.
+
+- 🔴 **`GET /api/diary/students?id=` non aveva alcun gate.** `requireDocente` era invocato solo
+  **dopo** il `return` del ramo `?id=`: bastava conoscere (o indovinare) un uuid per ottenere, da
+  internet e **senza credenziali**, nome, cognome, classe, **`note_mediche`** del bambino e
+  nome/cognome/**email dei suoi genitori**. Verificato in produzione il 2026-07-30 con un uuid
+  inesistente: **HTTP 200**. Non era una perdita fra sedi — era aperto a chiunque. Ora il gate sta
+  prima della lettura: genitore → legame genitore↔figlio (`requireParentOfStudent`); staff →
+  `assertAlunnoInScope` (plesso, e per `educator` sezioni assegnate). `cuoca` non ha né legame né
+  sezioni: nessun ruolo resta scoperto.
+- 🔴 **`GET /api/parent/medical-certificates/file` autorizzava il solo RUOLO.** Il ramo `isStaff`
+  saltava ogni verifica di appartenenza: chiunque fosse `educator` di qualunque plesso scaricava il
+  **PDF del certificato medico** (art. 9 GDPR) di un minore di un'altra sede conoscendo l'id del
+  certificato. Aggiunto `assertAlunnoInScope` anche per lo staff — coerente con la `PATCH` di
+  `teacher/medical-certificates`, che lo applicava già, e col modello di
+  `src/lib/primaria/fascicolo-rbac.ts` (che nega con motivo `cross-tenant`).
+- 🔴 **`GET /api/teacher/medical-certificates`: il gate c'era, il filtro no.** `assertClasseNomeInScope`
+  scattava **solo** con `?class_name=`, e il filtro righe era in JavaScript sul nome-classe. Senza
+  parametro tornavano i certificati di **tutte le sedi** (periodo di malattia, note cliniche libere,
+  `file_path`); con `?class_name=2 ANNI` entravano anche gli omonimi dell'altro plesso. Aggiunto
+  `.in('alunno.scuola_id', resolveScuoleAttive(…))` con `!inner` sul join. È il caso di scuola
+  descritto nel commento di `assertClasseNomeInScope`: **gate e filtro sono due presidi diversi e
+  servono entrambi**.
+
+**Regola confermata sui degradi:** scope vuoto ⇒ `.in(…, [])` ⇒ nessuna riga. Si **nega**, non si
+apre — un test dedicato lo mette a contratto (`utente senza alcun plesso: elenco vuoto, non elenco
+completo`).
+
+**Test**: 17 nuovi casi in `__tests__/api/diary-students-id-gate.test.ts` (8) e
+`__tests__/api/certificati-medici-scope-sede.test.ts` (9), su `finto-supabase` — il finto client che
+applica davvero `.eq`/`.in` anche sulle risorse embedded (con un mock piatto un test d'isolamento è
+verde **anche senza** il filtro). **Prova di validità eseguita su tutti e tre**: rimessi i difetti,
+5 test rossi per file. `diary-students-genitori-unione.test.ts` aggiornato — il suo oggetto è
+l'unione dei legami, non l'autorizzazione, e i due gate nuovi sono mockati concessivi di proposito.
+
+**Gate**: eslint **0** · tsc **0** · vitest **3477 / 420 file** verdi · build ok · E2E in CI al
+push. Nessuna migrazione, nessuna variabile d'ambiente nuova.
+
+### Resta aperto dopo questa PR (dall'audit, 59 route)
+
+Il difetto più grave che **non** è una route da filtrare: **`unique_registro_orario UNIQUE
+(classe_sezione, data, ora_lezione)` non contiene `scuola_id`** — verificato sul DB di produzione.
+Gli upsert `onConflict: 'classe_sezione,data,ora_lezione'` (`register/lessons:139`,
+`primaria/registro:245`) **condividono la stessa riga fra sedi omonime**: argomento, compiti e firme
+del «2 ANNI» di Aversa sovrascrivono quelli di Cesa. È l'unico che **corrompe** dati invece di
+esporli, ed è invisibile in lettura perché il gate di scope c'è. Oggi 14 righe e **0 collisioni**:
+la migrazione è ancora indolore. Poi: `admin/chat/contacts` (la correzione del 29/07 riguardava il
+gemello lato docente, non questa), `admin/students/[id]`, `admin/parents`, `admin/gdpr/erase`, i 4
+endpoint che leggono l'identità da header aggirando `ALLOW_HEADER_IDENTITY`, e i ~10 punti dove
+`if (plessi.length > 0)` rende lo scope vuoto un «nessun filtro».
+
+**Smentito**: le 15 route `admin/wipe`/`seed-*`/`debug-*`/`apply-*-migration` **non** sono aperte —
+passano tutte da `sealDangerous()` (`src/lib/security/seal.ts:14`), che in produzione risponde 404
+(verificato live: `POST /api/admin/wipe` → 404). E **`pre_inscriptions` non esiste** nel database di
+produzione: il `POST` anonimo del flusso legacy non può scrivere nulla.
+
+---
+
 ## 🗓️ Changelog — Collaudo end-to-end della catena di onboarding, e i quattro difetti che ha scoperto 2026-07-29 (branch `fix/audit-legami`)
 
 La catena *link → modulo → segreteria → credenziali → alunno in classe → genitore che vede il

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { getGenitoriDiAlunni, getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
@@ -35,10 +36,31 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     if (params.get('id')) {
         const q = parseQuery(request, getByIdQuerySchema);
         if ('response' in q) return q.response;
+        const alunnoId = q.data.id;
+
+        // Il gate sta PRIMA della lettura — e prima non c'era affatto: `requireDocente`
+        // era invocato solo DOPO il `return` di questo ramo, quindi bastava conoscere (o
+        // indovinare) un uuid per ottenere `note_mediche` di un minore, la sua classe e
+        // le email dei suoi genitori SENZA alcuna credenziale. Verificato in produzione
+        // il 2026-07-30: rispondeva 200 a una richiesta anonima.
+        //
+        // Genitore  → legame genitore↔figlio (`requireParentOfStudent`, unione
+        //             `legame_genitori_alunni` + `student_parents`).
+        // Staff     → l'alunno deve essere nel proprio plesso, e per `educator` nelle
+        //             proprie sezioni (`assertAlunnoInScope`).
+        // `cuoca`   → non è genitore e non ha sezioni assegnate: `assertAlunnoInScope`
+        //             la nega. Nessun ruolo resta scoperto.
+        const auth = await requireParentOfStudent(request, alunnoId);
+        if (auth.response) return auth.response;
+        if (auth.user.role !== 'genitore') {
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId);
+            if (fuoriScope) return fuoriScope;
+        }
+
         const { data: alunno, error } = await supabase
             .from('alunni')
             .select('id, nome, cognome, note_mediche, classe_sezione, consenso_privacy')
-            .eq('id', q.data.id)
+            .eq('id', alunnoId)
             .maybeSingle();
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });

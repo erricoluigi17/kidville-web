@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -36,7 +37,16 @@ export const GET = withRoute('parent/medical-certificates/file:GET', async (requ
     if (!cert) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria' || user.role === 'educator'
-    if (!isStaff) {
+    if (isStaff) {
+      // Il RUOLO non basta, e per mesi è stato l'unico controllo: chi era `educator`
+      // di qualunque plesso scaricava il PDF del certificato medico (dato sanitario,
+      // art. 9 GDPR) di un minore di un'altra sede, bastandogli l'id del certificato.
+      // Il modello corretto era già in casa: `src/lib/primaria/fascicolo-rbac.ts:47-56`
+      // nega con motivo `cross-tenant`. Qui si riusa `assertAlunnoInScope`, coerente
+      // con la PATCH di `teacher/medical-certificates`, che lo applica già.
+      const fuoriScope = await assertAlunnoInScope(supabase, user, cert.alunno_id as string)
+      if (fuoriScope) return fuoriScope
+    } else {
       // Unione runtime + anagrafica. Il perimetro NON si allarga: chi non è
       // collegato in nessuna delle due sorgenti resta fuori dal dato sanitario.
       const ok = await genitoreHasFiglio(supabase, user.id, cert.alunno_id)

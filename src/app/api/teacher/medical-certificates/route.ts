@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertAlunnoInScope, assertClasseNomeInScope } from '@/lib/auth/scope'
+import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { periodoValido } from '@/lib/certificati/stato'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -32,7 +32,7 @@ const patchBodySchema = z.object({
 
 // GET /api/teacher/medical-certificates — elenco certificati per la Segreteria.
 // Filtri opzionali: ?stato=in_validazione | ?class_name=
-export const GET = withRoute('teacher/medical-certificates:GET', async (request: Request) => {
+export const GET = withRoute('teacher/medical-certificates:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -47,11 +47,22 @@ export const GET = withRoute('teacher/medical-certificates:GET', async (request:
       const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className)
       if (scopeErr) return scopeErr
     }
+    // Il gate qui sopra scatta SOLO se arriva `?class_name=`, e comunque non filtra le
+    // righe: sono due presidi diversi e servono entrambi (cfr. il commento di
+    // `assertClasseNomeInScope` in src/lib/auth/scope.ts). Senza il filtro qui sotto,
+    // una GET senza parametri restituiva i certificati medici — periodo di malattia,
+    // note cliniche libere, `file_path` — di TUTTE le sedi; e con `?class_name=2 ANNI`
+    // entravano anche gli omonimi dell'altro plesso. `!inner` è necessario perché il
+    // filtro sulla risorsa embedded scarti davvero la riga padre; scope vuoto ⇒
+    // `.in(…, [])` ⇒ nessuna riga, cioè si nega, non si apre.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     let query = supabase
       .from('certificati_medici')
-      .select('id, alunno_id, file_path, data_inizio, data_fine, stato, note, nota_validazione, validato_il, creato_il, alunno:alunni(nome, cognome, classe_sezione)')
+      .select('id, alunno_id, file_path, data_inizio, data_fine, stato, note, nota_validazione, validato_il, creato_il, alunno:alunni!inner(nome, cognome, classe_sezione)')
+      .in('alunno.scuola_id', plessi)
       .order('creato_il', { ascending: false })
     if (stato) query = query.eq('stato', stato)
+    if (className) query = query.eq('alunno.classe_sezione', className)
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

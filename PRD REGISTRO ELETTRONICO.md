@@ -111,6 +111,20 @@ l'unione dei legami, non l'autorizzazione, e i due gate nuovi sono mockati conce
 **Gate**: eslint **0** · tsc **0** · vitest **3477 / 420 file** verdi · build ok · E2E in CI al
 push. Nessuna migrazione, nessuna variabile d'ambiente nuova.
 
+**Un test E2E rotto che non era una regressione.** `teacher-diary` ha cominciato a fallire in modo
+riproducibile su questa PR. Non era il nuovo codice: **lo stesso commit di `main` (`2d85d08`) è
+passato alle 10:28 e fallito alle 13:40 dello stesso giorno**, verificato rilanciando il job su
+`main`. Nella traccia Playwright la `POST /api/diary/entries` risulta con **status −1** — nessuna
+risposta, nessun errore lato server: la richiesta viene abortita dal test scaduto. La causa è che
+quel salvataggio fa **una ventina di viaggi al database in sequenza** (select+insert per bambino,
+audit, notifica ai titolari, e per ogni figlio: sede, toggle, delete di debounce, insert notifiche):
+con due bambini in sezione sfiora i **5 secondi** del timeout di default di `toBeVisible`, e quando
+il DB E2E rallenta li supera. Le altre attese dello stesso file usavano già 15 secondi; le due
+asserzioni sul toast erano rimaste al default. Corretto aspettando la **risposta** della POST invece
+di una soglia, e asserendo lo status (se il salvataggio fallisce, il messaggio dice *quale* stato è
+tornato). **Resta aperto**: venti round-trip sequenziali per salvare una merenda sono un costo reale
+anche in produzione, e vanno guardati a parte.
+
 ### Resta aperto dopo questa PR (dall'audit, 59 route)
 
 Il difetto più grave che **non** è una route da filtrare: **`unique_registro_orario UNIQUE

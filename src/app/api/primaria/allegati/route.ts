@@ -59,7 +59,25 @@ export const GET = withRoute('primaria/allegati:GET', async (request: NextReques
       .eq('registro_id', registroId)
       .order('creato_il')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true, data: data ?? [] })
+
+    // Link firmati a 10 minuti, generati solo per chi ha superato il gate.
+    // Le righe storiche con un URL completo (`http…`) restano com'erano: in
+    // produzione non ce n'è nessuna, ma non si riscrive un dato che non si è
+    // certi di saper interpretare.
+    const conLink = await Promise.all((data ?? []).map(async (riga) => {
+      const percorso = riga.file_url as string | null
+      if (!percorso || percorso.startsWith('http')) return riga
+      const { data: firmato, error: errFirma } = await supabase
+        .storage.from(BUCKET).createSignedUrl(percorso, 600)
+      if (errFirma) {
+        logEvento('storage', 'error', {
+          operazione: 'primaria/allegati:GET', esito: 'link-non-firmato', bucket: BUCKET,
+        }, errFirma)
+        return { ...riga, file_url: null }
+      }
+      return { ...riga, file_url: firmato?.signedUrl ?? null }
+    }))
+    return NextResponse.json({ success: true, data: conLink })
   } catch (err) {
     logErrore({ operazione: 'primaria/allegati:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -99,12 +117,22 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
     // Assicura il bucket.
     try {
       const { data: buckets } = await supabase.storage.listBuckets()
+      // Bucket PRIVATO. Era `public: true` e il percorso veniva salvato come
+      // `getPublicUrl`: un allegato del registro — compiti, verifiche, foto di
+      // lavagne con nomi di bambini — era leggibile da CHIUNQUE avesse (o
+      // indovinasse) l'indirizzo, senza login e SENZA SCADENZA. Ora si serve un
+      // link firmato a tempo, dietro lo stesso gate del resto della route.
       const opts = {
-        public: true,
+        public: false,
         allowedMimeTypes: ['application/pdf', ...IMG_TYPES],
         fileSizeLimit: MAX_PDF,
       }
-      if (!buckets?.some((b) => b.name === BUCKET)) await supabase.storage.createBucket(BUCKET, opts)
+      if (!buckets?.some((b) => b.name === BUCKET)) {
+        await supabase.storage.createBucket(BUCKET, opts)
+      } else {
+        // Se esiste già ed era pubblico, `createBucket` non lo cambierebbe.
+        await supabase.storage.updateBucket(BUCKET, { public: false })
+      }
     } catch (e) {
       // Passo idempotente di garanzia: se il bucket c'è già, l'upload qui sotto riesce
       // lo stesso e nulla è perduto. Se davvero manca, è l'upload a fallire con il suo
@@ -125,15 +153,15 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
     })
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
-    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path)
-
+    // Si salva il PERCORSO, non un URL: l'indirizzo firmato viene generato al
+    // momento della lettura, con scadenza breve, da chi ha superato il gate.
     const { data, error } = await supabase
       .from('allegati_registro')
       .insert({
         registro_id: registroId,
         ambito,
         tipo: isPdf ? 'pdf' : 'immagine',
-        file_url: pub.publicUrl,
+        file_url: path,
         file_name: file.name,
         dimensione_byte: file.size,
         caricato_da: userId,

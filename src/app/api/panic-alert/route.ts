@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope } from '@/lib/auth/scope';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody } from '@/lib/validation/http';
@@ -27,6 +29,18 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
         const { alunnoId } = b.data;
+
+        // La sessione c'era, il RUOLO no: qualunque utente autenticato — un
+        // genitore compreso — poteva far scattare l'allarme «ritiro non
+        // autorizzato» su qualunque bambino, di qualunque sede, bloccandogli
+        // l'uscita e allertando segreteria e famiglia. È un pulsante
+        // d'emergenza, quindi resta rapidissimo da usare per chi è al cancello:
+        // si aggiunge il gate di ruolo e il vincolo di plesso, nient'altro.
+        const gate = await requireDocente(request);
+        if (gate.response) return gate.response;
+        const admin = await createAdminClient();
+        const fuoriScope = await assertAlunnoInScope(admin, gate.user, alunnoId);
+        if (fuoriScope) return fuoriScope;
 
         const today = new Date().toISOString().split('T')[0];
 

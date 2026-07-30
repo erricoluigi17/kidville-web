@@ -229,13 +229,27 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
       alunniGenerati.push(...alunnoIds)
     }
 
-    await supabase.from('registro_modifiche').insert({
+    // `.then(() => {}, () => {})` scartava sia il successo sia il rifiuto. E
+    // PostgREST NON lancia: l'errore torna dentro il risultato, quindi non
+    // veniva nemmeno letto. La traccia di chi ha generato in massa i pagamenti
+    // poteva non essere scritta e nessuno l'avrebbe mai saputo — e' esattamente
+    // il costrutto che il 2026-07-29 aveva reso invisibile per mesi l'audit dei
+    // legami genitore/figlio. Best-effort resta (non fa fallire la generazione),
+    // ma «saltato» adesso si vede.
+    const auditRes = await supabase.from('registro_modifiche').insert({
       azione: 'genera_pagamenti_categoria',
       tabella_interessata: 'pagamenti',
       record_id: null,
       nuovo_valore: { categoria_id: categoriaId, descrizione, gruppo, generati, rate: !!rate },
       utente_id: user.id,
-    }).then(() => {}, () => {})
+    })
+    if (auditRes.error) {
+      logEvento('pagamenti', 'error', {
+        operazione: 'pagamenti/genera:POST',
+        esito: 'audit-non-scritto',
+        generati,
+      }, auditRes.error)
+    }
 
     // Notifica ai genitori: nuovo dovuto disponibile (best-effort). UNA
     // notifica per genitore (dedup nel wrapper), mai una per pagamento.

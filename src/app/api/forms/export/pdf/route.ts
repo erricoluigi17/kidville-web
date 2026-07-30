@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -39,12 +40,22 @@ export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest
   // all'invio. Scope vuoto ⇒ nessuna riga.
   const plessi = await resolveScuoleAttive(request, supabase, auth.user)
 
-  const { data: submission, error } = await supabase
-    .from('form_submissions')
-    .select('*, form_model:form_models(id, title, schema)')
-    .in('scuola_id', plessi)
-    .eq('id', id)
-    .maybeSingle()
+  const leggi = (conSede: boolean) => {
+    let q = supabase
+      .from('form_submissions')
+      .select('*, form_model:form_models(id, title, schema)')
+      .eq('id', id)
+    if (conSede) q = q.in('scuola_id', plessi)
+    return q.maybeSingle()
+  }
+  let res = await leggi(true)
+  if (colonnaSedeAssente(res.error)) {
+    if (!(await degradoSedeLecito(supabase, 'forms/export/pdf:GET'))) {
+      return NextResponse.json({ error: 'Isolamento per sede non disponibile' }, { status: 500 })
+    }
+    res = await leggi(false)
+  }
+  const { data: submission, error } = res
 
   if (error || !submission) {
     return NextResponse.json({ error: 'Compilazione non trovata' }, { status: 404 })

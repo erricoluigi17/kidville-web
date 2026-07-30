@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -21,6 +22,11 @@ const postBodySchema = z.object({
   // Flag «essenziale: sempre firmabile» (salute/sicurezza) — firmabile anche da
   // genitore sospeso. Best-effort: assente sul DB non migrato (PGRST204) → si omette.
   sempre_firmabile: z.unknown().optional(),
+  // Sede a cui il modello e' destinato. `null`/assente = vale per TUTTE le sedi
+  // (comportamento storico dei 6 modelli gia' esistenti). Il valore e' comunque
+  // ri-validato server-side contro le sedi accessibili: sceglierne una altrui
+  // dal client non funziona.
+  scuola_id: z.string().nullish(),
 })
 
 // Colonna nuova assente sul DB E2E CI non migrato.
@@ -42,9 +48,19 @@ export const POST = withRoute('admin/form-models:POST', async (request: Request)
   const b = await parseBody(request, postBodySchema)
   if ('response' in b) return b.response
   try {
-    const { title, schema, is_active, requires_signature, description, signature_mode, sempre_firmabile } = b.data
+    const { title, schema, is_active, requires_signature, description, signature_mode, sempre_firmabile, scuola_id } = b.data
 
     const supabase = await createAdminClient()
+
+    // La sede scelta nel costruttore vale solo se e' fra quelle accessibili:
+    // altrimenti si ricadrebbe su un modello pubblicato su un plesso altrui
+    // semplicemente manomettendo il body. `null` resta lecito e significa
+    // «tutte le sedi».
+    const accessibili = await scuoleDiUtente(supabase, auth.user)
+    const sedeModello = typeof scuola_id === 'string' && accessibili.includes(scuola_id)
+      ? scuola_id
+      : null
+
     const base = {
       title,
       description: description ?? null,
@@ -52,15 +68,23 @@ export const POST = withRoute('admin/form-models:POST', async (request: Request)
       is_active: is_active ?? false,
       requires_signature: requires_signature ?? false,
       signature_mode: signature_mode === 'joint' ? 'joint' : 'single',
+      scuola_id: sedeModello,
     }
     let res = await supabase
       .from('form_models')
       .insert({ ...base, sempre_firmabile: sempre_firmabile === true })
       .select()
       .single()
-    // DB non migrato (colonna sempre_firmabile assente): riprova senza il flag.
+    // DB non migrato: riprova togliendo le colonne recenti. Prima `sempre_firmabile`,
+    // poi anche `scuola_id` — sul DB E2E della CI mancano entrambe, e un solo
+    // tentativo lasciava fallire l'insert per la seconda.
     if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '')) {
       res = await supabase.from('form_models').insert(base).select().single()
+    }
+    if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '')) {
+      const { scuola_id: _sede, ...senzaSede } = base
+      void _sede
+      res = await supabase.from('form_models').insert(senzaSede).select().single()
     }
 
     if (res.error) {

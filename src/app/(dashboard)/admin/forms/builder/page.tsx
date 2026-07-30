@@ -18,6 +18,7 @@ import {
   Type, AlignLeft, ChevronDown, Paperclip, PenLine, Hash,
   Database, Baby, Heart, User, UserCheck, ShieldCheck,
   Globe, Lock, Copy, Link2, EyeOff,
+  MapPin,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useTranslations } from 'next-intl'
@@ -246,11 +247,32 @@ function FormBuilderInner() {
   // Contabilità v2: modulo «essenziale» (salute/sicurezza) → firmabile anche da
   // genitore sospeso per morosità (eccezione alla matrice sospensione).
   const [sempreFirmabile, setSempreFirmabile] = useState(false)
+  // Sede di destinazione del modello (2026-07-30). Stringa vuota = «tutte le
+  // sedi», che e' il comportamento storico: i modelli gia' esistenti restano
+  // validi ovunque finche' non si sceglie un plesso.
+  const [sedeModello, setSedeModello] = useState<string>('')
+  const [sediDisponibili, setSediDisponibili] = useState<{ id: string; nome: string }[]>([])
   const [draggingPaletteId, setDraggingPaletteId] = useState<string | null>(null)
   const [draggingPresetId, setDraggingPresetId] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(['madre', 'padre', 'delegato'])
   )
+
+  // Sedi su cui l'utente puo' pubblicare. La scelta e' comunque ri-validata
+  // server-side: qui serve solo a non far scegliere alla cieca.
+  useEffect(() => {
+    fetch('/api/admin/sedi')
+      .then(r => (r.ok ? r.json() : null))
+      .then((j) => {
+        const righe = Array.isArray(j) ? j : (j?.data ?? [])
+        setSediDisponibili(
+          righe
+            .filter((s: { id?: string }) => typeof s?.id === 'string')
+            .map((s: { id: string; nome?: string; name?: string }) => ({ id: s.id, nome: s.nome ?? s.name ?? s.id })),
+        )
+      })
+      .catch(() => {})
+  }, [])
 
   // Carica il modello esistente (modifica): schema + titolo + stato pubblicazione.
   useEffect(() => {
@@ -265,6 +287,7 @@ function FormBuilderInner() {
         setSavedModelId(m.id)
         if (m.signature_mode === 'joint' || m.signature_mode === 'single') setSignatureMode(m.signature_mode)
         setSempreFirmabile(m.sempre_firmabile === true)
+        setSedeModello(typeof m.scuola_id === 'string' ? m.scuola_id : '')
         if (m.access_mode === 'public' || m.access_mode === 'authenticated') setAccessMode(m.access_mode)
         if (m.published_at && m.public_token) {
           setPub({ token: m.public_token, url: publicFormUrl(m.public_token), access_mode: m.access_mode })
@@ -427,8 +450,8 @@ function FormBuilderInner() {
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify(
           editing
-            ? { id: editing, title: formTitle, schema, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single', sempre_firmabile: sempreFirmabile }
-            : { title: formTitle, schema, is_active: false, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single', sempre_firmabile: sempreFirmabile },
+            ? { id: editing, title: formTitle, schema, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single', sempre_firmabile: sempreFirmabile, scuola_id: sedeModello || null }
+            : { title: formTitle, schema, is_active: false, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single', sempre_firmabile: sempreFirmabile, scuola_id: sedeModello || null },
         ),
       })
       const json = await res.json()
@@ -548,6 +571,23 @@ function FormBuilderInner() {
               <ShieldCheck className="w-3.5 h-3.5" />
               {sempreFirmabile ? t('bldEssenzialeOn') : t('bldEssenzialeOff')}
             </button>
+            {sediDisponibili.length > 1 && (
+              <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-kidville-line text-xs text-kidville-muted">
+                <MapPin className="w-3.5 h-3.5" />
+                <span className="sr-only">{t('bldSedeLabel')}</span>
+                <select
+                  value={sedeModello}
+                  onChange={e => setSedeModello(e.target.value)}
+                  aria-label={t('bldSedeLabel')}
+                  className="bg-transparent text-xs text-kidville-ink focus:outline-none"
+                >
+                  <option value="">{t('bldSedeTutte')}</option>
+                  {sediDisponibili.map(s => (
+                    <option key={s.id} value={s.id}>{s.nome}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="flex items-center gap-2 text-xs text-kidville-muted font-mono tabular-nums">
               <span>{t('bldPagine', { count: schema.pages.length })}</span>
               <span className="text-kidville-muted">·</span>

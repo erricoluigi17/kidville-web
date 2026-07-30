@@ -38,7 +38,7 @@ export const GET = withRoute('parent/forms:GET', async (request: NextRequest) =>
 
     const { data: students, error: studErr } = await supabase
       .from('alunni')
-      .select('id, nome, cognome, classe_sezione')
+      .select('id, nome, cognome, classe_sezione, scuola_id')
       .in('id', studentIds);
 
     if (studErr || !students) {
@@ -47,18 +47,27 @@ export const GET = withRoute('parent/forms:GET', async (request: NextRequest) =>
 
     // Classi dei figli
     const classes = Array.from(new Set(students.map(s => s.classe_sezione).filter(Boolean)));
+    // Sedi dei figli. Il genitore NON ha una sede propria (può avere figli in due
+    // plessi): le sedi sono quelle dei suoi bambini, e sono l'unico perimetro
+    // legittimo. Senza questo filtro i moduli venivano abbinati per SOLO NOME di
+    // classe, e al genitore di Aversa comparivano quelli del «2 ANNI» di Cesa.
+    const sediFigli = Array.from(new Set(students.map(s => s.scuola_id).filter(Boolean)));
 
-    // 2. Recupera i moduli (templates) assegnati a queste classi
+    // 2. Recupera i moduli (templates) assegnati a queste classi, nelle sole sedi
+    //    in cui il genitore ha davvero un figlio.
     const { data: templates, error: tempErr } = await supabase
       .from('forms_templates')
       .select('*')
+      .in('scuola_id', sediFigli)
       .eq('target_scope', 'class');
 
     if (tempErr || !templates) {
       return NextResponse.json({ error: tempErr?.message || 'Errore moduli' }, { status: 500 });
     }
 
-    // Filtra i moduli in base alle classi dei figli
+    // Filtra i moduli in base alle classi dei figli. Il nome-classe da solo non
+    // basta più (è ambiguo fra sedi): la query sopra ha già ristretto ai plessi
+    // dei figli, questo abbinamento lavora dentro quel perimetro.
     const assignedTemplates = templates.filter(t => {
       const targetClasses = t.target_classes || [];
       return targetClasses.some((c: string) => classes.includes(c));

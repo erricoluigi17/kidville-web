@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 
@@ -14,7 +15,7 @@ const getQuerySchema = z.object({
 
 // GET /api/admin/forms/rankings?modelId= — graduatoria (compilazioni completate
 // ordinate per punteggio). Gated; sostituisce la lettura anon di `form_submissions`.
-export const GET = withRoute('admin/forms/rankings:GET', async (request: Request) => {
+export const GET = withRoute('admin/forms/rankings:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
@@ -22,10 +23,18 @@ export const GET = withRoute('admin/forms/rankings:GET', async (request: Request
     if ('response' in q) return q.response
     const { modelId } = q.data
 
+    // Isolamento per sede. Prima non esisteva NESSUN modo di sapere a quale plesso
+    // appartenesse una compilazione (nessuna colonna, e `user_id` senza FK): elenchi,
+    // graduatorie ed export mostravano i dati delle famiglie delle tre sedi a
+    // qualunque segreteria. La colonna esiste dalla migrazione
+    // `modulistica_sede_su_modelli_e_compilazioni` (2026-07-30) ed è scritta
+    // all'invio. Scope vuoto ⇒ nessuna riga.
     const supabase = await createAdminClient()
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     let query = supabase
       .from('form_submissions')
       .select('id, model_id, user_id, data, score, signed_at, manual_adjustments, esito_ammissione, status, created_at, form_model:form_models(id, title)')
+      .in('scuola_id', plessi)
       .eq('status', 'completed')
       .order('score', { ascending: false })
       .order('signed_at', { ascending: true })

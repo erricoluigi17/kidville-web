@@ -6,6 +6,7 @@ import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.ty
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -30,10 +31,18 @@ export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest
   const { id } = q.data
 
   const supabase = await createAdminClient()
+  // Isolamento per sede. Prima non esisteva NESSUN modo di sapere a quale plesso
+  // appartenesse una compilazione (nessuna colonna, e `user_id` senza FK): elenchi,
+  // graduatorie ed export mostravano i dati delle famiglie delle tre sedi a
+  // qualunque segreteria. La colonna esiste dalla migrazione
+  // `modulistica_sede_su_modelli_e_compilazioni` (2026-07-30) ed è scritta
+  // all'invio. Scope vuoto ⇒ nessuna riga.
+  const plessi = await resolveScuoleAttive(request, supabase, auth.user)
 
   const { data: submission, error } = await supabase
     .from('form_submissions')
     .select('*, form_model:form_models(id, title, schema)')
+    .in('scuola_id', plessi)
     .eq('id', id)
     .maybeSingle()
 

@@ -5,7 +5,6 @@
   "rimuoviFiltri": "Rimuovi filtri",
   "obbligatorio": "Obbligatorio",
   "colFirma": "Firma",
-
   "fieldTypeText": "Testo Corto",
   "fieldTypeTextarea": "Testo Lungo",
   "fieldTypeNumber": "Numero",
@@ -20,27 +19,21 @@
   "fieldTypeSignature": "Firma",
   "fieldTypeSectionHeader": "Intestazione",
   "fieldTypeParagraph": "Paragrafo",
-
   "esitoAmmesso": "Ammesso",
   "esitoListaAttesa": "Lista d'attesa",
   "esitoNonAmmesso": "Non ammesso",
-
   "statusBozza": "Bozza",
   "statusInAttesaFirma": "In attesa firma",
   "statusCompletato": "Completato",
-
   "modNd": "N.D.",
-
   "draggablePunti": "+{points}pt",
   "draggableEliminaCampo": "Elimina campo",
-
   "cnvAggiungiPagina": "Aggiungi pagina",
   "cnvStep": "Step {n} / {tot}",
   "cnvCanvasVuoto": "Canvas vuoto",
   "cnvCanvasVuotoDesc": "Trascina i campi dalla libreria a sinistra per iniziare.",
   "cnvRilasciaQui": "Rilascia qui per aggiungere",
   "cnvCampiInPagina": "{count, plural, one {# campo} other {# campi}} in questa pagina · Trascina per riordinare",
-
   "ppOpEq": "è uguale a",
   "ppOpNeq": "è diverso da",
   "ppOpContains": "contiene",
@@ -79,7 +72,6 @@
   "ppId": "ID:",
   "ppNessunCampo": "Nessun campo selezionato",
   "ppNessunCampoDesc": "Clicca su un campo nel canvas per modificarne le proprietà.",
-
   "radjErrEsito": "Impossibile aggiornare l'esito",
   "radjErrDelta": "Inserisci un valore diverso da zero",
   "radjErrMotivazione": "La motivazione è obbligatoria",
@@ -93,7 +85,6 @@
   "radjMotivazione": "Motivazione",
   "radjMotivazionePlaceholder": "Es. Fratello già frequentante",
   "radjApplica": "Applica",
-
   "rnkCandidato": "Candidato",
   "rnkDeliberaConfirm": "Deliberare con {posti} posti e soglia {soglia}? Gli esiti verranno (ri)assegnati.",
   "rnkDeliberaFallita": "Delibera non riuscita",
@@ -112,7 +103,6 @@
   "rnkColPunti": "Punti",
   "rnkPageTitle": "Graduatorie",
   "rnkPageSubtitle": "Classifiche con punteggi calcolati automaticamente — clicca su una riga per regolare",
-
   "subCercaPlaceholder": "Cerca per modello o contenuto…",
   "subTuttiStati": "Tutti gli stati",
   "subTuttiModelli": "Tutti i modelli",
@@ -131,20 +121,17 @@
   "subNo": "No",
   "subPageTitle": "Compilazioni Ricevute",
   "subPageSubtitle": "Visualizza, filtra ed esporta tutte le risposte ai moduli dinamici",
-
   "sdsCompilazione": "Compilazione",
   "sdsFirmato": "Firmato",
   "sdsNessunDato": "Nessun dato da visualizzare",
   "sdsRiportaNonGestita": "Riporta a non gestita",
   "sdsSegnaComeGestita": "Segna come gestita",
-
   "modFormTypeSondaggio": "Sondaggio",
   "modFormTypeSondaggioDesc": "Domande aperte o a scelta. Nessuna firma richiesta.",
   "modFormTypeGradimento": "Gradimento",
   "modFormTypeGradimentoDesc": "Valutazioni e feedback (scala 1-5). Nessuna firma.",
   "modFormTypeAutorizzazione": "Autorizzazione",
   "modFormTypeAutorizzazioneDesc": "Consenso con firma OTP via email (valore legale).",
-
   "modInputTestoBreve": "Testo breve",
   "modInputTestoLungo": "Testo lungo",
   "modInputSceltaSingola": "Scelta singola",
@@ -153,7 +140,6 @@
   "modInputCommento": "Commento",
   "modInputConsenso": "Consenso (Sì/No)",
   "modInputTesto": "Testo",
-
   "modToastTitoloRichiesto": "❌ Titolo del modulo richiesto",
   "modToastModuloCreato": "✅ Modulo creato con successo!",
   "modErroreSalvataggio": "Errore di salvataggio",
@@ -180,7 +166,6 @@
   "modErroreCaricamentoMerge": "Errore caricamento dati per merge",
   "modToastReportScaricato": "✅ Report cumulativo PDF scaricato!",
   "modErroreEsportazione": "Errore esportazione",
-
   "modPdfTitolo": "REPORT CUMULATIVO AUTORIZZAZIONI — {classe}",
   "modPdfModulo": "Modulo: {titolo}",
   "modPdfNessuna": "Nessuna",
@@ -195,7 +180,6 @@
   "modPdfHashFes": "Hash FES (SHA-256): {hash}",
   "modPdfStatoNonAutorizzato": "STATO: NON AUTORIZZATO (FIRMA MANCANTE)",
   "modPdfInAttesa": "In attesa di compilazione e firma FES da parte del genitore.",
-
   "modPageTitle": "Modulistica & Onboarding",
   "modPageSubtitle": "Gestione moduli di consenso, sala d'attesa pre-iscrizioni e carta intestata.",
   "modNuovoModuloGenitori": "Nuovo Modulo Genitori",
@@ -289,7 +273,6 @@
   "modInCorso": "In corso…",
   "modProtocolla": "Protocolla",
   "modProtocollaHint": "Ogni modulo viene registrato in INGRESSO nel registro protocolli con numero e fascia di segnatura.",
-
   "bldConsensoDefaultLabel": "Consenso al trattamento dei dati",
   "bldConsensoDefaultTesto": "Dichiaro di aver letto l'informativa e acconsento al trattamento dei dati.",
   "bldOpzione1": "Opzione 1",
@@ -319,5 +302,7 @@
   "bldSalvataggio": "Salvataggio…",
   "bldSalvato": "Salvato!",
   "bldErrore": "Errore",
-  "bldSalvaModello": "Salva Modello"
+  "bldSalvaModello": "Salva Modello",
+  "bldSedeTutte": "Tutte le sedi",
+  "bldSedeLabel": "Sede di destinazione del modulo"
 }

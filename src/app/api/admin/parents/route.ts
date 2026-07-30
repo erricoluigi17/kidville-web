@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope, assertParentInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -61,21 +62,46 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
 
         const supabase = await createAdminClient();
 
-        let query = supabase.from('parents').select('*');
-
+        // Isolamento per sede. `parents` non ha `scuola_id` e non deve averlo (un
+        // genitore può avere figli in due sedi): lo scope passa dai FIGLI. Senza
+        // questo, `select('*')` restituiva l'anagrafica completa dei genitori
+        // delle tre sedi — codice fiscale, numero e percorso del documento
+        // d'identità, indirizzo, telefoni, email.
         if (studentId) {
-            query = supabase
+            // Chiesto per un alunno preciso: si verifica l'alunno, e il filtro
+            // sul legame fa il resto.
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, studentId);
+            if (fuoriScope) return fuoriScope;
+            const { data, error } = await supabase
                 .from('parents')
-                .select(`
-                    *,
-                    student_parents!inner (
-                        student_id
-                    )
-                `)
+                .select('*, student_parents!inner (student_id)')
                 .eq('student_parents.student_id', studentId);
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json(data);
         }
 
-        const { data, error } = await query;
+        // Elenco completo: si parte dagli alunni dei propri plessi e si risale ai
+        // genitori. Tre query esplicite invece di un embed a due livelli: è la
+        // forma che i test possono verificare davvero, e non dipende da come
+        // PostgREST annida i filtri.
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+        const { data: alunniScope, error: errAlunni } = await supabase
+            .from('alunni')
+            .select('id')
+            .in('scuola_id', plessi);
+        if (errAlunni) return NextResponse.json({ error: errAlunni.message }, { status: 500 });
+        const alunniIds = (alunniScope ?? []).map((a) => a.id as string);
+        if (alunniIds.length === 0) return NextResponse.json([]);
+
+        const { data: legami, error: errLegami } = await supabase
+            .from('student_parents')
+            .select('parent_id')
+            .in('student_id', alunniIds);
+        if (errLegami) return NextResponse.json({ error: errLegami.message }, { status: 500 });
+        const parentIds = [...new Set((legami ?? []).map((l) => l.parent_id as string))];
+        if (parentIds.length === 0) return NextResponse.json([]);
+
+        const { data, error } = await supabase.from('parents').select('*').in('id', parentIds);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
         return NextResponse.json(data);
@@ -93,6 +119,15 @@ export const POST = withRoute('admin/parents:POST', async (request: NextRequest)
     const body = parsed.data;
     try {
         const supabase = await createAdminClient();
+
+        // Isolamento per sede sulla SCRITTURA: `student_id` arriva dal client, e
+        // senza verifica si collegava (o si creava) un genitore su un bambino di
+        // un'altra sede — con tanto di account e credenziali inviate per email.
+        const studentIdBody = (body.student_id as string) || null;
+        if (studentIdBody) {
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, studentIdBody);
+            if (fuoriScope) return fuoriScope;
+        }
 
         try {
             const { parentId, created, credenzialiEmail, identitaErrore } = await linkOrCreateParent(supabase, auth.user, {
@@ -132,6 +167,12 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
         const supabase = await createAdminClient();
 
         const { id, ...dataToUpdate } = parsed.data;
+
+        // Isolamento per sede: senza questo si modificava l'anagrafica (CF,
+        // documento, indirizzo, recapiti) di un genitore di un'altra sede
+        // conoscendone l'uuid. Lo scope passa dai figli — vedi `assertParentInScope`.
+        const fuoriScope = await assertParentInScope(supabase, auth.user, id as string);
+        if (fuoriScope) return fuoriScope;
 
         // Stato precedente per l'audit.
         const { data: prima } = await supabase.from('parents').select('*').eq('id', id).maybeSingle();

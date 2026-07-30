@@ -13,6 +13,14 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }));
+// Scope di sede: concessivo di proposito. L'oggetto di questo file è il reset
+// delle credenziali (guard anti-lockout, invio email, audit), non l'isolamento
+// fra sedi — quello sta in `__tests__/api/anagrafica-scope-sede.test.ts`, dove
+// gli helper girano davvero contro un finto DB che filtra.
+vi.mock('@/lib/auth/scope', () => ({
+  assertParentInScope: vi.fn(async () => null),
+  assertUtenteInScope: vi.fn(async () => null),
+}));
 vi.mock('@/lib/email/send', () => ({
   // La route usa la variante "detailed" (esito con motivo); il wrapper boolean
   // resta per compat con altri moduli.

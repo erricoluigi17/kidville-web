@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireEnv } from '@/lib/security/require-env';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope } from '@/lib/auth/scope';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -35,6 +36,16 @@ export const GET = withRoute('admin/students/[id]:GET', async (
         const parsedId = parseData(zUuid, id);
         if ('response' in parsedId) return parsedId.response;
         const studentId = parsedId.data;
+
+        // Isolamento per sede, PRIMA di leggere il fascicolo. Il gate di ruolo
+        // c'era (chiuso in M9 l'accesso anonimo), lo scope no: qualunque
+        // segreteria, conoscendo l'uuid, otteneva `select *` dell'alunno — codice
+        // fiscale e note mediche comprese — più `parents (*)` (CF, numero e
+        // percorso del documento d'identità, indirizzo, telefoni) e
+        // `delegates (*)` (numero di documento di chi ritira) di un minore di
+        // un'altra sede. È l'insieme di PII più ampio esposto da una sola route.
+        const fuoriScope = await assertAlunnoInScope(supabaseAdmin, auth.user, studentId);
+        if (fuoriScope) return fuoriScope;
 
         // 1. Recupera l'alunno con i suoi genitori
         const { data: student, error: studentError } = await supabaseAdmin

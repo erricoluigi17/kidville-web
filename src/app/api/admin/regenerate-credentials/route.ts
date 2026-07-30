@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertParentInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { requireEnv } from '@/lib/security/require-env';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
 import { ensureParentIdentity, firstEmail, randomPassword } from '@/lib/auth/parent-identity';
@@ -63,6 +64,15 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     process.env.SUPABASE_SERVICE_ROLE_KEY as string,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
+
+  // Isolamento per sede. Il gate di ruolo c'era, lo scope no: si resettava la
+  // password di un genitore (o di un membro dello staff) di un'ALTRA sede e gli
+  // si spediva le nuove credenziali per email. Il genitore si verifica dai figli
+  // (`parents` non ha sede); lo staff dalla propria `utenti.scuola_id`.
+  const fuoriScope = targetKind === 'parent'
+    ? await assertParentInScope(admin, auth.user, targetId)
+    : await assertUtenteInScope(admin, auth.user, targetId);
+  if (fuoriScope) return fuoriScope;
 
   let authId: string | null = null;
   let email: string | null = null;

@@ -233,6 +233,87 @@ export async function assertAlunniInSezione(
 }
 
 /**
+ * Verifica che un altro membro dello STAFF (`utenti.id`) sia nel plesso
+ * dell'utente. Per le operazioni che agiscono su un collega — reset delle
+ * credenziali, assegnazione a una sezione, cambio di ruolo — dove il solo gate
+ * di ruolo lasciava agire sul personale di un'altra sede. 403/404 se fuori scope.
+ */
+export async function assertUtenteInScope(
+  supabase: SupabaseClient,
+  user: AppUser,
+  utenteId: string | null | undefined,
+): Promise<NextResponse | null> {
+  if (!utenteId) {
+    return NextResponse.json({ error: 'utenteId obbligatorio' }, { status: 400 })
+  }
+  const { data: bersaglio } = await supabase
+    .from('utenti')
+    .select('id, scuola_id')
+    .eq('id', utenteId)
+    .maybeSingle()
+  if (!bersaglio) {
+    return NextResponse.json({ error: 'Utente non trovato' }, { status: 404 })
+  }
+  const plessi = await scuoleDiUtente(supabase, user)
+  if (!bersaglio.scuola_id || !plessi.includes(bersaglio.scuola_id as string)) {
+    logEvento('auth', 'warn', {
+      tipo: 'utente-fuori-sede', azione: 'assertUtenteInScope',
+      utente: user.id, ruolo: user.role,
+    })
+    return NextResponse.json({ error: 'Utente fuori dal tuo plesso' }, { status: 403 })
+  }
+  return null
+}
+
+/**
+ * Verifica che un GENITORE sia nello scope dell'utente.
+ *
+ * `parents` non ha `scuola_id`, e **non deve averlo**: un genitore può avere
+ * legittimamente figli in due sedi diverse, quindi non esiste «la sua sede». Lo
+ * scope si deriva dai FIGLI: il genitore è raggiungibile se almeno uno dei suoi
+ * figli sta in un plesso dell'utente. Da usare su tutte le route che leggono o
+ * scrivono l'anagrafica dei genitori per id (CF, documento d'identità,
+ * indirizzo, recapiti) — dove il solo `requireStaff` lasciava passare qualunque
+ * genitore delle tre sedi.
+ *
+ * Fail-closed: nessun plesso, errore di lettura, o nessun figlio in scope → si
+ * nega. Un genitore senza figli collegati non è raggiungibile da nessuno: è la
+ * risposta giusta, perché non c'è modo di stabilire a quale plesso appartenga.
+ */
+export async function assertParentInScope(
+  supabase: SupabaseClient,
+  user: AppUser,
+  parentId: string | null | undefined,
+): Promise<NextResponse | null> {
+  if (!parentId) {
+    return NextResponse.json({ error: 'parentId obbligatorio' }, { status: 400 })
+  }
+  const plessi = await scuoleDiUtente(supabase, user)
+  if (plessi.length === 0) {
+    return NextResponse.json({ error: 'Nessun plesso associato' }, { status: 403 })
+  }
+  const { data, error } = await supabase
+    .from('student_parents')
+    .select('student_id, alunni!inner(scuola_id)')
+    .eq('parent_id', parentId)
+    .in('alunni.scuola_id', plessi)
+  if (error) {
+    // PostgREST non lancia: senza questo controllo un guasto di lettura
+    // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.
+    logEvento('auth', 'error', { tipo: 'scope-genitore-non-risolto', utente: user.id }, error)
+    return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+  }
+  if (!data || data.length === 0) {
+    logEvento('auth', 'warn', {
+      tipo: 'genitore-fuori-sede', azione: 'assertParentInScope',
+      utente: user.id, ruolo: user.role,
+    })
+    return NextResponse.json({ error: 'Genitore fuori dal tuo plesso' }, { status: 403 })
+  }
+  return null
+}
+
+/**
  * Verifica che l'alunno (`alunnoId`) sia nello scope dell'utente, risolvendo la
  * sua sezione/plesso. Per gli endpoint che ricevono alunnoId e non sectionId
  * (valutazioni, prospetto, fascicolo, diario, ...). 403/404 se fuori scope.

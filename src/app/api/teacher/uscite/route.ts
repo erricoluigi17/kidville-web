@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -41,6 +42,15 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
     }
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: gli uuid degli alunni arrivano dal client. La risposta
+    // dice, per ogni bambino, se e' autorizzato all'uscita e se la quota e'
+    // pagata — su bambini di un'altra sede era informazione che non doveva
+    // uscire. Un id fuori scope fa fallire l'intera richiesta.
+    for (const aid of alunnoIds) {
+      const fuoriScope = await assertAlunnoInScope(supabase, auth.user, aid)
+      if (fuoriScope) return fuoriScope
+    }
     const { data: cat } = await supabase
       .from('payment_categories').select('id').eq('slug', 'gita').is('scuola_id', null).single()
 

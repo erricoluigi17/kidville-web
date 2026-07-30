@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
@@ -47,6 +48,12 @@ export const PATCH = withRoute('pagamenti/incassi/[id]:PATCH', async (request: R
     const supabase = await createAdminClient()
     const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()
     if (!old) return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
+
+    // Isolamento per sede: l'incasso non ha una sede propria, ma il PAGAMENTO a
+    // cui si riferisce si'. Senza questo si modificava (e si eliminava) un
+    // incasso registrato in un'altra sede conoscendone l'uuid.
+    const fuoriScopeInc = await assertPagamentoInScope(supabase, auth.user, old.pagamento_id as string)
+    if (fuoriScopeInc) return fuoriScopeInc
 
     const allowed = ['importo', 'data_incasso', 'metodo', 'note'] as const
     const updates: Record<string, unknown> = {}

@@ -11,6 +11,17 @@ const h = vi.hoisted(() => ({
   updateErr: null as { code: string } | null,
 }))
 
+// Scope di sede concessivo: l'oggetto di questo file sono le regole contabili
+// (saldo, sconto, intestatari, movimenti), non l'isolamento fra sedi — quello
+// sta in `__tests__/api/contabilita-scope-sede.test.ts`, dove gli helper girano
+// davvero contro un finto DB che filtra.
+vi.mock('@/lib/auth/scope', () => ({
+  assertAlunnoInScope: vi.fn(async () => null),
+  assertParentInScope: vi.fn(async () => null),
+  scuoleDiUtente: vi.fn(async () => ['sc-1']),
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  resolveScuolaScrittura: vi.fn(async () => ({ scuolaId: 'sc-1' })),
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -41,7 +52,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   h.revoca.mockResolvedValue({ revocati: [] })
-  h.pag = { id: PID, alunno_id: 'al-1', importo: 100, importo_pagato: 40, tipo: 'singolo' }
+  // `scuola_id` allineata a quella dell'attore: la route verifica la sede del
+  // pagamento prima di applicare lo sconto, e un pagamento senza sede e'
+  // (correttamente) un 403.
+  h.pag = { id: PID, alunno_id: 'al-1', scuola_id: 'sc-1', importo: 100, importo_pagato: 40, tipo: 'singolo' }
   h.updates = []; h.updateErr = null
 })
 

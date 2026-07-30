@@ -294,6 +294,46 @@ export async function assertUtenteInScope(
 }
 
 /**
+ * Verifica che un PAGAMENTO sia nel plesso dell'utente.
+ *
+ * `pagamenti` ha già `scuola_id`, e per la contabilità è quella che conta: una
+ * retta appartiene a un plesso, indipendentemente da dove sia il bambino
+ * adesso. Serve a tutte le route che agiscono su un pagamento per uuid —
+ * incassi, storni, sconti, quote, fatture, ricevute — dove il solo gate di
+ * ruolo lasciava incassare e stornare sulle rette di un'altra sede.
+ *
+ * Sede assente sulla riga ⇒ si nega: un movimento contabile senza plesso non è
+ * attribuibile a nessuno.
+ */
+export async function assertPagamentoInScope(
+  supabase: SupabaseClient,
+  user: AppUser,
+  pagamentoId: string | null | undefined,
+): Promise<NextResponse | null> {
+  if (!pagamentoId) {
+    return NextResponse.json({ error: 'pagamento_id obbligatorio' }, { status: 400 })
+  }
+  const { data: pagamento } = await supabase
+    .from('pagamenti')
+    .select('id, scuola_id')
+    .eq('id', pagamentoId)
+    .maybeSingle()
+  if (!pagamento) {
+    return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+  }
+  const plessi = await scuoleDiUtente(supabase, user)
+  const sede = (pagamento.scuola_id as string | null) ?? null
+  if (!sede || !plessi.includes(sede)) {
+    logEvento('auth', 'warn', {
+      tipo: 'pagamento-fuori-sede', azione: 'assertPagamentoInScope',
+      utente: user.id, ruolo: user.role,
+    })
+    return NextResponse.json({ error: 'Pagamento fuori dal tuo plesso' }, { status: 403 })
+  }
+  return null
+}
+
+/**
  * Verifica che un GENITORE sia nello scope dell'utente.
  *
  * `parents` non ha `scuola_id`, e **non deve averlo**: un genitore può avere

@@ -13,6 +13,17 @@ const h = vi.hoisted(() => ({
   updates: [] as { table: string; row: unknown }[],
 }))
 
+// Scope di sede concessivo: qui si verificano numerazione, causali e gestione
+// degli errori PostgREST, non l'isolamento fra sedi (che sta in
+// `__tests__/api/contabilita-scope-sede.test.ts`).
+vi.mock('@/lib/auth/scope', () => ({
+  assertPagamentoInScope: vi.fn(async () => null),
+  assertAlunnoInScope: vi.fn(async () => null),
+  assertParentInScope: vi.fn(async () => null),
+  scuoleDiUtente: vi.fn(async () => ['sc-1']),
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  resolveScuolaScrittura: vi.fn(async () => ({ scuolaId: 'sc-1' })),
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff, requireUser: h.requireUser }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({

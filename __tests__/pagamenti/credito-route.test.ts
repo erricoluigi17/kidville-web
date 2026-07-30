@@ -14,6 +14,17 @@ const h = vi.hoisted(() => ({
   pagamento: { alunno_id: 'al-1' } as Record<string, unknown> | null,
 }))
 
+// Scope di sede concessivo: l'oggetto di questo file sono le regole contabili
+// (saldo, sconto, intestatari, movimenti), non l'isolamento fra sedi — quello
+// sta in `__tests__/api/contabilita-scope-sede.test.ts`, dove gli helper girano
+// davvero contro un finto DB che filtra.
+vi.mock('@/lib/auth/scope', () => ({
+  assertAlunnoInScope: vi.fn(async () => null),
+  assertParentInScope: vi.fn(async () => null),
+  scuoleDiUtente: vi.fn(async () => ['sc-1']),
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  resolveScuolaScrittura: vi.fn(async () => ({ scuolaId: 'sc-1' })),
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/pagamenti/credito', () => ({ saldoCredito: (...a: unknown[]) => h.saldo(...a) }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -40,6 +41,12 @@ async function upsertQuote(request: Request) {
   const { pagamento_id, quote } = b.data
 
   const supabase = await createAdminClient()
+
+  // Isolamento per sede: il gate di ruolo non bastava — si operava sulle rette
+  // di un'altra sede conoscendo l'uuid del pagamento. `pagamenti` ha gia'
+  // `scuola_id`, che per la contabilita' e' il dato che conta.
+  const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamento_id)
+  if (fuoriScopePag) return fuoriScopePag
   const { data: pag, error: pErr } = await supabase
     .from('pagamenti').select('id, importo, tipo').eq('id', pagamento_id).maybeSingle()
   if (pErr || !pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
@@ -90,6 +97,12 @@ export const GET = withRoute('pagamenti/quote:GET', async (request: Request) => 
     const pagamentoId = q.data.pagamento_id
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: il gate di ruolo non bastava — si operava sulle rette
+    // di un'altra sede conoscendo l'uuid del pagamento. `pagamenti` ha gia'
+    // `scuola_id`, che per la contabilita' e' il dato che conta.
+    const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamentoId)
+    if (fuoriScopePag) return fuoriScopePag
     const { data, error } = await supabase
       .from('pagamenti_quote')
       .select('id, pagamento_id, adult_id, importo, etichetta, utenti:adult_id ( id, nome, cognome )')

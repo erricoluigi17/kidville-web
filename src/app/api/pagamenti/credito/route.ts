@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertParentInScope } from '@/lib/auth/scope'
 import { saldoCredito } from '@/lib/pagamenti/credito'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -37,6 +38,12 @@ export const GET = withRoute('pagamenti/credito:GET', async (request: Request) =
     const parentId = q.data.parent_id
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede. `parents` non ha una sede propria (un genitore puo'
+    // avere figli in due plessi): lo scope passa dai FIGLI. Senza questo si
+    // leggeva e si movimentava il CREDITO di una famiglia di un'altra sede.
+    const fuoriScope = await assertParentInScope(supabase, auth.user, parentId)
+    if (fuoriScope) return fuoriScope
     const saldo = await saldoCredito(supabase, parentId)
     const { data: movimenti, error } = await supabase
       .from('crediti_famiglia')
@@ -72,6 +79,12 @@ export const POST = withRoute('pagamenti/credito:POST', async (request: Request)
     const importo = round2(b.data.importo)
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede. `parents` non ha una sede propria (un genitore puo'
+    // avere figli in due plessi): lo scope passa dai FIGLI. Senza questo si
+    // leggeva e si movimentava il CREDITO di una famiglia di un'altra sede.
+    const fuoriScope = await assertParentInScope(supabase, auth.user, parent_id)
+    if (fuoriScope) return fuoriScope
 
     // Pre-check del saldo per un 409 pulito (la RPC lo ri-verifica in modo atomico).
     const saldo = await saldoCredito(supabase, parent_id)

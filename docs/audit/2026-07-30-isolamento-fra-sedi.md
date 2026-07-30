@@ -1,8 +1,13 @@
 # Audit dell'isolamento fra sedi — 30 luglio 2026
 
-> Stato: **in corso.** Questo documento è l'inventario che guida le correzioni; le voci si spostano
-> in `CHIUSA` man mano che vengono rilasciate. Il changelog di ogni rilascio sta nel
-> `PRD REGISTRO ELETTRONICO.md`.
+> Stato: **59 route su 59 corrette** (PR #59 in produzione, PR #60 in revisione), 5 migrazioni,
+> 1 lock anti-regressione. Restano aperti i punti elencati in fondo, tutti dichiarati e nessuno
+> chiuso di nascosto. Il changelog dei rilasci sta nel `PRD REGISTRO ELETTRONICO.md`.
+>
+> **Il lock è la parte che sopravvive a questo documento**:
+> `__tests__/architecture/isolamento-sede-coverage.test.ts` obbliga ogni route service-role che
+> legge dati di persone a dichiarare uno scope, o a comparire in un'allowlist con la ragione
+> scritta accanto. Un inventario invecchia; un lock no.
 
 ## Perché
 
@@ -63,7 +68,8 @@ test d'isolamento è verde **anche senza** il filtro, e non prova niente.
 
 ## Inventario per area
 
-Legenda: **CHIUSA** = corretta e rilasciata · **APERTA** = da correggere · **N/A** = non applicabile.
+Legenda: **CHIUSA** = corretta · **N/A** = non applicabile. Al 2026-07-30 sono chiuse tutte:
+la colonna «Cosa perdeva» resta al passato perché è la memoria del difetto, non il suo stato.
 
 ### Presenze — 0 da correggere
 `attendance/daily`, `attendance/delegates`, `attendance/monthly`, `admin/presenze/realtime`,
@@ -75,36 +81,37 @@ una). `parent/presenze/*`: **N/A** (scope famiglia). `panic-alert`: vedi *fuori 
 | Route | Stato | Cosa perdeva |
 |---|---|---|
 | `diary/students` ramo `?id=` | **CHIUSA** (PR #59) | Nessun gate: `note_mediche` di un minore ed email dei genitori a chiunque, senza credenziali. Verificato in produzione: HTTP 200 |
-| `notes` GET/POST | APERTA | `?alunnoId=` libero; senza parametro **tutte** le note disciplinari di tutte le sedi. Il POST inserisce note su `alunnoIds` arbitrari e notifica i genitori |
-| `grades` GET/POST | APERTA | Idem su `valutazioni` |
-| `educator-sections` GET | APERTA | Il ramo manager elenca le sezioni di tutte le sedi |
+| `notes` GET/POST | **CHIUSA** (PR #60) | `?alunnoId=` libero; senza parametro **tutte** le note disciplinari di tutte le sedi. Il POST inserisce note su `alunnoIds` arbitrari e notifica i genitori |
+| `grades` GET/POST | **CHIUSA** (PR #60) | Idem su `valutazioni` |
+| `educator-sections` GET | **CHIUSA** (PR #60) | Il ramo manager elenca le sezioni di tutte le sedi |
 
 ### Anagrafica e credenziali — 11
-| Route | Stato | Cosa perde |
+| Route | Stato | Cosa perdeva |
 |---|---|---|
-| `admin/students/[id]` | APERTA | `select *` + codice fiscale + `parents(*)` (CF, documento, indirizzo, telefoni) + `delegates(*)` (numero di documento) + fratelli, per qualunque alunno di qualunque sede |
-| `admin/parents`, `admin/parents/[id]` | APERTA | Anagrafica dei genitori delle tre sedi |
-| `admin/regenerate-credentials` | APERTA | Reset password e invio credenziali a un genitore di un'altra sede |
-| `admin/credentials-pdf` | APERTA | PDF credenziali di qualunque sede |
-| `admin/import/anagrafiche` | APERTA | Dedup del codice fiscale **globale**: lo stesso difetto già corretto in `admin/iscrizioni` il 29/07, qui no |
-| `admin/sidi/legami` | APERTA | Crea legami genitore↔figlio cross-sede |
-| `admin/sections/[id]/teachers` POST/DELETE | APERTA | Assegna docenti a sezioni di altre sedi (il GET filtra già) |
-| `locker/materials`, `locker/notify`, `locker/requests` PATCH | APERTA | Configurazione e richieste dell'armadietto della classe omonima altrui |
+| `admin/students/[id]` | **CHIUSA** (PR #60) | `select *` + codice fiscale + `parents(*)` (CF, documento, indirizzo, telefoni) + `delegates(*)` (numero di documento) + fratelli, per qualunque alunno di qualunque sede |
+| `admin/parents`, `admin/parents/[id]` | **CHIUSA** (PR #60) | Anagrafica dei genitori delle tre sedi |
+| `admin/regenerate-credentials` | **CHIUSA** (PR #60) | Reset password e invio credenziali a un genitore di un'altra sede |
+| `admin/credentials-pdf` | **CHIUSA** (PR #60) | PDF credenziali di qualunque sede |
+| `admin/import/anagrafiche` | **CHIUSA** (PR #60) | Dedup del codice fiscale **globale**: lo stesso difetto già corretto in `admin/iscrizioni` il 29/07, qui no |
+| `admin/sidi/legami` | **CHIUSA** (PR #60) | Crea legami genitore↔figlio cross-sede |
+| `admin/sections/[id]/teachers` POST/DELETE | **CHIUSA** (PR #60) | Assegna docenti a sezioni di altre sedi (il GET filtra già) |
+| `locker/materials`, `locker/notify`, `locker/requests` PATCH | **CHIUSA** (PR #60) | Configurazione e richieste dell'armadietto della classe omonima altrui |
 
 ### Chat e comunicazioni — 6
-| Route | Stato | Cosa perde |
+| Route | Stato | Cosa perdeva |
 |---|---|---|
-| `admin/chat/contacts` | APERTA | Nome e classe di **tutti** i minori e i genitori delle tre sedi, con la chat già apribile. ⚠️ La correzione del 29/07 riguardava il **gemello** `chat/contacts` (lato docente): questa non è mai stata toccata |
-| `admin/chat/threads` | APERTA | Tutte le conversazioni genitore↔docente delle tre sedi, coi nomi dei minori |
-| `admin/chat/messages` | APERTA | Contenuto dei messaggi di qualunque thread |
-| `chat/threads` POST | APERTA | Verifica solo di essere partecipante, non che il minore sia della propria sede |
-| `avvisi/[id]/risposte` | APERTA | Risposte e nomi di genitori/alunni di un avviso di un'altra sede |
-| `admin/segnalazioni` | APERTA | Coda di moderazione di tutte le sedi |
+| `admin/chat/contacts` | **CHIUSA** (PR #60) | Nome e classe di **tutti** i minori e i genitori delle tre sedi, con la chat già apribile. ⚠️ La correzione del 29/07 riguardava il **gemello** `chat/contacts` (lato docente): questa non è mai stata toccata |
+| `admin/chat/threads` | **CHIUSA** (PR #60) | Tutte le conversazioni genitore↔docente delle tre sedi, coi nomi dei minori |
+| `admin/chat/messages` | **CHIUSA** (PR #60) | Contenuto dei messaggi di qualunque thread |
+| `chat/threads` POST | **CHIUSA** (PR #60) | Verifica solo di essere partecipante, non che il minore sia della propria sede |
+| `avvisi/[id]/risposte` | **CHIUSA** (PR #60) | Risposte e nomi di genitori/alunni di un avviso di un'altra sede |
+| `admin/segnalazioni` | **CHIUSA** (PR #60) | Coda di moderazione di tutte le sedi |
 
 ### Galleria — 2
-`gallery` PATCH e DELETE autorizzano per **intersezione di nomi-classe**: il docente del «2 ANNI» di
-Aversa può modificare o eliminare le foto dei bambini del «2 ANNI» di Cesa. `gallery/upload` non
-valida `target_classes`/`tag_students` per sede. Il GET è già chiuso.
+**CHIUSA (PR #60).** `gallery` PATCH e DELETE autorizzavano per **intersezione di nomi-classe**, e
+per la segreteria dal ramo `isAdmin` che concedeva tutto: il docente del «2 ANNI» di Aversa poteva
+modificare o eliminare le foto dei bambini del «2 ANNI» di Cesa. Ora la sede del media si confronta
+prima, i nomi dopo.
 
 ### Modulistica — 7
 `admin/forms/submissions` (+`[id]`), `admin/forms/rankings`, `forms/export/pdf`,
@@ -113,8 +120,9 @@ valida `target_classes`/`tag_students` per sede. Il GET è già chiuso.
 compaiono i moduli del «2 ANNI» di Cesa.
 
 ### Mensa — 1
-`mensa/prenotazioni` ramo staff (`STAFF_FORZA`): prenota, disdice e legge per qualunque alunno di
-qualunque sede. Il resto del modulo è già chiuso.
+**CHIUSA (PR #60).** `mensa/prenotazioni` ramo staff (`STAFF_FORZA`) prenotava, disdiceva e leggeva
+per qualunque alunno di qualunque sede. Lo staff resta libero di forzare allo sportello, dentro il
+proprio plesso.
 
 ### Contabilità — 12
 `pagamenti/tutori`, `pagamenti/pagante-comune`, `pagamenti/credito`, `pagamenti/quote`,
@@ -123,12 +131,12 @@ qualunque sede. Il resto del modulo è già chiuso.
 di un'altra sede. Le altre 24 route del modulo sono già chiuse.
 
 ### Registro primaria e competenze — 10
-| Route | Stato | Cosa perde |
+| Route | Stato | Cosa perdeva |
 |---|---|---|
 | `teacher/medical-certificates` GET | **CHIUSA** (PR #59) | Certificati medici di tutte le sedi: il gate c'era, il filtro no |
-| `admin/competenze` (GET/POST/PATCH), `admin/competenze/download`, `admin/competenze/genera` | APERTA | Certificati delle competenze di sezioni di altre sedi, leggibili e modificabili |
-| `admin/primaria/docenti-materie`, `admin/primaria/materie`, `admin/primaria/orario`, `admin/primaria/materia-obiettivo` | APERTA | Scritture su sezioni di altre sedi |
-| `admin/primaria/fascicolo-audit` | APERTA | Rivela **quali** minori hanno un fascicolo PEI/PDP/104, in tutte le sedi |
+| `admin/competenze` (GET/POST/PATCH), `admin/competenze/download`, `admin/competenze/genera` | **CHIUSA** (PR #60) | Certificati delle competenze di sezioni di altre sedi, leggibili e modificabili |
+| `admin/primaria/docenti-materie`, `admin/primaria/materie`, `admin/primaria/orario`, `admin/primaria/materia-obiettivo` | **CHIUSA** (PR #60) | Scritture su sezioni di altre sedi |
+| `admin/primaria/fascicolo-audit` | **CHIUSA** (PR #60) | Rivela **quali** minori hanno un fascicolo PEI/PDP/104, in tutte le sedi |
 
 Il fascicolo vero e proprio (`primaria/fascicolo`, `/file`, `/pagelle`) è **già chiuso** e va usato
 come modello: `src/lib/primaria/fascicolo-rbac.ts:47-56` nega con motivo `cross-tenant` e traccia
@@ -215,6 +223,20 @@ persona che li ritrova non ci perda tempo.
   l'errore, e PostgREST non lancia. È lo stesso costrutto che ha reso invisibile per mesi l'audit
   dei legami (corretto il 29/07).
 - **`POST /api/panic-alert`** non ha alcun gate di ruolo.
+
+## Cosa resta aperto al 2026-07-30 (dichiarato, non nascosto)
+
+1. **L'informativa sul modulo pubblico d'iscrizione.** Per decisione del titolare è l'ultimo passo.
+   Nel frattempo il modulo raccoglie allergie, note mediche (BES/DSA) e il documento d'identità del
+   minore **senza informativa e senza registrazione del consenso**: al momento della misura, 26
+   invii con un ritmo di ~9/ora. Rischio accettato esplicitamente.
+2. **I 4 endpoint che leggono l'identità dall'header** aggirando `ALLOW_HEADER_IDENTITY`
+   (`parent/primaria/note/firma` e i tre invii di OTP). Il primo produce una **firma elettronica**
+   con valore legale. Non toccati: sigillarli tocca un flusso di firma vivo e va deciso.
+3. **`test_table`**, residuo di collaudo rimasto in produzione.
+4. **`consensi_accettazioni` è append-only per sola convenzione**: nessun trigger, nessuna revoke.
+5. Adempimenti non tecnici indicati come obbligatori e oggi assenti: **registro dei trattamenti**
+   (art. 30) e **DPIA** (art. 35), più la validazione legale vera dei testi adottati.
 
 ## Fuori perimetro, non ancora deciso
 

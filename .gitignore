@@ -74,3 +74,8 @@ next-env.d.ts
 # working dirs non destinate al repo
 scratch/
 design-reference/
+
+# Fascicolo per la validazione legale: dati societari, bozze di informativa e
+# corrispondenza col legale. Il repository è PUBBLICO — questa cartella non ci
+# entra, e non deve poterci entrare per sbaglio con un `git add -A`.
+PER-AVVOCATO/

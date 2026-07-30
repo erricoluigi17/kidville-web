@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { logScrittura } from '@/lib/audit/scrittura'
@@ -29,9 +30,14 @@ export const GET = withRoute('admin/sidi/legami:GET', async (request: NextReques
     if ('response' in q) return q.response
     try {
       const supabase = await createAdminClient()
+      // Isolamento per sede: l'elenco porta nome e cognome dei minori e CODICE
+      // FISCALE dei genitori. `!inner` perché il filtro sull'alunno embedded
+      // scarti davvero la riga di legame.
+      const plessi = await resolveScuoleAttive(request, supabase, auth.user)
       const { data } = await supabase
         .from('student_parents')
-        .select('student_id, parent_id, relation_type, is_primary, validato_sidi, alunni(nome, cognome), parents(first_name, last_name, fiscal_code)')
+        .select('student_id, parent_id, relation_type, is_primary, validato_sidi, alunni!inner(nome, cognome, scuola_id), parents(first_name, last_name, fiscal_code)')
+        .in('alunni.scuola_id', plessi)
         .order('student_id', { ascending: true })
       return NextResponse.json({ success: true, data: data ?? [] })
     } catch (err) {
@@ -52,6 +58,13 @@ export const PATCH = withRoute('admin/sidi/legami:PATCH', async (request: NextRe
       const { student_id, parent_id } = b.data
 
       const supabase = await createAdminClient()
+
+      // Isolamento per sede sulla SCRITTURA: `student_id` arriva dal client, e
+      // senza verifica si validava (o invalidava) il legame genitore↔figlio di
+      // una famiglia di un'altra sede.
+      const fuoriScope = await assertAlunnoInScope(supabase, auth.user, student_id)
+      if (fuoriScope) return fuoriScope
+
       const validato = b.data.validato !== false
       const { error } = await supabase
         .from('student_parents')

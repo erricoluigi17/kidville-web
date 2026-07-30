@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -27,10 +28,16 @@ export const GET = withRoute('admin/competenze/download:GET', async (request: Ne
     const supabase = await createAdminClient()
     const { data: cert } = await supabase
       .from('certificati_competenze')
-      .select('file_url')
+      .select('file_url, section_id')
       .eq('id', certificatoId)
       .maybeSingle()
     if (!cert?.file_url) return NextResponse.json({ error: 'Certificato non ancora generato' }, { status: 404 })
+
+    // Isolamento per sede, PRIMA di firmare l'URL: il certificato delle
+    // competenze è un documento nominativo di un minore, e il solo ruolo
+    // bastava a scaricarlo da qualunque sede conoscendone l'uuid.
+    const fuoriScopeCert = await assertSezioneInScope(supabase, auth.user, cert.section_id as string)
+    if (fuoriScopeCert) return fuoriScopeCert
 
     const { data: signed } = await supabase.storage.from(CERTIFICATI_BUCKET).createSignedUrl(cert.file_url, 600)
     if (!signed?.signedUrl) return NextResponse.json({ error: 'URL non disponibile' }, { status: 500 })

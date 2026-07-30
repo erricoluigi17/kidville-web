@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { seedCertificato } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
@@ -49,6 +50,12 @@ export const GET = withRoute('admin/competenze:GET', async (request: NextRequest
     const { sectionId } = q.data
 
     const supabase = await createAdminClient()
+    // Isolamento per sede: `sectionId` arrivava dal client senza verifica — si
+    // leggevano e si scrivevano materie, orari, obiettivi e certificati delle
+    // competenze su sezioni di un'altra sede.
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
     const { data: certs } = await supabase
       .from('certificati_competenze')
       .select('id, alunno_id, anno_scolastico, stato, generato_il, alunni(nome, cognome), certificato_competenza_livelli(competenza_codice, livello, note, ordine)')
@@ -73,6 +80,12 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     const body = b.data
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: si generavano certificati delle competenze per una
+    // sezione di un'altra sede passandone l'uuid.
+    const fuoriScopePost = await assertSezioneInScope(supabase, auth.user, body.sectionId)
+    if (fuoriScopePost) return fuoriScopePost
+
     let alunniIds: string[] = []
     if (body.alunnoId) alunniIds = [body.alunnoId]
     else {

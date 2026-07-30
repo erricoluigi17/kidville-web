@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -53,11 +54,23 @@ const deleteQuerySchema = z.object({
 
 // GET /api/admin/primaria/materie?sectionId=
 export const GET = withRoute('admin/primaria/materie:GET', async (request: NextRequest) => {
+  // Gate MANCANTE, non solo lo scope: questo GET rispondeva 200 a chiunque, senza
+  // alcuna credenziale (verificato in produzione il 2026-07-30). Non espone dati
+  // di minori — materie, orari e obiettivi sono configurazione — ma è un
+  // endpoint amministrativo, e la POST gemella il gate ce l'aveva già.
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { sectionId } = q.data
   try {
     const supabase = await createAdminClient()
+    // Isolamento per sede: `sectionId` arrivava dal client senza verifica — si
+    // leggevano e si scrivevano materie, orari, obiettivi e certificati delle
+    // competenze su sezioni di un'altra sede.
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
     const { data, error } = await supabase
       .from('materie')
       .select('*')

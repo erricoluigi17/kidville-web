@@ -7,7 +7,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Genera pagamenti una tantum per una categoria, su una classe o un elenco di alunni.
 // Riusa il filtro alunni di genera-rette e la logica di creazione di pagamenti/rate.
@@ -100,7 +100,7 @@ export const GET = withRoute('pagamenti/genera:GET', async (request: NextRequest
 // Body: { userId, categoria_id?, descrizione, importo, scadenza,
 //         alunno_ids?: string[], classe_sezione?, obbligatorio?, gruppo?,
 //         rate?: [{importo, scadenza}]  // se presente → piano rateale per alunno }
-export const POST = withRoute('pagamenti/genera:POST', async (request: Request) => {
+export const POST = withRoute('pagamenti/genera:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -121,14 +121,45 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: Request) 
 
     const supabase = await createAdminClient()
 
+    // Scope multi-sede: MAI fidarsi del client. Qui non si legge un'altra sede,
+    // ci si SCRIVE — e con `alunno_ids` non validati una segreteria poteva
+    // generare pagamenti (e le notifiche ai genitori) sui bambini di un'altra
+    // sede. Lo stesso `scuola_id`, se assente, lasciava la query SENZA filtro.
+    const scuoleAccessibili = await resolveScuoleAttive(request, supabase, user)
+    const scuolaRichiesta =
+      body.scuola_id && scuoleAccessibili.includes(body.scuola_id) ? body.scuola_id : null
+
     // risolve l'elenco alunni target
     let alunnoIds: string[] = body.alunno_ids ?? []
-    if (alunnoIds.length === 0) {
-      const scuolaId = body.scuola_id || user.scuola_id
-      let alQuery = supabase.from('alunni').select('id, classe_sezione, section_id').eq('stato', 'iscritto')
-      if (scuolaId) alQuery = alQuery.eq('scuola_id', scuolaId)
+    if (alunnoIds.length > 0) {
+      // Elenco esplicito: ogni id dev'essere di un alunno dei propri plessi.
+      const { data: ammessi, error: errScope } = await supabase
+        .from('alunni').select('id').in('id', alunnoIds).in('scuola_id', scuoleAccessibili)
+      if (errScope) {
+        logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, errScope)
+        return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+      }
+      const inScope = new Set((ammessi ?? []).map((a) => a.id as string))
+      const estranei = alunnoIds.filter((id) => !inScope.has(id))
+      if (estranei.length > 0) {
+        // warn → persistito: è un tentativo di scrittura cross-tenant. Solo
+        // conteggi e uuid dell'operatore: nessun dato dei minori coinvolti.
+        logEvento('auth', 'warn', {
+          tipo: 'alunni-fuori-sede', azione: 'pagamenti/genera:POST',
+          utente: user.id, ruolo: user.role, n: estranei.length,
+        })
+        return NextResponse.json({ error: 'Alunni fuori dal tuo plesso' }, { status: 403 })
+      }
+    } else {
+      let alQuery = supabase.from('alunni').select('id, classe_sezione, section_id')
+        .eq('stato', 'iscritto')
+        .in('scuola_id', scuolaRichiesta ? [scuolaRichiesta] : scuoleAccessibili)
       if (body.classe_sezione) alQuery = alQuery.eq('classe_sezione', body.classe_sezione)
-      const { data: al } = await alQuery
+      const { data: al, error: errAl } = await alQuery
+      if (errAl) {
+        logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, errAl)
+        return NextResponse.json({ error: 'Errore nel caricamento degli alunni' }, { status: 500 })
+      }
       alunnoIds = (al || []).filter((a) => a.classe_sezione != null || a.section_id != null).map((a) => a.id)
     }
     if (alunnoIds.length === 0) {
@@ -211,7 +242,8 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: Request) 
     if (alunniGenerati.length > 0) {
       await notificaEvento(supabase, {
         tipo: 'pagamento_emesso',
-        scuolaId: (body.scuola_id || user.scuola_id) ?? null,
+        // La sede del client solo se accessibile (vedi lo scope sopra).
+        scuolaId: (scuolaRichiesta || user.scuola_id) ?? null,
         alunnoIds: alunniGenerati,
         titolo: 'Nuovo pagamento disponibile',
         corpo: `${descrizione}: trovi il dettaglio nella sezione Pagamenti.`,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
@@ -52,6 +53,18 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         // RLS nega → via sessione non funzionerebbero per nessuno.
         const supabase = await createAdminClient();
 
+        // Sezione assente → risposta vuota, come da contratto storico di questa
+        // route (nessun 400: la UI la chiama anche prima di risolvere la classe).
+        if (!sezione) return NextResponse.json([]);
+
+        // Scope di sede: `requireDocente` verifica il RUOLO, non il tenant, e la
+        // route gira in service-role. Con tre sedi «2 ANNI» esiste sia ad Aversa
+        // sia a Cesa: senza questo, chi ne indovinava il nome otteneva nomi e
+        // presenze dei bambini dell'altra sede.
+        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione);
+        if (scopeErr) return scopeErr;
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+
         const { data: rows, error } = await supabase
             .from('presenze')
             .select(`
@@ -66,6 +79,10 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
             `)
             .eq('data', data)
             .eq('alunni.classe_sezione', sezione)
+            // Difesa in profondità sul join: il gate impedisce di NOMINARE una
+            // classe altrui, il filtro impedisce che l'omonimia ne porti dentro
+            // gli alunni comunque.
+            .in('alunni.scuola_id', plessi)
             // bound difensivo: 1 riga per alunno/giorno, una sezione non supera mai 500
             .limit(500);
 

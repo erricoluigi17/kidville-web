@@ -68,6 +68,125 @@
 
 ---
 
+## 🗓️ Changelog — Collaudo end-to-end della catena di onboarding, e i quattro difetti che ha scoperto 2026-07-29 (branch `fix/audit-legami`)
+
+La catena *link → modulo → segreteria → credenziali → alunno in classe → genitore che vede il
+figlio* è stata percorsa **per intero in produzione**, con una famiglia fittizia su **Aversa** e
+un'email reale. Non una simulazione: modulo compilato nel browser, import fatto dalla segreteria,
+email ricevuta in casella, login del genitore.
+
+### Cosa è stato verificato, passo per passo
+
+| Passaggio | Prova |
+|---|---|
+| Link pubblico con tre sedi | passo di scelta sede, «Passo 1 di 4» |
+| Invio | riga `enrollment_submissions` su Aversa, provincia normalizzata `CE`, due documenti |
+| Notifica alla segreteria | **2 admin** raggiunti (via ponte `utenti_scuole`) |
+| Pannello segreteria | badge «SEDE: KIDVILLE AVERSA», tendina con le **sole 5 sezioni di Aversa** |
+| Import in «3 ANNI» | alunno `stato: iscritto` |
+| Alunno agganciato alla classe | `section_id` valorizzato dal trigger `sync_alunno_section_id` |
+| Credenziali | email **ricevuta** da `noreply@mail.kidville.it`; successo registrato in `app_log` |
+| Login genitore | area `parent`, figlio in home |
+| Il genitore vede il figlio | home · diario · **galleria** · agenda · pagamenti · chat · mensa · notifiche → tutti `200` |
+| **Il gate regge ancora** | galleria di un bambino **non suo** → **403** |
+
+L'ultima riga è la più importante: la correzione dei legami ha **allargato l'accesso ai figli veri
+senza aprire un varco**. Un fix che avesse semplicemente disattivato il controllo avrebbe prodotto
+gli stessi `200` — e sarebbe stato molto peggio del difetto.
+
+### I quattro difetti che solo il collaudo poteva trovare
+
+1. **Il wizard si inchiodava al primo passo** (dettaglio nella voce precedente).
+2. **Un'iscrizione su una sede nuova non la annunciava nessuno.** `staffScuola` guardava solo
+   `utenti.scuola_id` e ignorava il ponte `utenti_scuole` attraverso cui la Direzione è
+   multi-plesso: su Aversa e Cesa restituiva zero destinatari, e `notificaEvento` con zero
+   destinatari esce in silenzio. Dieci punti di notifica interessati. Ora l'unione col ponte, e
+   «nessun destinatario» viene **loggato**: senza quella riga, «nessuno è stato avvisato» e «tutto
+   a posto» sono indistinguibili.
+3. **L'import poteva archiviare l'alunno nella sede sbagliata.** Il `PATCH` caricava l'invio per id
+   **senza filtro di scope**; per una segreteria le sedi accessibili sono solo la propria, quindi
+   la sede preferita non risultava accessibile e si ricadeva sull'unica disponibile: **il bambino
+   veniva creato nella sede dell'operatore, in silenzio**. Ora `403`, per l'accettazione e per il
+   rifiuto.
+4. **L'audit dei legami non è mai stato scritto.** `audit_scritture_docente.entita_id` è una
+   colonna uuid, ma sei chiamanti passavano una chiave composta (`"studentId:parentId"`) perché
+   quelle entità sono **relazioni** e un uuid proprio non ce l'hanno: Postgres rifiutava l'INSERT
+   e la riga non veniva scritta **affatto**. Per i legami genitore↔figlio — tutte e tre le vie di
+   creazione — e per le assegnazioni docente↔sezione non è **mai** esistita una traccia di chi
+   avesse collegato chi a chi. Trovato leggendo `app_log` dopo il primo import reale.
+
+> **Il filo comune, che vale più dei singoli difetti**: tutti e quattro erano **invisibili con una
+> sede sola**, e nessun test poteva vederli perché né jsdom né il DB della CI hanno mai avuto due
+> sedi. 3411 test verdi e l'E2E verde convivevano con un modulo di iscrizione inutilizzabile.
+> Non è una colpa dei test: è il limite di collaudare una condizione che l'ambiente di prova non
+> sa riprodurre.
+
+### Il collaudo degli 11 tester: sette route perdevano dati di minori fra sedi
+
+Gli 11 tester-opus hanno riportato **FAIL su tutte le categorie** e quattro bloccanti. Tre erano
+falle di **isolamento fra sedi**, tutte con la stessa firma: la query filtrava gli alunni per
+**nome della classe** senza vincolo di `scuola_id`, su route che girano con service-role — quindi
+con la RLS scavalcata e il gate applicativo come unico presidio.
+
+**Erano latenti da sempre e le ha attivate l'apertura delle sedi nuove**: con un plesso solo il
+nome della classe era di fatto una chiave univoca; con tre plessi «2 ANNI» esiste sia ad Aversa sia
+a Cesa, «5 ANNI» pure, e quel nome ha smesso di identificare una classe sola.
+
+L'audit sistematico delle **17** occorrenze dello schema ne ha trovate **sette** da correggere —
+cinque oltre le due segnalate:
+
+| Route | Cosa perdeva |
+|---|---|
+| `admin/documents-merge` | nome, cognome e **codice fiscale** dei minori di un'altra sede |
+| `teacher/modulistica` (GET) | nome e cognome; bastava il ruolo `educator` di qualunque plesso |
+| `teacher/modulistica` (POST) | si allegava una scansione al fascicolo di un bambino di un'altra sede |
+| `attendance/daily` | nomi e presenze |
+| `attendance/delegates` | delegati al ritiro, con **numero di documento** |
+| `chat/contacts` | i **genitori** dell'altra sede fra i contatti, chat già apribile |
+| `register/lessons` (GET) | registro: argomenti, compiti, firme |
+| `pagamenti/genera` (POST) | **scrittura**: `alunno_ids` non validati, sede del client non verificata |
+
+Corrette estendendo `assertClasseNomeInScope` (che ora sa anche restringere l'`educator` alle
+proprie sezioni, senza toccare segreteria/coordinator/admin che per progetto vedono tutte le classi
+del plesso) e aggiungendo il filtro per sede sulle query — gate e filtro insieme, perché il primo
+impedisce di *nominare* una classe altrui e il secondo impedisce che l'omonimia porti dentro i
+bambini dell'altra sede.
+
+**Quarto bloccante — la dedup dell'alunno per codice fiscale era globale.** Il modulo pubblico
+accetta qualunque CF senza verificarlo, e il codice fiscale italiano si deduce da nome, cognome,
+data e luogo di nascita: i dati che il genitore di un compagno di classe conosce. Su
+corrispondenza la dedup riusava il bambino e ne **sovrascriveva la classe** con una sezione di
+un'altra sede — che il trigger non risolve, lasciando `section_id` NULL e facendo sparire
+l'alunno dal registro della propria sede. Fino a stamattina era un difetto anagrafico; da quando
+l'import scrive anche `legame_genitori_alunni` (la tabella su cui fanno il join le policy RLS di
+pagamenti, incassi e note disciplinari) era diventato **accesso reale**. La dedup è ora vincolata
+alla sede, e un CF già iscritto altrove è un **errore bloccante** che dice all'operatore che serve
+un trasferimento, non un'iscrizione.
+
+> **Nota di metodo.** Nessuna di queste falle era visibile al gate formale: 3424 test verdi ed E2E
+> verde convivevano con sette route che perdevano dati di minori fra plessi. Le ha trovate un
+> collaudo condotto *sapendo* che le sedi erano diventate tre — cioè cercando la classe di difetti
+> che quel cambiamento poteva attivare, non rieseguendo i test esistenti.
+
+### Restano aperti (decisioni del titolare, non difetti)
+
+- `admin.e2e@kidville.test` è un account di collaudo con password nota che, per effetto di
+  `provisiona_sede` (collega **tutti** gli admin a ogni sede nuova), è ora amministratore di
+  Aversa e Cesa in produzione.
+- **Aversa e Cesa non hanno personale**: nessun docente, nessuna segreteria. Le notifiche arrivano
+  solo agli admin, e i solleciti restano spenti finché non li si accende a mano.
+- Il **riepilogo del modulo pubblico non mostra la sede scelta**: con tre plessi il genitore non ha
+  modo di accorgersi di aver sbagliato nell'ultimo momento utile.
+- La sede `Kidville E2E` ha `funzioni_matrice` vuota: i suoi docenti prendono 403 su tutto.
+- La protezione di `main` richiede un'approvazione che, su un repository con un solo sviluppatore,
+  **nessuno può dare**: oggi è stata sospesa e ripristinata identica tre volte, verificandola
+  campo per campo. È una toppa, non una soluzione.
+- **Dati di collaudo lasciati in produzione** su richiesta: alunno «Collaudo ProvaAversa»
+  (`CLLPRV22E50H501W`) in Aversa/«3 ANNI» e genitore «Ines ProvaAversa». Da cancellare quando non
+  servono più.
+
+---
+
 ## 🗓️ Changelog — Aversa e Cesa aperte, 33 sezioni · e il wizard che si inchiodava al primo passo 2026-07-29 (branch `fix/wizard-congelato-main`)
 
 ### Le tre sedi sono in produzione

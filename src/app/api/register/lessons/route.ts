@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
-import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
@@ -30,7 +30,7 @@ const postBodySchema = z.object({
 
 // GET /api/register/lessons?classeSezione=3A&data=2026-05-13
 // Gate docente (M5.6): la route era raggiungibile senza identità post-M4.
-export const GET = withRoute('register/lessons:GET', async (request: Request) => {
+export const GET = withRoute('register/lessons:GET', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -40,6 +40,14 @@ export const GET = withRoute('register/lessons:GET', async (request: Request) =>
         const { classeSezione, data } = q.data;
 
         const supabase = await createAdminClient();
+
+        // Scope di sede — la POST lo faceva già, la GET no: con tre sedi il nome
+        // classe non è una chiave («2 ANNI» sta ad Aversa e a Cesa) e il registro
+        // dell'altra sede (argomenti, compiti, firme) era leggibile a chi lo
+        // indovinava. Gate + filtro, come nelle route alunni.
+        const classeScope = await assertClasseNomeInScope(supabase, auth.user, classeSezione);
+        if (classeScope) return classeScope;
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
 
         const { data: registroRows, error } = await supabase
             .from('registro_orario')
@@ -60,6 +68,7 @@ export const GET = withRoute('register/lessons:GET', async (request: Request) =>
             `)
             .eq('classe_sezione', classeSezione)
             .eq('data', data)
+            .in('scuola_id', plessi)
             .order('ora_lezione', { ascending: true });
 
         if (error) {

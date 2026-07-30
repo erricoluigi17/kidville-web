@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseData, parseQuery } from '@/lib/validation/http';
@@ -31,8 +32,9 @@ const ALLOWED_MIME = new Set([
 // GET: Semaforo autorizzazioni per una classe e un modulo
 export const GET = withRoute('teacher/modulistica:GET', async (request: NextRequest) => {
   try {
-    // Gap auth segnalato in M3, chiuso in M9: stesso gate del POST (il
-    // semaforo espone nomi alunni e stato firme della classe).
+    // Gap auth segnalato in M3, chiuso in M9 sul RUOLO (il semaforo espone nomi
+    // alunni e stato firme della classe) — NON sullo SCOPE: `requireDocente`
+    // ammette anche `educator` e non guarda né sede né sezioni assegnate.
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -42,14 +44,33 @@ export const GET = withRoute('teacher/modulistica:GET', async (request: NextRequ
 
     const supabase = await createAdminClient();
 
-    // 1. Carica gli alunni della classe
+    // 0. SCOPE — prima di qualunque lettura di dati. Due vincoli:
+    //    · la classe dev'essere in un plesso dell'utente (con tre sedi «2 ANNI»
+    //      esiste sia ad Aversa sia a Cesa: il nome non è più una chiave);
+    //    · per l'`educator` dev'essere anche una sezione ASSEGNATA
+    //      (utenti_sezioni). Admin/coordinator/segreteria restano fuori dalla
+    //      restrizione: per progetto vedono tutte le classi del proprio plesso.
+    const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className, {
+      soloSezioniAssegnate: true,
+    });
+    if (scopeErr) return scopeErr;
+
+    // Difesa in profondità: il gate impedisce di NOMINARE una classe altrui, ma
+    // senza filtro per sede la `classe_sezione` omonima porterebbe dentro anche
+    // i bambini dell'altra sede.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+
+    // 1. Carica gli alunni della classe — ristretti alle sedi consentite
     const { data: students, error: studErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome')
       .eq('classe_sezione', className)
+      .in('scuola_id', plessi)
       .order('cognome');
 
     if (studErr || !students) {
+      // PostgREST non lancia: senza log, un guasto di lettura resterebbe un 500 muto.
+      if (studErr) logErrore({ operazione: 'teacher/modulistica:GET', stato: 500, evento: 'db' }, studErr);
       return NextResponse.json({ error: studErr?.message || 'Errore alunni' }, { status: 500 });
     }
 
@@ -60,6 +81,7 @@ export const GET = withRoute('teacher/modulistica:GET', async (request: NextRequ
       .eq('form_id', formId);
 
     if (subErr || !submissions) {
+      if (subErr) logErrore({ operazione: 'teacher/modulistica:GET', stato: 500, evento: 'db' }, subErr);
       return NextResponse.json({ error: subErr?.message || 'Errore sottomissioni' }, { status: 500 });
     }
 
@@ -116,6 +138,13 @@ export const POST = withRoute('teacher/modulistica:POST', async (request: Reques
     }
 
     const supabase = await createAdminClient();
+
+    // 0. SCOPE dell'alunno — prima dell'upload e di qualunque lettura del suo
+    //    legame familiare. `requireDocente` verifica il RUOLO: senza questo, un
+    //    docente poteva allegare una scansione al fascicolo di un bambino di
+    //    un'altra sede (e ricavarne il genitore) indovinandone l'id.
+    const scopeErr = await assertAlunnoInScope(supabase, auth.user, studentId);
+    if (scopeErr) return scopeErr;
 
     // 1. Upload reale della scansione (service-role, bucket privato).
     const safeForm = formId.replace(/[^a-zA-Z0-9._-]/g, '_');

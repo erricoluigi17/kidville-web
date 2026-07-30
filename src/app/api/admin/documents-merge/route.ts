@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -19,6 +20,7 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
     // B1 — questo endpoint restituisce nome/cognome/CF/firme dell'intera classe:
     // dati di minori. La route usa service-role (RLS bypassata), quindi il gate
     // applicativo è l'unico presidio. Solo lo staff (pannello admin modulistica).
+    // Il ruolo però non dice NIENTE sulla sede: lo scope di tenant è sotto.
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -28,6 +30,19 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
 
     const supabase = await createAdminClient();
 
+    // 0. SCOPE DI SEDE — prima di qualunque lettura. `requireStaff` verifica il
+    //    RUOLO, non il tenant: senza questo, una segreteria di Giugliano poteva
+    //    chiedere una classe di Cesa e ottenere nome, cognome e CODICE FISCALE
+    //    di quei bambini. Il nome-classe si risolve SOLO entro i propri plessi.
+    const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className);
+    if (scopeErr) return scopeErr;
+
+    // Difesa in profondità: il gate impedisce di nominare una classe altrui, ma
+    // «2 ANNI» esiste sia ad Aversa sia a Cesa — con la sola `classe_sezione` la
+    // query prenderebbe comunque gli OMONIMI dell'altra sede. Le sedi sono
+    // quelle attive del SedeSelector (cookie), ri-validate contro le accessibili.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+
     // 1. Carica il template del form
     const { data: template, error: tempErr } = await supabase
       .from('forms_templates')
@@ -36,16 +51,21 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
       .maybeSingle();
 
     if (tempErr || !template) {
+      // PostgREST non lancia: senza questa riga «template non trovato» e
+      // «lettura fallita» sarebbero la stessa 404 muta.
+      if (tempErr) logErrore({ operazione: 'admin/documents-merge:GET', stato: 404, evento: 'db' }, tempErr);
       return NextResponse.json({ error: 'Template del form non trovato' }, { status: 404 });
     }
 
-    // 2. Carica gli alunni della classe
+    // 2. Carica gli alunni della classe — ristretti alle sedi consentite
     const { data: students, error: studErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome, codice_fiscale')
-      .eq('classe_sezione', className);
+      .eq('classe_sezione', className)
+      .in('scuola_id', plessi);
 
     if (studErr || !students) {
+      if (studErr) logErrore({ operazione: 'admin/documents-merge:GET', stato: 500, evento: 'db' }, studErr);
       return NextResponse.json({ error: 'Errore nel caricamento degli alunni' }, { status: 500 });
     }
 
@@ -56,6 +76,7 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
       .eq('form_id', formId);
 
     if (subErr || !submissions) {
+      if (subErr) logErrore({ operazione: 'admin/documents-merge:GET', stato: 500, evento: 'db' }, subErr);
       return NextResponse.json({ error: 'Errore nel caricamento delle sottomissioni' }, { status: 500 });
     }
 

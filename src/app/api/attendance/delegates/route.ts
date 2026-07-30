@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -36,8 +36,13 @@ export const GET = withRoute('attendance/delegates:GET', async (request: NextReq
     const { sezione } = q.data;
 
     try {
-        const scopeErr = await assertClasseNomeInScope(await createAdminClient(), auth.user, sezione);
+        const admin = await createAdminClient();
+        const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione);
         if (scopeErr) return scopeErr;
+        // Il gate da solo non bastava: impedisce di NOMINARE la classe di
+        // un'altra sede, non che la classe OMONIMA della propria sede si porti
+        // dietro i delegati dell'altra (nome + numero di documento).
+        const plessi = await resolveScuoleAttive(request, admin, auth.user);
 
         const supabase = await createClient();
 
@@ -51,7 +56,8 @@ export const GET = withRoute('attendance/delegates:GET', async (request: NextReq
                 document_number,
                 alunni!inner ( classe_sezione )
             `)
-            .eq('alunni.classe_sezione', sezione);
+            .eq('alunni.classe_sezione', sezione)
+            .in('alunni.scuola_id', plessi);
 
         if (error) {
             // PostgREST non lancia: ritorna { error }. Prima questo errore veniva SCARTATO dalla

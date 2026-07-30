@@ -30,6 +30,9 @@ vi.mock('@/lib/auth/require-staff', () => ({
 
 vi.mock('@/lib/auth/scope', () => ({
     assertClasseNomeInScope: vi.fn(async () => null),
+    // Scope di sede sulla query (l'isolamento vero è verificato in
+    // `attendance-scope-sede.test.ts`, con un finto client che filtra davvero).
+    resolveScuoleAttive: vi.fn(async () => ['sc-1']),
 }))
 
 vi.mock('@/lib/logging/logger', async (originale) => ({
@@ -42,10 +45,15 @@ function client() {
     return {
         from: (tabella: string) => {
             h.tabelleInterrogate.push(tabella)
-            const query = {
-                select: () => query,
-                eq: () => Promise.resolve({ data: h.errore ? null : h.righe, error: h.errore }),
-            }
+            // Thenable invece di terminare su `.eq()`: la query dei delegati ora
+            // filtra anche `.in('alunni.scuola_id', …)`, e un mock che chiude la
+            // catena al primo filtro direbbe «rotto» per un difetto suo.
+            const query: Record<string, unknown> = {}
+            query.select = () => query
+            query.eq = () => query
+            query.in = () => query
+            query.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) =>
+                Promise.resolve({ data: h.errore ? null : h.righe, error: h.errore }).then(ok, ko)
             return query
         },
     }

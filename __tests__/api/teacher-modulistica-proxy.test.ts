@@ -55,6 +55,10 @@ beforeEach(() => {
     legame_genitori_alunni: [{ alunno_id: 'al-1', genitore_id: 'gen-1' }],
     student_parents: [],
     parents: [],
+    // Scope dell'alunno (B2): l'upload cartaceo scrive sul fascicolo di un
+    // minore, quindi l'alunno dev'essere nel plesso e nella sezione del docente.
+    alunni: [{ id: 'al-1', section_id: 'sec-1', scuola_id: 'sc-1' }],
+    utenti_sezioni: [{ section_id: 'sec-1', utente_id: 'doc-1' }],
   }
   h.requireDocente.mockResolvedValue({ user: { id: 'doc-1', role: 'educator', scuola_id: 'sc-1' } })
 })
@@ -89,6 +93,33 @@ describe('POST /api/teacher/modulistica — proxy upload cartaceo', () => {
     expect(row.pdf_path).toBe(h.uploads[0].path)
     expect(row.parent_id).toBe('gen-1')
     expect(h.logScrittura).toHaveBeenCalled()
+  })
+
+  // ── Scope dell'alunno (B2) ────────────────────────────────────────────────
+  // `requireDocente` verifica il RUOLO: senza scope, un docente poteva allegare
+  // una scansione al fascicolo di un bambino di un'ALTRA sede (e farsi
+  // restituire il legame col suo genitore) semplicemente indovinandone l'id.
+  it('403 se l\'alunno è di un\'altra sede: nessun upload, nessuna insert', async () => {
+    h.righe.alunni = [{ id: 'al-1', section_id: 'sec-b', scuola_id: 'sc-ALTRA' }]
+    const res = await POST(proxyReq({ form_id: 'f-1', student_id: 'al-1' }, pdf()))
+    expect(res.status).toBe(403)
+    expect(h.uploads).toHaveLength(0)
+    expect(h.inserts).toHaveLength(0)
+  })
+
+  it('403 se l\'alunno è del proprio plesso ma di una sezione non assegnata', async () => {
+    h.righe.utenti_sezioni = [{ section_id: 'sec-altra', utente_id: 'doc-1' }]
+    const res = await POST(proxyReq({ form_id: 'f-1', student_id: 'al-1' }, pdf()))
+    expect(res.status).toBe(403)
+    expect(h.uploads).toHaveLength(0)
+    expect(h.inserts).toHaveLength(0)
+  })
+
+  it('la segreteria carica su qualunque classe del PROPRIO plesso', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
+    h.righe.utenti_sezioni = []
+    const res = await POST(proxyReq({ form_id: 'f-1', student_id: 'al-1' }, pdf()))
+    expect(res.status).toBe(201)
   })
 
   it('201 col legame presente SOLO in anagrafica: parent_id valorizzato lo stesso', async () => {

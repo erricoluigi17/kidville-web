@@ -4,10 +4,11 @@
 // La valutazione conforme passa da /api/primaria/valutazioni e
 // /api/primaria/prospetto. Conservata come storico (coperta dai test API).
 
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope, resolveScuoleAttive, sezioniVisibili } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -35,7 +36,7 @@ const postBodySchema = z
 
 // GET /api/grades?alunnoId=xxx&materia=Italiano
 // Recupera i voti di un alunno (opzionalmente filtrati per materia)
-export const GET = withRoute('grades:GET', async (request: Request) => {
+export const GET = withRoute('grades:GET', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -45,6 +46,14 @@ export const GET = withRoute('grades:GET', async (request: Request) => {
         const { alunnoId, materia } = q.data;
 
         const supabase = await createAdminClient();
+
+        // Isolamento. `?alunnoId=` era libero, e SENZA parametro la route
+        // restituiva TUTTE le valutazioni di tutte le sedi.
+        if (alunnoId) {
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId);
+            if (fuoriScope) return fuoriScope;
+        }
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
 
         let query = supabase
             .from('valutazioni')
@@ -57,9 +66,14 @@ export const GET = withRoute('grades:GET', async (request: Request) => {
                 giudizio_testo,
                 pubblicato,
                 creato_il,
-                alunni ( nome, cognome )
+                alunni!inner ( nome, cognome, scuola_id, section_id )
             `)
+            .in('alunni.scuola_id', plessi)
             .order('creato_il', { ascending: false });
+
+        // L'educator vede le sole sezioni assegnate (decisione del 2026-07-30).
+        const mieSezioni = await sezioniVisibili(supabase, auth.user);
+        if (mieSezioni) query = query.in('alunni.section_id', mieSezioni);
 
         if (alunnoId) {
             query = query.eq('alunno_id', alunnoId);
@@ -83,7 +97,7 @@ export const GET = withRoute('grades:GET', async (request: Request) => {
     }
 });
 
-export const POST = withRoute('grades:POST', async (request: Request) => {
+export const POST = withRoute('grades:POST', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -94,6 +108,11 @@ export const POST = withRoute('grades:POST', async (request: Request) => {
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
+
+        // Isolamento sulla SCRITTURA: si registrava una valutazione su un bambino
+        // di un'altra sede conoscendone l'uuid.
+        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId);
+        if (fuoriScope) return fuoriScope;
 
         // L'autore/valutatore è l'utente del gate (identità risolta server-side).
         const maestraId = auth.user.id;

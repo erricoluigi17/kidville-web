@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope, resolveScuoleAttive, sezioniVisibili } from '@/lib/auth/scope';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -22,7 +23,7 @@ const postBodySchema = z.object({
 
 // GET /api/notes?alunnoId=xxx
 // Recupera le note disciplinari di un alunno
-export const GET = withRoute('notes:GET', async (request: Request) => {
+export const GET = withRoute('notes:GET', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -32,6 +33,16 @@ export const GET = withRoute('notes:GET', async (request: Request) => {
         const { alunnoId } = q.data;
 
         const supabase = await createAdminClient();
+
+        // Isolamento. `?alunnoId=` era libero, e SENZA parametro la route
+        // restituiva TUTTE le note disciplinari di tutte le sedi — il contenuto
+        // più delicato che un docente scrive su un bambino. `!inner` perché il
+        // filtro sulla risorsa embedded scarti davvero la riga padre.
+        if (alunnoId) {
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId);
+            if (fuoriScope) return fuoriScope;
+        }
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
 
         let query = supabase
             .from('note_disciplinari')
@@ -45,9 +56,15 @@ export const GET = withRoute('notes:GET', async (request: Request) => {
                 firmata_il,
                 firmata_da,
                 creato_il,
-                alunni ( nome, cognome, classe_sezione )
+                alunni!inner ( nome, cognome, classe_sezione, scuola_id, section_id )
             `)
+            .in('alunni.scuola_id', plessi)
             .order('creato_il', { ascending: false });
+
+        // L'educator vede le sole sezioni assegnate (decisione del 2026-07-30);
+        // admin/coordinator/segreteria tutte quelle del proprio plesso.
+        const mieSezioni = await sezioniVisibili(supabase, auth.user);
+        if (mieSezioni) query = query.in('alunni.section_id', mieSezioni);
 
         if (alunnoId) {
             query = query.eq('alunno_id', alunnoId);
@@ -70,7 +87,7 @@ export const GET = withRoute('notes:GET', async (request: Request) => {
 
 // POST /api/notes
 // Body: { alunnoIds: string[], categoria, testo, richiedeFirma }
-export const POST = withRoute('notes:POST', async (request: Request) => {
+export const POST = withRoute('notes:POST', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -81,6 +98,16 @@ export const POST = withRoute('notes:POST', async (request: Request) => {
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
+
+        // Isolamento sulla SCRITTURA: `alunnoIds` arriva dal client e non era
+        // verificato. Si scriveva una nota disciplinare — e si notificavano i
+        // genitori — su bambini di un'altra sede. Un id fuori scope fa fallire
+        // l'intera richiesta: una scrittura parziale su un elenco di minori
+        // sarebbe peggio di un rifiuto.
+        for (const aid of alunnoIds) {
+            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, aid);
+            if (fuoriScope) return fuoriScope;
+        }
 
         // L'autore della nota è l'utente del gate (identità risolta server-side).
         const maestraId = auth.user.id;

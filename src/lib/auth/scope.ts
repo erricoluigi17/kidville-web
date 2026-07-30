@@ -94,8 +94,36 @@ export async function resolveScuolaScrittura(
 }
 
 /** True se l'utente ha visibilità su TUTTE le classi del proprio/i plesso/i. */
-function vedeTutteLeClassi(user: AppUser): boolean {
+export function vedeTutteLeClassi(user: AppUser): boolean {
   return user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
+}
+
+/**
+ * Filtro per SEZIONE da applicare agli ELENCHI, complemento del filtro per sede.
+ *
+ * Ritorna `null` per chi vede tutte le classi del proprio plesso (admin,
+ * coordinator, segreteria): nessuna restrizione oltre alla sede. Per l'`educator`
+ * ritorna le sole sezioni assegnate in `utenti_sezioni` — decisione di prodotto
+ * del 2026-07-30, presa dal titolare: 9 educator su 10 le hanno già assegnate.
+ *
+ * Fail-closed: un educator senza sezioni assegnate riceve `[]`, cioè un elenco
+ * vuoto. È la risposta giusta — «non ti è stata assegnata nessuna classe» — e non
+ * «eccoti tutte quelle del plesso».
+ *
+ * Uso tipico, in AND col filtro di sede:
+ * ```ts
+ * const plessi = await resolveScuoleAttive(request, supabase, user)
+ * let q = supabase.from('...').select('..., alunni!inner(...)').in('alunni.scuola_id', plessi)
+ * const mie = await sezioniVisibili(supabase, user)
+ * if (mie) q = q.in('alunni.section_id', mie)
+ * ```
+ */
+export async function sezioniVisibili(
+  supabase: SupabaseClient,
+  user: AppUser,
+): Promise<string[] | null> {
+  if (vedeTutteLeClassi(user)) return null
+  return await sezioniDiUtente(supabase, user.id)
 }
 
 /**

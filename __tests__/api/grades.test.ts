@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
   mockInsert: vi.fn(),
@@ -8,7 +9,17 @@ const mocks = vi.hoisted(() => ({
 
 // Gate: l'endpoint è ora protetto da requireDocente (P0/S3).
 vi.mock('@/lib/auth/require-staff', () => ({
-  requireDocente: vi.fn().mockResolvedValue({ user: { id: 'educator-1', role: 'educator' } }),
+  requireDocente: vi.fn().mockResolvedValue({ user: { id: 'educator-1', role: 'educator', scuola_id: 'sc-1' } }),
+}));
+
+// Scope di sede concessivo: l'oggetto di questo file e' l'inserimento del voto
+// (pubblicato=false, autore = utente del gate), non l'isolamento fra sedi —
+// quello sta in `__tests__/api/note-voti-scope-sede.test.ts`, dove gli helper
+// girano davvero contro un finto DB che filtra.
+vi.mock('@/lib/auth/scope', () => ({
+  assertAlunnoInScope: vi.fn(async () => null),
+  resolveScuoleAttive: vi.fn(async () => ['sc-1']),
+  sezioniVisibili: vi.fn(async () => null),
 }));
 
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -29,7 +40,7 @@ describe('API Route: Grades (Inserimento Voti)', () => {
   it('forza pubblicato=false e usa l\'utente del gate come maestra', async () => {
     mocks.mockSingle.mockResolvedValueOnce({ data: { id: 'voto-1' }, error: null });
 
-    const request = new Request('http://localhost', {
+    const request = new NextRequest('http://localhost', {
       method: 'POST',
       // GUID-shaped: il postBodySchema (M3) valida alunnoId con zUuid
       body: JSON.stringify({ alunnoId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', materia: 'Matematica', tipo: 'scritto', votoNumerico: 8 }),
@@ -51,7 +62,7 @@ describe('API Route: Grades (Inserimento Voti)', () => {
   });
 
   it('rifiuta un payload incompleto (400)', async () => {
-    const request = new Request('http://localhost', {
+    const request = new NextRequest('http://localhost', {
       method: 'POST',
       body: JSON.stringify({ alunnoId: '1' }),
     });

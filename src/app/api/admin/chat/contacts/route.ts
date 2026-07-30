@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
@@ -27,9 +28,18 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
     // docente. Con la sola tabella runtime la Segreteria non poteva aprire una
     // conversazione con i genitori arrivati dal form pubblico: semplicemente non
     // comparivano in elenco.
+    //
+    // Isolamento per sede. `requireStaff` verifica il RUOLO, non il tenant, e la
+    // route gira in service-role: senza questo filtro la Segreteria di Giugliano
+    // riceveva nome, cognome e classe di TUTTI i bambini delle tre sedi e dei loro
+    // genitori, con la chat già apribile. La correzione del 2026-07-29 aveva
+    // toccato il GEMELLO `/api/chat/contacts` (lato docente), non questa.
+    // Fail-closed: nessun plesso ⇒ `.in(…, [])` ⇒ nessun contatto.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user);
     const { data: alunni, error } = await supabase
       .from('alunni')
-      .select('id, nome, cognome, classe_sezione');
+      .select('id, nome, cognome, classe_sezione')
+      .in('scuola_id', plessi);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const righeAlunni = alunni ?? [];

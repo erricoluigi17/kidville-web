@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -30,11 +30,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET } from '@/app/api/admin/gdpr/candidates/route'
 
-const get = () => new Request('http://localhost/api/admin/gdpr/candidates')
+// NextRequest (non Request): da quando la route filtra per sede legge il cookie
+// `sedi_attive` tramite `resolveScuoleAttive`, che vuole `request.cookies`.
+const get = () => new NextRequest('http://localhost/api/admin/gdpr/candidates')
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin' } })
+  h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 'sc-1' } })
   h.alunni = [{ id: 'al-1', nome: 'Marco', cognome: 'Rossi', classe_sezione: 'A', stato: 'non_iscritto' }]
   h.links = [{ student_id: 'al-1', parent_id: 'p-1' }]
   h.parents = [{ id: 'p-1', first_name: 'Maria', last_name: 'Rossi' }]

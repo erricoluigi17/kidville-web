@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { patchAlunno, patchParent, confermaValida, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
@@ -43,6 +44,14 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       .eq('id', alunno_id)
       .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+
+    // Isolamento per sede, PRIMA di qualunque effetto. È l'operazione più grave
+    // dell'applicazione — anonimizzazione irreversibile di un minore e dei suoi
+    // genitori — e l'unico controllo era il ruolo: la Direzione di un plesso
+    // poteva cancellare i dati di un bambino di un altro plesso, e non esiste un
+    // annulla. Vale anche in `dryrun`: il dry-run restituisce nome e cognome.
+    const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id)
+    if (fuoriScope) return fuoriScope
 
     // Si cancella SOLO un alunno non iscritto (diritto all'oblio post-uscita).
     if (alunno.stato === 'iscritto') {

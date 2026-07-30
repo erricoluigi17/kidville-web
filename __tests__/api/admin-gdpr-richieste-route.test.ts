@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server'
 
 // =============================================================================
 // LOCK del contratto sullo spazio-id: `richieste_cancellazione.parent_id` è un
@@ -70,8 +70,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { POST } from '@/app/api/admin/gdpr/richieste/route'
 
+// NextRequest (non Request): da quando la route verifica la sede legge il cookie
+// `sedi_attive` tramite `resolveScuoleAttive`, che vuole `request.cookies`.
 const req = (body: unknown) =>
-  new Request('http://localhost/api/admin/gdpr/richieste', {
+  new NextRequest('http://localhost/api/admin/gdpr/richieste', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),

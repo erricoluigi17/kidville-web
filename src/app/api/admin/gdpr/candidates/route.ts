@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 
@@ -13,7 +14,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 
-export const GET = withRoute('admin/gdpr/candidates:GET', async (request: Request) => {
+export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -22,9 +23,16 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: Reques
 
   const supabase = await createAdminClient()
 
+  // Isolamento per sede: `coordinator` è mono-plesso per progetto, ma senza
+  // questo filtro vedeva nomi e cognomi dei minori non iscritti — e dei loro
+  // genitori — di TUTTE le sedi. L'admin resta multi-plesso, ristretto alle sedi
+  // attive nel selettore. Scope vuoto ⇒ nessun candidato.
+  const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+
   const { data: alunni, error } = await supabase
     .from('alunni')
     .select('id, nome, cognome, classe_sezione, stato')
+    .in('scuola_id', plessi)
     .neq('stato', 'iscritto')
     .is('anonimizzato_il', null)
     .order('cognome', { ascending: true })

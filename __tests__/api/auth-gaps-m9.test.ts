@@ -20,6 +20,7 @@ const h = vi.hoisted(() => {
     requireStaff: vi.fn(async () => denied() as { user?: { id: string; role: string }; response?: Response }),
     requireDocente: vi.fn(async () => denied() as { user?: { id: string; role: string }; response?: Response }),
     requireUser: vi.fn(async () => denied() as { user?: { id: string; role: string }; response?: Response }),
+    genitoreHasFiglio: vi.fn(async () => true),
     // registro delle query: [table, metodo, argomenti...]
     calls: [] as Array<[string, string, ...unknown[]]>,
     rows: {} as Record<string, unknown>, // risposta per-tabella (maybeSingle)
@@ -35,6 +36,18 @@ vi.mock('@/lib/auth/require-staff', () => ({
 
 vi.mock('@/lib/settings/module-config', () => ({
   getModuleConfig: vi.fn(async () => ({})),
+}))
+
+// `POST /api/chat/threads` ora verifica anche che `student_id` sia un figlio del
+// chiamante (prima bastava essere partecipante: si poteva aprire un thread su un
+// minore di un'altra sede). Il legame è pilotabile per caso di prova: concesso
+// di default — l'oggetto di questo file è il gate «partecipante», non
+// l'isolamento — e negato dove il test verifica proprio l'assenza di legame.
+vi.mock('@/lib/anagrafiche/legami', () => ({
+  genitoreHasFiglio: h.genitoreHasFiglio,
+  getGenitoriDiAlunni: vi.fn(async () => new Map()),
+  getGenitoriDiAlunno: vi.fn(async () => []),
+  getFigliDiGenitore: vi.fn(async () => []),
 }))
 
 vi.mock('@/lib/supabase/server-client', () => {
@@ -83,6 +96,7 @@ const UUID_C = '33333333-3333-4333-8333-333333333333'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.genitoreHasFiglio.mockResolvedValue(true)
   h.calls.length = 0
   h.rows = {}
   h.lists = {}
@@ -184,6 +198,7 @@ describe('M9 — notes/sign col legame genitore↔alunno', () => {
     h.requireUser.mockImplementation(async () => ({ user: { id: UUID_A, role: 'genitore' } }))
     h.rows['note_disciplinari'] = { id: UUID_B, alunno_id: UUID_C }
     h.rows['legame_genitori_alunni'] = null as never
+    h.genitoreHasFiglio.mockResolvedValue(false)
     const res = await notesSignPOST(jsonReq('http://x/api/notes/sign', 'POST', { notaId: UUID_B }))
     expect(res.status).toBe(403)
   })

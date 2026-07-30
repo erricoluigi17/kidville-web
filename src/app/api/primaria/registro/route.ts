@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY, vincoloConflittoAssente } from '@/lib/registro/chiave-orario'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
@@ -230,22 +231,35 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
       if (dataConsegnaCompiti) sharedFields.data_consegna_compiti = dataConsegnaCompiti
     }
 
-    const { data: registroRow, error: regErr } = await supabase
+    // La chiave di conflitto include la SEDE: senza, il «2 ANNI» di Aversa e
+    // quello di Cesa scrivevano sulla stessa riga di registro. Vedi
+    // `src/lib/registro/chiave-orario.ts`.
+    const rigaRegistro = {
+      scuola_id: section.scuola_id,
+      section_id: sectionId,
+      classe_sezione: section.name,
+      data,
+      ora_lezione: oraLezione,
+      da_orario: daOrario ?? false,
+      ...sharedFields,
+    }
+    let regRes = await supabase
       .from('registro_orario')
-      .upsert(
-        {
-          scuola_id: section.scuola_id,
-          section_id: sectionId,
-          classe_sezione: section.name,
-          data,
-          ora_lezione: oraLezione,
-          da_orario: daOrario ?? false,
-          ...sharedFields,
-        },
-        { onConflict: 'classe_sezione,data,ora_lezione' }
-      )
+      .upsert(rigaRegistro, { onConflict: CHIAVE_REGISTRO })
       .select()
       .single()
+    if (vincoloConflittoAssente(regRes.error)) {
+      logEvento('registro', 'info', {
+        operazione: 'primaria/registro:POST',
+        esito: 'vincolo-per-sede-assente-ripiego-legacy',
+      })
+      regRes = await supabase
+        .from('registro_orario')
+        .upsert(rigaRegistro, { onConflict: CHIAVE_REGISTRO_LEGACY })
+        .select()
+        .single()
+    }
+    const { data: registroRow, error: regErr } = regRes
     if (regErr) return NextResponse.json({ error: regErr.message }, { status: 500 })
 
     // Una sola firma "principale" per ora/materia: un secondo docente non può

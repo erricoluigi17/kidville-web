@@ -68,6 +68,77 @@
 
 ---
 
+## 🗓️ Changelog — Audit sistematico dell'isolamento fra sedi: chat, GDPR, anagrafica e il vincolo che sovrascriveva il registro 2026-07-30 (branch `fix/isolamento-audit`)
+
+Seguito dell'hotfix qui sotto. Inventario completo delle **282 route** in
+`docs/audit/2026-07-30-isolamento-fra-sedi.md`: **59 da proteggere**, di cui 12 chiuse in questo
+rilascio, più la migrazione che chiude l'unico difetto che *corrompe* dati.
+
+**Il modello, verificato prima di applicarlo.** Le due regole decise dal titolare — segreteria
+sulla sola propria sede, educator sulle sole sezioni assegnate — **erano già scritte negli helper**:
+`scuoleDiUtente` restituisce solo la sede propria a chi non è admin, e `vedeTutteLeClassi` esclude
+l'`educator`. Non è stato toccato il cuore dell'autorizzazione: è stato **applicato** alle route che
+non lo chiamavano.
+
+### Il vincolo che faceva sovrascrivere il registro fra sedi — migrazione `registro_orario_unique_per_sede`
+
+```sql
+-- prima: UNIQUE (classe_sezione, data, ora_lezione)          ← senza sede
+-- dopo:  UNIQUE (scuola_id, classe_sezione, data, ora_lezione)
+```
+Gli upsert di `register/lessons:139` e `primaria/registro:245` **scrivevano sulla stessa riga**:
+argomento, compiti e firme del «2 ANNI» di Aversa sovrascrivevano quelli di Cesa, **in silenzio**.
+È l'unico difetto dell'audit che corrompe dati invece di esporli, ed era invisibile in lettura
+perché il gate di scope sulle due route c'era già. Al momento della migrazione: **14 righe, 0
+collisioni** — nulla da riconciliare. Advisors Supabase **0 ERROR**.
+Chiave centralizzata in `src/lib/registro/chiave-orario.ts`, con ripiego `42P10` per il **solo** DB
+E2E non migrato (che ha una sede sola, quindi le due chiavi vi coincidono). Lock architetturale
+`__tests__/architecture/chiave-registro-per-sede.test.ts`: nessun file di `src/` può usare una
+chiave di conflitto che parte da `classe_sezione`.
+
+### Chat e GDPR (7 route)
+
+- **`admin/chat/contacts`** — nome e classe di **tutti** i minori delle tre sedi e dei loro genitori,
+  a qualunque segreteria, con la chat già apribile. ⚠️ La correzione del 29/07 aveva toccato il
+  **gemello** `chat/contacts` (lato docente): questa route non era mai stata guardata.
+- **`admin/chat/threads`** — tutte le conversazioni genitore↔docente delle tre sedi. `chat_threads`
+  non ha `scuola_id` e **non serve**: `student_id` è FK verso `alunni`, la sede si deriva dal join.
+- **`admin/chat/messages`** — bastava l'uuid di un thread per leggere il **contenuto** dei messaggi.
+- **`chat/threads:POST`** — essere partecipante non basta: `student_id` arrivava dal client e non era
+  verificato.
+- **`admin/gdpr/erase`** — **anonimizzazione irreversibile** di un minore e dei suoi genitori di un
+  altro plesso, autorizzata dal solo ruolo. Il gate scatta prima di ogni effetto, dry-run compreso.
+- **`admin/gdpr/candidates`** e **`admin/gdpr/richieste`** — quest'ultima **leggeva** `scuola_id` e
+  non lo confrontava con niente.
+
+### Anagrafica (5 route) — l'insieme di PII più ampio del sistema
+
+`admin/students/[id]` (`select *` + CF + note mediche + `parents (*)` con documento d'identità e
+recapiti + `delegates (*)` col numero di documento di chi ritira), `admin/parents` GET/POST/PATCH,
+`admin/parents/[id]`, `admin/regenerate-credentials` (reset password **e invio credenziali per
+email** a un genitore o a un collega di un'altra sede).
+
+**Due primitivi nuovi in `src/lib/auth/scope.ts`**, perché mancavano davvero:
+- `assertParentInScope` — `parents` **non ha** `scuola_id` e **non deve averlo**: un genitore può
+  avere figli in due sedi, quindi «la sua sede» non esiste. Lo scope si deriva dai **figli**. Un
+  genitore senza legami non è raggiungibile da nessuno: è la risposta giusta, non c'è modo di
+  stabilire il plesso.
+- `assertUtenteInScope` — per le operazioni su un collega (reset credenziali, assegnazioni).
+
+**Regola confermata**: scope vuoto ⇒ `.in(…, [])` ⇒ nessuna riga. Si **nega**, non si apre.
+
+**Test**: 25 casi nuovi su `finto-supabase`. **Prova di validità su ogni blocco**: rimessi i
+difetti, 10/12 (chat+GDPR) e 6/8 (anagrafica) tornano rossi — i verdi sono i casi di accesso
+legittimo, ed è corretto che restino verdi. Dieci test preesistenti adeguati: dove il gate nuovo è
+mockato concessivo, la ragione è scritta accanto col rinvio al file che quel gate lo prova. Usato
+`importOriginal` e non un mock nudo — sostituire l'intero modulo di scope rendeva `undefined`
+funzioni già in uso, e due test diventavano verdi per il motivo sbagliato (successo al primo
+tentativo, corretto).
+
+**Gate**: eslint **0** · tsc **0** · vitest **3502 / 423 file** · build ok · advisors **0 ERROR**.
+
+---
+
 ## 🗓️ Changelog — Tre dati sanitari di minori autorizzati male, uno **senza alcuna autenticazione** 2026-07-30 (branch `fix/isolamento-hotfix-sanitari`)
 
 Primo tempo dell'audit sistematico dell'isolamento fra sedi (piano completo in

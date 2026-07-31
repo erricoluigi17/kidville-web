@@ -8,6 +8,7 @@ import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/l
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
+import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
@@ -290,7 +291,13 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             };
         });
 
-        return NextResponse.json({ media: enriched, total: count ?? 0 });
+        // Il bucket `gallery` è PRIVATO: in tabella c'è il percorso del file, e
+        // l'indirizzo con cui la foto si guarda nasce QUI, firmato e a scadenza
+        // breve, solo per chi ha superato il gate e lo scope di sede appena
+        // applicati. Una chiamata sola per l'intera pagina.
+        const conLink = await firmaMediaGalleria(supabase, enriched, 'gallery:GET');
+
+        return NextResponse.json({ media: conLink, total: count ?? 0 });
     } catch (error) {
         logErrore({ operazione: 'gallery:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -416,9 +423,19 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         if (sw.response) return sw.response;
         const scuolaId = sw.scuolaId as string;
 
+        // In tabella si archivia il PERCORSO nel bucket, mai un indirizzo.
+        // `gallery/upload` ormai restituisce già il percorso, ma un client
+        // vecchio (o un telefono col bundle in cache) può ancora rimandare
+        // l'URL pubblico di quando il bucket era aperto: quell'indirizzo oggi
+        // risponde 400, e salvarlo com'è vorrebbe dire archiviare un link morto
+        // che nessuna firma successiva saprebbe recuperare. Ciò che NON
+        // appartiene a questo bucket resta invece intatto: non si riscrive un
+        // dato che non si è certi di saper interpretare.
+        const fileUrlDaSalvare = percorsoNelBucket(file_url) ?? file_url;
+
         const baseRecord: Record<string, unknown> = {
             uploaded_by,
-            file_url,
+            file_url: fileUrlDaSalvare,
             file_type: file_type ?? 'foto',
             caption: caption ?? null,
             tag_students: tag_students ?? [],

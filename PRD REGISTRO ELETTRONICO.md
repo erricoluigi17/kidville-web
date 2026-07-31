@@ -86,6 +86,72 @@
 
 ---
 
+## 🗓️ Changelog — Le foto dei bambini erano leggibili senza login da chiunque avesse l'indirizzo: la galleria passa ai link firmati 2026-07-31 (branch `fix/multisede-audit-globale`)
+
+Il bucket storage `gallery` era **pubblico**. Il gate di ruolo, l'isolamento per sede e la regola
+«foto privata» (`src/lib/gallery/privacy.ts`) giravano tutti **sul database e mai sul file**:
+bastava avere — o indovinare — l'indirizzo per vedere la foto di un bambino **senza login, senza
+scadenza e fuori da ogni controllo**. Era un limite noto e messo per iscritto nel codice
+(«il bucket storage resta pubblico: hardening con signed-URL in un follow-up»), rimasto innocuo
+solo perché la galleria non è mai entrata in esercizio: `galleria_media_v2` e `galleria_media`
+hanno **zero righe** in produzione, e i 16 file nel bucket sono residui orfani di prove.
+
+**Il bucket è stato chiuso** (`public: false`) e il codice ora ci parla come si parla a un bucket
+privato. In tabella si archivia il **percorso** (`uploads/<utente>/<file>`), non un indirizzo; la
+`GET /api/gallery` genera i link **firmati a 10 minuti**, in blocco (`createSignedUrls`: una
+chiamata per pagina, non una per foto), **dopo** il gate e lo scope di sede, e quindi solo per chi
+ha titolo a vedere quella foto. `gallery/upload` non chiama più `getPublicUrl` — quell'indirizzo
+oggi risponde **400**, misurato — e restituisce `path` (da salvare) più un `previewUrl` firmato;
+il campo storico `fileUrl` resta nella risposta ma ora vale il percorso, così anche un telefono
+col bundle in cache continua a salvare il dato giusto. `POST /api/gallery` riconosce e normalizza
+gli URL pubblici completi che un client vecchio potesse ancora rimandare: in tabella non entra un
+link morto. Le righe storiche salvate come URL pubblico vengono riconosciute in lettura e firmate
+lo stesso (in produzione non ce n'è nessuna, ma il DB E2E della CI non è migrato e gli ambienti di
+prova possono averne).
+
+**Il fallimento della firma non è silenzioso** (AGENTS §3): l'errore si logga a livello `error`
+**col corpo del provider** e con i soli conteggi — mai il percorso, che porta con sé l'uuid di chi
+ha caricato — e il media esce con `file_url: null`. Lato interfaccia `MediaGrid` mostra un
+segnaposto «Anteprima non disponibile» invece di un `<img src="">`, che avrebbe fatto ripartire una
+richiesta sulla pagina stessa e mostrato l'icona di immagine rotta; Scarica e Condividi
+scompaiono, perché senza indirizzo non potrebbero fare nulla.
+
+**Nessuna migrazione, e nessun dato da convertire**: zero righe in entrambe le tabelle (verificato
+sul DB di produzione). Su `storage.objects` non esiste **nessuna policy**, quindi con il bucket
+privato il file è raggiungibile solo dal service-role delle route o da un link firmato. Il service
+worker non cachea `/api/*`, perciò nessun link firmato finisce su disco.
+
+**Il presidio che tiene chiuso il bucket, e che prima non c'era.** Il blocco «assicura il bucket»
+di `gallery/upload` chiamava `createBucket`/`updateBucket` **senza guardare il valore di ritorno**
+— e come PostgREST, lo Storage non lancia: ritorna `{ error }`. Cioè «lo rimettiamo privato a ogni
+caricamento» era una promessa che nessuno verificava. Ora un fallimento si logga a livello `error`
+col corpo, e trovare il bucket **ancora pubblico** produce una riga `error` dedicata **prima** di
+richiuderlo (richiuderlo e tacere cancellerebbe la traccia del guasto). La stessa cecità ha già
+lasciato passare una discrepanza viva: in produzione `gallery` ha `file_size_limit` **50MB**
+mentre il codice chiede 200MB a ogni upload — da oggi, se quell'aggiornamento fallisce, si vede.
+
+**Effetto collaterale voluto**: il link «Condividi» di una foto ora **scade**. Prima era un
+indirizzo eterno e pubblico — chi lo riceveva poteva rigirarlo a chiunque, per sempre.
+
+**File toccati** — `src/lib/gallery/storage.ts` (nuovo), `src/app/api/gallery/route.ts`,
+`src/app/api/gallery/upload/route.ts`, `src/components/features/gallery/MediaGrid.tsx`,
+`src/app/(dashboard)/teacher/gallery/page.tsx`, `src/lib/offline/syncEngine.ts`,
+`src/lib/gallery/privacy.ts` (il commento che dichiarava il limite), + 1 chiave i18n in
+`messages/{it,en}/shared.json`.
+**Test** — 34 nuovi su 3 file (`__tests__/lib/gallery-storage.test.ts`,
+`__tests__/api/gallery-signed-url.test.ts`,
+`__tests__/components/MediaGrid-link-scaduto.test.tsx`), dimostrati **rossi** rimettendo il
+difetto (`getPublicUrl` nell'upload, la GET che non firma, la POST che non normalizza, l'`<img>`
+senza guardia) e **verdi** dopo. Provato anche contro lo Storage vero: indirizzo pubblico **400**,
+firmato **200**, token manomesso **400**, e **400** dopo la scadenza.
+
+**Fuori perimetro, e ancora aperti**: i bucket `avvisi_allegati` (1 file) e `task_allegati` (0
+file) restano **pubblici** con `getPublicUrl` in `api/avvisi/upload` e `api/tasks/upload`; il
+bucket `news` non esiste ancora in produzione e `api/news/upload` lo creerebbe **pubblico**, il
+che per un blog è una scelta, non un difetto — ma va decisa, non subita.
+
+---
+
 ## 🗓️ Changelog — Il cockpit ingoiava i rifiuti del server, e presentava la rete giù come «non ci sono alunni» 2026-07-31 (branch `fix/multisede-audit-globale`)
 
 Tre difetti di **interfaccia** con la stessa radice: l'esito di una chiamata non arrivava mai a

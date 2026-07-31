@@ -327,7 +327,11 @@ function TeacherGalleryContent() {
                         throw new Error(`«${f.file.name}»: ${uploadErrData.error || t('galleryErrCaricamentoFile')}`);
                     }
 
-                    const { fileUrl } = await uploadRes.json();
+                    // Il bucket è privato: si salva il PERCORSO nel bucket, mai un
+                    // indirizzo (quello firmato scade, quello pubblico non apre più).
+                    // `fileUrl` è il nome storico della stessa cosa, tenuto per i
+                    // client vecchi: qui vale da ripiego.
+                    const { path, fileUrl } = await uploadRes.json();
 
                     // Crea il record nel DB
                     const res = await fetch('/api/gallery', {
@@ -335,7 +339,7 @@ function TeacherGalleryContent() {
                         headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                         body: JSON.stringify({
                             uploaded_by: teacherId,
-                            file_url: fileUrl,
+                            file_url: path ?? fileUrl,
                             file_type: isVideo ? 'video' : 'foto',
                             caption: f.file.name,
                             tag_students: f.is_broadcast ? [] : f.tag_students,

@@ -1,12 +1,17 @@
 // P4/DL-041 — Privacy Lock (Galleria): regola "foto privata".
 // Un bambino può essere taggato DA SOLO in una foto anche SENZA liberatoria:
 // una foto con un unico tag è mostrata solo ai genitori di quel bambino
-// (single tag = visibilità parents-only); l'esposizione è limitata dai filtri
-// applicativi esistenti (gate + visibilità) — il bucket storage resta pubblico:
-// hardening con signed-URL in un follow-up. Le foto di GRUPPO (≥2 taggati)
+// (single tag = visibilità parents-only). Le foto di GRUPPO (≥2 taggati)
 // richiedono invece la liberatoria foto (consenso_privacy === true) per OGNI
 // bambino taggato. Le foto broadcast (comunicazioni istituzionali) bypassano
 // il tagging e quindi il consenso.
+//
+// ⚠️ Questa regola vale su ciò che l'applicazione MOSTRA. Fino al 2026-07-31
+// valeva solo su quello, e qui c'era scritto che il bucket restava pubblico
+// «con hardening a signed-URL in un follow-up»: nel frattempo chiunque avesse
+// (o indovinasse) l'indirizzo di un file vedeva la foto senza login, e la
+// «foto privata» era privata solo dentro l'app. Il follow-up è stato fatto —
+// bucket `gallery` PRIVATO e link firmati a tempo, vedi `./storage.ts`.
 
 /**
  * Ritorna gli ID degli alunni in `tagStudents` che bloccano la pubblicazione

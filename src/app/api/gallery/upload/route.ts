@@ -6,6 +6,7 @@ import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
+import { BUCKET_GALLERIA, TTL_FIRMA_GALLERIA_S } from '@/lib/gallery/storage';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
@@ -68,29 +69,51 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                     bucket: 'gallery',
                 }, listError);
             } else {
-                const exists = buckets?.some(b => b.name === 'gallery');
-                if (!exists) {
-                    await supabase.storage.createBucket('gallery', {
-                        public: true,
-                        allowedMimeTypes: [
-                            'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                            // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
-                            // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
-                            'video/mp4', 'video/webm'
-                        ],
-                        fileSizeLimit: 209715200 // 200MB
+                // Bucket PRIVATO (2026-07-31). Era `public: true`, e ogni foto di
+                // un bambino era leggibile da CHIUNQUE avesse (o indovinasse)
+                // l'indirizzo del file: senza login, senza scadenza, fuori dal
+                // gate di ruolo, dall'isolamento per sede e dalla regola «foto
+                // privata», che vivevano tutti sul database e mai sul file.
+                // Da qui in poi si serve un link firmato a tempo (vedi
+                // `@/lib/gallery/storage`), e questo blocco deve RIMETTERE il
+                // bucket privato a ogni upload: se una mano lo riaprisse dalla
+                // console, il primo caricamento lo richiuderebbe.
+                const opzioniBucket = {
+                    public: false,
+                    allowedMimeTypes: [
+                        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+                        // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
+                        // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
+                        'video/mp4', 'video/webm'
+                    ],
+                    fileSizeLimit: 209715200 // 200MB
+                };
+                const info = buckets?.find(b => b.name === BUCKET_GALLERIA);
+                // Trovarlo APERTO è un incidente, non una nota: finché è rimasto
+                // così, ogni foto di bambino era scaricabile da chiunque avesse
+                // l'indirizzo. Si logga PRIMA di richiuderlo, altrimenti la
+                // riparazione cancellerebbe la traccia del guasto.
+                if (info?.public === true) {
+                    logEvento('storage', 'error', {
+                        operazione: 'gallery/upload:POST',
+                        esito: 'bucket-pubblico',
+                        bucket: BUCKET_GALLERIA,
                     });
-                } else {
-                    await supabase.storage.updateBucket('gallery', {
-                        public: true,
-                        allowedMimeTypes: [
-                            'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                            // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
-                            // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
-                            'video/mp4', 'video/webm'
-                        ],
-                        fileSizeLimit: 209715200 // 200MB
-                    });
+                }
+                // ⚠️ Anche queste NON lanciano: ritornano `{ error }`. Senza
+                // guardare il valore di ritorno, «il bucket lo rimettiamo
+                // privato a ogni upload» sarebbe una promessa non verificata —
+                // e il fallimento della richiusura è esattamente ciò che non
+                // possiamo permetterci di non sapere.
+                const esitoBucket = info
+                    ? await supabase.storage.updateBucket(BUCKET_GALLERIA, opzioniBucket)
+                    : await supabase.storage.createBucket(BUCKET_GALLERIA, opzioniBucket);
+                if (esitoBucket.error) {
+                    logEvento('storage', 'error', {
+                        operazione: 'gallery/upload:POST',
+                        esito: 'bucket-non-riconfigurato',
+                        bucket: BUCKET_GALLERIA,
+                    }, esitoBucket.error);
                 }
             }
         } catch (bucketErr) {
@@ -110,7 +133,7 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         const filePath = `uploads/${userId}/${uniqueFileName}`;
 
         const { error } = await supabase.storage
-            .from('gallery')
+            .from(BUCKET_GALLERIA)
             .upload(filePath, Buffer.from(fileBuffer), {
                 contentType,
                 upsert: true
@@ -121,12 +144,35 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // Ottieni URL pubblico
-        const { data: publicUrlData } = supabase.storage
-            .from('gallery')
-            .getPublicUrl(filePath);
+        // Link firmato per l'ANTEPRIMA immediata: il bucket è privato, quindi
+        // `getPublicUrl` produrrebbe un indirizzo che risponde 400.
+        const { data: firmato, error: errFirma } = await supabase.storage
+            .from(BUCKET_GALLERIA)
+            .createSignedUrl(filePath, TTL_FIRMA_GALLERIA_S);
+        if (errFirma) {
+            // Il file È salvato: non si butta via un caricamento (foto di una
+            // giornata che non torna) per un'anteprima. Ma il guasto va detto,
+            // COL CORPO dell'errore del provider: senza, resterebbe solo
+            // un'anteprima vuota senza spiegazione.
+            logEvento('storage', 'error', {
+                operazione: 'gallery/upload:POST',
+                esito: 'anteprima-non-firmata',
+                bucket: BUCKET_GALLERIA,
+            }, errFirma);
+        }
 
-        return NextResponse.json({ fileUrl: publicUrlData.publicUrl });
+        // `path` è ciò che il client deve RIMANDARE a POST /api/gallery: in
+        // tabella si archivia il percorso, non un indirizzo firmato che fra
+        // dieci minuti non apre più niente.
+        //
+        // `fileUrl` resta per i client vecchi (e per i telefoni con il bundle in
+        // cache), che leggono quel nome e lo rigirano come `file_url`: ora
+        // contiene il PERCORSO, così anche loro salvano il dato giusto.
+        return NextResponse.json({
+            path: filePath,
+            fileUrl: filePath,
+            previewUrl: firmato?.signedUrl ?? null,
+        });
     } catch (error) {
         logErrore({ operazione: 'gallery/upload:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

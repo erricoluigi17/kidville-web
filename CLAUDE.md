@@ -117,14 +117,28 @@ Stato runtime (`.claude/.ship-cycle/`): `active.json` (gate armato + `session_id
 
 ---
 
-# ⚠️ PROMEMORIA PRE-LANCIO — riattivare la conferma umana
+# 🔴 IN PRODUZIONE CI SONO DATI REALI DI MINORI — le conferme umane vanno riattivate
 
-**Oggi la pipeline fa merge, deploy in produzione e migrazioni sul DB di produzione SENZA
-chiedere conferma.** È accettabile per un solo motivo: **siamo pre-lancio**, e in produzione
-non c'è ancora nessun dato reale di famiglie e bambini.
+**Questo blocco, fino al 2026-07-31, diceva il falso.** Sosteneva che merge, deploy e migrazioni
+potessero girare senza conferma perché *«siamo pre-lancio, e in produzione non c'è ancora nessun
+dato reale di famiglie e bambini»*.
 
-**Prima del lancio pubblico — e comunque PRIMA che entri anche un solo dato reale di una
-famiglia o di un minore — vanno riattivate le conferme umane.** Concretamente:
+**Misurato il 2026-07-31**: la tabella `enrollment_submissions` contiene **227 domande di
+iscrizione vere**, con **152 codici fiscali distinti di minori**, allergie e note mediche in testo
+libero, raccolte **dal 16 luglio**. Il modulo pubblico riceve circa **9 invii l'ora**. Il lancio
+commerciale non è avvenuto, ma i dati sono arrivati lo stesso: nessuno aveva riletto questo
+promemoria da quando il modulo pubblico è andato online.
+
+**La lezione, prima delle istruzioni**: «pre-lancio» è una frase sul calendario, non una
+misurazione. L'unica domanda che conta è *quante righe reali ci sono adesso in produzione*, e ha
+una risposta che si ottiene con una query. Chi legge questo file e sta per scrivere in produzione
+la esegua, invece di fidarsi di questo paragrafo.
+
+**Decisione del titolare (2026-07-31): da qui in avanti ogni migrazione e ogni merge si mostrano
+e si fanno approvare, uno per uno.** Vale anche per gli `UPDATE`/`DELETE` sui dati veri. Le
+verifiche in lettura restano libere.
+
+Le conferme umane vanno riattivate così:
 
 1. **`.claude/settings.json`** — sposta da `allow` ad `ask`:
    `Bash(gh:*)` (o almeno `Bash(gh pr merge:*)`), `Bash(git push:*)`, `Bash(vercel:*)`,
@@ -137,9 +151,14 @@ famiglia o di un minore — vanno riattivate le conferme umane.** Concretamente:
 4. **GitHub** — riattiva i *Required reviewers* sull'environment `production`
    (workflow `.github/workflows/migrate.yml`), così nessuna migrazione tocca il DB senza
    un'approvazione umana.
-5. **Dati reali** — da quel momento gli account TEST in produzione, i seed e qualunque
-   scrittura automatica su prod vanno rivisti: quello che oggi è "pre-lancio, nessun danno"
-   diventa "dati di minori".
+5. **Dati reali** — gli account TEST in produzione, i seed e qualunque scrittura automatica su
+   prod vanno trattati come ciò che sono: strumenti che toccano **dati di minori**. In
+   particolare `test.segreteria@kidville.test` legge l'anagrafica dell'intera sede, e
+   `test.multisede.admin@kidville.test` vede tutte e tre le sedi.
 
-Finché questo blocco è ancora qui, **il lancio non è avvenuto**. Quando lo fai, aggiorna anche
-il PRD.
+**Stato di questi cinque punti**: da fare. Vengono applicati come **ultimo atto del rilascio del
+2026-07-31**, non prima — attivarli a metà lavoro avrebbe bloccato la sessione che li ha scritti.
+Se stai leggendo questa riga e i punti 1-4 risultano già applicati in `.claude/settings.json`,
+cancella questa frase; se non lo sono, **applicali prima di qualunque altra cosa**.
+
+Quando il lancio commerciale avverrà davvero, aggiorna anche il PRD.

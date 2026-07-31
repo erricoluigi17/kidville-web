@@ -95,9 +95,12 @@ gira da sola *pianifica → implementa → collauda → correggi* finché tutti 
 `PASS` (o si ferma dopo 8 cicli). Rispetta e fa rispettare tutte le regole di questo documento:
 branch secondario, PRD aggiornato, logging obbligatorio, gate di verifica.
 
-Spiegazione completa in **`CLAUDE.md`** — dove sta anche il **promemoria pre-lancio**: oggi
-merge, deploy e migrazioni in produzione girano **senza conferma umana** perché non ci sono
-ancora dati reali di famiglie e bambini; prima del lancio le conferme vanno riattivate.
+Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **conferme umane**.
+🔴 Dal 2026-07-31 quel blocco dice l'opposto di prima: in produzione ci sono **dati reali di
+minori** (227 domande di iscrizione, 152 codici fiscali di bambini, raccolte dal 16 luglio), e
+**ogni migrazione e ogni merge si mostrano al titolare e si fanno approvare, uno per uno**.
+Il «pre-lancio» che autorizzava le scritture automatiche non c'è più: non è mai stato vero da
+quando il modulo pubblico d'iscrizione è online.
 
 ## Note
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.

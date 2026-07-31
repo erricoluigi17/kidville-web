@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { dataCivile } from '@/i18n/config'
 
 // Ordini d'acquisto (PO) al fornitore — un PO per fornitore.
 //  GET   lista PO dei plessi con righe collegate.
@@ -108,7 +109,12 @@ export const POST = withRoute('admin/merch/ordini-fornitore:POST', async (reques
       if (!forn || forn.scuola_id !== scuolaId) {
         return NextResponse.json({ error: 'Fornitore non valido per il plesso' }, { status: 400 })
       }
-      const anno = new Date().getFullYear()
+      // L'anno ITALIANO: la numerazione dei PO è progressiva per anno, e su
+      // Vercel il processo gira in UTC. Fra le 00:00 e le 01:00 del 1° gennaio
+      // un ordine emesso in Italia avrebbe preso il numero dell'anno prima —
+      // dove la serie è già chiusa: o un buco o un duplicato, su un documento
+      // che va in contabilità.
+      const anno = Number(dataCivile().slice(0, 4))
       const num = await supabase.rpc('prossimo_numero_po', { p_scuola: scuolaId, p_anno: anno })
       if (num.error || typeof num.data !== 'number') {
         if (SCHEMA_MANCANTE.has(num.error?.code ?? '')) return NextResponse.json({ success: true, data: { po: null, righe: 0, degraded: true } })

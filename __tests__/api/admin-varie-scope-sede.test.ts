@@ -53,8 +53,22 @@ vi.mock('@/lib/supabase/server-client', async () => {
 import { GET as SEGNALAZIONI_GET, PATCH as SEGNALAZIONI_PATCH } from '@/app/api/admin/segnalazioni/route'
 import { GET as AUDIT_GET } from '@/app/api/admin/audit/route'
 import { GET as DASHBOARD_GET } from '@/app/api/admin/dashboard/route'
+import { dataCivile } from '@/i18n/config'
 
-const OGGI = new Date().toISOString().slice(0, 10)
+// «Oggi» per una scuola di Giugliano è oggi in ITALIA, non a Greenwich.
+//
+// Questa riga era `new Date().toISOString().slice(0, 10)`, cioè la data in UTC,
+// e il 2026-08-01 all'01:08 italiane ha fatto diventare rosso il test degli
+// incassi: la fixture datava l'incasso al 31 luglio, la dashboard cercava
+// «questo mese» in agosto. Non era un test fragile — era il difetto vero, che
+// si era manifestato da solo nelle due ore in cui Italia e UTC stanno in mesi
+// diversi. In produzione quelle due ore ci sono ogni notte, perché su Vercel il
+// processo gira in UTC.
+//
+// Ora la fixture usa la stessa nozione di «oggi» del prodotto, e il test non
+// dipende più dal fuso della macchina che lo esegue: verificato con
+// Europe/Rome, UTC, Pacific/Kiritimati (UTC+14) e Pacific/Niue (UTC-11).
+const OGGI = dataCivile()
 
 const req = (url: string, cookie?: string) =>
   new NextRequest(url, cookie ? { headers: { cookie } } : undefined)

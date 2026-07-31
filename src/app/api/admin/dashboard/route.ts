@@ -6,6 +6,7 @@ import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { dataCivile, meseCivile, primoDelMeseCivile } from '@/i18n/config'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -13,8 +14,21 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 // Etichette mesi brevi (IT) per l'asse del grafico trend incassi.
 const MESI_IT = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
 
-function ymKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+/**
+ * Il mese di una data del database, in ora ITALIANA.
+ *
+ * `data_incasso` è una colonna `date` e arriva come `'2026-07-31'`: passarla a
+ * `new Date()` la interpreta come mezzanotte UTC, e `getMonth()` la rilegge poi
+ * nel fuso del processo — che su Vercel è UTC e in locale no. Due conversioni
+ * dove non ne serve nessuna: il mese di `'2026-07-31'` sono i suoi primi sette
+ * caratteri.
+ *
+ * Misurato il 2026-08-01 all'01:08 italiane (a Greenwich era ancora luglio): la
+ * dashboard cercava «questo mese» in agosto e non trovava l'incasso registrato
+ * quel giorno. Un incasso vero, sparito da un KPI.
+ */
+function ymKey(data: string) {
+  return data.slice(0, 7)
 }
 
 /**
@@ -36,12 +50,15 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   // Scope multi-sede: aggreghiamo solo sui plessi attivi/accessibili (mai cross-tenant).
   const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
-  const now = new Date()
-  const today = now.toISOString().slice(0, 10) // YYYY-MM-DD
-  const curMonthKey = ymKey(now)
+  // Tutte le date di questa route sono date CIVILI ITALIANE, non date del
+  // processo: le tre sedi sono in Campania e «oggi» è oggi per loro. Su Vercel
+  // il processo gira in UTC, quindi fra mezzanotte e le due `toISOString()`
+  // restituirebbe il giorno prima — e per due ore al giorno la dashboard
+  // parlerebbe di ieri chiamandolo oggi.
+  const today = dataCivile()
+  const curMonthKey = meseCivile()
   // Primo giorno di 5 mesi fa => finestra di 6 mesi inclusa quella corrente.
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
-  const sixMonthsAgoIso = sixMonthsAgo.toISOString().slice(0, 10)
+  const sixMonthsAgoIso = primoDelMeseCivile(5)
 
   const [
     alunniRes,
@@ -181,13 +198,14 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   const trendMap = new Map<string, number>()
   // Inizializza gli ultimi 6 mesi a 0 così il grafico ha sempre tutte le colonne.
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    trendMap.set(ymKey(d), 0)
+    trendMap.set(ymKey(primoDelMeseCivile(i)), 0)
   }
   let incassatoMese = 0
   for (const inc of incassi) {
-    const d = new Date(inc.data_incasso as string)
-    const key = ymKey(d)
+    // La colonna è `date`: il suo mese sono i primi sette caratteri. Passarla da
+    // `new Date()` aggiungerebbe una conversione di fuso a un dato che un fuso
+    // non ce l'ha, ed è da lì che nasceva lo scarto di un giorno.
+    const key = ymKey(String(inc.data_incasso ?? ''))
     if (trendMap.has(key)) trendMap.set(key, (trendMap.get(key) ?? 0) + Number(inc.importo ?? 0))
     if (key === curMonthKey) incassatoMese += Number(inc.importo ?? 0)
   }

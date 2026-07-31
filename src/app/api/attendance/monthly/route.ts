@@ -6,6 +6,7 @@ import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { meseCivile } from '@/i18n/config';
 
 export interface MonthlyAttendanceRecord {
     student_id: string;
@@ -45,9 +46,13 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
 
-        const now = new Date();
-        const year  = q.data.year  ?? now.getFullYear();
-        const month = q.data.month ?? now.getMonth() + 1;
+        // Il mese di default è quello ITALIANO, non quello del processo: su
+        // Vercel gira in UTC, e fra mezzanotte e le due del primo del mese il
+        // registro delle presenze si sarebbe aperto sul mese SBAGLIATO — con la
+        // maestra che vede un mese vuoto e ricomincia a segnare da capo.
+        const [annoCorrente, meseCorrente] = meseCivile().split('-').map(Number);
+        const year  = q.data.year  ?? annoCorrente;
+        const month = q.data.month ?? meseCorrente;
         const sezione = q.data.sezione;
 
         const startDate = `${year}-${String(month).padStart(2, '0')}-01`;

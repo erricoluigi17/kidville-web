@@ -162,14 +162,16 @@ describe('POST /api/tasks — il promemoria nasce nella sede su cui si sta lavor
     )
   })
 
-  it('sede dichiarata FUORI dai propri plessi: nessuna riga scritta, da nessuna parte', async () => {
+  it('sede dichiarata FUORI dai propri plessi: 403 esplicito e nessuna riga scritta', async () => {
     // Ada ha SEDE_A e SEDE_C; chiede di scrivere su SEDE_B, che non è sua.
-    // Lo status resta volutamente non fissato a un valore solo: oggi
-    // `resolveScuolaScrittura` scarta la preferita non accessibile e, restando
-    // l'operazione ambigua, risponde 400; con la modifica in corso su
-    // `src/lib/auth/scope.ts` una sede fuori scope diventerà un 403 esplicito.
-    // Ciò che NON deve cambiare in nessuno dei due mondi è la mutazione: zero
-    // righe scritte — né su SEDE_B, né «ripiegando» su una sede qualsiasi.
+    // Lo status è **403**, non 400: sono due dinieghi diversi e vanno tenuti
+    // diversi — 400 è «non mi hai detto dove» (l'operatore deve scegliere), 403
+    // è «mi hai detto una sede che non è tua», cioè un segnale di sicurezza.
+    // Fino al 2026-07-31 qui c'era `expect([400, 403]).toContain(...)`, scritto
+    // quando il comportamento non era ancora deciso: quell'accettare due
+    // risposte lasciava passare anche il ripiego che nega per il motivo
+    // sbagliato. La mutazione resta l'asserzione principale: zero righe scritte,
+    // né su SEDE_B, né «ripiegando» su una sede qualsiasi.
     h.db.utenti_scuole = [{ utente_id: ADMIN, scuola_id: SEDE_C }]
     h.requireDocente.mockResolvedValue({ user: { id: ADMIN, role: 'admin', scuola_id: SEDE_A } })
 
@@ -177,9 +179,29 @@ describe('POST /api/tasks — il promemoria nasce nella sede su cui si sta lavor
       postReq({ titolo: 'Promemoria altrui', author_id: ADMIN, scuola_id: SEDE_B }),
     )
 
-    expect([400, 403]).toContain(res.status)
     expect(scritti()).toEqual([])
     expect(h.scritture.filter((s) => s.tabella === 'task_interni')).toEqual([])
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+  })
+
+  it('MONO-sede che dichiara la sede di un altro plesso: 403, e NIENTE scritto nella propria', async () => {
+    // Il caso che mancava, ed è il più insidioso dei tre: chi ha una sede sola.
+    // Col ripiego (rimosso il 2026-07-31) la sede dichiarata veniva
+    // DIMENTICATA, la funzione ricadeva sull'«unica sede accessibile» e la
+    // risposta era **201**: il promemoria nasceva a SEDE_A mentre il chiamante
+    // aveva chiesto SEDE_B, senza errore e senza log. Qui l'unico modo di
+    // accorgersene è guardare DOVE è finita la riga, non lo status.
+    h.requireDocente.mockResolvedValue({ user: { id: EDU_A, role: 'educator', scuola_id: SEDE_A } })
+
+    const res = await TASKS_POST(
+      postReq({ titolo: 'Promemoria di un altro plesso', author_id: EDU_A, scuola_id: SEDE_B }),
+    )
+
+    expect(scritti()).toEqual([])
+    expect(h.scritture.filter((s) => s.tabella === 'task_interni')).toEqual([])
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
   })
 
   it('più sedi accessibili e nessuna indicata: 400, e la bacheca resta vuota', async () => {

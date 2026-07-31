@@ -41,6 +41,22 @@ vi.mock('framer-motion', async () => {
 
 import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
 
+
+/**
+ * Attraversa il passo CONSENSI, che sta fra l'ultimo adulto e il riepilogo.
+ *
+ * La presa visione dell'informativa è OBBLIGATORIA: senza spuntarla il wizard
+ * non avanza — ed è esattamente il comportamento che si vuole, quindi qui va
+ * eseguito come lo eseguirebbe un genitore, non aggirato.
+ */
+async function passaDaiConsensi() {
+  await waitFor(() =>
+    expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
+  )
+  fireEvent.click(screen.getByRole('checkbox', { name: /informativa sulla privacy/i }))
+  fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+}
+
 const GIUGLIANO = { id: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529', nome: 'Kidville Giugliano' }
 const AVERSA = { id: '11111111-1111-4111-8111-111111111111', nome: 'Kidville Aversa' }
 const CESA = { id: '22222222-2222-4222-8222-222222222222', nome: 'Kidville Cesa' }
@@ -144,6 +160,7 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await passaDaiConsensi()
     await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
@@ -212,6 +229,7 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
     fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await passaDaiConsensi()
     await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
 
@@ -266,6 +284,7 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
     fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await passaDaiConsensi()
     await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
 
@@ -333,6 +352,7 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
     fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Ines' } })
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await passaDaiConsensi()
     await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))

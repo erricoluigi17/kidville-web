@@ -68,6 +68,81 @@
 
 ---
 
+## 🗓️ Changelog — Informativa e consensi: i testi legali riscritti e il modulo pubblico che finalmente li mostra 2026-07-31 (branch `fix/testi-legali-revisione`)
+
+Chiude l'ultimo punto rimasto del prompt sull'isolamento: il modulo pubblico d'iscrizione
+raccoglieva **allergie, note mediche (BES, DSA, patologie) e il documento d'identità del minore**
+senza mostrare alcuna informativa e senza registrare nulla. Non mancava un filtro: mancava il posto
+dove scrivere la prova.
+
+### La correzione controintuitiva: sui dati sanitari il consenso era la base SBAGLIATA
+
+Sembra più garantista chiedere il consenso. Non lo è. Se un genitore non comunica l'allergia, la
+Scuola non può preparare il pasto in sicurezza: quel «consenso» **non è rifiutabile**, e un consenso
+non libero non vale nulla. Fondarci sopra il trattamento significa trattare **senza base giuridica**
+dati sanitari di minori, credendo di averne una.
+
+L'informativa ora fonda quei dati su **art. 9.2.g GDPR + art. 2-sexies, c. 2, lett. bb** del Codice
+privacy (interesse pubblico rilevante nell'istruzione). Il consenso resta **solo su foto e video**,
+dove rifiutare non costa nulla al bambino — ed è **granulare per canale** (galleria riservata, sito,
+social: provv. Garante 725/2025).
+
+### Cosa cambia nel modulo
+
+Nuovo passo **Consensi** fra l'ultimo adulto e il riepilogo, con l'informativa al punto di raccolta
+(art. 13) e **una sola spunta obbligatoria: la presa visione**. Nessuna casella sui dati sanitari.
+La verifica è **server-side** (`consensiObbligatoriMancanti`), perché un invio fatto fuori dal
+wizard non esegue il codice del wizard.
+
+Migrazione `iscrizione_consents_log`: colonna `consents_log` su `enrollment_submissions`, stessa
+forma già usata da `form_submissions` — si riusa il meccanismo invece di inventarne un secondo, così
+esiste **un solo modo** di provare un consenso in questo sistema. Lo snapshot **congela il testo
+mostrato** dentro la riga: la prova deve dire *cosa* è stato accettato, non solo *che* qualcosa è
+stato accettato. `versione` dalla costante server-side, **mai dal client**.
+
+### Informativa e Termini riscritti
+
+**Informativa**: Apple/APNs nominata fra i destinatari (era taciuta pur essendo un destinatario
+noto); trasferimenti dichiarati **per fornitore**; conservazione allineata agli obblighi archivistici
+che valgono anche per le paritarie (fascicolo dell'alunno: **conservazione illimitata**); base
+giuridica dei log dichiarata; sezione su responsabilità genitoriale e genitori separati; come si
+revoca il consenso; cookie; riscontro «entro un mese»; indirizzo del Garante.
+
+**Termini**: accettazione **espressa** (la formula «utilizzando il servizio dichiari di accettare»
+non vincola nessuno — e senza accettazione la limitazione di responsabilità **non protegge**);
+clausola di responsabilità riscritta stretta con salvezza delle norme inderogabili (il genitore
+verso una paritaria è un **consumatore**, Cass. 10910/2017: le esclusioni per inadempimento sono
+nulle); modifiche con giustificato motivo e 30 giorni di preavviso; foro del consumatore
+inderogabile; ADR **senza** la piattaforma ODR europea, chiusa dal 20/07/2025 (Reg. UE 2024/3228).
+
+**La sezione RPD/DPO NON è pubblicata** (`RPD_RECAPITO = null`): scrivere «la Scuola ha designato un
+RPD» prima di averlo designato sarebbe un'affermazione falsa in un documento legale, ed è anche la
+più facile da smentire — la comunicazione al Garante passa da una procedura tracciata. Torna con una
+riga quando la nomina è perfezionata.
+
+Versioni alzate a **2026-07-31**: chi ha accettato la 2026-07-28 ha accettato un documento diverso.
+
+### Verificato sul codice, non solo asserito
+
+Prima di pubblicare affermazioni di fatto in un documento legale: **nessun analytics o tracker** (e
+quindi «solo cookie tecnici, nessun banner» è vero), **log 30 giorni**, **copia locale 7 giorni**,
+**backup Android esclusi**, **due canali di cancellazione**, **log senza nomi, recapiti né dati
+sanitari** (lista bianca in `redact.ts`). ⚠️ Restano da confermare al Titolare: che il database sia
+davvero in **Irlanda** (l'indirizzo del server è compatibile, la prova è nella dashboard) e le
+**certificazioni DPF** dei fornitori, che cambiano nel tempo.
+
+**Test**: 7 casi nuovi sui consensi + 8 asserzioni nel lock delle pagine legali, che guardano il
+**testo** e non i commenti — i commenti citano di proposito le formule sbagliate per spiegarle, e un
+lock che cercasse quelle stringhe nel file intero verificherebbe il contrario di ciò che intende.
+**Prova di validità**: tolto il controllo del consenso, 5 test su 7 cadono; rimesso l'art. 9.2.a
+sulla salute, il lock legale cade.
+
+**Gate**: eslint **0** · tsc **0** · vitest **3540 / 429 file** · build ok · advisors **0 ERROR**.
+
+⚠️ **I testi NON sono un parere legale** e nessun professionista abilitato li ha sottoscritti.
+
+---
+
 ## 🗓️ Changelog — Audit sistematico dell'isolamento fra sedi: chat, GDPR, anagrafica e il vincolo che sovrascriveva il registro 2026-07-30 (branch `fix/isolamento-audit`)
 
 Seguito dell'hotfix qui sotto. Inventario completo delle **282 route** in

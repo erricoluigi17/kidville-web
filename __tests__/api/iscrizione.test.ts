@@ -1,4 +1,9 @@
 // @vitest-environment node
+// Da quando il modulo pubblico mostra l'informativa al punto di raccolta, la
+// presa visione è un consenso OBBLIGATORIO verificato server-side: senza,
+// l'invio è un 400. I payload di prova la includono — l'oggetto di questi file
+// è la risoluzione della sede e la validazione dei campi, non il consenso, che
+// ha il suo test dedicato in `__tests__/api/iscrizione-consensi.test.ts`.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
@@ -81,8 +86,7 @@ beforeEach(() => {
 
 describe('POST /api/iscrizione — validazione province', () => {
   it('provincia per esteso riconoscibile → 201 e viene salvata la SIGLA', async () => {
-    const res = await POST(req({ data: {
-      children: [{ nome: 'Marco', residence_province: 'Napoli' }],
+    const res = await POST(req({ data: { presa_visione_informativa: true, children: [{ nome: 'Marco', residence_province: 'Napoli' }],
       adults: [{ residence_province: 'na' }],
     } }))
     expect(res.status).toBe(201)
@@ -93,8 +97,7 @@ describe('POST /api/iscrizione — validazione province', () => {
   })
 
   it('provincia non riconoscibile → 400 con messaggio per campo, nessun insert', async () => {
-    const res = await POST(req({ data: {
-      children: [{ nome: 'Marco', residence_province: 'Pippo' }],
+    const res = await POST(req({ data: { presa_visione_informativa: true, children: [{ nome: 'Marco', residence_province: 'Pippo' }],
       adults: [{ residence_province: 'RM' }],
     } }))
     expect(res.status).toBe(400)
@@ -109,8 +112,7 @@ describe('POST /api/iscrizione — validazione province', () => {
     // provincia reale. La normalizzazione non la riconosce (resta 'XY') e la
     // validazione ora la blocca PRIMA del salvataggio, così non arriva più al
     // vicolo cieco del pre-flight dell'import in segreteria.
-    const res = await POST(req({ data: {
-      children: [{ nome: 'Marco', residence_province: 'XY' }],
+    const res = await POST(req({ data: { presa_visione_informativa: true, children: [{ nome: 'Marco', residence_province: 'XY' }],
       adults: [{ residence_province: 'RM' }],
     } }))
     expect(res.status).toBe(400)
@@ -120,8 +122,7 @@ describe('POST /api/iscrizione — validazione province', () => {
   })
 
   it('payload già valido → 201 e valori invariati', async () => {
-    const res = await POST(req({ data: {
-      children: [{ nome: 'Marco', residence_province: 'MI' }],
+    const res = await POST(req({ data: { presa_visione_informativa: true, children: [{ nome: 'Marco', residence_province: 'MI' }],
       adults: [{ residence_province: 'RM' }],
     } }))
     expect(res.status).toBe(201)
@@ -131,8 +132,7 @@ describe('POST /api/iscrizione — validazione province', () => {
   })
 
   it('campo obbligatorio mancante → 400 con "Campo obbligatorio"', async () => {
-    const res = await POST(req({ data: {
-      children: [{ residence_province: 'MI' }],
+    const res = await POST(req({ data: { presa_visione_informativa: true, children: [{ residence_province: 'MI' }],
       adults: [{ residence_province: 'RM' }],
     } }))
     expect(res.status).toBe(400)
@@ -144,8 +144,7 @@ describe('POST /api/iscrizione — validazione province', () => {
     // Simula il DB E2E senza il modello: la query fallisce.
     h.model = null
     h.modelError = { code: '42P01', message: 'relation "form_models" does not exist' }
-    const res = await POST(req({ data: {
-      children: [{ nome: 'x' }], // volutamente incompleto per i template in codice
+    const res = await POST(req({ data: { presa_visione_informativa: true, children: [{ nome: 'x' }], // volutamente incompleto per i template in codice
       adults: [{ ruolo: 'mother' }],
     } }))
     // Non deve andare in 500: cade sui template in codice e valida.

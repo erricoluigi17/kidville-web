@@ -8,6 +8,10 @@ import { staffScuola } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { CONSENSI_FIELDS } from '@/lib/forms/enrollment-template'
+import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import { extractRequestMeta } from '@/lib/fea/signature-log'
+import { VERSIONE_PRIVACY } from '@/lib/legal/versioni'
 import { validatePage, isProvinceField } from '@/lib/forms/validate-fields'
 import {
   extractEnrollmentTemplates,
@@ -161,6 +165,53 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
       )
     }
 
+    // ── Consensi ────────────────────────────────────────────────────────────
+    // Il modulo raccoglie allergie, note mediche e il documento d'identità del
+    // minore: l'informativa al punto di raccolta (art. 13) e la prova che sia
+    // stata data non sono un accessorio, sono la condizione per raccoglierli.
+    //
+    // La verifica è QUI e non solo nel wizard: il wizard è codice del client, e
+    // un invio fatto fuori dal wizard non lo esegue. Un consenso obbligatorio
+    // non spuntato è un 400, esattamente come un campo non valido.
+    //
+    // NB: fra i consensi obbligatori NON c'è nessuna spunta sui dati sanitari —
+    // per quelli la base giuridica non è il consenso. Vedi CONSENSI_FIELDS.
+    const paginaConsensi = [{ id: 'consensi', title: 'Consensi', fields: CONSENSI_FIELDS }]
+    const consensiMancanti = consensiObbligatoriMancanti(
+      paginaConsensi,
+      data as Record<string, unknown>,
+    )
+    if (consensiMancanti.length > 0) {
+      logEvento('iscrizione', 'warn', {
+        operazione: 'iscrizione:POST',
+        esito: 'consensi-obbligatori-mancanti',
+        msg: `Consensi mancanti: ${consensiMancanti.join(', ')}`,
+        n: consensiMancanti.length,
+      })
+      return NextResponse.json(
+        {
+          error: 'Per proseguire è necessario dichiarare di aver letto l\'informativa sulla privacy.',
+          consensi: consensiMancanti,
+        },
+        { status: 400 },
+      )
+    }
+
+    // Snapshot probatorio: id, etichetta, TESTO MOSTRATO, esito e istante di
+    // ciascun blocco. Il testo si congela dentro la riga perché la prova deve
+    // dire *cosa* è stato accettato, non solo *che* qualcosa è stato accettato:
+    // se domani il modulo cambia, le accettazioni di ieri restano leggibili.
+    // `versione` viene dalla costante server-side, MAI dal client: un client
+    // datato o manomesso potrebbe dichiarare una versione arbitraria, e la prova
+    // varrebbe zero.
+    const accettatoIl = new Date().toISOString()
+    const consentsLog = {
+      versione_informativa: VERSIONE_PRIVACY,
+      accettato_il: accettatoIl,
+      ...extractRequestMeta(request),
+      blocchi: estraiConsensi(paginaConsensi, data as Record<string, unknown>, accettatoIl),
+    }
+
     // Salva i dati NORMALIZZATI (province già ridotte a sigla).
     const dataNormalizzata = { ...(data as Record<string, unknown>), children, adults }
 
@@ -198,11 +249,34 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         scuola_id: scuolaId,
         data: dataNormalizzata as EnrollmentSubmissionData,
         status: 'pending',
+        consents_log: consentsLog,
       })
       .select('id')
       .single()
 
     if (error) {
+      // Colonna assente sul DB E2E non migrato: si RIPROVA senza la prova, ma
+      // NON in silenzio. Un'iscrizione persa perché manca una colonna sarebbe
+      // peggio; una prova non registrata senza che nessuno lo sappia, pure.
+      if (['PGRST204', '42703'].includes((error as { code?: string }).code ?? '')) {
+        logEvento('iscrizione', 'warn', {
+          operazione: 'iscrizione:POST',
+          esito: 'consensi-non-registrati-colonna-assente',
+        })
+        const retry = await supabase
+          .from('enrollment_submissions')
+          .insert({
+            scuola_id: scuolaId,
+            data: dataNormalizzata as EnrollmentSubmissionData,
+            status: 'pending',
+          })
+          .select('id')
+          .single()
+        if (retry.error) {
+          return NextResponse.json({ error: retry.error.message }, { status: 500 })
+        }
+        return NextResponse.json({ id: retry.data.id }, { status: 201 })
+      }
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 

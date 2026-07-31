@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import {
-  CHILD_FIELDS, ADULT_FIELDS, ENROLLMENT_LIMITS,
+  CHILD_FIELDS, ADULT_FIELDS, CONSENSI_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
@@ -30,6 +30,7 @@ type Step =
   | { kind: 'sede' }
   | { kind: 'child'; index: number }
   | { kind: 'adult'; index: number }
+  | { kind: 'consensi' }
   | { kind: 'review' }
 
 interface Sede {
@@ -175,6 +176,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     if (mostraSede) s.push({ kind: 'sede' })
     for (let i = 0; i < childCount; i++) s.push({ kind: 'child', index: i })
     for (let i = 0; i < adultCount; i++) s.push({ kind: 'adult', index: i })
+    s.push({ kind: 'consensi' })
     s.push({ kind: 'review' })
     return s
   }, [mostraSede, childCount, adultCount])
@@ -189,6 +191,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   function currentNsFields(): FormField[] {
     if (current.kind === 'child') return nsFields(`children.${current.index}`, childFields)
     if (current.kind === 'adult') return nsFields(`adults.${current.index}`, adultFields)
+    // I consensi NON sono namespacizzati: sono uno per invio, non uno per figlio.
+    if (current.kind === 'consensi') return CONSENSI_FIELDS
     return []
   }
 
@@ -563,6 +567,38 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           )}
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* CONSENSI step — informativa al punto di raccolta (art. 13)
+                      + prova della presa visione. NB: nessuna spunta sui dati
+                      sanitari: per quelli il consenso non è la base giuridica, e
+                      chiederlo darebbe una falsa sicurezza (vedi CONSENSI_FIELDS). */}
+                  {current.kind === 'consensi' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-kidville-green-soft grid place-items-center">
+                          <Info className="w-4.5 h-4.5 text-kidville-green" />
+                        </div>
+                        <div>
+                          <h2 className="font-barlow font-bold uppercase tracking-wide text-kidville-green">
+                            {t('wizardConsensiTitolo')}
+                          </h2>
+                          <p className="text-xs text-kidville-muted">{t('wizardConsensiSottotitolo')}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {CONSENSI_FIELDS.map(f => (
+                          <FieldRenderer
+                            key={f.id}
+                            field={f}
+                            modelId="iscrizioni"
+                            register={register}
+                            control={control}
+                            error={resolveError(errors, f.id)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   )}
 

@@ -33,6 +33,22 @@ vi.mock('framer-motion', async () => {
 
 import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
 
+
+/**
+ * Attraversa il passo CONSENSI, che sta fra l'ultimo adulto e il riepilogo.
+ *
+ * La presa visione dell'informativa è OBBLIGATORIA: senza spuntarla il wizard
+ * non avanza — ed è esattamente il comportamento che si vuole, quindi qui va
+ * eseguito come lo eseguirebbe un genitore, non aggirato.
+ */
+async function passaDaiConsensi() {
+  await waitFor(() =>
+    expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
+  )
+  fireEvent.click(screen.getByRole('checkbox', { name: /informativa sulla privacy/i }))
+  fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+}
+
 const fetchMock = vi.fn()
 
 // Schema ridotto e CONTROLLATO (id pagine 'bambino'/'adulto' = quelli attesi da
@@ -139,6 +155,7 @@ describe('EnrollmentWizard — validazione per pagina (template ripetibile)', ()
     // Adulto 1 → Riepilogo
     fireEvent.change(screen.getByPlaceholderText('Nome adulto'), { target: { value: 'Maria' } })
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
+    await passaDaiConsensi()
     await waitFor(() => expect(screen.getByText('Riepilogo')).toBeInTheDocument())
 
     // Riepilogo → Invia (POST 400 con campi)

@@ -56,16 +56,48 @@ env:
 - takeScreenshot: /tmp/kv-bio-1-home
 
 # ── 2. PROFILO → attiva lo sblocco biometrico ────────────────────────────────
-- tapOn: "MENU"
+# Il quinto tab si tocca con l'ARIA-LABEL "Menu · tutte le sezioni": «MENU» è la
+# scritta a schermo, ma il <button> ha un aria-label e ARIA dice che l'aria-label
+# SOSTITUISCE il contenuto. Sulla home il dump non contiene «MENU» affatto; col
+# foglio aperto ne esiste uno nella topbar, [94,63][322,63] → ALTO 0 px, quindi
+# nemmeno toccabile (misurato 2026-07-31 e 2026-08-01). Spiegazione estesa in
+# android-percorso-genitore.yaml; lock R4/R8.
+- tapOn:
+    text: "Menu · tutte le sezioni"
+# «TUTTE LE SEZIONI» è l'occhiello del foglio (messages/it/nav.json →
+# `menuEyebrow`). Selettore ESATTO di proposito: Maestro fa full-match, quindi
+# non collide col tab «Menu · tutte le sezioni» che resta a schermo. Scriverlo
+# come regex `.*TUTTE LE SEZIONI.*` lo farebbe combaciare con il TAB e l'attesa
+# passerebbe a foglio ancora chiuso: falso verde.
 - extendedWaitUntil:
     visible: "TUTTE LE SEZIONI"
     timeout: 30000
 # La voce «Profilo e deleghe» sta in fondo al foglio: va raggiunta scorrendo.
+#
+# ⚠️ `centerElement: true` NON è un vezzo (misurato il 2026-08-01, KV-play-phone).
+# Senza, `scrollUntilVisible` si ferma appena il nodo ENTRA nel viewport — e in
+# fondo al viewport c'è la bottom-nav flottante, che lo COPRE:
+#   'PROFILO E DELEGHE'      [254,1727][553,1782]
+#   'Navigazione principale' [31,1664][1047,1824]   ← la pillola, sopra di essa
+# Maestro dichiara il tap COMPLETED (il nodo esiste ed è «visibile»), ma il tocco
+# arriva al tab «Diario» che sta sopra: il foglio resta aperto, la pagina sotto
+# cambia, e il passo dopo fallisce accusando l'app. È la TERZA faccia della
+# famiglia già nota (nodo duplicato · nodo alto 0 px · nodo coperto da un
+# overlay): sintomo identico, causa diversa. Centrare l'elemento lo porta a metà
+# schermo, dove non c'è nulla sopra.
 - scrollUntilVisible:
-    element: "PROFILO E DELEGHE"
+    element:
+      text: "PROFILO E DELEGHE"
     direction: DOWN
+    centerElement: true
     timeout: 20000
 - tapOn: "PROFILO E DELEGHE"
+# Controllo NEGATIVO — e va scelto con la stessa cura di quello positivo.
+# «PROFILO E DELEGHE» NON serve: è anche il TITOLO della pagina di destinazione
+# ([42,548][1039,637] nel dump), quindi l'asserzione sarebbe rossa anche a
+# navigazione riuscita. Si usa l'occhiello del foglio, che esiste solo mentre il
+# foglio è aperto (messages/it/nav.json → `menuEyebrow`).
+- assertNotVisible: "TUTTE LE SEZIONI"
 - extendedWaitUntil:
     visible: "SBLOCCO CON FACE ID / IMPRONTA"
     timeout: 60000

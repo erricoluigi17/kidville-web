@@ -12,7 +12,8 @@
 #   export MAESTRO_KV_EMAIL_DOCENTE=... MAESTRO_KV_PASSWORD=...
 #   maestro test .claude/maestro-flows/android-percorso-docente.yaml
 #
-# Selettori verificati su emulatore Medium_Phone_API_36 (2026-07-16).
+# Selettori RI-MISURATI sull'albero di accessibilità il 2026-07-31/08-01
+# (emulatore KV-play-phone, Android 16, `adb shell uiautomator dump`).
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · Android — percorso docente
@@ -49,13 +50,22 @@ env:
 # ── 2. DASHBOARD DOCENTE ─────────────────────────────────────────────────────
 # Gate d'idratazione su un elemento STABILE (la tab "Dashboard" della bottom-nav),
 # non sul saluto: "Buongiorno!" è orario (src/lib/ui/greeting.ts) e di pomeriggio
-# diventa "Buon pomeriggio!". La tab Menu espone il testo "MENU" (l'aria-label
-# "Menu · tutte le sezioni" non diventa contentDescription nella WebView Android).
+# diventa "Buon pomeriggio!".
+#
+# ⚠️ Il quinto tab si seleziona con l'ARIA-LABEL "Menu · tutte le sezioni", non
+# con la scritta «MENU» che si legge a schermo (corretto il 2026-07-31: il
+# commento precedente affermava il contrario e faceva fallire il flow al 13°
+# passo, con l'aria di un difetto dell'app). Causa vera: ARIA, non la WebView —
+# `<button aria-label={t('ariaMenu')}>` con dentro `<span>{t('tabMenu')}</span>`,
+# e l'aria-label SOSTITUISCE il contenuto nel calcolo del nome accessibile.
+# Spiegazione estesa in android-percorso-genitore.yaml e nel README; il lock
+# `__tests__/architecture/maestro-flows-selettori.test.ts` (R4, R8) impedisce che
+# «MENU» rientri.
 - extendedWaitUntil:
     visible: "Dashboard"
     timeout: 60000
 - assertVisible:
-    text: "MENU"
+    text: "Menu · tutte le sezioni"
 - takeScreenshot: /tmp/kv-android-docente-1-dashboard
 
 # ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
@@ -76,14 +86,83 @@ env:
 - takeScreenshot: /tmp/kv-android-docente-2-appello
 
 # ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────
+# ⚠️ DUE TRAPPOLE, entrambe misurate, entrambe capaci di far accusare l'app.
+#
+# (1) «Apri la bacheca» è STATO-DIPENDENTE: la sezione COMUNICAZIONI della
+#     dashboard è renderizzata solo se `avvisiRecenti.length > 0`
+#     (src/app/(dashboard)/teacher/page.tsx:242). Il 2026-08-01 la CTA c'era alle
+#     00:27 e NON c'era alle 00:45 — stessa app, stesso account, dati diversi.
+#     Un flow che la dà per scontata fallisce con «No visible element found» e
+#     sembra una regressione. Perciò la strada PRINCIPALE è il foglio «Menu»,
+#     che non dipende dai dati (sottotitolo univoco «Avvisi e comunicazioni»,
+#     messages/it/teacherNav.json → voceBachecaSub).
+#
+# (2) Quando la CTA c'è, è SOTTO LA PIEGA: tornando dall'appello la dashboard
+#     resta scrollata, la CTA esce dal viewport e la WebView la proietta a fondo
+#     pagina SCHIACCIATA — misurata [438,1857][643,1857], larga 205 px e ALTA 0.
+#     `extendedWaitUntil: visible` passa lo stesso (il nodo esiste), il tap
+#     risulta COMPLETED e il tocco cade su un'area morta. Per questo il ramo A
+#     fa `scrollUntilVisible` prima del tap e un'asserzione NEGATIVA dopo: il
+#     lock R7 pretende entrambe le cose, anche dentro un `runFlow`.
 - tapOn: "Dashboard"
 - extendedWaitUntil:
-    visible: "Apri la bacheca"
+    visible: "Menu · tutte le sezioni"
     timeout: 30000
-- tapOn: "Apri la bacheca"
-- extendedWaitUntil:
-    visible: "Circolari e avvisi alle famiglie"
-    timeout: 45000
+
+# Ramo A — la CTA c'è: si passa di lì, perché è il percorso reale dell'insegnante
+# ed è il punto dove vive la trappola del nodo alto 0.
+- runFlow:
+    when:
+      visible: "Apri la bacheca"
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: "Apri la bacheca"
+          direction: DOWN
+          centerElement: true
+          timeout: 15000
+      - tapOn: "Apri la bacheca"
+      - extendedWaitUntil:
+          visible: "Circolari e avvisi alle famiglie"
+          timeout: 45000
+      - assertNotVisible: "Apri la bacheca"
+
+# Ramo B — nessun avviso recente, niente CTA: alla bacheca si arriva dal foglio
+# «Menu». La condizione guarda la DESTINAZIONE, non la CTA: così il ramo B parte
+# solo se il ramo A non ci è già arrivato (i due rami non si sovrappongono mai).
+- runFlow:
+    when:
+      notVisible: "Circolari e avvisi alle famiglie"
+    commands:
+      - tapOn:
+          text: "Menu · tutte le sezioni"
+      - extendedWaitUntil:
+          visible: "Avvisi e comunicazioni"
+          timeout: 20000
+      # ⚠️ «visibile» NON vuol dire «toccabile». Misurato il 2026-08-01: la voce
+      # sta a [254,1632][580,1672] e uiautomator colloca la bottom-nav a
+      # [31,1664][1047,1824] → sembra libera per 30 px. Il DOM dice altro:
+      # `document.elementFromPoint` su quel punto restituisce il <a> del tab
+      # «Diario», e il contenitore della nav parte a y=1605 device (il rettangolo
+      # dell'albero è il <nav> interno, senza il suo padding). Il tap si perde: il
+      # foglio si chiude e non si naviga — riprodotto anche con `adb shell input
+      # tap`, quindi non è Maestro. Centrare l'elemento lo porta fuori da quella
+      # fascia morta.
+      - scrollUntilVisible:
+          element:
+            text: "Avvisi e comunicazioni"
+          direction: DOWN
+          centerElement: true
+          timeout: 15000
+      - tapOn: "Avvisi e comunicazioni"
+      - extendedWaitUntil:
+          visible: "Circolari e avvisi alle famiglie"
+          timeout: 45000
+      # Negativa: l'occhiello del foglio esiste solo a foglio aperto.
+      - assertNotVisible: "TUTTE LE SEZIONI"
+
+# Comunque ci si sia arrivati, si è in bacheca: qui il flow torna deterministico.
+- assertVisible: "Circolari e avvisi alle famiglie"
 - takeScreenshot: /tmp/kv-android-docente-3-bacheca
 
 # ── 5. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────

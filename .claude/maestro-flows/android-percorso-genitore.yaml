@@ -19,7 +19,8 @@
 #
 # NB: l'app è una WebView Capacitor che carica l'app web da server.url. I tempi
 # di attesa sono generosi di proposito: la prima pagina passa dalla rete.
-# Selettori verificati su emulatore Medium_Phone_API_36 (2026-07-16).
+# Selettori RI-MISURATI sull'albero di accessibilità il 2026-07-31/08-01
+# (emulatore KV-play-phone, Android 16, `adb shell uiautomator dump`).
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · Android — percorso genitore
@@ -61,23 +62,40 @@ env:
       - tapOn: "Non consentire"
 
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
-# Bottom nav del genitore. La tab Menu ha aria-label "Menu · tutte le sezioni",
-# ma la WebView Android collassa il button col suo <span> figlio ed espone solo
-# il testo visibile "MENU" (l'aria-label NON diventa contentDescription). Il
-# selettore va quindi sul testo esposto, non sull'aria-label.
+# Bottom nav del genitore. Il quinto tab si seleziona con il suo ARIA-LABEL
+# "Menu · tutte le sezioni", NON con la scritta «MENU» che si vede a schermo.
+#
+# ⚠️ Qui è dove questo flow ha mentito per mesi (corretto il 2026-07-31, misurato
+# con `adb shell uiautomator dump` su KV-play-phone): il commento precedente
+# sosteneva che la WebView collassasse il <button> col suo <span> ed esponesse
+# «MENU». È falso, e non per colpa della WebView: è ARIA. Il quinto tab è
+#   <button aria-label={t('ariaMenu')}> <Icon/> <span>{t('tabMenu')}</span> </button>
+# e il calcolo del nome accessibile (accname, passo 2C) dice che l'`aria-label`
+# SOSTITUISCE il contenuto. Dump della home genitore: 'HOME', 'DIARIO', 'AVVISI',
+# 'CHAT' e — per il quinto tab — 'Menu · tutte le sezioni' [834,1664][1039,1824].
+# «MENU» lì non compare affatto; in una seconda misura (2026-08-01, col foglio
+# aperto) compare nella topbar a [94,63][322,63], cioè ALTO 0 px: inservibile
+# comunque, ma è bene sapere che può esistere. (Nemmeno come stringa: `tabMenu` vale
+# «Menu», la maiuscola è `text-transform: uppercase`; nei primi quattro tab
+# Chromium la applica anche al nome accessibile, ed è per questo che il dump
+# mostra 'HOME' e non 'Home'. Il match di Maestro è case-insensitive: irrilevante
+# per il selettore, decisivo per capire perché la teoria sbagliata sembrava reggere.)
+# Il lock `__tests__/architecture/maestro-flows-selettori.test.ts` (R4, R8)
+# impedisce che «MENU» rientri, e la fonte del testo è messages/it/nav.json →
+# `ariaMenu` (se cambia lì, il lock diventa rosso: R5).
 - extendedWaitUntil:
     visible: "Avvisi"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
-    text: "MENU"
+    text: "Menu · tutte le sezioni"
 - takeScreenshot: /tmp/kv-android-genitore-1-dashboard
 
 # ── 3. PRESENZE ──────────────────────────────────────────────────────────────
 # "Presenze" vive nel foglio Menu; la voce è resa con il sottotitolo univoco
 # "Assenze e giustifiche" (selettore robusto rispetto alle voci vicine).
 - tapOn:
-    text: "MENU"
+    text: "Menu · tutte le sezioni"
 - extendedWaitUntil:
     visible: "Assenze e giustifiche"
     timeout: 20000
@@ -102,5 +120,5 @@ env:
     visible: "Home"
     timeout: 20000
 - assertVisible:
-    text: "MENU"
+    text: "Menu · tutte le sezioni"
 - takeScreenshot: /tmp/kv-android-genitore-4-back

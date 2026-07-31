@@ -87,24 +87,45 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
         const plessi = await resolveScuoleAttive(request, supabase, auth.user);
         const { data: alunniScope, error: errAlunni } = await supabase
             .from('alunni')
-            .select('id')
+            .select('id, scuola_id')
             .in('scuola_id', plessi);
         if (errAlunni) return NextResponse.json({ error: errAlunni.message }, { status: 500 });
-        const alunniIds = (alunniScope ?? []).map((a) => a.id as string);
+        const sedePerAlunno = new Map(
+            (alunniScope ?? []).map((a) => [a.id as string, (a.scuola_id as string | null) ?? null]),
+        );
+        const alunniIds = [...sedePerAlunno.keys()];
         if (alunniIds.length === 0) return NextResponse.json([]);
 
         const { data: legami, error: errLegami } = await supabase
             .from('student_parents')
-            .select('parent_id')
+            .select('parent_id, student_id')
             .in('student_id', alunniIds);
         if (errLegami) return NextResponse.json({ error: errLegami.message }, { status: 500 });
         const parentIds = [...new Set((legami ?? []).map((l) => l.parent_id as string))];
         if (parentIds.length === 0) return NextResponse.json([]);
 
+        // Sede del genitore = sedi dei suoi FIGLI. `parents` non ha (e non deve
+        // avere) una colonna di sede: un genitore può avere figli in due plessi.
+        // Senza questa derivazione la tab «Genitori» dell'anagrafica resta l'unica
+        // lista di persone che non sa dire di quale scuola sta parlando (R72).
+        const sediPerGenitore = new Map<string, Set<string>>();
+        for (const l of legami ?? []) {
+            const sede = sedePerAlunno.get(l.student_id as string);
+            if (!sede) continue;
+            const chiave = l.parent_id as string;
+            const insieme = sediPerGenitore.get(chiave) ?? new Set<string>();
+            insieme.add(sede);
+            sediPerGenitore.set(chiave, insieme);
+        }
+
         const { data, error } = await supabase.from('parents').select('*').in('id', parentIds);
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        return NextResponse.json(data);
+        const conSede = (data ?? []).map((p) => ({
+            ...p,
+            scuole_ids: [...(sediPerGenitore.get(p.id as string) ?? [])],
+        }));
+        return NextResponse.json(conSede);
     } catch (err) {
         logErrore({ operazione: 'admin/parents:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });

@@ -18,12 +18,13 @@ vi.mock('@/components/features/admin/settings/useAdminSettings', () => ({
 }));
 
 import { NotificheSettings } from '@/components/features/admin/settings/NotificheSettings';
+import { SEDE_A } from '../../fixtures/sedi';
 
 afterEach(() => cleanup());
 
 describe('Impostazioni → Notifiche: i due nuovi tipi C5 compaiono nel gruppo staff', () => {
   it('mostra i toggle "Segnalazione da moderare" e "Conversazione sospesa"', () => {
-    render(<NotificheSettings userId="u1" />);
+    render(<NotificheSettings userId="u1" scuolaId={SEDE_A} />);
     expect(screen.getByText(/Segnalazione da moderare/i)).toBeInTheDocument();
     expect(screen.getByText(/Conversazione sospesa/i)).toBeInTheDocument();
   });

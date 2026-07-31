@@ -14,9 +14,9 @@ interface ModulisticaConfig {
     export_formato: string;
 }
 
-export function ModulisticaSettings({ userId }: { userId: string }) {
+export function ModulisticaSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<ModulisticaConfig | null>(null);
     const [msg, setMsg] = useState('');
 

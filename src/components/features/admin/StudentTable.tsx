@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
+import { useSediAttive } from '@/lib/context/sede-context';
 import { StudentRowCard } from './StudentRowCard';
 
 export interface Student {
@@ -25,6 +26,12 @@ export interface Student {
     ruolo?: string; // per staff (utenti)
     sede_nome?: string; // per staff (nome plesso)
     classi_count?: number; // per staff (n. classi assegnate)
+    // Sede del DATO: uuid del plesso per l'alunno (`alunni.scuola_id`), elenco di
+    // plessi per il genitore — `parents` non ha (e non deve avere) una sede sua,
+    // la si deriva dai figli. Serve alla colonna «Sede» quando i plessi attivi
+    // sono più d'uno: con sezioni omonime fra sedi, due righe sono identiche.
+    scuola_id?: string | null;
+    scuole_ids?: string[];
 }
 
 interface Props {
@@ -51,6 +58,16 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
     const t = useTranslations('adminStudents');
     const locale = useLocale();
     const labelRuolo = useLabelRuolo();
+    // Colonna «Sede»: solo con più plessi accessibili, e solo dove non c'è già
+    // (lo staff ha `sede_nome` dalla sua API). L'uuid non dice niente a nessuno:
+    // il nome si risolve dalle sedi accessibili, come fa `ModuliRicevuti`.
+    const { sedi } = useSediAttive();
+    const mostraSede = sedi.length > 1 && currentTypeFilter !== 'staff';
+    const nomiSede = (s: Student): string => {
+        const ids = s.scuola_id ? [s.scuola_id] : (s.scuole_ids ?? []);
+        if (ids.length === 0) return t('sedeSconosciuta');
+        return ids.map((id) => sedi.find((x) => x.id === id)?.nome ?? t('sedeSconosciuta')).join(' · ');
+    };
     // Etichette di raggruppamento tradotte: la STESSA stringa deve servire sia
     // all'ordinamento sia alla reduce, così i gruppi combaciano col rendering.
     const senzaSezione = t('gruppoSenzaSezione');
@@ -142,6 +159,11 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                             )}
                             {renderSortHeader('cognome', t('thCognome'))}
                             {renderSortHeader('nome', t('thNome'))}
+                            {mostraSede && (
+                                <th className="px-3 py-3 text-left">
+                                    <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thSede')}</span>
+                                </th>
+                            )}
                             {currentTypeFilter === 'child' ? (
                                 <>
                                     {renderSortHeader('data_nascita', t('thNascita'))}
@@ -171,9 +193,10 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                         {Object.entries(groupedStudents).map(([section, sectionStudents]) => (
                             <React.Fragment key={section}>
                                 {/* Group By Header — colSpan calcolato: child ha checkbox + 6 colonne = 7;
-                                    genitori/staff hanno 6 celle (lo staff senza checkbox). */}
+                                    genitori/staff hanno 6 celle (lo staff senza checkbox), più
+                                    la colonna «Sede» quando i plessi attivi sono più d'uno. */}
                                 <tr className="bg-kidville-cream/20">
-                                    <td colSpan={currentTypeFilter === 'child' ? 7 : 6} className="px-4 py-2 font-maven font-bold text-kidville-green">
+                                    <td colSpan={(currentTypeFilter === 'child' ? 7 : 6) + (mostraSede ? 1 : 0)} className="px-4 py-2 font-maven font-bold text-kidville-green">
                                         {/* Staff: niente "Sezione:" (il personale non è raggruppato per classe) e conteggio in "membri". */}
                                         {currentTypeFilter === 'staff' ? t('gruppoPersonale') : `${t('gruppoSezionePrefix')}${section}`} <span className="text-xs font-normal text-kidville-muted">({currentTypeFilter === 'staff' ? t('contMembri', { n: sectionStudents.length }) : t('contAlunni', { n: sectionStudents.length })})</span>
                                     </td>
@@ -207,6 +230,11 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                             <td className="px-3 py-3 font-maven text-sm text-kidville-green">
                                                 {student.nome || student.first_name}
                                             </td>
+                                            {mostraSede && (
+                                                <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    {nomiSede(student)}
+                                                </td>
+                                            )}
                                             {currentTypeFilter === 'child' ? (
                                                 <>
                                                     <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
@@ -315,6 +343,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                 onToggleSelect={onToggleSelect}
                                 onClick={onStudentClick}
                                 currentTypeFilter={currentTypeFilter}
+                                sedeLabel={mostraSede ? nomiSede(student) : undefined}
                             />
                         ))}
                     </div>

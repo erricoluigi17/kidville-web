@@ -118,7 +118,11 @@ export async function sollecitaPagamenti(
             const { data: sede } = await supabase.from('scuole').select('nome').eq('id', pag.scuola_id).maybeSingle()
             scuolaCtx = {
                 cfg,
-                scuolaNome: datiStruttura(fiscale, aruba).denominazione || 'La Segreteria',
+                scuolaNome:
+                    datiStruttura(fiscale, aruba, {
+                        operazione: 'solleciti-invio',
+                        scuolaId: pag.scuola_id,
+                    }).denominazione || 'La Segreteria',
                 sedeNome: ((sede?.nome as string | null | undefined) ?? '') || '',
                 causaliCfg,
             }

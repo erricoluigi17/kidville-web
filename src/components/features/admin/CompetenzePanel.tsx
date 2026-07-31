@@ -6,6 +6,7 @@ import { Award, Download, PenLine, Save, Stamp } from 'lucide-react'
 import { COMPETENZE_CHIAVE, LIVELLI, COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { cx } from '@/lib/ui/cx'
 import { Badge } from '@/components/ui/Badge'
+import { useSediAttive } from '@/lib/context/sede-context'
 
 interface Livello { competenza_codice: string; livello: string | null; note: string | null }
 interface Cert {
@@ -15,7 +16,7 @@ interface Cert {
   alunni?: { nome?: string; cognome?: string } | { nome?: string; cognome?: string }[] | null
   certificato_competenza_livelli?: Livello[]
 }
-interface Sezione { id: string; name: string; school_type: string }
+interface Sezione { id: string; name: string; school_type: string; scuola_id?: string | null }
 
 const one = <T,>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? v[0] ?? null : v ?? null)
 
@@ -34,6 +35,9 @@ const LEVEL_DOT: Record<string, string> = {
 export function CompetenzePanel({ userId }: { userId: string }) {
   const t = useTranslations('adminStudents')
   const hdr = useCallback(() => ({ 'Content-Type': 'application/json', 'x-user-id': userId }), [userId])
+  // Sedi accessibili: servono a ETICHETTARE le quinte omonime e a ricaricare
+  // l'elenco quando la selezione delle sedi cambia (`reFetchKey`).
+  const { sedi, reFetchKey } = useSediAttive()
   const [sezioni, setSezioni] = useState<Sezione[]>([])
   const [sezioniLoaded, setSezioniLoaded] = useState(false)
   const [sectionId, setSectionId] = useState('')
@@ -44,7 +48,10 @@ export function CompetenzePanel({ userId }: { userId: string }) {
   const [msg, setMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`/api/admin/sections?userId=${userId}`, { headers: hdr() })
+    // `x-sedi` = chiave di re-fetch al cambio delle sedi attive (il server scopa
+    // dal cookie): senza questa dipendenza la tendina restava quella della sede
+    // di prima anche dopo aver cambiato plesso nel selettore.
+    fetch(`/api/admin/sections?userId=${userId}`, { headers: { ...hdr(), 'x-sedi': reFetchKey } })
       .then((r) => r.json())
       .then((d) => {
         const arr: Sezione[] = Array.isArray(d) ? d : d.data ?? []
@@ -52,7 +59,7 @@ export function CompetenzePanel({ userId }: { userId: string }) {
       })
       .catch(() => { /* no-op */ })
       .finally(() => setSezioniLoaded(true))
-  }, [userId, hdr])
+  }, [userId, hdr, reFetchKey])
 
   const loadCerts = useCallback(async (sec: string) => {
     if (!sec) return
@@ -138,6 +145,15 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     else setMsg(d.error ?? t('compPdfNonDisp'))
   }
 
+  // «5 A» esiste in ogni plesso: con più sedi accessibili il solo nome produce
+  // voci indistinguibili, e si firma il certificato di un bambino di un'altra
+  // scuola. Con una sola sede il suffisso sarebbe rumore, quindi non si mette.
+  const etichettaSezione = (s: Sezione) => {
+    if (sedi.length <= 1) return s.name
+    const nomeSede = sedi.find((x) => x.id === s.scuola_id)?.nome
+    return nomeSede ? `${s.name} — ${nomeSede}` : s.name
+  }
+
   const statoTone = (s: string) => (s === 'firmato' ? 'success' : s === 'generato' ? 'info' : 'read') as 'success' | 'info' | 'read'
   const selected = certs.find((c) => c.id === selectedId) ?? null
   const nomeOf = (c: Cert) => { const a = one(c.alunni); return `${a?.cognome ?? ''} ${a?.nome ?? ''}`.trim() || t('compAlunnoFallback') }
@@ -164,7 +180,7 @@ export function CompetenzePanel({ userId }: { userId: string }) {
         <div className="flex flex-wrap items-center gap-3">
           <select value={sectionId} onChange={(e) => selectSection(e.target.value)} className="h-9 rounded-xl border border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink">
             <option value="">{t('compSelezionaClasse')}</option>
-            {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {sezioni.map((s) => <option key={s.id} value={s.id}>{etichettaSezione(s)}</option>)}
           </select>
           <button onClick={seed} disabled={!sectionId || busy === 'seed'} className="h-9 rounded-pill bg-kidville-green px-4 font-barlow text-xs font-black uppercase text-kidville-yellow disabled:opacity-50">
             {busy === 'seed' ? t('compCreazione') : t('compCreaBozze')}

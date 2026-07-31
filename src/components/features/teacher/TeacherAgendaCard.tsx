@@ -48,10 +48,22 @@ const inputCls =
 
 export function TeacherAgendaCard({
   sezione,
+  sectionId = null,
   userId,
   gruppo = 'sezione',
 }: {
+  /** Nome della classe: serve alle etichette, non più a identificarla. */
   sezione: string;
+  /**
+   * Identità della sezione (`sections.id`). È ciò che viaggia al server.
+   *
+   * ⚠️ Fino al 2026-07-31 partiva solo il NOME, e `/api/agenda` lo risolveva con
+   * un `LIMIT 1` senza `ORDER BY`: con «2 ANNI» presente ad Aversa e a Cesa
+   * l'evento — e la notifica alle famiglie — finiva in un plesso scelto dal
+   * pianificatore di query. Oggi la route è fail-closed (400 sull'omonimo):
+   * senza `section_id` la creazione si fermerebbe.
+   */
+  sectionId?: string | null;
   userId: string | null;
   /** Lessico per grado: "sezione" (0-6) o "classe" (primaria). */
   gruppo?: 'sezione' | 'classe';
@@ -70,15 +82,21 @@ export function TeacherAgendaCard({
 
   const load = useCallback(async () => {
     try {
+      // `section_id` quando c'è: la lettura ha lo stesso perimetro della
+      // scrittura, quindi non si crea un evento che poi non si rivede (o si
+      // rivede quello dell'omonima di un'altra sede).
+      const filtro = sectionId
+        ? `section_id=${encodeURIComponent(sectionId)}`
+        : `sezione=${encodeURIComponent(sezione)}`;
       const res = await fetch(
-        `/api/agenda?sezione=${encodeURIComponent(sezione)}${userId ? `&userId=${userId}` : ''}`
+        `/api/agenda?${filtro}${userId ? `&userId=${userId}` : ''}`
       ).catch(() => null);
       const j = res?.ok ? await res.json().catch(() => null) : null;
       if (Array.isArray(j?.data)) setEventi(j.data.slice(0, 6));
     } finally {
       setLoading(false);
     }
-  }, [sezione, userId]);
+  }, [sezione, sectionId, userId]);
 
   useEffect(() => {
     if (!sezione || !userId) return;
@@ -104,7 +122,9 @@ export function TeacherAgendaCard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sezione,
+          // Identità se c'è, nome solo come ripiego: il server non deve mai
+          // scegliere fra due classi omonime al posto del docente.
+          ...(sectionId ? { section_id: sectionId } : { sezione }),
           titolo: titolo.trim(),
           data: dataEvento,
           tipo,
@@ -115,7 +135,12 @@ export function TeacherAgendaCard({
         setTitolo('');
         await load();
       } else {
-        setErrore(t('agendaErroreSalvataggio'));
+        // Il motivo del rifiuto viene dal server (es. «Specificare la sede»):
+        // una scrittura muta è una scrittura persa. Il titolo NON si azzera,
+        // così l'evento si può ancora salvare dopo aver corretto.
+        const j = res ? await res.json().catch(() => null) : null;
+        const messaggio = typeof j?.error === 'string' && j.error.trim() !== '' ? j.error : null;
+        setErrore(messaggio ?? t('agendaErroreSalvataggio'));
       }
     } finally {
       setSaving(false);

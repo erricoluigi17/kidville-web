@@ -1,31 +1,78 @@
 import { useState, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Send, Upload, Link } from 'lucide-react';
+import { X, Send, Upload, Link, AlertTriangle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
+/**
+ * Una classe destinataria, con la sua IDENTITÀ e la sua sede.
+ *
+ * Fino al 2026-07-31 qui passava `string[]`: i soli NOMI, deduplicati su tutte
+ * le sedi attive. Con tre plessi «2 ANNI» esiste ad Aversa e a Cesa, e il nome
+ * nudo non identifica più niente — né per la chiave di React, né per il server,
+ * che dalla sede risolta cerca quella classe e non la trova (W2-B). `scuolaId`
+ * è opzionale perché una sorgente può ancora non conoscerlo (`educator-sections`
+ * restituisce i soli nomi finché W3-A non le dà l'identità): in quel caso la
+ * sede non si dichiara e la risolve il server — che, se resta ambigua, risponde
+ * 400, e adesso quel 400 si VEDE.
+ */
+export interface ClasseAvviso {
+    id: string;
+    nome: string;
+    scuolaId?: string | null;
+    scuolaNome?: string | null;
+}
+
+/** Il corpo consegnato al chiamante: `scuola_id` è parte del contratto, non un extra. */
+export interface DatiAvviso {
+    titolo: string;
+    contenuto: string;
+    tipo: string;
+    target_scope: string;
+    target_classes: string[];
+    scadenza: string | null;
+    attachment_url: string | null;
+    /** Sede su cui si pubblica; `null` quando il chiamante non la conosce. */
+    scuola_id: string | null;
+}
+
+/**
+ * Esito dell'invio, visto dal modulo.
+ *
+ * Il piano di correzione lo chiamava `Promise<boolean>`; qui l'esito porta con
+ * sé anche il MESSAGGIO, e non è un vezzo: questo modale copre l'intera pagina,
+ * quindi un errore mostrato dalla pagina sotto non lo leggerebbe nessuno.
+ * `ok: false` ha esattamente la semantica del `false` del piano — niente reset,
+ * niente chiusura.
+ */
+export interface EsitoInvioAvviso {
+    ok: boolean;
+    errore?: string;
+}
+
 interface Props {
     open: boolean;
     onClose: () => void;
-    onSubmit: (data: {
-        titolo: string;
-        contenuto: string;
-        tipo: string;
-        target_scope: string;
-        target_classes: string[];
-        scadenza: string | null;
-        attachment_url: string | null;
-    }) => void;
-    availableClasses?: string[];
+    onSubmit: (data: DatiAvviso) => Promise<EsitoInvioAvviso>;
+    availableClasses?: ClasseAvviso[];
     initialAvviso?: Avviso | null;
     // Modalità docente (educator): niente destinatario «🌐 Tutti», scope forzato
     // a 'classe' e classi selezionabili solo tra le proprie (availableClasses),
     // preselezionate. Chiude il footgun lato UI (il gate server resta la difesa).
     // Le pagine admin NON passano questa prop → comportamento invariato.
     soloClassiProprie?: boolean;
+}
+
+/** Sedi distinte presenti fra le classi disponibili, nell'ordine in cui compaiono. */
+function sediDi(classi: ClasseAvviso[]): { id: string; nome: string }[] {
+    const viste = new Map<string, string>();
+    for (const c of classi) {
+        if (c.scuolaId && !viste.has(c.scuolaId)) viste.set(c.scuolaId, c.scuolaNome || '');
+    }
+    return [...viste].map(([id, nome]) => ({ id, nome }));
 }
 
 export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], initialAvviso = null, soloClassiProprie = false }: Props) {
@@ -41,7 +88,29 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     const [fileUploading, setFileUploading] = useState(false);
     const [fileName, setFileName] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    // Il messaggio del server quando rifiuta. Prima non esisteva: il modale si
+    // chiudeva lo stesso e l'operatore restava convinto di aver pubblicato.
+    const [errore, setErrore] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // ── Sede di pubblicazione ────────────────────────────────────────────────
+    // In MODIFICA la sede non si tocca: l'avviso è già archiviato in un plesso e
+    // la PUT non la cambia. In creazione: una sola sede ⇒ implicita (ma sempre
+    // DICHIARATA nel payload); più d'una ⇒ la si sceglie, senza preselezione —
+    // «la prima della lista» è esattamente il ripiego che ha archiviato a
+    // Giugliano gli avvisi di Aversa.
+    const sedi = sediDi(availableClasses);
+    const inModifica = Boolean(initialAvviso);
+    const sedeUnica = sedi.length === 1 ? sedi[0].id : '';
+    const chiedeSede = !inModifica && sedi.length > 1;
+    const [scuolaId, setScuolaId] = useState('');
+    const sedeScelta = chiedeSede ? scuolaId : sedeUnica;
+
+    // Classi mostrate: in creazione multi-sede solo quelle della sede scelta
+    // (finché non la si sceglie, nessuna); altrimenti tutte quelle ricevute.
+    const classiVisibili = chiedeSede
+        ? availableClasses.filter((c) => c.scuolaId === scuolaId)
+        : availableClasses;
 
     // Gestione precompilazione in caso di modifica
     // (adjust-state-during-render, prior art: TaskForm.tsx)
@@ -51,6 +120,10 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         setPrevOpen(open);
         setPrevAvviso(initialAvviso);
         if (open) {
+            // Un errore del tentativo precedente non deve sopravvivere alla
+            // riapertura del modulo: accuserebbe l'operatore di un guasto vecchio.
+            setErrore('');
+            setScuolaId('');
             if (initialAvviso) {
                 setTitolo(initialAvviso.titolo);
                 setContenuto(initialAvviso.contenuto);
@@ -59,7 +132,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 // (era globale) preseleziona le proprie.
                 const initClasses = initialAvviso.target_classes || [];
                 setScope(soloClassiProprie ? 'classe' : (initialAvviso.target_scope as 'globale' | 'classe'));
-                setSelectedClasses(soloClassiProprie && initClasses.length === 0 ? availableClasses : initClasses);
+                setSelectedClasses(
+                    soloClassiProprie && initClasses.length === 0
+                        ? availableClasses.map((c) => c.nome)
+                        : initClasses,
+                );
                 setScadenza(initialAvviso.scadenza || '');
                 
                 // Decodifica allegato (JSON o link semplice)
@@ -88,7 +165,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setTipo('presa_visione');
                 // Docente: scope forzato a 'classe' con le proprie classi preselezionate.
                 setScope(soloClassiProprie ? 'classe' : 'globale');
-                setSelectedClasses(soloClassiProprie ? availableClasses : []);
+                setSelectedClasses(soloClassiProprie ? availableClasses.map((c) => c.nome) : []);
                 setScadenza('');
                 setAttachmentUrl('');
                 setLinkUrl('');
@@ -154,7 +231,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
     const handleSubmit = async () => {
         if (!titolo.trim() || !contenuto.trim()) return;
+        if (chiedeSede && !scuolaId) return;
         setSubmitting(true);
+        setErrore('');
 
         // Prepariamo l'attachment_url serializzato come JSON se c'è file o link
         let serializedAttachment = null;
@@ -165,15 +244,30 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             });
         }
 
-        await onSubmit({
+        const esito = await onSubmit({
             titolo: titolo.trim(), contenuto: contenuto.trim(), tipo,
             target_scope: scope, target_classes: scope === 'classe' ? selectedClasses : [],
             scadenza: scadenza || null,
             attachment_url: serializedAttachment,
+            // La sede si DICHIARA. `null` solo quando davvero non la si conosce:
+            // in quel caso decide il server, e se resta ambigua risponde 400.
+            scuola_id: sedeScelta || null,
         });
         setSubmitting(false);
+
+        // ⚠️ IL PUNTO DI QUESTO FIX. Prima qui si azzerava tutto e si chiamava
+        // `onClose()` senza guardare niente: un 400 «Specificare la sede» o un
+        // 403 chiudeva il modale e cancellava il testo appena scritto, e
+        // l'operatore usciva convinto di aver pubblicato. Su un rifiuto NON si
+        // tocca nulla: il modulo resta aperto, com'era, con l'errore in testa.
+        if (!esito?.ok) {
+            setErrore(esito?.errore || t('formErroreInvio'));
+            return;
+        }
+
         setTitolo(''); setContenuto(''); setTipo('presa_visione');
         setScope('globale'); setSelectedClasses([]); setScadenza(''); setAttachmentUrl(''); setLinkUrl(''); setFileName('');
+        setScuolaId('');
         onClose();
     };
 
@@ -197,6 +291,39 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                             </button>
                         </div>
                         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
+                            {errore && (
+                                <div role="alert" className="flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
+                                    <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+                                    <span>{errore}</span>
+                                </div>
+                            )}
+                            {chiedeSede && (
+                                <div>
+                                    <label htmlFor="avviso-sede" className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                                        {t('formLabelSedePubblicazione')}
+                                    </label>
+                                    <select
+                                        id="avviso-sede"
+                                        value={scuolaId}
+                                        onChange={e => {
+                                            // Cambiare sede AZZERA le classi: tenerle
+                                            // significherebbe spedire al server i nomi di
+                                            // classi di un altro plesso — che è come è nato
+                                            // il difetto (400 sicuro, o peggio un'omonima).
+                                            setScuolaId(e.target.value);
+                                            setSelectedClasses([]);
+                                            setErrore('');
+                                        }}
+                                        className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all"
+                                    >
+                                        <option value="">{t('formSedeScegli')}</option>
+                                        {sedi.map(s => (
+                                            <option key={s.id} value={s.id}>{s.nome}</option>
+                                        ))}
+                                    </select>
+                                    <p className="font-maven text-xs text-kidville-muted mt-1.5">{t('formNotaSedePubblicazione')}</p>
+                                </div>
+                            )}
                             <div>
                                 <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
                                 <input value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
@@ -229,9 +356,20 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                 </div>
                             )}
                             {scope === 'classe' && (
+                                // `key={c.id}`, non `key={c.nome}`: da quando le sedi sono
+                                // tre lo stesso nome esiste in due plessi, e con la chiave
+                                // sul nome React rendeva UNA pillola per due classi diverse.
+                                // L'etichetta porta la sede quando le sedi sono più d'una
+                                // e non c'è già un selettore a dirla (caso «modifica»).
                                 <div className="flex flex-wrap gap-1.5 p-2 bg-kidville-cream rounded-2xl border border-kidville-line">
-                                    {availableClasses.map(c => (
-                                        <button key={c} onClick={() => toggleClass(c)} className={`px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${selectedClasses.includes(c) ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}>{c}</button>
+                                    {classiVisibili.map(c => (
+                                        <button
+                                            key={c.id}
+                                            onClick={() => toggleClass(c.nome)}
+                                            className={`px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${selectedClasses.includes(c.nome) ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}
+                                        >
+                                            {!chiedeSede && sedi.length > 1 && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome}
+                                        </button>
                                     ))}
                                 </div>
                             )}
@@ -287,7 +425,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                             </div>
                         </div>
                         <div className="px-6 py-4 border-t border-kidville-line bg-white">
-                            <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim() || (scope === 'classe' && selectedClasses.length === 0)}
+                            <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim() || (chiedeSede && !scuolaId) || (scope === 'classe' && selectedClasses.length === 0)}
                                 className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
                                 {submitting ? (
                                     <>

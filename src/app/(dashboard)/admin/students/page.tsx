@@ -59,7 +59,7 @@ function AdminStudentsInner() {
   const [isAssigning, setIsAssigning] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
-  const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string}[]>([]);
+  const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string, scuola_id?: string | null}[]>([]);
   // P5.4 (DL-050): gruppi mensa per la bulk assign
   const [mensaGroups, setMensaGroups] = useState<{ id: string; nome: string }[]>([]);
   const [targetMensa, setTargetMensa] = useState('');
@@ -71,6 +71,21 @@ function AdminStudentsInner() {
     fetch('/api/admin/sections', { headers: hdr }).then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
     fetch('/api/admin/gruppi-mensa', { headers: hdr }).then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
   }, [reFetchKey]);
+
+  // NOMI di classe univoci fra le sedi attive.
+  //
+  // Sia il filtro qui sotto sia la barra di assegnazione massiva lavorano sul
+  // NOME (`s.classe_sezione === filterClass`; PATCH `{ classe_sezione }`), non
+  // sull'identità della sezione. Dal 2026-07-29 lo stesso nome esiste in più
+  // plessi: elencare le sezioni una per una produceva tre voci «3 ANNI»
+  // identiche e con lo stesso valore — tre modi di dire la stessa cosa, offerti
+  // come se fossero scelte diverse. Un nome = una voce; a decidere in quale sede
+  // quel nome sia lecito è il server, per OGNI alunno selezionato
+  // (`classeEsisteInOgniSede`, admin/students:PATCH).
+  const nomiClasse = useMemo(
+    () => [...new Set(availableSections.map((s) => s.name))].sort((a, b) => a.localeCompare(b, 'it')),
+    [availableSections],
+  );
 
   // Toast stabile (setter di stato = identità stabile): definito prima delle fetch
   // così `fetchStaff` può usarlo nelle dipendenze senza ricrearsi a ogni render.
@@ -375,8 +390,8 @@ function AdminStudentsInner() {
                 className="flex-1 md:w-40 border-2 border-kidville-line rounded-input px-3 py-2 font-maven text-sm text-kidville-ink/70 bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
               >
                 <option value="all">{t('filtroTutteClassi')}</option>
-                {availableSections.map(s => (
-                  <option key={s.id} value={s.name}>{s.name}</option>
+                {nomiClasse.map(nome => (
+                  <option key={nome} value={nome}>{nome}</option>
                 ))}
                 <option value="">{t('filtroNonAssegnata')}</option>
               </select>
@@ -428,7 +443,7 @@ function AdminStudentsInner() {
           {viewType !== 'staff' && (
             <BulkAssignBar
               selectedCount={selectedIds.size}
-              availableClasses={availableSections.map(s => s.name)}
+              availableClasses={nomiClasse}
               targetClass={targetClass}
               onTargetClassChange={setTargetClass}
               onAssign={handleBulkAssign}

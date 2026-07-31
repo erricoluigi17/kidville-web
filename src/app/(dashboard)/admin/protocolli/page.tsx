@@ -25,6 +25,7 @@ import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { DateField } from '@/components/ui/DateField';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 
 // Traduttore next-intl passato agli helper fuori dai componenti (stesso pattern
@@ -691,6 +692,9 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
   const [tipoDoc, setTipoDoc] = useState('frequenza');
   const [alunni, setAlunni] = useState<Alunno[]>([]);
   const [caricoAlunni, setCaricoAlunni] = useState(true);
+  // «Lista vuota» e «lista non arrivata» sono due cose diverse, e prima erano
+  // la stessa: il `catch` era muto e la lettura era comunque sempre vuota.
+  const [alunniNonCaricati, setAlunniNonCaricati] = useState(false);
   const [ricerca, setRicerca] = useState('');
   const [alunnoId, setAlunnoId] = useState('');
   const [titolo, setTitolo] = useState('');
@@ -701,14 +705,33 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
 
   useEffect(() => {
     (async () => {
+      let lista: Alunno[] = [];
+      let fallita = false;
       try {
         const r = await fetch(`/api/admin/students?limit=1000${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`);
-        const j = await r.json().catch(() => ({}));
-        const lista = (j.data ?? j.students ?? []) as Alunno[];
-        setAlunni(Array.isArray(lista) ? lista : []);
-      } catch {
-        setAlunni([]);
+        if (!r.ok) {
+          // Prima non c'era: un 403 di sede o un 500 producevano lo stesso
+          // schermo di «non ci sono alunni», e nessuno poteva accorgersene.
+          fallita = true;
+          logClient({ livello: 'error', evento: 'fetch', messaggio: 'protocolli-alunni-non-caricati', route: '/admin/protocolli', stato: r.status });
+        } else {
+          const j: unknown = await r.json();
+          // `GET /api/admin/students` risponde con un ARRAY NUDO (`withRoute`
+          // non incapsula niente): il vecchio `j.data ?? j.students ?? []`
+          // valeva `[]` SEMPRE, e la tendina non si è mai popolata. Si accetta
+          // anche la forma incapsulata, per non legarsi a un dettaglio della
+          // route che domani potrebbe cambiare.
+          lista = Array.isArray(j)
+            ? (j as Alunno[])
+            : (((j as { data?: unknown } | null)?.data ?? []) as Alunno[]);
+          if (!Array.isArray(lista)) lista = [];
+        }
+      } catch (err) {
+        fallita = true;
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `protocolli-alunni-non-caricati: ${nomeErrore(err)}`, route: '/admin/protocolli' });
       } finally {
+        setAlunni(lista);
+        setAlunniNonCaricati(fallita);
         setCaricoAlunni(false);
       }
     })();
@@ -790,7 +813,11 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
                       </button>
                     </li>
                   ))}
-                  {filtrati.length === 0 && <li className="px-3 py-2 font-maven text-sm text-kidville-muted">{t('protNessunAlunno')}</li>}
+                  {filtrati.length === 0 && (
+                    <li className={cx('px-3 py-2 font-maven text-sm', alunniNonCaricati ? 'text-kidville-error' : 'text-kidville-muted')}>
+                      {alunniNonCaricati ? t('protAlunniNonCaricati') : t('protNessunAlunno')}
+                    </li>
+                  )}
                 </ul>
               </>
             )}

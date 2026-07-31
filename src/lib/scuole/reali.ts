@@ -73,6 +73,38 @@ export function isUtenteCollaudo(
   return tutte.every((id) => isScuolaE2E(sede(id)))
 }
 
+/**
+ * Il nome di una sede, letto da `schools`. `null` se la sede non è indicata,
+ * non esiste o la lettura non riesce.
+ *
+ * Serve a chi deve NOMINARE la sede in un testo che esce dall'applicazione —
+ * l'email delle credenziali, per prima. Il nome non si deduce da altro: con tre
+ * plessi, una frase che dice la sede sbagliata è peggio di una che non la dice.
+ *
+ * Il livello del log è `info` e non `error` di proposito: il chiamante ha già
+ * un piano B che funziona (la frase generica), quindi non è un incidente — ma
+ * un ramo che non si vede è un ramo che non si corregge, e PostgREST non lancia:
+ * senza controllare `{ error }` questo sarebbe un catch muto.
+ */
+export async function nomeSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+  operazione: string,
+): Promise<string | null> {
+  if (!scuolaId) return null
+  const { data, error } = await supabase
+    .from('schools')
+    .select('nome')
+    .eq('id', scuolaId)
+    .maybeSingle()
+  if (error) {
+    logEvento('multi_sede', 'info', { operazione, esito: 'nome-sede-non-letto' }, error)
+    return null
+  }
+  const nome = (data as { nome?: string | null } | null)?.nome ?? null
+  return nome && nome.trim() !== '' ? nome : null
+}
+
 export interface EsitoSedi {
   /** `schools` grezza: E2E incluse, flag `attiva` NON applicato. Serve solo a
    *  validare uno `scuola_id` arrivato esplicitamente dal link. */

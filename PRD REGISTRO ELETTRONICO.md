@@ -2683,6 +2683,45 @@ report cucina).
 > Resta il fatto che **la password vecchia è nella storia git**: è morta perché ruotata, non
 > perché cancellata.
 
+**Account TEST sulle altre sedi (dal 2026-07-31) — `scripts/seed-test-sedi.mjs`.** I 41 account
+qui sopra vivono tutti a **Giugliano**. Con tre plessi in produzione questo rende l'isolamento fra
+sedi **non collaudabile**: non esiste un «utente di Aversa» a cui chiedere se vede Cesa, ed è uno
+dei motivi per cui l'audit del 2026-07-31 ha trovato 140 rilievi col gate formale verde. Lo script
+`scripts/seed-test-sedi.mjs` crea — in modo **idempotente**, risolvendo le sedi **per nome** e mai
+per uuid — il minimo necessario alla prova incrociata:
+
+| Sede | Account | Ruolo |
+|---|---|---|
+| Kidville Aversa | `test.aversa.segreteria@kidville.test` | `segreteria` |
+| Kidville Aversa | `test.aversa.docente@kidville.test` | `educator` (sezione «TEST Infanzia» di Aversa) |
+| Kidville Aversa | `test.aversa.genitore@kidville.test` | `genitore` di *Alunno1 Test Aversa* |
+| Kidville Cesa | `test.cesa.segreteria@kidville.test` | `segreteria` |
+| Kidville Cesa | `test.cesa.docente@kidville.test` | `educator` (sezione «TEST Infanzia» di Cesa) |
+| Kidville Cesa | `test.cesa.genitore@kidville.test` | `genitore` di *Alunno1 Test Cesa* |
+
+Con gli account nasce, **in ogni sede, una sezione omonima «TEST Infanzia»** — lo stesso nome della
+sezione TEST di Giugliano. È deliberato: il nome-classe scambiato per identità è la famiglia di
+difetti F3 dell'audit, e senza tre classi omonime in tre plessi non si può dimostrare né che è
+chiusa né che si riapre.
+
+Due vincoli che valgono più delle righe create. **(1)** Nessun account di collaudo viene agganciato
+a una sede col ponte `utenti_scuole`: la sua sede è una sola, `utenti.scuola_id`. È esattamente il
+difetto chiuso il 2026-07-31 — il provisioning di Aversa e Cesa aveva collegato lì
+`admin.e2e@kidville.test`, cioè una Direzione, su due plessi veri. **(2)** La password arriva da
+`KV_TEST_PASSWORD` e lo script **fallisce subito se manca**: nessun default, nessun valore in un
+file. Lo script gira in **dry-run** per default (`node scripts/seed-test-sedi.mjs`) e scrive solo
+con `--apply`; la sua logica è collaudata da `__tests__/lib/seed-test-sedi.test.ts` sul finto
+client Supabase (21 casi, fra cui «non scrive mai `utenti_scuole`» e «non tocca le righe dell'altra
+sede»).
+
+**Come si rimuovono.** Nell'ordine, per ciascuna sede (`<slug>` = `aversa`/`cesa`), dopo aver
+cancellato le eventuali righe prodotte dal collaudo (presenze, diario, pagamenti, avvisi):
+`legame_genitori_alunni` → `student_parents` → `parents` (per `auth_user_id`) → `alunni` (per
+`scuola_id` + cognome «Test <Sede>») → `utenti_sezioni` → `utenti` (`email LIKE 'test.<slug>.%'`) →
+`sections` (`scuola_id` + `name = 'TEST Infanzia'`) → infine i sei account in **Supabase Auth**
+(`auth.admin.deleteUser`, o dalla dashboard). Nessuna di queste righe è referenziata da dati reali:
+sono nate isolate e restano isolate.
+
 **Nota di regressione nota (aggiornata 2026-07-13):** in `parents` la colonna `citizenship` conserva in
 realtà il *ruolo* (`mother`/`father`/`educator`…) come workaround storico; la cittadinanza reale digitata
 viene sovrascritta. La tab Staff dell'anagrafica **non dipende più** da questo workaround (ora legge da

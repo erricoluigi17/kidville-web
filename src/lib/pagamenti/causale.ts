@@ -54,7 +54,10 @@ export const PLACEHOLDER_CAUSALE: { chiave: string; label: string; esempio: stri
     { chiave: 'nome', label: 'Nome', esempio: 'Mario' },
     { chiave: 'cognome', label: 'Cognome', esempio: 'Rossi' },
     { chiave: 'codice_fiscale', label: 'Codice fiscale', esempio: 'RSSMRA85T10A562S' },
-    { chiave: 'sede', label: 'Sede', esempio: 'GIUGLIANO' },
+    // Segnaposto, non un plesso: l'esempio finisce nel tooltip del chip, e dal
+    // 2026-07-29 le sedi sono tre — «GIUGLIANO» qui suggeriva il plesso sbagliato
+    // a chi ne sta configurando un altro (R13).
+    { chiave: 'sede', label: 'Sede', esempio: '<SEDE>' },
     { chiave: 'mese', label: 'Mese di competenza', esempio: 'settembre' },
     { chiave: 'anno', label: 'Anno', esempio: '2026' },
     { chiave: 'importo', label: 'Importo', esempio: '€ 150,00' },

@@ -6,7 +6,11 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
 import { isUtenteCollaudo } from '@/lib/scuole/reali'
 import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
-import { defaultAdminSettingsRow } from '@/lib/scuole/admin-settings-default'
+import {
+  checklistSede,
+  provisionaCorredoFallback,
+  verificaCorredoSede,
+} from '@/lib/scuole/corredo-sede'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -271,43 +275,16 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
         }
         return NextResponse.json({ error: scuoleErr.message }, { status: 500 })
       }
-      // ── admin_settings: il registro elettronico della sede nuova ────────────
-      // Stesso inserimento che fa la RPC `provisiona_sede`
-      // (20260729120000_provisiona_sede_admin_settings.sql), qui replicato per il
-      // ramo senza RPC. NON è un accessorio: senza questa riga `loadGradoContext`
-      // legge `matrice = {}` e `requireFunzione` risponde 403 su TUTTE le funzioni
-      // docente della sede (require-grado.ts:36-44 e :64-86) — una sede che nasce
-      // col registro spento, in silenzio.
-      const { error: settingsErr } = await supabase.from('admin_settings').insert(defaultAdminSettingsRow(newId))
-      if (settingsErr) {
-        if (SCHEMA_ASSENTE.has(settingsErr.code ?? '')) {
-          // DB E2E non migrato: `admin_settings` (o una sua colonna) non c'è. È
-          // ignorabile — lì nessuno apre il registro — ma va detto, non taciuto.
-          logEvento(
-            'multi_sede',
-            'info',
-            { operazione: 'admin/schools:POST', esito: 'admin-settings-non-disponibile', sede_id: newId },
-            settingsErr,
-          )
-        } else {
-          // Configurazione mancante = `error` (AGENTS.md §4): la sede esiste ma i
-          // suoi docenti prenderanno 403 finché qualcuno non crea la riga da
-          // Impostazioni. NON si risponde 500: la sede è già in schools+scuole e
-          // un retry del client ne creerebbe una SECONDA.
-          logEvento(
-            'multi_sede',
-            'error',
-            { operazione: 'admin/schools:POST', esito: 'admin-settings-fallito', sede_id: newId },
-            settingsErr,
-          )
-        }
-      } else {
-        logEvento('multi_sede', 'info', {
-          operazione: 'admin/schools:POST',
-          esito: 'admin-settings-creato',
-          sede_id: newId,
-        })
-      }
+      // ── Il corredo minimo della sede nuova ─────────────────────────────────
+      // Stesse scritture che fa la RPC `provisiona_corredo_sede`
+      // (20260731170000_provisiona_sede_v2.sql), qui replicate per il ramo senza
+      // RPC: `admin_settings` (senza cui `loadGradoContext` legge `matrice = {}`
+      // e `requireFunzione` risponde 403 su TUTTE le funzioni docente della sede
+      // — require-grado.ts:36-44 e :64-86), la scala dei giudizi e il titolario
+      // dei protocolli. Un guasto qui NON diventa un 500: la sede è già in
+      // schools+scuole e un retry del client ne creerebbe una SECONDA. Si logga
+      // (AGENTS.md §4) e la checklist della risposta dice che cosa manca.
+      await provisionaCorredoFallback(supabase, newId, 'admin/schools:POST')
 
       // Collega gli admin (best-effort: la sede esiste comunque).
       for (const aid of adminIds) {
@@ -322,14 +299,25 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
       via = 'fallback'
     }
 
-    // Evento amministrativo critico → logga il SUCCESSO (uuid + conteggio admin
-    // collegati; MAI nomi: l'uuid è auto-descrittivo, il conteggio è un numero).
+    // ── Che cosa manca ancora, e dove si compila ─────────────────────────────
+    // Il corredo si RILEGGE dal database invece di darlo per fatto: sul ramo
+    // RPC il chiamante conosce solo l'uuid restituito, e quali pezzi contenga
+    // quella funzione lo decide la versione deployata. Una sede che «sembra
+    // pronta» è il difetto da cui veniamo (R123): Aversa e Cesa sono nate senza
+    // scala dei giudizi, senza titolario e — Cesa — senza una sola disciplina,
+    // e nessun punto dell'applicazione lo diceva.
+    const fatti = await verificaCorredoSede(supabase, sedeId, 'admin/schools:POST')
+    const checklist = checklistSede(fatti)
+
+    // Evento amministrativo critico → logga il SUCCESSO (uuid + conteggi; MAI
+    // nomi: l'uuid è auto-descrittivo, i conteggi sono numeri).
     logEvento('multi_sede', 'info', {
       operazione: 'admin/schools:POST',
       esito: via,
       sede_id: sedeId,
       admin_collegati: adminIds.length,
       admin_esclusi: scelta.esclusi,
+      corredo_da_fare: checklist.filter((v) => v.stato === 'da_fare').length,
     })
 
     const data = {
@@ -338,6 +326,7 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
       citta: scuola.citta,
       indirizzo: scuola.indirizzo,
       attiva: true,
+      checklist,
     }
 
     await logScrittura(supabase, {

@@ -3,12 +3,13 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations, useLocale } from 'next-intl';
-import { Bell, ClipboardList, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bell, ClipboardList, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
 import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
-import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
+import { AvvisoForm, type ClasseAvviso, type DatiAvviso, type EsitoInvioAvviso } from '@/components/features/avvisi/AvvisoForm';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
 // Bacheca avvisi nel cockpit: lista full-width; il dettaglio/monitoraggio apre
 // a tutta area su /admin/avvisi/[id] (niente più drawer laterale mobile).
@@ -26,10 +27,22 @@ function AdminAvvisiInner() {
     const [showForm, setShowForm] = useState(false);
     const [editingAvviso, setEditingAvviso] = useState<Avviso | null>(null);
     const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
+    // Errore dell'ultima operazione sulla LISTA (eliminazione): il modale ha il
+    // suo, ma un DELETE respinto avviene fuori dal modale e prima non lo diceva
+    // nessuno — la riga restava a schermo e sembrava un ritardo di caricamento.
+    const [erroreLista, setErroreLista] = useState('');
 
-    // Classi disponibili dai plessi consentiti (niente hardcode).
-    const availableClasses = useMemo(
-        () => [...new Set(scuole.flatMap(g => g.sezioni.map(s => s.name)))],
+    // Classi disponibili dai plessi consentiti, CON la loro sede.
+    //
+    // Fino al 2026-07-31 qui c'era `[...new Set(sezioni.map(s => s.name))]`: i
+    // soli nomi, deduplicati su tutte le sedi. Con tre plessi «2 ANNI» esiste ad
+    // Aversa e a Cesa, quindi quel Set trasformava due classi diverse in una
+    // pillola sola, e la sede non arrivava mai al server. `/api/admin/sections/scoped`
+    // raggruppa già per sede: si smette di appiattire ciò che il server distingue.
+    const availableClasses = useMemo<ClasseAvviso[]>(
+        () => scuole.flatMap(g =>
+            g.sezioni.map(s => ({ id: s.id, nome: s.name, scuolaId: g.scuolaId, scuolaNome: g.scuolaNome })),
+        ),
         [scuole]
     );
 
@@ -55,31 +68,43 @@ function AdminAvvisiInner() {
         return () => { active = false; };
     }, [userId]);
 
-    const handleCreateOrUpdate = async (data: {
-        titolo: string; contenuto: string; tipo: string;
-        target_scope: string; target_classes: string[]; scadenza: string | null;
-        attachment_url: string | null;
-    }) => {
-        if (!userId) return;
+    // Ritorna l'ESITO al modulo. Prima era `=> void` e il modulo si chiudeva
+    // comunque: un 400 «Specificare la sede» cancellava il testo appena scritto
+    // e usciva senza dire niente. Ora un rifiuto lascia il modulo aperto, col
+    // messaggio del server, e finisce anche nei log del client (lo `stato` è
+    // l'unica cosa che distingue «sede ambigua» da «non sei autorizzato»).
+    const handleCreateOrUpdate = async (data: DatiAvviso): Promise<EsitoInvioAvviso> => {
+        if (!userId) return { ok: false, errore: t('avvisiErroreOperazione') };
         try {
-            if (editingAvviso) {
-                const res = await fetch(`/api/avvisi/${editingAvviso.id}?userId=${userId}`, {
+            // In MODIFICA la sede non si cambia: la PUT non tocca `scuola_id`,
+            // e mandarlo lascerebbe credere il contrario a chi legge il codice.
+            const { scuola_id, ...comuni } = data;
+            const res = editingAvviso
+                ? await fetch(`/api/avvisi/${editingAvviso.id}?userId=${userId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                    body: JSON.stringify(data),
-                });
-                if (res.ok) {
-                    await loadAvvisi();
-                    setEditingAvviso(null);
-                }
-            } else {
-                const res = await fetch(`/api/avvisi?userId=${userId}`, {
+                    body: JSON.stringify(comuni),
+                })
+                : await fetch(`/api/avvisi?userId=${userId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                    body: JSON.stringify({ author_id: userId, ...data }),
+                    body: JSON.stringify({ author_id: userId, ...comuni, scuola_id }),
                 });
-                if (res.ok) await loadAvvisi();
+
+            if (!res.ok) {
+                const errore = await messaggioErrore(res, t('avvisiErroreOperazione'));
+                logClient({
+                    livello: 'error',
+                    evento: 'fetch',
+                    messaggio: editingAvviso ? 'avviso-modifica-respinta' : 'avviso-pubblicazione-respinta',
+                    route: '/admin/avvisi',
+                    stato: res.status,
+                });
+                return { ok: false, errore };
             }
+            await loadAvvisi();
+            if (editingAvviso) setEditingAvviso(null);
+            return { ok: true };
         } catch (err) {
             logClient({
                 livello: 'error',
@@ -87,19 +112,33 @@ function AdminAvvisiInner() {
                 messaggio: `avviso-salvataggio-fallito: ${nomeErrore(err)}`,
                 route: '/admin/avvisi',
             });
+            return { ok: false, errore: t('avvisiErroreOperazione') };
         }
     };
 
     const handleDelete = async (avvisoId: string) => {
         if (!userId) return;
         if (!window.confirm(t('avvisiConfermaElimina'))) return;
+        setErroreLista('');
         try {
             const res = await fetch(`/api/avvisi/${avvisoId}?userId=${userId}`, {
                 method: 'DELETE',
                 headers: { 'x-user-id': userId },
             });
-            if (res.ok) await loadAvvisi();
+            if (!res.ok) {
+                setErroreLista(await messaggioErrore(res, t('avvisiErroreOperazione')));
+                logClient({
+                    livello: 'error',
+                    evento: 'fetch',
+                    messaggio: 'avviso-eliminazione-respinta',
+                    route: '/admin/avvisi',
+                    stato: res.status,
+                });
+                return;
+            }
+            await loadAvvisi();
         } catch (err) {
+            setErroreLista(t('avvisiErroreOperazione'));
             logClient({
                 livello: 'error',
                 evento: 'fetch',
@@ -131,6 +170,13 @@ function AdminAvvisiInner() {
                     </button>
                 }
             />
+
+            {erroreLista && (
+                <div role="alert" className="mb-4 flex items-start gap-2 rounded-card bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+                    <span>{erroreLista}</span>
+                </div>
+            )}
 
             <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:max-w-[560px]">
                 <StatCard icon={Bell} label={t('avvisiStatPubblicati')} value={loading ? '…' : avvisi.length} />

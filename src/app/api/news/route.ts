@@ -56,13 +56,19 @@ export const GET = withRoute('news:GET', async (request: NextRequest) => {
     const supabase = await createAdminClient()
     const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
+    // Scope vuoto ⇒ si NEGA. Qui c'era `else query.is('scuola_id', null)`: col
+    // cookie `sedi_attive` puntato a una sede non (più) accessibile la risposta
+    // non era «niente» ma «tutti i post globali». Il ramo globale è voluto, ma
+    // vale DENTRO il filtro di sede, non come ripiego quando il filtro manca:
+    // «vale per tutte le sedi» presuppone che una sede ce l'abbia, chi legge.
+    // Il motivo è già a log (`resolveScuoleAttive` → warn `sedi-attive-non-accessibili`).
+    if (sedi.length === 0) {
+      return NextResponse.json({ disponibile: true, posts: [] })
+    }
+
     let query = supabase.from('news_posts').select('*').order('created_at', { ascending: false })
     // Isolamento di sede: le proprie sedi + i post globali (scuola_id NULL, riservati ad admin).
-    if (sedi.length > 0) {
-      query = query.or(`scuola_id.in.(${sedi.join(',')}),scuola_id.is.null`)
-    } else {
-      query = query.is('scuola_id', null)
-    }
+    query = query.or(`scuola_id.in.(${sedi.join(',')}),scuola_id.is.null`)
     if (q.data.stato) query = query.eq('stato', q.data.stato)
     if (q.data.tipo) query = query.eq('tipo', q.data.tipo)
     if (q.data.categoria_id) query = query.eq('categoria_id', q.data.categoria_id)

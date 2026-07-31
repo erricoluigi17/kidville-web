@@ -14,9 +14,9 @@ interface NoteConfig {
     notifica_admin_su_creazione: boolean;
 }
 
-export function NoteSettings({ userId }: { userId: string }) {
+export function NoteSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<NoteConfig | null>(null);
     const [nuova, setNuova] = useState('');
     const [msg, setMsg] = useState('');

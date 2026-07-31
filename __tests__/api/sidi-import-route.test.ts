@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 import JSZip from 'jszip'
 
+// `batchId` è validato come uuid (la colonna a DB lo è): un id fantasia come
+// 'b1' oggi si ferma alla validazione, prima di arrivare al DB.
+const BATCH_ID = 'ba7c0000-0000-4000-8000-000000000001'
+
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   applySidiBatch: vi.fn(),
   inserted: null as Record<string, unknown> | null,
+  batch: null as Record<string, unknown> | null,
 }))
 vi.mock('@/lib/auth/require-staff', async (orig) => ({ ...(await orig() as object), requireStaff: h.requireStaff }))
 vi.mock('@/lib/sidi/import-apply', () => ({ applySidiBatch: h.applySidiBatch }))
@@ -15,8 +20,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = () => q
+      q.in = () => q
       q.order = () => q
       q.limit = () => q
+      q.maybeSingle = async () => ({ data: h.batch, error: null })
       q.insert = (row: Record<string, unknown>) => { h.inserted = row; return { select: () => ({ single: async () => ({ data: { id: 'batch-1' }, error: null }) }) } }
       q.then = (r: (v: { data: unknown; error: null }) => unknown) => r({ data: [], error: null })
       return q
@@ -50,6 +57,9 @@ async function fileStub(): Promise<{ name: string; arrayBuffer: () => Promise<Ar
 beforeEach(() => {
   vi.clearAllMocks()
   h.inserted = null
+  // Il batch è nella sede dell'operatore: lo scope è verificato in
+  // `sidi-scope-sede.test.ts`, qui interessa il percorso felice.
+  h.batch = { id: BATCH_ID, scuola_id: 'sc1' }
   h.requireStaff.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: 'sc1' } })
   h.applySidiBatch.mockResolvedValue({ matched: 1, creati: 0, aggiornati: 0, warnings: [] })
 })
@@ -74,16 +84,16 @@ describe('POST /api/admin/sidi/import — upload + parse', () => {
 describe('PATCH /api/admin/sidi/import — apply', () => {
   it('403 per la segreteria (apply riservato alla dirigenza)', async () => {
     h.requireStaff.mockResolvedValue(denied())
-    const res = await PATCH(new Request('http://localhost/api/admin/sidi/import', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batchId: 'b1' }) }) as never)
+    const res = await PATCH(new Request('http://localhost/api/admin/sidi/import', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batchId: BATCH_ID }) }) as never)
     expect(res.status).toBe(403)
   })
 
   it('applica il batch e ritorna i conteggi', async () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'admin', scuola_id: 'sc1' } })
-    const res = await PATCH(new Request('http://localhost/api/admin/sidi/import', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batchId: 'b1' }) }) as never)
+    const res = await PATCH(new Request('http://localhost/api/admin/sidi/import', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batchId: BATCH_ID }) }) as never)
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.matched).toBe(1)
-    expect(h.applySidiBatch).toHaveBeenCalledWith(expect.anything(), 'b1', expect.objectContaining({ id: 'dir1' }))
+    expect(h.applySidiBatch).toHaveBeenCalledWith(expect.anything(), BATCH_ID, expect.objectContaining({ id: 'dir1' }))
   })
 })

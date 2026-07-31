@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { requireEnv } from '@/lib/security/require-env';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
+import { nomeSede } from '@/lib/scuole/reali';
 import { ensureParentIdentity, firstEmail, randomPassword } from '@/lib/auth/parent-identity';
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -78,6 +79,11 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   let email: string | null = null;
   let nome: string | null = null;
   let identitaCreata = false;
+  // La sede a cui appartiene il destinatario: finisce nel corpo dell'email e
+  // nel PDF delle credenziali. Con tre plessi «Kidville» non identifica più
+  // niente, e un genitore che riceve le credenziali del plesso sbagliato non ha
+  // modo di accorgersene.
+  let sedeId: string | null = null;
 
   if (targetKind === 'parent') {
     const { data } = await admin
@@ -120,6 +126,8 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
     authId = identita.authUserId;
     identitaCreata = identita.createdAuth || identita.createdUtenti || identita.boundNow;
+    // Risolta dai FIGLI dentro `ensureParentIdentity`, non da chi preme il bottone.
+    sedeId = identita.scuolaId;
 
     // Il genitore ha (finalmente) un account: allinea al runtime i legami che
     // vivono solo in `student_parents`. È il momento in cui gli 11 `parents`
@@ -145,11 +153,12 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
   } else {
     // staff: utenti.id È l'auth.users id (FK utenti_id_fkey)
-    const { data } = await admin.from('utenti').select('id, email, nome').eq('id', targetId).maybeSingle();
+    const { data } = await admin.from('utenti').select('id, email, nome, scuola_id').eq('id', targetId).maybeSingle();
     if (!data) return NextResponse.json({ error: 'Utente staff non trovato' }, { status: 404 });
     authId = (data as { id: string }).id;
     email = firstEmail((data as { email: string | null }).email);
     nome = (data as { nome: string | null }).nome;
+    sedeId = (data as { scuola_id: string | null }).scuola_id ?? null;
   }
 
   if (!email) {
@@ -162,10 +171,11 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const sedeNome = await nomeSede(admin, sedeId, 'admin/regenerate-credentials:POST');
   const invio = await sendEmailDetailed({
     to: email,
     subject: 'Le tue credenziali Kidville',
-    text: credentialsEmailBody(nome, email, password),
+    text: credentialsEmailBody(nome, email, password, sedeNome),
   });
   const emailed = invio.ok;
 
@@ -175,7 +185,7 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   try {
     const loginUrl = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/auth/login` : '/auth/login';
     const pdf = buildCredentialsPdf({
-      schoolName: 'Kidville',
+      schoolName: sedeNome ?? 'Kidville',
       nome,
       ruolo: targetKind === 'parent' ? 'Genitore' : 'Staff',
       email,

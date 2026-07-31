@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
@@ -23,6 +24,10 @@ const getQuerySchema = z.object({
     data: zDataYMD.optional(),
     // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
     sezione: z.string().default(''),
+    // La sede scelta nel cockpit (W3-A). Il nome-classe da solo non identifica
+    // più una classe: «2 ANNI» esiste ad Aversa E a Cesa, e senza questo l'appello
+    // usciva UNITO fra le due, senza dirlo.
+    scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
 });
 
 const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const;
@@ -68,7 +73,14 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         // pur avendo lo stesso buco. Educator → solo le sue sezioni.
         const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, { soloSezioniAssegnate: true });
         if (scopeErr) return scopeErr;
-        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+        const attive = await resolveScuoleAttive(request, supabase, auth.user);
+        // Sede dichiarata dal client ⇒ una sola sede. Dichiararne una non
+        // accessibile è un 403 loggato, mai un elenco allargato.
+        const sede = restringiASedeRichiesta(attive, q.data.scuola_id, {
+            azione: 'attendance/daily:GET', utente: auth.user.id, ruolo: auth.user.role,
+        });
+        if (sede.response) return sede.response;
+        const plessi = sede.plessi ?? [];
 
         const { data: rows, error } = await supabase
             .from('presenze')

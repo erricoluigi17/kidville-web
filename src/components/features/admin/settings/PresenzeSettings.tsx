@@ -16,9 +16,9 @@ interface PresenzeConfig {
     uscite_anticipate_richiedono_delega: boolean;
 }
 
-export function PresenzeSettings({ userId }: { userId: string }) {
+export function PresenzeSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<PresenzeConfig | null>(null);
     const [msg, setMsg] = useState('');
 

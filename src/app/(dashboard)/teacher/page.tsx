@@ -31,6 +31,21 @@ const SHORTCUTS = [
 ] as const;
 
 type MeData = { gradi: string[]; funzioni: Record<string, Record<string, boolean>> };
+/**
+ * Una sezione è un'IDENTITÀ, non un nome (R106, audit multi-sede 2026-07-31).
+ * Con tre plessi «2 ANNI» esiste ad Aversa E a Cesa: finché la chip era la
+ * stringa, le due omonime avevano la stessa `key` React, si accendevano
+ * insieme, e le letture a valle — presenze del giorno e `diary/students`, che
+ * restituisce le NOTE MEDICHE dei bambini — partivano con un nome che valeva
+ * per due sedi.
+ */
+type SezioneChip = {
+  id: string;
+  name: string;
+  scuolaId: string;
+  scuolaNome: string;
+  school_type: string | null;
+};
 type Student = { id: string; nome: string; cognome: string; note_mediche: string | null; consenso_privacy: boolean };
 type Avviso = {
   id: string; titolo: string; contenuto: string; tipo: string;
@@ -68,8 +83,8 @@ function TeacherDashboardInner() {
 
   const [me, setMe] = useState<MeData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sections, setSections] = useState<string[]>([]);
-  const [activeSection, setActiveSection] = useState<string>('');
+  const [sections, setSections] = useState<SezioneChip[]>([]);
+  const [activeSectionId, setActiveSectionId] = useState<string>('');
   const [students, setStudents] = useState<Student[]>([]);
   const [presenze, setPresenze] = useState<Presenza[]>([]);
   const [avvisi, setAvvisi] = useState<Avviso[]>([]);
@@ -93,9 +108,14 @@ function TeacherDashboardInner() {
       .then((r) => r.json())
       .then((d) => {
         if (!active) return;
-        const names: string[] = d?.sectionNames ?? [];
-        setSections(names);
-        setActiveSection((cur) => cur || names[0] || '');
+        // `sections` (identità) e non più `sectionNames`: la chip deve poter
+        // dire QUALE «2 ANNI» è, e la richiesta a valle deve poter dichiarare
+        // la sede. Righe senza `id` scartate: senza identità non si clicca.
+        const lista: SezioneChip[] = Array.isArray(d?.sections)
+          ? (d.sections as SezioneChip[]).filter((s) => s?.id && s?.name)
+          : [];
+        setSections(lista);
+        setActiveSectionId((cur) => cur || lista[0]?.id || '');
       })
       .catch(() => {});
     const avvisiReq = fetch(`/api/avvisi?userId=${userId}`)
@@ -106,16 +126,36 @@ function TeacherDashboardInner() {
     return () => { active = false; };
   }, [userId]);
 
+  // Sezione attiva risolta per ID: `sections` e `activeSectionId` cambiano
+  // insieme, quindi il riferimento resta stabile fra i render (dipendenza
+  // dell'effect qui sotto).
+  const activeSection = useMemo(
+    () => sections.find((s) => s.id === activeSectionId) ?? null,
+    [sections, activeSectionId],
+  );
+  const nomeSezione = activeSection?.name ?? '';
+  // Con più sedi in elenco l'etichetta deve dire QUALE: due «2 ANNI» nude sono
+  // indistinguibili. Con una sola sede il suffisso sarebbe solo rumore.
+  const piuSedi = useMemo(
+    () => new Set(sections.map((s) => s.scuolaId).filter(Boolean)).size > 1,
+    [sections],
+  );
+
   // dati della sezione attiva: presenze di oggi + alunni (per allergie/conteggio).
   const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []); // YYYY-MM-DD locale
   useEffect(() => {
     if (!activeSection || !userId) return;
     let active = true;
-    fetch(`/api/attendance/daily?data=${today}&sezione=${encodeURIComponent(activeSection)}&userId=${userId}`)
+    // La sede viaggia SEMPRE insieme al nome: le due route filtrano per
+    // `classe_sezione`, e senza `scuola_id` l'omonimia porterebbe dentro i
+    // bambini (e le note mediche) dell'altro plesso.
+    const sede = activeSection.scuolaId ? `&scuola_id=${activeSection.scuolaId}` : '';
+    const classe = encodeURIComponent(activeSection.name);
+    fetch(`/api/attendance/daily?data=${today}&sezione=${classe}&userId=${userId}${sede}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setPresenze(d); })
       .catch(() => {});
-    fetch(`/api/diary/students?sezione=${encodeURIComponent(activeSection)}&userId=${userId}`)
+    fetch(`/api/diary/students?sezione=${classe}&userId=${userId}${sede}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setStudents(d); })
       .catch(() => {});
@@ -154,8 +194,8 @@ function TeacherDashboardInner() {
       {/* ── HERO (DR yellow card) — wordmark/campanella nella AppBar ───── */}
       <HeroCard
         title={`${greeting}${greeting ? '!' : ''}`}
-        subtitle={activeSection
-          ? t(isPrimariaOnly ? 'heroSottotitoloClasse' : 'heroSottotitoloSezione', { sezione: activeSection, count: studentCount })
+        subtitle={nomeSezione
+          ? t(isPrimariaOnly ? 'heroSottotitoloClasse' : 'heroSottotitoloSezione', { sezione: nomeSezione, count: studentCount })
           : t(isPrimariaOnly ? 'heroVuotoClasse' : 'heroVuotoSezione')}
       />
 
@@ -168,11 +208,17 @@ function TeacherDashboardInner() {
       {sections.length > 1 && (
         <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
           {sections.map((s) => {
-            const on = s === activeSection;
+            const on = s.id === activeSectionId;
+            const conSede = piuSedi && Boolean(s.scuolaNome);
             return (
               <button
-                key={s}
-                onClick={() => setActiveSection(s)}
+                key={s.id}
+                onClick={() => setActiveSectionId(s.id)}
+                aria-pressed={on}
+                // Il nome da solo non identifica più la classe: l'etichetta
+                // accessibile porta anche la sede, altrimenti due chip omonime
+                // sono indistinguibili per chi usa uno screen reader.
+                aria-label={conSede ? `${s.name} — ${s.scuolaNome}` : s.name}
                 className={`flex shrink-0 items-center gap-2 rounded-pill py-1.5 pl-1.5 pr-3.5 transition ${
                   on ? 'bg-white shadow-[inset_0_0_0_1.5px_var(--color-kidville-green)]' : 'shadow-[inset_0_0_0_1.5px_rgba(0,106,95,.18)]'
                 }`}
@@ -180,7 +226,12 @@ function TeacherDashboardInner() {
                 <span className={`flex h-7 w-7 items-center justify-center rounded-full ${on ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream-dark text-kidville-green'}`}>
                   <Users size={15} />
                 </span>
-                <span className={`font-barlow text-sm font-extrabold uppercase ${on ? 'text-kidville-green' : 'text-kidville-muted'}`}>{s}</span>
+                <span className="flex min-w-0 flex-col items-start">
+                  <span className={`font-barlow text-sm font-extrabold uppercase leading-none ${on ? 'text-kidville-green' : 'text-kidville-muted'}`}>{s.name}</span>
+                  {conSede && (
+                    <span className="mt-0.5 max-w-[9rem] truncate font-maven text-[10px] leading-none text-kidville-muted">{s.scuolaNome}</span>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -264,7 +315,7 @@ function TeacherDashboardInner() {
               <div className="min-w-0 flex-1">
                 <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
                 <div className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">
-                  {t(isPrimariaOnly ? 'allergieDaSeguireClasse' : 'allergieDaSeguireSezione', { count: allergie.length, sezione: activeSection })}
+                  {t(isPrimariaOnly ? 'allergieDaSeguireClasse' : 'allergieDaSeguireSezione', { count: allergie.length, sezione: nomeSezione })}
                 </div>
               </div>
             </div>
@@ -366,7 +417,12 @@ function TeacherDashboardInner() {
           <Eyebrow>{t('agendaEyebrow')}</Eyebrow>
           <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t(isPrimariaOnly ? 'agendaTitoloClasse' : 'agendaTitoloSezione')}</h2>
         </div>
-        <TeacherAgendaCard sezione={activeSection} userId={userId} gruppo={nounGruppo} />
+        <TeacherAgendaCard
+          sezione={nomeSezione}
+          sectionId={activeSection?.id ?? null}
+          userId={userId}
+          gruppo={nounGruppo}
+        />
       </section>
 
       {/* footer */}

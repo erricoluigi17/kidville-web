@@ -38,6 +38,11 @@ const postBodySchema = z.object({
     tag_students: z.array(z.string()).nullish(),
     is_broadcast: z.boolean().nullish(),
     target_classes: z.array(z.string()).nullish(),
+    // Sede (tenant) di pubblicazione. Facoltativa nello schema perché chi ha un
+    // solo plesso non ha niente da scegliere: è `resolveScuolaScrittura` a
+    // renderla obbligatoria — e a rispondere 400 — quando i plessi sono più
+    // d'uno e nessuno è indicato né selezionato nel SedeSelector.
+    scuola_id: zUuid.nullish(),
 });
 
 const deleteQuerySchema = z.object({
@@ -308,6 +313,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             tag_students,
             is_broadcast,
             target_classes,
+            scuola_id,
         } = b.data;
 
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
@@ -347,13 +353,20 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             );
         }
 
-        // Sede (tenant) del media = sede di scrittura dell'uploader (rispetta il
-        // SedeSelector per gli admin multi-plesso). Se il resolver è ambiguo o
-        // nega (admin senza sede attiva) NON blocchiamo la pubblicazione: fallback
-        // alla sede primaria dell'utente. Fix D3: senza scuola_id la galleria non
-        // era isolabile per sede.
-        const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user);
-        const scuolaId = sw.scuolaId ?? auth.user.scuola_id ?? null;
+        // Sede (tenant) del media: DICHIARATA dal client (`scuola_id`), oppure
+        // dedotta dal SedeSelector / dall'unico plesso dell'utente.
+        //
+        // ⚠️ Qui c'era `sw.scuolaId ?? auth.user.scuola_id ?? null`, cioè la
+        // risposta del resolver veniva IGNORATA: `sw.response` non era nemmeno
+        // guardata. Per l'admin multi-plesso il 400 «specificare la sede» non
+        // arrivava mai — arrivava una foto archiviata nella sua sede PRIMARIA,
+        // qualunque plesso avesse in mente. E la sede sbagliata non resta sulla
+        // riga: comanda anche i destinatari della notifica qui sotto, cioè
+        // annuncia le foto ai genitori dell'altro plesso e non a quelli giusti.
+        // Chi ha un solo plesso non cambia comportamento.
+        const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, scuola_id ?? undefined);
+        if (sw.response) return sw.response;
+        const scuolaId = sw.scuolaId as string;
 
         const baseRecord: Record<string, unknown> = {
             uploaded_by,
@@ -396,6 +409,9 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         logEvento('galleria', 'info', {
             operazione: 'gallery:POST',
             esito: 'pubblicata',
+            // La sede è un uuid (passa la redazione) e senza di essa il log non
+            // direbbe DOVE è finita la foto: con tre plessi è metà del fatto.
+            sede_id: scuolaId,
             nTag: (tag_students ?? []).length,
             broadcast: is_broadcast ?? false,
         });

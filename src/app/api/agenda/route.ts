@@ -37,7 +37,10 @@ const zOrario = z
 
 const getQuerySchema = z.object({
   alunno_id: zUuid.optional(), // obbligatorio nel ramo genitore
-  sezione: z.string().trim().min(1).optional(), // filtro staff per NOME sezione
+  // Filtro staff per IDENTITÀ di sezione: è la forma da preferire — il nome non
+  // identifica più nulla («2 ANNI» esiste ad Aversa e a Cesa).
+  section_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+  sezione: z.string().trim().min(1).optional(), // ripiego: filtro per NOME sezione
   from: zDataYMD.optional(), // default: oggi
 })
 
@@ -200,7 +203,29 @@ export const GET = withRoute('agenda:GET', async (request: NextRequest) => {
       .in('scuola_id', plessi)
       .gte('data', from)
 
-    if (q.data.sezione) {
+    // Filtro per sezione: `section_id` (identità) o, per i chiamanti vecchi, il
+    // NOME risolto in scope. In entrambi i casi la lettura si stringe anche
+    // sulla SEDE di quella sezione: gli eventi di plesso non hanno `section_id`,
+    // quindi senza questo vincolo comparivano quelli di TUTTE le sedi attive,
+    // etichettati solo «evento di plesso» e indistinguibili fra loro.
+    let sezioneFiltro: { id: string; scuola_id: string } | null = null
+    if (q.data.section_id) {
+      const scopeErr = await assertSezioneInScope(supabase, user, q.data.section_id)
+      if (scopeErr) return scopeErr
+      const { data: sez, error: errSez } = await supabase
+        .from('sections')
+        .select('id, scuola_id')
+        .eq('id', q.data.section_id)
+        .maybeSingle()
+      if (errSez) {
+        logEvento('agenda', 'error', {
+          operazione: 'agenda:GET', esito: 'sezione-non-risolta',
+        }, errSez)
+        return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+      }
+      if (!sez) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
+      sezioneFiltro = { id: sez.id as string, scuola_id: sez.scuola_id as string }
+    } else if (q.data.sezione) {
       const esito = await sezionePerNomeInScope(request, supabase, user, q.data.sezione)
       if ('response' in esito) return esito.response
       const { sezione } = esito
@@ -210,7 +235,13 @@ export const GET = withRoute('agenda:GET', async (request: NextRequest) => {
           return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
         }
       }
-      query = query.or(`section_id.is.null,section_id.eq.${sezione.id}`)
+      sezioneFiltro = sezione
+    }
+
+    if (sezioneFiltro) {
+      query = query
+        .eq('scuola_id', sezioneFiltro.scuola_id)
+        .or(`section_id.is.null,section_id.eq.${sezioneFiltro.id}`)
     } else if (user.role === 'educator') {
       // Educator senza filtro: plesso + SOLO le proprie sezioni.
       const mie = await sezioniDiUtente(supabase, user.id)

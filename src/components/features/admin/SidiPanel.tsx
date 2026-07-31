@@ -26,7 +26,19 @@ function statoColor(s: string): string {
   return 'bg-kidville-line text-kidville-muted'
 }
 
-export function SidiPanel({ userId }: { userId: string }) {
+/**
+ * Pannello SIDI (anagrafe ministeriale).
+ *
+ * `scuolaId` NON è opzionale, ed è il punto. Dal 2026-07-31 le route SIDI
+ * rifiutano con 400 le operazioni di chi ha più plessi e non dice su quale sta
+ * lavorando: qui la sede arriva dal `SedeRequired` della pagina (una sola,
+ * scelta nel selettore) e accompagna TUTTE e cinque le chiamate — stato,
+ * upload, applica, e i tre flussi in trasmissione. Prima nessuna la portava, e
+ * il server ripiegava in silenzio sulla sede primaria dell'operatore: si
+ * importava l'anagrafe di un plesso dentro un altro senza un errore, senza un
+ * log, e senza modo di accorgersene se non confrontando i dati.
+ */
+export function SidiPanel({ userId, scuolaId }: { userId: string; scuolaId: string }) {
   const t = useTranslations('adminSettings')
   const statoLabel = (s: string): string => {
     if (s === 'non_inviato') return t('siStatoNonInviato')
@@ -43,19 +55,24 @@ export function SidiPanel({ userId }: { userId: string }) {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'gated' | 'err'; text: string } | null>(null)
   const [sidiGated, setSidiGated] = useState(false)
 
+  // `sede` è la query comune a tutte le chiamate: la sede si dichiara sempre.
+  const sede = `&scuola_id=${encodeURIComponent(scuolaId)}`
+
   const loadSync = useCallback(async () => {
-    const d = await fetch(`/api/admin/sidi/sync-state?userId=${userId}`, { headers: hdr() })
+    const d = await fetch(`/api/admin/sidi/sync-state?userId=${userId}&scuola_id=${encodeURIComponent(scuolaId)}`, { headers: hdr() })
       .then((r) => r.json())
       .catch(() => null)
     if (d?.success) setSync(d.data)
-  }, [userId, hdr])
+  }, [userId, scuolaId, hdr])
 
+  // `scuolaId` fra le dipendenze: cambiando sede nel selettore, lo stato
+  // mostrato dev'essere quello della sede nuova, non quello rimasto a schermo.
   useEffect(() => {
-    fetch(`/api/admin/sidi/sync-state?userId=${userId}`, { headers: hdr() })
+    fetch(`/api/admin/sidi/sync-state?userId=${userId}&scuola_id=${encodeURIComponent(scuolaId)}`, { headers: hdr() })
       .then((r) => r.json())
       .then((d) => { if (d.success) setSync(d.data) })
       .catch(() => { /* no-op */ })
-  }, [userId, hdr])
+  }, [userId, scuolaId, hdr])
 
   // Gating SIDI visibile (M2.4): badge quando l'integrazione non è configurata.
   useEffect(() => {
@@ -71,6 +88,9 @@ export function SidiPanel({ userId }: { userId: string }) {
     try {
       const fd = new FormData()
       fd.append('file', file)
+      // La sede in cui l'anagrafe ministeriale verrà riversata: campo del form,
+      // perché qui il body è il multipart.
+      fd.append('scuola_id', scuolaId)
       const r = await fetch(`/api/admin/sidi/import?userId=${userId}`, { method: 'POST', headers: hdr(false), body: fd })
       const d = await r.json()
       if (!r.ok) { setMsg({ kind: 'err', text: d.error ?? t('siUploadFallito') }); return }
@@ -93,7 +113,7 @@ export function SidiPanel({ userId }: { userId: string }) {
   async function transmit(flusso: 'fase-a' | 'frequentanti' | 'piattaforma-unica') {
     setBusy(flusso); setMsg(null)
     try {
-      const r = await fetch(`/api/admin/sidi/${flusso}?userId=${userId}`, { method: 'POST', headers: hdr(), body: '{}' })
+      const r = await fetch(`/api/admin/sidi/${flusso}?userId=${userId}${sede}`, { method: 'POST', headers: hdr(), body: '{}' })
       const d = await r.json()
       if (r.status === 503) setMsg({ kind: 'gated', text: d.messaggio ?? d.error ?? t('siGatedDefault') })
       else if (!r.ok) setMsg({ kind: 'err', text: d.error ?? t('siErroreTrasmissione') })

@@ -4,6 +4,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
+import { nomeSede } from '@/lib/scuole/reali';
 import { logEvento } from '@/lib/logging/logger';
 
 // =============================================================================
@@ -215,10 +216,15 @@ export async function linkOrCreateParent(
       let emailed: boolean | null = null;
       let emailError: string | null = null;
       if (identita.createdAuth && identita.password) {
+        // Il nome della sede nel corpo: con tre plessi «Kidville» non dice a
+        // quale scuola sia stato iscritto il figlio, e il genitore non ha modo
+        // di accorgersi di un plesso sbagliato. La sede è quella che
+        // `ensureParentIdentity` ha risolto dai FIGLI, non quella di chi salva.
+        const sedeNome = await nomeSede(supabase, identita.scuolaId, 'anagrafiche/parents:credenziali');
         const invio = await sendEmailDetailed({
           to: identita.email,
           subject: 'Le tue credenziali di accesso — Kidville',
-          text: credentialsEmailBody(identityInput.first_name, identita.email, identita.password),
+          text: credentialsEmailBody(identityInput.first_name, identita.email, identita.password, sedeNome),
         });
         emailed = invio.ok;
         emailError = invio.error;

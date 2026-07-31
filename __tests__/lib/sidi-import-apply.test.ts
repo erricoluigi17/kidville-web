@@ -10,7 +10,10 @@ import type { AppUser } from '@/lib/auth/require-staff'
 
 interface Opts {
   alunniByNumero?: Record<string, { id: string }>
-  alunniByCF?: Record<string, { id: string }>
+  // `scuola_id` è NOT NULL a DB: il finto record deve averlo, altrimenti il
+  // controllo «questo CF è di un'altra sede?» lavorerebbe su un dato che nella
+  // realtà non esiste.
+  alunniByCF?: Record<string, { id: string; scuola_id: string }>
   parentsByCF?: Record<string, { id: string }>
 }
 function makeSupabase(opts: Opts) {
@@ -64,13 +67,28 @@ describe('applySidiRecords', () => {
     expect(captures.inserts.filter((i) => i.table === 'alunni')).toHaveLength(0)
   })
 
-  it('fallback su CF: stampa numero_domanda_sidi sull alunno esistente', async () => {
-    const { client, captures } = makeSupabase({ alunniByCF: { CFAL1: { id: 'al-cf' } } })
+  it('fallback su CF: stampa numero_domanda_sidi sull alunno esistente DELLA SEDE', async () => {
+    const { client, captures } = makeSupabase({ alunniByCF: { CFAL1: { id: 'al-cf', scuola_id: 'sc1' } } })
     const res = await applySidiRecords(client, [rec()], 'sc1', attore)
     expect(res.aggiornati).toBe(1)
     const upd = captures.updates.find((u) => u.table === 'alunni')
     expect(upd?.payload.numero_domanda_sidi).toBe('123')
     expect(captures.inserts.filter((i) => i.table === 'alunni')).toHaveLength(0)
+  })
+
+  it('CF di un bambino di un ALTRA sede: non lo timbra, non lo duplica, lo segnala', async () => {
+    // Il CF è unico su tutte le sedi (vincolo voluto): riusare il record
+    // significherebbe fondere due anagrafi reali. Il caso vero è un
+    // trasferimento fra plessi, che è una decisione umana.
+    const { client, captures } = makeSupabase({ alunniByCF: { CFAL1: { id: 'al-altrove', scuola_id: 'sc2' } } })
+    const res = await applySidiRecords(client, [rec()], 'sc1', attore)
+
+    expect(res.aggiornati).toBe(0)
+    expect(res.creati).toBe(0)
+    expect(res.warnings.join(' ')).toMatch(/altra sede/i)
+    expect(captures.updates.filter((u) => u.table === 'alunni')).toHaveLength(0)
+    expect(captures.inserts.filter((i) => i.table === 'alunni')).toHaveLength(0)
+    expect(captures.upserts.filter((u) => u.table === 'student_parents')).toHaveLength(0)
   })
 
   it('nessun match: crea il nuovo alunno con numero_domanda_sidi', async () => {

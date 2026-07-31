@@ -17,9 +17,9 @@ interface DiarioConfig {
     diario_primaria_visibile: boolean;
 }
 
-export function DiarioSettings({ userId }: { userId: string }) {
+export function DiarioSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<DiarioConfig | null>(null);
     const [msg, setMsg] = useState('');
 

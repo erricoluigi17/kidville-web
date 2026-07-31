@@ -14,9 +14,9 @@ interface ArmadiettoConfig {
     categorie_extra: string[];
 }
 
-export function ArmadiettoSettings({ userId }: { userId: string }) {
+export function ArmadiettoSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<ArmadiettoConfig | null>(null);
     const [nuova, setNuova] = useState('');
     const [msg, setMsg] = useState('');

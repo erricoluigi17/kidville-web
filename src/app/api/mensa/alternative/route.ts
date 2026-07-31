@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireKitchenRead } from '@/lib/auth/require-staff'
@@ -23,11 +24,16 @@ const postBodySchema = z.object({
   data: zDataYMD,
   richiesta: z.string().trim().min(1, 'La richiesta non può essere vuota').max(500),
   origine: z.enum(['segreteria', 'genitore']).optional().default('segreteria'),
+  // Sede della scrittura, come già fa la GET. Facoltativa nello schema: chi ha
+  // un solo plesso non ha nulla da scegliere, chi ne ha più d'uno riceve 400 da
+  // `resolveScuolaScrittura` finché non la dichiara.
+  scuola_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
 })
 
 const deleteQuerySchema = z.object({
   alunno_id: zUuid,
   data: zDataYMD,
+  scuola_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
 })
 
 // La tabella `mensa_alternative` può non esistere in alcuni ambienti (DB E2E CI
@@ -37,6 +43,51 @@ function tabellaMancante(error: { code?: string; message?: string } | null): boo
   if (!error) return false
   if (error.code === '42P01' || error.code === 'PGRST205' || error.code === 'PGRST204') return true
   return /does not exist|schema cache|could not find/i.test(error.message ?? '')
+}
+
+/**
+ * La sede della scrittura deve essere QUELLA DELL'ALUNNO.
+ *
+ * `mensa_alternative.scuola_id` non è un'etichetta: è il filtro con cui la
+ * cucina legge le richieste del giorno (GET, `.eq('scuola_id', …)`). Una riga
+ * archiviata in un plesso mentre il bambino sta in un altro sparisce
+ * dall'elenco di chi gli cucina e compare in quello di chi non lo conosce —
+ * cioè un'allergia che non si vede. Con un plesso solo il caso non esisteva;
+ * con tre, `assertAlunnoInScope` ammette per l'admin gli alunni di TUTTE le sue
+ * sedi, mentre `resolveScuolaScrittura` ne sceglie UNA: le due possono
+ * legittimamente non coincidere, e allora si rifiuta invece di scrivere.
+ *
+ * Ritorna la NextResponse d'errore, oppure `null` se le sedi concordano.
+ */
+async function sedeDiscordeDallAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  scuolaId: string,
+  operazione: string,
+): Promise<NextResponse | null> {
+  // PostgREST non lancia: si controlla `{ error }`.
+  const { data, error } = await supabase
+    .from('alunni')
+    .select('scuola_id')
+    .eq('id', alunnoId)
+    .maybeSingle()
+  if (error) {
+    logErrore({ operazione, stato: 500 }, error)
+    return NextResponse.json({ error: 'Verifica della sede non riuscita' }, { status: 500 })
+  }
+  const sedeAlunno = (data?.scuola_id as string | null | undefined) ?? null
+  if (sedeAlunno !== scuolaId) {
+    // `warn` → persistito: una scrittura rifiutata deve lasciare traccia del
+    // perché. Solo uuid e ruoli: nessun nome, nessuna richiesta alimentare.
+    logEvento('mensa', 'warn', {
+      operazione,
+      esito: 'sede-discorde-dall-alunno',
+      alunno: alunnoId,
+      sede_id: scuolaId,
+    })
+    return NextResponse.json({ error: 'La sede indicata non è quella dell\'alunno' }, { status: 400 })
+  }
+  return null
 }
 
 interface AlternativaRow {
@@ -165,9 +216,14 @@ export const POST = withRoute('mensa/alternative:POST', async (request: NextRequ
     const scope = await assertAlunnoInScope(supabase, user, alunno_id)
     if (scope) return scope
 
-    const sw = await resolveScuolaScrittura(request, supabase, user)
+    // La sede si DICHIARA (`scuola_id` nel body), come già nella GET. Senza, per
+    // chi ha più plessi il resolver risponde 400 nominando il parametro.
+    const sw = await resolveScuolaScrittura(request, supabase, user, body.data.scuola_id ?? undefined)
     if (sw.response) return sw.response
     const scuolaId = sw.scuolaId as string
+
+    const discorde = await sedeDiscordeDallAlunno(supabase, alunno_id, scuolaId, 'mensa/alternative:POST')
+    if (discorde) return discorde
 
     const { error } = await supabase
       .from('mensa_alternative')
@@ -213,9 +269,15 @@ export const DELETE = withRoute('mensa/alternative:DELETE', async (request: Next
     const scope = await assertAlunnoInScope(supabase, user, alunno_id)
     if (scope) return scope
 
-    const sw = await resolveScuolaScrittura(request, supabase, user)
+    // Gemella della POST: la sede si dichiara in query (`?scuola_id=`), e deve
+    // essere quella dell'alunno — altrimenti la DELETE non troverebbe la riga e
+    // risponderebbe «fatto» senza aver cancellato niente.
+    const sw = await resolveScuolaScrittura(request, supabase, user, qp.data.scuola_id ?? undefined)
     if (sw.response) return sw.response
     const scuolaId = sw.scuolaId as string
+
+    const discorde = await sedeDiscordeDallAlunno(supabase, alunno_id, scuolaId, 'mensa/alternative:DELETE')
+    if (discorde) return discorde
 
     const { error } = await supabase
       .from('mensa_alternative')

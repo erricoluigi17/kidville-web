@@ -14,12 +14,21 @@
  * la barra verde in globals.css), `kv-appbar-admin` il padding-top di safe-area
  * nativa (`.cap-native`). L'identità (userId) viaggia via ?userId= come nelle
  * altre superfici del cockpit (`useAdminIdentity`), niente lettura duplicata.
+ *
+ * DAL 2026-07-31 PORTA ANCHE LA SEDE. Con tre plessi in produzione, «in quale
+ * sede sto guardando questi dati» è la prima cosa da sapere e non era scritta da
+ * nessuna parte sotto i 1024px: il selettore esisteva solo nella topbar
+ * desktop, `hidden … lg:flex`. Qui c'è la variante `compatto` (una riga, niente
+ * contatore alunni: nessuna chiamata in più) — e con una sede sola non si monta,
+ * perché non c'è niente da scegliere. La scelta estesa, con le tre righe e la
+ * spunta, resta nel bottom-sheet «Menu».
  */
 
 import Link from 'next/link';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
+import { SedeSelector } from '@/components/ui/cockpit';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
 
 export function AdminTopBarMobile() {
@@ -38,6 +47,7 @@ export function AdminTopBarMobile() {
           style={{ height: 19, width: 'auto', display: 'block' }}
         />
       </Link>
+      <SedeSelector userId={userId} compatto />
       <AdminNotificationsPanel userId={userId} attivoSu="(max-width: 1023.98px)" />
     </header>
   );

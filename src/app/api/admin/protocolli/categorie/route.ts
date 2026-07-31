@@ -7,21 +7,19 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { SCHEMA_MANCANTE } from '@/lib/protocolli/store'
 import { rispostaErroreProtocollo } from '@/lib/protocolli/server'
+import { TITOLARIO_DEFAULT } from '@/lib/scuole/corredo-sede'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Titolario configurabile (decisione #15): categorie per scuola con seed lazy
 // dei default (le sedi nuove li ricevono alla prima apertura della pagina).
-
-const CATEGORIE_DEFAULT = [
-  'Alunni e famiglie',
-  'Personale',
-  'Amministrazione e contabilità',
-  'Enti e istituzioni',
-  'Fornitori',
-  'Sicurezza e privacy',
-  'Varie',
-]
+//
+// Dal 2026-07-31 l'elenco NON vive più qui: è `TITOLARIO_DEFAULT`
+// (src/lib/scuole/corredo-sede.ts), che è anche ciò che il provisioning di una
+// sede nuova scrive — in SQL e nel ramo di fallback. Due copie della stessa
+// lista divergono, e quale sede prende quale copia lo decide il caso. Il seed
+// lazy resta: è la rete per le sedi create prima del corredo.
+const CATEGORIE_DEFAULT = TITOLARIO_DEFAULT
 
 const zScuolaPreferita = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
 

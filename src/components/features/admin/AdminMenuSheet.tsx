@@ -20,14 +20,25 @@
  * Colori SOLO via token (`bg-kidville-*`/`text-kidville-*`) — mai hex letterali:
  * il lock `design-tokens-admin` scansiona `features/admin/**`, e le regole Alto
  * Contrasto di `.kv-admin-sheet` (globals.css) si agganciano a quelle classi.
+ *
+ * IN CIMA C'È LA SEDE (2026-07-31). `<SedeSelector/>` viveva in UN solo posto,
+ * dentro l'header desktop `hidden … lg:flex`: sotto i 1024px — telefono e app
+ * nativa Capacitor, che è una WebView a larghezza telefono — non esisteva alcun
+ * modo di scegliere la sede. Con tre plessi in produzione la Direzione ha
+ * `sedeCorrente === null`, quindi sei pagine mostravano «Seleziona una sede» e
+ * `resolveScuolaScrittura` rifiutava con 400 ogni scrittura: dal telefono il
+ * cockpit era in sola lettura, senza che nulla lo dicesse. Qui la scelta è a due
+ * tocchi. Le righe NON chiudono lo sheet: sono uno STATO, non una navigazione, e
+ * la spunta che compare è la conferma che la scelta è stata registrata.
  */
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { X, Users, ChevronRight } from 'lucide-react';
+import { X, Users, ChevronRight, Check, School } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { useSediAttive } from '@/lib/context/sede-context';
 import { NAV_GROUPS, visibleItem } from './admin-nav-config';
 
 // Elementi che possono ricevere focus dentro lo sheet — per il focus-trap.
@@ -59,11 +70,33 @@ const ROW_CLS =
 const FOOTER_BTN_CLS =
   'flex w-full items-center gap-3 min-h-[44px] px-3 py-2.5 rounded-xl font-maven text-sm font-semibold transition-colors';
 
+/**
+ * Riga di scelta della sede. `aria-pressed` (non `aria-current`): è un
+ * interruttore di stato, non la pagina in cui ti trovi — e con lo screen reader
+ * «premuto/non premuto» è l'unica lettura che descrive davvero cosa fa.
+ */
+function SedeRigaMenu({ nome, attiva, onClick }: { nome: string; attiva: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={attiva}
+      className={`${ROW_CLS} w-full text-left ${attiva ? 'bg-kidville-green-soft' : ''}`}
+    >
+      <School size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />
+      <span className="min-w-0 flex-1 truncate font-semibold">{nome}</span>
+      {attiva && <Check size={16} strokeWidth={2.4} className="shrink-0 text-kidville-green" />}
+    </button>
+  );
+}
+
 export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef }: AdminMenuSheetProps) {
   const t = useTranslations('adminNav');
   // Etichette delle voci di nav dal config condiviso (namespace `etichette`).
   // Fallback all'IT del config se la chiave manca → nessuna rottura.
   const te = useTranslations('etichette');
+  const ts = useTranslations('shared');
+  const { sedi, effettive, soloSede, tutte } = useSediAttive();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -93,6 +126,11 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
     ...g,
     items: g.items.filter((i) => visibleItem(i, ruolo) && !ESCLUSI.has(i.href)),
   })).filter((g) => g.items.length > 0);
+
+  // Il blocco sede si mostra solo a chi ha davvero una scelta da fare: con un
+  // plesso solo non c'è ambiguità e la riga sarebbe rumore.
+  const scelteDiSede = sedi.length > 1;
+  const tutteAttive = effettive.length === sedi.length;
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Escape') {
@@ -153,6 +191,28 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
             <X className="w-4 h-4" strokeWidth={2.4} />
           </button>
         </div>
+
+        {/* SEDE DI LAVORO — il selettore che sotto i 1024px non esisteva. */}
+        {scelteDiSede && (
+          <div className="mb-4 flex flex-col gap-1">
+            <p className="px-1 pb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
+              {t('menuSedeGruppo')}
+            </p>
+            <SedeRigaMenu
+              nome={ts('tutteLeSedi')}
+              attiva={tutteAttive}
+              onClick={tutte}
+            />
+            {sedi.map((s) => (
+              <SedeRigaMenu
+                key={s.id}
+                nome={s.nome}
+                attiva={!tutteAttive && effettive.includes(s.id)}
+                onClick={() => soloSede(s.id)}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Anagrafica in evidenza — la sezione di consultazione più frequente da
             telefono (decisione utente), fuori dai gruppi e ben visibile. */}

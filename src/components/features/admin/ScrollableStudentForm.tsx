@@ -28,6 +28,11 @@ const buildStudentSchema = (t: (k: string) => string) => z.object({
     comune_residenza: z.string().optional().or(z.literal('')),
     provincia_residenza: z.string().max(2).optional().or(z.literal('')),
     cap: z.string().optional().or(z.literal('')),
+    // La sede è OBBLIGATORIA e non ha default: con tre plessi, «quale scuola»
+    // è un dato dell'iscrizione, non una preferenza di interfaccia. Prima del
+    // 2026-07-31 il form ripiegava sulla prima sede accessibile e il server —
+    // che riceveva una `preferita` valida — non aveva modo di accorgersene.
+    scuola_id: z.string().min(1, t('valSedeObbligatoria')),
     classe_sezione: z.string().optional().or(z.literal('')),
     is_bes_dsa: z.boolean(),
     note_bes: z.string().optional(),
@@ -78,11 +83,26 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
         invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' }
     });
 
-    const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
-    // Sedi reali accessibili all'utente (contesto multi-sede). La sede attiva
-    // (sedeCorrente) fa da default; con >1 sedi accessibili si può scegliere.
-    const { sedi, sedeCorrente } = useSediAttive();
-    const scuolaSelezionata = formData.scuola_id || sedeCorrente || (sedi[0]?.id ?? '');
+    // Sezioni della SEDE scelta, tenute insieme alla sede per cui sono state
+    // caricate: così la tendina non mostra mai, nemmeno per un istante, le
+    // sezioni del plesso precedente mentre la nuova richiesta è in volo.
+    const [sezioniCaricate, setSezioniCaricate] = useState<{ scuolaId: string; elenco: {id: string, name: string, school_type: string}[] }>({ scuolaId: '', elenco: [] });
+    // Sedi reali accessibili all'utente (contesto multi-sede).
+    // `sedeCorrente` è la sede SCELTA nel selettore quando ne è attiva una sola
+    // (ed è l'unica sede quando l'utente ne ha una): è una dichiarazione, non un
+    // ripiego. Quando invece sono attive più sedi, `sedeCorrente` è null e qui
+    // NON si indovina: il campo resta vuoto e la validazione blocca il salvataggio.
+    const { sedi, effettive, sedeCorrente } = useSediAttive();
+    // Si offrono solo le sedi ATTIVE, non tutte le accessibili: la lista delle
+    // sezioni (`GET /api/admin/sections?scuola_id=`) è comunque intersecata con
+    // `resolveScuoleAttive`, quindi una sede deselezionata darebbe una tendina
+    // classi VUOTA — una scelta promessa e poi non mantenuta, che finisce con un
+    // bambino salvato senza sezione. Per iscrivere altrove si cambia sede nel
+    // selettore del cockpit, che è il posto dove quella decisione si prende.
+    const sediSelezionabili = sedi.filter(s => effettive.includes(s.id));
+    const scuolaSelezionata = formData.scuola_id || sedeCorrente || '';
+    // La tendina si popola solo quando l'elenco appartiene alla sede scelta.
+    const sections = sezioniCaricate.scuolaId === scuolaSelezionata ? sezioniCaricate.elenco : [];
     const [isCfAutoCalculated, setIsCfAutoCalculated] = useState(false);
     const [isCfLoading, setIsCfLoading] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -99,10 +119,29 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
     // confrontare il CF corrente senza dipendere da formData.codice_fiscale (deps invariate)
     const codiceFiscaleRef = useRef('');
 
-    // Carica sezioni all'avvio
+    // Sezioni della sede scelta. La fetch DIPENDE dalla sede: cambiarla ricarica.
+    // Senza sede non si chiede nulla — un elenco di sezioni «di tutte le sedi
+    // attive» è la trappola che assegnava a un bambino di Aversa la «3 ANNI» di
+    // Giugliano, lasciando poi `section_id` NULL in silenzio.
     useEffect(() => {
-        fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setSections(d); }).catch(() => {});
-    }, []);
+        const sede = scuolaSelezionata;
+        if (!sede) return;
+        let annullato = false;
+        const carica = async () => {
+            try {
+                const r = await fetch(`/api/admin/sections?scuola_id=${encodeURIComponent(sede)}`);
+                const d = await r.json().catch(() => null);
+                if (!annullato && Array.isArray(d)) setSezioniCaricate({ scuolaId: sede, elenco: d });
+            } catch (error) {
+                // Un catch muto qui significherebbe tendina vuota senza spiegazione:
+                // l'operatore penserebbe «questa sede non ha classi». Nessun dato
+                // nel messaggio (l'uuid della sede non è un errore, è contesto).
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `sezioni-sede-caricamento-fallito: ${nomeErrore(error)}` });
+            }
+        };
+        void carica();
+        return () => { annullato = true; };
+    }, [scuolaSelezionata]);
 
     useEffect(() => {
         const timeoutId = setTimeout(async () => {
@@ -151,6 +190,11 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                 ...prev,
                 invoice_holder_details: { ...prev.invoice_holder_details, [field]: value }
             }));
+        } else if (name === 'scuola_id') {
+            // Cambiando plesso la sezione scelta non vale più: i nomi si ripetono
+            // fra sedi, quindi tenerla sarebbe peggio che perderla (verrebbe
+            // salvata come classe di un'ALTRA scuola).
+            setFormData(prev => ({ ...prev, scuola_id: value, classe_sezione: '' }));
         } else {
             setFormData(prev => ({
                 ...prev,
@@ -173,10 +217,12 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
         validate() {
             setErrors({});
             try {
-                const parsedData = buildStudentSchema(t).parse(formData);
-                // scuola_id: sede scelta (default = sede attiva). Il server la valida
-                // via resolveScuolaScrittura contro le sedi accessibili.
-                return { ok: true as const, data: { ...parsedData, scuola_id: scuolaSelezionata } };
+                // Si valida la sede RISOLTA (scelta a mano oppure sede attiva
+                // unica), non `formData.scuola_id`: sono la stessa cosa solo
+                // quando l'operatore ha toccato la tendina. Vuota ⇒ zod ferma il
+                // salvataggio con l'errore sotto il campo, e nessun payload esce.
+                const parsedData = buildStudentSchema(t).parse({ ...formData, scuola_id: scuolaSelezionata });
+                return { ok: true as const, data: parsedData };
             } catch (error) {
                 const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
                 if (zodLike && zodLike.issues) {
@@ -280,14 +326,18 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                 name="scuola_id"
                                 value={scuolaSelezionata}
                                 onChange={handleInputChange}
-                                disabled={sedi.length <= 1}
-                                className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green disabled:opacity-70"
+                                disabled={sediSelezionabili.length <= 1}
+                                className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green focus:ring-2 focus:ring-kidville-green disabled:opacity-70 ${errors.scuola_id ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
                             >
-                                {sedi.length === 0 && <option value="">{t('sFormNessunaSede')}</option>}
-                                {sedi.map(s => (
+                                {sediSelezionabili.length === 0 && <option value="">{t('sFormNessunaSede')}</option>}
+                                {/* Segnaposto vuoto: con più sedi accessibili e nessuna
+                                    scelta, la sede va DICHIARATA. Nessuna preselezione. */}
+                                {sediSelezionabili.length > 1 && !scuolaSelezionata && <option value="">{t('sFormSelezionaSede')}</option>}
+                                {sediSelezionabili.map(s => (
                                     <option key={s.id} value={s.id}>{s.nome}</option>
                                 ))}
                             </select>
+                            {errors.scuola_id && <span className="text-xs text-kidville-error font-bold">{errors.scuola_id}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoSezione')}</label>
@@ -295,9 +345,10 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                 name="classe_sezione"
                                 value={formData.classe_sezione}
                                 onChange={handleInputChange}
-                                className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green focus:ring-2 focus:ring-kidville-green ${errors.classe_sezione ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
+                                disabled={!scuolaSelezionata}
+                                className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green focus:ring-2 focus:ring-kidville-green disabled:opacity-70 ${errors.classe_sezione ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
                             >
-                                <option value="">{t('sFormSelezionaSezione')}</option>
+                                <option value="">{scuolaSelezionata ? t('sFormSelezionaSezione') : t('sFormSezioneScegliSede')}</option>
                                 {sections.map(s => (
                                     <option key={s.id} value={s.name}>{s.name} ({s.school_type})</option>
                                 ))}

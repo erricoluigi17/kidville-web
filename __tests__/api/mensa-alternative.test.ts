@@ -16,6 +16,10 @@ const h = vi.hoisted(() => ({
   utente: null as Record<string, unknown> | null,
   alternative: [] as Record<string, unknown>[],
   alunni: [] as Record<string, unknown>[],
+  // Riga di `alunni` letta per id: la sede della scrittura deve essere quella
+  // dell'alunno, altrimenti la riga finirebbe nel plesso sbagliato e la cucina
+  // non la vedrebbe (`sedeDiscordeDallAlunno`). Qui concorda con `resolveScuolaScrittura`.
+  alunno: null as Record<string, unknown> | null,
   altError: null as { code?: string; message?: string } | null,
   upsertError: null as { code?: string; message?: string } | null,
   deleteError: null as { code?: string; message?: string } | null,
@@ -36,6 +40,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b; b.eq = () => b; b.in = () => b; b.order = () => b
       b.single = async () => ({ data: h.utente, error: null })
+      // ⚠️ Mock PIATTO, tenuto solo perché questo file collauda gate/degrade/log
+      // e non l'isolamento. Non filtra niente: un test di sede scritto qui
+      // sarebbe verde anche senza filtro. L'isolamento di questa route sta in
+      // `scritture-sede-dichiarata.test.ts`, sul finto client che filtra davvero.
+      b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : h.utente, error: null })
       b.upsert = async () => ({ error: h.upsertError })
       b.delete = () => { b.__delete = true; return b }
       b.then = (res: (v: unknown) => void) => {
@@ -70,6 +79,7 @@ beforeEach(() => {
   h.utente = { id: SEGRETERIA, nome: 'Sara', cognome: 'Bianchi', ruolo: 'segreteria', role: 'segreteria', scuola_id: 'sc-1' }
   h.alternative = []
   h.alunni = []
+  h.alunno = { id: ALUNNO, scuola_id: 'sc-1' }
   h.altError = null
   h.upsertError = null
   h.deleteError = null

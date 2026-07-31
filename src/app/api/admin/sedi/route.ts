@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireKitchenRead } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -17,8 +17,14 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 // quelli su cui `resolveScuoleAttive`/`resolveScuolaScrittura` filtrano
 // (schools.id), così la selezione nel cookie `sedi_attive` scopa davvero i dati.
 // Distinto da /api/admin/schools, che è il CRUD del registry `scuole` (Direzione).
+// La `cuoca` è ammessa esplicitamente: da W3-E il Report Cucina
+// (`/admin/mensa/cucina`) sta sotto `SedeRequired`, che prende le sedi da QUI.
+// Col gate di default (admin/coordinator/segreteria) riceveva 403, l'elenco
+// restava vuoto, la sede corrente `null` — e la cuoca restava chiusa fuori
+// dalla sua stessa pagina. Non è un allargamento di visibilità: la risposta
+// resta `scuoleDiUtente`, cioè le SUE sedi e nient'altro.
 export const GET = withRoute('admin/sedi:GET', async (request: NextRequest) => {
-  const auth = await requireStaff(request)
+  const auth = await requireKitchenRead(request, ['admin', 'coordinator', 'segreteria', 'cuoca'])
   if (auth.response) return auth.response
 
   const q = parseQuery(request, getQuerySchema)

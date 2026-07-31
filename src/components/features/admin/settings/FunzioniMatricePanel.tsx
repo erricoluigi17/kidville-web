@@ -30,9 +30,9 @@ const FUNZIONI: { id: string; labelKey: string }[] = [
     { id: 'pagelle', labelKey: 'fmFunzPagelle' },
 ];
 
-export function FunzioniMatricePanel({ userId }: { userId: string }) {
+export function FunzioniMatricePanel({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [matrice, setMatrice] = useState<Matrice | null>(null);
     const [msg, setMsg] = useState('');
 

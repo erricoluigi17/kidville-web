@@ -68,7 +68,12 @@ export const GET = withRoute('pagamenti/transazioni/[id]/ricevuta:GET', async (r
     const pdf = buildRicevutaFamigliaPdf({
       numero: record?.numero ?? null,
       anno: record?.anno ?? null,
-      struttura: record?.dati_struttura ?? datiStruttura(null, null),
+      struttura:
+        record?.dati_struttura ??
+        datiStruttura(null, null, {
+          operazione: 'pagamenti/transazioni/[id]/ricevuta:GET',
+          scuolaId: tx.scuola_id,
+        }),
       intestatario: record?.intestatario ?? null,
       righe: record?.righe ?? [],
       importoTotale: record ? Number(record.importo) : Number(tx.importo_totale),

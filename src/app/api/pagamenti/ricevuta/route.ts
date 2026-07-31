@@ -78,7 +78,12 @@ export const GET = withRoute('pagamenti/ricevuta:GET', async (request: Request) 
     const pdf = buildRicevutaPdf({
       numero: record?.numero ?? null,
       anno: record?.anno ?? null,
-      struttura: record?.dati_struttura ?? datiStruttura(null, null),
+      struttura:
+        record?.dati_struttura ??
+        datiStruttura(null, null, {
+          operazione: 'pagamenti/ricevuta:GET',
+          scuolaId: pag.scuola_id as string,
+        }),
       intestatario: record?.intestatario ?? null,
       alunno: `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim(),
       descrizione: pag.descrizione ?? '—',

@@ -107,11 +107,19 @@ export const GET = withRoute('news/categorie:GET', async (request: NextRequest) 
     const supabase = await createAdminClient()
     const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
+    // Scope vuoto ⇒ si NEGA. Qui c'era `else query.is('scuola_id', null)`: col
+    // cookie `sedi_attive` puntato a una sede non (più) accessibile uscivano
+    // comunque tutte le categorie globali. Il ramo globale resta, ma DENTRO il
+    // filtro di sede (`.or()` qui sotto), non come ripiego quando il filtro
+    // manca. Il motivo è già a log (`resolveScuoleAttive` → warn).
+    if (sedi.length === 0) {
+      return NextResponse.json({ disponibile: true, categorie: [] })
+    }
+
     let query = supabase.from('news_categorie').select('*').order('ordine', { ascending: true })
     // Non-staff/docente (genitore, cuoca): solo le categorie attive.
     if (!RUOLI_VEDONO_TUTTE.includes(auth.user.role)) query = query.eq('attivo', true)
-    if (sedi.length > 0) query = query.or(`scuola_id.is.null,scuola_id.in.(${sedi.join(',')})`)
-    else query = query.is('scuola_id', null)
+    query = query.or(`scuola_id.is.null,scuola_id.in.(${sedi.join(',')})`)
 
     const { data, error } = await query
     if (error) {

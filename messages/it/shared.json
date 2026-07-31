@@ -43,6 +43,7 @@
   "salvato": "Salvato",
   "sediPlurale": "{n, plural, one {# sede} other {# sedi}}",
   "sedeNoticeCorpo": "Hai più sedi attive. Scegline <strong>una sola</strong> dal menu in alto",
+  "sedeNoticeScegliQui": "Hai più sedi attive. Scegli qui sotto su quale vuoi lavorare",
   "sedeNoticePerGestire": "per gestire {cosa}",
   "segnaTutteLette": "Segna tutte lette",
   "selezionaUnaSede": "Seleziona una sede",

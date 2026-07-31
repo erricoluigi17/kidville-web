@@ -119,7 +119,15 @@ export default function SezioneDetailPage() {
                 const stuData = stuRes?.ok ? await stuRes.json().catch(() => null) : null;
                 if (Array.isArray(stuData)) {
                     const f = found;
-                    setStudents((stuData as Student[]).filter(s => s.section_id === f.id || s.classe_sezione === f.name));
+                    // `section_id` è il legame vero: se c'è, decide da solo. Il
+                    // nome-classe resta solo come ripiego per le righe che il
+                    // trigger `sync_alunno_section_id` non ha ancora risolto —
+                    // in OR con `section_id` faceva comparire in questa classe
+                    // anche chi è assegnato a un'altra e porta ancora scritto
+                    // sopra il vecchio nome, gonfiando il numero in testata.
+                    setStudents((stuData as Student[]).filter(s => (
+                        s.section_id ? s.section_id === f.id : s.classe_sezione === f.name
+                    )));
                 }
             }
         } finally {

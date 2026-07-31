@@ -141,6 +141,9 @@
   "giudiziValore": "Value",
   "giudiziPlaceholderDescrittivo": "Descriptive judgement (report card)",
   "giudiziPlaceholderNuovo": "New judgement",
+  "giudiziAggiungi": "Add judgement",
+  "giudiziElimina": "Delete judgement",
+  "giudiziErroreOperazione": "The operation failed. Please try again.",
   "giudiziTemplateTitolo": "Descriptive judgement template",
   "giudiziTemplateSottotitolo": "Composable fragments by dimension/value. Editing them overrides the default for your school.",
 

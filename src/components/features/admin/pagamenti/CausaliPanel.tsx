@@ -34,15 +34,20 @@ const CHIAVE_DEFAULT = 'default';
 
 /**
  * Dati d'esempio dell'anteprima. CF SINTETICO (mai un CF reale di un minore):
- * coincide con l'esempio di `PLACEHOLDER_CAUSALE`. La sede è il nome pubblico
- * della struttura, non un dato personale.
+ * coincide con l'esempio di `PLACEHOLDER_CAUSALE`.
+ *
+ * La sede è un SEGNAPOSTO, non un plesso: qui c'era «Kidville Giugliano», e dal
+ * 2026-07-29 le sedi sono tre. Un admin di Aversa che configura le causali del suo
+ * plesso non deve vedere l'anteprima finire con «GIUGLIANO» — a runtime `{sede}`
+ * viene dal dato (`sedeCausale`, causale.ts), qui basta che si veda DOVE finisce.
+ * `sedeCausale('Kidville <Sede>')` → «<SEDE>».
  */
 const DATI_ESEMPIO: DatiCausale = {
   descrizione: 'Retta Settembre 2026',
   nome: 'Mario',
   cognome: 'Rossi',
   codiceFiscale: 'RSSMRA85T10A562S',
-  sede: 'Kidville Giugliano',
+  sede: 'Kidville <Sede>',
   mese: 'settembre',
   anno: '2026',
   importo: '€ 150,00',

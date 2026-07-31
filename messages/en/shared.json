@@ -43,6 +43,7 @@
   "salvato": "Saved",
   "sediPlurale": "{n, plural, one {# location} other {# locations}}",
   "sedeNoticeCorpo": "You have multiple locations active. Pick <strong>just one</strong> from the top menu",
+  "sedeNoticeScegliQui": "You have multiple locations active. Pick below the one you want to work on",
   "sedeNoticePerGestire": "to manage {cosa}",
   "segnaTutteLette": "Mark all as read",
   "selezionaUnaSede": "Select a location",

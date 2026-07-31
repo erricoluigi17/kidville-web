@@ -45,7 +45,10 @@ export const GET = withRoute('admin/merch/ordini-fornitore/pdf:GET', async (requ
 
     const fiscale = (await getModuleConfig(supabase, 'fiscale_config', po.scuola_id as string)) as FiscaleConfig
     const aruba = (await getModuleConfig(supabase, 'aruba_config', po.scuola_id as string)) as ArubaFiscalConfig
-    const struttura = datiStruttura(fiscale, aruba)
+    const struttura = datiStruttura(fiscale, aruba, {
+      operazione: 'admin/merch/ordini-fornitore/pdf:GET',
+      scuolaId: po.scuola_id as string,
+    })
 
     const righeValide = (righe ?? [])
       .filter((r) => String(r.stato) !== 'annullato')

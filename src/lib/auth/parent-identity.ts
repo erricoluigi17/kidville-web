@@ -46,6 +46,13 @@ export type EnsureParentIdentityResult =
       boundNow: boolean;
       /** password temporanea SOLO quando createdAuth (per invii immediati) */
       password: string | null;
+      /**
+       * La sede risolta per questo genitore (dai FIGLI, vedi `sedeDelGenitore`),
+       * `null` quando non era deducibile. Non è un dettaglio interno: è ciò che
+       * permette a chi manda le credenziali di NOMINARE la sede giusta nel
+       * corpo dell'email — con tre plessi, «Kidville» non identifica più niente.
+       */
+      scuolaId: string | null;
     }
   | { ok: false; reason: 'no_email' | 'email_conflict' | 'error'; message: string };
 
@@ -408,6 +415,7 @@ export async function ensureParentIdentity(
       createdUtenti: utenti.created,
       boundNow,
       password: createdAuth ? password : null,
+      scuolaId,
     };
   } catch (e) {
     return { ok: false, reason: 'error', message: e instanceof Error ? e.message : String(e) };

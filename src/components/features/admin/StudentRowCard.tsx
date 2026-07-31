@@ -31,9 +31,12 @@ interface Props {
     onToggleSelect: (id: string) => void;
     onClick: (student: Student) => void;
     currentTypeFilter: 'adult' | 'child' | 'staff';
+    /** Nome del plesso, già risolto da `StudentTable` (che conosce le sedi
+     *  accessibili). `undefined` = una sola sede attiva ⇒ non si mostra. */
+    sedeLabel?: string;
 }
 
-export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, currentTypeFilter }: Props) {
+export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, currentTypeFilter, sedeLabel }: Props) {
     const t = useTranslations('adminStudents');
     const locale = useLocale();
     const labelRuolo = useLabelRuolo();
@@ -81,6 +84,10 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                     <p className="truncate font-maven text-sm font-bold text-kidville-green">
                         {cognome} {nome}
                     </p>
+
+                    {sedeLabel && (
+                        <p className="mt-0.5 truncate font-maven text-xs text-kidville-muted">{sedeLabel}</p>
+                    )}
 
                     {currentTypeFilter === 'child' && (
                         <div className="mt-1 flex flex-wrap items-center gap-2 font-maven text-xs text-kidville-sub">

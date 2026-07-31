@@ -17,6 +17,7 @@ import { cx } from '@/lib/ui/cx';
 import { SHADOW_CARD, SHADOW_FLOAT } from '@/components/ui/Card';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { TONE_HEX, TRACK } from '@/lib/ui/chart-colors';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useSediAttive } from '@/lib/context/sede-context';
 
 export type Tone = 'green' | 'info' | 'warn' | 'error' | 'success' | 'neutral' | 'yellow';
@@ -304,23 +305,41 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
  * persiste il cookie `sedi_attive` e fa ri-scopare i dati server-side. Il
  * dropdown resta aperto durante il toggle (selezione multipla); "Tutte le sedi"
  * azzera il filtro. Con una sola sede accessibile il toggle è inerte (già "tutte").
+ *
+ * `compatto` è la variante per la topbar MOBILE (`AdminTopBarMobile`), dove lo
+ * spazio è quello di un telefono: una riga sola, niente contatore alunni (e
+ * quindi nessuna chiamata a /api/admin/dashboard in più su ogni pagina del
+ * cockpit), dropdown ancorato a destra. Con una sede sola non si monta affatto:
+ * non c'è niente da scegliere e sulla barra mobile ogni pixel conta.
  */
-export function SedeSelector({ userId }: { userId?: string | null }) {
+export function SedeSelector({ userId, compatto = false }: { userId?: string | null; compatto?: boolean }) {
   const t = useTranslations('shared');
+  const tn = useTranslations('adminNav');
   const { sedi, effettive, toggle, tutte } = useSediAttive();
   const [open, setOpen] = useState(false);
   const [totAlunni, setTotAlunni] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (compatto) return;
     const q = userId ? `?userId=${userId}` : '';
     // `x-sedi`: segnala lo scope attivo (il server scopa dal cookie) e fa
     // ri-conteggiare al cambio selezione. effettive è così referenziato (deps).
     fetch(`/api/admin/dashboard${q}`, { headers: { 'x-sedi': effettive.join(',') } })
       .then((r) => r.json())
       .then((d) => { const n = d?.studenti?.iscritti ?? d?.data?.studenti?.iscritti; if (typeof n === 'number') setTotAlunni(n); })
-      .catch(() => {});
-  }, [userId, effettive]);
+      // Un `catch` che non logga è un bug (AGENTS.md §6): qui il conteggio
+      // resta al valore precedente, cioè il selettore mostra un numero di
+      // alunni di una sede che non è più quella attiva — senza dirlo a nessuno.
+      .catch((e) => {
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `sede-selettore-conteggio-fallito: ${nomeErrore(e)}`,
+          route: '/admin',
+        });
+      });
+  }, [userId, effettive, compatto]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -338,18 +357,36 @@ export function SedeSelector({ userId }: { userId?: string | null }) {
       : t('sediPlurale', { n: effettive.length });
   const meta = `${totAlunni != null ? `${t('alunniPlurale', { n: totAlunni })} · ` : ''}${strutture(tutteAttive ? sedi.length : effettive.length)}`;
 
+  if (compatto && sedi.length <= 1) return null;
+
   return (
     <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-2.5 rounded-[12px] bg-kidville-white/[0.12] px-3 py-[7px] text-kidville-white">
-        <span className="flex text-kidville-yellow"><SchoolIcon /></span>
-        <span className="text-left leading-[1.1]">
-          <span className="block font-barlow text-sm font-extrabold uppercase">{nome}</span>
-          <span className="block font-maven text-[10.5px] text-kidville-white/70">{meta}</span>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        title={compatto ? tn('sedeSelettoreAria') : undefined}
+        className={cx(
+          'flex items-center rounded-[12px] bg-kidville-white/[0.12] text-kidville-white',
+          compatto ? 'min-h-[36px] max-w-[52vw] gap-1.5 px-2.5 py-1.5' : 'gap-2.5 px-3 py-[7px]',
+        )}
+      >
+        <span className="flex shrink-0 text-kidville-yellow"><SchoolIcon /></span>
+        <span className="min-w-0 text-left leading-[1.1]">
+          <span className={cx('block truncate font-barlow font-extrabold uppercase', compatto ? 'text-[12.5px]' : 'text-sm')}>{nome}</span>
+          {!compatto && <span className="block font-maven text-[10.5px] text-kidville-white/70">{meta}</span>}
         </span>
-        <ChevronDown size={16} className="text-kidville-white/80" />
+        <ChevronDown size={compatto ? 14 : 16} className="shrink-0 text-kidville-white/80" />
       </button>
       {open && (
-        <div className="absolute left-0 top-[calc(100%+8px)] z-[60] w-[264px] rounded-[14px] bg-kidville-white p-1.5" style={{ boxShadow: SHADOW_FLOAT }}>
+        <div
+          className={cx(
+            'absolute top-[calc(100%+8px)] z-[60] w-[264px] max-w-[86vw] rounded-[14px] bg-kidville-white p-1.5',
+            compatto ? 'right-0' : 'left-0',
+          )}
+          style={{ boxShadow: SHADOW_FLOAT }}
+        >
           <SedeRow active={tutteAttive} nome={t('tutteLeSedi')} meta={t('strutturePlurale', { n: sedi.length })} onClick={() => { tutte(); }} />
           {sedi.map((s) => (
             <SedeRow key={s.id} active={!tutteAttive && sel.has(s.id)} nome={s.nome} meta="" onClick={() => { toggle(s.id); }} />

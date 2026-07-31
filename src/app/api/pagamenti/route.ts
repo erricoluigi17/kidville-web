@@ -206,6 +206,14 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // Nome sede per la causale consigliata del bonifico (best-effort): risolve
     // scuola_id → nome da `scuole`. Se fallisce, la causale resta senza sede (ha
     // comunque descrizione + nome + CF). Una sola query batch sulle sedi distinte.
+    //
+    // NB (audit 2026-07-31, segnalato due volte come «fail-open»): il
+    // `if (scuolaIds.length > 0)` qui sotto NON è un filtro di tenancy. Gli uuid
+    // arrivano dalle righe GIÀ filtrate (`.in('scuola_id', sediAttive)` per lo
+    // staff, `.in('alunno_id', figli)` per il genitore) e servono solo a
+    // tradurli in un nome; senza il guard il risultato sarebbe identico
+    // (`.in('id', [])` ⇒ nessuna riga). Il perimetro è quello sopra, ed è
+    // incondizionato — lo blocca `__tests__/api/pagamenti-scope-vuoto.test.ts`.
     const scuolaIds = [...new Set(rowsArricchite.map((r) => r.scuola_id).filter(Boolean))]
     let nomiSedi: Record<string, string> = {}
     if (scuolaIds.length > 0) {

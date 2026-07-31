@@ -141,6 +141,9 @@
   "giudiziValore": "Valore",
   "giudiziPlaceholderDescrittivo": "Giudizio descrittivo (pagella)",
   "giudiziPlaceholderNuovo": "Nuovo giudizio",
+  "giudiziAggiungi": "Aggiungi giudizio",
+  "giudiziElimina": "Elimina giudizio",
+  "giudiziErroreOperazione": "Operazione non riuscita. Riprova.",
   "giudiziTemplateTitolo": "Template giudizio descrittivo",
   "giudiziTemplateSottotitolo": "Frammenti componibili per dimensione/valore. Modificandoli sovrascrivi il default per la tua scuola.",
 

@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
-import { ShieldAlert, Loader2, Trash2, AlertTriangle, UserX } from 'lucide-react';
+import { ShieldAlert, Loader2, Trash2, AlertTriangle, UserX, MapPin } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
+import { useSediAttive } from '@/lib/context/sede-context';
 
 interface Candidato {
   id: string;
@@ -11,6 +12,9 @@ interface Candidato {
   cognome: string;
   classe_sezione?: string | null;
   stato?: string | null;
+  // Sede del minore (da `gdpr/candidates`). Con tre plessi il nominativo NON è
+  // più una chiave: «Rossi Beta / 2 ANNI» può esistere in due sedi.
+  scuola_id?: string | null;
   genitori: { id: string; nome: string }[];
 }
 
@@ -28,6 +32,14 @@ interface DryRun {
 // audit e registri fiscali (fatture) sono preservati per obbligo di legge.
 export function OblioPanel({ userId }: { userId: string }) {
   const t = useTranslations('adminAltro');
+  // Con più di una sede accessibile ogni candidato porta scritto il suo plesso:
+  // qui si conferma un'anonimizzazione IRREVERSIBILE digitando un nominativo, e
+  // due bambini omonimi in due sedi renderebbero quella conferma indistinguibile.
+  // Con una sola sede l'informazione sarebbe solo rumore e resta nascosta.
+  const { sedi } = useSediAttive();
+  const piuSedi = sedi.length > 1;
+  const nomeSede = (scuolaId?: string | null) =>
+    sedi.find((s) => s.id === scuolaId)?.nome ?? t('ricevutiSedeSconosciuta');
   const [list, setList] = useState<Candidato[]>([]);
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState<Candidato | null>(null);
@@ -117,6 +129,11 @@ export function OblioPanel({ userId }: { userId: string }) {
                   <span className="truncate font-maven text-[11.5px] text-kidville-muted">
                     {c.classe_sezione ? t('oblioClasse', { classe: c.classe_sezione }) : ''}{t('oblioGenitori', { elenco: c.genitori.map((g) => g.nome).join(', ') || '—' })}
                   </span>
+                  {piuSedi && (
+                    <span className="flex items-center gap-1 font-maven text-[11.5px] font-semibold text-kidville-green">
+                      <MapPin size={12} className="shrink-0" /> {nomeSede(c.scuola_id)}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -134,9 +151,17 @@ export function OblioPanel({ userId }: { userId: string }) {
                 <h3 className="flex items-center gap-2 font-barlow text-xl font-black uppercase tracking-wide text-kidville-error">
                   <AlertTriangle size={20} /> {t('oblioTitoloCancellazione')}
                 </h3>
-                <p className="mb-4 mt-2 font-maven text-sm text-kidville-ink/80">
+                <p className={cx('mt-2 font-maven text-sm text-kidville-ink/80', piuSedi ? 'mb-2' : 'mb-4')}>
                   {t.rich('oblioAvviso', { nome: `${target.cognome} ${target.nome}`, strong: (c) => <strong>{c}</strong> })}
                 </p>
+                {/* La sede resta sotto gli occhi anche nel passo di conferma e di
+                    esecuzione: è l'ultimo punto in cui l'operazione si può fermare. */}
+                {piuSedi && (
+                  <p className="mb-4 flex items-center gap-1.5 font-maven text-sm text-kidville-ink/80">
+                    <MapPin size={14} className="shrink-0 text-kidville-green" /> {t('oblioSede')}{' '}
+                    <strong>{nomeSede(target.scuola_id)}</strong>
+                  </p>
+                )}
 
                 {busy && !dry ? (
                   <div className="flex items-center gap-2 py-3 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={14} /> {t('oblioDryRun')}</div>

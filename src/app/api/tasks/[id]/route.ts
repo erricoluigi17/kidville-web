@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { assertSedeRigaInScope, rigaNonTrovata, scopeRigaNonRisolta } from '@/lib/auth/scope-avvisi';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -162,15 +162,16 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             .eq('id', id)
             .maybeSingle();
 
-        if (getErr || !currentRow) {
-            return NextResponse.json({ error: 'Task non trovato' }, { status: 404 });
-        }
-
-        // Tenant: la task deve essere in un plesso dell'attore.
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-        if (!currentRow.scuola_id || !plessi.includes(currentRow.scuola_id as string)) {
-            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
-        }
+        // I tre casi restano TRE. PostgREST non lancia: fino al 2026-07-31 un
+        // guasto di lettura usciva come 404 «Task non trovato», cioè come
+        // un'affermazione su un dato che non si era letto.
+        if (getErr) return scopeRigaNonRisolta('task', getErr, { utente: auth.user.id });
+        if (!currentRow) return rigaNonTrovata('task');
+        // Tenant: la task deve essere in un plesso dell'attore (403 + `warn`).
+        const fuoriSede = await assertSedeRigaInScope(
+            supabase, auth.user, 'task', currentRow.scuola_id as string | null, 'tasks/[id]:PUT',
+        );
+        if (fuoriSede) return fuoriSede;
 
         // 2. Decode existing JSON payload
         const existing = decodeContenuto(currentRow.contenuto as string | null);
@@ -250,8 +251,11 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             .single();
 
         if (error) {
+            // Il testo di PostgREST (nomi di colonna e di vincolo) resta nel log,
+            // dove serve alla diagnosi: al client non dice nulla di utile e
+            // descrive lo schema a chi non deve conoscerlo.
             logErrore({ operazione: 'tasks/[id]:PUT', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Aggiornamento del promemoria non riuscito' }, { status: 500 });
         }
 
         const row = data as Record<string, unknown>;
@@ -297,12 +301,18 @@ export const DELETE = withRoute('tasks/[id]:DELETE', async (
         const id = idParsed.data;
         const supabase = await createAdminClient();
 
-        // Tenant: la task deve essere in un plesso dell'attore.
-        const { data: row } = await supabase.from('task_interni').select('scuola_id').eq('id', id).maybeSingle();
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-        if (!row || !row.scuola_id || !plessi.includes(row.scuola_id as string)) {
-            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
-        }
+        // Tenant: la task deve essere in un plesso dell'attore. Anche qui i tre
+        // casi restano TRE: fino al 2026-07-31 `error` non veniva guardato e un
+        // guasto di lettura usciva come 403 «fuori dal tuo plesso», cioè come un
+        // tentativo cross-sede — dentro il contatore che serve a riconoscerli.
+        const { data: row, error: getErr } = await supabase
+            .from('task_interni').select('scuola_id').eq('id', id).maybeSingle();
+        if (getErr) return scopeRigaNonRisolta('task', getErr, { utente: auth.user.id });
+        if (!row) return rigaNonTrovata('task');
+        const fuoriSede = await assertSedeRigaInScope(
+            supabase, auth.user, 'task', row.scuola_id as string | null, 'tasks/[id]:DELETE',
+        );
+        if (fuoriSede) return fuoriSede;
 
         const { error } = await supabase
             .from('task_interni')
@@ -311,7 +321,7 @@ export const DELETE = withRoute('tasks/[id]:DELETE', async (
 
         if (error) {
             logErrore({ operazione: 'tasks/[id]:DELETE', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Cancellazione del promemoria non riuscita' }, { status: 500 });
         }
 
         await logScrittura(supabase, {

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAvvisoInScope } from '@/lib/auth/scope-avvisi';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
@@ -25,19 +25,9 @@ const putBodySchema = z.object({
     attachment_url: z.string().nullish(),
 });
 
-// Verifica che l'avviso sia in un plesso dell'attore (tenant). 403 altrimenti.
-async function assertAvvisoInScope(
-    supabase: Awaited<ReturnType<typeof createAdminClient>>,
-    user: { id: string; role: string; scuola_id?: string | null },
-    id: string,
-): Promise<NextResponse | null> {
-    const { data: row } = await supabase.from('avvisi').select('scuola_id').eq('id', id).maybeSingle();
-    const plessi = await scuoleDiUtente(supabase, user as never);
-    if (!row || !row.scuola_id || !plessi.includes(row.scuola_id as string)) {
-        return NextResponse.json({ error: 'Accesso negato: avviso fuori dal tuo plesso' }, { status: 403 });
-    }
-    return null;
-}
+// Il controllo di sede sta in `@/lib/auth/scope-avvisi`: fino al 2026-07-31 era
+// una copia locale che non guardava `{ error }` di PostgREST, e rispondeva 403
+// «fuori dal tuo plesso» anche su un guasto di lettura e su un id inesistente.
 
 // GET /api/avvisi/[id]
 // Singolo avviso (deep-link del dettaglio cockpit /admin/avvisi/[id]).
@@ -61,8 +51,11 @@ export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { param
             .maybeSingle();
 
         if (error) {
+            // Il testo di PostgREST (nomi di colonna e di vincolo) resta nel log,
+            // dove serve alla diagnosi: al client non dice nulla di utile e
+            // descrive lo schema a chi non deve conoscerlo.
             logErrore({ operazione: 'avvisi/[id]:GET', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Lettura dell\'avviso non riuscita' }, { status: 500 });
         }
         if (!data) {
             return NextResponse.json({ error: 'Avviso non trovato' }, { status: 404 });
@@ -142,7 +135,7 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
 
         if (error) {
             logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Aggiornamento dell\'avviso non riuscito' }, { status: 500 });
         }
 
         await logScrittura(supabase, {
@@ -176,7 +169,7 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
 
         if (error) {
             logErrore({ operazione: 'avvisi/[id]:DELETE', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Cancellazione dell\'avviso non riuscita' }, { status: 500 });
         }
 
         await logScrittura(supabase, {

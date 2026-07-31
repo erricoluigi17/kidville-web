@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
-import { isUtenteCollaudo } from '@/lib/scuole/reali'
+import { isScuolaE2E, isUtenteCollaudo } from '@/lib/scuole/reali'
 import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
 import {
   checklistSede,
@@ -15,9 +16,10 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
-// Multi-Sede CRUD (DL-033). Riservato alla Direzione (admin/coordinator).
-// Aggiungi / rinomina / disattiva (soft) + config isolata per sede. Service-role
-// + scoping app + audit, coerente col resto del progetto.
+// Multi-Sede CRUD (DL-033). Aggiungi / rinomina / disattiva (soft) + config
+// isolata per sede. Service-role + scoping app + audit, coerente col resto del
+// progetto. Chi può fare che cosa — e su QUALE sede — è nel blocco qui sotto:
+// NON è più «la Direzione» in blocco, come diceva questa riga fino al 2026-07-31.
 //
 // D1 — Provisioning reale (multi-sede): `schools` è il tenant REALE (tutte le FK
 // scuola_id → schools), `scuole` è il registry anagrafico. Creare la sede solo in
@@ -25,7 +27,33 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // SedeSelector. Il POST ora provisiona in ENTRAMBI con lo stesso id (RPC
 // `provisiona_sede`, o fallback client-side sul DB E2E) e collega gli admin.
 
+// ─── Chi può fare che cosa, e su QUALE sede ─────────────────────────────────
+//
+// Fino al 2026-07-31 questo file aveva una sola lista — `DIREZIONE` — e la
+// usava per tutti e tre gli handler. Era un gate di RUOLO senza gate di
+// OGGETTO: misurato in collaudo, un `coordinator` di Giugliano riceveva
+// **HTTP 200** da `PATCH {"id":"<uuid di un'altra sede>"}` e poteva riscrivere
+// nome, città, `config` intera — dentro c'è l'anagrafica fiscale che finisce in
+// fattura: PEC, P.IVA, codice meccanografico — e il flag `attiva` di QUALUNQUE
+// plesso del deployment. La `GET` elencava tutte le sedi, compresa quella
+// fittizia della CI che `/api/iscrizione/sedi` esclude da sempre.
+//
+// La causa non era una dimenticanza locale: erano DUE modelli di autorizzazione
+// incoerenti nello stesso repository. Qui `admin` e `coordinator` erano
+// un'unica «Direzione» globale; in `src/lib/auth/scope.ts:58`
+// (`if (user.role !== 'admin') return own`) solo l'`admin` è multi-plesso. Fra i
+// due vince `scope.ts`, che è il punto in cui il modello è deciso per tutto il
+// progetto — quindi:
+//
+//  · GESTIONE (GET/PATCH) → admin e coordinator, ma **solo sulle sedi che
+//    `scuoleDiUtente` restituisce**. Il coordinator ne ha una e resta lì.
+//  · CREAZIONE (POST) → **solo admin**. Creare un plesso è un atto societario:
+//    provisiona il tenant, ci aggancia la Direzione e fa nascere il corredo.
+//    Un utente mono-plesso creerebbe una sede che poi non vedrebbe nemmeno
+//    nell'elenco (la GET filtra per `scuoleDiUtente`): il verso in cui si
+//    sbaglia è «non può», non «può e poi non se ne accorge nessuno».
 const DIREZIONE = ['admin', 'coordinator'] as const
+const CREA_SEDE = ['admin'] as const
 
 // Esito della RPC `provisiona_sede`. `{}` (né id né error) = RPC non disponibile
 // (PGRST202 sul DB E2E non migrato, o client di test senza `.rpc`): il chiamante
@@ -161,6 +189,28 @@ async function adminDaCollegare(supabase: ClientAdmin): Promise<EsitoAdmin> {
   return { ids, esclusi }
 }
 
+/**
+ * Il diniego per SEDE — stessa forma e **stesso messaggio** di
+ * `resolveScuolaScrittura` (`scope.ts:188-192`), di proposito: «ho chiesto una
+ * sede che non è mia» deve essere un segnale solo, contabile con una query
+ * sola. Cambia il campo `azione`, che dice da dove arriva.
+ *
+ * Nella riga NON entra l'uuid della sede richiesta: come nelle altre
+ * `*-fuori-scope` del modulo si registrano solo l'utente, il suo ruolo e
+ * QUANTE sedi ha. Chi indaga parte dall'utente, non dal plesso.
+ */
+function sedeFuoriScope(
+  user: { id: string; role: string },
+  azione: string,
+  accessibili: number,
+): NextResponse {
+  logEvento('auth', 'warn', {
+    tipo: 'sede-scrittura-fuori-scope', azione,
+    utente: user.id, ruolo: user.role, accessibili,
+  })
+  return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+}
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
@@ -199,16 +249,41 @@ export const GET = withRoute('admin/schools:GET', async (request: Request) => {
   if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
+
+  // Le sedi dell'utente, non le sedi del deployment. Scope vuoto = elenco vuoto
+  // (fail-closed: `scuoleDiUtente` ritorna `[]` anche quando la lettura del
+  // ponte fallisce, e un errore di lettura non è un permesso).
+  const plessi = await scuoleDiUtente(supabase, auth.user)
+  if (plessi.length === 0) return NextResponse.json([])
+
   const { data, error } = await supabase
     .from('scuole')
     .select('id, nome, citta, indirizzo, attiva, config, created_at')
+    .in('id', plessi)
     .order('nome', { ascending: true })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data ?? [])
+  if (error) {
+    // PostgREST non lancia: senza questa riga il 500 direbbe «è andata male» e
+    // non «quale lettura non è riuscita».
+    logErrore({ operazione: 'admin/schools:GET', stato: 500, evento: 'db-scuole' }, error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  // La sede fittizia della CI (`e2e00000-…` / nome «…E2E») non compare a un
+  // utente vero: è lo stesso predicato che `/api/iscrizione/sedi` applica al
+  // pubblico da sempre, e senza di esso un admin che se la ritrova nel ponte se
+  // la vede in elenco fra i plessi veri. Restano invece visibili agli ACCOUNT DI
+  // COLLAUDO — riconosciuti da `isUtenteCollaudo`, il predicato gemello — perché
+  // per loro quella è l'unica sede che esiste: escluderla svuoterebbe la pagina
+  // Multi-sede della CI e trasformerebbe un filtro in un guasto.
+  const righe = (data ?? []) as { id: string; nome: string }[]
+  const nomiSedi = new Map(righe.map((s) => [String(s.id), s.nome ?? '']))
+  const collaudo = isUtenteCollaudo({ scuola_id: auth.user.scuola_id, sedi: plessi }, nomiSedi)
+  const visibili = collaudo ? righe : righe.filter((s) => !isScuolaE2E({ id: s.id, nome: s.nome }))
+  return NextResponse.json(visibili)
 })
 
 export const POST = withRoute('admin/schools:POST', async (request: Request) => {
-  const auth = await requireStaff(request, [...DIREZIONE])
+  const auth = await requireStaff(request, [...CREA_SEDE])
   if (auth.response) return auth.response
 
   const b = await parseBody(request, postBodySchema)
@@ -356,12 +431,30 @@ export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) =
 
   try {
     const supabase = await createAdminClient()
-    const { data: existing } = await supabase
+    const { data: existing, error: letturaErr } = await supabase
       .from('scuole')
       .select('id, config')
       .eq('id', id)
       .maybeSingle()
+    // PostgREST non lancia: senza guardare `error` una lettura FALLITA lasciava
+    // `existing` a null e la route rispondeva «Sede non trovata» — cioè
+    // affermava qualcosa su un dato che non aveva letto, e il guasto spariva
+    // dentro un diniego dall'aria normale.
+    if (letturaErr) {
+      logErrore({ operazione: 'admin/schools:PATCH', stato: 500, evento: 'db-scuole-lettura' }, letturaErr)
+      return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+    }
     if (!existing) return NextResponse.json({ error: 'Sede non trovata' }, { status: 404 })
+
+    // ── Il gate sull'OGGETTO, non solo su chi lo chiede ──────────────────────
+    // Va DOPO il 404 di proposito: «questa sede non esiste» e «questa sede non è
+    // tua» sono due dinieghi diversi e vanno tenuti distinti — il secondo è un
+    // segnale di sicurezza e finisce in un contatore, il primo è un id sbagliato
+    // e non deve inquinarlo.
+    const plessi = await scuoleDiUtente(supabase, auth.user)
+    if (!plessi.includes(id)) {
+      return sedeFuoriScope(auth.user, 'admin/schools:PATCH', plessi.length)
+    }
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (nome !== undefined) updates.nome = String(nome).trim()

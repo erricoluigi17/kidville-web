@@ -838,7 +838,20 @@ const AMMESSE: Record<string, string> = {
     'iscrizione/model:GET': 'modulo pubblico: legge il modello di iscrizione, che è globale',
 
     // ── Gestione delle sedi stesse ───────────────────────────────────────────
-    'admin/schools:<modulo>': 'gestione sedi (Direzione): opera SULLE sedi, quindi non dentro una',
+    // ⚠️ Questa voce diceva «gestione sedi (Direzione): opera SULLE sedi, quindi
+    // non dentro una», e con quella frase esentava TUTTO il file. Era vera per
+    // l'admin di tre plessi e falsa per il `coordinator`, che per modello ne ha
+    // uno solo (`scope.ts:58`): il 2026-07-31 un coordinator di Giugliano
+    // riceveva 200 da `PATCH {"id":"<altra sede>"}` e poteva disattivare un
+    // plesso vero. Il lock non aveva sbagliato a misurare — gli era stato detto
+    // di non guardare. Da oggi GET e PATCH filtrano/verificano con
+    // `scuoleDiUtente` e il POST è riservato all'admin (test:
+    // `__tests__/api/schools-patch-in-scope.test.ts`), quindi l'esenzione NON
+    // copre più nessun handler: resta solo per l'helper `adminDaCollegare`, che
+    // legge `utenti` e `utenti_scuole` di TUTTI i plessi perché deve agganciare
+    // ogni admin reale alla sede appena creata — filtrarlo per sede la farebbe
+    // nascere senza Direzione.
+    'admin/schools:<modulo>': "helper `adminDaCollegare`: legge gli admin di TUTTE le sedi perché la sede NUOVA non ha ancora un plesso a cui appartenere, e senza quel collegamento nascerebbe senza Direzione (gli account di collaudo sono esclusi da `isUtenteCollaudo`). Gli HANDLER non sono più esentati: GET filtra con `scuoleDiUtente`, PATCH verifica l'id richiesto, POST è solo admin",
 
     // ── Contabilità: l estratto conto è UNICO per la cooperativa ─────────────
     // Decisione del 2026-07-19, non una dimenticanza: il conto corrente è uno

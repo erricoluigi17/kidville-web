@@ -1,60 +1,302 @@
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOCK — nessuna NUOVA migrazione configura il prodotto per uuid di sede cablato
+// LOCK — nessun uuid di sede è cablato da nessuna parte
 //
-// A4. `20260718400000_pagamenti_solleciti_cron.sql` accende i solleciti con
-// `WHERE scuola_id = '<uuid di Kidville Giugliano>'`. Il cron però è globale: la
-// route seleziona le sedi con `solleciti_config.enabled`. Risultato: una sede
-// nuova (Aversa, Cesa) non eredita nulla e nessuno se ne accorge — la funzione
-// semplicemente non parte, e «nessun sollecito» somiglia moltissimo a «nessun
-// moroso».
+// Nato per le sole migrazioni (`20260718400000_pagamenti_solleciti_cron.sql`
+// accendeva i solleciti con `WHERE scuola_id = '<uuid di Giugliano>'`: il cron è
+// globale, quindi Aversa e Cesa non ereditavano nulla e «nessun sollecito»
+// somigliava moltissimo a «nessun moroso»), esteso il 2026-07-31 a TUTTO il
+// codice — `src/`, `scripts/`, `__tests__/`, `e2e/` — dopo l'audit globale
+// multi-sede.
 //
-// La regola: la configurazione si applica per INSIEME (tutte le sedi, o quelle che
-// soddisfano una condizione) oppure entra nel provisioning
-// (`provisiona_sede`, 20260729120000). Mai per uuid scritto a mano: quello vale
-// per la sede di oggi e per nessuna di domani.
+// PERCHÉ SERVE anche fuori dalle migrazioni. `d53b0fbc-…` era incollato in 30
+// file: due route di seed (cancellate), due script che scrivono sul database di
+// PRODUZIONE leggendo `.env.local`, quattro campagne di collaudo e 24 file di
+// test. Nei test è innocuo ma normalizza l'errore — chi copia un test copia
+// l'uuid — e da lì esce in uno script che agisce: `repair_parent_identities.mjs`
+// aveva `SCUOLA_PROD_DEFAULT = 'd53b0fbc-…'` con un commento che lo giustificava
+// come «unica sede di produzione». Dal 2026-07-29 le sedi sono tre.
 //
-// Restano ammessi gli uuid nei COMMENTI troncati (es. 'd53b0fbc-…') e nei file in
-// ALLOWLIST, che sono storia già applicata e non si riscrive.
+// LE DUE PROVE.
+//  1. Lista nera: gli uuid che NON devono comparire, ciascuno col suo perimetro
+//     e la sua allowlist scritta (ogni voce è una decisione difendibile).
+//  2. Euristica: un uuid LETTERALE assegnato a un identificatore di sede
+//     (`SCUOLA_ID = '…'`, `scuola_id: '…'`, `school = '…'`) nel codice che gira
+//     davvero. Serve per la sede numero quattro, il cui uuid oggi non conosciamo
+//     e che nessuna lista nera potrebbe intercettare.
+//
+// COSA NON È VIETATO, e perché.
+//  · Gli uuid palesemente finti dei test (`aaaaaaaa-…`, `11111111-…`): un test
+//    non deve conoscere la produzione, ma deve pur nominare una sede. Le
+//    costanti condivise stanno in `__tests__/fixtures/sedi.ts`.
+//  · Il prefisso `e2e00000` come PREDICATO (`src/lib/scuole/reali.ts`): è il
+//    segnale con cui la scuola finta della CI viene esclusa dagli elenchi
+//    pubblici. Qui si vieta l'uuid COMPLETO della sede E2E, non il prefisso.
+//  · Gli uuid nei commenti troncati (es. `d53b0fbc-…`) e nei file in allowlist.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** L'unica sede di produzione: PRD §Sedi — Kidville Giugliano. */
-const SEDE_PROD = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const RADICE = process.cwd()
 
-// Migrazioni PRE-ESISTENTI che cablano l'uuid. Sono già applicate in produzione e
-// non si modificano (le migrazioni sono immutabili): l'una-tantum di dati che
-// contengono è storia. NON aggiungere qui una migrazione NUOVA per aggirare il
-// lock — si scrive un UPDATE per insieme, o si mette il default nel provisioning.
-const ALLOWLIST = new Set<string>([
-  // Backfill una-tantum di galleria.scuola_id sulle foto già caricate.
-  '20260714103000_galleria_scuola_id.sql',
-  // Accensione dei solleciti sulla sola Giugliano: È IL DIFETTO corretto da
-  // 20260729121000_solleciti_config_tutte_le_sedi.sql.
-  '20260718400000_pagamenti_solleciti_cron.sql',
+/** I perimetri scanditi. Chiave → cartella, relativa alla radice del repo. */
+const PERIMETRI = {
+  src: 'src',
+  scripts: 'scripts',
+  test: '__tests__',
+  e2e: 'e2e',
+  migrazioni: join('supabase', 'migrations'),
+} as const
+type Perimetro = keyof typeof PERIMETRI
+
+const TUTTI: Perimetro[] = ['src', 'scripts', 'test', 'e2e', 'migrazioni']
+/** Il codice che gira davvero: prodotto, script di manutenzione, campagne di collaudo. */
+const CHE_AGISCE: Perimetro[] = ['src', 'scripts', 'e2e', 'migrazioni']
+
+const ESTENSIONI = ['.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx', '.sql']
+const CARTELLE_SALTATE = new Set([
+  'node_modules', '.next', '.auth', 'dist', 'coverage',
+  'test-results', 'playwright-report', '__snapshots__',
 ])
 
-const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')
+/** Questo file NOMINA gli uuid vietati: è il suo mestiere, non si controlla da solo. */
+const QUESTO_FILE = join('__tests__', 'architecture', 'migrazioni-senza-sede-cablata.test.ts')
 
-describe('lock architettura · migrazioni senza uuid di sede cablato', () => {
-  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort()
+type Regola = {
+  /** L'uuid vietato, in minuscolo. */
+  uuid: string
+  /** Che cos'è, per il messaggio d'errore. */
+  cosa: string
+  /** Dove è vietato. */
+  perimetri: Perimetro[]
+  /** Percorso relativo → ragione per cui quel file può contenerlo. */
+  allowlist: Record<string, string>
+  /** Cosa fare al posto suo. */
+  invece: string
+}
 
-  it('la cartella delle migrazioni è leggibile (sanity)', () => {
-    expect(files.length).toBeGreaterThan(0)
+const INVECE_SEDE_REALE =
+  'la sede si riceve come parametro (`--scuola`, `KV_SCUOLA_ID`, body della richiesta) o si ' +
+  "deriva dal dato (la sezione, l'alunno, `resolveScuolaScrittura`). Nei test si usa " +
+  '`__tests__/fixtures/sedi.ts`. Nelle migrazioni si aggiorna per INSIEME o via `provisiona_sede`.'
+
+const REGOLE: Regola[] = [
+  {
+    uuid: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529',
+    cosa: "l'uuid REALE di Kidville Giugliano",
+    perimetri: TUTTI,
+    allowlist: {
+      // Migrazioni PRE-ESISTENTI: sono già applicate in produzione e non si
+      // riscrivono (una migrazione è immutabile). NON aggiungere qui una
+      // migrazione NUOVA per aggirare il lock: si scrive un UPDATE per INSIEME
+      // (tutte le sedi, o quelle che soddisfano una condizione), oppure il
+      // default entra nel provisioning (`public.provisiona_sede`).
+      [join('supabase', 'migrations', '20260714103000_galleria_scuola_id.sql')]:
+        'backfill una-tantum di galleria.scuola_id sulle foto già caricate',
+      [join('supabase', 'migrations', '20260718400000_pagamenti_solleciti_cron.sql')]:
+        'accensione dei solleciti sulla sola Giugliano: È IL DIFETTO, corretto da 20260729121000_solleciti_config_tutte_le_sedi.sql',
+    },
+    invece: INVECE_SEDE_REALE,
+  },
+  {
+    uuid: '429da920-2c1f-47a8-82ed-a26f63ee0591',
+    cosa: "l'uuid REALE di Kidville Aversa",
+    perimetri: TUTTI,
+    allowlist: {},
+    invece: INVECE_SEDE_REALE,
+  },
+  {
+    uuid: '04accbfd-5890-4416-99f7-acd8b864dc2f',
+    cosa: "l'uuid REALE di Kidville Cesa",
+    perimetri: TUTTI,
+    allowlist: {},
+    invece: INVECE_SEDE_REALE,
+  },
+  {
+    uuid: '11111111-1111-1111-1111-111111111111',
+    cosa: "l'uuid della finta «Kidville Roma» dei seed cancellati il 2026-07-31",
+    // Non in `__tests__`: lì è un uuid palesemente finto, usato come id generico
+    // (avviso, alunno, fattura) in una dozzina di file. Vietarlo nei test non
+    // proteggerebbe nessun dato e romperebbe fixture legittime.
+    perimetri: CHE_AGISCE,
+    allowlist: {
+      // Versione STORICA del trigger `fn_form_submission_etl`, che dichiarava
+      // `c_scuola_id uuid := '1111…'`. Le migrazioni sono immutabili e queste due
+      // sono già applicate; la funzione oggi in produzione non contiene più quel
+      // valore (verificato su `pg_proc` il 2026-07-31: 0 righe).
+      [join('supabase', 'migrations', '20260704120000_baseline.sql')]:
+        'baseline storica: vecchia fn_form_submission_etl, riscritta da migrazioni successive',
+      [join('supabase', 'migrations', '20260706105201_anagrafiche_residenza_provincia_civico.sql')]:
+        'stessa funzione, stessa versione storica: già superata in produzione',
+    },
+    invece:
+      'nessun codice che scrive su un database deve creare una sede con un uuid inventato: ' +
+      '`POST /api/seed-db` faceva nascere «Kidville Roma» nel registry di PRODUZIONE, perché ' +
+      '`.env.local` punta a produzione e `sealDangerous` guarda `NODE_ENV`, non il database.',
+  },
+  {
+    uuid: 'e2e00000-0000-4000-8000-000000000001',
+    cosa: "l'uuid della sede FINTA della CI",
+    // Non in `__tests__` (la fixture `SEDE_E2E` serve a verificare il filtro che
+    // la esclude dagli elenchi pubblici) e non in `e2e/` (è la sede su cui la
+    // campagna E2E gira per definizione).
+    perimetri: ['src', 'scripts', 'migrazioni'],
+    allowlist: {
+      [join('scripts', 'seed-e2e.mjs')]:
+        'è il seed che CREA la sede finta della CI: quell\'uuid è il suo oggetto, non un assunto',
+    },
+    invece:
+      'il prodotto riconosce la sede E2E dal PREDICATO `isScuolaE2E` (prefisso `e2e00000` o «e2e» ' +
+      'nel nome, src/lib/scuole/reali.ts), mai dall\'uuid intero: così un secondo ambiente di prova ' +
+      'viene escluso dagli elenchi pubblici senza toccare il codice.',
+  },
+]
+
+/**
+ * Un uuid LETTERALE assegnato a un identificatore di sede.
+ * Intercetta `const SCUOLA_ID = '…'`, `scuola_id: '…'`, `school = "…"`,
+ * `plessoId: '…'` — cioè la forma con cui una sede nuova verrebbe cablata
+ * domani, quando il suo uuid non sarà in nessuna lista nera.
+ */
+const UUID_DI_SEDE_LETTERALE =
+  /(?:scuola|scuole|sede|sedi|school|plesso|plessi)[a-z0-9_]*\s*[:=]\s*['"][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['"]/i
+
+/** Dove l'euristica è attiva. */
+const EURISTICA_PERIMETRI: Perimetro[] = ['src', 'scripts', 'e2e']
+
+/**
+ * L'euristica ignora le righe che nominano un uuid GIÀ in lista nera: quei casi
+ * hanno una regola dedicata, che sa dove sono leciti e dove no (la sede finta
+ * della CI è cablata a ragione in `scripts/seed-e2e.mjs` e in `e2e/`, che è il
+ * suo mestiere). Così l'euristica resta ciò per cui esiste: la sede numero
+ * quattro, quella il cui uuid non conosce ancora nessuno.
+ */
+const UUID_GIA_GOVERNATI = REGOLE.map((r) => r.uuid)
+
+/**
+ * Esenzioni dell'euristica. **Vuota di proposito**: oggi nessun file di `src/`,
+ * `scripts/` o `e2e/` ha ragione di cablare una sede. Chi ne aggiunge una scrive
+ * qui accanto perché — e il controllo delle «voci morte» qui sotto la toglie di
+ * mezzo appena smette di servire.
+ */
+const EURISTICA_AMMESSI: Record<string, string> = {}
+
+// ── raccolta dei file ────────────────────────────────────────────────────────
+
+function fileSotto(dir: string): string[] {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return []
+  const out: string[] = []
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) {
+      if (CARTELLE_SALTATE.has(e.name)) continue
+      out.push(...fileSotto(join(dir, e.name)))
+    } else if (ESTENSIONI.some((x) => e.name.endsWith(x))) {
+      out.push(join(dir, e.name))
+    }
+  }
+  return out
+}
+
+/** Percorso relativo alla radice, con i separatori della piattaforma. */
+const rel = (f: string) => relative(RADICE, f)
+
+const FILES: Record<Perimetro, string[]> = {
+  src: [], scripts: [], test: [], e2e: [], migrazioni: [],
+}
+for (const p of TUTTI) {
+  FILES[p] = fileSotto(join(RADICE, PERIMETRI[p])).filter((f) => rel(f) !== QUESTO_FILE)
+}
+
+/** Cache: un file si legge una volta sola, non una per regola. */
+const contenuto = new Map<string, string>()
+function testo(f: string): string {
+  let t = contenuto.get(f)
+  if (t === undefined) {
+    t = readFileSync(f, 'utf8')
+    contenuto.set(f, t)
+  }
+  return t
+}
+
+// ── le prove ─────────────────────────────────────────────────────────────────
+
+describe('lock architettura · nessun uuid di sede cablato', () => {
+  it('tutti i perimetri sono leggibili (se cade, il lock si sta autoingannando)', () => {
+    for (const p of TUTTI) {
+      expect(FILES[p].length, `nessun file scandito sotto ${PERIMETRI[p]}`).toBeGreaterThan(0)
+    }
+    // `src/` è il perimetro grande: un walk che ne trova quattro sta guardando altrove.
+    expect(FILES.src.length).toBeGreaterThan(300)
   })
 
-  for (const f of files) {
-    if (ALLOWLIST.has(f)) continue
-    it(`${f} non cabla l'uuid della sede di produzione`, () => {
-      const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8')
+  for (const regola of REGOLE) {
+    it(`${regola.cosa} non compare in ${regola.perimetri.map((p) => PERIMETRI[p]).join(', ')}`, () => {
+      const colpevoli: string[] = []
+      for (const p of regola.perimetri) {
+        for (const f of FILES[p]) {
+          const r = rel(f)
+          if (regola.allowlist[r]) continue
+          if (testo(f).toLowerCase().includes(regola.uuid)) colpevoli.push(r)
+        }
+      }
       expect(
-        sql.includes(SEDE_PROD),
-        `${f} contiene l'uuid di Kidville Giugliano. La configurazione va applicata per INSIEME ` +
-          `(UPDATE su tutte le sedi / con una condizione) o inserita nel provisioning ` +
-          `(public.provisiona_sede): con l'uuid cablato le sedi nuove — Aversa, Cesa — non ereditano nulla.`,
-      ).toBe(false)
+        colpevoli,
+        `Questi file contengono ${regola.cosa} (${regola.uuid}).\n` +
+          `Invece: ${regola.invece}\n` +
+          `Se un file DEVE contenerlo, aggiungilo all'allowlist della regola con la ragione scritta.`,
+      ).toEqual([])
     })
   }
+
+  it('nessun uuid letterale è assegnato a un identificatore di sede (la sede numero quattro)', () => {
+    const colpevoli: Array<string> = []
+    for (const p of EURISTICA_PERIMETRI) {
+      for (const f of FILES[p]) {
+        const r = rel(f)
+        if (EURISTICA_AMMESSI[r]) continue
+        const righe = testo(f).split('\n')
+        righe.forEach((riga, i) => {
+          const minuscola = riga.toLowerCase()
+          if (UUID_GIA_GOVERNATI.some((u) => minuscola.includes(u))) return
+          if (UUID_DI_SEDE_LETTERALE.test(riga)) colpevoli.push(`${r}:${i + 1}`)
+        })
+      }
+    }
+    expect(
+      colpevoli,
+      'Qui una sede è scritta a mano. Un uuid di sede in un letterale vale per la sede di oggi e ' +
+        'per nessuna di domani: la sede si riceve come parametro o si deriva dal dato (la sezione, ' +
+        "l'alunno, `resolveScuolaScrittura`). Vale anche per una sede non ancora esistente, che " +
+        'nessuna lista nera potrebbe intercettare.',
+    ).toEqual([])
+  })
+
+  it("l'allowlist non contiene voci morte (un file cancellato la lascerebbe indietro)", () => {
+    const morte: string[] = []
+    for (const regola of REGOLE) {
+      for (const percorso of Object.keys(regola.allowlist)) {
+        const assoluto = join(RADICE, percorso)
+        if (!existsSync(assoluto)) morte.push(`${percorso} (non esiste più)`)
+        else if (!testo(assoluto).toLowerCase().includes(regola.uuid)) {
+          morte.push(`${percorso} (non contiene più ${regola.uuid})`)
+        }
+      }
+    }
+    for (const percorso of Object.keys(EURISTICA_AMMESSI)) {
+      const assoluto = join(RADICE, percorso)
+      if (!existsSync(assoluto)) morte.push(`${percorso} (non esiste più)`)
+      else if (!UUID_DI_SEDE_LETTERALE.test(testo(assoluto))) {
+        morte.push(`${percorso} (non cabla più nessuna sede: togli l'esenzione)`)
+      }
+    }
+    expect(
+      morte,
+      "Un'esenzione che non serve più è un permesso lasciato aperto: toglila dal lock.",
+    ).toEqual([])
+  })
 })
+
+// Il separatore di percorso è usato nelle chiavi delle allowlist: se un giorno
+// il test girasse su Windows, `join` produce già `\` e il confronto regge.
+void sep

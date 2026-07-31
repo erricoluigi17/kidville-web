@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 
 // =============================================================================
 // Cancellazione account via risorsa web PUBBLICA (C5 §1). Due route:
@@ -43,10 +44,16 @@ vi.mock('@/lib/supabase/server-client', () => ({
 const sendEmail = vi.fn().mockResolvedValue(true)
 vi.mock('@/lib/email/send', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('@/lib/notifiche/destinatari', () => ({
-  staffScuola: vi.fn().mockResolvedValue(['staff-1']),
-  scuolaUnicaReale: vi.fn().mockResolvedValue('d53b0fbc-a9eb-4073-b302-73d1d5abd529'),
-}))
+// Factory ASINCRONA: `vi.mock` è sollevata sopra gli import, quindi il valore
+// della fixture va richiesto qui dentro — un riferimento all'import statico
+// verrebbe letto prima che sia inizializzato.
+vi.mock('@/lib/notifiche/destinatari', async () => {
+  const { SEDE_A: sede } = await import('../fixtures/sedi')
+  return {
+    staffScuola: vi.fn().mockResolvedValue(['staff-1']),
+    scuolaUnicaReale: vi.fn().mockResolvedValue(sede),
+  }
+})
 
 import { POST as POST_INIT } from '@/app/api/public/cancellazione-account/route'
 import { POST as POST_CONF } from '@/app/api/public/cancellazione-account/conferma/route'
@@ -55,7 +62,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { resetRateLimit } from '@/lib/security/rate-limit'
 
 const PARENT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 
 // Il rate-limiter è un Map di modulo condiviso da tutti i test del file: senza
 // reset, il budget consumato da un test farebbe fallire il successivo.

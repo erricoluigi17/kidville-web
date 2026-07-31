@@ -53,7 +53,9 @@ const GRUPPI_COPERTI: string[] = [
     'notifiche',
     'push',
     'teacher',
-    'seed-db',
+    // `seed-db` è stata cancellata il 2026-07-31 (audit multi-sede): cablava
+    // l'uuid di una sede inesistente e in `npm run dev` avrebbe creato una
+    // scuola nel database di PRODUZIONE, a cui `.env.local` punta.
     'debug-supabase',
     'debug',
     // M3.11–M3.14 (zod 10-13/14 — chiude tutto admin/*)

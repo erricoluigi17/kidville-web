@@ -1,4 +1,5 @@
 import { it, expect, vi, beforeEach, describe } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import { NextResponse, NextRequest } from 'next/server'
 
 // ── Report cassa (E2.5) ───────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ import {
 } from '@/lib/cassa/report'
 import { CASSA_METODO_LABEL, metodoLabel, meseItaliano } from '@/lib/cassa/tipi'
 
-const SC = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SC = SEDE_A
 const CAT_SAGGIO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 
 const req = (qs: string) =>

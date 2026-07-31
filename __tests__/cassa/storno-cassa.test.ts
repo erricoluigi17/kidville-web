@@ -1,4 +1,5 @@
 import { it, expect, vi, beforeEach, describe } from 'vitest'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 // =============================================================================
 // E1.5 — storno di un movimento cassa (test PRIMA dell'implementazione).
@@ -63,7 +64,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 import { POST } from '@/app/api/pagamenti/cassa/movimenti/storno/route'
 
 const MOV = '22222222-2222-4222-8222-222222222222'
-const SEDE = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SEDE = SEDE_A
 const MOTIVO = 'errore di conteggio'
 
 const post = (body: unknown) =>
@@ -155,7 +156,7 @@ describe('POST /api/pagamenti/cassa/movimenti/storno', () => {
   })
 
   it('RC2 — movimento di una sede FUORI scope → 403 «Sede non accessibile», nessun contro-movimento', async () => {
-    h.orig = { ...(h.orig as Record<string, unknown>), scuola_id: 'e2e00000-0000-4000-8000-000000000001' }
+    h.orig = { ...(h.orig as Record<string, unknown>), scuola_id: SEDE_B }
     h.resolveScuoleAttive.mockResolvedValue([SEDE]) // l'operatore NON ha la sede del movimento
     const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
     expect(res.status).toBe(403)

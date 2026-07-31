@@ -76,8 +76,10 @@ const AMMESSE: Record<string, string> = {
     'public/cancellazione-account': 'token monouso via email',
     'iscrizione': 'modulo pubblico: la sede è scelta e validata dentro la route',
     // Sigillati in produzione da sealDangerous() → 404.
+    // (`admin/seed-full` e `seed-db` NON sono più qui: cancellate il 2026-07-31
+    // perché cablavano l'uuid di una sede e `.env.local` punta al database di
+    // produzione — il sigillo guarda NODE_ENV, non il database.)
     'admin/wipe': 'sealDangerous: 404 in produzione',
-    'admin/seed-full': 'sealDangerous',
     'admin/backfill-auth': 'sealDangerous',
     'admin/check-schema': 'sealDangerous',
     'admin/test-relations': 'sealDangerous',
@@ -88,7 +90,6 @@ const AMMESSE: Record<string, string> = {
     'admin/apply-fase4-migration': 'sealDangerous',
     'admin/apply-forms-migration': 'sealDangerous',
     'admin/apply-mensa-multi-menu-migration': 'sealDangerous',
-    'seed-db': 'sealDangerous',
     'debug-supabase': 'sealDangerous',
     'debug/scrutini': 'sealDangerous',
     // Gestione delle sedi stesse.

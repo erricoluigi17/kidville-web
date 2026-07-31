@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import { NextResponse, NextRequest } from 'next/server'
 
 // =============================================================================
@@ -17,7 +18,7 @@ import { NextResponse, NextRequest } from 'next/server'
 
 const UTENTE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-utente000001'
 const PARENT_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-parent000001'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 
 const h = vi.hoisted(() => {
   const state = {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 import { NextRequest } from 'next/server'
 
 // =============================================================================
@@ -21,7 +22,7 @@ import { NextRequest } from 'next/server'
 //     ed è granulare per canale.
 // =============================================================================
 
-const SEDE = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SEDE = SEDE_A
 
 const h = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
@@ -52,7 +53,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         b.order = () => b
         b.in = () => b
         b.then = (res: (v: unknown) => unknown) =>
-          Promise.resolve({ data: [{ id: SEDE, nome: 'Kidville Giugliano', attiva: true }], error: null }).then(res)
+          Promise.resolve({ data: [{ id: SEDE, nome: NOME_SEDE_A, attiva: true }], error: null }).then(res)
         return b
       }
       if (table === 'form_models') {

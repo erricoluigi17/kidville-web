@@ -79,7 +79,7 @@ describe('redact — lista bianca', () => {
     it('lascia in chiaro ciò che serve al debug e non identifica nessuno', () => {
         const out = redact({
             id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
-            section_id: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529',
+            section_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3302',
             tipo: 'assenza',
             stato: 'confermato',
             azione: 'insert',
@@ -88,7 +88,7 @@ describe('redact — lista bianca', () => {
             quantita: 3,
         }) as Record<string, unknown>;
         expect(out.id).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301');
-        expect(out.section_id).toBe('d53b0fbc-a9eb-4073-b302-73d1d5abd529');
+        expect(out.section_id).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3302');
         expect(out.tipo).toBe('assenza');
         expect(out.stato).toBe('confermato');
         expect(out.azione).toBe('insert');

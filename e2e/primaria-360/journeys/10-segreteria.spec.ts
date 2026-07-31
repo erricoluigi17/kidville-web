@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { storagePath, SEGRETERIA, SCUOLA_GIUGLIANO, TAG } from '../config/accounts';
+import { storagePath, SEGRETERIA, SCUOLA_COLLAUDO, TAG } from '../config/accounts';
 import { SECTION, ALUNNI, MATERIE } from '../config/data';
 import { Recorder, visit, step, apiPost, apiPatch, apiGet, readAppIds, writeState } from '../lib/harness';
 
@@ -44,7 +44,7 @@ test('10 · Segreteria — anagrafiche, orario, pagamenti, ticket, config, logou
 
   // ── Config: abilita docenti a pubblicare avvisi + chat sempre in orario ──
   const cfg = await apiPatch(page, '/api/admin/settings', {
-    scuola_id: SCUOLA_GIUGLIANO,
+    scuola_id: SCUOLA_COLLAUDO,
     avvisi_config: { ruoli_pubblicazione: ['admin', 'teacher'] },
     chat_config: { orario_docenti_da: '00:00', orario_docenti_a: '23:59' },
   });

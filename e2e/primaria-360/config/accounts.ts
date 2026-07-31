@@ -19,9 +19,26 @@ function requireTestPassword(): string {
   return valore;
 }
 
+// La SEDE su cui gira la campagna: dall'ambiente, mai cablata. Fino al 2026-07-31
+// qui c'era l'uuid di Kidville Giugliano; dal 2026-07-29 i plessi di produzione
+// sono tre e una campagna che scrive nel plesso sbagliato non se ne accorge.
+// Stessa regola della password: manca ⇒ si fallisce subito. Vedi
+// e2e/lib/scuola-collaudo.mjs (la variante .mjs usata dagli script di seed).
+function requireScuolaCollaudo(): string {
+  const valore = (process.env.KV_SCUOLA_ID || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(valore)) {
+    throw new Error(
+      "Manca (o non è un uuid) la variabile d'ambiente KV_SCUOLA_ID: è la sede su cui gira la " +
+        'campagna 360°. Le sedi di produzione sono TRE — prendi l\'uuid da `select id, nome from ' +
+        "scuole` ed esportalo prima di rilanciare:  export KV_SCUOLA_ID='…'",
+    );
+  }
+  return valore;
+}
+
 export const PASSWORD = requireTestPassword();
 export const SECTION_1A = 'bb4e9f8a-c737-4d41-8634-02f8f8e48601';
-export const SCUOLA_GIUGLIANO = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
+export const SCUOLA_COLLAUDO = requireScuolaCollaudo();
 
 // Prefisso identificativo su ogni dato testuale scritto (audit/cleanup).
 export const TAG = '[E2E360]';

@@ -13,6 +13,15 @@ Prerequisiti una tantum:
 - `.env.local` con `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
   `SUPABASE_SERVICE_ROLE_KEY` (il seed usa la service-role; i test usano sessioni vere,
   `ALLOW_HEADER_IDENTITY=false` resta rispettato).
+- `export KV_E2E_PASSWORD='…'` — la password dei 4 account `*.e2e@kidville.test`.
+  **Non è nel repo** e non ha default: senza, `npm run e2e:seed` esce con `exit 1` e la
+  suite fallisce all'import di `e2e/fixtures.ts`. In CI arriva dal secret GitHub
+  `CI_E2E_PASSWORD` (job `e2e` di `.github/workflows/ci.yml`). Il seed la **rimposta** a
+  ogni esecuzione, quindi per ruotarla basta cambiare il secret e rilanciare.
+  Perché sta fuori dal repo: il 2026-07-29 il provisioning di Kidville Aversa e Kidville
+  Cesa ha collegato `admin.e2e@kidville.test` (ruolo `admin`) a due sedi **vere**, e quel
+  letterale committato è stato per due giorni una credenziale di Direzione valida in
+  produzione, in un repository pubblico. Vedi `e2e/lib/e2e-password.mjs`.
 - `npx playwright install chromium`.
 
 Architettura: `playwright.config.ts` avvia `next dev --port 3100` (`webServer`),
@@ -28,7 +37,7 @@ fissi prefisso `e2e00000-…`: i dati demo/reali delle altre scuole NON vengono 
 | --- | --- |
 | Sezioni | `Girasoli` + `Tulipani` (infanzia). Il nome Girasoli è obbligato: appello e diario docente sono agganciati a quel nome. |
 | Alunni | Aurora Arcobaleno-E2E, Bruno Baleno-E2E (Girasoli); Clara Cometa-E2E, Dino Delfino-E2E (Tulipani) — tutti `iscritto`. |
-| Utenti Auth | `admin.e2e@kidville.test` (admin), `docente.e2e@kidville.test` (educator, sezione Girasoli), `genitore.e2e@kidville.test` (genitore di Aurora), `doppio.e2e@kidville.test` (educator Tulipani **+** bridge `parents.auth_user_id` ⇒ picker multi-profilo). Password comune: `KidvilleE2E.2026!`. |
+| Utenti Auth | `admin.e2e@kidville.test` (admin), `docente.e2e@kidville.test` (educator, sezione Girasoli), `genitore.e2e@kidville.test` (genitore di Aurora), `doppio.e2e@kidville.test` (educator Tulipani **+** bridge `parents.auth_user_id` ⇒ picker multi-profilo). Password comune: dalla variabile d'ambiente **`KV_E2E_PASSWORD`** (vedi sotto), mai scritta nel repo. |
 | Config scuola | `admin_settings` della sola scuola E2E: `diario_config.routine_attive` include `umore`; `avvisi_config.ruoli_pubblicazione = ['admin','teacher']`. |
 | Dati di contorno | 1 avviso adesione (classe Girasoli), 1 evento agenda futuro (Girasoli, visibile ai genitori), presenze di oggi SOLO per Tulipani (Girasoli = "appello mancante"), 2 pagamenti di Aurora (aperto+pagato), armadietto Aurora con stock 1 (bottone "Avvisa"), diario di oggi di Aurora (umore + attività), 1 notifica non letta per l'admin, 1 form model + submission `completed` non gestita. |
 

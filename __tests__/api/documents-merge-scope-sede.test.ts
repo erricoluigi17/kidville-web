@@ -86,6 +86,10 @@ describe('GET /api/admin/documents-merge — isolamento per sede (B1)', () => {
 
   it('classi OMONIME in due sedi: nessun codice fiscale dell\'altra sede nel corpo', async () => {
     const res = await GET(req(OMONIMA))
+    // Lo stato esatto va asserito sempre: un corpo che «non contiene» il dato
+    // dell'altra sede è vero anche per un 500 (regola trasversale del piano
+    // 2026-07-31 sui test d'isolamento).
+    expect(res.status).toBe(200)
     const corpo = await res.text()
     expect(corpo).toContain('CF-FINTO-A')
     expect(corpo).not.toContain('CF-FINTO-B')

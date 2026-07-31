@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { SEDE_A } from '../fixtures/sedi'
 import {
     appLog as appLogSilenzioso,
     appLogBatch as appLogBatchSilenzioso,
@@ -100,7 +101,7 @@ describe('la riga persistita', () => {
             m.impostaUtente({
                 userId: '11111111-2222-3333-4444-555555555555',
                 ruolo: 'admin',
-                scuolaId: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529',
+                scuolaId: SEDE_A,
             });
             await m.appLog({
                 livello: 'error',
@@ -124,7 +125,7 @@ describe('la riga persistita', () => {
         expect(r.request_id).toBe('rid-1');
         expect(r.utente_id).toBe('11111111-2222-3333-4444-555555555555');
         expect(r.utente_ruolo).toBe('admin');
-        expect(r.scuola_id).toBe('d53b0fbc-a9eb-4073-b302-73d1d5abd529');
+        expect(r.scuola_id).toBe(SEDE_A);
         expect(r.fingerprint).toMatch(/^[0-9a-f]{64}$/);
         expect(r.contesto).toEqual({});
     });

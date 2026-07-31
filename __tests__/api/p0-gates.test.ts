@@ -14,7 +14,12 @@ import * as attDaily from '@/app/api/attendance/daily/route';
 import * as attMonthly from '@/app/api/attendance/monthly/route';
 import * as gallery from '@/app/api/gallery/route';
 import * as galleryUpload from '@/app/api/gallery/upload/route';
-import * as seedDb from '@/app/api/seed-db/route';
+// `seed-db` e `admin/seed-full` sono state CANCELLATE il 2026-07-31 (audit
+// multi-sede): cablavano l'uuid di una sede e `.env.local` punta al database di
+// produzione, quindi in `npm run dev` un POST avrebbe creato una scuola vera. Il
+// sigillo `sealDangerous` protegge però altre 15 route ancora vive: la sua prova
+// resta, spostata su `debug-supabase`.
+import * as debugSupabase from '@/app/api/debug-supabase/route';
 
 const denied = () =>
   ({ response: NextResponse.json({ error: 'denied' }, { status: 403 }) }) as never;
@@ -52,19 +57,19 @@ describe('P0/S3 — gate wiring sugli endpoint docente', () => {
   }
 });
 
-describe('P0/S3 — seal endpoint pericolosi (seed-db)', () => {
+describe('P0/S3 — seal endpoint pericolosi (debug-supabase)', () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it('seed-db è riservato ad admin (403 per non-admin)', async () => {
+  it('debug-supabase è riservato ad admin (403 per non-admin)', async () => {
     vi.mocked(requireStaff).mockResolvedValue(denied());
-    const res = await seedDb.GET(new Request('http://localhost'));
+    const res = await debugSupabase.GET(new Request('http://localhost'));
     expect(res.status).toBe(403);
     expect(requireStaff).toHaveBeenCalledWith(expect.anything(), ['admin']);
   });
 
-  it('seed-db restituisce 404 in produzione (prima di ogni gate)', async () => {
+  it('debug-supabase restituisce 404 in produzione (prima di ogni gate)', async () => {
     vi.stubEnv('NODE_ENV', 'production');
-    const res = await seedDb.POST(new Request('http://localhost'));
+    const res = await debugSupabase.GET(new Request('http://localhost'));
     expect(res.status).toBe(404);
   });
 });

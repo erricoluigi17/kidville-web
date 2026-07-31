@@ -1,4 +1,5 @@
 import { it, expect, vi, beforeEach, describe } from 'vitest'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { NextResponse, NextRequest } from 'next/server'
 
 // ── Categorie cassa (E2.6) ────────────────────────────────────────────────────
@@ -22,7 +23,7 @@ const h = vi.hoisted(() => ({
   logErrore: vi.fn(),
 }))
 
-const SC = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SC = SEDE_A
 
 vi.mock('@/lib/auth/require-staff', () => ({
   requireStaff: (_req: unknown, allowed: string[] = ['admin', 'coordinator', 'segreteria']) => {
@@ -155,7 +156,7 @@ describe('DELETE', () => {
 
   // RC2 — scope di sede: una categoria DI SEDE altrui non è eliminabile.
   it('RC2 — categoria di una sede FUORI scope → 403, nessuna cancellazione', async () => {
-    h.cat = { scuola_id: 'e2e00000-0000-4000-8000-000000000001', is_sistema: false }
+    h.cat = { scuola_id: SEDE_B, is_sistema: false }
     h.scuoleAttive.mockResolvedValue([SC])
     const res = await DELETE(del(CAT))
     expect(res.status).toBe(403)
@@ -174,7 +175,7 @@ describe('PATCH — scope di sede, is_sistema, slug (RC2)', () => {
   })
 
   it('categoria di una sede FUORI scope → 403, nessun update', async () => {
-    h.cat = { scuola_id: 'e2e00000-0000-4000-8000-000000000001', is_sistema: false }
+    h.cat = { scuola_id: SEDE_B, is_sistema: false }
     h.scuoleAttive.mockResolvedValue([SC])
     const res = await PATCH(patch({ id: CAT, nome: 'Rinomina' }))
     expect(res.status).toBe(403)

@@ -22,16 +22,16 @@ const ROOT = process.cwd()
 
 // Eccezioni motivate. NON aggiungere qui una password nuova per far passare il gate:
 // spostala in una variabile d'ambiente. Chiave = percorso del file (relativo alla root).
-const ECCEZIONI: Record<string, string> = {
-  'scripts/seed-e2e.mjs':
-    'credenziali del progetto Supabase E2E della CI (usa-e-getta): è lo script stesso a CREARE gli utenti ' +
-    '`*.e2e@kidville.test` su un DB dedicato che non contiene dati reali, e la CI non ha (ancora) un secret ' +
-    'da cui leggerle. Da spostare su `KV_E2E_PASSWORD` + secret GitHub quando si tocca il workflow E2E.',
-  'e2e/fixtures.ts':
-    'stessa coppia di credenziali di scripts/seed-e2e.mjs, deve restare allineata (DB E2E della CI, non produzione).',
-  'docs/e2e.md':
-    'documenta le credenziali del DB E2E della CI create dal seed; segue la sorte di scripts/seed-e2e.mjs.',
-}
+// (2026-07-31) L'allowlist è VUOTA, e l'ultima eccezione è caduta col peggiore
+// dei precedenti: la password del seed E2E — `scripts/seed-e2e.mjs`,
+// `e2e/fixtures.ts`, `docs/e2e.md` — era esentata perché «il DB E2E della CI non
+// contiene dati reali». Era vero del database; non dell'ACCOUNT. Il 29/07 il
+// provisioning delle sedi ha collegato `admin.e2e@kidville.test` a Kidville
+// Aversa e Kidville Cesa, e quella password è rimasta valida in PRODUZIONE su un
+// `ruolo='admin'` per due giorni, in un repository pubblico. La lezione non è
+// «serviva un'eccezione più stretta»: è che una password committata non resta
+// dove l'hai messa. Ora si legge da `KV_E2E_PASSWORD` (e2e/lib/e2e-password.mjs).
+const ECCEZIONI: Record<string, string> = {}
 
 const ESTENSIONI = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.md', '.mdx',
@@ -74,6 +74,15 @@ export function sembraUnaPassword(valore: string): boolean {
   if (/^[A-Z][A-Z0-9_]*$/.test(v)) return false
   // Path, URL, import: non sono password.
   if (/^[./~]|:\/\/|^@/.test(v)) return false
+  // Un INDIRIZZO E-MAIL non è una password, e nei documenti che parlano di
+  // account ne compare uno accanto alla parola «password» in quasi ogni riga
+  // («la password dell'account `x@y.test`»). Senza questa calibrazione il lock
+  // urla su prosa innocua, e un lock che urla a vuoto finisce per raccogliere
+  // eccezioni — che è il modo in cui la password del seed E2E è rimasta
+  // committata per mesi. Compromesso accettato: una password fatta ESATTAMENTE
+  // come un indirizzo e-mail (`Pa@ssw0rd.info`) sfuggirebbe; il TLD alfabetico
+  // di 2+ lettere tiene fuori i casi realistici (`Kidv@lle.2026!` resta rilevata).
+  if (/^[A-Za-z0-9_.+*%-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,24}$/.test(v)) return false
   // Frammenti di codice citati nei documenti: `auth.admin.updateUserById`,
   // `ALLOW_HEADER_IDENTITY='false'`, `getModuleConfig()`.
   if (/[=()[\];,<>|]/.test(v)) return false
@@ -148,6 +157,9 @@ describe('lock sicurezza · nessuna password in chiaro nei file tracciati', () =
     expect(
       trovaPasswordInChiaro(`<p>Password unica di test: <span class="mono">${campione}</span></p>`, 'a.mjs'),
     ).toHaveLength(1)
+    // L'esclusione degli indirizzi e-mail è STRETTA: una password che contiene
+    // una chiocciola resta una password.
+    expect(trovaPasswordInChiaro('Password comune: `' + 'Kidv@' + 'lle.2026!`', 'a.md')).toHaveLength(1)
   })
 
   it('il rilevatore NON urla su segnaposto e rimandi (calibrazione)', () => {
@@ -163,6 +175,10 @@ describe('lock sicurezza · nessuna password in chiaro nei file tracciati', () =
       ['il reset della password (`auth.admin.updateUserById` con password random)', 'a.md'],
       ['La password è nel gestore di credenziali del titolare.', 'a.md'],
       [`const tempPassword = ${q}KidvilleParent_${q} + Math.random().toString(36);`, 'a.ts'],
+      // Indirizzi e-mail citati accanto alla parola «password»: nei documenti che
+      // parlano di account sono la norma, e non sono credenziali.
+      ['la password era valida su `admin.e2e@kidville.test` — ruolo `admin`', 'a.md'],
+      ['Ruotare la password dei 4 account `*.e2e@kidville.test` in produzione', 'a.md'],
     ]
     for (const [testo, file] of casi) {
       expect(trovaPasswordInChiaro(testo, file), `falso positivo su: ${testo}`).toHaveLength(0)

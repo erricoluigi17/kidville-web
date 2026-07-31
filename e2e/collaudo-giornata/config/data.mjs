@@ -1,10 +1,14 @@
-// ID reali di produzione (sede Kidville Giugliano) usati dalla campagna
-// «collaudo-giornata». Solo dati TEST. Fonte: query prod 2026-07-17 +
-// e2e/primaria-360/config/data.ts.
+// ID reali di produzione usati dalla campagna «collaudo-giornata». Solo dati
+// TEST. Fonte: query prod 2026-07-17 + e2e/primaria-360/config/data.ts.
 import { requireTestPassword } from '../../lib/test-password.mjs';
+import { requireScuolaCollaudo } from '../../lib/scuola-collaudo.mjs';
 
 export const PROD_BASE = 'https://app.kidville.it';
-export const SCUOLA_GIUGLIANO = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
+
+// La SEDE arriva dall'ambiente (KV_SCUOLA_ID), non da una costante: dal
+// 2026-07-29 i plessi di produzione sono tre e le sezioni TEST vivono in uno
+// solo. Fino al 2026-07-31 qui c'era l'uuid di Giugliano scritto a mano.
+export const SCUOLA_COLLAUDO = requireScuolaCollaudo();
 export const SECTION_1A = 'bb4e9f8a-c737-4d41-8634-02f8f8e48601'; // primaria
 export const SECTION_INFANZIA = '219cab6a-2bf3-48d6-a443-b7aecda40f42';
 

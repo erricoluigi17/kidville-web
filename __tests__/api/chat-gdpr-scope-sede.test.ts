@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
-import type { DBFinto } from '../fixtures/finto-supabase'
+import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
 
 // =============================================================================
 // Isolamento per sede su chat e GDPR — il blocco più esposto dell'audit.
@@ -46,6 +46,7 @@ const h = vi.hoisted(() => ({
   anonimizzaParent: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
+  scritture: [] as Scrittura[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -65,8 +66,8 @@ vi.mock('@/lib/gdpr/esegui', () => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   return {
-    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle),
-    createClient: async () => creaFintoSupabase(h.db, h.tabelle),
+    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture }),
+    createClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture }),
   }
 })
 
@@ -119,6 +120,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.db = dbBase()
   h.tabelle = []
+  h.scritture.length = 0
   h.genitoreHasFiglio.mockResolvedValue(false)
   h.getGenitoriDiAlunni.mockImplementation(async (_c: unknown, ids: string[]) => {
     const m = new Map<string, string[]>()
@@ -171,6 +173,7 @@ describe('POST /api/chat/threads — non si apre una chat su un minore altrui', 
     const res = await CREA_THREAD(post('/api/chat/threads', { teacher_id: SEG_A, parent_id: GEN_B, student_id: ALU_B }))
     expect(res.status).toBe(403)
     expect(h.tabelle).not.toContain('chat_threads')
+    expect(h.scritture).toEqual([])
   })
 
   it('genitore: 403 se il bambino non è suo, anche nella stessa sede', async () => {
@@ -180,10 +183,21 @@ describe('POST /api/chat/threads — non si apre una chat su un minore altrui', 
     expect(res.status).toBe(403)
   })
 
-  it('staff: passa sul bambino della propria sede (nessun falso negativo)', async () => {
+  // Controllo positivo. `not.toBe(403)` era verde su un 500: il finto client non
+  // aveva `insert()`, quindi la creazione del thread esplodeva in TypeError e
+  // finiva nel catch (audit R130). Qui si asserisce lo stato ESATTO e la
+  // SCRITTURA: il thread nasce, e nasce sul bambino giusto.
+  it('staff: crea davvero il thread sul bambino della propria sede', async () => {
     h.requireUser.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await CREA_THREAD(post('/api/chat/threads', { teacher_id: SEG_A, parent_id: GEN_A, student_id: ALU_A }))
-    expect(res.status).not.toBe(403)
+    expect(res.status).toBe(201)
+    expect(h.scritture).toEqual([
+      expect.objectContaining({ tabella: 'chat_threads', operazione: 'insert' }),
+    ])
+    expect(h.scritture[0].valori).toEqual([
+      { teacher_id: SEG_A, parent_id: GEN_A, student_id: ALU_A },
+    ])
+    expect(h.db.chat_threads.map((t) => t.student_id)).toEqual([ALU_A, ALU_B, ALU_A])
   })
 })
 

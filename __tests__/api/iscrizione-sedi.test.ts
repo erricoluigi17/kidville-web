@@ -1,5 +1,15 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import {
+  SEDE_A,
+  SEDE_B,
+  SEDE_C,
+  NOME_SEDE_A,
+  NOME_SEDE_B,
+  NOME_SEDE_C,
+  SEDE_E2E,
+  NOME_SEDE_E2E,
+} from '../fixtures/sedi'
 
 /**
  * `GET /api/iscrizione/sedi` — elenco pubblico delle sedi per il selettore del
@@ -36,10 +46,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET } from '@/app/api/iscrizione/sedi/route'
 
-const GIUGLIANO = { id: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529', nome: 'Kidville Giugliano' }
-const AVERSA = { id: '11111111-1111-4111-8111-111111111111', nome: 'Kidville Aversa' }
-const CESA = { id: '22222222-2222-4222-8222-222222222222', nome: 'Kidville Cesa' }
-const E2E = { id: 'e2e00000-0000-4000-8000-000000000001', nome: 'Kidville E2E' }
+const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
+const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
+const GAMMA = { id: SEDE_C, nome: NOME_SEDE_C }
+const E2E = { id: SEDE_E2E, nome: NOME_SEDE_E2E }
 
 const req = (url = 'http://localhost/api/iscrizione/sedi') =>
   new Request(url) as unknown as import('next/server').NextRequest
@@ -55,31 +65,31 @@ beforeEach(() => {
 
 describe('GET /api/iscrizione/sedi', () => {
   it('da anonimo: 200 con le sedi reali, la sede E2E esclusa', async () => {
-    h.schools = { data: [AVERSA, CESA, GIUGLIANO, E2E], error: null }
+    h.schools = { data: [ALFA, BETA, GAMMA, E2E], error: null }
     const res = await GET(req())
     expect(res.status).toBe(200)
     const json = (await res.json()) as Corpo
     expect(json.success).toBe(true)
-    expect(json.data?.map((s) => s.id)).toEqual([AVERSA.id, CESA.id, GIUGLIANO.id])
+    expect(json.data?.map((s) => s.id)).toEqual([ALFA.id, BETA.id, GAMMA.id])
     expect(json.data?.some((s) => s.id === E2E.id)).toBe(false)
   })
 
   it('espone SOLO id e nome (niente indirizzo, città o config)', async () => {
     h.schools = {
-      data: [{ ...GIUGLIANO, citta: 'Giugliano', indirizzo: 'Via Test 1', config: { x: 1 } }],
+      data: [{ ...GAMMA, citta: 'Città di prova', indirizzo: 'Via Test 1', config: { x: 1 } }],
       error: null,
     }
     const res = await GET(req())
     const json = (await res.json()) as Corpo
-    expect(json.data).toEqual([{ id: GIUGLIANO.id, nome: GIUGLIANO.nome }])
+    expect(json.data).toEqual([{ id: GAMMA.id, nome: GAMMA.nome }])
   })
 
   it('la sede disattivata (scuole.attiva = false) non compare', async () => {
-    h.schools = { data: [AVERSA, CESA, GIUGLIANO], error: null }
-    h.scuole = { data: [{ id: CESA.id, attiva: false }], error: null }
+    h.schools = { data: [ALFA, BETA, GAMMA], error: null }
+    h.scuole = { data: [{ id: BETA.id, attiva: false }], error: null }
     const res = await GET(req())
     const json = (await res.json()) as Corpo
-    expect(json.data?.map((s) => s.id)).toEqual([AVERSA.id, GIUGLIANO.id])
+    expect(json.data?.map((s) => s.id)).toEqual([ALFA.id, GAMMA.id])
   })
 
   it('DB E2E della CI (solo la sede di test) → 200 con elenco vuoto, non 500', async () => {
@@ -106,7 +116,7 @@ describe('GET /api/iscrizione/sedi', () => {
   })
 
   it('query param inatteso → non manda in 500 (schema zod vuoto e permissivo)', async () => {
-    h.schools = { data: [GIUGLIANO], error: null }
+    h.schools = { data: [GAMMA], error: null }
     const res = await GET(req('http://localhost/api/iscrizione/sedi?foo=bar'))
     expect(res.status).toBe(200)
   })

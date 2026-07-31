@@ -1,0 +1,680 @@
+{
+  "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
+  "generato_il": "2026-07-31",
+  "sha256": "9b119ab78d47ad8f326ba5477127dd5a74cafc28563145cd5c9c8ea74f7b74f1",
+  "policy_solo_service_role": 74,
+  "policies": [
+    {
+      "tabella": "alunni",
+      "policy": "parent read alunni figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "campanelle",
+      "policy": "read campanelle",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "chat_messages",
+      "policy": "chat_messages_select_participant",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(thread_id IN ( SELECT chat_threads.id FROM chat_threads WHERE ((chat_threads.teacher_id = auth.uid()) OR (chat_threads.parent_id = auth.uid()) OR (chat_threads.parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = auth.uid()))))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "chat_threads",
+      "policy": "chat_threads_select_participant",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "((teacher_id = auth.uid()) OR (parent_id = auth.uid()) OR (parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = auth.uid()))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "eventi_agenda",
+      "policy": "own eventi agenda",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(creato_da = auth.uid())",
+      "check_expr": ""
+    },
+    {
+      "tabella": "eventi_diario",
+      "policy": "parent read diario figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "firme_docenti",
+      "policy": "Maestre possono gestire le proprie firme",
+      "cmd": "ALL",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(maestra_id = auth.uid())",
+      "check_expr": "(maestra_id = auth.uid())"
+    },
+    {
+      "tabella": "firme_docenti",
+      "policy": "Maestre della scuola possono vedere tutte le firme del registro",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM (registro_orario r JOIN utenti u ON ((r.scuola_id = u.scuola_id))) WHERE ((r.id = firme_docenti.registro_id) AND (u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "form_models",
+      "policy": "fm_select_active_authenticated",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(is_active = true)",
+      "check_expr": ""
+    },
+    {
+      "tabella": "form_submissions",
+      "policy": "fs_insert_authenticated",
+      "cmd": "INSERT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "",
+      "check_expr": "((auth.uid() IS NOT NULL) AND ((user_id = auth.uid()) OR (user_id IS NULL)))"
+    },
+    {
+      "tabella": "form_submissions",
+      "policy": "fs_select_owner",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(user_id = auth.uid())",
+      "check_expr": ""
+    },
+    {
+      "tabella": "form_submissions",
+      "policy": "fs_update_owner",
+      "cmd": "UPDATE",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(user_id = auth.uid())",
+      "check_expr": "(user_id = auth.uid())"
+    },
+    {
+      "tabella": "galleria_media_v2",
+      "policy": "parent read galleria figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "((is_broadcast = true) OR (tag_students && ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids)))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "giudizi_sintetici_scala",
+      "policy": "read giudizi_sintetici_scala",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "giudizio_template",
+      "policy": "read giudizio_template",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "incassi",
+      "policy": "parent read incassi",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM pagamenti p WHERE ((p.id = incassi.pagamento_id) AND (p.alunno_id IN ( SELECT legame_genitori_alunni.alunno_id FROM legame_genitori_alunni WHERE (legame_genitori_alunni.genitore_id = auth.uid()))) AND ((p.tipo <> 'split'::pagamento_tipo) OR (incassi.quota_id IN ( SELECT q.id FROM pagamenti_quote q WHERE ((q.pagamento_id = p.id) AND (q.adult_id = auth.uid()))))))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "incassi",
+      "policy": "parent read incassi figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM pagamenti pg WHERE ((pg.id = incassi.pagamento_id) AND (pg.alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids)))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "materie",
+      "policy": "read materie",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "materie_preset",
+      "policy": "read materie_preset",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "mensa_menu_override",
+      "policy": "read mensa override",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "mensa_menu_rotazione",
+      "policy": "read mensa rotazione",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "news_categorie",
+      "policy": "auth read news_categorie",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(attivo = true)",
+      "check_expr": ""
+    },
+    {
+      "tabella": "news_digest_edizioni",
+      "policy": "auth read news_digest_edizioni",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "((EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND ((news_digest_edizioni.scuola_id = u.scuola_id) OR (news_digest_edizioni.scuola_id IN ( SELECT us.scuola_id FROM utenti_scuole us WHERE (us.utente_id = ( SELECT auth.uid() AS uid)))))))) OR ((inviata_il IS NOT NULL) AND (EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids UNION SELECT lga.alunno_id FROM legame_genitori_alunni lga WHERE (lga.genitore_id = ( SELECT auth.uid() AS uid)))) AND (a.scuola_id = news_digest_edizioni.scuola_id))))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "news_posts",
+      "policy": "auth read news_posts",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "((EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND ((news_posts.scuola_id IS NULL) OR (news_posts.scuola_id = u.scuola_id) OR (news_posts.scuola_id IN ( SELECT us.scuola_id FROM utenti_scuole us WHERE (us.utente_id = ( SELECT auth.uid() AS uid)))))))) OR ((stato = 'pubblicata'::text) AND (EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids UNION SELECT lga.alunno_id FROM legame_genitori_alunni lga WHERE (lga.genitore_id = ( SELECT auth.uid() AS uid)))) AND ((news_posts.scuola_id IS NULL) OR (news_posts.scuola_id = a.scuola_id)) AND ((news_posts.target_scope = 'globale'::text) OR ((news_posts.target_scope = 'classi'::text) AND ((a.classe_sezione)::text = ANY (news_posts.target_classes))) OR ((news_posts.target_scope = 'grado'::text) AND (EXISTS ( SELECT 1 FROM sections s WHERE ((s.id = a.section_id) AND (s.school_type = ANY (news_posts.target_gradi))))))))))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "note_disciplinari",
+      "policy": "Maestre possono gestire le proprie note",
+      "cmd": "ALL",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(maestra_id = auth.uid())",
+      "check_expr": "(maestra_id = auth.uid())"
+    },
+    {
+      "tabella": "note_disciplinari",
+      "policy": "Genitori possono vedere le note dei propri figli",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM legame_genitori_alunni WHERE ((legame_genitori_alunni.genitore_id = auth.uid()) AND (legame_genitori_alunni.alunno_id = note_disciplinari.alunno_id))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "note_disciplinari",
+      "policy": "Maestre della stessa scuola possono vedere le note",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM (utenti u JOIN alunni a ON ((a.scuola_id = u.scuola_id))) WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (a.id = note_disciplinari.alunno_id))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "note_disciplinari",
+      "policy": "parent read note figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "notifiche",
+      "policy": "own notifiche",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(utente_id = auth.uid())",
+      "check_expr": ""
+    },
+    {
+      "tabella": "obiettivi_apprendimento",
+      "policy": "read obiettivi_apprendimento",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "orario_settimanale",
+      "policy": "read orario_settimanale",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "pagamenti",
+      "policy": "parent read pagamenti figli",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "((alunno_id IN ( SELECT legame_genitori_alunni.alunno_id FROM legame_genitori_alunni WHERE (legame_genitori_alunni.genitore_id = auth.uid()))) AND ((tipo <> 'split'::pagamento_tipo) OR (EXISTS ( SELECT 1 FROM pagamenti_quote q WHERE ((q.pagamento_id = pagamenti.id) AND (q.adult_id = auth.uid()))))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "pagamenti",
+      "policy": "parent read pagamenti figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "pagamenti_quote",
+      "policy": "parent read own quota",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(adult_id = auth.uid())",
+      "check_expr": ""
+    },
+    {
+      "tabella": "pagamenti_quote",
+      "policy": "parent read quote figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(pagamento_id IN ( SELECT pg.id FROM pagamenti pg WHERE (pg.alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "payment_categories",
+      "policy": "read categories",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "presenze",
+      "policy": "parent read presenze figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "push_subscriptions",
+      "policy": "own push sub",
+      "cmd": "ALL",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(utente_id = auth.uid())",
+      "check_expr": "(utente_id = auth.uid())"
+    },
+    {
+      "tabella": "registro_orario",
+      "policy": "Maestre della scuola possono gestire il registro",
+      "cmd": "ALL",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (u.scuola_id = registro_orario.scuola_id))))",
+      "check_expr": "(EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (u.scuola_id = registro_orario.scuola_id))))"
+    },
+    {
+      "tabella": "registro_orario",
+      "policy": "Genitori possono vedere il registro dei figli",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(EXISTS ( SELECT 1 FROM (alunni a JOIN legame_genitori_alunni lga ON ((a.id = lga.alunno_id))) WHERE ((lga.genitore_id = auth.uid()) AND (a.scuola_id = registro_orario.scuola_id) AND ((a.classe_sezione)::text = (registro_orario.classe_sezione)::text))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "scrutinio_periodi",
+      "policy": "read scrutinio_periodi",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "sezione_materia_obiettivo",
+      "policy": "read sezione_materia_obiettivo",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "tempo_scuola",
+      "policy": "read tempo_scuola",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "true",
+      "check_expr": ""
+    },
+    {
+      "tabella": "valutazioni",
+      "policy": "parent read valutazioni figli (parents space)",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "((alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids)) AND (pubblicato = true))",
+      "check_expr": ""
+    }
+  ],
+  "tabelle_con_scuola_id": [
+    "admin_settings",
+    "alunni",
+    "app_log",
+    "armadietto",
+    "audit_scritture_docente",
+    "avvisi",
+    "cassa_categorie",
+    "cassa_chiusure",
+    "cassa_movimenti",
+    "certificati_competenze",
+    "conversazioni_sospensioni",
+    "crediti_famiglia",
+    "divise_articoli",
+    "divise_ordini",
+    "enrollment_submissions",
+    "eventi_agenda",
+    "fatture_emesse",
+    "fatture_numerazione",
+    "form_models",
+    "form_submissions",
+    "forms_templates",
+    "galleria_media",
+    "galleria_media_v2",
+    "giudizi_sintetici_scala",
+    "giudizio_template",
+    "gruppi_mensa",
+    "materie",
+    "mensa_alternative",
+    "mensa_class_menu_assignment",
+    "mensa_menu_config",
+    "mensa_menu_override",
+    "mensa_menu_rotazione",
+    "mensa_prenotazioni",
+    "mensa_ticket_movimenti",
+    "merch_fornitori",
+    "merch_ordini_fornitore",
+    "merch_po_numerazione",
+    "merch_rettifiche",
+    "news_categorie",
+    "news_digest_edizioni",
+    "news_posts",
+    "obiettivi_apprendimento",
+    "pagamenti",
+    "pagamenti_transazioni",
+    "payment_categories",
+    "presenze",
+    "protocolli",
+    "protocolli_categorie",
+    "protocolli_numerazione",
+    "registro_orario",
+    "ricevute_emesse",
+    "ricevute_numerazione",
+    "richieste_cancellazione",
+    "riconciliazione_import",
+    "riconciliazione_movimenti",
+    "scrutinio_giudizio_descrittivo",
+    "scrutinio_periodi",
+    "sections",
+    "segnalazioni",
+    "sidi_import_batches",
+    "sidi_sync_state",
+    "solleciti",
+    "task_interni",
+    "utenti",
+    "utenti_scuole"
+  ],
+  "tabelle_rls_attiva": [
+    "admin_settings",
+    "allegati_registro",
+    "alunni",
+    "app_log",
+    "armadietto",
+    "audit_scritture_docente",
+    "avvisi",
+    "avvisi_risposte",
+    "campanelle",
+    "cassa_categorie",
+    "cassa_chiusure",
+    "cassa_movimenti",
+    "certificati_competenze",
+    "certificati_medici",
+    "certificato_competenza_livelli",
+    "chat_messages",
+    "chat_threads",
+    "consensi_accettazioni",
+    "conversazioni_sospensioni",
+    "crediti_famiglia",
+    "delegates",
+    "divise_articoli",
+    "divise_ordini",
+    "divise_ordini_righe",
+    "enrollment_submissions",
+    "eventi_agenda",
+    "eventi_diario",
+    "fascicolo_accessi_audit",
+    "fatture_emesse",
+    "fatture_numerazione",
+    "fea_audit_log",
+    "fea_signatures",
+    "firme_docenti",
+    "firme_documenti",
+    "form_models",
+    "form_submissions",
+    "forms_submissions",
+    "forms_templates",
+    "galleria_media",
+    "galleria_media_v2",
+    "giudizi_sintetici_scala",
+    "giudizio_template",
+    "giustifiche_didattiche",
+    "gruppi_mensa",
+    "incassi",
+    "legame_genitori_alunni",
+    "locker_config",
+    "materie",
+    "materie_preset",
+    "mensa_alternative",
+    "mensa_class_menu_assignment",
+    "mensa_menu_config",
+    "mensa_menu_override",
+    "mensa_menu_rotazione",
+    "mensa_prenotazioni",
+    "mensa_ticket_movimenti",
+    "merch_fornitori",
+    "merch_ordini_fornitore",
+    "merch_po_numerazione",
+    "merch_rettifiche",
+    "news_categorie",
+    "news_digest_edizioni",
+    "news_media",
+    "news_posts",
+    "news_visualizzazioni",
+    "nota_ricezioni",
+    "note_disciplinari",
+    "notifiche",
+    "obiettivi_apprendimento",
+    "orario_settimanale",
+    "otp_ticket_consumati",
+    "pagamenti",
+    "pagamenti_quote",
+    "pagamenti_transazioni",
+    "pagella_ricezioni",
+    "pagelle",
+    "parents",
+    "payment_categories",
+    "presenze",
+    "protocolli",
+    "protocolli_allegati",
+    "protocolli_categorie",
+    "protocolli_numerazione",
+    "push_subscriptions",
+    "registro_destinatari",
+    "registro_modifiche",
+    "registro_orario",
+    "ricevute_emesse",
+    "ricevute_numerazione",
+    "richieste_cancellazione",
+    "riconciliazione_import",
+    "riconciliazione_movimenti",
+    "sblocchi_audit",
+    "schools",
+    "scrutini",
+    "scrutinio_comportamento",
+    "scrutinio_giudizi",
+    "scrutinio_giudizio_descrittivo",
+    "scrutinio_periodi",
+    "scuole",
+    "sections",
+    "segnalazioni",
+    "sezione_materia_obiettivo",
+    "sidi_import_batches",
+    "sidi_sync_state",
+    "solleciti",
+    "student_documents",
+    "student_guardians",
+    "student_parents",
+    "task_interni",
+    "tempo_scuola",
+    "test_table",
+    "ticket_mensa",
+    "utenti",
+    "utenti_scuole",
+    "utenti_sezioni",
+    "utenti_sezioni_materie",
+    "valutazione_obiettivi",
+    "valutazioni"
+  ]
+}

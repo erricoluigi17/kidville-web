@@ -1,5 +1,14 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
+import {
+  SEDE_A,
+  SEDE_B,
+  SEDE_C,
+  NOME_SEDE_A,
+  NOME_SEDE_B,
+  NOME_SEDE_C,
+  SEDE_E2E,
+} from '../fixtures/sedi'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isScuolaE2E, sediReali } from '@/lib/scuole/reali'
 
@@ -45,10 +54,10 @@ function fakeSupabase(opts: {
   } as unknown as SupabaseClient
 }
 
-const GIUGLIANO = { id: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529', nome: 'Kidville Giugliano' }
-const AVERSA = { id: '11111111-1111-4111-8111-111111111111', nome: 'Kidville Aversa' }
-const CESA = { id: '22222222-2222-4222-8222-222222222222', nome: 'Kidville Cesa' }
-const E2E_ID = { id: 'e2e00000-0000-4000-8000-000000000001', nome: 'Scuola di prova' }
+const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
+const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
+const GAMMA = { id: SEDE_C, nome: NOME_SEDE_C }
+const E2E_ID = { id: SEDE_E2E, nome: 'Scuola di prova' }
 const E2E_NOME = { id: '33333333-3333-4333-8333-333333333333', nome: 'Kidville E2E' }
 
 describe('isScuolaE2E — predicato "scuola di test"', () => {
@@ -58,37 +67,37 @@ describe('isScuolaE2E — predicato "scuola di test"', () => {
 
   it('riconosce la sede E2E dal nome (case-insensitive)', () => {
     expect(isScuolaE2E(E2E_NOME)).toBe(true)
-    expect(isScuolaE2E({ id: AVERSA.id, nome: 'kidville e2e' })).toBe(true)
+    expect(isScuolaE2E({ id: ALFA.id, nome: 'kidville e2e' })).toBe(true)
   })
 
   it('una sede reale non è E2E', () => {
-    expect(isScuolaE2E(GIUGLIANO)).toBe(false)
-    expect(isScuolaE2E(AVERSA)).toBe(false)
-    expect(isScuolaE2E(CESA)).toBe(false)
+    expect(isScuolaE2E(GAMMA)).toBe(false)
+    expect(isScuolaE2E(ALFA)).toBe(false)
+    expect(isScuolaE2E(BETA)).toBe(false)
   })
 
   it('non esplode se il nome è nullo (colonna nullable in DB)', () => {
-    expect(isScuolaE2E({ id: AVERSA.id, nome: null as unknown as string })).toBe(false)
+    expect(isScuolaE2E({ id: ALFA.id, nome: null as unknown as string })).toBe(false)
   })
 })
 
 describe('sediReali — sedi reali e attive', () => {
   it('esclude la sede E2E dalle reali ma la lascia in `tutte`', async () => {
-    const s = await sediReali(fakeSupabase({ schools: { data: [GIUGLIANO, E2E_ID], error: null } }), 'test')
-    expect(s.reali.map((x) => x.id)).toEqual([GIUGLIANO.id])
-    expect(s.tutte.map((x) => x.id)).toEqual([GIUGLIANO.id, E2E_ID.id])
+    const s = await sediReali(fakeSupabase({ schools: { data: [GAMMA, E2E_ID], error: null } }), 'test')
+    expect(s.reali.map((x) => x.id)).toEqual([GAMMA.id])
+    expect(s.tutte.map((x) => x.id)).toEqual([GAMMA.id, E2E_ID.id])
     expect(s.error).toBeNull()
   })
 
   it('scarta le sedi disattivate (scuole.attiva = false)', async () => {
     const s = await sediReali(
       fakeSupabase({
-        schools: { data: [GIUGLIANO, AVERSA, CESA], error: null },
-        scuole: { data: [{ id: CESA.id, attiva: false }], error: null },
+        schools: { data: [GAMMA, ALFA, BETA], error: null },
+        scuole: { data: [{ id: BETA.id, attiva: false }], error: null },
       }),
       'test',
     )
-    expect(s.reali.map((x) => x.id)).toEqual([GIUGLIANO.id, AVERSA.id])
+    expect(s.reali.map((x) => x.id)).toEqual([GAMMA.id, ALFA.id])
     // `tutte` NON è filtrata: serve solo a validare uno scuola_id esplicito.
     expect(s.tutte).toHaveLength(3)
   })
@@ -96,12 +105,12 @@ describe('sediReali — sedi reali e attive', () => {
   it('FAIL-OPEN: se la lettura del flag `attiva` fallisce, non filtra nulla', async () => {
     const s = await sediReali(
       fakeSupabase({
-        schools: { data: [GIUGLIANO, AVERSA], error: null },
+        schools: { data: [GAMMA, ALFA], error: null },
         scuole: { data: null, error: { code: '42703', message: 'column "attiva" does not exist' } },
       }),
       'test',
     )
-    expect(s.reali.map((x) => x.id)).toEqual([GIUGLIANO.id, AVERSA.id])
+    expect(s.reali.map((x) => x.id)).toEqual([GAMMA.id, ALFA.id])
     expect(s.error).toBeNull() // il degrado non è un errore della richiesta
   })
 
@@ -123,7 +132,7 @@ describe('sediReali — sedi reali e attive', () => {
 
   it('legge SOLO id e nome da schools (nessun indirizzo, nessuna config)', async () => {
     const select: string[] = []
-    await sediReali(fakeSupabase({ schools: { data: [GIUGLIANO], error: null }, select }), 'test')
+    await sediReali(fakeSupabase({ schools: { data: [GAMMA], error: null }, select }), 'test')
     expect(select).toContain('schools:id, nome')
     expect(select.join('|')).not.toMatch(/indirizzo|citta|config/)
   })

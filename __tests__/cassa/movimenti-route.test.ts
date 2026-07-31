@@ -1,4 +1,5 @@
 import { it, expect, vi, beforeEach, describe } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 
 // =============================================================================
 // E1.4 — API movimenti cassa (test PRIMA dell'implementazione).
@@ -70,7 +71,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET, POST } from '@/app/api/pagamenti/cassa/movimenti/route'
 
-const SEDE = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SEDE = SEDE_A
 
 const getReq = (qs = `scuola_id=${SEDE}`) =>
   new Request(`http://localhost/api/pagamenti/cassa/movimenti?${qs}`, {

@@ -13,6 +13,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
+import { requireE2EPassword } from '../e2e/lib/e2e-password.mjs';
 
 // ── Env: process.env (CI) con fallback a .env.local (dev locale) ────────────
 function loadEnvLocal() {
@@ -73,7 +74,10 @@ export const IDS = {
 };
 
 export const CREDENZIALI = {
-  password: 'KidvilleE2E.2026!',
+  // Dall'ambiente, mai dal repo: `KV_E2E_PASSWORD` (in CI, secret CI_E2E_PASSWORD).
+  // Assente ⇒ lo script esce con exit 1 — vedi e2e/lib/e2e-password.mjs per il
+  // perché (il 29/07 questo account è finito in Direzione su due sedi VERE).
+  password: requireE2EPassword(),
   admin: 'admin.e2e@kidville.test',
   docente: 'docente.e2e@kidville.test',
   genitore: 'genitore.e2e@kidville.test',

@@ -5,6 +5,16 @@
 // è la risoluzione della sede e la validazione dei campi, non il consenso, che
 // ha il suo test dedicato in `__tests__/api/iscrizione-consensi.test.ts`.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import {
+  SEDE_A,
+  SEDE_B,
+  SEDE_C,
+  NOME_SEDE_A,
+  NOME_SEDE_B,
+  NOME_SEDE_C,
+  SEDE_E2E,
+  NOME_SEDE_E2E,
+} from '../fixtures/sedi'
 
 /**
  * `POST /api/iscrizione` — risoluzione della SEDE.
@@ -71,10 +81,10 @@ const minimalModel = {
 
 import { POST } from '@/app/api/iscrizione/route'
 
-const GIUGLIANO = { id: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529', nome: 'Kidville Giugliano' }
-const AVERSA = { id: '11111111-1111-4111-8111-111111111111', nome: 'Kidville Aversa' }
-const CESA = { id: '22222222-2222-4222-8222-222222222222', nome: 'Kidville Cesa' }
-const E2E = { id: 'e2e00000-0000-4000-8000-000000000001', nome: 'Kidville E2E' }
+const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
+const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
+const GAMMA = { id: SEDE_C, nome: NOME_SEDE_C }
+const E2E = { id: SEDE_E2E, nome: NOME_SEDE_E2E }
 
 const invia = (scuolaId?: string) =>
   POST(
@@ -97,14 +107,14 @@ beforeEach(() => {
 
 describe('POST /api/iscrizione — risoluzione della sede', () => {
   it('UNA sola sede reale (+ la E2E) e nessuno scuola_id → 201 sulla sede reale (non-regressione)', async () => {
-    h.schools = { data: [GIUGLIANO, E2E], error: null }
+    h.schools = { data: [GAMMA, E2E], error: null }
     const res = await invia()
     expect(res.status).toBe(201)
-    expect(h.inserts[0].scuola_id).toBe(GIUGLIANO.id)
+    expect(h.inserts[0].scuola_id).toBe(GAMMA.id)
   })
 
   it('TRE sedi reali e nessuno scuola_id → 400, nessun insert (niente default silenzioso)', async () => {
-    h.schools = { data: [AVERSA, CESA, GIUGLIANO], error: null }
+    h.schools = { data: [ALFA, BETA, GAMMA], error: null }
     const res = await invia()
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
@@ -113,17 +123,17 @@ describe('POST /api/iscrizione — risoluzione della sede', () => {
   })
 
   it('TRE sedi reali + scuola_id scelto dal wizard → 201 su QUELLA sede', async () => {
-    h.schools = { data: [AVERSA, CESA, GIUGLIANO], error: null }
-    const res = await invia(CESA.id)
+    h.schools = { data: [ALFA, BETA, GAMMA], error: null }
+    const res = await invia(BETA.id)
     expect(res.status).toBe(201)
-    expect(h.inserts[0].scuola_id).toBe(CESA.id)
+    expect(h.inserts[0].scuola_id).toBe(BETA.id)
   })
 
   it('scuola_id inesistente → non viene usato: si ricade sulla risoluzione automatica', async () => {
-    h.schools = { data: [GIUGLIANO, E2E], error: null }
+    h.schools = { data: [GAMMA, E2E], error: null }
     const res = await invia('99999999-9999-4999-8999-999999999999')
     expect(res.status).toBe(201)
-    expect(h.inserts[0].scuola_id).toBe(GIUGLIANO.id)
+    expect(h.inserts[0].scuola_id).toBe(GAMMA.id)
   })
 
   it('DB E2E della CI (solo la sede di test) → 201 su quella sede (degrado pulito)', async () => {
@@ -134,18 +144,18 @@ describe('POST /api/iscrizione — risoluzione della sede', () => {
   })
 
   it('scuola_id esplicito sulla sede E2E → resta accettato (i test E2E passano da lì)', async () => {
-    h.schools = { data: [GIUGLIANO, E2E], error: null }
+    h.schools = { data: [GAMMA, E2E], error: null }
     const res = await invia(E2E.id)
     expect(res.status).toBe(201)
     expect(h.inserts[0].scuola_id).toBe(E2E.id)
   })
 
   it('due sedi reali di cui una DISATTIVATA → 201 sull\'unica ancora attiva', async () => {
-    h.schools = { data: [AVERSA, GIUGLIANO], error: null }
-    h.scuole = { data: [{ id: AVERSA.id, attiva: false }], error: null }
+    h.schools = { data: [ALFA, GAMMA], error: null }
+    h.scuole = { data: [{ id: ALFA.id, attiva: false }], error: null }
     const res = await invia()
     expect(res.status).toBe(201)
-    expect(h.inserts[0].scuola_id).toBe(GIUGLIANO.id)
+    expect(h.inserts[0].scuola_id).toBe(GAMMA.id)
   })
 
   it('lettura di `schools` in errore → 400, nessun insert (non si indovina la sede)', async () => {

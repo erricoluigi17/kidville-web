@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   creaTicketCancellazione,
@@ -32,7 +33,7 @@ function makeClient(queues: Record<string, Array<{ data: unknown; error: unknown
 }
 
 const PARENT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 
 describe('creaTicketCancellazione + verifyTicket (round-trip)', () => {
   it('produce un ticket accettato da verifyTicket per la stessa email', () => {

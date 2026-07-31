@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { risolviGenitorePerEmail } from '@/lib/gdpr/cancellazione-pubblica'
 
@@ -96,7 +97,7 @@ function makeClient(cfg: Cfg) {
 // Due spazi-id DIVERSI, come in produzione: 0 coincidenze fra parents.id e utenti.id.
 const UTENTE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-utente000001'
 const PARENT_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-parent000001'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 const EMAIL = 'genitore@example.com'
 
 const utenteGenitore = (email = EMAIL) => ({ id: UTENTE_ID, email, scuola_id: SCUOLA_ID })

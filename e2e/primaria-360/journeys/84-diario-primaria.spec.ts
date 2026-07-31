@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { storagePath, SCUOLA_GIUGLIANO, BASE_URL } from '../config/accounts';
+import { storagePath, SCUOLA_COLLAUDO, BASE_URL } from '../config/accounts';
 import { readAppIds, apiGet, apiPatch, withUser, httpOk } from '../lib/harness';
 
 // FASE 1 — Diario 0-6 configurabile per la primaria (E24).
@@ -13,7 +13,7 @@ import { readAppIds, apiGet, apiPatch, withUser, httpOk } from '../lib/harness';
 
 const setToggle = async (page: import('@playwright/test').Page, value: boolean) => {
   const r = await apiPatch(page, '/api/admin/settings', {
-    scuola_id: SCUOLA_GIUGLIANO,
+    scuola_id: SCUOLA_COLLAUDO,
     diario_config: { diario_primaria_visibile: value },
   });
   expect(httpOk(r.status), `PATCH settings status ${r.status}`).toBeTruthy();
@@ -46,7 +46,7 @@ test.describe('FASE 1 — diario 0-6 configurabile in primaria', () => {
       const seg = await playwright.request.newContext({ baseURL: BASE_URL, storageState: storagePath('segreteria') });
       const patchSeg = async (value: boolean) => {
         const r = await seg.patch('/api/admin/settings', {
-          data: { scuola_id: SCUOLA_GIUGLIANO, diario_config: { diario_primaria_visibile: value } },
+          data: { scuola_id: SCUOLA_COLLAUDO, diario_config: { diario_primaria_visibile: value } },
         });
         expect(r.ok(), `PATCH segreteria status ${r.status()}`).toBeTruthy();
       };

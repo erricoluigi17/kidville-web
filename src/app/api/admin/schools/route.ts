@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
+import { isUtenteCollaudo } from '@/lib/scuole/reali'
 import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { defaultAdminSettingsRow } from '@/lib/scuole/admin-settings-default'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -45,6 +46,115 @@ async function provisionaSedeViaRpc(
   // PGRST202 = funzione non trovata (DB E2E non migrato) → degrade, non è un errore.
   if (error) return error.code === 'PGRST202' ? {} : { error }
   return { id: data as string }
+}
+
+type ClientAdmin = Awaited<ReturnType<typeof createAdminClient>>
+
+/** Chi agganciare alla sede nuova, o l'errore che impedisce di deciderlo. */
+type EsitoAdmin =
+  | { ids: string[]; esclusi: number }
+  | { error: { message: string; code?: string }; evento: string }
+
+/**
+ * Gli admin da collegare alla sede nuova — **senza gli account di collaudo**.
+ *
+ * Il 2026-07-29, provisionando Kidville Aversa e Kidville Cesa, questo elenco
+ * era «tutti gli admin» (`.eq('ruolo','admin')`, nessun altro filtro) e ci è
+ * finito dentro anche `admin.e2e@kidville.test`, l'account del seed della CI, la
+ * cui password era un letterale committato in un repository PUBBLICO: Direzione
+ * a pieno titolo su due plessi veri — anagrafiche di minori, note mediche,
+ * pagamenti — e nessun segnale che fosse successo qualcosa.
+ *
+ * Il predicato è `isUtenteCollaudo` (src/lib/scuole/reali.ts), gemello di
+ * `isScuolaE2E`: uno solo per tutto il progetto. Un'euristica locale «sugli id
+ * che iniziano per e2e» sarebbe il secondo, e fra sei mesi i due non
+ * concorderebbero più.
+ *
+ * Se una delle letture necessarie a classificare fallisce si RITORNA l'errore (→
+ * 500) invece di tirare a indovinare: creare la sede collegando chiunque è
+ * esattamente il difetto da cui veniamo, e creare la sede senza collegare
+ * nessuno la lascerebbe senza Direzione. Un 500 si ritenta; una sede sbagliata
+ * va bonificata a mano sul database.
+ */
+async function adminDaCollegare(supabase: ClientAdmin): Promise<EsitoAdmin> {
+  const { data: admins, error: adminsError } = await supabase
+    .from('utenti')
+    .select('id, scuola_id')
+    .eq('ruolo', 'admin')
+  if (adminsError) return { error: adminsError, evento: 'db' }
+
+  const candidati = ((admins ?? []) as { id: string | null; scuola_id: string | null }[])
+    .filter((a) => Boolean(a.id))
+    .map((a) => ({ id: String(a.id), scuola_id: a.scuola_id ?? null }))
+  if (candidati.length === 0) return { ids: [], esclusi: 0 }
+
+  // ── Ponte `utenti_scuole`: le sedi in più di ciascun candidato ─────────────
+  // Serve per l'admin che non dichiara una sede primaria: senza il ponte le sue
+  // sedi sarebbero zero e resterebbe classificato «reale» per assenza di prove.
+  const ponte = new Map<string, string[]>()
+  const { data: legami, error: ponteError } = await supabase
+    .from('utenti_scuole')
+    .select('utente_id, scuola_id')
+    .in('utente_id', candidati.map((c) => c.id))
+  if (ponteError) {
+    // DB E2E della CI, non migrato: la tabella (o la colonna) può non esserci.
+    // Si degrada alla sola sede primaria — che è comunque il segnale che ha
+    // riconosciuto l'account di collaudo in produzione — ma lo si DICE.
+    if (!SCHEMA_ASSENTE.has(ponteError.code ?? '')) {
+      return { error: ponteError, evento: 'db-utenti-scuole' }
+    }
+    logEvento(
+      'multi_sede',
+      'info',
+      { operazione: 'admin/schools:POST', esito: 'ponte-utenti-scuole-non-disponibile' },
+      ponteError,
+    )
+  } else {
+    for (const r of (legami ?? []) as { utente_id: string | null; scuola_id: string | null }[]) {
+      if (!r.utente_id || !r.scuola_id) continue
+      const chiave = String(r.utente_id)
+      const lista = ponte.get(chiave) ?? []
+      lista.push(String(r.scuola_id))
+      ponte.set(chiave, lista)
+    }
+  }
+
+  // ── Nomi delle sedi coinvolte: il secondo indizio di `isScuolaE2E` ─────────
+  const sediIds = new Set<string>()
+  for (const c of candidati) if (c.scuola_id) sediIds.add(c.scuola_id)
+  for (const lista of ponte.values()) for (const s of lista) sediIds.add(s)
+  const nomiSedi = new Map<string, string>()
+  if (sediIds.size > 0) {
+    const { data: sedi, error: sediError } = await supabase
+      .from('schools')
+      .select('id, nome')
+      .in('id', Array.from(sediIds))
+    if (sediError) return { error: sediError, evento: 'db-schools' }
+    for (const s of (sedi ?? []) as { id: string | null; nome: string | null }[]) {
+      if (s.id) nomiSedi.set(String(s.id), s.nome ?? '')
+    }
+  }
+
+  const ids: string[] = []
+  let esclusi = 0
+  for (const c of candidati) {
+    if (isUtenteCollaudo({ scuola_id: c.scuola_id, sedi: ponte.get(c.id) }, nomiSedi)) {
+      esclusi += 1
+      continue
+    }
+    ids.push(c.id)
+  }
+  if (esclusi > 0) {
+    // Solo conteggi: l'identità di chi è stato escluso non serve a nessuno nel
+    // log, e sarebbero pur sempre dati di persone.
+    logEvento('multi_sede', 'info', {
+      operazione: 'admin/schools:POST',
+      esito: 'admin-collaudo-esclusi',
+      admin_totali: candidati.length,
+      admin_esclusi: esclusi,
+    })
+  }
+  return { ids, esclusi }
 }
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -105,16 +215,15 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
     const supabase = await createAdminClient()
 
     // Admin da collegare alla nuova sede: senza il legame in `utenti_scuole` la
-    // sede nasce senza Direzione e resta invisibile nel SedeSelector.
-    const { data: admins, error: adminsError } = await supabase
-      .from('utenti')
-      .select('id')
-      .eq('ruolo', 'admin')
-    if (adminsError) {
-      logErrore({ operazione: 'admin/schools:POST', stato: 500, evento: 'db' }, adminsError)
-      return NextResponse.json({ error: adminsError.message }, { status: 500 })
+    // sede nasce senza Direzione e resta invisibile nel SedeSelector. **Gli
+    // account di collaudo NON entrano in questo elenco** — vedi la testata di
+    // `adminDaCollegare`.
+    const scelta = await adminDaCollegare(supabase)
+    if ('error' in scelta) {
+      logErrore({ operazione: 'admin/schools:POST', stato: 500, evento: scelta.evento }, scelta.error)
+      return NextResponse.json({ error: scelta.error.message }, { status: 500 })
     }
-    const adminIds = (admins ?? []).map((a) => a.id as string).filter(Boolean)
+    const adminIds = scelta.ids
 
     // Provisioning atomico via RPC: crea in schools E scuole con lo STESSO id e
     // collega gli admin. Sul DB E2E la RPC non è deployata (PGRST202) → fallback.
@@ -220,6 +329,7 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
       esito: via,
       sede_id: sedeId,
       admin_collegati: adminIds.length,
+      admin_esclusi: scelta.esclusi,
     })
 
     const data = {

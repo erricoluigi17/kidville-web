@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import { NextResponse } from 'next/server'
 
 // =============================================================================
@@ -18,7 +19,7 @@ import { NextResponse } from 'next/server'
 
 const UTENTE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-utente000001'
 const PARENT_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-parent000001'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 
 type Row = Record<string, unknown>
 interface Filtro { col: string; val: unknown }
@@ -72,10 +73,16 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => h.makeClient() }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('@/lib/notifiche/destinatari', () => ({
-  staffScuola: vi.fn().mockResolvedValue(['staff-1']),
-  scuolaUnicaReale: vi.fn().mockResolvedValue('d53b0fbc-a9eb-4073-b302-73d1d5abd529'),
-}))
+// Factory ASINCRONA: `vi.mock` è sollevata sopra gli import, quindi il valore
+// della fixture va richiesto qui dentro — un riferimento all'import statico
+// verrebbe letto prima che sia inizializzato.
+vi.mock('@/lib/notifiche/destinatari', async () => {
+  const { SEDE_A: sede } = await import('../fixtures/sedi')
+  return {
+    staffScuola: vi.fn().mockResolvedValue(['staff-1']),
+    scuolaUnicaReale: vi.fn().mockResolvedValue(sede),
+  }
+})
 
 import { GET, POST, DELETE } from '@/app/api/parent/account/richiesta-cancellazione/route'
 

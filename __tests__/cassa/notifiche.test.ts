@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // ── Notifiche cassa: adminDellaSede a 3 fallback (P10) + label metodo (P1) ────
@@ -43,8 +44,8 @@ function supa(utenti: Ris, utentiScuole: Ris): SupabaseClient {
   } as unknown as SupabaseClient
 }
 
-const SC = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
-const ALTRA = 'e2e00000-0000-4000-8000-000000000001'
+const SC = SEDE_A
+const ALTRA = SEDE_B
 
 beforeEach(() => vi.clearAllMocks())
 

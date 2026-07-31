@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 /**
  * `staffScuola` con più sedi.
@@ -23,8 +24,10 @@ vi.mock('@/lib/scuole/reali', () => ({ isScuolaE2E: () => false }))
 
 import { staffScuola } from '@/lib/notifiche/destinatari'
 
-const AVERSA = '429da920-2c1f-47a8-82ed-a26f63ee0591'
-const GIUGLIANO = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+/** La sede APPENA APERTA: nessuno ce l'ha come sede primaria, lo staff arriva dal ponte. */
+const SEDE_NUOVA = SEDE_B
+/** La sede STORICA: ha già staff con `utenti.scuola_id` valorizzato. */
+const SEDE_CON_STAFF = SEDE_A
 
 /**
  * Client minimo. `utenti` risponde a `.eq('scuola_id', …)` (primari) e a
@@ -70,11 +73,11 @@ describe('staffScuola — sede nuova senza staff primario', () => {
   it('trova l\'admin collegato SOLO dal ponte utenti_scuole', async () => {
     const ids = await staffScuola(
       client({
-        primari: [],                                   // nessuno ha Aversa come sede primaria
+        primari: [],                                   // nessuno ha la sede nuova come primaria
         ponte: [{ utente_id: 'admin-1' }],             // ma l'admin è collegato dal ponte
         utentiPonte: [{ id: 'admin-1', ruolo: 'admin' }],
       }),
-      AVERSA,
+      SEDE_NUOVA,
       RUOLI,
     )
     expect(ids).toEqual(['admin-1'])
@@ -87,7 +90,7 @@ describe('staffScuola — sede nuova senza staff primario', () => {
         ponte: [{ utente_id: 'admin-1' }],
         utentiPonte: [{ id: 'admin-1', ruolo: 'admin' }],
       }),
-      GIUGLIANO,
+      SEDE_CON_STAFF,
       RUOLI,
     )
     expect([...ids].sort()).toEqual(['admin-1', 'segr-1'])
@@ -100,14 +103,14 @@ describe('staffScuola — sede nuova senza staff primario', () => {
         ponte: [{ utente_id: 'doc-1' }],
         utentiPonte: [{ id: 'doc-1', ruolo: 'educator' }],
       }),
-      AVERSA,
+      SEDE_NUOVA,
       RUOLI,
     )
     expect(ids).toEqual([])
   })
 
   it('zero destinatari lo DICE: senza il log, «nessuno avvisato» e «tutto ok» sono uguali', async () => {
-    await staffScuola(client({ primari: [], ponte: [] }), AVERSA, RUOLI)
+    await staffScuola(client({ primari: [], ponte: [] }), SEDE_NUOVA, RUOLI)
     const warn = logEvento.mock.calls.find(
       c => c[1] === 'warn' && (c[2] as { esito?: string })?.esito === 'nessun-destinatario',
     )
@@ -122,7 +125,7 @@ describe('staffScuola — sede nuova senza staff primario', () => {
         primari: [{ id: 'segr-1', ruolo: 'segreteria' }],
         ponteError: { code: '42P01', message: 'relation "utenti_scuole" does not exist' },
       }),
-      GIUGLIANO,
+      SEDE_CON_STAFF,
       RUOLI,
     )
     expect(ids).toEqual(['segr-1'])
@@ -138,7 +141,7 @@ describe('staffScuola — sede nuova senza staff primario', () => {
         primari: [{ id: 'segr-1', ruolo: 'segreteria' }],
         ponteError: { code: '08006', message: 'connection failure' },
       }),
-      GIUGLIANO,
+      SEDE_CON_STAFF,
       RUOLI,
     )
     const ponte = logEvento.mock.calls.find(

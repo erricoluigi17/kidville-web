@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -134,6 +134,17 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         const { alunno_id, data, stato, orario_entrata, orario_uscita } = b.data;
 
         const supabase = await createAdminClient();
+
+        // LO SCOPE VALE ANCHE QUI, e prima di ogni scrittura. Fino al 2026-07-31
+        // questo handler aveva il solo gate di ruolo: la segreteria di una sede
+        // poteva segnare presenze e assenze sui bambini di un'altra, e con
+        // `stato:'assente'` partiva pure la notifica «tuo figlio è stato segnato
+        // assente» ai genitori dell'altro plesso. Dimostrato in produzione dal
+        // collaudo backend (rilievo F1, bloccante).
+        // Il lock non l'aveva visto perché cercava l'import a livello di FILE: la
+        // GET qui sopra lo scope ce l'aveva, e amnistiava la POST.
+        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        if (fuoriScope) return fuoriScope;
 
         // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
         // le policy scolastiche su presenze e l'aggregato realtime li richiedono.

@@ -4,7 +4,9 @@ import { NextResponse } from 'next/server'
 // P4/DL-041 — Privacy Lock (Galleria) enforced server-side su POST e PATCH.
 // Regola "foto privata": un solo bambino taggato è sempre pubblicabile (foto
 // visibile solo ai suoi genitori); le foto di gruppo (≥2 taggati) richiedono la
-// liberatoria (consenso_privacy === true) per OGNI bambino. Broadcast bypassa.
+// liberatoria (consenso_privacy === true) per OGNI bambino.
+// Dal 2026-07-31 il broadcast NON bypassa più: una foto istituzionale non può
+// taggare bambini (400) — vedi `__tests__/lib/gallery-privacy-broadcast.test.ts`.
 
 const MSG_GRUPPO =
   'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).'
@@ -140,11 +142,21 @@ describe('POST /api/gallery — Privacy Lock', () => {
     expect(h.inserted).toMatchObject({ tag_students: ['a'] })
   })
 
-  it('broadcast istituzionale (Direzione) bypassa il consenso → 201', async () => {
+  it('broadcast CON bambini taggati → 400 e nessuna riga scritta (il canale non spegne il consenso)', async () => {
     // Il broadcast è riservato alla Direzione: qui il gate risolve un admin.
+    // Fino al 2026-07-31 questa stessa richiesta rispondeva 201 e pubblicava una
+    // foto di gruppo di bambini senza liberatoria a tutta la sede (privacy F5).
     h.requireDocente.mockResolvedValue({ user: { id: 'ad1', role: 'admin', scuola_id: 'sc-1' } })
     const res = await POST(postReq({ file_url: 'u', tag_students: ['a', 'b'], is_broadcast: true }))
+    expect(res.status).toBe(400)
+    expect(h.inserted).toBeNull()
+  })
+
+  it('CONTROLLO POSITIVO — il broadcast SENZA tag resta pubblicabile dalla Direzione → 201', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: 'ad1', role: 'admin', scuola_id: 'sc-1' } })
+    const res = await POST(postReq({ file_url: 'u', tag_students: [], is_broadcast: true, target_classes: ['A'] }))
     expect(res.status).toBe(201)
+    expect(h.inserted).toMatchObject({ is_broadcast: true })
   })
 
   it('403 se non docente', async () => {

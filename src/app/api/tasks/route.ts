@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
@@ -278,6 +278,40 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             return NextResponse.json({ error: 'userId o studentId è richiesto' }, { status: 400 });
         }
 
+        // ─── CHI SEI LO DICE LA SESSIONE (2026-07-31) ────────────────────────
+        // Fino a oggi il livello di visibilità e l'identità dei filtri arrivavano
+        // dal parametro di query `userId`: il ruolo si leggeva con
+        // `.eq('id', userId)` e `activeUserId` era `userId!`. Il gate
+        // `requireDocente` c'era ed era corretto — ma verificava CHE FOSSE STAFF,
+        // non CHI FOSSE. Misurato in collaudo: un `educator` che chiamava la
+        // propria rotta con lo userId di un admin della sede diventava
+        // `isManager` e riceveva TUTTI i promemoria del plesso, compresi quelli
+        // di cui non era né autore, né assegnatario, né destinatario di classe.
+        // Un parametro che il client sceglie non può decidere i permessi.
+        //
+        // Il `userId` in query resta accettato — i client lo mandano da sempre e
+        // serve ancora a distinguere questa chiamata dal ramo `?studentId=` — ma
+        // da qui in poi non decide più niente.
+        const activeUserId = auth.user.id;
+        // `String(...)`: `AppRole` non contiene 'coordinatore', ma `loadAppUser`
+        // ricade su `utenti.ruolo` (italiano) se la colonna generata `role` è
+        // vuota. Si conserva la mappatura che c'era, senza confronti fuori tipo.
+        const ruoloSessione = String(auth.user.role ?? '');
+        const isManager = ruoloSessione === 'admin' || ruoloSessione === 'coordinator' || ruoloSessione === 'coordinatore';
+
+        if (userId && userId !== activeUserId) {
+            // `warn` → persistito. Non è rumore: il client manda sempre l'id di
+            // chi ha la sessione, quindi una divergenza è o un bug del client o
+            // il tentativo che il collaudo ha misurato. Solo uuid e ruolo:
+            // nessun nome, nessun dato di minori.
+            logEvento('auth', 'warn', {
+                tipo: 'identita-da-query-ignorata',
+                operazione: 'tasks:GET',
+                utente: activeUserId,
+                ruolo: auth.user.role,
+            });
+        }
+
         const supabase = await createAdminClient();
         // Le sedi ATTIVE, non tutte quelle accessibili: la bacheca deve seguire
         // il SedeSelector come ogni altro elenco. Con `scuoleDiUtente` la
@@ -287,16 +321,36 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
         const plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
         if (plessi.length === 0) return NextResponse.json([]);
 
-        // Determine role
-        let role = 'educator';
-        const { data: uEntry } = await supabase.from('utenti').select('ruolo, role').eq('id', userId ?? null).maybeSingle();
-        if (uEntry) {
-            const rawRole = uEntry.role || uEntry.ruolo;
-            if (rawRole === 'admin') role = 'admin';
-            else if (rawRole === 'coordinator' || rawRole === 'coordinatore') role = 'coordinator';
+        // ─── IL RAMO `?studentId=` PARLA DI UN BAMBINO ───────────────────────
+        // La risposta porta nome, cognome, classe e ALLERGIE (`note_mediche`)
+        // dell'alunno collegato all'incarico — dato sanitario di un minore — e
+        // fino a oggi non c'era NESSUNA verifica: bastava un uuid qualsiasi
+        // della sede. `assertAlunnoInScope` controlla il plesso e, per chi non
+        // vede tutte le classi (l'educator), esige la sezione assegnata.
+        //
+        // Sta PRIMA della lettura di `task_interni`: un controllo applicato
+        // dopo aver interrogato la tabella è un filtro, non un gate.
+        if (studentId) {
+            const negato = await assertAlunnoInScope(supabase, auth.user, studentId);
+            if (negato) {
+                // Il `warn` lo emette la route: `withRoute` manda 401/403/404 a
+                // `info`, che su Vercel si vede ma in `app_log` non entra. Solo
+                // sul 403 — «non è tuo» è un tentativo, «non esiste» (404) è un
+                // id sbagliato, e il 500 di `scopeNonRisolto` è già un `error`
+                // suo. Un contatore di sicurezza riempito dai 404 banali non
+                // distingue più niente.
+                if (negato.status === 403) {
+                    logEvento('auth', 'warn', {
+                        tipo: 'alunno-fuori-sede',
+                        operazione: 'tasks:GET',
+                        utente: auth.user.id,
+                        ruolo: auth.user.role,
+                        stato: negato.status,
+                    });
+                }
+                return negato;
+            }
         }
-
-        const isManager = role === 'admin' || role === 'coordinator';
 
         // Sezioni del docente per il filtro `target_class`: fonte canonica
         // utenti_sezioni → sections.name; fallback legacy sui media taggati.
@@ -304,8 +358,8 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
         // tutti i docenti hanno legami in utenti_sezioni). Senza riscontri → []
         // (il docente vede comunque i task global/role/authored/assigned).
         let sectionNames: string[] = [];
-        if (!isManager && userId) {
-            sectionNames = await nomiSezioniDiUtente(supabase, userId);
+        if (!isManager) {
+            sectionNames = await nomiSezioniDiUtente(supabase, activeUserId);
         }
         if (!isManager && sectionNames.length === 0) {
             // Get sections from educator's media uploads (tagged students' classes)
@@ -319,7 +373,7 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             const { data: myMedia } = await supabase
                 .from('galleria_media_v2')
                 .select('tag_students')
-                .eq('uploaded_by', userId ?? null)
+                .eq('uploaded_by', activeUserId)
                 .in('scuola_id', plessi)
                 .not('tag_students', 'is', null);
 
@@ -367,8 +421,6 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             // con un link firmato a tempo, generato dietro a questo gate.
             return NextResponse.json(await firmaAllegatiTask(supabase, enriched, 'tasks:GET'));
         }
-
-        const activeUserId = userId!;
 
         // Decode and filter in JS
         const statusFilter = statusParam ? statusParam.split(',') : null;

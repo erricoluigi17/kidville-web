@@ -79,9 +79,10 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
 
         // Gate identità: mai più lettura anonima. Con studentId il gate verifica
-        // anche il legame genitore↔alunno (401 anonimo / 403 figlio altrui;
-        // staff/docente passa); senza studentId (lista/classe) la lettura è
-        // riservata a staff/docente.
+        // anche che quel bambino sia raggiungibile da chi chiede — legame di
+        // famiglia per il genitore, plesso e sezione per tutti gli altri (401
+        // anonimo / 403 figlio altrui o bambino di un'altra sede); senza
+        // studentId (lista/classe) la lettura è riservata a staff/docente.
         const auth = studentId
             ? await requireParentOfStudent(request, studentId)
             : await requireDocente(request);
@@ -163,12 +164,18 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
                 );
             }
             plessi = [sedeFiglio];
-            // Lo STAFF attraversa `requireParentOfStudent` senza controllo di
-            // plesso (il gate verifica il legame solo al genitore): senza questa
-            // intersezione la sede del BAMBINO diventava lo scope dell'operatore,
-            // e la segreteria di un plesso leggeva le foto di un minore di un
-            // altro semplicemente chiedendone l'uuid. Il genitore resta fuori:
-            // la sua sede sono i FIGLI, non il plesso scritto sul suo record.
+            // Per lo STAFF la sede del BAMBINO non è lo scope dell'operatore: va
+            // intersecata con le sue. Questa riga è nata il 2026-07-31 come
+            // tampone locale, quando `requireParentOfStudent` verificava il
+            // legame SOLO al genitore e la segreteria di un plesso leggeva le
+            // foto di un minore di un altro chiedendone l'uuid; il gate ora fa
+            // quel controllo per tutte e venti le route, ma l'intersezione qui
+            // NON è ridondante e resta: `scuoleDiUtente` (dentro il gate) dice
+            // quali plessi l'operatore PUÒ vedere, `resolveScuoleAttive` quali ha
+            // effettivamente SELEZIONATO nel SedeSelector. Sono due domande
+            // diverse, e questa route deve rispettare anche la seconda.
+            // Il genitore resta fuori: la sua sede sono i FIGLI, non il plesso
+            // scritto sul suo record.
             if (auth.user.role !== 'genitore') {
                 const attive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
                 plessi = attive.includes(sedeFiglio) ? [sedeFiglio] : [];
@@ -336,6 +343,36 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             );
         }
 
+        // BROADCAST ⇒ NESSUN TAG, e ora lo dice il server.
+        // `tag_students` sono i bambini RITRATTI; il broadcast manda la foto a
+        // un'intera classe o all'intera sede. La regola esisteva già, ma viveva
+        // SOLO nel client (`teacher/gallery/page.tsx:304` e `:345`, che mandano
+        // `tag_students: []` quando il broadcast è attivo): chi chiamava questa
+        // rotta direttamente la scavalcava, e il Privacy Lock qui sotto non lo
+        // fermava perché in broadcast usciva prima ancora di leggere
+        // l'anagrafica. Risultato misurato dal collaudo privacy del 2026-07-31
+        // (rilievo F5): `is_broadcast:true` + tre bambini senza liberatoria →
+        // 201, foto di gruppo pubblicata a tutta la sede.
+        // Una regola di privacy applicata dal client non è una regola.
+        const tagUnici = [...new Set((tag_students ?? []) as string[])];
+        if (is_broadcast === true && tagUnici.length > 0) {
+            // `warn`: non è un errore del sistema, è una richiesta respinta — ma
+            // va vista, perché l'interfaccia questa combinazione non la produce.
+            // Solo conteggi: gli id sono di minori.
+            logEvento('galleria', 'warn', {
+                operazione: 'gallery:POST',
+                esito: 'broadcast-con-tag',
+                tipo: 'broadcast-con-tag',
+                taggati: tagUnici.length,
+            });
+            return NextResponse.json(
+                {
+                    error: 'Una foto in broadcast non può taggare bambini: va a tutta la classe o a tutta la sede. Pubblicala senza tag, oppure togli il broadcast e tagga solo chi ha la liberatoria foto.',
+                },
+                { status: 400 }
+            );
+        }
+
         const supabase = await createAdminClient();
 
         // LO SCOPE DI SEDE VIENE PRIMA DEL PRIVACY LOCK, e non è un dettaglio
@@ -350,7 +387,6 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // `tag_students` era l'unico ingresso rimasto che accettava
         // identificatori di minori senza chiedersi di chi fossero: GET, PATCH e
         // DELETE di questa stessa route lo scope l'avevano già.
-        const tagUnici = [...new Set((tag_students ?? []) as string[])];
         if (tagUnici.length > 0) {
             const plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
             // Scope vuoto ⇒ NEGA: è la regola del progetto, e qui vale doppio.
@@ -386,9 +422,11 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             }
         }
 
-        // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso privacy
-        // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
-        const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
+        // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso
+        // privacy (liberatoria foto) sulle foto di GRUPPO. Il canale non lo
+        // spegne più: `alunniSenzaConsenso` non accetta nemmeno l'argomento con
+        // cui prima lo si spegneva (vedi la nota in `@/lib/gallery/privacy`).
+        const senza = await alunniSenzaConsenso(supabase, tag_students);
         if (senza.length > 0) {
             // Privacy Lock scattato: nel log SOLO conteggi (mai nomi/id dei bambini,
             // che restano nel corpo della risposta per la UI dell'insegnante).
@@ -854,12 +892,40 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             );
         }
 
+        // BROADCAST ⇒ NESSUN TAG, dall'altro lato della porta (gemello del
+        // presidio della POST, rilievo privacy F5 del 2026-07-31). Si guardano i
+        // valori EFFETTIVI, non quelli del body: il client manda `tag_students`
+        // da solo (`teacher/gallery/page.tsx:402`, `handleUpdateTags`), quindi
+        // senza leggere `media.is_broadcast` si potrebbero appiccicare i tag a
+        // una foto già istituzionale — cioè ottenere per modifica esattamente
+        // ciò che la POST rifiuta.
+        // Le due correzioni restano possibili: `{tag_students: []}` svuota i tag
+        // e `{is_broadcast: false}` toglie il broadcast, e nessuna delle due
+        // passa di qui. (In produzione, al 2026-07-31, `galleria_media_v2` è
+        // vuota: nessun media storico da sanare.)
+        const tagEffettivi = [...new Set(
+            ((tag_students !== undefined ? tag_students : media.tag_students) ?? []) as string[]
+        )];
+        if (broadcastEffettivo && tagEffettivi.length > 0) {
+            logEvento('galleria', 'warn', {
+                operazione: 'gallery:PATCH',
+                esito: 'broadcast-con-tag',
+                tipo: 'broadcast-con-tag',
+                taggati: tagEffettivi.length,
+            });
+            return NextResponse.json(
+                {
+                    error: 'Una foto in broadcast non può taggare bambini: va a tutta la classe o a tutta la sede. Togli i tag, oppure togli il broadcast e tagga solo chi ha la liberatoria foto.',
+                },
+                { status: 400 }
+            );
+        }
+
         // 3. Esegui l'aggiornamento
         // Privacy Lock (DL-041): valida i tag EFFETTIVI quando si modificano tag/broadcast.
         if (tag_students !== undefined || is_broadcast !== undefined) {
-            const effBroadcast = is_broadcast !== undefined ? is_broadcast : media.is_broadcast;
             const effTags = tag_students !== undefined ? tag_students : media.tag_students;
-            const senza = await alunniSenzaConsenso(supabase, effTags, effBroadcast ?? false);
+            const senza = await alunniSenzaConsenso(supabase, effTags);
             if (senza.length > 0) {
                 // Come nel POST: nel log solo conteggi, mai nomi/id dei bambini.
                 logEvento('galleria', 'info', {

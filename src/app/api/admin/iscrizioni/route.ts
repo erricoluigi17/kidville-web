@@ -129,9 +129,128 @@ async function assertInvioInScope(
   )
 }
 
+// Un solo messaggio per «di un'altra sede» e per «non esiste»: la risposta non
+// deve dire a un estraneo se quel file c'è. La differenza vive nel log.
+const DOC_NEGATO =
+  'Documento non accessibile: appartiene alla domanda di un\'altra sede, oppure non è più presente.'
+
+/**
+ * Gate di SCOPE sull'ALLEGATO (multi-sede) — `?doc=<percorso>`.
+ *
+ * Il collaudo privacy del 2026-07-31 l'ha MISURATA in produzione, non dedotta:
+ * la segreteria di Aversa chiedeva un percorso preso da una domanda di
+ * Giugliano e riceveva `200 {"url": "…/object/sign/form_attachments/…"}` — e
+ * quell'URL, scaricato SENZA alcuna sessione, restituiva integra la scansione
+ * del documento d'identità di un bambino. Il bucket ne contiene 870.
+ *
+ * La causa non era lo storage: era il gate. `requireStaff` verifica CHI chiede,
+ * non CHE COSA viene chiesto, e il percorso arrivava dalla query dritto a
+ * `createSignedUrl` col client service-role. **Un gate deve verificare
+ * l'OGGETTO, non solo il soggetto.**
+ *
+ * Qui il percorso si RISOLVE alla domanda che lo contiene — con `@>` (PostgREST
+ * `cs`), interrogando direttamente le sole domande delle sedi accessibili — e si
+ * firma solo se ne esce una riga. Due rami perché il modulo d'iscrizione ha due
+ * campi `file`: il documento del minore (`data->children[]->documento_path`) e
+ * quello dell'adulto (`data->adults[]->documento_path`).
+ *
+ * Tre scelte, tutte deliberate:
+ *  · **fail-CLOSED**: se la lettura fallisce non si firma. Non sapere di chi è
+ *    un documento d'identità di un minore non può voler dire consegnarlo;
+ *  · **percorso che non si risolve ⇒ diniego**: un oggetto che non appartiene a
+ *    nessuna domanda non ha una sede da verificare, e quindi nessuno può dire
+ *    che sia suo;
+ *  · **un solo messaggio** per «di un'altra sede» e «inesistente» (`DOC_NEGATO`):
+ *    la risposta non deve dire all'estraneo se il file c'è.
+ *
+ * Ritorna una 403/503 pronta, oppure `null` se si può firmare.
+ */
+async function assertDocumentoInScope(
+  request: NextRequest,
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  user: Parameters<typeof scuoleDiUtente>[1],
+  docPath: string,
+): Promise<NextResponse | null> {
+  const sedi = await resolveScuoleAttive(request, supabase, user)
+  const rami = ['children', 'adults'] as const
+
+  // Autorizzazione: la domanda che contiene il percorso, RISTRETTA alle sedi
+  // attive. Il filtro di sede sta nella STESSA query — non «da qualche parte
+  // nell'handler» — perché è l'unico posto dove l'AND lo rende vero.
+  for (const ramo of rami) {
+    const { data, error } = await supabase
+      .from('enrollment_submissions')
+      .select('id')
+      .in('scuola_id', sedi)
+      .contains('data', { [ramo]: [{ documento_path: docPath }] })
+      .limit(1)
+      .maybeSingle()
+    if (error) {
+      // PostgREST non lancia: ritorna `{ error }`. Qui si ferma tutto — anche
+      // quando è il DB E2E non migrato: un 503 in collaudo è un fastidio, un
+      // documento d'identità firmato per chi non ne ha diritto è una fuga.
+      logEvento('multi_sede', 'error', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'documento-non-verificabile',
+        entita_tipo: 'enrollment_submissions',
+        error_code: (error as { code?: string }).code ?? null,
+      }, error)
+      return NextResponse.json(
+        { error: 'Verifica del documento non riuscita: riprovare fra poco.' },
+        { status: 503 },
+      )
+    }
+    if (data) return null
+  }
+
+  // Diniego. Prima di rispondere si guarda — SOLO per il log — se quel percorso
+  // esista in un'altra sede: distingue un tentativo cross-sede da un percorso
+  // inventato, e senza quella distinzione il log di una fuga non si legge.
+  // Legge una riga sola e la SOLA `scuola_id`: mai il `data`, che è la domanda
+  // di una famiglia. Best-effort: un errore qui non cambia l'esito.
+  let sedeAltrove: string | null = null
+  for (const ramo of rami) {
+    const { data: altrove, error: altroveErr } = await supabase
+      .from('enrollment_submissions')
+      .select('scuola_id')
+      .contains('data', { [ramo]: [{ documento_path: docPath }] })
+      .limit(1)
+      .maybeSingle()
+    if (altroveErr) {
+      logEvento('multi_sede', 'info', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'documento-origine-non-verificabile',
+        entita_tipo: 'enrollment_submissions',
+        error_code: (altroveErr as { code?: string }).code ?? null,
+      }, altroveErr)
+      break
+    }
+    const sede = (altrove as { scuola_id?: unknown } | null)?.scuola_id
+    if (typeof sede === 'string') {
+      sedeAltrove = sede
+      break
+    }
+  }
+
+  // Nel log solo uuid, ruolo ed esito. MAI il percorso: contiene il nome del
+  // file caricato dalla famiglia, che quasi sempre è il nome di una persona.
+  logEvento('multi_sede', 'warn', {
+    operazione: 'admin/iscrizioni:GET',
+    esito: sedeAltrove ? 'documento-fuori-sede' : 'documento-non-risolto',
+    azione: 'documento',
+    utente: user.id,
+    ruolo: user.role,
+    sede_id: sedeAltrove,
+    sedi_attive: sedi.length,
+  })
+  return NextResponse.json({ error: DOC_NEGATO }, { status: 403 })
+}
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
-  doc: z.string().optional(), // path storage → signed URL
+  // `max(500)` come in `pagamenti/cassa/allegato:GET`: un percorso di storage
+  // non è lungo, e una stringa senza tetto è solo superficie d'attacco in più.
+  doc: z.string().max(500).optional(), // path storage → signed URL
 })
 
 // referenteIndex resta unknown: il codice accetta qualsiasi valore e usa 0
@@ -154,10 +273,23 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     const supabase = await createAdminClient()
 
     if (docPath) {
+      // PRIMA il gate sull'oggetto, POI la firma: l'URL firmato vive 10 minuti
+      // ed è scaricabile senza sessione, quindi produrlo e poi rispondere 403
+      // sarebbe una fuga con un altro nome.
+      const fuoriScope = await assertDocumentoInScope(request, supabase, auth.user, docPath)
+      if (fuoriScope) return fuoriScope
+
       const { data, error } = await supabase.storage
         .from('form_attachments')
         .createSignedUrl(docPath, 60 * 10) // 10 minuti
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        // Un errore restituito senza log è un guasto muto: `withRoute` registra
+        // l'esito della richiesta, non il motivo dello storage. Il messaggio
+        // grezzo non torna al client (può contenere il percorso, e quindi il
+        // nome del file della famiglia).
+        logErrore({ operazione: 'admin/iscrizioni:GET', stato: 404, evento: 'storage' }, error)
+        return NextResponse.json({ error: 'Documento non trovato' }, { status: 404 })
+      }
       return NextResponse.json({ url: data.signedUrl })
     }
 

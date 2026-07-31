@@ -13,6 +13,31 @@ import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
+type TipoVista = 'child' | 'adult' | 'sections' | 'staff';
+
+/** La tab richiesta dall'URL (`?tab=sections` = back-link dal dettaglio sezione). */
+const tabDaQuery = (v: string | null): TipoVista =>
+  v === 'adult' || v === 'sections' || v === 'staff' ? v : 'child';
+
+/**
+ * «Questa tab aspetta un elenco dal server?» — e quindi: lo spinner va acceso?
+ *
+ * È l'UNICA condizione che decide, e la leggono TUTTI E TRE i punti che prima
+ * decidevano per conto proprio: l'accensione iniziale di `isLoading`, l'effetto
+ * che lancia il fetch e il cambio tab. Il difetto nasceva proprio da quella
+ * separazione: `isLoading` partiva `true` per qualunque tab, ma solo tre su
+ * quattro hanno un fetch — e `setIsLoading(false)` vive dentro `caricaElenco`.
+ * Con `?tab=sections` (la Sezioni carica da sé, dentro `SectionsView`) nessun
+ * fetch partiva, nessuno spegneva lo spinner, e «Caricamento anagrafica...»
+ * restava lì per sempre: riaprire la voce di menu non ripara — è la stessa
+ * rotta, il componente non si rimonta.
+ *
+ * Legare le tre decisioni a questa sola funzione è ciò che rende il difetto
+ * irripetibile: una tab senza elenco non può più accendere uno spinner che
+ * nessuno spegnerà, perché è lo stesso predicato a fare entrambe le cose.
+ */
+const attendeElenco = (v: TipoVista) => v !== 'sections';
+
 interface Student {
   id: string;
   nome?: string;
@@ -46,8 +71,11 @@ function AdminStudentsInner() {
   const router = useRouter();
   const userId = search.get('userId');
   const { reFetchKey } = useSediAttive();
+  // Calcolata UNA volta: la vista iniziale e lo spinner iniziale sono due
+  // decisioni che devono nascere dallo stesso valore, non da due letture.
+  const tabIniziale = tabDaQuery(search.get('tab'));
   const [students, setStudents] = useState<Student[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => attendeElenco(tabIniziale));
   // «Non ho potuto caricare» ≠ «non c'è nessuno».
   //
   // `null` = nessun errore. `''` = errore senza un messaggio del server (rete
@@ -60,10 +88,7 @@ function AdminStudentsInner() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [viewType, setViewType] = useState<'child' | 'adult' | 'sections' | 'staff'>(() => {
-    const t = search.get('tab');
-    return t === 'adult' || t === 'sections' || t === 'staff' ? t : 'child';
-  });
+  const [viewType, setViewType] = useState<TipoVista>(tabIniziale);
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [targetClass, setTargetClass] = useState('');
@@ -227,17 +252,20 @@ function AdminStudentsInner() {
     else void fetchStudents();
   };
 
-  // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
-  // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).
+  // NB: lo spinner viene attivato dall'inizializzazione di `isLoading` e dal
+  // cambio tab (onChange dei Tabs), non qui: setState sincrono negli effect è
+  // vietato (react-hooks/set-state-in-effect). Entrambi i punti usano
+  // `attendeElenco`, lo stesso predicato che governa la `return` qui sotto: se
+  // questo effetto non lancia nessun fetch, lo spinner non si è mai acceso.
   useEffect(() => {
+    if (!attendeElenco(viewType)) return; // Sezioni: SectionsView carica da sé.
     if (viewType === 'child') {
       fetchStudents();
     } else if (viewType === 'adult') {
       fetchParents();
-    } else if (viewType === 'staff') {
+    } else {
       fetchStaff();
     }
-    // sections tab handles its own loading
   }, [viewType, fetchStudents, fetchParents, fetchStaff]);
 
   // Lista filtrata derivata (niente state+effect: stessa resa, zero cascading render)
@@ -427,8 +455,12 @@ function AdminStudentsInner() {
       <Tabs
         value={viewType}
         onChange={(id) => {
-          if (id !== 'sections') setIsLoading(true);
-          setViewType(id as 'child' | 'adult' | 'sections' | 'staff');
+          const v = tabDaQuery(id);
+          // Stesso predicato del montaggio: acceso se un elenco sta per partire,
+          // SPENTO altrimenti. Non `if (v !== 'sections') setIsLoading(true)`:
+          // così lo spinner non può nemmeno restare acceso da prima.
+          setIsLoading(attendeElenco(v));
+          setViewType(v);
         }}
         options={[
           { id: 'child', label: t('tabAlunni'), icon: Users },

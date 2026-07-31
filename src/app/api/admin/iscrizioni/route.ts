@@ -195,10 +195,24 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       .select('*')
       .eq('id', id)
       .maybeSingle()
+    // Consenso foto dalla PROVA registrata all'invio (`consents_log`), non dal
+    // payload grezzo: `data` è ciò che il client ha mandato, `consents_log` è ciò
+    // che il server ha verificato e congelato. Le domande anteriori al passo
+    // consensi non hanno la prova: restano a `false`, che è il default corretto —
+    // un consenso che non risulta non è un consenso.
     if (subErr || !sub) {
       return NextResponse.json({ error: 'Invio non trovato' }, { status: 404 })
     }
     const invioScuolaId = (sub as { scuola_id?: string | null }).scuola_id ?? null
+
+    // Consenso alla galleria riservata, letto dalla PROVA e non dal payload
+    // grezzo: `data` è ciò che il client ha mandato, `consents_log` è ciò che il
+    // server ha verificato e congelato all'invio.
+    const provaConsensi = (sub as { consents_log?: { blocchi?: { field_id?: string; accepted?: boolean }[] } | null }).consents_log
+    const consensoFotoGalleria =
+      (provaConsensi?.blocchi ?? []).some(
+        (b) => b.field_id === 'consenso_foto_galleria' && b.accepted === true,
+      )
     const fuoriScope = await assertInvioInScope(supabase, auth.user, invioScuolaId, action)
     if (fuoriScope) return fuoriScope
 
@@ -727,6 +741,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           documento_path: c.documento_path ?? null,
           classe_sezione: classe,
           stato: 'iscritto',
+          // Liberatoria foto raccolta al momento dell'iscrizione. Senza questa
+          // riga la famiglia acconsentiva e il bambino restava comunque con
+          // `consenso_privacy = false`: la galleria avrebbe bloccato le sue foto,
+          // e nessuno avrebbe capito perché — il consenso c'era, ma non era mai
+          // arrivato dove viene letto. È il canale «galleria riservata»: il sito
+          // e i social sono consensi distinti e NON passano di qui.
+          consenso_privacy: consensoFotoGalleria,
         }
         // Insert resiliente alla colonna mancante (come per i parents sopra): DB E2E
         // senza le colonne della migrazione 20260706105201 → PGRST204 → le rimuove e riprova.

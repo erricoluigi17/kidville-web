@@ -175,3 +175,21 @@ describe('POST /api/iscrizione — la presa visione è verificata sul SERVER', (
     expect(galleria?.accepted).toBe(false)
   })
 })
+
+describe('la liberatoria foto arriva fino al bambino', () => {
+  it('il consenso galleria si legge dalla PROVA, non dal payload grezzo', async () => {
+    // Difetto d'integrazione che questo test blocca: la famiglia acconsentiva e
+    // il bambino restava con `consenso_privacy = false`, quindi la galleria gli
+    // bloccava le foto. Il consenso c'era, ma non arrivava dove viene letto — e
+    // nessuno avrebbe capito perché.
+    const { readFileSync } = await import('node:fs')
+    const route = readFileSync('src/app/api/admin/iscrizioni/route.ts', 'utf8')
+    expect(route).toContain('consenso_privacy: consensoFotoGalleria')
+    // Dalla prova (`consents_log`), non da `data`: `data` è ciò che il client ha
+    // mandato, `consents_log` è ciò che il server ha verificato e congelato.
+    expect(route).toMatch(/consents_log[\s\S]{0,400}consenso_foto_galleria/)
+    // Il sito e i social sono canali distinti e non devono passare di qui.
+    expect(route).not.toContain('consenso_foto_sito')
+    expect(route).not.toContain('consenso_foto_social')
+  })
+})

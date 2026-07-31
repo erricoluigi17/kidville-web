@@ -365,8 +365,9 @@ describe('adattatore auth su Supabase', () => {
 describe('account di collaudo multi-sede (deroga del 2026-07-31)', () => {
   it('prende TUTTE le sedi reali e lascia fuori quella finta della CI', () => {
     const piano = pianoAdminMultisede(scuoleFinte())
-    expect(piano.sedi.map((s) => s.id)).toEqual([SEDE_A, SEDE_B])
-    expect(piano.sedi.map((s) => s.id)).not.toContain(SEDE_E2E)
+    const idSedi = (piano.sedi as { id: string }[]).map((s) => s.id)
+    expect(idSedi).toEqual([SEDE_A, SEDE_B])
+    expect(idSedi).not.toContain(SEDE_E2E)
   })
 
   it('è UN account solo, di ruolo admin, col prefisso degli account di collaudo', () => {

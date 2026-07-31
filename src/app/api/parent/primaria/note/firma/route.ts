@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
@@ -13,7 +13,11 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-// `userId` in query è consumato dal gate identità (getRequestUserId), non dall'handler.
+// L'identità viene dalla SESSIONE (`requireUser` → `resolveIdentity`), mai dalla
+// query: `?userId=` è ignorato. Fino al 2026-07-31 questa route leggeva
+// `getRequestUserId` in diretta, cioè scavalcava `ALLOW_HEADER_IDENTITY=false`, e
+// una firma con valore legale (CAD art. 20) era apponibile a nome di un genitore
+// qualunque da chiunque ne conoscesse l'uuid. Lock: __tests__/api/firma-identita-da-sessione.test.ts.
 // notaId permissivo (stringa non vuota): oggi nessun vincolo di formato (un id
 // non valido ricade nel 404 "Nota non trovata").
 // code/expiry/ticket restano pass-through (z.unknown): il codice li coercizza
@@ -34,8 +38,9 @@ const postBodySchema = z.object({
 // pattern della pagella: signature_log in nota_ricezioni + slot + audit immutabile.
 export const POST = withRoute('parent/primaria/note/firma:POST', async (request: NextRequest) => {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response

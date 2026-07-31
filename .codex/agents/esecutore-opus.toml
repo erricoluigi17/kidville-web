@@ -73,7 +73,13 @@ Uno step non è finito quando "compila". È finito quando ha tutte e quattro le 
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.
 - Le route admin usano il pattern service-role (`createAdminClient`) + gate applicativo
   (`requireStaff`/`requireDocente`) + validazione `zod`.
-- Sede di produzione unica: **Kidville Giugliano** (`d53b0fbc-a9eb-4073-b302-73d1d5abd529`).
+- **Le sedi di produzione sono TRE** (dal 2026-07-29): Kidville Giugliano, Kidville Aversa,
+  Kidville Cesa — più la sede fittizia `e2e00000-…` su cui gira la CI, che va **esclusa** da
+  ogni elenco pubblico. Non dare mai per scontato che la sede sia una sola, e non cablare mai
+  un uuid di sede nel codice: la sede si risolve a runtime (`resolveScuoleAttive` in lettura,
+  `resolveScuolaScrittura` in scrittura, che risponde **400** quando l'utente ha più plessi e
+  nessuno è indicato). Una route che "indovina" la sede archivia i dati nel plesso sbagliato
+  **in silenzio**. **Ogni scrittura dichiara la sua sede.**
 - Token di colore: `@theme inline` in `src/app/globals.css`
   (`--color-kidville-green: #006A5F`, `--color-kidville-yellow: #FDC400`,
   `--color-kidville-cream: #FEF1E4`). Usa i token, non gli hex letterali.

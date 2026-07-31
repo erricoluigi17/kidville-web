@@ -243,6 +243,33 @@ describe('ensureParentIdentity (S6bis)', () => {
     const r = await ensureParentIdentity(admin, PARENT, { scuolaId: 'sc-1' });
     expect(r).toMatchObject({ ok: false, reason: 'error' });
   });
+
+  /**
+   * Successo in produzione il 2026-07-31: quattro account di collaudo erano stati
+   * bloccati con `banned_until = 'infinity'`, timestamp legittimo per Postgres ma
+   * NON serializzabile in JSON. GoTrue rispondeva con un errore SENZA `message`, e
+   * l'INTERA pagina di `listUsers` falliva — cioè l'onboarding dei genitori si
+   * rompeva per chiunque cadesse in quella pagina. Il codice faceva
+   * `throw new Error(error.message)`, che con `message` assente diventa
+   * «Error: undefined»: il guasto restava illeggibile.
+   *
+   * Regola AGENTS.md, «Logging obbligatorio» punto 3: il corpo dell'errore di un
+   * servizio esterno non si butta MAI via.
+   */
+  it('errore di listUsers SENZA message → il motivo resta leggibile, mai «undefined»', async () => {
+    const { admin } = makeAdmin({ authUsers: [] });
+    // GoTrue che risponde con un errore opaco: nessun `message`, solo lo status.
+    ;(admin as unknown as { auth: { admin: { listUsers: unknown } } }).auth.admin.listUsers =
+      async () => ({ data: null, error: { status: 500 } });
+
+    const r = await ensureParentIdentity(admin, PARENT, { scuolaId: 'sc-1' });
+    expect(r).toMatchObject({ ok: false, reason: 'error' });
+    const motivo = String((r as { message?: unknown }).message ?? '');
+    expect(motivo).not.toMatch(/undefined/);
+    expect(motivo).toMatch(/listUsers/);
+    // …e deve dire QUALE pagina: senza il numero non si sa dove guardare.
+    expect(motivo).toMatch(/pagina 1/);
+  });
 });
 
 describe('firstEmail', () => {

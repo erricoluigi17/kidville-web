@@ -83,7 +83,15 @@ async function findAuthUserIdByEmail(admin: SupabaseClient, email: string): Prom
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PER_PAGE });
-    if (error) throw new Error(error.message);
+    // `error.message` di GoTrue può essere `undefined`: succede quando una riga di
+    // `auth.users` non è serializzabile e l'INTERA pagina fallisce — visto in
+    // produzione il 2026-07-31 con `banned_until = 'infinity'`, che è un timestamp
+    // legittimo per Postgres ma non per JSON. `throw new Error(undefined)` avrebbe
+    // detto «Error: undefined» e nascosto sia la causa sia la pagina.
+    if (error) {
+      const dettaglio = error.message || JSON.stringify(error) || `status ${(error as { status?: number }).status ?? '?'}`;
+      throw new Error(`auth.admin.listUsers (pagina ${page}): ${dettaglio}`);
+    }
     const users = data?.users ?? [];
     for (const u of users) if (u.email && u.email.toLowerCase() === key) return u.id;
     if (users.length < PER_PAGE) break;

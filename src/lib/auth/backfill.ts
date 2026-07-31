@@ -51,7 +51,13 @@ async function buildEmailIndex(admin: SupabaseClient): Promise<Map<string, strin
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PER_PAGE });
-    if (error) throw new Error(error.message);
+    // Stesso motivo di `parent-identity.ts`: `error.message` di GoTrue può essere
+    // `undefined` quando una riga di `auth.users` non è serializzabile in JSON e
+    // fa fallire l'intera pagina. Il corpo dell'errore non si butta via.
+    if (error) {
+      const dettaglio = error.message || JSON.stringify(error) || `status ${(error as { status?: number }).status ?? '?'}`;
+      throw new Error(`auth.admin.listUsers (pagina ${page}): ${dettaglio}`);
+    }
     const users = data?.users ?? [];
     for (const u of users) if (u.email) map.set(u.email.toLowerCase(), u.id);
     if (users.length < PER_PAGE) break;

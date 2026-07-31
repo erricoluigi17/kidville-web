@@ -575,8 +575,56 @@ continuerebbe a vedere una sede sola: un oggetto inerte che sembra funzionare. I
 così chi domani allargasse il ponte se ne accorge. Le credenziali stanno nel gestore del titolare e
 si leggono da `KV_TEST_PASSWORD`: **nessun valore in nessun file**.
 
+### Il gate che verificava un ruolo solo: venti route di dati di minori, cinque in scrittura
+
+`requireParentOfStudent` è il presidio di venti endpoint che leggono o scrivono i dati di **un
+bambino indicato dal client**: diario, assenze con la giustificazione, note, pagella, armadietto,
+galleria. Verificava il legame **solo a chi era `genitore`**; ogni altro ruolo passava. E non per
+distrazione: la testata del file lo dichiarava — *«staff/educator passano: il loro scope è applicato
+altrove nelle rispettive query»*. Contati uno per uno: **diciotto call site su venti non avevano
+nulla**; `gallery:GET` aveva il solo controllo di plesso (non di sezione), aggiunto il giorno prima
+come tampone locale; `diary/students:GET` era l'unico col gate completo, scritto a mano. Il client è
+`createAdminClient()` (service-role), che scavalca la RLS: dove l'altrove non c'era, non c'era
+nessuna difesa.
+
+Misurato in produzione, non dedotto. `GET /api/diary/entries?alunno_id=<minore di Giugliano>` con la
+sessione di un educator di **Aversa** rispondeva **200** con quindici voci di diario; `GET
+/api/parent/primaria/assenze` restituiva le assenze col `giustificazione_testo`, che è testo libero
+di natura sanitaria. Ripetuto su cinque minori e **sette attori** — docenti e segreterie delle altre
+sedi, e perfino la **cuoca**: 200 per tutti. L'unico 403 arrivava all'altro genitore. In `app_log`
+nemmeno un warn: senza gate non esiste neppure il segnale che qualcuno ci abbia provato.
+
+Fra i venti call site ce n'erano **cinque in scrittura**, e il primo ha valore legale: la
+**giustifica con firma FES** (`giustificazione_firma`, `giustificata_da`), la presa visione della
+pagella, la comunicazione d'assenza, la giustifica didattica e il carico dell'armadietto. Un
+operatore di un'altra sede poteva firmare al posto della famiglia.
+
+La correzione sta **in un punto solo**: `genitore` → `genitoreHasFiglio` (invariato: al legame di
+famiglia la sede non si applica, due fratelli possono stare in due plessi); **chiunque altro** →
+`assertAlunnoInScope`, cioè plesso e — per l'`educator` — sezione assegnata, con **403** e un
+`warn` persistito `alunno-fuori-sede`. I percorsi legittimi non si stringono: l'educator vede i
+bambini delle proprie sezioni, la segreteria tutte le classi del proprio plesso, la Direzione tutti
+i plessi che ha in `utenti_scuole`. Riprovata la stessa misura sul dev server con i sette attori:
+**403 su tutte e sei le rotte per i quattro fuori scope, 200 per i tre legittimi**, e 24 righe
+`alunno-fuori-sede` in `app_log`, correlabili per ruolo e rotta.
+
+**E il lock ratificava la falla.** `isolamento-sede-coverage` esentava tredici handler «per scope
+famiglia»; undici di quelle voci descrivevano uno scope che per i ruoli diversi da genitore **non
+esisteva**, e tre dicevano testualmente «di UN alunno, verificato prima». Non sono state riscritte
+meglio: sono state **tolte**, perché il debito è stato pagato e il lock riconosce da solo il gate dal
+suo corpo. `handlerEsentati` scende da 109 a **96** — il calo più grosso mai registrato su quel
+numero. Resta una sola voce, riscritta per dire il vero: `parent/presenze/comunica-assenza:POST` fa
+un `upsert` su `presenze` **senza `scuola_id`** — l'attore è verificato, la riga nasce senza plesso.
+Debito aperto e dichiarato, non una giustificazione.
+
 ### Le lezioni
 
+- **Una voce di allowlist che afferma il falso è peggio di una route non coperta**, perché spegne il
+  sospetto: la route scoperta prima o poi si trova, quella coperta a torto no. Undici righe dicevano
+  «scope famiglia» su venti endpoint dove il legame di famiglia era verificato a un ruolo su sei.
+- **Un commento che descrive una difesa non è una difesa.** *«Lo scope è applicato altrove nelle
+  rispettive query»* è stato vero, forse, per una route su venti; scritto in cima al gate condiviso è
+  diventato il permesso di non applicarlo in nessuna.
 - **Il gate verde non misura l'isolamento.** 3540 test verdi mentre 140 cose erano rotte, perché un
   filtro di sede mancante non produce un errore: produce righe in più. Finché la sede è una sola non
   esiste una differenza da osservare — la prima cosa che serviva era un secondo plesso su cui

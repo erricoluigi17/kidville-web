@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { getGenitoriDiAlunni, getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
@@ -48,18 +48,22 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
         // le email dei suoi genitori SENZA alcuna credenziale. Verificato in produzione
         // il 2026-07-30: rispondeva 200 a una richiesta anonima.
         //
-        // Genitore  → legame genitore↔figlio (`requireParentOfStudent`, unione
-        //             `legame_genitori_alunni` + `student_parents`).
+        // Genitore  → legame genitore↔figlio (`legame_genitori_alunni` +
+        //             `student_parents`).
         // Staff     → l'alunno deve essere nel proprio plesso, e per `educator` nelle
-        //             proprie sezioni (`assertAlunnoInScope`).
-        // `cuoca`   → non è genitore e non ha sezioni assegnate: `assertAlunnoInScope`
-        //             la nega. Nessun ruolo resta scoperto.
+        //             proprie sezioni.
+        // `cuoca`   → non è genitore e non ha sezioni assegnate: viene negata.
+        //             Nessun ruolo resta scoperto.
+        //
+        // Le tre righe qui sopra le fa TUTTE `requireParentOfStudent`. Fino al
+        // 2026-07-31 ne faceva una sola — il legame di famiglia — e questa route
+        // era l'UNICA delle venti che ci aggiungeva `assertAlunnoInScope` a mano.
+        // Ora che il presidio sta nel gate quel giro è stato tolto: non per
+        // risparmiare due query, ma perché una difesa duplicata QUI insegna al
+        // prossimo lettore che il gate da solo non basta — ed è esattamente la
+        // convinzione che ha lasciato scoperte le altre diciannove.
         const auth = await requireParentOfStudent(request, alunnoId);
         if (auth.response) return auth.response;
-        if (auth.user.role !== 'genitore') {
-            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId);
-            if (fuoriScope) return fuoriScope;
-        }
 
         const { data: alunno, error } = await supabase
             .from('alunni')

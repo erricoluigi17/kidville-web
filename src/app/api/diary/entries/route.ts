@@ -56,9 +56,17 @@ const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
 //
 // P0/S9b (DL-040): tutti gli accessi a `eventi_diario` usano service-role +
 // scoping applicativo (End-state X, DL-035), così le policy permissive anon
-// sono droppate. Il ramo genitore è ora gated con requireParentOfStudent
-// (privacy minori: la nota_bambino E1 è riservata al genitore di quel bambino):
-// requireUser sessione-first + verifica del legame genitore↔alunno.
+// sono droppate. Il ramo per alunno è gated con `requireParentOfStudent`:
+// identità dalla SESSIONE, poi legame genitore↔figlio al genitore e
+// plesso+sezione a chiunque altro.
+//
+// ⚠️ Il secondo pezzo è arrivato il 2026-07-31, e prima non c'era: questo è il
+// ramo su cui la falla è stata MISURATA in produzione. Un educator di Aversa
+// chiedeva `?alunno_id=<minore di Giugliano>` e riceveva 200 con quindici voci
+// di diario — bagno, pranzo, attività. La query qui sotto filtra solo per
+// `alunno_id`, che è un valore scelto dal client: senza il gate non esiste
+// nessun altro presidio, perché il client è service-role e la RLS non si
+// applica.
 export const GET = withRoute('diary/entries:GET', async (request: NextRequest) => {
     const admin = await createAdminClient();
     const params = request.nextUrl.searchParams;
@@ -67,8 +75,10 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     if (params.get('alunno_id')) {
         const q = parseQuery(request, getParentQuerySchema);
         if ('response' in q) return q.response;
-        // Scoping di proprietà (privacy minori): solo il genitore del bambino
-        // (o staff/docente) legge il diario; chiude la lettura anonima/altrui.
+        // Scoping di proprietà (privacy minori): il genitore del bambino, oppure
+        // lo staff che ha quel bambino nel proprio plesso (e nella propria
+        // sezione, se educator). Chiude la lettura anonima, quella dell'altro
+        // genitore e quella cross-sede.
         const gate = await requireParentOfStudent(request, q.data.alunno_id);
         if (gate.response) return gate.response;
         const fromDate = q.data.from ?? (() => {

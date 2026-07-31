@@ -49,7 +49,9 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
         const supabase = await createAdminClient();
 
         if (alunnoId) {
-            // Ramo genitore: gate identità (sessione) + legame genitore↔alunno.
+            // Ramo per singolo alunno: gate identità (sessione), poi legame
+            // genitore↔alunno al genitore e plesso+sezione a tutti gli altri
+            // ruoli (dal 2026-07-31: prima lo staff di qualunque sede passava).
             const auth = await requireParentOfStudent(request, alunnoId);
             if (auth.response) return auth.response;
 

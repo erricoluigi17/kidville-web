@@ -23,7 +23,12 @@ export const GET = withRoute('diary/checkin:GET', async (request: NextRequest) =
     const date = q.data.date ?? new Date().toISOString().split('T')[0];
 
     // G1 — orario di entrata/stato presenza è un dato del minore: chiudiamo l'IDOR.
-    // Staff/docenti passano; il genitore solo i propri figli; l'anonimo è 401.
+    // Il genitore solo i propri figli; lo staff solo i bambini del proprio plesso
+    // (e della propria sezione, se educator); l'anonimo è 401.
+    //
+    // La seconda metà è del 2026-07-31: fino a quel giorno «staff/docenti
+    // passano» era scritto qui e nel gate, e voleva dire che la cuoca di un
+    // plesso leggeva l'orario d'ingresso di un bambino di un altro.
     const auth = await requireParentOfStudent(request, alunnoId);
     if (auth.response) return auth.response;
 

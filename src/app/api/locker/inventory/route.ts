@@ -71,8 +71,11 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
 
         const supabase = await createAdminClient();
 
-        // Ramo genitore (?alunno_id): gate identità (sessione) + legame genitore↔alunno.
-        // Chiude l'IDOR anonimo segnalato dal test 360°. Staff/educator passano.
+        // Ramo per singolo alunno (?alunno_id): gate identità (sessione) + legame
+        // genitore↔alunno al genitore, plesso+sezione a tutti gli altri ruoli.
+        // Chiude l'IDOR anonimo segnalato dal test 360° e — dal 2026-07-31 —
+        // quello fra sedi: «staff/educator passano» era la falla, non il
+        // contratto.
         if (alunnoId) {
             const auth = await requireParentOfStudent(request, alunnoId);
             if (auth.response) return auth.response;
@@ -211,9 +214,14 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
         if ('response' in b) return b.response;
         const { alunno_id, materiale, quantita, date } = b.data;
 
-        // M9 — CARICO = azione del genitore sul PROPRIO figlio: gate identità
-        // (sessione) + legame genitore↔alunno. Staff/educator passano. Chiude
-        // l'accettazione anonima di scritture su qualsiasi alunno_id.
+        // M9 — CARICO = azione del genitore sul PROPRIO figlio, o dello staff sui
+        // bambini che ha in carico: gate identità (sessione) + legame
+        // genitore↔alunno al genitore, plesso+sezione a tutti gli altri.
+        // Chiude l'accettazione anonima di scritture su qualsiasi alunno_id, e —
+        // dal 2026-07-31 — quella di un operatore di un'altra sede: è una delle
+        // cinque SCRITTURE che passavano di qui senza alcun controllo di plesso.
+        // Il carico «distribuito a tutta la sezione» della UI non cambia: quegli
+        // alunni arrivano dal GET per classe, già ristretto alle sezioni assegnate.
         const auth = await requireParentOfStudent(request, alunno_id);
         if (auth.response) return auth.response;
 

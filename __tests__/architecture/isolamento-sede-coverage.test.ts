@@ -750,26 +750,43 @@ const GATE_LIB = gateDiLibreria(path.join(process.cwd(), 'src', 'lib'))
 const AMMESSE: Record<string, string> = {
     // ── Scope FAMIGLIA: il genitore vede i propri figli, ovunque siano iscritti ──
     // Non è la sede a delimitare, è il legame genitore↔figlio (`requireParent`,
-    // `requireParentOfStudent`, `genitoreHasFiglio`). Un filtro di sede qui
-    // sarebbe perfino SBAGLIATO: due fratelli possono stare in due plessi.
+    // `genitoreHasFiglio`). Un filtro di sede qui sarebbe perfino SBAGLIATO: due
+    // fratelli possono stare in due plessi.
+    //
+    // ⚠️ QUESTO BLOCCO ERA IL DOPPIO DI COSÌ, e undici delle sue voci dicevano una
+    // cosa non vera (2026-07-31). «Scope famiglia» descriveva le venti route che
+    // passano da `requireParentOfStudent`, ma quel gate verificava il legame SOLO
+    // a chi era `genitore`: ogni altro ruolo passava, su un client service-role
+    // che scavalca la RLS. Misurato in produzione: un educator di Aversa leggeva
+    // il diario e le assenze — con la giustificazione, che è testo sanitario — di
+    // un minore di Giugliano; la cuoca pure. La riga di allowlist non copriva uno
+    // scope di famiglia: copriva l'assenza di qualunque scope per chiunque non
+    // fosse un genitore, e mentre lo faceva SPEGNEVA IL SOSPETTO — che è il danno
+    // peggiore di una voce falsa, perché una route non coperta prima o poi si
+    // trova, una coperta a torto no.
+    //
+    // Le voci non sono state riscritte meglio: sono state TOLTE, perché il debito
+    // è stato pagato. `requireParentOfStudent` ora chiama `assertAlunnoInScope`
+    // per tutti i ruoli diversi da `genitore`, quindi è un gate a tutti gli
+    // effetti — e questo lock lo riconosce da solo, dal CORPO (regola qui sopra:
+    // «una funzione che parla di sede e nega È un gate»). Nessuna esenzione
+    // serve più a: parent/presenze:GET, parent/presenze/giustifica:POST,
+    // parent/competenze:GET, parent/giustifiche-didattiche:POST,
+    // parent/primaria/{assenze,note,orario,pagella,scrutinio}:GET,
+    // parent/primaria/pagella/firma:POST, diary/checkin:GET,
+    // locker/inventory:{GET,POST}.
     'parent/students:GET': 'scope famiglia: i figli del richiedente, in qualunque plesso',
-    'parent/presenze:GET': 'scope famiglia: presenze dei propri figli',
-    'parent/presenze/comunica-assenza:POST': 'scope famiglia: assenza di un proprio figlio',
-    'parent/presenze/giustifica:POST': 'scope famiglia: giustifica di un proprio figlio',
-    'parent/competenze:GET': 'scope famiglia: certificato delle competenze del proprio figlio',
+    // NON è «scope famiglia»: la scopertura qui è un `upsert` su `presenze` — che
+    // ha `scuola_id` — senza dichiarare la sede. Chi scrive è verificato
+    // (`requireParentOfStudent`), la RIGA no: nasce con il plesso vuoto. Debito
+    // aperto e dichiarato, non una giustificazione.
+    'parent/presenze/comunica-assenza:POST': "upsert su `presenze` senza `scuola_id`: l'attore è verificato, la riga nasce senza plesso — debito aperto (2026-07-31)",
     'parent/submissions:GET': 'scope famiglia: moduli compilati per i propri figli',
     'parent/medical-certificates:GET': 'scope famiglia: certificati medici dei propri figli',
     'parent/medical-certificates:POST': 'scope famiglia: caricamento su un proprio figlio',
-    'parent/giustifiche-didattiche:POST': 'scope famiglia: giustifica didattica di un proprio figlio',
     'parent/forms/otp:PATCH': 'scope famiglia + OTP monouso sulla propria compilazione',
     'parent/primaria:GET': 'scope famiglia: registro del proprio figlio',
-    'parent/primaria/assenze:GET': 'scope famiglia: assenze del proprio figlio',
-    'parent/primaria/note:GET': 'scope famiglia: note del proprio figlio',
     'parent/primaria/note/firma:POST': 'scope famiglia: firma sulla nota del proprio figlio',
-    'parent/primaria/orario:GET': 'scope famiglia: orario della classe del proprio figlio',
-    'parent/primaria/pagella:GET': 'scope famiglia: pagella del proprio figlio',
-    'parent/primaria/pagella/firma:POST': 'scope famiglia: presa visione della pagella del proprio figlio',
-    'parent/primaria/scrutinio:GET': 'scope famiglia: scrutinio del proprio figlio',
     // L'account è del genitore: lo scope è SE STESSO, non una sede.
     'parent/account/richiesta-cancellazione:GET': 'self: la richiesta di cancellazione del proprio account',
     'parent/account/richiesta-cancellazione:DELETE': 'self: revoca della propria richiesta',
@@ -902,12 +919,14 @@ const AMMESSE: Record<string, string> = {
     'primaria/classe/[sectionId]:GET': 'materie della sezione verificata (`materieDiDocenteInSezione`)',
     'primaria/prospetto:GET': "materie della sezione dell'alunno verificato",
     'primaria/registro:GET': 'nomi dei docenti che hanno firmato le righe già lette per sezione',
-    'diary/checkin:GET': "orario d'ingresso di UN alunno, verificato prima (staff in sede o genitore)",
     'avvisi/[id]/risposte:POST': 'risposta a un avviso già verificato: la riga esistente si cerca per `avviso_id`',
     'gallery:PATCH': "galleria: il media è letto, l'autorizzazione verificata (autore o docente delle classi taggate) e poi aggiornato per id",
     'gallery:DELETE': 'idem in cancellazione',
-    'locker/inventory:GET': 'armadietto di UN alunno, verificato prima',
-    'locker/inventory:POST': "carico/scarico sull'alunno verificato; la `scuola_id` viene scritta nel SET per sanare le righe storiche",
+    // `diary/checkin:GET`, `locker/inventory:GET` e `locker/inventory:POST`
+    // stavano qui e dicevano «di UN alunno, verificato prima». NON era vero: la
+    // verifica esisteva solo per il genitore. Ora esiste per tutti
+    // (`requireParentOfStudent` → `assertAlunnoInScope`) e l'esenzione non serve
+    // più — vedi la nota in cima al blocco «scope FAMIGLIA».
 
     // ── Il debito che era dichiarato qui è stato ASSOLTO (2026-07-31) ────────
     // `tasks:GET` e `tasks:POST` stavano in questo elenco come promemoria: la
@@ -1023,7 +1042,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
-            handlerEsentati: 109,
+            //
+            // 109 → 96 lo stesso giorno, ed è il calo più grosso mai registrato:
+            // `requireParentOfStudent` verifica il legame di famiglia al genitore
+            // e il plesso/sezione a chiunque altro, quindi tredici handler che
+            // stavano in allowlist «per scope famiglia» — undici dei quali NON
+            // avevano nessuno scope per i ruoli diversi da genitore — hanno ora
+            // un presidio vero e non un'esenzione.
+            handlerEsentati: 96,
         })
     })
 })

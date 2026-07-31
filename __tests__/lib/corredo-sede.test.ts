@@ -35,6 +35,7 @@ import {
   checklistSede,
   provisionaCorredoFallback,
 } from '@/lib/scuole/corredo-sede'
+import { DEFAULT_AVVISI_CONFIG } from '@/lib/scuole/admin-settings-default'
 
 let db: DBFinto
 let scritture: Scrittura[]
@@ -87,6 +88,21 @@ describe('provisionaCorredoFallback — il ramo senza RPC (DB E2E)', () => {
     expect(new Set(db.protocolli_categorie.map((r) => r.scuola_id))).toEqual(new Set([SEDE_A]))
 
     expect([...fatti].sort()).toEqual(['giudizi', 'registro', 'titolario'])
+  })
+
+  it('la sede nasce sapendo CHI può pubblicare un avviso (S24, backend F3)', async () => {
+    // Il difetto misurato il 2026-07-31: Aversa e Cesa sono nate con
+    // `avvisi_config = {}` (la colonna è NOT NULL DEFAULT '{}'), il codice
+    // ripiegava su `['admin']` e la SEGRETERIA delle due sedi nuove non poteva
+    // pubblicare — con un messaggio d'errore che diceva l'opposto. La riga
+    // `admin_settings` esisteva: mancava solo questa chiave.
+    await provisionaCorredoFallback(client(), SEDE_A, 'test:POST')
+
+    expect(db.admin_settings[0].avvisi_config).toEqual(DEFAULT_AVVISI_CONFIG)
+    expect(
+      (db.admin_settings[0].avvisi_config as { ruoli_pubblicazione: string[] })
+        .ruoli_pubblicazione,
+    ).toEqual(['admin', 'teacher'])
   })
 
   it('nessuna scrittura del corredo finisce su una sede diversa da quella richiesta', async () => {

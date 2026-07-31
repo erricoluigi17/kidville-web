@@ -15,6 +15,7 @@ import { degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { RUOLI_PUBBLICAZIONE_DEFAULT } from '@/lib/scuole/admin-settings-default';
 
 // Il ramo STAFF filtra ancora per scope/classe (dashboard cockpit). Il ramo
 // GENITORE è SERVER-DERIVED (G3): i parametri client sono ignorati, figli e
@@ -292,6 +293,49 @@ type EsitoClassi =
     | { ok: true; mancanti: string[] }
     | { ok: false; errore: unknown };
 
+// ─── Chi può pubblicare, e come si dice a chi non può (S24) ──────────────────
+//
+// `avvisi_config.ruoli_pubblicazione` non elenca RUOLI, elenca due GRUPPI:
+// `admin` e `teacher`. È il vocabolario della schermata Impostazioni → Avvisi,
+// dove la pillola `admin` si chiama letteralmente «Segreteria/Admin»
+// (AvvisiSettings.tsx:24). Fino al 2026-07-31 la route metteva `segreteria` nel
+// gruppo `teacher`: la segreteria veniva negata da una configurazione che, letta
+// sullo schermo, la autorizzava. Il resto dell'applicazione non ha mai avuto
+// questo dubbio — `areaForRole('segreteria') = 'admin'` (active-role.ts:24),
+// `requireStaff` la ammette per default (require-staff.ts:253),
+// `vedeTutteLeClassi` la include (scope.ts:240).
+const RUOLI_GRUPPO_GESTIONE = ['admin', 'coordinator', 'segreteria'];
+
+function gruppoPubblicazione(ruolo: string): string {
+    return RUOLI_GRUPPO_GESTIONE.includes(ruolo) ? 'admin' : 'teacher';
+}
+
+/** Come si chiama un gruppo sullo schermo; un gruppo ignoto si mostra com'è. */
+const ETICHETTA_GRUPPO: Record<string, string> = {
+    admin: 'Segreteria e Direzione',
+    teacher: 'Docenti',
+};
+const etichettaGruppo = (g: string) => ETICHETTA_GRUPPO[g] ?? g;
+
+/**
+ * Il messaggio del 403 dice la CONFIGURAZIONE, non un'ipotesi.
+ *
+ * Il testo precedente — «La pubblicazione di avvisi è riservata alla segreteria»
+ * — era scritto per un caso solo e nominava come autorizzato proprio il ruolo
+ * che stava ricevendo il diniego: la segreteria di Aversa lo ha letto per due
+ * giorni. Un messaggio d'errore che afferma il contrario di quel che succede
+ * costa più del silenzio, perché manda a cercare il guasto dove non è.
+ */
+function messaggioRuoliAbilitati(abilitati: readonly string[], gruppo: string): string {
+    if (abilitati.length === 0) {
+        return 'In questa sede nessun ruolo è abilitato a pubblicare avvisi — Impostazioni → Avvisi.';
+    }
+    return (
+        `In questa sede possono pubblicare avvisi: ${abilitati.map(etichettaGruppo).join(', ')}. ` +
+        `Il tuo ruolo (${etichettaGruppo(gruppo)}) non è fra questi — Impostazioni → Avvisi.`
+    );
+}
+
 async function classiMancantiNellaSede(
     supabase: SupabaseAdmin,
     scuolaId: string,
@@ -346,14 +390,30 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         // Ruoli abilitati alla pubblicazione: la configurazione è PER SEDE, e
         // quella che conta è la sede su cui si pubblica, non quella dell'autore.
-        const gruppo = ['admin', 'coordinator'].includes(ruolo) ? 'admin' : 'teacher';
+        // Se la sede non ha ancora la configurazione (sede nuova, o DB E2E non
+        // migrato) vale il default con cui la sede NASCE: una copia sola, non
+        // due che divergono.
+        const gruppo = gruppoPubblicazione(ruolo);
         const avvisiCfg = await getModuleConfig<{ ruoli_pubblicazione: string[] }>(
             supabase, 'avvisi_config', scuolaId,
         );
-        const abilitati = avvisiCfg.ruoli_pubblicazione ?? ['admin'];
+        const abilitati = avvisiCfg.ruoli_pubblicazione ?? [...RUOLI_PUBBLICAZIONE_DEFAULT];
         if (!abilitati.includes(gruppo)) {
+            // `warn` → persistito. Un diniego di pubblicazione è quasi sempre una
+            // configurazione da correggere, non un tentativo: senza questa riga
+            // «la segreteria di Aversa non riesce a pubblicare» resta una
+            // segnalazione telefonica invece di un dato. Solo metadati.
+            logEvento('avvisi', 'warn', {
+                operazione: 'avvisi:POST',
+                esito: 'pubblicazione-non-abilitata',
+                tipo: 'ruolo-fuori-configurazione',
+                ruolo,
+                uid: auth.user.id,
+                scuola_id: scuolaId,
+                n_abilitati: abilitati.length,
+            });
             return NextResponse.json(
-                { error: 'La pubblicazione di avvisi è riservata alla segreteria (vedi Impostazioni → Avvisi)' },
+                { error: messaggioRuoliAbilitati(abilitati, gruppo) },
                 { status: 403 },
             );
         }

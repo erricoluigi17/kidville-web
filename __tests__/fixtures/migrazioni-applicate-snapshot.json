@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-07-31",
-  "sha256": "5972e8cf1b6a6e1187c7522fec27b48f910a9a142ee307fc7c45fb26c602e94a",
+  "sha256": "3cb9496063c8e6d0401359a1bf21b2cd402b7cff67e7cd74ebb289ee32f8f28f",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -302,6 +302,14 @@
     {
       "version": "20260731192131",
       "name": "task_interni_scuola_obbligatoria"
+    },
+    {
+      "version": "20260731211118",
+      "name": "enrollment_documento_path_indice"
+    },
+    {
+      "version": "20260731211221",
+      "name": "avvisi_config_backfill_sedi"
     }
   ]
 }

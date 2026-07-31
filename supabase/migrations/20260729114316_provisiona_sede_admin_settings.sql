@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260729120000 — A3 · Una sede nuova nasce col REGISTRO ACCESO
+-- 20260729114316 — A3 · Una sede nuova nasce col REGISTRO ACCESO
 -- =============================================================================
 -- IL DIFETTO. `public.provisiona_sede` (20260714102000) crea la sede in `schools`
 -- e `scuole` con lo stesso id e collega gli admin in `utenti_scuole`, ma NON crea
@@ -102,7 +102,7 @@ BEGIN
   -- scuola_id, quindi la chiamata resta idempotente e rilanciabile.
   --
   -- solleciti_config = {"enabled": false} — SCELTA ESPLICITA, non una dimenticanza
-  -- (vedi anche 20260729121000): una sede appena creata sta ancora importando
+  -- (vedi anche 20260729114339): una sede appena creata sta ancora importando
   -- anagrafiche e pagamenti, e `retta_auto_enabled` è true per default, quindi le
   -- prime rette nascono con scadenze anche retrodatate. Col cron acceso il primo
   -- giro delle 06:00 manderebbe solleciti di morosità VERI a famiglie vere per

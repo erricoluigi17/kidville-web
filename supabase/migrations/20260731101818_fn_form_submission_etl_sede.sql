@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260731103000 — L'ETL dell'iscrizione archivia il minore nella sede DICHIARATA
+-- 20260731101818 — L'ETL dell'iscrizione archivia il minore nella sede DICHIARATA
 --
 -- IL DIFETTO (R92, audit globale multi-sede del 2026-07-31 — bloccante).
 -- `public.fn_form_submission_etl()` è il trigger SECURITY DEFINER che, quando un

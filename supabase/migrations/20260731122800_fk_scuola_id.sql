@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260731180000 — Lo SCHEMA difende il tenant: `scuola_id` smette di essere un
+-- 20260731122800 — Lo SCHEMA difende il tenant: `scuola_id` smette di essere un
 --                  uuid libero su 31 tabelle, e la colonna morta viene disarmata
 --
 -- IL DIFETTO (R103, R100 — audit globale multi-sede del 2026-07-31).

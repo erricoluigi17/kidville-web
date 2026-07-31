@@ -118,7 +118,14 @@ const REGOLE: Regola[] = [
       [join('supabase', 'migrations', '20260714103000_galleria_scuola_id.sql')]:
         'backfill una-tantum di galleria.scuola_id sulle foto già caricate',
       [join('supabase', 'migrations', '20260718400000_pagamenti_solleciti_cron.sql')]:
-        'accensione dei solleciti sulla sola Giugliano: È IL DIFETTO, corretto da 20260729121000_solleciti_config_tutte_le_sedi.sql',
+        'accensione dei solleciti sulla sola Giugliano: È IL DIFETTO, corretto da 20260729114339_solleciti_config_tutte_le_sedi.sql',
+      // Applicata in produzione il 2026-07-30, riportata nel repo il 2026-07-31
+      // (fino ad allora viveva SOLO nel database). Il backfill assegna le 4
+      // compilazioni storiche a Giugliano perché fino al 29 luglio era l'unica
+      // sede esistente: l'uuid non è un assunto, è l'oggetto del backfill. Un
+      // «UPDATE per insieme» qui non vuol dire nulla — l'insieme era di uno.
+      [join('supabase', 'migrations', '20260730144035_modulistica_backfill_sede_compilazioni_storiche.sql')]:
+        'backfill una-tantum delle 4 compilazioni anteriori all\'apertura di Aversa e Cesa',
     },
     invece: INVECE_SEDE_REALE,
   },
@@ -168,6 +175,11 @@ const REGOLE: Regola[] = [
     allowlist: {
       [join('scripts', 'seed-e2e.mjs')]:
         'è il seed che CREA la sede finta della CI: quell\'uuid è il suo oggetto, non un assunto',
+      // Stessa migrazione ammessa sopra per l'uuid di Giugliano: il backfill
+      // separa le righe seminate dalla CI (prefisso `e2e00000-`) da quelle
+      // reali, e per farlo deve nominare la sede su cui mandarle.
+      [join('supabase', 'migrations', '20260730144035_modulistica_backfill_sede_compilazioni_storiche.sql')]:
+        'backfill storico: manda sulla sede finta le sole compilazioni seminate dalla CI',
     },
     invece:
       'il prodotto riconosce la sede E2E dal PREDICATO `isScuolaE2E` (prefisso `e2e00000` o «e2e» ' +

@@ -63,7 +63,8 @@ Il server di sviluppo è su **http://localhost:3000** e parla col **DB di produz
 | `localizzazione` | I testi nuovi in IT **e** EN (namespace next-intl): il 400 «Specificare la sede», la checklist di provisioning, i badge «Sede», «Anteprima non disponibile» della galleria |
 | `debug` | **Rifai le prove di validità** dichiarate dagli esecutori: campionane almeno 5, rimetti il bug, verifica che il test diventi rosso. È il controllo sul controllo — il 30/07 due test si erano dichiarati verdi senza guardare niente |
 
-**Account di collaudo** (produzione, password `Kidville1`):
+**Account di collaudo** (produzione; la password sta nella variabile `KV_TEST_PASSWORD`
+e nel gestore di credenziali del titolare — **mai in un file di questo repo, che è pubblico**):
 `test.segreteria@kidville.test` (Giugliano, 25 alunni veri) · `test.aversa.segreteria@kidville.test` ·
 `test.cesa.segreteria@kidville.test` · `test.aversa.docente@kidville.test` · `test.cesa.docente@kidville.test`.
 

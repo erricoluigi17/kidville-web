@@ -9,7 +9,7 @@
 //
 // Questo file è la fonte di verità TypeScript del default. La stessa identica
 // forma è replicata nella RPC SQL `public.provisiona_sede`
-// (supabase/migrations/20260729120000_provisiona_sede_admin_settings.sql): le due
+// (supabase/migrations/20260729114316_provisiona_sede_admin_settings.sql): le due
 // copie servono perché il ramo di fallback della route gira sul DB E2E, dove la
 // RPC non esiste. **Se cambi qui, cambia anche là** (e viceversa).
 

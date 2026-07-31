@@ -277,7 +277,7 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
       }
       // ── Il corredo minimo della sede nuova ─────────────────────────────────
       // Stesse scritture che fa la RPC `provisiona_corredo_sede`
-      // (20260731170000_provisiona_sede_v2.sql), qui replicate per il ramo senza
+      // (20260731123052_provisiona_sede_v2.sql), qui replicate per il ramo senza
       // RPC: `admin_settings` (senza cui `loadGradoContext` legge `matrice = {}`
       // e `requireFunzione` risponde 403 su TUTTE le funzioni docente della sede
       // — require-grado.ts:36-44 e :64-86), la scala dei giudizi e il titolario

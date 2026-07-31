@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260731150000 — Le rette si generano PER SEDE (R64, R115, R116, R117, R121)
+-- 20260731115341 — Le rette si generano PER SEDE (R64, R115, R116, R117, R121)
 --
 -- IL DIFETTO, e la prova che è GIÀ SCATTATO in produzione.
 -- `genera_rette_mensili(p_periodo date)` non aveva nessun parametro di sede e nel

@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260731160000 — La sede è una proprietà del DATO: `presenze` e `armadietto`
+-- 20260731114449 — La sede è una proprietà del DATO: `presenze` e `armadietto`
 --                  non possono più nascere senza plesso
 --
 -- IL DIFETTO (R27, R28, R42 — audit globale multi-sede del 2026-07-31).

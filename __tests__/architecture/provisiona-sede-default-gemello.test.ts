@@ -34,8 +34,8 @@ import {
 const migrazione = (nome: string) =>
   readFileSync(join(process.cwd(), 'supabase', 'migrations', nome), 'utf8')
 
-const SQL_MATRICE = migrazione('20260729120000_provisiona_sede_admin_settings.sql')
-const SQL_CORREDO = migrazione('20260731170000_provisiona_sede_v2.sql')
+const SQL_MATRICE = migrazione('20260729114316_provisiona_sede_admin_settings.sql')
+const SQL_CORREDO = migrazione('20260731123052_provisiona_sede_v2.sql')
 
 /** Il corpo di una funzione plpgsql/sql: da `CREATE … <nome>` al `$$;` che la chiude. */
 function corpoFunzione(sql: string, nome: string): string {

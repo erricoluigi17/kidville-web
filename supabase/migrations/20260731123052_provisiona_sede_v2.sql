@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260731170000 — W4-A · Una sede nuova nasce PRONTA, e Aversa e Cesa vengono
+-- 20260731123052 — W4-A · Una sede nuova nasce PRONTA, e Aversa e Cesa vengono
 --                  recuperate
 -- =============================================================================
 -- IL DIFETTO (audit multi-sede 2026-07-31, R123 · R124 · R68).
@@ -48,7 +48,7 @@
 -- =============================================================================
 
 -- ── (a) I default, come costanti leggibili ───────────────────────────────────
--- Stessa forma di `admin_settings_default_matrice()` (20260729120000): una
+-- Stessa forma di `admin_settings_default_matrice()` (20260729114316): una
 -- funzione IMMUTABLE che restituisce jsonb. Serve a due cose insieme — la si
 -- legge in code review, e il lock
 -- `__tests__/architecture/provisiona-sede-default-gemello.test.ts` la confronta
@@ -171,7 +171,7 @@ BEGIN
   --    legge `matrice = {}` e `requireFunzione` risponde 403 su TUTTE le
   --    funzioni docente (src/lib/auth/require-grado.ts:36-44 e :64-86): una sede
   --    che nasce col registro spento, in silenzio. `solleciti_config` spento è
-  --    una scelta esplicita, motivata in 20260729120000.
+  --    una scelta esplicita, motivata in 20260729114316.
   INSERT INTO public.admin_settings (scuola_id, funzioni_matrice, solleciti_config)
   VALUES (p_scuola_id, public.admin_settings_default_matrice(), '{"enabled": false}'::jsonb)
   ON CONFLICT (scuola_id) DO NOTHING;
@@ -233,7 +233,7 @@ REVOKE ALL ON FUNCTION public.provisiona_corredo_sede(uuid) FROM PUBLIC, anon, a
 GRANT  EXECUTE ON FUNCTION public.provisiona_corredo_sede(uuid) TO service_role;
 
 -- ── (d) provisiona_sede v2: stessa firma, il corredo in più ─────────────────
--- Rispetto a 20260729120000 cambia SOLO che il blocco `admin_settings` diventa
+-- Rispetto a 20260729114316 cambia SOLO che il blocco `admin_settings` diventa
 -- una chiamata a `provisiona_corredo_sede`, che ne fa di più. Resta atomica
 -- (unica funzione plpgsql: se una INSERT fallisce, rollback di tutto), stessa
 -- firma, stessa security, stesso search_path.

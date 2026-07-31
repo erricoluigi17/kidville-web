@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260731130000 — Il nome di una classe è unico DENTRO la sua sede
+-- 20260731113406 — Il nome di una classe è unico DENTRO la sua sede
 --
 -- IL DIFETTO (R107, audit globale multi-sede del 2026-07-31).
 -- `public.sections` non aveva nessun vincolo oltre alla chiave primaria:

@@ -18,7 +18,7 @@
 // solo un documento incompleto.
 //
 // ⚠️ GEMELLO SQL: `public.provisiona_corredo_sede`
-// (supabase/migrations/20260731170000_provisiona_sede_v2.sql). Questo file è il
+// (supabase/migrations/20260731123052_provisiona_sede_v2.sql). Questo file è il
 // ramo che gira quando la RPC non c'è (DB E2E della CI, non migrato). Le due
 // copie devono restare allineate — il lock
 // `__tests__/architecture/provisiona-sede-default-gemello.test.ts` le confronta.

@@ -225,7 +225,7 @@ async function main() {
   //    "Nuovi Iscritti" è la sezione-parcheggio degli import pubblici).
   //    «Girasoli» esiste in ENTRAMBE le sedi: è l'omonimia che il 2026-07-29 ha
   //    reso il nome-classe una chiave ambigua. A DB l'unicità è per
-  //    (scuola_id, name) — migrazione 20260731130000_sections_nome_per_sede —
+  //    (scuola_id, name) — migrazione 20260731113406_sections_nome_per_sede —
   //    quindi questi due record convivono per progetto, non per fortuna.
   must('sections', await db.from('sections').upsert([
     { id: IDS.SEC_GIRASOLI, scuola_id: IDS.SCUOLA, name: 'Girasoli', school_type: 'infanzia' },

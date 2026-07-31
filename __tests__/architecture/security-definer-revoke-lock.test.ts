@@ -30,7 +30,7 @@ const ALLOWLIST = new Set<string>([
   // stata fatta il 2026-07-31 (audit multi-sede, R97). Non filtrava per sede e aveva
   // la lista dei ruoli invertita — dentro la cuoca, fuori la segreteria — e le sette
   // policy che la usavano su form_models/form_submissions sono state droppate:
-  // vedi 20260731120000_rls_multisede_pulizia.sql, che ne revoca l'EXECUTE ad
+  // vedi 20260731102245_rls_multisede_pulizia.sql, che ne revoca l'EXECUTE ad
   // anon/authenticated.
   '20260704120000_baseline.sql',
   '20260706105201_anagrafiche_residenza_provincia_civico.sql', // trigger/helper anagrafica pre-esistente

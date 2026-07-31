@@ -1,5 +1,5 @@
 -- =============================================================================
--- 20260729121000 — A4 · I solleciti non sono più una cosa della sola Giugliano
+-- 20260729114339 — A4 · I solleciti non sono più una cosa della sola Giugliano
 -- =============================================================================
 -- IL DIFETTO. 20260718400000_pagamenti_solleciti_cron.sql accende la
 -- schedulazione dei solleciti per UNA sede sola, per uuid cablato:
@@ -18,7 +18,7 @@
 --
 --  1. SEDI FUTURE — il default entra nel provisioning: `provisiona_sede` crea la
 --     riga `admin_settings` con `solleciti_config = {"enabled": false}`
---     (20260729120000). Nessun uuid, nessuna migrazione da ricordarsi.
+--     (20260729114316). Nessun uuid, nessuna migrazione da ricordarsi.
 --
 --  2. SEDI PRESENTI — questa migrazione lavora per INSIEME, su tutte le sedi
 --     esistenti, senza nominarne nessuna.

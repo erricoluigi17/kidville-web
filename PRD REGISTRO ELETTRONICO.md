@@ -43,13 +43,13 @@
 > |---|---|---|
 > | Sedi | **3 reali** (Giugliano · Aversa · Cesa) + **1 finta** di collaudo (prefisso `e2e00000-…`), esclusa da elenchi pubblici, digest e contabilità | `src/lib/scuole/reali.ts` (`isScuolaE2E`, `sediReali`), `schools.operativa` |
 > | Sede obbligatoria in scrittura | ✅ `resolveScuolaScrittura` risponde **400** quando l'utente ha più sedi e nessuna è indicata — nessun ripiego silenzioso sulla sede primaria | `src/lib/auth/scope.ts` (+ 55 test propri) |
-> | `scuola_id` → `schools(id)` | ✅ FK su **65 tabelle su 65** (erano 34) | migr. `20260731180000_fk_scuola_id` · lock `fk-scuola-id` |
-> | Nome classe univoco nella sede | ✅ UNIQUE `(scuola_id, name)` su `sections` | migr. `20260731130000_sections_nome_per_sede` |
-> | Sede come proprietà del dato | ✅ `presenze` e `armadietto`: trigger dall'alunno + backfill + `NOT NULL` | migr. `20260731160000` |
-> | RLS per sede | ✅ 42 policy riviste (37 droppate, 5 riscritte col vincolo di plesso) + fotografia versionata di `pg_policies` | migr. `20260731120000_rls_multisede_pulizia` · lock `rls-per-sede` |
-> | Contabilità per sede | ✅ `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio**; sede di collaudo fuori dal perimetro | migr. `20260731150000` |
+> | `scuola_id` → `schools(id)` | ✅ FK su **65 tabelle su 65** (erano 34) | migr. `20260731122800_fk_scuola_id` · lock `fk-scuola-id` |
+> | Nome classe univoco nella sede | ✅ UNIQUE `(scuola_id, name)` su `sections` | migr. `20260731113406_sections_nome_per_sede` |
+> | Sede come proprietà del dato | ✅ `presenze` e `armadietto`: trigger dall'alunno + backfill + `NOT NULL` | migr. `20260731114449` |
+> | RLS per sede | ✅ 42 policy riviste (37 droppate, 5 riscritte col vincolo di plesso) + fotografia versionata di `pg_policies` | migr. `20260731102245_rls_multisede_pulizia` · lock `rls-per-sede` |
+> | Contabilità per sede | ✅ `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio**; sede di collaudo fuori dal perimetro | migr. `20260731115341` |
 > | Semantica di `scuola_id NULL` | ✅ decisa e scritta: dato di famiglia ⇒ mai NULL; configurazione ⇒ NULL = «globale» | changelog 2026-07-31 |
-> | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731170000_provisiona_sede_v2` |
+> | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731123052_provisiona_sede_v2` |
 > | Collaudo dell'isolamento | ✅ account TEST su Aversa e Cesa · seed E2E a **due** sedi con sezione omonima · `e2e/isolamento-sedi.spec.ts` | `scripts/seed-test-sedi.mjs`, `scripts/seed-e2e.mjs` |
 >
 > ### Moduli Implementati
@@ -627,15 +627,15 @@ ha 55, ed è il primo che lo importa davvero.
 
 | Migrazione | Cosa fa |
 |---|---|
-| `20260731090000_chiudi_policy_scaffolding_rls_aperte` | Via 6 policy `auth.role()='authenticated'` lasciate da Studio: davvero **chiunque** poteva scrivere il registro di qualsiasi sede, annotare note disciplinari su qualsiasi minore e **inserire firme docenti a nome altrui** (valore probatorio) |
-| `20260731103000_fn_form_submission_etl_sede` | Il trigger ETL dell'iscrizione prende la sede da `NEW.scuola_id`; se manca **non crea nulla** e lo scrive in `app_log` |
-| `20260731120000_rls_multisede_pulizia` | 42 policy riviste: 37 droppate, 5 riscritte col vincolo di plesso, 1 `REVOKE`. Verificato file per file che **nessun** percorso client-side dipendesse da quelle policy |
-| `20260731130000_sections_nome_per_sede` | UNIQUE `(scuola_id, name)`: l'invariante viveva solo in tre docstring, e un invariante che vive nei commenti è una speranza |
-| `20260731140000_mensa_unique_per_sede` | Unicità della configurazione mensa per sede: due menu attivi dalla stessa data rendevano nondeterministici **gli allergeni del giorno** |
-| `20260731150000_genera_rette_per_sede` | `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio** (nessun default) + `schools.operativa`. Non è teoria: l'unica esecuzione registrata in produzione ha emesso 21 rette su Giugliano **e 4 sulla sede finta della CI** — un clic, due sedi |
-| `20260731160000_presenze_armadietto_scuola_id` | Trigger dall'alunno + backfill (12 presenze, 4 armadietti) + `NOT NULL` |
-| `20260731170000_provisiona_sede_v2` | Corredo minimo automatico per una sede nuova + **backfill idempotente** di Aversa e Cesa; ciò che resta umano esce come checklist |
-| `20260731180000_fk_scuola_id` | FK `scuola_id → schools(id)` su 31 tabelle (da 34/65 a **65/65**) e disarmo della colonna morta `alunni.fiscal_code` |
+| `20260731094558_chiudi_policy_scaffolding_rls_aperte` | Via 6 policy `auth.role()='authenticated'` lasciate da Studio: davvero **chiunque** poteva scrivere il registro di qualsiasi sede, annotare note disciplinari su qualsiasi minore e **inserire firme docenti a nome altrui** (valore probatorio) |
+| `20260731101818_fn_form_submission_etl_sede` | Il trigger ETL dell'iscrizione prende la sede da `NEW.scuola_id`; se manca **non crea nulla** e lo scrive in `app_log` |
+| `20260731102245_rls_multisede_pulizia` | 42 policy riviste: 37 droppate, 5 riscritte col vincolo di plesso, 1 `REVOKE`. Verificato file per file che **nessun** percorso client-side dipendesse da quelle policy |
+| `20260731113406_sections_nome_per_sede` | UNIQUE `(scuola_id, name)`: l'invariante viveva solo in tre docstring, e un invariante che vive nei commenti è una speranza |
+| `20260731112535_mensa_unique_per_sede` | Unicità della configurazione mensa per sede: due menu attivi dalla stessa data rendevano nondeterministici **gli allergeni del giorno** |
+| `20260731115341_genera_rette_per_sede` | `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio** (nessun default) + `schools.operativa`. Non è teoria: l'unica esecuzione registrata in produzione ha emesso 21 rette su Giugliano **e 4 sulla sede finta della CI** — un clic, due sedi |
+| `20260731114449_presenze_armadietto_scuola_id` | Trigger dall'alunno + backfill (12 presenze, 4 armadietti) + `NOT NULL` |
+| `20260731123052_provisiona_sede_v2` | Corredo minimo automatico per una sede nuova + **backfill idempotente** di Aversa e Cesa; ciò che resta umano esce come checklist |
+| `20260731122800_fk_scuola_id` | FK `scuola_id → schools(id)` su 31 tabelle (da 34/65 a **65/65**) e disarmo della colonna morta `alunni.fiscal_code` |
 
 ### La decisione sulla semantica di `scuola_id NULL`
 

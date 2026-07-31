@@ -26,6 +26,14 @@ const h = vi.hoisted(() => ({
   resolveScuoleAttive: vi.fn(),
   resolveScuolaScrittura: vi.fn(),
   scuoleDiUtente: vi.fn(),
+  // Dal 2026-07-31 il ramo `GET /api/tasks?studentId=` passa da
+  // `assertAlunnoInScope` (S08: la sezione si verifica prima di parlare del
+  // bambino). Qui il gate è permissivo di proposito: questo file collauda la
+  // FIRMA degli allegati, e il gate ha il suo test dedicato in
+  // `tasks-identita-da-sessione.test.ts`. Senza questa voce il modulo mockato
+  // non esporrebbe la funzione, la route lancerebbe e il 500 farebbe passare
+  // per «rotta la firma» ciò che è solo un mock incompleto.
+  assertAlunnoInScope: vi.fn(),
   nomiSezioniDiUtente: vi.fn(),
   getFigliDiGenitore: vi.fn(),
   verificaTargetAvvisoDocente: vi.fn(),
@@ -59,6 +67,7 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: (...a: unknown[]) => h.resolveScuoleAttive(...a),
   resolveScuolaScrittura: (...a: unknown[]) => h.resolveScuolaScrittura(...a),
   scuoleDiUtente: (...a: unknown[]) => h.scuoleDiUtente(...a),
+  assertAlunnoInScope: (...a: unknown[]) => h.assertAlunnoInScope(...a),
 }))
 vi.mock('@/lib/sezioni/docenti', () => ({ nomiSezioniDiUtente: (...a: unknown[]) => h.nomiSezioniDiUtente(...a) }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ getFigliDiGenitore: (...a: unknown[]) => h.getFigliDiGenitore(...a) }))
@@ -194,6 +203,7 @@ beforeEach(() => {
   h.resolveScuoleAttive.mockResolvedValue([SEDE])
   h.resolveScuolaScrittura.mockResolvedValue({ scuolaId: SEDE })
   h.scuoleDiUtente.mockResolvedValue([SEDE])
+  h.assertAlunnoInScope.mockResolvedValue(null) // alunno in scope: nessun diniego
   h.nomiSezioniDiUtente.mockResolvedValue([])
   h.getFigliDiGenitore.mockResolvedValue(['s1'])
   h.verificaTargetAvvisoDocente.mockResolvedValue(null)

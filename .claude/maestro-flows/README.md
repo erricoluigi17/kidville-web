@@ -16,9 +16,10 @@ dentro la pipeline `/ship-cycle`.
 > **Segreteria/Direzione (cockpit `/admin`).** Da questo ciclo il cockpit naviga come genitore e
 > docente: una **bottom-nav a pillola** su mobile (Home · Avvisi · Contabilità · Mensa + un
 > bottone **`Menu`** che apre un bottom-sheet con le altre sezioni, Anagrafica in evidenza) al
-> posto del vecchio **drawer laterale**, ormai rimosso. I 4 tab si toccano col loro testo; il tab
-> `Menu` ha aria-label `Menu · tutte le sezioni`. I flow si ancorano ai testi stabili del cockpit
-> ri-skinnato (`Dashboard Direzione`, `Mensa & Cucina`, `Anagrafica Generale`). Su Android i
+> posto del vecchio **drawer laterale**, ormai rimosso. Il tab `Menu` ha aria-label
+> `Menu · tutte le sezioni`. I flow si ancorano ai testi stabili del cockpit ri-skinnato
+> (`Dashboard Direzione`, `Mensa & Cucina`, `Anagrafica Generale`) — **tranne `Mensa` e
+> `Anagrafica`, che sono ambigui**: vedi «La trappola dei nodi duplicati» qui sotto. Su Android i
 > "ritorni" usano il tasto Indietro hardware; su iOS, che non ce l'ha, si tocca un tab della
 > bottom-nav (persistente su ogni pagina).
 
@@ -33,6 +34,71 @@ Non è un bug dell'app, è un errore di configurazione della prova.
 
 - Dall'**emulatore Android**, l'host della macchina è **`10.0.2.2`** (non `localhost`).
 - Dal **simulatore iOS**, l'host è **`localhost`**.
+
+## La trappola dei nodi duplicati (leggila prima di dare la colpa all'app)
+
+**Misurato il 2026-07-31, emulatore Android.** `android-percorso-segreteria.yaml` faceva
+`tapOn: "Mensa"` e **non navigava**. Non era un bug dell'app: nell'albero di accessibilità della
+WebView esistevano **due** nodi con testo esattamente `Mensa` —
+
+1. la **tile della griglia «Tutti i moduli»**, in fondo alla dashboard: **fuori viewport,
+   schiacciata a `y=1857` con altezza 0**;
+2. il **tab vero** della bottom-nav.
+
+**Maestro prende la prima corrispondenza**, non la prima *visibile*. Il tap finiva su un'area
+morta. Il tap a coordinate (`point: "68%,93%"`) funzionava al primo colpo: la prova che l'app
+era sana. Identica causa sul tap `Anagrafica` dentro il bottom-sheet — la tile omonima resta
+nell'albero **dietro** il foglio modale.
+
+### Perché fa perdere mezza giornata
+
+Perché ha **due facce**, e la seconda è peggiore:
+
+- **rumorosa** — il passo successivo va in timeout e il flow fallisce. Fastidiosa ma onesta:
+  è così che l'abbiamo trovata.
+- **silenziosa** — se il testo atteso dopo il tap **esiste anche nella pagina di partenza**,
+  l'asserzione passa lo stesso e il flow dichiara `PASS` **senza essersi mai mosso**. È già
+  successo: `android-screenshot-playstore.yaml`, trappola 1, catturava la schermata sbagliata.
+
+Da qui la regola: **dopo un tap "cieco" (a coordinate) servono DUE asserzioni** — una
+**positiva** (un testo che esiste solo a destinazione) e una **negativa** (un testo che esiste
+solo nella pagina di partenza, che ora non deve più esserci). Con una sola, un tap che non
+naviga può ancora passare.
+
+### Vederlo con i propri occhi
+
+```bash
+maestro hierarchy | grep -n -i "mensa"     # quante volte compare? con che bounds?
+maestro studio                             # e chi tocca Maestro quando gli dici "Mensa"
+```
+
+Un nodo con `bounds` di altezza 0 o fuori schermo è un nodo **morto**: se compare prima di
+quello buono, il tuo `tapOn` per testo sta toccando lui.
+
+### Le etichette già note come ambigue
+
+| Schermata | Etichetta | L'altro nodo |
+|---|---|---|
+| `/admin` (cockpit) | `Mensa` | tile della griglia «Tutti i moduli» |
+| `/admin` (cockpit) | `Anagrafica` | tile della griglia «Tutti i moduli», dietro il foglio Menu |
+| Home genitore | `Diario` · `Avvisi` · `Chat` | scorciatoie della home (es. «DIARIO DI OGGI») |
+
+### Le tre strade, e quale abbiamo scelto
+
+| Strada | Verdetto |
+|---|---|
+| `point: "68%,93%"` | **Scelta.** È l'unica variante **misurata** su questa WebView. Fragile ai cambi di layout — per questo va accompagnata dalle due asserzioni di cui sopra, che la fanno fallire **forte** invece che in silenzio. |
+| `childOf` la `<nav>` / `rightOf` il tab accanto | Più semantica, ma **non provata** su questo runtime. Sull'esposizione degli attributi ARIA la WebView ci ha già smentiti **due volte in direzioni opposte** (la bottom-nav del genitore non espone l'`aria-label`, quella del cockpit sì): un selettore semantico non misurato è solo la terza ipotesi, e se sbaglia il flow muore con «Element not found». |
+| `aria-label` univoco sui 4 tab | **La strada definitiva** — ma tocca `src/`. È una proposta aperta: dando ai tab un `aria-label` tipo `Mensa · sezione` sparirebbe l'ambiguità e i flow tornerebbero a selettori di puro testo, su tutte le piattaforme. |
+
+Geometria del tap, se un giorno la coordinata va rifatta: la bottom-nav ha **5 voci a larghezza
+uguale** (`flex-1`) → centri a **10 / 30 / 50 / 70 / 90 %** della larghezza; la pillola è alta
+**60 px** ed è agganciata sopra la safe-area, quindi **`y=93%`** ci cade dentro sia su Android
+sia su iPhone. Vale **solo sul telefono**: sopra i 1024 px la bottom-nav è `lg:hidden` e c'è la
+sidebar.
+
+Il lock **`__tests__/architecture/maestro-flows-selettori.test.ts`** tiene ferme queste regole:
+gira in ogni `vitest run`, senza bisogno di un emulatore acceso.
 
 ## Credenziali — mai dentro un file
 
@@ -65,7 +131,15 @@ qualcuno la riscrive in un file tracciato.
 curl -fsSL "https://get.maestro.mobile.dev" | bash
 export PATH="$PATH:$HOME/.maestro/bin"
 maestro --version
+
+# Controllo di sintassi — NON serve nessun dispositivo, dura un secondo:
+for f in .claude/maestro-flows/*.yaml; do maestro check-syntax "$f"; done
 ```
+
+> `check-syntax` boccia davvero (un comando inesistente esce con
+> `Invalid Command: … at /syntax-checker:<riga>`), quindi un `OK` vale qualcosa. Verifica la
+> **grammatica**, non il comportamento: un selettore sbagliato passa il controllo e fallisce
+> sul device.
 
 ### Android
 
@@ -122,6 +196,10 @@ maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
 - I selettori sono **testi italiani della UI reale** (`Accedi`, `Menu`, `Presenze`, `Avvisi`,
   `Appello`, `Bacheca`). Se un'etichetta cambia nel codice, il flow va aggiornato **nello
   stesso lavoro** — un flow che punta a un'etichetta morta è un test che mente.
+- **Un'etichetta che compare due volte a schermo non è un selettore.** Maestro prende la prima
+  corrispondenza dell'albero, anche se è invisibile o alta 0 px → vedi
+  «La trappola dei nodi duplicati» sopra. Nel dubbio, preferisci il **sottotitolo univoco**
+  (`Alunni, famiglie e personale`, `Assenze e giustifiche`, `Rette e scadenze`) alla label.
 
 ## Rapporto con l'harness Appium esistente
 

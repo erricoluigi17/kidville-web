@@ -26,6 +26,15 @@
 # "Menu · tutte le sezioni" e apre un bottom-sheet (Anagrafica in evidenza).
 # Selettori ancorati a testi STABILI: "Dashboard Direzione", "Mensa & Cucina",
 # "Anagrafica Generale".
+#
+# ⚠️ NODI DUPLICATI (2026-07-31). «Mensa» e «Anagrafica» NON si toccano per
+# testo: la dashboard le ripete nella griglia «Tutti i moduli» e Maestro prende
+# la prima corrispondenza, che è la copia morta. Vedi README, «La trappola dei
+# nodi duplicati». Il difetto è stato misurato su ANDROID: qui la correzione è
+# applicata per identità del DOM, e il tap a coordinate NON è ancora stato
+# provato su simulatore. Il lock
+# `__tests__/architecture/maestro-flows-selettori.test.ts` impedisce di
+# rimettere i selettori ambigui.
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · iOS — percorso segreteria
@@ -86,10 +95,30 @@ env:
 - takeScreenshot: /tmp/kv-ios-segreteria-2-avvisi
 
 # ── 4. TAB «MENSA» (la bottom-nav è persistente: niente back hardware) ────────
-- tapOn: "Mensa"
+# ⚠️ QUESTO TAB NON SI TOCCA PER TESTO. «Mensa» è un'etichetta AMBIGUA del
+# cockpit: esiste sia nella bottom-nav sia nella griglia «Tutti i moduli» in
+# fondo alla dashboard, e Maestro prende la PRIMA corrispondenza — quella morta.
+# L'ambiguità sta nel DOM, quindi vale su entrambe le piattaforme: su Android è
+# stata MISURATA il 2026-07-31 (tile fuori viewport, altezza 0, y=1857).
+# ⚠️ SU iOS LA COORDINATA NON È STATA PROVATA: il collaudo del 31/07 era solo
+# Android. È derivata dalla geometria, non misurata — se il flow fallisce qui,
+# rileggila prima di dare la colpa all'app: pillola alta 60px con
+# `paddingBottom: max(12px, env(safe-area-inset-bottom))`, su iPhone (home
+# indicator, 34pt) occupa circa il 90–96,5% dell'altezza schermo → 93% è dentro.
+# In larghezza: 5 voci `flex-1` → centri a 10/30/50/70/90%, «Mensa» è la 4ª.
+# Vale sul TELEFONO: su iPad la bottom-nav è `lg:hidden` e c'è la sidebar.
+- assertVisible:
+    text: "Menu · tutte le sezioni"   # controllo POSITIVO: la bottom-nav è a schermo
+- tapOn:
+    point: "68%,93%"
 - extendedWaitUntil:
     visible: "Mensa & Cucina"
     timeout: 45000
+# Controllo NEGATIVO, obbligatorio dopo un tap cieco: «Tutti i moduli» è la
+# griglia che esiste SOLO sulla dashboard. Se è ancora lì, non ci siamo mossi —
+# ed è esattamente il modo in cui questi flow hanno già dichiarato PASS restando
+# fermi (vedi android-screenshot-playstore.yaml, trappola 1).
+- assertNotVisible: "Tutti i moduli"
 - takeScreenshot: /tmp/kv-ios-segreteria-3-mensa
 
 # ── 5. TAB «MENU» → BOTTOM-SHEET → ANAGRAFICA ────────────────────────────────
@@ -101,12 +130,22 @@ env:
     visible: ".*Alunni, famiglie e personale.*"
     timeout: 15000
 - takeScreenshot: /tmp/kv-ios-segreteria-4-menu
+# ⚠️ Stessa ambiguità del tab «Mensa»: «Anagrafica» è anche una tile della
+# griglia «Tutti i moduli», che resta nell'albero DIETRO il foglio modale →
+# `tapOn: ".*Anagrafica.*"` prendeva la tile morta. Qui si tocca il SOTTOTITOLO
+# «Alunni, famiglie e personale», univoco in tutto il cockpit
+# (messages/it/adminNav.json → `anagraficaSub`): nessuna coordinata, nessuna
+# ambiguità — su iOS è anzi l'unico dei due tap che NON ha bisogno della prova
+# sul device, perché non dipende dalla geometria. Regex non ancorata: nella
+# WebView iOS ogni voce del foglio è UN SOLO nodo con l'accessibilityText
+# concatenato («ANAGRAFICA Alunni, famiglie e personale») e Maestro fa full-match.
 - tapOn:
-    text: ".*Anagrafica.*"
+    text: ".*Alunni, famiglie e personale.*"
 - extendedWaitUntil:
     visible: "Anagrafica Generale"
     timeout: 45000
 - assertVisible: "Gestione studenti, genitori e personale"
+- assertNotVisible: "Tutti i moduli"   # controllo negativo: dashboard lasciata davvero
 - takeScreenshot: /tmp/kv-ios-segreteria-5-anagrafica
 
 # ── 6. RITORNO AL COCKPIT (tab «Home» della bottom-nav) ──────────────────────

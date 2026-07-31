@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useId } from 'react';
 import { useTranslations } from 'next-intl';
-import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, Upload, Link, AlertTriangle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
+import { Modal } from '@/components/ui/Modal';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -75,8 +75,43 @@ function sediDi(classi: ClasseAvviso[]): { id: string; nome: string }[] {
     return [...viste].map(([id, nome]) => ({ id, nome }));
 }
 
+/**
+ * Modulo «Nuovo avviso / Modifica avviso».
+ *
+ * ACCESSIBILITÀ (2026-07-31). Fino a oggi il contenitore era due `motion.div`
+ * nudi: nessun `role="dialog"`, nessun `aria-modal`, nessun `aria-labelledby`,
+ * nessun focus-trap. Per TalkBack la modale NON esisteva — l'albero di
+ * accessibilità continuava a esporre solo la pagina sotto, e il bottone di
+ * chiusura (32×32, senza `aria-label`) era muto e sotto il minimo touch.
+ *
+ * La correzione NON reinventa il dialogo: usa la primitiva `@/components/ui/Modal`,
+ * che in questo repo è l'unico modo giusto di fare una modale (`role="dialog"` +
+ * `aria-modal` + focus-trap ciclico + Esc + scroll-lock del body + ripristino del
+ * focus al trigger, con lo stack per i dialoghi annidati). Il prezzo pagato è
+ * l'animazione framer-motion di entrata/uscita, che la primitiva non ha: la
+ * consistenza con gli altri quattordici modali già migrati vale più della dissolvenza.
+ *
+ * PIANI (z-index) — la scala in uso nel repo, dal basso. I numeri sono scritti
+ * NUDI di proposito: il lock `native-privacy-lock` cerca la forma `z-[…]` in
+ * tutti i file di `src`, commenti compresi, e un esempio in un commento gli
+ * risulterebbe indistinguibile da un piano vero.
+ *   50        bottom-nav (parent · teacher · admin), drawer laterali, tendine
+ *   60        toast e popover ancorati
+ *   80        MODALI (questa) — la primitiva `Modal`
+ *   105 · 110 chrome dell'admin (topbar, sidebar, bottom-sheet «Menu»)
+ *   9999      gate biometrico, che deve stare sopra a tutto
+ * Prima la modale stava a 50, cioè sullo STESSO piano della bottom-nav: che
+ * infatti le copriva il bottone «Pubblica avviso». Ora è 80 (dalla primitiva), e
+ * il lock `AvvisoForm-a11y-modale` confronta il numero con quello dichiarato
+ * davvero dalle tre bottom-nav, non con una costante scritta a mano.
+ */
 export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], initialAvviso = null, soloClassiProprie = false }: Props) {
     const t = useTranslations('teacherComunicazioni');
+    // `shared` per la sola etichetta «Chiudi»: già presente in IT e EN, nessuna
+    // chiave nuova da tradurre (stessa scelta di AdminMenuSheet).
+    const ts = useTranslations('shared');
+    // Id stabile e unico per istanza: è il bersaglio di `aria-labelledby`.
+    const titoloId = useId();
     const [titolo, setTitolo] = useState('');
     const [contenuto, setContenuto] = useState('');
     const [tipo, setTipo] = useState<'presa_visione' | 'adesione'>('presa_visione');
@@ -271,178 +306,185 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         onClose();
     };
 
+    const titoloModale = initialAvviso ? t('formTitoloModifica') : t('formTitoloNuovo');
+
     return (
-        <AnimatePresence>
-            {open && (
-                <>
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-kidville-green/30 backdrop-blur-sm z-50" onClick={onClose} />
-                    <motion.div
-                        initial={{ opacity: 0, y: 30, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 20, scale: 0.97 }} transition={{ duration: 0.25 }}
-                        className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-lg bg-white rounded-3xl shadow-2xl z-50 flex flex-col max-h-[90vh] overflow-hidden"
-                    >
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line bg-white">
-                            <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
-                                {initialAvviso ? t('formTitoloModifica') : t('formTitoloNuovo')}
-                            </h2>
-                            <button onClick={onClose} className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green transition-colors">
-                                <X size={14} strokeWidth={1.5} />
+        <Modal
+            open={open}
+            onClose={onClose}
+            title={titoloModale}
+            labelledBy={titoloId}
+            className="w-full max-w-lg max-h-[90vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+        >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line bg-white">
+                <h2 id={titoloId} className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
+                    {titoloModale}
+                </h2>
+                {/* Area toccabile 44×44 (WCAG 2.5.8 / linee guida iOS e Android)
+                    con la pastiglia visiva ancora a 32: si allarga il bersaglio,
+                    non il disegno. `-mr-2` riassorbe i 12px in più a destra così
+                    l'allineamento dell'header resta quello di prima. */}
+                <button
+                    type="button"
+                    onClick={onClose}
+                    aria-label={ts('chiudi')}
+                    className="group -mr-2 min-w-[44px] min-h-[44px] shrink-0 flex items-center justify-center rounded-xl"
+                >
+                    <span className="w-8 h-8 rounded-xl bg-kidville-cream group-hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green transition-colors">
+                        <X size={14} strokeWidth={1.5} aria-hidden="true" />
+                    </span>
+                </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
+                {errore && (
+                    <div role="alert" className="flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+                        <span>{errore}</span>
+                    </div>
+                )}
+                {chiedeSede && (
+                    <div>
+                        <label htmlFor="avviso-sede" className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                            {t('formLabelSedePubblicazione')}
+                        </label>
+                        <select
+                            id="avviso-sede"
+                            value={scuolaId}
+                            onChange={e => {
+                                // Cambiare sede AZZERA le classi: tenerle
+                                // significherebbe spedire al server i nomi di
+                                // classi di un altro plesso — che è come è nato
+                                // il difetto (400 sicuro, o peggio un'omonima).
+                                setScuolaId(e.target.value);
+                                setSelectedClasses([]);
+                                setErrore('');
+                            }}
+                            className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all"
+                        >
+                            <option value="">{t('formSedeScegli')}</option>
+                            {sedi.map(s => (
+                                <option key={s.id} value={s.id}>{s.nome}</option>
+                            ))}
+                        </select>
+                        <p className="font-maven text-xs text-kidville-muted mt-1.5">{t('formNotaSedePubblicazione')}</p>
+                    </div>
+                )}
+                <div>
+                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
+                    <input value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
+                        className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
+                </div>
+                <div>
+                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
+                    <textarea value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder={t('formPlaceholderContenuto')} rows={4}
+                        className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all resize-none" />
+                </div>
+                <div>
+                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</label>
+                    <div className="flex gap-2">
+                        <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoPresaVisione')}</button>
+                        <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoAdesione')}</button>
+                    </div>
+                </div>
+                {soloClassiProprie ? (
+                    <div>
+                        <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</label>
+                        <p className="font-maven text-xs text-kidville-muted mb-2">{t('formNotaLeTueClassi')}</p>
+                    </div>
+                ) : (
+                    <div>
+                        <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</label>
+                        <div className="flex gap-2">
+                            <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariTutti')}</button>
+                            <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariPerClasse')}</button>
+                        </div>
+                    </div>
+                )}
+                {scope === 'classe' && (
+                    // `key={c.id}`, non `key={c.nome}`: da quando le sedi sono
+                    // tre lo stesso nome esiste in due plessi, e con la chiave
+                    // sul nome React rendeva UNA pillola per due classi diverse.
+                    // L'etichetta porta la sede quando le sedi sono più d'una
+                    // e non c'è già un selettore a dirla (caso «modifica»).
+                    <div className="flex flex-wrap gap-1.5 p-2 bg-kidville-cream rounded-2xl border border-kidville-line">
+                        {classiVisibili.map(c => (
+                            <button
+                                key={c.id}
+                                onClick={() => toggleClass(c.nome)}
+                                className={`px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${selectedClasses.includes(c.nome) ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}
+                            >
+                                {!chiedeSede && sedi.length > 1 && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome}
                             </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
-                            {errore && (
-                                <div role="alert" className="flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
-                                    <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
-                                    <span>{errore}</span>
-                                </div>
-                            )}
-                            {chiedeSede && (
-                                <div>
-                                    <label htmlFor="avviso-sede" className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
-                                        {t('formLabelSedePubblicazione')}
-                                    </label>
-                                    <select
-                                        id="avviso-sede"
-                                        value={scuolaId}
-                                        onChange={e => {
-                                            // Cambiare sede AZZERA le classi: tenerle
-                                            // significherebbe spedire al server i nomi di
-                                            // classi di un altro plesso — che è come è nato
-                                            // il difetto (400 sicuro, o peggio un'omonima).
-                                            setScuolaId(e.target.value);
-                                            setSelectedClasses([]);
-                                            setErrore('');
-                                        }}
-                                        className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all"
-                                    >
-                                        <option value="">{t('formSedeScegli')}</option>
-                                        {sedi.map(s => (
-                                            <option key={s.id} value={s.id}>{s.nome}</option>
-                                        ))}
-                                    </select>
-                                    <p className="font-maven text-xs text-kidville-muted mt-1.5">{t('formNotaSedePubblicazione')}</p>
-                                </div>
-                            )}
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
-                                <input value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
-                                    className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
-                            </div>
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
-                                <textarea value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder={t('formPlaceholderContenuto')} rows={4}
-                                    className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all resize-none" />
-                            </div>
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</label>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoPresaVisione')}</button>
-                                    <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoAdesione')}</button>
-                                </div>
-                            </div>
-                            {soloClassiProprie ? (
-                                <div>
-                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</label>
-                                    <p className="font-maven text-xs text-kidville-muted mb-2">{t('formNotaLeTueClassi')}</p>
-                                </div>
-                            ) : (
-                                <div>
-                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</label>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariTutti')}</button>
-                                        <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariPerClasse')}</button>
-                                    </div>
-                                </div>
-                            )}
-                            {scope === 'classe' && (
-                                // `key={c.id}`, non `key={c.nome}`: da quando le sedi sono
-                                // tre lo stesso nome esiste in due plessi, e con la chiave
-                                // sul nome React rendeva UNA pillola per due classi diverse.
-                                // L'etichetta porta la sede quando le sedi sono più d'una
-                                // e non c'è già un selettore a dirla (caso «modifica»).
-                                <div className="flex flex-wrap gap-1.5 p-2 bg-kidville-cream rounded-2xl border border-kidville-line">
-                                    {classiVisibili.map(c => (
-                                        <button
-                                            key={c.id}
-                                            onClick={() => toggleClass(c.nome)}
-                                            className={`px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${selectedClasses.includes(c.nome) ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}
-                                        >
-                                            {!chiedeSede && sedi.length > 1 && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                            
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
-                                    {tipo === 'presa_visione' ? t('formScadenzaAvviso') : t('formScadenzaAdesione')}
-                                </label>
-                                <input type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
-                            </div>
+                        ))}
+                    </div>
+                )}
+                
+                <div>
+                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                        {tipo === 'presa_visione' ? t('formScadenzaAvviso') : t('formScadenzaAdesione')}
+                    </label>
+                    <input type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
+                        className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
+                </div>
 
-                            {/* Upload File */}
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</label>
-                                <div className="flex items-center gap-3">
-                                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf,image/*,.doc,.docx" />
-                                    <button
-                                        type="button"
-                                        onClick={() => fileInputRef.current?.click()}
-                                        disabled={fileUploading}
-                                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green hover:text-kidville-green transition-colors disabled:opacity-50"
-                                    >
-                                        <Upload size={14} /> {fileUploading ? t('formFileCaricamento') : t('formFileCarica')}
-                                    </button>
+                {/* Upload File */}
+                <div>
+                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</label>
+                    <div className="flex items-center gap-3">
+                        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf,image/*,.doc,.docx" />
+                        <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={fileUploading}
+                            className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green hover:text-kidville-green transition-colors disabled:opacity-50"
+                        >
+                            <Upload size={14} /> {fileUploading ? t('formFileCaricamento') : t('formFileCarica')}
+                        </button>
 
-                                    {/* Nativo: scatta la foto dell'allegato. Su web non compare. */}
-                                    <ScattaFotoButton
-                                        onFile={processaFile}
-                                        disabled={fileUploading}
-                                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
-                                    />
+                        {/* Nativo: scatta la foto dell'allegato. Su web non compare. */}
+                        <ScattaFotoButton
+                            onFile={processaFile}
+                            disabled={fileUploading}
+                            className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
+                        />
 
-                                    {fileName && (
-                                        <div className="flex items-center gap-2 bg-kidville-cream border border-kidville-line rounded-xl px-3 py-1.5 max-w-[200px] truncate text-xs font-maven text-kidville-green">
-                                            <span className="truncate flex-1">{fileName}</span>
-                                            <button type="button" onClick={removeFile} className="text-kidville-muted hover:text-kidville-error flex-shrink-0">
-                                                <X size={12} />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
+                        {fileName && (
+                            <div className="flex items-center gap-2 bg-kidville-cream border border-kidville-line rounded-xl px-3 py-1.5 max-w-[200px] truncate text-xs font-maven text-kidville-green">
+                                <span className="truncate flex-1">{fileName}</span>
+                                <button type="button" onClick={removeFile} className="text-kidville-muted hover:text-kidville-error flex-shrink-0">
+                                    <X size={12} />
+                                </button>
                             </div>
+                        )}
+                    </div>
+                </div>
 
-                            {/* Link Esterno */}
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
-                                <div className="relative">
-                                    <Link size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-muted" />
-                                    <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder={t('formPlaceholderLink')}
-                                        className="w-full border-2 border-kidville-line rounded-2xl pl-10 pr-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
-                                </div>
-                            </div>
-                        </div>
-                        <div className="px-6 py-4 border-t border-kidville-line bg-white">
-                            <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim() || (chiedeSede && !scuolaId) || (scope === 'classe' && selectedClasses.length === 0)}
-                                className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
-                                {submitting ? (
-                                    <>
-                                        <div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
-                                        {initialAvviso ? t('formSubmitSalvataggio') : t('formSubmitPubblicazione')}
-                                    </>
-                                ) : (
-                                    <>
-                                        <Send size={16} strokeWidth={1.5} />
-                                        {initialAvviso ? t('formSubmitSalvaModifiche') : t('formSubmitPubblicaAvviso')}
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </motion.div>
-                </>
-            )}
-        </AnimatePresence>
+                {/* Link Esterno */}
+                <div>
+                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
+                    <div className="relative">
+                        <Link size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-muted" />
+                        <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder={t('formPlaceholderLink')}
+                            className="w-full border-2 border-kidville-line rounded-2xl pl-10 pr-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
+                    </div>
+                </div>
+            </div>
+            <div className="px-6 py-4 border-t border-kidville-line bg-white">
+                <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim() || (chiedeSede && !scuolaId) || (scope === 'classe' && selectedClasses.length === 0)}
+                    className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
+                    {submitting ? (
+                        <>
+                            <div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
+                            {initialAvviso ? t('formSubmitSalvataggio') : t('formSubmitPubblicazione')}
+                        </>
+                    ) : (
+                        <>
+                            <Send size={16} strokeWidth={1.5} />
+                            {initialAvviso ? t('formSubmitSalvaModifiche') : t('formSubmitPubblicaAvviso')}
+                        </>
+                    )}
+                </button>
+            </div>
+        </Modal>
     );
 }

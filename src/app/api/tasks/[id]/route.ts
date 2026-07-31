@@ -6,6 +6,7 @@ import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 
@@ -185,10 +186,21 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
         if (deadline !== undefined) updated.deadline = deadline;
         if (target_scope !== undefined) updated.target_scope = target_scope ?? 'single';
         if (student_id !== undefined) updated.student_id = student_id;
-        if (compiti !== undefined) updated.compiti = (compiti ?? []) as SubTask[];
+        // Negli allegati si archivia il PERCORSO nel bucket (privato dal
+        // 2026-07-31), mai l'indirizzo firmato: il client rimanda ciò che ha
+        // ricevuto dalla lettura, e quel token scade in dieci minuti.
+        if (compiti !== undefined) updated.compiti = normalizzaAllegatiTask((compiti ?? []) as SubTask[]);
         if (revision_feedback !== undefined) updated.revision_feedback = revision_feedback;
-        if (attachments !== undefined) updated.attachments = attachments as Attachment[] | null;
-        if (commenti !== undefined) updated.commenti = commenti as Commento[] | null;
+        // `null` resta `null` (è «togli gli allegati», non «lista vuota»): la
+        // normalizzazione non deve cambiare la semantica del merge parziale.
+        if (attachments !== undefined) {
+            updated.attachments = attachments === null
+                ? null
+                : normalizzaAllegatiTask({ attachments: attachments as Attachment[] }).attachments;
+        }
+        if (commenti !== undefined) {
+            updated.commenti = commenti === null ? null : normalizzaAllegatiTask(commenti as Commento[]);
+        }
 
         // Handle assignees update
         if (assigned_to !== undefined) {
@@ -250,7 +262,10 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             scuolaId: (currentRow.scuola_id as string) ?? null, valoreDopo: { id, status: payload.status, titolo: row.titolo },
         });
 
-        return NextResponse.json({
+        // In tabella c'è il percorso; al client serve un indirizzo che si apra.
+        // Senza questa firma l'allegato appena caricato resterebbe rotto fino al
+        // ricaricamento della pagina — e nessuno collegherebbe le due cose.
+        const risposta = await firmaAllegatiTask(supabase, {
             id: row.id,
             titolo: row.titolo,
             author_id: payload.real_author_id ?? row.author_id,
@@ -260,7 +275,8 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             completato: row.completato,
             created_at: row.created_at,
             ...payload,
-        });
+        }, 'tasks/[id]:PUT');
+        return NextResponse.json(risposta);
     } catch (error) {
         logErrore({ operazione: 'tasks/[id]:PUT', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

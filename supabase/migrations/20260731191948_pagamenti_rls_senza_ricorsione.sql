@@ -1,0 +1,77 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- `pagamenti` ⇄ `pagamenti_quote`: due policy che si leggono a vicenda (42P17)
+-- Audit globale multi-sede del 2026-07-31. Difetto PREESISTENTE, non introdotto
+-- dal passaggio a tre sedi.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- IL DIFETTO, misurato in produzione prima di scrivere questa migrazione.
+--
+--   public.pagamenti       · «parent read pagamenti figli» (SELECT, authenticated)
+--        … EXISTS (SELECT 1 FROM pagamenti_quote q
+--                   WHERE q.pagamento_id = pagamenti.id AND q.adult_id = auth.uid())
+--   public.pagamenti_quote · «parent read quote figli (parents space)» (SELECT)
+--        pagamento_id IN (SELECT pg.id FROM pagamenti pg WHERE pg.alunno_id IN …)
+--
+-- Per leggere `pagamenti` Postgres deve valutare la policy di `pagamenti_quote`;
+-- per valutarla deve leggere `pagamenti`. Cerchio chiuso. Il motore se ne accorge
+-- e abortisce la query. Misurato impersonando `authenticated` con l'uid di un
+-- genitore, dentro una transazione di sola lettura:
+--
+--     ERROR:  42P17: infinite recursion detected in policy for relation "pagamenti"
+--     ERROR:  42P17: infinite recursion detected in policy for relation "pagamenti_quote"
+--
+-- NON è una fuga di dati: nega tutto, a tutti. Ma nega anche le sottoscrizioni
+-- realtime del genitore su pagamenti/incassi (`SospensioneBanner`,
+-- `PagamentiSummary`, `StoricoPagamenti`), che sono l'unico codice che parla con
+-- Postgres SOTTO la RLS. E lo fa senza un log applicativo.
+--
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- LA CURA: si toglie la metà del cerchio che è GIÀ MORTA.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- «parent read pagamenti figli» concede su una sola via:
+--     alunno_id IN (SELECT alunno_id FROM legame_genitori_alunni
+--                    WHERE genitore_id = auth.uid())
+-- e `legame_genitori_alunni` ha la RLS ATTIVA e ZERO policy. Dentro l'espressione
+-- di un'altra policy quella sottoquery è a sua volta soggetta alla RLS: non ritorna
+-- mai una riga. Misurato, sempre in sola lettura:
+--     · come `service_role`   → 48 righe in legame_genitori_alunni
+--     · come `authenticated`  →  0 righe
+-- Quindi la policy è sempre falsa: oggi non concede niente a nessuno.
+--
+-- CHE COSA RESTA AL GENITORE. L'altra policy di lettura, «parent read pagamenti
+-- figli (parents space)», che concede su `current_parent_student_ids()` — funzione
+-- `SECURITY DEFINER` che salta la RLS e ritorna i SOLI figli di chi chiama. È
+-- quella che regge davvero l'app (il grafo vero è `parents` + `student_parents`,
+-- non `legame_genitori_alunni`), e non nomina `pagamenti_quote`: nessun cerchio.
+--
+-- IL VERSO DEL RISCHIO. Le policy permissive si sommano in OR: toglierne una può
+-- solo TOGLIERE visibilità, mai aggiungerne. Qui la visibilità tolta è zero
+-- (la policy era sempre falsa), quindi il rischio residuo è nullo in entrambe le
+-- direzioni — e il caso peggiore immaginabile resta «un genitore non vede un
+-- pagamento», mai «vede quello di un altro».
+--
+-- E IL VINCOLO SUI PAGAMENTI «SPLIT»? Nella policy droppata c'era anche
+-- «se il pagamento è split lo vedo solo se ho una quota». Non lo stiamo perdendo
+-- adesso: era già inefficace, perché la policy «(parents space)» concede in OR
+-- senza quel vincolo. In più, oggi in produzione ci sono 0 pagamenti di tipo
+-- `split` e 0 righe in `pagamenti_quote`: non c'è una sola riga il cui accesso
+-- cambi. Se un domani lo split servirà davvero, il vincolo va rimesso DENTRO la
+-- policy «(parents space)» passando da una funzione `SECURITY DEFINER` (schema di
+-- `current_parent_student_ids()`), MAI con una sottoquery diretta su
+-- `pagamenti_quote`: quella riaprirebbe esattamente questo cerchio.
+--
+-- COSA QUESTA MIGRAZIONE NON FA: non tocca `pagamenti_quote`, non tocca le policy
+-- del `service_role` (le route usano il service-role e non passano dalla RLS),
+-- non aggiunge funzioni, non cancella e non modifica NESSUNA riga di dati.
+--
+-- DOPO L'APPLICAZIONE: rigenerare la fotografia delle policy
+--   node scripts/rls-fotografia.mjs --sql   → eseguire la query in sola lettura
+--   node scripts/rls-fotografia.mjs < risposta.json
+-- (il lock `__tests__/architecture/rls-per-sede.test.ts` la usa come riferimento).
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+DROP POLICY IF EXISTS "parent read pagamenti figli" ON public.pagamenti;
+
+COMMENT ON POLICY "parent read pagamenti figli (parents space)" ON public.pagamenti IS
+  'Unica lettura del genitore su pagamenti dal 2026-07-31: passa da current_parent_student_ids() (SECURITY DEFINER, salta la RLS) e NON deve mai nominare pagamenti_quote — la policy gemella di pagamenti_quote legge pagamenti, e il riferimento incrociato produce 42P17 (infinite recursion) su entrambe le tabelle.';

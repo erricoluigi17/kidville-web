@@ -7,6 +7,7 @@ import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 
@@ -74,14 +75,21 @@ export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { param
             .eq('id', data.author_id)
             .maybeSingle();
 
-        return NextResponse.json({
-            ...data,
-            author: author ? {
-                first_name: author.first_name || author.nome || '?',
-                last_name: author.last_name || author.cognome || '?',
-                role: author.role || author.ruolo || 'unknown',
-            } : { first_name: '?', last_name: '?', role: 'unknown' },
-        });
+        // Il bucket degli allegati è PRIVATO (2026-07-31): l'indirizzo si firma
+        // qui, dietro al gate della route, e vale dieci minuti.
+        const [conAllegato] = await firmaAllegatiAvvisi(
+            supabase,
+            [{
+                ...data,
+                author: author ? {
+                    first_name: author.first_name || author.nome || '?',
+                    last_name: author.last_name || author.cognome || '?',
+                    role: author.role || author.ruolo || 'unknown',
+                } : { first_name: '?', last_name: '?', role: 'unknown' },
+            }],
+            'avvisi/[id]:GET',
+        );
+        return NextResponse.json(conAllegato);
     } catch (error) {
         logErrore({ operazione: 'avvisi/[id]:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -124,7 +132,9 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
                 target_scope,
                 target_classes,
                 scadenza: scadenza || null,
-                attachment_url: attachment_url || null,
+                // In tabella il PERCORSO nel bucket, mai l'indirizzo firmato che
+                // il modulo di modifica rimanda indietro dopo averlo riletto.
+                attachment_url: normalizzaAllegatoAvviso(attachment_url),
             })
             .eq('id', id)
             .select()

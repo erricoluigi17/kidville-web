@@ -11,8 +11,17 @@ import { NEWS_BUCKET } from '@/lib/news/tipi'
 // =============================================================================
 // POST /api/news/upload — carica un media (immagine/video) nel bucket «news».
 // Pattern ESATTO di gallery/upload: requireDocente, sniff video sui primi 64KB
-// → 415 se non riproducibile, bucket garantito a runtime, MAI il nome file nei
-// log (può contenere PII), path namespaced sull'utente del gate.
+// → 415 se non riproducibile, MAI il nome file nei log (può contenere PII),
+// path namespaced sull'utente del gate.
+//
+// IL BUCKET NON SI CREA DA QUI (2026-07-31). Fino a oggi questa route creava
+// «news» al volo — e PUBBLICO — al primo caricamento: limite di dimensione,
+// tipi ammessi e visibilità di uno spazio destinato all'esterno vivevano dentro
+// un `try` di una route, cioè in un posto che nessuno ispeziona e che nessuna
+// migrazione versiona. Ora il bucket è dichiarato in
+// `supabase/migrations/20260731192048_bucket_news.sql` e qui si carica soltanto.
+// Conseguenza diretta: l'elenco dei tipi ammessi non è più fatto rispettare
+// dallo Storage «per effetto collaterale», quindi il gate sta QUI sotto.
 // =============================================================================
 
 const MIME_AMMESSI = [
@@ -40,6 +49,21 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
 
     // Il tipo del File può portare un suffisso codec (`video/webm;codecs=vp9`).
     const contentType = (file.type || 'application/octet-stream').split(';')[0].trim()
+
+    // GATE APPLICATIVO sui tipi. Il bucket ha la stessa lista (dichiarata in
+    // migrazione) e resta l'ultima difesa, ma se il rifiuto arrivasse solo da lì
+    // l'utente vedrebbe un 500 generico invece di «questo formato non si carica».
+    if (!MIME_AMMESSI.includes(contentType)) {
+      // MAI il nome del file nei log (PII). Solo il mime e la dimensione.
+      logEvento('news', 'warn', {
+        operazione: 'news/upload:POST',
+        esito: 'mime-non-ammesso',
+        mime: contentType,
+        size: file.size,
+      })
+      return NextResponse.json({ error: 'Formato del file non ammesso' }, { status: 415 })
+    }
+
     const fileBuffer = await file.arrayBuffer()
 
     // DIFESA IN PROFONDITÀ: un client vecchio (o una POST diretta) potrebbe spedire
@@ -62,22 +86,6 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
 
     const supabase = await createAdminClient()
 
-    // Assicura il bucket «news» (public, limite 200MB, mime riproducibili).
-    try {
-      const { data: buckets, error: listError } = await supabase.storage.listBuckets()
-      if (listError) {
-        // listBuckets non lancia — ritorna { error }: il log va QUI, non sul catch che non scatta.
-        logEvento('storage', 'warn', { operazione: 'news/upload:POST', esito: 'bucket-non-verificato', bucket: NEWS_BUCKET }, listError)
-      } else {
-        const exists = buckets?.some((b) => b.name === NEWS_BUCKET)
-        const opts = { public: true, allowedMimeTypes: MIME_AMMESSI, fileSizeLimit: 209715200 }
-        if (!exists) await supabase.storage.createBucket(NEWS_BUCKET, opts)
-        else await supabase.storage.updateBucket(NEWS_BUCKET, opts)
-      }
-    } catch (bucketErr) {
-      logEvento('storage', 'warn', { operazione: 'news/upload:POST', esito: 'bucket-non-verificato', bucket: NEWS_BUCKET }, bucketErr)
-    }
-
     const fileExtension = file.name.split('.').pop() || ''
     const uniqueFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExtension}`
     const filePath = `uploads/${userId}/${uniqueFileName}`
@@ -87,6 +95,17 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
       upsert: true,
     })
     if (error) {
+      // Il bucket è dichiarato in migrazione: se lo Storage dice che non c'è,
+      // la migrazione non è arrivata su questo progetto. È configurazione
+      // mancante in produzione, cioè un incidente — livello `error`, e col nome
+      // del bucket, altrimenti resterebbe sepolto nel messaggio grezzo.
+      if (/bucket not found/i.test(error.message ?? '')) {
+        logEvento('storage', 'error', {
+          operazione: 'news/upload:POST',
+          esito: 'bucket-mancante',
+          bucket: NEWS_BUCKET,
+        }, error)
+      }
       logErrore({ operazione: 'news/upload:POST', stato: 500, evento: 'storage' }, error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }

@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
+import { BUCKET_AVVISI_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
@@ -27,7 +28,7 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
 
         const fileBuffer = await file.arrayBuffer();
         const { error } = await supabase.storage
-            .from('avvisi_allegati')
+            .from(BUCKET_AVVISI_ALLEGATI)
             .upload(uniqueFileName, Buffer.from(fileBuffer), {
                 contentType: file.type,
                 upsert: true
@@ -38,12 +39,34 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // Ottieni URL pubblico
-        const { data: publicUrlData } = supabase.storage
-            .from('avvisi_allegati')
-            .getPublicUrl(uniqueFileName);
+        // Link firmato per l'ANTEPRIMA immediata: il bucket è privato dal
+        // 2026-07-31, quindi un indirizzo pubblico (`/object/public/…`) ora
+        // risponde 400 — un allegato "caricato" che non si apre.
+        const { data: firmato, error: errFirma } = await supabase.storage
+            .from(BUCKET_AVVISI_ALLEGATI)
+            .createSignedUrl(uniqueFileName, TTL_FIRMA_ALLEGATI_S);
+        if (errFirma) {
+            // Il file È salvato: non si butta via un caricamento per un'anteprima.
+            // Ma il guasto va detto, COL CORPO dell'errore del provider (AGENTS §3):
+            // senza, resterebbe solo un riquadro vuoto senza spiegazione.
+            logEvento('storage', 'error', {
+                operazione: 'avvisi/upload:POST',
+                esito: 'anteprima-non-firmata',
+                bucket: BUCKET_AVVISI_ALLEGATI,
+            }, errFirma);
+        }
 
-        return NextResponse.json({ fileUrl: publicUrlData.publicUrl });
+        // `path` è ciò che va ARCHIVIATO in `avvisi.attachment_url`: un indirizzo
+        // firmato, fra dieci minuti, non aprirebbe più niente.
+        //
+        // `fileUrl` resta col nome di prima per i client già in circolazione (il
+        // modulo di pubblicazione legge quel campo e lo rigira come allegato): ora
+        // contiene il PERCORSO, così anche loro salvano il dato giusto.
+        return NextResponse.json({
+            path: uniqueFileName,
+            fileUrl: uniqueFileName,
+            previewUrl: firmato?.signedUrl ?? null,
+        });
     } catch (error) {
         logErrore({ operazione: 'avvisi/upload:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

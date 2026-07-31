@@ -909,14 +909,16 @@ const AMMESSE: Record<string, string> = {
     'locker/inventory:GET': 'armadietto di UN alunno, verificato prima',
     'locker/inventory:POST': "carico/scarico sull'alunno verificato; la `scuola_id` viene scritta nel SET per sanare le righe storiche",
 
-    // ── Debito dichiarato, non assolto ───────────────────────────────────────
-    // Non è una giustificazione: è un promemoria. `task_interni` ha `scuola_id`
-    // NULLABLE ed è l ultima tabella rimasta con una semantica mono-sede: la
-    // bacheca interna nasce senza dichiarare la sede e si legge per sezione.
-    // Va chiusa con una migrazione (NOT NULL + backfill) e una scrittura che
-    // dichiari il plesso — non con una riga qui.
-    'tasks:GET': 'DEBITO: bacheca interna ancora mono-sede (`task_interni.scuola_id` nullable)',
-    'tasks:POST': 'DEBITO: il task nasce senza dichiarare la sede — da chiudere con migrazione + `resolveScuolaScrittura`',
+    // ── Il debito che era dichiarato qui è stato ASSOLTO (2026-07-31) ────────
+    // `tasks:GET` e `tasks:POST` stavano in questo elenco come promemoria: la
+    // bacheca interna era l'ultima cosa con una semantica mono-sede — nasceva
+    // con `auth.user.scuola_id` (la sede PRIMARIA di chi scrive) e si leggeva
+    // con `scuoleDiUtente` invece che con le sedi attive. Le due voci sono state
+    // tolte quando il debito è stato pagato davvero: `resolveScuolaScrittura` in
+    // scrittura, `resolveScuoleAttive` in lettura, e la migrazione
+    // `task_interni_scuola_obbligatoria` che rende `scuola_id` NOT NULL (la
+    // tabella era vuota in produzione: 0 righe, verificato lo stesso giorno).
+    // Resta solo la voce `tasks:<modulo>` qui sopra, che è un'altra cosa.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1018,7 +1020,10 @@ describe('coverage-lock isolamento fra sedi', () => {
         ).toEqual({
             routeConServiceRole: 272,
             handlerControllati: 432,
-            handlerEsentati: 111,
+            // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
+            // esentati. Questo numero CALA solo quando un debito viene pagato;
+            // se sale, qualcuno ha appena tolto un pezzo di questo lock.
+            handlerEsentati: 109,
         })
     })
 })

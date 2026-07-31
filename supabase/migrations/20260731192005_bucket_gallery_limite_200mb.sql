@@ -1,0 +1,41 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Bucket `gallery`: il limite passa da 50 MB a 200 MB, quanto dichiara il codice
+-- Audit globale multi-sede del 2026-07-31.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- IL DIFETTO, misurato in produzione:
+--   · storage.buckets → gallery.file_size_limit = 52428800   (50 MB)
+--   · src/app/api/gallery/upload/route.ts → fileSizeLimit: 209715200 (200 MB)
+--
+-- La stessa regola scritta in due posti, divergente. Una maestra che carica il
+-- video di una recita da 120 MB supera tutti i controlli dell'applicazione e viene
+-- respinta dallo Storage, con un errore che parla di dimensioni e non di quale
+-- limite. Finora era anche INVISIBILE: la route riscrive la configurazione del
+-- bucket a ogni upload, ma l'esito di `updateBucket` non lo guardava nessuno —
+-- quindi il riallineamento poteva fallire da mesi senza lasciare una riga di log.
+-- (Il controllo dell'esito c'è dalla stessa giornata: `gallery/upload:POST`,
+-- esito `bucket-non-riconfigurato`, livello `error`.)
+--
+-- COSA FA: alza il limite di dimensione del solo bucket `gallery` a 200 MB
+-- (209715200 byte), il valore che il codice dichiara da sempre.
+--
+-- COSA NON FA: non tocca la visibilità del bucket — `gallery` è e resta PRIVATO,
+-- le foto dei bambini si servono con link firmati a scadenza breve. Non tocca i
+-- tipi di file ammessi. Non tocca nessun file già caricato: il limite vale al
+-- momento del caricamento, i file esistenti restano dove sono e non vengono né
+-- riletti né riscritti. Non tocca gli altri bucket.
+--
+-- SE VA STORTO: l'effetto peggiore è che si possano caricare file più grandi di
+-- prima — mai che se ne perda uno. Per tornare indietro basta rimettere il valore
+-- vecchio (`file_size_limit = 52428800`), ed è una riga sola. Da notare che, se
+-- questa migrazione non venisse applicata, il primo upload della galleria
+-- proverebbe comunque a riallineare il bucket da solo: la migrazione rende quel
+-- valore dichiarato e verificabile invece che affidato a un effetto collaterale.
+--
+-- IL LOCK: `__tests__/architecture/bucket-storage-dichiarati.test.ts` confronta
+-- questo numero con quello della route e fallisce se tornano a divergere.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+UPDATE storage.buckets
+   SET file_size_limit = 209715200
+ WHERE id = 'gallery';

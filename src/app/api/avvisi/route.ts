@@ -12,6 +12,7 @@ import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { degradoSedeLecito } from '@/lib/forms/degrado-sede';
+import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -156,7 +157,9 @@ async function listaAvvisiStaff(
             return { ...avviso, author, stats, my_response: null };
         }),
     );
-    return NextResponse.json(enriched);
+    // Il bucket degli allegati è PRIVATO (2026-07-31): l'indirizzo si firma qui,
+    // dietro a questo gate, e vale dieci minuti. Una sola chiamata per pagina.
+    return NextResponse.json(await firmaAllegatiAvvisi(supabase, enriched, 'avvisi:GET'));
 }
 
 // ── Ramo GENITORE (G3+m3): parentId dalla SESSIONE, feed unificato dei figli. ─
@@ -228,7 +231,9 @@ async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): P
         }),
     );
 
-    return NextResponse.json(enriched);
+    // Stessa firma del ramo staff: il genitore riceve un link a tempo, non un
+    // indirizzo pubblico che resterebbe valido per chiunque, per sempre.
+    return NextResponse.json(await firmaAllegatiAvvisi(supabase, enriched, 'avvisi:GET'));
 }
 
 // GET /api/avvisi
@@ -424,7 +429,10 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             // essere mai stati confrontati con le sezioni della sede.
             target_classes: classiTarget.length > 0 ? classiTarget : null,
             scadenza: scadenza ?? null,
-            attachment_url: attachment_url ?? null,
+            // In tabella si archivia il PERCORSO nel bucket. Il modulo rilegge un
+            // avviso già firmato e rimanda quell'indirizzo tale e quale: senza
+            // questa normalizzazione resterebbe salvato un URL col token scaduto.
+            attachment_url: normalizzaAllegatoAvviso(attachment_url),
             form_model_id: form_model_id ?? null,
             scuola_id: scuolaId, // tenant
         };

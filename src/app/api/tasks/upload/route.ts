@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
+import { BUCKET_TASK_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Il file si valida come presenza/istanza; il contenuto non è materia di zod.
@@ -29,7 +30,7 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
 
         const fileBuffer = await file.arrayBuffer();
         const { error } = await supabase.storage
-            .from('task_allegati')
+            .from(BUCKET_TASK_ALLEGATI)
             .upload(uniqueFileName, Buffer.from(fileBuffer), {
                 contentType: file.type,
                 upsert: true
@@ -40,13 +41,36 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // Get public URL
-        const { data: publicUrlData } = supabase.storage
-            .from('task_allegati')
-            .getPublicUrl(uniqueFileName);
+        // Link firmato per l'ANTEPRIMA immediata: il bucket è privato dal
+        // 2026-07-31 e un indirizzo pubblico (`/object/public/…`) risponde 400.
+        const { data: firmato, error: errFirma } = await supabase.storage
+            .from(BUCKET_TASK_ALLEGATI)
+            .createSignedUrl(uniqueFileName, TTL_FIRMA_ALLEGATI_S);
+        if (errFirma) {
+            // Il file È salvato: il caricamento non si butta via per un'anteprima.
+            // Il perché del guasto sta nel corpo dell'errore del provider.
+            logEvento('storage', 'error', {
+                operazione: 'tasks/upload:POST',
+                esito: 'anteprima-non-firmata',
+                bucket: BUCKET_TASK_ALLEGATI,
+            }, errFirma);
+        }
 
+        // `path`/`url` portano il PERCORSO: è quello che va archiviato nel payload
+        // dell'incarico — un indirizzo firmato sarebbe morto alla prima riapertura.
+        //
+        // `fileUrl` porta invece il link FIRMATO, e non è un'incoerenza: è la
+        // chiave che i componenti degli incarichi usano per MOSTRARE l'allegato
+        // (`att.fileUrl || att.url` in `TaskCard` e `StudentDetailPanel`). Col
+        // percorso lì dentro, l'allegato appena caricato apparirebbe rotto fino al
+        // salvataggio. Quando il client rimanda l'oggetto, la scrittura riporta a
+        // percorso TUTTE le chiavi d'indirizzo (`normalizzaAllegatiTask`): in
+        // tabella non entra mai un token che scade.
         return NextResponse.json({
-            fileUrl: publicUrlData.publicUrl,
+            path: uniqueFileName,
+            url: uniqueFileName,
+            fileUrl: firmato?.signedUrl ?? uniqueFileName,
+            previewUrl: firmato?.signedUrl ?? null,
             name: file.name,
             size: file.size,
             type: file.type

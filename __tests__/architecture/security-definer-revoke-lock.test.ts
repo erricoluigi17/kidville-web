@@ -38,10 +38,42 @@ const ALLOWLIST = new Set<string>([
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')
 
+/**
+ * Via i commenti prima di cercare `SECURITY DEFINER`.
+ *
+ * Il lock cercava la stringa nel file intero, prosa compresa: una migrazione che
+ * NON crea nessuna funzione ma SPIEGA nel proprio commento perché passa da
+ * `current_parent_student_ids()` (che è `SECURITY DEFINER`) veniva accusata di non
+ * revocare l'EXECUTE di una funzione che non esiste. Un lock che punisce chi
+ * documenta insegna a non documentare — e, peggio, la scorciatoia per farlo tacere
+ * è scrivere la parola in modo diverso, cioè nascondere proprio l'informazione che
+ * il lock esiste per sorvegliare. Qui si guarda l'SQL che viene eseguito.
+ */
+function sqlSenzaCommenti(testo: string): string {
+  return testo.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ')
+}
+
+/**
+ * Il file DEFINISCE una funzione `SECURITY DEFINER`?
+ *
+ * Servono due segnali insieme, sull'SQL eseguito: la clausola `SECURITY DEFINER` e
+ * una `CREATE [OR REPLACE] FUNCTION`. Il secondo è quello che tiene il lock onesto:
+ * una funzione con i privilegi del proprietario non si crea in nessun altro modo —
+ * nemmeno via SQL dinamico, che quella stessa `CREATE FUNCTION` deve pur scriverla
+ * dentro la stringa che esegue. Senza il legame, bastava NOMINARE la clausola
+ * dentro un `COMMENT ON … IS '…'` — cioè spiegare a chi legge il database perché
+ * una policy passa da `current_parent_student_ids()` — per essere accusati di non
+ * aver revocato l'EXECUTE di una funzione mai creata.
+ */
+function definisceSecurityDefiner(testo: string): boolean {
+  const sql = sqlSenzaCommenti(testo)
+  return /SECURITY\s+DEFINER/i.test(sql) && /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION/i.test(sql)
+}
+
 describe('lock architettura · SECURITY DEFINER senza EXECUTE per anon/authenticated', () => {
   const conSecurityDefiner = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql'))
-    .filter((f) => /SECURITY\s+DEFINER/i.test(readFileSync(join(MIGRATIONS_DIR, f), 'utf8')))
+    .filter((f) => definisceSecurityDefiner(readFileSync(join(MIGRATIONS_DIR, f), 'utf8')))
     .sort()
 
   it('esistono migrazioni con SECURITY DEFINER da controllare (sanity)', () => {
@@ -51,7 +83,9 @@ describe('lock architettura · SECURITY DEFINER senza EXECUTE per anon/authentic
   for (const f of conSecurityDefiner) {
     if (ALLOWLIST.has(f)) continue
     it(`${f} revoca EXECUTE da anon/authenticated`, () => {
-      const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8')
+      // Anche il REVOKE si cerca sull'SQL eseguito: un REVOKE citato in un commento
+      // non revoca niente, e farebbe passare il lock su una funzione davvero aperta.
+      const sql = sqlSenzaCommenti(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'))
       const revocaAnonOAuth = /REVOKE\b[\s\S]*?\b(anon|authenticated)\b/i.test(sql)
       expect(
         revocaAnonOAuth,

@@ -59,6 +59,18 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await caricaDocumento(page, pngPath);
   await page.getByRole('button', { name: 'Avanti' }).click();
 
+  // Consensi → informativa al punto di raccolta. La presa visione è
+  // OBBLIGATORIA e va spuntata come la spunterebbe un genitore: senza, il
+  // wizard non avanza — ed è il comportamento che si vuole, quindi qui si
+  // esegue, non si aggira.
+  const presaVisione = page.getByRole('checkbox', { name: /informativa sulla privacy/i });
+  await expect(presaVisione).toBeVisible();
+  // Prova che l'obbligo sia reale: senza spunta, «Avanti» non porta al riepilogo.
+  await page.getByRole('button', { name: 'Avanti' }).click();
+  await expect(page.getByText('Riepilogo')).toHaveCount(0);
+  await presaVisione.check();
+  await page.getByRole('button', { name: 'Avanti' }).click();
+
   // Riepilogo → invio.
   await expect(page.getByText('Riepilogo')).toBeVisible();
   await expect(page.getByText(/Stai iscrivendo 1 bambino/)).toBeVisible();

@@ -38,6 +38,7 @@ import { useTranslations } from 'next-intl';
 import { X, Users, ChevronRight, Check, School } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { NAV_GROUPS, visibleItem } from './admin-nav-config';
 
@@ -118,6 +119,12 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
       previous?.focus();
     };
   }, [open, returnFocusRef]);
+
+  // Il tasto Indietro fisico di Android chiude il foglio, invece di navigare via.
+  // Questo sheet non passa dalla primitiva `ui/Modal`, quindi la riga va ripetuta
+  // qui: senza, premendo Indietro la pagina SOTTO cambiava mentre il foglio restava
+  // aperto sopra — e in una prova l'app è uscita del tutto (misurato il 2026-07-31).
+  useOverlayIndietro(open, onClose);
 
   if (!open) return null;
 

@@ -65,9 +65,16 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   // esegue, non si aggira.
   const presaVisione = page.getByRole('checkbox', { name: /informativa sulla privacy/i });
   await expect(presaVisione).toBeVisible();
-  // Prova che l'obbligo sia reale: senza spunta, «Avanti» non porta al riepilogo.
+
+  // Prova che l'obbligo sia REALE: senza spunta, «Avanti» non deve portare al
+  // riepilogo. NB: NON si può cercare il testo «Riepilogo», che compare anche
+  // nell'indicatore dei passi — guarderebbe la barra di avanzamento invece del
+  // pannello, e l'asserzione sarebbe sempre vera per il motivo sbagliato.
+  // L'elemento che esiste SOLO nel riepilogo è il pulsante d'invio.
   await page.getByRole('button', { name: 'Avanti' }).click();
-  await expect(page.getByText('Riepilogo')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Invia richiesta' })).toHaveCount(0);
+  await expect(presaVisione).toBeVisible();
+
   await presaVisione.check();
   await page.getByRole('button', { name: 'Avanti' }).click();
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
 import type { AppRole, AppUser } from '@/lib/auth/require-staff'
-import { SEDE_A, SEDE_B, SEDE_C } from '../../fixtures/sedi'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { SEDE_A, SEDE_B, SEDE_C, SEDE_E2E } from '../../fixtures/sedi'
 import {
   creaFintoSupabase,
   type DBFinto,
@@ -407,25 +408,80 @@ describe('resolveScuolaScrittura', () => {
     expect((r.response as { status: number }).status).toBe(400)
   })
 
-  it('sede dichiarata NON accessibile ⇒ ignorata: con più sedi ⇒ 400', async () => {
-    const { supabase, dati } = client()
-    // L'admin ha A, B, C; gli si chiede di scrivere sulla sede E2E (non sua).
+  // ── W2-B: la sede DICHIARATA e non accessibile si NEGA, non si sostituisce ──
+  //
+  // ⚠️ QUI IL COMPORTAMENTO ATTESO È CAMBIATO, e i due casi qui sotto prima
+  // asserivano l'esatto contrario («dichiarata non accessibile ⇒ IGNORATA»).
+  // Erano test veri su un difetto vero: fino al 2026-07-31 `resolveScuolaScrittura`
+  // trattava una `preferita` fuori scope come se non fosse stata detta, e
+  // proseguiva col cookie o con l'unica sede accessibile. Misurato sul campo:
+  // `POST /api/mensa/alternative` con la sede di Cesa fatto da un utente di
+  // Aversa rispondeva **200**, con la riga archiviata su **Aversa**. Nessun
+  // errore, nessun log, il dato nel plesso sbagliato.
+  //
+  // Una scrittura che finisce nel plesso sbagliato IN SILENZIO è peggio di un
+  // errore: l'errore lo vedi e lo correggi, il dato dirottato lo scopri mesi
+  // dopo — o mai. E la stessa domanda aveva già due risposte diverse: in
+  // LETTURA `restringiASedeRichiesta` (src/lib/auth/sede-richiesta.ts) rispondeva
+  // già **403 «Sede non accessibile»** per il caso identico. Ora è una sola.
+  //
+  // Il ripiego era anche una difesa impossibile da tenere: era tamponato route
+  // per route (`news/digest/genera` lo faceva a mano), e le chiamate sono 65 in
+  // 54 file. Un tampone su 54 non è una difesa, è un promemoria.
+  it('sede dichiarata NON accessibile ⇒ 403 «Sede non accessibile», MAI un ripiego (più sedi)', async () => {
+    const { supabase, dati, scritture } = client()
+    // L'admin ha A e B; gli si chiede di scrivere su C, che non è sua.
     dati.utenti_scuole = [
       { utente_id: ID_ADMIN, scuola_id: SEDE_A },
       { utente_id: ID_ADMIN, scuola_id: SEDE_B },
     ]
     const r = await resolveScuolaScrittura(richiesta(), supabase, ADMIN_TRE_SEDI, SEDE_C)
     expect(r.scuolaId).toBeUndefined()
-    expect((r.response as { status: number }).status).toBe(400)
+    expect(await esito(r.response)).toEqual({ status: 403, error: 'Sede non accessibile' })
+    expect(scritture).toEqual([])
   })
 
-  it('sede dichiarata NON accessibile ⇒ ignorata: con UNA sola sede si resta sulla propria', async () => {
-    const { supabase } = client()
-    // La segreteria di A chiede di scrivere su B: non si nega, ma NON si scrive
-    // su B. Il dato resta nel suo plesso.
+  it('sede dichiarata NON accessibile ⇒ 403 anche per chi ha UNA sola sede', async () => {
+    // È il caso misurato: la segreteria di A dichiara B. Prima non si negava —
+    // si scriveva su A, cioè si archiviava il dato in un plesso che l'operatore
+    // non aveva nominato, rispondendo 200.
+    const { supabase, scritture } = client()
     const r = await resolveScuolaScrittura(richiesta(), supabase, SEGRETERIA_A, SEDE_B)
-    expect(r.response).toBeUndefined()
-    expect(r.scuolaId).toBe(SEDE_A)
+    expect(r.scuolaId).toBeUndefined()
+    expect(await esito(r.response)).toEqual({ status: 403, error: 'Sede non accessibile' })
+    expect(scritture).toEqual([])
+  })
+
+  it('sede dichiarata NON accessibile ⇒ 403 anche se il cookie ne indica una sola accessibile', async () => {
+    // Il ramo del cookie non deve MAI rattoppare una dichiarazione sbagliata:
+    // se il client dice «scrivi su C» e C non è sua, la risposta è no — non
+    // «allora te la scrivo su B, che avevi selezionato».
+    const { supabase } = client()
+    const r = await resolveScuolaScrittura(richiesta(SEDE_B), supabase, ADMIN_TRE_SEDI, SEDE_E2E)
+    expect(r.scuolaId).toBeUndefined()
+    expect(await esito(r.response)).toEqual({ status: 403, error: 'Sede non accessibile' })
+  })
+
+  it('il diniego si LOGGA come fuori-scope, e NON come ambiguità', async () => {
+    // Due cose diverse: «non mi hai detto dove» (400, l'operatore deve scegliere)
+    // e «mi hai detto una sede che non è tua» (403, che è un segnale di
+    // sicurezza). Se finissero nello stesso contatore, il secondo sparirebbe
+    // dentro il primo.
+    const { supabase } = client()
+    await resolveScuolaScrittura(richiesta(), supabase, SEGRETERIA_A, SEDE_B)
+    expect(tipiLoggati('warn')).toEqual(['sede-scrittura-fuori-scope'])
+    const riga = logEvento.mock.calls.find(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'sede-scrittura-fuori-scope',
+    )
+    // Nel log solo uuid, ruolo e conteggi: la sede richiesta NON ci va in chiaro,
+    // come nelle altre due chiamate del modulo.
+    expect(riga?.[2]).toMatchObject({
+      azione: 'resolveScuolaScrittura',
+      utente: ID_SEGRETERIA,
+      ruolo: 'segreteria',
+      accessibili: 1,
+    })
+    expect(JSON.stringify(riga?.[2])).not.toContain(SEDE_B)
   })
 
   it('cookie manomesso con una sede altrui ⇒ non la usa: resta la propria', async () => {
@@ -433,6 +489,77 @@ describe('resolveScuolaScrittura', () => {
     const r = await resolveScuolaScrittura(richiesta(SEDE_B), supabase, SEGRETERIA_A)
     expect(r.response).toBeUndefined()
     expect(r.scuolaId).toBe(SEDE_A)
+  })
+})
+
+// =============================================================================
+// LA MUTAZIONE — perché uno status non è una prova.
+//
+// Un 403 con la riga scritta lo stesso è un falso verde, e il difetto misurato
+// era proprio dell'altra forma: **200 con la riga nel plesso sbagliato**. Qui si
+// guarda il DATABASE, non la risposta: `dati.<tabella>` (che il finto client crea
+// solo se qualcuno ci scrive davvero) e l'accumulatore `scritture`.
+//
+// Il finto handler qui sotto non è una scorciatoia: è LETTERALMENTE il pattern
+// che condividono tutti i 65 chiamanti di `resolveScuolaScrittura` — risolvi,
+// esci se c'è la risposta, scrivi con la sede risolta. Se il resolver ripiega,
+// questo handler scrive: è la catena vera, in tre righe.
+// =============================================================================
+
+/** La tabella del caso misurato (`POST /api/mensa/alternative`). Non sta nel
+ *  fixture di partenza APPOSTA: se resta `undefined`, nessuno ci ha scritto. */
+const TABELLA = 'mensa_alternative'
+
+async function handlerCheScrive(
+  supabase: SupabaseClient,
+  req: NextRequest,
+  u: AppUser,
+  dichiarata?: string | null,
+): Promise<{ status: number; error?: string }> {
+  const sw = await resolveScuolaScrittura(req, supabase, u, dichiarata)
+  if (sw.response) return await esito(sw.response)
+  const { error } = await supabase
+    .from(TABELLA)
+    .insert({ scuola_id: sw.scuolaId, alunno_id: ALU_A_ASSEGNATO, richiesta: 'in bianco' })
+  if (error) return { status: 500, error: 'db' }
+  return { status: 201 }
+}
+
+describe('resolveScuolaScrittura — la scrittura, non lo status', () => {
+  it('sede dichiarata FUORI SCOPE ⇒ 403 e NESSUNA riga, da nessuna parte', async () => {
+    const { supabase, dati, scritture } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), SEGRETERIA_A, SEDE_B)
+    expect(r).toEqual({ status: 403, error: 'Sede non accessibile' })
+    // La prova che conta: l'insert non è mai partito. Non «è finito altrove»,
+    // non «è finito con la sede sbagliata»: non esiste.
+    expect(scritture).toEqual([])
+    expect(dati[TABELLA]).toBeUndefined()
+  })
+
+  it('CONTROLLO POSITIVO: sede dichiarata e accessibile ⇒ 201 e la riga porta QUELLA sede', async () => {
+    // Senza questo caso il test sopra sarebbe verde anche con un resolver che
+    // nega sempre — cioè con la funzionalità distrutta.
+    const { supabase, dati, scritture } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), ADMIN_TRE_SEDI, SEDE_B)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA]).toHaveLength(1)
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_B, alunno_id: ALU_A_ASSEGNATO })
+    expect(scritture).toHaveLength(1)
+    expect(scritture[0].valori[0]).toMatchObject({ scuola_id: SEDE_B })
+  })
+
+  it('CONTROLLO POSITIVO: mono-sede senza dichiararla ⇒ 201 sulla propria (nessuna regressione)', async () => {
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), SEGRETERIA_A)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_A })
+  })
+
+  it('sede NON dichiarata e ambigua ⇒ 400 e nessuna riga (il ramo che già c\'era)', async () => {
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), ADMIN_TRE_SEDI)
+    expect(r.status).toBe(400)
+    expect(dati[TABELLA]).toBeUndefined()
   })
 })
 

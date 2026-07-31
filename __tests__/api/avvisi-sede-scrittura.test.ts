@@ -195,14 +195,21 @@ describe('POST /api/avvisi — la sede si dichiara, non si deduce dall’autore'
     expect(h.notificaEvento).not.toHaveBeenCalled()
   })
 
-  it('`scuola_id` di una sede NON accessibile ⇒ 400 e nessuna scrittura (mai fuori dal proprio perimetro)', async () => {
+  it('`scuola_id` di una sede NON accessibile ⇒ 403 e nessuna scrittura (mai fuori dal proprio perimetro)', async () => {
+    // ⚠️ Era 400 fino al 2026-07-31, e il 400 arrivava per il motivo sbagliato:
+    // `resolveScuolaScrittura` non NEGAVA la sede altrui, la DIMENTICAVA, e
+    // finiva nel ramo «sede ambigua» solo perché questo utente ha più plessi.
+    // Con un utente mono-sede la stessa strada dava 201, e l'avviso nasceva in
+    // un plesso che nessuno aveva chiesto. Ora il diniego è esplicito.
     const res = await POST(
       post(corpoAvviso({ target_scope: 'globale', scuola_id: SEDE_C })),
     )
 
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
     expect(avvisiScritti()).toHaveLength(0)
     expect(h.scritture).toHaveLength(0)
+    expect(h.notificaEvento).not.toHaveBeenCalled()
   })
 
   it('l’avviso `globale` di una sede resta di QUELLA sede: genitori di B, non di A', async () => {

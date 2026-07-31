@@ -134,14 +134,25 @@ describe('POST /api/admin/merch/articoli — la sede si dichiara', () => {
     })
   })
 
-  it('utente con UNA sola sede ⇒ 201 nella sua, anche se ne dichiara un\'altra', async () => {
+  it('utente con UNA sola sede che ne dichiara un\'altra ⇒ 403, nessun articolo', async () => {
+    // ⚠️ Comportamento atteso CAMBIATO il 2026-07-31. Qui si asseriva
+    // «201 nella sua», cioè: la segreteria di A chiede di creare l'articolo su
+    // C e il server lo crea su A — duecentouno, nessun errore, nessun log, il
+    // dato in un plesso che nessuno aveva nominato. È il ripiego che
+    // `resolveScuolaScrittura` faceva quando la sede dichiarata non era
+    // accessibile, ed è la forma esatta del difetto misurato su
+    // `mensa/alternative` e `gallery`. Ora si nega.
     h.requireStaff.mockResolvedValue({
       user: { id: ID_SEGRETERIA, role: 'segreteria', scuola_id: SEDE_A },
     })
     const res = await postArticolo(articolo({ scuola_id: SEDE_C }))
 
-    expect(res.status).toBe(201)
-    expect(scrittureSu('divise_articoli')[0].valori[0]).toMatchObject({ scuola_id: SEDE_A })
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    // Non basta lo status: la prova è che nel database non è comparso niente,
+    // né l'articolo né la sua riga di audit.
+    expect(scrittureSu('divise_articoli')).toEqual([])
+    expect(scrittureSu('audit_scritture_docente')).toEqual([])
   })
 })
 

@@ -177,12 +177,36 @@ describe('POST /api/gallery — la foto nasce nella sede DICHIARATA', () => {
     })
   })
 
-  it('`scuola_id` non accessibile: ignorata, e con due sedi resta 400 (mai una scrittura altrove)', async () => {
+  it('`scuola_id` non accessibile: 403 e NESSUNA riga (prima era «ignorata»)', async () => {
+    // ⚠️ Il comportamento atteso è cambiato il 2026-07-31: qui si asseriva 400,
+    // cioè che la sede dichiarata e non accessibile venisse DIMENTICATA e la
+    // funzione proseguisse come se il client non avesse detto niente. Per
+    // l'admin di due sedi finiva in un 400 innocuo, ma per un utente mono-sede
+    // la stessa strada portava a **201 con la foto archiviata nel suo plesso** —
+    // un plesso che non aveva nominato. Ora `resolveScuolaScrittura` nega.
     const res = await GALLERY_POST(
       req('/api/gallery', { method: 'POST', body: corpo({ scuola_id: SEDE_C }) }),
     )
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    // Lo status da solo non proverebbe niente: la riga non esiste, l'insert non
+    // è mai partito e i genitori non hanno ricevuto niente.
     expect(h.db.galleria_media_v2).toEqual([])
+    expect(inserite('galleria_media_v2')).toEqual([])
+    expect(h.notificaEvento).not.toHaveBeenCalled()
+  })
+
+  it('mono-sede che dichiara una sede altrui: 403, NON un 201 nella propria', async () => {
+    // Il caso misurato dall'audit: senza il diniego nel resolver, l'educator di
+    // A che dichiara B pubblicava — su A. Duecentouno, nessun errore, nessun
+    // log, foto nel plesso sbagliato.
+    h.requireDocente.mockResolvedValue({ user: { id: ED_A, role: 'educator', scuola_id: SEDE_A } })
+    const res = await GALLERY_POST(
+      req('/api/gallery', { method: 'POST', body: corpo({ scuola_id: SEDE_B }) }),
+    )
+    expect(res.status).toBe(403)
+    expect(h.db.galleria_media_v2).toEqual([])
+    expect(h.notificaEvento).not.toHaveBeenCalled()
   })
 
   it('educator mono-sede SENZA `scuola_id`: pubblica nella sua sede (nessuna regressione)', async () => {

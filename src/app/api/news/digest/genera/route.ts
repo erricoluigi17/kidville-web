@@ -44,20 +44,16 @@ export const POST = withRoute('news/digest/genera:POST', async (request: NextReq
     // semplicemente falso. La selezione è una preferenza di interfaccia; una
     // sede DICHIARATA nel corpo della richiesta la sovrascrive.
     //
-    // Il 403 resta, e va tenuto: `resolveScuolaScrittura` IGNORA una `preferita`
-    // fuori scope e ripiega sulle altre, quindi senza questo controllo una sede
-    // altrui verrebbe rimpiazzata in silenzio da una propria — e il digest
-    // partirebbe per il plesso sbagliato senza che nessuno l'abbia chiesto.
+    // ⚠️ QUI C'ERA UN TAMPONE, e non c'è più (2026-07-31). Era un
+    // `if (scuola_id && sw.scuolaId !== scuola_id) → 403` scritto a mano, perché
+    // `resolveScuolaScrittura` IGNORAVA una sede dichiarata ma non accessibile e
+    // ripiegava su un'altra: senza il controllo, il digest sarebbe partito per il
+    // plesso sbagliato in silenzio. Il difetto stava nel resolver, e le sue
+    // chiamate sono 65 in 54 file: questa route era l'UNICA a tamponarlo, cioè
+    // 53 non lo facevano. Ora il 403 «Sede non accessibile» — stesso stato,
+    // stesso messaggio — lo emette `resolveScuolaScrittura` per tutte, con il
+    // suo `warn` persistito (`auth` / `sede-scrittura-fuori-scope`).
     const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined)
-    if (scuola_id && sw.scuolaId !== scuola_id) {
-      logEvento('news', 'warn', {
-        operazione: 'news/digest/genera:POST',
-        esito: 'sede-non-accessibile',
-        utente: auth.user.id,
-        ruolo: auth.user.role,
-      })
-      return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
-    }
     if (sw.response) return sw.response
     const scuolaId = sw.scuolaId as string
 

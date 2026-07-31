@@ -131,9 +131,9 @@ export async function resolveScuoleAttive(
 
 /**
  * SCRITTURE (create/update che settano `scuola_id`): UNA sola sede, e la sede si
- * DICHIARA. Ordine: `preferita`/body.scuola_id se accessibile → l'unica sede
- * attiva (cookie) → l'unica sede accessibile. Se resta ambiguo — più sedi
- * accessibili e nessuna indicata — ritorna una NextResponse **400**.
+ * DICHIARA. Ordine: `preferita`/body.scuola_id → l'unica sede attiva (cookie) →
+ * l'unica sede accessibile. Se resta ambiguo — più sedi accessibili e nessuna
+ * indicata — ritorna una NextResponse **400**.
  *
  * ⚠️ NIENTE RIPIEGO SULLA SEDE PRIMARIA. Fino al 2026-07-31 qui c'era un ultimo
  * ramo `if (user.scuola_id && set.has(user.scuola_id))`, e siccome
@@ -145,6 +145,30 @@ export async function resolveScuoleAttive(
  * prima che è stata assegnata all'utente. Chi ha un solo plesso non cambia
  * comportamento (ramo `accessibili.length === 1`); chi ne ha più d'uno deve dire
  * dove sta scrivendo.
+ *
+ * ⚠️ E NIENTE RIPIEGO SULLA SEDE DICHIARATA MALE. Fino allo stesso giorno la
+ * riga era `if (preferita && set.has(preferita)) return …`: una `preferita` NON
+ * accessibile non veniva negata, veniva **dimenticata**, e la funzione tirava
+ * dritto sul cookie e poi sull'unica sede accessibile. Misurato:
+ * `POST /api/mensa/alternative` con la sede di Cesa fatto da un utente di Aversa
+ * rispondeva **200**, con la riga scritta su **Aversa**. Idem `POST /api/gallery`.
+ * Il client chiedeva un plesso, il server ne sceglieva un altro e non lo diceva a
+ * nessuno.
+ *
+ * Il difetto era già noto e tamponato **route per route** (`news/digest/genera`
+ * ci aveva messo un `if (sw.scuolaId !== scuola_id) → 403` scritto a mano), ma le
+ * chiamate a questa funzione sono 65 in 54 file: un tampone su 54 non è una
+ * difesa, è un promemoria. Perciò il controllo sta QUI, una volta sola.
+ *
+ * Da oggi: `preferita` presente e non accessibile ⇒ **403 «Sede non accessibile»**
+ * + `warn` persistito. Che è anche la risposta che il caso identico riceveva già
+ * in LETTURA da `restringiASedeRichiesta` (`src/lib/auth/sede-richiesta.ts`):
+ * erano due risposte diverse alla stessa domanda, ora è una.
+ *
+ * Sono due dinieghi distinti, e vanno tenuti distinti: **400** è «non mi hai
+ * detto dove» (l'operatore deve scegliere), **403** è «mi hai detto una sede che
+ * non è tua» — un segnale di sicurezza, che dentro il contatore dell'ambiguità
+ * sparirebbe.
  */
 export async function resolveScuolaScrittura(
   request: NextRequest,
@@ -157,17 +181,32 @@ export async function resolveScuolaScrittura(
     return { response: NextResponse.json({ error: 'Nessun plesso associato all\'utente' }, { status: 403 }) }
   }
   const set = new Set(accessibili)
-  if (preferita && set.has(preferita)) return { scuolaId: preferita }
+  if (preferita) {
+    if (set.has(preferita)) return { scuolaId: preferita }
+    // `warn` → persistito. Solo uuid utente, ruolo e conteggio: la sede
+    // richiesta NON va in chiaro, come nelle altre chiamate del modulo.
+    logEvento('auth', 'warn', {
+      tipo: 'sede-scrittura-fuori-scope', azione: 'resolveScuolaScrittura',
+      utente: user.id, ruolo: user.role, accessibili: accessibili.length,
+    })
+    return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+  }
   const attive = sediDalCookie(request).filter((id) => set.has(id))
   if (attive.length === 1) return { scuolaId: attive[0] }
   if (accessibili.length === 1) return { scuolaId: accessibili[0] }
   // `warn` → persistito: una scrittura ambigua è un'operazione RIFIUTATA, e il
   // motivo deve essere leggibile senza risalire al corpo della richiesta.
+  //
+  // Qui NON c'è più `dichiarata: Boolean(preferita)`: da quando una `preferita`
+  // fuori scope esce col 403 qui sopra, in questo punto `preferita` è per
+  // costruzione assente e quel campo varrebbe `false` per sempre. Un campo che
+  // dice sempre la stessa cosa è peggio di un campo che manca: sembra
+  // un'informazione. «Era stata dichiarata una sede?» ora si legge dal `tipo`
+  // della riga (`…-fuori-scope` contro `…-ambigua`).
   logEvento('auth', 'warn', {
     tipo: 'sede-scrittura-ambigua', azione: 'resolveScuolaScrittura',
     utente: user.id, ruolo: user.role,
     accessibili: accessibili.length, attive: attive.length,
-    dichiarata: Boolean(preferita),
   })
   return { response: NextResponse.json({ error: 'Specificare la sede (scuola_id) per questa operazione' }, { status: 400 }) }
 }

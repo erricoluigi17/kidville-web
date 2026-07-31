@@ -78,7 +78,19 @@ beforeEach(() => {
   h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore', scuola_id: null } })
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
-  h.resolveScuolaScrittura.mockResolvedValue({ scuolaId: 'sc-1' })
+  // Il finto resolver deve NEGARE come quello vero (2026-07-31): una sede
+  // dichiarata e non accessibile ⇒ 403, mai «eccoti la tua». Prima qui c'era
+  // `mockResolvedValue({ scuolaId: 'sc-1' })`, cioè un mock che diceva sempre di
+  // sì: il 403 del caso qui sotto lo produceva un tampone scritto a mano DENTRO
+  // la route, oggi rimosso perché il controllo sta nel resolver. Un mock che
+  // risponde meglio della funzione che sostituisce rende verde un test che con
+  // il codice vero sarebbe rosso.
+  h.resolveScuolaScrittura.mockImplementation(async (...a: unknown[]) => {
+    const preferita = a[3] as string | null | undefined
+    return preferita && preferita !== 'sc-1'
+      ? { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+      : { scuolaId: 'sc-1' }
+  })
   h.caricaFigliConTarget.mockResolvedValue([{ scuola_id: 'sc-1', classe_sezione: '1A', grado: 'infanzia' }])
   h.generaEInviaDigest.mockResolvedValue({ edizioni: [] })
 })
@@ -169,9 +181,14 @@ describe('GET /api/news/digest/[id] — dettaglio', () => {
 
 describe('POST /api/news/digest/genera', () => {
   it('scuola_id NON accessibile → 403, e generaEInviaDigest NON chiamata', async () => {
+    // Il 403 ora arriva da `resolveScuolaScrittura` (il tampone locale della
+    // route è stato rimosso il 2026-07-31): l'invariante è la stessa, cambia
+    // solo chi la fa rispettare — e ora vale per tutte e 65 le chiamate, non
+    // per questa sola route.
     h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
     const res = await generaPOST(postReq({ anno: 2026, mese: 2, scuola_id: 'cccccccc-cccc-cccc-cccc-cccccccccccc' }))
     expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
     expect(h.generaEInviaDigest).not.toHaveBeenCalled()
   })
 

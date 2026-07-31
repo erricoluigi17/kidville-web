@@ -295,7 +295,16 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       const all = getValues()
       const children = (all.children ?? []).slice(0, childCount).filter(Boolean)
       const adults = (all.adults ?? []).slice(0, adultCount).filter(Boolean)
-      const data: EnrollmentSubmissionData = { children, adults }
+      // I CONSENSI vanno nel payload, e questa riga è la ragione per cui il
+      // percorso end-to-end esiste: senza, il wizard li raccoglieva e li buttava
+      // via prima dell'invio. Ogni pezzo funzionava — la casella, la
+      // validazione, la registrazione della prova — e il collegamento fra
+      // penultimo e ultimo no. Il server rifiutava, giustamente, un invio senza
+      // presa visione.
+      const consensi = Object.fromEntries(
+        CONSENSI_FIELDS.map(f => [f.id, (all as Record<string, unknown>)[f.id] === true]),
+      )
+      const data: EnrollmentSubmissionData = { ...consensi, children, adults }
 
       const res = await fetch('/api/iscrizione', {
         method: 'POST',

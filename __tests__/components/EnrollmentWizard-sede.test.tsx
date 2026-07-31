@@ -166,6 +166,17 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
     await waitFor(() => expect(postBodies).toHaveLength(1))
     expect((postBodies[0] as { scuola_id?: string }).scuola_id).toBe(CESA.id)
+
+    // I CONSENSI devono essere NEL PAYLOAD, non solo spuntati sullo schermo.
+    // Difetto reale trovato dal percorso end-to-end e non da qui: il wizard
+    // raccoglieva le spunte e poi costruiva l'invio con i soli bambini e adulti,
+    // buttandole via. Ogni pezzo funzionava, il collegamento no — e il server
+    // rifiutava, giustamente, un invio senza presa visione.
+    const inviato = postBodies[0] as { data?: Record<string, unknown> }
+    expect(inviato.data?.presa_visione_informativa).toBe(true)
+    // Anche i consensi NON spuntati viaggiano, come `false`: «non gliel'ho
+    // chiesto» e «ha detto no» non sono la stessa cosa nella prova.
+    expect(inviato.data?.consenso_foto_galleria).toBe(false)
   })
 
   /**

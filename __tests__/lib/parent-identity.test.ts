@@ -15,6 +15,9 @@ interface FakeState {
   utentiInsertError?: { message: string } | null;
   schools?: Array<{ id: string }>;
   createUserError?: { message: string } | null;
+  /** Sedi dei FIGLI del genitore: da qui viene `utenti.scuola_id` (audit 31/07).
+   *  Vuoto = genitore senza alunni collegati, che è il caso di questo file. */
+  sediFigli?: string[];
 }
 
 function makeAdmin(state: FakeState) {
@@ -63,6 +66,18 @@ function makeAdmin(state: FakeState) {
       }
       if (table === 'schools') {
         return { select: () => ({ limit: async () => ({ data: state.schools ?? [], error: null }) }) };
+      }
+      if (table === 'student_parents') {
+        // La sede del genitore si deriva dai FIGLI: `sedeDelGenitore` legge
+        // `student_parents` con il join `!inner` su `alunni`.
+        return {
+          select: () => ({
+            eq: async () => ({
+              data: (state.sediFigli ?? []).map((s, i) => ({ student_id: `al-${i}`, alunni: { scuola_id: s } })),
+              error: null,
+            }),
+          }),
+        };
       }
       throw new Error(`tabella inattesa: ${table}`);
     },
@@ -181,11 +196,29 @@ describe('ensureParentIdentity (S6bis)', () => {
     expect(r.message).toMatch(/scuola/i);
   });
 
-  it('scuolaId assente + UNICA scuola → fallback mono-sede', async () => {
+  it('nessuna indicazione e nessun figlio → error, NON il ripiego mono-sede', async () => {
+    // Il ripiego «se il deployment ha una sola scuola, è quella» è morto il
+    // 2026-07-29: le sedi sono tre e `resolveScuolaId` restituisce sempre null.
+    // Senza figli da cui dedurre e senza sede indicata dal chiamante, la sede di
+    // un genitore non esiste — e la si nega, non la si indovina (audit 31/07, R6).
     const { admin, calls } = makeAdmin({ schools: [{ id: 'sc-only' }] });
     const r = await ensureParentIdentity(admin, PARENT, {});
+    expect(r).toMatchObject({ ok: false, reason: 'error' });
+    expect(calls.utentiInserts).toEqual([]);
+  });
+
+  it('nessun figlio ma sede dell\'operatore indicata → si usa quella', async () => {
+    const { admin, calls } = makeAdmin({});
+    const r = await ensureParentIdentity(admin, PARENT, { sedeOperatore: 'sc-operatore' });
     expect(r).toMatchObject({ ok: true });
-    expect(calls.utentiInserts[0]).toMatchObject({ scuola_id: 'sc-only' });
+    expect(calls.utentiInserts[0]).toMatchObject({ scuola_id: 'sc-operatore' });
+  });
+
+  it('la sede del FIGLIO vince su quella dell\'operatore', async () => {
+    const { admin, calls } = makeAdmin({ sediFigli: ['sc-figlio'] });
+    const r = await ensureParentIdentity(admin, PARENT, { sedeOperatore: 'sc-operatore' });
+    expect(r).toMatchObject({ ok: true });
+    expect(calls.utentiInserts[0]).toMatchObject({ scuola_id: 'sc-figlio' });
   });
 
   it('nome/cognome mancanti → fallback dal local-part email (NOT NULL a DB)', async () => {

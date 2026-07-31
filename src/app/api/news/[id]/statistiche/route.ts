@@ -8,8 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
-import { genitoriDiGrado } from '@/lib/news/notifiche'
-import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
+import { destinatariNews } from '@/lib/news/notifiche'
 import type { NewsPost } from '@/lib/news/tipi'
 
 interface RouteParams {
@@ -73,17 +72,14 @@ export const GET = withRoute('news/[id]/statistiche:GET', async (request: NextRe
     }
     const distinte = new Set(((vis ?? []) as { utente_id: string | null }[]).map((v) => v.utente_id).filter(Boolean))
 
-    // Denominatore: le famiglie destinatarie, con gli stessi resolver della notifica.
-    let target: string[] = []
-    if (post.target_scope === 'classi') {
-      target = await genitoriDiClassi(supabase, post.scuola_id, post.target_classes ?? [])
-    } else if (post.target_scope === 'grado') {
-      target = await genitoriDiGrado(supabase, post.scuola_id, post.target_gradi)
-    } else {
-      target = await genitoriDiScuola(supabase, post.scuola_id)
-    }
+    // Denominatore: le famiglie destinatarie, con lo STESSO risolutore della
+    // notifica — ora davvero lo stesso, non tre righe che gli somigliano. Conta
+    // per il post «tutte le sedi» (`scuola_id` NULL), dove i risolutori per sede
+    // rispondono «non so dove sei, nego»: qui il denominatore sarebbe 0 e la
+    // percentuale di lettura una divisione per zero travestita da statistica.
+    const { destinatari } = await destinatariNews(supabase, post)
 
-    return NextResponse.json({ visualizzazioni: distinte.size, famiglie_target: target.length })
+    return NextResponse.json({ visualizzazioni: distinte.size, famiglie_target: destinatari.length })
   } catch (err) {
     logErrore({ operazione: 'news/[id]/statistiche:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

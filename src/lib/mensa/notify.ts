@@ -3,6 +3,7 @@ import { sendPush } from '@/lib/push/web-push'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
+import { staffScuola } from '@/lib/notifiche/destinatari'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { logEvento } from '@/lib/logging/logger'
 
@@ -16,12 +17,23 @@ async function inviaNotifiche(
   n: { tipo: string; titolo: string; corpo: string; link: string; entita_tipo?: string; entita_id?: string }
 ): Promise<void> {
   if (utenti.length === 0) return
-  await supabase.from('notifiche').insert(
+  const { error } = await supabase.from('notifiche').insert(
     utenti.map(u => ({
       utente_id: u, tipo: n.tipo, titolo: n.titolo, corpo: n.corpo, link: n.link,
       entita_tipo: n.entita_tipo ?? null, entita_id: n.entita_id ?? null,
     }))
   )
+  // PostgREST non lancia: ritorna `{ error }`. Senza questo controllo l'insert
+  // poteva fallire e la funzione proseguiva verso il push come se nulla fosse —
+  // e il chiamante rispondeva comunque «inviata».
+  if (error) {
+    logEvento('mensa', 'error', {
+      operazione: 'mensa/notify:inviaNotifiche',
+      esito: 'notifiche-non-inserite',
+      tipo: n.tipo,
+      n: utenti.length,
+    }, error)
+  }
   const { data: subs } = await supabase
     .from('push_subscriptions')
     .select('endpoint, p256dh, auth, utente_id')
@@ -39,21 +51,20 @@ async function inviaNotifiche(
 // scuola SEMPRE, più gli insegnanti DELLA SEZIONE del bambino (via utenti_sezioni).
 // Se la sezione non ha docenti mappati, fallback a tutti gli insegnanti della
 // scuola (su un alert di sicurezza è preferibile sovra-notificare che mancare).
+//
+// L'APPARTENENZA A UNA SEDE NON È `utenti.scuola_id`: è l'unione fra quella
+// colonna e il ponte `utenti_scuole` — la stessa definizione che usa
+// `scuoleDiUtente` per decidere su quali plessi una persona può operare. Qui
+// c'era una `.eq('scuola_id', …)` nuda, e per le sedi aperte il 2026-07-29
+// (dove nessuno ha ancora quel plesso come primario) la lista usciva VUOTA:
+// nessuno riceveva l'alert allergie. Da qui in poi passa da `staffScuola`, che
+// il ponte lo guarda ed è l'unico posto del repo autorizzato a quella query.
 export async function destinatariAllerta(supabase: SupabaseClient, scuolaId: string, sectionId?: string | null): Promise<string[]> {
-  const ruoliSegreteriaCuoca = new Set(['admin', 'coordinator', 'segreteria', 'cuoca'])
-  const ruoliInsegnanti = new Set(['educator', 'maestra'])
-  const { data } = await supabase
-    .from('utenti')
-    .select('id, role, ruolo, scuola_id')
-    .eq('scuola_id', scuolaId)
+  const ruoliSegreteriaCuoca = ['admin', 'coordinator', 'segreteria', 'cuoca']
+  const ruoliInsegnanti = ['educator', 'maestra']
 
-  const out = new Set<string>()
-  const insegnantiScuola = new Set<string>()
-  for (const u of data ?? []) {
-    const r = String((u.role as string) || (u.ruolo as string) || '')
-    if (ruoliSegreteriaCuoca.has(r)) out.add(u.id as string)
-    if (ruoliInsegnanti.has(r)) insegnantiScuola.add(u.id as string)
-  }
+  const out = new Set<string>(await staffScuola(supabase, scuolaId, ruoliSegreteriaCuoca))
+  const insegnantiScuola = new Set<string>(await staffScuola(supabase, scuolaId, ruoliInsegnanti))
 
   // insegnanti scoped alla sezione del bambino
   const docentiSezione = (await docentiDiSezione(supabase, sectionId)).filter(id => insegnantiScuola.has(id))
@@ -97,6 +108,19 @@ export async function notificaAllergie(
     const corpo = `${opts.nomeAlunno}${sez}: il menu di ${dataLeggibile} contiene allergeni a cui è sensibile → ${dettaglio}. Verificare in cucina.`
 
     const utenti = await destinatariAllerta(supabase, opts.scuolaId, opts.sezioneId)
+    if (utenti.length === 0) {
+      // `error`, e non `warn`: questo è un alert di SICUREZZA (un allergene nel
+      // piatto di un bambino). «Composto e mai recapitato» non può essere
+      // indistinguibile da «recapitato»: il cron delle 07:00 contava l'alert fra
+      // gli inviati e chiudeva il battito con «ok». Nessun nome nel log — il
+      // corpo dell'alert contiene nome e allergeni del minore, i log no.
+      logEvento('mensa', 'error', {
+        operazione: 'notificaAllergie',
+        esito: 'nessun-destinatario',
+        sede_id: opts.scuolaId,
+      })
+      return { inviata: false }
+    }
     await inviaNotifiche(supabase, utenti, {
       tipo: 'mensa_allergia', titolo, corpo, link, entita_tipo: 'alunno', entita_id: opts.alunnoId,
     })

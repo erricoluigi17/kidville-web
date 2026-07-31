@@ -8,7 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { SCHEMA_MANCANTE } from '@/lib/protocolli/store'
 import { rispostaErroreProtocollo } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Titolario configurabile (decisione #15): categorie per scuola con seed lazy
 // dei default (le sedi nuove li ricevono alla prima apertura della pagina).
@@ -70,15 +70,54 @@ export const GET = withRoute('admin/protocolli/categorie:GET', async (request: N
       }
 
       // Seed lazy per le sedi senza titolario (create dopo la migrazione).
+      //
+      // ⚠️ Fino al 2026-07-31 l'INSERT finiva in `.then(() => undefined, () => undefined)`,
+      // che scarta ENTRAMBI gli esiti — e PostgREST non lancia: ritorna `{ error }`.
+      // Seed fallito ⇒ la rilettura trovava ancora vuoto e la route rispondeva
+      // `{ success: true, data: [] }`: quella sede avrebbe visto un titolario vuoto
+      // per sempre, senza una riga in `app_log` che dicesse perché. È anche l'unico
+      // auto-provisioning per sede del progetto, quindi il successo si logga:
+      // «nessun log» non deve poter significare tanto «tutto ok» quanto «non è mai
+      // partito niente» (AGENTS.md §5 e §6).
       if ((data ?? []).length === 0) {
-        await supabase
+        const { error: seedErr } = await supabase
           .from('protocolli_categorie')
           .insert(CATEGORIE_DEFAULT.map((nome, i) => ({ scuola_id: scuolaId, nome, ordine: i + 1 })))
-          .then(
-            () => undefined,
-            () => undefined
-          )
+        if (seedErr && seedErr.code !== '23505') {
+          logEvento('protocolli', 'error', {
+            operazione: 'admin/protocolli/categorie:GET',
+            esito: 'seed-fallito',
+            scuola_id: scuolaId,
+            righe: CATEGORIE_DEFAULT.length,
+          }, seedErr)
+          return rispostaErroreProtocollo(seedErr)
+        }
+        if (seedErr) {
+          // 23505: un'altra scheda (o un altro operatore) ha seminato per prima.
+          // Non è un guasto — le categorie ci sono — ma va visto, perché è l'unico
+          // modo di distinguerlo da un seed proprio.
+          logEvento('protocolli', 'info', {
+            operazione: 'admin/protocolli/categorie:GET',
+            esito: 'seed-concorrente',
+            scuola_id: scuolaId,
+          })
+        } else {
+          logEvento('protocolli', 'info', {
+            operazione: 'admin/protocolli/categorie:GET',
+            esito: 'seed-eseguito',
+            scuola_id: scuolaId,
+            righe: CATEGORIE_DEFAULT.length,
+          })
+        }
         const riletto = await leggi()
+        if (riletto.error) {
+          logEvento('protocolli', 'error', {
+            operazione: 'admin/protocolli/categorie:GET',
+            esito: 'rilettura-titolario-fallita',
+            scuola_id: scuolaId,
+          }, riletto.error)
+          return rispostaErroreProtocollo(riletto.error)
+        }
         return NextResponse.json({ success: true, data: riletto.data ?? [] })
       }
 

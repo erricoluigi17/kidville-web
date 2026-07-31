@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { requireUser, requireDocente } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -33,6 +33,10 @@ const postBodySchema = z.object({
     attachment_url: z.string().nullish(),
     // Modulo firmabile FEA collegato (gita): opzionale (item 19).
     form_model_id: zUuid.nullish(),
+    // Sede su cui si PUBBLICA (multi-sede, 2026-07-31). Il cockpit la manda
+    // esplicitamente; se manca la deduce `resolveScuolaScrittura` dal selettore
+    // di sede, e se resta ambigua risponde 400. Mai la sede primaria dell'autore.
+    scuola_id: zUuid.nullish(),
 });
 
 type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
@@ -256,8 +260,54 @@ export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
     }
 });
 
+// ── Le classi destinatarie devono esistere NELLA SEDE su cui si pubblica. ──
+//
+// `assertClasseNomeInScope` (lib/auth/scope) risolve il nome dentro TUTTI i
+// plessi dell'utente: risponde «questa classe è tua», non «questa classe è nel
+// plesso su cui stai pubblicando». Per la Direzione, che ha tre sedi, le due
+// domande hanno risposte diverse, ed è la seconda che conta: «3 ANNI» esiste
+// solo ad Aversa, quindi un avviso pubblicato su Giugliano che la nomina non
+// raggiunge nessuno e non lo scopre nessuno (in produzione, il 2026-07-31, due
+// avvisi erano già finiti così — con l'uuid della sezione al posto del nome).
+//
+// La sede arriva da `resolveScuolaScrittura`, cioè è già dentro il perimetro
+// dell'utente: questo controllo è quindi **più stretto** dello scope, e vale da
+// gate per TUTTI i ruoli (il gate dell'educator, `verificaTargetAvvisoDocente`,
+// resta e risponde prima: «non è una tua classe» è un 403, non un 400).
+// Una query sola, mai una per classe.
+// L'esito è un'unione DISCRIMINATA su `ok`. Il campo dell'errore non può fare
+// da discriminante: `errore: unknown` non è un tipo unitario, quindi
+// `if (esito.errore)` non restringe l'unione e a valle `esito.mancanti` resta
+// `string[] | null` — cioè il compilatore, giustamente, non crede al controllo.
+// Lo dicono `tsc --noEmit` e `next build`; i test no, perché a runtime il ramo
+// si comporta bene: è il tipo a non reggere, ed è il tipo che tiene onesto chi
+// aggiungerà il prossimo controllo qui dentro.
+type EsitoClassi =
+    | { ok: true; mancanti: string[] }
+    | { ok: false; errore: unknown };
+
+async function classiMancantiNellaSede(
+    supabase: SupabaseAdmin,
+    scuolaId: string,
+    classi: string[],
+): Promise<EsitoClassi> {
+    const { data, error } = await supabase
+        .from('sections')
+        .select('name')
+        .eq('scuola_id', scuolaId)
+        .in('name', classi);
+    // PostgREST non lancia: senza questo controllo un guasto di lettura
+    // diventerebbe «nessuna classe trovata», cioè un 400 che accusa l'operatore
+    // di un errore che non ha commesso.
+    if (error) return { ok: false, errore: error };
+    const presenti = new Set(
+        (data ?? []).map((r) => String((r as { name?: unknown }).name ?? '')),
+    );
+    return { ok: true, mancanti: classi.filter((c) => !presenti.has(c)) };
+}
+
 // POST /api/avvisi
-// Body: { titolo, contenuto, tipo?, target_scope?, target_classes?, scadenza?, attachment_url?, form_model_id? }
+// Body: { titolo, contenuto, tipo?, target_scope?, target_classes?, scadenza?, attachment_url?, form_model_id?, scuola_id? }
 export const POST = withRoute('avvisi:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
@@ -269,12 +319,27 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         // M7: l'autore è SEMPRE l'utente di sessione. `author_id` del client non esiste più.
         const authorId = auth.user.id;
-        const scuolaId = auth.user.scuola_id ?? null;
         const ruolo = (auth.user.role || '').toLowerCase();
 
         const supabase = await createAdminClient();
 
-        // Ruoli abilitati alla pubblicazione, configurabili da Impostazioni → Avvisi.
+        // La sede si DICHIARA (multi-sede, 2026-07-31). Fino a oggi era
+        // `auth.user.scuola_id`: la sede PRIMARIA di chi scrive, che con tre
+        // plessi non ha nessun rapporto con la sede su cui sta lavorando. Quel
+        // valore si propagava a tutto — riga `avvisi`, audit, destinatari della
+        // notifica — quindi un avviso per Aversa nasceva a Giugliano, lo
+        // ricevevano le famiglie sbagliate (o nessuna) e l'autore non lo
+        // ritrovava nemmeno nel cockpit. Se la sede resta ambigua il resolver
+        // risponde 400: «dimmi dove stai pubblicando» è la risposta giusta, un
+        // ripiego silenzioso no.
+        const sw = await resolveScuolaScrittura(
+            request as NextRequest, supabase, auth.user, b.data.scuola_id ?? undefined,
+        );
+        if (sw.response) return sw.response;
+        const scuolaId = sw.scuolaId as string;
+
+        // Ruoli abilitati alla pubblicazione: la configurazione è PER SEDE, e
+        // quella che conta è la sede su cui si pubblica, non quella dell'autore.
         const gruppo = ['admin', 'coordinator'].includes(ruolo) ? 'admin' : 'teacher';
         const avvisiCfg = await getModuleConfig<{ ruoli_pubblicazione: string[] }>(
             supabase, 'avvisi_config', scuolaId,
@@ -307,6 +372,44 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
         });
         if (targetErr) return targetErr;
 
+        // Gate di SEDE sul target, per TUTTI i ruoli: ogni nome di classe deve
+        // esistere nella sede risolta. Il nome-classe non è più una chiave
+        // univoca (da quando le sedi sono tre, «2 ANNI» esiste in due plessi):
+        // senza questo controllo si pubblica in una sede una classe che sta in
+        // un'altra, e l'avviso non arriva a nessuno rispondendo 201.
+        if (classiTarget.length > 0) {
+            const esito = await classiMancantiNellaSede(supabase, scuolaId, classiTarget);
+            if (!esito.ok) {
+                logErrore({ operazione: 'avvisi:POST', stato: 500, evento: 'db' }, esito.errore);
+                return NextResponse.json(
+                    { error: 'Verifica delle classi destinatarie non riuscita' },
+                    { status: 500 },
+                );
+            }
+            if (esito.mancanti.length > 0) {
+                // `warn` → persistito: «pubblicare a una classe che non è in
+                // questa sede» è o un errore d'interfaccia o un tentativo. Solo
+                // metadati non personali (i nomi di sezione sono in lista bianca).
+                logEvento('avvisi', 'warn', {
+                    operazione: 'avvisi:POST',
+                    esito: 'classe-fuori-sede',
+                    tipo: 'target-non-nella-sede',
+                    ruolo,
+                    uid: auth.user.id,
+                    n_classi: esito.mancanti.length,
+                    sezione: esito.mancanti.join(','),
+                });
+                return NextResponse.json(
+                    {
+                        error:
+                            'Classi non presenti nella sede selezionata: ' +
+                            `${esito.mancanti.join(', ')}. Controlla la sede di pubblicazione.`,
+                    },
+                    { status: 400 },
+                );
+            }
+        }
+
         // Insert resiliente alla colonna form_model_id mancante (DB E2E CI non migrato).
         const avvisoRecord: Record<string, unknown> = {
             author_id: authorId,
@@ -314,7 +417,11 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             contenuto,
             tipo: tipo ?? 'presa_visione',
             target_scope: target_scope ?? 'globale',
-            target_classes: target_classes ?? null,
+            // Si archivia l'insieme VALIDATO (`classiTarget`), non l'array grezzo:
+            // validare una lista e scriverne un'altra rende il gate una formalità —
+            // duplicati, stringhe vuote e valori non-testuali entrerebbero senza
+            // essere mai stati confrontati con le sezioni della sede.
+            target_classes: classiTarget.length > 0 ? classiTarget : null,
             scadenza: scadenza ?? null,
             attachment_url: attachment_url ?? null,
             form_model_id: form_model_id ?? null,

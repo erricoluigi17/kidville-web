@@ -24,7 +24,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
-      b.maybeSingle = async () => ({ data: table === 'form_models' ? h.model : null, error: null })
+      // `utenti`: chi compila ha una sede — è la condizione di TUTTI i 51 utenti
+      // in produzione, ed è la prima fonte da cui la compilazione prende la
+      // propria `scuola_id` (una riga senza sede non la vedrebbe più nessuno).
+      b.maybeSingle = async () => ({
+        data: table === 'form_models' ? h.model : table === 'utenti' ? { scuola_id: 'sc-1' } : null,
+        error: null,
+      })
       b.single = async () => ({ data: { id: 'sub-new' }, error: h.insertError })
       b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
       return b
@@ -86,6 +92,9 @@ describe('POST /api/forms/submit (path senza firma)', () => {
     const row = h.inserts[0]
     expect(row.status).toBe('completed')
     expect(row.model_id).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10')
+    // La sede di chi compila finisce sulla riga: senza, la compilazione non
+    // comparirebbe in nessun elenco (`NULL IN (…)` in SQL vale NULL).
+    expect(row.scuola_id).toBe('sc-1')
     const log = row.consents_log as Array<Record<string, unknown>>
     expect(log[0]).toMatchObject({ field_id: 'privacy', label: 'Trattamento dati', accepted: true })
     expect(typeof log[0].accepted_at).toBe('string')

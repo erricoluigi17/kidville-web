@@ -29,16 +29,21 @@ function euro(n: number): string {
 }
 
 /**
- * Id degli admin della sede, con TRE livelli di fallback (P10) — dal più preciso
- * al più largo, per non allargare la platea di una notifica più del necessario:
+ * Id degli admin della sede. DUE livelli, dal più preciso al meno preciso:
  *
  *   1. mappatura `utenti_scuole` per la sede, se ha righe per questi admin;
  *   2. altrimenti gli admin la cui colonna `utenti.scuola_id` è la sede richiesta
- *      (fallback intermedio: nello stato attuale di prod `utenti_scuole` è vuota
- *      per gli admin, ma la colonna diretta spesso è valorizzata);
- *   3. solo se anche quello è vuoto → TUTTI gli admin (fail-open, loggato `info`
- *      perché è un degrado: senza log "notifica a tutti" e "configurazione a posto"
- *      sarebbero indistinguibili). Non lancia mai.
+ *      (l'appartenenza a una sede è l'unione delle due fonti, non la sola colonna).
+ *
+ * NESSUN TERZO LIVELLO. Fino al 2026-07-31 c'era: «nessuna mappatura ⇒ TUTTI gli
+ * admin del sistema», con un log `info`. Con una sede sola «meglio una notifica in
+ * più» era difendibile; con tre plessi significa la cassa di Aversa annunciata
+ * all'amministratore di Giugliano — e `info` è precisamente il livello che NON
+ * viene persistito (`EVENTI_PERSISTITI` tiene warn ed error), quindi quel degrado
+ * non lasciava nemmeno una riga interrogabile. Zero destinatari con un avviso è
+ * onesto; «tutti» è una decisione di visibilità presa da un ramo di ripiego.
+ *
+ * Non lancia mai.
  */
 export async function adminDellaSede(supabase: SupabaseClient, scuolaId: string): Promise<string[]> {
   try {
@@ -61,17 +66,23 @@ export async function adminDellaSede(supabase: SupabaseClient, scuolaId: string)
       .in('utente_id', ids)
     if (eUs) {
       // Tabella multi-plesso assente/illeggibile: prova la colonna diretta prima di
-      // allargare a tutti.
+      // rinunciare. `warn` e non `info`: il ponte illeggibile è un guasto, e da qui in
+      // poi la rinuncia è silenziosa per chiunque non legga i log.
       if (perColonna.length > 0) return perColonna
-      logEvento('cassa', 'info', { operazione: 'adminDellaSede', esito: 'utenti-scuole-non-letta' })
-      return ids
+      logEvento('cassa', 'warn', {
+        operazione: 'adminDellaSede', esito: 'utenti-scuole-non-letta', sede_id: scuolaId,
+      }, eUs)
+      return []
     }
     const perSede = (us ?? []).map((r) => String((r as { utente_id: string }).utente_id))
     if (perSede.length > 0) return perSede
     if (perColonna.length > 0) return perColonna
-    // Nessuna mappatura per-sede né per-colonna → fail-open a tutti gli admin.
-    logEvento('cassa', 'info', { operazione: 'adminDellaSede', esito: 'fail-open-tutti-admin' })
-    return ids
+    // Nessuna mappatura per-sede né per-colonna: si NEGA e lo si dice. Prima si
+    // notificavano tutti gli admin del sistema con una riga `info` non persistita.
+    logEvento('cassa', 'warn', {
+      operazione: 'adminDellaSede', esito: 'nessun-destinatario', sede_id: scuolaId, n: ids.length,
+    })
+    return []
   } catch (e) {
     logEvento('cassa', 'error', { operazione: 'adminDellaSede', esito: 'errore' }, e)
     return []

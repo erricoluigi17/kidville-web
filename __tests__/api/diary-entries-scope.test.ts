@@ -19,7 +19,13 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireDocente: h.requireDocente,
 }))
 vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: h.requireParentOfStudent }))
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, resolveScuoleAttive: h.resolveScuoleAttive }))
+// `assertClasseNomeInScope` concessivo: da W2-N (2026-07-31) il ramo docente ha
+// anche il gate per SEZIONE ASSEGNATA, provato in `sezioni-assegnate-scope.test.ts`.
+vi.mock('@/lib/auth/scope', () => ({
+  assertAlunnoInScope: async () => null,
+  assertClasseNomeInScope: async () => null,
+  resolveScuoleAttive: h.resolveScuoleAttive,
+}))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn(), enqueueDiarioGenitori: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => ({

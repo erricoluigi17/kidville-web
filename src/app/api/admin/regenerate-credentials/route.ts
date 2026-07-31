@@ -97,7 +97,15 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     nome = row.first_name;
     // Completa (o verifica) l'identità di accesso: account auth, ponte
     // anagrafica↔account e riga `utenti` ruolo genitore. Idempotente.
-    const identita = await ensureParentIdentity(admin, row, { scuolaId: auth.user.scuola_id ?? null });
+    //
+    // LA SEDE DEL GENITORE VIENE DAI FIGLI. Qui si passava `scuolaId:
+    // auth.user.scuola_id`, cioè la sede di CHI PREME IL BOTTONE: l'unico admin
+    // reale ha come primaria Giugliano ed è l'unico che possa gestire Aversa e
+    // Cesa, quindi al primo invio di credenziali a una famiglia di Aversa quel
+    // genitore nasceva «di Giugliano». La query giusta era già stata fatta 28
+    // righe più su da `assertParentInScope`. Ora la sede dell'operatore serve
+    // solo a sciogliere l'ambiguità di un genitore con figli in due plessi.
+    const identita = await ensureParentIdentity(admin, row, { sedeOperatore: auth.user.scuola_id ?? null });
     if (!identita.ok) {
       if (identita.reason === 'no_email') {
         return NextResponse.json(

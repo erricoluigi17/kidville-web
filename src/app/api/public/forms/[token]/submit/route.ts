@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { accessoConsentito } from '@/lib/forms/publish'
+import { colonnaSedeAssente } from '@/lib/forms/degrado-sede'
+import { risolviSedeCompilazione } from '@/lib/forms/sede-compilazione'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -20,6 +22,17 @@ const tokenParamSchema = z.string().min(1)
 const postBodySchema = z.object({
   data: z.unknown().refine((v) => Boolean(v), { message: 'data obbligatorio' }),
 })
+
+/** Il modello dietro al token. `scuola_id` è OPZIONALE: sul DB E2E della CI, non
+ *  migrato, la colonna non esiste e la chiave arriva ASSENTE — condizione
+ *  diversa da «presente e vuota», che significa invece modello globale. */
+interface ModelloPubblico {
+  id: string
+  published_at: string | null
+  access_mode: string | null
+  schema?: unknown
+  scuola_id?: string | null
+}
 
 export const POST = withRoute('public/forms/[token]/submit:POST', async (
   request: Request,
@@ -44,11 +57,31 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
     const data = b.data.data as FormSubmissionData
 
     const supabase = await createAdminClient()
-    const { data: model } = await supabase
-      .from('form_models')
-      .select('id, published_at, access_mode, schema, scuola_id')
-      .eq('public_token', token)
-      .maybeSingle()
+    // Sul DB E2E della CI, non migrato, `scuola_id` non esiste ancora: senza il
+    // secondo tentativo la SELECT fallirebbe intera e OGNI modulo pubblico
+    // risponderebbe «non trovato».
+    // Due `select()` distinti e non un ternario dentro `select()`: il client
+    // Supabase tipizza quella stringa come LETTERALE e su un'unione risponde con
+    // un `ParserError` al posto del tipo della riga.
+    const carica = async (conSede: boolean) => {
+      const res = conSede
+        ? await supabase.from('form_models')
+            .select('id, published_at, access_mode, schema, scuola_id').eq('public_token', token).maybeSingle()
+        : await supabase.from('form_models')
+            .select('id, published_at, access_mode, schema').eq('public_token', token).maybeSingle()
+      return { data: res.data as ModelloPubblico | null, error: res.error }
+    }
+    let modelRes = await carica(true)
+    if (colonnaSedeAssente(modelRes.error)) modelRes = await carica(false)
+    if (modelRes.error) {
+      // PostgREST non lancia: senza questo controllo un guasto di lettura
+      // diventerebbe un 404 muto, indistinguibile da «token inesistente».
+      logEvento('modulistica', 'error', {
+        operazione: 'public/forms/[token]/submit:POST', esito: 'modello-non-letto',
+      }, modelRes.error)
+      return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
+    }
+    const model = modelRes.data
 
     if (!model || !model.published_at) {
       return NextResponse.json({ error: 'Modulo non trovato o non pubblicato' }, { status: 404 })
@@ -69,16 +102,33 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
 
     const consents_log = estraiConsensi(pages, data as Record<string, unknown>, new Date().toISOString())
     // Invio anonimo da link pubblico: l'unica sede conoscibile è quella dichiarata
-    // sul MODELLO. Se il modello vale per tutte le sedi resta `null` — la riga è
-    // visibile alla sola Direzione, che è la risposta onesta: non c'è nessun dato
-    // da cui dedurre da quale plesso arrivi chi ha aperto il link.
+    // sul MODELLO — chi apre il link non ha nessun altro dato da cui dedurla.
+    //
+    // Il commento che stava qui diceva che senza sede «la riga è visibile alla
+    // sola Direzione, che è la risposta onesta». Era falso, ed è il genere di
+    // commento che ferma un'indagine: i lettori filtrano con
+    // `.in('scuola_id', plessi)` e `NULL IN (…)` in SQL vale NULL, quindi quella
+    // compilazione non compariva a nessuno. Se il modello non dichiara la sede e
+    // le sedi reali sono più d'una, l'invio si rifiuta: va dichiarata sul
+    // modello prima di pubblicarlo.
+    const sede = await risolviSedeCompilazione(
+      supabase,
+      [(model as { scuola_id?: string | null }).scuola_id],
+      'public/forms/[token]/submit:POST',
+    )
+    if (sede.ambigua) {
+      return NextResponse.json(
+        { error: 'Modulo non disponibile: la sede non è indicata sul modello' },
+        { status: 400 }
+      )
+    }
     const rigaInvio: Record<string, unknown> = {
       model_id: model.id,
       user_id: null,
       data,
       status: 'completed',
       consents_log: consents_log.length > 0 ? consents_log : null,
-      scuola_id: (model as { scuola_id?: string | null }).scuola_id ?? null,
+      scuola_id: sede.scuolaId,
     }
     let insRes = await supabase.from('form_submissions').insert(rigaInvio).select('id').single()
     if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
@@ -92,11 +142,20 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
     const { data: submission, error } = insRes
 
     if (error || !submission) {
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Invio fallito' },
-        { status: 500 }
-      )
+      // PostgREST ritorna un oggetto, non un `Error`: il ramo qui sotto scartava
+      // il messaggio E non lo scriveva da nessuna parte. Un invio perso senza
+      // traccia è esattamente il guasto che l'osservabilità deve impedire.
+      logEvento('modulistica', 'error', {
+        operazione: 'public/forms/[token]/submit:POST', esito: 'compilazione-non-registrata',
+      }, error)
+      return NextResponse.json({ error: 'Invio fallito' }, { status: 500 })
     }
+    // Successo loggato: il modulo pubblico è l'unico canale in cui nessuno,
+    // dall'altra parte, si accorge che una compilazione non è mai arrivata.
+    logEvento('modulistica', 'info', {
+      operazione: 'public/forms/[token]/submit:POST', esito: 'compilazione-registrata',
+      entita_id: submission.id, sede: sede.scuolaId,
+    })
     return NextResponse.json({ id: submission.id }, { status: 201 })
   } catch (err) {
     logErrore({ operazione: 'public/forms/[token]/submit:POST', stato: 500 }, err)

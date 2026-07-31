@@ -196,15 +196,21 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     const totals = useMemo(() => calcolaTotaliPagamenti(pagamenti), [pagamenti]);
 
-    // genera la retta del mese selezionato (per chi non ce l'ha ancora)
+    // genera la retta del mese selezionato (per chi non ce l'ha ancora), SULLA
+    // SEDE SELEZIONATA: senza `scuola_id` il server emetteva su tutti i plessi.
+    // E la risposta ora si guarda: un rifiuto (sede non dichiarata, sede di
+    // collaudo) restava altrimenti del tutto invisibile all'operatore.
     const generaMese = async () => {
         setGenerando(true);
         try {
-            await fetch('/api/pagamenti/genera-rette', {
+            const res = await fetch('/api/pagamenti/genera-rette', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({ periodo: mese.slice(0, 7) }),
+                body: JSON.stringify({ periodo: mese.slice(0, 7), scuola_id: scuolaId }),
             });
+            const j = await res.json().catch(() => null);
+            if (!res.ok || !j?.success) setError(j?.error || t('dashErrCaricamento'));
+            else setError(null);
             await load();
         } finally {
             setGenerando(false);

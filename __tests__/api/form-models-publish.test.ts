@@ -10,10 +10,19 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
-    from: () => {
+    // Fixture SENZA sedi (`schools` vuota): questo file prova la meccanica della
+    // pubblicazione — token stabile, published_at, unpublish — non l'isolamento
+    // fra sedi, che sta in `modulistica-mutazioni-scope-sede.test.ts` col finto
+    // client che filtra davvero. Zero sedi reali = niente da isolare, quindi il
+    // gate di tenant lascia passare, come sul DB E2E della CI.
+    from: (tabella: string) => {
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      b.in = () => b
+      b.order = () => b
+      b.then = (ok: (v: unknown) => unknown) =>
+        Promise.resolve({ data: tabella === 'form_models' ? [h.model] : [], error: null }).then(ok)
       b.maybeSingle = async () => ({ data: h.model, error: null })
       b.update = (row: Record<string, unknown>) => {
         h.updates.push(row)

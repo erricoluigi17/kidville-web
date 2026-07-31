@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -55,6 +55,18 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
         const endDate   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
         const supabase = await createAdminClient();
+
+        // Contratto storico: senza sezione la risposta è vuota, non un 400.
+        if (!sezione) {
+            return NextResponse.json([], { status: 200, headers: { 'Cache-Control': 'no-store' } });
+        }
+
+        // GATE per SEZIONE ASSEGNATA (R108): `requireDocente` verifica il RUOLO,
+        // non la classe. Senza questo un educator otteneva il prospetto presenze
+        // del mese di qualunque classe del proprio plesso, comprese quelle non
+        // sue. Admin/coordinator/segreteria non sono toccati (vedono il plesso).
+        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, { soloSezioniAssegnate: true });
+        if (scopeErr) return scopeErr;
 
         // Isolamento per tenant (finora ASSENTE su questa route): la stessa
         // `classe_sezione` può esistere in più sedi, quindi senza filtro il

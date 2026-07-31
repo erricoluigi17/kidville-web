@@ -32,8 +32,11 @@ const req = (body: unknown) =>
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
 
+// Il modello DICHIARA la sua sede: nell'invio anonimo è l'unico dato da cui
+// dedurla — chi apre un link pubblico non ha nient'altro. Senza, l'invio viene
+// rifiutato (400) invece di generare una riga che non vedrebbe nessuno.
 const pubModel = {
-  id: 'm-1', published_at: '2026-06-26T00:00:00Z', access_mode: 'public',
+  id: 'm-1', published_at: '2026-06-26T00:00:00Z', access_mode: 'public', scuola_id: 'sc-1',
   schema: { version: '1.0', pages: [{ id: 'p', title: 'P', fields: [
     { id: 'privacy', type: 'consent', label: 'Privacy', required: true },
   ] }] },
@@ -75,6 +78,7 @@ describe('POST /api/public/forms/[token]/submit', () => {
     const row = h.inserts[0]
     expect(row.status).toBe('completed')
     expect(row.user_id).toBeNull()
+    expect(row.scuola_id).toBe('sc-1')
     expect((row.consents_log as Array<Record<string, unknown>>)[0]).toMatchObject({ field_id: 'privacy', accepted: true })
   })
 })

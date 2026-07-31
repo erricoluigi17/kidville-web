@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
 import { getModuleConfig } from '@/lib/settings/module-config';
@@ -24,6 +25,8 @@ const getParentQuerySchema = z.object({
 const getTeacherQuerySchema = z.object({
     sezione: z.string().default(''),
     date: zDataYMD.optional(),
+    // La sede scelta nel SedeSelector (R70): il nome-classe da solo non basta più.
+    scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
 });
 
 // Un evento diario: campi pass-through verso il DB lasciati permissivi
@@ -131,18 +134,31 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     }
 
     // ── Modalità insegnante/staff: per sezione + data ──
-    // Gate ruolo + isolamento per plesso (nome classe risolto DENTRO i propri plessi).
+    // Gate ruolo + gate classe + isolamento per plesso.
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
-    // Rispetta la selezione del SedeSelector (cookie `sedi_attive`), ri-validata
-    // contro le sedi accessibili: filtra il diario sulle sole sedi attive.
-    const plessi = await resolveScuoleAttive(request, admin, auth.user);
-    if (plessi.length === 0) return NextResponse.json([]);
 
     const q = parseQuery(request, getTeacherQuerySchema);
     if ('response' in q) return q.response;
     const sezione = q.data.sezione;
     const date = q.data.date ?? new Date().toISOString().split('T')[0];
+    // Contratto storico: senza sezione la risposta è vuota, non un 400.
+    if (!sezione) return NextResponse.json([]);
+
+    // GATE per SEZIONE ASSEGNATA prima di leggere gli alunni: `requireDocente`
+    // verifica il ruolo, non la classe (R108). Educator → solo le sue sezioni.
+    const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione, { soloSezioniAssegnate: true });
+    if (scopeErr) return scopeErr;
+
+    // Rispetta la selezione del SedeSelector (cookie `sedi_attive`), ri-validata
+    // contro le sedi accessibili, e la sede eventualmente dichiarata in query.
+    const attive = await resolveScuoleAttive(request, admin, auth.user);
+    const sede = restringiASedeRichiesta(attive, q.data.scuola_id, {
+        azione: 'diary/entries:GET', utente: auth.user.id, ruolo: auth.user.role,
+    });
+    if (sede.response) return sede.response;
+    const plessi = sede.plessi ?? [];
+    if (plessi.length === 0) return NextResponse.json([]);
 
     const { data: alunni } = await admin
         .from('alunni')
@@ -263,13 +279,28 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         // Best-effort e idempotente per giorno: non blocca mai il salvataggio del diario.
         if (entry.tipo_evento === 'bagno') {
             try {
+                // `scuola_id` insieme a `usa_pannolino`: lo scalo scrive su
+                // `armadietto`, e ogni scrittura dichiara la sua sede. Fino al
+                // 2026-07-31 questo insert — come gli altri due su `armadietto` —
+                // la ometteva, e in produzione la colonna è NULL su tutte le righe.
                 const { data: al } = await admin
                     .from('alunni')
-                    .select('usa_pannolino')
+                    .select('usa_pannolino, scuola_id')
                     .eq('id', entry.alunno_id)
                     .maybeSingle();
 
-                if (al?.usa_pannolino === true) {
+                const scuolaAlunno = (al?.scuola_id as string | undefined) ?? null;
+                if (al?.usa_pannolino === true && !scuolaAlunno) {
+                    // Sede non risolvibile: si SALTA lo scalo invece di scrivere una
+                    // riga senza plesso. Va detto per lo stesso motivo del catch qui
+                    // sotto: è una scorta che a fine mese non torna.
+                    logEvento('diary', 'warn', {
+                        operazione: 'diary/entries:POST',
+                        esito: 'scalo-pannolino-saltato-senza-sede',
+                    });
+                }
+
+                if (al?.usa_pannolino === true && scuolaAlunno) {
                     // Evita doppio scalo nello stesso giorno (idempotenza su update ripetuti)
                     const { data: giaScalato } = await admin
                         .from('armadietto')
@@ -283,6 +314,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
                     if (!giaScalato || giaScalato.length === 0) {
                         await admin.from('armadietto').insert({
                             alunno_id: entry.alunno_id,
+                            scuola_id: scuolaAlunno,
                             nome_oggetto: 'Pannolini',
                             materiale: 'Pannolini',
                             quantita: 1,

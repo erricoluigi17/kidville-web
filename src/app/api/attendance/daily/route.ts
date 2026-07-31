@@ -61,7 +61,12 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         // route gira in service-role. Con tre sedi «2 ANNI» esiste sia ad Aversa
         // sia a Cesa: senza questo, chi ne indovinava il nome otteneva nomi e
         // presenze dei bambini dell'altra sede.
-        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione);
+        //
+        // `soloSezioniAssegnate` (aggiunto il 2026-07-31, R108): il gate senza
+        // opzioni risponde a «di quale sede è questa classe?», non a «questa
+        // classe è tua?» — e questa route era citata come il «gemello corretto»
+        // pur avendo lo stesso buco. Educator → solo le sue sezioni.
+        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, { soloSezioniAssegnate: true });
         if (scopeErr) return scopeErr;
         const plessi = await resolveScuoleAttive(request, supabase, auth.user);
 

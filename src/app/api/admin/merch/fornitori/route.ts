@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -19,7 +19,11 @@ const COLS = 'id, scuola_id, nome, referente, email, telefono, piva, indirizzo, 
 const getQuerySchema = z.object({})
 
 const zEmail = z.string().trim().email('Email non valida').max(160).nullish()
+/** Sede DICHIARATA dal client (`''` = non dichiarata, come nelle altre route). */
+const zScuolaPreferita = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
+
 const postBodySchema = z.object({
+  scuola_id: zScuolaPreferita,
   nome: z.string().trim().min(1, 'Il nome del fornitore è obbligatorio').max(160),
   referente: z.string().trim().max(160).nullish(),
   email: zEmail,
@@ -75,8 +79,8 @@ export const GET = withRoute('admin/merch/fornitori:GET', async (request: Reques
   }
 })
 
-// POST /api/admin/merch/fornitori — crea un fornitore
-export const POST = withRoute('admin/merch/fornitori:POST', async (request: Request) => {
+// POST /api/admin/merch/fornitori — crea un fornitore nella sede DICHIARATA
+export const POST = withRoute('admin/merch/fornitori:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -84,9 +88,11 @@ export const POST = withRoute('admin/merch/fornitori:POST', async (request: Requ
     if ('response' in b) return b.response
 
     const supabase = await createAdminClient()
-    const plessi = await scuoleDiUtente(supabase, auth.user)
-    const scuolaId = auth.user.scuola_id && plessi.includes(auth.user.scuola_id) ? auth.user.scuola_id : plessi[0]
-    if (!scuolaId) return NextResponse.json({ error: 'Nessun plesso associato al tuo profilo' }, { status: 400 })
+    // Stessa correzione di `merch/articoli`: la sede si dichiara, non si eredita
+    // dal profilo di chi scrive (vedi il commento esteso lì).
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, b.data.scuola_id)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
 
     const record = {
       scuola_id: scuolaId,

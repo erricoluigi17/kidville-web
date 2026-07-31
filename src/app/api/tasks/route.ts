@@ -309,10 +309,17 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
                 .filter(Boolean);
 
             if (myTaggedIds.length > 0) {
+                // `.in('scuola_id', plessi)`: `plessi` è già calcolato sopra (e
+                // vuoto ⇒ si è già usciti). Senza il filtro, un vecchio tag su un
+                // bambino di un altro plesso faceva entrare il NOME della SUA
+                // classe fra le sezioni del docente, e da lì gli mostrava i task
+                // della classe OMONIMA della propria sede — che non è la sua.
+                // Stesso presidio già in `educator-sections` e in `chat/contacts`.
                 const { data: students } = await supabase
                     .from('alunni')
                     .select('classe_sezione')
-                    .in('id', myTaggedIds);
+                    .in('id', myTaggedIds)
+                    .in('scuola_id', plessi);
                 sectionNames = [...new Set(
                     (students ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
                 )];

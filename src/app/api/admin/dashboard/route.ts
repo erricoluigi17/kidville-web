@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -77,10 +78,16 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .select('id', { count: 'exact', head: true })
       .in('scuola_id', sedi)
       .eq('fattura_stato', 'in_attesa'),
-    // Incassi ultimi 6 mesi (trend + incassato mese corrente)
+    // Incassi ultimi 6 mesi (trend + incassato mese corrente).
+    // `incassi` NON ha `scuola_id`: la sede si raggiunge solo via
+    // `pagamento_id → pagamenti.scuola_id`. Il join `!inner` è quindi il filtro
+    // — e non perde righe, perché `incassi.pagamento_id` è sempre valorizzato
+    // (FK verso `pagamenti`). Senza, il primo incasso di un'altra sede entrava
+    // nel KPI di chi non deve vederlo.
     supabase
       .from('incassi')
-      .select('importo, data_incasso')
+      .select('importo, data_incasso, pagamenti!inner(scuola_id)')
+      .in('pagamenti.scuola_id', sedi)
       .gte('data_incasso', sixMonthsAgoIso),
     // Iscrizioni in attesa (conteggio)
     supabase
@@ -102,14 +109,35 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .select('id', { count: 'exact', head: true })
       .in('scuola_id', sedi)
       .eq('data', today),
-    // Submission moduli totali
-    supabase.from('form_submissions').select('id', { count: 'exact', head: true }),
+    // Submission moduli totali — filtrate per sede: senza `.in()` il contatore
+    // includeva anche la riga della sede FINTA E2E, cioè un KPI di produzione
+    // già sbagliato oggi.
+    supabase.from('form_submissions').select('id', { count: 'exact', head: true }).in('scuola_id', sedi),
     // Submission moduli da firmare/evadere
     supabase
       .from('form_submissions')
       .select('id', { count: 'exact', head: true })
+      .in('scuola_id', sedi)
       .eq('status', 'pending_signature'),
   ])
+
+  // PostgREST non lancia: ogni aggregato si legge con `?? 0` / `?? []`, quindi
+  // un guasto diventa uno ZERO indistinguibile da «non ci sono dati». Con i
+  // filtri di sede aggiunti il 2026-07-31 il caso è concreto: sul DB E2E della
+  // CI, che non è migrato, `form_submissions.scuola_id` non esiste e PostgREST
+  // risponde `42703` sulla SELECT. La dashboard deve reggere — ma il motivo
+  // dello zero deve restare leggibile nei log, non sparire.
+  for (const [nome, res] of [
+    ['incassi', incassiRes],
+    ['form_submissions:totale', moduliTotRes],
+    ['form_submissions:da_firmare', moduliPendingRes],
+  ] as const) {
+    if (res.error) {
+      // Il nome dell'aggregato va in `evento`: è l'unico campo libero del
+      // contesto, ed è ciò che distingue «quale KPI è a zero e perché».
+      logErrore({ operazione: 'admin/dashboard:GET', stato: 200, evento: `db:${nome}` }, res.error)
+    }
+  }
 
   // --- Studenti ---
   const alunni = alunniRes.data ?? []

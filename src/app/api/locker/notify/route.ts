@@ -8,8 +8,9 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
+import { staffScuola } from '@/lib/notifiche/destinatari'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Ruoli di plesso avvisati oltre ai docenti della sezione (come panic-alert).
 const STAFF_LOCKER = new Set(['segreteria', 'admin', 'coordinator'])
@@ -56,23 +57,35 @@ export const POST = withRoute('locker/notify:POST', async (request: Request) => 
       .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
-    // Destinatari: staff del plesso (schema legacy: ruolo su `role` O `ruolo`)
-    // + docenti della sezione (utenti_sezioni; section_id può essere null).
-    const destinatari = new Set<string>()
-    if (alunno.scuola_id) {
-      const { data: staff } = await supabase
-        .from('utenti')
-        .select('id, role, ruolo')
-        .eq('scuola_id', alunno.scuola_id)
-      for (const u of staff ?? []) {
-        if (STAFF_LOCKER.has(u.role ?? '') || STAFF_LOCKER.has(u.ruolo ?? '')) destinatari.add(u.id)
-      }
-    }
+    // Destinatari: staff del plesso + docenti della sezione (utenti_sezioni;
+    // section_id può essere null).
+    //
+    // L'APPARTENENZA A UNA SEDE NON È `utenti.scuola_id`: è l'unione fra quella
+    // colonna e il ponte `utenti_scuole`. Qui c'era una `.eq('scuola_id', …)`
+    // nuda, e per le sedi aperte il 2026-07-29 — dove nessuno ha ancora quel
+    // plesso come primario — la lista usciva VUOTA. È la quarta occorrenza della
+    // stessa forma (mensa/notify, panic-alert, fattura/sync), e l'unica che una
+    // famiglia reale poteva già percorrere: `staffScuola` guarda il ponte ed è
+    // l'unico posto del repo autorizzato a quella query.
+    const destinatari = new Set<string>(
+      await staffScuola(supabase, (alunno.scuola_id as string | null) ?? null, [...STAFF_LOCKER])
+    )
     if (alunno.section_id) {
       for (const id of await docentiDiSezione(supabase, alunno.section_id)) destinatari.add(id)
     }
 
-    if (destinatari.size > 0) {
+    if (destinatari.size === 0) {
+      // La route risponde comunque 200 con `destinatari: 0` — e finché quel numero
+      // non finiva anche in un log, «nessuno da avvisare» e «avvisati tutti» si
+      // leggevano identici: il genitore vede una conferma e la richiesta non arriva
+      // a nessuno. Nessun nome del bambino nella riga.
+      logEvento('notifica', 'warn', {
+        operazione: 'locker/notify:POST',
+        esito: 'nessun-destinatario',
+        sede_id: (alunno.scuola_id as string | null) ?? null,
+        tipo: 'locker_scorte',
+      })
+    } else {
       await enqueueNotifiche(supabase, {
         utenteIds: [...destinatari],
         tipo: 'locker_scorte',

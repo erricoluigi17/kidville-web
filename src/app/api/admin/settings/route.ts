@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -90,6 +91,44 @@ const patchBodySchema = z.object({
   rette_config: zRetteConfig.optional(),
 })
 
+/**
+ * La sede DICHIARATA dal client si VALIDA, non si ripiega.
+ *
+ * `admin_settings` ha UNA riga per sede: qui si decide quale plesso si sta
+ * configurando. `resolveScuolaScrittura` però ignora una `preferita` fuori scope
+ * e passa al ramo successivo, che per chi ha un solo plesso risponde sempre:
+ * `scuola_id` di un'altra sede non veniva rifiutato, veniva **sostituito in
+ * silenzio**. Chi credeva di configurare Aversa configurava Giugliano — con
+ * `avvisi_config`, `presenze_config`, `chat_config` questo significa cambiare i
+ * permessi del plesso sbagliato senza vederlo. Sede nominata e non attiva ⇒ 403.
+ *
+ * Il confronto è con `resolveScuoleAttive` (accessibili ∩ SedeSelector): questi
+ * pannelli girano dentro `SedeRequired`, che manda esattamente la sede
+ * selezionata, e scrivere su una sede appena tolta dal selettore è
+ * indistinguibile dal difetto che si sta chiudendo.
+ *
+ * NB: gemella della funzione omonima in `admin/settings/categorie/route.ts`. Non
+ * è ancora un helper condiviso di proposito — `@/lib/auth/scope.ts` è in mano ad
+ * altri in questo ciclo; l'estrazione è annotata per il consolidamento finale.
+ */
+async function sedeDichiarataFuoriScope(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  dichiarata: string | undefined,
+  operazione: string,
+): Promise<NextResponse | null> {
+  if (!dichiarata) return null
+  const sedi = await resolveScuoleAttive(request, supabase, user)
+  if (sedi.includes(dichiarata)) return null
+  // `warn` → persistito: una sede nominata e non posseduta è un segnale, non rumore.
+  logEvento('multi_sede', 'warn', {
+    tipo: 'sede-dichiarata-fuori-scope', azione: operazione,
+    utente: user.id, ruolo: user.role, attive: sedi.length,
+  })
+  return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+}
+
 // GET /api/admin/settings?userId=&scuola_id=  (staff) — impostazioni della scuola
 export const GET = withRoute('admin/settings:GET', async (request: NextRequest) => {
     try {
@@ -100,12 +139,10 @@ export const GET = withRoute('admin/settings:GET', async (request: NextRequest) 
       if ('response' in q) return q.response
 
       const supabase = await createAdminClient()
-      const sw = await resolveScuolaScrittura(
-        request,
-        supabase,
-        auth.user,
-        (q.data.scuola_id as string | undefined) ?? undefined,
-      )
+      const dichiarata = (q.data.scuola_id as string | undefined) ?? undefined
+      const fuori = await sedeDichiarataFuoriScope(request, supabase, auth.user, dichiarata, 'admin/settings:GET')
+      if (fuori) return fuori
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, dichiarata)
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId as string
 
@@ -153,12 +190,10 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
       const body = b.data as Record<string, unknown>
 
       const supabase = await createAdminClient()
-      const sw = await resolveScuolaScrittura(
-        request,
-        supabase,
-        auth.user,
-        (body.scuola_id as string | undefined) ?? undefined,
-      )
+      const dichiarata = (body.scuola_id as string | undefined) ?? undefined
+      const fuori = await sedeDichiarataFuoriScope(request, supabase, auth.user, dichiarata, 'admin/settings:PATCH')
+      if (fuori) return fuori
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, dichiarata)
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId as string
 

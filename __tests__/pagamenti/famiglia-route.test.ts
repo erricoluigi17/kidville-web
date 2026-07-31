@@ -7,6 +7,7 @@ import { it, expect, vi, beforeEach, describe } from 'vitest'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   scope: vi.fn(),
+  parentInScope: vi.fn(),
   figli: vi.fn(),
   saldo: vi.fn(),
   parent: { id: '33333333-3333-4333-8333-333333333333', first_name: 'Anna', last_name: 'Rossi', auth_user_id: 'acc-1' } as Record<string, unknown> | null,
@@ -18,7 +19,14 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.scope(...a) }))
+// Qui il gate di sede NON è l'oggetto del test (lo è in
+// `__tests__/api/pagamenti-famiglia-scope-sede.test.ts`, col finto client e lo
+// scope VERO): si lascia passare, così restano coperti i rami di FORMA della
+// risposta — ordinamento, degradazione 42703, 404, genitore senza figli.
+vi.mock('@/lib/auth/scope', () => ({
+  resolveScuoleAttive: (...a: unknown[]) => h.scope(...a),
+  assertParentInScope: (...a: unknown[]) => h.parentInScope(...a),
+}))
 vi.mock('@/lib/anagrafiche/legami', () => ({ getFigliDiGenitore: (...a: unknown[]) => h.figli(...a) }))
 vi.mock('@/lib/pagamenti/credito', () => ({ saldoCredito: (...a: unknown[]) => h.saldo(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -54,6 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SC } })
   h.scope.mockResolvedValue([SC])
+  h.parentInScope.mockResolvedValue(null)
   h.figli.mockResolvedValue([AL1, AL2])
   h.saldo.mockResolvedValue(25)
   h.parent = { id: '33333333-3333-4333-8333-333333333333', first_name: 'Anna', last_name: 'Rossi', auth_user_id: 'acc-1' }

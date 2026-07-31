@@ -8,6 +8,7 @@ import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { assertConfigMensaInScope } from '@/lib/mensa/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -236,8 +237,26 @@ export const DELETE = withRoute('mensa/menu:DELETE', async (request: Request) =>
     const q = parseQuery(request, deleteQuerySchema)
     if ('response' in q) return q.response
     const supabase = await createAdminClient()
-    const { error } = await supabase.from('mensa_menu_override').delete().eq('id', q.data.override_id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    // R44: l'override è la riga che descrive il pasto di UNA data — allergeni
+    // compresi. Cancellarlo riporta la giornata alla rotazione ordinaria: sul menu
+    // di un altro plesso significa rimettere in tavola l'allergene che qualcuno
+    // aveva tolto apposta. Il gate di ruolo non bastava: serve quello di sede.
+    const scope = await assertConfigMensaInScope(
+      request as NextRequest, supabase, auth.user, 'mensa_menu_override', q.data.override_id,
+    )
+    if (scope.response) return scope.response
+
+    const { error } = await supabase
+      .from('mensa_menu_override')
+      .delete()
+      .eq('id', q.data.override_id)
+      .eq('scuola_id', scope.sede as string)
+    if (error) {
+      // PostgREST non lancia: senza questo ramo il fallimento resterebbe muto e la
+      // route risponderebbe comunque «fatto».
+      logErrore({ operazione: 'mensa/menu:DELETE', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Impossibile eliminare la variazione di menu' }, { status: 500 })
+    }
     return NextResponse.json({ success: true })
   } catch (err) {
     logErrore({ operazione: 'mensa/menu:DELETE', stato: 500 }, err)

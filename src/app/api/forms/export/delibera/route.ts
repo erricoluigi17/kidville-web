@@ -1,12 +1,14 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { jsPDF } from 'jspdf'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -29,7 +31,7 @@ function candidatoLabel(data: Record<string, unknown>): string {
 }
 
 // GET /api/forms/export/delibera?modelId=&userId=  (staff) — PDF della delibera (DL-025).
-export const GET = withRoute('forms/export/delibera:GET', async (request: Request) => {
+export const GET = withRoute('forms/export/delibera:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -40,14 +42,37 @@ export const GET = withRoute('forms/export/delibera:GET', async (request: Reques
     const supabase = await createAdminClient()
     const { data: model } = await supabase.from('form_models').select('title').eq('id', modelId).maybeSingle()
     if (!model) return NextResponse.json({ error: 'Modello non trovato' }, { status: 404 })
-    const { data: subs } = await supabase
-      .from('form_submissions')
-      .select('id, score, esito_ammissione, data')
-      .eq('model_id', modelId)
-      .eq('status', 'completed')
-      .order('score', { ascending: false })
 
-    const righe = (subs ?? []) as { id: string; score: number; esito_ammissione: string | null; data: Record<string, unknown> }[]
+    // Isolamento per sede — stesso blocco di `forms/export/pdf` e
+    // `forms/export/xlsx`, che PR #60 aveva corretto lasciando indietro il
+    // gemello: questo PDF stampa cognome e nome dei minori candidati, il
+    // punteggio e l'esito, ed è un file che una volta scaricato non torna
+    // indietro. Scope vuoto ⇒ nessuna riga.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+    const leggi = (conSede: boolean) => {
+      let query = supabase
+        .from('form_submissions')
+        .select('id, score, esito_ammissione, data')
+        .eq('model_id', modelId)
+        .eq('status', 'completed')
+      if (conSede) query = query.in('scuola_id', plessi)
+      return query.order('score', { ascending: false })
+    }
+    let res = await leggi(true)
+    if (colonnaSedeAssente(res.error)) {
+      if (!(await degradoSedeLecito(supabase, 'forms/export/delibera:GET'))) {
+        return NextResponse.json({ error: 'Isolamento per sede non disponibile' }, { status: 500 })
+      }
+      res = await leggi(false)
+    }
+    if (res.error) {
+      logEvento('modulistica', 'error', {
+        operazione: 'forms/export/delibera:GET', esito: 'graduatoria-non-letta',
+      }, res.error)
+      return NextResponse.json({ error: res.error.message }, { status: 500 })
+    }
+
+    const righe = (res.data ?? []) as { id: string; score: number; esito_ammissione: string | null; data: Record<string, unknown> }[]
     const titolo = (model as { title?: string } | null)?.title ?? 'Modulo'
 
     const doc = new jsPDF()

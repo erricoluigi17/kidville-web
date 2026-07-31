@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zAnnoMese, zDataYMD, zUuid } from '@/lib/validation/common';
@@ -20,6 +21,8 @@ const getQuerySchema = z.object({
     month: z.preprocess(vuotoComeAssente, zAnnoMese.optional()),
     material_filter: z.string().optional(),
     mode: z.string().optional(), // 'stock' | 'carico' | altro (altri valori = nessun effetto, come prima)
+    // La sede scelta nel SedeSelector (R70): finora non viaggiava mai.
+    scuola_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
 });
 
 const postBodySchema = z.object({
@@ -75,13 +78,31 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
             if (auth.response) return auth.response;
         }
 
-        // Ramo docente/staff (per classe): gate ruolo + isolamento per plesso.
+        // Ramo docente/staff (per classe): gate ruolo + gate classe + isolamento
+        // per plesso.
         let plessiScope: string[] = [];
         if (classeSezione && !alunnoId) {
             const auth = await requireDocente(request);
             if (auth.response) return auth.response;
             const admin = await createAdminClient();
-            plessiScope = await scuoleDiUtente(admin, auth.user);
+
+            // GATE per SEZIONE ASSEGNATA (R108) prima di leggere gli alunni:
+            // `requireDocente` verifica il ruolo, non la classe. Sull'armadietto
+            // il danno arrivava anche in scrittura — la UI cicla sugli alunni
+            // così ottenuti e registra il carico per ciascuno.
+            const scopeErr = await assertClasseNomeInScope(admin, auth.user, classeSezione, { soloSezioniAssegnate: true });
+            if (scopeErr) return scopeErr;
+
+            // `resolveScuoleAttive` e non `scuoleDiUtente`: quest'ultima non legge
+            // nemmeno il cookie, quindi il SedeSelector della pagina Armadietto
+            // era del tutto inerte (R70). Più la sede eventualmente dichiarata
+            // in query, ristretta a quelle accessibili (fail-closed).
+            const attive = await resolveScuoleAttive(request, admin, auth.user);
+            const sede = restringiASedeRichiesta(attive, q.data.scuola_id, {
+                azione: 'locker/inventory:GET', utente: auth.user.id, ruolo: auth.user.role,
+            });
+            if (sede.response) return sede.response;
+            plessiScope = sede.plessi ?? [];
             if (plessiScope.length === 0) return NextResponse.json([]);
         }
 
@@ -200,6 +221,25 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
 
         const targetDate = date ?? new Date().toISOString().slice(0, 10);
 
+        // L'anagrafica dell'alunno si legge PRIMA di scrivere: serviva già per
+        // l'audit qui sotto, e porta la SEDE. Fino al 2026-07-31 i tre insert su
+        // `armadietto` non passavano `scuola_id` e in produzione tutte e 4 le
+        // righe hanno la chiave di tenant vuota: la colonna esiste per isolare i
+        // plessi e nessuno la riempiva. La sede è una proprietà del DATO.
+        //
+        // PostgREST non lancia: si controlla `{ error }`. Senza sede si rifiuta
+        // la scrittura, non si archivia «da qualche parte».
+        const { data: al, error: alErr } = await supabase
+            .from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        if (alErr) {
+            logErrore({ operazione: 'locker/inventory:POST', stato: 500, evento: 'db' }, alErr);
+            return NextResponse.json({ error: 'Anagrafica alunno non leggibile' }, { status: 500 });
+        }
+        const scuolaId = (al?.scuola_id as string | undefined) ?? null;
+        if (!scuolaId) {
+            return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
+        }
+
         // Cerca record esistente per (alunno, materiale, data, portato=true)
         const { data: existing } = await supabase
             .from('armadietto')
@@ -212,10 +252,12 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
 
         let result;
         if (existing) {
-            // Aggiorna quantità esistente (somma)
+            // Aggiorna quantità esistente (somma). `scuola_id` va nel SET perché
+            // le righe scritte prima del 2026-07-31 ce l'hanno NULL: la data è
+            // quella odierna, quindi non si riscrive nessuno storico.
             const { data, error } = await supabase
                 .from('armadietto')
-                .update({ quantita: existing.quantita + quantita })
+                .update({ quantita: existing.quantita + quantita, scuola_id: scuolaId })
                 .eq('alunno_id', alunno_id).eq('materiale', materiale)
                 .eq('date', targetDate).eq('portato', true)
                 .select().single();
@@ -227,6 +269,7 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
                 .from('armadietto')
                 .insert({
                     alunno_id,
+                    scuola_id:        scuolaId,
                     nome_oggetto:     materiale,
                     materiale,
                     quantita,
@@ -243,8 +286,6 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
 
         // Audit della scrittura (come la PATCH/CONSUMO accanto): attore, plesso,
         // sezione, valore dopo. Best-effort (logScrittura non lancia mai).
-        const { data: al } = await supabase
-            .from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
         await logScrittura(supabase, {
             attore: auth.user, entitaTipo: 'armadietto', entitaId: result?.id ?? null,
             azione: existing ? 'update' : 'insert',
@@ -280,10 +321,24 @@ export const PATCH = withRoute('locker/inventory:PATCH', async (request: NextReq
         if (scopeErr) return scopeErr;
         const today = new Date().toISOString().slice(0, 10);
 
+        // Come nella POST: l'anagrafica si legge PRIMA della scrittura perché
+        // porta la sede, e senza sede non si scrive (vedi commento in POST).
+        const { data: al, error: alErr } = await admin
+            .from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        if (alErr) {
+            logErrore({ operazione: 'locker/inventory:PATCH', stato: 500, evento: 'db' }, alErr);
+            return NextResponse.json({ error: 'Anagrafica alunno non leggibile' }, { status: 500 });
+        }
+        const scuolaId = (al?.scuola_id as string | undefined) ?? null;
+        if (!scuolaId) {
+            return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
+        }
+
         const { data, error } = await supabase
             .from('armadietto')
             .insert({
                 alunno_id,
+                scuola_id:        scuolaId,
                 nome_oggetto:     materiale,
                 materiale,
                 quantita:         quantita_usata,
@@ -297,7 +352,6 @@ export const PATCH = withRoute('locker/inventory:PATCH', async (request: NextReq
 
         if (error) throw error;
 
-        const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
         await logScrittura(admin, {
             attore: auth.user, entitaTipo: 'armadietto', entitaId: data.id, azione: 'insert',
             scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: data,

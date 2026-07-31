@@ -17,6 +17,7 @@ import type { DBFinto } from '../fixtures/finto-supabase'
 const SEDE_A = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const SEDE_B = 'bbbbbbbb-0000-4000-8000-00000000000b'
 const FORM = '11111111-1111-4111-8111-111111111111'
+const FORM_B = '55555555-5555-4555-8555-555555555555'
 const ALU_A = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
 const ALU_B = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
 const OMONIMA = '2 ANNI'
@@ -36,14 +37,17 @@ vi.mock('@/lib/supabase/server-client', async () => {
 
 import { GET } from '@/app/api/admin/documents-merge/route'
 
-const req = (classe: string, cookie?: string) =>
+const req = (classe: string, cookie?: string, form = FORM) =>
   new NextRequest(
-    `http://localhost/api/admin/documents-merge?form_id=${FORM}&class_name=${encodeURIComponent(classe)}`,
+    `http://localhost/api/admin/documents-merge?form_id=${form}&class_name=${encodeURIComponent(classe)}`,
     cookie ? { headers: { cookie } } : undefined,
   )
 
 const dbBase = (): DBFinto => ({
-  forms_templates: [{ id: FORM, title: 'Autorizzazione uscita', description: '', fields: [] }],
+  forms_templates: [
+    { id: FORM, scuola_id: SEDE_A, title: 'Autorizzazione uscita', description: '', fields: [] },
+    { id: FORM_B, scuola_id: SEDE_B, title: 'MODELLO-SOLO-SEDE-B', description: '', fields: [] },
+  ],
   forms_submissions: [],
   sections: [
     { id: 'sec-a', scuola_id: SEDE_A, name: OMONIMA },
@@ -105,6 +109,17 @@ describe('GET /api/admin/documents-merge — isolamento per sede (B1)', () => {
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(j.results.map((r: { student_id: string }) => r.student_id)).toEqual([ALU_A])
+  })
+
+  it('404 se il MODELLO di modulo è di un\'altra sede: gli alunni non vengono nemmeno letti', async () => {
+    // `forms_templates.scuola_id` è NOT NULL: il gate sulla CLASSE non basta,
+    // perché si può abbinare il modulo di un altro plesso alla propria classe e
+    // portarsene fuori la struttura (titolo, descrizione, campi).
+    const res = await GET(req(OMONIMA, undefined, FORM_B))
+    expect(res.status).toBe(404)
+    expect(h.tabelle).not.toContain('alunni')
+    const corpo = await res.text()
+    expect(corpo).not.toContain('MODELLO-SOLO-SEDE-B')
   })
 
   it('401 anonimo: nessun accesso al DB (gate di ruolo invariato)', async () => {

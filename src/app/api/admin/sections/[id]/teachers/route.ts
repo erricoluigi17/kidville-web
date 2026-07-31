@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { assertSezioneInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { docentiDiSezione } from '@/lib/sezioni/docenti';
 import { parseBody, parseData } from '@/lib/validation/http';
@@ -16,6 +17,18 @@ import { logErrore } from '@/lib/logging/logger';
 // automaticamente nelle "Classi assegnate" del docente (StaffPanel).
 // Semantica add/remove (non replace) per non toccare i legami creati dalle
 // associazioni materia-docente (utenti_sezioni_materie).
+//
+// ⚠️ SCOPE DI SEDE SU TUTTI E TRE GLI HANDLER (audit 2026-07-31). `DIREZIONE`
+// dice CHI può assegnare un docente, non SU QUALE plesso: fino a quella data
+// POST e DELETE non leggevano mai `sections`, quindi il coordinator di un plesso
+// poteva agganciare un proprio educator a una sezione di un altro — o sfilarne
+// il titolare. Non è un dettaglio di permessi: `docentiDiSezione` legge
+// `utenti_sezioni` per `section_id` SENZA filtro di sede ed è la sorgente dei
+// destinatari di sei notifiche che citano il NOME di un minore (assenze,
+// giustifiche, pagelle, armadietto). Un legame cross-sede creato qui manda il
+// nome di un bambino di un plesso nel centro notifiche di un'insegnante di un
+// altro. Servono entrambi gli assert: la SEZIONE (che non sia di un'altra sede)
+// e il DOCENTE (che non sia personale di un'altra sede).
 // ============================================================
 
 const DIREZIONE = ['admin', 'coordinator'] as const;
@@ -37,6 +50,14 @@ export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request:
 
   try {
     const supabase = await createAdminClient();
+    // Anche in LETTURA: l'elenco contiene nome, cognome, email e ruolo del
+    // personale della sede della sezione — dati di lavoratori, più la mappa
+    // delle assegnazioni, che è l'inventario con cui si sfruttano gli altri
+    // rilievi. `assertSezioneInScope` risponde 404 se la sezione non esiste,
+    // esattamente come faceva il controllo qui sotto.
+    const fuoriSezione = await assertSezioneInScope(supabase, auth.user, sectionId);
+    if (fuoriSezione) return fuoriSezione;
+
     const { data: section } = await supabase.from('sections').select('id, scuola_id').eq('id', sectionId).maybeSingle();
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 });
 
@@ -82,10 +103,18 @@ export const POST = withRoute('admin/sections/[id]/teachers:POST', async (reques
 
   try {
     const supabase = await createAdminClient();
+    const fuoriSezione = await assertSezioneInScope(supabase, auth.user, sectionId);
+    if (fuoriSezione) return fuoriSezione;
+    const fuoriUtente = await assertUtenteInScope(supabase, auth.user, utente_id);
+    if (fuoriUtente) return fuoriUtente;
+
     const { error } = await supabase
       .from('utenti_sezioni')
       .upsert({ utente_id, section_id: sectionId }, { onConflict: 'utente_id,section_id', ignoreDuplicates: true });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      logErrore({ operazione: 'admin/sections/[id]/teachers:POST', stato: 500 }, error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -116,12 +145,22 @@ export const DELETE = withRoute('admin/sections/[id]/teachers:DELETE', async (re
 
   try {
     const supabase = await createAdminClient();
+    // Anche la RIMOZIONE va vincolata: sfilare il docente titolare di una
+    // sezione di un altro plesso gli toglie l'accesso alla propria classe.
+    const fuoriSezione = await assertSezioneInScope(supabase, auth.user, sectionId);
+    if (fuoriSezione) return fuoriSezione;
+    const fuoriUtente = await assertUtenteInScope(supabase, auth.user, utente_id);
+    if (fuoriUtente) return fuoriUtente;
+
     const { error } = await supabase
       .from('utenti_sezioni')
       .delete()
       .eq('section_id', sectionId)
       .eq('utente_id', utente_id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      logErrore({ operazione: 'admin/sections/[id]/teachers:DELETE', stato: 500 }, error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,

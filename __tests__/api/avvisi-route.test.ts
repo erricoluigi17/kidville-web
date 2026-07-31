@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   requireDocente: vi.fn(),
   resolveScuoleAttive: vi.fn(),
+  resolveScuolaScrittura: vi.fn(),
   getFigliDiGenitore: vi.fn(),
   verificaTargetAvvisoDocente: vi.fn(),
   getModuleConfig: vi.fn(),
@@ -27,6 +28,12 @@ const h = vi.hoisted(() => ({
   avvisi: [] as Array<Record<string, unknown>>,
   author: { nome: null, cognome: null, ruolo: null, first_name: 'Anna', last_name: 'Bianchi', role: 'educator' } as Record<string, unknown>,
   risposte: [] as Array<Record<string, unknown>>,
+  // Sezioni della sede su cui si pubblica: dal 2026-07-31 il POST verifica che
+  // ogni classe destinataria esista NELLA SEDE risolta (W2-B). Qui la sede è una
+  // sola, quindi il controllo è verde e questi test restano su ciò che provano:
+  // autore di sessione e semantica del target. L'isolamento fra sedi ha il suo
+  // test dedicato — `avvisi-sede-scrittura.test.ts`, col finto client che filtra.
+  sezioni: [] as Array<Record<string, unknown>>,
   lastInsert: null as Record<string, unknown> | null,
 }))
 
@@ -34,7 +41,10 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: h.requireUser,
   requireDocente: h.requireDocente,
 }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.resolveScuoleAttive(...a) }))
+vi.mock('@/lib/auth/scope', () => ({
+  resolveScuoleAttive: (...a: unknown[]) => h.resolveScuoleAttive(...a),
+  resolveScuolaScrittura: (...a: unknown[]) => h.resolveScuolaScrittura(...a),
+}))
 vi.mock('@/lib/anagrafiche/legami', () => ({ getFigliDiGenitore: (...a: unknown[]) => h.getFigliDiGenitore(...a) }))
 vi.mock('@/lib/avvisi/target-gate', () => ({ verificaTargetAvvisoDocente: (...a: unknown[]) => h.verificaTargetAvvisoDocente(...a) }))
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: (...a: unknown[]) => h.getModuleConfig(...a) }))
@@ -52,6 +62,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const result = () => {
         if (table === 'alunni') return { data: h.alunni, error: null }
         if (table === 'avvisi') return { data: h.avvisi, error: null }
+        if (table === 'sections') return { data: h.sezioni, error: null }
         if (table === 'utenti') return { data: h.author, error: null }
         if (table === 'avvisi_risposte') {
           if (st.count) {
@@ -110,9 +121,13 @@ beforeEach(() => {
     { id: 'av-1a', author_id: 'aut1', titolo: 'Gita 1A', contenuto: 'y', tipo: 'adesione', target_scope: 'classe', target_classes: ['1A'], scadenza: null, attachment_url: null, created_at: '2026-07-02' },
     { id: 'av-3c', author_id: 'aut1', titolo: 'Altra classe', contenuto: 'z', tipo: 'presa_visione', target_scope: 'classe', target_classes: ['3C'], scadenza: null, attachment_url: null, created_at: '2026-07-01' },
   ]
+  h.sezioni = [{ name: '1A' }, { name: '1B' }]
   h.requireUser.mockResolvedValue({ user: { id: PARENT_ID, role: 'genitore', scuola_id: 'sc-1' } })
   h.getFigliDiGenitore.mockResolvedValue(['s1', 's2'])
   h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
+  // Utente con UNA sola sede: è ciò che il resolver vero risponde in quel caso
+  // (`accessibili.length === 1`), qui senza dover montare il ponte `utenti_scuole`.
+  h.resolveScuolaScrittura.mockResolvedValue({ scuolaId: 'sc-1' })
   h.requireDocente.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   h.verificaTargetAvvisoDocente.mockResolvedValue(null)
   h.getModuleConfig.mockResolvedValue({ ruoli_pubblicazione: ['admin', 'teacher'] })

@@ -8,6 +8,7 @@ import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/l
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
+import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
@@ -114,6 +115,20 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         //    ri-validate server-side contro le sedi accessibili; mai cross-tenant).
         //  - genitore (studentId): la sede del FIGLIO, così vede solo i broadcast e
         //    i media della sua sede (classi omonime di sedi diverse non collidono).
+        //
+        // ⚠️ SENZA UNO DEI DUE PARAMETRI LO SCOPE NON ESISTE, e non esiste
+        // nemmeno una «lista di default». Tutti i campi dello schema zod sono
+        // opzionali, quindi fino al 2026-07-31 `GET /api/gallery` nudo passava la
+        // validazione, superava il gate (basta un educator), lasciava `plessi`
+        // a `[]` e — per via della guardia `if (plessi.length > 0)` più sotto —
+        // usciva SENZA NESSUN filtro: i 30 media più recenti di TUTTE le sedi,
+        // con `tag_students` e `caption`. Scope non calcolato ⇒ si nega.
+        if (!classe && !studentId) {
+            return NextResponse.json(
+                { error: 'Specificare la classe (classe) o l\'alunno (studentId)' },
+                { status: 400 }
+            );
+        }
         let plessi: string[] = [];
         if (classe) {
             plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
@@ -128,19 +143,46 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
                 return NextResponse.json({ error: alErr.message }, { status: 500 });
             }
             const sedeFiglio = (alunno?.scuola_id as string | null | undefined) ?? null;
-            if (sedeFiglio) plessi = [sedeFiglio];
+            if (!sedeFiglio) {
+                // Un alunno senza plesso non è isolabile: non c'è modo di dire di
+                // quale sede siano le sue foto. `warn` → persistito, perché è un
+                // dato anagrafico rotto, non una richiesta sbagliata dell'utente.
+                logEvento('galleria', 'warn', {
+                    operazione: 'gallery:GET',
+                    esito: 'alunno-senza-sede',
+                });
+                return NextResponse.json(
+                    { error: 'Alunno senza plesso: galleria non disponibile' },
+                    { status: 403 }
+                );
+            }
+            plessi = [sedeFiglio];
+            // Lo STAFF attraversa `requireParentOfStudent` senza controllo di
+            // plesso (il gate verifica il legame solo al genitore): senza questa
+            // intersezione la sede del BAMBINO diventava lo scope dell'operatore,
+            // e la segreteria di un plesso leggeva le foto di un minore di un
+            // altro semplicemente chiedendone l'uuid. Il genitore resta fuori:
+            // la sua sede sono i FIGLI, non il plesso scritto sul suo record.
+            if (auth.user.role !== 'genitore') {
+                const attive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
+                plessi = attive.includes(sedeFiglio) ? [sedeFiglio] : [];
+            }
         }
 
         // Insegnante: alunni della classe RISTRETTI ai plessi accessibili. Senza
         // questo scope `.eq('classe_sezione', classe)` prendeva anche gli omonimi
         // di un'altra sede → tag cross-tenant nella `.or()` dei media (bug D3).
+        // Il filtro è INCONDIZIONATO: `plessi` vuoto significa «nessuna sede in
+        // scope», e `.in('scuola_id', [])` risponde giustamente niente. La
+        // guardia `if (plessi.length > 0)` che stava qui faceva l'opposto —
+        // scope vuoto ⇒ nessun filtro ⇒ tutte le sedi.
         let studentIds: string[] = [];
         if (classe) {
-            let alunniQ = supabase
+            const alunniQ = supabase
                 .from('alunni')
                 .select('id')
-                .eq('classe_sezione', classe);
-            if (plessi.length > 0) alunniQ = alunniQ.in('scuola_id', plessi);
+                .eq('classe_sezione', classe)
+                .in('scuola_id', plessi);
             const { data: students, error: stErr } = await alunniQ;
             if (stErr) {
                 logErrore({ operazione: 'gallery:GET', stato: 500, evento: 'db' }, stErr);
@@ -164,7 +206,9 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             }
 
             // Isolamento per sede (in AND con i filtri broadcast/tag sotto).
-            if (conScuola && plessi.length > 0) {
+            // Incondizionato: `conScuola=false` esiste SOLO per il degrado su
+            // colonna assente, e quel degrado ora è a sua volta condizionato.
+            if (conScuola) {
                 query = query.in('scuola_id', plessi);
             }
 
@@ -188,9 +232,25 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         };
 
         let mediaRes = await buildMedia(true);
-        // DB E2E CI non migrato: scuola_id assente → 42703 (o PGRST204). Riprova
-        // senza il filtro sede, così la lettura resta possibile (degrado pulito).
-        if (mediaRes.error && ['PGRST204', '42703'].includes((mediaRes.error as { code?: string }).code ?? '')) {
+        // DB E2E CI non migrato: scuola_id assente → 42703 (o PGRST204). Qui si
+        // rileggeva SEMPRE senza il filtro di sede: su un impianto multi-sede è
+        // il fail-open peggiore, perché scatta proprio quando l'isolamento non è
+        // disponibile. Ora vale la stessa regola della modulistica
+        // (`degradoSedeLecito`): si prosegue senza filtro SOLO se non c'è niente
+        // da isolare (al più una sede reale), altrimenti si NEGA.
+        if (colonnaSedeAssente(mediaRes.error as { code?: string } | null)) {
+            if (!(await degradoSedeLecito(supabase, 'gallery:GET'))) {
+                // Configurazione d'isolamento mancante su impianto multi-sede:
+                // è un incidente, quindi `error`, mai `info`.
+                logEvento('galleria', 'error', {
+                    operazione: 'gallery:GET',
+                    esito: 'colonna-sede-assente-degrado-negato',
+                });
+                return NextResponse.json(
+                    { error: 'Isolamento per sede non disponibile' },
+                    { status: 500 }
+                );
+            }
             logEvento('galleria', 'info', {
                 operazione: 'gallery:GET',
                 esito: 'degrado-scuola-id-assente',
@@ -419,12 +479,21 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         // ad Aversa sia a Cesa, quindi la maestra di Aversa risultava autorizzata
         // a modificare (e cancellare) le foto dei bambini di Cesa. Il media ha la
         // sua `scuola_id`: si confronta quella, e i nomi contano solo dopo.
+        const plessi = await scuoleDiUtente(supabase, auth.user);
         {
-            const plessi = await scuoleDiUtente(supabase, auth.user);
             const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
-            // `sedeMedia` nullo = riga anteriore alla colonna: la si tratta come
-            // fuori scope per tutti tranne chi non ha vincoli di plesso.
-            if (sedeMedia !== null && !plessi.includes(sedeMedia)) {
+            // Sede assente ⇒ si NEGA, come in `assertPagamentoInScope`: una riga
+            // senza plesso non è attribuibile a nessuno. Il test era
+            // `sedeMedia !== null && !plessi.includes(sedeMedia)`, cioè il
+            // contrario del commento che gli stava sopra: con `scuola_id` nullo
+            // la condizione è falsa e il controllo NON scattava per nessuno,
+            // rimandando l'autorizzazione all'intersezione dei nomi di classe —
+            // esattamente il meccanismo che questo blocco esiste per sostituire.
+            if (sedeMedia === null || !plessi.includes(sedeMedia)) {
+                logEvento('galleria', 'warn', {
+                    operazione: 'gallery:DELETE',
+                    esito: sedeMedia === null ? 'media-senza-sede' : 'media-fuori-sede',
+                });
                 return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
             }
         }
@@ -479,10 +548,15 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
                 let myClassNames: string[] = [];
 
                 if (myTaggedStudentIds.length > 0) {
+                    // `.in('scuola_id', plessi)`: un vecchio tag su un bambino di
+                    // un altro plesso faceva entrare il NOME della SUA classe fra
+                    // «le classi del docente», e da lì autorizzava sull'omonima.
+                    // Stesso presidio già in `educator-sections`.
                     const { data: myStudents } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
-                        .in('id', myTaggedStudentIds);
+                        .in('id', myTaggedStudentIds)
+                        .in('scuola_id', plessi);
 
                     myClassNames = [...new Set(
                         (myStudents ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
@@ -497,7 +571,8 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
                     const { data: taggedStudents } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
-                        .in('id', media.tag_students);
+                        .in('id', media.tag_students)
+                        .in('scuola_id', plessi);
 
                     hasStudentIntersection = taggedStudents?.some(
                         (s: { classe_sezione: string }) => myClassNames.includes(s.classe_sezione)
@@ -565,17 +640,20 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
         }
 
         // Isolamento per sede, PRIMA di qualunque valutazione dei permessi.
-        // L'autorizzazione qui sotto si basa sull'INTERSEZIONE DEI NOMI di classe
-        // fra il media e le classi del docente: con tre sedi «2 ANNI» esiste sia
-        // ad Aversa sia a Cesa, quindi la maestra di Aversa risultava autorizzata
-        // a modificare (e cancellare) le foto dei bambini di Cesa. Il media ha la
-        // sua `scuola_id`: si confronta quella, e i nomi contano solo dopo.
+        // Gemello del blocco della DELETE, stessa regola: sede assente ⇒ si NEGA
+        // (`assertPagamentoInScope`), perché una riga senza plesso non è
+        // attribuibile a nessuno e l'autorizzazione ricadrebbe sull'intersezione
+        // dei NOMI di classe — con tre sedi «2 ANNI» esiste sia ad Aversa sia a
+        // Cesa, ed era così che la maestra di Aversa poteva riscrivere (e
+        // cancellare) le foto dei bambini di Cesa.
+        const plessi = await scuoleDiUtente(supabase, auth.user);
         {
-            const plessi = await scuoleDiUtente(supabase, auth.user);
             const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
-            // `sedeMedia` nullo = riga anteriore alla colonna: la si tratta come
-            // fuori scope per tutti tranne chi non ha vincoli di plesso.
-            if (sedeMedia !== null && !plessi.includes(sedeMedia)) {
+            if (sedeMedia === null || !plessi.includes(sedeMedia)) {
+                logEvento('galleria', 'warn', {
+                    operazione: 'gallery:PATCH',
+                    esito: sedeMedia === null ? 'media-senza-sede' : 'media-fuori-sede',
+                });
                 return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
             }
         }
@@ -626,10 +704,16 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
                 let myClassNames: string[] = [];
 
                 if (myTaggedStudentIds.length > 0) {
+                    // `.in('scuola_id', plessi)`: gemello del presidio della
+                    // DELETE, che il 30/07 era stato messo su una copia sola del
+                    // frammento. Senza, un vecchio tag su un bambino di un altro
+                    // plesso fa entrare il NOME della SUA classe fra «le classi
+                    // del docente», e da lì autorizza a RISCRIVERE l'omonima.
                     const { data: myStudents } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
-                        .in('id', myTaggedStudentIds);
+                        .in('id', myTaggedStudentIds)
+                        .in('scuola_id', plessi);
 
                     myClassNames = [...new Set(
                         (myStudents ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
@@ -643,7 +727,8 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
                     const { data: taggedStudents } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
-                        .in('id', media.tag_students);
+                        .in('id', media.tag_students)
+                        .in('scuola_id', plessi);
 
                     hasStudentIntersection = taggedStudents?.some(
                         (s: { classe_sezione: string }) => myClassNames.includes(s.classe_sezione)

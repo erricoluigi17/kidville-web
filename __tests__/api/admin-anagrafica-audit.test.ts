@@ -49,15 +49,19 @@ function makeClient() {
           }),
         }
       }
+      // Builder CHAINABLE: dal 2026-07-31 le mutazioni filtrano anche per sede
+      // (`.eq('id', …).in('scuola_id', …)`), quindi un finto builder che si
+      // ferma al primo filtro produce un 500 e nasconde ciò che il test vuole
+      // verificare (l'audit). Terminatori: `.single()` oppure `await`.
       b.update = (row: unknown) => {
         h.updates.push({ table, row })
         const u: Record<string, unknown> = {}
-        u.eq = () => ({
-          select: () => ({
-            single: async () => ({ data: { id: 'al-1', ...(row as object) }, error: null }),
-          }),
-        })
-        u.in = () => ({ select: async () => ({ data: [{ id: 'al-1', ...(row as object) }], error: null }) })
+        u.eq = () => u
+        u.in = () => u
+        u.select = () => u
+        u.single = async () => ({ data: { id: 'al-1', ...(row as object) }, error: null })
+        u.then = (resolve: (v: unknown) => unknown) =>
+          resolve({ data: [{ id: 'al-1', ...(row as object) }], error: null })
         return u
       }
       b.upsert = (row: unknown) => {
@@ -66,7 +70,14 @@ function makeClient() {
       }
       b.delete = () => {
         h.deletes.push({ table })
-        return { eq: async () => ({ data: null, error: null }) }
+        const d: Record<string, unknown> = {}
+        d.eq = () => d
+        d.in = () => d
+        // `.select('id')` sulla delete: la route conta le righe davvero rimosse
+        // (zero ⇒ 404) invece di dichiarare un successo mai avvenuto.
+        d.select = () => d
+        d.then = (resolve: (v: unknown) => unknown) => resolve({ data: [{ id: 'al-1' }], error: null })
+        return d
       }
       return b
     },

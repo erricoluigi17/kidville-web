@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { assertParentInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { saldoCredito } from '@/lib/pagamenti/credito'
 import { residuoEffettivo, statoEffettivo, type AgingPagamento } from '@/lib/pagamenti/aging'
@@ -41,6 +41,19 @@ export const GET = withRoute('pagamenti/famiglia:GET', async (request: NextReque
     const parentId = q.data.parent_id
 
     const supabase = await createAdminClient()
+
+    // IL GATE PRIMA DEL DATO. Fino al 2026-07-31 questa route leggeva `parents`
+    // e calcolava `saldoCredito` PRIMA di qualunque controllo di sede: nome,
+    // cognome e saldo credito di un genitore qualunque delle tre sedi tornavano
+    // a ogni staff che ne conoscesse l'uuid, perché il filtro arrivava dopo e
+    // solo sui figli — e i due `return` anticipati (genitore senza figli, figli
+    // fuori scope) restituivano comunque `parent` e `credito`.
+    // Lo scope di un genitore si deriva dai FIGLI (`parents` non ha `scuola_id`,
+    // e non deve averlo: un genitore può avere figli in due plessi). Stesso
+    // ordine di `admin/regenerate-credentials`, che il modello ce l'ha già.
+    const fuoriScope = await assertParentInScope(supabase, auth.user, parentId)
+    if (fuoriScope) return fuoriScope
+
     const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
     const { data: parent, error: pErr } = await supabase
@@ -77,8 +90,14 @@ export const GET = withRoute('pagamenti/famiglia:GET', async (request: NextReque
       .from('alunni')
       .select('id, nome, cognome, scuola_id')
       .in('id', [...childIds])
+    // Scope vuoto ⇒ NESSUN figlio. Il vecchio predicato era
+    // `!a.scuola_id || sedi.length === 0 || sedi.includes(…)`: due scappatoie
+    // che allargavano invece di restringere — una riga senza sede passava
+    // sempre, e «nessuna sede selezionata» valeva «tutte». `resolveScuoleAttive`
+    // ritorna `[]` quando la selezione del SedeSelector non è (o non è più)
+    // accessibile: lì la risposta onesta è «niente», non «allora eccoti tutto».
     const alunni = ((alunniRows ?? []) as { id: string; nome?: string | null; cognome?: string | null; scuola_id?: string | null }[])
-      .filter((a) => !a.scuola_id || sedi.length === 0 || sedi.includes(String(a.scuola_id)))
+      .filter((a) => sedi.includes(String(a.scuola_id)))
     const scopedIds = alunni.map((a) => a.id)
 
     if (scopedIds.length === 0) {

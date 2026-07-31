@@ -51,9 +51,15 @@ function sediDalCookie(request: NextRequest): string[] {
 
 /**
  * LETTURE: insieme di plessi su cui filtrare (`scuola_id IN (...)`). Sono le sedi
- * selezionate nel SedeSelector (cookie) INTERSECATE con quelle accessibili. Cookie
- * assente o intersezione vuota → tutte le accessibili. Mai vuoto se l'utente ha
- * almeno un plesso.
+ * selezionate nel SedeSelector (cookie) INTERSECATE con quelle accessibili.
+ *
+ * Cookie ASSENTE → tutte le accessibili (nessuna selezione = nessuna
+ * restrizione). Cookie PRESENTE ma con intersezione vuota → `[]`, cioè si NEGA:
+ * l'utente ha chiesto sedi che non sono (o non sono più) sue, e l'unica risposta
+ * onesta è «niente», non «allora eccoti tutto». Fino al 2026-07-31 questo era
+ * l'unico punto del modulo in cui il vuoto ALLARGAVA invece di restringere, e
+ * mascherava l'unico segnale che dice «questo utente ha perso l'accesso a una
+ * sede» oppure «qualcuno ha manomesso il cookie»: per questo ora lo si logga.
  */
 export async function resolveScuoleAttive(
   request: NextRequest,
@@ -65,14 +71,34 @@ export async function resolveScuoleAttive(
   if (selezionate.length === 0) return accessibili
   const set = new Set(accessibili)
   const inter = selezionate.filter((id) => set.has(id))
-  return inter.length > 0 ? inter : accessibili
+  if (inter.length === 0) {
+    // `warn` → persistito: nessuna sede selezionata è accessibile. Solo uuid
+    // utente, ruolo e conteggi: nessun dato di minori, nessuna sede in chiaro.
+    logEvento('auth', 'warn', {
+      tipo: 'sedi-attive-non-accessibili', azione: 'resolveScuoleAttive',
+      utente: user.id, ruolo: user.role,
+      selezionate: selezionate.length, accessibili: accessibili.length,
+    })
+  }
+  return inter
 }
 
 /**
- * SCRITTURE (create/update che settano `scuola_id`): UNA sola sede. Ordine:
- * `preferita`/body.scuola_id se accessibile → l'unica sede attiva (cookie) →
- * l'unica sede accessibile → la sede primaria dell'utente. Se resta ambiguo
- * (più sedi accessibili, nessuna indicata) ritorna una NextResponse 400.
+ * SCRITTURE (create/update che settano `scuola_id`): UNA sola sede, e la sede si
+ * DICHIARA. Ordine: `preferita`/body.scuola_id se accessibile → l'unica sede
+ * attiva (cookie) → l'unica sede accessibile. Se resta ambiguo — più sedi
+ * accessibili e nessuna indicata — ritorna una NextResponse **400**.
+ *
+ * ⚠️ NIENTE RIPIEGO SULLA SEDE PRIMARIA. Fino al 2026-07-31 qui c'era un ultimo
+ * ramo `if (user.scuola_id && set.has(user.scuola_id))`, e siccome
+ * `scuoleDiUtente` mette la sede primaria per PRIMA (riga 25) e `utenti.scuola_id`
+ * è NOT NULL, quel ramo scattava SEMPRE: il 400 era codice morto. Effetto reale:
+ * l'admin che nel SedeSelector aveva scelto Aversa+Cesa — cioè aveva tolto
+ * Giugliano — si vedeva archiviare il dato **a Giugliano**, senza errore e senza
+ * log. Con tre plessi la «sede primaria» non è un default sensato: è solo la
+ * prima che è stata assegnata all'utente. Chi ha un solo plesso non cambia
+ * comportamento (ramo `accessibili.length === 1`); chi ne ha più d'uno deve dire
+ * dove sta scrivendo.
  */
 export async function resolveScuolaScrittura(
   request: NextRequest,
@@ -89,7 +115,14 @@ export async function resolveScuolaScrittura(
   const attive = sediDalCookie(request).filter((id) => set.has(id))
   if (attive.length === 1) return { scuolaId: attive[0] }
   if (accessibili.length === 1) return { scuolaId: accessibili[0] }
-  if (user.scuola_id && set.has(user.scuola_id)) return { scuolaId: user.scuola_id }
+  // `warn` → persistito: una scrittura ambigua è un'operazione RIFIUTATA, e il
+  // motivo deve essere leggibile senza risalire al corpo della richiesta.
+  logEvento('auth', 'warn', {
+    tipo: 'sede-scrittura-ambigua', azione: 'resolveScuolaScrittura',
+    utente: user.id, ruolo: user.role,
+    accessibili: accessibili.length, attive: attive.length,
+    dichiarata: Boolean(preferita),
+  })
   return { response: NextResponse.json({ error: 'Specificare la sede (scuola_id) per questa operazione' }, { status: 400 }) }
 }
 

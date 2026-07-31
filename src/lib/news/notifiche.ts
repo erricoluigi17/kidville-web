@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { sediReali } from '@/lib/scuole/reali'
 import { logEvento, logErrore } from '@/lib/logging/logger'
 import type { NewsGrado, NewsScope } from '@/lib/news/tipi'
 
@@ -54,22 +55,97 @@ export interface PostDaNotificare {
   notifica_inviata_il: string | null
 }
 
+const OPERAZIONE = 'notifica-pubblicazione'
+
+/** Il sottoinsieme di un post che basta a sapere CHI ne è destinatario. */
+export type PostConTarget = Pick<PostDaNotificare, 'scuola_id' | 'target_scope' | 'target_gradi' | 'target_classes'>
+
+/** Destinatari di UNA sede, secondo lo scope del post. */
+async function destinatariDiSede(
+  supabase: SupabaseClient,
+  post: PostConTarget,
+  scuolaId: string,
+): Promise<string[]> {
+  if (post.target_scope === 'classi') {
+    return genitoriDiClassi(supabase, scuolaId, post.target_classes ?? [], {
+      operazione: 'news/notifiche:genitoriDiClassi',
+    })
+  }
+  if (post.target_scope === 'grado') {
+    return genitoriDiGrado(supabase, scuolaId, post.target_gradi)
+  }
+  return genitoriDiScuola(supabase, scuolaId, { operazione: 'news/notifiche:genitoriDiScuola' })
+}
+
+/**
+ * DESTINATARI DI UN POST — punto unico, per la notifica e per il denominatore
+ * delle statistiche di lettura.
+ *
+ * `scuola_id === null` significa «TUTTE le sedi»: è una funzione esplicita e
+ * riservata alla Direzione (news/route.ts:113-121). I risolutori di destinatari
+ * leggono però lo stesso NULL con il significato OPPOSTO — «sede sconosciuta,
+ * nega» — quindi una news per tutti i plessi usciva con ZERO destinatari. Qui il
+ * caso globale si ESPANDE sull'elenco delle sedi REALI (la finta E2E la esclude
+ * `sediReali`), sede per sede, e i destinatari si uniscono.
+ *
+ * `sediRisolte: false` distingue «non so quali sedi esistono» (lettura fallita)
+ * da «lo so, e i destinatari sono zero»: sono due esiti con conseguenze diverse
+ * per chi chiama.
+ */
+export async function destinatariNews(
+  supabase: SupabaseClient,
+  post: PostConTarget,
+): Promise<{ destinatari: string[]; sediRisolte: boolean }> {
+  if (post.scuola_id) {
+    return { destinatari: await destinatariDiSede(supabase, post, post.scuola_id), sediRisolte: true }
+  }
+  const { reali, error } = await sediReali(supabase, 'news/notifiche:sediReali')
+  if (error || reali.length === 0) return { destinatari: [], sediRisolte: false }
+  const uniti = new Set<string>()
+  for (const sede of reali) {
+    for (const id of await destinatariDiSede(supabase, post, sede.id)) uniti.add(id)
+  }
+  return { destinatari: [...uniti], sediRisolte: true }
+}
+
 /**
  * Notifica ai genitori destinatari la pubblicazione di un post. Idempotente:
  * non ri-notifica se `notifica_inviata_il` è già valorizzato. Rispetta il flag
  * `invia_notifica`. Best-effort (non lancia): l'esito si legge nei log.
+ *
+ * `post.scuola_id === null` significa «TUTTE le sedi» — è una funzione esplicita
+ * e riservata alla Direzione (news/route.ts:113-121). I risolutori di destinatari
+ * leggono però lo stesso NULL con il significato OPPOSTO, «sede sconosciuta,
+ * nega»: fino al 2026-07-31 una news per tutti i plessi usciva con ZERO
+ * destinatari, `notificaEvento` taceva sulla lista vuota e `notifica_inviata_il`
+ * veniva scritto lo stesso — la guardia di idempotenza chiudeva la porta per
+ * sempre. Da qui in poi «tutte le sedi» si espande ESPLICITAMENTE sull'elenco
+ * delle sedi REALI (la finta E2E esclusa da `sediReali`), sede per sede, e i
+ * destinatari si uniscono.
  */
 export async function notificaNewsPubblicata(supabase: SupabaseClient, post: PostDaNotificare): Promise<void> {
   if (post.notifica_inviata_il) return // già notificata: idempotenza
   if (!post.invia_notifica) return // notifiche disattivate per questo post
 
-  let destinatari: string[] = []
-  if (post.target_scope === 'classi') {
-    destinatari = await genitoriDiClassi(supabase, post.scuola_id, post.target_classes ?? [])
-  } else if (post.target_scope === 'grado') {
-    destinatari = await genitoriDiGrado(supabase, post.scuola_id, post.target_gradi)
-  } else {
-    destinatari = await genitoriDiScuola(supabase, post.scuola_id)
+  const { destinatari, sediRisolte } = await destinatariNews(supabase, post)
+  if (!sediRisolte) {
+    // Senza l'elenco delle sedi non si sa a chi mandarla: si esce SENZA marcare,
+    // così il prossimo tentativo (ri-pubblicazione, tick del cron) la ritrova.
+    logEvento('news', 'error', {
+      operazione: OPERAZIONE, esito: 'sedi-non-risolte', post_id: post.id,
+    })
+    return
+  }
+
+  if (destinatari.length === 0) {
+    // NON si marca `notifica_inviata_il`: marcare una notifica mai partita è
+    // l'unica mossa irreversibile di questa funzione. E si logga, perché
+    // «inviata a tutti» e «inviata a nessuno» erano indistinguibili.
+    logEvento('news', 'warn', {
+      operazione: OPERAZIONE, esito: 'nessun-destinatario', post_id: post.id,
+      tipo: post.target_scope, sede_id: post.scuola_id ?? null,
+    })
+    return
   }
 
   const corpo = post.contenuto_testo && post.contenuto_testo.length > 140
@@ -103,9 +179,10 @@ export async function notificaNewsPubblicata(supabase: SupabaseClient, post: Pos
   }
 
   logEvento('news', 'info', {
-    operazione: 'notifica-pubblicazione',
+    operazione: OPERAZIONE,
     esito: 'inviata',
     post_id: post.id,
     destinatari: destinatari.length,
+    sede_id: post.scuola_id ?? null,
   })
 }

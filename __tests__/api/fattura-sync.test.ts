@@ -73,7 +73,15 @@ describe('POST /api/pagamenti/fattura/sync', () => {
         { id: 'f-1', pagamento_id: 'pag-1', scuola_id: SCUOLA, numero: 7, aruba_filename: 'ITxxx_a.xml.p7m', sdi_stato: 1 },
       ],
       admin_settings: { aruba_config: { username: 'u', password_ref: 'ARUBA_PASSWORD', abilitato: true, ambiente: 'demo' } },
-      utenti: [{ id: 'seg-1' }, { id: 'dir-1' }],
+      // I ruoli servono davvero: i destinatari passano da `staffScuola`, che filtra
+      // per ruolo IN MEMORIA (schema legacy doppio `role`/`ruolo`). Prima la route
+      // filtrava con `.in('ruolo', …)` in SQL e questo finto client ignorava `.in()`:
+      // due utenti senza ruolo passavano lo stesso. L'isolamento per SEDE ha il suo
+      // test dedicato in `fattura-sync-destinatari-sede.test.ts`, col finto client vero.
+      utenti: [
+        { id: 'seg-1', ruolo: 'segreteria', scuola_id: SCUOLA },
+        { id: 'dir-1', ruolo: 'admin', scuola_id: SCUOLA },
+      ],
     })
     vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
     vi.mocked(arubaGetByFilename).mockResolvedValue({ stato: 4 }) // 4 = Scartata (NS)

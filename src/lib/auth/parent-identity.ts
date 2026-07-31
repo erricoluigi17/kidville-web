@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logEvento } from '@/lib/logging/logger';
 
 // =============================================================================
 // Identità di accesso di un GENITORE — fonte unica (S6bis).
@@ -87,6 +88,12 @@ async function findAuthUserIdByEmail(admin: SupabaseClient, email: string): Prom
 /**
  * Scuola per `utenti.scuola_id` (NOT NULL): quella passata, altrimenti l'unica
  * configurata (installazione mono-sede). Con più sedi il chiamante DEVE passarla.
+ *
+ * @deprecated DAL 2026-07-29 IL DEPLOYMENT HA TRE SEDI: il ramo `limit(2)` non
+ * può più risolvere niente (e non escludeva nemmeno la sede finta della CI). Per
+ * un GENITORE la sede si ricava dai FIGLI — `sedeDelGenitore` qui sotto. Resta
+ * per il backfill S6 (`src/lib/auth/backfill.ts`), che opera su una sede
+ * dichiarata dall'operatore e non ha un genitore da cui partire.
  */
 export async function resolveScuolaId(
   admin: SupabaseClient,
@@ -95,6 +102,151 @@ export async function resolveScuolaId(
   if (preferred) return preferred;
   const { data } = await admin.from('schools').select('id').limit(2);
   return data && data.length === 1 ? (data[0].id as string) : null;
+}
+
+/** Codici PostgREST/Postgres di «schema non ancora migrato» (DB E2E della CI). */
+const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205']);
+
+export type MotivoSedeGenitore =
+  /** Una sola sede fra i figli: decide il dato, e basta. */
+  | 'figli'
+  /** Più sedi possibili, e il chiamante ne ha DICHIARATA una fra quelle. */
+  | 'dichiarata'
+  /** Più sedi possibili, e l'operatore lavora in una di esse. */
+  | 'operatore'
+  /** Nessun figlio da cui dedurre: si ripiega sulla sede indicata dal chiamante. */
+  | 'operatore-senza-figli'
+  /** Più sedi e nessun criterio per scegliere: si rinuncia. */
+  | 'ambigua'
+  /** Tabelle non ancora migrate (DB E2E della CI): si usa ciò che è stato indicato. */
+  | 'schema-assente'
+  /** Lettura fallita: non è «nessun figlio», ed è un'altra cosa dall'ambiguità. */
+  | 'errore';
+
+export interface SedeGenitore {
+  scuolaId: string | null;
+  motivo: MotivoSedeGenitore;
+  /** Sedi distinte dei figli, ordinate: nel log ne finisce solo il CONTEGGIO. */
+  sediFigli: string[];
+}
+
+/**
+ * LA SEDE DI UN GENITORE È QUELLA DEI SUOI FIGLI.
+ *
+ * `parents` non ha (e non deve avere) una colonna sede: un genitore può avere
+ * legittimamente bambini in due plessi. Ma `utenti.scuola_id` è NOT NULL e serve
+ * a cose che contano — è la sede con cui vengono registrate la richiesta GDPR di
+ * cancellazione e la notifica dei moduli firmati — quindi UNA va scelta.
+ *
+ * Fino al 2026-07-31 la sceglieva l'OPERATORE: `ensureParentIdentity(admin, row,
+ * { scuolaId: auth.user.scuola_id })`. L'unico admin reale ha come sede primaria
+ * Giugliano ed è, per la decisione del 30/07, l'unico che possa gestire Aversa e
+ * Cesa: al primo invio di credenziali a una famiglia di Aversa quel genitore
+ * sarebbe nato «di Giugliano». Il dato giusto era già in mano al codice —
+ * `assertParentInScope` fa la stessa identica query 28 righe sopra.
+ *
+ * Ordine, e nessun `[0]` da nessuna parte:
+ *   1. una sola sede fra i figli (più l'eventuale sede DICHIARATA) ⇒ quella;
+ *   2. più d'una, ma il chiamante ne ha dichiarata una fra quelle ⇒ la dichiarata
+ *      (è il caso dell'import iscrizioni: la sede del bambino che si sta
+ *      iscrivendo, e il legame non è ancora scritto);
+ *   3. più d'una, e l'operatore lavora in una di esse ⇒ quella, e si scrive nei log;
+ *   4. nessun figlio ⇒ non c'è nulla da cui dedurre: si usa la sede indicata dal
+ *      chiamante, dicendolo (è l'anagrafica genitore creata senza alunno);
+ *   5. altrimenti ⇒ **niente sede**. Chi scrive dovrà dichiararla.
+ *
+ * @param opts.dichiarata sede che il DATO in lavorazione porta con sé.
+ * @param opts.sedeOperatore sede in cui sta lavorando chi ha premuto il bottone:
+ *   NON è un dato del genitore, serve solo a sciogliere un'ambiguità.
+ */
+export async function sedeDelGenitore(
+  admin: SupabaseClient,
+  parentId: string,
+  opts: { dichiarata?: string | null; sedeOperatore?: string | null } = {},
+): Promise<SedeGenitore> {
+  const dichiarata = opts.dichiarata ?? null;
+  const sedeOperatore = opts.sedeOperatore ?? null;
+
+  let sediFigli: string[] = [];
+  try {
+    // Stessa query di `assertParentInScope`: il join `!inner` scarta i legami
+    // il cui alunno non esiste più.
+    const { data, error } = await admin
+      .from('student_parents')
+      .select('student_id, alunni!inner(scuola_id)')
+      .eq('parent_id', parentId);
+    if (error) {
+      const codice = (error as { code?: string }).code ?? '';
+      if (SCHEMA_ASSENTE.has(codice)) {
+        // DB E2E della CI, non migrato: si degrada a ciò che è stato indicato,
+        // senza gridare (è una condizione nota, non un guasto).
+        logEvento('multi_sede', 'info', {
+          operazione: 'auth/parent-identity:sedeDelGenitore', esito: 'schema-assente',
+        }, error);
+        return { scuolaId: dichiarata ?? sedeOperatore, motivo: 'schema-assente', sediFigli: [] };
+      }
+      // PostgREST non lancia: senza questo controllo una lettura rotta si
+      // travestirebbe da «genitore senza figli» e la sede la sceglierebbe di
+      // nuovo l'operatore — cioè il difetto tornerebbe, mascherato da degrado.
+      logEvento('multi_sede', 'error', {
+        operazione: 'auth/parent-identity:sedeDelGenitore', esito: 'sede-genitore-non-risolta',
+      }, error);
+      return { scuolaId: null, motivo: 'errore', sediFigli: [] };
+    }
+    type Riga = { alunni?: { scuola_id?: string | null } | { scuola_id?: string | null }[] | null };
+    const sedi = new Set<string>();
+    for (const r of (data ?? []) as Riga[]) {
+      const nodo = r.alunni;
+      for (const a of Array.isArray(nodo) ? nodo : nodo ? [nodo] : []) {
+        if (a?.scuola_id) sedi.add(String(a.scuola_id));
+      }
+    }
+    sediFigli = [...sedi].sort();
+  } catch (e) {
+    logEvento('multi_sede', 'error', {
+      operazione: 'auth/parent-identity:sedeDelGenitore', esito: 'sede-genitore-non-risolta',
+    }, e);
+    return { scuolaId: null, motivo: 'errore', sediFigli: [] };
+  }
+
+  if (sediFigli.length === 0) {
+    const ripiego = dichiarata ?? sedeOperatore;
+    if (ripiego) {
+      // `warn` → persistito: un genitore senza figli collegati NON ha una sede
+      // propria, e la riga `utenti` che sta per nascere la eredita da chi opera.
+      logEvento('multi_sede', 'warn', {
+        operazione: 'auth/parent-identity:sedeDelGenitore',
+        esito: 'sede-genitore-senza-figli',
+        dichiarata: Boolean(dichiarata),
+      });
+      return { scuolaId: ripiego, motivo: 'operatore-senza-figli', sediFigli };
+    }
+    return { scuolaId: null, motivo: 'ambigua', sediFigli };
+  }
+
+  const candidati = new Set(sediFigli);
+  if (dichiarata) candidati.add(dichiarata);
+  if (candidati.size === 1) {
+    return { scuolaId: [...candidati][0], motivo: sediFigli.length === 1 ? 'figli' : 'dichiarata', sediFigli };
+  }
+  if (dichiarata && candidati.has(dichiarata)) {
+    return { scuolaId: dichiarata, motivo: 'dichiarata', sediFigli };
+  }
+  if (sedeOperatore && candidati.has(sedeOperatore)) {
+    // Scelta legittima ma non ovvia (il genitore ha figli in più plessi): resta
+    // scritta, così il giorno in cui una notifica arriva «alla sede sbagliata»
+    // si sa perché.
+    logEvento('multi_sede', 'info', {
+      operazione: 'auth/parent-identity:sedeDelGenitore',
+      esito: 'sede-genitore-scelta', n: sediFigli.length,
+    });
+    return { scuolaId: sedeOperatore, motivo: 'operatore', sediFigli };
+  }
+  logEvento('multi_sede', 'warn', {
+    operazione: 'auth/parent-identity:sedeDelGenitore',
+    esito: 'sede-genitore-ambigua', n: sediFigli.length,
+  });
+  return { scuolaId: null, motivo: 'ambigua', sediFigli };
 }
 
 /**
@@ -139,11 +291,18 @@ export async function ensureUtentiRow(
  * `auth.users` (dedup per email), scrive il ponte `parents.auth_user_id` e
  * garantisce la riga `utenti` ruolo 'genitore'. Idempotente: i pezzi già
  * presenti vengono riusati senza modifiche. Non invia MAI email.
+ *
+ * @param opts.scuolaId sede DICHIARATA dal dato in lavorazione (es. l'iscrizione
+ *   che si sta approvando: è la sede del bambino, il cui legame non è ancora
+ *   scritto). Concorre con le sedi dei figli, non le sostituisce.
+ * @param opts.sedeOperatore sede in cui lavora chi ha premuto il bottone. NON
+ *   determina la sede del genitore: serve a sciogliere l'ambiguità di un
+ *   genitore con figli in più plessi, e a coprire il caso «nessun figlio».
  */
 export async function ensureParentIdentity(
   admin: SupabaseClient,
   parent: ParentIdentityInput,
-  opts: { scuolaId?: string | null } = {}
+  opts: { scuolaId?: string | null; sedeOperatore?: string | null } = {}
 ): Promise<EnsureParentIdentityResult> {
   try {
     const email = firstEmail(parent.emails);
@@ -223,7 +382,12 @@ export async function ensureParentIdentity(
       }
     }
 
-    const scuolaId = await resolveScuolaId(admin, opts.scuolaId ?? null);
+    // LA SEDE VIENE DAI FIGLI, non da chi preme il bottone (audit 2026-07-31, R6).
+    const sede = await sedeDelGenitore(admin, parent.id, {
+      dichiarata: opts.scuolaId ?? null,
+      sedeOperatore: opts.sedeOperatore ?? null,
+    });
+    const scuolaId = sede.scuolaId;
     const utenti = await ensureUtentiRow(admin, {
       id: authUserId,
       email,

@@ -50,9 +50,27 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
             student_id: string;
             student_name: string;
             sezione: string;
+            // Sede del LEGAME (quella dell'alunno), non dell'operatore: con più
+            // plessi «2 ANNI» non identifica una classe, e una lista di persone
+            // senza sede è indistinguibile da quella di un altro plesso. La UI
+            // la usa per l'etichetta «nome — sede» quando le sedi sono più d'una.
+            scuola_id: string | null;
         }> = [];
 
         if (role === 'maestra' || role === 'educator') {
+            // Isolamento per sede: la sezione è risolta dai legami del docente,
+            // ma il nome-classe non è una chiave (con tre sedi «2 ANNI» esiste
+            // sia ad Aversa sia a Cesa). Senza questo filtro la maestra si
+            // ritrovava fra i contatti i GENITORI dei bambini dell'altra sede,
+            // con la chat già apribile. Fail-closed: nessun plesso → nessun
+            // contatto (in produzione ogni utente di staff ha una sede).
+            //
+            // Il calcolo sta QUI, e non venti righe più sotto, perché serve già
+            // al fallback storico: la derivazione della sezione dai tag deve
+            // restare dentro la sede, altrimenti si IDENTIFICA la maestra con la
+            // classe di un altro plesso e la si porta poi sull'omonima.
+            const plessi = await scuoleDiUtente(supabase, auth.user);
+
             // Maestra: sezione dalla fonte canonica (utenti_sezioni → sections).
             const { data: legamiSez } = await supabase
                 .from('utenti_sezioni')
@@ -75,10 +93,15 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
                     .filter(Boolean);
 
                 if (myTaggedIds.length > 0) {
+                    // `.in('scuola_id', plessi)`: ultima copia non corretta del
+                    // frammento che vive anche in `educator-sections` e `tasks`.
+                    // Il `.limit(1)` non ordina: bastava un vecchio tag su un
+                    // bambino di un altro plesso perché la SUA classe vincesse.
                     const { data: taggedStudents } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
                         .in('id', myTaggedIds)
+                        .in('scuola_id', plessi)
                         .limit(1);
                     teacherSection = taggedStudents?.[0]?.classe_sezione ?? null;
                 }
@@ -86,18 +109,10 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
 
             // Senza sezione risolta la lista resta vuota: niente default arbitrari.
             if (teacherSection) {
-                // Isolamento per sede: la sezione è risolta dai legami del docente,
-                // ma il nome-classe non è una chiave (con tre sedi «2 ANNI» esiste
-                // sia ad Aversa sia a Cesa). Senza questo filtro la maestra si
-                // ritrovava fra i contatti i GENITORI dei bambini dell'altra sede,
-                // con la chat già apribile. Fail-closed: nessun plesso → nessun
-                // contatto (in produzione ogni utente di staff ha una sede).
-                const plessi = await scuoleDiUtente(supabase, auth.user);
-
                 // 3 query batched: alunni della sezione → legami → genitori (niente N+1).
                 const { data: allStudents } = await supabase
                     .from('alunni')
-                    .select('id, nome, cognome, classe_sezione')
+                    .select('id, nome, cognome, classe_sezione, scuola_id')
                     .eq('classe_sezione', teacherSection)
                     .in('scuola_id', plessi);
                 const students = allStudents ?? [];
@@ -135,6 +150,7 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
                             student_id: student.id,
                             student_name: `${student.nome} ${student.cognome}`,
                             sezione: student.classe_sezione ?? '',
+                            scuola_id: (student.scuola_id as string | null) ?? null,
                         });
                     }
                 }
@@ -148,7 +164,7 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
             const { data: studentsData } = alunnoIds.length > 0
                 ? await supabase
                     .from('alunni')
-                    .select('id, nome, cognome, classe_sezione, section_id')
+                    .select('id, nome, cognome, classe_sezione, section_id, scuola_id')
                     .in('id', alunnoIds)
                 : { data: [] };
             const students = studentsData ?? [];
@@ -210,6 +226,7 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
                         student_id: student.id,
                         student_name: `${student.nome} ${student.cognome}`,
                         sezione: student.classe_sezione ?? '',
+                        scuola_id: (student.scuola_id as string | null) ?? null,
                     });
                 }
             }

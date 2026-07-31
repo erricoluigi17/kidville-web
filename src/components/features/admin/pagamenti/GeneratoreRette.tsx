@@ -53,7 +53,11 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     const conferma = async () => {
         setLoading(true);
         try {
-            const body = mode === 'anno' ? { anno } : { periodo };
+            // La sede va DICHIARATA, ed è la stessa dell'anteprima: senza,
+            // «genera le rette» emetteva su tutti i plessi (in produzione è già
+            // successo: un clic, due sedi). Il pannello sta dentro <SedeRequired>,
+            // quindi `scuolaId` c'è sempre.
+            const body = mode === 'anno' ? { anno, scuola_id: scuolaId } : { periodo, scuola_id: scuolaId };
             const res = await fetch('/api/pagamenti/genera-rette', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
             const j = await res.json();
             if (j.success) {

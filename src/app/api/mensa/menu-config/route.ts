@@ -5,6 +5,7 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { assertConfigMensaInScope, vincoloDuplicato } from '@/lib/mensa/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -74,6 +75,9 @@ export const POST = withRoute('mensa/menu-config:POST', async (request: NextRequ
       .insert({ scuola_id: sede, nome, ordine })
       .select('id, nome, ordine')
       .single()
+    if (vincoloDuplicato(error)) {
+      return NextResponse.json({ error: 'Esiste già un menu con questo nome in questa sede.' }, { status: 409 })
+    }
     if (error) throw error
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
@@ -96,12 +100,24 @@ export const PATCH = withRoute('mensa/menu-config:PATCH', async (request: Reques
     if (ordine !== undefined) updates.ordine = ordine
 
     const supabase = await createAdminClient()
+    // R44: la sede si dichiarava alla creazione e si dimenticava alla modifica.
+    // Il gate di ruolo non è un gate di tenant: senza questo, con l'uuid in mano
+    // si rinominava il menu di un altro plesso.
+    const scope = await assertConfigMensaInScope(request as NextRequest, supabase, auth.user, 'mensa_menu_config', id)
+    if (scope.response) return scope.response
+
     const { data, error } = await supabase
       .from('mensa_menu_config')
       .update(updates)
       .eq('id', id)
+      // Ridondante dopo l'assert, e voluto: la mutazione porta con sé il proprio
+      // filtro di sede, così non dipende dal fatto che il controllo resti sopra.
+      .eq('scuola_id', scope.sede as string)
       .select('id, nome, ordine')
       .single()
+    if (vincoloDuplicato(error)) {
+      return NextResponse.json({ error: 'Esiste già un menu con questo nome in questa sede.' }, { status: 409 })
+    }
     if (error) throw error
     return NextResponse.json({ success: true, data })
   } catch (err) {
@@ -120,16 +136,23 @@ export const DELETE = withRoute('mensa/menu-config:DELETE', async (request: Requ
     const id = q.data.id
 
     const supabase = await createAdminClient()
+    // PRIMA dei conteggi, non dopo (R44): il 409 «ha rotazioni collegate» calcolato
+    // su righe di un'altra sede è già di per sé un oracolo sui dati altrui — dice
+    // quanto è configurato il menu di un plesso che non si può nemmeno vedere.
+    const scope = await assertConfigMensaInScope(request as NextRequest, supabase, auth.user, 'mensa_menu_config', id)
+    if (scope.response) return scope.response
+    const sede = scope.sede as string
+
     // Blocca eliminazione se ci sono rotazioni/override collegati
     const [{ count: cRot }, { count: cOvr }] = await Promise.all([
-      supabase.from('mensa_menu_rotazione').select('id', { count: 'exact', head: true }).eq('menu_config_id', id),
-      supabase.from('mensa_menu_override').select('id', { count: 'exact', head: true }).eq('menu_config_id', id),
+      supabase.from('mensa_menu_rotazione').select('id', { count: 'exact', head: true }).eq('menu_config_id', id).eq('scuola_id', sede),
+      supabase.from('mensa_menu_override').select('id', { count: 'exact', head: true }).eq('menu_config_id', id).eq('scuola_id', sede),
     ])
     if ((cRot ?? 0) > 0 || (cOvr ?? 0) > 0) {
       return NextResponse.json({ error: 'Impossibile eliminare: il menu ha voci di rotazione o override associati.' }, { status: 409 })
     }
 
-    const { error } = await supabase.from('mensa_menu_config').delete().eq('id', id)
+    const { error } = await supabase.from('mensa_menu_config').delete().eq('id', id).eq('scuola_id', sede)
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {

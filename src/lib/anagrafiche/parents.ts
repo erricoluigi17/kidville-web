@@ -194,8 +194,15 @@ export async function linkOrCreateParent(
   let credenzialiEmail: LinkOrCreateParentResult['credenzialiEmail'];
   let identitaErrore: string | undefined;
   if (!STAFF_ROLES.includes(role)) {
+    // LA SEDE DEL GENITORE VIENE DAI FIGLI, e il legame col figlio è stato
+    // appena scritto qui sopra (punto 3): `ensureParentIdentity` lo trova. Qui
+    // si passava `scuolaId: actor.scuola_id`, cioè la sede di chi salva —
+    // l'operatore di Giugliano che registrava una famiglia di Aversa creava un
+    // genitore «di Giugliano». Ora l'operatore serve solo come criterio di
+    // scelta quando i figli stanno in più plessi, o quando non ci sono figli
+    // (anagrafica genitore creata senza alunno: lì non c'è nulla da cui dedurre).
     const identita = await ensureParentIdentity(supabase, identityInput, {
-      scuolaId: actor.scuola_id ?? null,
+      sedeOperatore: actor.scuola_id ?? null,
     });
     // Ora che un account esiste, il legame anagrafico scritto al punto 3 può
     // avere il suo gemello runtime (`legame_genitori_alunni`, FK su `utenti.id`).

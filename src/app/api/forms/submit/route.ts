@@ -6,7 +6,9 @@ import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospens
 import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { notificaEvento } from '@/lib/notifiche/triggers'
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+import { staffScuola } from '@/lib/notifiche/destinatari'
+import { risolviSedeCompilazione } from '@/lib/forms/sede-compilazione'
+import { colonnaSedeAssente } from '@/lib/forms/degrado-sede'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -53,13 +55,34 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     }
 
     // Carica lo schema del modello per snapshot consensi + guard server-side.
-    const { data: model } = await supabase
-      .from('form_models')
-      // `scuola_id` serve a dare una sede alla compilazione quando chi compila
-      // non ne ha una propria (link pubblico, genitore senza plesso).
-      .select('schema, title, scuola_id')
-      .eq('id', modelId)
-      .maybeSingle()
+    // `scuola_id` serve a dare una sede alla compilazione quando chi compila non
+    // ne ha una propria. Sul DB E2E della CI, che non è migrato, quella colonna
+    // non esiste: senza il secondo tentativo la SELECT fallirebbe INTERA e con
+    // essa sparirebbe anche il guard sui consensi obbligatori — un controllo
+    // legale spento da una colonna mancante.
+    // Due `select()` distinti e non un ternario dentro `select()`: il client
+    // Supabase tipizza quella stringa come LETTERALE e su un'unione risponde con
+    // un `ParserError` al posto del tipo della riga.
+    const caricaModello = async (conSede: boolean) => {
+      const res = conSede
+        ? await supabase.from('form_models').select('schema, title, scuola_id').eq('id', modelId).maybeSingle()
+        : await supabase.from('form_models').select('schema, title').eq('id', modelId).maybeSingle()
+      return {
+        data: res.data as { schema?: unknown; title?: string; scuola_id?: string | null } | null,
+        error: res.error,
+      }
+    }
+    let modelRes = await caricaModello(true)
+    if (colonnaSedeAssente(modelRes.error)) modelRes = await caricaModello(false)
+    if (modelRes.error) {
+      // PostgREST non lancia: senza questo controllo lo schema resta vuoto e i
+      // consensi obbligatori passano tutti.
+      logEvento('modulistica', 'error', {
+        operazione: 'forms/submit:POST', esito: 'modello-non-letto',
+      }, modelRes.error)
+      return NextResponse.json({ error: modelRes.error.message }, { status: 500 })
+    }
+    const model = modelRes.data
     const pages = ((model?.schema as FormSchemaConfig | undefined)?.pages) ?? []
 
     const mancanti = consensiObbligatoriMancanti(pages, data as Record<string, unknown>)
@@ -73,20 +96,39 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     const acceptedAt = new Date().toISOString()
     const consents_log = estraiConsensi(pages, data as Record<string, unknown>, acceptedAt)
 
-    // Sede della COMPILAZIONE, scritta all'invio. Era calcolata già qui sotto,
-    // ma solo per decidere a chi mandare la notifica — e poi buttata via: la riga
-    // restava senza sede, e nessun elenco poteva più filtrarla. Ordine di
-    // risoluzione: la sede di chi compila → quella dichiarata sul modello →
-    // l'unica sede reale (se ce n'è una sola). Se resta ambigua si scrive `null`
-    // e la riga è visibile alla sola Direzione: inventarle una sede sarebbe
-    // peggio che ammettere di non saperla.
-    let scuolaId: string | null = null
+    // Sede della COMPILAZIONE, scritta all'invio. Ordine di risoluzione: la sede
+    // di chi compila → quella dichiarata sul modello → l'unica sede reale.
+    //
+    // Fino al 2026-07-31 il terzo ripiego era `scuolaUnicaReale`, che con tre
+    // sedi reali risponde sempre `null`, e la riga veniva scritta comunque: il
+    // commento diceva «visibile alla sola Direzione», ma i quattro lettori
+    // filtrano con `.in('scuola_id', plessi)` e `NULL IN (…)` in SQL vale NULL —
+    // quella compilazione non la vedeva NESSUNO. Ora una sede non risolvibile è
+    // un rifiuto esplicito, non una riga che sparisce.
+    let sedeUtente: string | null = null
     if (userId) {
-      const { data: u } = await supabase.from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
-      scuolaId = (u?.scuola_id as string | undefined) ?? null
+      const { data: u, error: erroreUtente } = await supabase
+        .from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
+      if (erroreUtente) {
+        logEvento('modulistica', 'error', {
+          operazione: 'forms/submit:POST', esito: 'utente-non-letto',
+        }, erroreUtente)
+        return NextResponse.json({ error: erroreUtente.message }, { status: 500 })
+      }
+      sedeUtente = (u?.scuola_id as string | undefined) ?? null
     }
-    if (!scuolaId) scuolaId = (model as { scuola_id?: string | null } | null)?.scuola_id ?? null
-    if (!scuolaId) scuolaId = await scuolaUnicaReale(supabase)
+    const sede = await risolviSedeCompilazione(
+      supabase,
+      [sedeUtente, (model as { scuola_id?: string | null } | null)?.scuola_id],
+      'forms/submit:POST',
+    )
+    if (sede.ambigua) {
+      return NextResponse.json(
+        { error: 'Sede non determinabile per questa compilazione: indicare la sede sul modulo' },
+        { status: 400 }
+      )
+    }
+    const scuolaId = sede.scuolaId
 
     const rigaInvio: Record<string, unknown> = {
       model_id: modelId,
@@ -110,11 +152,22 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     const { data: submission, error: insertErr } = insRes
 
     if (insertErr || !submission) {
+      logEvento('modulistica', 'error', {
+        operazione: 'forms/submit:POST', esito: 'compilazione-non-registrata',
+      }, insertErr)
       return NextResponse.json(
         { error: insertErr instanceof Error ? insertErr.message : 'Creazione submission fallita' },
         { status: 500 }
       )
     }
+
+    // Successo loggato: una compilazione è un documento di una famiglia, e
+    // «nessun log» non deve poter significare tanto «tutto bene» quanto «non è
+    // mai arrivato niente». Solo uuid: nessun contenuto del modulo.
+    logEvento('modulistica', 'info', {
+      operazione: 'forms/submit:POST', esito: 'compilazione-registrata',
+      entita_id: submission.id, sede: scuolaId,
+    })
 
     // Notifica alla segreteria: modulo compilato (best-effort). Debounce per
     // modello + buffer 60' → una notifica riassuntiva, non una per invio.

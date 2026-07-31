@@ -3,9 +3,10 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
+import { esitoScopeModello } from '@/lib/forms/scope-modello'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // POST — sostituisce il 400 manuale 'title e schema sono obbligatori'.
@@ -32,14 +33,31 @@ const postBodySchema = z.object({
 // Colonna nuova assente sul DB E2E CI non migrato.
 const COLONNA_NUOVA_ASSENTE = new Set(['PGRST204', '42703'])
 
-// PATCH — il resto del body viene spalmato nell'update (...updates):
-// .loose() preserva le chiavi extra. `id` resta stringa libera come il
-// truthy check odierno (nei test circolano id non-UUID tipo 'm-1').
-const patchBodySchema = z
-  .object({
-    id: z.string().min(1, 'id obbligatorio'),
-  })
-  .loose()
+// PATCH — ALLOWLIST esplicita, mai `.loose()`.
+//
+// Fino al 2026-07-31 lo schema era `z.object({ id }).loose()` e l'handler faceva
+// `const { id, ...updates }` → `.update({ ...updates })`: OGNI colonna della
+// tabella era scrivibile dal client. Comprese `scuola_id` — la chiave di
+// tenancy, che PR #60 aveva appena introdotto e che così si poteva ripuntare a
+// un altro plesso o azzerare (rendendo globale un modello di sede) —,
+// `public_token` (la capability che apre `/m/{token}` senza credenziali),
+// `published_at` e `is_enrollment_form` (cioè QUALE modello è il modulo
+// d'iscrizione). Quelle quattro non stanno qui dentro di proposito: la sede si
+// dichiara alla creazione (POST, già ri-validata contro le sedi accessibili) e
+// la pubblicazione ha la sua route dedicata.
+// `id` resta stringa libera come il truthy check odierno (nei test circolano id
+// non-UUID tipo 'm-1'). NB zod v4: `z.unknown()` nudo rende la chiave
+// obbligatoria → sempre `.optional()`.
+const patchBodySchema = z.object({
+  id: z.string().min(1, 'id obbligatorio'),
+  title: z.unknown().optional(),
+  description: z.unknown().optional(),
+  schema: z.unknown().optional(),
+  is_active: z.unknown().optional(),
+  requires_signature: z.unknown().optional(),
+  signature_mode: z.unknown().optional(),
+  sempre_firmabile: z.unknown().optional(),
+})
 
 // POST: crea un nuovo modello form (bypassa RLS via service-role)
 export const POST = withRoute('admin/form-models:POST', async (request: Request) => {
@@ -108,9 +126,47 @@ export const PATCH = withRoute('admin/form-models:PATCH', async (request: Reques
   const b = await parseBody(request, patchBodySchema)
   if ('response' in b) return b.response
   try {
-    const { id, ...updates } = b.data
+    const { id, ...campi } = b.data
+    // Solo le chiavi realmente presenti nel body: `undefined` finirebbe
+    // nell'UPDATE come «azzera la colonna».
+    const updates: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(campi)) {
+      if (v !== undefined) updates[k] = v
+    }
 
     const supabase = await createAdminClient()
+
+    // Gate di tenant sull'OGGETTO scritto: il modello di un'altra sede non è
+    // modificabile (404), quello globale solo da chi ha in scope tutte le sedi
+    // reali (403). Vedi `@/lib/forms/scope-modello`.
+    // `scuola_id` non esiste sul DB E2E della CI (non migrato): la lettura si
+    // ripete senza la colonna e la riga arriva SENZA la chiave — il gate applica
+    // allora il degrado (lecito solo se non c'è niente da isolare).
+    // Due `select()` distinti e non un ternario dentro `select()`: il client
+    // Supabase tipizza quella stringa come LETTERALE e su un'unione risponde con
+    // un `ParserError` al posto del tipo della riga.
+    const caricaModello = async (conSede: boolean) => {
+      const res = conSede
+        ? await supabase.from('form_models').select('id, scuola_id').eq('id', id).maybeSingle()
+        : await supabase.from('form_models').select('id').eq('id', id).maybeSingle()
+      return { data: res.data as { id: string; scuola_id?: string | null } | null, error: res.error }
+    }
+    let caricato = await caricaModello(true)
+    if (COLONNA_NUOVA_ASSENTE.has(caricato.error?.code ?? '')) caricato = await caricaModello(false)
+    const { data: modello, error: erroreLettura } = caricato
+    if (erroreLettura) {
+      // PostgREST non lancia: un guasto di lettura non deve diventare «nessun
+      // controllo di sede».
+      logEvento('modulistica', 'error', {
+        operazione: 'admin/form-models:PATCH', esito: 'modello-non-letto',
+      }, erroreLettura)
+      return NextResponse.json({ error: erroreLettura.message }, { status: 500 })
+    }
+    const negato = await esitoScopeModello(supabase, auth.user, modello, {
+      operazione: 'admin/form-models:PATCH', perScrittura: true,
+    })
+    if (negato) return negato
+
     let res = await supabase
       .from('form_models')
       .update({ ...updates, updated_at: new Date().toISOString() })

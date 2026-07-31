@@ -10,8 +10,9 @@ const ALUNNO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   requireUser: vi.fn(),
-  scuoleDiUtente: vi.fn(),
+  resolveScuoleAttive: vi.fn(),
   assertAlunnoInScope: vi.fn(),
+  assertClasseNomeInScope: vi.fn(),
   righe: {} as Record<string, Record<string, unknown>[]>,
 }))
 
@@ -24,9 +25,15 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireDocente: h.requireDocente,
   requireUser: h.requireUser,
 }))
+// `assertClasseNomeInScope` e `resolveScuoleAttive` servono da quando il ramo
+// `?sezione=` ha il gate per SEZIONE ASSEGNATA e legge il cookie del
+// SedeSelector (W2-N, 2026-07-31). Concessivi come gli altri: l'oggetto di
+// QUESTO test è l'unione dei legami, non l'autorizzazione — quella sta in
+// `__tests__/api/sezioni-assegnate-scope.test.ts`.
 vi.mock('@/lib/auth/scope', () => ({
-  scuoleDiUtente: h.scuoleDiUtente,
+  resolveScuoleAttive: h.resolveScuoleAttive,
   assertAlunnoInScope: h.assertAlunnoInScope,
+  assertClasseNomeInScope: h.assertClasseNomeInScope,
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -51,8 +58,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireDocente.mockResolvedValue({ user: { id: 'doc1', role: 'educator', scuola_id: 'sc-1' } })
   h.requireUser.mockResolvedValue({ user: { id: 'doc1', role: 'educator', scuola_id: 'sc-1' } })
-  h.scuoleDiUtente.mockResolvedValue(['sc-1'])
+  h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
   h.assertAlunnoInScope.mockResolvedValue(null)
+  h.assertClasseNomeInScope.mockResolvedValue(null)
   h.righe = {
     alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', note_mediche: null, consenso_privacy: true }],
     legame_genitori_alunni: [],

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Upload, Download, Loader2, CheckCircle, FileSpreadsheet, FileDown, AlertTriangle } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
 import { buildTemplateCsv } from '@/lib/import/template';
+import { SedeRequired } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface ImportOutcome {
@@ -62,7 +63,13 @@ export function ImportExportClient() {
 
     // Importa il file compilato: parse lato client → POST al server che crea
     // alunni + genitori collegati (dedup su CF), con scoping/gate applicativo.
-    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    //
+    // `scuolaId` arriva da <SedeRequired>, cioè dalla sede SCELTA nel selettore, e
+    // viaggia nel corpo della richiesta. Non è un vezzo: la dedup del codice
+    // fiscale e la creazione dell'alunno avvengono DENTRO quella sede, e dal
+    // 2026-07-31 `resolveScuolaScrittura` risponde 400 invece di indovinare. Un
+    // import "a sede ignota" archivierebbe una scolaresca nel plesso sbagliato.
+    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>, scuolaId: string) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
@@ -82,7 +89,7 @@ export function ImportExportClient() {
             const res = await fetch('/api/admin/import/anagrafiche', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rows }),
+                body: JSON.stringify({ rows, scuola_id: scuolaId }),
             });
             const body = await res.json();
             if (!res.ok) throw new Error(body.error || t('ieErroreImport'));
@@ -142,19 +149,38 @@ export function ImportExportClient() {
                             <FileDown size={18} /> {t('ieScaricaPrestampato')}
                         </button>
 
-                        <label className={`px-6 py-2 bg-kidville-green hover:opacity-90 text-white rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
-                            {isImporting ? <Loader2 size={18} className="animate-spin" /> : t('ieCaricaFile')}
-                            <input type="file" accept=".xlsx, .xls, .csv" onChange={handleImport} className="hidden" />
-                        </label>
+                        {/* L'import SCRIVE in una sede sola: finché il selettore ne ha
+                            attive più d'una la sede è ambigua, e il caricamento non si
+                            offre nemmeno — invece di far caricare un foglio che il
+                            server rifiuterebbe con 400. */}
+                        <SedeRequired>
+                            {(scuolaId) => (
+                                <label className={`px-6 py-2 bg-kidville-green hover:opacity-90 text-white rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
+                                    {isImporting ? <Loader2 size={18} className="animate-spin" /> : t('ieCaricaFile')}
+                                    <input type="file" accept=".xlsx, .xls, .csv" onChange={(ev) => handleImport(ev, scuolaId)} className="hidden" />
+                                </label>
+                            )}
+                        </SedeRequired>
                     </div>
 
                     {outcome && (
                         <div className="mt-2 w-full p-3 bg-kidville-success/20 border border-kidville-success/30 rounded-xl text-kidville-success text-sm font-bold flex flex-col gap-1">
                             <span className="flex items-center gap-2"><CheckCircle size={16} /> {t('ieRisultato', { alunni: outcome.alunniCreati, genitori: outcome.genitoriCreati, legami: outcome.legami })}</span>
                             {outcome.errori.length > 0 && (
-                                <span className="flex items-center gap-2 text-kidville-warn font-medium">
-                                    <AlertTriangle size={14} /> {t('ieRigheErrori', { count: outcome.errori.length, righe: outcome.errori.map(e => e.riga).join(', ') })}
-                                </span>
+                                <>
+                                    <span className="flex items-center gap-2 text-kidville-warn font-medium">
+                                        <AlertTriangle size={14} /> {t('ieRigheErrori', { count: outcome.errori.length, righe: outcome.errori.map(e => e.riga).join(', ') })}
+                                    </span>
+                                    {/* Il MESSAGGIO, non solo il numero di riga. «Riga 7» non
+                                        dice a nessuno che quel bambino risulta già iscritto in
+                                        un'altra sede e che la strada è il trasferimento: il
+                                        server lo spiega, e finiva buttato via qui. */}
+                                    <ul className="list-disc pl-5 text-left font-medium text-kidville-warn">
+                                        {outcome.errori.map((e, i) => (
+                                            <li key={`${e.riga}-${i}`}>{e.riga}: {e.messaggio}</li>
+                                        ))}
+                                    </ul>
+                                </>
                             )}
                         </div>
                     )}

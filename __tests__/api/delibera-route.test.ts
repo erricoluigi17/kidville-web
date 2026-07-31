@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -10,14 +10,30 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    // Le domande sono TUTTE della sede dell'utente: qui si prova l'ALGORITMO
+    // della delibera (soglia, posti, override), non l'isolamento fra sedi —
+    // quello sta in `modulistica-mutazioni-scope-sede.test.ts`, dove il finto
+    // client applica davvero `.in('scuola_id', plessi)`.
     from: () => {
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      b.in = () => b
       b.order = () => b
+      b.maybeSingle = async () => ({ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3', scuola_id: 'sc-1' }, error: null })
       b.then = (res: (v: unknown) => void) => res({ data: h.subs, error: null })
       b.update = (row: Record<string, unknown>) => ({
-        eq: async (_col: string, val: unknown) => { h.updates.push({ id: val, row }); return { error: null } },
+        // L'override ripete il filtro di sede anche sull'UPDATE
+        // (`.eq('id', …).in('scuola_id', plessi)`), il bulk no: la catena deve
+        // essere attendibile con e senza `.in()`.
+        eq: (_col: string, val: unknown) => {
+          h.updates.push({ id: val, row })
+          const esito = { error: null }
+          return {
+            in: async () => esito,
+            then: (ok: (v: unknown) => unknown) => Promise.resolve(esito).then(ok),
+          }
+        },
       })
       return b
     },
@@ -26,8 +42,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { POST } from '@/app/api/forms/delibera/route'
 
+// `NextRequest` e non `Request`: la route legge le sedi attive dal cookie del
+// SedeSelector, e quel canale esiste solo sulla richiesta di Next.
 function post(body: unknown) {
-  return new Request('http://localhost/api/forms/delibera', {
+  return new NextRequest('http://localhost/api/forms/delibera', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
 }
@@ -37,7 +55,7 @@ describe('POST /api/forms/delibera', () => {
     vi.clearAllMocks()
     h.subs = []
     h.updates = []
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria' } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   })
 
   it('gated allo staff', async () => {

@@ -30,7 +30,16 @@ vi.mock('@/lib/supabase/server-client', () => ({
       q.eq = () => q
       q.in = () => q
       q.order = () => q
-      q.maybeSingle = async () => ({ data: h.owns ? { alunno_id: 'al1' } : null, error: null })
+      // `genera` risolve ora la SEZIONE del certificato e la passa da
+      // `assertSezioneInScope` prima di firmare (W2-G): il finto client deve
+      // rispondere per TABELLA, altrimenti il certificato torna senza
+      // `section_id` e il gate di sede risponde 400 mascherando il gate di
+      // ruolo che questo file collauda.
+      q.maybeSingle = async () => {
+        if (table === 'certificati_competenze') return { data: { id: 'c1', section_id: 'sec1' }, error: null }
+        if (table === 'sections') return { data: { id: 'sec1', scuola_id: 'sc1' }, error: null }
+        return { data: h.owns ? { alunno_id: 'al1' } : null, error: null }
+      }
       q.then = (r: (v: { data: unknown; error: null }) => unknown) => {
         if (table === 'legame_genitori_alunni' || table === 'student_parents') return r({ data: h.owns ? [{ alunno_id: 'al1', student_id: 'al1' }] : [], error: null })
         if (table === 'certificati_competenze') return r({ data: h.certs, error: null })

@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
+
+// La sede dichiarata nel body è la STESSA che lo scope restituisce: dal 31/07 la
+// route la valida (`sedeDichiarataFuoriScope`) invece di ripiegare in silenzio su
+// un'altra, quindi un uuid scollegato dal mock darebbe 403 e questi casi — che
+// parlano di shallow-merge JSONB, non di sedi — fallirebbero per il motivo sbagliato.
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -7,10 +13,13 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({
-  resolveScuolaScrittura: async () => ({ scuolaId: 'sc-1' }),
-  resolveScuoleAttive: async () => ['sc-1'],
-}))
+vi.mock('@/lib/auth/scope', async () => {
+  const { SEDE_A: SEDE } = await import('../fixtures/sedi')
+  return {
+    resolveScuolaScrittura: async () => ({ scuolaId: SEDE }),
+    resolveScuoleAttive: async () => [SEDE],
+  }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: () => {
@@ -43,14 +52,14 @@ describe('PATCH /api/admin/settings — fiscale_config', () => {
 
   it('accetta fiscale_config e lo salva in shallow-merge con l\'esistente', async () => {
     h.existing = { fiscale_config: { denominazione: 'Kidville Giugliano' } }
-    const res = await PATCH(req({ scuola_id: '11111111-1111-4111-8111-111111111111', fiscale_config: { piva: '01234567890' } }))
+    const res = await PATCH(req({ scuola_id: SEDE_A, fiscale_config: { piva: '01234567890' } }))
     expect(res.status).toBe(200)
     expect(h.upserted?.fiscale_config).toEqual({ denominazione: 'Kidville Giugliano', piva: '01234567890' })
   })
 
   it('accetta solleciti_config e lo salva in shallow-merge con l\'esistente', async () => {
     h.existing = { solleciti_config: { enabled: false } }
-    const res = await PATCH(req({ scuola_id: '11111111-1111-4111-8111-111111111111', solleciti_config: { cadenza_min_giorni: 10 } }))
+    const res = await PATCH(req({ scuola_id: SEDE_A, solleciti_config: { cadenza_min_giorni: 10 } }))
     expect(res.status).toBe(200)
     expect(h.upserted?.solleciti_config).toEqual({ enabled: false, cadenza_min_giorni: 10 })
   })
@@ -60,7 +69,7 @@ describe('PATCH /api/admin/settings — fiscale_config', () => {
     // sovrascrivere il predefinito né le altre categorie già impostate.
     h.existing = { causali_config: { default: '{descrizione} - {sede}', gita: 'Quota {descrizione}' } }
     const res = await PATCH(req({
-      scuola_id: '11111111-1111-4111-8111-111111111111',
+      scuola_id: SEDE_A,
       causali_config: { mensa: 'Mensa {mese} {anno}' },
     }))
     expect(res.status).toBe(200)
@@ -74,7 +83,7 @@ describe('PATCH /api/admin/settings — fiscale_config', () => {
   it('causali_config: una stringa VUOTA rimuove la chiave (reset al predefinito) e i valori non-stringa sono scartati', async () => {
     h.existing = { causali_config: { default: '{descrizione} - {sede}', retta: 'Retta {mese}', mensa: 'Mensa' } }
     const res = await PATCH(req({
-      scuola_id: '11111111-1111-4111-8111-111111111111',
+      scuola_id: SEDE_A,
       // retta svuotata (reset), mensa aggiornata, un valore non-stringa da scartare
       causali_config: { retta: '', mensa: 'Mensa {anno}', divisa: 123 },
     }))

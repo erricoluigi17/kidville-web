@@ -17,12 +17,15 @@ interface Richiesta {
   parent_nome: string;
   alunni_iscritti: number;
   alunni_non_iscritti: number;
+  /** Figli in plessi NON accessibili a chi evade: contati, mai anonimizzati qui. */
+  alunni_fuori_scope?: number;
 }
 
 interface DryRun {
   parent: number;
   alunni_non_iscritti: number;
   alunni_iscritti_mantenuti: number;
+  alunni_fuori_scope?: number;
 }
 
 export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
@@ -140,6 +143,13 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
                     <div>{t('richiesteGenitoreAnon')} <strong>{dry.parent}</strong></div>
                     <div>{t('richiesteFigliNonIscrittiAnon')} <strong>{dry.alunni_non_iscritti}</strong></div>
                     {dry.alunni_iscritti_mantenuti > 0 && <div className="text-kidville-warn">{t('richiesteFigliMantenuti', { n: dry.alunni_iscritti_mantenuti })}</div>}
+                    {/* Il residuo NON si tace: questa evasione chiude la richiesta,
+                        e un pezzo dell'oblio resta in carico a un altro plesso.
+                        Chi sta per digitare ANONIMIZZA deve saperlo qui, non in un
+                        campo JSON che non guarda nessuno. */}
+                    {(dry.alunni_fuori_scope ?? 0) > 0 && (
+                      <div className="text-kidville-error">{t('richiesteFigliFuoriScope', { n: dry.alunni_fuori_scope ?? 0 })}</div>
+                    )}
                   </div>
                 ) : null}
 

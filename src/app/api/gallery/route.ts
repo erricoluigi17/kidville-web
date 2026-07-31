@@ -331,6 +331,54 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
 
         const supabase = await createAdminClient();
 
+        // LO SCOPE DI SEDE VIENE PRIMA DEL PRIVACY LOCK, e non è un dettaglio
+        // d'ordine. Fino al 2026-07-31 `alunniSenzaConsenso` interrogava `alunni`
+        // con `.in('id', ids)` senza filtro di sede, e il 422 che ne usciva
+        // portava NOMI E COGNOMI dei minori taggati più l'informazione che a loro
+        // manca la liberatoria fotografica. Il collaudo privacy l'ha misurato con
+        // la controprova su tre sedi: la risposta era IDENTICA per la segreteria
+        // che ne aveva titolo e per quella di un altro plesso. Bastava conoscere
+        // gli uuid — e un uuid non è un segreto.
+        //
+        // `tag_students` era l'unico ingresso rimasto che accettava
+        // identificatori di minori senza chiedersi di chi fossero: GET, PATCH e
+        // DELETE di questa stessa route lo scope l'avevano già.
+        const tagUnici = [...new Set((tag_students ?? []) as string[])];
+        if (tagUnici.length > 0) {
+            const plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
+            // Scope vuoto ⇒ NEGA: è la regola del progetto, e qui vale doppio.
+            if (plessi.length === 0) {
+                return NextResponse.json({ error: 'Nessuna sede selezionata' }, { status: 403 });
+            }
+            const { data: alunniInScope, error: errScope } = await supabase
+                .from('alunni')
+                .select('id')
+                .in('id', tagUnici)
+                .in('scuola_id', plessi);
+            // PostgREST non lancia: senza questo controllo un errore di lettura
+            // diventerebbe «nessun alunno in scope» e poi, peggio, un permesso.
+            if (errScope) {
+                logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, errScope);
+                return NextResponse.json({ error: 'Verifica dei tag non riuscita' }, { status: 500 });
+            }
+            const ammessi = new Set((alunniInScope ?? []).map((a) => a.id as string));
+            if (tagUnici.some((id) => !ammessi.has(id))) {
+                // Solo conteggi nel log, e NIENTE nel corpo: dire quali sono
+                // confermerebbe l'esistenza di quei bambini a chi non ha titolo.
+                logEvento('galleria', 'warn', {
+                    operazione: 'gallery:POST',
+                    esito: 'tag-fuori-sede',
+                    tipo: 'tag-fuori-sede',
+                    taggati: tagUnici.length,
+                    fuoriSede: tagUnici.filter((id) => !ammessi.has(id)).length,
+                });
+                return NextResponse.json(
+                    { error: 'Uno o più bambini taggati non appartengono ai tuoi plessi.' },
+                    { status: 403 }
+                );
+            }
+        }
+
         // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso privacy
         // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
         const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
@@ -403,22 +451,14 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun
-        // dato personale): senza, "nessun log" non distinguerebbe "pubblicata" da
-        // "non è mai partito niente".
-        logEvento('galleria', 'info', {
-            operazione: 'gallery:POST',
-            esito: 'pubblicata',
-            // La sede è un uuid (passa la redazione) e senza di essa il log non
-            // direbbe DOVE è finita la foto: con tre plessi è metà del fatto.
-            sede_id: scuolaId,
-            nTag: (tag_students ?? []).length,
-            broadcast: is_broadcast ?? false,
-        });
-
         // Notifica ai genitori interessati (best-effort): alunni taggati →
         // classi target → broadcast a tutta la scuola. Buffer 30' + debounce
         // per uploader: gli upload a raffica collassano in una notifica sola.
+        //
+        // Il conteggio dei destinatari si tiene FUORI dal try perché è il dato del
+        // log di successo qui sotto. `null` significa «non si è arrivati a
+        // calcolarlo»: in quel caso la riga `error` del catch dice già perché.
+        let nDestinatari: number | null = null;
         try {
             // Riusa la sede risolta sopra (rispetta il SedeSelector), invece di
             // ricadere sempre sulla sede primaria dell'utente.
@@ -429,6 +469,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
                 : classi.length > 0
                     ? await genitoriDiClassi(supabase, scuolaId, classi)
                     : await genitoriDiScuola(supabase, scuolaId);
+            nDestinatari = destinatari.length;
             await notificaEvento(supabase, {
                 tipo: 'galleria',
                 scuolaId,
@@ -450,6 +491,25 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
                 esito: 'notifica-genitori-non-accodata',
             }, e);
         }
+
+        // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun
+        // dato personale): senza, "nessun log" non distinguerebbe "pubblicata" da
+        // "non è mai partito niente".
+        //
+        // `n_destinatari` accanto a `nTag` è la coppia che conta: la foto è il
+        // contenuto, la notifica è il suo recapito. «Due bambini nella foto, zero
+        // famiglie avvisate» è un guasto vivo — in produzione ci sono alunni senza
+        // nessun tutore collegato — e con il solo `nTag` si leggeva come un successo.
+        logEvento('galleria', 'info', {
+            operazione: 'gallery:POST',
+            esito: 'pubblicata',
+            // La sede è un uuid (passa la redazione) e senza di essa il log non
+            // direbbe DOVE è finita la foto: con tre plessi è metà del fatto.
+            sede_id: scuolaId,
+            nTag: (tag_students ?? []).length,
+            broadcast: is_broadcast ?? false,
+            n_destinatari: nDestinatari,
+        });
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {

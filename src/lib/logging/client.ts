@@ -143,8 +143,9 @@ const ANOMALIE_4XX = new Set([408, 409, 413, 429]);
  * conservarlo» è NON SPEDIRLO.
  *
  * Ciò che si perde è visibile altrove: il server quei 4xx li vede e li logga su Vercel. Ciò
- * che invece SOLO il client vede — la fetch che non è mai partita (rete giù, DNS, CORS) — è
- * `error` e ha `stato: 0`, e resta il motivo per cui questo patch esiste.
+ * che invece SOLO il client vede — la fetch che non è mai partita (rete giù, DNS, CORS) — ha
+ * `stato: 0` e resta il motivo per cui questo patch esiste; il suo livello è `warn` e non
+ * `error`, per la ragione misurata nella testata di `eAnnullata`.
  *
  * `stato < 400` (una 3xx non seguita, una risposta opaca con `status: 0`) → `null`: non è un
  * guasto, e una risposta opaca non ha nemmeno uno status da raccontare.
@@ -153,6 +154,48 @@ function livelloFetch(stato: number): 'warn' | 'error' | null {
     if (stato >= 500) return 'error';
     if (ANOMALIE_4XX.has(stato)) return 'warn';
     return null;
+}
+
+/**
+ * LA FETCH CHE NON È MAI PARTITA — e perché non è più un `error`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * IL RUMORE, MISURATO. In `app_log`, su trenta giorni, **763 occorrenze su 964** del canale
+ * client sono `stato_http = 0` a livello `error`: il 79%. La sola riga
+ * «GET /api/notifiche — Failed to fetch» ne conta 372. E sotto a quella montagna stavano
+ * 41 occorrenze in UN giorno di `POST /api/iscrizione/upload → 413`: genitori che non
+ * riuscivano ad allegare i documenti al modulo pubblico. Il guasto vero era a livello
+ * `warn`, il rumore a livello `error`: chi apriva la tabella filtrando per `error` — cioè
+ * chiunque — vedeva solo il rumore.
+ *
+ * PERCHÉ `stato: 0` NON È UN GUASTO. Questa app gira in una WebView Capacitor. Lì
+ * «Failed to fetch» (Chrome/Android) e «Load failed» (Safari/iOS) sono ciò che il motore
+ * dice quando la richiesta viene TRONCATA: l'utente cambia pagina, il telefono si
+ * addormenta, l'app va in background mentre un polling è in volo. A livello di JavaScript
+ * è indistinguibile dalla rete caduta davvero — non c'è nessun campo che le separi — e
+ * fra le due la frequente, di gran lunga, è la prima.
+ *
+ * PERCHÉ NON SI BUTTA. Resta l'unica traccia possibile di un'interruzione di rete vera: la
+ * richiesta non è mai arrivata al server, quindi nessun log del server la vedrà mai. Si
+ * declassa a `warn` — che è persistito e contabile — invece di sopprimerla: il livello
+ * dice «capita, guardalo quando ne conti troppi», che è esattamente ciò che è.
+ *
+ * L'ECCEZIONE È L'ABORT, e va nella direzione opposta: `AbortError` lo produce il NOSTRO
+ * codice (un `AbortController` allo smontaggio, un timeout applicativo). Non si spedisce
+ * affatto — sarebbe una riga per dire «ho fatto ciò che ho deciso di fare». Il livello che
+ * gli spetterebbe (`info`) la route `/api/logs` non lo accetta, quindi l'unico modo di
+ * dire «non conservarlo» è non spedirlo, come per i 401.
+ * ─────────────────────────────────────────────────────────────────────────────────
+ */
+function eAnnullata(err: unknown): boolean {
+    try {
+        // `name`, non `instanceof DOMException`: nelle WebView e sotto jsdom la classe non è
+        // sempre la stessa, ma il nome è quello che la specifica fetch impone.
+        return (err as { name?: unknown } | null | undefined)?.name === 'AbortError';
+    } catch {
+        // Getter ostile: nel dubbio la si tratta come una fetch fallita e la si logga.
+        return false;
+    }
 }
 
 /**
@@ -558,16 +601,20 @@ export function installaLoggerClient(): void {
             try {
                 res = await originale(input, init);
             } catch (err) {
-                // La fetch è FALLITA: rete giù, DNS, CORS, abort. È il caso che NESSUN log del
-                // server vedrà mai, perché la richiesta non è mai arrivata — ed è esattamente
-                // il guasto del genitore sulla rete mobile che oggi non sappiamo di avere.
-                senzaLanciare(() => logClient({
-                    livello: 'error',
-                    evento: 'fetch',
-                    messaggio: `${metodo(req, init)} ${percorso(url)} — ${testoErrore(err)}`,
-                    route: pagina(),
-                    stato: 0,
-                }));
+                // La fetch non è mai arrivata al server: rete giù, DNS, CORS — oppure, molto
+                // più spesso su una WebView, la richiesta troncata da un cambio pagina o dal
+                // telefono che si addormenta. `warn`, non `error`, e niente affatto se
+                // l'abbiamo annullata noi: vedi la testata di `eAnnullata`.
+                senzaLanciare(() => {
+                    if (eAnnullata(err)) return;
+                    logClient({
+                        livello: 'warn',
+                        evento: 'fetch',
+                        messaggio: `${metodo(req, init)} ${percorso(url)} — ${testoErrore(err)}`,
+                        route: pagina(),
+                        stato: 0,
+                    });
+                });
                 throw err; // tale e quale: il chiamante deve vedere il SUO errore.
             }
 

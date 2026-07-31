@@ -118,10 +118,14 @@ describe('POST /api/admin/gdpr/richieste — evasione', () => {
   })
 
   it('execute: anonimizza i figli NON iscritti e lascia gli iscritti alla scuola', async () => {
+    // `scuola_id` sui figli è ORA parte del fixture: dal 2026-07-31 la route
+    // anonimizza solo i minori del proprio plesso (F5), e un figlio senza sede
+    // è fuori scope per progetto (fail-closed). Vedi
+    // `admin-gdpr-richieste-scope-sede.test.ts` per il caso a due sedi.
     h.state.links = [{ student_id: 'al-1' }, { student_id: 'al-2' }]
     h.state.alunni = [
-      { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null },
-      { id: 'al-2', stato: 'iscritto', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null },
+      { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, scuola_id: SCUOLA_ID, documento_path: null, codice_fiscale: null, fiscal_code: null },
+      { id: 'al-2', stato: 'iscritto', anonimizzato_il: null, scuola_id: SCUOLA_ID, documento_path: null, codice_fiscale: null, fiscal_code: null },
     ]
     const res = await POST(req({ id: 'req-1', mode: 'execute', confirm: 'ANONIMIZZA' }))
     const j = await res.json()
@@ -133,7 +137,7 @@ describe('POST /api/admin/gdpr/richieste — evasione', () => {
   it('dryrun: conta senza anonimizzare nulla', async () => {
     h.state.links = [{ student_id: 'al-1' }]
     h.state.alunni = [
-      { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null },
+      { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, scuola_id: SCUOLA_ID, documento_path: null, codice_fiscale: null, fiscal_code: null },
     ]
     const res = await POST(req({ id: 'req-1', mode: 'dryrun' }))
     expect(res.status).toBe(200)

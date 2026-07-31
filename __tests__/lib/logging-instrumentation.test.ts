@@ -103,6 +103,9 @@ beforeEach(() => {
 afterEach(() => {
     spiaLog.mockRestore();
     spiaErr.mockRestore();
+    // `NODE_ENV` si tocca solo con `stubEnv` (vitest lo tratta a parte): l'unstub va fatto
+    // qui, e non costa niente quando nessun test l'ha stubbata.
+    vi.unstubAllEnvs();
     for (const [k, v] of originali) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
@@ -195,6 +198,53 @@ describe('preflight della configurazione', () => {
         expect(r.evento).toBe('config');
         expect((r.contesto as Record<string, Record<string, unknown>>).campi.esito).toBe('ok');
         expect(rpc).toHaveBeenCalledTimes(1);
+    });
+
+    /* ────────────────────────────────────────────────────────────────────────
+     * L'INCIDENTE FALSO. Non è un caso di scuola: dal 16 al 31 luglio 2026 la tabella
+     * `app_log` di PRODUZIONE ha collezionato otto righe `livello=error`,
+     * `ambiente=production`, «variabile d'ambiente critica mancante: LOG_HASH_SALT» —
+     * mentre su Vercel il salt c'era e gli hash uscivano veri. Le firmava
+     * `app_versione = null`: nessuno sha di commit, cioè nessun deploy. Erano i
+     * `npm run build` fatti su questa macchina, dove `NODE_ENV` vale `production`
+     * perché la BUILD è ottimizzata — non perché l'ambiente sia la produzione.
+     *
+     * Il costo è tutto sul lettore: chi indaga un guasto alle tre di notte filtra per
+     * `livello=error` e `ambiente=production`, e parte da un incidente che non esiste.
+     * ──────────────────────────────────────────────────────────────────────── */
+    it('una build LOCALE non scrive un incidente di PRODUZIONE nel log di produzione', async () => {
+        // Esattamente ciò che fa `npm run build` su una macchina di sviluppo: nessun
+        // VERCEL_ENV (non siamo su Vercel), NODE_ENV a `production` (build ottimizzata).
+        togli('VERCEL_ENV');
+        vi.stubEnv('NODE_ENV', 'production');
+        togli('LOG_HASH_SALT');
+
+        const m = await carica();
+        await m.register();
+        await vi.waitFor(() => expect(rpc).toHaveBeenCalled());
+
+        const r = rigaSpedita();
+        // Solo Vercel può dire «production»: senza `VERCEL_ENV` il codice sta girando
+        // sulla macchina di qualcuno, e la riga deve dirlo.
+        expect(r.ambiente).toBe('locale');
+        // E quindi NON è un incidente di produzione: resta visibile e persistito, ma
+        // fuori dal canale su cui si filtra per primo.
+        expect(r.livello).toBe('warn');
+        expect((r.contesto as Record<string, Record<string, unknown>>).campi.ambiente).toBe('locale');
+    });
+
+    it('su Vercel, invece, `production` resta `production` — l\'incidente vero non si declassa', async () => {
+        process.env.VERCEL_ENV = 'production';
+        // NODE_ENV non c'entra nulla con la decisione: comanda VERCEL_ENV, e basta.
+        vi.stubEnv('NODE_ENV', 'test');
+        togli('LOG_HASH_SALT');
+
+        const m = await carica();
+        await m.register();
+        await vi.waitFor(() => expect(rpc).toHaveBeenCalled());
+
+        expect(rigaSpedita().ambiente).toBe('production');
+        expect(rigaSpedita().livello).toBe('error');
     });
 
     it('nell\'EDGE non fa nulla: le variabili le legge il codice Node, e il logger lì non esiste', async () => {

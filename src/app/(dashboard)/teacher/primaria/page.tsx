@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { BookOpen, Users, ChevronRight } from 'lucide-react';
-import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
@@ -19,13 +19,18 @@ interface Classe {
 function HubInner() {
   const t = useTranslations('teacherPrimaria');
   const params = useSearchParams();
-  const userId = getCurrentTeacherId(params);
+  // Identità a due passaggi: l'uuid finisce negli href delle classi, quindi non
+  // può essere letto da localStorage nel corpo del render (vedi
+  // `use-teacher-identity`). `withUser` non emette mai `userId=null`.
+  const { pronta, userId, withUser } = useTeacherIdentity(params);
   const [classi, setClassi] = useState<Classe[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
 
   useEffect(() => {
-    fetch(`/api/primaria/classi?userId=${userId}`)
+    if (!pronta) return;
+    fetch(`/api/primaria/classi${q}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.success) setClassi(d.data);
@@ -33,7 +38,7 @@ function HubInner() {
       })
       .catch(() => setError(t('comuneErroreRete')))
       .finally(() => setLoading(false));
-  }, [userId, t]);
+  }, [q, pronta, t]);
 
   return (
     <div className="min-h-screen bg-kidville-cream/40">
@@ -62,7 +67,7 @@ function HubInner() {
             {classi.map((c) => (
               <Link
                 key={c.id}
-                href={`/teacher/primaria/${c.id}?userId=${userId}`}
+                href={withUser(`/teacher/primaria/${c.id}`)}
                 className="group flex items-center gap-3.5 rounded-[18px] bg-white p-4 shadow-sm transition hover:shadow-md"
               >
                 <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-[15px] bg-kidville-green px-1 text-center font-barlow text-sm font-black uppercase leading-tight text-kidville-yellow [word-break:break-word]">

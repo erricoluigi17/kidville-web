@@ -26,15 +26,18 @@ interface ImportResult {
 // "Moduli ricevuti": iscrizioni compilate via /iscrizione (enrollment_submissions)
 // con import in anagrafica. Estratto da /admin/iscrizioni (tab "Ricevute").
 
+// NB: niente `credentials` qui dentro. La GET non lo restituisce più (e la PATCH
+// non lo archivia più): la password del genitore si vede UNA volta sola, nella
+// risposta dell'import — vedi `ImportResult` qui sopra — e poi si rigenera da
+// «Rigenera credenziali». Il campo era dichiarato e mai letto: toglierlo evita
+// che qualcuno ci ricostruisca sopra un elenco di password.
 interface SubmissionRow {
   id: string
   data: EnrollmentSubmissionData
   status: 'pending' | 'approved' | 'rejected'
   assigned_classes?: Record<string, string>
-  credentials?: { email: string; password: string } | null
   created_at: string
   // Sede per cui la famiglia ha fatto domanda (scelta al passo 0 del wizard).
-  // La GET fa `select('*')`: il campo c'è già nel payload, mancava solo nel tipo.
   scuola_id?: string | null
 }
 

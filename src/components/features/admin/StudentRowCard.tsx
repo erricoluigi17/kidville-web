@@ -42,7 +42,9 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
     const labelRuolo = useLabelRuolo();
     const cognome = student.cognome || student.last_name || '—';
     const nome = student.nome || student.first_name || '';
-    const hasAllergie = !!student.note_mediche;
+    // Dal 2026-07-31 la lista riceve solo il SEGNALE (`ha_note_mediche`), non il
+    // testo: `note_mediche` resta come ripiego per chi passa il record completo.
+    const hasAllergie = student.ha_note_mediche ?? !!student.note_mediche;
     const hasBes = !!student.bes;
     const showCheckbox = currentTypeFilter !== 'staff';
 

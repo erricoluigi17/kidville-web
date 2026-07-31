@@ -16,6 +16,11 @@ export interface Student {
     data_nascita?: string;
     classe_sezione?: string | null;
     stato?: string;
+    /** SEGNALE, non contenuto: `GET /api/admin/students` manda solo questo booleano
+     *  («c'è una nota medica»), mai il testo. Il testo vive nella scheda alunno. */
+    ha_note_mediche?: boolean;
+    /** Solo per i chiamanti che hanno già la riga completa (scheda alunno): la
+     *  LISTA non lo riceve più. Tenuto per non rompere chi passa il record intero. */
     note_mediche?: string | null;
     codice_fiscale?: string | null;
     fiscal_code?: string | null;
@@ -203,7 +208,10 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                 </tr>
                                 {sectionStudents.map(student => {
                                     const isSelected = selectedIds.has(student.id);
-                                    const hasAllergie = !!student.note_mediche;
+                                    // Solo un flag di presenza, come nella card mobile: la nota medica
+                                    // GREZZA (dato art. 9 GDPR di un minore) non finisce mai in un
+                                    // attributo DOM, e dalla lista non arriva nemmeno più.
+                                    const hasAllergie = student.ha_note_mediche ?? !!student.note_mediche;
                                     const hasBes = !!student.bes;
 
                                     return (
@@ -256,7 +264,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                     <td className="px-3 py-3">
                                                         <div className="flex items-center gap-1.5">
                                                             {hasAllergie && (
-                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={`${t('allergie')}: ${student.note_mediche}`}>
+                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergieNotePresenti')}>
                                                                     <AlertTriangle size={12} /> {t('allergie')}
                                                                 </span>
                                                             )}

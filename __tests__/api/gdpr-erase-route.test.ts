@@ -22,6 +22,8 @@ const h = vi.hoisted(() => ({
   newsVisError: null as { code: string } | null,
   newsVisDeleteFilter: null as string[] | null,
   deletedTables: [] as string[],
+  // W5 — prove di consenso dei genitori orfani (ip/user_agent da azzerare).
+  consensi: [] as { id: string }[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -38,6 +40,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'cassa_movimenti') return h.cassaBonificati
         if (table === 'parents') return h.parentsAuth
         if (table === 'news_visualizzazioni') return h.newsVisDeleted
+        if (table === 'consensi_accettazioni') return h.consensi
         if (table === 'riconciliazione_movimenti') {
           if (state.stato === 'confermato') return h.movConfermati
           if (state.neqStato === 'confermato') return h.movCfMatch
@@ -98,6 +101,7 @@ beforeEach(() => {
   h.cassaBonificati = []
   h.parentsAuth = []; h.newsVisDeleted = []; h.newsVisError = null
   h.newsVisDeleteFilter = null; h.deletedTables = []
+  h.consensi = []
 })
 
 describe('POST /api/admin/gdpr/erase', () => {
@@ -275,6 +279,26 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect(h.deletedTables).not.toContain('news_visualizzazioni')
     const json = await res.json()
     expect(json.news_visualizzazioni_rimosse).toBe(0)
+  })
+
+  it('execute: toglie ip e user_agent dalle prove di consenso dei genitori orfani (W5)', async () => {
+    h.parentsAuth = [{ auth_user_id: 'auth-1' }]
+    h.consensi = [{ id: 'c1' }, { id: 'c2' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'Rossi Marco' }))
+    expect(res.status).toBe(200)
+    const cUpd = h.updates.find((u) => u.table === 'consensi_accettazioni')
+    expect(cUpd).toBeTruthy()
+    expect(cUpd!.ip).toBeNull()
+    expect(cUpd!.user_agent).toBeNull()
+    expect(Object.keys(cUpd!)).not.toContain('versione')
+    expect((await res.json()).consensi_prova_bonificati).toBe(2)
+  })
+
+  it('execute: nessun genitore orfano → le prove di consenso non si toccano', async () => {
+    h.parentChildren = { 'p-1': [{ stato: 'iscritto', anonimizzato_il: null }] }
+    h.consensi = [{ id: 'c1' }]
+    await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'Rossi Marco' }))
+    expect(h.updates.some((u) => u.table === 'consensi_accettazioni')).toBe(false)
   })
 
   it('execute: genitore orfano senza auth_user_id → nessuna DELETE', async () => {

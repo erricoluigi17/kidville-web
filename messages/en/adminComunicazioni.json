@@ -26,6 +26,7 @@
   "avvisiTipoAdesione": "Sign-up",
   "avvisiTipoPresaVisione": "Acknowledgement",
   "avvisiTuttoIstituto": "Whole school",
+  "avvisiClasseSconosciuta": "Class no longer available",
   "avvisiAdesioniSiNo": "{si} yes · {no} no",
   "avvisiAzioneApri": "Open details",
   "avvisiAzioneModifica": "Edit",

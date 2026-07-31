@@ -252,7 +252,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
       utente_id: user.id,
     })
     if (auditRes.error) {
-      logEvento('pagamenti', 'error', {
+      logEvento('pagamento', 'error', {
         operazione: 'pagamenti/genera:POST',
         esito: 'audit-non-scritto',
         generati,

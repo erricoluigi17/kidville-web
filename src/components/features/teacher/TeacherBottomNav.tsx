@@ -10,7 +10,7 @@ import {
   Image, Package, FileText, ClipboardCheck, Users, Megaphone,
   ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper,
 } from 'lucide-react';
-import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teacher-gradi';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
@@ -48,12 +48,16 @@ export default function TeacherBottomNav() {
   const pathname = usePathname();
   const search = useSearchParams();
   const [showMenu, setShowMenu] = useState(false);
-  const userId = getCurrentTeacherId(search);
-  const withUser = (href: string) => `${href}?userId=${userId}`;
+  // Identità a due passaggi (SSR → idratazione): `withUser` omette il parametro
+  // finché l'uuid non è risolto, così l'HTML del server e il primo render del
+  // client coincidono e nessun href porta mai la stringa «null».
+  const { userId, pronta, withUser } = useTeacherIdentity(search);
 
   // Gradi del docente (utenti.gradi): pilotano quali voci esistono. Finché il
   // dato non è pronto — o per staff senza gradi — non si filtra nulla.
-  const tg = useTeacherGradi(userId);
+  // `pronta`: senza, il primo passaggio chiederebbe i gradi con identità vuota e
+  // il secondo con l'uuid → due GET a /api/primaria/me su ogni pagina docente.
+  const tg = useTeacherGradi(userId, pronta);
 
   // Mondo primaria attivo dal contesto di navigazione (fallback per i misti).
   const isPrimaria = pathname.startsWith('/teacher/primaria');

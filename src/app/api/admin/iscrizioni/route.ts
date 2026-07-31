@@ -161,11 +161,43 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
       return NextResponse.json({ url: data.signedUrl })
     }
 
-    const { data, error } = await supabase
-      .from('enrollment_submissions')
-      .select('*')
-      .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user))
-      .order('created_at', { ascending: false })
+    // Proiezione ESPLICITA, non `select('*')`.
+    //
+    // `enrollment_submissions.credentials` è un JSONB `{email, password}` con la
+    // PASSWORD IN CHIARO dell'account creato per il genitore. Con `select('*')`
+    // usciva da qui a ogni apertura di «Moduli ricevuti», per chiunque abbia un
+    // ruolo di staff nella sede, senza scadenza. Dal 2026-07-31 non si scrive
+    // più (vedi l'update in fondo alla PATCH) e non si rilegge: per riavere una
+    // password c'è `admin/regenerate-credentials`, che la rigenera lasciando
+    // traccia. Anche `consents_log` resta fuori: è la prova dei consensi, la
+    // legge il server nella PATCH, non serve all'elenco.
+    let cols = ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at']
+    const scuole = await resolveScuoleAttive(request, supabase, auth.user)
+    const runQuery = () =>
+      supabase
+        .from('enrollment_submissions')
+        .select(cols.join(', '))
+        .in('scuola_id', scuole)
+        .order('created_at', { ascending: false })
+
+    let { data, error } = await runQuery()
+    // Resilienza pre-migration (come in admin/students:GET): `select('*')` non
+    // falliva mai, una proiezione esplicita sì. Il DB E2E della CI non è
+    // migrato: colonna assente ⇒ `42703` ⇒ la si toglie e si riprova, invece di
+    // restituire un 500 su un problema d'infrastruttura del DB di test.
+    let attempts = 0
+    while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
+      const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(error.message)?.[1]
+      if (!col || !cols.includes(col)) break
+      logEvento('db', 'info', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'colonna-assente-rimossa',
+        campo: col,
+      })
+      cols = cols.filter((c) => c !== col)
+      ;({ data, error } = await runQuery())
+      attempts++
+    }
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
   } catch (err) {
@@ -904,12 +936,19 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     }
 
     // 5. Import completo → aggiorna l'invio a 'approved'.
+    //
+    // `credentials` NON si scrive più (2026-07-31). Era un JSONB con la password
+    // IN CHIARO dell'account genitore, archiviata a tempo indeterminato e rilette
+    // dalla GET qui sopra da qualunque ruolo di staff della sede. La password
+    // torna nella risposta HTTP di QUESTA richiesta — l'unico momento in cui
+    // l'operatore deve poterla leggere — e finisce nell'email al genitore.
+    // Per riaverla dopo esiste `admin/regenerate-credentials`, che la rigenera
+    // (e quindi invalida la precedente) lasciando traccia dell'operazione.
     const { error: updErr } = await supabase
       .from('enrollment_submissions')
       .update({
         status: 'approved',
         assigned_classes: assignments,
-        credentials,
         imported_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })

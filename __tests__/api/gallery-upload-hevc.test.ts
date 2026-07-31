@@ -64,7 +64,7 @@ function req(file: File): Request {
 }
 
 // Solo gli eventi di DOMINIO dell'upload (via il rumore di 'route' di withRoute).
-const eventiGallery = () => h.logEvento.mock.calls.filter((c) => c[0] === 'gallery');
+const eventiGallery = () => h.logEvento.mock.calls.filter((c) => c[0] === 'galleria');
 
 beforeEach(() => {
     vi.clearAllMocks();

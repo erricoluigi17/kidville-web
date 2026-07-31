@@ -8,7 +8,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ============================================================
 // Anagrafica genitori — gated Segreteria+Direzione (DL-036) + audit
@@ -52,6 +52,45 @@ const patchBodySchema = z
     })
     .loose();
 
+// ─── Proiezione MINIMA dell'elenco adulti (W8, 2026-07-31) ───────────────────
+//
+// `select('*')` restituiva il FASCICOLO del genitore a ogni apertura della tab
+// «Genitori»: `fiscal_code`, `document_type`, `document_number`,
+// `documento_path`, residenza completa, data e luogo di nascita, `consensi_gdpr`,
+// `auth_user_id`. La lista mostra nome, cognome, email, telefono, codice fiscale
+// e sede — e la ricerca lavora su nome/cognome/CF. Il fascicolo è
+// `GET /api/admin/parents/[id]`, che ha il suo gate di sede.
+const COLONNE_ELENCO = ['id', 'first_name', 'last_name', 'emails', 'phone_numbers', 'fiscal_code'];
+
+// Ramo `?student_id=`: unico consumatore è `StudentEconomicSection`, che cerca
+// l'intestatario di famiglia predefinito. Legge `id` e `intestatario_default`.
+const COLONNE_PER_ALUNNO = ['id', 'intestatario_default'];
+
+/**
+ * Esegue una SELECT togliendo le colonne che questo database non ha (42703) e
+ * riprovando, invece di restituire un 500. `select('*')` non falliva mai; una
+ * proiezione esplicita sì — e il progetto E2E della CI non è migrato
+ * (`intestatario_default` arriva dalla migrazione 20260718200000).
+ */
+async function selectResiliente(
+    colonne: string[],
+    esegui: (cols: string[]) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>,
+    operazione: string,
+) {
+    let cols = [...colonne];
+    let esito = await esegui(cols);
+    let tentativi = 0;
+    while (esito.error && esito.error.code === '42703' && tentativi < 6) {
+        const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(esito.error.message)?.[1];
+        if (!col || !cols.includes(col)) break;
+        logEvento('db', 'info', { operazione, esito: 'colonna-assente-rimossa', campo: col });
+        cols = cols.filter((c) => c !== col);
+        esito = await esegui(cols);
+        tentativi++;
+    }
+    return esito;
+}
+
 export const GET = withRoute('admin/parents:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
@@ -72,10 +111,15 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
             // sul legame fa il resto.
             const fuoriScope = await assertAlunnoInScope(supabase, auth.user, studentId);
             if (fuoriScope) return fuoriScope;
-            const { data, error } = await supabase
-                .from('parents')
-                .select('*, student_parents!inner (student_id)')
-                .eq('student_parents.student_id', studentId);
+            const { data, error } = await selectResiliente(
+                COLONNE_PER_ALUNNO,
+                (cols) =>
+                    supabase
+                        .from('parents')
+                        .select(`${cols.join(', ')}, student_parents!inner (student_id)`)
+                        .eq('student_parents.student_id', studentId),
+                'admin/parents:GET',
+            );
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
             return NextResponse.json(data);
         }
@@ -118,10 +162,14 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
             sediPerGenitore.set(chiave, insieme);
         }
 
-        const { data, error } = await supabase.from('parents').select('*').in('id', parentIds);
+        const { data, error } = await selectResiliente(
+            COLONNE_ELENCO,
+            (cols) => supabase.from('parents').select(cols.join(', ')).in('id', parentIds),
+            'admin/parents:GET',
+        );
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        const conSede = (data ?? []).map((p) => ({
+        const conSede = ((data ?? []) as Record<string, unknown>[]).map((p) => ({
             ...p,
             scuole_ids: [...(sediPerGenitore.get(p.id as string) ?? [])],
         }));

@@ -40,6 +40,7 @@
   "richiesteGenitoreAnon": "Parent anonymized:",
   "richiesteFigliNonIscrittiAnon": "Unenrolled children anonymized:",
   "richiesteFigliMantenuti": "Enrolled children kept: {n}",
+  "richiesteFigliFuoriScope": "Children in another site, not affected here: {n}. The competent management must handle their part.",
   "richiesteConfermaDigita": "To confirm, type",
 
   "diaryEyebrow": "Learning",

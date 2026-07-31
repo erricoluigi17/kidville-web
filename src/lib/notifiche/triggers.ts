@@ -48,7 +48,32 @@ export async function notificaEvento(supabase: SupabaseClient, params: NotificaE
     if (params.alunnoIds?.length) {
       for (const id of await genitoriDiAlunni(supabase, params.alunnoIds)) destinatari.add(id)
     }
-    if (destinatari.size === 0) return
+    if (destinatari.size === 0) {
+      // «ZERO DESTINATARI» È UN FATTO, E VA DETTO. Questo `return` era nudo, ed è l'imbuto
+      // da cui passano TUTTE le notifiche alle famiglie: i cinque canali staff dicevano già
+      // la loro (`staffScuola` emette `nessun-destinatario`), qui si usciva in silenzio. Due
+      // commenti nel repo lo ammettevano senza rimediarci — `destinatari.ts` («notificaEvento
+      // con zero destinatari esce in silenzio») e `fattura/sync/route.ts` («enqueueNotifiche
+      // esce muto sulla lista vuota»).
+      //
+      // La condizione è VIVA in produzione: il 2026-07-31, 2 alunni su 25 a Giugliano non
+      // hanno nessuna riga in `student_parents`. Un avviso di classe su quella sezione
+      // notifica meno famiglie di quante ce ne siano, risponde 201 e non lascia traccia.
+      //
+      // `warn` e non `error`: può essere legittimo (una sezione senza iscritti, un debounce
+      // che ha già coperto tutti). Va CONTATO, non deve svegliare nessuno — ma `sede_id` e
+      // `tipo` ci sono perché con tre plessi «nessuno da avvisare» ad Aversa e a Giugliano
+      // sono due incidenti diversi. Sono uuid e chiavi in lista bianca: sopravvivono a
+      // `redact()` anche nella riga persistita.
+      logEvento('notifica', 'warn', {
+        operazione: 'notificaEvento',
+        esito: 'nessun-destinatario',
+        tipo: params.tipo,
+        sede_id: params.scuolaId ?? null,
+        n_alunni: params.alunnoIds?.length ?? 0,
+      })
+      return
+    }
 
     if (params.debounce && params.entitaId) {
       // Il `try` resta, ma NON è più lui a portare il log: PostgREST non lancia, la `delete`

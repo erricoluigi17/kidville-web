@@ -74,6 +74,37 @@ export function firstEmail(emails: unknown): string | null {
 const PER_PAGE = 100;
 
 /**
+ * IL CORPO DELL'ERRORE DI GoTrue, in una forma che dice sempre qualcosa.
+ *
+ * Tre modi in cui un errore di `auth.admin.*` riesce a non dire niente, tutti
+ * incontrati per davvero:
+ *  1. `message` è `undefined` — succede quando una riga di `auth.users` non è
+ *     serializzabile e l'INTERA pagina fallisce (produzione, 2026-07-31:
+ *     `banned_until = 'infinity'`, timestamp legittimo per Postgres e non per
+ *     JSON). `Error: undefined` nasconde sia la causa sia la pagina;
+ *  2. `message` è la stringa vuota: `error.message || …` scivola oltre, e senza
+ *     un ripiego il messaggio finale finisce con i due punti e basta;
+ *  3. l'errore è un vero `Error` (AuthApiError lo è): `message`/`name` NON sono
+ *     enumerabili, quindi `JSON.stringify` restituisce `'{}'` — che è truthy, e
+ *     quindi passa il `||` e diventa il «dettaglio». Un dettaglio che dice `{}`
+ *     è peggio di nessun dettaglio: sembra un'informazione.
+ *
+ * Ordine: messaggio → corpo serializzato (se dice qualcosa) → status e codice.
+ */
+export function dettaglioErroreAuth(error: unknown): string {
+  const e = (error ?? null) as { message?: string; status?: number; code?: string } | null;
+  try {
+    if (typeof e?.message === 'string' && e.message.trim() !== '') return e.message;
+    const corpo = JSON.stringify(error);
+    if (corpo && corpo !== '{}' && corpo !== 'null' && corpo !== '""') return corpo;
+  } catch {
+    // Oggetto ciclico o BigInt: si ripiega su status/codice, che bastano a cercare.
+  }
+  const stato = e?.status ?? '?';
+  return e?.code ? `status ${stato} (${e.code})` : `status ${stato}`;
+}
+
+/**
  * Cerca un auth.users per email. L'admin API non ha getUserByEmail: scansione
  * paginata O(utenti totali), accettabile alla scala attuale (decine di account);
  * stesso approccio del backfill S6.
@@ -83,14 +114,8 @@ async function findAuthUserIdByEmail(admin: SupabaseClient, email: string): Prom
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PER_PAGE });
-    // `error.message` di GoTrue può essere `undefined`: succede quando una riga di
-    // `auth.users` non è serializzabile e l'INTERA pagina fallisce — visto in
-    // produzione il 2026-07-31 con `banned_until = 'infinity'`, che è un timestamp
-    // legittimo per Postgres ma non per JSON. `throw new Error(undefined)` avrebbe
-    // detto «Error: undefined» e nascosto sia la causa sia la pagina.
     if (error) {
-      const dettaglio = error.message || JSON.stringify(error) || `status ${(error as { status?: number }).status ?? '?'}`;
-      throw new Error(`auth.admin.listUsers (pagina ${page}): ${dettaglio}`);
+      throw new Error(`auth.admin.listUsers (pagina ${page}): ${dettaglioErroreAuth(error)}`);
     }
     const users = data?.users ?? [];
     for (const u of users) if (u.email && u.email.toLowerCase() === key) return u.id;
@@ -340,10 +365,24 @@ export async function ensureParentIdentity(
           password,
         });
         if (error || !data?.user) {
+          // Il corpo dell'errore del provider non si butta via (AGENTS.md §3), e
+          // nemmeno l'evento: fino al 2026-07-31 questo ramo restituiva
+          // «errore sconosciuto» al chiamante e NON lasciava una sola riga di
+          // log — l'account del genitore non nasceva e non c'era niente da
+          // cercare. Il chiamante è best-effort: se non logga qui, non logga
+          // nessuno.
+          const dettaglio = error ? dettaglioErroreAuth(error) : 'nessun utente restituito';
+          logEvento('auth', 'error', {
+            operazione: 'auth/parent-identity:ensureParentIdentity',
+            esito: 'creazione-account-non-riuscita',
+            stato: typeof (error as { status?: number } | null)?.status === 'number'
+              ? (error as { status?: number }).status
+              : undefined,
+          }, error ?? new Error('createUser: nessun utente restituito'));
           return {
             ok: false,
             reason: 'error',
-            message: `Creazione account non riuscita: ${error?.message ?? 'errore sconosciuto'}`,
+            message: `Creazione account non riuscita: ${dettaglio}`,
           };
         }
         authUserId = data.user.id;

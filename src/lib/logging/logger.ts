@@ -53,8 +53,72 @@ export type Valore = string | number | boolean | null | undefined;
  */
 const SILENZIOSO = !!process.env.VITEST || process.env.KV_LOG_LEVEL === 'silent';
 
-/** Eventi i cui SUCCESSI vengono persistiti (deroga a "solo warn+error in tabella"). */
-export const EVENTI_PERSISTITI = new Set(['email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa', 'news', 'chat', 'gdpr', 'segnalazione']);
+/**
+ * I NOMI DI EVENTO AMMESSI — elenco CHIUSO.
+ *
+ * `evento` è il discriminante trasversale di `app_log`: è la colonna su cui si raggruppa per
+ * chiedere «questa categoria di cose funziona?». Una colonna del genere regge solo se il
+ * vocabolario è chiuso, e in questo repo non lo era: convivevano `galleria` (9 usi) e
+ * `gallery` (1), `modulistica` (34) e `forms` (3), `pagamento` (39) e `pagamenti` (1).
+ *
+ * Non è pedanteria lessicale. Un sinonimo SPEZZA le query in silenzio — `where evento =
+ * 'modulistica'` non conta i tre invii finiti sotto `forms`, e chi legge non ha modo di
+ * sapere che gli manca qualcosa. E c'è un modo peggiore di sbagliare, che era già armato:
+ * `EVENTI_PERSISTITI` contiene `pagamento` al SINGOLARE, quindi un
+ * `logEvento('pagamenti', 'info', …)` di successo non sarebbe stato persistito affatto —
+ * il fallimento silenzioso esatto per cui esiste tutto questo modulo.
+ *
+ * Il lock è `__tests__/architecture/eventi-log.test.ts`: nessun `logEvento('…')` del repo può
+ * usare un nome fuori da qui, e `EVENTI_PERSISTITI` dev'essere un sottoinsieme di questo
+ * elenco. Un nome nuovo si aggiunge QUI, deliberatamente — non lo si inventa al volo in una
+ * route, che è come sono nati i tre sinonimi.
+ *
+ * NON copre gli eventi del CLIENT (`client:fetch`, `client:js`, …): li produce
+ * `/api/logs`, che li prefissa `client:` proprio per rendere impossibile impersonare un
+ * evento del server. Lì il vocabolario è aperto per progetto e il presidio è il prefisso.
+ */
+export const EVENTI_NOTI = new Set([
+    // Dominio applicativo.
+    'agenda', 'anagrafica', 'audit', 'avvisi', 'cassa', 'chat', 'competenze', 'credenziali',
+    'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr', 'iscrizione',
+    'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento', 'pagella',
+    'protocolli', 'registro', 'segnalazione', 'sidi',
+    // Infrastruttura. `db`/`rpc`/`storage`/`auth`/`altro` sono le aree di `supabase-fetch`,
+    // `esterno` il default di `externalFetch`, `email`/`push` i suoi due chiamanti nominati,
+    // `route` la riga di esito di `withRoute`, `app_log` il sink che si segnala da solo,
+    // `logs` l'ingestione client, `sconosciuto` il ripiego di `componi()` e della RPC.
+    'altro', 'app_log', 'auth', 'config', 'cron', 'db', 'email', 'esterno', 'logs', 'push',
+    'route', 'rpc', 'sconosciuto', 'storage', 'traduzione', 'unhandled',
+]);
+
+/**
+ * Eventi i cui SUCCESSI vengono persistiti (deroga a "solo warn+error in tabella").
+ *
+ * AGGIUNTI IL 2026-07-31 — `galleria`, `modulistica`, `multi_sede`. Il `sede_id` sugli eventi
+ * di pubblicazione era un obiettivo dichiarato dell'audit multi-sede, ma quegli eventi sono a
+ * livello `info`: senza allowlist non arrivavano in tabella, e in 30 giorni non c'era UNA riga
+ * `galleria`. Alla domanda «in quale sede abbiamo pubblicato ieri?» `app_log` non sapeva
+ * rispondere. Il volume è stato misurato prima di decidere (produzione, 30 giorni): 0 media in
+ * galleria, 4 compilazioni di moduli, 10 avvisi — contro le 23,7 righe al giorno che la
+ * tabella già assorbe. È rumore zero.
+ *
+ * `auth` NON è stato aggiunto, ed è la scelta che conta. I suoi `info` non sono segnali di
+ * dominio: sono i rifiuti dei gate (`require-staff.ts` logga OGNI 401/403) e ogni risposta
+ * non-ok di GoTrue vista da `supabase-fetch` (401 a sessione scaduta, 400 refresh token
+ * invalido) — cioè le righe che il design §6 esclude esplicitamente, e per cui `route` non è
+ * in allowlist. Gli `auth` che servono all'audit sono `warn`/`error` e si persistono già per
+ * livello (19 righe misurate in produzione il giorno stesso): aggiungere `auth` avrebbe
+ * portato zero del segnale voluto e tutto il rumore.
+ *
+ * `avvisi` e `notifica` non sono stati aggiunti per una ragione diversa e più semplice: nel
+ * repo NON esiste nessun `logEvento('avvisi'|'notifica', 'info', …)` (misurato: 0 su 522
+ * chiamate). Metterli in allowlist non persisterebbe niente — sarebbe configurazione morta
+ * che dà falsa sicurezza. Manca il log di successo, non l'allowlist.
+ */
+export const EVENTI_PERSISTITI = new Set([
+    'email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa', 'news', 'chat',
+    'gdpr', 'segnalazione', 'galleria', 'modulistica', 'multi_sede',
+]);
 
 /**
  * BUDGET DELLA RIGA. Vercel tronca le righe lunghe (~3.500 caratteri) e taglia dalla CODA.
@@ -463,10 +527,35 @@ function numeroDi(campi: Record<string, Valore>, chiave: string): number | undef
  * `withRoute` (campi: operazione, stato, ms) avrebbe come `messaggio` la stringa "500" — la
  * colonna che un umano legge per prima, e su cui si fanno le query, direbbe "cinquecento" su
  * 239 route. Il nome della rotta è il minimo sindacale per capire di cosa si parla.
+ *
+ * `tipo` è entrato nella lista il 2026-07-31, e non per completezza: senza, i 18 log
+ * dell'audit multi-sede — che passano `tipo:` e non `esito:` — scrivevano in `messaggio` il
+ * nome NUDO dell'evento (`auth`, `multi_sede`, `mensa`, `agenda`). Misurato in produzione:
+ * DICIASSETTE righe `messaggio = "auth"` che raccontavano cinque fatti diversi.
+ *
+ * E il danno non era solo estetico. `messaggio` ENTRA NELL'IMPRONTA (`impronta()` in
+ * `app-log.ts`), il `contesto` no: con lo stesso messaggio, due segnali diversi sulla stessa
+ * route+utente+giorno cadevano nella stessa chiave `(fingerprint, giorno)` e l'`ON CONFLICT`
+ * li sommava in UNA riga — che conserva il `contesto` della PRIMA. Del secondo evento non
+ * restava traccia, e la riga superstite attribuiva l'accaduto alla causa sbagliata. Una
+ * colonna che mente è peggio di una colonna che manca: sulla prima ci si crede.
+ *
+ * PERCHÉ QUI E NON NELL'IMPRONTA. La tentazione era aggiungere il contesto a `impronta()`.
+ * Sarebbe stato il rimedio sbagliato: i campi di questi eventi portano CONTATORI che cambiano
+ * a ogni richiesta (`accessibili`, `selezionate`, `n`, `ms`), quindi ogni occorrenza avrebbe
+ * prodotto una riga nuova — cioè la fine della deduplica, che esiste proprio per non farsi
+ * sommergere. Mettere solo `tipo` nell'impronta, invece, avrebbe creato una seconda sorgente
+ * di verità che prima o poi diverge da `messaggio`. Correggendo il messaggio si sistemano
+ * entrambe le cose in un punto solo, e retroattivamente.
+ *
+ * L'ORDINE È DELIBERATO: `tipo` viene DOPO `operazione`, non prima. Nei chiamanti che passano
+ * entrambi, `tipo` non è la categoria del segnale ma un dato di dominio — `agenda:POST` passa
+ * `tipo: body.tipo` ('uscita', 'riunione') — e farlo vincere sostituirebbe il nome della rotta
+ * con il contenuto di un body. Chi ha un `esito` o una `operazione` non cambia comportamento.
  */
 function testoEvento(evento: string, campi: Record<string, Valore>): string {
     try {
-        const v = [campi.msg, campi.esito, campi.operazione, campi.stato].find(pieno);
+        const v = [campi.msg, campi.esito, campi.operazione, campi.tipo, campi.stato].find(pieno);
         return sanificaMessaggio(v === undefined ? evento : String(v));
     } catch {
         return evento;

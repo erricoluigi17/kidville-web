@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { patchAlunno, patchParent, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
+import { scrubProvaConsensi } from '@/lib/gdpr/consensi-oblio'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -47,7 +48,12 @@ export async function anonimizzaParent(
   parentId: string,
   at: string,
   op: string,
-): Promise<{ newsVisualizzazioniRimosse: number; segnalazioniBonificate: number; sospensioniBonificate: number }> {
+): Promise<{
+  newsVisualizzazioniRimosse: number
+  segnalazioniBonificate: number
+  sospensioniBonificate: number
+  provaConsensiScrubbate: number
+}> {
   // 1. Raccogli l'auth_user_id prima dell'azzeramento.
   const { data: pRow, error: errP } = await supabase
     .from('parents')
@@ -121,7 +127,17 @@ export async function anonimizzaParent(
     }
   }
 
-  return { newsVisualizzazioniRimosse, segnalazioniBonificate, sospensioniBonificate }
+  // 5. Prova del consenso (W5): si tolgono `ip` e `user_agent`, si lascia il
+  //    resto. La tabella `consensi_accettazioni` non ha FK verso `parents` —
+  //    apposta, per sopravvivere a questa anonimizzazione — e proprio per questo
+  //    restava fuori dall'oblio: l'IP di una famiglia rimaneva in tabella senza
+  //    scadenza, agganciato a un `parent_id` ancora unico. Il fatto e la
+  //    versione accettata restano: sono loro la prova, non l'indirizzo di rete.
+  //    Lo scrub è per `parents.id` (spazio-id corretto: è quello che scrive
+  //    `api/parent/onboarding`), non per l'auth id.
+  const provaConsensiScrubbate = await scrubProvaConsensi(supabase, parentId, op)
+
+  return { newsVisualizzazioniRimosse, segnalazioniBonificate, sospensioniBonificate, provaConsensiScrubbate }
 }
 
 /**

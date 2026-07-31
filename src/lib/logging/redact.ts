@@ -74,6 +74,35 @@ const DA_HASHARE = insieme(
 );
 
 /**
+ * LA DATA DI NASCITA DI UN MINORE — l'unico buco che la lista bianca aveva ancora, e come
+ * si è aperto.
+ *
+ * Le DATE passano in chiaro per TIPO (vedi `DATA_ISO`): è la deroga che rende leggibile un
+ * log (istanti, scadenze, giorni) e da sola non identifica nessuno. Ma "da sola" è la
+ * parola che nasconde il difetto: la deroga guardava il VALORE e non la CHIAVE, quindi
+ * `data_nascita: '2019-05-03'` usciva in chiaro esattamente come `creato_il`. Nelle righe
+ * `iscrizione warn` di `app_log` — produzione, 30 giorni, interrogabile in SQL — nome,
+ * cognome e codice fiscale uscivano hashati, tutto il resto era redatto, e la data di
+ * nascita del bambino stava lì in chiaro accanto alla provincia di residenza e all'orario
+ * dell'invio. Tre campi che insieme identificano una persona; e la persona è un minore.
+ *
+ * La correzione va nel verso che la regola 8 di AGENTS.md impone: si RESTRINGE la lista
+ * bianca, non la si allarga. Qui la sensibilità si decide sulla CHIAVE, come per
+ * `RADICI_SEGRETE`, e per la stessa ragione: `2019-05-03` e `2026-08-31` sono
+ * indistinguibili a guardare il valore.
+ *
+ * DUE RADICI, `nascita` e `birth`, con `includes` — quindi coprono anche `dataNascita`,
+ * `DATA-NASCITA`, `date_of_birth`, `birthDate`, `birthplace`. Per gli altri campi di
+ * nascita (`comune_nascita`, `provincia_nascita`, `birth_city`…) NON cambia niente: erano
+ * già redatti perché stringhe fuori dalla lista bianca. Cambia solo che ora lo sono per una
+ * ragione dichiarata invece che per omissione.
+ *
+ * `dob` NON è qui di proposito: in questo repo non compare, e una radice di tre lettere
+ * dentro un `includes` è il modo più facile di redigere per sbaglio una chiave innocua.
+ */
+const RADICI_NASCITA = ['nascita', 'birth'];
+
+/**
  * Path e URL: MAI in chiaro. In questo repo il token del modulo pubblico è un
  * SEGMENTO di path (`/m/[token]`, `/api/public/forms/[token]/submit`) ed è una
  * capability; le query string trasportano `?userId=`, `?email=`, `?token=`.
@@ -161,6 +190,32 @@ function eSegreta(chiaveNorm: string): boolean {
     return RADICI_SEGRETE.some((radice) => chiaveNorm.includes(radice));
 }
 
+function eNascita(chiaveNorm: string): boolean {
+    return RADICI_NASCITA.some((radice) => chiaveNorm.includes(radice));
+}
+
+/**
+ * Il valore di un campo di nascita, redatto SENZA perdere la diagnosi.
+ *
+ * Non è `'[redatto]'` secco, e la differenza è già stata pagata una volta: la provincia
+ * viaggia in una colonna `varchar(2)` e il guasto vero era un `22001` (valore troppo
+ * lungo). Con `[redatto:str/8]` in tabella si vede subito che il campo aveva 8 caratteri
+ * invece di 2 — con `[redatto]` non si vede più niente e resta solo la riproduzione a mano.
+ * Perciò le stringhe conservano la lunghezza, esattamente come qualunque altra stringa
+ * fuori dalla lista bianca: rispetto a oggi cambia solo che la deroga «è una data, quindi
+ * passa» qui non si applica più.
+ *
+ * `null`/`undefined` passano intatti: «il campo mancava» è il 95% dei bug (§5 del design),
+ * e un `null` non è il dato di nessuno.
+ */
+function redigiNascita(v: unknown): unknown {
+    if (v === null || v === undefined) return v;
+    if (typeof v === 'string') return redigiStringa(v);
+    // Date, numeri (un epoch è una data di nascita a tutti gli effetti), oggetti annidati:
+    // niente forma da conservare, e il verso in cui si sbaglia è quello giusto.
+    return '[redatto]';
+}
+
 /**
  * Hash stabile e corto: permette di dire "è sempre lo stesso genitore" senza dire chi.
  *
@@ -217,6 +272,10 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
     if (k !== null) {
         if (eSegreta(k)) return '[redatto]';
         if (DA_HASHARE.has(k)) return v === null || v === undefined ? v : hashCorrelabile(v);
+        // PRIMA di ogni ramo per tipo, e deve stare qui: `v instanceof Date` e
+        // `stringaAutoDescrittiva` più in basso lascerebbero uscire in chiaro proprio le
+        // due forme con cui una data di nascita arriva davvero (oggetto Date e ISO).
+        if (eNascita(k)) return redigiNascita(v);
     }
 
     if (v === null || v === undefined) return v;

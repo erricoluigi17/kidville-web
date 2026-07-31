@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
@@ -11,6 +11,7 @@ import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/component
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
 interface Student {
   id: string;
@@ -21,7 +22,8 @@ interface Student {
   data_nascita?: string;
   classe_sezione?: string | null;
   stato?: string;
-  note_mediche?: string | null;
+  /** Segnale «c'è una nota medica»: la lista non riceve più il testo (W8). */
+  ha_note_mediche?: boolean;
   codice_fiscale?: string | null;
   fiscal_code?: string | null;
   bes?: boolean;
@@ -46,6 +48,15 @@ function AdminStudentsInner() {
   const { reFetchKey } = useSediAttive();
   const [students, setStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // «Non ho potuto caricare» ≠ «non c'è nessuno».
+  //
+  // `null` = nessun errore. `''` = errore senza un messaggio del server (rete
+  // giù, corpo illeggibile) → si mostra il testo generico. Una stringa = il
+  // motivo detto dal SERVER. La traduzione avviene al render e non dentro le
+  // `useCallback`: `useTranslations` restituisce una funzione nuova a ogni
+  // render, e metterla nelle dipendenze di una callback usata da un `useEffect`
+  // farebbe ripartire l'effetto a ogni render — un ciclo di fetch infinito.
+  const [erroreElenco, setErroreElenco] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -95,61 +106,126 @@ function AdminStudentsInner() {
     setTimeout(() => setShowToast(false), 3000);
   }, []);
 
-  const fetchStudents = useCallback(async () => {
+  /**
+   * Carica un elenco e DISTINGUE i tre esiti. Prima ce n'erano due soli — «ho
+   * dei dati» e «tutto il resto» — e «tutto il resto» finiva nella card «Nessun
+   * alunno trovato»: la rete giù raccontata come un archivio vuoto.
+   *
+   * ⚠️ DUE VINCOLI DI FORMA, entrambi imposti da `react-hooks/set-state-in-effect`
+   * (che qui è un ERRORE del gate, non un warning) e misurati, non supposti:
+   *
+   *  1. NIENTE blocco `catch`. Un `catch { setStudents([]) }` aggiunto alla
+   *     versione precedente fa fallire `eslint --max-warnings 0`. Il ramo
+   *     d'errore vive su `.catch()` DELLA PROMISE: restituisce `null` e la
+   *     gestione resta nel flusso normale, dopo l'`await`. Il motivo non si
+   *     perde — lo si cattura nella callback (`motivo`) e lo si logga.
+   *  2. IL `try { … } finally { setIsLoading(false) }` RESTA. Spostare quel
+   *     `setIsLoading(false)` nel corpo lineare (stesso codice, stessi rami)
+   *     fa scattare la regola. È la forma che l'analisi riconosce; toglierla
+   *     costa un rosso senza guadagnare niente.
+   *
+   * Da questi due vincoli era nato il difetto: il `try/finally` SENZA ramo
+   * d'errore. La via d'uscita non era rinunciare al ramo — era scriverlo qui.
+   */
+  const caricaElenco = useCallback(async (
+    url: string,
+    /** `null` = corpo inatteso: è un guasto, non una lista vuota. */
+    estrai: (corpo: unknown) => Student[] | null,
+    operazione: string,
+  ) => {
+    // Il NOME della classe d'errore, non il messaggio: `TypeError` (rete giù)
+    // contro `Error` (il server ha detto di no) è l'unica distinzione che serve
+    // al triage, ed è l'unico pezzo che può lasciare il dispositivo.
+    let motivo = '';
     try {
-      const res = await fetch(`/api/admin/students?limit=1000`, { headers: { 'x-sedi': reFetchKey } });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setStudents(data);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [reFetchKey]);
+      const res = await fetch(url, { headers: { 'x-sedi': reFetchKey } })
+        .catch((e: unknown) => { motivo = nomeErrore(e); return null; });
 
-  const fetchParents = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/admin/parents`, { headers: { 'x-sedi': reFetchKey } });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setStudents(data);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [reFetchKey]);
-
-  // Personale reale da `utenti` via /api/admin/staff (non più il workaround su
-  // parents.citizenship, che teneva la tab sempre vuota). L'errore non resta mai
-  // silenzioso: lista svuotata + toast col motivo.
-  const fetchStaff = useCallback(async () => {
-    try {
-      const res = await fetch('/api/admin/staff', { headers: { 'x-sedi': reFetchKey } });
-      const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.success) {
+      if (res === null) {
+        // La fetch non è mai arrivata: rete giù, DNS, CORS. È il caso che nessun
+        // log del server vedrà mai — e finora non lo vedeva nemmeno il client.
         setStudents([]);
-        showToastMsg(`❌ ${(j && j.error) || t('staffErrCaricamento')}`);
+        setErroreElenco('');
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${operazione}: ${motivo}`, route: '/admin/students' });
         return;
       }
-      const sedi = new Map<string, string>((j.schools ?? []).map((s: { id: string; nome: string }) => [s.id, s.nome]));
-      const nClassi = new Map<string, number>();
-      for (const a of (j.assegnazioni ?? []) as { utente_id: string }[]) {
-        nClassi.set(a.utente_id, (nClassi.get(a.utente_id) ?? 0) + 1);
+      if (!res.ok) {
+        setStudents([]);
+        setErroreElenco(await messaggioErrore(res, ''));
+        logClient({ livello: 'error', evento: 'fetch', messaggio: operazione, route: '/admin/students', stato: res.status });
+        return;
       }
-      const rows: Student[] = (j.data ?? []).map((u: { id: string; nome?: string; cognome?: string; email?: string | null; ruolo: string; scuola_id?: string | null }) => ({
-        id: u.id,
-        nome: u.nome,
-        cognome: u.cognome,
-        emails: u.email ? [u.email] : [],
-        ruolo: u.ruolo,
-        sede_nome: u.scuola_id ? (sedi.get(u.scuola_id) ?? '—') : '—',
-        classi_count: nClassi.get(u.id) ?? 0,
-      }));
-      setStudents(rows);
+      const corpo: unknown = await res.json().catch(() => null);
+      const righe = estrai(corpo);
+      if (righe === null) {
+        // 200 con un corpo che non è una lista: `if (Array.isArray(data))` senza
+        // `else` lo trattava esattamente come «non ci sono alunni».
+        setStudents([]);
+        setErroreElenco('');
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${operazione}-corpo-inatteso`, route: '/admin/students', stato: res.status });
+        return;
+      }
+      setStudents(righe);
+      setErroreElenco(null);
     } finally {
       setIsLoading(false);
     }
-  }, [reFetchKey, showToastMsg, t]);
+  }, [reFetchKey]);
+
+  const fetchStudents = useCallback(
+    () => caricaElenco(
+      `/api/admin/students?limit=1000`,
+      (c) => (Array.isArray(c) ? (c as Student[]) : null),
+      'anagrafica-alunni-non-caricata',
+    ),
+    [caricaElenco],
+  );
+
+  const fetchParents = useCallback(
+    () => caricaElenco(
+      `/api/admin/parents`,
+      (c) => (Array.isArray(c) ? (c as Student[]) : null),
+      'anagrafica-genitori-non-caricata',
+    ),
+    [caricaElenco],
+  );
+
+  // Personale reale da `utenti` via /api/admin/staff (non più il workaround su
+  // parents.citizenship, che teneva la tab sempre vuota).
+  const fetchStaff = useCallback(
+    () => caricaElenco(
+      '/api/admin/staff',
+      (c) => {
+        const j = c as { success?: boolean; data?: unknown[]; schools?: { id: string; nome: string }[]; assegnazioni?: { utente_id: string }[] } | null;
+        if (!j?.success) return null;
+        const sedi = new Map<string, string>((j.schools ?? []).map((s: { id: string; nome: string }) => [s.id, s.nome]));
+        const nClassi = new Map<string, number>();
+        for (const a of (j.assegnazioni ?? []) as { utente_id: string }[]) {
+          nClassi.set(a.utente_id, (nClassi.get(a.utente_id) ?? 0) + 1);
+        }
+        return ((j.data ?? []) as { id: string; nome?: string; cognome?: string; email?: string | null; ruolo: string; scuola_id?: string | null }[]).map((u) => ({
+          id: u.id,
+          nome: u.nome,
+          cognome: u.cognome,
+          emails: u.email ? [u.email] : [],
+          ruolo: u.ruolo,
+          sede_nome: u.scuola_id ? (sedi.get(u.scuola_id) ?? '—') : '—',
+          classi_count: nClassi.get(u.id) ?? 0,
+        }));
+      },
+      'anagrafica-staff-non-caricata',
+    ),
+    [caricaElenco],
+  );
+
+  /** Ritenta l'elenco della tab corrente. Gestore d'evento: può alzare lo spinner. */
+  const ricaricaElenco = () => {
+    setIsLoading(true);
+    setErroreElenco(null);
+    if (viewType === 'adult') void fetchParents();
+    else if (viewType === 'staff') void fetchStaff();
+    else void fetchStudents();
+  };
 
   // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
   // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).
@@ -416,6 +492,24 @@ function AdminStudentsInner() {
       {/* Content area — switch by viewType */}
       {viewType === 'sections' ? (
         <SectionsView />
+      ) : erroreElenco !== null ? (
+        /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
+           e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,
+           cioè due affermazioni sui dati fatte senza avere i dati. È di proposito
+           diverso dalla card vuota — colore, titolo, e un bottone da premere. */
+        <div role="alert" className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
+          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-error-soft text-kidville-error">
+            <AlertTriangle size={34} strokeWidth={1.8} />
+          </div>
+          <h3 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('listErrTitolo')}</h3>
+          <p className="font-maven mt-1 max-w-md text-sm text-kidville-muted">{erroreElenco || t('listErrCaricamento')}</p>
+          <button
+            onClick={ricaricaElenco}
+            className="mt-4 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2.5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-yellow"
+          >
+            <RotateCcw size={15} strokeWidth={2} /> {t('listErrRiprova')}
+          </button>
+        </div>
       ) : (
         <>
           {/* Statistiche rapide — solo per alunni */}
@@ -424,7 +518,9 @@ function AdminStudentsInner() {
               <StatCard icon={Users} label={t('statTotale')} value={students.length} tone="green" />
               <StatCard icon={CheckCircle2} label={t('statIscritti')} value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
               <StatCard icon={GraduationCap} label={t('statConBes')} value={students.filter((s) => s.bes).length} tone="warn" />
-              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.note_mediche).length} tone="error" />
+              {/* Conteggio dal SEGNALE, non dal testo: la lista non riceve più la
+                  nota medica (W8), riceve solo `ha_note_mediche`. */}
+              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.ha_note_mediche).length} tone="error" />
             </div>
           )}
 

@@ -251,6 +251,67 @@ describe('redact — lista bianca', () => {
         expect(out.data).toBe('2026-07-12');
     });
 
+    /* ────────────────────────────────────────────────────────────────────────
+     * LA DATA DI NASCITA DI UN MINORE — trovata in chiaro in produzione.
+     *
+     * Le date erano in lista bianca PER TIPO: qualunque stringa con la forma di un
+     * timestamp ISO usciva in chiaro, qualunque fosse la sua chiave. Nelle righe
+     * `iscrizione warn` di `app_log` nome, cognome e codice fiscale uscivano hashati e
+     * tutto il resto redatto — ma `data_nascita` e `birth_date` passavano intatti.
+     * Accanto alla provincia di residenza e all'orario dell'invio, la data di nascita di
+     * un bambino resta un dato personale, e la tabella la conserva 30 giorni.
+     *
+     * La correzione è quella che la regola 8 di AGENTS.md impone: si decide sulla
+     * CHIAVE, e nel verso giusto — si toglie dalla lista bianca, non si aggiunge.
+     * ──────────────────────────────────────────────────────────────────────── */
+    it('la data di nascita NON esce in chiaro solo perché è una data', () => {
+        const out = redact({
+            data_nascita: '2019-05-03',
+            birth_date: '2019-05-03',
+            dataNascita: '2019-05-03',
+            'DATA-NASCITA': '2019-05-03',
+            date_of_birth: '2019-05-03',
+            nascita: '2019-05-03T00:00:00Z',
+        }) as Record<string, unknown>;
+
+        for (const [chiave, valore] of Object.entries(out)) {
+            expect(String(valore), `"${chiave}" è uscita in chiaro`).not.toContain('2019');
+        }
+    });
+
+    it('...nemmeno quando arriva come oggetto Date (il ramo che scavalca le stringhe)', () => {
+        // `v instanceof Date` viene PRIMA del ramo delle stringhe: una difesa messa solo
+        // lì lascerebbe passare `new Date(...)`, che è la forma con cui una data arriva da
+        // un ORM o da un `JSON.parse` con reviver.
+        const out = redact({ data_nascita: new Date('2019-05-03T00:00:00Z') }) as Record<string, unknown>;
+        expect(String(out.data_nascita)).not.toContain('2019');
+    });
+
+    it('il CAMPO ASSENTE resta diagnosticabile: `null` non diventa `[redatto]`', () => {
+        // «il campo mancava» è il 95% dei bug (vedi §5 del design): redigere un `null`
+        // cancellerebbe l'unica cosa che quella riga di log doveva dire.
+        const out = redact({ data_nascita: null, birth_date: undefined }) as Record<string, unknown>;
+        expect(out.data_nascita).toBeNull();
+        expect(out.birth_date).toBeUndefined();
+    });
+
+    it('le date LEGITTIME continuano a passare: sono ciò che rende leggibile un log', () => {
+        const out = redact({
+            creato_il: '2026-07-31T13:24:07Z',
+            data: '2026-07-31',
+            data_evento: '2026-09-15',
+            scadenza: '2026-08-31',
+            data_scadenza: '2026-08-31',
+            visto_l_ultima: '2026-07-31T13:24:07Z',
+        }) as Record<string, string>;
+        expect(out.creato_il).toBe('2026-07-31T13:24:07Z');
+        expect(out.data).toBe('2026-07-31');
+        expect(out.data_evento).toBe('2026-09-15');
+        expect(out.scadenza).toBe('2026-08-31');
+        expect(out.data_scadenza).toBe('2026-08-31');
+        expect(out.visto_l_ultima).toBe('2026-07-31T13:24:07Z');
+    });
+
     it('una chiave sconosciuta con valore stringa è redatta (default chiuso)', () => {
         const out = redact({ campo_inventato_domani: 'dato sensibilissimo' }) as Record<string, string>;
         expect(out.campo_inventato_domani).toBe('[redatto:str/19]');

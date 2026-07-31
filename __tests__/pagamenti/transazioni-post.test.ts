@@ -13,7 +13,13 @@ const h = vi.hoisted(() => ({
   revoca: vi.fn(),
   rpcCalls: [] as { fn: string; params: unknown }[],
   rpcResult: { data: null as unknown, error: null as { code?: string } | null },
-  pagamentiRows: [] as { id: string; alunno_id: string }[],
+  // `scuola_id` è entrato il 2026-07-31: la route ora carica i pagamenti delle
+  // voci e nega se stanno in un altro plesso (una segreteria di Aversa incassava
+  // sulle rette di Giugliano — collaudo backend, rilievo F3). Senza questo campo
+  // il finto client restituirebbe `scuola_id: undefined` e ogni voce risulterebbe
+  // fuori sede: i casi di quadratura qui sotto sono verdi solo se le voci ci sono
+  // e sono nella sede della transazione.
+  pagamentiRows: [] as { id: string; alunno_id: string; scuola_id?: string }[],
   inserts: [] as { table: string; row: unknown }[],
 }))
 
@@ -64,7 +70,10 @@ beforeEach(() => {
   h.revoca.mockResolvedValue({ revocati: [] })
   h.rpcCalls = []
   h.rpcResult = { data: { transazione_id: 'tx-1', incassi: 2, ricariche: 1, eccedenza: 0 }, error: null }
-  h.pagamentiRows = [{ id: P1, alunno_id: AL1 }, { id: P2, alunno_id: AL2 }]
+  h.pagamentiRows = [
+    { id: P1, alunno_id: AL1, scuola_id: SC },
+    { id: P2, alunno_id: AL2, scuola_id: SC },
+  ]
   h.inserts = []
 })
 

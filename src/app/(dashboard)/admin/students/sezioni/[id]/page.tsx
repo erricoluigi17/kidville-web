@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { ArrowLeft, Building2, GraduationCap, Loader2, Plus, Settings, User, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, GraduationCap, Loader2, Plus, RotateCcw, Settings, User, X } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { schoolTypeConfig } from '@/components/features/admin/SectionsView';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
 // Etichetta tradotta del grado (schoolTypeConfig.label resta fallback statico).
 const livelloLabelKey = (tipo: string) =>
@@ -41,6 +43,20 @@ interface Teacher {
     cognome: string;
 }
 
+/**
+ * Un errore da mostrare, in forma NON ancora tradotta.
+ *
+ * ⚠️ NON è un vezzo: `load`/`loadTeachers` sono `useCallback` che alimentano un
+ * `useEffect`. Se dentro ci finisse `t`, `t` andrebbe nelle loro dipendenze — e
+ * `useTranslations` restituisce una funzione NUOVA a ogni render. L'effetto
+ * ripartirebbe a ogni render: un ciclo di fetch infinito che, per giunta,
+ * riscrive di continuo lo stato appena aggiornato da una mutazione riuscita
+ * (misurato: il grado cambiato tornava indietro da solo). Perciò le due
+ * `useCallback` conservano CHIAVE + testo-del-server, e la traduzione avviene al
+ * render, dove `t` non è una dipendenza di niente.
+ */
+type Avvertimento = { chiave: 'sezErroreOperazione' | 'sezErroreCaricamento'; testo: string } | null;
+
 export default function SezioneDetailPage() {
     const t = useTranslations('adminStudents');
     const params = useParams<{ id: string }>();
@@ -54,13 +70,85 @@ export default function SezioneDetailPage() {
     const [newTeacherId, setNewTeacherId] = useState('');
     const [teacherBusy, setTeacherBusy] = useState(false);
     const [teachersLoading, setTeachersLoading] = useState(true);
+    // L'esito dell'ultima operazione, quando è NEGATIVO.
+    //
+    // PERCHÉ ESISTE. Le tre scritture di questa pagina erano scritte
+    // `if (res.ok) …` senza `else` (o senza guardare affatto la risposta): un
+    // rifiuto del server — il 400 «Specificare la sede» nato con le tre sedi, un
+    // 403 di scope — si comportava esattamente come un successo. La tendina del
+    // grado lampeggiava e tornava indietro, il modulo dell'insegnante si
+    // azzerava, e l'operatore restava convinto che il click non fosse stato
+    // registrato. Questa pagina è rimasta fuori dall'inventario dell'ondata 3.
+    const [errore, setErrore] = useState<Avvertimento>(null);
+    // «Non ho potuto caricare» ≠ «non esiste». Sono due schermate diverse: la
+    // seconda accusa i dati, la prima accusa la rete — e solo la prima ha senso
+    // riprovarla.
+    const [erroreCaricamento, setErroreCaricamento] = useState<Avvertimento>(null);
 
+    /** Il testo da mostrare: quello del server se c'è, altrimenti il generico. */
+    const testoDi = (a: Avvertimento) => (a === null ? '' : a.testo || t(a.chiave));
+
+    /** Log di un rifiuto: lo `stato` è un numero (passa la lista bianca di `redact`). */
+    const logRifiuto = (messaggio: string, stato: number) => {
+        logClient({
+            livello: 'error',
+            evento: 'fetch',
+            messaggio,
+            route: '/admin/students/sezioni/[id]',
+            stato,
+        });
+    };
+
+    /** Guasto già ridotto a testo (dal `.catch` di una promise). */
+    const logGuastoMsg = (messaggio: string) => {
+        logClient({
+            livello: 'error',
+            evento: 'fetch',
+            messaggio,
+            route: '/admin/students/sezioni/[id]',
+        });
+    };
+
+    const logGuasto = (messaggio: string, err: unknown) => logGuastoMsg(`${messaggio}: ${nomeErrore(err)}`);
+
+    /**
+     * ⚠️ DUE VINCOLI DI FORMA per questa funzione e per `load`, entrambi imposti
+     * da `react-hooks/set-state-in-effect` (che nel gate è un ERRORE) e
+     * verificati, non supposti — sono chiamate da un `useEffect`:
+     *  1. niente blocco `catch`: il ramo d'errore vive su `.catch()` DELLA
+     *     PROMISE, che torna `null` e lascia la gestione nel flusso normale;
+     *  2. il `try { … } finally { setSomething(false) }` RESTA: spostare quel
+     *     setter nel corpo lineare, a parità di codice, fa scattare la regola.
+     * Le mutazioni (`addTeacher` & co.) non passano da un effetto: lì il
+     * `try/catch` è legittimo.
+     */
     const loadTeachers = useCallback(async () => {
         if (!sectionId) return;
+        let motivo = '';
         try {
-            const res = await fetch(`/api/admin/sections/${sectionId}/teachers`).catch(() => null);
-            const d = res?.ok ? await res.json().catch(() => null) : null;
-            if (d?.success) setTeachers({ assigned: d.assigned ?? [], available: d.available ?? [] });
+            const res = await fetch(`/api/admin/sections/${sectionId}/teachers`)
+                .catch((e: unknown) => { motivo = nomeErrore(e); return null; });
+            if (res === null) {
+                setErrore({ chiave: 'sezErroreCaricamento', testo: '' });
+                logGuastoMsg(`sezione-insegnanti-caricamento-fallito: ${motivo}`);
+                return;
+            }
+            const d = res.ok ? await res.json().catch(() => null) : null;
+            if (d?.success) {
+                setTeachers({ assigned: d.assigned ?? [], available: d.available ?? [] });
+                return;
+            }
+            // Elenco insegnanti VUOTO perché non è arrivato: senza questo ramo
+            // la card diceva «Nessun insegnante di riferimento assegnato», che è
+            // un'affermazione sui dati fatta senza avere i dati.
+            setErrore({ chiave: 'sezErroreCaricamento', testo: res.ok ? '' : await messaggioErrore(res, '') });
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: 'sezione-insegnanti-non-caricati',
+                route: '/admin/students/sezioni/[id]',
+                stato: res.status,
+            });
         } finally {
             setTeachersLoading(false);
         }
@@ -71,14 +159,26 @@ export default function SezioneDetailPage() {
     const addTeacher = async () => {
         if (!newTeacherId || !sectionId) return;
         setTeacherBusy(true);
+        setErrore(null);
         try {
-            await fetch(`/api/admin/sections/${sectionId}/teachers`, {
+            const res = await fetch(`/api/admin/sections/${sectionId}/teachers`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ utente_id: newTeacherId }),
             });
+            if (!res.ok) {
+                // ⚠️ IL PUNTO. `setNewTeacherId('')` stava QUI SOPRA, prima di
+                // sapere l'esito: su un rifiuto si perdeva anche la scelta appena
+                // fatta, ed è esattamente il difetto che l'ondata 3 dichiarava chiuso.
+                setErrore({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
+                logRifiuto('sezione-insegnante-aggiunta-respinta', res.status);
+                return;
+            }
             setNewTeacherId('');
             await loadTeachers();
+        } catch (err) {
+            setErrore({ chiave: 'sezErroreOperazione', testo: '' });
+            logGuasto('sezione-insegnante-aggiunta-fallita', err);
         } finally {
             setTeacherBusy(false);
         }
@@ -87,13 +187,24 @@ export default function SezioneDetailPage() {
     const removeTeacher = async (utenteId: string) => {
         if (!sectionId) return;
         setTeacherBusy(true);
+        setErrore(null);
         try {
-            await fetch(`/api/admin/sections/${sectionId}/teachers`, {
+            const res = await fetch(`/api/admin/sections/${sectionId}/teachers`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ utente_id: utenteId }),
             });
+            if (!res.ok) {
+                // Ricaricare e basta faceva ricomparire la pillola dell'insegnante
+                // come se nulla fosse: sembrava un ritardo, era un rifiuto.
+                setErrore({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
+                logRifiuto('sezione-insegnante-rimozione-respinta', res.status);
+                return;
+            }
             await loadTeachers();
+        } catch (err) {
+            setErrore({ chiave: 'sezErroreOperazione', testo: '' });
+            logGuasto('sezione-insegnante-rimozione-fallita', err);
         } finally {
             setTeacherBusy(false);
         }
@@ -101,9 +212,27 @@ export default function SezioneDetailPage() {
 
     const load = useCallback(async () => {
         if (!sectionId) return;
+        let motivo = '';
         try {
-            const res = await fetch('/api/admin/sections/scoped').catch(() => null);
-            const d = res?.ok ? await res.json().catch(() => null) : null;
+            const res = await fetch('/api/admin/sections/scoped')
+                .catch((e: unknown) => { motivo = nomeErrore(e); return null; });
+            if (res === null) {
+                setErroreCaricamento({ chiave: 'sezErroreCaricamento', testo: '' });
+                logGuastoMsg(`sezione-dettaglio-caricamento-fallito: ${motivo}`);
+                return;
+            }
+            if (!res.ok) {
+                setErroreCaricamento({ chiave: 'sezErroreCaricamento', testo: await messaggioErrore(res, '') });
+                logClient({
+                    livello: 'error',
+                    evento: 'fetch',
+                    messaggio: 'sezione-dettaglio-non-caricato',
+                    route: '/admin/students/sezioni/[id]',
+                    stato: res.status,
+                });
+                return;
+            }
+            const d = await res.json().catch(() => null);
             const groups: { scuolaId: string; scuolaNome: string; sezioni: { id: string; name: string; school_type: SchoolType }[] }[] =
                 d?.success ? (d.data ?? []) : [];
 
@@ -112,24 +241,36 @@ export default function SezioneDetailPage() {
                 const s = g.sezioni.find(x => x.id === sectionId);
                 if (s) { found = { ...s, scuolaId: g.scuolaId, scuolaNome: g.scuolaNome }; break; }
             }
+            setErroreCaricamento(null);
             setSezione(found);
+            if (!found) return;
 
-            if (found) {
-                const stuRes = await fetch(`/api/admin/students?scuola_id=${found.scuolaId}&limit=1000`).catch(() => null);
-                const stuData = stuRes?.ok ? await stuRes.json().catch(() => null) : null;
-                if (Array.isArray(stuData)) {
-                    const f = found;
-                    // `section_id` è il legame vero: se c'è, decide da solo. Il
-                    // nome-classe resta solo come ripiego per le righe che il
-                    // trigger `sync_alunno_section_id` non ha ancora risolto —
-                    // in OR con `section_id` faceva comparire in questa classe
-                    // anche chi è assegnato a un'altra e porta ancora scritto
-                    // sopra il vecchio nome, gonfiando il numero in testata.
-                    setStudents((stuData as Student[]).filter(s => (
-                        s.section_id ? s.section_id === f.id : s.classe_sezione === f.name
-                    )));
-                }
+            const stuRes = await fetch(`/api/admin/students?scuola_id=${found.scuolaId}&limit=1000`)
+                .catch(() => null);
+            const stuData = stuRes?.ok ? await stuRes.json().catch(() => null) : null;
+            if (Array.isArray(stuData)) {
+                const f = found;
+                // `section_id` è il legame vero: se c'è, decide da solo. Il
+                // nome-classe resta solo come ripiego per le righe che il
+                // trigger `sync_alunno_section_id` non ha ancora risolto —
+                // in OR con `section_id` faceva comparire in questa classe
+                // anche chi è assegnato a un'altra e porta ancora scritto
+                // sopra il vecchio nome, gonfiando il numero in testata.
+                setStudents((stuData as Student[]).filter(s => (
+                    s.section_id ? s.section_id === f.id : s.classe_sezione === f.name
+                )));
+                return;
             }
+            // Elenco alunni non arrivato: «0 alunni» in testata sarebbe una
+            // risposta a una domanda che nessuno ha potuto porre.
+            setErrore({ chiave: 'sezErroreCaricamento', testo: '' });
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: 'sezione-alunni-non-caricati',
+                route: '/admin/students/sezioni/[id]',
+                stato: stuRes?.status ?? 0,
+            });
         } finally {
             setIsLoading(false);
         }
@@ -137,16 +278,38 @@ export default function SezioneDetailPage() {
 
     useEffect(() => { load(); }, [load]);
 
+    /** Ritenta il caricamento: è un gestore d'evento, quindi può alzare lo spinner. */
+    const riprovaCaricamento = () => {
+        setIsLoading(true);
+        setErroreCaricamento(null);
+        setErrore(null);
+        setTeachersLoading(true);
+        void load();
+        void loadTeachers();
+    };
+
     const changeSchoolType = async (newType: SchoolType) => {
         if (!sezione) return;
         setIsSavingType(true);
+        setErrore(null);
         try {
             const res = await fetch('/api/admin/sections', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: sezione.id, school_type: newType }),
             });
-            if (res.ok) setSezione({ ...sezione, school_type: newType });
+            if (!res.ok) {
+                // Senza questo ramo la tendina tornava al valore vecchio e basta:
+                // identico a un click perso, e il 400 «Specificare la sede»
+                // rimaneva invisibile.
+                setErrore({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
+                logRifiuto('sezione-tipo-scuola-respinto', res.status);
+                return;
+            }
+            setSezione({ ...sezione, school_type: newType });
+        } catch (err) {
+            setErrore({ chiave: 'sezErroreOperazione', testo: '' });
+            logGuasto('sezione-tipo-scuola-fallito', err);
         } finally {
             setIsSavingType(false);
         }
@@ -170,11 +333,30 @@ export default function SezioneDetailPage() {
                 <Link href={backHref} className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline">
                     <ArrowLeft size={15} strokeWidth={2} /> {t('sezBack')}
                 </Link>
-                <div className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
-                    <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🏫</div>
-                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('sezNonDisp')}</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">{t('sezNonDispHint')}</p>
-                </div>
+                {erroreCaricamento ? (
+                    // La sezione non è arrivata: dirlo. «Non esiste o non è tua»
+                    // sarebbe un'accusa ai dati per un guasto della rete — e non
+                    // offrirebbe l'unica cosa che qui serve, riprovare.
+                    <div role="alert" className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
+                        <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-error-soft text-kidville-error">
+                            <AlertTriangle size={34} strokeWidth={1.8} />
+                        </div>
+                        <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('sezErroreCaricamentoTitolo')}</h2>
+                        <p className="font-maven mt-1 text-sm text-kidville-muted">{testoDi(erroreCaricamento)}</p>
+                        <button
+                            onClick={riprovaCaricamento}
+                            className="mt-4 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2.5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-yellow"
+                        >
+                            <RotateCcw size={15} strokeWidth={2} /> {t('sezRiprova')}
+                        </button>
+                    </div>
+                ) : (
+                    <div className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
+                        <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🏫</div>
+                        <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('sezNonDisp')}</h2>
+                        <p className="font-maven mt-1 text-sm text-kidville-muted">{t('sezNonDispHint')}</p>
+                    </div>
+                )}
             </CockpitPage>
         );
     }
@@ -187,6 +369,16 @@ export default function SezioneDetailPage() {
             <Link href={backHref} className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline">
                 <ArrowLeft size={15} strokeWidth={2} /> {t('sezBack')}
             </Link>
+
+            {/* L'esito negativo dell'ultima operazione. Stessa forma di
+                `AvvisoForm`: `role="alert"`, così lo annuncia anche uno screen
+                reader — prima qui gli elementi con quel ruolo erano ZERO. */}
+            {errore && (
+                <div role="alert" className="mb-4 flex items-start gap-2 rounded-card bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+                    <span>{testoDi(errore)}</span>
+                </div>
+            )}
 
             {/* Testata sezione */}
             <div className="mb-5 rounded-card bg-kidville-white p-6 shadow-sm">

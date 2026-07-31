@@ -11,6 +11,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -427,12 +428,54 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             form_model_id: form_model_id ?? null,
             scuola_id: scuolaId, // tenant
         };
+        // ── IL DEGRADO SI DICHIARA, E LA TENANCY NON SI SFILA MAI IN SILENZIO. ──
+        //
+        // Questo ciclo esiste per il DB E2E della CI, che non è migrato: PostgREST
+        // risponde `PGRST204`/`42703` nominando la colonna che non ha, e si riprova
+        // senza. Il difetto era che `scuola_id` È NEL RECORD: bastava che PostgREST la
+        // nominasse (una migrazione a metà, una cache dello schema stantia, una colonna
+        // rimossa per errore) perché l'avviso venisse inserito SENZA CHIAVE DI TENANCY,
+        // senza una riga di log, con 201 al chiamante. Con tre plessi quella riga non è
+        // di nessuno: non compare nel cockpit di nessuna sede e nel feed di nessuna
+        // famiglia — cioè l'avviso "esiste" e non lo legge nessuno.
+        //
+        // Il gemello `gallery:GET` per lo stesso degrado NEGA già (`degradoSedeLecito`):
+        // si prosegue senza isolamento SOLO se non c'è niente da isolare (al più una
+        // sede reale). Qui vale la stessa regola, e per la stessa ragione: il fallback
+        // scatta proprio quando l'isolamento non è disponibile, cioè nel momento in cui
+        // è più pericoloso assecondarlo.
+        //
+        // Ogni colonna sfilata lascia comunque la sua riga: il nome viaggia sia come
+        // campo (`colonna`, leggibile su Vercel) sia dentro `msg` — `redact()` è a lista
+        // bianca PER CHIAVE e `colonna` non è in lista, quindi in `app_log` uscirebbe
+        // come `[redatto:str/N]` e la riga direbbe «ho sfilato una colonna» senza dire
+        // quale. `msg` finisce invece in `app_log.messaggio`, in chiaro e sanificato.
         let insRes = await supabase.from('avvisi').insert(avvisoRecord).select().single();
         let attempts = 0;
-        while (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '') && attempts < 4) {
+        while (insRes.error && colonnaMancante(insRes.error as { code?: string } | null) && attempts < 4) {
             const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(insRes.error.message);
             const col = m?.[1] ?? m?.[2];
             if (!col || !(col in avvisoRecord)) break;
+            if (col === 'scuola_id' && !(await degradoSedeLecito(supabase, 'avvisi:POST'))) {
+                // Isolamento di sede non disponibile su impianto multi-sede: è un
+                // incidente, quindi `error`, mai `info`. E si NEGA prima di riprovare:
+                // un avviso senza tenant è peggio di un avviso non pubblicato.
+                logEvento('avvisi', 'error', {
+                    operazione: 'avvisi:POST',
+                    esito: 'colonna-sede-assente-degrado-negato',
+                    msg: 'avvisi:POST: colonna "scuola_id" assente su impianto multi-sede, pubblicazione negata',
+                });
+                return NextResponse.json(
+                    { error: 'Isolamento per sede non disponibile' },
+                    { status: 500 },
+                );
+            }
+            logEvento('avvisi', 'warn', {
+                operazione: 'avvisi:POST',
+                esito: 'degrado-colonna-sfilata',
+                colonna: col,
+                msg: `avvisi:POST: colonna "${col}" assente sul DB, sfilata dal record`,
+            });
             delete avvisoRecord[col];
             insRes = await supabase.from('avvisi').insert(avvisoRecord).select().single();
             attempts++;
@@ -452,14 +495,19 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         // Notifica ai genitori destinatari (best-effort). UN solo enqueue con
         // tipo per priorità: modulo firmabile > richiesta adesione > avviso.
+        const tipoNotifica = form_model_id
+            ? 'modulo_da_compilare'
+            : (tipo === 'adesione' ? 'consenso_uscita' : 'avviso');
+        // Il conteggio si tiene FUORI dal try perché è il dato del log di successo qui
+        // sotto. `null` significa «non si è arrivati a calcolarlo»: in quel caso la riga
+        // `error` del catch dice già perché, e un conteggio inventato mentirebbe.
+        let nDestinatari: number | null = null;
         try {
             const globale = (target_scope ?? 'globale') === 'globale';
             const destinatari = globale
                 ? await genitoriDiScuola(supabase, scuolaId)
                 : await genitoriDiClassi(supabase, scuolaId, classiTarget);
-            const tipoNotifica = form_model_id
-                ? 'modulo_da_compilare'
-                : (tipo === 'adesione' ? 'consenso_uscita' : 'avviso');
+            nDestinatari = destinatari.length;
             const titoloNotifica =
                 tipoNotifica === 'modulo_da_compilare' ? `Modulo da compilare: ${titolo}`
                 : tipoNotifica === 'consenso_uscita' ? `Richiesta di consenso: ${titolo}`
@@ -486,6 +534,23 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
                 esito: 'notifica-genitori-non-accodata',
             }, e);
         }
+
+        // IL SUCCESSO SI LOGGA, COL NUMERO DI FAMIGLIE RAGGIUNTE (AGENTS, regola 5).
+        // Prima questa route rispondeva 201 e non lasciava NIENTE: né l'esito, né la
+        // sede, né quante famiglie avesse davvero avvisato. Con i soli errori, «nessun
+        // log» non distingue «tutto ok» da «non è partito niente» — ed è la condizione
+        // in cui il sistema si trova adesso, perché in produzione ci sono alunni senza
+        // alcun tutore collegato: un avviso di classe raggiunge meno famiglie di quante
+        // ce ne siano, e nessuno può accorgersene. `n_destinatari: 0` è il dato che
+        // rende visibile quel caso; solo conteggi, uuid e chiavi in lista bianca.
+        logEvento('avvisi', 'info', {
+            operazione: 'avvisi:POST',
+            esito: 'pubblicato',
+            sede_id: scuolaId,
+            tipo: tipoNotifica,
+            n_destinatari: nDestinatari,
+            n_classi: classiTarget.length,
+        });
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {

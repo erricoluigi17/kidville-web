@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
 import type { AppRole, AppUser } from '@/lib/auth/require-staff'
 import { SEDE_A, SEDE_B, SEDE_C } from '../../fixtures/sedi'
-import { creaFintoSupabase, type DBFinto, type Scrittura } from '../../fixtures/finto-supabase'
+import {
+  creaFintoSupabase,
+  type DBFinto,
+  type ErrorePostgrest,
+  type Scrittura,
+} from '../../fixtures/finto-supabase'
 
 // =============================================================================
 // IL TEST DEL MODULO CHE CONTIENE TUTTI I PRIMITIVI D'ISOLAMENTO.
@@ -124,6 +129,9 @@ function db(): DBFinto {
       { parent_id: PAR_A, student_id: ALU_A_ASSEGNATO, alunni: { scuola_id: SEDE_A } },
       { parent_id: PAR_B, student_id: ALU_B, alunni: { scuola_id: SEDE_B } },
     ],
+    // L'anagrafica esiste anche per il genitore SENZA figli collegati: è ciò che
+    // distingue «non è tuo» da «non esiste» (vedi assertParentInScope).
+    parents: [{ id: PAR_A }, { id: PAR_B }, { id: PAR_ORFANO }],
     pagamenti: [
       { id: PAG_A, scuola_id: SEDE_A },
       { id: PAG_B, scuola_id: SEDE_B },
@@ -133,7 +141,7 @@ function db(): DBFinto {
 }
 
 /** Il finto client + i suoi accumulatori (letture e scritture). */
-function client(opzioni: { errori?: Record<string, { code: string }> } = {}) {
+function client(opzioni: { errori?: Record<string, ErrorePostgrest> } = {}) {
   const dati = db()
   const lette: string[] = []
   const scritture: Scrittura[] = []
@@ -197,6 +205,91 @@ describe('scuoleDiUtente', () => {
   it('un utente senza sede primaria e senza ponte non ha nessun plesso', async () => {
     const { supabase } = client()
     expect(await scuoleDiUtente(supabase, SENZA_SEDE)).toEqual([])
+  })
+
+  // ── F3: la lettura fallita del ponte NON diventa «sei mono-sede» ───────────
+  // PostgREST non lancia. Fino al 2026-07-31 qui `{ error }` non veniva
+  // guardato: `data` era null, `extra` restava [] e l'admin di tre sedi
+  // diventava di una sola — la PRIMARIA. Da lì `resolveScuolaScrittura`
+  // imboccava il ramo `accessibili.length === 1` e archiviava il dato a
+  // Giugliano senza il 400 e senza un warn: cioè esattamente il difetto che
+  // l'audit aveva appena rimosso, rientrato da una porta laterale.
+  it('errore di lettura del ponte ⇒ NESSUN plesso (fail-closed) e un log error', async () => {
+    const { supabase } = client({
+      errori: { utenti_scuole: { code: '42501', message: 'permission denied for table utenti_scuole' } },
+    })
+    expect(await scuoleDiUtente(supabase, ADMIN_TRE_SEDI)).toEqual([])
+    expect(tipiLoggati('error')).toContain('sedi-utente-non-risolte')
+  })
+
+  it('errore di lettura ⇒ fail-closed anche quando il codice è di colonna (42703)', async () => {
+    // `utenti_scuole.scuola_id` è nel baseline: su QUESTA lettura un 42703 non
+    // significa «CI non migrata», significa che la colonna è sparita. Si nega.
+    const { supabase } = client({ errori: { utenti_scuole: { code: '42703' } } })
+    expect(await scuoleDiUtente(supabase, ADMIN_TRE_SEDI)).toEqual([])
+    expect(tipiLoggati('error')).toContain('sedi-utente-non-risolte')
+  })
+
+  it('tabella ponte ASSENTE ⇒ la sola sede primaria, con un warn (DB non migrato)', async () => {
+    // Unica deroga al fail-closed, e vale solo per la tabella INTERA mancante:
+    // dove il ponte non esiste nessuno è multi-plesso, quindi la sede primaria
+    // è la verità completa, non un restringimento silenzioso. Serve al DB E2E
+    // della CI; in produzione lascia comunque una riga persistita.
+    for (const code of ['42P01', 'PGRST205']) {
+      logEvento.mockClear()
+      const { supabase } = client({ errori: { utenti_scuole: { code } } })
+      expect(await scuoleDiUtente(supabase, ADMIN_TRE_SEDI)).toEqual([SEDE_A])
+      expect(tipiLoggati('warn')).toContain('sedi-utente-ponte-assente')
+      expect(tipiLoggati('error')).not.toContain('sedi-utente-non-risolte')
+    }
+  })
+})
+
+// =============================================================================
+// F3 — LA PROVA: un errore di LETTURA non deve diventare un PERMESSO.
+//
+// Il ponte `utenti_scuole` non si legge (permessi revocati, timeout, rete). Ogni
+// funzione del modulo deve rispondere «non lo so, quindi no», non «allora sei di
+// Giugliano». Le tre conseguenze si asseriscono qui, insieme, perché è la catena
+// — non la singola funzione — a essere stata rotta.
+// =============================================================================
+
+describe('ponte utenti_scuole illeggibile', () => {
+  const rotto = () =>
+    client({ errori: { utenti_scuole: { code: '42501', message: 'permission denied' } } })
+
+  it('la SCRITTURA è negata (403), non dirottata sulla sede primaria', async () => {
+    const { supabase, scritture } = rotto()
+    const r = await resolveScuolaScrittura(richiesta(), supabase, ADMIN_TRE_SEDI)
+    expect(r.scuolaId).toBeUndefined()
+    expect(await esito(r.response)).toEqual({
+      status: 403,
+      error: "Nessun plesso associato all'utente",
+    })
+    expect(scritture).toEqual([])
+  })
+
+  it('la scrittura è negata anche con il SedeSelector su una sede legittima', async () => {
+    // Il cookie non è una fonte d'autorità: viene INTERSECATO con le sedi
+    // accessibili, e se quelle non si sanno l'intersezione è vuota.
+    const { supabase } = rotto()
+    const r = await resolveScuolaScrittura(richiesta(SEDE_B), supabase, ADMIN_TRE_SEDI, SEDE_B)
+    expect(r.scuolaId).toBeUndefined()
+    expect((r.response as { status: number }).status).toBe(403)
+  })
+
+  it('le LETTURE restano senza perimetro-vuoto: nessuna sede attiva', async () => {
+    const { supabase } = rotto()
+    expect(await resolveScuoleAttive(richiesta(), supabase, ADMIN_TRE_SEDI)).toEqual([])
+  })
+
+  it("gli assert* negano: sezione, alunno e genitore del proprio plesso non passano più", async () => {
+    const { supabase } = rotto()
+    expect((await esito(await assertSezioneInScope(supabase, ADMIN_TRE_SEDI, SEZ_A_GIRASOLI))).status)
+      .toBe(403)
+    expect((await esito(await assertAlunnoInScope(supabase, ADMIN_TRE_SEDI, ALU_A_ASSEGNATO))).status)
+      .toBe(403)
+    expect((await esito(await assertParentInScope(supabase, ADMIN_TRE_SEDI, PAR_A))).status).toBe(403)
   })
 })
 
@@ -407,6 +500,15 @@ describe('assertSezioneInScope', () => {
     expect(await esito(r)).toEqual({ status: 403, error: 'Sezione non assegnata al docente' })
     expect(await assertSezioneInScope(supabase, EDUCATOR_A, SEZ_A_GIRASOLI)).toBeNull()
   })
+
+  it('errore di lettura ⇒ 500 e log error, mai un 404 muto', async () => {
+    // Senza il controllo di `{ error }` la sezione risultava «non trovata»: un
+    // 404 indistinguibile da un id inesistente, che inquina anche i contatori.
+    const { supabase } = client({ errori: { sections: { code: '42703' } } })
+    const r = await assertSezioneInScope(supabase, SEGRETERIA_A, SEZ_A_GIRASOLI)
+    expect(await esito(r)).toEqual({ status: 500, error: 'Verifica di scope non riuscita' })
+    expect(tipiLoggati('error')).toContain('scope-sezione-non-risolta')
+  })
 })
 
 // =============================================================================
@@ -482,23 +584,37 @@ describe('assertAlunniInSezione', () => {
     expect(await assertAlunniInSezione(supabase, [ALU_A_ASSEGNATO], SEZ_A_GIRASOLI)).toBeNull()
   })
 
-  it('un solo id estraneo ⇒ 403, e il messaggio lo nomina', async () => {
+  it('un solo id estraneo ⇒ 403 SENZA nominare gli uuid nel corpo, e un warn che li conta', async () => {
+    // W6: il corpo della risposta elencava gli uuid degli alunni estranei —
+    // cioè restituiva a chi ha appena sbagliato plesso l'unico dato che non
+    // avrebbe dovuto vedere (l'esistenza di quegli id). Gli identificativi
+    // stanno nei log, che sono service-role; la risposta dice solo di no.
     const { supabase } = client()
-    const r = await assertAlunniInSezione(
-      supabase,
-      [ALU_A_ASSEGNATO, ALU_B],
-      SEZ_A_GIRASOLI,
-    )
+    const r = await assertAlunniInSezione(supabase, [ALU_A_ASSEGNATO, ALU_B], SEZ_A_GIRASOLI)
     const e = await esito(r)
     expect(e.status).toBe(403)
-    expect(e.error).toContain(ALU_B)
+    expect(e.error).toBe('Alunni non appartenenti alla sezione')
+    expect(e.error).not.toContain(ALU_B)
     expect(e.error).not.toContain(ALU_A_ASSEGNATO)
+    expect(tipiLoggati('warn')).toContain('alunni-fuori-sezione')
+    const riga = logEvento.mock.calls.find(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'alunni-fuori-sezione',
+    )
+    expect((riga?.[2] as { n?: number })?.n).toBe(1)
   })
 
   it('elenco vuoto (o di soli null) ⇒ consentito, senza leggere gli alunni', async () => {
     const { supabase, lette } = client()
     expect(await assertAlunniInSezione(supabase, [null, undefined], SEZ_A_GIRASOLI)).toBeNull()
     expect(lette).not.toContain('alunni')
+  })
+
+  it('errore di lettura ⇒ 500 e log error, mai un 403 che accusa tutti gli id', async () => {
+    const { supabase } = client({ errori: { alunni: { code: '42703' } } })
+    const r = await assertAlunniInSezione(supabase, [ALU_A_ASSEGNATO], SEZ_A_GIRASOLI)
+    expect(await esito(r)).toEqual({ status: 500, error: 'Verifica di scope non riuscita' })
+    expect(tipiLoggati('error')).toContain('scope-alunni-non-risolti')
+    expect(tipiLoggati('warn')).not.toContain('alunni-fuori-sezione')
   })
 })
 
@@ -531,6 +647,16 @@ describe('assertUtenteInScope', () => {
     )
     expect((await esito(await assertUtenteInScope(supabase, SEGRETERIA_A, null))).status).toBe(400)
   })
+
+  it('errore di lettura ⇒ 500 e log error, e NESSUN warn `utente-fuori-sede`', async () => {
+    const { supabase } = client({ errori: { utenti: { code: '42703' } } })
+    const r = await assertUtenteInScope(supabase, SEGRETERIA_A, ID_COLLEGA_A)
+    expect(await esito(r)).toEqual({ status: 500, error: 'Verifica di scope non riuscita' })
+    expect(tipiLoggati('error')).toContain('scope-utente-non-risolto')
+    // Il contatore `*-fuori-sede` è un segnale di SICUREZZA: un guasto di
+    // lettura non deve riempirlo di falsi positivi.
+    expect(tipiLoggati('warn')).not.toContain('utente-fuori-sede')
+  })
 })
 
 // =============================================================================
@@ -561,6 +687,14 @@ describe('assertPagamentoInScope', () => {
     const { supabase } = client()
     expect((await esito(await assertPagamentoInScope(supabase, SEGRETERIA_A, 'x'))).status).toBe(404)
     expect((await esito(await assertPagamentoInScope(supabase, SEGRETERIA_A, null))).status).toBe(400)
+  })
+
+  it('errore di lettura ⇒ 500 e log error, e NESSUN warn `pagamento-fuori-sede`', async () => {
+    const { supabase } = client({ errori: { pagamenti: { code: '42703' } } })
+    const r = await assertPagamentoInScope(supabase, SEGRETERIA_A, PAG_A)
+    expect(await esito(r)).toEqual({ status: 500, error: 'Verifica di scope non riuscita' })
+    expect(tipiLoggati('error')).toContain('scope-pagamento-non-risolto')
+    expect(tipiLoggati('warn')).not.toContain('pagamento-fuori-sede')
   })
 })
 
@@ -597,6 +731,37 @@ describe('assertParentInScope', () => {
     expect((await esito(await assertParentInScope(supabase, SEGRETERIA_A, PAR_ORFANO))).status).toBe(
       403,
     )
+    // …ma NON è un tentativo cross-sede: il contatore di sicurezza non si tocca.
+    expect(tipiLoggati('warn')).not.toContain('genitore-fuori-sede')
+    expect(tipiLoggati('warn')).toContain('genitore-senza-figli')
+  })
+
+  // ── W6: «non è tuo» e «non esiste» sono due cose diverse ───────────────────
+  it('genitore INESISTENTE ⇒ 404 e nessun warn: il contatore di sicurezza resta pulito', async () => {
+    // Provato dal tester con un uuid a caso: rispondeva 403 e scriveva
+    // `genitore-fuori-sede`, cioè il segnale nato per contare i tentativi
+    // cross-sede si riempiva di 404 banali.
+    const { supabase } = client()
+    const r = await assertParentInScope(supabase, SEGRETERIA_A, 'bab00000-0000-4000-8000-00000000ffff')
+    expect(await esito(r)).toEqual({ status: 404, error: 'Genitore non trovato' })
+    expect(tipiLoggati('warn')).toEqual([])
+  })
+
+  it('genitore ESISTENTE ma di un altro plesso ⇒ 403 e IL warn (è il segnale vero)', async () => {
+    const { supabase } = client()
+    const r = await assertParentInScope(supabase, SEGRETERIA_A, PAR_B)
+    expect(await esito(r)).toEqual({ status: 403, error: 'Genitore fuori dal tuo plesso' })
+    expect(tipiLoggati('warn')).toEqual(['genitore-fuori-sede'])
+  })
+
+  it("errore di lettura dell'anagrafica ⇒ 500, non un 404 inventato", async () => {
+    // `student_parents` risponde (nessun figlio), `parents` no: senza il
+    // controllo di `{ error }` l'anagrafica illeggibile diventerebbe
+    // «genitore non trovato» — un 404 affermativo su un dato che non si è letto.
+    const { supabase } = client({ errori: { parents: { code: '42703' } } })
+    const r = await assertParentInScope(supabase, SEGRETERIA_A, 'bab00000-0000-4000-8000-00000000ffff')
+    expect(await esito(r)).toEqual({ status: 500, error: 'Verifica di scope non riuscita' })
+    expect(tipiLoggati('error')).toContain('scope-genitore-non-risolto')
   })
 
   it('utente senza plessi ⇒ 403 senza leggere student_parents', async () => {
@@ -650,5 +815,12 @@ describe('assertAlunnoInScope', () => {
     expect((await esito(await assertAlunnoInScope(supabase, SEGRETERIA_A, undefined))).status).toBe(
       400,
     )
+  })
+
+  it('errore di lettura ⇒ 500 e log error, mai un 404 muto', async () => {
+    const { supabase } = client({ errori: { alunni: { code: '42703' } } })
+    const r = await assertAlunnoInScope(supabase, SEGRETERIA_A, ALU_A_ASSEGNATO)
+    expect(await esito(r)).toEqual({ status: 500, error: 'Verifica di scope non riuscita' })
+    expect(tipiLoggati('error')).toContain('scope-alunno-non-risolto')
   })
 })

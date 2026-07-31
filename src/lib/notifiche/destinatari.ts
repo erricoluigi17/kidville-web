@@ -283,23 +283,52 @@ export async function scuolaUnicaReale(supabase: SupabaseClient): Promise<string
   }
 }
 
-/** L'altro partecipante di un thread chat (genitore ↔ docente). */
+/**
+ * L'altro partecipante di un thread chat (genitore ↔ docente).
+ *
+ * Decide CHI riceve la notifica di un messaggio, e ogni suo `null` significa
+ * «notifica non spedita». Fino al 2026-07-31 era l'ultima funzione muta del
+ * file: `catch { return null }`, e la lettura sopra senza il controllo di
+ * `{ error }` — che con PostgREST è l'unico modo di sapere che è andata male,
+ * visto che non lancia. Esito: messaggio salvato (201), notifica mai partita,
+ * zero righe. E il `try/catch` del chiamante (`chat/messages:POST`) non copre
+ * niente, proprio perché questa funzione non lancia mai.
+ *
+ * I quattro modi di non avere una controparte ora si distinguono nei log:
+ * guasto di lettura, thread assente, mittente estraneo al thread, eccezione.
+ */
 export async function controparteThread(
   supabase: SupabaseClient,
   threadId: string,
   senderId: string,
 ): Promise<{ utenteId: string; versoGenitore: boolean } | null> {
+  const operazione = 'notifiche/destinatari:controparteThread'
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('chat_threads')
       .select('teacher_id, parent_id')
       .eq('id', threadId)
       .maybeSingle()
-    if (!data) return null
+    if (error) {
+      logEvento('notifica', 'error', { operazione, esito: 'controparte-non-risolta' }, error)
+      return null
+    }
+    if (!data) {
+      // Il messaggio è stato scritto su un thread che non c'è: anomalo (la FK lo
+      // impedirebbe), quindi merita una riga persistita, non il silenzio.
+      logEvento('notifica', 'warn', { operazione, esito: 'controparte-thread-assente' })
+      return null
+    }
     if (senderId === data.teacher_id && data.parent_id) return { utenteId: data.parent_id as string, versoGenitore: true }
     if (senderId === data.parent_id && data.teacher_id) return { utenteId: data.teacher_id as string, versoGenitore: false }
+    // Mittente che non è né il docente né il genitore del thread (es. segreteria
+    // che risponde al posto della docente), oppure thread con un lato vuoto:
+    // legittimo, ma la controparte NON riceve nessuna spinta e senza questa riga
+    // «notifica non inviata» e «tutto a posto» restano indistinguibili.
+    logEvento('notifica', 'warn', { operazione, esito: 'controparte-non-nel-thread' })
     return null
-  } catch {
+  } catch (e) {
+    logEvento('notifica', 'error', { operazione, esito: 'controparte-non-risolta' }, e)
     return null
   }
 }

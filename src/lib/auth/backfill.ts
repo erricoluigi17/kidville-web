@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { ensureUtentiRow, resolveScuolaId, randomPassword } from './parent-identity';
+import { ensureUtentiRow, resolveScuolaId, randomPassword, dettaglioErroreAuth } from './parent-identity';
+import { logEvento } from '@/lib/logging/logger';
 
 export { randomPassword };
 
@@ -51,12 +52,11 @@ async function buildEmailIndex(admin: SupabaseClient): Promise<Map<string, strin
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PER_PAGE });
-    // Stesso motivo di `parent-identity.ts`: `error.message` di GoTrue può essere
-    // `undefined` quando una riga di `auth.users` non è serializzabile in JSON e
-    // fa fallire l'intera pagina. Il corpo dell'errore non si butta via.
+    // Il corpo dell'errore non si butta via: `error.message` di GoTrue può essere
+    // `undefined` (riga di `auth.users` non serializzabile che fa fallire l'intera
+    // pagina) o vuoto. La normalizzazione è UNA sola, in `parent-identity.ts`.
     if (error) {
-      const dettaglio = error.message || JSON.stringify(error) || `status ${(error as { status?: number }).status ?? '?'}`;
-      throw new Error(`auth.admin.listUsers (pagina ${page}): ${dettaglio}`);
+      throw new Error(`auth.admin.listUsers (pagina ${page}): ${dettaglioErroreAuth(error)}`);
     }
     const users = data?.users ?? [];
     for (const u of users) if (u.email) map.set(u.email.toLowerCase(), u.id);
@@ -120,7 +120,19 @@ export async function backfillParentsAuth(
           password: randomPassword(),
         });
         if (cErr || !cu?.user) {
-          report.errors.push({ id: p.id, email, error: cErr?.message ?? 'createUser failed' });
+          // `createUser failed` non è una diagnosi: è la constatazione che il
+          // chiamante già faceva da sé. Il report porta il corpo dell'errore, e
+          // una riga di log lo dice anche a chi il report non lo legge — un
+          // backfill si lancia una volta e il suo esito lo si ritrova dopo.
+          const dettaglio = cErr ? dettaglioErroreAuth(cErr) : 'nessun utente restituito';
+          logEvento('auth', 'error', {
+            operazione: 'auth/backfill:backfillParentsAuth',
+            esito: 'creazione-account-non-riuscita',
+            stato: typeof (cErr as { status?: number } | null)?.status === 'number'
+              ? (cErr as { status?: number }).status
+              : undefined,
+          }, cErr ?? new Error('createUser: nessun utente restituito'));
+          report.errors.push({ id: p.id, email, error: dettaglio });
           continue;
         }
         authId = cu.user.id;

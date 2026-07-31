@@ -15,6 +15,7 @@ import type { FormField } from '@/types/database.types'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import { limiteUploadByte, limiteUploadMb } from '@/lib/upload/limite-piattaforma'
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 
 export const FIELD_BASE =
@@ -303,6 +304,27 @@ export function FieldRenderer({
   )
 }
 
+/**
+ * Il messaggio d'errore del SERVER, o `null` se non ce n'è uno leggibile.
+ *
+ * Tre strette, e ognuna ha un motivo:
+ *  · si legge solo se il `content-type` è JSON — il corpo di un 413 di piattaforma è
+ *    testo, e riversarlo in pagina mostrerebbe al genitore «FUNCTION_PAYLOAD_TOO_LARGE»;
+ *  · si legge SOLO il campo `error`, che è quello che scriviamo noi nelle route;
+ *  · si tronca. Non lancia mai: è il ramo che gestisce un errore, non il posto dove
+ *    aprirne un secondo.
+ */
+async function messaggioDelServer(res: Response): Promise<string | null> {
+  try {
+    if (!/application\/json/i.test(res.headers.get('content-type') ?? '')) return null
+    const body: unknown = await res.json()
+    const msg = (body as { error?: unknown } | null)?.error
+    return typeof msg === 'string' && msg !== '' ? msg.slice(0, 200) : null
+  } catch {
+    return null
+  }
+}
+
 // ── Upload allegato (bucket form_attachments) ────────────────
 export function FileField({
   modelId,
@@ -344,6 +366,28 @@ export function FileField({
     setFileName(file.name)
 
     try {
+      // ── IL CONTROLLO DELLA TAGLIA STA QUI, PRIMA DI SPEDIRE. Non è una gentilezza
+      // verso la rete mobile del genitore: sopra il tetto della piattaforma la
+      // richiesta non arriva MAI alla nostra route (Vercel risponde 413
+      // `FUNCTION_PAYLOAD_TOO_LARGE` con un corpo di testo), quindi nessun controllo
+      // lato server potrebbe scattare e nessun messaggio nostro potrebbe uscire. Il
+      // 31 luglio 2026 sono stati 41 tentativi in un giorno sul modulo pubblico.
+      // Vedi `@/lib/upload/limite-piattaforma`.
+      const limite = limiteUploadByte(maxSizeMb)
+      if (file.size > limite) {
+        // Il NOME del file non si logga mai: «certificato-mario-rossi.pdf» è un dato.
+        // La dimensione sì: è un numero, ed è l'unica cosa che serve per sapere se il
+        // tetto è tarato bene o se i genitori caricano foto da 12 MB.
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: `modulo-allegato-troppo-pesante: ${file.size} byte, limite ${limite}`,
+        })
+        setUploadError(t('fileTroppoPesante', { mb: limiteUploadMb(maxSizeMb) }))
+        onChange('')
+        return
+      }
+
       // Upload SEMPRE via endpoint server (service-role, bucket privato deny-by-default).
       // Pubblico: token-scoped; autenticato: `/api/forms/upload` (requireUser). Niente
       // più scrittura diretta dal client anon (P0/DL-035).
@@ -353,9 +397,27 @@ export function FileField({
       fd.append('folder', modelId)
       if (maxSizeMb) fd.append('max_size_mb', String(maxSizeMb))
       const res = await fetch(endpoint, { method: 'POST', body: fd })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Upload fallito')
-      const path: string = json.path
+
+      // `res.ok` PRIMA di `res.json()`, ed è il difetto che questo ordine ripara: il 413
+      // della piattaforma ha `content-type: text/plain`, quindi il parse LANCIAVA
+      // `SyntaxError` e il genitore si vedeva «Caricamento non riuscito. Riprova.» —
+      // l'invito a rifare l'unica cosa che non poteva funzionare. In `app_log` restava
+      // `modulo-allegato-upload-fallito: SyntaxError`, che del 413 non diceva nulla.
+      // (Il 413 in tabella ci finisce comunque, una volta sola: lo registra il patch di
+      // `fetch` in `@/lib/logging/client`, che i 413 li tiene come anomalia.)
+      if (!res.ok) {
+        setUploadError(
+          res.status === 413
+            ? t('fileTroppoPesante', { mb: limiteUploadMb(maxSizeMb) })
+            : (await messaggioDelServer(res)) ?? t('caricamentoNonRiuscito'),
+        )
+        onChange('')
+        return
+      }
+
+      const json: unknown = await res.json()
+      const path = (json as { path?: unknown } | null)?.path
+      if (typeof path !== 'string' || path === '') throw new Error('risposta senza path')
       onChange(path)
     } catch (err) {
       // Un catch che non logga è un bug: l'upload fallito è invisibile a chi

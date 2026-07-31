@@ -95,10 +95,19 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .select('id', { count: 'exact', head: true })
       .in('scuola_id', sedi)
       .eq('status', 'pending'),
-    // Iscrizioni in attesa (lista per alert)
+    // Iscrizioni in attesa (lista per alert) — SOLO l'id e la data d'arrivo.
+    //
+    // `enrollment_submissions.data` NON è una data: è la colonna JSONB con il
+    // MODULO D'ISCRIZIONE INTERO (19 campi per adulto, fra cui tipo e numero
+    // del documento d'identità e `documento_path`; 17 per minore, fra cui
+    // codice fiscale, data di nascita, residenza, `allergies` e `note_mediche`).
+    // Fino al 2026-07-31 stava in questa proiezione e finiva in risposta, così
+    // ogni caricamento della dashboard consegnava per intero le 5 domande
+    // pending più recenti. Il widget mostra «Richiesta N · da gestire» e una
+    // data: `created_at` è tutto ciò che gli serve.
     supabase
       .from('enrollment_submissions')
-      .select('id, data, status, created_at')
+      .select('id, created_at')
       .in('scuola_id', sedi)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
@@ -188,9 +197,14 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   })
 
   // --- Iscrizioni alert ---
-  const alertIscrizioni = (iscrizioniListRes.data ?? []).map((e) => ({
-    id: e.id as string,
-    data: (e.data ?? e.created_at) as string | null,
+  // La variabile si chiama `invio`, non `e`: `e.data` si leggeva come «la data»
+  // ed era invece la colonna JSONB col fascicolo della famiglia. Qui `data` è
+  // la CHIAVE della risposta (in italiano: la data d'arrivo, quella che il
+  // widget formatta), e il valore viene solo da `created_at` — l'unico campo
+  // che la query chiede.
+  const alertIscrizioni = (iscrizioniListRes.data ?? []).map((invio) => ({
+    id: invio.id as string,
+    data: (invio.created_at as string | null) ?? null,
   }))
 
   return NextResponse.json({

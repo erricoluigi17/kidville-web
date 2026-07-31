@@ -39,7 +39,13 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
   }),
 }))
 
-import { staffScuola, genitoriDiClassi, genitoriDiScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+import {
+  staffScuola,
+  genitoriDiClassi,
+  genitoriDiScuola,
+  scuolaUnicaReale,
+  controparteThread,
+} from '@/lib/notifiche/destinatari'
 
 const RUOLI = ['admin', 'coordinator', 'segreteria']
 
@@ -173,5 +179,75 @@ describe('scuolaUnicaReale — la primitiva mono-sede, ora deprecata', () => {
     const out = await scuolaUnicaReale(creaFintoSupabase(db))
     expect(out).toBe(SEDE_A)
     expect(logDi('sede-non-univoca')).toBeUndefined()
+  })
+})
+
+// =============================================================================
+// W9 — `controparteThread`: l'ULTIMO catch muto del file.
+//
+// Era l'unica funzione che l'audit non aveva toccato: `catch { return null }` e
+// la lettura di `chat_threads` senza guardare `{ error }` (PostgREST non lancia).
+// Decide CHI riceve la notifica di un messaggio in chat: se fallisce, il
+// messaggio viene salvato — 201 — e la notifica non parte. Il `try/catch` del
+// chiamante (`chat/messages:POST`) non aiuta: questa funzione non lancia mai,
+// quindi quel catch non scatta. Zero righe, e il genitore scopre il messaggio
+// solo se apre la chat per caso.
+// =============================================================================
+
+describe('controparteThread — chi riceve la notifica di un messaggio', () => {
+  const dbChat = (): DBFinto => ({
+    chat_threads: [{ id: 'th-1', teacher_id: 'doc-1', parent_id: 'gen-1' }],
+  })
+
+  it('dal docente ⇒ il genitore, e viceversa (nessun log: è il percorso felice)', async () => {
+    expect(await controparteThread(creaFintoSupabase(dbChat()), 'th-1', 'doc-1')).toEqual({
+      utenteId: 'gen-1',
+      versoGenitore: true,
+    })
+    expect(await controparteThread(creaFintoSupabase(dbChat()), 'th-1', 'gen-1')).toEqual({
+      utenteId: 'doc-1',
+      versoGenitore: false,
+    })
+    expect(logEvento).not.toHaveBeenCalled()
+  })
+
+  it('errore di lettura ⇒ null MA con una riga `error`: non si finge «nessuna controparte»', async () => {
+    const supabase = creaFintoSupabase(dbChat(), [], {
+      errori: { chat_threads: { code: '42501', message: 'permission denied' } },
+    })
+    expect(await controparteThread(supabase, 'th-1', 'doc-1')).toBeNull()
+    const riga = logDi('controparte-non-risolta')
+    expect(riga).toBeDefined()
+    expect(riga?.[0]).toBe('notifica')
+    expect(riga?.[1]).toBe('error')
+    // L'errore del provider viaggia attaccato: codice e messaggio in tabella.
+    expect(riga?.[3]).toMatchObject({ code: '42501' })
+  })
+
+  it('thread inesistente ⇒ null e un warn: la notifica non parte, e si sa perché', async () => {
+    expect(await controparteThread(creaFintoSupabase(dbChat()), 'th-inesistente', 'doc-1')).toBeNull()
+    expect(logDi('controparte-thread-assente')?.[1]).toBe('warn')
+  })
+
+  it('mittente estraneo al thread ⇒ null e un warn distinto', async () => {
+    expect(await controparteThread(creaFintoSupabase(dbChat()), 'th-1', 'segreteria-9')).toBeNull()
+    expect(logDi('controparte-non-nel-thread')?.[1]).toBe('warn')
+  })
+
+  it('eccezione vera (rete/DNS) ⇒ null e una riga `error`, mai un catch muto', async () => {
+    const supabase = {
+      from: () => {
+        throw new Error('getaddrinfo ENOTFOUND')
+      },
+    } as never
+    expect(await controparteThread(supabase, 'th-1', 'doc-1')).toBeNull()
+    expect(logDi('controparte-non-risolta')?.[1]).toBe('error')
+  })
+
+  it('nessun log porta identificativi in chiaro oltre agli uuid tecnici', async () => {
+    await controparteThread(creaFintoSupabase(dbChat()), 'th-1', 'segreteria-9')
+    for (const c of logEvento.mock.calls) {
+      expect(JSON.stringify(c[2])).not.toMatch(/@/)
+    }
   })
 })

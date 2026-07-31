@@ -13,6 +13,7 @@ interface Cfg {
   movNc?: { id: string; suggerimenti?: unknown }[]
   incassi?: { id: string }[]
   cassa?: { id: string }[]
+  consensi?: { id: string }[] // W5 — prove di consenso da cui togliere ip/user_agent
   // C5 — testo libero UGC bonificato dall'oblio.
   segnalazioni?: { id: string }[] // scrub a livello genitore (via .or su segnalante/segnalato)
   sospensioni?: { id: string }[] // scrub a livello genitore (via .or su sospesa_da/sospesa_verso)
@@ -39,6 +40,7 @@ function arrayFor(table: string, state: QState, cfg: Cfg) {
   if (table === 'pagamenti') return cfg.pagamenti ?? []
   if (table === 'incassi') return cfg.incassi ?? []
   if (table === 'cassa_movimenti') return cfg.cassa ?? []
+  if (table === 'consensi_accettazioni') return cfg.consensi ?? []
   if (table === 'eventi_diario') return cfg.diario ?? []
   if (table === 'galleria_media_v2') return cfg.media ?? []
   if (table === 'chat_threads') return cfg.threads ?? []
@@ -116,6 +118,20 @@ describe('anonimizzaParent', () => {
     expect(f.deletedTables).toContain('news_visualizzazioni')
     expect(f.newsFilter.v).toEqual(['auth-1'])
     expect(r.newsVisualizzazioniRimosse).toBe(2)
+  })
+
+  it('toglie ip e user_agent dalle prove di consenso, lasciando la prova (W5)', async () => {
+    const f = makeFake({ parentAuth: 'auth-1', consensi: [{ id: 'c1' }, { id: 'c2' }] })
+    const r = await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    const cUpd = f.updates.find((u) => u.table === 'consensi_accettazioni')
+    expect(cUpd).toBeTruthy()
+    expect(cUpd!.ip).toBeNull()
+    expect(cUpd!.user_agent).toBeNull()
+    // La prova resta: versione, tipo e data NON si toccano — servono all'art. 7
+    // §1 GDPR e all'art. 1341 c.c. molto più dell'indirizzo IP.
+    expect(Object.keys(cUpd!)).not.toContain('versione')
+    expect(Object.keys(cUpd!)).not.toContain('accettato_il')
+    expect(r.provaConsensiScrubbate).toBe(2)
   })
 
   it('genitore senza auth_user_id → nessuna DELETE news', async () => {

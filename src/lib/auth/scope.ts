@@ -17,7 +17,38 @@ import { logEvento } from '@/lib/logging/logger'
 // oppure null se l'accesso è consentito.
 // =============================================================================
 
-/** Plessi (schools.id) su cui l'utente può operare. */
+/**
+ * Codici che significano «questa TABELLA non esiste in questo database» —
+ * `42P01` (Postgres) e `PGRST205` (PostgREST non la trova nella schema cache).
+ * NON ci sono i codici di COLONNA (`42703`, `PGRST204`): su `utenti_scuole` si
+ * legge `scuola_id`, che sta nel baseline. Lì un errore di colonna non è «CI non
+ * migrata», è la colonna sparita — e allora si nega.
+ */
+const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
+
+/**
+ * Plessi (schools.id) su cui l'utente può operare.
+ *
+ * ⚠️ FAIL-CLOSED, e non è una precauzione teorica. PostgREST non lancia: fino al
+ * 2026-07-31 `{ error }` qui non veniva guardato, quindi una lettura fallita del
+ * ponte lasciava `data` a null, `extra` a `[]` e l'admin di tre sedi diventava
+ * di UNA — la primaria. Da lì `resolveScuolaScrittura` imboccava il ramo
+ * `accessibili.length === 1` e archiviava il dato a Giugliano **senza il 400 e
+ * senza il warn**: cioè il difetto che l'audit aveva appena rimosso, rientrato
+ * da una porta laterale. Restava solo la riga `db error` del fetch strumentato,
+ * che dice «PostgREST ha risposto male su utenti_scuole» e non «una scrittura è
+ * finita nel plesso sbagliato».
+ *
+ * Un errore di lettura non è un permesso: se non si sa quali sedi ha l'utente,
+ * non ne ha nessuna. Tutti i chiamanti trattano lo scope vuoto come diniego
+ * (403 sulle scritture, elenco vuoto sulle letture), quindi il contratto regge
+ * senza cambiare la firma su 50 file.
+ *
+ * Unica deroga: la tabella ponte ASSENTE per intero. Dove `utenti_scuole` non
+ * esiste nessuno è multi-plesso, quindi la sede primaria è la verità completa e
+ * non un restringimento silenzioso — ma resta un `warn` persistito, perché in
+ * produzione quella tabella c'è e la sua sparizione è un incidente.
+ */
 export async function scuoleDiUtente(
   supabase: SupabaseClient,
   user: AppUser,
@@ -25,10 +56,25 @@ export async function scuoleDiUtente(
   const own = user.scuola_id ? [user.scuola_id] : []
   // Solo la Direzione (admin) può essere multi-plesso via utenti_scuole.
   if (user.role !== 'admin') return own
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('utenti_scuole')
     .select('scuola_id')
     .eq('utente_id', user.id)
+  if (error) {
+    const codice = (error as { code?: string }).code ?? ''
+    if (TABELLA_ASSENTE.has(codice)) {
+      logEvento('auth', 'warn', {
+        tipo: 'sedi-utente-ponte-assente', azione: 'scuoleDiUtente',
+        utente: user.id, ruolo: user.role,
+      }, error)
+      return own
+    }
+    logEvento('auth', 'error', {
+      tipo: 'sedi-utente-non-risolte', azione: 'scuoleDiUtente',
+      utente: user.id, ruolo: user.role,
+    }, error)
+    return []
+  }
   const extra = (data ?? []).map((r) => r.scuola_id as string)
   const set = new Set<string>([...own, ...extra])
   return [...set]
@@ -126,6 +172,30 @@ export async function resolveScuolaScrittura(
   return { response: NextResponse.json({ error: 'Specificare la sede (scuola_id) per questa operazione' }, { status: 400 }) }
 }
 
+/**
+ * Diniego per GUASTO, non per scope: 500 + una riga `error` che dice quale
+ * verifica non è stata fatta.
+ *
+ * Esiste perché le sette `assert*` sbagliavano allo stesso modo in cinque punti
+ * su sette: PostgREST non lancia, quindi una lettura fallita lasciava `data` a
+ * null e la funzione rispondeva **404 «non trovato»** o **403 «fuori dal tuo
+ * plesso»** — cioè affermava qualcosa sul dato che non aveva letto. Due danni,
+ * non uno: chi riceve il 403 non sa che è un guasto, e i contatori
+ * `*-fuori-sede` — che l'audit ha creato come segnale di sicurezza — si
+ * riempiono di falsi positivi.
+ *
+ * Il messaggio è deliberatamente lo stesso per tutte: al client non serve sapere
+ * QUALE tabella non si è letta (e non deve saperlo). Il `tipo` lo dice al log.
+ */
+function scopeNonRisolto(
+  tipo: string,
+  err: unknown,
+  campi: Record<string, string | number | null | undefined> = {},
+): NextResponse {
+  logEvento('auth', 'error', { tipo, ...campi }, err)
+  return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+}
+
 /** True se l'utente ha visibilità su TUTTE le classi del proprio/i plesso/i. */
 export function vedeTutteLeClassi(user: AppUser): boolean {
   return user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
@@ -171,11 +241,12 @@ export async function assertSezioneInScope(
   if (!sectionId) {
     return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
   }
-  const { data: section } = await supabase
+  const { data: section, error } = await supabase
     .from('sections')
     .select('id, scuola_id')
     .eq('id', sectionId)
     .maybeSingle()
+  if (error) return scopeNonRisolto('scope-sezione-non-risolta', error, { utente: user.id })
   if (!section) {
     return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
   }
@@ -236,8 +307,7 @@ export async function assertClasseNomeInScope(
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.
-    logEvento('auth', 'error', { tipo: 'scope-classe-non-risolta', sezione: classeNome }, error)
-    return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+    return scopeNonRisolto('scope-classe-non-risolta', error, { sezione: classeNome })
   }
   if (data.length === 0) {
     // `warn` → persistito: «qualcuno ha chiesto una classe che non è nei suoi
@@ -277,16 +347,30 @@ export async function assertAlunniInSezione(
 ): Promise<NextResponse | null> {
   const ids = [...new Set(alunnoIds.filter(Boolean) as string[])]
   if (ids.length === 0) return null
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('alunni')
     .select('id')
     .in('id', ids)
     .eq('section_id', sectionId)
+  // Senza questo controllo una lettura fallita («data: null») faceva risultare
+  // estranei TUTTI gli id: un 403 che accusa anche gli alunni giusti, e che il
+  // chiamante non può distinguere da un vero tentativo cross-sezione.
+  if (error) return scopeNonRisolto('scope-alunni-non-risolti', error, { sezione: sectionId })
   const inSezione = new Set((data ?? []).map((r) => r.id as string))
   const estranei = ids.filter((id) => !inSezione.has(id))
   if (estranei.length > 0) {
+    // Gli uuid NON tornano nel corpo. Fino al 2026-07-31 la risposta li
+    // elencava: a chi ha appena provato a toccare alunni non suoi si
+    // confermava, id per id, quali esistono e non sono nella sezione — l'unica
+    // informazione che quel 403 esiste per non dare. Per la diagnosi restano la
+    // sezione, i due conteggi e — sul canale persistito — il payload già redatto
+    // dal contesto di richiesta, dove gli id (uuid) ci sono per intero.
+    logEvento('auth', 'warn', {
+      tipo: 'alunni-fuori-sezione', azione: 'assertAlunniInSezione',
+      sezione: sectionId, n: estranei.length, richiesti: ids.length,
+    })
     return NextResponse.json(
-      { error: `Alunni non appartenenti alla sezione: ${estranei.join(', ')}` },
+      { error: 'Alunni non appartenenti alla sezione' },
       { status: 403 }
     )
   }
@@ -307,11 +391,12 @@ export async function assertUtenteInScope(
   if (!utenteId) {
     return NextResponse.json({ error: 'utenteId obbligatorio' }, { status: 400 })
   }
-  const { data: bersaglio } = await supabase
+  const { data: bersaglio, error } = await supabase
     .from('utenti')
     .select('id, scuola_id')
     .eq('id', utenteId)
     .maybeSingle()
+  if (error) return scopeNonRisolto('scope-utente-non-risolto', error, { utente: user.id })
   if (!bersaglio) {
     return NextResponse.json({ error: 'Utente non trovato' }, { status: 404 })
   }
@@ -346,11 +431,12 @@ export async function assertPagamentoInScope(
   if (!pagamentoId) {
     return NextResponse.json({ error: 'pagamento_id obbligatorio' }, { status: 400 })
   }
-  const { data: pagamento } = await supabase
+  const { data: pagamento, error } = await supabase
     .from('pagamenti')
     .select('id, scuola_id')
     .eq('id', pagamentoId)
     .maybeSingle()
+  if (error) return scopeNonRisolto('scope-pagamento-non-risolto', error, { utente: user.id })
   if (!pagamento) {
     return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
   }
@@ -401,17 +487,54 @@ export async function assertParentInScope(
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.
-    logEvento('auth', 'error', { tipo: 'scope-genitore-non-risolto', utente: user.id }, error)
-    return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+    return scopeNonRisolto('scope-genitore-non-risolto', error, { utente: user.id })
   }
-  if (!data || data.length === 0) {
+  if (data && data.length > 0) return null
+
+  // ── Da qui in giù si NEGA comunque: si stabilisce solo COME, e cosa scrivere.
+  //
+  // Fino al 2026-07-31 tutto questo era un `return 403 + warn genitore-fuori-sede`.
+  // Provato con un uuid inesistente, rispondeva «Genitore fuori dal tuo plesso»
+  // e incrementava un contatore nato come SEGNALE DI SICUREZZA: bastavano i 404
+  // banali di un id sbagliato per riempirlo, e il giorno in cui qualcuno prova
+  // davvero a leggere il genitore di un'altra sede quel segnale non si distingue
+  // dal rumore. «Non è tuo» e «non esiste» sono due cose diverse e vanno dette
+  // diverse. Il costo sta tutto sul ramo di diniego: il percorso felice resta
+  // una query sola.
+  const { data: altrove, error: errAltrove } = await supabase
+    .from('student_parents')
+    .select('student_id, alunni!inner(scuola_id)')
+    .eq('parent_id', parentId)
+    .limit(1)
+  if (errAltrove) return scopeNonRisolto('scope-genitore-non-risolto', errAltrove, { utente: user.id })
+  if (altrove && altrove.length > 0) {
+    // Ha figli, ma non nei tuoi plessi: QUESTO è il tentativo cross-sede.
     logEvento('auth', 'warn', {
       tipo: 'genitore-fuori-sede', azione: 'assertParentInScope',
       utente: user.id, ruolo: user.role,
     })
     return NextResponse.json({ error: 'Genitore fuori dal tuo plesso' }, { status: 403 })
   }
-  return null
+
+  // Nessun figlio collegato: o l'anagrafica non esiste (404 banale), o esiste e
+  // non è attribuibile a nessun plesso (403, ma non è un tentativo).
+  const { data: anagrafica, error: errAnagrafica } = await supabase
+    .from('parents')
+    .select('id')
+    .eq('id', parentId)
+    .maybeSingle()
+  if (errAnagrafica) {
+    // Mai affermare «non trovato» su un dato che non si è riusciti a leggere.
+    return scopeNonRisolto('scope-genitore-non-risolto', errAnagrafica, { utente: user.id })
+  }
+  if (!anagrafica) {
+    return NextResponse.json({ error: 'Genitore non trovato' }, { status: 404 })
+  }
+  logEvento('auth', 'warn', {
+    tipo: 'genitore-senza-figli', azione: 'assertParentInScope',
+    utente: user.id, ruolo: user.role,
+  })
+  return NextResponse.json({ error: 'Genitore non collegato a nessun alunno' }, { status: 403 })
 }
 
 /**
@@ -427,11 +550,12 @@ export async function assertAlunnoInScope(
   if (!alunnoId) {
     return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
   }
-  const { data: alunno } = await supabase
+  const { data: alunno, error } = await supabase
     .from('alunni')
     .select('id, section_id, scuola_id')
     .eq('id', alunnoId)
     .maybeSingle()
+  if (error) return scopeNonRisolto('scope-alunno-non-risolto', error, { utente: user.id })
   if (!alunno) {
     return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
   }

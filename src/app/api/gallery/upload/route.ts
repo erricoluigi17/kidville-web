@@ -36,7 +36,7 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
             const analisi = analizzaContenutoVideo(testa, contentType);
             if (analisi.daConvertire) {
                 // MAI il nome del file nei log: può contenere PII. Solo mime, size e motivo.
-                logEvento('gallery', 'warn', {
+                logEvento('galleria', 'warn', {
                     operazione: 'gallery/upload:POST',
                     esito: 'video-non-riproducibile',
                     mime: contentType,

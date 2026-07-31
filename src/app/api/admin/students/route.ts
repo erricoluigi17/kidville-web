@@ -368,27 +368,46 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
     try {
         const supabase = await createAdminClient();
 
-        const embedTail = 'student_parents ( relation_type, is_primary, parents (*) ), delegates (*)';
-        // Colonne "flat" della lista anagrafica. residence_province/residence_street_number
-        // dipendono dalla migrazione 20260706105201: se il DB non le ha ancora (es. progetto E2E CI,
-        // o finestra pre-migrate in un deploy) PostgREST risponde 42703 → le rimuoviamo e
-        // riproviamo, esattamente come già fanno POST/PATCH qui sotto.
+        // ─── Proiezione MINIMA dell'elenco (W8, 2026-07-31) ──────────────────
+        //
+        // Questa route restituiva 43 colonne per alunno — `note_mediche`,
+        // `allergies`, `allergeni`, `is_bes_dsa`/`note_bes` (dato art. 9 GDPR),
+        // `documento_path`, `importo_retta_mensile`, `genitori_separati`,
+        // `retta_split_config`, `intestatario_fatture`, residenza — PIÙ l'embed
+        // `student_parents ( … parents (*) ), delegates (*)`, cioè l'anagrafica
+        // COMPLETA di ogni adulto collegato (codice fiscale, tipo e numero del
+        // documento d'identità, indirizzo, recapiti) per OGNI riga dell'elenco.
+        // Con `limit=1000` — il valore che usano tutte le pagine — una sola
+        // chiamata consegnava il fascicolo dell'intera scuola.
+        //
+        // Niente di tutto ciò veniva mostrato da una lista: il dettaglio è
+        // `GET /api/admin/students/[id]`, che il gate di sede ce l'ha già.
+        // Le colonne rimaste sono quelle che i consumatori leggono davvero:
+        //  · `StudentTable`/`StudentRowCard`: cognome, nome, `scuola_id` (colonna
+        //    «Sede»), `data_nascita`, `classe_sezione`, `stato`, indicatore allergie;
+        //  · ricerca ed export CSV di `/admin/students`: `codice_fiscale`;
+        //  · filtri «frequentanti» di PaymentsDashboard/GeneratoreCategoria/
+        //    FiscalePanel e di `students/sezioni/[id]`: `section_id`.
+        // (`fiscal_code` su `alunni` non è mai stato popolato: il CF del minore
+        // sta in `codice_fiscale`.)
+        //
+        // `note_mediche` si LEGGE ma non si RESTITUISCE: la lista accende solo un
+        // indicatore «Allergie», e il testo libero di un minore non deve viaggiare
+        // in un elenco (né finire in un attributo del DOM). Fuori esce il booleano
+        // `ha_note_mediche`; il testo resta dietro la scheda alunno.
+        //
+        // Il ciclo 42703 qui sotto resta indispensabile: il DB E2E della CI non è
+        // migrato e una colonna assente va tolta, non trasformata in un 500.
         let cols = [
-            'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'classe_sezione', 'stato',
-            'note_mediche', 'consenso_privacy', 'creato_il', 'gender', 'citizenship', 'birth_nation',
-            'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city',
-            'residence_province', 'zip_code', 'allergies',
-            'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'fiscal_code', 'section_id',
-            'documento_path', 'importo_retta_mensile', 'genitori_separati', 'retta_split_config',
-            'intestatario_fatture', 'allergeni', 'usa_pannolino', 'sospeso', 'sospeso_motivo', 'sospeso_il',
-            'sospeso_da', 'anonimizzato_il', 'gruppo_mensa_id', 'numero_domanda_sidi',
+            'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale',
+            'classe_sezione', 'stato', 'section_id', 'note_mediche',
         ];
         // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
         const scuole = await resolveScuoleAttive(request, supabase, auth.user);
         const runQuery = () => {
             let query = supabase
                 .from('alunni')
-                .select(`${cols.join(', ')}, ${embedTail}`)
+                .select(cols.join(', '))
                 .order('cognome', { ascending: true })
                 .range(offset, offset + limit - 1)
                 .in('scuola_id', scuole);
@@ -416,7 +435,16 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        return NextResponse.json(data);
+        // La nota medica esce come SEGNALE, non come testo: `ha_note_mediche`
+        // accende l'indicatore «Allergie» nella lista, e il contenuto resta dove
+        // ha un motivo per stare (la scheda alunno). `note_mediche` non compare
+        // nella risposta nemmeno a null, così nessun componente può ricascarci.
+        const righe = ((data ?? []) as unknown as Record<string, unknown>[]).map((riga) => {
+            const { note_mediche: nota, ...resto } = riga;
+            return { ...resto, ha_note_mediche: Boolean(nota) };
+        });
+
+        return NextResponse.json(righe);
     } catch (err) {
         logErrore({ operazione: 'admin/students:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });

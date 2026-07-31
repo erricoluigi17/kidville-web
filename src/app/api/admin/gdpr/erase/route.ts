@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { patchAlunno, patchParent, confermaValida, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
+import { scrubProvaConsensi } from '@/lib/gdpr/consensi-oblio'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
@@ -119,8 +120,17 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       }
     }
 
+    // 2a. Prova del consenso (W5): via `ip` e `user_agent`, resta il fatto.
+    //     `consensi_accettazioni` non ha FK verso `parents` — apposta, per
+    //     sopravvivere a questa anonimizzazione — e proprio per questo restava
+    //     fuori dall'oblio: l'indirizzo IP di una famiglia sarebbe rimasto in
+    //     tabella senza scadenza, agganciato a un `parent_id` ancora unico.
+    //     Versione, tipo e data non si toccano: sono loro la prova richiesta
+    //     dall'art. 7 §1 GDPR e dall'art. 1341 c.c.
+    let consensiProvaBonificati = 0
     for (const pid of parentiOrfani) {
       await supabase.from('parents').update(patchParent(pid, at)).eq('id', pid)
+      consensiProvaBonificati += await scrubProvaConsensi(supabase, pid, 'admin/gdpr/erase:POST')
     }
 
     // 2b. Oblio del tracciamento di lettura news (F1 privacy, ciclo 2). La tabella
@@ -283,6 +293,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         incassi_bonificati: incassiBonificati,
         cassa_bonificati: cassaBonificati,
         news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
+        consensi_prova_bonificati: consensiProvaBonificati,
       },
     })
 
@@ -295,6 +306,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       incassi_bonificati: incassiBonificati,
       cassa_bonificati: cassaBonificati,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
+      consensi_prova_bonificati: consensiProvaBonificati,
     })
   } catch (err) {
     logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)

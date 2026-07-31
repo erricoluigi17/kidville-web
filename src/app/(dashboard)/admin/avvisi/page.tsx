@@ -16,6 +16,9 @@ import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
 interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: string; name: string; school_type: string }[] }
 
+/** Riconosce una voce di `target_classes` che è in realtà un ID di sezione. */
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function AdminAvvisiInner() {
     const router = useRouter();
     const t = useTranslations('adminComunicazioni');
@@ -45,6 +48,49 @@ function AdminAvvisiInner() {
         ),
         [scuole]
     );
+
+    // Le sedi rappresentate fra le classi disponibili: se sono più d'una,
+    // l'etichetta di un destinatario deve dire ANCHE il plesso.
+    const piuSedi = useMemo(
+        () => new Set(availableClasses.map(c => c.scuolaId).filter(Boolean)).size > 1,
+        [availableClasses],
+    );
+
+    /**
+     * L'etichetta di una voce di `target_classes`, che è un campo ETEROGENEO.
+     *
+     * `AvvisoForm` ci scrive i NOMI, ma in produzione esistono record che ci
+     * hanno messo l'ID della sezione — e la tabella li stampava tali e quali:
+     * un uuid nella colonna «Destinatari», dove ci si aspetta una classe.
+     *
+     * Si risolve prima per `id` (identità vera), poi per `nome`. La sede si
+     * aggiunge SOLO quando è deducibile senza ambiguità: se lo stesso nome
+     * esiste in due plessi, attribuirlo a uno dei due sarebbe indovinare — cioè
+     * l'errore che questo audit sta chiudendo. L'uuid resta nel `title`: a
+     * disposizione del supporto, invisibile a chi legge.
+     */
+    const etichettaDestinatario = useCallback((voce: string): { testo: string; titolo?: string } => {
+        const perId = availableClasses.find(c => c.id === voce);
+        if (perId) {
+            return {
+                testo: piuSedi && perId.scuolaNome ? `${perId.nome} — ${perId.scuolaNome}` : perId.nome,
+                titolo: voce,
+            };
+        }
+        const omonime = availableClasses.filter(c => c.nome === voce);
+        if (omonime.length === 1) {
+            const c = omonime[0];
+            return { testo: piuSedi && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome };
+        }
+        // Più di una: il nome è tutto ciò che si sa con certezza.
+        if (omonime.length > 1) return { testo: voce };
+        // Nessuna corrispondenza. Se ha la forma di un uuid è una sezione
+        // cancellata (o di un plesso che non ci compete): si dice questo, non lo
+        // si stampa. Altrimenti è un nome storico, e il nome si legge.
+        return UUID_RX.test(voce)
+            ? { testo: t('avvisiClasseSconosciuta'), titolo: voce }
+            : { testo: voce };
+    }, [availableClasses, piuSedi, t]);
 
     const loadAvvisi = useCallback(async () => {
         if (!userId) return;
@@ -224,7 +270,17 @@ function AdminAvvisiInner() {
                                             </span>
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>
-                                            {a.target_scope === 'globale' ? t('avvisiTuttoIstituto') : (a.target_classes ?? []).join(', ')}
+                                            {a.target_scope === 'globale'
+                                                ? t('avvisiTuttoIstituto')
+                                                : (a.target_classes ?? []).map((voce, i) => {
+                                                    const e = etichettaDestinatario(voce);
+                                                    return (
+                                                        <span key={`${voce}-${i}`}>
+                                                            {i > 0 && ', '}
+                                                            <span title={e.titolo}>{e.testo}</span>
+                                                        </span>
+                                                    );
+                                                })}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-muted`}>
                                             {a.scadenza ? new Date(a.scadenza).toLocaleDateString(locale) : '—'}

@@ -40,6 +40,7 @@
   "richiesteGenitoreAnon": "Genitore anonimizzato:",
   "richiesteFigliNonIscrittiAnon": "Figli non iscritti anonimizzati:",
   "richiesteFigliMantenuti": "Figli iscritti mantenuti: {n}",
+  "richiesteFigliFuoriScope": "Figli in un altro plesso, non toccati da qui: {n}. La Direzione competente deve evadere la sua parte.",
   "richiesteConfermaDigita": "Per confermare, digita",
 
   "diaryEyebrow": "Didattica",

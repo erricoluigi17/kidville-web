@@ -131,11 +131,13 @@ export const POST = withRoute('forms/delibera:POST', async (request: NextRequest
       if (conSede) q = q.in('scuola_id', plessi)
       return q.order('score', { ascending: false })
     }
+    let bulkConSede = true
     let candidatiRes = await leggiCandidati(true)
     if (colonnaSedeAssente(candidatiRes.error)) {
       if (!(await degradoSedeLecito(supabase, 'forms/delibera:POST'))) {
         return NextResponse.json({ error: 'Isolamento per sede non disponibile' }, { status: 500 })
       }
+      bulkConSede = false
       candidatiRes = await leggiCandidati(false)
     }
     if (candidatiRes.error) {
@@ -154,10 +156,17 @@ export const POST = withRoute('forms/delibera:POST', async (request: NextRequest
     const esiti = calcolaDelibera(candidati, { soglia, posti })
 
     for (const e of esiti) {
-      const { error: updErr } = await supabase
+      // La clausola di sede si ripete sulla scrittura, esattamente come
+      // nell'override qui sopra: gli id vengono da una SELECT già ristretta ai
+      // plessi, ma «vengono da una query che filtrava» non è una garanzia che si
+      // legga nell'istruzione che scrive — e un domani quella SELECT può
+      // cambiare. Il costo di chiuderla è una clausola.
+      let upd = supabase
         .from('form_submissions')
         .update({ esito_ammissione: e.esito, esito_il: nowIso, esito_da: auth.user.id })
         .eq('id', e.id)
+      if (bulkConSede) upd = upd.in('scuola_id', plessi)
+      const { error: updErr } = await upd
       if (updErr) {
         logEvento('modulistica', 'error', {
           operazione: 'forms/delibera:POST', esito: 'esito-non-scritto', entita_id: e.id,

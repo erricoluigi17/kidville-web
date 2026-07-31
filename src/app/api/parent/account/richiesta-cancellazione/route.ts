@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { notificaEvento } from '@/lib/notifiche/triggers'
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+import { staffScuola } from '@/lib/notifiche/destinatari'
+import { risolviSedeRichiestaCancellazione } from '@/lib/gdpr/sede-richiesta'
 import { parseBody } from '@/lib/validation/http'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { withRoute } from '@/lib/logging/with-route'
@@ -123,7 +124,38 @@ export const POST = withRoute('parent/account/richiesta-cancellazione:POST', asy
       return NextResponse.json({ error: 'Account già cancellato' }, { status: 409 })
     }
 
-    const scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(admin))
+    // SEDE DELLA RICHIESTA (W1). Fino al 2026-07-31 qui c'era
+    // `auth.user.scuola_id ?? await scuolaUnicaReale(admin)`, e `scuolaUnicaReale`
+    // è DEPRECATA: con tre sedi reali risponde sempre `null`. Quel `??` non
+    // ripiegava più, produceva `NULL` — e una richiesta con `scuola_id NULL` è
+    // invisibile al GET della Direzione (`.in('scuola_id', …)` scarta i NULL),
+    // negata per sempre dalla POST di evasione (sede nulla ⇒ 403) e
+    // irripresentabile (indice unico parziale su `pending`): il diritto all'oblio
+    // si blocca in silenzio mentre l'app continua a dire «richiesta in corso».
+    // Oggi la sede viene dai FIGLI — il dato che ce l'ha davvero — e se resta
+    // indeterminabile la richiesta si RIFIUTA con un errore leggibile invece di
+    // nascere in un limbo. Vedi `@/lib/gdpr/sede-richiesta`.
+    const sede = await risolviSedeRichiestaCancellazione(
+      admin,
+      parent.id,
+      auth.user.scuola_id ?? null,
+      'parent/account/richiesta-cancellazione:POST',
+    )
+    if (sede.scuolaId === null) {
+      logEvento('gdpr', 'warn', {
+        operazione: 'parent/account/richiesta-cancellazione:POST',
+        esito: 'sede-non-determinabile',
+        motivo: sede.motivo,
+      })
+      return NextResponse.json(
+        {
+          error:
+            'Non è stato possibile stabilire la sede a cui inoltrare la richiesta. Contatta la segreteria: la cancellazione verrà registrata dal personale.',
+        },
+        { status: 422 },
+      )
+    }
+    const scuolaId = sede.scuolaId
 
     // L'indice unico parziale (stato='pending') impedisce doppie richieste: 23505.
     // `parent_id` = `parents.id` (NON `auth.user.id`): è lo spazio-id che

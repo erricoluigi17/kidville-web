@@ -259,9 +259,26 @@ describe('difetto 3 — la politica dei livelli è quella di `with-route`', () =
         expect(e.stato).toBe(stato);
     });
 
-    it('la fetch che non parte MAI (rete giù) resta `error` con `stato: 0`', async () => {
-        // È il caso che NESSUN log del server vedrà: la richiesta non è mai arrivata. È il
-        // guasto del genitore sulla rete mobile, ed è il motivo per cui questo patch esiste.
+    /* ────────────────────────────────────────────────────────────────────────
+     * LA FETCH CHE NON PARTE — misurata, non immaginata.
+     *
+     * `stato: 0` nasceva `error`, ed è stato il rumore che seppelliva i log veri: in
+     * `app_log`, in trenta giorni, **763 occorrenze su 964** del canale client sono
+     * `stato_http = 0` a livello `error` — il 79%. La sola riga
+     * «GET /api/notifiche — Failed to fetch» ne conta 372.
+     *
+     * Non sono guasti. Su una WebView Capacitor `Failed to fetch` (Chrome/Android) e
+     * `Load failed` (Safari/iOS) sono ciò che il browser dice quando la richiesta viene
+     * TRONCATA: l'utente cambia pagina, il telefono si addormenta, l'app va in background.
+     * È la normalità di un'app mobile, e occupava il livello su cui si filtra per primo —
+     * mentre sotto, a livello `warn`, stavano 41 occorrenze in un giorno di genitori che
+     * non riuscivano a caricare i documenti sul modulo pubblico.
+     *
+     * La riga NON si butta: è ancora l'unica traccia di un'interruzione di rete vera, che
+     * nessun log del server vedrà mai (la richiesta non è mai arrivata). Si declassa a
+     * `warn`, che è il livello onesto per un evento indistinguibile dalla normalità.
+     * ──────────────────────────────────────────────────────────────────────── */
+    it('la fetch che non parte MAI (rete giù) si logga, ma è `warn`: non è distinguibile da un cambio pagina', async () => {
         const { flush } = await carica();
         rete.mockRejectedValue(new TypeError('Failed to fetch'));
 
@@ -273,9 +290,37 @@ describe('difetto 3 — la politica dei livelli è quella di `with-route`', () =
         flush();
 
         const e = batchSpedito().eventi[0];
-        expect(e.livello).toBe('error');
+        expect(e.livello).toBe('warn');
         expect(e.stato).toBe(0);
         expect(e.messaggio).toContain('Failed to fetch');
+    });
+
+    it('lo stesso vale per «Load failed», che è la forma iOS della stessa cosa', async () => {
+        const { flush } = await carica();
+        rete.mockRejectedValue(new TypeError('Load failed'));
+
+        await expect(window.fetch('/api/notifiche')).rejects.toThrow('Load failed');
+        rete.mockResolvedValue(risposta(200));
+        flush();
+
+        expect(batchSpedito().eventi[0].livello).toBe('warn');
+    });
+
+    it('una fetch ANNULLATA da noi non si spedisce affatto: non è un evento, è una nostra decisione', async () => {
+        // `AbortError` lo produce il NOSTRO codice (un `AbortController` allo smontaggio di un
+        // componente, un timeout applicativo). Registrarlo significherebbe scrivere in tabella
+        // «ho fatto quello che ho deciso di fare»: rumore puro, e per giunta al livello di un
+        // guasto. Il livello `info` — che sarebbe il suo — la route `/api/logs` non lo accetta:
+        // l'unico modo di dire «non conservarlo» è NON SPEDIRLO (vedi `livelloFetch`).
+        const { flush } = await carica();
+        const abort = new DOMException('The operation was aborted.', 'AbortError');
+        rete.mockRejectedValue(abort);
+
+        await expect(window.fetch('/api/notifiche')).rejects.toThrow();
+        rete.mockResolvedValue(risposta(200));
+        flush();
+
+        expect(rete.mock.calls.some(([u]) => String(u).startsWith('/api/logs'))).toBe(false);
     });
 });
 

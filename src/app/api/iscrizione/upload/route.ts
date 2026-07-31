@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseData } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Il file si valida come presenza/istanza; dimensione e contenuto restano
@@ -27,9 +28,19 @@ export const POST = withRoute('iscrizione/upload:POST', async (request: NextRequ
     const { file } = parsed.data
     const folder = parsed.data.folder || 'generico'
 
-    // Limite dimensione: 8 MB
-    if (file.size > 8 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File troppo grande (max 8MB)' }, { status: 400 })
+    // Limite dimensione: quello VERO, che è della piattaforma e non nostro.
+    // Il vecchio «8 MB» era una promessa che questo codice non poteva mantenere: sopra i
+    // ~4,5 MB il corpo lo rifiuta Vercel (413 `FUNCTION_PAYLOAD_TOO_LARGE`, corpo di
+    // testo) e questo handler non viene mai eseguito. Il 31/07/2026 sono state 41
+    // occorrenze in un giorno sul modulo pubblico. Vedi `@/lib/upload/limite-piattaforma`.
+    //
+    // 413 e non 400: è lo stesso codice che darebbe la piattaforma — così il client ha una
+    // sola cosa da riconoscere — e a differenza di quello ha un corpo JSON leggibile.
+    if (file.size > LIMITE_UPLOAD_BYTE) {
+      return NextResponse.json(
+        { error: `File troppo grande (max ${LIMITE_UPLOAD_MB} MB)` },
+        { status: 413 },
+      )
     }
 
     const safeFolder = folder.replace(/[^a-zA-Z0-9._-]/g, '_')

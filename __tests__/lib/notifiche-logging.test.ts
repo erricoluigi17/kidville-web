@@ -38,6 +38,15 @@ vi.mock('@/lib/logging/logger', () => log)
 const dest = vi.hoisted(() => ({ genitoriDiAlunni: vi.fn(async () => ['p1', 'p2'] as string[]) }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ genitoriDiAlunni: dest.genitoriDiAlunni }))
 
+import { SEDE_A } from '../fixtures/sedi'
+
+/**
+ * Una sede FINTA: mai un uuid di produzione nei test (lock
+ * `migrazioni-senza-sede-cablata`). È comunque un uuid, quindi `redact` la lascia in
+ * chiaro anche nella riga persistita — che è il punto della sua presenza nel log.
+ */
+const SEDE = SEDE_A
+
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 
@@ -215,6 +224,89 @@ describe('notificaEvento — best-effort NON vuol dire invisibile', () => {
     expect(inserts).toHaveLength(1)
     expect(righe('error')).toHaveLength(0)
     expect(righe('warn')).toHaveLength(0)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * «ZERO DESTINATARI» È UN FATTO, E VA DETTO.
+ *
+ * I cinque canali STAFF lo dicevano già (`staffScuola` emette `nessun-destinatario`);
+ * i due IMBUTI da cui passa OGNI notifica alle FAMIGLIE — `notificaEvento` e
+ * `enqueueNotifiche` — uscivano con un `return` nudo sulla lista vuota. Il codice lo
+ * ammetteva pure, due volte, senza rimediarci: `destinatari.ts:146` («notificaEvento con
+ * zero destinatari esce in silenzio») e `fattura/sync/route.ts:274` («enqueueNotifiche
+ * esce muto sulla lista vuota»).
+ *
+ * NON È UN CASO DI SCUOLA: in produzione, il 2026-07-31, 2 alunni su 25 a Giugliano non
+ * hanno NESSUNA riga in `student_parents`. Un avviso a quella sezione raggiunge meno
+ * famiglie di quante ce ne siano, risponde 201 e non lascia una riga. «Non è partito
+ * niente» e «è andato tutto bene» sono la stessa cosa, che è esattamente l'ambiguità
+ * (regola 5 di AGENTS) che ha tenuto ferme le email per mesi.
+ *
+ * `warn` e non `error`: zero destinatari può essere legittimo (una classe vuota, un
+ * debounce che ha già coperto tutti). Va CONTATO, non deve svegliare nessuno — ma deve
+ * esistere, e deve dire QUALE tipo e QUALE sede, perché con tre plessi «nessuno da
+ * avvisare» ad Aversa e a Giugliano sono due incidenti diversi.
+ */
+describe('«zero destinatari» sul canale GENITORI non esce più muto', () => {
+  it('notificaEvento senza destinatari → `warn` con tipo e sede, e NESSUN insert', async () => {
+    dest.genitoriDiAlunni.mockResolvedValue([])
+    const { supabase, inserts } = creaClient()
+
+    await notificaEvento(supabase, {
+      tipo: 'avviso', scuolaId: SEDE, alunnoIds: ['a1', 'a2'], titolo: 'T',
+    })
+
+    const avvisi = righe('warn')
+    expect(avvisi).toHaveLength(1)
+    expect(avvisi[0].evento).toBe('notifica')
+    expect(avvisi[0].campi).toMatchObject({
+      operazione: 'notificaEvento',
+      esito: 'nessun-destinatario',
+      tipo: 'avviso',
+      sede_id: SEDE,
+    })
+    // L'effetto, non solo la riga: la coda resta vuota, e nessuno ha spedito niente.
+    expect(inserts).toHaveLength(0)
+    expect(righe('error')).toHaveLength(0)
+  })
+
+  it('enqueueNotifiche con lista vuota → `warn` con tipo e sede, e NESSUN insert', async () => {
+    const { supabase, inserts } = creaClient()
+
+    await enqueueNotifiche(supabase, { utenteIds: [], tipo: 'consenso_uscita', titolo: 'T', scuolaId: SEDE })
+
+    const avvisi = righe('warn')
+    expect(avvisi).toHaveLength(1)
+    expect(avvisi[0].evento).toBe('notifica')
+    expect(avvisi[0].campi).toMatchObject({
+      operazione: 'enqueueNotifiche',
+      esito: 'nessun-destinatario',
+      tipo: 'consenso_uscita',
+      sede_id: SEDE,
+    })
+    expect(inserts).toHaveLength(0)
+  })
+
+  it('una lista di soli id vuoti è «zero destinatari», non «un destinatario»', async () => {
+    // `filter(Boolean)` svuota la lista DOPO il controllo del chiamante: senza la riga qui
+    // dentro, chi ha invocato con `['']` crede di aver notificato qualcuno.
+    const { supabase, inserts } = creaClient()
+
+    await enqueueNotifiche(supabase, { utenteIds: ['', ''], tipo: 'avviso', titolo: 'T', scuolaId: SEDE })
+
+    expect(righe('warn')).toHaveLength(1)
+    expect(righe('warn')[0].campi).toMatchObject({ esito: 'nessun-destinatario' })
+    expect(inserts).toHaveLength(0)
+  })
+
+  it('con destinatari veri NON si logga niente: la riga esiste solo quando c\'è il fatto', async () => {
+    const { supabase, inserts } = creaClient()
+    await notificaEvento(supabase, { tipo: 'avviso', scuolaId: SEDE, utenteIds: ['p1'], titolo: 'T' })
+    expect(inserts).toHaveLength(1)
+    expect(righe('warn')).toHaveLength(0)
+    expect(righe('error')).toHaveLength(0)
   })
 })
 

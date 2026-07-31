@@ -321,7 +321,11 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (compatto) return;
+    // Il conteggio serve solo al ramo desktop, e solo quando il selettore esiste
+    // davvero: con una sede sola non si monta (vedi sotto), e chiedere il numero
+    // di alunni su OGNI pagina del cockpit per non mostrarlo mai è traffico
+    // regalato.
+    if (compatto || sedi.length <= 1) return;
     const q = userId ? `?userId=${userId}` : '';
     // `x-sedi`: segnala lo scope attivo (il server scopa dal cookie) e fa
     // ri-conteggiare al cambio selezione. effettive è così referenziato (deps).
@@ -339,7 +343,7 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
           route: '/admin',
         });
       });
-  }, [userId, effettive, compatto]);
+  }, [userId, effettive, compatto, sedi.length]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -357,7 +361,13 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
       : t('sediPlurale', { n: effettive.length });
   const meta = `${totAlunni != null ? `${t('alunniPlurale', { n: totAlunni })} · ` : ''}${strutture(tutteAttive ? sedi.length : effettive.length)}`;
 
-  if (compatto && sedi.length <= 1) return null;
+  // Con una sede sola non c'è NIENTE da scegliere: il menu offrirebbe due voci
+  // equivalenti («Tutte le sedi» e l'unica sede) e l'etichetta direbbe «TUTTE LE
+  // SEDI · 1 struttura» — un plurale per un plesso solo. La guardia esisteva già
+  // sul ramo compatto (mobile); vale identica sul desktop, e vale anche mentre
+  // le sedi si stanno ancora caricando (`sedi` vuoto), per non far lampeggiare
+  // un'etichetta che poi cambia.
+  if (sedi.length <= 1) return null;
 
   return (
     <div ref={ref} className="relative">

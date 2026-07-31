@@ -143,8 +143,24 @@ describe('sanificaMessaggio — il testo dell\'errore non aggira la redazione', 
         // Il regex dell'email fa backtracking: senza pre-taglio, un dump da megabyte lo
         // farebbe girare sull'intero input dentro il percorso di logging.
         const inizio = Date.now();
-        sanificaMessaggio('a'.repeat(2_000_000) + '@' + 'b'.repeat(2_000_000));
-        expect(Date.now() - inizio).toBeLessThan(200);
+        const out = sanificaMessaggio('a'.repeat(2_000_000) + '@' + 'b'.repeat(2_000_000));
+        const durata = Date.now() - inizio;
+
+        // L'invariante STRUTTURALE, che non dipende da quanto è carica la macchina:
+        // se il pre-taglio c'è, l'uscita è troncata. È questa l'asserzione che
+        // fallisce davvero il giorno in cui qualcuno toglie il taglio.
+        expect(out.length).toBeLessThanOrEqual(500);
+
+        // La soglia di tempo resta come rete per il backtracking catastrofico, ma a
+        // 2 secondi e non a 200 ms. Il 2026-07-31 questo test è fallito in locale con
+        // 343 ms — non per una regressione, ma perché girava insieme a dieci agenti:
+        // la misura del tempo di PARETE dipende dal carico della macchina, e in CI la
+        // macchina è condivisa. Un test che diventa rosso a caso smette di essere
+        // letto, ed è peggio di un test che non c'è.
+        // La soglia continua a fare il suo mestiere: col pre-taglio siamo nell'ordine
+        // dei millisecondi, senza si va a secondi o minuti. Serve a distinguere quei
+        // due mondi, non 200 da 343.
+        expect(durata).toBeLessThan(2_000);
     });
 
     it('lascia intatto un messaggio senza dati personali', () => {

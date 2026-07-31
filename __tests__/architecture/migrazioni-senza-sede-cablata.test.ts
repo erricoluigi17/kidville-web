@@ -40,24 +40,47 @@ import { join, relative, sep } from 'node:path'
 
 const RADICE = process.cwd()
 
-/** I perimetri scanditi. Chiave → cartella, relativa alla radice del repo. */
+/** I perimetri scanditi. Chiave → cartelle, relative alla radice del repo. */
 const PERIMETRI = {
-  src: 'src',
-  scripts: 'scripts',
-  test: '__tests__',
-  e2e: 'e2e',
-  migrazioni: join('supabase', 'migrations'),
+  src: ['src'],
+  scripts: ['scripts'],
+  test: ['__tests__'],
+  e2e: ['e2e'],
+  migrazioni: [join('supabase', 'migrations')],
+  // I PROMPT della pipeline agentica. Non eseguono nulla, e proprio per questo
+  // sono il posto peggiore dove lasciare un uuid: `.claude/agents/esecutore-opus.md`
+  // ha detto per due giorni «Sede di produzione unica: Kidville Giugliano
+  // (<uuid>)» a OGNI esecutore, prima che scrivesse una riga di codice — con
+  // l'uuid già pronto da incollare. Era falso dal 2026-07-29 e ha inclinato
+  // l'intera generazione di codice nella direzione dei 140 rilievi di quel
+  // giorno. Una grep fatta una volta lo toglie; solo un lock impedisce che
+  // rientri alla prossima riscrittura dei prompt.
+  prompt: ['.claude', '.codex'],
 } as const
 type Perimetro = keyof typeof PERIMETRI
 
-const TUTTI: Perimetro[] = ['src', 'scripts', 'test', 'e2e', 'migrazioni']
+const TUTTI: Perimetro[] = ['src', 'scripts', 'test', 'e2e', 'migrazioni', 'prompt']
 /** Il codice che gira davvero: prodotto, script di manutenzione, campagne di collaudo. */
 const CHE_AGISCE: Perimetro[] = ['src', 'scripts', 'e2e', 'migrazioni']
 
-const ESTENSIONI = ['.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx', '.sql']
+const ESTENSIONI_CODICE = ['.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx', '.sql']
+/** I prompt sono prosa e configurazione, non codice: altre estensioni. */
+const ESTENSIONI_PROMPT = ['.md', '.toml', '.json', '.yaml', '.yml', '.sh']
+const ESTENSIONI_DI: Record<Perimetro, string[]> = {
+  src: ESTENSIONI_CODICE,
+  scripts: ESTENSIONI_CODICE,
+  test: ESTENSIONI_CODICE,
+  e2e: ESTENSIONI_CODICE,
+  migrazioni: ESTENSIONI_CODICE,
+  prompt: ESTENSIONI_PROMPT,
+}
 const CARTELLE_SALTATE = new Set([
   'node_modules', '.next', '.auth', 'dist', 'coverage',
   'test-results', 'playwright-report', '__snapshots__',
+  // Stato runtime del ciclo `/ship-cycle`: non è tracciato da git (.gitignore),
+  // e la ricognizione che ci vive dentro CITA gli uuid perché il suo mestiere è
+  // segnalarli. Vietarli lì significherebbe vietare di descrivere il difetto.
+  '.ship-cycle',
 ])
 
 /** Questo file NOMINA gli uuid vietati: è il suo mestiere, non si controlla da solo. */
@@ -202,14 +225,14 @@ const EURISTICA_AMMESSI: Record<string, string> = {}
 
 // ── raccolta dei file ────────────────────────────────────────────────────────
 
-function fileSotto(dir: string): string[] {
+function fileSotto(dir: string, estensioni: string[]): string[] {
   if (!existsSync(dir) || !statSync(dir).isDirectory()) return []
   const out: string[] = []
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.isDirectory()) {
       if (CARTELLE_SALTATE.has(e.name)) continue
-      out.push(...fileSotto(join(dir, e.name)))
-    } else if (ESTENSIONI.some((x) => e.name.endsWith(x))) {
+      out.push(...fileSotto(join(dir, e.name), estensioni))
+    } else if (estensioni.some((x) => e.name.endsWith(x))) {
       out.push(join(dir, e.name))
     }
   }
@@ -220,10 +243,12 @@ function fileSotto(dir: string): string[] {
 const rel = (f: string) => relative(RADICE, f)
 
 const FILES: Record<Perimetro, string[]> = {
-  src: [], scripts: [], test: [], e2e: [], migrazioni: [],
+  src: [], scripts: [], test: [], e2e: [], migrazioni: [], prompt: [],
 }
 for (const p of TUTTI) {
-  FILES[p] = fileSotto(join(RADICE, PERIMETRI[p])).filter((f) => rel(f) !== QUESTO_FILE)
+  FILES[p] = PERIMETRI[p]
+    .flatMap((d) => fileSotto(join(RADICE, d), ESTENSIONI_DI[p]))
+    .filter((f) => rel(f) !== QUESTO_FILE)
 }
 
 /** Cache: un file si legge una volta sola, non una per regola. */
@@ -242,14 +267,17 @@ function testo(f: string): string {
 describe('lock architettura · nessun uuid di sede cablato', () => {
   it('tutti i perimetri sono leggibili (se cade, il lock si sta autoingannando)', () => {
     for (const p of TUTTI) {
-      expect(FILES[p].length, `nessun file scandito sotto ${PERIMETRI[p]}`).toBeGreaterThan(0)
+      expect(
+        FILES[p].length,
+        `nessun file scandito sotto ${PERIMETRI[p].join(', ')}`,
+      ).toBeGreaterThan(0)
     }
     // `src/` è il perimetro grande: un walk che ne trova quattro sta guardando altrove.
     expect(FILES.src.length).toBeGreaterThan(300)
   })
 
   for (const regola of REGOLE) {
-    it(`${regola.cosa} non compare in ${regola.perimetri.map((p) => PERIMETRI[p]).join(', ')}`, () => {
+    it(`${regola.cosa} non compare in ${regola.perimetri.flatMap((p) => PERIMETRI[p]).join(', ')}`, () => {
       const colpevoli: string[] = []
       for (const p of regola.perimetri) {
         for (const f of FILES[p]) {

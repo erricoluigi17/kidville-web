@@ -34,6 +34,24 @@
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
+> ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
+> Dal 2026-07-29 i plessi in produzione sono **tre**, non uno. Il nome di una classe ha smesso
+> di essere una chiave, e i presidi che reggono l'isolamento sono questi (dettaglio e ragioni
+> nel changelog del 2026-07-31, branch `fix/multisede-audit-globale`).
+>
+> | Presidio | Stato | Dove |
+> |---|---|---|
+> | Sedi | **3 reali** (Giugliano · Aversa · Cesa) + **1 finta** di collaudo (prefisso `e2e00000-…`), esclusa da elenchi pubblici, digest e contabilità | `src/lib/scuole/reali.ts` (`isScuolaE2E`, `sediReali`), `schools.operativa` |
+> | Sede obbligatoria in scrittura | ✅ `resolveScuolaScrittura` risponde **400** quando l'utente ha più sedi e nessuna è indicata — nessun ripiego silenzioso sulla sede primaria | `src/lib/auth/scope.ts` (+ 55 test propri) |
+> | `scuola_id` → `schools(id)` | ✅ FK su **65 tabelle su 65** (erano 34) | migr. `20260731180000_fk_scuola_id` · lock `fk-scuola-id` |
+> | Nome classe univoco nella sede | ✅ UNIQUE `(scuola_id, name)` su `sections` | migr. `20260731130000_sections_nome_per_sede` |
+> | Sede come proprietà del dato | ✅ `presenze` e `armadietto`: trigger dall'alunno + backfill + `NOT NULL` | migr. `20260731160000` |
+> | RLS per sede | ✅ 42 policy riviste (37 droppate, 5 riscritte col vincolo di plesso) + fotografia versionata di `pg_policies` | migr. `20260731120000_rls_multisede_pulizia` · lock `rls-per-sede` |
+> | Contabilità per sede | ✅ `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio**; sede di collaudo fuori dal perimetro | migr. `20260731150000` |
+> | Semantica di `scuola_id NULL` | ✅ decisa e scritta: dato di famiglia ⇒ mai NULL; configurazione ⇒ NULL = «globale» | changelog 2026-07-31 |
+> | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731170000_provisiona_sede_v2` |
+> | Collaudo dell'isolamento | ✅ account TEST su Aversa e Cesa · seed E2E a **due** sedi con sezione omonima · `e2e/isolamento-sedi.spec.ts` | `scripts/seed-test-sedi.mjs`, `scripts/seed-e2e.mjs` |
+>
 > ### Moduli Implementati
 > | Modulo | Stato | Pagine | API Routes |
 > |--------|-------|--------|------------|
@@ -65,6 +83,145 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🗓️ Changelog — Audit globale multi-sede: 140 rilievi chiusi, dal 400 che non arrivava mai al trigger che archiviava ogni iscritto a Cesa 2026-07-31 (branch `fix/multisede-audit-globale`)
+
+Il 2026-07-29 Kidville è passata da un plesso a **tre**. Per due giorni il gate formale è rimasto
+verde — 3540 test — e non perché l'isolamento tenesse: **un filtro di sede mancante non rompe
+niente, restituisce solo più righe**. Non c'è nulla da vedere finché non esistono due sedi.
+
+Venti agenti hanno riletto il codice riga per riga e interrogato il database di produzione:
+**140 rilievi confermati** (10 bloccanti · 55 gravi · 42 minori · 33 note), raccolti in
+`docs/audit/2026-07-31-audit-globale-multisede.md`. Il piano di correzione — con la **prova di
+validità obbligatoria** su ogni step (rimettere il difetto, vedere il test diventare rosso) — è in
+`docs/superpowers/plans/2026-07-31-multisede-audit-globale.md`. Chiusi **tutti**, non solo i
+bloccanti: oltre 360 file toccati, **84 route API**, **9 migrazioni**.
+
+### La causa radice comune: il 400 promesso non esisteva
+
+`resolveScuolaScrittura` deve rispondere **400 «Specificare la sede»** a chi ha più plessi e non ne
+indica nessuno — lo dice AGENTS.md dal 29 luglio. Non è mai successo: il ripiego su
+`user.scuola_id` **precedeva** la condizione d'errore, quindi il ramo che nega era codice morto.
+La Direzione che lavorava su Aversa, guardando Aversa, si vedeva scrivere i dati su Giugliano.
+Senza un errore, senza un log, senza un test rosso.
+
+Il file non aveva **un solo test proprio**: 83 file di `__tests__/` lo *mockavano*, zero lo
+importavano — cioè l'unico modulo su cui poggia l'intera tenancy era l'unico mai verificato. Ora ne
+ha 55, ed è il primo che lo importa davvero.
+
+### Le tredici famiglie di guasti
+
+| | Famiglia | Il caso peggiore che conteneva |
+|---|---|---|
+| **F1** | La sede la sceglieva il server invece di pretenderla | Ogni scrittura senza sede dichiarata finiva nel plesso primario dell'operatore |
+| **F2** | Route chiuse a metà: gate di **ruolo** scambiato per gate di **tenant** | `admin/students` PATCH rileggeva per intero la scheda di un minore di un'altra sede — note mediche, codice fiscale, indirizzo — a fronte di una scrittura innocua; il DELETE la cancellava. `admin/sections` PATCH con schema `.loose()` lasciava **riscrivere `scuola_id`**: la chiave di tenancy stessa |
+| **F3** | Il nome della classe usato come identità | Due «Girasoli» in due plessi: `.limit(1)` senza `ORDER BY` sceglieva a caso fra due gruppi di bambini |
+| **F4** | RLS dell'era mono-sede: policy che rispondono «che ruolo hai» e mai «su quale sede» | 33 tabelle con firme, pagelle e audit leggibili da **qualunque autenticato**; le policy di `presenze` davano a ogni genitore lettura **e scrittura** sull'intera sede |
+| **F5** | Due semantiche opposte per `scuola_id NULL`, e un trigger che deduceva la sede da un `ORDER BY` di uuid | `fn_form_submission_etl` archiviava **ogni minore iscritto a Cesa**, qualunque plesso avesse scelto la famiglia |
+| **F6** | Destinatari delle notifiche risolti senza il ponte `utenti_scuole` | Per Aversa e Cesa l'allarme allergie e il **panic alert** non arrivavano a nessuno, e il cron marcava l'invio come riuscito |
+| **F7** | Oggetti di collaudo dentro la produzione | La password del seed E2E era un letterale in un repository **pubblico**, su un account `ruolo='admin'` che il provisioning del 29/07 aveva collegato a **due sedi vere** |
+| **F8** | I lock e i test non tenevano | Il finto client Supabase accettava `.or()`, `.neq()`, `.not()` e li **ignorava**, e non aveva `insert()` né `delete()`: con un mock così un test d'isolamento è verde anche senza il filtro nella route |
+| **F9** | L'inventario dell'audit del 30/07 mentiva | 12 voci marcate CHIUSA che `git show --name-only` dice non essere mai state toccate |
+| **F10** | Il cockpit non era multi-sede | Sotto i 1024px l'avviso «scegline una dal menu in alto» indicava un menu che su mobile **non esisteva** |
+| **F11** | Lo schema non difendeva il tenant | 31 tabelle accettavano qualunque uuid come `scuola_id`: non una fuga, una **sparizione** — quella riga non appartiene a nessun plesso e diventa invisibile a ogni filtro |
+| **F12** | Una sede nuova nasceva vuota | Cesa aveva cinque classi di primaria senza una sola disciplina e senza scala dei giudizi. Nessun errore, da nessuna parte |
+| **F13** | Fail-open nelle librerie condivise | Scope non calcolato ⇒ si procedeva **senza filtro**, invece di negare |
+
+### Le nove migrazioni (applicate in produzione via MCP, `get_advisors` 0 ERROR)
+
+| Migrazione | Cosa fa |
+|---|---|
+| `20260731090000_chiudi_policy_scaffolding_rls_aperte` | Via 6 policy `auth.role()='authenticated'` lasciate da Studio: davvero **chiunque** poteva scrivere il registro di qualsiasi sede, annotare note disciplinari su qualsiasi minore e **inserire firme docenti a nome altrui** (valore probatorio) |
+| `20260731103000_fn_form_submission_etl_sede` | Il trigger ETL dell'iscrizione prende la sede da `NEW.scuola_id`; se manca **non crea nulla** e lo scrive in `app_log` |
+| `20260731120000_rls_multisede_pulizia` | 42 policy riviste: 37 droppate, 5 riscritte col vincolo di plesso, 1 `REVOKE`. Verificato file per file che **nessun** percorso client-side dipendesse da quelle policy |
+| `20260731130000_sections_nome_per_sede` | UNIQUE `(scuola_id, name)`: l'invariante viveva solo in tre docstring, e un invariante che vive nei commenti è una speranza |
+| `20260731140000_mensa_unique_per_sede` | Unicità della configurazione mensa per sede: due menu attivi dalla stessa data rendevano nondeterministici **gli allergeni del giorno** |
+| `20260731150000_genera_rette_per_sede` | `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio** (nessun default) + `schools.operativa`. Non è teoria: l'unica esecuzione registrata in produzione ha emesso 21 rette su Giugliano **e 4 sulla sede finta della CI** — un clic, due sedi |
+| `20260731160000_presenze_armadietto_scuola_id` | Trigger dall'alunno + backfill (12 presenze, 4 armadietti) + `NOT NULL` |
+| `20260731170000_provisiona_sede_v2` | Corredo minimo automatico per una sede nuova + **backfill idempotente** di Aversa e Cesa; ciò che resta umano esce come checklist |
+| `20260731180000_fk_scuola_id` | FK `scuola_id → schools(id)` su 31 tabelle (da 34/65 a **65/65**) e disarmo della colonna morta `alunni.fiscal_code` |
+
+### La decisione sulla semantica di `scuola_id NULL`
+
+Era la cosa più pericolosa dell'elenco, perché non era un bug: erano **due convenzioni opposte
+convissute nello stesso schema**. In scrittura `NULL` voleva dire «tutte le sedi»; in lettura le
+query filtrano `.in('scuola_id', plessi)`, e in SQL `NULL IN (…)` non è vero — quindi la stessa
+riga significava «di tutti» a chi la scriveva e «di nessuno» a chi la leggeva. Dal 2026-07-31 vale
+una regola sola, scritta qui perché la prossima persona non debba dedurla:
+
+1. **Dato di una famiglia ⇒ `scuola_id` mai NULL.** `form_submissions` compresa: se al momento
+   dell'invio la sede non è risolvibile, la risposta è **400** e non si scrive niente. Una
+   compilazione senza sede non la vedrebbe nessuno — e sarebbe un modulo d'iscrizione perso in
+   silenzio, non un dato «globale».
+2. **Dato di configurazione ⇒ `NULL` significa «globale».** Vale per `form_models` e
+   `payment_categories`: si **legge** da tutte le sedi, si **modifica** solo da chi ha in scope
+   **tutte** le sedi reali. Un admin di un plesso solo non può cambiare sotto i piedi degli altri
+   una riga che vale per tutti.
+3. **Chi risolve una configurazione preferisce la sede al globale**: `ORDER BY scuola_id NULLS
+   LAST` — la riga di sede vince, quella globale è il ripiego.
+4. **Chi espande un «per tutti» lo fa esplicitamente**, sede per sede su `sediReali` (la finta di
+   collaudo esclusa): una news globale notificava **zero** genitori e restava marcata inviata per
+   sempre.
+
+### Account TEST su Aversa e Cesa
+
+Con tre plessi, l'isolamento non era **collaudabile**: non esisteva un «utente di Aversa» a cui
+chiedere se vede Cesa. Ora ci sono sei account (`test.aversa.*` e `test.cesa.*`: segreteria,
+docente, genitore per sede) creati da `scripts/seed-test-sedi.mjs` in modo idempotente, con le sedi
+risolte **per nome** e mai per uuid — elenco completo, ragioni e procedura di rimozione nella
+sezione «Account TEST sulle altre sedi» più avanti in questo documento. Le credenziali stanno nel
+gestore del titolare e si leggono da `KV_TEST_PASSWORD`: **nessun valore in nessun file**.
+
+In ogni sede nasce con loro una sezione **omonima** «TEST Infanzia», deliberatamente: senza tre
+classi con lo stesso nome in tre plessi, la famiglia F3 non si può né dimostrare chiusa né vedere
+riaprire.
+
+### I lock nuovi — quelli che avrebbero trovato tutto questo
+
+Un difetto corretto senza un lock è un difetto in attesa di tornare. Sette presidi nuovi, più tre
+rimessi in sesto:
+
+- **`rls-per-sede`** — fotografia versionata di `pg_policies` (rigenerata da `scripts/rls-fotografia.mjs`):
+  fallisce se una `USING (true)` ricompare su una tabella sensibile, se una policy di scrittura su
+  tabella con `scuola_id` non nomina né sede né identità, o se la fotografia non corrisponde più al
+  database. **Prima di oggi nessun test guardava la RLS.**
+- **`fk-scuola-id`** — una colonna `scuola_id` nuova senza chiave esterna fa rosso il gate.
+- **`etl-form-submission-sede`** — il trigger dell'iscrizione non può tornare a dedurre la sede.
+- **`scope-vuoto-nega`** — vieta la **forma** del fail-open: una guardia `X.length > 0` senza ramo
+  `else` che governa un filtro su `scuola_id` costruito con la stessa lista. Scope vuoto ⇒ nessun
+  filtro ⇒ tutte le sedi. Allowlist inesistente, per scelta.
+- **`nome-classe-con-sede`** — ogni filtro su `classe_sezione`, e ogni filtro su `name` dentro una
+  query su `sections`, deve avere `scuola_id` nella **stessa** query.
+- **`destinatari-con-ponte`** — vieta `from('utenti')` + `.eq('scuola_id', …)`, la forma che ha reso
+  muti quattro canali di notifica. L'esenzione è per **funzione**, non per file. Il lock ha subito
+  trovato una **quinta** occorrenza viva, che l'ondata precedente non aveva visto.
+- **`niente-password-nel-repo`** — allowlist **svuotata**: è caduta l'ultima eccezione, quella del
+  seed E2E, con la lezione che non era «serviva un'eccezione più stretta» ma «una password
+  committata non resta dove l'hai messa».
+- **`migrazioni-senza-sede-cablata`** esteso da `supabase/migrations/` a `src/`, `scripts/`,
+  `__tests__/` ed `e2e/`: gli uuid reali dei tre plessi sono usciti da 30 file, sostituiti dalle
+  fixture finte di `__tests__/fixtures/sedi.ts`.
+- **Il finto Supabase ora filtra e scrive davvero** (89 → 736 righe) e **lancia** su ciò che non sa
+  emulare. Ha smascherato subito **quattro test falsi verdi**: due passavano su un 500, due non
+  asserivano nulla.
+- **Il seed E2E semina due sedi** con una sezione omonima, e `e2e/isolamento-sedi.spec.ts` fa quattro
+  percorsi reali attraverso il confine. Finora la suite era verde perché **non c'era un confine da
+  attraversare**.
+
+### Cosa NON è stato toccato
+
+I permessi decisi il 30/07 (segreteria = la sua sede; educator = le sue sezioni; cross-sede solo
+admin): questi step li **applicano** dove mancavano, non li ridiscutono. Il modulo pubblico
+`/iscrizione`, vivo e appena rifatto, resta com'è: le route di submit sono cambiate solo restando
+compatibili col payload che il wizard già manda. Il vincolo UNIQUE globale sul codice fiscale
+rimane: è voluto e presidiato.
+
+**Gate:** eslint **0** · tsc **0** · vitest **4404 test / 512 file** (erano 3540 / 429) · build ok ·
+`get_advisors` **0 ERROR** (riverificato a chiusura: restano solo INFO e WARN preesistenti). E2E
+Playwright in CI. Prompt dell'esecutore della pipeline allineato: `.claude/agents/esecutore-opus.md`
+non dichiara più «sede di produzione unica» con l'uuid pronto da incollare.
 
 ---
 
@@ -2798,7 +2955,7 @@ bypassando il normale "Soft Delete" applicato in fase di ritiro/sospensione.
 ***Flusso Dati:** Ogni operazione dell'insegnante (compilazione entrata, pranzo, nanna, bagno, attività) genera una chiamata API al server che esegue un **UPSERT** sulla tabella `eventi_diario`: se per quel bambino+tipo_evento+data esiste già un record, viene aggiornato (UPDATE); altrimenti viene creato (INSERT). La lettura degli alunni avviene tramite SELECT sulla tabella `alunni` filtrata per `classe_sezione`.
 ***Cloud Authentication:** Relazione rigorosa e vincolata. I genitori non dispongono di codici di auto-invito; è unicamente la Segreteria a creare il legame parent_id <-> student_id ed effettuare l'onboarding. L'autenticazione è gestita tramite **Supabase Auth** (`auth.users` + `auth.identities`) con email/password.
 ***Offline-First per Docenti:** Le anagrafiche degli studenti vengono salvate in un database locale IndexedDB (tramite **Dexie.js**) per permettere l'appello e il registro offline. Un **Sync Engine** personalizzato (`src/lib/offline/syncEngine.ts`) si occupa di allineare i dati locali con il database centrale PostgreSQL non appena il dispositivo torna online. Le fotografie e i media pesanti sono esclusi dal caching per minimizzare l'impatto sulla memoria del dispositivo.
-***Multi-Tenant:** La proprietà `scuola_id` (Sede di appartenenza, FK verso tabella `schools`) è obbligatoria su ogni tabella radice (`utenti`, `alunni`), garantendo isolamento logico dei dati tra plessi diversi all'interno dello stesso ambiente Kidville.
+***Multi-Tenant:** La proprietà `scuola_id` (Sede di appartenenza) è la chiave di tenancy e ha una **FK verso `schools(id)` su tutte le 65 tabelle** che la portano (dal 2026-07-31: prima erano 34, e sulle altre il database accettava qualunque uuid — una riga così non appartiene a nessun plesso e diventa invisibile a ogni filtro, senza errore e senza log). L'isolamento poggia su tre strati che devono dire la stessa cosa: **schema** (FK, `NOT NULL` dove il dato è di una famiglia, UNIQUE `(scuola_id, name)` su `sections`), **RLS** vincolata alla sede e non al solo ruolo, e **strato applicativo** (`resolveScuoleAttive` in lettura, `resolveScuolaScrittura` in scrittura — che risponde **400** quando l'utente ha più plessi e non ne indica nessuno: la sede si dichiara, non si indovina). Dal 2026-07-29 i plessi reali sono **tre**, più una sede finta di collaudo esclusa da elenchi pubblici, digest e contabilità.
 
 ---
 

@@ -167,6 +167,128 @@ export function pianoSede(nomeSede) {
   }
 }
 
+// ── L'unico account di collaudo multi-sede (deroga del 2026-07-31) ──────────
+
+/**
+ * Email dell'unico account di collaudo autorizzato a vedere più di un plesso.
+ * Il prefisso `test.` lo rende riconoscibile come tutti gli altri.
+ */
+export const EMAIL_ADMIN_MULTISEDE = `test.multisede.admin@${DOMINIO_TEST}`
+
+/**
+ * Il piano dell'account multi-sede — **l'eccezione alla regola scritta in cima
+ * a questo file**, e il suo perché.
+ *
+ * L'intestazione dice che `utenti_scuole` non si tocca, ed è ancora vero per i
+ * nove account per-sede: quel ponte è ciò che il 29/07 ha portato
+ * `admin.e2e@kidville.test` dentro Aversa e Cesa. Resta però un ramo del
+ * prodotto che in quel modo NESSUNO può collaudare — il selettore di sede —
+ * perché dei 57 utenti di produzione **uno solo**, l'admin del titolare, ha più
+ * di un plesso. L'alternativa era collaudare con le credenziali di una persona
+ * vera: peggio.
+ *
+ * Il titolare ha autorizzato la deroga il 2026-07-31, stretta a: UN account,
+ * ruolo `admin`, nessun minore collegato, nessun genitore, nessun legame. Solo
+ * un accesso.
+ *
+ * ⚠️ Il ruolo `admin` NON è una comodità: `scuoleDiUtente`
+ * (src/lib/auth/scope.ts:58) concede il ponte multi-plesso ai soli admin, per
+ * decisione di prodotto del 30/07. Un `segreteria` multi-sede avrebbe le righe
+ * in `utenti_scuole` e continuerebbe a vedere una sede sola — un oggetto
+ * inerte che sembra funzionare.
+ *
+ * La sede finta della CI resta fuori PER COSTRUZIONE (`isSedeE2E`), non per
+ * convenzione: è lo stesso filtro che protegge `risolviSedi`.
+ *
+ * @param scuole elenco `{ id, nome }` letto dal database
+ */
+export function pianoAdminMultisede(scuole) {
+  const reali = (scuole ?? []).filter((s) => !isSedeE2E(s)).map((s) => ({ id: String(s.id), nome: String(s.nome) }))
+  if (reali.length === 0) {
+    throw new Error(
+      'Nessuna sede reale fra quelle lette: un admin di collaudo senza plessi non serve a niente ' +
+        'e la sola sede presente è quella finta della CI, che non si semina a mano.',
+    )
+  }
+  return {
+    sedi: reali,
+    account: {
+      email: EMAIL_ADMIN_MULTISEDE,
+      nome: 'Multisede',
+      cognome: 'Test Collaudo',
+      ruolo: 'admin',
+      gradi: [],
+    },
+  }
+}
+
+/**
+ * Crea (o riallinea) l'account multi-sede e il suo ponte verso ogni sede reale.
+ * Idempotente come il resto dello script.
+ *
+ * Non crea sezioni, alunni, genitori né legami: se un giorno servisse un dato
+ * su cui provare, si usa quello che `seminaSede` ha già messo nella sua sede.
+ */
+export async function seminaAdminMultisede({ db, auth, sedi, password }) {
+  if (!String(password ?? '').trim()) {
+    throw new Error(
+      `Password assente: esporta ${KV_TEST_PASSWORD} prima di seminare. ` +
+        'Nessun default — un seed che inventa una password la rende nota a chiunque legga il repo.',
+    )
+  }
+  const bersagli = (sedi ?? []).map((s) => ({ id: String(s.id), nome: String(s.nome) }))
+  for (const sede of bersagli) {
+    if (isSedeE2E(sede)) {
+      throw new Error(
+        `Sede «${sede.nome}» è la scuola finta del collaudo automatico (E2E): non entra nel ponte ` +
+          "dell'account multi-sede. Il suo seed è scripts/seed-e2e.mjs, su un altro progetto Supabase.",
+      )
+    }
+  }
+  if (bersagli.length === 0) throw new Error('Nessuna sede da agganciare: il ponte resterebbe vuoto.')
+
+  const piano = pianoAdminMultisede(bersagli)
+  const descrizione = piano.account
+  // La sede primaria è la prima delle reali: `utenti.scuola_id` è NOT NULL e
+  // serve comunque, ma per questo account non è «la» sede — sono tutte.
+  const primaria = piano.sedi[0]
+
+  let id = await auth.trovaPerEmail(descrizione.email)
+  let creato = false
+  if (!id) {
+    id = await auth.crea(descrizione.email, password)
+    creato = true
+  } else {
+    await auth.reimpostaPassword(id, password)
+  }
+
+  await ok(
+    `utenti (scrittura, ${descrizione.email})`,
+    db.from('utenti').upsert(
+      {
+        id,
+        email: descrizione.email,
+        nome: descrizione.nome,
+        cognome: descrizione.cognome,
+        ruolo: descrizione.ruolo,
+        scuola_id: primaria.id,
+        gradi: descrizione.gradi,
+        attivo: true,
+      },
+      { onConflict: 'id' },
+    ),
+  )
+
+  for (const sede of piano.sedi) {
+    await ok(
+      `utenti_scuole (${sede.nome})`,
+      db.from('utenti_scuole').upsert({ utente_id: id, scuola_id: sede.id }, { onConflict: 'utente_id,scuola_id' }),
+    )
+  }
+
+  return { email: descrizione.email, id, creato, sedi: piano.sedi }
+}
+
 // ── Accesso al database (PostgREST non lancia: si controlla `{ error }`) ─────
 
 async function ok(etichetta, richiesta) {
@@ -433,19 +555,21 @@ function caricaEnvLocale() {
 function argomenti(argv) {
   const sedi = []
   let applica = false
+  let multisede = false
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--apply') applica = true
+    else if (argv[i] === '--multisede') multisede = true
     else if (argv[i] === '--sede') {
       const valore = argv[++i]
       if (!valore) throw new Error('--sede vuole il NOME della sede, per esempio: --sede "Kidville Cesa"')
       sedi.push(valore)
     }
   }
-  return { applica, sedi: sedi.length > 0 ? sedi : SEDI_BERSAGLIO }
+  return { applica, multisede, sedi: sedi.length > 0 ? sedi : SEDI_BERSAGLIO }
 }
 
 async function main() {
-  const { applica, sedi: nomi } = argomenti(process.argv.slice(2))
+  const { applica, multisede, sedi: nomi } = argomenti(process.argv.slice(2))
   const fileEnv = caricaEnvLocale()
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || fileEnv.NEXT_PUBLIC_SUPABASE_URL
   const chiave = process.env.SUPABASE_SERVICE_ROLE_KEY || fileEnv.SUPABASE_SERVICE_ROLE_KEY
@@ -463,6 +587,14 @@ async function main() {
 
   if (!applica) {
     console.log('🔎 DRY-RUN — niente viene scritto. Rilancia con --apply per eseguire.\n')
+    if (multisede) {
+      const piano = pianoAdminMultisede(scuole)
+      console.log('  ACCOUNT MULTI-SEDE (deroga del 2026-07-31, autorizzata dal titolare)')
+      console.log(`    account  ${piano.account.email}  [${piano.account.ruolo}]`)
+      for (const s of piano.sedi) console.log(`    ponte    utenti_scuole -> ${s.nome}`)
+      console.log('    NESSUN alunno, genitore o legame: è solo un accesso\n')
+      return
+    }
     for (const sede of sedi) {
       const piano = pianoSede(sede.nome)
       console.log(`  ${sede.nome}`)
@@ -476,6 +608,16 @@ async function main() {
 
   const password = requireTestPassword()
   const auth = creaAuthAdmin(db)
+
+  if (multisede) {
+    const piano = pianoAdminMultisede(scuole)
+    const esito = await seminaAdminMultisede({ db, auth, sedi: piano.sedi, password })
+    console.log(`${esito.creato ? '✚ creato' : '= riallineato'} ${esito.email} [admin]`)
+    for (const s of esito.sedi) console.log(`   ponte -> ${s.nome} (${s.id})`)
+    console.log('\nFatto. La password non è stata stampata e non è scritta da nessuna parte.')
+    return
+  }
+
   for (const sede of sedi) {
     const esito = await seminaSede({ db, auth, sede, password })
     console.log(`✅ ${esito.sede} (${esito.scuolaId})`)

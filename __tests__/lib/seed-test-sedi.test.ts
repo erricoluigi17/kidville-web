@@ -8,6 +8,9 @@ import {
   creaAuthAdmin,
   SEDI_BERSAGLIO,
   NOME_SEZIONE_TEST,
+  pianoAdminMultisede,
+  seminaAdminMultisede,
+  EMAIL_ADMIN_MULTISEDE,
 } from '../../scripts/seed-test-sedi.mjs'
 import { creaFintoSupabase, type DBFinto, type Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B, SEDE_E2E, NOME_SEDE_E2E } from '../fixtures/sedi'
@@ -332,5 +335,131 @@ describe('adattatore auth su Supabase', () => {
       },
     }
     await expect(creaAuthAdmin(client).trovaPerEmail('x@kidville.test')).rejects.toThrow(/service_role scaduta/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L'UNICO account di collaudo multi-sede (2026-07-31) — e perché è un'eccezione
+//
+// Tutto il blocco qui sopra asserisce che `utenti_scuole` NON si tocca: un
+// account di collaudo sta nella sua sede e in nessun'altra. Resta però un ramo
+// che nessuno può collaudare così — il selettore di sede — perché dei 57 utenti
+// di produzione **uno solo**, l'admin del titolare, ha più di un plesso. Senza
+// un secondo account multi-sede l'unico modo di provare quel ramo è usare le
+// credenziali di una persona vera.
+//
+// Il titolare ha quindi autorizzato UNA deroga, stretta il più possibile:
+//  · un account solo, `admin`, riconoscibile dal prefisso `test.`;
+//  · nessun bambino, nessun genitore, nessun legame: solo l'accesso;
+//  · la sede finta della CI resta fuori PER COSTRUZIONE, non per convenzione —
+//    è lo stesso `isSedeE2E` che protegge il resto dello script.
+//
+// E soprattutto: il ruolo `admin` non è un vezzo. `scuoleDiUtente`
+// (src/lib/auth/scope.ts:58) concede il ponte multi-plesso ai SOLI admin, per
+// decisione di prodotto del 30/07. Un account `segreteria` multi-sede sarebbe
+// un oggetto inerte: le righe in `utenti_scuole` ci sarebbero e non varrebbero
+// niente. L'ultimo test qui sotto inchioda proprio quello, così il giorno in cui
+// qualcuno allargasse il ponte per comodità se ne accorgerebbe subito.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('account di collaudo multi-sede (deroga del 2026-07-31)', () => {
+  it('prende TUTTE le sedi reali e lascia fuori quella finta della CI', () => {
+    const piano = pianoAdminMultisede(scuoleFinte())
+    expect(piano.sedi.map((s) => s.id)).toEqual([SEDE_A, SEDE_B])
+    expect(piano.sedi.map((s) => s.id)).not.toContain(SEDE_E2E)
+  })
+
+  it('è UN account solo, di ruolo admin, col prefisso degli account di collaudo', () => {
+    const piano = pianoAdminMultisede(scuoleFinte())
+    expect(piano.account.ruolo).toBe('admin')
+    expect(piano.account.email).toMatch(/^test\..*@kidville\.test$/)
+    expect(piano.account.email).toBe(EMAIL_ADMIN_MULTISEDE)
+  })
+
+  it('il piano non contiene password', () => {
+    expect(JSON.stringify(pianoAdminMultisede(scuoleFinte()))).not.toMatch(/password/i)
+  })
+
+  it('nessuna sede reale ⇒ si ferma invece di creare un admin senza plessi', () => {
+    expect(() => pianoAdminMultisede([{ id: SEDE_E2E, nome: NOME_SEDE_E2E }])).toThrow(/nessuna sede reale/i)
+  })
+
+  it('scrive l’utente e UNA riga `utenti_scuole` per ogni sede reale', async () => {
+    const db: DBFinto = { schools: [], sections: [], utenti: [], alunni: [], parents: [] }
+    const scritture: Scrittura[] = []
+    const tabelle: string[] = []
+    const supabase = creaFintoSupabase(db, tabelle, { scritture })
+    const auth = authFinto()
+
+    const esito = await seminaAdminMultisede({
+      db: supabase,
+      auth: auth.adapter,
+      sedi: [
+        { id: SEDE_A, nome: NOME_SEDE_AVERSA },
+        { id: SEDE_B, nome: NOME_SEDE_CESA },
+      ],
+      password: PASSWORD_FINTA,
+    })
+
+    // Controllo POSITIVO: l'utente c'è, con ruolo admin e la prima sede come primaria.
+    const utente = scritture.find((s) => s.tabella === 'utenti')
+    expect(utente).toBeDefined()
+    expect(utente?.valori?.[0]).toMatchObject({ email: EMAIL_ADMIN_MULTISEDE, ruolo: 'admin', scuola_id: SEDE_A })
+    // `role` è una colonna GENERATA da `ruolo`: scriverla è un errore (AGENTS.md).
+    expect(Object.keys(utente?.valori?.[0] ?? {})).not.toContain('role')
+
+    // Il ponte: una riga per sede, e solo per questo account.
+    const ponte = scritture.filter((s) => s.tabella === 'utenti_scuole')
+    const sediScritte = ponte.flatMap((s) => s.valori ?? []).map((r) => r.scuola_id)
+    expect([...sediScritte].sort()).toEqual([SEDE_A, SEDE_B].sort())
+    expect(esito.sedi).toHaveLength(2)
+  })
+
+  it('non crea alunni, parents né legami: è solo un accesso', async () => {
+    const db: DBFinto = { schools: [], sections: [], utenti: [], alunni: [], parents: [] }
+    const scritture: Scrittura[] = []
+    const supabase = creaFintoSupabase(db, [], { scritture })
+    await seminaAdminMultisede({
+      db: supabase,
+      auth: authFinto().adapter,
+      sedi: [{ id: SEDE_A, nome: NOME_SEDE_AVERSA }],
+      password: PASSWORD_FINTA,
+    })
+    const toccate = scritture.map((s) => s.tabella)
+    // Asserzione negativa…
+    expect(toccate).not.toContain('alunni')
+    expect(toccate).not.toContain('parents')
+    expect(toccate).not.toContain('student_parents')
+    expect(toccate).not.toContain('legame_genitori_alunni')
+    // …col suo controllo POSITIVO accanto: senza, un no-op passerebbe il test.
+    expect(toccate).toContain('utenti')
+    expect(toccate).toContain('utenti_scuole')
+  })
+
+  it('la sede finta della CI non si semina nemmeno se gliela si passa a mano', async () => {
+    await expect(
+      seminaAdminMultisede({
+        db: creaFintoSupabase({ schools: [], sections: [], utenti: [], alunni: [], parents: [] }, [], {}),
+        auth: authFinto().adapter,
+        sedi: [{ id: SEDE_E2E, nome: NOME_SEDE_E2E }],
+        password: PASSWORD_FINTA,
+      }),
+    ).rejects.toThrow(/E2E/i)
+  })
+
+  it('senza password non scrive NIENTE', async () => {
+    const scritture: Scrittura[] = []
+    const supabase = creaFintoSupabase({ schools: [], sections: [], utenti: [], alunni: [], parents: [] }, [], {
+      scritture,
+    })
+    await expect(
+      seminaAdminMultisede({
+        db: supabase,
+        auth: authFinto().adapter,
+        sedi: [{ id: SEDE_A, nome: NOME_SEDE_AVERSA }],
+        password: '',
+      }),
+    ).rejects.toThrow()
+    expect(scritture).toHaveLength(0)
   })
 })

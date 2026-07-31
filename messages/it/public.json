@@ -48,5 +48,7 @@
   "wizardSede": "Sede",
   "wizardSedeErrore": "Scegli una sede per proseguire",
   "wizardSedeLegenda": "Sede di iscrizione",
-  "wizardSedeSub": "Scegli il plesso a cui vuoi iscrivere tuo figlio"
+  "wizardSedeSub": "Scegli il plesso a cui vuoi iscrivere tuo figlio",
+  "wizardConsensiTitolo": "Consensi e informativa",
+  "wizardConsensiSottotitolo": "Un passaggio, poi il riepilogo"
 }

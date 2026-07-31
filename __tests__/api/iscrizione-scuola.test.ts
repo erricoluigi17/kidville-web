@@ -1,4 +1,9 @@
 // @vitest-environment node
+// Da quando il modulo pubblico mostra l'informativa al punto di raccolta, la
+// presa visione è un consenso OBBLIGATORIO verificato server-side: senza,
+// l'invio è un 400. I payload di prova la includono — l'oggetto di questi file
+// è la risoluzione della sede e la validazione dei campi, non il consenso, che
+// ha il suo test dedicato in `__tests__/api/iscrizione-consensi.test.ts`.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
@@ -78,7 +83,7 @@ const invia = (scuolaId?: string) =>
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         scuola_id: scuolaId,
-        data: { children: [{ nome: 'Tino' }], adults: [{ nome: 'Ines' }] },
+        data: { presa_visione_informativa: true, children: [{ nome: 'Tino' }], adults: [{ nome: 'Ines' }] },
       }),
     }) as unknown as import('next/server').NextRequest,
   )

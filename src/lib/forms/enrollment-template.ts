@@ -79,3 +79,70 @@ export const ADULT_ROLE_LABELS: Record<string, string> = {
   tutor: 'Tutore',
   delegate: 'Delegato',
 }
+
+// ── Consensi (→ enrollment_submissions.consents_log) ───────────────────────
+/**
+ * Blocchi di consenso del modulo pubblico d'iscrizione.
+ *
+ * ⚠️ Qui NON si chiede il consenso per allergie, note mediche o certificati.
+ * Non è una dimenticanza: per una scuola quei dati si trattano su una base
+ * giuridica che non è il consenso (art. 9.2.g GDPR + art. 2-sexies, c. 2,
+ * lett. bb del Codice privacy). Chiederlo sarebbe peggio che non chiederlo —
+ * un consenso che non si può rifiutare, perché senza l'allergia la Scuola non
+ * può preparare il pasto in sicurezza, non è libero, e un consenso non libero
+ * non vale nulla. Si finirebbe per trattare dati sanitari di minori credendo di
+ * avere una base, e non avendola.
+ *
+ * Quello che serve davvero è **l'informativa al punto di raccolta** (art. 13) e
+ * la prova che sia stata data: da qui la presa visione, obbligatoria.
+ *
+ * Le foto sono l'unico caso in cui il consenso è la base giusta, perché
+ * rifiutarlo non costa nulla al bambino. È **granulare per canale**: un consenso
+ * raccolto per la galleria riservata non copre la pubblicazione sul sito né sui
+ * social (provv. Garante 725 del 27/11/2025).
+ */
+export const CONSENSI_FIELDS: FormField[] = [
+  {
+    id: 'presa_visione_informativa',
+    type: 'consent',
+    label: 'Ho letto l’informativa sulla privacy',
+    required: true,
+    text:
+      'Dichiaro di aver preso visione dell’informativa sul trattamento dei dati personali. ' +
+      'I dati necessari all’iscrizione e alla sicurezza del bambino — comprese allergie, ' +
+      'intolleranze ed eventuali indicazioni sanitarie — sono trattati dalla Scuola per motivi ' +
+      'di interesse pubblico rilevante nel settore dell’istruzione, e per questi non è ' +
+      'richiesto il consenso: la loro comunicazione è però necessaria, perché senza di essa ' +
+      'la Scuola non può predisporre in sicurezza il servizio.',
+    link: '/privacy',
+    link_label: 'Leggi l’informativa completa',
+  },
+  {
+    id: 'consenso_foto_galleria',
+    type: 'consent',
+    label: 'Fotografie e video nella galleria riservata alle famiglie della sezione',
+    required: false,
+    text:
+      'Acconsento alla pubblicazione di fotografie e video che ritraggono mio figlio nella galleria ' +
+      'dell’app, visibile alle sole famiglie della sua sezione. Il consenso è facoltativo e ' +
+      'revocabile in qualsiasi momento: il rifiuto non pregiudica in alcun modo l’iscrizione.',
+  },
+  {
+    id: 'consenso_foto_sito',
+    type: 'consent',
+    label: 'Fotografie sul sito web della Scuola',
+    required: false,
+    text:
+      'Acconsento alla pubblicazione di fotografie che ritraggono mio figlio sul sito web della ' +
+      'Scuola. Consenso distinto da quello per la galleria riservata, facoltativo e revocabile.',
+  },
+  {
+    id: 'consenso_foto_social',
+    type: 'consent',
+    label: 'Fotografie sui canali social della Scuola',
+    required: false,
+    text:
+      'Acconsento alla pubblicazione di fotografie che ritraggono mio figlio sui canali social della ' +
+      'Scuola. Consenso distinto dai precedenti, facoltativo e revocabile.',
+  },
+]

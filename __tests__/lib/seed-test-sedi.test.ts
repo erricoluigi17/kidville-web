@@ -198,6 +198,9 @@ describe('semina di una sede', () => {
     expect(parents).toHaveLength(1)
     expect(parents[0].auth_user_id).toBe(genitore?.id)
     expect(parents[0].consensi_gdpr).toEqual({ privacy: true, termini: true })
+    // Stessa persona, stessa identità: `parents` e `utenti` non devono divergere.
+    expect(parents[0].first_name).toBe(genitore?.nome)
+    expect(parents[0].last_name).toBe(genitore?.cognome)
     expect((db.student_parents ?? []) as Record<string, unknown>[]).toEqual([
       expect.objectContaining({ student_id: alunno.id, parent_id: parents[0].id }),
     ])

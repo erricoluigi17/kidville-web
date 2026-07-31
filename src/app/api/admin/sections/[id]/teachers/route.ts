@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { assertSezioneInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { docentiDiSezione } from '@/lib/sezioni/docenti';
+import { staffScuola } from '@/lib/notifiche/destinatari';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -34,6 +35,15 @@ import { logErrore } from '@/lib/logging/logger';
 const DIREZIONE = ['admin', 'coordinator'] as const;
 const bodySchema = z.object({ utente_id: zUuid });
 
+// Tutto il personale, genitori esclusi: sostituisce il vecchio
+// `.neq('ruolo', 'genitore')`. I nomi storici (`maestra`, `insegnante`,
+// `coordinatore`) convivono a database con quelli di `RUOLI_VALIDI` e vanno
+// tenuti, altrimenti sparirebbero dall'elenco insegnanti di mezza anagrafica.
+const RUOLI_PERSONALE = [
+  'admin', 'coordinator', 'coordinatore', 'segreteria',
+  'educator', 'maestra', 'insegnante', 'cuoca',
+];
+
 interface StaffRow { id: string; nome: string; cognome: string; ruolo: string; scuola_id: string | null }
 
 async function resolveSectionId(context: { params: Promise<{ id: string }> }) {
@@ -61,12 +71,27 @@ export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request:
     const { data: section } = await supabase.from('sections').select('id, scuola_id').eq('id', sectionId).maybeSingle();
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 });
 
-    const { data: staff } = await supabase
+    // CHI LAVORA IN QUESTA SEDE NON È `utenti.scuola_id`: è l'unione fra quella
+    // colonna e il ponte `utenti_scuole` (audit 2026-07-31 — quinta occorrenza
+    // della stessa forma, dopo mensa/notify, panic-alert, locker/notify e
+    // fattura/sync). Qui c'era una `.eq('scuola_id', section.scuola_id)` nuda:
+    // il personale agganciato alla sede dal solo ponte non compariva
+    // nell'elenco, quindi non era assegnabile alla classe — e la Direzione
+    // vedeva una tendina corta senza il minimo errore. `staffScuola` fa
+    // l'unione, regge il ponte assente sul DB E2E non migrato e logga i
+    // destinatari zero: è l'unico posto del repo autorizzato a quella query.
+    const idsSede = await staffScuola(supabase, (section.scuola_id as string | null) ?? null, RUOLI_PERSONALE);
+    const { data: staff, error: errStaff } = await supabase
       .from('utenti')
       .select('id, nome, cognome, ruolo, scuola_id')
-      .neq('ruolo', 'genitore')
-      .eq('scuola_id', section.scuola_id)
+      .in('id', idsSede)
       .order('cognome', { ascending: true });
+    // PostgREST non lancia: senza questo controllo una lettura fallita usciva
+    // come «nessun insegnante disponibile», indistinguibile da una sede vuota.
+    if (errStaff) {
+      logErrore({ operazione: 'admin/sections/[id]/teachers:GET', stato: 500, evento: 'db' }, errStaff);
+      return NextResponse.json({ error: 'Errore nel caricamento del personale' }, { status: 500 });
+    }
 
     const assignedIds = await docentiDiSezione(supabase, sectionId);
     const assignedSet = new Set(assignedIds);
@@ -76,10 +101,11 @@ export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request:
     // Nomi anche per docenti assegnati non appartenenti alla sede corrente.
     const missing = assignedIds.filter(aid => !staffList.some(u => u.id === aid));
     if (missing.length) {
-      const { data: extra } = await supabase
+      const { data: extra, error: errExtra } = await supabase
         .from('utenti')
         .select('id, nome, cognome, ruolo, scuola_id')
         .in('id', missing);
+      if (errExtra) logErrore({ operazione: 'admin/sections/[id]/teachers:GET', stato: 200, evento: 'db' }, errExtra);
       for (const u of (extra ?? []) as StaffRow[]) assigned.push(u);
     }
     const available = staffList.filter(u => !assignedSet.has(u.id));

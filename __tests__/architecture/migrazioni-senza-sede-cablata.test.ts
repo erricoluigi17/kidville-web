@@ -151,6 +151,24 @@ const REGOLE: Regola[] = [
       'nel nome, src/lib/scuole/reali.ts), mai dall\'uuid intero: così un secondo ambiente di prova ' +
       'viene escluso dagli elenchi pubblici senza toccare il codice.',
   },
+  {
+    uuid: 'e2e00000-0000-4000-8000-000000000002',
+    cosa: "l'uuid della SECONDA sede finta della CI",
+    // Gemella della precedente. Esiste dal 2026-07-31 (rilievo R132): con una
+    // sola scuola nel seed, nessuno spec Playwright poteva accorgersi di una
+    // perdita fra sedi — la suite era verde perché non c'era un confine da
+    // attraversare, non perché il confine tenesse. Stesse regole della sede 1:
+    // vietata in `src/` (il prodotto la riconosce dal predicato, mai dall'uuid),
+    // lecita nel seed che la CREA e nella campagna E2E che ci gira sopra.
+    perimetri: ['src', 'scripts', 'migrazioni'],
+    allowlist: {
+      [join('scripts', 'seed-e2e.mjs')]:
+        "è il seed che CREA la seconda sede finta della CI: quell'uuid è il suo oggetto, non un assunto",
+    },
+    invece:
+      'vale parola per parola quanto scritto per la prima sede E2E: il predicato `isScuolaE2E` ' +
+      'copre entrambe (stesso prefisso `e2e00000`), quindi nessuna riga di prodotto deve nominarle.',
+  },
 ]
 
 /**

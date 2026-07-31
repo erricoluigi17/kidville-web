@@ -326,13 +326,16 @@ async function assicuraParent(db, genitore, piano) {
     db.from('parents').select('id').eq('auth_user_id', genitore.id).maybeSingle(),
   )
   if (trovato?.id) return { id: trovato.id, creato: false }
+  // Nome e cognome vengono dal piano, gli stessi della riga `utenti`: due fonti
+  // diverse per la stessa persona divergono al primo ritocco.
+  const descrizione = piano.account.find((a) => a.chiave === 'genitore')
   const creato = await ok(
     'parents (creazione)',
     db
       .from('parents')
       .insert({
-        first_name: 'Genitore',
-        last_name: cognomeDiSede(piano.nomeSede),
+        first_name: descrizione.nome,
+        last_name: descrizione.cognome,
         auth_user_id: genitore.id,
         emails: [genitore.email],
         consensi_gdpr: CONSENSI_TEST,
@@ -452,7 +455,10 @@ async function main() {
   }
 
   const db = createClient(url, chiave, { auth: { persistSession: false } })
-  const scuole = await ok('scuole (elenco)', db.from('scuole').select('id, nome'))
+  // `schools` e non `scuole`: è la tabella da cui l'applicazione risolve le sedi
+  // (`src/lib/scuole/reali.ts`) ed è il bersaglio delle FK `scuola_id`. `scuole`
+  // è il registro amministrativo (porta il flag `attiva`), non la fonte.
+  const scuole = await ok('schools (elenco)', db.from('schools').select('id, nome'))
   const sedi = risolviSedi(scuole, nomi)
 
   if (!applica) {

@@ -33,6 +33,13 @@ export const EMAILS = {
   docente: 'docente.e2e@kidville.test',
   genitore: 'genitore.e2e@kidville.test',
   doppio: 'doppio.e2e@kidville.test',
+  // Sede 1: la segreteria (il ruolo che allo sportello vede l'anagrafica, e che
+  // dal 2026-07-30 è limitato alla SOLA propria sede).
+  segreteria: 'segreteria.e2e@kidville.test',
+  // Sede 2 (`isolamento-sedi.spec.ts`): personale e famiglia propri.
+  segreteria2: 'segreteria2.e2e@kidville.test',
+  docente2: 'docente2.e2e@kidville.test',
+  genitore2: 'genitore2.e2e@kidville.test',
 };
 
 export const IDS = {
@@ -43,6 +50,18 @@ export const IDS = {
   ADMIN: 'e2e00000-0000-4000-8000-000000000201',
   DOCENTE: 'e2e00000-0000-4000-8000-000000000202',
   GENITORE: 'e2e00000-0000-4000-8000-000000000203',
+  SEGRETERIA: 'e2e00000-0000-4000-8000-000000000205',
+
+  // ── Sede 2: quella che l'isolamento deve tenere fuori ────────────────────
+  // La sua sezione si chiama «Girasoli» come quella della sede 1: il nome-classe
+  // non è una chiave, e questo è il caso che il 2026-07-29 ha reso reale.
+  SCUOLA2: 'e2e00000-0000-4000-8000-000000000002',
+  SEC2_GIRASOLI: 'e2e00000-0000-4000-8000-000000000021',
+  B1: 'e2e00000-0000-4000-8000-000000000105', // Emma Eclissi-E2E (Girasoli, sede 2)
+  SEGRETERIA2: 'e2e00000-0000-4000-8000-000000000206',
+  DOCENTE2: 'e2e00000-0000-4000-8000-000000000207',
+  GENITORE2: 'e2e00000-0000-4000-8000-000000000208',
+  AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
 };
 
 export const STORAGE = {

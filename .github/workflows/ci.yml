@@ -35,7 +35,7 @@ jobs:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
     # Serializza le run che condividono il progetto Supabase CI:
-    # il seed lavora sulla scuola dedicata e2e00000-* ed è idempotente,
+    # il seed lavora sulle scuole dedicate e2e00000-* ed è idempotente,
     # ma due run simultanee sullo stesso DB potrebbero interferire.
     concurrency:
       group: e2e-ci-db
@@ -45,7 +45,8 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.CI_SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}
-      # Password dei 4 account `*.e2e@kidville.test`. Fino al 2026-07-31 era un
+      # Password di TUTTI gli account `*.e2e@kidville.test` (8 dal 2026-07-31: il
+      # seed semina due sedi — vedi `docs/e2e.md`). Fino al 2026-07-31 era un
       # letterale in `scripts/seed-e2e.mjs`, e il repository è PUBBLICO: il 29/07
       # quell'account è finito in Direzione su Kidville Aversa e Kidville Cesa,
       # sedi vere. Ora sta solo qui. Il seed la RIMPOSTA a ogni run

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
@@ -24,18 +25,24 @@ interface PdfLabels {
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
+//
+// Costruzione e formattazione sono entrambe ancorate a UTC, e il giorno scelto è
+// il 15: qui non si mostra una data vera, si compila un ELENCO di nomi. Con la
+// mezzanotte locale e un fuso di lettura diverso da quello del browser il primo
+// del mese scivola al 31 del mese prima, e l'elenco parte da «Dicembre».
 function nomiMesi(locale: string): string[] {
-    const fmt = new Intl.DateTimeFormat(locale, { month: 'long' });
+    const fmt = intlDateTime(locale, { month: 'long', timeZone: 'UTC' });
     return Array.from({ length: 12 }, (_, i) => {
-        const s = fmt.format(new Date(2000, i, 1));
+        const s = fmt.format(new Date(Date.UTC(2000, i, 15)));
         return s.charAt(0).toUpperCase() + s.slice(1);
     });
 }
 function nomiGiorni(locale: string): string[] {
-    const fmt = new Intl.DateTimeFormat(locale, { weekday: 'short' });
-    // 2023-01-01 è una domenica → getDay() 0..6 = dom..sab.
+    const fmt = intlDateTime(locale, { weekday: 'short', timeZone: 'UTC' });
+    // 2023-01-01 è una domenica → getDay() 0..6 = dom..sab. A mezzogiorno UTC,
+    // così nessun fuso di lettura può farlo scivolare al giorno prima o dopo.
     return Array.from({ length: 7 }, (_, i) => {
-        const s = fmt.format(new Date(2023, 0, 1 + i));
+        const s = fmt.format(new Date(Date.UTC(2023, 0, 1 + i, 12)));
         return s.charAt(0).toUpperCase() + s.slice(1);
     });
 }

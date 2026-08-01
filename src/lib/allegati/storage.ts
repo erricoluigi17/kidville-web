@@ -183,10 +183,23 @@ function decodificaAllegatoAvviso(valore: string | null | undefined): { file: st
         link: typeof p.link === 'string' && p.link.trim() !== '' ? p.link : null,
         jsonOriginale: true,
       }
-    } catch {
+    } catch (err) {
       // JSON malformato: si tratta come stringa nuda, che è il comportamento del
-      // client (`AvvisoCard`) da sempre. Non è un errore da segnalare, è un dato
-      // storico: se ci fosse un allegato, la firma qui sotto lo troverà lo stesso.
+      // client (`AvvisoCard`) da sempre. Non è un guasto da svegliare qualcuno, è
+      // un dato storico: se ci fosse un allegato, la firma qui sotto lo troverà
+      // lo stesso — perciò `info` e non `error`.
+      //
+      // Ma la riga ci vuole, e il commento da solo non basta (AGENTS.md regola 6:
+      // «se un errore è davvero ignorabile, lo si logga a livello info spiegando
+      // perché»). Il valore NON si logga: `attachment_url` è un percorso, e in
+      // questo repo un percorso è una credenziale. Esce solo la LUNGHEZZA (che
+      // il valore cominciasse per `{` lo dice già il ramo in cui siamo): quel
+      // tanto che basta ad accorgersi se un giorno il formato si rompe davvero.
+      logEvento('storage', 'info', {
+        operazione: 'decodificaAllegatoAvviso',
+        esito: 'json-malformato-letto-come-stringa',
+        lunghezza: v.length,
+      }, err)
       return { file: v, link: null, jsonOriginale: false }
     }
   }

@@ -39,6 +39,30 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
+        // IL CARICAMENTO RIUSCITO LASCIA UNA RIGA, E LA RIGA ARRIVA IN TABELLA.
+        //
+        // Da quando il bucket è privato (2026-07-31) «l'allegato non si apre» è un guasto nuovo:
+        // un TTL scaduto, una firma che fallisce, un percorso salvato male. Con i soli errori,
+        // «nessun log di upload» non distingue «nessuno ha caricato niente» da «gli upload non
+        // partono più» — la stessa ambiguità che ha tenuto invisibile per mesi il guasto delle
+        // email di credenziali (AGENTS.md, regola 5).
+        //
+        // Si emette QUI e non dopo la firma: il successo è che il file è nel bucket. Se
+        // l'anteprima poi non si firma, accanto compare la riga `error` — e le due insieme
+        // raccontano il fatto giusto («c'è, ma non si vede»).
+        //
+        // Solo metadati. Il NOME del file non si logga: un allegato può chiamarsi
+        // «certificato-<cognome>.pdf», e sarebbe un dato personale di un minore in un canale
+        // che si legge tutti i giorni. `bucket` e `mime` sono in lista bianca, `byte` è un
+        // numero: la riga resta leggibile anche in `app_log`.
+        logEvento('storage', 'info', {
+            operazione: 'avvisi/upload:POST',
+            esito: 'allegato-caricato',
+            bucket: BUCKET_AVVISI_ALLEGATI,
+            mime: file.type,
+            byte: file.size,
+        });
+
         // Link firmato per l'ANTEPRIMA immediata: il bucket è privato dal
         // 2026-07-31, quindi un indirizzo pubblico (`/object/public/…`) ora
         // risponde 400 — un allegato "caricato" che non si apre.

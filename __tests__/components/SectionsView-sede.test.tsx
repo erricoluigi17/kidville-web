@@ -24,17 +24,34 @@ import enAdminStudents from '../../messages/en/adminStudents.json'
  * modulo restava lì, identico, e l'operatore ricliccava.
  *
  * Il mock di next-intl è LOCALE (non quello globale di test/setup.ts) perché qui
- * il numero interpolato in `{n} alunni` È l'asserzione.
+ * il numero interpolato in `contAlunni` È l'asserzione: il mock globale
+ * restituisce la stringa GREZZA, e su un conteggio non direbbe niente.
+ *
+ * Dal 2026-08-01 il mock usa il formattatore ICU vero (`createTranslator` di
+ * `use-intl`, la libreria che sta sotto next-intl) invece di una `replace` sui
+ * segnaposto: `contAlunni` è diventata `{n, plural, one {# alunno} other {# alunni}}`,
+ * e un'interpolazione a mano avrebbe reso la sintassi ICU tale e quale — cioè
+ * avrebbe fatto fallire questo test per un difetto che non c'è, oppure (peggio)
+ * avrebbe continuato ad asserire su «1 alunni», il testo sbagliato che il collaudo
+ * del 31/07 aveva trovato a schermo.
  */
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'e' }))
 
 vi.mock('next-intl', async () => {
-  const it = (await import('../../messages/it/adminStudents.json')).default as Record<string, string>
-  const interpola = (testo: string, valori?: Record<string, unknown>) =>
-    testo.replace(/\{(\w+)\}/g, (intero, chiave) => (valori && chiave in valori ? String(valori[chiave]) : intero))
+  const { createTranslator } = await import('use-intl')
+  const adminStudents = (await import('../../messages/it/adminStudents.json')).default as Record<string, string>
+  const traduci = createTranslator({
+    locale: 'it',
+    messages: { adminStudents } as never,
+    namespace: 'adminStudents' as never,
+    // Chiave assente → il nome della chiave, come fa il mock globale: qui contano
+    // le poche chiavi asserite, non l'intero catalogo.
+    onError: () => {},
+    getMessageFallback: ({ key }: { key: string }) => key,
+  }) as unknown as (k: string, v?: Record<string, unknown>) => string
   const useTranslations = () => {
-    const t = (key: string, valori?: Record<string, unknown>) => interpola(it[key] ?? key, valori)
+    const t = (key: string, valori?: Record<string, unknown>) => traduci(key, valori)
     return Object.assign(t, { rich: t, markup: t, raw: t, has: () => true })
   }
   return { useTranslations, useLocale: () => 'it', NextIntlClientProvider: ({ children }: { children: unknown }) => children }
@@ -91,7 +108,9 @@ describe('SectionsView — sezioni omonime in sedi diverse', () => {
     render(<SectionsView />)
     await waitFor(() => expect(card('sez-a1')).toBeTruthy())
 
-    expect(within(card('sez-a1')).getByText('1 alunni')).toBeInTheDocument()
+    // Singolare e plurale, come li legge l'utente: la sede con un solo iscritto
+    // dice «1 alunno», non «1 alunni».
+    expect(within(card('sez-a1')).getByText('1 alunno')).toBeInTheDocument()
     expect(within(card('sez-b1')).getByText('2 alunni')).toBeInTheDocument()
   })
 

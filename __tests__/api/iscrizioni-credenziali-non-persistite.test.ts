@@ -181,7 +181,12 @@ describe('PATCH /api/admin/iscrizioni (import) — la password non si archivia',
 
     expect(updateInvii()).toHaveLength(1)
     const payload = updateInvii()[0].payload
-    expect(Object.keys(payload).sort()).toEqual(['assigned_classes', 'imported_at', 'status', 'updated_at'])
+    // `data` è entrato nell'elenco il 2026-08-01 (S22): l'approvazione riscrive
+    // la domanda per togliere la copia ridondante dei dati sanitari del minore
+    // (`__tests__/api/iscrizioni-sanitari-dopo-import.test.ts`). L'elenco resta
+    // ESATTO — è quello che rende il lock un lock — e `credentials` continua a
+    // non poterci rientrare né direttamente né dentro `data` (asserzioni sotto).
+    expect(Object.keys(payload).sort()).toEqual(['assigned_classes', 'data', 'imported_at', 'status', 'updated_at'])
     expect(payload).not.toHaveProperty('credentials')
     // Nemmeno di sbieco: la password non deve comparire da nessuna parte nel payload.
     expect(JSON.stringify(payload)).not.toContain(PASSWORD_IN_CHIARO)

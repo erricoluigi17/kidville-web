@@ -107,8 +107,30 @@ const RADICI_NASCITA = ['nascita', 'birth'];
  * SEGMENTO di path (`/m/[token]`, `/api/public/forms/[token]/submit`) ed è una
  * capability; le query string trasportano `?userId=`, `?email=`, `?token=`.
  * Passano da `redigiPath`, che ne tiene il solo pattern.
+ *
+ * ANCHE QUI LA CHIAVE APRE E IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`, `FORMA_PATH`):
+ * `redigiPath` riduce un PATH a pattern, e su una stringa che path non è non riduce niente —
+ * la restituisce intatta. Finché bastava la chiave, `{"url":"<quello che ti pare>"}` era un
+ * canale di TESTO LIBERO verso `app_log`: `redact()` gira anche sul BODY GREZZO di ogni
+ * richiesta (`parseBody` deposita il raw PRIMA di zod), quindi la porta era aperta a chiunque
+ * sapesse fare una POST. Misurato: `"url":"NON-ESISTE-collaudo-log.pdf"` in chiaro accanto a
+ * `"fileUrl":"[redatto:str/27]"` — lo stesso valore, due trattamenti.
  */
 const CHIAVI_PATH = insieme('path', 'route', 'url');
+
+/**
+ * La FORMA di un path o di un URL: comincia con `/` (path assoluto) oppure porta uno schema
+ * (`https://`, `capacitor://`). Tutto il resto, sotto una chiave di path, è una stringa come
+ * un'altra e viene redatta come un'altra.
+ *
+ * NON accetta i path RELATIVI (`api/alunni`): sotto queste chiavi, nei log del repo, arriva
+ * sempre un `pathname` (`context.ts`, `client.ts`, `/api/logs`) o un URL intero. Accettarli
+ * significherebbe riaprire la porta a qualunque parola sciolta — «Mario Rossi» è un path
+ * relativo tanto quanto `api/alunni`. Chi ha in mano un frammento relativo e sa che è un path
+ * chiama `redigiPath` direttamente (lo fa `supabase-fetch.ts` con `object/fascicoli/…`), e lì
+ * la riduzione continua a valere.
+ */
+const FORMA_PATH = /^(\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/;
 
 /**
  * Le uniche chiavi il cui valore STRINGA esce in chiaro. Sono metadati di dominio.
@@ -229,11 +251,20 @@ function redigiNascita(v: unknown): unknown {
  * 2. hasha solo `string | number`. `String({...})` è `"[object Object]"` per QUALUNQUE
  *    oggetto: l'hash sarebbe identico per persone diverse, e un hash "correlabile" che
  *    correla il falso è peggio di nessun hash.
+ * 3. non hasha il VUOTO, per la stessa ragione del punto 2 — ed è il caso che si è
+ *    presentato davvero. `hashCorrelabile('')` è una COSTANTE: in una riga `iscrizione warn`
+ *    di produzione nome, cognome, codice fiscale ed email di un adulto uscivano TUTTI come lo
+ *    stesso `#xxxxxxxx`, e quello stesso `#xxxxxxxx` compariva sulle righe di persone
+ *    DIVERSE. Un campo vuoto non è un'identità: correlarlo significa affermare che due
+ *    estranei sono la stessa persona, in una tabella che si legge per capire cosa è successo.
+ *    Esce quindi come qualunque altra stringa fuori dalla lista bianca — `[redatto:str/0]` —
+ *    che dice anche la cosa utile: «il campo c'era ed era vuoto», che è metà dei bug.
  */
 export function hashCorrelabile(valore: unknown): string {
     const salt = process.env.LOG_HASH_SALT;
     if (!salt) return '[redatto]';
     if (typeof valore !== 'string' && typeof valore !== 'number') return '[redatto]';
+    if (typeof valore === 'string' && valore.trim() === '') return redigiStringa(valore);
     return '#' + createHash('sha256').update(salt + String(valore)).digest('hex').slice(0, 8);
 }
 
@@ -287,7 +318,11 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
 
     if (typeof v === 'string') {
         if (k !== null) {
-            if (CHIAVI_PATH.has(k)) return tronca(redigiPath(v));
+            // LA CHIAVE APRE, IL VALORE CONFERMA: solo ciò che ha la forma di un path o di un
+            // URL viene ridotto a pattern. Quello che path non è cade sotto, e viene redatto
+            // come qualunque altra stringa — così `url` e `fileUrl` dicono la stessa cosa
+            // dello stesso valore.
+            if (CHIAVI_PATH.has(k)) return FORMA_PATH.test(v) ? tronca(redigiPath(v)) : redigiStringa(v);
             if (IN_CHIARO.has(k)) return tronca(v);
             // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`): niente `tronca`, perché
             // un digest o ci sta intero — e allora si può cercare — o non serve a niente. Se la

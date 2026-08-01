@@ -110,14 +110,39 @@ export const EVENTI_NOTI = new Set([
  * livello (19 righe misurate in produzione il giorno stesso): aggiungere `auth` avrebbe
  * portato zero del segnale voluto e tutto il rumore.
  *
- * `avvisi` e `notifica` non sono stati aggiunti per una ragione diversa e più semplice: nel
- * repo NON esiste nessun `logEvento('avvisi'|'notifica', 'info', …)` (misurato: 0 su 522
- * chiamate). Metterli in allowlist non persisterebbe niente — sarebbe configurazione morta
- * che dà falsa sicurezza. Manca il log di successo, non l'allowlist.
+ * AGGIUNTI IL 2026-08-01 — `avvisi` e `storage`. E qui prima c'era scritto il contrario, con
+ * un numero a sostenerlo: «nel repo NON esiste nessun `logEvento('avvisi'…, 'info', …)`
+ * (misurato: 0 su 522 chiamate) — metterli in allowlist sarebbe configurazione morta». La
+ * misura era vera un'ora prima e falsa quando è stata scritta: il log di successo di
+ * `avvisi:POST` e questo commento sono entrati nello STESSO commit (`534abd2`). Risultato
+ * misurato in produzione il 2026-07-31: `select count(*) from app_log where evento='avvisi'
+ * and livello='info'` → **0 da sempre**, con 10 avvisi pubblicati in 30 giorni, mentre il
+ * campo `n_destinatari` — che esiste per scoprire che un avviso di classe ha raggiunto meno
+ * famiglie di quante ce ne siano — non era interrogabile in SQL. Un commento che *giustifica*
+ * un'esclusione con un fatto smesso di essere vero è peggio dell'esclusione: convince il
+ * lettore successivo a non ricontrollare.
+ *
+ * `storage` entra per la ragione gemella. I bucket degli allegati (`avvisi_allegati`,
+ * `task_allegati`) sono passati il 2026-07-31 da pubblici a privati con link firmato: «l'allegato
+ * non si apre» è da allora un guasto NUOVO e plausibile. Senza una riga di successo del
+ * caricamento, in tabella «nessun log di upload» non distingue «nessuno ha caricato niente» da
+ * «gli upload non partono più» — che è, alla lettera, l'ambiguità con cui il guasto delle email
+ * di credenziali è rimasto invisibile per mesi.
+ *
+ * ⚠️ `storage` È ANCHE UN'AREA DI `supabase-fetch` (`db`/`rpc`/`storage`/`auth`/`altro`), che
+ * emette `info` ad alto volume: una risposta lenta, un 3xx. Che quelle righe non finissero in
+ * tabella era garantito finora SOLO dal fatto che nessuna delle cinque aree fosse in questa
+ * lista — una garanzia implicita, che questa riga avrebbe fatto saltare in silenzio. Ora è
+ * esplicita e vive lì: `supabase-fetch` non persiste MAI i propri `info`, qualunque cosa dica
+ * l'allowlist. Chi aggiunge qui `db`, `rpc`, `auth` o `altro` legga prima quel modulo.
+ *
+ * Il lock è `__tests__/architecture/eventi-log.test.ts`: ogni `logEvento(evento,'info')` del
+ * repo o è in questa lista, o sta fra le deroghe motivate. È l'unica cosa che impedisce al
+ * difetto di tornare — perché quando torna, non si vede.
  */
 export const EVENTI_PERSISTITI = new Set([
     'email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa', 'news', 'chat',
-    'gdpr', 'segnalazione', 'galleria', 'modulistica', 'multi_sede',
+    'gdpr', 'segnalazione', 'galleria', 'modulistica', 'multi_sede', 'avvisi', 'storage',
 ]);
 
 /**

@@ -56,6 +56,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.in = (col: string, vals: unknown) => { if (table === 'news_visualizzazioni' && col === 'utente_id') h.newsVisDeleteFilter = vals as string[]; return b }
       b.or = () => b
       b.ilike = () => b
+      // Dal 2026-08-01 l'oblio interroga anche `enrollment_submissions` e
+      // `galleria_media_v2` con l'operatore di contenimento (`@>`): senza questo
+      // metodo il doppio di test non è più un doppio del client Supabase, e
+      // ogni caso qui sotto cadeva con un 500 «contains is not a function».
+      // I dati restano quelli di prima (nessuna asserzione cambia).
+      b.contains = () => b
       b.delete = () => { h.deletedTables.push(table); return b }
       b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
       b.then = (res: (v: unknown) => unknown) => {

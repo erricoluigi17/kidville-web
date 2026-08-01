@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
@@ -50,7 +51,7 @@ export function formatMessageDate(iso: string, locale: string, labels: Etichette
     // (giorno + mese) è localizzato tramite `Intl.DateTimeFormat(locale, …)`.
     if (d.toDateString() === today.toDateString()) return labels.oggi;
     if (d.toDateString() === yesterday.toDateString()) return labels.ieri;
-    return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(d);
+    return intlDateTime(locale, { day: 'numeric', month: 'long' }).format(d);
 }
 
 function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { date: string; messages: ChatMessage[] }[] {

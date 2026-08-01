@@ -3,12 +3,20 @@ import { formatData, nomeMese } from '@/lib/i18n/date';
 
 // Helper condiviso di formattazione data/ora localizzata. In italiano (locale='it')
 // il risultato deve restare IDENTICO a quanto producevano le vecchie chiamate
-// `toLocale*String('it-IT', …)`; in inglese (locale='en') deve localizzare mesi e
-// giorni. Le date sono costruite con componenti LOCALI (new Date(anno, meseIdx, …))
-// per essere indipendenti dal fuso orario della macchina di test.
+// `toLocale*String('it-IT', …)`: tutti gli attesi italiani qui sotto sono infatti
+// gli stessi di prima del 2026-08-01. In inglese (locale='en') deve localizzare
+// mesi e giorni.
+//
+// L'istante è ASSOLUTO (una `Z` esplicita) e gli attesi sono l'ora di Roma. Prima
+// la data si costruiva con componenti locali «per essere indipendenti dal fuso
+// della macchina di test»: era vero solo finché anche la formattazione usava il
+// fuso della macchina — cioè finché il difetto c'era. Ora il fuso è dichiarato
+// (Europe/Rome) e l'unico modo di essere davvero indipendenti è fissare
+// l'istante, non i suoi componenti. Il lock che lo prova su più fusi è
+// `__tests__/architecture/date-con-timezone.test.ts`.
 describe('formatData', () => {
-  // 5 novembre 2026, 09:30 in ora locale
-  const d = new Date(2026, 10, 5, 9, 30, 0);
+  // 5 novembre 2026, 08:30 UTC = 09:30 a Roma (CET, +1 in novembre).
+  const d = new Date('2026-11-05T08:30:00Z');
 
   it('formato "lunga": giorno mese-per-esteso anno', () => {
     expect(formatData(d, 'it', 'lunga')).toBe('5 novembre 2026');
@@ -17,23 +25,24 @@ describe('formatData', () => {
     expect(formatData(d, 'en', 'lunga')).not.toContain('novembre');
   });
 
-  it('formato "breve": gg/mm/aaaa in IT, localizzato in EN', () => {
+  it('formato "breve": gg/mm/aaaa in IT e in EN (en-GB, non en-US)', () => {
     expect(formatData(d, 'it', 'breve')).toBe('05/11/2026');
-    // EN usa l'ordine mese/giorno
-    expect(formatData(d, 'en', 'breve')).toBe('11/05/2026');
+    // La lingua inglese dell'app è en-GB: giorno/mese/anno come in italiano.
+    // Con 'en' nudo Intl risolveva en-US e rendeva «11/05/2026» — la stessa
+    // stringa letta al contrario, in un prodotto che altrove scriveva en-GB.
+    expect(formatData(d, 'en', 'breve')).toBe('05/11/2026');
+    expect(formatData(d, 'en', 'breve')).not.toBe('11/05/2026');
   });
 
   it('formato "ora": solo ore e minuti (nessun campo data iniettato)', () => {
     expect(formatData(d, 'it', 'ora')).toBe('09:30');
-    // In EN l'ora è a 12h con AM/PM
-    expect(formatData(d, 'en', 'ora')).toContain('AM');
+    // en-GB usa l'orologio a 24 ore, come l'italiano (en-US userebbe AM/PM).
+    expect(formatData(d, 'en', 'ora')).toBe('09:30');
   });
 
   it('formato "dataOra": data + ora', () => {
     expect(formatData(d, 'it', 'dataOra')).toBe('05/11/2026, 09:30');
-    // EN: ordine mese/giorno e ora a 12h
-    expect(formatData(d, 'en', 'dataOra')).toContain('11/05/2026');
-    expect(formatData(d, 'en', 'dataOra')).toContain('AM');
+    expect(formatData(d, 'en', 'dataOra')).toBe('05/11/2026, 09:30');
   });
 
   it('formato "giornoMese": giorno + mese per esteso, senza anno', () => {

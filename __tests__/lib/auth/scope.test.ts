@@ -39,6 +39,9 @@ vi.mock('@/lib/logging/logger', () => ({
   logOk: vi.fn(),
 }))
 
+// `redact` NON è mockato, ed è il punto: la riga persistita si guarda per
+// davvero (vedi il test sulla redazione di `sede_richiesta`).
+import { redact } from '@/lib/logging/redact'
 import {
   scuoleDiUtente,
   resolveScuoleAttive,
@@ -342,6 +345,28 @@ describe('resolveScuoleAttive', () => {
     ])
     expect(tipiLoggati('warn')).not.toContain('sedi-attive-non-accessibili')
   })
+
+  it('cookie in MAIUSCOLO ⇒ la stessa sede, in forma canonica (uuid non case-sensitive)', async () => {
+    // Lo stesso confronto sbagliato della scrittura, sul ramo della lettura: qui
+    // il prezzo non è un 403 ma un elenco VUOTO — che, per contratto di questo
+    // modulo, nega. Con in più il warn `sedi-attive-non-accessibili`, cioè un
+    // falso positivo nel contatore di sicurezza.
+    const { supabase } = client()
+    expect(await resolveScuoleAttive(richiesta(SEDE_B.toUpperCase()), supabase, ADMIN_TRE_SEDI))
+      .toEqual([SEDE_B])
+    expect(tipiLoggati('warn')).toEqual([])
+  })
+
+  it('cookie con la stessa sede due volte ⇒ una sola: è un insieme, non una lista', async () => {
+    const { supabase } = client()
+    expect(
+      await resolveScuoleAttive(
+        richiesta(`${SEDE_B},${SEDE_B.toUpperCase()}`),
+        supabase,
+        ADMIN_TRE_SEDI,
+      ),
+    ).toEqual([SEDE_B])
+  })
 })
 
 // =============================================================================
@@ -378,9 +403,14 @@ describe('resolveScuolaScrittura', () => {
     const { supabase } = client()
     const r = await resolveScuolaScrittura(richiesta(), supabase, ADMIN_TRE_SEDI)
     expect(r.scuolaId).toBeUndefined()
+    // La frase è cambiata il 2026-08-01: diceva «Specificare la sede (scuola_id)
+    // per questa operazione» e mostrava il nome di una colonna del database a
+    // chi la leggeva a schermo. Il nome del campo resta nel log
+    // `sede-scrittura-ambigua`, che è il posto giusto. Il `codice` che
+    // accompagna la frase è provato in `scope-codice-errore.test.ts`.
     expect(await esito(r.response)).toEqual({
       status: 400,
-      error: 'Specificare la sede (scuola_id) per questa operazione',
+      error: 'Specificare la sede a cui si riferisce questa operazione',
     })
     // Il rifiuto si LOGGA: senza, «la scrittura non è mai partita» resta
     // indistinguibile da «non l'ha mai tentata nessuno» — l'ambiguità che nel
@@ -473,22 +503,39 @@ describe('resolveScuolaScrittura', () => {
     const riga = logEvento.mock.calls.find(
       (c) => (c[2] as { tipo?: string })?.tipo === 'sede-scrittura-fuori-scope',
     )
-    // Nel log solo uuid, ruolo e conteggi: la sede richiesta NON ci va in chiaro,
-    // come nelle altre due chiamate del modulo.
     expect(riga?.[2]).toMatchObject({
       azione: 'resolveScuolaScrittura',
       utente: ID_SEGRETERIA,
       ruolo: 'segreteria',
       accessibili: 1,
+      // ⚠️ QUI L'ATTESA È CAMBIATA il 2026-08-01, e prima diceva l'opposto
+      // (`expect(JSON.stringify(riga)).not.toContain(SEDE_B)`, «la sede
+      // richiesta NON va in chiaro»). Era un divieto inventato: un uuid non è
+      // un dato personale, e senza di lui la riga NON dice quale sede è stata
+      // rifiutata. Misurato in produzione: `sede=d53b0fbc-…(Giugliano) …
+      // tipo=sede-scrittura-fuori-scope … accessibili=3` mentre la sede
+      // respinta era `e2e00000-…`. Il campo `sede=` viene dal CONTESTO di
+      // richiesta — è la sede primaria di chi chiama — e chi legge alle 3 di
+      // notte lo scambia per la sede del tentativo. Il segnale di sicurezza
+      // nominava l'innocente.
+      sede_richiesta: SEDE_B,
     })
-    expect(JSON.stringify(riga?.[2])).not.toContain(SEDE_B)
   })
 
-  it('cookie manomesso con una sede altrui ⇒ non la usa: resta la propria', async () => {
+  it('cookie manomesso con SOLE sedi altrui ⇒ 403, non la propria sede in silenzio', async () => {
+    // ⚠️ ANCHE QUI L'ATTESA È CAMBIATA il 2026-08-01: questo test asseriva
+    // `scuolaId === SEDE_A`, cioè ratificava il difetto. Misurato dal collaudo:
+    // `POST /api/tasks` come segreteria di Aversa con `Cookie: sedi_attive=<Cesa>`
+    // e nessuna sede nel body → **201, riga scritta su Aversa**, e in `app_log`
+    // nemmeno una riga. È lo stesso schema che il ciclo precedente ha appena
+    // rimosso per la sede DICHIARATA — «il client chiede un plesso, il server ne
+    // sceglie un altro e non lo dice a nessuno» — sopravvissuto sul ramo accanto,
+    // dentro la stessa funzione. Due porte per la stessa stanza, chiuse a chiave
+    // diversa.
     const { supabase } = client()
     const r = await resolveScuolaScrittura(richiesta(SEDE_B), supabase, SEGRETERIA_A)
-    expect(r.response).toBeUndefined()
-    expect(r.scuolaId).toBe(SEDE_A)
+    expect(r.scuolaId).toBeUndefined()
+    expect(await esito(r.response)).toEqual({ status: 403, error: 'Sede non accessibile' })
   })
 })
 
@@ -560,6 +607,212 @@ describe('resolveScuolaScrittura — la scrittura, non lo status', () => {
     const r = await handlerCheScrive(supabase, richiesta(), ADMIN_TRE_SEDI)
     expect(r.status).toBe(400)
     expect(dati[TABELLA]).toBeUndefined()
+  })
+})
+
+// =============================================================================
+// W2 — L'UUID DI UNA SEDE NON È CASE-SENSITIVE, `Set.has` SÌ.
+//
+// In Postgres `uuid` è un tipo, non una stringa: 'AAAAAAAA-…' e 'aaaaaaaa-…'
+// sono LO STESSO valore, e `where scuola_id = 'AAAAAAAA-…'` trova la riga. In
+// JavaScript `new Set(['aaaaaaaa-…']).has('AAAAAAAA-…')` è `false`.
+//
+// Misurato dal collaudo sicurezza su dati veri: la segreteria di Aversa che
+// dichiara LA PROPRIA sede in maiuscolo riceve **403 «Sede non accessibile»** e
+// accende il warn `sede-scrittura-fuori-scope`. Doppio danno, e il secondo è
+// quello che dura: una scrittura legittima negata (visibile, ci si accorge) e un
+// contatore nato come SEGNALE DI SICUREZZA riempito di falsi positivi (invisibile
+// — e il giorno che qualcuno prova davvero a scrivere in un'altra sede, il
+// segnale vero è dentro il rumore).
+//
+// La normalizzazione è un CONFRONTO, non un permesso: l'ultimo test di questo
+// blocco è il controllo negativo che lo dimostra.
+// =============================================================================
+
+/** La stessa sede dell'utente, come potrebbe arrivare da un client qualsiasi. */
+const SEDE_A_MAIUSCOLO = SEDE_A.toUpperCase()
+const SEDE_B_MAIUSCOLO = SEDE_B.toUpperCase()
+
+describe('resolveScuolaScrittura — maiuscole e minuscole nello stesso uuid', () => {
+  it('la PROPRIA sede dichiarata in MAIUSCOLO è accettata', async () => {
+    const { supabase } = client()
+    const r = await resolveScuolaScrittura(richiesta(), supabase, SEGRETERIA_A, SEDE_A_MAIUSCOLO)
+    expect(r.response).toBeUndefined()
+    // Non basta «non ha negato»: torna la forma CANONICA, quella del database.
+    // Chi riceve questo valore ci fa una `insert` e poi ci confronta le righe.
+    expect(r.scuolaId).toBe(SEDE_A)
+  })
+
+  it('e non sporca il contatore di sicurezza: nessun warn', async () => {
+    const { supabase } = client()
+    await resolveScuolaScrittura(richiesta(), supabase, SEGRETERIA_A, SEDE_A_MAIUSCOLO)
+    expect(tipiLoggati('warn')).toEqual([])
+  })
+
+  it('la riga scritta porta l\'uuid canonico, non la stringa arrivata dal client', async () => {
+    const { supabase, dati, scritture } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), SEGRETERIA_A, SEDE_A_MAIUSCOLO)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA]).toHaveLength(1)
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_A })
+    expect(scritture[0].valori[0]).toMatchObject({ scuola_id: SEDE_A })
+  })
+
+  it('vale anche per il cookie del SedeSelector, non solo per il body', async () => {
+    const { supabase } = client()
+    const r = await resolveScuolaScrittura(richiesta(SEDE_B_MAIUSCOLO), supabase, ADMIN_TRE_SEDI)
+    expect(r.response).toBeUndefined()
+    expect(r.scuolaId).toBe(SEDE_B)
+  })
+
+  it('CONTROLLO NEGATIVO: una sede ALTRUI in maiuscolo resta un 403', async () => {
+    // Senza questo caso, «normalizza e confronta» sarebbe verde anche con un
+    // resolver che accetta qualunque stringa gli venga data.
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), SEGRETERIA_A, SEDE_B_MAIUSCOLO)
+    expect(r).toEqual({ status: 403, error: 'Sede non accessibile' })
+    expect(dati[TABELLA]).toBeUndefined()
+    expect(tipiLoggati('warn')).toEqual(['sede-scrittura-fuori-scope'])
+  })
+})
+
+// =============================================================================
+// W1 — IL COOKIE È MANOMETTIBILE ESATTAMENTE COME IL BODY.
+//
+// `sedi_attive` non è httpOnly (lo dichiara `sede-context.tsx`: «il cookie NON è
+// un segreto, il server lo ri-valida SEMPRE»). Ri-validarlo però non voleva dire
+// negare: le sedi non accessibili venivano SCARTATE in silenzio, e la funzione
+// tirava dritto fino a «l'unica sede accessibile».
+//
+// Misurato: `POST /api/tasks` come segreteria di Aversa con
+// `Cookie: sedi_attive=<uuid di Cesa>` → **201, riga su Aversa**, e in `app_log`
+// nessun `sedi-attive-non-accessibili` (che invece in LETTURA compare
+// regolarmente). Non è una fuga di dati — la riga resta nel plesso di chi scrive
+// — ma è il difetto che il ciclo precedente ha appena chiuso sul ramo della sede
+// dichiarata, sopravvissuto sul ramo del cookie.
+//
+// Da oggi le due porte sono chiuse con la stessa chiave: se il client indica
+// SOLO sedi che non sono sue, si nega — e si lascia la riga.
+// =============================================================================
+
+describe('resolveScuolaScrittura — il cookie manomesso', () => {
+  it('mono-sede: cookie con sole sedi altrui ⇒ 403 e NESSUNA riga scritta', async () => {
+    const { supabase, dati, scritture } = client()
+    const r = await handlerCheScrive(supabase, richiesta(SEDE_B), SEGRETERIA_A)
+    expect(r).toEqual({ status: 403, error: 'Sede non accessibile' })
+    // La prova che conta è questa, non lo status: prima la riga si scriveva —
+    // su Aversa — e la risposta era 201.
+    expect(dati[TABELLA]).toBeUndefined()
+    expect(scritture).toEqual([])
+  })
+
+  it('il diniego lascia una riga `warn`, distinta da quella della sede dichiarata', async () => {
+    const { supabase } = client()
+    await resolveScuolaScrittura(richiesta(SEDE_B), supabase, SEGRETERIA_A)
+    expect(tipiLoggati('warn')).toEqual(['sede-scrittura-cookie-fuori-scope'])
+    const riga = logEvento.mock.calls.find(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'sede-scrittura-cookie-fuori-scope',
+    )
+    expect(riga?.[2]).toMatchObject({
+      azione: 'resolveScuolaScrittura',
+      utente: ID_SEGRETERIA,
+      ruolo: 'segreteria',
+      selezionate: 1,
+      accessibili: 1,
+      // Come per la sede dichiarata: la riga deve NOMINARE la sede rifiutata,
+      // altrimenti resta solo `sede=<la primaria di chi chiama>` e accusa la
+      // sede sbagliata.
+      sede_richiesta: SEDE_B,
+    })
+  })
+
+  it('multi-sede: è un 403, non il 400 dell\'ambiguità', async () => {
+    // Due dinieghi che vanno tenuti distinti: 400 è «non mi hai detto dove»
+    // (l'operatore deve scegliere), 403 è «mi hai detto sedi che non sono tue».
+    // Dentro il contatore dell'ambiguità, il secondo — che è un segnale di
+    // sicurezza — sparirebbe.
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(SEDE_E2E), ADMIN_TRE_SEDI)
+    expect(r).toEqual({ status: 403, error: 'Sede non accessibile' })
+    expect(dati[TABELLA]).toBeUndefined()
+    expect(tipiLoggati('warn')).toEqual(['sede-scrittura-cookie-fuori-scope'])
+  })
+
+  it('più sedi altrui nel cookie: 403, e la riga dice quante erano', async () => {
+    const { supabase } = client()
+    await resolveScuolaScrittura(richiesta(`${SEDE_B},${SEDE_C}`), supabase, SEGRETERIA_A)
+    const riga = logEvento.mock.calls.find(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'sede-scrittura-cookie-fuori-scope',
+    )
+    expect(riga?.[2]).toMatchObject({ selezionate: 2, accessibili: 1 })
+    // Con più sedi non c'è UNA sede richiesta: il campo non si inventa. Due
+    // uuid concatenati non sono un uuid, e uscirebbero comunque redatti.
+    expect(riga?.[2]).toMatchObject({ sede_richiesta: undefined })
+  })
+
+  it('CONTROLLO POSITIVO: cookie MISTO ⇒ 201 sulla sola sede accessibile', async () => {
+    // Senza questo caso il blocco sarebbe verde anche con un resolver che nega
+    // ogni volta che vede un cookie: il cookie RESTRINGE, e restringere resta
+    // il suo mestiere.
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(`${SEDE_A},${SEDE_B}`), SEGRETERIA_A)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_A })
+  })
+
+  it('CONTROLLO POSITIVO: nessun cookie ⇒ il mono-sede scrive sulla propria, senza log', async () => {
+    // Il caso di 56 utenti su 57. Se questo diventasse un 403, il fix avrebbe
+    // spento il prodotto per chiudere un warning.
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(), SEGRETERIA_A)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_A })
+    expect(tipiLoggati('warn')).toEqual([])
+  })
+
+  it('CONTROLLO POSITIVO: cookie VUOTO ⇒ trattato come assente, non come manomesso', async () => {
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(''), SEGRETERIA_A)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_A })
+    expect(tipiLoggati('warn')).toEqual([])
+  })
+
+  it('il campo `sede_richiesta` sopravvive alla redazione, e non porta con sé nient\'altro', async () => {
+    // NON è un test di `redact`: è la verifica della PREMESSA su cui poggia il
+    // campo nuovo. `redact` è a LISTA BIANCA per chiave, e `sede_richiesta` in
+    // lista bianca non c'è: passa solo perché il VALORE è un uuid
+    // (`stringaAutoDescrittiva`). Se domani la sede arrivasse in un'altra forma
+    // — un nome, un codice — quel campo uscirebbe redatto e la riga tornerebbe
+    // muta esattamente com'era. Meglio saperlo da un test rosso che da un
+    // incidente in cui il log non dice quale sede è stata rifiutata.
+    //
+    // E la seconda metà è la garanzia di privacy: nella riga PERSISTITA di
+    // questo evento non deve finire niente che riguardi una persona.
+    const { supabase } = client()
+    await resolveScuolaScrittura(richiesta(), supabase, SEGRETERIA_A, SEDE_B)
+    const campi = logEvento.mock.calls.find(
+      (c) => (c[2] as { tipo?: string })?.tipo === 'sede-scrittura-fuori-scope',
+    )?.[2] as Record<string, unknown>
+    const persistita = redact(campi) as Record<string, unknown>
+    expect(persistita.sede_richiesta).toBe(SEDE_B)
+    // Controllo che la lista bianca stia ancora facendo il suo mestiere: una
+    // chiave qualsiasi con dentro un nome NON esce in chiaro.
+    expect(redact({ ...campi, nota: 'Mario Rossi' })).toMatchObject({
+      nota: '[redatto:str/11]',
+    })
+    expect(Object.keys(persistita).sort()).toEqual(
+      ['accessibili', 'azione', 'ruolo', 'sede_richiesta', 'tipo', 'utente'].sort(),
+    )
+  })
+
+  it('la sede DICHIARATA e valida batte un cookie manomesso (nessun 403 di rimbalzo)', async () => {
+    // Il cookie è una preferenza di visualizzazione stantìa; il body è
+    // un'istruzione esplicita. Se l'istruzione è legittima, si esegue.
+    const { supabase, dati } = client()
+    const r = await handlerCheScrive(supabase, richiesta(SEDE_E2E), ADMIN_TRE_SEDI, SEDE_B)
+    expect(r).toEqual({ status: 201 })
+    expect(dati[TABELLA][0]).toMatchObject({ scuola_id: SEDE_B })
   })
 })
 

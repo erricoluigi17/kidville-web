@@ -226,10 +226,14 @@ function TeacherDashboardInner() {
                 <span className={`flex h-7 w-7 items-center justify-center rounded-full ${on ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream-dark text-kidville-green'}`}>
                   <Users size={15} />
                 </span>
+                {/* Nome classe e nome sede sono la COPPIA che identifica dove
+                    finiscono presenze, diario e voti: `muted` (2,27:1 su crema)
+                    era il testo meno leggibile della schermata. Token `sub`
+                    (5,82:1) e sede a 11px invece di 10. */}
                 <span className="flex min-w-0 flex-col items-start">
-                  <span className={`font-barlow text-sm font-extrabold uppercase leading-none ${on ? 'text-kidville-green' : 'text-kidville-muted'}`}>{s.name}</span>
+                  <span className={`font-barlow text-sm font-extrabold uppercase leading-none ${on ? 'text-kidville-green' : 'text-kidville-sub'}`}>{s.name}</span>
                   {conSede && (
-                    <span className="mt-0.5 max-w-[9rem] truncate font-maven text-[10px] leading-none text-kidville-muted">{s.scuolaNome}</span>
+                    <span className="mt-0.5 max-w-[9rem] truncate font-maven text-[11px] leading-none text-kidville-sub">{s.scuolaNome}</span>
                   )}
                 </span>
               </button>

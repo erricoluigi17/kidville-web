@@ -6,15 +6,16 @@
 // diretta né «Tutte le sedi»). Il client invia SOLO il JSON del rich-text: HTML e
 // sanificazione sono di competenza del server. Degrada su ambiente non migrato.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSONContent } from '@tiptap/react';
-import { Save, Send, CalendarClock, Megaphone, ExternalLink, ShieldCheck, CheckCircle2, X } from 'lucide-react';
+import { Save, Send, CalendarClock, Megaphone, ExternalLink, ShieldCheck, CheckCircle2, X, Users } from 'lucide-react';
 import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, SELECT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
 import { parseInstagramUrl, buildEmbedUrl } from '@/lib/news/instagram';
+import { contieneFoto } from '@/lib/news/foto-nel-post';
 import type { NewsCategoria, NewsGrado, NewsPost, NewsScope, NewsStato, NewsTipo } from '@/lib/news/tipi';
 import { NewsRichTextEditor } from './NewsRichTextEditor';
 import { NewsMediaUploader } from './NewsMediaUploader';
@@ -57,7 +58,23 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
   const [tuttiSedi, setTuttiSedi] = useState(inModifica ? postIniziale?.scuola_id === null : false);
   const [inviaNotifica, setInviaNotifica] = useState(postIniziale?.invia_notifica ?? true);
   const [programmataIl, setProgrammataIl] = useState('');
-  const [consensoFoto, setConsensoFoto] = useState(false);
+
+  // ── Dichiarazione dei bambini ritratti (privacy F4) ────────────────────────
+  // Fino al 2026-07-31 qui c'era `const [consensoFoto, setConsensoFoto] = useState(false)`:
+  // una spunta libera che non usciva mai dal browser. Non arrivava al server, non
+  // veniva archiviata, non consultava nessun dato — quindi non esisteva alcuna
+  // prova di chi avesse dichiarato cosa (art. 5 §2 e art. 7 §1 GDPR), e il
+  // consenso «sito» raccolto da 141 famiglie non veniva letto da nessuno.
+  // Ora l'operatore dichiara CHI è ritratto (eventualmente «nessuno») e il server
+  // verifica il consenso di ciascun bambino prima di scrivere la riga.
+  const [dichiarazione, setDichiarazione] = useState<'nessuno' | 'elenco' | null>(
+    inModifica && Array.isArray(postIniziale?.bambini_ritratti)
+      ? (postIniziale.bambini_ritratti.length > 0 ? 'elenco' : 'nessuno')
+      : null,
+  );
+  const [bambiniRitratti, setBambiniRitratti] = useState<{ id: string; nome: string }[]>([]);
+  const [sezioneRitratti, setSezioneRitratti] = useState('');
+  const [alunniSezione, setAlunniSezione] = useState<{ id: string; nome: string }[]>([]);
 
   const [categorie, setCategorie] = useState<NewsCategoria[]>([]);
   const [classiDisponibili, setClassiDisponibili] = useState<string[]>([]);
@@ -102,8 +119,46 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
     }
   }, [userId, modalita]);
 
+  // Alunni della sezione scelta per la dichiarazione dei ritratti. La rotta è
+  // già scopata per sede e per ruolo (`diary/students`): il server rifiuta da sé
+  // una sezione che non è dell'operatore, qui non si «indovina» niente.
+  // Nessun `setState` prima del primo `await` (regola react-hooks
+  // set-state-in-effect): lo svuotamento al cambio sezione lo fa l'`onChange`
+  // del <select>, che è un gestore d'evento, non un effetto.
+  const caricaAlunniSezione = useCallback(async () => {
+    try {
+      if (!sezioneRitratti) return;
+      const qs = new URLSearchParams({ sezione: sezioneRitratti, scuola_id: scuolaId });
+      const res = await fetch(`/api/diary/students?${qs.toString()}`).catch(() => null);
+      if (!res || !res.ok) { setAlunniSezione([]); return; }
+      const j = (await res.json().catch(() => null)) as { students?: { id: string; nome?: string; cognome?: string }[] } | { id: string; nome?: string; cognome?: string }[] | null;
+      const righe = Array.isArray(j) ? j : (j?.students ?? []);
+      setAlunniSezione(righe.map((a) => ({ id: a.id, nome: `${a.nome ?? ''} ${a.cognome ?? ''}`.trim() || a.id })));
+    } finally {
+      /* degrado silenzioso: senza elenco l'operatore non può dichiarare i
+         ritratti, e senza dichiarazione il caricamento della foto resta chiuso */
+    }
+  }, [sezioneRitratti, scuolaId]);
+
   useEffect(() => { void caricaCategorie(); }, [caricaCategorie]);
   useEffect(() => { void caricaClassi(); }, [caricaClassi]);
+  useEffect(() => { void caricaAlunniSezione(); }, [caricaAlunniSezione]);
+
+  // Il post porta una foto? Stessa funzione che usa il server (`contieneFoto`):
+  // se le due risposte divergessero, l'operatore vedrebbe un salvataggio
+  // rifiutato senza capire perché.
+  const postHaFoto = useMemo(
+    () => tipo !== 'instagram' && contieneFoto(copertinaUrl, contenutoJson),
+    [tipo, copertinaUrl, contenutoJson],
+  );
+  const dichiarazioneResa =
+    dichiarazione === 'nessuno' || (dichiarazione === 'elenco' && bambiniRitratti.length > 0);
+
+  const alternaBambino = (a: { id: string; nome: string }) => {
+    setBambiniRitratti((prec) =>
+      prec.some((b) => b.id === a.id) ? prec.filter((b) => b.id !== a.id) : [...prec, a],
+    );
+  };
 
   const verificaIg = async () => {
     const sc = parseInstagramUrl(instagramUrl);
@@ -136,6 +191,9 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
     if (!titolo.trim()) { setErrore(t('editorTitoloObbligatorio')); return; }
     if (tipo === 'instagram' && !parseInstagramUrl(instagramUrl)) { setErrore(t('editorIgInserisciUrl')); return; }
     if (!inModifica && stato === 'programmata' && !programmataIl) { setErrore(t('editorScegliData')); return; }
+    // Il controllo VERO è del server (che verifica anche il consenso di ciascun
+    // bambino): questo evita solo all'operatore un rifiuto senza spiegazione.
+    if (postHaFoto && !dichiarazioneResa) { setErrore(t('editorRitrattiObbligatoria')); return; }
     setErrore(null);
     setSalvato(false);
     setSalvando(true);
@@ -151,6 +209,12 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         invia_notifica: inviaNotifica,
         scuola_id: canAllSedi && tuttiSedi ? null : scuolaId,
       };
+      // La dichiarazione viaggia SOLO se è stata resa: l'assenza del campo è
+      // ciò che fa rispondere 422 al server. Mandare `[]` «per sicurezza»
+      // sarebbe dichiarare al posto dell'operatore — cioè il difetto di prima.
+      if (dichiarazioneResa) {
+        body.bambini_ritratti = dichiarazione === 'nessuno' ? [] : bambiniRitratti.map((b) => b.id);
+      }
       if (tipo === 'instagram') body.instagram_url = instagramUrl.trim();
       else body.contenuto_json = contenutoJson;
 
@@ -169,9 +233,12 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       }
       setSalvato(true);
       if (!inModifica) {
-        // Reset del form dopo una creazione riuscita.
+        // Reset del form dopo una creazione riuscita. La dichiarazione si azzera
+        // con tutto il resto: vale per QUEL post e per quelle foto, non per il
+        // prossimo — ereditarla sarebbe di nuovo una dichiarazione mai resa.
         setTitolo(''); setContenutoJson(null); setCopertinaUrl(''); setInstagramUrl('');
         setIgEsito(null); setProgrammataIl('');
+        setDichiarazione(null); setBambiniRitratti([]); setSezioneRitratti('');
       }
       onSalvato?.();
     } catch (err) {
@@ -226,6 +293,99 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         </select>
       </div>
 
+      {/* Bambini ritratti — la dichiarazione viene PRIMA della foto, non dopo */}
+      {tipo !== 'instagram' && (
+        <fieldset className="rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/40 p-4">
+          <legend className="inline-flex items-center gap-1.5 px-1 font-barlow text-sm font-black uppercase tracking-wide text-kidville-green">
+            <Users size={14} strokeWidth={2.5} /> {t('editorRitrattiTitolo')}
+          </legend>
+          <p className="font-maven text-xs text-kidville-sub">{t('editorRitrattiSpiegazione')}</p>
+
+          <div className="mt-3 space-y-2">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="radio"
+                name="news-ritratti"
+                checked={dichiarazione === 'nessuno'}
+                onChange={() => { setDichiarazione('nessuno'); setBambiniRitratti([]); }}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-kidville-green"
+              />
+              <span className="font-maven text-sm text-kidville-ink">{t('editorRitrattiNessuno')}</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="radio"
+                name="news-ritratti"
+                checked={dichiarazione === 'elenco'}
+                onChange={() => setDichiarazione('elenco')}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-kidville-green"
+              />
+              <span className="font-maven text-sm text-kidville-ink">{t('editorRitrattiElenco')}</span>
+            </label>
+          </div>
+
+          {dichiarazione === 'elenco' && (
+            <div className="mt-3 space-y-3">
+              <div>
+                <label htmlFor="news-ritratti-sezione" className={labelCls}>{t('editorRitrattiSezione')}</label>
+                <select
+                  id="news-ritratti-sezione"
+                  value={sezioneRitratti}
+                  onChange={(e) => { setAlunniSezione([]); setSezioneRitratti(e.target.value); }}
+                  className={SELECT}
+                >
+                  <option value="">{t('editorRitrattiScegliSezione')}</option>
+                  {classiDisponibili.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              {alunniSezione.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {alunniSezione.map((a) => {
+                    const on = bambiniRitratti.some((b) => b.id === a.id);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => alternaBambino(a)}
+                        aria-pressed={on}
+                        className={cx(
+                          'rounded-pill px-3 py-1.5 font-maven text-[13px] font-bold transition-colors',
+                          'outline-none focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1',
+                          on ? 'bg-kidville-green text-kidville-white' : 'border-[1.5px] border-kidville-line bg-kidville-white text-kidville-green hover:border-kidville-green',
+                        )}
+                      >
+                        {a.nome}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {bambiniRitratti.length === 0 ? (
+                <p className="font-maven text-xs text-kidville-sub">{t('editorRitrattiSceltiVuoto')}</p>
+              ) : (
+                <ul className="flex flex-wrap gap-2">
+                  {bambiniRitratti.map((b) => (
+                    <li key={b.id} className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-[13px] font-bold text-kidville-white">
+                      {b.nome}
+                      <button
+                        type="button"
+                        onClick={() => alternaBambino(b)}
+                        aria-label={t('editorRitrattiRimuovi', { nome: b.nome })}
+                        className="rounded-full p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-kidville-white"
+                      >
+                        <X size={13} strokeWidth={2.5} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </fieldset>
+      )}
+
       {/* Copertina */}
       <div>
         <span className={labelCls}>{t('editorCopertina')}</span>
@@ -236,7 +396,22 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
             <button type="button" onClick={() => setCopertinaUrl('')} className={BTN_SECONDARY}><X size={14} /> {t('editorRimuovi')}</button>
           </div>
         ) : (
-          <NewsMediaUploader userId={userId} consensoFoto={consensoFoto} onConsensoFoto={() => setConsensoFoto(true)} onUploaded={setCopertinaUrl} label={t('editorCaricaCopertina')} />
+          <>
+            {/* La foto non si carica prima della dichiarazione: il bucket `news`
+                è pubblico, quindi il file è raggiungibile da chiunque dal momento
+                stesso dell'upload, prima ancora che il post esista. */}
+            <NewsMediaUploader
+              userId={userId}
+              consensoFoto={dichiarazioneResa}
+              onConsensoFoto={() => setErrore(t('editorRitrattiObbligatoria'))}
+              onUploaded={setCopertinaUrl}
+              label={t('editorCaricaCopertina')}
+              disabled={!dichiarazioneResa}
+            />
+            {!dichiarazioneResa && (
+              <p className="mt-2 font-maven text-xs text-kidville-sub">{t('editorRitrattiObbligatoria')}</p>
+            )}
+          </>
         )}
       </div>
 
@@ -275,8 +450,8 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
             userId={userId}
             value={contenutoJson}
             onChange={setContenutoJson}
-            consensoFoto={consensoFoto}
-            onConsensoFoto={() => setConsensoFoto(true)}
+            consensoFoto={dichiarazioneResa}
+            onConsensoFoto={() => setErrore(t('editorRitrattiObbligatoria'))}
             placeholder={t('editorContenutoPlaceholder')}
           />
         </div>

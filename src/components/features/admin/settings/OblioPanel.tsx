@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
-import { ShieldAlert, Loader2, Trash2, AlertTriangle, UserX, MapPin } from 'lucide-react';
+import { ShieldAlert, Loader2, Trash2, AlertTriangle, UserX } from 'lucide-react';
+import { SedeIcon } from '@/components/ui/SedeIcon';
 import { cx } from '@/lib/ui/cx';
 import { useSediAttive } from '@/lib/context/sede-context';
 
@@ -131,7 +132,7 @@ export function OblioPanel({ userId }: { userId: string }) {
                   </span>
                   {piuSedi && (
                     <span className="flex items-center gap-1 font-maven text-[11.5px] font-semibold text-kidville-green">
-                      <MapPin size={12} className="shrink-0" /> {nomeSede(c.scuola_id)}
+                      <SedeIcon size={12} className="shrink-0" /> {nomeSede(c.scuola_id)}
                     </span>
                   )}
                 </button>
@@ -158,7 +159,7 @@ export function OblioPanel({ userId }: { userId: string }) {
                     esecuzione: è l'ultimo punto in cui l'operazione si può fermare. */}
                 {piuSedi && (
                   <p className="mb-4 flex items-center gap-1.5 font-maven text-sm text-kidville-ink/80">
-                    <MapPin size={14} className="shrink-0 text-kidville-green" /> {t('oblioSede')}{' '}
+                    <SedeIcon size={14} className="shrink-0 text-kidville-green" /> {t('oblioSede')}{' '}
                     <strong>{nomeSede(target.scuola_id)}</strong>
                   </p>
                 )}

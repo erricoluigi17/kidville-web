@@ -145,7 +145,8 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>fotografie e video</strong> del minore, solo se espressamente autorizzati
-                dai genitori;
+                dai genitori e <strong>solo sul canale autorizzato</strong> (galleria riservata,
+                sito web pubblico, canali social: vedi &laquo;Base giuridica&raquo;);
               </li>
               <li>
                 dati amministrativi e contabili: rette dovute, pagamenti registrati, metodo di
@@ -215,10 +216,31 @@ export default function PrivacyPage() {
                 GDPR);
               </li>
               <li>
-                per la <strong>pubblicazione di fotografie e video</strong> del minore nella
-                galleria di classe, il <strong>consenso</strong> dei genitori o degli esercenti la
-                responsabilità genitoriale (art. 6, par. 1, lett. a GDPR), specifico per ciascun
-                ambito di utilizzo e revocabile in qualsiasi momento;
+                per la <strong>pubblicazione di fotografie e video</strong> del minore, il{' '}
+                <strong>consenso</strong> dei genitori o degli esercenti la responsabilità
+                genitoriale (art. 6, par. 1, lett. a GDPR), <strong>distinto per ciascun canale</strong>{' '}
+                e revocabile in qualsiasi momento. I canali sono tre, e il consenso dato per uno{' '}
+                <strong>non vale per gli altri</strong>:
+                <ul className={UL}>
+                  <li>
+                    la <strong>galleria riservata</strong> dell&rsquo;applicazione, visibile alle
+                    sole famiglie della sezione del minore, dopo aver effettuato l&rsquo;accesso;
+                  </li>
+                  <li>
+                    il <strong>sito web della Scuola</strong> (sezione &laquo;News&raquo;): è un
+                    canale <strong>pubblico</strong>, consultabile{' '}
+                    <strong>da chiunque, senza alcun accesso</strong>, e i contenuti pubblicati
+                    possono essere indicizzati dai motori di ricerca;
+                  </li>
+                  <li>
+                    i <strong>canali social</strong> della Scuola: la pubblicazione avviene su
+                    piattaforme di terzi, fuori dai sistemi della Scuola, e ai loro contenuti si
+                    applicano anche le condizioni di quelle piattaforme.
+                  </li>
+                </ul>
+                Senza il consenso relativo a un canale, su quel canale{' '}
+                <strong>non viene pubblicata alcuna immagine del minore</strong>; il rifiuto di un
+                canale non pregiudica gli altri.
               </li>
               <li>
                 per i <strong>log tecnici</strong> e le attività di sicurezza e diagnosi, il{' '}
@@ -248,7 +270,9 @@ export default function PrivacyPage() {
               È invece <strong>facoltativo</strong> il conferimento delle fotografie e dei video:
               il rifiuto o la revoca del consenso non pregiudicano in alcun modo
               l&rsquo;iscrizione e la fruizione del servizio, ma impediscono la pubblicazione delle
-              immagini del minore nella galleria della sezione.
+              immagini del minore sul canale rifiutato. I consensi sono{' '}
+              <strong>tre e separati</strong> — galleria riservata, sito web pubblico, canali
+              social — e si possono accogliere o rifiutare uno per uno.
             </p>
           </section>
 

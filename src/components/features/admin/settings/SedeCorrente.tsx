@@ -1,7 +1,7 @@
 'use client';
 
-import { MapPin } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { SedeIcon } from '@/components/ui/SedeIcon';
 import { useSediAttive } from '@/lib/context/sede-context';
 
 /**
@@ -23,7 +23,7 @@ export function SedeCorrente({ scuolaId }: { scuolaId: string }) {
     const nome = sedi.find((s) => s.id === scuolaId)?.nome ?? t('sedeSconosciuta');
     return (
         <p className="mb-4 flex items-center gap-1.5 font-maven text-[13px] text-kidville-sub">
-            <MapPin size={14} className="shrink-0 text-kidville-green" aria-hidden="true" />
+            <SedeIcon size={14} className="shrink-0 text-kidville-green" />
             {t('sedeInConfigurazione')} <strong className="text-kidville-green">{nome}</strong>
         </p>
     );

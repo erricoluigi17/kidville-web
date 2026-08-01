@@ -218,7 +218,7 @@ function AdminAvvisiInner() {
             />
 
             {erroreLista && (
-                <div role="alert" className="mb-4 flex items-start gap-2 rounded-card bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
+                <div role="alert" className="mb-4 flex items-start gap-2 rounded-card bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error-strong">
                     <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
                     <span>{erroreLista}</span>
                 </div>
@@ -226,19 +226,35 @@ function AdminAvvisiInner() {
 
             <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:max-w-[560px]">
                 <StatCard icon={Bell} label={t('avvisiStatPubblicati')} value={loading ? '…' : avvisi.length} />
-                <StatCard icon={ClipboardList} label={t('avvisiStatConAdesione')} value={loading ? '…' : adesioni} tone="yellow" />
+                {/* Il numero di una KPI è INFORMAZIONE, non decorazione: il
+                    giallo del brand (`--color-kidville-yellow`) su bianco è
+                    1,61:1 (a11y F10), sotto soglia perfino per il «testo
+                    grande» (3:1). Il tono resta `yellow` perché è
+                    il linguaggio di accento della card — bordo e chip icona —
+                    ma l'inchiostro del numero passa al verde (6,51:1).
+                    NOTA per chi verrà dopo: la radice vera è `TONE.yellow.text`
+                    in `src/components/ui/cockpit.tsx`, che vale per TUTTE le
+                    StatCard gialle dell'admin (compiti, armadietto, protocolli).
+                    In questo ciclo `cockpit.tsx` è di un altro step e non si
+                    tocca: qui si chiude il punto d'uso misurato dal collaudo. */}
+                <StatCard
+                    icon={ClipboardList}
+                    label={t('avvisiStatConAdesione')}
+                    value={<span className="text-kidville-green">{loading ? '…' : adesioni}</span>}
+                    tone="yellow"
+                />
             </div>
 
             {loading ? (
                 <div className="flex items-center gap-3 rounded-card bg-kidville-white p-6 shadow-sm">
                     <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />
-                    <p className="font-maven text-sm text-kidville-muted">{t('avvisiCaricamento')}</p>
+                    <p className="font-maven text-sm text-kidville-sub">{t('avvisiCaricamento')}</p>
                 </div>
             ) : avvisi.length === 0 ? (
                 <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
                     <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-cream text-3xl">📢</div>
                     <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('avvisiVuotoTitolo')}</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">{t('avvisiVuotoDescrizione')}</p>
+                    <p className="font-maven mt-1 text-sm text-kidville-sub">{t('avvisiVuotoDescrizione')}</p>
                 </div>
             ) : (
                 <div className="rounded-card bg-kidville-white p-4 shadow-sm">
@@ -260,12 +276,16 @@ function AdminAvvisiInner() {
                                     <tr key={a.id} className={`${TROW} cursor-pointer`} onClick={() => openDetail(a.id)}>
                                         <td className={TD}>
                                             <span className="font-maven block max-w-[360px] truncate text-sm font-semibold text-kidville-ink">{a.titolo}</span>
-                                            <span className="font-maven block text-xs text-kidville-muted">
+                                            <span className="font-maven block text-xs text-kidville-sub">
                                                 {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {new Date(a.created_at).toLocaleDateString(locale)}
                                             </span>
                                         </td>
                                         <td className={TD}>
-                                            <span className={`rounded-pill px-2.5 py-1 font-maven text-[11px] font-bold ${a.tipo === 'adesione' ? 'bg-kidville-info-soft text-kidville-info' : 'bg-kidville-green-soft text-kidville-green'}`}>
+                                            {/* `info` su `info-soft` è 4,20:1 — sotto AA per un
+                                                testo di 11px. Il token forte esiste già ed è
+                                                documentato per questo accoppiamento: 6,74:1.
+                                                (`green` su `green-soft` è 5,48:1: resta com'è.) */}
+                                            <span className={`rounded-pill px-2.5 py-1 font-maven text-[11px] font-bold ${a.tipo === 'adesione' ? 'bg-kidville-info-soft text-kidville-info-strong' : 'bg-kidville-green-soft text-kidville-green'}`}>
                                                 {a.tipo === 'adesione' ? t('avvisiTipoAdesione') : t('avvisiTipoPresaVisione')}
                                             </span>
                                         </td>
@@ -282,7 +302,7 @@ function AdminAvvisiInner() {
                                                     );
                                                 })}
                                         </td>
-                                        <td className={`${TD} font-maven text-sm text-kidville-muted`}>
+                                        <td className={`${TD} font-maven text-sm text-kidville-sub`}>
                                             {a.scadenza ? new Date(a.scadenza).toLocaleDateString(locale) : '—'}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>{a.stats?.letti ?? 0}</td>
@@ -339,7 +359,7 @@ function AdminAvvisiInner() {
 
 function AvvisiFallback() {
     const t = useTranslations('adminComunicazioni');
-    return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+    return <div className="p-8 font-maven text-kidville-sub">{t('caricamento')}</div>;
 }
 
 export default function AdminAvvisiPage() {

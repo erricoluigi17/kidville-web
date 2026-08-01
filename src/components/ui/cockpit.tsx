@@ -9,12 +9,13 @@
  * Colori-di-stato dinamici (grado/materia o accenti per-dato) passano via prop
  * `tone` mappata sui token semantici (green/info/warn/error/success/neutral/yellow).
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type { LucideIcon } from 'lucide-react';
 import { Search, X, ChevronDown, Check } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
 import { SHADOW_CARD, SHADOW_FLOAT } from '@/components/ui/Card';
+import { SedeIcon } from '@/components/ui/SedeIcon';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { TONE_HEX, TRACK } from '@/lib/ui/chart-colors';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -270,13 +271,58 @@ export const TH = 'whitespace-nowrap px-3 pb-2.5 text-left font-barlow text-[12p
 export const TD = 'border-t border-kidville-line px-3 py-2.5 align-middle';
 export const TROW = 'transition-colors hover:bg-kidville-cream';
 
-/** Drawer / slide-over destro con scrim. */
+/**
+ * Drawer / slide-over destro con scrim.
+ *
+ * NON PASSA DALLA PRIMITIVA `Modal`, ed è una scelta, non una dimenticanza:
+ * `Modal` centra il proprio contenuto (`flex items-center justify-center p-4`) e
+ * un pannello ancorato a destra e alto quanto lo schermo non ci entra senza
+ * cambiare la primitiva stessa. Conseguenza da tenere presente: il Drawer NON ha
+ * il focus-trap, l'inerzia dello sfondo né il tasto Indietro di Android che la
+ * primitiva ha ricevuto il 2026-07-31. Chi unificherà le due cose deve lavorare
+ * su `Modal`, non qui.
+ *
+ * Quello che si può avere senza la primitiva c'è: un NOME per il dialogo (il
+ * titolo era un `<h2>` scollegato, e un `role="dialog"` senza nome non si
+ * annuncia), la chiusura con Escape (prima si usciva solo col mouse) e lo scrim
+ * fuori dall'albero di accessibilità.
+ */
 export function Drawer({ open, onClose, title, subtitle, children, footer, width = 460 }: { open: boolean; onClose: () => void; title?: React.ReactNode; subtitle?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; width?: number }) {
   const t = useTranslations('shared');
+  const idBase = useId();
+  const titoloId = `${idBase}-drawer-titolo`;
+  const contenitoreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Solo il dialogo PIÙ INTERNO reagisce. `stopPropagation()` non basterebbe:
+      // i listener stanno tutti su `document`, cioè sullo stesso target, e lì si
+      // ferma solo la risalita, non i vicini. Senza questa guardia un Escape
+      // dentro una modale aperta DAL drawer chiuderebbe tutti e due — che è il
+      // motivo per cui `Modal` tiene uno stack.
+      const mio = contenitoreRef.current;
+      if (!mio) return;
+      const sopra = Array.from(
+        document.querySelectorAll('[role="dialog"][aria-modal="true"]'),
+      ).filter((d) => d !== mio && !d.contains(mio));
+      if (sopra.length > 0) return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[95]" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-kidville-ink/30 backdrop-blur-[1px]" onClick={onClose} />
+    // z-[115]: sopra tutto il chrome del cockpit (topbar e sidebar `z-[105]`,
+    // foglio «Menu» `z-[110]`) e sotto i modali della primitiva (`z-[120]`), che
+    // possono aprirsi DA dentro un drawer. A `z-[95]` la barra verde gli passava
+    // davanti e restava cliccabile.
+    <div ref={contenitoreRef} className="fixed inset-0 z-[115]" role="dialog" aria-modal="true" aria-labelledby={title ? titoloId : undefined}>
+      <div aria-hidden="true" className="absolute inset-0 bg-kidville-ink/30 backdrop-blur-[1px]" onClick={onClose} />
       <div
         className="absolute inset-y-0 right-0 flex max-w-[92%] flex-col bg-kidville-white"
         style={{ width, boxShadow: SHADOW_FLOAT }}
@@ -284,8 +330,13 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
         {(title || subtitle) && (
           <div className="flex items-start justify-between gap-3 border-b border-kidville-line px-6 py-5">
             <div className="min-w-0">
-              {typeof title === 'string' ? <h2 className="font-barlow text-2xl font-black uppercase leading-none text-kidville-green">{title}</h2> : title}
-              {subtitle && <div className="mt-1 font-maven text-[13px] text-kidville-muted">{subtitle}</div>}
+              {/* Il titolo porta l'id a cui punta `aria-labelledby`: il nome del
+                  dialogo è quello che l'utente vede, non un'etichetta inventata.
+                  Il sottotitolo resta fuori — spesso è il nominativo di un minore. */}
+              {typeof title === 'string'
+                ? <h2 id={titoloId} className="font-barlow text-2xl font-black uppercase leading-none text-kidville-green">{title}</h2>
+                : title && <span id={titoloId}>{title}</span>}
+              {subtitle && <div className="mt-1 font-maven text-[13px] text-kidville-sub">{subtitle}</div>}
             </div>
             <button type="button" onClick={onClose} aria-label={t('chiudi')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green outline-none transition-colors hover:bg-kidville-green-soft focus-visible:ring-2 focus-visible:ring-kidville-green">
               <X size={19} />
@@ -311,6 +362,29 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
  * quindi nessuna chiamata a /api/admin/dashboard in più su ogni pagina del
  * cockpit), dropdown ancorato a destra. Con una sede sola non si monta affatto:
  * non c'è niente da scegliere e sulla barra mobile ogni pixel conta.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * SU QUALE SEDE STO LAVORANDO — perché lo stato è `aria-pressed` e il pannello
+ * è un `group` (bloccante a11y F1 del collaudo 2026-07-31).
+ *
+ * Prima, quale sede fosse attiva lo dicevano SOLO una spunta e un fondo colorato:
+ * nessun attributo di stato su nessuna riga. Chi usa uno screen reader non aveva
+ * alcun modo di sapere su quale dei tre plessi stava operando — e qui sbagliare
+ * sede significa archiviare il dato nel fascicolo del bambino di un altro plesso.
+ *
+ * Le righe restano `<button>` e portano `aria-pressed`, il pattern già in uso e
+ * collaudato nel repo (le `Tabs` qui sopra, «Mostra password» sulla login). NON
+ * `role="menuitemradio"`: la selezione è MULTIPLA (si possono tenere attive due
+ * sedi su tre) e «radio» annuncerebbe «una sola scelta possibile», cioè una
+ * bugia al posto di un silenzio. E NON `role="menu"`: un menu ARIA promette la
+ * navigazione con le frecce, che qui non c'è — il pannello è un gruppo di
+ * interruttori raggiungibili con Tab, ed è così che si annuncia.
+ * Di conseguenza cade anche `aria-haspopup="true"` (equivale a "menu"): la
+ * relazione trigger→pannello è dichiarata da `aria-expanded` + `aria-controls`.
+ *
+ * Escape chiude e riporta il focus al trigger: prima la chiusura era agganciata
+ * al solo `mousedown` su `document`, quindi da tastiera non c'era modo di
+ * annullare l'apertura.
  */
 export function SedeSelector({ userId, compatto = false }: { userId?: string | null; compatto?: boolean }) {
   const t = useTranslations('shared');
@@ -319,6 +393,10 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
   const [open, setOpen] = useState(false);
   const [totAlunni, setTotAlunni] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const idBase = useId();
+  const triggerId = `${idBase}-sede-trigger`;
+  const pannelloId = `${idBase}-sede-pannello`;
 
   useEffect(() => {
     // Il conteggio serve solo al ramo desktop, e solo quando il selettore esiste
@@ -370,19 +448,36 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
   if (sedi.length <= 1) return null;
 
   return (
-    <div ref={ref} className="relative">
+    <div
+      ref={ref}
+      className="relative"
+      // Escape chiude e restituisce il focus al trigger (WCAG 2.1.1 + 2.4.3).
+      // `stopPropagation`: se un giorno il selettore finisse dentro un dialogo,
+      // un solo Escape non deve chiudere anche quello.
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape' || !open) return;
+        e.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }}
+    >
       <button
+        ref={triggerRef}
         type="button"
+        id={triggerId}
         onClick={() => setOpen((o) => !o)}
-        aria-haspopup="true"
         aria-expanded={open}
-        title={compatto ? tn('sedeSelettoreAria') : undefined}
+        aria-controls={open ? pannelloId : undefined}
         className={cx(
           'flex items-center rounded-[12px] bg-kidville-white/[0.12] text-kidville-white',
           compatto ? 'min-h-[36px] max-w-[52vw] gap-1.5 px-2.5 py-1.5' : 'gap-2.5 px-3 py-[7px]',
         )}
       >
-        <span className="flex shrink-0 text-kidville-yellow"><SchoolIcon /></span>
+        {/* Il nome accessibile del trigger dice COSA fa il controllo e SU QUALE
+            sede si sta lavorando, senza doverlo aprire. È testo vero e precede il
+            contenuto visibile, così il nome lo contiene per intero (WCAG 2.5.3). */}
+        <span className="sr-only">{tn('sedeSelettoreAria')}: </span>
+        <span className="flex shrink-0 text-kidville-yellow"><SedeIcon /></span>
         <span className="min-w-0 text-left leading-[1.1]">
           <span className={cx('block truncate font-barlow font-extrabold uppercase', compatto ? 'text-[12.5px]' : 'text-sm')}>{nome}</span>
           {!compatto && <span className="block font-maven text-[10.5px] text-kidville-white/70">{meta}</span>}
@@ -391,6 +486,9 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
       </button>
       {open && (
         <div
+          id={pannelloId}
+          role="group"
+          aria-labelledby={triggerId}
           className={cx(
             'absolute top-[calc(100%+8px)] z-[60] w-[264px] max-w-[86vw] rounded-[14px] bg-kidville-white p-1.5',
             compatto ? 'right-0' : 'left-0',
@@ -409,22 +507,17 @@ export function SedeSelector({ userId, compatto = false }: { userId?: string | n
 
 function SedeRow({ active, nome, meta, onClick }: { active: boolean; nome: string; meta: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className={cx('flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2.5 text-left', active ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream')}>
-      <span className={cx('flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px]', active ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-green')}><SchoolIcon /></span>
+    // `aria-pressed` porta lo stato su un ruolo che lo espone davvero: prima
+    // «attiva» era solo un fondo verde e una spunta, invisibili a chi non vede.
+    <button type="button" aria-pressed={active} onClick={onClick} className={cx('flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2.5 text-left', active ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream')}>
+      <span className={cx('flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px]', active ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-green')}><SedeIcon /></span>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-barlow text-[14.5px] font-extrabold uppercase text-kidville-green">{nome}</span>
-        {meta && <span className="block truncate font-maven text-[11.5px] text-kidville-muted">{meta}</span>}
+        {/* Il conteggio delle strutture è informazione, non decorazione: `muted`
+            su verde tenue misurava 2,12:1, il valore più basso di tutto il cockpit. */}
+        {meta && <span className="block truncate font-maven text-[11.5px] text-kidville-sub">{meta}</span>}
       </span>
       {active && <Check size={16} className="shrink-0 text-kidville-green" />}
     </button>
-  );
-}
-
-function SchoolIcon() {
-  // building/scuola (lucide "School" equivalente compatto)
-  return (
-    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 22v-4a2 2 0 0 0-4 0v4" /><path d="m18 10 4 2v10H2V12l4-2" /><path d="M18 5v17" /><path d="m4 6 8-4 8 4" /><path d="M6 5v17" /><circle cx="12" cy="9" r="2" />
-    </svg>
   );
 }

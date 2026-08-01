@@ -14,6 +14,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 // Lettura estesa alla Segreteria (T3): l'elenco del personale è consultabile anche
@@ -142,7 +143,7 @@ export const PATCH = withRoute('admin/staff:PATCH', async (request: Request) => 
       if (body.scuola_id !== null) {
         const plessi = await scuoleDiUtente(supabase, auth.user)
         if (!plessi.includes(body.scuola_id)) {
-          return NextResponse.json({ error: 'Sede non consentita' }, { status: 403 })
+          return rifiutoSede('SEDE_NON_ACCESSIBILE')
         }
       }
       patch.scuola_id = body.scuola_id

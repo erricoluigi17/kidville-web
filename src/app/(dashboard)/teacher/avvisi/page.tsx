@@ -155,7 +155,7 @@ function TeacherAvvisiContent() {
             <div className="mt-5">{/* contenuto */}</div>
 
             {erroreLista && (
-                <div role="alert" className="mb-4 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
+                <div role="alert" className="mb-4 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error-strong">
                     <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
                     <span>{erroreLista}</span>
                 </div>
@@ -165,7 +165,7 @@ function TeacherAvvisiContent() {
             {loading && (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">{t('avvisiCaricamento')}</p>
+                    <p className="font-maven text-sm text-kidville-sub">{t('avvisiCaricamento')}</p>
                 </div>
             )}
 
@@ -174,7 +174,7 @@ function TeacherAvvisiContent() {
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                     <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">📢</div>
                     <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">{t('avvisiVuotoTitolo')}</h2>
-                    <p className="font-maven text-kidville-muted text-sm max-w-xs">
+                    <p className="font-maven text-kidville-sub text-sm max-w-xs">
                         {t('avvisiVuotoDescrizione')}
                     </p>
                 </div>

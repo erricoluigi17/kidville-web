@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from './rifiuto-sede'
 
 // =============================================================================
 // La sede CHIESTA dal client (`?scuola_id=`), ristretta a quelle in scope.
@@ -42,7 +43,7 @@ export function restringiASedeRichiesta(
       ruolo: contesto.ruolo,
       accessibili: plessi.length,
     })
-    return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+    return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
   }
   return { plessi: [richiesta] }
 }

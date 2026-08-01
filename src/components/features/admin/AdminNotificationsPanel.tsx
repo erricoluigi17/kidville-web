@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations, useLocale } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
 
@@ -28,7 +29,7 @@ interface Notifica {
 function quando(iso: string, locale: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return `${new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(d)} · ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(d)}`;
+  return `${intlDateTime(locale, { day: 'numeric', month: 'short' }).format(d)} · ${intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(d)}`;
 }
 
 export function AdminNotificationsPanel({

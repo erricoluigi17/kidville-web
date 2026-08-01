@@ -1,6 +1,6 @@
 import { useState, useRef, useId } from 'react';
 import { useTranslations } from 'next-intl';
-import { X, Send, Upload, Link, AlertTriangle } from 'lucide-react';
+import { X, Send, Upload, Link, AlertTriangle, Check } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { Modal } from '@/components/ui/Modal';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -66,6 +66,22 @@ interface Props {
     soloClassiProprie?: boolean;
 }
 
+/**
+ * Le classi di un segmento «Tipo»/«Destinatari», scelto o no.
+ *
+ * `min-w-0` non è cosmetico: i due bottoni sono figli `flex-1` di un `flex`, e
+ * senza di lui `min-width:auto` impedisce di scendere sotto la parola più lunga
+ * — a 320px con etichette più lunghe (una terza lingua, o l'inglese in qualche
+ * variante) il secondo bottone sborda e viene tagliato. Misurato: 11px fuori.
+ */
+function classiSegmento(scelto: boolean): string {
+    return `flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${
+        scelto
+            ? 'bg-kidville-green text-kidville-yellow shadow-sm'
+            : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'
+    }`;
+}
+
 /** Sedi distinte presenti fra le classi disponibili, nell'ordine in cui compaiono. */
 function sediDi(classi: ClasseAvviso[]): { id: string; nome: string }[] {
     const viste = new Map<string, string>();
@@ -91,27 +107,75 @@ function sediDi(classi: ClasseAvviso[]): { id: string; nome: string }[] {
  * l'animazione framer-motion di entrata/uscita, che la primitiva non ha: la
  * consistenza con gli altri quattordici modali già migrati vale più della dissolvenza.
  *
+ * I CAMPI (2026-08-01). Il contenitore era a posto, il suo contenuto no: il
+ * collaudo del 31/07 ha misurato dentro il dialogo cinque campi senza etichetta
+ * associata (axe `label`, *critical*; il campo data senza NESSUN nome), quattro
+ * toggle che dicevano di essere scelti col solo colore, le pillole delle classi
+ * mute — con il rischio concreto di pubblicare alla classe sbagliata — e un
+ * «togli allegato» di 12×12 px senza nome. Le regole applicate qui:
+ *   · ogni `<label>` è legato al suo controllo con `htmlFor`/`id` derivati da
+ *     `useId()` (per ISTANZA: due moduli montati insieme non si rubano gli id);
+ *     il placeholder torna a essere un suggerimento, non l'etichetta;
+ *   · dove i controlli sono bottoni e non campi, l'intestazione etichetta il
+ *     GRUPPO (`role="group"` + `aria-labelledby`): un `<label>` senza controllo
+ *     non etichetta niente;
+ *   · lo stato scelto si dichiara con `aria-pressed` E con una spunta, perché il
+ *     colore non basta a chi non lo distingue (WCAG 1.4.1);
+ *   · il bottone d'invio NON usa `disabled`: il browser, disabilitando un
+ *     elemento che ha il fuoco, lo sposta su `<body>` — misurato — e chi naviga
+ *     da tastiera si ritrova fuori dal dialogo nell'istante in cui pubblica. Si
+ *     usa `aria-disabled` + la guardia nell'handler, che è anche la difesa
+ *     contro il doppio invio.
+ *
  * PIANI (z-index) — la scala in uso nel repo, dal basso. I numeri sono scritti
  * NUDI di proposito: il lock `native-privacy-lock` cerca la forma `z-[…]` in
  * tutti i file di `src`, commenti compresi, e un esempio in un commento gli
  * risulterebbe indistinguibile da un piano vero.
  *   50        bottom-nav (parent · teacher · admin), drawer laterali, tendine
  *   60        toast e popover ancorati
- *   80        MODALI (questa) — la primitiva `Modal`
  *   105 · 110 chrome dell'admin (topbar, sidebar, bottom-sheet «Menu»)
+ *   120       MODALI (questa) — la primitiva `Modal`
  *   9999      gate biometrico, che deve stare sopra a tutto
- * Prima la modale stava a 50, cioè sullo STESSO piano della bottom-nav: che
- * infatti le copriva il bottone «Pubblica avviso». Ora è 80 (dalla primitiva), e
- * il lock `AvvisoForm-a11y-modale` confronta il numero con quello dichiarato
- * davvero dalle tre bottom-nav, non con una costante scritta a mano.
+ * Prima la modale stava a 50, cioè sullo STESSO piano della bottom-nav, che
+ * infatti le copriva il bottone «Pubblica avviso»; poi a 80, che risolveva la
+ * collisione in basso e lasciava intatta quella simmetrica in alto — la barra
+ * verde del cockpit (105) le tagliava intestazione e ✕, e su iPhone il tocco
+ * sulla chiusura finiva sulla campanella. Dal 2026-08-01 la primitiva sta a 120,
+ * sopra TUTTO il chrome: questa scala è verificata contro il sorgente dal lock
+ * `AvvisoForm-a11y-modale` (che ricava l'inventario delle superfici fisse invece
+ * di elencarle a mano) e dal lock `AvvisoForm-campi-a11y`, che confronta il
+ * numero qui scritto con quello che la primitiva usa davvero: un commento che
+ * mente su questa gerarchia è già costato una giornata di collaudo.
  */
 export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], initialAvviso = null, soloClassiProprie = false }: Props) {
     const t = useTranslations('teacherComunicazioni');
     // `shared` per la sola etichetta «Chiudi»: già presente in IT e EN, nessuna
     // chiave nuova da tradurre (stessa scelta di AdminMenuSheet).
     const ts = useTranslations('shared');
+    // `adminAltro` per il solo nome accessibile di «togli allegato»: la stringa
+    // esiste già, tradotta in entrambe le lingue, e descrive ESATTAMENTE lo
+    // stesso gesto sullo stesso oggetto (il registro protocolli la usa per il
+    // suo bottone di rimozione allegato). Preferita a una chiave nuova perché
+    // i cataloghi sono in mano a un altro intervento in corso: una chiave
+    // aggiunta qui verrebbe sovrascritta. Da spostare in `teacherComunicazioni`
+    // quando i cataloghi tornano liberi — è debito dichiarato, non una svista.
+    const tAllegato = useTranslations('adminAltro');
     // Id stabile e unico per istanza: è il bersaglio di `aria-labelledby`.
     const titoloId = useId();
+    // Un solo `useId()` per tutti i campi: l'alternativa (id costanti scritti a
+    // mano, come l'`avviso-sede` di ieri) rende ambigui gli `htmlFor` nel momento
+    // in cui due istanze del modulo stanno nella stessa pagina — ed è proprio
+    // quello che succede quando una modale ne apre un'altra.
+    const uid = useId();
+    const idSede = `${uid}-sede`;
+    const idTitolo = `${uid}-titolo`;
+    const idContenuto = `${uid}-contenuto`;
+    const idTipo = `${uid}-tipo`;
+    const idDestinatari = `${uid}-destinatari`;
+    const idClassi = `${uid}-classi`;
+    const idScadenza = `${uid}-scadenza`;
+    const idAllegato = `${uid}-allegato`;
+    const idLink = `${uid}-link`;
     const [titolo, setTitolo] = useState('');
     const [contenuto, setContenuto] = useState('');
     const [tipo, setTipo] = useState<'presa_visione' | 'adesione'>('presa_visione');
@@ -122,6 +186,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     const [linkUrl, setLinkUrl] = useState(''); // External Link
     const [fileUploading, setFileUploading] = useState(false);
     const [fileName, setFileName] = useState('');
+    // Link FIRMATO all'anteprima, restituito dall'upload e finora buttato via: il
+    // bucket è privato, quindi è l'unico modo di riaprire l'allegato appena
+    // caricato senza uscire dal modulo. Non si archivia (scade) e non vale per un
+    // avviso già salvato: lì l'anteprima si rifirma dalla pagina, non da qui.
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     // Il messaggio del server quando rifiuta. Prima non esisteva: il modale si
     // chiudeva lo stesso e l'operatore restava convinto di aver pubblicato.
@@ -193,6 +262,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setAttachmentUrl(fUrl);
                 setLinkUrl(lUrl);
                 setFileName(fUrl ? fUrl.split('/').pop() || t('formFileAllegatoFallback') : '');
+                // Un allegato già archiviato non porta con sé un link firmato: si
+                // mostra il nome, non un'anteprima che non si può aprire.
+                setPreviewUrl(null);
             } else {
                 // Reset in caso di creazione
                 setTitolo('');
@@ -205,6 +277,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setAttachmentUrl('');
                 setLinkUrl('');
                 setFileName('');
+                setPreviewUrl(null);
             }
         }
     }
@@ -239,6 +312,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             if (res.ok) {
                 const data = await res.json();
                 setAttachmentUrl(data.fileUrl);
+                // `previewUrl` è il link firmato che il server prepara apposta per
+                // riaprire subito ciò che si è appena caricato: finora arrivava e
+                // veniva scartato, e l'operatore poteva allegare il file sbagliato
+                // senza avere modo di accorgersene prima di pubblicare.
+                setPreviewUrl(typeof data.previewUrl === 'string' ? data.previewUrl : null);
             } else {
                 // Lo STATO è un numero: passa la whitelist di `redact` ed è l'unica cosa che
                 // distingue «401, l'identità non è arrivata» da «413, il file è troppo grosso».
@@ -259,13 +337,29 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     const removeFile = () => {
         setAttachmentUrl('');
         setFileName('');
+        setPreviewUrl(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     };
 
+    // Le condizioni che rendono il modulo NON inviabile, in un posto solo: la
+    // stessa espressione governa l'aspetto del bottone, il suo `aria-disabled` e
+    // la guardia dell'handler. Prima viveva solo nell'attributo `disabled`, e un
+    // bottone `disabled` esce dal giro del Tab senza dire perché — oltre a far
+    // saltare il fuoco su `<body>` nell'istante in cui lo si preme.
+    const nonInviabile =
+        fileUploading ||
+        !titolo.trim() ||
+        !contenuto.trim() ||
+        (chiedeSede && !scuolaId) ||
+        (scope === 'classe' && selectedClasses.length === 0);
+
     const handleSubmit = async () => {
-        if (!titolo.trim() || !contenuto.trim()) return;
+        // La guardia è la SOSTANZA, non una formalità: senza `disabled`, il
+        // bottone resta cliccabile durante la POST e due click distratti
+        // pubblicherebbero due volte lo stesso avviso a tutte le famiglie.
+        if (submitting || nonInviabile) return;
         if (chiedeSede && !scuolaId) return;
         setSubmitting(true);
         setErrore('');
@@ -302,6 +396,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
         setTitolo(''); setContenuto(''); setTipo('presa_visione');
         setScope('globale'); setSelectedClasses([]); setScadenza(''); setAttachmentUrl(''); setLinkUrl(''); setFileName('');
+        setPreviewUrl(null);
         setScuolaId('');
         onClose();
     };
@@ -322,20 +417,26 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 </h2>
                 {/* Area toccabile 44×44 (WCAG 2.5.8 / linee guida iOS e Android)
                     con la pastiglia visiva ancora a 32: si allarga il bersaglio,
-                    non il disegno. `-mr-2` riassorbe i 12px in più a destra così
-                    l'allineamento dell'header resta quello di prima. */}
+                    non il disegno. La compensazione è ESATTAMENTE la metà della
+                    crescita — (44−32)/2 = 6px, cioè `-mr-1.5`: con `-mr-2` (8px,
+                    il gradino più vicino della scala Tailwind) la pastiglia
+                    finiva 2px oltre il bordo destro dei campi, misurato. */}
                 <button
                     type="button"
                     onClick={onClose}
                     aria-label={ts('chiudi')}
-                    className="group -mr-2 min-w-[44px] min-h-[44px] shrink-0 flex items-center justify-center rounded-xl"
+                    className="group -mr-1.5 min-w-[44px] min-h-[44px] shrink-0 flex items-center justify-center rounded-xl"
                 >
                     <span className="w-8 h-8 rounded-xl bg-kidville-cream group-hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green transition-colors">
                         <X size={14} strokeWidth={1.5} aria-hidden="true" />
                     </span>
                 </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
+            {/* `aria-busy` sul MODULO, non sul dialogo: la primitiva `Modal` è
+                condivisa da quindici schermate e non espone l'attributo. Il
+                significato è comunque quello giusto — «questa regione sta
+                cambiando, aspetta prima di leggerla». */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white" aria-busy={submitting}>
                 {errore && (
                     <div role="alert" className="flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
                         <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
@@ -344,11 +445,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 )}
                 {chiedeSede && (
                     <div>
-                        <label htmlFor="avviso-sede" className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                        <label htmlFor={idSede} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
                             {t('formLabelSedePubblicazione')}
                         </label>
                         <select
-                            id="avviso-sede"
+                            id={idSede}
                             value={scuolaId}
                             onChange={e => {
                                 // Cambiare sede AZZERA le classi: tenerle
@@ -370,33 +471,52 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     </div>
                 )}
                 <div>
-                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
-                    <input value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
+                    <label htmlFor={idTitolo} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
+                    {/* Il placeholder NON è l'etichetta: sparisce appena si scrive,
+                        e con TalkBack il campo tornava senza nome a metà frase. */}
+                    <input id={idTitolo} aria-required="true" value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
                         className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                 </div>
                 <div>
-                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
-                    <textarea value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder={t('formPlaceholderContenuto')} rows={4}
+                    <label htmlFor={idContenuto} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
+                    <textarea id={idContenuto} aria-required="true" value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder={t('formPlaceholderContenuto')} rows={4}
                         className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all resize-none" />
                 </div>
+                {/* Tipo e Destinatari sono coppie di BOTTONI, non campi: un
+                    `<label>` senza controllo non etichetta niente e resta un
+                    titoletto muto. L'intestazione etichetta il GRUPPO, così lo
+                    screen reader annuncia «Tipo — Presa visione, premuto» invece
+                    di quattro bottoni sciolti tutti uguali. */}
                 <div>
-                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</label>
-                    <div className="flex gap-2">
-                        <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoPresaVisione')}</button>
-                        <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoAdesione')}</button>
+                    <span id={idTipo} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</span>
+                    <div role="group" aria-labelledby={idTipo} className="flex gap-2">
+                        <button type="button" aria-pressed={tipo === 'presa_visione'} onClick={() => setTipo('presa_visione')} className={classiSegmento(tipo === 'presa_visione')}>
+                            {tipo === 'presa_visione' && <Check size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
+                            {t('formTipoPresaVisione')}
+                        </button>
+                        <button type="button" aria-pressed={tipo === 'adesione'} onClick={() => setTipo('adesione')} className={classiSegmento(tipo === 'adesione')}>
+                            {tipo === 'adesione' && <Check size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
+                            {t('formTipoAdesione')}
+                        </button>
                     </div>
                 </div>
                 {soloClassiProprie ? (
                     <div>
-                        <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</label>
+                        <span id={idClassi} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</span>
                         <p className="font-maven text-xs text-kidville-muted mb-2">{t('formNotaLeTueClassi')}</p>
                     </div>
                 ) : (
                     <div>
-                        <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</label>
-                        <div className="flex gap-2">
-                            <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariTutti')}</button>
-                            <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariPerClasse')}</button>
+                        <span id={idDestinatari} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</span>
+                        <div role="group" aria-labelledby={idDestinatari} className="flex gap-2">
+                            <button type="button" aria-pressed={scope === 'globale'} onClick={() => setScope('globale')} className={classiSegmento(scope === 'globale')}>
+                                {scope === 'globale' && <Check size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
+                                {t('formDestinatariTutti')}
+                            </button>
+                            <button type="button" aria-pressed={scope === 'classe'} onClick={() => setScope('classe')} className={classiSegmento(scope === 'classe')}>
+                                {scope === 'classe' && <Check size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
+                                {t('formDestinatariPerClasse')}
+                            </button>
                         </div>
                     </div>
                 )}
@@ -406,32 +526,57 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     // sul nome React rendeva UNA pillola per due classi diverse.
                     // L'etichetta porta la sede quando le sedi sono più d'una
                     // e non c'è già un selettore a dirla (caso «modifica»).
-                    <div className="flex flex-wrap gap-1.5 p-2 bg-kidville-cream rounded-2xl border border-kidville-line">
-                        {classiVisibili.map(c => (
-                            <button
-                                key={c.id}
-                                onClick={() => toggleClass(c.nome)}
-                                className={`px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${selectedClasses.includes(c.nome) ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}
-                            >
-                                {!chiedeSede && sedi.length > 1 && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome}
-                            </button>
-                        ))}
+                    //
+                    // `aria-pressed` + spunta su OGNI pillola: sceglierne una
+                    // cambiava solo il colore del fondo, e un avviso mandato alla
+                    // classe sbagliata è una comunicazione arrivata a famiglie che
+                    // non c'entrano — e non arrivata a quelle che dovevano averla.
+                    <div
+                        role="group"
+                        aria-labelledby={soloClassiProprie ? idClassi : idDestinatari}
+                        className="flex flex-wrap gap-1.5 p-2 bg-kidville-cream rounded-2xl border border-kidville-line"
+                    >
+                        {classiVisibili.map(c => {
+                            const scelta = selectedClasses.includes(c.nome);
+                            return (
+                                <button
+                                    key={c.id}
+                                    type="button"
+                                    aria-pressed={scelta}
+                                    onClick={() => toggleClass(c.nome)}
+                                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${scelta ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}
+                                >
+                                    {scelta && <Check size={12} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
+                                    {!chiedeSede && sedi.length > 1 && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome}
+                                </button>
+                            );
+                        })}
                     </div>
                 )}
                 
                 <div>
-                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                    {/* Era il campo messo peggio di tutti: `read_page` sull'albero
+                        di accessibilità lo dava come «textbox» con nome VUOTO —
+                        non il placeholder, proprio niente. */}
+                    <label htmlFor={idScadenza} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
                         {tipo === 'presa_visione' ? t('formScadenzaAvviso') : t('formScadenzaAdesione')}
                     </label>
-                    <input type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
+                    <input id={idScadenza} type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
                         className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                 </div>
 
                 {/* Upload File */}
                 <div>
-                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</label>
-                    <div className="flex items-center gap-3">
-                        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf,image/*,.doc,.docx" />
+                    {/* Anche qui i controlli sono bottoni (l'`<input type="file">`
+                        vero è nascosto e lo apre il bottone): etichetta di gruppo,
+                        non `<label>`. */}
+                    <span id={idAllegato} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</span>
+                    <div role="group" aria-labelledby={idAllegato} className="flex items-center gap-3">
+                        {/* Nascosto ma pur sempre il campo vero: prende il nome
+                            dall'intestazione del gruppo. Senza, axe lo conta fra
+                            i controlli senza etichetta — e il giorno in cui
+                            qualcuno lo mostrasse sarebbe muto davvero. */}
+                        <input type="file" ref={fileInputRef} onChange={handleFileChange} aria-labelledby={idAllegato} className="hidden" accept=".pdf,image/*,.doc,.docx" />
                         <button
                             type="button"
                             onClick={() => fileInputRef.current?.click()}
@@ -449,10 +594,38 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                         />
 
                         {fileName && (
-                            <div className="flex items-center gap-2 bg-kidville-cream border border-kidville-line rounded-xl px-3 py-1.5 max-w-[200px] truncate text-xs font-maven text-kidville-green">
-                                <span className="truncate flex-1">{fileName}</span>
-                                <button type="button" onClick={removeFile} className="text-kidville-muted hover:text-kidville-error flex-shrink-0">
-                                    <X size={12} />
+                            <div className="flex items-center gap-2 bg-kidville-cream border border-kidville-line rounded-xl px-3 py-1.5 max-w-[200px] text-xs font-maven text-kidville-green">
+                                {previewUrl ? (
+                                    // Nuova scheda per forza: aprire l'anteprima
+                                    // nella stessa butterebbe via la bozza.
+                                    // Sottolineato, non solo colorato: «è un link»
+                                    // non si affida al colore (WCAG 1.4.1).
+                                    <a
+                                        href={previewUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="truncate flex-1 min-w-0 underline underline-offset-2 hover:text-kidville-green"
+                                    >
+                                        {fileName}
+                                    </a>
+                                ) : (
+                                    <span className="truncate flex-1 min-w-0">{fileName}</span>
+                                )}
+                                {/* 12×12 px e senza nome: invisibile a uno screen
+                                    reader e impossibile da centrare col dito. Ora
+                                    il BERSAGLIO è 44×44 (WCAG 2.5.8) mentre la
+                                    pastiglia visiva resta piccola; i margini
+                                    negativi riassorbono la crescita così la
+                                    pillola non cambia altezza. */}
+                                <button
+                                    type="button"
+                                    onClick={removeFile}
+                                    aria-label={tAllegato('protRimuoviAllegato', { nome: fileName })}
+                                    className="group -mr-2 -my-2.5 min-w-[44px] min-h-[44px] shrink-0 flex items-center justify-center rounded-xl"
+                                >
+                                    <span className="w-5 h-5 rounded-lg flex items-center justify-center text-kidville-sub group-hover:text-kidville-error transition-colors">
+                                        <X size={12} strokeWidth={2} aria-hidden="true" />
+                                    </span>
                                 </button>
                             </div>
                         )}
@@ -461,25 +634,46 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
                 {/* Link Esterno */}
                 <div>
-                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
+                    <label htmlFor={idLink} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
                     <div className="relative">
-                        <Link size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-muted" />
-                        <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder={t('formPlaceholderLink')}
+                        <Link size={14} aria-hidden="true" className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-muted" />
+                        <input id={idLink} value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder={t('formPlaceholderLink')}
                             className="w-full border-2 border-kidville-line rounded-2xl pl-10 pr-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                     </div>
                 </div>
             </div>
             <div className="px-6 py-4 border-t border-kidville-line bg-white">
-                <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim() || (chiedeSede && !scuolaId) || (scope === 'classe' && selectedClasses.length === 0)}
-                    className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
+                {/* La regione viva nasce VUOTA e vive quanto il modulo: un
+                    `role="status"` creato insieme al testo non viene annunciato,
+                    perché lo screen reader legge i CAMBIAMENTI di una regione che
+                    era già lì. Qui dentro finisce l'unico stato che l'operatore
+                    non può dedurre da solo — «sto pubblicando» — che prima non
+                    veniva detto in nessun modo. */}
+                <span role="status" className="sr-only">
+                    {submitting ? (initialAvviso ? t('formSubmitSalvataggio') : t('formSubmitPubblicazione')) : ''}
+                </span>
+                {/* NIENTE `disabled`. Un elemento che si disabilita mentre ha il
+                    fuoco lo scarica su `<body>`: misurato, e da lì il Tab usciva
+                    dal dialogo proprio nell'istante in cui si preme «Pubblica».
+                    `aria-disabled` dice la stessa cosa agli assistivi, tiene il
+                    bottone nel giro del Tab (chi naviga da tastiera lo TROVA, e
+                    scopre che manca qualcosa) e lascia la decisione all'handler,
+                    che è anche l'unico punto in cui si può impedire il doppio
+                    invio. L'opacità segue `aria-disabled`, non `:disabled`. */}
+                <button
+                    type="button"
+                    onClick={handleSubmit}
+                    aria-disabled={submitting || nonInviabile}
+                    className={`w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20 ${submitting || nonInviabile ? 'opacity-60 cursor-not-allowed' : 'hover:opacity-90'}`}
+                >
                     {submitting ? (
                         <>
-                            <div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
+                            <div aria-hidden="true" className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
                             {initialAvviso ? t('formSubmitSalvataggio') : t('formSubmitPubblicazione')}
                         </>
                     ) : (
                         <>
-                            <Send size={16} strokeWidth={1.5} />
+                            <Send size={16} strokeWidth={1.5} aria-hidden="true" />
                             {initialAvviso ? t('formSubmitSalvaModifiche') : t('formSubmitPubblicaAvviso')}
                         </>
                     )}

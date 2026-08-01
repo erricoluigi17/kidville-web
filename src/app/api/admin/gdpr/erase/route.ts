@@ -6,11 +6,17 @@ import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { patchAlunno, patchParent, confermaValida, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
 import { scrubProvaConsensi } from '@/lib/gdpr/consensi-oblio'
+import {
+  obliaIscrizioni,
+  obliaFotoAlunno,
+  rimuoviFileOblio,
+  BUCKET_ISCRIZIONI,
+} from '@/lib/gdpr/esegui'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `alunno_id`: contratto storico permissivo (qualunque stringa non vuota; id
@@ -76,9 +82,40 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       if (!altri) parentiOrfani.push(pid)
     }
 
+    // ─── I SOGGETTI dell'oblio, con TUTTO ciò che li identifica ────────────────
+    // Si leggono PRIMA di qualunque patch (che azzera CF e percorsi) e prima del
+    // ramo `dryrun`: fino al 2026-07-31 la lettura stava dopo, e il dry-run
+    // annunciava «1 file da rimuovere» mentre i documenti d'identità nel bucket
+    // erano quello del bambino PIÙ quello di ogni adulto — questi ultimi mai
+    // rimossi da nessuno (privacy F3, misurata in produzione).
+    const authIdsOrfani: string[] = []
+    const cfOrfani: (string | null)[] = []
+    const docOrfani: (string | null)[] = []
+    if (parentiOrfani.length > 0) {
+      const { data: authRows, error: errAuth } = await supabase
+        .from('parents')
+        .select('auth_user_id, fiscal_code, documento_path')
+        .in('id', parentiOrfani)
+      if (errAuth) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'raccolta_auth_orfani' }, errAuth)
+      for (const r of (authRows ?? []) as {
+        auth_user_id: string | null
+        fiscal_code?: string | null
+        documento_path?: string | null
+      }[]) {
+        if (r.auth_user_id) authIdsOrfani.push(r.auth_user_id)
+        cfOrfani.push(r.fiscal_code ?? null)
+        docOrfani.push(r.documento_path ?? null)
+      }
+    }
+
     // File PII da rimuovere (binari non anonimizzabili). Il bucket `fatture` è ESCLUSO
-    // (conservazione fiscale). `documento_path` dell'alunno (se presente).
-    const fileAlunno = alunno.documento_path ? [String(alunno.documento_path)] : []
+    // (conservazione fiscale). Documento dell'alunno + documento di ogni adulto orfano;
+    // a questi si aggiungeranno, in fase di esecuzione, i percorsi che solo la DOMANDA
+    // DI ISCRIZIONE conosce ancora.
+    const fileAnagrafica = [
+      alunno.documento_path ? String(alunno.documento_path) : null,
+      ...docOrfani,
+    ].filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
 
     if (mode === 'dryrun') {
       return NextResponse.json({
@@ -86,7 +123,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         alunno: 1,
         parents: parentiOrfani.length,
         parents_non_anonimizzati: parentIds.length - parentiOrfani.length,
-        file_da_rimuovere: fileAlunno.length,
+        file_da_rimuovere: fileAnagrafica.length,
         nominativo_conferma: `${(alunno.cognome ?? '').trim()} ${(alunno.nome ?? '').trim()}`.trim().toUpperCase(),
       })
     }
@@ -104,21 +141,11 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     // 1. Anonimizza l'alunno.
     await supabase.from('alunni').update(patchAlunno(alunno_id, at)).eq('id', alunno_id)
 
-    // 2. Anonimizza i genitori orfani. PRIMA raccogli gli `auth_user_id`: il
-    //    patchParent li azzera, ma servono per l'oblio del tracciamento di lettura
-    //    news (passo 2b). Solo conteggi/uuid nei log: nessun auth_user_id.
+    // 2. Anonimizza i genitori orfani. Identità, CF e percorsi dei documenti sono
+    //    già stati raccolti sopra: `patchParent` li azzera tutti, e senza il CF
+    //    la domanda d'iscrizione dell'adulto non si ritroverebbe più.
+    //    Solo conteggi/uuid nei log: nessun auth_user_id.
     let newsVisualizzazioniRimosse = 0
-    const authIdsOrfani: string[] = []
-    if (parentiOrfani.length > 0) {
-      const { data: authRows, error: errAuth } = await supabase
-        .from('parents')
-        .select('auth_user_id')
-        .in('id', parentiOrfani)
-      if (errAuth) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'raccolta_auth_orfani' }, errAuth)
-      for (const r of (authRows ?? []) as { auth_user_id: string | null }[]) {
-        if (r.auth_user_id) authIdsOrfani.push(r.auth_user_id)
-      }
-    }
 
     // 2a. Prova del consenso (W5): via `ip` e `user_agent`, resta il fatto.
     //     `consensi_accettazioni` non ha FK verso `parents` — apposta, per
@@ -269,13 +296,67 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       }
     }
 
-    // 4. Rimuovi i file PII (escluso il bucket fatture). Best-effort.
-    if (fileAlunno.length > 0) {
-      try {
-        await supabase.storage.from('form_attachments').remove(fileAlunno)
-      } catch {
-        /* file già assente o bucket diverso: ignora */
-      }
+    // 3f. Le FOTO del minore (galleria). Va PRIMA della domanda e dei file, ed è
+    //     l'unico passo che tocca `galleria_media_v2`: la foto in cui il bambino
+    //     è l'unico taggato esce (riga + file), quella di gruppo perde solo il
+    //     suo tag — dentro c'è l'immagine di altri minori.
+    const foto = await obliaFotoAlunno(supabase, alunno_id, 'admin/gdpr/erase:POST')
+
+    // 3g. La DOMANDA DI ISCRIZIONE (privacy F2). È la tabella di ORIGINE del
+    //     dato — quella che ha raccolto anche allergie e note mediche — e non
+    //     era toccata da nessun canale di oblio: l'anagrafica risultava anonima
+    //     mentre la domanda conservava tutto in chiaro, senza scadenza.
+    //     Un solo passaggio per l'intero nucleo: minore + adulti orfani.
+    const iscr = await obliaIscrizioni(
+      supabase,
+      {
+        codiciFiscali: [alunno.codice_fiscale, alunno.fiscal_code, ...cfOrfani],
+        documentoPaths: [alunno.documento_path as string | null, ...docOrfani],
+      },
+      at,
+      'admin/gdpr/erase:POST',
+    )
+
+    // 4. Rimuovi i file PII (escluso il bucket fatture): documento dell'alunno,
+    //    documento di OGNI adulto orfano e i percorsi che solo la domanda
+    //    conosceva. Il `catch { /* ignora */ }` che c'era qui non lasciava
+    //    traccia di niente: se la rimozione falliva, il documento d'identità di
+    //    un minore restava nel bucket e nessuno lo sapeva. Ora il fallimento si
+    //    conta, si logga e TORNA NELLA RISPOSTA.
+    const esitoFile = await rimuoviFileOblio(
+      supabase,
+      BUCKET_ISCRIZIONI,
+      [...fileAnagrafica, ...iscr.documenti],
+      'admin/gdpr/erase:POST',
+    )
+    const nFileNonRimossi = esitoFile.nonRimossi + foto.fileNonRimossi
+
+    // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è
+    // in EVENTI_PERSISTITI) con soli conteggi e uuid. Alla famiglia è stato
+    // promesso che quei file non ci sono più.
+    if (nFileNonRimossi > 0) {
+      logEvento('gdpr', 'error', {
+        operazione: 'admin/gdpr/erase:POST',
+        esito: 'oblio-parziale',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        n_file: nFileNonRimossi,
+      })
+    }
+
+    const esito = {
+      alunno: 1,
+      parents: parentiOrfani.length,
+      file_rimossi: esitoFile.rimossi,
+      n_file_non_rimossi: nFileNonRimossi,
+      iscrizioni_scrubbate: iscr.domandeScrubbate,
+      foto_rimosse: foto.fotoRimosse,
+      foto_sganciate: foto.fotoSganciate,
+      riconciliazione_bonificati: riconciliazioneBonificati,
+      incassi_bonificati: incassiBonificati,
+      cassa_bonificati: cassaBonificati,
+      news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
+      consensi_prova_bonificati: consensiProvaBonificati,
     }
 
     // 5. Log immutabile dell'oblio (solo conteggi/uuid: nessuna PII).
@@ -285,29 +366,10 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       entitaId: alunno_id,
       azione: 'update',
       scuolaId: auth.user.scuola_id ?? null,
-      valoreDopo: {
-        alunno_id,
-        parents_anonimizzati: parentiOrfani,
-        file_rimossi: fileAlunno.length,
-        riconciliazione_bonificati: riconciliazioneBonificati,
-        incassi_bonificati: incassiBonificati,
-        cassa_bonificati: cassaBonificati,
-        news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
-        consensi_prova_bonificati: consensiProvaBonificati,
-      },
+      valoreDopo: { alunno_id, parents_anonimizzati: parentiOrfani, ...esito },
     })
 
-    return NextResponse.json({
-      ok: true,
-      alunno: 1,
-      parents: parentiOrfani.length,
-      file_rimossi: fileAlunno.length,
-      riconciliazione_bonificati: riconciliazioneBonificati,
-      incassi_bonificati: incassiBonificati,
-      cassa_bonificati: cassaBonificati,
-      news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
-      consensi_prova_bonificati: consensiProvaBonificati,
-    })
+    return NextResponse.json({ ok: true, ...esito })
   } catch (err) {
     logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)
     return NextResponse.json(

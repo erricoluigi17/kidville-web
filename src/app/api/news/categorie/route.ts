@@ -10,6 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import type { NewsCategoria } from '@/lib/news/tipi'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // =============================================================================
 // /api/news/categorie — clone del pattern pagamenti/cassa/categorie. GET
@@ -87,7 +88,7 @@ async function caricaCategoriaConScope(
   if (cat.scuola_id != null) {
     const sedi = await resolveScuoleAttive(request, supabase, user)
     if (!sedi.includes(cat.scuola_id)) {
-      return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+      return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
     }
   }
   return { cat }

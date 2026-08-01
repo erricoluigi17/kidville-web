@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Building2, Plus, ChevronRight, Loader2 } from 'lucide-react';
+import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Plus, ChevronRight, Loader2 } from 'lucide-react';
+import { SedeIcon } from '@/components/ui/SedeIcon';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Griglia sezioni dell'anagrafica: le sedi/sezioni arrivano dai plessi
@@ -243,10 +244,13 @@ export function SectionsView() {
                                 </span>
                             </div>
                             <h3 className="font-barlow font-black text-lg text-kidville-ink mb-1">{section.name}</h3>
-                            <div className="flex items-center gap-4 text-sm text-kidville-muted font-maven">
+                            {/* Alunni e SEDE non sono metadati decorativi: con tre
+                                plessi il nome della sede è metà della chiave che
+                                identifica la classe. `muted` misurava 2,51:1. */}
+                            <div className="flex items-center gap-4 text-sm text-kidville-sub font-maven">
                                 <span className="flex items-center gap-1"><User size={14} /> {t('contAlunni', { n: countStudents(section) })}</span>
                                 {multiSede && (
-                                    <span className="flex items-center gap-1"><Building2 size={14} /> {section.scuolaNome}</span>
+                                    <span className="flex items-center gap-1"><SedeIcon size={14} /> {section.scuolaNome}</span>
                                 )}
                             </div>
                             <div className="mt-3 flex items-center gap-1 text-xs font-bold text-kidville-green opacity-0 group-hover:opacity-100 transition-opacity">

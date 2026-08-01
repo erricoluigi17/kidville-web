@@ -150,10 +150,16 @@ describe('POST /api/gallery — la foto nasce nella sede DICHIARATA', () => {
     ...extra,
   })
 
-  it('admin multi-sede SENZA `scuola_id`: 400 che NOMINA il parametro, e nessuna riga scritta', async () => {
+  it('admin multi-sede SENZA `scuola_id`: 400 col CODICE del rifiuto (non col nome della colonna), e nessuna riga scritta', async () => {
     const res = await GALLERY_POST(req('/api/gallery', { method: 'POST', body: corpo() }))
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toContain('scuola_id')
+    const corpo400 = await res.json()
+    // Il messaggio NON nomina più `scuola_id`: il nome della colonna resta nel
+    // log `sede-scrittura-ambigua`, che è il posto giusto. Al client arriva il
+    // `codice`, ed è quello che rende il rifiuto leggibile anche in inglese
+    // (collaudo 2026-07-31, localizzazione F2).
+    expect(corpo400.codice).toBe('SEDE_DA_SPECIFICARE')
+    expect(corpo400.error).not.toContain('scuola_id')
     // Il 400 da solo non basterebbe: la prova è che il media NON esiste.
     expect(h.db.galleria_media_v2).toEqual([])
     expect(inserite('galleria_media_v2')).toEqual([])
@@ -188,7 +194,7 @@ describe('POST /api/gallery — la foto nasce nella sede DICHIARATA', () => {
       req('/api/gallery', { method: 'POST', body: corpo({ scuola_id: SEDE_C }) }),
     )
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
     // Lo status da solo non proverebbe niente: la riga non esiste, l'insert non
     // è mai partito e i genitori non hanno ricevuto niente.
     expect(h.db.galleria_media_v2).toEqual([])
@@ -256,10 +262,16 @@ describe('POST /api/mensa/alternative — l\'alternativa si registra nella sede 
     })
   })
 
-  it('admin multi-sede SENZA `scuola_id`: 400 che nomina il parametro, e nessuna riga', async () => {
+  it('admin multi-sede SENZA `scuola_id`: 400 col CODICE del rifiuto (non col nome della colonna), e nessuna riga', async () => {
     const res = await ALT_POST(req('/api/mensa/alternative', { method: 'POST', body: corpo() }))
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toContain('scuola_id')
+    const corpo400 = await res.json()
+    // Il messaggio NON nomina più `scuola_id`: il nome della colonna resta nel
+    // log `sede-scrittura-ambigua`, che è il posto giusto. Al client arriva il
+    // `codice`, ed è quello che rende il rifiuto leggibile anche in inglese
+    // (collaudo 2026-07-31, localizzazione F2).
+    expect(corpo400.codice).toBe('SEDE_DA_SPECIFICARE')
+    expect(corpo400.error).not.toContain('scuola_id')
     expect(h.db.mensa_alternative).toEqual([])
     expect(inserite('mensa_alternative')).toEqual([])
   })
@@ -310,7 +322,13 @@ describe('DELETE /api/mensa/alternative — si cancella nella sede dichiarata', 
       req(`/api/mensa/alternative?alunno_id=${ALU_B}&data=${GIORNO}`, { method: 'DELETE' }),
     )
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toContain('scuola_id')
+    const corpo400 = await res.json()
+    // Il messaggio NON nomina più `scuola_id`: il nome della colonna resta nel
+    // log `sede-scrittura-ambigua`, che è il posto giusto. Al client arriva il
+    // `codice`, ed è quello che rende il rifiuto leggibile anche in inglese
+    // (collaudo 2026-07-31, localizzazione F2).
+    expect(corpo400.codice).toBe('SEDE_DA_SPECIFICARE')
+    expect(corpo400.error).not.toContain('scuola_id')
     expect(h.db.mensa_alternative.map((r) => r.id)).toEqual(['alt-a', 'alt-b'])
   })
 
@@ -358,14 +376,20 @@ describe('POST /api/news/digest/genera — la sede dichiarata batte il SedeSelec
       req('/api/news/digest/genera', { method: 'POST', body: corpo({ scuola_id: SEDE_C }) }),
     )
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
     expect(h.generaEInviaDigest).not.toHaveBeenCalled()
   })
 
-  it('admin multi-sede SENZA sede: 400 che nomina il parametro, nessuna generazione', async () => {
+  it('admin multi-sede SENZA sede: 400 col CODICE del rifiuto (non col nome della colonna), nessuna generazione', async () => {
     const res = await DIGEST_POST(req('/api/news/digest/genera', { method: 'POST', body: corpo() }))
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toContain('scuola_id')
+    const corpo400 = await res.json()
+    // Il messaggio NON nomina più `scuola_id`: il nome della colonna resta nel
+    // log `sede-scrittura-ambigua`, che è il posto giusto. Al client arriva il
+    // `codice`, ed è quello che rende il rifiuto leggibile anche in inglese
+    // (collaudo 2026-07-31, localizzazione F2).
+    expect(corpo400.codice).toBe('SEDE_DA_SPECIFICARE')
+    expect(corpo400.error).not.toContain('scuola_id')
     expect(h.generaEInviaDigest).not.toHaveBeenCalled()
   })
 

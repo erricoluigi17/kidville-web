@@ -19,7 +19,12 @@ describe('formatMessageDate — separatori Oggi/Ieri localizzati', () => {
   });
 
   it('per una data più vecchia localizza giorno + mese (non usa le label)', () => {
-    const vecchia = new Date(2026, 10, 5); // 5 novembre 2026 (né oggi né ieri)
+    // Istante ASSOLUTO, non mezzanotte locale: dal 2026-08-01 la formattazione è
+    // ancorata a Europe/Rome (il fuso della scuola), quindi una data costruita
+    // con componenti locali renderebbe un giorno diverso a seconda della
+    // macchina che esegue i test — che è il difetto per cui il fuso è stato
+    // dichiarato. Mezzogiorno UTC = 13:00/14:00 a Roma, lo stesso 5 novembre.
+    const vecchia = new Date('2026-11-05T12:00:00Z');
     expect(formatMessageDate(vecchia.toISOString(), 'it', labels)).toBe('5 novembre');
     expect(formatMessageDate(vecchia.toISOString(), 'en', labels)).toContain('November');
   });

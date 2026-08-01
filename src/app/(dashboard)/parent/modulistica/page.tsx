@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import {
   Clock, Archive, Award, HeartPulse, Shield,
   ArrowRight, Download, CheckCircle2, Upload, Mail
@@ -934,7 +935,7 @@ export default function ParentModulisticaPage() {
                       <div className="flex flex-col items-end gap-1.5">
                         {(cert.giorni_coperti?.length ?? 0) > 0 ? (
                           <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                            {t('modulisticaGiustificato', { giorni: (cert.giorni_coperti ?? []).map((d: string) => new Intl.DateTimeFormat(f.locale, { day: '2-digit', month: '2-digit' }).format(new Date(d))).join(', ') })}
+                            {t('modulisticaGiustificato', { giorni: (cert.giorni_coperti ?? []).map((d: string) => intlDateTime(f.locale, { day: '2-digit', month: '2-digit' }).format(new Date(d))).join(', ') })}
                           </span>
                         ) : (
                           <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">

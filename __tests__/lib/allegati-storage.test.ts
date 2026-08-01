@@ -391,3 +391,34 @@ describe('normalizzaAllegatiTask — si archivia il percorso', () => {
     expect(out.attachments[0].previewUrl).toBe('verbale.pdf')
   })
 })
+
+describe('decodificaAllegatoAvviso — la deroga è motivata in un log, non in un commento', () => {
+  // AGENTS.md regola 6: «se un errore è davvero ignorabile, lo si logga a livello info
+  // spiegando perché». Qui il `catch` del `JSON.parse` aveva solo un commento — vero, ben
+  // scritto, e invisibile a chiunque guardi i log alle tre di notte chiedendosi perché un
+  // allegato non si apre. Un commento non si interroga in SQL.
+  it('un attachment_url con JSON rotto lascia una riga `info` e NON rompe la lettura', () => {
+    // Comportamento invariato: il valore si tratta come stringa nuda, esattamente come fa
+    // `AvvisoCard` da sempre. È il CONTROLLO POSITIVO — senza, il test passerebbe anche se
+    // la correzione avesse cambiato il comportamento oltre al log.
+    expect(normalizzaAllegatoAvviso('{questo non è JSON')).toBe('{questo non è JSON')
+
+    const righe = h.logEvento.mock.calls.filter((c) => c[0] === 'storage')
+    expect(righe).toHaveLength(1)
+    expect(righe[0][1]).toBe('info')
+    expect(righe[0][2]).toMatchObject({
+      operazione: 'decodificaAllegatoAvviso',
+      esito: 'json-malformato-letto-come-stringa',
+      lunghezza: '{questo non è JSON'.length,
+    })
+    // Il VALORE non esce: `attachment_url` è un percorso, e in questo repo un percorso è
+    // una credenziale. Fuori vanno solo la lunghezza e il fatto che cominciasse per `{`.
+    const campi = JSON.stringify(righe[0][2])
+    expect(campi).not.toContain('questo non è JSON')
+  })
+
+  it('un JSON valido non produce nessuna riga (niente rumore sul percorso felice)', () => {
+    normalizzaAllegatoAvviso(JSON.stringify({ file: 'a.pdf', link: null }))
+    expect(h.logEvento.mock.calls.filter((c) => c[0] === 'storage')).toEqual([])
+  })
+})

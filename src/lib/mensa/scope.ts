@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 /**
  * Le tabelle di CONFIGURAZIONE della mensa che si mutano per solo `id`.
@@ -72,7 +73,7 @@ export async function assertConfigMensaInScope(
       tipo: 'config-mensa-fuori-sede', azione: 'assertConfigMensaInScope',
       utente: user.id, ruolo: user.role, tabella,
     })
-    return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+    return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
   }
   return { sede }
 }

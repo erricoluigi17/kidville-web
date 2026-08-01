@@ -5,6 +5,7 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId } from '@/lib/mensa/server'
 import { resolveMenuRange } from '@/lib/mensa/resolveMenu'
 import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
@@ -131,7 +132,7 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
       const scuoleOk = await scuoleDiUtente(supabase, user)
       if (scuolaId) {
         if (!scuoleOk.includes(scuolaId)) {
-          return NextResponse.json({ error: 'Sede non consentita' }, { status: 403 })
+          return rifiutoSede('SEDE_NON_ACCESSIBILE')
         }
       } else if (scuoleOk.length === 1) {
         scuolaId = scuoleOk[0]
@@ -140,7 +141,7 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
       }
     }
     if (!scuolaId) {
-      return NextResponse.json({ error: 'Specificare la sede (scuola_id)' }, { status: 400 })
+      return rifiutoSede('SEDE_DA_SPECIFICARE')
     }
 
     const today = new Date().toISOString().slice(0, 10)

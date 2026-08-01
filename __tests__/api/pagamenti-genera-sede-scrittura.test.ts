@@ -96,7 +96,13 @@ describe('POST /api/pagamenti/genera — il ramo per nome-classe dichiara la sed
   it('admin multi-sede, classe omonima e nessuna sede: 400 e NESSUN pagamento', async () => {
     const res = await POST(post({ ...BASE, classe_sezione: OMONIMA }))
     expect(res.status).toBe(400)
-    expect(await res.json()).toEqual({ error: 'Specificare la sede (scuola_id) per questa operazione' })
+    // Il corpo porta anche il `codice`, che è ciò che il client traduce: senza,
+    // la segretaria che lavora in inglese leggerebbe questa frase in italiano
+    // (collaudo 2026-07-31, localizzazione F2).
+    expect(await res.json()).toEqual({
+      error: 'Specificare la sede a cui si riferisce questa operazione',
+      codice: 'SEDE_DA_SPECIFICARE',
+    })
     expect(h.db.pagamenti).toEqual([])
     expect(h.scritture).toEqual([])
     expect(h.notificaEvento).not.toHaveBeenCalled()

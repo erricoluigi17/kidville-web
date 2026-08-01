@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { AlertTriangle, ArrowLeft, Building2, GraduationCap, Loader2, Plus, RotateCcw, Settings, User, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, GraduationCap, Loader2, Lock, Plus, RotateCcw, Settings, User, X } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { schoolTypeConfig } from '@/components/features/admin/SectionsView';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -55,7 +55,65 @@ interface Teacher {
  * `useCallback` conservano CHIAVE + testo-del-server, e la traduzione avviene al
  * render, dove `t` non è una dipendenza di niente.
  */
-type Avvertimento = { chiave: 'sezErroreOperazione' | 'sezErroreCaricamento'; testo: string } | null;
+type ChiaveAvvertimento =
+    | 'sezErroreOperazione'
+    | 'sezErroreCaricamento'
+    | 'sezInsegnantiErrore'
+    | 'sezAlunniErrore';
+type Avvertimento = { chiave: ChiaveAvvertimento; testo: string } | null;
+
+/**
+ * Il riquadro (card) di questa pagina: un titolo e il suo contenuto, come
+ * REGIONE con nome accessibile.
+ *
+ * ⚠️ NON è decorazione. Da qui in poi ogni riquadro racconta il PROPRIO esito
+ * dentro di sé, e perché quella promessa sia verificabile — da uno screen
+ * reader come da un test — il riquadro deve avere un'identità: `role="region"`
+ * + `aria-labelledby` sul titolo. Senza, «il messaggio è dentro il riquadro
+ * insegnanti» non è un'affermazione che si possa provare.
+ */
+function Riquadro({
+    id,
+    icona: Icona,
+    titolo,
+    children,
+}: {
+    id: string;
+    icona: typeof Settings;
+    titolo: string;
+    children: React.ReactNode;
+}) {
+    return (
+        <section role="region" aria-labelledby={`${id}-titolo`} className="rounded-card bg-kidville-white p-6 shadow-sm">
+            <h4 id={`${id}-titolo`} className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
+                <Icona size={16} /> {titolo}
+            </h4>
+            {children}
+        </section>
+    );
+}
+
+/**
+ * L'esito NEGATIVO di un riquadro, reso dentro il riquadro stesso.
+ *
+ * 🔴 LA REGOLA CHE QUESTO COMPONENTE FA RISPETTARE. Fino al 2026-07-31 questa
+ * pagina aveva UN solo stato d'errore e UNA sola fascia rossa, in cima: il 403
+ * di `/teachers` — un riquadro secondario — veniva raccontato come «Accesso
+ * negato» dell'INTERA schermata. La segreteria apriva il dettaglio di una
+ * sezione, leggeva una fascia rossa che le diceva pure il falso, e concludeva
+ * che la pagina fosse rotta. Non lo era: era rotto il modo di riportare.
+ *
+ * Un rifiuto parziale è parziale: sta dove è nato, e il resto della pagina
+ * continua a funzionare e a dirlo.
+ */
+function EsitoRiquadro({ testo }: { testo: string }) {
+    return (
+        <div role="alert" className="mb-3 flex items-start gap-2 rounded-xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+            <span>{testo}</span>
+        </div>
+    );
+}
 
 export default function SezioneDetailPage() {
     const t = useTranslations('adminStudents');
@@ -70,16 +128,28 @@ export default function SezioneDetailPage() {
     const [newTeacherId, setNewTeacherId] = useState('');
     const [teacherBusy, setTeacherBusy] = useState(false);
     const [teachersLoading, setTeachersLoading] = useState(true);
-    // L'esito dell'ultima operazione, quando è NEGATIVO.
+    // L'esito NEGATIVO dell'ultima operazione, UNO PER RIQUADRO.
     //
-    // PERCHÉ ESISTE. Le tre scritture di questa pagina erano scritte
+    // PERCHÉ ESISTONO. Le tre scritture di questa pagina erano scritte
     // `if (res.ok) …` senza `else` (o senza guardare affatto la risposta): un
     // rifiuto del server — il 400 «Specificare la sede» nato con le tre sedi, un
     // 403 di scope — si comportava esattamente come un successo. La tendina del
     // grado lampeggiava e tornava indietro, il modulo dell'insegnante si
     // azzerava, e l'operatore restava convinto che il click non fosse stato
-    // registrato. Questa pagina è rimasta fuori dall'inventario dell'ondata 3.
-    const [errore, setErrore] = useState<Avvertimento>(null);
+    // registrato.
+    //
+    // PERCHÉ SONO TRE E NON UNO (S27, collaudo del 2026-07-31). Con un solo
+    // stato condiviso, il rifiuto di UN riquadro finiva in una fascia rossa in
+    // cima alla PAGINA: chi la leggeva concludeva che la schermata intera fosse
+    // negata, mentre erano negati gli insegnanti e basta. Un errore che non dice
+    // DOVE è nato costa più di quanto informa.
+    const [erroreInsegnanti, setErroreInsegnanti] = useState<Avvertimento>(null);
+    const [erroreImpostazioni, setErroreImpostazioni] = useState<Avvertimento>(null);
+    const [erroreAlunni, setErroreAlunni] = useState<Avvertimento>(null);
+    // «Non hai i permessi» NON è un errore: è una risposta. Ha uno stato suo
+    // perché si rende in modo diverso (nessun allarme, e i comandi spariscono:
+    // una tendina disabilitata accanto a un diniego non serve a nessuno).
+    const [insegnantiNegati, setInsegnantiNegati] = useState(false);
     // «Non ho potuto caricare» ≠ «non esiste». Sono due schermate diverse: la
     // seconda accusa i dati, la prima accusa la rete — e solo la prima ha senso
     // riprovarla.
@@ -129,19 +199,36 @@ export default function SezioneDetailPage() {
             const res = await fetch(`/api/admin/sections/${sectionId}/teachers`)
                 .catch((e: unknown) => { motivo = nomeErrore(e); return null; });
             if (res === null) {
-                setErrore({ chiave: 'sezErroreCaricamento', testo: '' });
+                setErroreInsegnanti({ chiave: 'sezInsegnantiErrore', testo: '' });
                 logGuastoMsg(`sezione-insegnanti-caricamento-fallito: ${motivo}`);
                 return;
             }
             const d = res.ok ? await res.json().catch(() => null) : null;
             if (d?.success) {
+                setInsegnantiNegati(false);
+                setErroreInsegnanti(null);
                 setTeachers({ assigned: d.assigned ?? [], available: d.available ?? [] });
+                return;
+            }
+            // 403 = «non ti compete», non «è rotto». Due conseguenze, entrambe
+            // volute:
+            //  · a schermo NON è un allarme (nessun `role="alert"`, nessuna
+            //    fascia rossa): è lo stato del riquadro, e resta nel riquadro;
+            //  · NON si spedisce nessuna riga al canale client. È la politica
+            //    scritta di `src/lib/logging/client.ts` («401/403/404 → info,
+            //    mai in tabella; l'unico modo di dire non conservarlo è non
+            //    spedirlo») e quella di `with-route.ts`. Il diniego il server lo
+            //    vede e lo logga già lui, con il ruolo e il motivo: qui
+            //    aggiungerebbe solo rumore `error` sopra un evento normale.
+            if (res.status === 403) {
+                setInsegnantiNegati(true);
+                setErroreInsegnanti(null);
                 return;
             }
             // Elenco insegnanti VUOTO perché non è arrivato: senza questo ramo
             // la card diceva «Nessun insegnante di riferimento assegnato», che è
             // un'affermazione sui dati fatta senza avere i dati.
-            setErrore({ chiave: 'sezErroreCaricamento', testo: res.ok ? '' : await messaggioErrore(res, '') });
+            setErroreInsegnanti({ chiave: 'sezInsegnantiErrore', testo: res.ok ? '' : await messaggioErrore(res, '') });
             logClient({
                 livello: 'error',
                 evento: 'fetch',
@@ -159,7 +246,7 @@ export default function SezioneDetailPage() {
     const addTeacher = async () => {
         if (!newTeacherId || !sectionId) return;
         setTeacherBusy(true);
-        setErrore(null);
+        setErroreInsegnanti(null);
         try {
             const res = await fetch(`/api/admin/sections/${sectionId}/teachers`, {
                 method: 'POST',
@@ -170,14 +257,14 @@ export default function SezioneDetailPage() {
                 // ⚠️ IL PUNTO. `setNewTeacherId('')` stava QUI SOPRA, prima di
                 // sapere l'esito: su un rifiuto si perdeva anche la scelta appena
                 // fatta, ed è esattamente il difetto che l'ondata 3 dichiarava chiuso.
-                setErrore({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
+                setErroreInsegnanti({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
                 logRifiuto('sezione-insegnante-aggiunta-respinta', res.status);
                 return;
             }
             setNewTeacherId('');
             await loadTeachers();
         } catch (err) {
-            setErrore({ chiave: 'sezErroreOperazione', testo: '' });
+            setErroreInsegnanti({ chiave: 'sezErroreOperazione', testo: '' });
             logGuasto('sezione-insegnante-aggiunta-fallita', err);
         } finally {
             setTeacherBusy(false);
@@ -187,7 +274,7 @@ export default function SezioneDetailPage() {
     const removeTeacher = async (utenteId: string) => {
         if (!sectionId) return;
         setTeacherBusy(true);
-        setErrore(null);
+        setErroreInsegnanti(null);
         try {
             const res = await fetch(`/api/admin/sections/${sectionId}/teachers`, {
                 method: 'DELETE',
@@ -197,13 +284,13 @@ export default function SezioneDetailPage() {
             if (!res.ok) {
                 // Ricaricare e basta faceva ricomparire la pillola dell'insegnante
                 // come se nulla fosse: sembrava un ritardo, era un rifiuto.
-                setErrore({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
+                setErroreInsegnanti({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
                 logRifiuto('sezione-insegnante-rimozione-respinta', res.status);
                 return;
             }
             await loadTeachers();
         } catch (err) {
-            setErrore({ chiave: 'sezErroreOperazione', testo: '' });
+            setErroreInsegnanti({ chiave: 'sezErroreOperazione', testo: '' });
             logGuasto('sezione-insegnante-rimozione-fallita', err);
         } finally {
             setTeacherBusy(false);
@@ -263,7 +350,7 @@ export default function SezioneDetailPage() {
             }
             // Elenco alunni non arrivato: «0 alunni» in testata sarebbe una
             // risposta a una domanda che nessuno ha potuto porre.
-            setErrore({ chiave: 'sezErroreCaricamento', testo: '' });
+            setErroreAlunni({ chiave: 'sezAlunniErrore', testo: '' });
             logClient({
                 livello: 'error',
                 evento: 'fetch',
@@ -282,7 +369,10 @@ export default function SezioneDetailPage() {
     const riprovaCaricamento = () => {
         setIsLoading(true);
         setErroreCaricamento(null);
-        setErrore(null);
+        setErroreInsegnanti(null);
+        setErroreImpostazioni(null);
+        setErroreAlunni(null);
+        setInsegnantiNegati(false);
         setTeachersLoading(true);
         void load();
         void loadTeachers();
@@ -291,7 +381,7 @@ export default function SezioneDetailPage() {
     const changeSchoolType = async (newType: SchoolType) => {
         if (!sezione) return;
         setIsSavingType(true);
-        setErrore(null);
+        setErroreImpostazioni(null);
         try {
             const res = await fetch('/api/admin/sections', {
                 method: 'PATCH',
@@ -302,13 +392,13 @@ export default function SezioneDetailPage() {
                 // Senza questo ramo la tendina tornava al valore vecchio e basta:
                 // identico a un click perso, e il 400 «Specificare la sede»
                 // rimaneva invisibile.
-                setErrore({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
+                setErroreImpostazioni({ chiave: 'sezErroreOperazione', testo: await messaggioErrore(res, '') });
                 logRifiuto('sezione-tipo-scuola-respinto', res.status);
                 return;
             }
             setSezione({ ...sezione, school_type: newType });
         } catch (err) {
-            setErrore({ chiave: 'sezErroreOperazione', testo: '' });
+            setErroreImpostazioni({ chiave: 'sezErroreOperazione', testo: '' });
             logGuasto('sezione-tipo-scuola-fallito', err);
         } finally {
             setIsSavingType(false);
@@ -370,15 +460,12 @@ export default function SezioneDetailPage() {
                 <ArrowLeft size={15} strokeWidth={2} /> {t('sezBack')}
             </Link>
 
-            {/* L'esito negativo dell'ultima operazione. Stessa forma di
-                `AvvisoForm`: `role="alert"`, così lo annuncia anche uno screen
-                reader — prima qui gli elementi con quel ruolo erano ZERO. */}
-            {errore && (
-                <div role="alert" className="mb-4 flex items-start gap-2 rounded-card bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
-                    <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
-                    <span>{testoDi(errore)}</span>
-                </div>
-            )}
+            {/* ⚠️ QUI NON C'È PIÙ NESSUNA FASCIA. L'esito negativo lo mostra il
+                riquadro che l'ha prodotto (`EsitoRiquadro`): una fascia in cima
+                dice «questa pagina è negata» anche quando a essere negato è un
+                riquadro su tre — ed è esattamente ciò che la segreteria leggeva
+                il 2026-07-31. L'annuncio allo screen reader non si perde:
+                `role="alert"` è sull'esito, dovunque stia. */}
 
             {/* Testata sezione */}
             <div className="mb-5 rounded-card bg-kidville-white p-6 shadow-sm">
@@ -405,10 +492,8 @@ export default function SezioneDetailPage() {
 
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
                 {/* Alunni della sezione */}
-                <div className="rounded-card bg-kidville-white p-6 shadow-sm">
-                    <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
-                        <User size={16} /> {t('sezAlunniInSezione', { n: students.length })}
-                    </h4>
+                <Riquadro id="riquadro-alunni" icona={User} titolo={t('sezAlunniInSezione', { n: students.length })}>
+                    {erroreAlunni && <EsitoRiquadro testo={testoDi(erroreAlunni)} />}
                     {students.length > 0 ? (
                         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                             {students.map(student => (
@@ -431,14 +516,12 @@ export default function SezioneDetailPage() {
                     <p className="font-maven mt-4 text-xs text-kidville-muted">
                         {t('sezPerAprirePre')}<Link href="/admin/students" className="font-semibold text-kidville-green hover:underline">{t('tabAlunni')}</Link>{t('sezPerAprirePost')}
                     </p>
-                </div>
+                </Riquadro>
 
                 <div className="space-y-5">
                 {/* Impostazioni sezione */}
-                <div className="rounded-card bg-kidville-white p-6 shadow-sm">
-                    <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
-                        <Settings size={16} /> {t('sezImpostazioni')}
-                    </h4>
+                <Riquadro id="riquadro-impostazioni" icona={Settings} titolo={t('sezImpostazioni')}>
+                    {erroreImpostazioni && <EsitoRiquadro testo={testoDi(erroreImpostazioni)} />}
                     <div className="space-y-4 rounded-xl bg-kidville-cream p-4">
                         <div>
                             <label className="mb-1 block text-xs font-bold uppercase text-kidville-muted">{t('sezTipoScuola')}</label>
@@ -461,14 +544,24 @@ export default function SezioneDetailPage() {
                             </div>
                         </div>
                     </div>
-                </div>
+                </Riquadro>
 
                 {/* Insegnanti di riferimento */}
-                <div className="rounded-card bg-kidville-white p-6 shadow-sm">
-                    <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
-                        <GraduationCap size={16} /> {t('sezInsegnanti')}
-                    </h4>
+                <Riquadro id="riquadro-insegnanti" icona={GraduationCap} titolo={t('sezInsegnanti')}>
+                    {/* 🔴 IL 403 RESTA QUI DENTRO. Non è un allarme e non è una
+                        fascia rossa: è lo stato del riquadro. E i comandi
+                        spariscono invece di restare disabilitati — una tendina
+                        grigia accanto a un diniego non dice niente a nessuno.
+                        Nemmeno «Nessun insegnante assegnato» va detto: sarebbe
+                        un'affermazione sui dati fatta senza avere i dati. */}
+                    {insegnantiNegati ? (
+                        <div className="flex items-start gap-2 rounded-xl bg-kidville-cream px-4 py-4 font-maven text-sm text-kidville-sub">
+                            <Lock size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+                            <span>{t('sezInsegnantiNegato')}</span>
+                        </div>
+                    ) : (
                     <div className="space-y-3 rounded-xl bg-kidville-cream p-4">
+                        {erroreInsegnanti && <EsitoRiquadro testo={testoDi(erroreInsegnanti)} />}
                         {teachers.assigned.length > 0 ? (
                             <div className="flex flex-wrap gap-2">
                                 {teachers.assigned.map(tch => (
@@ -512,7 +605,8 @@ export default function SezioneDetailPage() {
                             {t('sezInsegnanteHint')}
                         </p>
                     </div>
-                </div>
+                    )}
+                </Riquadro>
                 </div>
             </div>
         </CockpitPage>

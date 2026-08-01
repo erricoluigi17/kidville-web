@@ -106,20 +106,20 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
   return (
     <div className="grid gap-6 md:grid-cols-2">
       {errore && (
-        <div role="alert" className="md:col-span-2 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error">
+        <div role="alert" className="md:col-span-2 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error-strong">
           <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} />
           <span>{errore}</span>
         </div>
       )}
       <section>
         <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">{t('giudiziScalaTitolo')}</h3>
-        <p className="font-maven text-xs text-kidville-muted mb-3">{t('giudiziScalaSottotitolo')}</p>
+        <p className="font-maven text-xs text-kidville-sub mb-3">{t('giudiziScalaSottotitolo')}</p>
         <ul className="divide-y divide-kidville-line mb-3">
           {scala.map((s) => (
             <li key={s.id} className={`py-2 ${s.attivo ? '' : 'opacity-50'}`}>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                  <span className="font-maven text-sm text-kidville-muted shrink-0">{s.ordine}.</span>
+                  <span className="font-maven text-sm text-kidville-sub shrink-0">{s.ordine}.</span>
                   <input
                     key={`${s.id}-${s.etichetta}`}
                     defaultValue={s.etichetta}
@@ -127,14 +127,14 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
                     className="font-maven flex-1 min-w-0 rounded border border-transparent px-1.5 py-0.5 text-sm text-kidville-ink hover:border-kidville-line focus:border-kidville-muted focus:outline-none"
                   />
                 </div>
-                <label className="font-maven inline-flex items-center gap-1 text-[11px] text-kidville-muted shrink-0">
+                <label className="font-maven inline-flex items-center gap-1 text-[11px] text-kidville-sub shrink-0">
                   <input type="checkbox" checked={s.attivo} onChange={() => toggleAttivo(s)} />
                   {t('giudiziAttivo')}
                 </label>
-                <button onClick={() => removeScala(s.id)} aria-label={t('giudiziElimina')} className="text-kidville-muted hover:text-kidville-error shrink-0"><Trash2 size={15} /></button>
+                <button onClick={() => removeScala(s.id)} aria-label={t('giudiziElimina')} className="text-kidville-sub hover:text-kidville-error shrink-0"><Trash2 size={15} /></button>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
-                <label className="font-maven text-[11px] text-kidville-muted w-14 shrink-0">{t('giudiziValore')}</label>
+                <label className="font-maven text-[11px] text-kidville-sub w-14 shrink-0">{t('giudiziValore')}</label>
                 <input
                   type="number"
                   step="0.5"
@@ -160,11 +160,11 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
 
       <section>
         <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">{t('giudiziTemplateTitolo')}</h3>
-        <p className="font-maven text-xs text-kidville-muted mb-3">{t('giudiziTemplateSottotitolo')}</p>
+        <p className="font-maven text-xs text-kidville-sub mb-3">{t('giudiziTemplateSottotitolo')}</p>
         <div className="space-y-1.5">
           {template.map((t) => (
             <div key={t.id} className="flex items-center gap-2">
-              <span className="font-maven text-[11px] text-kidville-muted w-28 shrink-0">{t.dimensione}={t.valore}</span>
+              <span className="font-maven text-[11px] text-kidville-sub w-28 shrink-0">{t.dimensione}={t.valore}</span>
               <input
                 defaultValue={t.frammento}
                 onBlur={(e) => { if (e.target.value !== t.frammento) saveFrammento(t, e.target.value); }}

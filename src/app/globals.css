@@ -267,7 +267,18 @@ body {
    verde ESPLICITO (#006A5F, non `var()` che in certi contesti ricade su currentColor
    e sparisce sui controlli a testo chiaro) + separatore bianco, così l'anello resta
    visibile sia sui controlli a fondo pieno (pill-filtro verde attiva, bottoni del
-   popup) sia sul fondo chiaro della pagina. */
+   popup) sia sul fondo chiaro della pagina.
+
+   ⚠️ NON SPOSTARE QUESTA REGOLA DENTRO UN `@layer`. In `src/` ci sono 171
+   `focus:outline-none`: non uccidono l'anello SOLO perché questa regola vive
+   fuori da ogni layer, mentre le utility Tailwind stanno in `@layer utilities`
+   — e in CSS un layer perde sempre contro ciò che è fuori dai layer, a
+   prescindere dalla specificità. Chi «ripulisce» quelle utility, o chi
+   riordina questo file dentro dei layer, spegne il focus su TUTTA l'app in
+   silenzio: nessun test di rendering se ne accorgerebbe. Il lock
+   `__tests__/a11y/contrasto-token.test.ts` verifica che il contesto di questa
+   regola non contenga nessun `@layer`.
+   (Misura del 2026-07-31: anello 2px #006A5F, 6,51:1 — l'anello è SANO.) */
 :focus-visible {
   outline: 2px solid #006A5F;
   outline-offset: 2px;
@@ -443,8 +454,22 @@ body {
    Tecnica classica delle quattro gradient con `background-attachment` misto: i due
    "coperchi" del colore-superficie scrollano col contenuto (`local`) e a fine
    corsa coprono l'ombra sottostante; le due ombre restano agganciate alla
-   scroll-box (`scroll`). Il colore-coperchio è il token superficie → si ribalta
-   da solo in Alto Contrasto. Nessun JS. */
+   scroll-box (`scroll`). Nessun JS.
+
+   ⚠️ Qui il commento precedente diceva: «il colore-coperchio è il token
+   superficie → si ribalta da solo in Alto Contrasto». ERA FALSO, ed è costato
+   una banda NERA larga 40px sopra la prima lettera di ogni riga su DIECI
+   schermate admin (a11y F6, misurato il 2026-07-31: «Gita al parco» → la G
+   coperta, l'intestazione «AVVISO» → la A coperta).
+   Il motivo: `var(--color-kidville-white)` viene rimappato a #000000 dentro
+   `[data-contrast="high"]` (riga 172), ma la SUPERFICIE sotto NON si ribalta,
+   perché è la utility Tailwind `bg-white`/`bg-kidville-white`, dove
+   `@theme inline` ha già inlinato l'hex #FFFFFF. Coperchio nero su tavolo
+   bianco. Finché le card delle tabelle restano chiare, il coperchio deve
+   restare chiaro: vedi la regola esplicita subito sotto.
+   Il lock `__tests__/a11y/contrasto-token.test.ts` impedisce che una nuova
+   copertura basata su `var(--color-kidville-white)` nasca senza la sua
+   controparte in Alto Contrasto. */
 .kv-table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -456,6 +481,19 @@ body {
   background-repeat: no-repeat;
   background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
   background-attachment: local, local, scroll, scroll;
+}
+/* Alto Contrasto — il coperchio dello scorrimento resta del colore della
+   superficie VERA (le card delle tabelle sono `bg-kidville-white`, hex inlinato:
+   restano bianche anche in HC). Si sovrascrive il solo `background-image`, MAI
+   la shorthand `background`: la shorthand azzererebbe repeat/size/attachment
+   della regola sopra e il coperchio diventerebbe un rettangolo a tutta larghezza.
+   Specificità 0,2,0 > 0,1,0 → vince senza !important. */
+[data-contrast="high"] .kv-table-scroll {
+  background-image:
+    linear-gradient(to right, #FFFFFF 30%, transparent),
+    linear-gradient(to left, #FFFFFF 30%, transparent),
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.35), transparent),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.35), transparent);
 }
 
 /* =============================================================================

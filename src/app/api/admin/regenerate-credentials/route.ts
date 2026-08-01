@@ -193,8 +193,30 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
       loginUrl,
       generatedAt: new Date().toLocaleString('it-IT'),
     });
-    // Assicura il bucket privato (idempotente: se esiste, l'errore è ignorato).
-    await admin.storage.createBucket('credenziali', { public: false }).catch(() => {});
+    // Assicura il bucket privato. Idempotente: in tutti gli ambienti il bucket ESISTE già, e
+    // il 409 «resource already exists» è l'esito ATTESO — si registra a `info` e si tira
+    // dritto (AGENTS.md regola 6: un errore ignorabile si logga spiegando perché).
+    //
+    // Qui prima c'era `.catch(() => {})`, ed era sbagliato due volte. Primo: lo Storage NON
+    // lancia, ritorna `{ error }` (regola 7), quindi quel catch non ha mai intercettato
+    // niente — l'errore veniva scartato dal fatto stesso di non guardarlo. Secondo: questo è
+    // il percorso delle CREDENZIALI, cioè il difetto storico da cui nasce l'intera regola 6.
+    // Se il bucket non si può creare, l'upload sotto fallisce e la Segreteria vede un PDF che
+    // non arriva: il motivo va detto QUI, dove si sa ancora qual è.
+    const creazioneBucket = await admin.storage.createBucket('credenziali', { public: false });
+    if (creazioneBucket.error) {
+      const giaPresente = /exist/i.test(creazioneBucket.error.message ?? '');
+      logEvento(
+        'storage',
+        giaPresente ? 'info' : 'error',
+        {
+          operazione: 'admin/regenerate-credentials:POST',
+          bucket: 'credenziali',
+          esito: giaPresente ? 'bucket-gia-presente' : 'bucket-non-creato',
+        },
+        giaPresente ? undefined : creazioneBucket.error,
+      );
+    }
     const pdfKey = `${targetId}-${Date.now()}.pdf`;
     const up = await admin.storage.from('credenziali').upload(pdfKey, pdf, { contentType: 'application/pdf', upsert: true });
     if (up.error) throw up.error;

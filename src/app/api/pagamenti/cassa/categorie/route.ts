@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { CassaCategoria } from '@/lib/cassa/tipi'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // Codici PostgREST/Postgres «schema cassa assente» (DB E2E CI non migrato). Copia
 // locale della lista canonica di `@/lib/cassa/saldo`: tiene questa route — e i suoi
@@ -90,7 +91,7 @@ async function caricaCategoriaConScope(
   if (cat.scuola_id != null) {
     const sedi = await resolveScuoleAttive(request, supabase, user)
     if (!sedi.includes(cat.scuola_id)) {
-      return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+      return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
     }
   }
   return { cat }

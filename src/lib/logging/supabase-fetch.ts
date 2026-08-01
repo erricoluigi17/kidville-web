@@ -1,5 +1,5 @@
 import { logEvento, type Livello, type Valore } from './logger';
-import { inLogger } from './context';
+import { contesto, inLogger } from './context';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
 
@@ -58,6 +58,26 @@ import { sanificaMessaggio } from './serialize';
  * sommergerebbero proprio gli errori che questo modulo esiste per far emergere. La latenza si
  * guarda su Vercel, dove la riga arriva lo stesso.
  *
+ * ⚠️ E IL LIVELLO NON BASTA A GARANTIRLO. Fino al 2026-08-01 «gli `info` di questo modulo non
+ * finiscono in tabella» era vero per un accidente: nessuna delle cinque aree (`db`, `rpc`,
+ * `storage`, `auth`, `altro`) era in `EVENTI_PERSISTITI`. Il giorno in cui `storage` è entrato
+ * in allowlist — per una ragione giusta e distante, far arrivare in tabella il successo del
+ * caricamento di un allegato — ogni lettura lenta e ogni 3xx dello Storage hanno cominciato a
+ * scriversi in `app_log`, in silenzio, senza che nessuno avesse deciso niente. Perciò adesso la
+ * regola è scritta QUI, dove sta la ragione: `daPersistere()` esclude gli `info` di questo
+ * modulo qualunque cosa dica l'allowlist. Un `logEvento('storage','info',…)` APPLICATIVO —
+ * l'upload riuscito — continua a persistersi: è un successo di dominio, non latenza.
+ *
+ * IL RUMORE HA UN TETTO, e non è la soglia. Misurato il 2026-07-31: una `GET /api/avvisi` con 9
+ * avvisi produceva 35 righe, 34 delle quali `lenta=true` — un terzo delle 100 righe che una
+ * lettura dei log di Vercel restituisce, bruciate da un'apertura della bacheca (l'N+1 del
+ * cockpit: quattro query per avviso). Alzare `LENTA_MS` avrebbe curato il sintomo nel posto
+ * sbagliato: la soglia è tarata sulla PRODUZIONE, dove una query da mezzo secondo è davvero
+ * anomala; è in locale, contro un Postgres remoto, che 700-900 ms sono la norma. E se domani il
+ * database rallentasse davvero, con la sola soglia si tornerebbe a 34 righe proprio nel momento
+ * in cui i log servono. Il tetto per richiesta (`SOGLIE_LENTE`) invece regge in entrambi i casi:
+ * dice che è lento, dice quante volte, e non acceca chi legge.
+ *
  * Perché l'auth non è trattata come il DB: `resolveIdentity()` chiama `auth.getUser()` a OGNI
  * richiesta API. Un cookie scaduto produce un 400/401 da GoTrue a ogni richiesta: a `error`
  * sarebbe una riga in tabella per ogni richiesta con una sessione vecchia. È lo stesso
@@ -78,6 +98,35 @@ type Fetch = typeof fetch;
 
 /** Oltre questa soglia la risposta è "lenta". Solo `info`: vedi la politica dei livelli. */
 const LENTA_MS = 500;
+
+/**
+ * Quante righe «lenta» può emettere UNA richiesta: si emette alla 1ª, alla 10ª, alla 100ª.
+ *
+ * Non è un troncamento — è una scala. La prima riga dice DOVE (quale tabella, quanti ms); le
+ * successive dicono che non è un caso isolato, e portano il conteggio raggiunto (`lente=10`),
+ * così chi legge sa che sotto ce n'erano altre nove. Una richiesta patologica costa al massimo
+ * tre righe invece di trentaquattro, e il tetto cresce col logaritmo del disastro: se un giorno
+ * ne servissero mille, la riga `lente=1000` c'è.
+ *
+ * Perché non «una riga di sintesi a fine richiesta», che sarebbe la forma migliore: chi chiude
+ * la richiesta è `withRoute`, e la sintesi andrebbe emessa da lì. Si può fare, e va fatto —
+ * ma è un altro modulo e un altro intervento; questa scala dà lo stesso tetto senza toccarlo.
+ */
+const SOGLIE_LENTE = new Set([1, 10, 100, 1_000]);
+
+/**
+ * Il contatore vive APPESO ALL'OGGETTO DI CONTESTO, non in una variabile di modulo.
+ *
+ * Una variabile di modulo sarebbe condivisa fra le richieste concorrenti (su Fluid Compute più
+ * invocazioni girano nello stesso processo Node) — è precisamente ciò che le regole in testa a
+ * `context.ts` vietano — e, non azzerandosi mai, dopo mille query lente renderebbe il canale
+ * MUTO per sempre. Una `WeakMap` chiavata sullo store della richiesta dà un contatore per
+ * richiesta senza che il contesto debba sapere niente di questo modulo, e sparisce con lei.
+ *
+ * Fuori da una richiesta (cron, boot, `waitUntil`) non c'è store e quindi non c'è tetto: il
+ * volume lì è basso e nessuno sta leggendo un incidente in diretta. Scelta dichiarata.
+ */
+const lentePerRichiesta = new WeakMap<object, { n: number }>();
 
 /** Tetto del corpo d'errore che ci portiamo dietro quando non è JSON. */
 const CORPO_MAX = 1_000;
@@ -186,7 +235,7 @@ export function creaFetchStrumentato(base?: Fetch): Fetch {
             if (!ok(res)) {
                 await registraFallimento(b, res, ms);
             } else if (ms > LENTA_MS) {
-                logEvento(b.area, 'info', campiDi(b, { stato: stato(res), ms, lenta: true }));
+                registraLenta(b, res, ms);
             }
         } catch {
             // L'osservabilità non può rompere la risposta che sta osservando: si perde il log.
@@ -293,10 +342,40 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
     // Il corpo si legge SOLO qui, mai sulle risposte ok: `storage.download()` passa da questo
     // wrapper, e leggerne il corpo distruggerebbe lo streaming e farebbe esplodere la memoria.
     const err = leggeIlCorpo(b.area) ? await erroreDalCorpo(res, s) : undefined;
+    const livello = livelloDi(b.area, s, err);
 
-    logEvento(b.area, livelloDi(b.area, s, err), campiDi(b, { stato: s, ms }), err, {
-        persisti: persistibile(b.area, s),
+    logEvento(b.area, livello, campiDi(b, { stato: s, ms }), err, {
+        persisti: daPersistere(livello, b.area, s),
     });
+}
+
+/**
+ * Una risposta OK ma lenta. Non è un guasto di nessuno: è latenza, e si guarda su Vercel.
+ *
+ * Il contatore si incrementa SEMPRE, anche quando la riga non esce: è ciò che rende la scala
+ * una scala invece di un troncamento — la riga alla 10ª dice `lente=10` perché le nove di mezzo
+ * sono state contate, non ignorate.
+ */
+function registraLenta(b: Descrizione, res: Response, ms: number): void {
+    const n = contaLenta();
+    if (n !== undefined && !SOGLIE_LENTE.has(n)) return;
+    logEvento(b.area, 'info', campiDi(b, { stato: stato(res), ms, lenta: true, lente: n }),
+        undefined, { persisti: false });
+}
+
+/** Quante risposte lente ha già prodotto QUESTA richiesta. `undefined` = fuori da una richiesta. */
+function contaLenta(): number | undefined {
+    try {
+        const c = contesto();
+        if (!c) return undefined;
+        const stato = lentePerRichiesta.get(c) ?? { n: 0 };
+        stato.n++;
+        lentePerRichiesta.set(c, stato);
+        return stato.n;
+    } catch {
+        // Il tetto è un'ottimizzazione dell'osservabilità: se salta, si emette come prima.
+        return undefined;
+    }
 }
 
 /**
@@ -362,6 +441,25 @@ function zeroRighe(err: unknown): boolean {
     } catch {
         return false;
     }
+}
+
+/**
+ * CHI VA IN TABELLA. Due regole, e la prima è nuova (2026-08-01).
+ *
+ * 1. GLI `info` DI QUESTO MODULO NON SI PERSISTONO MAI. Sono, tutti, non-guasti ad alto volume:
+ *    una risposta lenta, un 3xx, un `.single()` a zero righe, una credenziale sbagliata verso
+ *    GoTrue. Erano fuori dalla tabella soltanto perché nessuna delle cinque aree era in
+ *    `EVENTI_PERSISTITI` — una garanzia che nessuno aveva scritto e che infatti è caduta appena
+ *    `storage` è entrato in allowlist (per far arrivare in tabella il successo del caricamento
+ *    di un allegato, che è tutt'altra cosa). Da quel momento ogni lettura lenta dello Storage si
+ *    sarebbe scritta in `app_log`, in silenzio. Una regola implicita non è una regola: è
+ *    un'abitudine che regge finché nessuno la contraddice.
+ *
+ * 2. Un 5xx di PostgREST non si scrive sul database che lo ha appena prodotto (sotto).
+ */
+function daPersistere(livello: Livello, area: Bersaglio['area'], s: number): boolean {
+    if (livello === 'info') return false;
+    return persistibile(area, s);
 }
 
 /**

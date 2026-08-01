@@ -22,7 +22,7 @@ interface Props { userId: string; scuolaId: string }
 function ErroreBox({ testo }: { testo: string }) {
     if (!testo) return null;
     return (
-        <div role="alert" className="mt-3 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error">
+        <div role="alert" className="mt-3 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error-strong">
             <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} />
             <span>{testo}</span>
         </div>
@@ -115,13 +115,13 @@ function SollecitiSettings({ userId }: Props) {
                     <span className="font-maven text-sm text-kidville-green">{t('spSollecitiCronAttivo')}</span>
                 </label>
                 <div className="flex items-center gap-2">
-                    <span className="font-maven text-xs text-kidville-muted">{t('spSollecitiCadenza')}</span>
+                    <span className="font-maven text-xs text-kidville-sub">{t('spSollecitiCadenza')}</span>
                     <input type="number" min={1} value={cfg.cadenza_min_giorni ?? 7}
                         onChange={e => setCfg({ ...cfg, cadenza_min_giorni: Math.max(1, Number(e.target.value) || 1) })}
                         className={`${input} w-16`} />
                 </div>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-2">
+            <p className="font-maven text-[11px] text-kidville-sub mt-2">
                 {t('spSegnaposto')} {'{alunno}'} {'{descrizione}'} {'{importo}'} {'{residuo}'} {'{scadenza}'} {'{scuola}'} {'{giorni_ritardo}'}
             </p>
             <div className="mt-3 space-y-4">
@@ -129,7 +129,7 @@ function SollecitiSettings({ userId }: Props) {
                     <div key={i} className="rounded-xl border-2 border-kidville-line p-3">
                         <div className="flex flex-wrap items-center gap-3 mb-2">
                             <span className="font-barlow text-xs font-extrabold uppercase text-kidville-green">{t('spLivello', { n: i + 1 })}</span>
-                            <span className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                            <span className="flex items-center gap-1.5 font-maven text-xs text-kidville-sub">
                                 {t('spDopo')}
                                 <input type="number" min={0} value={l.giorni_da_scadenza}
                                     onChange={e => setLivello(i, { giorni_da_scadenza: Math.max(0, Number(e.target.value) || 0) })}
@@ -188,7 +188,7 @@ function FiscaleSettings({ userId }: Props) {
     return (
         <section className={card}>
             <h3 className={h3}><FileText size={16} /> {t('spDatiFiscali')}</h3>
-            <p className="font-maven text-[11px] text-kidville-muted -mt-2 mb-3">
+            <p className="font-maven text-[11px] text-kidville-sub -mt-2 mb-3">
                 {t('spFiscaleDesc')}
             </p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -263,8 +263,8 @@ function CategorieManager({ userId }: Props) {
                 {cats.map(c => (
                     <span key={c.id} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green">
                         {c.icona} {c.nome}
-                        {c.is_sistema ? <Lock size={11} className="text-kidville-muted" /> :
-                            <button onClick={() => del(c.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>}
+                        {c.is_sistema ? <Lock size={11} className="text-kidville-sub" /> :
+                            <button onClick={() => del(c.id)} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={13} /></button>}
                     </span>
                 ))}
             </div>
@@ -272,7 +272,7 @@ function CategorieManager({ userId }: Props) {
                 <input value={nuovo} onChange={e => setNuovo(e.target.value)} placeholder={t('nuovaCategoriaPlaceholder')} className={`${input} flex-1`} />
                 <button onClick={add} className={btnPrimary}><Plus size={14} /> {t('aggiungi')}</button>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
+            <p className="font-maven text-[11px] text-kidville-sub mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
             <ErroreBox testo={errore} />
         </section>
     );
@@ -315,13 +315,13 @@ function RettaMorositaSettings({ userId }: Props) {
                     <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}>{t('spGiornoScadenza')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />
-                    <p className="font-maven text-[10px] text-kidville-muted mt-0.5">{t('spGiornoScadenzaHint')}</p></div>
+                    <p className="font-maven text-[10px] text-kidville-sub mt-0.5">{t('spGiornoScadenzaHint')}</p></div>
                 <div><label className={label}>{t('spVisibileDalGiorno')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_visibilita ?? 25} onChange={e => setS({ ...s, retta_giorno_visibilita: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}><AlertTriangle size={11} className="inline" /> {t('spTolleranzaInsoluti')}</label>
                     <input type="number" value={s.insoluto_tolleranza_giorni} onChange={e => setS({ ...s, insoluto_tolleranza_giorni: Number(e.target.value) })} className={`${input} w-full`} /></div>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('spRettaVisibilitaHint')}</p>
+            <p className="font-maven text-[11px] text-kidville-sub mt-1">{t('spRettaVisibilitaHint')}</p>
             <label className="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" checked={s.retta_auto_enabled} onChange={e => setS({ ...s, retta_auto_enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
                 <span className="font-maven text-sm text-kidville-green">{t('spRettaAutoGen')}</span>
@@ -330,7 +330,7 @@ function RettaMorositaSettings({ userId }: Props) {
                 <label className={label}>{t('spCausaleFattura')}</label>
                 <input value={s.fattura_causale_template ?? ''} onChange={e => setS({ ...s, fattura_causale_template: e.target.value })}
                     placeholder="{descrizione} - {alunno}" className={`${input} w-full`} />
-                <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('spCausaleSegnaposto')} {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. {t('spCausaleModificabile')}</p>
+                <p className="font-maven text-[11px] text-kidville-sub mt-1">{t('spCausaleSegnaposto')} {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. {t('spCausaleModificabile')}</p>
             </div>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
             <ErroreBox testo={errore} />
@@ -369,12 +369,12 @@ function TicketSettings({ userId }: Props) {
                         <input value={p.label} onChange={e => upd(i, 'label', e.target.value)} placeholder={t('spTicketNome')} className={`${input} flex-1`} />
                         <input type="number" value={p.pezzi || ''} onChange={e => upd(i, 'pezzi', Number(e.target.value))} placeholder={t('spTicketPezzi')} className={`${input} w-24`} />
                         <input type="number" value={p.costo || ''} onChange={e => upd(i, 'costo', Number(e.target.value))} placeholder="€" className={`${input} w-24`} />
-                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={15} /></button>
                     </div>
                 ))}
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"><Plus size={14} /> {t('spTicketAggiungiPacchetto')}</button>
+                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-sub flex items-center gap-1"><Plus size={14} /> {t('spTicketAggiungiPacchetto')}</button>
                 <button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? '…' : t('salva')}</button>
             </div>
             <ErroreBox testo={errore} />
@@ -422,7 +422,7 @@ function ArubaSettings({ userId }: Props) {
     return (
         <section className={card}>
             <h3 className={h3}><FileText size={16} /> {t('spArubaTitolo')} <span className="text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">{t('spScaffold')}</span></h3>
-            <p className="font-maven text-xs text-kidville-muted mb-3">{t('spArubaDesc')}</p>
+            <p className="font-maven text-xs text-kidville-sub mb-3">{t('spArubaDesc')}</p>
             <div className="grid grid-cols-2 gap-3">
                 <div><label className={label}>{t('spArubaUsername')}</label><input value={cfg.username} onChange={e => setCfg({ ...cfg, username: e.target.value })} className={`${input} w-full`} /></div>
                 <div><label className={label}>{t('spArubaPassword')}{cfg.has_password && t('spArubaPasswordImpostata')}</label><input type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder={cfg.has_password ? '••••••' : t('spArubaPasswordPlaceholder')} className={`${input} w-full`} /></div>

@@ -7,6 +7,7 @@ import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { STATI_PAGAMENTO as STATI, METODO_LABEL } from './stati';
 
 interface Props { userId: string; scuolaId: string }
@@ -47,9 +48,23 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const [storico, setStorico] = useState<Storico | null>(null);
     const [morosi, setMorosi] = useState<Moroso[]>([]);
 
+    // I due `.catch(() => {})` di prima erano muti nel punto peggiore: qui l'elenco vuoto
+    // NON è un'informazione neutra. «Nessun moroso» è una risposta che la segreteria usa per
+    // decidere se sollecitare una famiglia, e uno storico vuoto le fa credere che una ricarica
+    // non sia mai stata fatta. Si logga anche il `!ok` (un 403 è una risposta regolare: senza
+    // questo ramo resterebbe silenzioso), con lo STATO — numero, lista bianca. Nessun nome di
+    // alunno e nessun importo lascia il dispositivo.
     const loadMorosi = useCallback(() => {
         fetch(`/api/pagamenti/ticket/morosi?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setMorosi(d.data); }).catch(() => {});
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-morosi-non-caricati', stato: r.status });
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => { if (d?.success) setMorosi(d.data); })
+            .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-morosi-non-caricati: ${nomeErrore(err)}` }));
     }, [userId, scuolaId]);
 
     useEffect(() => {
@@ -67,7 +82,15 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
 
     const loadStorico = useCallback((alunnoId: string) => {
         fetch(`/api/pagamenti/ticket/storico?userId=${userId}&alunno_id=${alunnoId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setStorico(d.data); }).catch(() => {});
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-storico-non-caricato', stato: r.status });
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => { if (d?.success) setStorico(d.data); })
+            .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-storico-non-caricato: ${nomeErrore(err)}` }));
     }, [userId]);
 
     const select = (a: Alunno) => { setSel(a); setDone(null); setStorico(null); loadSaldo(a.id); loadStorico(a.id); };

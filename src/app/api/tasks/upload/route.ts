@@ -41,6 +41,21 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
+        // Il caricamento riuscito lascia una riga, e la riga arriva in tabella (evento
+        // `storage` in `EVENTI_PERSISTITI` dal 2026-08-01). Stessa ragione del gemello
+        // `avvisi/upload`: col bucket ora privato, senza un successo persistito «nessun log di
+        // upload» non distingue «nessuno ha caricato» da «gli upload non partono più».
+        //
+        // Solo metadati, mai il nome del file: `bucket` e `mime` sono in lista bianca, `byte`
+        // è un numero. Il nome no — «relazione-<cognome>.pdf» è un dato personale.
+        logEvento('storage', 'info', {
+            operazione: 'tasks/upload:POST',
+            esito: 'allegato-caricato',
+            bucket: BUCKET_TASK_ALLEGATI,
+            mime: file.type,
+            byte: file.size,
+        });
+
         // Link firmato per l'ANTEPRIMA immediata: il bucket è privato dal
         // 2026-07-31 e un indirizzo pubblico (`/object/public/…`) risponde 400.
         const { data: firmato, error: errFirma } = await supabase.storage

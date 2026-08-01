@@ -15,6 +15,7 @@ import {
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // Multi-Sede CRUD (DL-033). Aggiungi / rinomina / disattiva (soft) + config
 // isolata per sede. Service-role + scoping app + audit, coerente col resto del
@@ -208,7 +209,7 @@ function sedeFuoriScope(
     tipo: 'sede-scrittura-fuori-scope', azione,
     utente: user.id, ruolo: user.role, accessibili,
   })
-  return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+  return rifiutoSede('SEDE_NON_ACCESSIBILE')
 }
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────

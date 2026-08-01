@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -84,7 +85,7 @@ async function sedeDichiarataFuoriScope(
     tipo: 'sede-dichiarata-fuori-scope', azione: operazione,
     utente: user.id, ruolo: user.role, attive: sedi.length,
   })
-  return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+  return rifiutoSede('SEDE_NON_ACCESSIBILE')
 }
 
 type CategoriaScope = { scuola_id: string | null; is_sistema: boolean }

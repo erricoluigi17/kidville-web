@@ -271,7 +271,7 @@
   "avChiPubblica": "Who can publish notices",
   "avAllegatiMax": "Attachments: max size (MB)",
   "avScadenzaDefault": "Default expiry (days)",
-  "avConfermaLettura": "Read receipt required from parents",
+  "avConfermaLettura": "Acknowledgement required from parents",
   "avHint": "Publishing roles are applied automatically when the notice is created.",
 
   "chTitolo": "Chat",

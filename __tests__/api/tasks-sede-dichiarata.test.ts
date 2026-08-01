@@ -182,7 +182,7 @@ describe('POST /api/tasks — il promemoria nasce nella sede su cui si sta lavor
     expect(scritti()).toEqual([])
     expect(h.scritture.filter((s) => s.tabella === 'task_interni')).toEqual([])
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
   })
 
   it('MONO-sede che dichiara la sede di un altro plesso: 403, e NIENTE scritto nella propria', async () => {
@@ -201,7 +201,7 @@ describe('POST /api/tasks — il promemoria nasce nella sede su cui si sta lavor
     expect(scritti()).toEqual([])
     expect(h.scritture.filter((s) => s.tabella === 'task_interni')).toEqual([])
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
   })
 
   it('più sedi accessibili e nessuna indicata: 400, e la bacheca resta vuota', async () => {
@@ -212,7 +212,8 @@ describe('POST /api/tasks — il promemoria nasce nella sede su cui si sta lavor
 
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({
-      error: 'Specificare la sede (scuola_id) per questa operazione',
+      error: 'Specificare la sede a cui si riferisce questa operazione',
+      codice: 'SEDE_DA_SPECIFICARE',
     })
     expect(scritti()).toEqual([])
   })

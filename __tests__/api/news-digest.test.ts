@@ -240,7 +240,7 @@ describe('POST /api/news/digest/genera', () => {
     // «200».
     expect(generazioni()).toEqual([])
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
   })
 
   it('Direzione multi-plesso: sede dichiarata fuori dai propri plessi → 403, nessuna generazione', async () => {
@@ -250,7 +250,7 @@ describe('POST /api/news/digest/genera', () => {
     const res = await generaPOST(postReq({ anno: 2026, mese: 2, scuola_id: SEDE_B }))
     expect(generazioni()).toEqual([])
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
   })
 
   it('CONTROLLO POSITIVO: la stessa Direzione sulla sede del ponte → 200 e digest su QUELLA sede', async () => {

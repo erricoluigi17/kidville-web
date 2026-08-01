@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // ─── Transazione unica di famiglia (slice S4 — Contabilità v2) ────────────────
 // UN pagamento (bonifico/POS/…) che salda più voci di più figli, ricarica la
@@ -134,7 +135,7 @@ export const POST = withRoute('pagamenti/transazioni:POST', async (request: Requ
     // Scope di sede: non registrare su un plesso fuori dall'ambito dello staff.
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
     if (!sedi.includes(body.scuola_id)) {
-      return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
     }
 
     // LA SEDE DEL CONTENITORE NON BASTA: vanno controllate le VOCI.

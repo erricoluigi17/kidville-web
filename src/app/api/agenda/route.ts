@@ -16,6 +16,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
@@ -122,12 +123,10 @@ async function sezionePerNomeInScope(
       tipo: 'classe-omonima-ambigua', azione: 'agenda:sezionePerNomeInScope',
       utente: user.id, ruolo: user.role, sezione: nome, candidate: data.length,
     })
-    return {
-      response: NextResponse.json(
-        { error: 'Specificare la sede: più classi con questo nome (usare section_id)' },
-        { status: 400 }
-      ),
-    }
+    // Il dettaglio dell'omonimia («usare section_id») resta nella riga di log
+    // qui sopra: all'operatore serve sapere cosa fare — scegliere la sede — non
+    // il nome del parametro con cui il client glielo dirà.
+    return { response: rifiutoSede('SEDE_DA_SPECIFICARE') }
   }
   return { sezione: { id: data[0].id as string, scuola_id: data[0].scuola_id as string } }
 }

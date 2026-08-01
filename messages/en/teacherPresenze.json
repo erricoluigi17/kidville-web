@@ -53,7 +53,7 @@
   "delegatiAutorizzati": "Authorized delegates",
   "nessunDelegato": "No registered delegates.",
   "conferma": "Confirm",
-  "invioAllarme": "Sending alert...",
+  "invioAllarme": "Sending alert…",
   "panicAlert": "PANIC ALERT - Unauthorized pickup",
   "panicDescrizione": "Blocks the check-out and sends an immediate notification to the Office and the Parent.",
   "ingresso": "Check-in",

@@ -13,6 +13,8 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
+import { CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -370,14 +372,25 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     }
     const invioScuolaId = (sub as { scuola_id?: string | null }).scuola_id ?? null
 
-    // Consenso alla galleria riservata, letto dalla PROVA e non dal payload
-    // grezzo: `data` è ciò che il client ha mandato, `consents_log` è ciò che il
-    // server ha verificato e congelato all'invio.
+    // Consensi fotografici, letti dalla PROVA e non dal payload grezzo: `data` è
+    // ciò che il client ha mandato, `consents_log` è ciò che il server ha
+    // verificato e congelato all'invio. Le domande anteriori al passo consensi
+    // non hanno la prova: restano a `false`, che è il default corretto — un
+    // consenso che non risulta non è un consenso.
+    //
+    // ⚠️ TUTTI E TRE, non solo la galleria (privacy F4, 2026-07-31). Fino a oggi
+    // qui si leggeva soltanto `consenso_foto_galleria`: sito e social — risposti
+    // da 141 famiglie — non arrivavano da nessuna parte. L'elenco NON si scrive
+    // a mano: viene da `CONSENSI_FOTO_CANALI`, così un quarto canale aggiunto al
+    // modulo non può più nascere senza destinazione (lock nei test).
     const provaConsensi = (sub as { consents_log?: { blocchi?: { field_id?: string; accepted?: boolean }[] } | null }).consents_log
-    const consensoFotoGalleria =
-      (provaConsensi?.blocchi ?? []).some(
-        (b) => b.field_id === 'consenso_foto_galleria' && b.accepted === true,
-      )
+    const blocchiConsenso = provaConsensi?.blocchi ?? []
+    const consensiFoto = Object.fromEntries(
+      Object.entries(CONSENSI_FOTO_CANALI).map(([fieldId, colonna]) => [
+        colonna,
+        blocchiConsenso.some((b) => b.field_id === fieldId && b.accepted === true),
+      ]),
+    ) as Record<string, boolean>
     const fuoriScope = await assertInvioInScope(supabase, auth.user, invioScuolaId, action)
     if (fuoriScope) return fuoriScope
 
@@ -911,13 +924,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           documento_path: c.documento_path ?? null,
           classe_sezione: classe,
           stato: 'iscritto',
-          // Liberatoria foto raccolta al momento dell'iscrizione. Senza questa
-          // riga la famiglia acconsentiva e il bambino restava comunque con
-          // `consenso_privacy = false`: la galleria avrebbe bloccato le sue foto,
-          // e nessuno avrebbe capito perché — il consenso c'era, ma non era mai
-          // arrivato dove viene letto. È il canale «galleria riservata»: il sito
-          // e i social sono consensi distinti e NON passano di qui.
-          consenso_privacy: consensoFotoGalleria,
+          // Liberatorie foto raccolte al momento dell'iscrizione, UNA PER CANALE.
+          // Senza queste righe la famiglia acconsentiva e il bambino restava
+          // comunque a `false`: il consenso c'era, ma non era mai arrivato dove
+          // viene letto. I canali NON si contaminano — la galleria riservata alle
+          // famiglie della sezione è un'altra cosa dal sito pubblico e dai social
+          // (provv. Garante 725 del 27/11/2025).
+          ...consensiFoto,
         }
         // Insert resiliente alla colonna mancante (come per i parents sopra): DB E2E
         // senza le colonne della migrazione 20260706105201 → PGRST204 → le rimuove e riprova.
@@ -1076,16 +1089,42 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // l'operatore deve poterla leggere — e finisce nell'email al genitore.
     // Per riaverla dopo esiste `admin/regenerate-credentials`, che la rigenera
     // (e quindi invalida la precedente) lasciando traccia dell'operazione.
+    // Insieme all'approvazione escono dalla domanda i DATI SANITARI del minore
+    // (privacy F2, 2026-07-31). Allergie e note mediche sono ora in
+    // `alunni.allergies` / `alunni.note_mediche` — dove le legge la cucina, dove
+    // le corregge la segreteria e da dove l'oblio le cancella. La copia dentro
+    // `data` è ridondante, ed è una categoria particolare (art. 9) che usciva
+    // integra da `GET /api/admin/iscrizioni` a ogni apertura di «Moduli
+    // ricevuti», per ogni ruolo di staff, senza scadenza.
+    // Solo quei due campi: la domanda accolta resta un atto amministrativo, con
+    // dentro chi ha chiesto cosa e quando. E solo QUI, dopo il ramo degli errori
+    // bloccanti: se l'import non fosse riuscito, la segreteria riproverebbe su
+    // una domanda già svuotata dei dati sanitari.
+    const at = new Date().toISOString()
+    const sanitari = scrubSanitariDomanda(data, at)
     const { error: updErr } = await supabase
       .from('enrollment_submissions')
       .update({
         status: 'approved',
         assigned_classes: assignments,
-        imported_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        data: sanitari.data,
+        imported_at: at,
+        updated_at: at,
       })
       .eq('id', id)
     if (updErr) warnings.push(`Aggiornamento invio: ${updErr.message}`)
+    else if (sanitari.minoriScrubbati > 0) {
+      // Evento critico → si logga anche il SUCCESSO. Solo conteggi e uuid:
+      // `gdpr` è in EVENTI_PERSISTITI, quindi la riga resta in `app_log` e
+      // documenta che quella copia è stata tolta (e quando).
+      logEvento('gdpr', 'info', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'sanitari-rimossi-da-domanda',
+        entita_tipo: 'enrollment_submissions',
+        entita_id: id,
+        n: sanitari.minoriScrubbati,
+      })
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,

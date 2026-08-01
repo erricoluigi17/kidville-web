@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
 import { AlertCircle, Check } from 'lucide-react';
@@ -153,7 +154,7 @@ function AssenzeGenitore() {
                   <div className="flex items-center gap-2">
                     <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-maven font-semibold ${statoCls}`}>{statoLabel}</span>
                     <span className="font-maven text-sm font-semibold text-kidville-ink">
-                      {new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(p.data))}
+                      {intlDateTime(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(p.data))}
                     </span>
                   </div>
                   <span className={`font-maven text-xs ${p.giustificata ? 'text-kidville-success' : 'text-kidville-warn'}`}>

@@ -11,6 +11,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
 import type { NewsPost } from '@/lib/news/tipi'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -43,7 +44,7 @@ async function caricaPostConScope(
   if (post.scuola_id != null) {
     const sedi = await resolveScuoleAttive(request, supabase, user)
     if (!sedi.includes(post.scuola_id)) {
-      return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+      return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
     }
   }
   return { post }

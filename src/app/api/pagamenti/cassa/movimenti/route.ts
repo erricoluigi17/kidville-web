@@ -10,6 +10,7 @@ import { CASSA_SCHEMA_ASSENTE, calcolaAggregatiMovimenti } from '@/lib/cassa/sal
 import type { RigaMovimentoCassa } from '@/lib/cassa/tipi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // =============================================================================
 // MODULO CASSA · registro movimenti (contratto §3.5).
@@ -103,7 +104,7 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
     const supabase = await createAdminClient()
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
     if (!sedi.includes(scuola_id)) {
-      return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
     }
 
     const isAdmin = user.role === 'admin'

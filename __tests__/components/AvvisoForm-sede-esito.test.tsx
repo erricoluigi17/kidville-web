@@ -50,6 +50,24 @@ function compila(titolo = 'Chiusura per ponte', contenuto = 'La scuola resta chi
 
 const pubblica = () => screen.getByRole('button', { name: new RegExp(itTeacher.formSubmitPubblicaAvviso, 'i') })
 
+/**
+ * «Non si può pubblicare» si legge su `aria-disabled`, non su `disabled`.
+ *
+ * Il 2026-08-01 il bottone d'invio ha smesso di usare l'attributo nativo: un
+ * elemento che si disabilita mentre ha il fuoco lo scarica su `<body>` (misurato
+ * in Chrome), e da lì il Tab successivo usciva dal dialogo proprio nell'istante
+ * in cui l'operatore premeva «Pubblica». Con `aria-disabled` lo stato arriva
+ * comunque agli assistivi, il bottone resta nel giro del Tab — chi naviga da
+ * tastiera lo TROVA e scopre che manca qualcosa — e il rifiuto lo decide la
+ * guardia dentro l'handler.
+ *
+ * Il contratto verificato qui sotto resta però quello di prima, ed è l'unico che
+ * conta per chi legge: **premendolo non parte niente**.
+ */
+const nonPubblicabile = () => {
+    expect(pubblica()).toHaveAttribute('aria-disabled', 'true')
+}
+
 beforeEach(() => {
     vi.clearAllMocks()
 })
@@ -68,7 +86,7 @@ describe('AvvisoForm — la sede dichiarata', () => {
             Array.from(sede.querySelectorAll('option')).map((o) => (o as HTMLOptionElement).value),
         ).toEqual(['', SEDE_A, SEDE_B])
 
-        expect(pubblica()).toBeDisabled()
+        nonPubblicabile()
         fireEvent.click(pubblica())
         expect(onSubmit).not.toHaveBeenCalled()
     })
@@ -106,7 +124,10 @@ describe('AvvisoForm — la sede dichiarata', () => {
 
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelSedePubblicazione), { target: { value: SEDE_B } })
         // Nessuna classe selezionata ⇒ il modulo di classe non è inviabile.
-        expect(pubblica()).toBeDisabled()
+        nonPubblicabile()
+        // …e non è una questione di aspetto: premendolo NON parte niente.
+        fireEvent.click(pubblica())
+        expect(onSubmit).not.toHaveBeenCalled()
 
         fireEvent.click(screen.getByRole('button', { name: OMONIMA }))
         fireEvent.click(pubblica())
@@ -160,7 +181,11 @@ describe('AvvisoForm — l\'esito del server', () => {
         expect((screen.getByPlaceholderText(itTeacher.formPlaceholderContenuto) as HTMLTextAreaElement).value)
             .toBe('Domani si esce alle 12.')
         // E il bottone torna utilizzabile: si può correggere e riprovare.
-        expect(pubblica()).toBeEnabled()
+        // `toBeEnabled()` qui non direbbe più niente (senza l'attributo nativo è
+        // vero sempre): si guarda lo stato dichiarato, e poi lo si preme davvero.
+        expect(pubblica()).toHaveAttribute('aria-disabled', 'false')
+        fireEvent.click(pubblica())
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
     })
 
     it('rifiutato senza messaggio: mostra comunque un errore, mai il silenzio', async () => {

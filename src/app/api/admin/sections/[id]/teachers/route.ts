@@ -12,15 +12,30 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 
 // ============================================================
-// Insegnanti di riferimento di una sezione — gate Direzione.
+// Insegnanti di riferimento di una sezione — gate Direzione + segreteria.
 // Riusa la tabella-ponte `utenti_sezioni` (fonte di verità del legame
 // docente↔sezione): aggiungere/rimuovere un insegnante qui si riflette
 // automaticamente nelle "Classi assegnate" del docente (StaffPanel).
 // Semantica add/remove (non replace) per non toccare i legami creati dalle
 // associazioni materia-docente (utenti_sezioni_materie).
 //
-// ⚠️ SCOPE DI SEDE SU TUTTI E TRE GLI HANDLER (audit 2026-07-31). `DIREZIONE`
-// dice CHI può assegnare un docente, non SU QUALE plesso: fino a quella data
+// 🔴 CHI GESTISCE GLI INSEGNANTI DI RIFERIMENTO — decisione ORGANIZZATIVA del
+// titolare (2026-08-01), non una correzione tecnica. Fino a oggi questa route
+// ammetteva la sola Direzione (`admin`/`coordinator`): la segreteria riceveva
+// 403 sul GET e sul dettaglio della sezione le compariva una fascia rossa che
+// per giunta le diceva «riservata allo staff» — mentre la segreteria È staff.
+// Da oggi la segreteria VEDE e MODIFICA gli insegnanti di riferimento delle
+// sezioni del proprio plesso. È uno spostamento di responsabilità dalla
+// Direzione alla segreteria, ed è scritto nel PRD come tale.
+//
+// ⚠️ IL RUOLO NON È LA SEDE. Il permesso allargato qui sotto non tocca di una
+// virgola gli assert di plesso: la segreteria di Aversa continua a ricevere 403
+// su una sezione di Cesa (`assertSezioneInScope`) e su un docente di Cesa
+// (`assertUtenteInScope`). I due controlli negativi stanno in
+// `__tests__/api/sections-teachers-segreteria.test.ts`.
+//
+// ⚠️ SCOPE DI SEDE SU TUTTI E TRE GLI HANDLER (audit 2026-07-31). La lista dei
+// ruoli dice CHI può assegnare un docente, non SU QUALE plesso: fino a quella data
 // POST e DELETE non leggevano mai `sections`, quindi il coordinator di un plesso
 // poteva agganciare un proprio educator a una sezione di un altro — o sfilarne
 // il titolare. Non è un dettaglio di permessi: `docentiDiSezione` legge
@@ -32,7 +47,13 @@ import { logErrore } from '@/lib/logging/logger';
 // e il DOCENTE (che non sia personale di un'altra sede).
 // ============================================================
 
-const DIREZIONE = ['admin', 'coordinator'] as const;
+/**
+ * Chi gestisce gli insegnanti di riferimento: Direzione **e segreteria**.
+ * Coincide col default di `requireStaff`, ma resta scritto per esteso: è una
+ * scelta organizzativa, e un default che cambiasse domani non deve cambiarla
+ * di nascosto.
+ */
+const GESTIONE_INSEGNANTI = ['admin', 'coordinator', 'segreteria'] as const;
 const bodySchema = z.object({ utente_id: zUuid });
 
 // Tutto il personale, genitori esclusi: sostituisce il vecchio
@@ -52,7 +73,7 @@ async function resolveSectionId(context: { params: Promise<{ id: string }> }) {
 }
 
 export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
-  const auth = await requireStaff(request, [...DIREZIONE]);
+  const auth = await requireStaff(request, [...GESTIONE_INSEGNANTI]);
   if (auth.response) return auth.response;
   const idP = await resolveSectionId(context);
   if ('response' in idP) return idP.response;
@@ -118,7 +139,7 @@ export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request:
 });
 
 export const POST = withRoute('admin/sections/[id]/teachers:POST', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
-  const auth = await requireStaff(request, [...DIREZIONE]);
+  const auth = await requireStaff(request, [...GESTIONE_INSEGNANTI]);
   if (auth.response) return auth.response;
   const idP = await resolveSectionId(context);
   if ('response' in idP) return idP.response;
@@ -160,7 +181,7 @@ export const POST = withRoute('admin/sections/[id]/teachers:POST', async (reques
 });
 
 export const DELETE = withRoute('admin/sections/[id]/teachers:DELETE', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
-  const auth = await requireStaff(request, [...DIREZIONE]);
+  const auth = await requireStaff(request, [...GESTIONE_INSEGNANTI]);
   if (auth.response) return auth.response;
   const idP = await resolveSectionId(context);
   if ('response' in idP) return idP.response;

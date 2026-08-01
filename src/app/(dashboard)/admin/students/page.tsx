@@ -104,8 +104,33 @@ function AdminStudentsInner() {
   // attive (il server scopa dal cookie); così reFetchKey è referenziato (deps).
   useEffect(() => {
     const hdr = { 'x-sedi': reFetchKey };
-    fetch('/api/admin/sections', { headers: hdr }).then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
-    fetch('/api/admin/gruppi-mensa', { headers: hdr }).then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
+    // Il fallimento non è più muto (AGENTS.md regola 6). Qui c'erano due `.catch(() => {})`,
+    // e l'unico effetto visibile di un guasto era un menù a tendina vuoto — che per chi sta
+    // davanti allo schermo è indistinguibile da «in questa sede non c'è nessuna sezione».
+    // Va loggato anche il `!ok`, non solo l'eccezione: un 403 arriva come risposta REGOLARE
+    // e senza questo ramo il silenzio resterebbe identico.
+    // Esce solo lo STATO (numero, lista bianca) o il NOME della classe d'errore: niente
+    // dell'elenco degli alunni lascia il dispositivo.
+    fetch('/api/admin/sections', { headers: hdr })
+      .then(r => {
+        if (!r.ok) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'admin-students-sezioni-non-caricate', stato: r.status });
+          return null;
+        }
+        return r.json();
+      })
+      .then(d => { if (Array.isArray(d)) setAvailableSections(d); })
+      .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-sezioni-non-caricate: ${nomeErrore(err)}` }));
+    fetch('/api/admin/gruppi-mensa', { headers: hdr })
+      .then(r => {
+        if (!r.ok) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'admin-students-gruppi-mensa-non-caricati', stato: r.status });
+          return null;
+        }
+        return r.json();
+      })
+      .then(d => { if (d?.success) setMensaGroups(d.data ?? []); })
+      .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-gruppi-mensa-non-caricati: ${nomeErrore(err)}` }));
   }, [reFetchKey]);
 
   // NOMI di classe univoci fra le sedi attive.
@@ -441,8 +466,16 @@ function AdminStudentsInner() {
             >
               <FileDown size={16} /> {t('azioneEsporta')}
             </button>
-            {/* Lo staff non si crea da qui (gestione RBAC dedicata): niente "Nuovo". */}
-            {viewType !== 'staff' && (
+            {/* Il bottone crea PERSONE, quindi vive solo dove ci sono persone.
+                Lo staff non si crea da qui (gestione RBAC dedicata), e le
+                sezioni hanno il loro «Nuova Sezione» dentro `SectionsView`.
+                ⚠️ Il predicato era `viewType !== 'staff'`: con la tab SEZIONI
+                attiva il bottone diceva «NUOVO GENITORE» e portava alla
+                creazione di un genitore — un invito a fare tutt'altro, nella
+                pagina delle classi (collaudo frontend del 2026-07-31). Elencare
+                le tab ammesse invece di escluderne una impedisce alla prossima
+                tab nuova di ereditare l'etichetta sbagliata per silenzio. */}
+            {(viewType === 'child' || viewType === 'adult') && (
               <button onClick={() => (window.location.href = '/admin/students/new')} className={HEADER_BTN}>
                 <UserPlus size={18} /> {viewType === 'child' ? t('azioneNuovoAlunno') : t('azioneNuovoGenitore')}
               </button>

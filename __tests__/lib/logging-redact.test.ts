@@ -202,6 +202,75 @@ describe('redact — lista bianca', () => {
         expect(json).not.toContain('tok_live');
     });
 
+    it('il NOME DI FILE non è una rotta: «certificato-<cognome>.pdf» non esce in chiaro', () => {
+        // Misurato in produzione (report log W4): nella riga persistita del guasto indotto
+        // convivevano `"url":"NON-ESISTE-collaudo-log.pdf"` IN CHIARO e
+        // `"fileUrl":"[redatto:str/27]"` — stesso valore, due trattamenti. `redigiPath`
+        // maschera i segmenti uuid, tutto-cifre o lunghi-con-cifre: un NOME DI FILE senza
+        // cifre gli passa in mezzo. E un allegato di avviso può chiamarsi
+        // «certificato-<cognome>.pdf» — il cognome di un minore in una colonna che vive
+        // 30 giorni e si interroga in SQL.
+        expect(redigiPath('certificato-rossi.pdf')).not.toBe('certificato-rossi.pdf');
+        expect(redigiPath('certificato-rossi.pdf')).toBe('[file].pdf');
+        expect(redigiPath('/storage/v1/object/avvisi_allegati/certificato-rossi.pdf'))
+            .toBe('/storage/v1/object/avvisi_allegati/[file].pdf');
+
+        // CONTROLLI POSITIVI — ciò che il pattern deve CONTINUARE a dire, altrimenti si è
+        // solo spento il log invece di averlo reso onesto:
+        //  · l'ESTENSIONE resta (dice che era un PDF, e non è il dato di nessuno);
+        //  · i nomi di rotta restano leggibili;
+        //  · l'HOST resta: è ciò che dice QUALE provider ha risposto.
+        expect(redigiPath('/api/medical-certificates/3')).toBe('/api/medical-certificates/[n]');
+        expect(redigiPath('https://api.resend.com/emails')).toBe('https://api.resend.com/emails');
+        expect(redigiPath('https://app.kidville.it')).toBe('https://app.kidville.it');
+        expect(redigiPath('https://app.kidville.it/m/tok_live_9f8e7d6c5b4a3210')).toBe('https://app.kidville.it/m/[tok]');
+        // …e l'host va protetto ANCHE nella forma protocollo-relativa, che non è un caso di
+        // scuola: è esattamente ciò che `redigiPathNelTesto` ritaglia dal messaggio di un
+        // browser («Failed to fetch https://app.kidville.it» → il match comincia dopo i `:`,
+        // cioè da `//app.kidville.it`). Senza, l'host diventerebbe `[file].it`.
+        expect(redigiPath('//app.kidville.it')).toBe('//app.kidville.it');
+        expect(redigiPath('//x.supabase.co/storage/v1/object/avvisi_allegati/certificato-rossi.pdf'))
+            .toBe('//x.supabase.co/storage/v1/object/avvisi_allegati/[file].pdf');
+    });
+
+    it('sotto una chiave di path LA CHIAVE APRE E IL VALORE CONFERMA: `url` e `fileUrl` dicono la stessa cosa', () => {
+        // `url` è in CHIAVI_PATH, quindi passava da `redigiPath` QUALUNQUE cosa fosse. Ma
+        // `redigiPath` riduce un PATH a pattern: su una stringa che path non è, non riduce
+        // niente e la restituisce intatta. È lo stesso difetto di forma che la deroga
+        // `digest` chiude da tempo — la chiave da sola non basta.
+        const out = redact({
+            url: 'NON-ESISTE-collaudo-log.pdf',
+            fileUrl: 'NON-ESISTE-collaudo-log.pdf',
+        }) as Record<string, string>;
+        expect(out.url).toBe(out.fileUrl);
+        expect(out.url).toBe('[redatto:str/27]');
+
+        // `redact()` gira sul BODY GREZZO di ogni richiesta (`parseBody` deposita il raw PRIMA
+        // di zod): senza la conferma sul valore, `{"url":"<quello che ti pare>"}` è un canale
+        // di TESTO LIBERO verso `app_log`, aperto a chiunque sappia fare una POST.
+        const ostile = redact({
+            url: 'mario.rossi@gmail.com',
+            path: 'Mario Rossi',
+            // codice fiscale in OMOCODIA PIENA: 16 caratteri, zero cifre → nessuna delle
+            // euristiche di `redigiPath` lo tocca.
+            route: 'RSSMRALMTLLASLMS',
+        }) as Record<string, string>;
+        const json = JSON.stringify(ostile);
+        expect(json).not.toContain('mario.rossi');
+        expect(json).not.toContain('Mario Rossi');
+        expect(json).not.toContain('RSSMRALMTLLASLMS');
+
+        // CONTROLLO POSITIVO: un path VERO continua a uscire ridotto a PATTERN, non redatto —
+        // se cadesse anche questo, il test non starebbe misurando la conferma del valore ma
+        // solo la morte del campo.
+        const veri = redact({
+            path: '/m/8f3a9c2e-secretissimo-token-firma',
+            url: 'https://app.kidville.it/api/public/forms/tok_live_9f8e7d6c5b4a3210/submit',
+        }) as Record<string, string>;
+        expect(veri.path).toBe('/m/[tok]');
+        expect(veri.url).toBe('https://app.kidville.it/api/public/forms/[tok]/submit');
+    });
+
     it('senza LOG_HASH_SALT l’hash è FAIL-CLOSED (niente hash debole)', () => {
         // Il repo è pubblico: con il salt noto e poche centinaia di input possibili,
         // l'hash sarebbe invertibile per forza bruta. Meglio nessun hash.
@@ -399,6 +468,35 @@ describe('redact — lista bianca', () => {
     it('hashCorrelabile è deterministico e corto', () => {
         expect(hashCorrelabile('x')).toBe(hashCorrelabile('x'));
         expect(hashCorrelabile('x')).toMatch(/^#[0-9a-f]{8}$/);
+    });
+
+    it('un campo VUOTO non diventa un identificativo: `hashCorrelabile("")` era una COSTANTE', () => {
+        // Misurato in produzione (report privacy): in una riga `iscrizione warn` reale il nome,
+        // il cognome, il codice fiscale e l'email di un adulto uscivano TUTTI come lo stesso
+        // `#xxxxxxxx`, perché erano stringhe vuote. Lo stesso `#xxxxxxxx` compariva sulle righe
+        // di persone DIVERSE: un hash "correlabile" che correla il VUOTO correla persone che non
+        // c'entrano niente — e chi indaga ci crede, perché la riga sembra dire qualcosa.
+        expect(hashCorrelabile('')).not.toMatch(/^#/);
+        expect(hashCorrelabile('')).toBe('[redatto:str/0]');
+        // Uno spazio non è un dato più di quanto lo sia il vuoto, e la LUNGHEZZA resta
+        // diagnosticabile come per ogni altra stringa fuori dalla lista bianca.
+        expect(hashCorrelabile('   ')).toBe('[redatto:str/3]');
+
+        const vuoti = redact({
+            nome: '', cognome: '', codice_fiscale: '', email: '',
+        }) as Record<string, string>;
+        for (const [chiave, valore] of Object.entries(vuoti)) {
+            expect(valore, `"${chiave}" vuoto è uscito come identificativo`).not.toMatch(/^#/);
+        }
+
+        // CONTROLLO POSITIVO — la correlazione VERA, che è l'unica ragione per cui questo hash
+        // esiste, continua a funzionare: la stessa persona resta lo stesso hash, due persone
+        // diverse restano due hash diversi. Senza questo controllo il test sarebbe passato
+        // anche spegnendo `hashCorrelabile` del tutto.
+        expect(hashCorrelabile('Mario')).toMatch(/^#[0-9a-f]{8}$/);
+        expect(hashCorrelabile('Mario')).toBe(hashCorrelabile('Mario'));
+        expect(hashCorrelabile('Mario')).not.toBe(hashCorrelabile('Luigi'));
+        expect((redact({ nome: 'Mario' }) as Record<string, string>).nome).toMatch(/^#[0-9a-f]{8}$/);
     });
 });
 

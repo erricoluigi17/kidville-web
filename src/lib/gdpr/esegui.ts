@@ -1,8 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { patchAlunno, patchParent, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
+import {
+  patchAlunno,
+  patchParent,
+  scrubSuggerimenti,
+  scrubDomandaIscrizione,
+  type SoggettiIscrizione,
+} from '@/lib/gdpr/anonimizza'
 import { scrubProvaConsensi } from '@/lib/gdpr/consensi-oblio'
 import { schemaAssente } from '@/lib/news/schema-assente'
-import { logErrore } from '@/lib/logging/logger'
+import { BUCKET_GALLERIA, percorsoNelBucket } from '@/lib/gallery/storage'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // Esecuzione dell'oblio, PER SINGOLA ENTITÀ e riusabile.
@@ -36,6 +43,259 @@ export interface AlunnoOblio {
   fiscal_code?: string | null
 }
 
+/** Il bucket degli allegati del modulo d'iscrizione (documenti d'identità). */
+export const BUCKET_ISCRIZIONI = 'form_attachments'
+
+// =============================================================================
+// S22 — L'OBLIO SEGUE IL DATO, NON LA RIGA.
+//
+// Fino al 2026-07-31 questo modulo ragionava per RIGHE: azzerava le colonne di
+// `alunni`/`parents` e si fermava lì. Due conseguenze misurate sul campo:
+//
+//  · la DOMANDA DI ISCRIZIONE — la tabella di ORIGINE, quella che ha raccolto
+//    tutto, comprese allergie e note mediche del minore — non era toccata da
+//    nessuno dei tre canali di oblio;
+//  · il documento d'identità degli ADULTI non usciva MAI dallo storage. Il
+//    percorso veniva azzerato in `parents.documento_path` (e questo faceva
+//    *sembrare* che il file fosse sparito) mentre l'oggetto restava nel bucket,
+//    e il suo percorso restava per giunta leggibile dentro la domanda.
+//
+// Un dato cancellato a metà è un dato non cancellato: su una richiesta GDPR
+// diventa una risposta falsa data a una famiglia. Da qui la regola operativa di
+// queste tre funzioni: **ogni oblio parziale deve essere VISIBILE** — conteggio
+// dei file non rimossi nel valore di ritorno, nella risposta HTTP e nel log.
+// =============================================================================
+
+/**
+ * Scrubba dentro `enrollment_submissions` le persone che sono soggetto
+ * dell'oblio (per codice fiscale o per percorso dell'allegato), e restituisce i
+ * `documento_path` incontrati: sono file da togliere dallo storage, e per gli
+ * ADULTI la domanda è l'unico posto che li conosce ancora.
+ *
+ * NON si restringe alla sede: il titolare del trattamento è la cooperativa, una
+ * sola per i tre plessi, e lo stesso bambino può aver presentato domanda in due
+ * sedi. Chi ha diritto all'oblio ne ha diritto ovunque il dato sia finito; la
+ * verifica di CHI può chiedere l'oblio è a monte, nella route (`assertAlunnoInScope`).
+ *
+ * Mai PII nei log: solo conteggi. Degrada in silenzio se la tabella non c'è (DB
+ * E2E della CI non migrato).
+ */
+export async function obliaIscrizioni(
+  supabase: SupabaseClient,
+  soggetti: SoggettiIscrizione,
+  at: string,
+  op: string,
+): Promise<{ domandeScrubbate: number; documenti: string[] }> {
+  // Varianti del CF da cercare: `@>` è sensibile alle maiuscole, e la famiglia
+  // scrive il codice fiscale come le pare. Il match definitivo lo rifà comunque
+  // `scrubDomandaIscrizione`, che confronta normalizzato.
+  const cfVarianti = new Set<string>()
+  for (const raw of soggetti.codiciFiscali ?? []) {
+    const v = typeof raw === 'string' ? raw.trim() : ''
+    if (!v) continue
+    cfVarianti.add(v)
+    cfVarianti.add(v.toUpperCase())
+  }
+  const pathCercati = new Set(
+    (soggetti.documentoPaths ?? [])
+      .map((v) => (typeof v === 'string' ? v.trim() : ''))
+      .filter((v) => v.length > 0),
+  )
+  if (cfVarianti.size === 0 && pathCercati.size === 0) return { domandeScrubbate: 0, documenti: [] }
+
+  // Le domande candidate si raccolgono PRIMA e si scrivono UNA volta sola: una
+  // domanda che contiene sia il bambino sia il genitore non va riscritta due
+  // volte (la seconda ripartirebbe dal `data` già letto, non da quello scritto).
+  const candidate = new Map<string, unknown>()
+  const filtri: Record<string, unknown>[] = []
+  for (const ramo of ['children', 'adults'] as const) {
+    for (const cf of cfVarianti) {
+      filtri.push({ [ramo]: [{ codice_fiscale: cf }] })
+      filtri.push({ [ramo]: [{ fiscal_code: cf }] })
+    }
+    for (const p of pathCercati) filtri.push({ [ramo]: [{ documento_path: p }] })
+  }
+
+  for (const filtro of filtri) {
+    const { data, error } = await supabase
+      .from('enrollment_submissions')
+      .select('id, data')
+      .contains('data', filtro)
+    if (error) {
+      if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_iscrizioni_select' }, error)
+      // Fermarsi al primo errore: se la tabella non è leggibile, insistere con
+      // gli altri filtri produrrebbe solo altre righe di log identiche.
+      return { domandeScrubbate: 0, documenti: [] }
+    }
+    for (const r of (data ?? []) as { id: string; data: unknown }[]) {
+      if (!candidate.has(r.id)) candidate.set(r.id, r.data)
+    }
+  }
+
+  let domandeScrubbate = 0
+  const documenti: string[] = []
+  for (const [id, dataOriginale] of candidate) {
+    const scrub = scrubDomandaIscrizione(dataOriginale, soggetti, at)
+    if (scrub.personeScrubbate === 0) continue
+    const { error: errUpd } = await supabase
+      .from('enrollment_submissions')
+      .update({ data: scrub.data, updated_at: at })
+      .eq('id', id)
+    if (errUpd) {
+      // Non si tace: questa è la riga che conserva il codice fiscale e i dati
+      // sanitari di un minore. Se l'UPDATE non passa, l'oblio è parziale.
+      logErrore({ operazione: op, evento: 'oblio_iscrizioni_update' }, errUpd)
+      continue
+    }
+    domandeScrubbate++
+    documenti.push(...scrub.documenti)
+  }
+
+  // Evento critico → si logga anche il SUCCESSO (una riga, solo conteggi):
+  // senza, «nessun log» non distinguerebbe «niente da fare» da «non è mai
+  // partito niente». `gdpr` è in EVENTI_PERSISTITI: la riga resta in app_log.
+  if (candidate.size > 0) {
+    logEvento('gdpr', 'info', {
+      operazione: op,
+      esito: 'oblio-iscrizioni',
+      n_domande: domandeScrubbate,
+      n_file: documenti.length,
+    })
+  }
+  return { domandeScrubbate, documenti: [...new Set(documenti)] }
+}
+
+/**
+ * Rimuove dallo storage i file di un oblio, CONTANDO quelli che non sono usciti.
+ *
+ * Sostituisce il `try { … } catch { /* ignora *\/ }` che c'era prima e che non
+ * lasciava traccia di niente: se la rimozione falliva, il documento d'identità
+ * di un minore restava nel bucket e nessuno lo sapeva — né chi aveva eseguito
+ * l'oblio, né la famiglia che l'aveva chiesto.
+ *
+ * Nel log MAI il percorso: contiene l'uuid di chi ha caricato e il nome del file
+ * scelto dalla famiglia, che quasi sempre è il nome di una persona.
+ */
+export async function rimuoviFileOblio(
+  supabase: SupabaseClient,
+  bucket: string,
+  percorsi: (string | null | undefined)[],
+  op: string,
+): Promise<{ rimossi: number; nonRimossi: number }> {
+  const unici = [
+    ...new Set(
+      percorsi.map((p) => (typeof p === 'string' ? p.trim() : '')).filter((p) => p.length > 0),
+    ),
+  ]
+  if (unici.length === 0) return { rimossi: 0, nonRimossi: 0 }
+
+  try {
+    const { data, error } = await supabase.storage.from(bucket).remove(unici)
+    if (error) {
+      logEvento('storage', 'error', {
+        operazione: op,
+        esito: 'oblio-file-non-rimosso',
+        bucket,
+        n_file: unici.length,
+      }, error)
+      return { rimossi: 0, nonRimossi: unici.length }
+    }
+    // Lo Storage risponde con gli oggetti effettivamente rimossi: un percorso
+    // che non c'era più non è un guasto (l'esito voluto è comunque raggiunto),
+    // ma va detto — è il segnale di un oblio già eseguito, o di un percorso
+    // scritto in tabella e mai caricato.
+    const rimossi = Array.isArray(data) ? data.length : unici.length
+    if (rimossi < unici.length) {
+      logEvento('gdpr', 'info', {
+        operazione: op,
+        esito: 'oblio-file-gia-assenti',
+        bucket,
+        n_file: unici.length - rimossi,
+      })
+    }
+    logEvento('gdpr', 'info', { operazione: op, esito: 'oblio-file-rimossi', bucket, n_file: rimossi })
+    return { rimossi, nonRimossi: 0 }
+  } catch (e) {
+    // Guasto di TRASPORTO: `remove()` non ritorna, lancia. Stesso trattamento —
+    // e soprattutto stessa VISIBILITÀ — dell'errore restituito.
+    logEvento('storage', 'error', {
+      operazione: op,
+      esito: 'oblio-file-non-rimosso',
+      bucket,
+      n_file: unici.length,
+    }, e)
+    return { rimossi: 0, nonRimossi: unici.length }
+  }
+}
+
+/**
+ * Oblio delle FOTO del minore in galleria.
+ *
+ * `esegui.ts` bonificava le *segnalazioni* sui media, ma il media restava: riga,
+ * file nel bucket e uuid del bambino dentro `tag_students`. L'informativa
+ * pubblicata promette «fotografie e video: fino alla revoca del consenso e
+ * comunque non oltre la durata dell'iscrizione».
+ *
+ * Due comportamenti, deliberatamente diversi:
+ *  · foto in cui il minore è l'UNICO taggato → la riga si cancella e il file
+ *    esce dal bucket: quel contenuto riguarda solo lui;
+ *  · foto di GRUPPO → si toglie soltanto il suo tag. Dentro c'è l'immagine di
+ *    altri bambini, e l'oblio di uno non autorizza a cancellare il dato altrui;
+ *    ciò che si rimuove è il collegamento identificante «questo è X».
+ */
+export async function obliaFotoAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  op: string,
+): Promise<{ fotoRimosse: number; fotoSganciate: number; fileNonRimossi: number }> {
+  const { data, error } = await supabase
+    .from('galleria_media_v2')
+    .select('id, file_url, tag_students')
+    .contains('tag_students', [alunnoId])
+  if (error) {
+    if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_galleria_select' }, error)
+    return { fotoRimosse: 0, fotoSganciate: 0, fileNonRimossi: 0 }
+  }
+
+  const righe = (data ?? []) as { id: string; file_url?: string | null; tag_students?: unknown }[]
+  const daCancellare: string[] = []
+  const fileDaRimuovere: string[] = []
+  let fotoSganciate = 0
+
+  for (const r of righe) {
+    const tags = Array.isArray(r.tag_students) ? (r.tag_students as string[]) : []
+    const altri = [...new Set(tags.filter((t) => t && t !== alunnoId))]
+    if (altri.length === 0) {
+      daCancellare.push(r.id)
+      const p = percorsoNelBucket(r.file_url)
+      if (p) fileDaRimuovere.push(p)
+      continue
+    }
+    const { error: errU } = await supabase
+      .from('galleria_media_v2')
+      .update({ tag_students: altri })
+      .eq('id', r.id)
+    if (errU) logErrore({ operazione: op, evento: 'oblio_galleria_untag' }, errU)
+    else fotoSganciate++
+  }
+
+  let fotoRimosse = 0
+  let fileNonRimossi = 0
+  if (daCancellare.length > 0) {
+    const { error: errDel } = await supabase.from('galleria_media_v2').delete().in('id', daCancellare)
+    if (errDel) {
+      logErrore({ operazione: op, evento: 'oblio_galleria_delete' }, errDel)
+    } else {
+      fotoRimosse = daCancellare.length
+      // Il file si toglie DOPO la riga: se la DELETE non passa, cancellare
+      // l'immagine lascerebbe in galleria una scheda rotta al posto di una foto.
+      const esito = await rimuoviFileOblio(supabase, BUCKET_GALLERIA, fileDaRimuovere, op)
+      fileNonRimossi = esito.nonRimossi
+    }
+  }
+  return { fotoRimosse, fotoSganciate, fileNonRimossi }
+}
+
 /**
  * Anonimizza UN genitore: raccoglie l'`auth_user_id` PRIMA di `patchParent`
  * (che lo azzera), applica il patch PII, cancella il tracciamento di lettura
@@ -53,15 +313,38 @@ export async function anonimizzaParent(
   segnalazioniBonificate: number
   sospensioniBonificate: number
   provaConsensiScrubbate: number
+  iscrizioniScrubbate: number
+  fileRimossi: number
+  fileNonRimossi: number
 }> {
-  // 1. Raccogli l'auth_user_id prima dell'azzeramento.
-  const { data: pRow, error: errP } = await supabase
-    .from('parents')
-    .select('auth_user_id')
-    .eq('id', parentId)
-    .maybeSingle()
-  if (errP && !schemaAssente(errP)) logErrore({ operazione: op, evento: 'raccolta_auth_parent' }, errP)
+  // 1. Raccogli PRIMA dell'azzeramento: l'`auth_user_id` (ponte verso lo
+  //    spazio-id `utenti`), il codice fiscale e il percorso del documento
+  //    d'identità. `patchParent` li azzera tutti e tre, e senza il CF non si
+  //    ritrova più la domanda d'iscrizione in cui quell'adulto compare — che è
+  //    esattamente il modo in cui il difetto era diventato invisibile.
+  let pRow: Record<string, unknown> | null = null
+  {
+    const esteso = await supabase
+      .from('parents')
+      .select('auth_user_id, fiscal_code, documento_path')
+      .eq('id', parentId)
+      .maybeSingle()
+    if (esteso.error && schemaAssente(esteso.error)) {
+      // DB E2E della CI non migrato: una colonna in meno non può far perdere
+      // anche l'`auth_user_id`, da cui dipendono news/segnalazioni/sospensioni.
+      const minimo = await supabase.from('parents').select('auth_user_id').eq('id', parentId).maybeSingle()
+      if (minimo.error && !schemaAssente(minimo.error)) {
+        logErrore({ operazione: op, evento: 'raccolta_auth_parent' }, minimo.error)
+      }
+      pRow = (minimo.data as Record<string, unknown> | null) ?? null
+    } else {
+      if (esteso.error) logErrore({ operazione: op, evento: 'raccolta_auth_parent' }, esteso.error)
+      pRow = (esteso.data as Record<string, unknown> | null) ?? null
+    }
+  }
   const authUserId = (pRow?.auth_user_id as string | null) ?? null
+  const cfParent = (pRow?.fiscal_code as string | null) ?? null
+  const docParent = (pRow?.documento_path as string | null) ?? null
 
   // 2. Anonimizza il genitore (sgancia anche il login: auth_user_id → null).
   const { error: errU } = await supabase.from('parents').update(patchParent(parentId, at)).eq('id', parentId)
@@ -137,7 +420,28 @@ export async function anonimizzaParent(
   //    `api/parent/onboarding`), non per l'auth id.
   const provaConsensiScrubbate = await scrubProvaConsensi(supabase, parentId, op)
 
-  return { newsVisualizzazioniRimosse, segnalazioniBonificate, sospensioniBonificate, provaConsensiScrubbate }
+  // 6. La DOMANDA DI ISCRIZIONE (privacy F2) e il DOCUMENTO D'IDENTITÀ (F3).
+  //    L'adulto si aggancia per codice fiscale o per percorso dell'allegato; i
+  //    percorsi che la domanda restituisce si sommano a quello dell'anagrafica e
+  //    si rimuovono in un blocco solo. Prima di oggi nessuna `.remove()` dello
+  //    storage riguardava gli adulti: il file restava nel bucket per sempre.
+  const iscr = await obliaIscrizioni(supabase, { codiciFiscali: [cfParent], documentoPaths: [docParent] }, at, op)
+  const esitoFile = await rimuoviFileOblio(
+    supabase,
+    BUCKET_ISCRIZIONI,
+    [docParent, ...iscr.documenti],
+    op,
+  )
+
+  return {
+    newsVisualizzazioniRimosse,
+    segnalazioniBonificate,
+    sospensioniBonificate,
+    provaConsensiScrubbate,
+    iscrizioniScrubbate: iscr.domandeScrubbate,
+    fileRimossi: esitoFile.rimossi,
+    fileNonRimossi: esitoFile.nonRimossi,
+  }
 }
 
 /**
@@ -157,8 +461,12 @@ export async function anonimizzaAlunno(
   incassi: number
   cassa: number
   file: number
+  fileNonRimossi: number
   segnalazioniBonificate: number
   sospensioniBonificate: number
+  iscrizioniScrubbate: number
+  fotoRimosse: number
+  fotoSganciate: number
 }> {
   // 1. Anonimizza l'anagrafica dell'alunno.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
@@ -347,16 +655,41 @@ export async function anonimizzaAlunno(
     }
   }
 
-  // 4. Rimuovi il file PII dell'alunno (best-effort; bucket fatture escluso a monte).
-  let file = 0
-  if (alunno.documento_path) {
-    try {
-      await supabase.storage.from('form_attachments').remove([String(alunno.documento_path)])
-      file = 1
-    } catch {
-      /* file già assente o bucket diverso: ignora (best-effort) */
-    }
-  }
+  // 3g. Le FOTO del minore (warning privacy, ciclo 2). Va DOPO 3f-b, che si
+  //     serve proprio di `galleria_media_v2` per trovare le segnalazioni da
+  //     bonificare: cancellare prima i media renderebbe quel ramo cieco.
+  const foto = await obliaFotoAlunno(supabase, alunno.id, op)
 
-  return { riconciliazione, incassi, cassa, file, segnalazioniBonificate, sospensioniBonificate }
+  // 4. La DOMANDA DI ISCRIZIONE (privacy F2) e i file PII.
+  //    La domanda si aggancia per codice fiscale del minore o per percorso del
+  //    suo allegato, e restituisce i `documento_path` che solo lei conosce.
+  //    I file escono tutti insieme, con il conteggio dei NON rimossi: un oblio
+  //    parziale deve essere visibile a chi l'ha eseguito, non finire in un
+  //    `catch` muto come accadeva fino al 2026-07-31. Il bucket `fatture` resta
+  //    escluso a monte (conservazione fiscale).
+  const iscr = await obliaIscrizioni(
+    supabase,
+    { codiciFiscali: [alunno.codice_fiscale, alunno.fiscal_code], documentoPaths: [alunno.documento_path] },
+    at,
+    op,
+  )
+  const esitoFile = await rimuoviFileOblio(
+    supabase,
+    BUCKET_ISCRIZIONI,
+    [alunno.documento_path, ...iscr.documenti],
+    op,
+  )
+
+  return {
+    riconciliazione,
+    incassi,
+    cassa,
+    file: esitoFile.rimossi,
+    fileNonRimossi: esitoFile.nonRimossi + foto.fileNonRimossi,
+    segnalazioniBonificate,
+    sospensioniBonificate,
+    iscrizioniScrubbate: iscr.domandeScrubbate,
+    fotoRimosse: foto.fotoRimosse,
+    fotoSganciate: foto.fotoSganciate,
+  }
 }

@@ -112,7 +112,7 @@ describe('POST /api/pagamenti/genera — isolamento per sede', () => {
     // duplicati si scoprono in riconciliazione. Ora si nega.
     const res = await POST(req({ ...BASE, classe_sezione: OMONIMA, scuola_id: SEDE_B }))
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
     expect(h.inserite).toEqual([])
   })
 })

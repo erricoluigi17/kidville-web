@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
@@ -54,7 +55,7 @@ interface Alunno {
 // Mese abbreviato localizzato con iniziale maiuscola. In IT riproduce ESATTAMENTE
 // il vecchio array hardcoded (Gen, Feb, … Dic); in EN diventa Jan, Feb, … Dec.
 function meseCorto(mese1a12: number, locale: string): string {
-    const s = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(
+    const s = intlDateTime(locale, { month: 'short', timeZone: 'UTC' }).format(
         new Date(Date.UTC(2020, mese1a12 - 1, 15)),
     );
     return s.charAt(0).toUpperCase() + s.slice(1);

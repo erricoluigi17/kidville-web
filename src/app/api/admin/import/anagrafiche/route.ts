@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, resolveScuolaScrittura } from '@/lib/auth/scope';
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { parseFamilyRow } from '@/lib/import/template';
@@ -77,10 +78,7 @@ export const POST = withRoute('admin/import/anagrafiche:POST', async (request: N
         esito: 'sede-scrittura-non-risolta',
         ruolo: auth.user.role,
       });
-      return NextResponse.json(
-        { error: 'Specificare la sede (scuola_id) per questa operazione' },
-        { status: 400 },
-      );
+      return rifiutoSede('SEDE_DA_SPECIFICARE');
     }
 
     const families = b.data.rows.map(parseFamilyRow);

@@ -7,6 +7,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, RefreshCw, CalendarDays, UtensilsCrossed } from 'lucide-react';
@@ -152,7 +153,12 @@ function MensaDocente() {
             <p className="font-maven text-sm text-kidville-green">
               {t.rich('mensaPranziPrenotati', {
                 count: report.totale,
-                data: new Intl.DateTimeFormat(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${report.data}T00:00:00`)),
+                // `Z` esplicita: `report.data` è un giorno di calendario, non un
+                // istante. Con la mezzanotte LOCALE, letta nel fuso della scuola,
+                // il giorno scivolerebbe indietro per chi apre l'app da un fuso
+                // più avanti dell'Italia; a mezzanotte UTC resta lo stesso giorno
+                // per chiunque.
+                data: intlDateTime(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${report.data}T00:00:00Z`)),
                 strong: (c) => <strong>{c}</strong>,
               })}
             </p>

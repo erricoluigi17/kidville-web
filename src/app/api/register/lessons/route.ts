@@ -10,6 +10,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -178,10 +179,11 @@ export const POST = withRoute('register/lessons:POST', async (request: NextReque
                     candidate: (omonime ?? []).length,
                     sedi: perimetro.length,
                 });
-                return NextResponse.json(
-                    { error: 'Specificare la sede (scuola_id o sectionId): il nome della classe non la identifica' },
-                    { status: 400 }
-                );
+                // Il DETTAGLIO («il nome della classe non la identifica»,
+                // «usare sectionId») resta nella riga di log qui sopra, che è il
+                // posto in cui serve. All'operatore la richiesta è una sola, ed è
+                // la stessa di tutti gli altri rifiuti di sede: dire quale sede.
+                return rifiutoSede('SEDE_DA_SPECIFICARE');
             }
             const row = omonime[0];
             sezione = { id: row.id as string, name: row.name as string, scuola_id: row.scuola_id as string };

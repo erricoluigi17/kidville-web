@@ -261,9 +261,13 @@ describe('POST /api/avvisi/upload — niente più indirizzi pubblici', () => {
     const j = await res.json()
     expect(j.path).toBe(h.uploadPath)
     expect(j.previewUrl).toBeNull()
-    const ev = h.logEvento.mock.calls.filter((c) => c[0] === 'storage')
+    // Si filtra per LIVELLO, non per evento: dal 2026-08-01 il caricamento riuscito emette
+    // anche `storage:info allegato-caricato` (W7 — senza una riga di successo, «nessun log di
+    // upload» non distingue «nessuno ha caricato» da «gli upload non partono più»). Qui interessa
+    // l'errore, e contarne uno solo resta un'asserzione stretta: dice che il guasto è UNO, non
+    // che le righe di quella route sono una.
+    const ev = h.logEvento.mock.calls.filter((c) => c[0] === 'storage' && c[1] === 'error')
     expect(ev).toHaveLength(1)
-    expect(ev[0][1]).toBe('error')
     expect(ev[0][2]).toMatchObject({ operazione: 'avvisi/upload:POST', bucket: 'avvisi_allegati' })
   })
 })

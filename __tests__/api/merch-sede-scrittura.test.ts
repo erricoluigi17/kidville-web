@@ -148,7 +148,7 @@ describe('POST /api/admin/merch/articoli — la sede si dichiara', () => {
     const res = await postArticolo(articolo({ scuola_id: SEDE_C }))
 
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
     // Non basta lo status: la prova è che nel database non è comparso niente,
     // né l'articolo né la sua riga di audit.
     expect(scrittureSu('divise_articoli')).toEqual([])

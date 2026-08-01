@@ -1,0 +1,1159 @@
+{
+  "_leggimi": [
+    "Le risposte `NextResponse.json({ error: '…' })` di src/ che NON portano ancora un",
+    "`codice`, e che quindi il client non sa tradurre: chi lavora con l'interfaccia in",
+    "inglese le legge in italiano, esattamente come nel collaudo del 2026-07-31.",
+    "",
+    "REGOLA D'ORO: questa lista può solo RIMPICCIOLIRSI. Converti una risposta, abbassi il",
+    "numero del suo file (o togli la voce, se arriva a zero) e abbassi i due tetti in",
+    "__tests__/architecture/errori-con-codice.test.ts. Aggiungere una voce è vietato dal lock.",
+    "",
+    "n = quante risposte d'errore SENZA codice ha quel file oggi. Il lock pretende che non",
+    "CRESCA: è così che una risposta nuova, dentro un file già in elenco, viene comunque presa.",
+    "",
+    "Come si converte: si dichiara il codice in CODICI_ERRORE (src/lib/ui/esito-fetch.ts), si",
+    "aggiungono le due voci a messages/it/shared.json e messages/en/shared.json e si manda",
+    "`codice` accanto a `error`. Per i due dinieghi di sede esiste già `rifiutoSede()`",
+    "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
+  ],
+  "aggiornato": "2026-08-01",
+  "totale_occorrenze": 1478,
+  "file": [
+    {
+      "path": "src/app/api/admin/adults/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/apply-enrollment-migration/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/apply-fase4-migration/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/apply-forms-migration/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/apply-mensa-multi-menu-migration/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/apply-migration/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/audit/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/backfill-auth/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/chat/contacts/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/chat/messages/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/chat/threads/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/competenze/download/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/competenze/genera/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/competenze/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/admin/credentials-pdf/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/documents-merge/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/admin/form-models/[id]/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/form-models/publish/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/admin/form-models/reset/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/form-models/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/forms/models/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/forms/rankings/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/forms/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/forms/submissions/[id]/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/forms/submissions/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/gdpr/candidates/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/gdpr/erase/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/admin/gdpr/richieste/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/admin/gruppi-mensa/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/admin/import/anagrafiche/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/iscrizioni/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/merch/articoli/route.ts",
+      "n": 12
+    },
+    {
+      "path": "src/app/api/admin/merch/cambio-taglia/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/admin/merch/consegna/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/merch/da-ordinare/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/merch/evadi-magazzino/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/admin/merch/export/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/merch/fornitori/route.ts",
+      "n": 12
+    },
+    {
+      "path": "src/app/api/admin/merch/giacenze/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/merch/ordini-fornitore/checkin/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/merch/ordini-fornitore/pdf/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/merch/ordini-fornitore/route.ts",
+      "n": 15
+    },
+    {
+      "path": "src/app/api/admin/merch/ordini/route.ts",
+      "n": 14
+    },
+    {
+      "path": "src/app/api/admin/merch/righe/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/pagamenti/sospensione/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/parents/[id]/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/parents/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/admin/pre-inscriptions/route.ts",
+      "n": 13
+    },
+    {
+      "path": "src/app/api/admin/primaria/docente-gradi/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/admin/primaria/docenti-materie/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/admin/primaria/fascicolo-audit/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/primaria/giudizi/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/primaria/impostazioni/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/primaria/materia-obiettivo/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/primaria/materie/route.ts",
+      "n": 14
+    },
+    {
+      "path": "src/app/api/admin/primaria/obiettivi/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/primaria/orario/route.ts",
+      "n": 11
+    },
+    {
+      "path": "src/app/api/admin/primaria/scrutinio-giudizio/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/primaria/scrutinio-periodi/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/protocolli/analizza/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/protocolli/categorie/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/admin/protocolli/da-documento/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/admin/protocolli/export/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/protocolli/file/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/protocolli/genera-documento/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/protocolli/rettifica/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/admin/protocolli/route.ts",
+      "n": 11
+    },
+    {
+      "path": "src/app/api/admin/protocolli/upload-url/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/protocolli/verifica/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/regenerate-credentials/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/admin/schools/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/sections/[id]/teachers/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/admin/sections/route.ts",
+      "n": 15
+    },
+    {
+      "path": "src/app/api/admin/sections/scoped/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/admin/sedi/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/segnalazioni/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/admin/settings/aruba/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/settings/categorie/route.ts",
+      "n": 16
+    },
+    {
+      "path": "src/app/api/admin/settings/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/admin/settings/sidi/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/setup-registro/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/sidi/fase-a/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/sidi/frequentanti/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/sidi/import/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/admin/sidi/legami/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/sidi/piattaforma-unica/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/sidi/sync-state/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/staff/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/admin/students/[id]/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/admin/students/route.ts",
+      "n": 26
+    },
+    {
+      "path": "src/app/api/admin/test-relations/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/admin/wipe/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/agenda/route.ts",
+      "n": 17
+    },
+    {
+      "path": "src/app/api/attendance/daily/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/attendance/monthly/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/auth/active-role/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/avvisi/[id]/risposte/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/avvisi/[id]/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/avvisi/route.ts",
+      "n": 12
+    },
+    {
+      "path": "src/app/api/avvisi/upload/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/chat/config/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/chat/contacts/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/chat/messages/read/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/chat/messages/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/chat/threads/[id]/riapri/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/chat/threads/[id]/sospendi/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/chat/threads/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/chat/translate/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/chat/upload/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/diary/checkin/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/diary/config/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/diary/entries/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/diary/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/diary/students/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/fea/receipt/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/forms/delibera/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/forms/export/delibera/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/forms/export/pdf/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/forms/export/xlsx/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/forms/send-otp/route.ts",
+      "n": 15
+    },
+    {
+      "path": "src/app/api/forms/submit/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/forms/upload/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/gallery/route.ts",
+      "n": 30
+    },
+    {
+      "path": "src/app/api/gallery/upload/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/grades/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/iscrizione/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/iscrizione/sedi/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/iscrizione/upload/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/locker/catalog/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/locker/inventory/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/locker/materials/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/locker/notify/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/locker/requests/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/logs/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/me/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/mensa/allergie-check/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/mensa/alternative/route.ts",
+      "n": 13
+    },
+    {
+      "path": "src/app/api/mensa/class-assignments/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/mensa/menu-config/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/mensa/menu/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/mensa/prenotazioni/route.ts",
+      "n": 12
+    },
+    {
+      "path": "src/app/api/mensa/report/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/news/[id]/approva/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/news/[id]/pubblica/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/news/[id]/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/news/[id]/statistiche/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/news/categorie/route.ts",
+      "n": 15
+    },
+    {
+      "path": "src/app/api/news/cron/run/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/news/digest/[id]/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/news/digest/genera/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/news/digest/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/news/feed/[id]/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/news/feed/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/news/instagram/valida/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/news/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/news/upload/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/notes/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/notes/sign/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/notifiche/promemoria/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/notifiche/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/[id]/route.ts",
+      "n": 18
+    },
+    {
+      "path": "src/app/api/pagamenti/[id]/sconto/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/pagamenti/attestazione/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/allegato/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/allegato/upload-url/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/categorie/route.ts",
+      "n": 14
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/chiusura/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/movimenti/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/movimenti/storno/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/report/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/cassa/saldo/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/pagamenti/credito/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/pagamenti/export/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/famiglia/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/fattura/list/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/fattura/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/pagamenti/fattura/sync/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/genera-rette/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/pagamenti/genera/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/pagamenti/incassi/[id]/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/pagamenti/incassi/route.ts",
+      "n": 12
+    },
+    {
+      "path": "src/app/api/pagamenti/incassi/storno/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/pagamenti/pagante-comune/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/pagamenti/quote/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/pagamenti/rate/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/pagamenti/ricevuta/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/pagamenti/ricevute/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/pagamenti/riconciliazione/[id]/route.ts",
+      "n": 15
+    },
+    {
+      "path": "src/app/api/pagamenti/riconciliazione/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/pagamenti/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/pagamenti/solleciti/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/solleciti/run/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/pagamenti/sospensione-stato/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/pagamenti/ticket/morosi/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/pagamenti/ticket/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/pagamenti/ticket/storico/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/pagamenti/transazioni/[id]/annulla/route.ts",
+      "n": 11
+    },
+    {
+      "path": "src/app/api/pagamenti/transazioni/[id]/ricevuta/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/pagamenti/transazioni/[id]/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/pagamenti/transazioni/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/pagamenti/tutori/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/panic-alert/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/parent/account/richiesta-cancellazione/route.ts",
+      "n": 15
+    },
+    {
+      "path": "src/app/api/parent/competenze/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/parent/forms/otp/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/parent/forms/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/parent/giustifiche-didattiche/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/parent/medical-certificates/file/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/parent/medical-certificates/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/parent/onboarding/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/parent/presenze/comunica-assenza/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/parent/presenze/giustifica/otp/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/presenze/giustifica/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/parent/presenze/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/primaria/assenze/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/parent/primaria/note/firma/otp/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/primaria/note/firma/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/parent/primaria/note/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/primaria/orario/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/primaria/pagella/firma/otp/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/primaria/pagella/firma/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/parent/primaria/pagella/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/primaria/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/parent/primaria/scrutinio/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/parent/primaria/valutazioni/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/parent/students/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/parent/submissions/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/primaria/allegati/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/primaria/appello/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/classe/[sectionId]/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/primaria/classi/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/primaria/fascicolo/file/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/primaria/fascicolo/pagelle/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/fascicolo/route.ts",
+      "n": 11
+    },
+    {
+      "path": "src/app/api/primaria/giustifiche-didattiche/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/me/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/primaria/note/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/obiettivi/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/primaria/orario/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/primaria/ore-assenza/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/primaria/pagella/batch/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/primaria/pagella/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/primaria/presenze/giust-vista/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/prospetto/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/primaria/registro/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/primaria/sblocca/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/primaria/scrutinio/chiudi/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/primaria/scrutinio/import/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/scrutinio/pubblica/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/primaria/scrutinio/route.ts",
+      "n": 13
+    },
+    {
+      "path": "src/app/api/primaria/sezioni/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/primaria/valutazioni/route.ts",
+      "n": 10
+    },
+    {
+      "path": "src/app/api/public/cancellazione-account/conferma/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/public/cancellazione-account/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/public/forms/[token]/submit/route.ts",
+      "n": 8
+    },
+    {
+      "path": "src/app/api/public/forms/[token]/upload/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/push/dispatch/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/app/api/push/subscribe/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/push/vapid-public-key/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/register/lessons/route.ts",
+      "n": 7
+    },
+    {
+      "path": "src/app/api/segnalazioni/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/tasks/[id]/route.ts",
+      "n": 4
+    },
+    {
+      "path": "src/app/api/tasks/meta/route.ts",
+      "n": 1
+    },
+    {
+      "path": "src/app/api/tasks/route.ts",
+      "n": 5
+    },
+    {
+      "path": "src/app/api/tasks/upload/route.ts",
+      "n": 2
+    },
+    {
+      "path": "src/app/api/teacher/medical-certificates/route.ts",
+      "n": 6
+    },
+    {
+      "path": "src/app/api/teacher/modulistica/route.ts",
+      "n": 9
+    },
+    {
+      "path": "src/app/api/teacher/uscite/route.ts",
+      "n": 3
+    },
+    {
+      "path": "src/lib/audit/valutatore.ts",
+      "n": 2
+    },
+    {
+      "path": "src/lib/auth/require-grado.ts",
+      "n": 3
+    },
+    {
+      "path": "src/lib/auth/require-parent.ts",
+      "n": 2
+    },
+    {
+      "path": "src/lib/auth/require-staff.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/auth/scope-avvisi.ts",
+      "n": 3
+    },
+    {
+      "path": "src/lib/auth/scope.ts",
+      "n": 26
+    },
+    {
+      "path": "src/lib/avvisi/target-gate.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/chat/sospensione-conversazione.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/forms/scope-modello.ts",
+      "n": 4
+    },
+    {
+      "path": "src/lib/mensa/scope.ts",
+      "n": 2
+    },
+    {
+      "path": "src/lib/onboarding/consensi.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/pagamenti/sospensione.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/protocolli/server.ts",
+      "n": 2
+    },
+    {
+      "path": "src/lib/security/require-env.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/security/seal.ts",
+      "n": 1
+    },
+    {
+      "path": "src/lib/validation/http.ts",
+      "n": 1
+    }
+  ]
+}

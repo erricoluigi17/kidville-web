@@ -138,7 +138,7 @@ describe('PATCH /api/admin/schools — si opera solo sulle proprie sedi', () => 
     const res = await PATCH(patch({ id: SEDE_B, nome: 'Sede Dirottata', attiva: false }))
 
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
     // L'asserzione che conta: la riga dell'altra sede è rimasta com'era. Nella
     // riproduzione del collaudo l'unico campo alterato era `updated_at` — se
     // cambia quello, la scrittura è passata.

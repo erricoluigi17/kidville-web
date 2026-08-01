@@ -171,7 +171,7 @@
   "scrutinioIncompleto": "{count, plural, one {Scrutinio incompleto: manca # giudizio.} other {Scrutinio incompleto: mancano # giudizi.}}",
   "scrutinioChiuso": "Scrutinio chiuso ✓",
   "scrutinioErroreImport": "Errore import",
-  "scrutinioImportate": "Importate {count} righe",
+  "scrutinioImportate": "{count, plural, one {Importata # riga} other {Importate # righe}}",
   "scrutinioImportateErrori": ", {count} con errori",
   "scrutinioErroreLettura": "Errore lettura file",
   "scrutinioPagelleGenerate": "Generate {generate}/{totale} pagelle",

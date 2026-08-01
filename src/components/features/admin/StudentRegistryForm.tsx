@@ -6,6 +6,7 @@ import { Fingerprint, FileWarning, Users, Activity, Home, User, AlertTriangle, L
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { z } from 'zod';
+import { useTranslations } from 'next-intl';
 import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
 
 const studentSchema = z.object({
@@ -34,6 +35,10 @@ const studentSchema = z.object({
 });
 
 export function StudentRegistryForm() {
+    // I due placeholder vengono dal catalogo (`phVia`, `phDettagliAggiuntivi`),
+    // che esisteva già ed era già in uso nel modulo gemello: scritti nel TSX,
+    // restavano italiani con l'interfaccia in inglese.
+    const t = useTranslations('adminStudents');
     const [step, setStep] = useState(1);
     
     // Form state
@@ -271,7 +276,7 @@ export function StudentRegistryForm() {
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-ink mb-1">Indirizzo di Residenza</label>
-                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.indirizzo_residenza ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} placeholder="Via Roma, 1" />
+                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.indirizzo_residenza ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} placeholder={t('phVia')} />
                             {errors.indirizzo_residenza && <span className="text-xs text-kidville-error">{errors.indirizzo_residenza}</span>}
                         </div>
                         <div>
@@ -318,7 +323,7 @@ export function StudentRegistryForm() {
                                         className="mt-4 overflow-hidden"
                                     >
                                         <label className="block text-sm font-bold text-kidville-warn mb-1">Note BES / DSA</label>
-                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-warn/30 bg-white focus:ring-2 focus:ring-kidville-warn outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
+                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-warn/30 bg-white focus:ring-2 focus:ring-kidville-warn outline-none" rows={2} placeholder={t('phDettagliAggiuntivi')} />
                                         <div className="mt-3 text-sm text-kidville-warn">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
                                     </motion.div>
                                 )}

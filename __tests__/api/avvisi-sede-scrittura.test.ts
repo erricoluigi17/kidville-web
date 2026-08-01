@@ -206,7 +206,12 @@ describe('POST /api/avvisi — la sede si dichiara, non si deduce dall’autore'
     )
 
     expect(res.status).toBe(403)
-    expect(await res.json()).toEqual({ error: 'Sede non accessibile' })
+    // `codice` accanto alla prosa: è quello che il client traduce nella lingua
+    // dell'interfaccia (collaudo 2026-07-31, localizzazione F1).
+    expect(await res.json()).toEqual({
+      error: 'Sede non accessibile',
+      codice: 'SEDE_NON_ACCESSIBILE',
+    })
     expect(avvisiScritti()).toHaveLength(0)
     expect(h.scritture).toHaveLength(0)
     expect(h.notificaEvento).not.toHaveBeenCalled()

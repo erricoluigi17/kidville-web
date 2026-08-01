@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { User, Clock, CheckCircle, Timer, LogOut, X } from 'lucide-react';
 
@@ -95,7 +96,7 @@ const STATI_BOTTONI: {
 function formatTime(isoString: string | null, locale: string): string | null {
     if (!isoString) return null;
     try {
-        return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(isoString));
+        return intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(isoString));
     } catch {
         return isoString;
     }

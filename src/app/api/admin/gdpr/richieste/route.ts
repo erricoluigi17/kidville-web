@@ -232,20 +232,44 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     const consensiProvaBonificati = rParent.provaConsensiScrubbate ?? 0
     let segnalazioni = rParent.segnalazioniBonificate
     let sospensioni = rParent.sospensioniBonificate
+    // S22 — l'oblio segue il dato: domanda d'iscrizione, allegati e foto. I
+    // conteggi arrivano fin qui perché un oblio PARZIALE dev'essere visibile a
+    // chi lo esegue e a chi rilegge la richiesta fra un mese: `esito` viene
+    // persistito sulla riga e nell'audit. `?? 0` per prudenza sui campi nuovi.
+    let iscrizioni = rParent.iscrizioniScrubbate ?? 0
+    let file = rParent.fileRimossi ?? 0
+    let fileNonRimossi = rParent.fileNonRimossi ?? 0
+    let fotoRimosse = 0
+    let fotoSganciate = 0
 
     // 2. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
     let ricon = 0
     let incassi = 0
     let cassa = 0
-    let file = 0
     for (const f of nonIscritti) {
       const r = await anonimizzaAlunno(admin, f as AlunnoOblio, at, op)
       ricon += r.riconciliazione
       incassi += r.incassi
       cassa += r.cassa
       file += r.file
+      fileNonRimossi += r.fileNonRimossi ?? 0
+      iscrizioni += r.iscrizioniScrubbate ?? 0
+      fotoRimosse += r.fotoRimosse ?? 0
+      fotoSganciate += r.fotoSganciate ?? 0
       segnalazioni += r.segnalazioniBonificate
       sospensioni += r.sospensioniBonificate
+    }
+
+    // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
+    // che quei file non ci sono più. Riga PERSISTITA (`gdpr` è in
+    // EVENTI_PERSISTITI), solo conteggi e uuid.
+    if (fileNonRimossi > 0) {
+      logEvento('gdpr', 'error', {
+        operazione: op,
+        esito: 'oblio-parziale',
+        richiesta: id,
+        n_file: fileNonRimossi,
+      })
     }
 
     const esito = {
@@ -260,6 +284,10 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       incassi_bonificati: incassi,
       cassa_bonificati: cassa,
       file_rimossi: file,
+      n_file_non_rimossi: fileNonRimossi,
+      iscrizioni_scrubbate: iscrizioni,
+      foto_rimosse: fotoRimosse,
+      foto_sganciate: fotoSganciate,
       segnalazioni_bonificate: segnalazioni,
       sospensioni_bonificate: sospensioni,
     }

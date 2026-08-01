@@ -75,6 +75,11 @@ const SEGNALI_INVIO: RegExp[] = [
 /** Un tetto di frequenza, in una qualunque delle sue forme. */
 const SEGNALI_TETTO: RegExp[] = [
     /\blimitaVerificaOtp\s*\(/,
+    // Il tetto contato sull'OGGETTO invece che sull'attore: serve dove la verifica
+    // non ha un utente dietro (`forms/send-otp:PATCH`, il modulo «Sistema A», che è
+    // firmabile anche senza sessione per scelta di prodotto). La chiave è il
+    // bersaglio — l'unica cosa che chi tenta non può cambiare.
+    /\blimitaVerificaOtpOggetto\s*\(/,
     /\blimitaInvioOtp\s*\(/,
     /\brateLimit\s*\(/,
 ];
@@ -106,14 +111,14 @@ const SENZA_TETTO_GIUSTIFICATE: Record<string, string> = {
  * e ne renderebbe l'elenco inutile.
  */
 const SENZA_TETTO_DA_CHIUDERE: Record<string, string> = {
-    'forms/send-otp:PATCH':
-        'VERIFICA un codice a SEI cifre (`hashOtp(submissionId, code) !== submission.otp_secret`) ' +
-        'e non ha nessun tetto: il POST della stessa route ne ha uno (IP, 8/10min), il PATCH no. ' +
-        'Peggio: non c’è nemmeno un gate d’identità — bastano un `submissionId` e un codice, quindi ' +
-        'i tentativi non sono nemmeno attribuibili a una sessione. È il modulo «Sistema A». ' +
-        'FUORI dal perimetro esclusivo dello step S30 (2026-08-01), che copriva le quattro rotte ' +
-        'OTP del genitore: segnalato allo scrittore-di-piani invece di essere toccato di nascosto ' +
-        'mentre altri esecutori lavoravano in parallelo sugli stessi file.',
+    // VUOTO, ed è l'unico stato accettabile. L'ultima voce — `forms/send-otp:PATCH`,
+    // trovata il 2026-08-01 mentre si estendeva il tetto alle quattro firme del
+    // genitore — è stata chiusa lo stesso giorno con `limitaVerificaOtpOggetto`:
+    // quel PATCH confrontava un codice a sei cifre senza tetto e senza gate
+    // d'identità, e chi indovinava completava una firma con valore legale.
+    //
+    // Questo registro è shrink-only: una voce nuova qui è ammessa solo per il tempo
+    // che serve a chiuderla, mai come luogo dove parcheggiare un difetto.
 };
 
 interface Handler {

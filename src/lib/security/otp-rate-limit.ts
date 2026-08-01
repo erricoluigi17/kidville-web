@@ -158,3 +158,44 @@ export function limitaVerificaOtp(userId: string): NextResponse | null {
   })
   return rl.ok ? null : troppeRichieste(rl.retryAfterMs)
 }
+
+/**
+ * Il tetto per le verifiche che NON hanno un utente dietro: si conta sull'OGGETTO
+ * del tentativo invece che sull'attore.
+ *
+ * ─── PERCHÉ SERVE UNA SECONDA FORMA ─────────────────────────────────────────
+ *
+ * `forms/send-otp:PATCH` (il modulo «Sistema A») confronta un codice a sei cifre e
+ * **non ha nessun gate d'identità**: bastano un `submissionId` e un codice. Non è
+ * una dimenticanza da correggere qui — quella firma è pensata per essere completata
+ * anche da chi non ha una sessione, ed è una scelta di prodotto. Ma senza tetto
+ * significava tentativi illimitati e gratuiti su una firma con valore legale: un
+ * milione di combinazioni, nessuna che costi niente. Chi indovina porta la domanda
+ * a `completed`, con `signed_at` e la riga nel `signature_log`.
+ *
+ * ─── PERCHÉ LA CHIAVE È L'OGGETTO, E PERCHÉ QUI È GIUSTO ────────────────────
+ *
+ * Altrove la chiave è l'utente, «l'unica cosa che l'attore non può cambiare senza
+ * rifare il login». Qui l'attore non esiste, e restano due candidati:
+ *
+ *  · l'IP — che chi attacca cambia a piacere, e che punirebbe un intero plesso
+ *    dietro lo stesso NAT;
+ *  · il `submissionId` — che è **il bersaglio**, e che l'attaccante NON può
+ *    cambiare senza rinunciare a ciò che sta cercando di firmare.
+ *
+ * È il rovescio del ragionamento sull'utente e porta allo stesso posto: si conta
+ * ciò che l'attore non può sostituire. Il costo dichiarato è che due persone
+ * legittime che firmano la STESSA domanda condividono il budget — ma i firmatari di
+ * una domanda sono al massimo due (`signature_mode: 'joint'`), e dieci tentativi
+ * bastano a entrambi.
+ *
+ * Vale lo stesso caveat di tutti gli altri: il contatore è **per istanza** (vedi
+ * «QUANTO VALE DAVVERO IL TETTO» qui sopra).
+ */
+export function limitaVerificaOtpOggetto(oggettoId: string): NextResponse | null {
+  const rl = rateLimit(`otp-verifica-oggetto:${oggettoId}`, {
+    limit: LIMITE_OTP_VERIFICA,
+    windowMs: FINESTRA_OTP_MS,
+  })
+  return rl.ok ? null : troppeRichieste(rl.retryAfterMs)
+}

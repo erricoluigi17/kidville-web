@@ -6,6 +6,7 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sendEmail } from '@/lib/email/send'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { limitaVerificaOtpOggetto } from '@/lib/security/otp-rate-limit'
 import { getUserEmail, OTP_TTL_MS } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot, getSlots } from '@/lib/fea/slots'
@@ -243,6 +244,25 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
     if ('response' in b) return b.response
     const { submissionId } = b.data
     const code = String(b.data.code)
+
+    // ── IL TETTO SUI TENTATIVI, che qui non c'era (2026-08-01) ──
+    //
+    // Il POST di questa stessa route ha un tetto per IP dal primo giorno; il PATCH
+    // — quello che CONFRONTA il codice — non ne ha mai avuto uno. Sei cifre sono un
+    // milione di combinazioni, e senza tetto erano tutte gratuite: chi indovina
+    // porta la domanda a `completed`, con `signed_at` e la riga nel registro delle
+    // firme. È una firma con valore legale.
+    //
+    // La chiave è il `submissionId` e non l'IP, perché l'IP chi attacca lo cambia e
+    // un intero plesso dietro lo stesso NAT lo condivide: si conta il BERSAGLIO, che
+    // è l'unica cosa che l'attaccante non può sostituire senza rinunciare alla firma
+    // che sta cercando di forzare. Il perché per esteso è in `otp-rate-limit.ts`.
+    //
+    // Sta PRIMA di ogni lettura: un tentativo bloccato non deve nemmeno interrogare
+    // il database, e soprattutto non deve arrivare al confronto — è quello il
+    // tentativo che si sta contando.
+    const tettoErr = limitaVerificaOtpOggetto(submissionId)
+    if (tettoErr) return tettoErr
 
     const supabase = await createAdminClient()
 

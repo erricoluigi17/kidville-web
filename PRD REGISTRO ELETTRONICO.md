@@ -89,6 +89,89 @@
 
 ---
 
+## 🗓️ Changelog — Il ciclo di correzione ripreso dopo uno spegnimento, e i quattro difetti che nessun collaudo aveva visto 2026-08-01 (branch `fix/multisede-audit-globale`)
+
+Alle **03:50 del 1° agosto** il computer si è spento mentre undici esecutori scrivevano l'ultima
+ondata del piano di correzione. Il codice era tutto su disco; i loro report — compresa la voce
+«cosa NON ho chiuso» — sono andati persi tutti e undici.
+
+Ricostruirli a posteriori ha insegnato più del lavoro stesso: **il gate verde non dice che il
+lavoro è finito, dice che ciò che è stato scritto non è rotto.** Uno step lasciato a tre quarti —
+il codice c'è, il test c'è, ma manca il pezzo che chiudeva il difetto — passa senza fare rumore.
+Undici verificatori sui singoli step: **3 chiusi, 8 parziali**.
+
+### Le otto migrazioni in produzione, e la prova che nessuno aveva fatto
+
+Applicate una per una con l'approvazione del titolare, e verificate **contro il database** invece
+che contro i propri commenti: 3 job di conservazione (24 mesi per le domande mai evase, i dati
+sanitari che escono dalla domanda accolta, il contenuto del registro docenti a 12 mesi), la colonna
+delle password in chiaro rimossa, i consensi fotografici per canale, la dichiarazione di chi
+pubblica una foto, l'allowlist MIME dei bucket, l'ultimo link firmato a 365 giorni della chat
+riportato a percorso, le policy dell'orario per sede, 1 notifica orfana su 60. `get_advisors`:
+0 ERROR. In tutto **3 righe di dati cambiate** su 249 domande intatte.
+
+**La policy dell'orario non era mai stata provata**, e non poteva esserlo: quelle tabelle sono
+vuote in produzione, quindi «il genitore vede 0 righe» non dimostra niente — è vuoto per tutti, e
+il rilievo di sicurezza era una porta senza niente dietro. Con due righe di prova sulle due sezioni
+**omonime** «TEST Infanzia» (Giugliano e Aversa — il caso che ha aperto l'intero audit) e una
+sessione vera via PostgREST: `1 riga, quella di Giugliano` · `[] sulla riga di Aversa`. Controllo
+positivo e negativo nella stessa misura.
+
+### Quattro difetti che il collaudo non aveva visto
+
+1. **Due migrazioni con lo STESSO timestamp.** Sul disco una collisione non fa rumore; si
+   manifesta quando si applica, e delle due ne entra una sola — l'altra viene rifiutata o
+   considerata «già applicata» e **saltata in silenzio**. Il repo avrebbe detto che i genitori di
+   Aversa non leggono più l'orario di Giugliano, e il database non l'avrebbe mai saputo. Il lock
+   esistente non poteva vederla: guardava i duplicati in produzione, dove la `version` è chiave
+   primaria e la collisione è impossibile per costruzione.
+2. **Il PUT degli avvisi non ha mai avuto il gate di sede.** Il POST l'ha dal 30 luglio; la
+   MODIFICA aveva solo il gate di ruolo, poi scriveva `target_classes` grezzo. Bastava modificare
+   un avviso per assegnarlo a una classe di un altro plesso — o a un id di sezione invece che a un
+   nome — ricevendo **200 con la riga aggiornata**. In produzione due avvisi veri avevano l'id:
+   10 alunni in sezione, 10 genitori agganciati, **0 raggiunti**.
+3. **La password degli account TEST era in chiaro in 70 file** di log Maestro (278 occorrenze). Lo
+   strumento per toglierla esisteva; nessuno l'aveva mai eseguito, perché il README insegnava
+   `maestro test` a mano e non nominava lo script. E la bonifica inseguiva **un valore** — quello
+   corrente — quindi era cieca sulle password già ruotate (altre 156 righe) e lo sarebbe
+   ridiventata a ogni rotazione.
+4. **Un OTP a sei cifre provabile un milione di volte, che firmava.**
+   `PATCH /api/forms/send-otp` non aveva nessun tetto sui tentativi. Non l'ha trovato una ricerca:
+   l'ha trovato un **lock scritto per un altro step**, che invece di elencare rotte spezza ogni
+   file nei singoli handler HTTP — un lock per file sarebbe passato, perché in quella route la
+   parola `rateLimit` c'è, ma sta nel POST.
+
+### La forma ricorrente: la porta accanto
+
+Tre dei quattro hanno la stessa forma, ed è la stessa del rilievo C8 del piano: *una regola chiusa
+su una strada e lasciata aperta su quella accanto*. Il POST corretto e il PUT no; i promemoria che
+ricevono il massimo di lunghezza e gli avvisi no (dove il `500` con dentro il tipo della colonna
+era ancora riproducibile parola per parola); il tetto OTP su una firma su quattro. Ogni volta
+perché due esecutori diversi avevano in mano i due lati, e chi teneva l'uno non aveva ragione di
+guardare l'altro. La contromisura non è «stare più attenti»: è che **una regola che vale per due
+strade viva in un posto solo** — da qui `@/lib/avvisi/classi-sede` e `@/lib/validation/avvisi`.
+
+### Debito dichiarato (non chiuso, ma scritto)
+
+- I tre flow Maestro **iOS non sono mai stati eseguiti** dopo la correzione: sono iscritti in
+  `FLOW_SENZA_ESECUZIONE_VERDE`, quindi il gate è verde **perché** la prova manca, non nonostante.
+  Vale anche per i sei login consecutivi di S28, che restano da fare sul simulatore.
+- Il rate-limit conta **in memoria, per istanza**: su Vercel il tetto reale è N × il limite
+  dichiarato. Regge perché i tentativi non si accumulano su un codice solo (il ticket vive dieci
+  minuti), ma il numero non è garantito finché il contatore non passa a uno store condiviso.
+- Il **login non ha un tetto applicativo**: autentica dal client con Supabase, quindi non esiste
+  una nostra route su cui appenderlo. È una decisione di prodotto, non una riga di codice.
+- Un **allegato orfano storico** in `avvisi_allegati` (24/05/2026, nessun avviso lo referenzia) e i
+  file di prova dei collaudi attendono una decisione: rimuoverli con la service key o dichiararli.
+- Restano dal ciclo precedente: i **452 messaggi d'errore italiani** nelle route (l'inventario può
+  solo rimpicciolirsi), le **11 policy `using(true)`** accettate con la motivazione scritta accanto,
+  e le **93 domande con `raccolta_senza_informativa = true`** — dove il flag documenta il problema,
+  non lo chiude.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 617 file / 5573 test** · `build ok`.
+
+---
+
 ## 🗓️ Changelog — Audit globale multi-sede: 140 rilievi chiusi col gate verde, dal 400 che non arrivava mai alle foto dei bambini leggibili senza login 2026-07-31 (branch `fix/multisede-audit-globale`)
 
 Il 2026-07-29 Kidville è passata da un plesso a **tre**. Per due giorni il gate formale è rimasto

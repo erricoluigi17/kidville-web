@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-08-01",
-  "sha256": "606850003e551c6b8b5f9cf22b0e865bacc7c2bc3feeea9246f15b7ef6233721",
+  "sha256": "66b1dd6bb3c7231d7c7dee651fbe242de6de56ef368a3d15f749ebb37d4da7da",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -350,6 +350,14 @@
     {
       "version": "20260801121248",
       "name": "retention_iscrizioni_via_storage_api"
+    },
+    {
+      "version": "20260801130404",
+      "name": "bucket_news_bozze"
+    },
+    {
+      "version": "20260801130431",
+      "name": "app_log_bonifica_pii"
     }
   ]
 }

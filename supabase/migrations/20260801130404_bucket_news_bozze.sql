@@ -70,10 +70,7 @@ on conflict (id) do update
       file_size_limit = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;
 
-comment on table storage.buckets is
-  'Archivi dei file. `news` è pubblico per decisione del titolare (2026-07-31: un articolo condiviso deve restare visibile); `news_bozze` è l''area di sosta CHIUSA dove i media dei post attendono la verifica del consenso fotografico, e da cui l''applicazione li sposta in `news` solo dopo che il gate è passato.';
-
--- Nessuna policy RLS: l'accesso a `news_bozze` passa esclusivamente dal
--- service-role dell'applicazione (upload, indirizzo firmato per l'anteprima,
--- spostamento). Nessun client legge direttamente da questo bucket — che è
--- esattamente il motivo per cui esiste.
+-- Nessun `comment on table storage.buckets`: quella tabella è di proprietà del
+-- ruolo `supabase_storage_admin` e un COMMENT da qui fallisce con
+-- `42501: must be owner of table buckets`. La spiegazione dei due bucket sta in
+-- questo file e in `src/lib/news/media-bozza.ts`, che è dove la si cerca.

@@ -182,6 +182,13 @@ const RISERVATI = [
   'fatture',
   'form_attachments',
   'gallery',
+  // Area di sosta dei media delle News (2026-08-01). Ci stanno le foto **prima**
+  // che il consenso fotografico sia verificato: fino a oggi finivano dritte in
+  // `news`, che è pubblico, e restavano leggibili da chiunque senza login anche se
+  // la pubblicazione veniva poi rifiutata dal gate — o se il post non veniva mai
+  // salvato. È il bucket che deve essere chiuso più di tutti: contiene esattamente
+  // ciò per cui il consenso non è ancora stato dato.
+  'news_bozze',
   'pagelle',
   'protocollo',
   'task_allegati',

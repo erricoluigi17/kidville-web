@@ -36,6 +36,24 @@ function formatMessageTime(iso: string, locale: string): string {
     return new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
+/**
+ * L'allegato si mostra solo quando è un indirizzo che il browser può aprire.
+ *
+ * Da S32 (2026-08-01) in `chat_messages.attachment_url` c'è il PERCORSO nel
+ * bucket privato, non più un link firmato a 365 giorni: le route lo firmano al
+ * momento della lettura, ma il Realtime di Supabase consegna la riga del
+ * database così com'è e per qualche istante la bolla ha in mano un percorso.
+ * Un percorso dentro un `<img src>` è un'immagine rotta, e «la chat è rotta» è
+ * la conclusione sbagliata che se ne trae: meglio niente, finché il ricarico
+ * non porta il link firmato.
+ *
+ * Vale anche come rete di sicurezza sugli schemi non-http (`javascript:`), che
+ * era già la regola per i documenti e non lo era per le immagini.
+ */
+export function allegatoMostrabile(url: string | null | undefined): boolean {
+    return !!url && /^https?:\/\//i.test(url);
+}
+
 /** Etichette localizzate per i separatori relativi (da `common.oggi`/`common.ieri`). */
 export interface EtichetteGiorno {
     oggi: string;
@@ -132,14 +150,14 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             }}
         >
             {/* Attachment preview */}
-            {msg.attachment_url && msg.attachment_type === 'image' && (
+            {msg.attachment_type === 'image' && allegatoMostrabile(msg.attachment_url) && (
                 <div className="mb-2 rounded-xl overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={msg.attachment_url} alt={t('attachmentAlt')} className="w-full h-auto max-h-48 object-cover" />
+                    <img src={msg.attachment_url!} alt={t('attachmentAlt')} className="w-full h-auto max-h-48 object-cover" />
                 </div>
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
-                /^https?:\/\//i.test(msg.attachment_url) ? (
+                allegatoMostrabile(msg.attachment_url) ? (
                     <a
                         href={msg.attachment_url}
                         target="_blank"

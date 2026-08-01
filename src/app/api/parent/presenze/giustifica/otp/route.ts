@@ -6,6 +6,7 @@ import { sendOtp } from '@/lib/auth/otp-ticket'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseQuery } from '@/lib/validation/http'
+import { limitaInvioOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -24,6 +25,12 @@ export const POST = withRoute('parent/presenze/giustifica/otp:POST', async (requ
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
+
+    // Tetto di frequenza (sicurezza W5): un tentativo bloccato non spedisce email e non
+    // entra nel registro FEA, che è il libro delle firme, non dei tentativi. Il budget è
+    // condiviso con le altre tre rotte OTP — la casella del genitore è una sola.
+    const troppe = limitaInvioOtp(userId)
+    if (troppe) return troppe
 
     const q = parseQuery(request, postQuerySchema)
     if ('response' in q) return q.response

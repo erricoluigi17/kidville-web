@@ -5,6 +5,7 @@ import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, M
 import { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { condividi } from '@/lib/native/share';
+import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
 // (timeAgo/statusBadge) definite fuori dal componente, dove gli hook non si usano.
@@ -30,6 +31,13 @@ interface Props {
     avviso: Avviso;
     index: number;
     isTeacher?: boolean;
+    /**
+     * Le sezioni che il chiamante conosce, per tradurre `target_classes` in
+     * nomi di classe. È OPZIONALE perché non tutti hanno una fonte: il genitore
+     * non ha nessun elenco di sezioni, e in quel caso una voce che è un id si
+     * dichiara sconosciuta invece di comparire a schermo come uuid.
+     */
+    classiNote?: readonly ClasseNota[];
     onReadReceipt?: (avvisoId: string) => void;
     onAdesione?: (avvisoId: string, risposta: 'si' | 'no') => void;
     onShowDetails?: (avviso: Avviso) => void;
@@ -66,7 +74,7 @@ function statusBadge(opts: { isAdesione: boolean; isRead: boolean; myAnswer?: st
         : { txt: t('badgeDaLeggere'), cls: 'bg-kidville-green-soft text-kidville-green' };
 }
 
-export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
+export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
     const t = useTranslations('avvisi');
     const locale = useLocale();
     const [expanded, setExpanded] = useState(false);
@@ -79,9 +87,25 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
 
     // Target leggibile: una pill «🌐 Tutti» per gli avvisi di plesso, una pill
     // per ogni classe destinataria. Contrasto Clay Village (green su green-soft).
+    //
+    // `target_classes` è un campo ETEROGENEO: il modulo ci scrive i NOMI, ma in
+    // produzione ci sono record che portano l'ID della sezione. Finché il plesso
+    // era uno le due forme erano ugualmente leggibili (il nome era di fatto una
+    // chiave); con tre sedi non lo è più, e il collaudo iOS del 2026-07-31 (F4)
+    // ha fotografato questa card mentre stampava `219cab6a-…` come destinatario
+    // — mentre il cockpit, sullo stesso avviso, diceva «TEST Infanzia».
+    // `etichettaDestinatario` fa quella risoluzione (id → nome, sede accanto solo
+    // se deducibile) e, quando la voce è un uuid che non si risolve, NON restituisce
+    // testo: la parola la mette qui il catalogo. Un uuid non è un'informazione per
+    // un genitore né per un docente, ed è la ragione per cui non finisce nemmeno
+    // in un `title`: un attributo lo nasconde alla vista, non allo screen reader.
     const isGlobale = avviso.target_scope === 'globale';
     const classiTarget = isGlobale ? [] : (avviso.target_classes ?? []).filter(Boolean);
-    const showTargetPills = isGlobale || classiTarget.length > 0;
+    const destinatari = classiTarget.map((voce) => {
+        const e = etichettaDestinatario(voce, classiNote ?? []);
+        return { chiave: voce, testo: e.risolta ? e.testo : t('classeSconosciuta') };
+    });
+    const showTargetPills = isGlobale || destinatari.length > 0;
 
     // Decodifica allegato (JSON o link semplice)
     let fileUrl = null;
@@ -148,12 +172,12 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                     {t('tutti')}
                                 </span>
                             ) : (
-                                classiTarget.map((classe) => (
+                                destinatari.map((d) => (
                                     <span
-                                        key={classe}
+                                        key={d.chiave}
                                         className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green"
                                     >
-                                        {classe}
+                                        {d.testo}
                                     </span>
                                 ))
                             )}

@@ -12,6 +12,7 @@ import { marcaConsegnati } from '@/lib/chat/delivered';
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { assertConversazioneNonSospesa } from '@/lib/chat/sospensione-conversazione';
 import { assertTerminiAccettatiSeGenitore } from '@/lib/onboarding/consensi';
+import { firmaAllegatiChat, normalizzaAllegatoChat } from '@/lib/chat/allegati';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -118,7 +119,12 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        return NextResponse.json({ messages: data ?? [], total: count ?? 0 });
+        // In tabella c'è il PERCORSO nel bucket privato: il link firmato lo
+        // genera la lettura, a tempo, dietro al gate appena superato (S32). Una
+        // sola chiamata allo Storage per pagina, mai una per messaggio.
+        const messages = await firmaAllegatiChat(supabase, data ?? [], 'chat/messages:GET');
+
+        return NextResponse.json({ messages, total: count ?? 0 });
     } catch (error) {
         logErrore({ operazione: 'chat/messages:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -198,6 +204,40 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
         );
         if (terminiErr) return terminiErr;
 
+        // ── L'allegato si ARCHIVIA come percorso, non come link firmato (S32) ──
+        // Fino al 2026-08-01 qui entrava — e restava — l'URL firmato a 365 giorni
+        // prodotto da `chat/upload`: un link permanente al certificato di un
+        // minore, in chiaro in tabella e valido fuori da ogni gate.
+        //
+        // `normalizzaAllegatoChat` risponde `null` anche per gli indirizzi che
+        // NON sono del bucket `chat-allegati`: prima `attachment_url` era una
+        // `z.string()` qualunque, e un utente autenticato poteva far caricare al
+        // browser di una famiglia un indirizzo scelto da lui (pixel di
+        // tracciamento). Un valore c'è ma non è nostro → 400, e NIENTE va in
+        // tabella.
+        let allegatoPercorso: string | null = null;
+        if (attachment_url != null && attachment_url.trim() !== '') {
+            allegatoPercorso = normalizzaAllegatoChat(attachment_url);
+            if (allegatoPercorso === null) {
+                // `warn`: non è un errore d'uso, è qualcuno che prova a mettere un
+                // indirizzo altrui dentro la conversazione di una famiglia. Nel log
+                // solo uuid: il valore respinto potrebbe essere lungo, e in questo
+                // repo un percorso è una credenziale.
+                logEvento('chat', 'warn', {
+                    operazione: 'chat/messages:POST',
+                    esito: 'allegato-fuori-bucket',
+                    threadId: thread_id,
+                });
+                return NextResponse.json(
+                    {
+                        error: 'Allegato non valido: si possono inviare solo i file caricati dalla chat',
+                        codice: 'ALLEGATO_NON_VALIDO',
+                    },
+                    { status: 400 }
+                );
+            }
+        }
+
         // Inserisci messaggio (sender_id = utente del gate, mai dal body)
         const { data, error } = await supabase
             .from('chat_messages')
@@ -205,7 +245,7 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
                 thread_id,
                 sender_id,
                 content,
-                attachment_url: attachment_url ?? null,
+                attachment_url: allegatoPercorso,
                 attachment_type: attachment_type ?? null,
             })
             .select()
@@ -256,7 +296,12 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
             }, e);
         }
 
-        return NextResponse.json(data, { status: 201 });
+        // La risposta al mittente porta il link FIRMATO: la sua bolla mostra
+        // l'anteprima subito, senza aspettare il ricarico. In tabella resta il
+        // percorso — sono due cose diverse, ed è tutto il punto dello step.
+        const [messaggio] = await firmaAllegatiChat(supabase, [data], 'chat/messages:POST');
+
+        return NextResponse.json(messaggio, { status: 201 });
     } catch (error) {
         logErrore({ operazione: 'chat/messages:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

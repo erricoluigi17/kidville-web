@@ -73,6 +73,14 @@ export const CODICI_ERRORE = {
     SEDE_NON_ACCESSIBILE: 'erroreSedeNonAccessibile',
     /** 400 — più sedi accessibili e nessuna indicata: l'operatore deve scegliere. */
     SEDE_DA_SPECIFICARE: 'erroreSedeDaSpecificare',
+    /** 415 — il tipo dell'allegato non è fra quelli ammessi (`src/lib/allegati/mime.ts`). */
+    ALLEGATO_TIPO_NON_AMMESSO: 'erroreAllegatoTipoNonAmmesso',
+    /** 413 — l'allegato supera il limite del bucket (10 MB). */
+    ALLEGATO_TROPPO_GRANDE: 'erroreAllegatoTroppoGrande',
+    /** 400 — l'indirizzo dell'allegato non è del nostro bucket (`src/lib/chat/allegati.ts`). */
+    ALLEGATO_NON_VALIDO: 'erroreAllegatoNonValido',
+    /** 429 — tetto di frequenza raggiunto (`src/lib/security/otp-rate-limit.ts`). */
+    TROPPE_RICHIESTE: 'erroreTroppeRichieste',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

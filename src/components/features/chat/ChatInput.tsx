@@ -14,7 +14,11 @@ interface Props {
 export function ChatInput({ onSend, disabled, placeholder }: Props) {
     const t = useTranslations('teacherComunicazioni');
     const [text, setText] = useState('');
-    const [attachment, setAttachment] = useState<{ name: string; url: string; type: string } | null>(null);
+    // `riferimento` è ciò che si manda al server: dal 2026-08-01 (S32) è il
+    // PERCORSO nel bucket privato, non più un link firmato a 365 giorni.
+    // L'anteprima qui sotto mostra solo il nome del file, quindi un indirizzo
+    // apribile non serve a nessuno prima dell'invio.
+    const [attachment, setAttachment] = useState<{ name: string; riferimento: string; type: string } | null>(null);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -29,7 +33,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
 
         onSend(
             trimmed || (attachment ? '📎 Allegato' : ''),
-            attachment?.url,
+            attachment?.riferimento,
             attachment?.type,
         );
         setText('');
@@ -46,7 +50,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
 
     // Upload reale su Supabase Storage via POST /api/chat/upload (M5.5):
     // bucket privato chat-allegati, max 10MB, PDF o immagini; la route
-    // risponde con URL firmato + tipo ('image' | 'document').
+    // risponde col PERCORSO nel bucket + tipo ('image' | 'document').
     const handleAttachClick = () => {
         if (uploading) return;
         fileRef.current?.click();
@@ -62,8 +66,11 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
             fd.append('file', file);
             const res = await fetch('/api/chat/upload', { method: 'POST', body: fd }).catch(() => null);
             const data = res ? await res.json().catch(() => null) : null;
-            if (res?.ok && data?.url) {
-                setAttachment({ name: data.name ?? file.name, url: data.url, type: data.attachment_type ?? 'document' });
+            // `data.url` è il ripiego per un server non ancora aggiornato: il
+            // server nuovo lo riporta comunque a percorso prima di scrivere.
+            const riferimento = data?.path ?? data?.url;
+            if (res?.ok && riferimento) {
+                setAttachment({ name: data.name ?? file.name, riferimento, type: data.attachment_type ?? 'document' });
             } else {
                 setUploadError(data?.error ?? t('chatInputUploadErrore'));
             }

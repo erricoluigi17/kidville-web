@@ -7,25 +7,32 @@
 #   - simulatore iOS avviato (xcrun simctl boot …)
 #   - dev server sull'host, porta 3000
 #   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
-#   - credenziali negli env MAESTRO_KV_EMAIL_SEGRETERIA / MAESTRO_KV_PASSWORD
-#     L'email dell'account TEST segreteria è `test.segreteria@kidville.test`; la
-#     password è quella comune degli account TEST (PRD / e2e config) — NON qui.
 #
-# Esecuzione:
-#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_SEGRETERIA" \
-#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
-#                .claude/maestro-flows/ios-percorso-segreteria.yaml
+# Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
+#   .claude/maestro-flows/esegui.sh ios-percorso-segreteria.yaml
+# Lo script passa le credenziali (l'account TEST è `test.segreteria@kidville.test`;
+# la password NON sta nel repo) e poi BONIFICA il log di Maestro, che altrimenti
+# conserva la password in chiaro su disco (misurato: 4 occorrenze per run, fra cui
+# «Inputting text: <password>», che nessuna scelta di flow può evitare).
 #
 # Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
 # 10.0.2.2), e non c'è tasto Indietro hardware → i "ritorni" avvengono toccando i
-# tab della bottom-nav, che è persistente su ogni pagina. Su WebView iOS
-# `hideKeyboard` fallisce ("Couldn't hide the keyboard"): la tastiera si chiude
-# con un tap sul titolo statico "Benvenuto/a!". Da questo ciclo la segreteria
-# naviga con la BOTTOM-NAV a pillola (Home · Avvisi · Contabilità · Mensa +
-# «Menu») come genitore/docente, NON più col drawer. Il tab «Menu» ha aria-label
-# "Menu · tutte le sezioni" e apre un bottom-sheet (Anagrafica in evidenza).
-# Selettori ancorati a testi STABILI: "Dashboard Direzione", "Mensa & Cucina",
-# "Anagrafica Generale".
+# tab della bottom-nav, che è persistente su ogni pagina.
+#
+# ⚠️ IL LOGIN NON SI INVIA COL TAP (misurato 2026-07-31, iPhone 17 Pro Max /
+# iOS 26.2). `tapOn: "Accedi"` con la tastiera aperta risulta COMPLETED e il form
+# NON parte: il flow prosegue e muore al 13° comando, sull'asserzione «Dashboard
+# Direzione» — due esecuzioni su due, e il verdetto scritto accusava l'app. Il tap
+# sul titolo "Benvenuto/a!" NON chiude la tastiera e `hideKeyboard` sulla WebView
+# iOS fallisce con «Couldn't hide the keyboard»: erano due rimedi scritti nel file
+# e mai verificati. `pressKey: Enter` invia il form SEMPRE (lock R15). Il dialog
+# dei permessi va gestito prima E dopo il login (lock R14).
+#
+# Da questo ciclo la segreteria naviga con la BOTTOM-NAV a pillola (Home · Avvisi ·
+# Contabilità · Mensa + «Menu») come genitore/docente, NON più col drawer. Il tab
+# «Menu» ha aria-label "Menu · tutte le sezioni" e apre un bottom-sheet (Anagrafica
+# in evidenza). Selettori ancorati a testi STABILI: "Dashboard Direzione",
+# "Mensa & Cucina", "Anagrafica Generale".
 #
 # ⚠️ NODI DUPLICATI (2026-07-31). «Mensa» e «Anagrafica» NON si toccano per
 # testo: la dashboard le ripete nella griglia «Tutti i moduli» e Maestro prende
@@ -48,6 +55,21 @@ env:
 - launchApp:
     clearState: true
 
+# ── 0. PERMESSO RIMASTO IN CODA DAL GIRO PRECEDENTE ──────────────────────────
+# `runFlow when:` valuta la condizione una volta sola e NON aspetta: da solo,
+# subito dopo il login, risultava sempre SKIPPED e il dialog compariva un istante
+# dopo, coprendo la UI. Serve l'attesa `optional: true` davanti — e due gestioni,
+# perché il permesso lasciato in coda ricompare al lancio successivo.
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 15000
+    optional: true
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
 # ── 1. LOGIN ─────────────────────────────────────────────────────────────────
 - extendedWaitUntil:
     visible: "Accedi al tuo account Kidville"
@@ -58,16 +80,18 @@ env:
 - tapOn:
     below: "Email"
 - inputText: ${KV_EMAIL}
-- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
 
 - tapOn:
     below: "Password"
 - inputText: ${KV_PASSWORD}
-- tapOn: "Benvenuto/a!"
 
-- tapOn: "Accedi"
+- pressKey: Enter
 
-# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+# ── 1b. DIALOG DEI PERMESSI DI QUESTO GIRO ───────────────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 30000
+    optional: true
 - runFlow:
     when:
       visible: "Non consentire"

@@ -189,6 +189,13 @@ function TeacherAvvisiContent() {
                             avviso={avviso}
                             index={idx}
                             isTeacher
+                            // Le sezioni del docente sono la stessa fonte che usa il
+                            // cockpit (`/api/educator-sections` porta id, nome e sede):
+                            // servono alla card per tradurre le voci di `target_classes`
+                            // che sono ID e non nomi. Senza, la bacheca stampava l'uuid
+                            // della sezione dove il cockpit diceva «TEST Infanzia»
+                            // (collaudo iOS del 2026-07-31, F4).
+                            classiNote={availableClasses}
                             onShowDetails={(a) => {
                                 setSelectedAvviso(a);
                                 setShowDetails(true);

@@ -290,8 +290,14 @@ describe('PUT/DELETE /api/avvisi/[id] — nessuna riga toccata quando si nega', 
         const res = await AVVISO_DELETE(req(`/api/avvisi/${AVVISO_ID}`, undefined, 'DELETE'), ctx(AVVISO_ID))
 
         expect(res.status).toBe(200)
-        expect(h.mutazioni).toHaveLength(1)
-        expect(h.mutazioni[0]).toMatchObject({ tabella: 'avvisi', tipo: 'delete', id: AVVISO_ID })
+        // Dal 2026-08-01 (S35) la cancellazione si porta via anche le notifiche
+        // già consegnate in campanella: la riga di `avvisi` resta l'unica che
+        // interessa QUI, e sulle notifiche c'è un file di prove dedicato
+        // (`avvisi-orfani-cancellazione.test.ts`). Un `toHaveLength(1)` secco
+        // trasformerebbe questo test in un lucchetto contro quel lavoro.
+        const suAvvisi = h.mutazioni.filter((m) => m.tabella === 'avvisi')
+        expect(suAvvisi).toHaveLength(1)
+        expect(suAvvisi[0]).toMatchObject({ tabella: 'avvisi', tipo: 'delete', id: AVVISO_ID })
     })
 })
 

@@ -102,6 +102,22 @@ interface ProfiloDisponibile {
 }
 
 
+/*
+ * S28 — UNA sola navigazione per ogni uscita dal login.
+ *
+ * Qui c'erano quattro `router.replace(...)` seguiti immediatamente da `router.refresh()`.
+ * Sul simulatore iOS, 1 login su 6 finiva sulla schermata «KIDVILLE NON È RAGGIUNGIBILE»
+ * con il server perfettamente raggiungibile: WebKit registrava
+ * `Failed provisional load (isCancellation = 1, errorCode = -999)`, cioè
+ * `NSURLErrorCancelled` — la prima navigazione non falliva, veniva ANNULLATA dalla
+ * seconda partita 28 ms dopo.
+ *
+ * Il `refresh()` non aggiungeva nulla: il `replace` verso una destinazione mai visitata
+ * da questa istanza di router va comunque a prendere il payload RSC dal server, e ci va
+ * con i cookie appena scritti (sessione Supabase + ruolo attivo da /api/auth/active-role).
+ * Chi fosse tentato di rimetterlo: il lock è `__tests__/components/login-navigazione-singola.test.tsx`.
+ */
+
 /** Destinazione post-login: `?next=` onorato solo se coerente col ruolo attivo. */
 function destinazione(ruolo: string, next: string | null): string {
   if (next) {
@@ -188,7 +204,6 @@ function LoginForm() {
             persisti('kv_user_role', ruolo);
             void impostaRuoloAttivo(ruolo).then(() => {
               router.replace(destinazione(ruolo, next));
-              router.refresh();
             });
           } else if (profs && profs.length >= 2) {
             setProfili(profs);
@@ -219,7 +234,6 @@ function LoginForm() {
       }
       persisti('kv_user_role', ruolo);
       router.replace(destinazione(ruolo, next));
-      router.refresh();
     } finally {
       setLoading(false);
     }
@@ -254,7 +268,6 @@ function LoginForm() {
         persisti('kv_user_role', ruolo);
         await impostaRuoloAttivo(ruolo); // best-effort: la guardia ha il fallback ruolo unico
         router.replace(destinazione(ruolo, next));
-        router.refresh();
         return;
       }
 
@@ -262,7 +275,6 @@ function LoginForm() {
       // redirect): si onorano solo path interni alle aree; per il resto si va
       // alla radice e le guardie server-side faranno il loro lavoro.
       router.replace(next && areaFromPath(next) ? next : '/');
-      router.refresh();
     } catch {
       setError(t('erroreConnessione'));
     } finally {

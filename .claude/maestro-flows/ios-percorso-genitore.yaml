@@ -1,23 +1,36 @@
 # =============================================================================
 # Kidville · iOS — percorso utente reale del GENITORE
-#   login → dashboard → presenze → comunicazioni
+#   login → dashboard → presenze → comunicazioni → ritorno home
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
 #   - dev server sull'host, porta 3000
 #   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
-#   - credenziali negli env MAESTRO_KV_EMAIL_GENITORE / MAESTRO_KV_PASSWORD
 #
-# Esecuzione:
-#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
-#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
-#                .claude/maestro-flows/ios-percorso-genitore.yaml
+# Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
+#   .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml
+# Lo script passa le credenziali e poi BONIFICA il log di Maestro, che altrimenti
+# conserva la password in chiaro su disco (misurato: 4 occorrenze per run, fra cui
+# «Inputting text: <password>», che nessuna scelta di flow può evitare).
 #
 # Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
-# 10.0.2.2, e localhost non soffre il problema HMR di next dev), e non c'è tasto
-# Indietro hardware → si naviga con la bottom nav. Su WebView iOS `hideKeyboard`
-# fallisce ("Couldn't hide the keyboard"): la tastiera si chiude con un tap sul
-# titolo statico "Benvenuto/a!". Selettori verificati su iPhone 17 Pro (2026-07-16).
+# 10.0.2.2), e non c'è tasto Indietro hardware → si naviga con la bottom nav.
+#
+# ⚠️ IL LOGIN NON SI INVIA COL TAP (misurato 2026-07-31, iPhone 17 Pro Max /
+# iOS 26.2). `tapOn: "Accedi"` con la tastiera aperta risulta COMPLETED e il form
+# NON parte: il flow prosegue e muore tre passi dopo, sull'asserzione della
+# dashboard, facendo scrivere «la dashboard non compare» in un verdetto di
+# collaudo. Il tap sul titolo "Benvenuto/a!" NON chiude la tastiera, e
+# `hideKeyboard` sulla WebView iOS fallisce con «Couldn't hide the keyboard»:
+# entrambi erano rimedi scritti nel file e mai verificati. `pressKey: Enter`
+# invia il form SEMPRE. Il lock R15 impedisce che il tap rientri.
+#
+# ⚠️ IL DIALOG DEI PERMESSI SI GESTISCE DUE VOLTE. `runFlow when:` valuta la
+# condizione una volta sola e non aspetta: messo subito dopo il login risultava
+# sempre SKIPPED, e il dialog compariva un istante dopo coprendo la UI. Serve
+# `extendedWaitUntil … optional: true` davanti. E ne servono due, perché il
+# permesso rimasto in coda ricompare al LANCIO SUCCESSIVO — cioè prima del login
+# del giro dopo (lock R14).
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · iOS — percorso genitore
@@ -31,6 +44,17 @@ env:
 - launchApp:
     clearState: true
 
+# ── 0. PERMESSO RIMASTO IN CODA DAL GIRO PRECEDENTE ──────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 15000
+    optional: true
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
 # ── 1. LOGIN ─────────────────────────────────────────────────────────────────
 - extendedWaitUntil:
     visible: "Accedi al tuo account Kidville"
@@ -41,16 +65,18 @@ env:
 - tapOn:
     below: "Email"
 - inputText: ${KV_EMAIL}
-- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
 
 - tapOn:
     below: "Password"
 - inputText: ${KV_PASSWORD}
-- tapOn: "Benvenuto/a!"
 
-- tapOn: "Accedi"
+- pressKey: Enter
 
-# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+# ── 1b. DIALOG DEI PERMESSI DI QUESTO GIRO ───────────────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 30000
+    optional: true
 - runFlow:
     when:
       visible: "Non consentire"

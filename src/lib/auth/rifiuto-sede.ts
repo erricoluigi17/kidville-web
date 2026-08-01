@@ -37,14 +37,28 @@ import { CODICI_ERRORE, type CodiceErrore } from '@/lib/ui/esito-fetch'
  * costruisce risposte e logga produrrebbe righe senza contesto, cioè rumore.
  */
 
-const STATO: Record<CodiceErrore, number> = {
+/**
+ * I codici che questa funzione sa rifiutare: i DUE dinieghi di sede, non tutto
+ * `CodiceErrore`. La distinzione è nata il 2026-08-01, quando al catalogo si sono
+ * aggiunti i codici degli allegati e del rate limit: un `Record<CodiceErrore, …>`
+ * qui avrebbe preteso uno stato HTTP anche per `ALLEGATO_TROPPO_GRANDE`, cioè
+ * avrebbe chiesto a `rifiutoSede` di rispondere 413 — una funzione che dice
+ * «questa sede non è tua» non ha niente da dire sul peso di un file.
+ *
+ * `Extract` tiene comunque il legame col catalogo: se uno dei due codici venisse
+ * rinominato in `CODICI_ERRORE`, questo oggetto diventerebbe rosso invece di
+ * restare in silenzio a mappare un nome che non esiste più.
+ */
+type CodiceSede = Extract<CodiceErrore, 'SEDE_NON_ACCESSIBILE' | 'SEDE_DA_SPECIFICARE'>
+
+const STATO: Record<CodiceSede, number> = {
   SEDE_NON_ACCESSIBILE: 403,
   SEDE_DA_SPECIFICARE: 400,
 }
 
 const CATALOGO_IT = it as Record<string, string>
 
-export function rifiutoSede(codice: CodiceErrore): NextResponse {
+export function rifiutoSede(codice: CodiceSede): NextResponse {
   return NextResponse.json(
     { error: CATALOGO_IT[CODICI_ERRORE[codice]], codice },
     { status: STATO[codice] },

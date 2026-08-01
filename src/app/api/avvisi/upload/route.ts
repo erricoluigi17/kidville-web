@@ -6,6 +6,7 @@ import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { BUCKET_AVVISI_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
+import { verificaAllegato } from '@/lib/allegati/mime';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
@@ -20,6 +21,17 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
         if ('response' in f) return f.response;
         const { file } = f.data;
 
+        // IL TIPO DICHIARATO DAL CLIENT NON È UNA PROVA (collaudo 2026-07-31, W7).
+        // Il gate sta QUI, prima dello Storage: senza, un `.txt` arrivava fino al bucket e
+        // tornava indietro come `500 {"error":"mime type text/plain is not supported"}` — il
+        // testo grezzo del provider, dove serviva un 415 comprensibile. È lo stesso gate di
+        // `news/upload:POST`, in un modulo solo: due liste di tipi ammessi divergono.
+        const gate = verificaAllegato(file, {
+            operazione: 'avvisi/upload:POST',
+            bucket: BUCKET_AVVISI_ALLEGATI,
+        });
+        if (!gate.ok) return gate.risposta;
+
         const supabase = await createAdminClient();
 
         // Genera nome file unico
@@ -30,7 +42,9 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
         const { error } = await supabase.storage
             .from(BUCKET_AVVISI_ALLEGATI)
             .upload(uniqueFileName, Buffer.from(fileBuffer), {
-                contentType: file.type,
+                // Il tipo NORMALIZZATO (`image/jpeg`, non `image/jpeg; charset=binary`): con
+                // il suffisso dei parametri il bucket rifiuterebbe la stringa intera.
+                contentType: gate.contentType,
                 upsert: true
             });
 
@@ -59,7 +73,7 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
             operazione: 'avvisi/upload:POST',
             esito: 'allegato-caricato',
             bucket: BUCKET_AVVISI_ALLEGATI,
-            mime: file.type,
+            mime: gate.contentType,
             byte: file.size,
         });
 

@@ -27,7 +27,53 @@
 // offline si rompe in un modo che nessuno collega a questa riga. Il test
 // `__tests__/offline/sw.test.ts` la difende.
 
-// ─── PERCHÉ `VERSIONE` È PASSATA A v3 (e perché sotto c'è un hash) ──────────
+// ─── INVARIANTE: SI SERVE DA CACHE SOLO CIÒ CHE NON PUÒ ESSERE CAMBIATO ────
+// Il 31/07 due esecutori, uno dopo l'altro, hanno misurato «un'app rotta» che
+// rotta non era. Il SW teneva in cache `/_next/static/chunks/src_00w6rj3._.js`
+// da 246.051 byte mentre il dev server ne serviva una da 256.678: la pagina
+// alzava `ReferenceError: setErroreElenco is not defined`, un errore di
+// hydration, e mostrava «NESSUN ALUNNO TROVATO» con 25 alunni a database. La
+// ricarica non lo sanava. Due collaudi bruciati a rincorrere un fantasma.
+//
+// La causa non è «lo sviluppo», è la MUTABILITÀ dell'URL. Misure con `curl -I`
+// del 2026-08-01:
+//   next dev      /_next/static/chunks/*.js  → `no-cache, must-revalidate`
+//   produzione    /_next/static/chunks/*.js  → `public,max-age=31536000,immutable`
+//   produzione    /favicon.ico, /mascot.png  → `public, max-age=0, must-revalidate`
+// In produzione il nome del chunk CONTIENE l'hash del contenuto: quell'URL non
+// cambierà mai significato, e cache-first è corretto. Con Turbopack in sviluppo
+// il nome è stabile e il contenuto cambia a ogni ricompilazione: lo stesso URL è
+// un file diverso, e cache-first congela il primo che passa, per sempre.
+//
+// E non è una nostra deduzione dall'hostname: è NEXT a dirlo, esplicitamente, in
+// `next/dist/server/lib/router-server.js` — «se la risorsa è in `_next/static`:
+// in dev `no-cache, must-revalidate`, altrimenti `public, max-age=31536000,
+// immutable`». Leggere quell'header invece di indovinare l'ambiente ha una
+// conseguenza pratica che conta: con `next start` in locale — il modo in cui si
+// collauda l'app nativa — gli asset tornano immutabili, quindi la cache offline
+// continua a funzionare esattamente come in produzione.
+//
+// Da qui la regola, che vale in ogni ambiente e non chiede a nessuno di
+// ricordarsi niente:
+//   · si SERVE dalla cache senza passare dalla rete solo ciò che la risposta
+//     dichiara immutabile (`immutable`, o un `max-age` di almeno un giorno);
+//   · tutto il resto è rete-prima-e-cache-di-riserva: online si vede sempre la
+//     copia fresca, offline si vede l'ultima buona;
+//   · sotto `/_next/static/` ciò che non è immutabile non si scrive nemmeno:
+//     in sviluppo la cache resta vuota, com'è giusto.
+// Il difetto non è più «noto»: è impossibile. `__tests__/offline/sw.test.ts`
+// lo riproduce (246 KB → 256 KB) e tiene ferma anche la metà opposta, cioè che
+// in produzione gli asset con hash restino cache-first.
+//
+// E se un domani un collaudo sembrasse vedere codice che non esiste più, la
+// prova che scagiona (o incolpa) il Service Worker in cinque secondi, dalla
+// console del browser:
+//   await Promise.all((await navigator.serviceWorker.getRegistrations())
+//     .map(function (r) { return r.unregister(); }));
+//   await Promise.all((await caches.keys()).map(function (k) { return caches.delete(k); }));
+// poi si ricarica. Se il sintomo resta, la cache non c'entrava: è il codice.
+
+// ─── PERCHÉ `VERSIONE` È PASSATA A v4 (e perché sotto c'è un hash) ──────────
 // La PR #46 ha riscritto la pagina /offline senza toccare questo file. Il
 // browser reinstalla un Service Worker solo se ne cambiano i BYTE: nessuna
 // reinstallazione, nessun `activate`, `precarica()` mai rieseguita — e la copia
@@ -46,11 +92,14 @@
 // basta a far reinstallare il SW (i byte del file cambiano), ma solo il bump di
 // `VERSIONE` cambia `CACHE_SHELL` e fa buttare ad `activate` la cache
 // precedente, asset statici stantii compresi.
-// (In questo stesso branch la pagina è stata poi corretta di nuovo — l'elenco
-// che l'idratazione di React annullava: l'impronta è cambiata, `VERSIONE` no,
-// perché `v3` non è ancora stata rilasciata. Il bump vale per rilascio, non per
-// modifica.)
-const VERSIONE = 'v3';
+//
+// v3 → v4: il bump vale per rilascio, non per modifica, e v3 È rilasciata —
+// verificato il 2026-08-01 scaricando `https://app.kidville.it/sw.js`, byte per
+// byte identico a questo file. Si alza perché cambia la STRATEGIA di cache: ogni
+// voce scritta con la regola vecchia («cache-first sempre») è stata salvata con
+// un criterio che non vale più, e la si butta tutta invece di fidarsi voce per
+// voce. Costa un riscaricamento del guscio alla prima apertura con rete.
+const VERSIONE = 'v4';
 // IMPRONTA-PAGINA-OFFLINE: 4850a3d0226675b3761c5cdb606986e11e871bd29a74c23306ccc123ba23236a
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
@@ -113,6 +162,68 @@ function documentoCacheabile(url) {
   for (const p of MAI_IN_CACHE) {
     if (url.pathname === p || url.pathname.startsWith(p)) return false;
   }
+  return true;
+}
+
+/* ──────────────── mutabilità: chi può essere servito da cache ─────────────── */
+
+/** Gli asset di build di Next: in produzione hanno l'hash nel nome, in dev no. */
+const PREFISSO_STATICI_NEXT = '/_next/static/';
+
+/**
+ * Soglia oltre la quale un `max-age` vale quanto `immutable`: un giorno.
+ * Nessuno mette 24 ore di cache su una risorsa che intende cambiare sotto lo
+ * stesso URL; e se un domani Next smettesse di emettere `immutable` tenendo
+ * `max-age=31536000`, gli asset con hash resterebbero cache-first senza che
+ * nessuno debba accorgersene.
+ */
+const ETA_IMMUTABILE_MIN = 86400;
+
+/** `Cache-Control` della risposta, minuscolo. Mai lancia: '' se non c'è. */
+function direttiveCache(res) {
+  try {
+    const valore = res && res.headers ? res.headers.get('cache-control') : null;
+    return valore ? valore.toLowerCase() : '';
+  } catch {
+    // Response senza `headers` utilizzabili (opaque, o un finto in un test):
+    // si tratta come «non dichiara nulla», cioè non immutabile. È il verso
+    // prudente: al massimo si va in rete una volta di troppo.
+    return '';
+  }
+}
+
+/**
+ * La risposta dichiara che quell'URL identificherà per sempre questo contenuto?
+ *
+ * È l'UNICA condizione che rende corretto servire da cache senza sentire la
+ * rete. `no-cache` significa «puoi conservarla ma devi rivalidarla»: per noi
+ * vale come «non servirla da sola», ed è esattamente ciò che il dev server dice
+ * dei suoi chunk.
+ */
+function immutabile(res) {
+  const cc = direttiveCache(res);
+  if (!cc) return false;
+  if (cc.includes('no-store') || cc.includes('no-cache')) return false;
+  if (cc.includes('immutable')) return true;
+  const eta = cc.match(/max-age\s*=\s*(\d+)/);
+  return !!eta && Number(eta[1]) >= ETA_IMMUTABILE_MIN;
+}
+
+/**
+ * Si può SCRIVERE questa risposta nella cache del guscio?
+ *
+ * Due no:
+ *  · `no-store` — il server chiede di non metterla su disco, e lo si rispetta;
+ *  · `/_next/static/` non immutabile — è una build di sviluppo: lo stesso URL
+ *    conterrà un file diverso alla prossima ricompilazione, quindi conservarlo
+ *    non serve a nessuno (l'offline in sviluppo non è una cosa che esiste) e
+ *    lascia in giro esche per il prossimo che collauda.
+ * Tutto il resto si conserva: `/mascot.png` e le icone sono `max-age=0` anche in
+ * produzione, e senza di loro il guscio offline si vedrebbe spoglio.
+ */
+function conservabile(url, res) {
+  if (direttiveCache(res).includes('no-store')) return false;
+  if (url.pathname.startsWith(PREFISSO_STATICI_NEXT) && !immutabile(res)) return false;
   return true;
 }
 
@@ -200,6 +311,46 @@ async function precarica() {
   }
 }
 
+/**
+ * Toglie dalla cache corrente gli asset di build che NON sono immutabili.
+ *
+ * Serve a bonificare quello che la regola vecchia ha già scritto: una macchina
+ * di sviluppo che ha collaudato ieri si porta dentro `kidville-shell-*` i chunk
+ * di Turbopack di ieri. Con la regola nuova non verrebbero comunque più serviti,
+ * ma restare lì è un'esca: chi apre la CacheStorage li vede e non sa se sono
+ * quelli che gli stanno rompendo la pagina. Il bump di `VERSIONE` fa lo stesso
+ * lavoro solo quando qualcuno si ricorda di alzarlo; questo lo fa da sé, a ogni
+ * attivazione.
+ *
+ * In produzione non tocca niente: lì sotto `/_next/static/` è tutto `immutable`.
+ */
+async function potaAssetStantii() {
+  let potati = 0;
+  try {
+    const cache = await caches.open(CACHE_SHELL);
+    const chiavi = await cache.keys();
+    for (const req of chiavi) {
+      let pathname;
+      try {
+        pathname = new URL(req.url).pathname;
+      } catch {
+        continue; // chiave non interpretabile: non è roba nostra, si lascia stare
+      }
+      if (!pathname.startsWith(PREFISSO_STATICI_NEXT)) continue;
+      const salvata = await cache.match(req);
+      if (salvata && immutabile(salvata)) continue;
+      await cache.delete(req);
+      potati += 1;
+    }
+  } catch {
+    // Potatura fallita: nessun danno, gli asset non immutabili non vengono
+    // comunque serviti da soli. Si continua con l'attivazione.
+  }
+  // Si riferisce solo quando c'è stato davvero qualcosa da buttare: è il segnale
+  // «questo ambiente aveva copie stantie», non rumore a ogni avvio.
+  if (potati > 0) avvisa('sw-asset-stantii-potati', 'warn', 'altro');
+}
+
 // install: pre-cacha la pagina di ripiego e attiva subito il nuovo SW.
 self.addEventListener('install', function (event) {
   event.waitUntil(precarica());
@@ -207,8 +358,9 @@ self.addEventListener('install', function (event) {
 });
 
 // activate: prende il controllo dei client aperti, elimina le cache di versioni
-// precedenti (nome diverso da CACHE_SHELL) e ri-precarica /offline — è il punto
-// in cui si recupera un cambio di lingua avvenuto dopo l'installazione.
+// precedenti (nome diverso da CACHE_SHELL), pota gli asset di build stantii
+// rimasti in quella corrente e ri-precarica /offline — è il punto in cui si
+// recupera un cambio di lingua avvenuto dopo l'installazione.
 // Tutto in try/catch: un errore qui non deve impedire l'attivazione.
 self.addEventListener('activate', function (event) {
   event.waitUntil(
@@ -228,6 +380,7 @@ self.addEventListener('activate', function (event) {
       } catch {
         // clients.claim non supportato/fallito: ininfluente.
       }
+      await potaAssetStantii();
       await precarica();
     })()
   );
@@ -235,26 +388,54 @@ self.addEventListener('activate', function (event) {
 
 /* ───────────────────────────── strategie ─────────────────────────────────── */
 
-// Serve una richiesta cache-first: se in cache la restituisce, altrimenti va in
-// rete e memorizza la risposta ok. Mai lancia: in caso di guasto totale rilancia
-// alla rete grezza (che gestirà l'eventuale errore di navigazione).
-async function cacheFirst(request) {
+/**
+ * Serve un asset statico.
+ *
+ * Cache-first SOLO se la copia salvata si dichiara immutabile (vedi
+ * `immutabile()`): è il caso dei chunk di produzione, il cui nome contiene
+ * l'hash del contenuto. Tutto il resto è rete-prima: online si vede sempre la
+ * copia fresca — è ciò che rende impossibile il chunk stantio in sviluppo —
+ * e la copia salvata resta lì per quando la rete non c'è.
+ *
+ * Mai lancia: in caso di guasto totale rilancia alla rete grezza.
+ */
+async function assetStatico(request, url) {
+  let salvata;
   try {
-    const cached = await caches.match(request);
-    if (cached) return cached;
+    salvata = await caches.match(request);
+  } catch {
+    // Cache non leggibile (storage disabilitato, modalità privata): si prosegue
+    // come se non ci fosse nulla di salvato, cioè si va in rete.
+    salvata = undefined;
+  }
+  if (salvata && immutabile(salvata)) return salvata;
+
+  try {
     const res = await fetch(request);
     if (res && res.ok) {
-      try {
-        const cache = await caches.open(CACHE_SHELL);
-        await cache.put(request, res.clone());
-      } catch {
-        // put fallita (quota/opaque): si ignora, la risposta è già pronta.
+      if (conservabile(url, res)) {
+        try {
+          const cache = await caches.open(CACHE_SHELL);
+          await cache.put(request, res.clone());
+        } catch {
+          // put fallita (quota/opaque): si ignora, la risposta è già pronta.
+        }
+      } else if (salvata) {
+        // C'era una copia scritta da una regola precedente e ora sappiamo che
+        // non va conservata: si toglie subito, senza aspettare un `activate`.
+        try {
+          const cache = await caches.open(CACHE_SHELL);
+          await cache.delete(request);
+        } catch {
+          // delete fallita: la voce resta, ma non verrà comunque più servita
+          // (non è immutabile), quindi è innocua.
+        }
       }
     }
     return res;
   } catch {
-    const cached = await caches.match(request);
-    if (cached) return cached;
+    // Qui la rete non c'è: la copia vecchia è meglio di un asset mancante.
+    if (salvata) return salvata;
     return fetch(request);
   }
 }
@@ -330,7 +511,7 @@ async function navigazione(event) {
 }
 
 function isStaticAsset(url) {
-  if (url.pathname.startsWith('/_next/static/')) return true;
+  if (url.pathname.startsWith(PREFISSO_STATICI_NEXT)) return true;
   return /\.(?:js|css|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|avif|ico)$/i.test(url.pathname);
 }
 
@@ -364,7 +545,7 @@ self.addEventListener('fetch', function (event) {
   if (isRichiestaRSC(url, request)) return;
 
   if (isStaticAsset(url)) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(assetStatico(request, url));
     return;
   }
 

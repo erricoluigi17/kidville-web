@@ -38,6 +38,9 @@ class FakeCache {
     async keys() {
         return [...this.voci.keys()].map((u) => new Request(u));
     }
+    async delete(req: Request | string) {
+        return this.voci.delete(typeof req === 'string' ? req : req.url);
+    }
 }
 
 class FakeCacheStorage {
@@ -213,6 +216,29 @@ const CACHE_CORRENTE = (() => {
     return 'kidville-shell-' + trovato[1];
 })();
 
+/**
+ * Header `Cache-Control` VERI, misurati con `curl -I` il 2026-08-01 (non
+ * inventati): sono la sola cosa che distingue un URL immutabile da uno che
+ * cambierà contenuto restando lo stesso.
+ */
+const CC_DEV = 'no-cache, must-revalidate'; // next dev → /_next/static/chunks/*
+const CC_PROD_IMMUTABILE = 'public,max-age=31536000,immutable'; // Vercel → idem
+const CC_RIVALIDABILE = 'public, max-age=0, must-revalidate'; // Vercel → /mascot.png
+
+function asset(corpo: string, cacheControl: string) {
+    return new Response(corpo, {
+        status: 200,
+        headers: { 'content-type': 'application/javascript', 'cache-control': cacheControl },
+    });
+}
+
+/** Ogni chiave presente in una qualunque delle cache. */
+function chiaviInCache(s: ScopeSW): string[] {
+    const out: string[] = [];
+    for (const c of s.caches.cache.values()) out.push(...c.voci.keys());
+    return out;
+}
+
 describe('service worker — installazione', () => {
     let s: ScopeSW;
     beforeEach(() => {
@@ -365,13 +391,125 @@ describe('service worker — cosa NON intercetta', () => {
         ).toBeUndefined();
     });
 
-    it('gli asset statici sono cache-first: la seconda volta non tocca la rete', async () => {
-        s.fetch.mockResolvedValue(new Response('js', { status: 200 }));
-        const url = `${ORIGIN}/_next/static/chunks/a.js`;
+    it('gli asset statici IMMUTABILI sono cache-first: la seconda volta non tocca la rete', async () => {
+        // Prima questo caso non mandava alcun `Cache-Control`, e passava: era la
+        // forma scritta del difetto — «cache-first sempre, qualunque cosa dica il
+        // server». Ora l'header c'è ed è quello MISURATO in produzione, perché è
+        // l'unica condizione che rende cache-first corretto: l'URL dei chunk di
+        // una build contiene l'hash del contenuto, quindi non cambierà mai sotto
+        // i piedi.
+        s.fetch.mockResolvedValue(asset('js', CC_PROD_IMMUTABILE));
+        const url = `${ORIGIN}/_next/static/chunks/004-h267miri0.js`;
         await scatenaFetch(s, new Request(url));
         expect(s.fetch).toHaveBeenCalledTimes(1);
         await scatenaFetch(s, new Request(url));
         expect(s.fetch).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * ─── IL COLLAUDO BRUCIATO DUE VOLTE ────────────────────────────────────────
+ * Il 31/07 due esecutori hanno misurato «un'app rotta» che rotta non era: il SW
+ * teneva in cache `/_next/static/chunks/src_00w6rj3._.js` da 246.051 byte mentre
+ * il dev server ne serviva una da 256.678. Risultato: `ReferenceError:
+ * setErroreElenco is not defined`, un errore di hydration e «NESSUN ALUNNO
+ * TROVATO» con 25 alunni a database — e la ricarica non lo sanava.
+ *
+ * CAUSA RADICE, misurata con `curl -I` il 2026-08-01:
+ *   next dev  → /_next/static/chunks/*.js : `no-cache, must-revalidate`
+ *   Vercel    → /_next/static/chunks/*.js : `public,max-age=31536000,immutable`
+ *   Vercel    → /favicon.ico, /mascot.png : `public, max-age=0, must-revalidate`
+ * In produzione il nome del chunk contiene l'hash del contenuto: cache-first è
+ * corretto perché l'URL non cambia mai significato. Con Turbopack in sviluppo il
+ * nome è STABILE e il contenuto cambia a ogni ricompilazione: lo stesso URL è un
+ * file diverso, e cache-first congela il primo che passa, per sempre.
+ *
+ * La discriminante NON è «sviluppo o produzione» — è la MUTABILITÀ dell'URL, e
+ * la risposta la dichiara da sé. Per questo i casi qui sotto pilotano il SW con
+ * gli header veri, non con l'hostname.
+ */
+describe('service worker — asset statici: mai una copia stantia', () => {
+    let s: ScopeSW;
+    beforeEach(() => {
+        s = creaScopeSW();
+    });
+
+    const CHUNK_DEV = `${ORIGIN}/_next/static/chunks/src_00w6rj3._.js`;
+
+    it('lo stesso URL di chunk che cambia contenuto serve la copia NUOVA, non quella vista per prima', async () => {
+        // La riproduzione esatta del collaudo bruciato, in miniatura.
+        s.fetch.mockResolvedValueOnce(asset('VECCHIO senza erroreElenco', CC_DEV));
+        const primo = await scatenaFetch(s, new Request(CHUNK_DEV));
+        expect(await primo!.text()).toContain('VECCHIO');
+
+        s.fetch.mockResolvedValueOnce(asset('NUOVO con erroreElenco', CC_DEV));
+        const secondo = await scatenaFetch(s, new Request(CHUNK_DEV));
+
+        // L'asserzione che conta è sul CONTENUTO servito, non sullo status.
+        expect(await secondo!.text()).toContain('NUOVO');
+        expect(s.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('in sviluppo nessun `_next/static` viene nemmeno SCRITTO in cache', async () => {
+        s.fetch.mockResolvedValue(asset('js di sviluppo', CC_DEV));
+        await scatenaFetch(s, new Request(CHUNK_DEV));
+        expect(chiaviInCache(s)).toEqual([]);
+
+        // CONTROLLO POSITIVO: lo stesso percorso, con l'header della produzione,
+        // in cache ci finisce. Senza questo, il caso sopra passerebbe anche se il
+        // SW avesse smesso di cachare qualunque cosa.
+        s.fetch.mockResolvedValue(asset('js di produzione', CC_PROD_IMMUTABILE));
+        const prod = `${ORIGIN}/_next/static/chunks/004-h267miri0.js`;
+        await scatenaFetch(s, new Request(prod));
+        expect(chiaviInCache(s)).toEqual([prod]);
+    });
+
+    it('un asset da rivalidare (max-age=0) si aggiorna: con la rete si serve sempre la copia fresca', async () => {
+        // `/favicon.ico` e `/mascot.png` in produzione: si possono conservare per
+        // l'offline, ma non si servono al posto della rete.
+        const url = `${ORIGIN}/mascot.png`;
+        s.fetch.mockResolvedValueOnce(asset('logo vecchio', CC_RIVALIDABILE));
+        await scatenaFetch(s, new Request(url));
+        expect(chiaviInCache(s)).toEqual([url]);
+
+        s.fetch.mockResolvedValueOnce(asset('logo nuovo', CC_RIVALIDABILE));
+        const secondo = await scatenaFetch(s, new Request(url));
+        expect(await secondo!.text()).toContain('logo nuovo');
+    });
+
+    it('lo stesso asset, SENZA rete, viene servito dalla cache: l’offline resta in piedi', async () => {
+        // Controllo positivo dell'offline: la regola nuova non deve svuotare il
+        // guscio, solo impedire che si serva roba vecchia quando la rete c'è.
+        const url = `${ORIGIN}/mascot.png`;
+        s.fetch.mockResolvedValueOnce(asset('logo', CC_RIVALIDABILE));
+        await scatenaFetch(s, new Request(url));
+
+        s.fetch.mockRejectedValue(new Error('offline'));
+        const res = await scatenaFetch(s, new Request(url));
+        expect(await res!.text()).toContain('logo');
+    });
+
+    it('una risposta `no-store` non entra mai in cache', async () => {
+        s.fetch.mockResolvedValue(asset('mai su disco', 'no-store'));
+        await scatenaFetch(s, new Request(`${ORIGIN}/icone/qualcosa.png`));
+        expect(chiaviInCache(s)).toEqual([]);
+    });
+
+    it('activate pota gli `_next/static` stantii già in cache e conserva quelli immutabili', async () => {
+        // È il residuo lasciato dalla regola vecchia sulle macchine di chi
+        // collauda: senza questa potatura resterebbe lì finché non si alza
+        // VERSIONE, cioè finché qualcuno non se ne accorge.
+        const cache = await s.caches.open(CACHE_CORRENTE);
+        const immutabile = `${ORIGIN}/_next/static/chunks/004-h267miri0.js`;
+        await cache.put(new Request(CHUNK_DEV), asset('chunk di sviluppo stantio', CC_DEV));
+        await cache.put(new Request(immutabile), asset('chunk con hash', CC_PROD_IMMUTABILE));
+        s.fetch.mockResolvedValue(html('<html>offline</html>'));
+
+        await scatenaActivate(s);
+
+        const chiavi = chiaviInCache(s);
+        expect(chiavi).toContain(immutabile);
+        expect(chiavi).not.toContain(CHUNK_DEV);
     });
 });
 

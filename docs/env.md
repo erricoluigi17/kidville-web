@@ -25,6 +25,25 @@ metterci segreti.
 | `CRON_SECRET` | — | Bearer condiviso per gli endpoint service-to-service (es. `/api/push/dispatch` dal cron). **Segreto.** |
 | `NODE_ENV` | gestita da Next | In `production` attiva `sealDangerous` sugli endpoint di debug/seed. |
 
+## Osservabilità / log
+
+| Variabile | Dove | Descrizione |
+|---|---|---|
+| `LOG_HASH_SALT` | solo server | **Salt della pseudonimizzazione nei log.** `hashCorrelabile()` (`src/lib/logging/redact.ts`) trasforma nome, cognome, e-mail e codice fiscale in un `#xxxxxxxx` stabile: serve a dire «è sempre lo stesso genitore» senza dire chi. **Assente → fail-closed**: nessun hash debole, ogni identità esce come `[redatto]` e la correlazione fra le righe della stessa persona è persa (la privacy resta salva, la diagnostica no). Non si genera a runtime — un salt casuale per processo spezzerebbe la correlazione fra invocazioni diverse — e non si cambia senza motivo: cambiandolo, le righe già scritte diventano non correlabili con quelle nuove. Stesso valore su tutti gli ambienti dello stesso deploy; si genera con `openssl rand -hex 32`. È fra le variabili del **preflight critico** (`src/instrumentation.ts`): se manca, ogni cold start scrive in `app_log` una riga `evento=config`, `codice=config_mancante`, livello `error` in produzione. **Segreto.** |
+| `KV_LOG_LEVEL` | solo server | A `silent` spegne il logger su **entrambi** i canali: riga su console e persistenza su `app_log` (`SILENZIOSO` in `src/lib/logging/logger.ts`). Serve agli script e alle esecuzioni non interattive — `.env.local` punta al DB di **produzione**, e un'esecuzione di servizio non deve lasciarci righe di log. Sotto `vitest` il silenzio è già automatico (variabile `VITEST`). Assente → i log si scrivono normalmente. |
+
+`LOG_HASH_SALT` **su Vercel c'è**, in tutti e tre gli ambienti (Development, Preview,
+Production): verificato il 2026-08-01 con `vercel env ls`, che elenca solo i nomi, e confermato
+dai dati — le righe di `app_log` scritte da un deploy (cioè con `app_versione` valorizzata)
+riportano `config … esito=ok`, e in produzione nomi ed e-mail escono come `#xxxxxxxx`. Sulla
+macchina di **sviluppo** invece di norma manca, ed è il motivo per cui in locale si legge
+`[redatto]` dove in produzione c'è un hash: chi confronta i due ambienti se lo ricordi.
+Attenzione a un falso allarme già capitato (collaudo del 2026-07-31): le righe
+`error … variabile d'ambiente critica mancante: LOG_HASH_SALT` con `ambiente=production` e
+**`app_versione` nullo** non vengono da un deploy, ma da un `next build` su una macchina di
+sviluppo, quando l'ambiente si deduceva da `VERCEL_ENV ?? NODE_ENV` (corretto in
+`src/lib/logging/ambiente.ts`: ora una macchina di sviluppo si dichiara `locale`).
+
 ## Email / OTP
 
 | Variabile | Descrizione |

@@ -78,7 +78,7 @@ export function percorsoNelBucket(bucket: string, valore: string | null | undefi
 
 // Il minimo indispensabile del client Supabase: il vero `SupabaseClient` lo
 // soddisfa, e un test può passarne uno finto senza montare mezzo SDK.
-type ClientStorage = {
+export type ClientStorage = {
   storage: {
     from: (bucket: string) => {
       createSignedUrls: (
@@ -100,8 +100,16 @@ type ClientStorage = {
  * mascherebbe il guasto da «allegato rotto»). Ogni fallimento finisce nel log a
  * livello `error` **col corpo dell'errore del provider** (AGENTS §3): senza, si
  * saprebbe solo che qualcosa non ha firmato, non perché.
+ *
+ * ESPORTATA il 2026-08-01 perché la CHAT (`src/lib/chat/allegati.ts`) è uscita
+ * dallo stesso difetto e usa lo stesso meccanismo. Non è una scorciatoia: il
+ * commento in testa a questo file dice che «una seconda forma inventata altrove
+ * sarebbe una seconda cosa da tenere allineata», e un terzo bucket che si firma
+ * per conto suo — con un altro TTL, un altro log, un'altra gestione del
+ * fallimento — è esattamente il modo in cui il difetto è sopravvissuto nella
+ * chat mentre lo si chiudeva su avvisi e incarichi.
  */
-async function firmaPercorsi(
+export async function firmaPercorsi(
   supabase: ClientStorage,
   bucket: string,
   percorsi: string[],

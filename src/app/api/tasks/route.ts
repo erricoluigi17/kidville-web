@@ -8,6 +8,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { zTargetClassTask, zTitoloTask } from '@/lib/validation/task-interni';
 import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
@@ -24,13 +25,20 @@ const getQuerySchema = z.object({
 });
 
 const postBodySchema = z.object({
-    titolo: z.string().min(1),
+    // IL MASSIMO SI DICHIARA (2026-07-31). Fino a oggi era `z.string().min(1)` e
+    // basta: la larghezza della colonna viveva solo nel DDL, e un titolo da
+    // 100.000 caratteri usciva come `500 {"error":"value too long for type
+    // character varying(255)"}` — un 400 di validazione travestito da guasto del
+    // server, con lo schema del database raccontato al client. I due limiti
+    // stanno in `@/lib/validation/task-interni`, accanto alla riga di DDL da cui
+    // vengono, perché `tasks/[id]:PUT` scrive le stesse due colonne.
+    titolo: zTitoloTask.min(1),
     contenuto: z.string().nullable().optional(),
     priority: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
     deadline: z.string().nullable().optional(),
     assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
-    target_class: z.string().nullable().optional(),
+    target_class: zTargetClassTask.nullable().optional(),
     target_role: z.string().nullable().optional(),
     target_scope: z.string().nullable().optional(),
     student_id: z.string().nullable().optional(),
@@ -407,8 +415,12 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             .order('created_at', { ascending: false });
 
         if (rowsErr) {
+            // Il testo di PostgREST (nomi di colonna, di vincolo, di host) resta
+            // nel log — con `codice`, che è il dato più utile che ha — e non
+            // torna più al client: non gli dice niente di azionabile e descrive
+            // lo schema a chi non deve conoscerlo.
             logErrore({ operazione: 'tasks:GET', stato: 500, evento: 'db' }, rowsErr);
-            return NextResponse.json({ error: rowsErr.message }, { status: 500 });
+            return NextResponse.json({ error: 'Lettura dei promemoria non riuscita' }, { status: 500 });
         }
 
         // Special filter for studentId (used in StudentDetailPanel)
@@ -563,8 +575,17 @@ export const POST = withRoute('tasks:POST', async (request: Request) => {
             .single();
 
         if (error) {
+            // Stesso motivo della GET, e qui era il punto esatto del rilievo:
+            // `{ error: error.message }` restituiva «value too long for type
+            // character varying(255)». Il messaggio grezzo resta nel log; il
+            // `codice` PostgREST (`22001`) ci finisce insieme, quindi se un
+            // giorno la colonna si stringesse rispetto a `@/lib/validation/
+            // task-interni` la query `select … where codice='22001'` lo direbbe
+            // subito — che è la sola ragione per cui questo caso può ancora
+            // capitare, ed è un difetto NOSTRO: perciò resta 500 e non diventa
+            // un 400 addebitato a chi ha scritto il promemoria.
             logErrore({ operazione: 'tasks:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Creazione del promemoria non riuscita' }, { status: 500 });
         }
 
         await logScrittura(supabase, {

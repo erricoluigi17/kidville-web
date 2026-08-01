@@ -6,6 +6,7 @@ import { sendOtp } from '@/lib/auth/otp-ticket'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseQuery } from '@/lib/validation/http'
+import { limitaInvioOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -23,6 +24,11 @@ export const POST = withRoute('parent/primaria/pagella/firma/otp:POST', async (r
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
+
+    // Tetto di frequenza (sicurezza W5): budget condiviso con le altre tre rotte OTP —
+    // la casella del genitore è una sola. Vedi `@/lib/security/otp-rate-limit`.
+    const troppe = limitaInvioOtp(userId)
+    if (troppe) return troppe
 
     const q = parseQuery(request, querySchema)
     if ('response' in q) return q.response

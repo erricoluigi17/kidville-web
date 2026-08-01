@@ -10,6 +10,7 @@ import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { limitaInvioOtp, limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -46,6 +47,11 @@ export const POST = withRoute('parent/forms/otp:POST', async (request: NextReque
     if (auth.response) return auth.response
     const parentId = auth.user.id
 
+    // Tetto di frequenza (sicurezza W5): prima di qualunque query e di qualunque invio.
+    // Budget condiviso con le altre tre rotte OTP — la casella del genitore è una sola.
+    const troppe = limitaInvioOtp(parentId)
+    if (troppe) return troppe
+
     const supabase = await createAdminClient()
 
     // Morosità (B4/M4): richiedere l'OTP per firmare un modulo Sistema B è un'azione
@@ -79,6 +85,15 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const parentId = auth.user.id
+
+    // Tetto di frequenza sui TENTATIVI di verifica (sicurezza W5), su un budget separato
+    // da quello degli invii: qui non si difende una casella email, si difende una firma
+    // con valore legale. Il codice è di sei cifre e un confronto HMAC fallito NON consuma
+    // il ticket (`consumeTicket` è più sotto, dopo la verifica): senza tetto, provarli
+    // tutti era gratis. Separato dagli invii perché chiedere un codice nuovo non deve
+    // consumare i tentativi di chi sbaglia a digitare.
+    const troppe = limitaVerificaOtp(parentId)
+    if (troppe) return troppe
 
     const supabase = await createAdminClient()
 

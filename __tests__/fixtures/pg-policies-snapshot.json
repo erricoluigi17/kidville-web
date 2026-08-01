@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-07-31",
-  "sha256": "9b119ab78d47ad8f326ba5477127dd5a74cafc28563145cd5c9c8ea74f7b74f1",
+  "generato_il": "2026-08-01",
+  "sha256": "391f0ecd55bdf0d01e6720b21bf9cac64e5f73ddeb4a34df2fa66e59f329d7b5",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -72,17 +72,6 @@
     },
     {
       "tabella": "firme_docenti",
-      "policy": "Maestre possono gestire le proprie firme",
-      "cmd": "ALL",
-      "permissive": "PERMISSIVE",
-      "ruoli": [
-        "authenticated"
-      ],
-      "using_expr": "(maestra_id = auth.uid())",
-      "check_expr": "(maestra_id = auth.uid())"
-    },
-    {
-      "tabella": "firme_docenti",
       "policy": "Maestre della scuola possono vedere tutte le firme del registro",
       "cmd": "SELECT",
       "permissive": "PERMISSIVE",
@@ -90,6 +79,17 @@
         "authenticated"
       ],
       "using_expr": "(EXISTS ( SELECT 1 FROM (registro_orario r JOIN utenti u ON ((r.scuola_id = u.scuola_id))) WHERE ((r.id = firme_docenti.registro_id) AND (u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "firme_docenti",
+      "policy": "Maestre vedono le proprie firme",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(maestra_id = ( SELECT auth.uid() AS uid))",
       "check_expr": ""
     },
     {
@@ -144,7 +144,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "((is_broadcast = true) OR (tag_students && ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids)))",
+      "using_expr": "((EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id = ANY (ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))) AND (a.scuola_id = galleria_media_v2.scuola_id)))) AND ((is_broadcast = true) OR (tag_students && ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
       "check_expr": ""
     },
     {
@@ -270,17 +270,6 @@
     },
     {
       "tabella": "note_disciplinari",
-      "policy": "Maestre possono gestire le proprie note",
-      "cmd": "ALL",
-      "permissive": "PERMISSIVE",
-      "ruoli": [
-        "authenticated"
-      ],
-      "using_expr": "(maestra_id = auth.uid())",
-      "check_expr": "(maestra_id = auth.uid())"
-    },
-    {
-      "tabella": "note_disciplinari",
       "policy": "Genitori possono vedere le note dei propri figli",
       "cmd": "SELECT",
       "permissive": "PERMISSIVE",
@@ -299,6 +288,17 @@
         "authenticated"
       ],
       "using_expr": "(EXISTS ( SELECT 1 FROM (utenti u JOIN alunni a ON ((a.scuola_id = u.scuola_id))) WHERE ((u.id = auth.uid()) AND ((u.ruolo)::text <> 'genitore'::text) AND (a.id = note_disciplinari.alunno_id))))",
+      "check_expr": ""
+    },
+    {
+      "tabella": "note_disciplinari",
+      "policy": "Maestre vedono le proprie note",
+      "cmd": "SELECT",
+      "permissive": "PERMISSIVE",
+      "ruoli": [
+        "authenticated"
+      ],
+      "using_expr": "(maestra_id = ( SELECT auth.uid() AS uid))",
       "check_expr": ""
     },
     {
@@ -343,17 +343,6 @@
         "authenticated"
       ],
       "using_expr": "true",
-      "check_expr": ""
-    },
-    {
-      "tabella": "pagamenti",
-      "policy": "parent read pagamenti figli",
-      "cmd": "SELECT",
-      "permissive": "PERMISSIVE",
-      "ruoli": [
-        "authenticated"
-      ],
-      "using_expr": "((alunno_id IN ( SELECT legame_genitori_alunni.alunno_id FROM legame_genitori_alunni WHERE (legame_genitori_alunni.genitore_id = auth.uid()))) AND ((tipo <> 'split'::pagamento_tipo) OR (EXISTS ( SELECT 1 FROM pagamenti_quote q WHERE ((q.pagamento_id = pagamenti.id) AND (q.adult_id = auth.uid()))))))",
       "check_expr": ""
     },
     {
@@ -668,7 +657,6 @@
     "student_parents",
     "task_interni",
     "tempo_scuola",
-    "test_table",
     "ticket_mensa",
     "utenti",
     "utenti_scuole",

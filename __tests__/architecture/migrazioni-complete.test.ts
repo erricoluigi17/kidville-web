@@ -162,6 +162,41 @@ describe('lock architettura · le migrazioni del repo ricostruiscono il database
         ).toEqual([])
     })
 
+    it('due file di migrazione non hanno la stessa version', () => {
+        // NATO DA UN CASO VERO (2026-08-01). Due esecutori in parallelo hanno scritto
+        // due migrazioni diverse — l'allowlist MIME dei bucket e le policy dell'orario
+        // per sede — scegliendo lo stesso istante: `20260801031500`. Nessun test se n'è
+        // accorto, perché il controllo sui duplicati qui sopra guarda la FOTOGRAFIA,
+        // cioè ciò che è già in produzione, dove una collisione non può esistere: la
+        // `version` è la chiave di `supabase_migrations.schema_migrations`.
+        //
+        // È proprio questo a rendere il difetto pericoloso invece che fastidioso: la
+        // collisione è invisibile finché resta sul disco, e si manifesta al momento
+        // peggiore — quando si applica. Delle due, una sola entra; l'altra viene
+        // rifiutata per chiave duplicata o, a seconda dello strumento, considerata
+        // «già applicata» e SALTATA IN SILENZIO. Nel nostro caso avrebbe potuto saltare
+        // le policy dell'orario: il repo direbbe che i genitori di Aversa non leggono
+        // più l'orario di Giugliano, e il database non l'avrebbe mai saputo.
+        const perVersion = new Map<string, string[]>()
+        for (const f of FILE_SUL_DISCO) {
+            const m = FORMA_NOME.exec(f)
+            if (!m) continue // la forma la sorveglia il test qui sopra
+            const version = m[1]
+            perVersion.set(version, [...(perVersion.get(version) ?? []), f])
+        }
+        const collisioni = [...perVersion.entries()]
+            .filter(([, file]) => file.length > 1)
+            .map(([version, file]) => `${version}: ${file.sort().join(' + ')}`)
+            .sort()
+        expect(
+            collisioni,
+            `Due migrazioni con la STESSA version. Ne verrebbe applicata una sola, e l'altra ` +
+            `sarebbe rifiutata o saltata senza dirlo a nessuno: il repo descriverebbe un ` +
+            `database che non esiste. Rinomina la più recente con l'istante vero in cui è ` +
+            `stata scritta (\`<14 cifre>_<nome>.sql\`), non con un secondo a caso.`,
+        ).toEqual([])
+    })
+
     it('ogni migrazione applicata in produzione ha il suo file nel repo', () => {
         // ⟵ È IL CUORE DEL LOCK. Il difetto storico stava tutto qui: sei migrazioni
         // applicate con `apply_migration` e mai riportate su disco. Nessuna

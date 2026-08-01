@@ -6,6 +6,7 @@ import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { BUCKET_TASK_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
+import { verificaAllegato } from '@/lib/allegati/mime';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Il file si valida come presenza/istanza; il contenuto non è materia di zod.
@@ -22,6 +23,17 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
         if ('response' in parsed) return parsed.response;
         const { file } = parsed.data;
 
+        // IL TIPO DICHIARATO DAL CLIENT NON È UNA PROVA (collaudo 2026-07-31, W7).
+        // `task_allegati` era l'unico bucket con `allowed_mime_types = null`: un finto `.html`
+        // dichiarato `text/html` ci entrava e ci restava con quel mimetype. Che oggi lo
+        // Storage lo serva `text/plain` + `nosniff` è una difesa del PROVIDER, non nostra.
+        // Stesso gate di `avvisi/upload:POST`, stesso modulo: un upload si valida in un modo solo.
+        const gate = verificaAllegato(file, {
+            operazione: 'tasks/upload:POST',
+            bucket: BUCKET_TASK_ALLEGATI,
+        });
+        if (!gate.ok) return gate.risposta;
+
         const supabase = await createAdminClient();
 
         // Generate a unique file name
@@ -32,7 +44,9 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
         const { error } = await supabase.storage
             .from(BUCKET_TASK_ALLEGATI)
             .upload(uniqueFileName, Buffer.from(fileBuffer), {
-                contentType: file.type,
+                // Il tipo NORMALIZZATO: col suffisso dei parametri (`; charset=…`) il bucket
+                // rifiuterebbe la stringa intera.
+                contentType: gate.contentType,
                 upsert: true
             });
 
@@ -52,7 +66,7 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
             operazione: 'tasks/upload:POST',
             esito: 'allegato-caricato',
             bucket: BUCKET_TASK_ALLEGATI,
-            mime: file.type,
+            mime: gate.contentType,
             byte: file.size,
         });
 

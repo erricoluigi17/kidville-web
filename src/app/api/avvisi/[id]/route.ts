@@ -8,12 +8,40 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
+import { percorsoAllegatoArchiviatoAvviso, percorsoAllegatoAvviso, rimuoviAllegatoAvvisoSeOrfano } from '@/lib/allegati/rimozione';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
 }
+
+// ─── I RESTI DI UN AVVISO ────────────────────────────────────────────────────
+//
+// Un avviso non è solo la sua riga. Quando si pubblica, lascia due cose dietro
+// di sé che la cancellazione fino al 2026-08-01 non toccava:
+//
+//  · le NOTIFICHE già consegnate in campanella a ogni genitore destinatario
+//    (`notifiche.entita_tipo='avviso'`, `entita_id=<id>`). Misurato in produzione
+//    dal collaudo del 31/07: dopo `DELETE /api/avvisi/<id>` la riga restava, e al
+//    genitore restava una notifica che porta a un avviso inesistente — la tocca,
+//    arriva su `/parent/avvisi` e non trova niente. Il tester l'ha dovuta togliere
+//    a mano in SQL;
+//  · il FILE nel bucket privato `avvisi_allegati`, che restava archiviato per
+//    sempre: il collaudo ne ha trovato già uno che nessuna riga referenziava.
+//
+// Nessuna delle due operazioni può far fallire la cancellazione: quando ci si
+// arriva, l'avviso è già stato cancellato davvero, e un 500 direbbe a chi ha
+// premuto «Elimina» una cosa falsa (lo farebbe riprovare, ottenendo un 404).
+// Perciò best-effort — ma mai in silenzio: ogni guasto lascia la sua riga, e il
+// successo lascia i conteggi.
+
+// Le due operazioni stanno in `@/lib/allegati/rimozione`
+// (`percorsoAllegatoArchiviatoAvviso`, `rimuoviAllegatoAvvisoSeOrfano`), accanto
+// alla firma dei link a cui fanno da contrappeso. Non è per nasconderle: la
+// verifica «lo sta usando qualcun altro?» interroga il bucket, che è UNO per
+// tutte e tre le sedi, e va perciò fatta SENZA filtro di plesso — là c'è scritto
+// perché, per esteso. Entrambe si chiamano solo dietro ad `assertAvvisoInScope`.
 
 const putBodySchema = z.object({
     titolo: z.string().min(1, 'Titolo e contenuto sono obbligatori'),
@@ -116,6 +144,14 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         });
         if (targetErr) return targetErr;
 
+        // In tabella il PERCORSO nel bucket, mai l'indirizzo firmato che il modulo
+        // di modifica rimanda indietro dopo averlo riletto.
+        const allegatoNuovo = normalizzaAllegatoAvviso(attachment_url);
+        // Va letto PRIMA dell'update: dopo, quale file ci fosse non lo sa più
+        // nessuno. Se l'allegato viene sostituito o tolto, il vecchio è a tutti
+        // gli effetti un orfano — l'avviso non lo nomina più.
+        const allegatoPrima = await percorsoAllegatoArchiviatoAvviso(supabase, id, 'avvisi/[id]:PUT');
+
         const { data, error } = await supabase
             .from('avvisi')
             .update({
@@ -125,9 +161,7 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
                 target_scope,
                 target_classes,
                 scadenza: scadenza || null,
-                // In tabella il PERCORSO nel bucket, mai l'indirizzo firmato che
-                // il modulo di modifica rimanda indietro dopo averlo riletto.
-                attachment_url: normalizzaAllegatoAvviso(attachment_url),
+                attachment_url: allegatoNuovo,
             })
             .eq('id', id)
             .select()
@@ -136,6 +170,12 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         if (error) {
             logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Aggiornamento dell\'avviso non riuscito' }, { status: 500 });
+        }
+
+        // Solo DOPO che l'update è riuscito: se fallisse, l'avviso conserverebbe
+        // il vecchio allegato e averlo già cancellato lo lascerebbe rotto.
+        if (allegatoPrima && allegatoPrima !== percorsoAllegatoAvviso(allegatoNuovo)) {
+            await rimuoviAllegatoAvvisoSeOrfano(supabase, id, allegatoPrima, 'avvisi/[id]:PUT');
         }
 
         await logScrittura(supabase, {
@@ -162,6 +202,9 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
         const scopeErr = await assertAvvisoInScope(supabase, auth.user, id);
         if (scopeErr) return scopeErr;
 
+        // Prima della cancellazione, perché dopo il dato non c'è più.
+        const allegato = await percorsoAllegatoArchiviatoAvviso(supabase, id, 'avvisi/[id]:DELETE');
+
         const { error } = await supabase
             .from('avvisi')
             .delete()
@@ -172,8 +215,57 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
             return NextResponse.json({ error: 'Cancellazione dell\'avviso non riuscita' }, { status: 500 });
         }
 
+        // LE NOTIFICHE GIÀ CONSEGNATE. Si ritirano SOLO dopo che l'avviso è
+        // sparito davvero: se la delete qui sopra fosse fallita, l'avviso sarebbe
+        // ancora vivo e togliere le notifiche lascerebbe le famiglie senza il
+        // messaggio di una comunicazione che c'è.
+        //
+        // I due filtri sono il contratto: senza `entita_id` si svuoterebbe la
+        // campanella di tutta la scuola, senza `entita_tipo` si prenderebbero le
+        // notifiche di un'altra entità che per caso avesse lo stesso uuid.
+        // `.select('id')` serve al conteggio: PostgREST restituisce le righe
+        // cancellate, ed è l'unico modo di sapere QUANTE famiglie sono state
+        // toccate.
+        let nNotifiche = 0;
+        const { data: notificheRimosse, error: errNotifiche } = await supabase
+            .from('notifiche')
+            .delete()
+            .eq('entita_tipo', 'avviso')
+            .eq('entita_id', id)
+            .select('id');
+
+        if (errNotifiche) {
+            // `error`: l'avviso non esiste più e le sue notifiche sì. È lo stato
+            // che questo intervento serve a evitare, e nessuno se ne accorgerebbe
+            // altrimenti — la risposta resta 200. Il corpo del guasto si passa
+            // intero: su un database non migrato è un `42703` sul nome della
+            // colonna, e senza quel codice il degrado non si distingue da un bug.
+            logEvento('notifica', 'error', {
+                operazione: 'avvisi/[id]:DELETE',
+                esito: 'notifiche-orfane-non-rimosse',
+                avviso: id,
+            }, errNotifiche);
+        } else {
+            // `.select()` restituisce sempre un array; il controllo di forma evita
+            // che un conteggio inventato finisca nel log di successo.
+            nNotifiche = Array.isArray(notificheRimosse) ? notificheRimosse.length : 0;
+        }
+
+        const nAllegati = await rimuoviAllegatoAvvisoSeOrfano(supabase, id, allegato, 'avvisi/[id]:DELETE');
+
         await logScrittura(supabase, {
             attore: auth.user, entitaTipo: 'avviso', entitaId: id, azione: 'delete',
+        });
+
+        // IL SUCCESSO SI LOGGA, COI CONTEGGI (AGENTS, regola 5): con i soli
+        // errori, «nessun log» non distingue «ripulito tutto» da «non è mai
+        // partito niente». Solo uuid e numeri: mai il titolo, mai un destinatario.
+        logEvento('avvisi', 'info', {
+            operazione: 'avvisi/[id]:DELETE',
+            esito: 'cancellato',
+            avviso: id,
+            n_notifiche_rimosse: nNotifiche,
+            n_allegati_rimossi: nAllegati,
         });
 
         return NextResponse.json({ success: true });

@@ -6,6 +6,7 @@ import { assertSedeRigaInScope, rigaNonTrovata, scopeRigaNonRisolta } from '@/li
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { zTargetClassTask, zTitoloTask } from '@/lib/validation/task-interni';
 import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -18,13 +19,19 @@ const putBodySchema = z.object({
     status: z.string().optional(),
     resolution_notes: z.string().nullable().optional(),
     resolved_by: z.string().nullable().optional(),
-    titolo: z.string().optional(),
+    // IL MASSIMO VALE ANCHE IN AGGIORNAMENTO (2026-07-31). Il rilievo backend F1
+    // è stato misurato sulla POST, ma queste sono le stesse due colonne
+    // `varchar` e questa è l'altra strada che le scrive: dichiarare il limite
+    // solo di là avrebbe chiuso il caso misurato e lasciato aperto il gemello.
+    // Niente `.min(1)`: qui il body è un merge parziale e un campo assente
+    // significa «non toccarlo».
+    titolo: zTitoloTask.optional(),
     contenuto: z.string().nullable().optional(),
     priority: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
     deadline: z.string().nullable().optional(),
     assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
-    target_class: z.string().nullable().optional(),
+    target_class: zTargetClassTask.nullable().optional(),
     target_scope: z.string().nullable().optional(),
     student_id: z.string().nullable().optional(),
     compiti: z.array(z.unknown()).nullable().optional(),

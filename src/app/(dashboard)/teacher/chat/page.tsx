@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread, SospensioneInfo } from '@/components/features/chat/ChatThreadList';
-import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
+import { ChatMessageArea, ChatMessage, allegatoMostrabile } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { ChatConversationMenu } from '@/components/features/chat/ChatConversationMenu';
 import { ChatSuspensionBanner } from '@/components/features/chat/ChatSuspensionBanner';
@@ -90,8 +90,10 @@ function TeacherChatContent() {
         }
     }, [teacherId]);
 
-    const loadMessages = useCallback(async (threadId: string) => {
-        setLoadingMessages(true);
+    // `silenzioso`: ricarico di servizio (l'allegato arrivato dal Realtime va
+    // rifirmato) — non deve far comparire lo spinner al posto della conversazione.
+    const loadMessages = useCallback(async (threadId: string, silenzioso = false) => {
+        if (!silenzioso) setLoadingMessages(true);
         try {
             const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
             if (res.ok) {
@@ -117,7 +119,7 @@ function TeacherChatContent() {
             // messaggi fra la maestra e una famiglia, che è il dato più sensibile della pagina.
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-caricamento-messaggi-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
         } finally {
-            setLoadingMessages(false);
+            if (!silenzioso) setLoadingMessages(false);
         }
     }, [teacherId]);
 
@@ -127,13 +129,20 @@ function TeacherChatContent() {
             if (prev.some(m => m.id === msg.id)) return prev;
             return [...prev, msg];
         });
+        // Il Realtime consegna la riga del database GREZZA: da S32 l'allegato è
+        // un percorso nel bucket privato, e il link firmato lo genera la route.
+        // Si ricarica il thread — che firma — invece di aspettare il polling:
+        // altrimenti l'allegato resta invisibile fino a 15 secondi.
+        if (msg.attachment_url && !allegatoMostrabile(msg.attachment_url)) {
+            void loadMessages(msg.thread_id, true);
+        }
         // Segna subito come letto (il thread è aperto)
         fetch('/api/chat/messages/read', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messageIds: [msg.id], userId: teacherId }),
         }).catch(() => {/* silenzioso */});
-    }, [teacherId]);
+    }, [teacherId, loadMessages]);
 
     // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
     // Merge per id, mai append: è lo stesso messaggio con read_at/delivered_at aggiornati.

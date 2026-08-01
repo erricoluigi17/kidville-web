@@ -4,14 +4,26 @@
 #
 # Prerequisiti: vedi .claude/maestro-flows/README.md
 #
-# Esecuzione:
-#   export MAESTRO_KV_EMAIL_DOCENTE=... MAESTRO_KV_PASSWORD=...
-#   maestro test .claude/maestro-flows/ios-percorso-docente.yaml
+# Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
+#   .claude/maestro-flows/esegui.sh ios-percorso-docente.yaml
+# Lo script passa le credenziali e poi BONIFICA il log di Maestro, che altrimenti
+# conserva la password in chiaro su disco (misurato: 4 occorrenze per run).
 #
-# Su WebView iOS `hideKeyboard` fallisce: la tastiera si chiude con un tap sul
-# titolo statico "Benvenuto/a!". L'appello NON è sulla home docente: si apre
-# dalla scorciatoia "Modifica appello" (sotto la piega). Selettori verificati
-# su iPhone 17 Pro (2026-07-16).
+# ⚠️ IL LOGIN NON SI INVIA COL TAP (misurato 2026-07-31, iPhone 17 Pro Max /
+# iOS 26.2): `tapOn: "Accedi"` con la tastiera aperta risulta COMPLETED e il form
+# NON parte. Il tap sul titolo "Benvenuto/a!" NON chiude la tastiera e
+# `hideKeyboard` sulla WebView iOS fallisce. Si invia con `pressKey: Enter`
+# (lock R15); il dialog dei permessi si gestisce prima E dopo (lock R14).
+#
+# ⚠️ DUE ANCORE FRAGILI TOLTE DA QUESTO FLOW, ed è il motivo per cui il collaudo
+# iOS del 2026-07-31 lo dava rosso:
+#   1. «Buongiorno!» — è il saluto ORARIO (src/lib/ui/greeting.ts): alle 22:07 la
+#      pagina dice «Buonasera!». Il flow collaudava l'orologio. Ora l'ancora è la
+#      tab «Dashboard» della bottom-nav, che non cambia mai (lock R11).
+#   2. «Modifica appello» — la CTA si chiama così SOLO se l'appello è già
+#      registrato; finché non lo è si chiama «Fai l'appello ora»
+#      (messages/it/teacherNav.json → appelloCtaFai/appelloCtaModifica). Si
+#      accettano entrambe, come già fa il flow Android (lock R12).
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · iOS — percorso docente
@@ -25,6 +37,17 @@ env:
 - launchApp:
     clearState: true
 
+# ── 0. PERMESSO RIMASTO IN CODA DAL GIRO PRECEDENTE ──────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 15000
+    optional: true
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
 # ── 1. LOGIN ─────────────────────────────────────────────────────────────────
 - extendedWaitUntil:
     visible: "Accedi al tuo account Kidville"
@@ -32,13 +55,16 @@ env:
 - tapOn:
     below: "Email"
 - inputText: ${KV_EMAIL}
-- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
 - tapOn:
     below: "Password"
 - inputText: ${KV_PASSWORD}
-- tapOn: "Benvenuto/a!"
-- tapOn: "Accedi"
+- pressKey: Enter
 
+# ── 1b. DIALOG DEI PERMESSI DI QUESTO GIRO ───────────────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 30000
+    optional: true
 - runFlow:
     when:
       visible: "Non consentire"
@@ -46,24 +72,25 @@ env:
       - tapOn: "Non consentire"
 
 # ── 2. DASHBOARD DOCENTE ─────────────────────────────────────────────────────
+# Ancora STABILE: la tab della bottom-nav, non il saluto (vedi l'intestazione).
 - extendedWaitUntil:
-    visible: "Buongiorno!"
+    visible: "Dashboard"
     timeout: 60000
-- assertVisible: "Dashboard"
 - assertVisible:
     text: "Menu · tutte le sezioni"
 - takeScreenshot: /tmp/kv-ios-docente-1-dashboard
 
 # ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
-# La scorciatoia "Modifica appello" sta sotto la piega: scroll + tap.
+# La CTA appello sta sotto la piega e ha DUE nomi a seconda dello stato dei dati:
+# il selettore alternato li accetta entrambi.
 - scrollUntilVisible:
     element:
-      text: "Modifica appello"
+      text: "Fai l'appello ora|Modifica appello"
     direction: DOWN
     centerElement: true
-    timeout: 15000
+    timeout: 20000
 - tapOn:
-    text: "Modifica appello"
+    text: "Fai l'appello ora|Modifica appello"
 - extendedWaitUntil:
     visible: "Appello"
     timeout: 45000
@@ -71,12 +98,56 @@ env:
 - takeScreenshot: /tmp/kv-ios-docente-2-appello
 
 # ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────
+# ⚠️ «Apri la bacheca» ESISTE SOLO SE CI SONO AVVISI RECENTI: la sezione
+# COMUNICAZIONI della dashboard è resa da `avvisiRecenti.length > 0`
+# (src/app/(dashboard)/teacher/page.tsx:246). Misurato il 2026-08-01: c'era alle
+# 00:27 e non c'era alle 00:45 — stessa app, stesso account, dati diversi. Un
+# flow che la dà per scontata fallisce con «No visible element found» e sembra
+# una regressione dell'app. Due rami, come nel flow Android (lock R13).
 - tapOn: "Dashboard"
 - extendedWaitUntil:
-    visible: "Apri la bacheca"
+    visible: "Menu · tutte le sezioni"
     timeout: 30000
-- tapOn: "Apri la bacheca"
-- extendedWaitUntil:
-    visible: "Circolari e avvisi alle famiglie"
-    timeout: 45000
+
+# Ramo A — la CTA c'è: è il percorso reale dell'insegnante.
+- runFlow:
+    when:
+      visible: "Apri la bacheca"
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: "Apri la bacheca"
+          direction: DOWN
+          centerElement: true
+          timeout: 15000
+      - tapOn: "Apri la bacheca"
+      - extendedWaitUntil:
+          visible: "Circolari e avvisi alle famiglie"
+          timeout: 45000
+      - assertNotVisible: "Apri la bacheca"
+
+# Ramo B — nessun avviso recente, niente CTA: alla bacheca si arriva dal foglio
+# «Menu». La condizione guarda la DESTINAZIONE, non la CTA: così il ramo B parte
+# solo se il ramo A non ci è già arrivato (i due rami non si sovrappongono mai).
+- runFlow:
+    when:
+      notVisible: "Circolari e avvisi alle famiglie"
+    commands:
+      - tapOn:
+          text: "Menu · tutte le sezioni"
+      # Nella WebView iOS ogni voce del foglio è UN SOLO nodo con
+      # l'accessibilityText concatenato («BACHECA Avvisi e comunicazioni») e
+      # Maestro fa full-match → regex NON ancorata.
+      - extendedWaitUntil:
+          visible:
+            text: ".*Avvisi e comunicazioni.*"
+          timeout: 20000
+      - tapOn:
+          text: ".*Avvisi e comunicazioni.*"
+      - extendedWaitUntil:
+          visible: "Circolari e avvisi alle famiglie"
+          timeout: 45000
+
+# Comunque ci si sia arrivati, si è in bacheca: qui il flow torna deterministico.
+- assertVisible: "Circolari e avvisi alle famiglie"
 - takeScreenshot: /tmp/kv-ios-docente-3-bacheca

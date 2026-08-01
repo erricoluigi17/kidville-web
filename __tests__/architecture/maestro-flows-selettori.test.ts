@@ -234,6 +234,139 @@ const CTA_SOTTO_LA_PIEGA = [
 ];
 
 /**
+ * ─── R11 · I TESTI CHE DIPENDONO DALL'ORA DEL GIORNO ───────────────────────
+ *
+ * Collaudo mobile-ios del 2026-07-31, `ios-percorso-docente.yaml`:
+ *   `Assert that "Buongiorno!" is visible... FAILED` — alle 22:07.
+ * L'app era sana: alle 22:07 la dashboard dice «Buonasera!». Il flow non
+ * collaudava il docente, collaudava l'orologio — e per tre quarti della giornata
+ * dava FAIL su un'app che funziona.
+ *
+ * È lo stesso vizio di «MENU», cambiata la fonte: là il selettore descriveva un
+ * albero che non esisteva, qui descrive uno stato che dura quattro ore. In
+ * entrambi i casi il flow è rosso e la colpa cade sull'app.
+ *
+ * La regola NON contiene la lista dei saluti: la legge da `greetingByHour()`.
+ * Così, se domani qualcuno aggiunge «Buonanotte», il divieto lo copre da subito
+ * senza che nessuno se ne ricordi; e se la funzione sparisce, il primo controllo
+ * diventa rosso e chiede di rimisurare invece di restare verde per inerzia.
+ */
+const SORGENTE_SALUTI = 'src/lib/ui/greeting.ts';
+
+function salutiOrari(): string[] {
+  const sorgente = fs.readFileSync(path.join(process.cwd(), SORGENTE_SALUTI), 'utf8');
+  return [...sorgente.matchAll(/return\s+'([^']+)'/g)].map((m) => m[1]);
+}
+
+/** Il saluto è reso come `${greeting}!`: il confronto ignora la punteggiatura finale. */
+function normalizzaSelettore(s: string): string {
+  return s.trim().replace(/[!.\s]+$/, '').toLowerCase();
+}
+
+/**
+ * ─── R12 · LE ETICHETTE CHE CAMBIANO CON LO STATO DEI DATI ─────────────────
+ *
+ * Stesso collaudo, passo successivo: `No visible element found: "Modifica
+ * appello"`. Quel bottone si chiama «Modifica appello» **solo se l'appello è già
+ * registrato**; finché non lo è, si chiama «Fai l'appello ora». Il flow iOS
+ * conosceva una sola delle due facce, e quale delle due si vedesse dipendeva da
+ * cosa avesse fatto la maestra quella mattina.
+ *
+ * Su Android la stessa CTA era già stata corretta con un selettore che accetta
+ * entrambe le varianti (`"Fai l'appello ora|Modifica appello"`): la conoscenza
+ * c'era, non è stata propagata al file accanto. Da qui il lock — che è l'unica
+ * forma di propagazione che non dipende dalla memoria di chi scrive.
+ *
+ * `chiavi` sono le due (o più) chiavi del catalogo che nominano lo STESSO
+ * comando in stati diversi. Chi cerca una variante deve cercarle tutte.
+ */
+const ETICHETTE_STATO_DIPENDENTE = [
+  {
+    catalogo: 'messages/it/teacherNav.json',
+    chiavi: ['appelloCtaFai', 'appelloCtaModifica'],
+    componente: 'src/app/(dashboard)/teacher/page.tsx',
+    dove: 'CTA dell\'appello sulla dashboard docente',
+    misurato: '2026-07-31',
+    nota:
+      'Misurato sul simulatore alle 22:07: l\'appello del giorno non era registrato e la ' +
+      'CTA diceva «Fai l\'appello ora». Il flow cercava «Modifica appello» e non trovava nulla.',
+  },
+];
+
+/**
+ * ─── R13 · LE CTA CHE ESISTONO SOLO SE CI SONO I DATI ──────────────────────
+ *
+ * «Apri la bacheca» non è sempre a schermo: la sezione COMUNICAZIONI della
+ * dashboard docente è resa solo se `avvisiRecenti.length > 0`. Misurato il
+ * 2026-08-01 su Android: c'era alle 00:27 e non c'era alle 00:45 — stessa app,
+ * stesso account, dati diversi.
+ *
+ * Un flow che la dà per scontata fallisce con «No visible element found» e
+ * sembra una regressione dell'app. La forma corretta è quella già adottata dal
+ * flow Android: il passo sta dentro un `runFlow when:`, e c'è una seconda strada
+ * che arriva alla stessa destinazione quando la CTA non c'è.
+ *
+ * Perché vale anche su iOS, dove non è stata misurata: la condizione non è
+ * grafica, sta nel componente React che le due piattaforme condividono
+ * (`src/app/(dashboard)/teacher/page.tsx`). Le misure sui bounds restano
+ * specifiche per piattaforma (vedi R7); questa no.
+ */
+const CTA_CONDIZIONATE_DAI_DATI = [
+  {
+    selettore: 'Apri la bacheca',
+    componente: 'src/app/(dashboard)/teacher/page.tsx',
+    condizione: 'avvisiRecenti.length > 0',
+    destinazione: 'Circolari e avvisi alle famiglie',
+    misurato: '2026-08-01',
+    nota:
+      'Presente alle 00:27, assente alle 00:45 dello stesso giorno sull\'emulatore ' +
+      'KV-play-phone: dipende dagli avvisi recenti della sezione, non dall\'app.',
+  },
+];
+
+/**
+ * ─── R14 · IL DIALOG NATIVO DEI PERMESSI (solo iOS) ────────────────────────
+ *
+ * Collaudo mobile-ios del 2026-07-31: il ramo `runFlow when: visible "Non
+ * consentire"` risultava **sempre SKIPPED**, e subito dopo il dialog nativo
+ * compariva e copriva la UI, facendo fallire l'asserzione successiva.
+ *
+ * `runFlow when:` valuta la condizione **una volta sola, subito**: non aspetta.
+ * Su iOS il permesso notifiche viene chiesto dal codice web dopo il login, e fra
+ * il tap e il dialog passano centinaia di ms — abbastanza perché la condizione
+ * sia falsa quando viene guardata. Serve un'attesa esplicita e `optional: true`
+ * davanti al ramo: è l'unico modo di dire «può darsi che compaia, dagli tempo».
+ *
+ * E ne servono DUE, non una: se il dialog resta in coda perché il flow è finito
+ * prima, ricompare **al lancio successivo**, cioè PRIMA del login del giro dopo.
+ * Un flow che lo gestisce solo dopo il login funziona una volta su due — e la
+ * volta che fallisce sembra un difetto dell'app.
+ *
+ * Portata: la regola vale sui flow `ios-*`, dove il comportamento è stato
+ * misurato. Su Android il permesso POST_NOTIFICATIONS è chiesto in un altro
+ * momento e i flow passano 27/27 e 30/30 con la forma attuale: cambiarli senza
+ * una misura significherebbe ripetere l'errore in senso opposto.
+ */
+const TESTO_DIALOG_PERMESSI = 'Non consentire';
+
+/**
+ * ─── R15 · IL SUBMIT DEL LOGIN SU iOS ──────────────────────────────────────
+ *
+ * Misurato il 2026-07-31 su iPhone 17 Pro Max / iOS 26.2: `tapOn: "Accedi"` con
+ * la tastiera aperta risulta `COMPLETED` e **il form non parte**. Il passo che
+ * dovrebbe chiudere la tastiera (`tapOn: "Benvenuto/a!"`) non la chiude, e
+ * `hideKeyboard` su WebView iOS fallisce con «Couldn't hide the keyboard».
+ * Con `pressKey: Enter` il login riesce **sempre**: l'app risponde, era il flow
+ * a non premere il bottone.
+ *
+ * È la faccia peggiore della classe: il tap è COMPLETED, quindi il flow non
+ * fallisce lì — fallisce tre passi dopo, sull'asserzione della dashboard, e il
+ * verdetto scritto è «la dashboard non compare». Tre collaudi iOS di fila hanno
+ * accusato l'app per questo.
+ */
+const SUBMIT_LOGIN_VIETATO_IOS = 'Accedi';
+
+/**
  * ─── R8 · I TESTI CHE L'`aria-label` SOSTITUISCE ───────────────────────────
  *
  * La causa radice di «MENU» non è la WebView: è ARIA. Il calcolo del nome
@@ -857,6 +990,248 @@ describe('lock: selettori dei flow Maestro (il testo che l\'aria-label sostituis
         'MAI nel nome accessibile, quindi non è un selettore: il flow fallirebbe al primo ' +
         'passo e il collaudo accuserebbe l\'app di un difetto che non ha.',
     ).toEqual([]);
+  });
+});
+
+/** I flow che guidano il simulatore iOS. */
+function flowIOS(): string[] {
+  return tuttiIFlow().filter((f) => f.startsWith('ios-'));
+}
+
+describe('lock: flow Maestro (ancore che dipendono dall\'ora e dai dati)', () => {
+  it('R11a · il registro dei saluti orari descrive ancora il codice', () => {
+    // Controllo di SCADENZA, sullo stampo di R8a: se `greetingByHour()` cambia forma,
+    // R11b non deve restare verde per il semplice fatto di non trovare più niente.
+    const saluti = salutiOrari();
+    expect(
+      saluti.length,
+      `${SORGENTE_SALUTI}: non espone più i saluti come stringhe di return. Il registro R11 ` +
+        'non descrive più il codice: rileggerlo prima di fidarsi di R11b.',
+    ).toBeGreaterThanOrEqual(3);
+    for (const s of saluti) {
+      expect(s.length, `${SORGENTE_SALUTI}: saluto vuoto nel registro`).toBeGreaterThan(3);
+    }
+  });
+
+  it('R11b · nessun flow si àncora a un saluto, che dipende dall\'ora', () => {
+    const saluti = salutiOrari().map(normalizzaSelettore);
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      for (const sel of tuttiISelettori(leggiFlow(f))) {
+        if (saluti.includes(normalizzaSelettore(sel))) {
+          colpevoli.push(
+            `${f} → "${sel}": è il saluto di ${SORGENTE_SALUTI}, vero solo in una fascia ` +
+              'oraria. Àncorati a un testo che non cambia (la tab della bottom-nav, il ' +
+              'titolo della sezione).',
+          );
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Un flow ancorato al saluto non collauda l\'app, collauda l\'orologio: alle 22:07 la ' +
+        'dashboard dice «Buonasera!» e il collaudo scrive FAIL su un\'app che funziona ' +
+        '(mobile-ios, 2026-07-31).',
+    ).toEqual([]);
+  });
+
+  it('R12a · il registro delle etichette stato-dipendenti è ancora vero', () => {
+    const scaduti: string[] = [];
+    for (const e of ETICHETTE_STATO_DIPENDENTE) {
+      const catalogo = leggiCatalogo(e.catalogo);
+      const sorgente = fs.readFileSync(path.join(process.cwd(), e.componente), 'utf8');
+      for (const k of e.chiavi) {
+        if (typeof catalogo[k] !== 'string') {
+          scaduti.push(`${e.catalogo}: la chiave ${k} non esiste più`);
+          continue;
+        }
+        if (!sorgente.includes(`'${k}'`)) {
+          scaduti.push(
+            `${e.componente}: non rende più t('${k}') → le varianti dell'etichetta sono ` +
+              'cambiate, RIMISURARE prima di fidarsi di R12b.',
+          );
+        }
+      }
+    }
+    expect(scaduti, 'Registro R12 scaduto: la regola non descrive più il codice.').toEqual([]);
+  });
+
+  it('R12b · chi cerca una variante di un\'etichetta stato-dipendente le cerca tutte', () => {
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      for (const sel of tuttiISelettori(leggiFlow(f))) {
+        for (const e of ETICHETTE_STATO_DIPENDENTE) {
+          const varianti = e.chiavi.map((k) => String(leggiCatalogo(e.catalogo)[k]));
+          if (!varianti.some((v) => sel.includes(v))) continue;
+          const mancanti = varianti.filter((v) => !sel.includes(v));
+          if (mancanti.length > 0) {
+            colpevoli.push(
+              `${f} → "${sel}" (${e.dove}): conosce una sola faccia del bottone. Mancano ` +
+                `${mancanti.map((v) => `"${v}"`).join(', ')} — usa il selettore alternato ` +
+                `"${varianti.join('|')}".`,
+            );
+          }
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'L\'etichetta cambia con lo stato dei dati: quale delle due si vede dipende da cosa ha ' +
+        'fatto la maestra quella mattina. Un flow che ne conosce una sola è rosso a giorni ' +
+        'alterni, e la colpa cade sull\'app (mobile-ios, 2026-07-31).',
+    ).toEqual([]);
+  });
+
+  it('R13a · il registro delle CTA condizionate dai dati è ancora vero', () => {
+    const scaduti: string[] = [];
+    for (const c of CTA_CONDIZIONATE_DAI_DATI) {
+      const sorgente = fs.readFileSync(path.join(process.cwd(), c.componente), 'utf8');
+      if (!sorgente.includes(c.condizione)) {
+        scaduti.push(
+          `${c.componente}: non contiene più la condizione \`${c.condizione}\` → la CTA ` +
+            `«${c.selettore}» potrebbe essere diventata sempre presente. RIMISURARE.`,
+        );
+      }
+    }
+    expect(scaduti, 'Registro R13 scaduto: la regola non descrive più il codice.').toEqual([]);
+  });
+
+  it('R13b · le CTA che esistono solo con certi dati si cercano dentro un ramo condizionale', () => {
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      // Livello BASE soltanto: quello che sta dentro un `runFlow` è già condizionato.
+      for (const passo of passi(leggiFlow(f))) {
+        for (const c of CTA_CONDIZIONATE_DAI_DATI) {
+          if (!passo.corpo.includes(c.selettore)) continue;
+          if (passo.nome === 'runFlow' && /when:/.test(passo.corpo)) continue;
+          if (/optional:\s*true/.test(passo.corpo)) continue;
+          colpevoli.push(
+            `${f} · ${passo.nome} "${c.selettore}": la CTA è resa solo se ` +
+              `\`${c.condizione}\` (${c.componente}). Va dentro un \`runFlow when:\`, con ` +
+              `una seconda strada verso «${c.destinazione}».`,
+          );
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Misurato il 2026-08-01: la CTA c\'era alle 00:27 e non c\'era alle 00:45, stessa app e ' +
+        'stesso account. Un flow che la dà per scontata fallisce con «No visible element ' +
+        'found» e sembra una regressione.',
+    ).toEqual([]);
+  });
+
+  it('R13c · esiste davvero la strada alternativa verso la destinazione', () => {
+    // Controllo POSITIVO: senza, R13b si chiuderebbe cancellando il passo — e il flow
+    // smetterebbe di collaudare la bacheca invece di collaudarla in entrambi gli stati.
+    for (const f of ['android-percorso-docente.yaml', 'ios-percorso-docente.yaml']) {
+      const testo = leggiFlow(f);
+      for (const c of CTA_CONDIZIONATE_DAI_DATI) {
+        if (!testo.includes(c.selettore)) continue;
+        const rami = passi(testo).filter((p) => p.nome === 'runFlow');
+        expect(
+          rami.some((p) => p.corpo.includes(`notVisible: "${c.destinazione}"`)),
+          `${f}: manca il ramo alternativo. Quando «${c.selettore}» non c'è, il flow deve ` +
+            `arrivare a «${c.destinazione}» per un'altra strada (il foglio «Menu»), non ` +
+            'saltare il passo.',
+        ).toBe(true);
+        expect(
+          tuttiISelettori(testo),
+          `${f}: il flow non asserisce più di essere arrivato a «${c.destinazione}»`,
+        ).toContain(c.destinazione);
+      }
+    }
+  });
+});
+
+describe('lock: flow Maestro iOS (dialog dei permessi e submit del login)', () => {
+  it('R14a · su iOS il ramo del dialog permessi ha un\'attesa esplicita davanti', () => {
+    const colpevoli: string[] = [];
+    for (const f of flowIOS()) {
+      const p = passi(leggiFlow(f));
+      p.forEach((passo, i) => {
+        if (passo.nome !== 'runFlow' || !passo.corpo.includes(TESTO_DIALOG_PERMESSI)) return;
+        const prima = p.slice(Math.max(0, i - 2), i);
+        const attesa = prima.find(
+          (x) =>
+            x.nome === 'extendedWaitUntil' &&
+            x.corpo.includes(TESTO_DIALOG_PERMESSI) &&
+            /optional:\s*true/.test(x.corpo),
+        );
+        if (!attesa) {
+          colpevoli.push(
+            `${f} · runFlow "${TESTO_DIALOG_PERMESSI}" #${i}: manca ` +
+              '`extendedWaitUntil: visible: "Non consentire"` con `optional: true` davanti.',
+          );
+        }
+      });
+    }
+    expect(
+      colpevoli,
+      '`runFlow when:` guarda la condizione UNA VOLTA, subito: non aspetta. Su iOS il dialog ' +
+        'nativo arriva dopo, il ramo risulta SKIPPED e poi il dialog copre la UI e fa fallire ' +
+        'l\'asserzione seguente (mobile-ios, 2026-07-31).',
+    ).toEqual([]);
+  });
+
+  it('R14b · ogni flow iOS gestisce il dialog PRIMA e DOPO il login', () => {
+    // Il permesso rimasto in coda ricompare al LANCIO SUCCESSIVO, cioè prima del login
+    // del giro dopo: un flow che lo gestisce solo dopo funziona una volta su due.
+    for (const f of flowIOS()) {
+      const p = passi(leggiFlow(f));
+      const rami = p
+        .map((passo, i) => ({ passo, i }))
+        .filter((x) => x.passo.nome === 'runFlow' && x.passo.corpo.includes(TESTO_DIALOG_PERMESSI));
+      expect(
+        rami.length,
+        `${f}: ${rami.length} gestione/i del dialog permessi. Ne servono due: una prima del ` +
+          'login (il permesso in coda dal giro precedente) e una dopo (quello di questo giro).',
+      ).toBeGreaterThanOrEqual(2);
+      const submit = p.findIndex((x) => x.nome === 'pressKey');
+      expect(submit, `${f}: nessun \`pressKey\` che invii il login`).toBeGreaterThan(-1);
+      expect(
+        rami.some((x) => x.i < submit),
+        `${f}: nessuna gestione del dialog PRIMA del submit del login`,
+      ).toBe(true);
+      expect(
+        rami.some((x) => x.i > submit),
+        `${f}: nessuna gestione del dialog DOPO il submit del login`,
+      ).toBe(true);
+    }
+  });
+
+  it('R15a · nessun flow iOS invia il login toccando «Accedi»', () => {
+    const colpevoli: string[] = [];
+    for (const f of flowIOS()) {
+      for (const sel of selettoriDeiTap(leggiFlow(f))) {
+        if (sel.trim().toLowerCase() === SUBMIT_LOGIN_VIETATO_IOS.toLowerCase()) {
+          colpevoli.push(`${f} → tapOn "${sel}"`);
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Misurato su iPhone 17 Pro Max / iOS 26.2: con la tastiera aperta il tap risulta ' +
+        'COMPLETED e il form NON parte; `hideKeyboard` fallisce sulla WebView iOS. Il flow ' +
+        'non muore lì, muore tre passi dopo sull\'asserzione della dashboard — ed è così che ' +
+        'tre collaudi di fila hanno accusato l\'app. Usa `pressKey: Enter`.',
+    ).toEqual([]);
+  });
+
+  it('R15b · ogni flow iOS invia il login con pressKey: Enter', () => {
+    // Controllo POSITIVO: senza, R15a resterebbe verde anche in un flow che non fa più login.
+    for (const f of flowIOS()) {
+      const p = passi(leggiFlow(f));
+      expect(
+        p.some((x) => x.nome === 'pressKey' && /Enter/.test(x.corpo)),
+        `${f}: nessun \`pressKey: Enter\`. È l'unico invio del login misurato affidabile ` +
+          'sulla WebView iOS.',
+      ).toBe(true);
+      expect(
+        tuttiISelettori(leggiFlow(f)),
+        `${f}: il flow non compila più il campo Password`,
+      ).toContain('Password');
+    }
   });
 });
 

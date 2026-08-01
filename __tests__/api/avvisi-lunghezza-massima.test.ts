@@ -177,6 +177,58 @@ describe('POST /api/avvisi — il titolo dichiara il massimo della colonna', () 
   })
 })
 
+describe('POST /api/avvisi — anche i campi che non hanno una LARGHEZZA sono validati', () => {
+  // La prima stesura di `@/lib/validation/avvisi` ha chiuso S34 guardando quali
+  // colonne hanno un `character varying(n)`. `scadenza` è una `date` e
+  // `target_classes` un array: nessun `.max()` da copiare dal DDL, quindi sono
+  // scivolate via — e continuavano a produrre il 500 che S34 dichiarava chiuso, su
+  // altre due colonne della stessa tabella. Il criterio giusto non è «come è fatto
+  // il tipo» ma «che cosa può arrivare dal client».
+
+  it('una `scadenza` che non è una data ⇒ 400, non il 500 di Postgres', async () => {
+    const res = await post(corpo('Titolo valido', { scadenza: 'non-una-data' }))
+    expect(res.status).toBe(400)
+    const corpoRisposta = JSON.stringify(await res.json())
+    // `22007 invalid input syntax for type date` non deve arrivare al client.
+    expect(corpoRisposta).not.toContain('invalid input syntax')
+    expect(corpoRisposta).not.toContain('type date')
+    expect(righeAvvisi().length, 'nessuna riga nuova').toBe(1)
+  })
+
+  it('CONTROLLO POSITIVO: una scadenza valida passa ancora', async () => {
+    const res = await post(corpo('Titolo valido', { scadenza: '2026-12-31' }))
+    expect(res.status).toBe(201)
+  })
+
+  it('una data inesistente nel calendario ⇒ 400 (il 31 febbraio non è una scadenza)', async () => {
+    const res = await post(corpo('Titolo valido', { scadenza: '2026-02-31' }))
+    expect(res.status).toBe(400)
+  })
+
+  it('un nome di classe abnorme ⇒ 400, non 500', async () => {
+    const res = await post(corpo('Titolo valido', {
+      target_scope: 'classe',
+      target_classes: ['A'.repeat(100000)],
+    }))
+    expect(res.status).toBe(400)
+    expect(righeAvvisi().length).toBe(1)
+  })
+
+  it('un elenco di classi spropositato ⇒ 400 (le sezioni delle tre sedi sono 33)', async () => {
+    const res = await post(corpo('Titolo valido', {
+      target_scope: 'classe',
+      target_classes: Array.from({ length: 3000 }, (_, i) => `C${i}`),
+    }))
+    expect(res.status).toBe(400)
+    expect(righeAvvisi().length).toBe(1)
+  })
+
+  it('`target_classes` che non è un elenco di stringhe ⇒ 400', async () => {
+    const res = await post(corpo('Titolo valido', { target_scope: 'classe', target_classes: [{ x: 1 }, 42] }))
+    expect(res.status).toBe(400)
+  })
+})
+
 describe('PUT /api/avvisi/[id] — lo stesso massimo, sulla strada accanto', () => {
   it(`CONFINE: ${MAX_TITOLO_AVVISO} caratteri PASSANO`, async () => {
     const res = await put(corpo('B'.repeat(MAX_TITOLO_AVVISO)))

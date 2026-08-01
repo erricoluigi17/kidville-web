@@ -184,7 +184,13 @@ export async function promuoviMediaBozza(
 
   // Evento critico → si logga anche il SUCCESSO: senza, «nessun log» non
   // distinguerebbe «promosso» da «non è mai partita nessuna promozione».
-  logEvento('news', 'info', { operazione, esito: 'media-promossi', n_media: promossi })
+  // `n_promossi` e non `n_media`: la redazione dei log tratta la radice `media`
+  // come un dato sensibile (è la MEDIA dei voti di un alunno — `redact.ts:61`), e
+  // il conteggio arrivava in `app_log` come `[redatto]`. Cioè proprio il numero che
+  // dice se la promozione ha funzionato spariva dal log che serve a verificarlo.
+  // La lista è a lista bianca e non si allarga «perché sarebbe comodo»: si cambia
+  // il nome del campo, che è la parte nostra.
+  logEvento('news', 'info', { operazione, esito: 'media-promossi', n_promossi: promossi })
 
   return {
     copertinaUrl: typeof input.copertinaUrl === 'string' ? riscrivi(input.copertinaUrl) : input.copertinaUrl,

@@ -16,7 +16,7 @@ import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/st
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { RUOLI_PUBBLICAZIONE_DEFAULT } from '@/lib/scuole/admin-settings-default';
-import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso } from '@/lib/validation/avvisi';
+import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso, zScadenzaAvviso, zTargetClassesAvviso } from '@/lib/validation/avvisi';
 import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
 
 // Il ramo STAFF filtra ancora per scope/classe (dashboard cockpit). Il ramo
@@ -35,8 +35,8 @@ const postBodySchema = z.object({
     contenuto: zContenutoAvviso,
     tipo: zTipoAvviso.nullish(),
     target_scope: zTargetScopeAvviso.nullish(),
-    target_classes: z.unknown().optional(),
-    scadenza: z.string().nullish(),
+    target_classes: zTargetClassesAvviso.optional(),
+    scadenza: zScadenzaAvviso.nullish(),
     attachment_url: z.string().nullish(),
     // Modulo firmabile FEA collegato (gita): opzionale (item 19).
     form_model_id: zUuid.nullish(),

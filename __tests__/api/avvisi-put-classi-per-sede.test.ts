@@ -193,6 +193,40 @@ describe('PUT /api/avvisi/[id] — in modifica il target passa dallo stesso gate
     expect(targetInTabella()).toEqual([OMONIMA])
   })
 
+  it('REGRESSIONE — un PUT senza `target_scope` NON azzera i destinatari', async () => {
+    // Trovato dal collaudo del 2026-08-01, e introdotto dalla prima versione di
+    // questo stesso gate. La guardia leggeva `target_scope` dal BODY: se il campo
+    // mancava ricadeva su `'globale'` e non pretendeva nessuna classe — ma la
+    // scrittura mandava `target_classes: … ?? null`, che è SEMPRE definito.
+    // Risultato: un PUT di solo titolo su un avviso di classe lo lasciava
+    // `scope='classe'` con ZERO destinatari, rispondendo 200 e senza un log.
+    // L'avviso spariva da ogni bacheca e nessuno poteva accorgersene.
+    const res = await PUT(
+      new NextRequest(`http://localhost/api/avvisi/${AVVISO_A}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        // Il corpo di chi cambia solo il testo: niente scope, niente classi.
+        body: JSON.stringify({ titolo: 'Titolo corretto', contenuto: 'Testo nuovo' }),
+      }),
+      { params: Promise.resolve({ id: AVVISO_A }) },
+    )
+    expect(res.status).toBe(200)
+    expect(
+      targetInTabella(),
+      'le classi dell’avviso non si toccano se il campo non è stato mandato',
+    ).toEqual([OMONIMA])
+  })
+
+  it('REGRESSIONE — un `target_classes: []` ESPLICITO su un avviso di classe è ancora 400', async () => {
+    // Il rovescio del test qui sopra: «campo assente» vuol dire «non toccare», ma
+    // un array vuoto MANDATO è una richiesta di svuotare, e come tale deve
+    // incontrare la guardia. Senza questa coppia, la correzione avrebbe potuto
+    // chiudere la regressione riaprendo il difetto di partenza.
+    const res = await put(corpo({ target_classes: [] }))
+    expect(res.status).toBe(400)
+    expect(targetInTabella()).toEqual([OMONIMA])
+  })
+
   it('un avviso GLOBALE resta modificabile senza classi', async () => {
     const res = await put(corpo({ target_scope: 'globale', target_classes: [] }))
     expect(res.status).toBe(200)

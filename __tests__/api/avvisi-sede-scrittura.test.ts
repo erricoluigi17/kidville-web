@@ -240,7 +240,7 @@ describe('POST /api/avvisi — la sede si dichiara, non si deduce dall’autore'
       post(
         corpoAvviso({
           target_scope: 'classe',
-          target_classes: [OMONIMA, OMONIMA, '  ', 42],
+          target_classes: [OMONIMA, OMONIMA, '  '],
           scuola_id: SEDE_B,
         }),
       ),
@@ -248,6 +248,28 @@ describe('POST /api/avvisi — la sede si dichiara, non si deduce dall’autore'
 
     expect(res.status).toBe(201)
     expect(avvisiScritti()[0].target_classes).toEqual([OMONIMA])
+  })
+
+  it('un valore che non è un nome di classe ⇒ 400, invece di essere scartato in silenzio', async () => {
+    // Fino al 2026-08-01 `target_classes` era `z.unknown()`: un numero in mezzo ai
+    // nomi veniva buttato via da `classiTargetValide` e l'avviso si pubblicava lo
+    // stesso, con 201. Comodo, e sbagliato: un client che manda un numero dove
+    // vanno i nomi ha un difetto, e scartarlo in silenzio glielo nasconde —
+    // pubblicando per giunta a un insieme di classi diverso da quello richiesto.
+    // Ora lo schema lo rifiuta, ed è più severo di prima: l'intento del test qui
+    // sopra («in tabella solo ciò che è stato verificato») vale a maggior ragione.
+    const res = await POST(
+      post(
+        corpoAvviso({
+          target_scope: 'classe',
+          target_classes: [OMONIMA, 42],
+          scuola_id: SEDE_B,
+        }),
+      ),
+    )
+
+    expect(res.status).toBe(400)
+    expect(avvisiScritti(), 'nessuna riga scritta').toHaveLength(0)
   })
 
   it('lettura delle sezioni in errore ⇒ 500 PARLANTE, mai un 400 che incolpa l’operatore', async () => {

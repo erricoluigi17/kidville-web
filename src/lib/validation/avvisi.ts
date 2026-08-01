@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { zDataYMD } from '@/lib/validation/common';
 
 // =============================================================================
 // I LIMITI DI LUNGHEZZA DI `avvisi`, PRESI DAL DDL.
@@ -76,3 +77,46 @@ export const zTipoAvviso = z
 export const zTargetScopeAvviso = z
     .string()
     .max(MAX_TARGET_SCOPE_AVVISO, `Il destinatario non può superare ${MAX_TARGET_SCOPE_AVVISO} caratteri`);
+
+/**
+ * La scadenza dell'avviso.
+ *
+ * ⚠️ AGGIUNTA IL 2026-08-01, DOPO IL COLLAUDO, e la ragione per cui mancava vale
+ * più della correzione. La prima stesura di questo modulo ha chiuso il rilievo S34
+ * guardando **quali colonne hanno una LARGHEZZA** — le `character varying` — e non
+ * **quali colonne hanno un FORMATO**. `scadenza` è una `date`: nessun `.max()` da
+ * scrivere, quindi è scivolata via, e una stringa qualunque continuava a produrre
+ *
+ *     500 {"error":"…"}  ·  log: 22007 invalid input syntax for type date: "…"
+ *
+ * cioè lo stesso 400-travestito-da-500 che S34 dichiarava chiuso, su un'altra
+ * colonna della stessa tabella. Un criterio applicato per come è fatto il tipo, e
+ * non per che cosa può arrivare dal client, lascia sempre fuori qualcosa.
+ *
+ * `zDataYMD` è lo schema già in uso nel progetto (cassa, mensa, presenze): non se
+ * ne scrive un secondo.
+ */
+export const zScadenzaAvviso = zDataYMD;
+
+/**
+ * Le classi destinatarie, come arrivano dal client.
+ *
+ * Prima era `z.unknown().optional()`: qualunque cosa passava, e la larghezza
+ * dichiarata in `MAX_CLASSE_AVVISO` era una **costante morta** — scritta, mai
+ * usata. Il collaudo l'ha misurato con un array di 3000 voci e con un nome di
+ * classe da 100.000 caratteri: entrambi facevano fallire la query di verifica e
+ * uscivano come 500, non come 400.
+ *
+ * `TETTO_CLASSI_AVVISO` non viene dal DDL — la colonna è un array senza limite —
+ * ma dalla realtà: le sezioni di tutte e tre le sedi messe insieme sono 33. Cento
+ * è un tetto che nessun uso legittimo raggiunge e che ferma l'abuso prima che
+ * diventi una query da 30 KB.
+ */
+export const TETTO_CLASSI_AVVISO = 100;
+
+export const zTargetClassesAvviso = z
+    .array(
+        z.string().max(MAX_CLASSE_AVVISO, `Il nome della classe non può superare ${MAX_CLASSE_AVVISO} caratteri`),
+        { error: 'Le classi destinatarie devono essere un elenco di nomi' },
+    )
+    .max(TETTO_CLASSI_AVVISO, `Non si possono indicare più di ${TETTO_CLASSI_AVVISO} classi`);

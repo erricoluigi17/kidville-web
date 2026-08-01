@@ -5,7 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAvvisoInScope } from '@/lib/auth/scope-avvisi';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
-import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso } from '@/lib/validation/avvisi';
+import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso, zScadenzaAvviso, zTargetClassesAvviso } from '@/lib/validation/avvisi';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -54,8 +54,8 @@ const putBodySchema = z.object({
     contenuto: zContenutoAvviso,
     tipo: zTipoAvviso.nullish(),
     target_scope: zTargetScopeAvviso.nullish(),
-    target_classes: z.unknown().optional(),
-    scadenza: z.string().nullish(),
+    target_classes: zTargetClassesAvviso.optional(),
+    scadenza: zScadenzaAvviso.nullish(),
     attachment_url: z.string().nullish(),
 });
 
@@ -164,30 +164,57 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // stesso trattamento del ramo dichiarato» — applicato alla coppia
         // creazione/modifica. Per questo la regola vive ora in
         // `@/lib/avvisi/classi-sede` invece che dentro una delle due route.
-        const classiTarget = classiTargetValide(target_classes);
-        if ((target_scope ?? 'globale') === 'classe' && classiTarget.length === 0) {
+        // ── SI GUARDA LO STATO RISULTANTE, NON IL CORPO DELLA RICHIESTA ──
+        //
+        // Regressione trovata dal collaudo del 2026-08-01 e introdotta dalla prima
+        // versione di questo gate: la guardia leggeva `target_scope` dal BODY e, se il
+        // campo mancava, ricadeva su `'globale'` senza pretendere nessuna classe —
+        // mentre la scrittura mandava `target_classes: … ?? null`, che è SEMPRE
+        // definito e quindi AZZERAVA la colonna. Un PUT di solo titolo su un avviso
+        // di classe lo lasciava `scope='classe'` con zero destinatari: HTTP 200,
+        // nessun log, e l'avviso spariva da ogni bacheca.
+        //
+        // Il difetto vero era l'asimmetria: per tutti gli altri campi «assente» vuol
+        // dire «non toccare», per questo era diventato «cancella». Perciò lo scope e
+        // le classi si ricavano dalla riga quando il corpo tace, e la guardia decide
+        // su ciò che resterà in tabella.
+        const { data: rigaPrima, error: erroreRiga } = await supabase
+            .from('avvisi')
+            .select('scuola_id, target_scope, target_classes')
+            .eq('id', id)
+            .maybeSingle();
+        if (erroreRiga) {
+            logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, erroreRiga);
+            return NextResponse.json(
+                { error: 'Verifica delle classi destinatarie non riuscita', codice: 'VERIFICA_CLASSI_NON_RIUSCITA' },
+                { status: 500 },
+            );
+        }
+        const prima = rigaPrima as { scuola_id?: string; target_scope?: string; target_classes?: string[] | null } | null;
+        const scopeEffettivo = target_scope ?? prima?.target_scope ?? 'globale';
+        // `undefined` = il campo non è stato mandato → si conservano le classi che
+        // l'avviso ha già. Un array vuoto, invece, è una richiesta esplicita di
+        // svuotare, e come tale deve incontrare la guardia.
+        const classiInvariate = target_classes === undefined;
+        const classiTarget = classiInvariate
+            ? (prima?.target_classes ?? [])
+            : classiTargetValide(target_classes);
+
+        if (scopeEffettivo === 'classe' && classiTarget.length === 0) {
             return NextResponse.json(
                 { error: 'Seleziona almeno una classe destinataria per un avviso di classe.', codice: 'CLASSE_DESTINATARIA_MANCANTE' },
                 { status: 400 },
             );
         }
-        if (classiTarget.length > 0) {
+        // Si valida contro la sede SOLO ciò che arriva di nuovo: rivalidare le classi
+        // già in tabella farebbe fallire con 400 la modifica del solo titolo di un
+        // avviso la cui sezione è stata nel frattempo rinominata — un rifiuto che
+        // accusa l'operatore di qualcosa che non ha fatto.
+        if (!classiInvariate && classiTarget.length > 0) {
             // La sede è quella DELL'AVVISO, non quella di chi lo modifica: una
             // modifica non sposta un avviso di plesso, e leggerla dall'utente
             // rimetterebbe in gioco proprio l'ambiguità che il gate deve chiudere.
-            const { data: rigaSede, error: erroreSede } = await supabase
-                .from('avvisi')
-                .select('scuola_id')
-                .eq('id', id)
-                .maybeSingle();
-            if (erroreSede) {
-                logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, erroreSede);
-                return NextResponse.json(
-                    { error: 'Verifica delle classi destinatarie non riuscita', codice: 'VERIFICA_CLASSI_NON_RIUSCITA' },
-                    { status: 500 },
-                );
-            }
-            const scuolaId = (rigaSede as { scuola_id?: string } | null)?.scuola_id ?? null;
+            const scuolaId = prima?.scuola_id ?? null;
             if (!scuolaId) {
                 // Nessuna sede sulla riga: non si indovina. Un avviso senza plesso non
                 // si può validare, e validarlo «contro tutte» equivarrebbe a non farlo.

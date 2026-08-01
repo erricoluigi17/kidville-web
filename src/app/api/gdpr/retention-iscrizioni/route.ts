@@ -169,6 +169,41 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
                 )
             }
             fileTolti = (rimossi ?? []).length
+
+            // ── `remove()` NON FALLISCE SUI PERCORSI CHE NON ESISTONO ──
+            //
+            // Restituisce `data: []` e `error: null`: dal suo punto di vista non c'è
+            // niente da fare, e ha ragione. Ma per questa route «zero file rimossi su
+            // tre attesi» non è un successo — è il caso in cui il documento d'identità
+            // di un minore resta nell'archivio mentre la riga che lo nomina sparisce.
+            // Cioè esattamente l'invariante che questa route esiste per garantire, e
+            // che il commento qui sopra promette («PRIMA i file, POI le righe»).
+            //
+            // Il conteggio va confrontato, non guardato: un errore assente non è una
+            // rimozione avvenuta. Se non combaciano ci si ferma, la riga resta, e la
+            // notte dopo si riprova con la domanda ancora lì a dire quali file cercare.
+            if (fileTolti !== percorsi.length) {
+                fileFalliti = percorsi.length - fileTolti
+                logEvento('cron', 'error', {
+                    operazione: JOB,
+                    esito: 'file-non-rimossi',
+                    canale,
+                    n_file: percorsi.length,
+                    n_file_falliti: fileFalliti,
+                    ms: Date.now() - t0,
+                    msg: `${JOB}: attesi ${percorsi.length} allegati rimossi, rimossi ${fileTolti} — righe NON cancellate`,
+                })
+                return NextResponse.json(
+                    {
+                        ok: false,
+                        motivo: 'allegati-non-rimossi',
+                        domande: righe.length,
+                        file_attesi: percorsi.length,
+                        file_rimossi: fileTolti,
+                    },
+                    { status: 500 },
+                )
+            }
         }
 
         // ── POI LE RIGHE ──

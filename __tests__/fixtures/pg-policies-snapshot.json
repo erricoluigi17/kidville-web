@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
   "generato_il": "2026-08-01",
-  "sha256": "391f0ecd55bdf0d01e6720b21bf9cac64e5f73ddeb4a34df2fa66e59f329d7b5",
+  "sha256": "72e2f66d754f61407f12a6597e16a819c57c1d63b2f2e39a40f61c20bd4a2452",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -336,13 +336,13 @@
     },
     {
       "tabella": "orario_settimanale",
-      "policy": "read orario_settimanale",
+      "policy": "parent read orario sezione dei figli",
       "cmd": "SELECT",
       "permissive": "PERMISSIVE",
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "true",
+      "using_expr": "(section_id IN ( SELECT a.section_id FROM alunni a WHERE (a.id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
       "check_expr": ""
     },
     {
@@ -446,13 +446,13 @@
     },
     {
       "tabella": "sezione_materia_obiettivo",
-      "policy": "read sezione_materia_obiettivo",
+      "policy": "parent read obiettivi sezione dei figli",
       "cmd": "SELECT",
       "permissive": "PERMISSIVE",
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "true",
+      "using_expr": "(section_id IN ( SELECT a.section_id FROM alunni a WHERE (a.id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
       "check_expr": ""
     },
     {

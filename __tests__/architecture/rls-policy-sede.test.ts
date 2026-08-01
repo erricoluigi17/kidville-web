@@ -281,7 +281,12 @@ describe('lock architettura · le policy `USING (true)` si chiudono o si dichiar
     it('le fonti sono piene: se cadono queste, tutto il resto starebbe controllando il vuoto', () => {
         // Controllo positivo del parser e delle fonti. Un lock che gira su un elenco vuoto
         // passa sempre, ed è il modo più silenzioso di non controllare niente.
-        expect(permissiveNude.length, 'La fotografia non contiene nessuna policy `true`: rigenerala.').toBeGreaterThanOrEqual(13)
+        // 13 fino al 2026-08-01, **11 da quando la migrazione di questo step è stata
+        // applicata**: `orario_settimanale` e `sezione_materia_obiettivo` non sono più
+        // `true`. La soglia serve a impedire che il lock giri su una fotografia vuota, non
+        // a fissare un numero: si abbassa insieme alle chiusure vere e **non si alza mai**
+        // — una `true` nuova deve passare dal commento di dichiarazione, non da qui.
+        expect(permissiveNude.length, 'La fotografia non contiene nessuna policy `true`: rigenerala.').toBeGreaterThanOrEqual(11)
         expect(fileS33, `Manca la migrazione dello step S33 (\`*${MIGRAZIONE_S33}\`) in supabase/migrations/.`).toBeTruthy()
         expect(sqlS33.length, 'La migrazione S33 è vuota.').toBeGreaterThan(500)
         expect(tutteLeCreazioni.length, 'Il parser non trova nessuna CREATE POLICY in tutto supabase/migrations/.').toBeGreaterThan(50)

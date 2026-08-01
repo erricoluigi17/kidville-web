@@ -85,16 +85,44 @@ ARGS=()
 # È agganciata a `trap … EXIT INT TERM` e non alla fine dello script proprio
 # perché il caso pericoloso è quello in cui lo script non arriva alla fine: se la
 # pulizia sta in coda, basta un Ctrl-C perché il segreto resti su disco.
+# Bonifica per VALORE **e per FORMA**, e la forma è la metà che conta.
+#
+# La prima versione di questa funzione sostituiva soltanto `$PW`, cioè la password
+# di OGGI, e solo in `*.log`, `*.json`, `*.txt`. Misurato il 2026-08-01 su
+# ~/.maestro/tests: dopo averla passata su tutti i file restavano **156 righe**
+# `MAESTRO_KV_PASSWORD=<valore>` in chiaro, con password già RUOTATE. Sono
+# inutili a chi le trova — non aprono più niente — ma dicono a chiunque legga
+# quanto sono lunghe, come sono fatte e ogni quanto cambiano; e soprattutto
+# raccontano che una bonifica c'è stata e non ha funzionato.
+#
+# Il difetto è strutturale, non un caso: una pulizia che insegue UN valore è
+# cieca su tutti gli altri, e diventa cieca da sé a ogni rotazione della
+# password. Perciò qui si maschera anche ciò che HA LA FORMA di un segreto,
+# qualunque valore abbia:
+#   · `MAESTRO_KV_PASSWORD=…`  — inequivocabile, si maschera sempre;
+#   · `Inputting text: …`      — è Maestro che logga da sé ciò che digita, e non
+#     c'è modo, lato flow, di impedirglielo. Si risparmiano solo i valori con una
+#     `@`: sono gli indirizzi degli account di collaudo, non sono segreti e
+#     servono a capire quale percorso stava girando.
+#
+# `find` senza filtro d'estensione: la vecchia terna era un'ipotesi su come
+# Maestro nomina i suoi file, e un'ipotesi sbagliata qui si paga in segreti.
 bonifica() {
   local dir="$HOME/.maestro/tests"
   [[ -d "$dir" ]] || return 0
   local n=0
   while IFS= read -r f; do
-    if LC_ALL=C grep -qF -- "$PW" "$f" 2>/dev/null; then
-      PW="$PW" perl -pi -e 'BEGIN{$p=$ENV{PW}} s/\Q$p\E/***/g' "$f"
+    if LC_ALL=C grep -qE 'MAESTRO_KV_PASSWORD=[^,)}[:space:]]|Inputting text: ' "$f" 2>/dev/null \
+       || LC_ALL=C grep -qF -- "$PW" "$f" 2>/dev/null; then
+      PW="$PW" perl -pi -e '
+        BEGIN{$p=$ENV{PW}}
+        s/\Q$p\E/***/g;
+        s/(MAESTRO_KV_PASSWORD=)(?!\*\*\*)[^,)}\s]+/$1***/g;
+        s/(Inputting text: )(?!\*\*\*)(?![^\s@]*@)(\S{8,})$/$1***/gm;
+      ' "$f"
       n=$((n + 1))
     fi
-  done < <(find "$dir" -type f \( -name '*.log' -o -name '*.json' -o -name '*.txt' \) 2>/dev/null)
+  done < <(find "$dir" -type f 2>/dev/null)
   echo "bonifica log Maestro: $n file ripuliti in $dir"
 }
 trap bonifica EXIT INT TERM

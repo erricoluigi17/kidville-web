@@ -247,12 +247,25 @@ La password degli account TEST ha una sola sorgente in tutto il repo — la vari
 (`e2e/lib/test-password.mjs`). I flow Maestro la ricevono da lì:
 
 ```bash
-export MAESTRO_KV_EMAIL_GENITORE="test.inf.genitore1@kidville.test"
-export MAESTRO_KV_EMAIL_DOCENTE="test.inf.docente1@kidville.test"
-export MAESTRO_KV_EMAIL_SEGRETERIA="test.segreteria@kidville.test"
 export KV_TEST_PASSWORD='…'                        # gestore di credenziali del titolare
-export MAESTRO_KV_PASSWORD="$KV_TEST_PASSWORD"     # è il nome che i YAML si aspettano
+.claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml
 ```
+
+**I flow si lanciano SEMPRE da `esegui.sh`, mai con `maestro test` a mano.** Non è una
+preferenza di stile: Maestro scrive la password **in chiaro** dentro
+`~/.maestro/tests/<run>/maestro.log`, e non esiste un modo, lato flow, di impedirglielo.
+Verificato il 2026-08-01 con due canarini finti: finisce nel log sia il valore passato
+come variabile d'ambiente, sia quello passato con `-e NOME=valore`, e in più Maestro
+logga da sé il testo che digita (`Inputting text: <password>`). Qualunque cosa si faccia
+con le variabili, quella riga resta.
+
+L'unica difesa è la **bonifica dopo l'esecuzione**, ed è dentro `esegui.sh`: agganciata a
+`trap … EXIT INT TERM`, quindi gira anche su flow fallito o Ctrl-C. Maschera per valore
+**e per forma**, così copre anche le password già ruotate rimaste nei run vecchi — il
+1° agosto 2026 erano 70 file con la password corrente e altre 156 righe con password
+storiche, tutte prodotte da esecuzioni lanciate a mano seguendo la versione precedente
+di questo file. Lo script si occupa anche di `--device` (con due dispositivi attivi
+Maestro aggancia il primo che trova) e del timeout del driver XCUITest.
 
 Gli account TEST vivono in **produzione** sulle sezioni "TEST Infanzia" / "TEST 1A"
 (sede Kidville Giugliano): la loro password è un segreto vero, non un valore di comodo.
@@ -294,9 +307,7 @@ CAP_SERVER_URL="http://10.0.2.2:3000" npx cap sync android
 (cd android && ./gradlew assembleDebug)
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
-maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
-             -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
-             .claude/maestro-flows/android-percorso-genitore.yaml
+.claude/maestro-flows/esegui.sh android-percorso-genitore.yaml
 ```
 
 ### iOS (solo Mac con Xcode)
@@ -313,9 +324,7 @@ xcodebuild -project ios/App/App.xcodeproj -scheme App \
   -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build
 xcrun simctl install booted ios/DerivedData/Build/Products/Debug-iphonesimulator/App.app
 
-maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
-             -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
-             .claude/maestro-flows/ios-percorso-genitore.yaml
+.claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml
 ```
 
 > Capacitor 8 usa Swift Package Manager: si builda con `-project`, **non** con `-workspace`.

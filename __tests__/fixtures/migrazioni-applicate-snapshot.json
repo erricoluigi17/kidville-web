@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-07-31",
-  "sha256": "3cb9496063c8e6d0401359a1bf21b2cd402b7cff67e7cd74ebb289ee32f8f28f",
+  "generato_il": "2026-08-01",
+  "sha256": "ce1d7aedb2634cc9eef3bb3f8d980fbc1adf2ca9e6350bd57f1a9c419a7acc50",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -310,6 +310,38 @@
     {
       "version": "20260731211221",
       "name": "avvisi_config_backfill_sedi"
+    },
+    {
+      "version": "20260801081423",
+      "name": "retention_iscrizioni_e_audit"
+    },
+    {
+      "version": "20260801081446",
+      "name": "drop_enrollment_credentials"
+    },
+    {
+      "version": "20260801081502",
+      "name": "alunni_consensi_foto_per_canale"
+    },
+    {
+      "version": "20260801081513",
+      "name": "news_posts_dichiarazione_consenso"
+    },
+    {
+      "version": "20260801081531",
+      "name": "allegati_avvisi_task_mime"
+    },
+    {
+      "version": "20260801081542",
+      "name": "chat_allegati_percorso"
+    },
+    {
+      "version": "20260801081633",
+      "name": "policy_orario_per_sede"
+    },
+    {
+      "version": "20260801081644",
+      "name": "notifiche_orfane_avvisi"
     }
   ]
 }

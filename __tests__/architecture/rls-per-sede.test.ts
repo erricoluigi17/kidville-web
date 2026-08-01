@@ -81,12 +81,16 @@ const ALLOWLIST: Record<string, string> = {
         'configurazione mensa: rotazione settimanale dei menù, nessun dato personale',
     'obiettivi_apprendimento · read obiettivi_apprendimento':
         'configurazione didattica: obiettivi curricolari, nessun dato personale',
-    'orario_settimanale · read orario_settimanale':
-        'configurazione didattica: orario delle lezioni per sezione, nessun dato personale',
+    // `orario_settimanale` e `sezione_materia_obiettivo` erano qui fino al 2026-08-01, con
+    // la motivazione «configurazione didattica, nessun dato personale». Era vero sul dato e
+    // falso sull'effetto: quelle due tabelle portano `section_id`, e con tre plessi la
+    // sezione È la sede. Un genitore di Aversa leggeva l'organizzazione didattica di
+    // Giugliano — e la leggeva da fuori l'app, con la sola chiave pubblica del browser.
+    // Chiuse dalla migrazione `20260801081633_policy_orario_per_sede.sql`: ora il genitore
+    // vede la sola sezione dove ha un figlio. **Le voci non si rimettono**: il lock
+    // «l'ALLOWLIST non contiene voci morte» diventa rosso, ed è quello che deve fare.
     'scrutinio_periodi · read scrutinio_periodi':
         'configurazione didattica: date e stato dei periodi di scrutinio, nessun dato personale',
-    'sezione_materia_obiettivo · read sezione_materia_obiettivo':
-        'configurazione didattica: mappatura sezione↔materia↔obiettivo, nessun dato personale',
     'tempo_scuola · read tempo_scuola':
         'configurazione didattica: tempo scuola per sezione, nessun dato personale',
     'payment_categories · read categories':

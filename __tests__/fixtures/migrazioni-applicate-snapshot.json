@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-08-01",
-  "sha256": "ce1d7aedb2634cc9eef3bb3f8d980fbc1adf2ca9e6350bd57f1a9c419a7acc50",
+  "sha256": "30bb13af8dd0d4bf8176ba223518fc6d618d8724f4d5d4949b1738993ffab657",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -342,6 +342,10 @@
     {
       "version": "20260801081644",
       "name": "notifiche_orfane_avvisi"
+    },
+    {
+      "version": "20260801104252",
+      "name": "avvisi_target_classes_nomi"
     }
   ]
 }

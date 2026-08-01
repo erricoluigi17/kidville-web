@@ -11,8 +11,9 @@ import { schemaAssente } from '@/lib/news/schema-assente'
 import { sanificaContenuto } from '@/lib/news/sanitizza'
 import { parseInstagramUrl } from '@/lib/news/instagram'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
-import { contieneFoto, verificaConsensoSito } from '@/lib/news/consenso-foto'
-import { CONSENSI_VERSIONE } from '@/lib/forms/enrollment-template'
+import { campiProva, gateConsensoFoto, scriviConDegradazione } from '@/lib/news/gate-consenso'
+import { contieneFoto } from '@/lib/news/foto-nel-post'
+import { promuoviMediaBozza } from '@/lib/news/media-bozza'
 import { NEWS_SCOPES, NEWS_STATI, NEWS_TIPI, type NewsPost } from '@/lib/news/tipi'
 
 // Query param «vuoto» → undefined (i <select> mandano '' per "nessun filtro").
@@ -51,16 +52,13 @@ const postBodySchema = z.object({
 
 const STATI_STAFF = new Set(['bozza', 'proposta', 'programmata', 'pubblicata'])
 
-// Colonne della dichiarazione di consenso: se il DB non le ha (progetto E2E
-// della CI, non migrato) l'insert risponde `PGRST204` e si ritenta senza.
-const COLONNE_CONSENSO = ['bambini_ritratti', 'consenso_dichiarato_da', 'consenso_dichiarato_il', 'consenso_versione']
-
-const DICHIARAZIONE_MANCANTE =
-  'Il post contiene una foto: indicare quali bambini sono ritratti, oppure dichiarare che non ne è ritratto nessuno.'
-const CONSENSO_SITO_MANCANTE =
-  'Alcuni bambini ritratti non hanno il consenso alla pubblicazione sul sito. Il consenso della galleria riservata non vale per il sito pubblico.'
-const CONSENSO_NON_VERIFICABILE =
-  'Il consenso alla pubblicazione sul sito non è verificabile in questo momento: la pubblicazione è sospesa.'
+/**
+ * Il gate del consenso è passato, ma il media non si è potuto spostare
+ * nell'archivio pubblico. Si rifiuta: una riga salvata adesso mostrerebbe
+ * un'immagine rotta (il file è ancora privato) o un indirizzo che scade.
+ */
+const MEDIA_NON_PROMOSSI =
+  'Non è stato possibile pubblicare le immagini del post in questo momento: riprova fra qualche istante.'
 
 // GET /api/news — elenco gestionale (staff: sede + globali; educator: solo i propri).
 export const GET = withRoute('news:GET', async (request: NextRequest) => {
@@ -152,44 +150,39 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     // Il bucket `news` è pubblico e senza login: è il «sito web della Scuola»
     // per cui le famiglie danno (o negano) un consenso DISTINTO da quello della
     // galleria riservata. Il gate sta PRIMA dell'insert: una riga scritta e poi
-    // rifiutata sarebbe una pubblicazione con un altro nome.
-    const conFoto = contieneFoto(body.copertina_url, body.contenuto_json)
-    let dichiarazione: { bambini: string[]; il: string } | null = null
-    if (conFoto) {
-      if (body.bambini_ritratti == null) {
-        logEvento('news', 'warn', {
-          operazione: 'news:POST',
-          esito: 'dichiarazione-ritratti-mancante',
-          utente: auth.user.id,
-          ruolo: auth.user.role,
-        })
-        return NextResponse.json({ error: DICHIARAZIONE_MANCANTE }, { status: 422 })
-      }
-      const ritratti = [...new Set(body.bambini_ritratti)]
-      // Sede della verifica: quella del post; per «tutte le sedi» (solo admin),
-      // le sedi attive di chi pubblica.
-      const sediVerifica = scuolaId ? [scuolaId] : await resolveScuoleAttive(request, supabase, auth.user)
-      const esito = await verificaConsensoSito(supabase, ritratti, sediVerifica)
-      if (esito.esito === 'non-verificabile') {
-        // «Non lo so» non vale «sì». Il log dettagliato lo lascia già
-        // `verificaConsensoSito` a livello error.
-        return NextResponse.json({ error: CONSENSO_NON_VERIFICABILE }, { status: 503 })
-      }
-      if (esito.esito === 'bloccato') {
-        // Nel log solo i CONTEGGI: i nomi e gli id sono di minori. All'operatore
-        // — che quei bambini li ha appena scelti — il nome serve per toglierli.
-        logEvento('news', 'warn', {
-          operazione: 'news:POST',
-          esito: 'consenso-sito-mancante',
-          utente: auth.user.id,
-          ruolo: auth.user.role,
-          dichiarati: ritratti.length,
-          senza_consenso: esito.bambini.length,
-        })
-        return NextResponse.json({ error: CONSENSO_SITO_MANCANTE, bambini: esito.bambini }, { status: 422 })
-      }
-      dichiarazione = { bambini: ritratti, il: new Date().toISOString() }
+    // rifiutata sarebbe una pubblicazione con un altro nome. E vive in
+    // `@/lib/news/gate-consenso`, non qui: la stessa regola vale per la PATCH e
+    // per la pubblicazione, e fino al 2026-08-01 valeva solo per questa rotta.
+    // Sede della verifica: quella del post; per «tutte le sedi» (solo admin), le
+    // sedi attive di chi pubblica.
+    const sediVerifica = scuolaId ? [scuolaId] : await resolveScuoleAttive(request, supabase, auth.user)
+    const gate = await gateConsensoFoto({
+      supabase,
+      copertinaUrl: body.copertina_url,
+      contenutoJson: body.contenuto_json,
+      ritrattiRichiesti: body.bambini_ritratti,
+      sedi: sediVerifica,
+      attore: auth.user,
+      operazione: 'news:POST',
+    })
+    if ('response' in gate) return gate.response
+    const dichiarazione = gate.prova
+
+    // ─── Solo ORA il file può diventare pubblico ─────────────────────────────
+    // I media sostano nel bucket privato `news_bozze` fino a questo punto: la
+    // pubblicità è la conseguenza del consenso verificato, non la sua premessa.
+    // Se lo spostamento fallisce non si scrive niente — una riga con l'indirizzo
+    // pubblico di un file rimasto privato è un'immagine rotta sul sito.
+    const promozione = await promuoviMediaBozza(
+      supabase,
+      { copertinaUrl: body.copertina_url, contenutoJson: body.contenuto_json },
+      'news:POST',
+    )
+    if (promozione.errore) {
+      return NextResponse.json({ error: MEDIA_NON_PROMOSSI, codice: 'MEDIA_NON_PROMOSSI' }, { status: 503 })
     }
+    const copertinaFinale = promozione.copertinaUrl
+    const contenutoFinale = promozione.contenutoJson
 
     // Stato: educator vincolato a bozza|proposta; staff libero (default bozza).
     let stato: string
@@ -200,10 +193,12 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     }
 
     // Contenuto rich-text: SOLO dal JSON, passato dal chokepoint di sanificazione.
+    // Si sanifica il contenuto DOPO la promozione: è quello che verrà salvato, e
+    // html/testo devono citare gli stessi indirizzi del JSON.
     let contenutoHtml: string | null = null
     let contenutoTesto: string | null = null
-    if (body.contenuto_json != null && typeof body.contenuto_json === 'object') {
-      const s = sanificaContenuto(body.contenuto_json)
+    if (contenutoFinale != null && typeof contenutoFinale === 'object') {
+      const s = sanificaContenuto(contenutoFinale)
       contenutoHtml = s.html
       contenutoTesto = s.testo
     }
@@ -212,14 +207,14 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
       tipo: body.tipo,
       stato,
       titolo: body.titolo,
-      contenuto_json: body.contenuto_json ?? null,
+      contenuto_json: contenutoFinale ?? null,
       contenuto_html: contenutoHtml,
       contenuto_testo: contenutoTesto,
       categoria_id: body.categoria_id ?? null,
       target_scope: body.target_scope,
       target_gradi: body.target_gradi ?? null,
       target_classes: body.target_classes ?? null,
-      copertina_url: body.copertina_url ?? null,
+      copertina_url: copertinaFinale ?? null,
       instagram_url: body.instagram_url ?? null,
       instagram_shortcode: instagramShortcode,
       invia_notifica: body.invia_notifica ?? true,
@@ -229,32 +224,22 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
       // su quali bambini. Senza riga non c'è prova, e un consenso che non si può
       // dimostrare non vale (art. 5 §2 e art. 7 §1 GDPR). `null` sui post senza
       // foto: niente da dichiarare, e la differenza deve restare leggibile.
-      bambini_ritratti: dichiarazione?.bambini ?? null,
-      consenso_dichiarato_da: dichiarazione ? auth.user.id : null,
-      consenso_dichiarato_il: dichiarazione?.il ?? null,
-      consenso_versione: dichiarazione ? CONSENSI_VERSIONE : null,
+      bambini_ritratti: null,
+      consenso_dichiarato_da: null,
+      consenso_dichiarato_il: null,
+      consenso_versione: null,
+      ...campiProva(dichiarazione, auth.user.id),
     }
     if (stato === 'pubblicata') record.pubblicata_il = new Date().toISOString()
 
     // Insert resiliente alla colonna mancante: il DB E2E della CI non è migrato
     // e risponde `PGRST204`. Si rimuovono SOLO le colonne della dichiarazione —
-    // mai un campo del post — e si ritenta. Il gate del consenso è già passato:
-    // qui si sta perdendo la PROVA, non il controllo.
-    let res = await supabase.from('news_posts').insert(record).select().single()
-    for (let i = 0; res.error && i < COLONNE_CONSENSO.length; i++) {
-      const code = (res.error as { code?: string }).code ?? ''
-      if (!['PGRST204', '42703'].includes(code)) break
-      const col = COLONNE_CONSENSO.find((c) => c in record && res.error!.message.includes(c))
-      if (!col) break
-      logEvento('news', 'warn', {
-        operazione: 'news:POST',
-        esito: 'colonna-consenso-assente',
-        colonna: col,
-        error_code: code,
-      })
-      delete record[col]
-      res = await supabase.from('news_posts').insert(record).select().single()
-    }
+    // mai un campo del post — e si ritenta.
+    const res = await scriviConDegradazione<NewsPost>(
+      record,
+      (rec) => supabase.from('news_posts').insert(rec).select().single(),
+      'news:POST',
+    )
     const { data, error } = res
     if (error) {
       if (schemaAssente(error)) {
@@ -273,7 +258,7 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
       esito: 'creato',
       post_id: post.id,
       stato,
-      con_foto: conFoto,
+      con_foto: contieneFoto(body.copertina_url, body.contenuto_json),
       bambini_ritratti: dichiarazione?.bambini.length ?? 0,
     })
 

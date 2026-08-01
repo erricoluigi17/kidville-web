@@ -10,6 +10,7 @@ import { AvvisoForm, type ClasseAvviso, type DatiAvviso, type EsitoInvioAvviso }
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { formattaIstante } from '@/i18n/config';
 
 // Bacheca avvisi nel cockpit: lista full-width; il dettaglio/monitoraggio apre
 // a tutta area su /admin/avvisi/[id] (niente più drawer laterale mobile).
@@ -277,7 +278,7 @@ function AdminAvvisiInner() {
                                         <td className={TD}>
                                             <span className="font-maven block max-w-[360px] truncate text-sm font-semibold text-kidville-ink">{a.titolo}</span>
                                             <span className="font-maven block text-xs text-kidville-sub">
-                                                {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {new Date(a.created_at).toLocaleDateString(locale)}
+                                                {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {formattaIstante(new Date(a.created_at), locale)}
                                             </span>
                                         </td>
                                         <td className={TD}>
@@ -303,7 +304,7 @@ function AdminAvvisiInner() {
                                                 })}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-sub`}>
-                                            {a.scadenza ? new Date(a.scadenza).toLocaleDateString(locale) : '—'}
+                                            {a.scadenza ? formattaIstante(new Date(a.scadenza), locale) : '—'}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>{a.stats?.letti ?? 0}</td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>

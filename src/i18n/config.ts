@@ -65,6 +65,41 @@ export function intlDateTime(
 }
 
 /**
+ * Formatta un istante con fuso e regione dichiarati — **e non lancia mai**.
+ *
+ * ─── PERCHÉ ESISTE, invece di `intlDateTime(…).format(new Date(x))` ─────────
+ *
+ * Perché le due forme si comportano in modo OPPOSTO su una data non valida, e
+ * la differenza non si vede leggendo il codice:
+ *
+ *   new Date(undefined).toLocaleDateString('it-IT')   → "Invalid Date"
+ *   new Intl.DateTimeFormat('it-IT').format(quella)   → RangeError: Invalid time value
+ *
+ * Il repo era pieno di `toLocaleDateString`, che davanti a una colonna nulla o a
+ * un timestamp malformato stampava una stringa brutta e tirava dritto.
+ * Sostituendole con `Intl` — che è il modo giusto di dichiarare fuso e regione —
+ * ogni punto è diventato un potenziale **500**: misurato il 2026-08-01 su
+ * `GET /api/pagamenti/ricevuta`, dove una ricevuta senza `creato_il` faceva
+ * fallire il download del PDF a una famiglia invece di scrivere una riga
+ * imperfetta.
+ *
+ * Qui l'istante non valido diventa stringa VUOTA, che è meglio sia di
+ * «Invalid Date» sia di un'eccezione: un campo vuoto in un PDF si nota e non
+ * rompe niente. `intlDateTime` resta per chi ha in mano una data già certa (o
+ * gli serve `formatToParts`).
+ */
+export function formattaIstante(
+  input: string | number | Date | null | undefined,
+  locale: string | undefined | null,
+  opzioni: Intl.DateTimeFormatOptions = {},
+): string {
+  if (input === null || input === undefined || input === '') return '';
+  const d = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(d.getTime())) return '';
+  return intlDateTime(locale, opzioni).format(d);
+}
+
+/**
  * La DATA CIVILE italiana di un istante — `YYYY-MM-DD` in `Europe/Rome`.
  *
  * Serve al codice di SERVIZIO, non a quello che mostra: aggregazioni, confronti

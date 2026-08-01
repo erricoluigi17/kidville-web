@@ -18,6 +18,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { dataCivile } from '@/i18n/config'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
 // plesso (section_id NULL) o di sezione, su eventi_agenda (migr. 20260762).
@@ -68,7 +69,7 @@ const TIPO_LABEL: Record<(typeof TIPI_EVENTO)[number], string> = {
 }
 
 function oggiYMD(): string {
-  return new Date().toLocaleDateString('en-CA') // YYYY-MM-DD locale
+  return dataCivile() // YYYY-MM-DD nel fuso della scuola
 }
 
 type EsitoSezione = { sezione: { id: string; scuola_id: string } } | { response: NextResponse }

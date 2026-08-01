@@ -10,6 +10,7 @@ import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from '@/lib
 import { buildOrdineFornitorePdf } from '@/lib/merch/pdf'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { formattaIstante } from '@/i18n/config'
 
 // GET /api/admin/merch/ordini-fornitore/pdf?id= — PDF (ristampabile) del PO al
 // fornitore: intestazione committente (scuola) + fornitore + matrice articolo/taglia.
@@ -56,7 +57,7 @@ export const GET = withRoute('admin/merch/ordini-fornitore/pdf:GET', async (requ
 
     const pdf = buildOrdineFornitorePdf({
       numero: po.numero as string,
-      data: po.creato_il ? new Date(po.creato_il as string).toLocaleDateString('it-IT') : null,
+      data: po.creato_il ? formattaIstante(new Date(po.creato_il as string), 'it') : null,
       committente: {
         denominazione: struttura.denominazione,
         piva: struttura.piva,

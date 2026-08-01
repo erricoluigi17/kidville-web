@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useLocale } from 'next-intl';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { HeroMascot } from './HeroMascot';
+import { formattaIstante } from '@/i18n/config';
 
 interface HeroCardProps {
   /** Contenuto dell'`<h1>` (saluto): lo fornisce la pagina perché gli e2e
@@ -35,7 +36,7 @@ export function HeroCard({
   // Data locale calcolata SOLO client-side (hydration-safe, come il saluto).
   const locale = useLocale();
   const oggi = useClientValue(
-    () => new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' }),
+    () => formattaIstante(new Date(), locale, { weekday: 'long', day: 'numeric', month: 'long' }),
     '',
   );
 

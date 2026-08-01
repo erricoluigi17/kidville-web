@@ -12,6 +12,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { formattaIstante } from '@/i18n/config';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ function addDays(iso: string, n: number): string {
 
 function formatDataLunga(iso: string, locale: string): string {
     const d = new Date(iso + 'T12:00:00');
-    return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return formattaIstante(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 // ─── Navigatore Data ─────────────────────────────────────────────────────────

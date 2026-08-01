@@ -115,7 +115,7 @@
   "tipoRiunione": "Meeting",
   "agendaOre": "at {orario}",
   "agendaSoloStaff": "staff only",
-  "agendaPlesso": "site-wide",
+  "agendaPlesso": "location-wide",
   "agendaNuovoEvento": "New event",
   "agendaTitoloPlaceholder": "Title (e.g. Trip to the park)",
   "agendaVisibileGenitori": "Visible to parents",

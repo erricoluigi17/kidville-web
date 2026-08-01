@@ -7,6 +7,7 @@ import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/co
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
+import { formattaIstante } from '@/i18n/config';
 
 interface OversightThread {
   id: string;
@@ -22,7 +23,7 @@ interface Contatto { parentUserId: string; parentName: string; studentId: string
 
 function fmtWhen(iso: string | null, locale: string) {
   if (!iso) return '';
-  try { return new Date(iso).toLocaleString(locale, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+  try { return formattaIstante(new Date(iso), locale, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
   catch { return ''; }
 }
 

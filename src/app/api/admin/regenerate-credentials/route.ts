@@ -15,6 +15,7 @@ import { buildCredentialsPdf } from '@/lib/pdf/credentials-pdf';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
+import { formattaIstante } from '@/i18n/config';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // targetId è sempre un UUID: parents.id (PK uuid) oppure utenti.id (= auth.users id).
@@ -191,7 +192,7 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
       email,
       password,
       loginUrl,
-      generatedAt: new Date().toLocaleString('it-IT'),
+      generatedAt: formattaIstante(new Date(), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }),
     });
     // Assicura il bucket privato. Idempotente: in tutti gli ambienti il bucket ESISTE già, e
     // il 409 «resource already exists» è l'esito ATTESO — si registra a `info` e si tira

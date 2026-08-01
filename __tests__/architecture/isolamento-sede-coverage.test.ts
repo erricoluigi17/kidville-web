@@ -890,6 +890,7 @@ const AMMESSE: Record<string, string> = {
 
     // ── Oblio GDPR: per definizione NON si ferma al confine della sede ───────
     // Cancellare «solo nella mia sede» sarebbe una cancellazione finta.
+    'gdpr/retention-iscrizioni:POST': 'conservazione a 24 mesi: come l\'oblio, deve valere su TUTTE le sedi — una domanda mai evasa scade allo stesso modo a Giugliano, Aversa e Cesa, e un filtro di sede qui lascerebbe indietro i plessi che il job non conosce. Nessun utente da cui derivare uno scope: la chiama pg_net.',
     'admin/gdpr/erase:POST': 'oblio: la bonifica insegue il minore ovunque compaia (movimenti bancari, cassa, riconciliazione), altrimenti non è cancellazione',
 
     // ── Anagrafica: la ricerca del CF ALTROVE è deliberata ───────────────────
@@ -921,9 +922,6 @@ const AMMESSE: Record<string, string> = {
     'admin/merch/ordini:POST': 'ordine divise: gli articoli sono validati (attivi, STESSA scuola) prima di ordinarli; i `delete` sono il rollback delle righe appena create in questa richiesta',
 
     // ── Configurazione: categorie di pagamento globali ───────────────────────
-    'admin/settings/categorie:POST': 'categorie di pagamento: NULL = globale per progetto (semantica 2026-07-31); la scrittura passa dal gate del pannello impostazioni',
-    'admin/settings/categorie:PATCH': 'idem: la categoria è letta e verificata prima di modificarla',
-    'admin/settings/categorie:DELETE': 'idem: eliminazione della categoria già verificata (le categorie di sistema sono negate)',
     'admin/search:GET': 'ricerca globale della Direzione: i modelli di modulo sono per lo più globali; alunni e persone nella stessa route sono filtrati per sede',
     'admin/segnalazioni:PATCH': 'presa in carico della segnalazione già letta e verificata',
 
@@ -1056,8 +1054,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // tabella: la sola query su `avvisi` vive in `src/lib/allegati/rimozione.ts`, ed
             // è deliberatamente SENZA filtro di sede (il bucket è uno per tutte e tre: se un
             // avviso di un altro plesso punta a quell'oggetto, il file resta).
-            routeConServiceRole: 273,
-            handlerControllati: 433,
+            // 273 → 274 e 433 → 434 il 2026-08-01: è nata `gdpr/retention-iscrizioni:POST`,
+            // che sostituisce il pezzo SQL della conservazione a 24 mesi. Quello cancellava
+            // i file con `DELETE FROM storage.objects`, cosa che Postgres vieta (trigger
+            // `protect_objects_delete`, FOR EACH STATEMENT): falliva a ogni esecuzione, e
+            // falliva PRIMA di scrivere la riga di log che avrebbe dovuto segnalarlo.
+            // Porta UNA esenzione, dichiarata in AMMESSE: come l'oblio, la conservazione
+            // deve valere su tutte le sedi.
+            routeConServiceRole: 274,
+            handlerControllati: 434,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1068,7 +1073,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // stavano in allowlist «per scope famiglia» — undici dei quali NON
             // avevano nessuno scope per i ruoli diversi da genitore — hanno ora
             // un presidio vero e non un'esenzione.
-            handlerEsentati: 96,
+            //
+            // 96 → 94 il 2026-08-01: tolte tre voci MORTE (`admin/settings/categorie`
+            // POST/PATCH/DELETE, il cui handler non ha più la forma che le richiedeva) e
+            // aggiunta una sola esenzione nuova e dichiarata
+            // (`gdpr/retention-iscrizioni:POST`). Il saldo è −2, cioè un debito pagato:
+            // questo numero può calare, e sale solo se qualcuno toglie un presidio.
+            handlerEsentati: 94,
         })
     })
 })

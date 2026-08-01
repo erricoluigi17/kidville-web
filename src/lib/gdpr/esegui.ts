@@ -35,6 +35,52 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // migrato) e NON mettono PII nei log (solo conteggi/uuid).
 // =============================================================================
 
+/**
+ * Svuota il CONTENUTO delle righe di `audit_scritture_docente` che riguardano
+ * gli interessati indicati, lasciando in piedi la riga.
+ *
+ * PERCHÉ ESISTE (collaudo del 2026-08-01). Quella tabella conserva accanto a
+ * «chi ha scritto cosa e quando» anche il valore prima/dopo, e da
+ * `admin/iscrizioni` ci arrivava il record integrale del bambino: nome, codice
+ * fiscale, indirizzo, allergie, note mediche. L'oblio non la toccava affatto.
+ * L'unico rimedio era il job di retention a 12 mesi — ma una richiesta di
+ * cancellazione va evasa «senza ingiustificato ritardo» (art. 17 GDPR), non
+ * l'anno prossimo.
+ *
+ * Non si CANCELLA la riga: il registro deve continuare a dire che quel giorno
+ * quella persona ha fatto quella modifica (art. 5 §2, responsabilizzazione).
+ * Si toglie il contenuto, che è la parte che parla dell'interessato — esattamente
+ * ciò che fa il job `audit_docente_retention_tick`, solo subito.
+ *
+ * Ritorna il numero di righe bonificate. Best-effort come il resto del modulo:
+ * logga e prosegue, non fa fallire l'oblio.
+ */
+export async function bonificaAuditScritture(
+  supabase: SupabaseClient,
+  entitaIds: (string | null | undefined)[],
+  op: string,
+): Promise<number> {
+  const ids = [...new Set(entitaIds.filter((v): v is string => typeof v === 'string' && v.length > 0))]
+  // Nessun id ⇒ nessuna scrittura. Un `in` con lista vuota su PostgREST è un
+  // filtro che non filtra: bonificherebbe l'INTERA tabella.
+  if (ids.length === 0) return 0
+
+  const { data, error } = await supabase
+    .from('audit_scritture_docente')
+    .update({ valore_prima: null, valore_dopo: null })
+    .in('entita_id', ids)
+    .select('id')
+  if (error) {
+    // PostgREST non lancia: ritorna `{ error }`. Un oblio parziale deve essere
+    // VISIBILE a chi l'ha eseguito, non finire in un catch muto.
+    if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_audit_scritture' }, error)
+    return 0
+  }
+  const n = (data ?? []).length
+  logEvento('gdpr', 'info', { operazione: op, esito: 'audit-scritture-bonificate', n_righe: n })
+  return n
+}
+
 /** Riga alunno minima necessaria all'anonimizzazione + bonifica finanziaria. */
 export interface AlunnoOblio {
   id: string
@@ -433,6 +479,12 @@ export async function anonimizzaParent(
     op,
   )
 
+  // 7. Il REGISTRO DELLE SCRITTURE, per entrambi gli spazi-id dell'adulto:
+  //    l'anagrafica (`parents.id`) e l'account (`utenti.id`, via `auth_user_id`).
+  //    Chi scrive l'audit usa l'uno o l'altro a seconda del punto della
+  //    codebase: cercarne uno solo lascerebbe indietro metà delle righe.
+  await bonificaAuditScritture(supabase, [parentId, authUserId], op)
+
   return {
     newsVisualizzazioniRimosse,
     segnalazioniBonificate,
@@ -679,6 +731,12 @@ export async function anonimizzaAlunno(
     [alunno.documento_path, ...iscr.documenti],
     op,
   )
+
+  // 5. Il REGISTRO DELLE SCRITTURE. Ci finisce il diff di ogni modifica fatta
+  //    da docenti e segreteria su quel bambino — e, fino al 2026-08-01, il suo
+  //    record integrale al momento dell'importazione. La riga resta (dice chi ha
+  //    fatto cosa e quando), il contenuto no.
+  await bonificaAuditScritture(supabase, [alunno.id], op)
 
   return {
     riconciliazione,

@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import type { Student } from './StudentTable';
+import { formattaIstante } from '@/i18n/config';
 
 /**
  * Card-riga dell'anagrafica per il layout mobile (`sm:hidden`) — sotto `sm` la
@@ -98,7 +99,7 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                             </span>
                             <span>
                                 {student.data_nascita
-                                    ? new Date(student.data_nascita).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
+                                    ? formattaIstante(new Date(student.data_nascita), locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                     : '—'}
                             </span>
                         </div>

@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   bucketToccati: [] as string[],
   uploadError: null as { message: string } | null,
   ultimoPath: null as string | null,
+  bucketCaricato: null as string | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: (...a: unknown[]) => h.requireDocente(...a) }))
@@ -56,12 +57,24 @@ vi.mock('@/lib/supabase/server-client', () => ({
         h.bucketToccati.push('updateBucket')
         return { data: null, error: null }
       },
-      from: () => ({
+      // Dal 2026-08-01 il file NON nasce nel bucket pubblico: sosta in
+      // `news_bozze` (privato) finché il gate del consenso non è passato, e
+      // l'editor ne riceve un indirizzo firmato. Il contratto verificato qui —
+      // «l'upload non configura nessun bucket» — non cambia; cambia il bucket di
+      // destinazione, e l'indirizzo restituito. Vedi
+      // `__tests__/api/news-media-area-privata.test.ts`, che inchioda il perché.
+      from: (bucket: string) => ({
         upload: async (path: string) => {
+          if (h.uploadError) return { data: null, error: h.uploadError }
           h.ultimoPath = path
-          return h.uploadError ? { data: null, error: h.uploadError } : { data: { path }, error: null }
+          h.bucketCaricato = bucket
+          return { data: { path }, error: null }
         },
-        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.test/news/${path}` } }),
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.test/${bucket}/${path}` } }),
+        createSignedUrl: async (path: string) => ({
+          data: { signedUrl: `https://cdn.test/sign/${bucket}/${path}?token=abc` },
+          error: null,
+        }),
       }),
     },
   }),
@@ -82,6 +95,7 @@ beforeEach(() => {
   h.bucketToccati = []
   h.uploadError = null
   h.ultimoPath = null
+  h.bucketCaricato = null
   h.requireDocente.mockResolvedValue({ user: { id: 'edu-1', role: 'educator', scuola_id: 'sc-1' } })
   h.analizzaContenutoVideo.mockReturnValue({ daConvertire: false, motivo: 'ok' })
 })
@@ -93,7 +107,11 @@ describe('POST /api/news/upload · il bucket è dichiarato in migrazione, non cr
     // Controllo POSITIVO: l'upload è davvero avvenuto. Senza questo, una route
     // che fallisse subito passerebbe l'asserzione negativa qui sotto.
     expect(res.status).toBe(200)
-    expect((await res.json()).fileUrl).toContain('/news/')
+    // L'indirizzo restituito è FIRMATO e punta all'area di sosta privata: fino
+    // al 2026-08-01 qui usciva l'indirizzo pubblico, cioè la foto era leggibile
+    // da chiunque prima che qualcuno verificasse il consenso.
+    expect((await res.json()).fileUrl).toContain('/sign/news_bozze/')
+    expect(h.bucketCaricato).toBe('news_bozze')
     expect(h.ultimoPath).toContain('edu-1')
 
     // Asserzione sulla MUTAZIONE: nessuna configurazione di bucket è stata toccata.
@@ -128,6 +146,9 @@ describe('POST /api/news/upload · il bucket è dichiarato in migrazione, non cr
         'come `error` con il nome del bucket, non lasciato al messaggio grezzo dello Storage.',
     ).toBeTruthy()
     expect(errore?.[1]).toBe('error')
+    // Il bucket nominato è quello su cui l'upload ha DAVVERO fallito da ultimo:
+    // con il bucket di sosta assente si ricade sul pubblico, e il messaggio deve
+    // dire quale dei due manca invece di nominarne sempre uno solo.
     expect((errore?.[2] as { bucket?: string })?.bucket).toBe('news')
   })
 })

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { CheckCircle2, XCircle, ChevronDown, CalendarDays } from 'lucide-react';
+import { formattaIstante } from '@/i18n/config';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ function getDaysInMonth(yearMonth: string): number[] {
 
 function formatMonthLabel(yearMonth: string, locale: string): string {
     const [y, m] = yearMonth.split('-').map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString(locale, {
+    return formattaIstante(new Date(y, m - 1, 1), locale, {
         month: 'long',
         year: 'numeric',
     });

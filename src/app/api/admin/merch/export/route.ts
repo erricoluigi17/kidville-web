@@ -8,6 +8,7 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { formattaIstante } from '@/i18n/config'
 
 // GET /api/admin/merch/export — XLSX flat delle righe Merchandise (una riga per
 // riga d'ordine) per segreteria/magazzino. Degrada a foglio vuoto su DB non migrato.
@@ -19,7 +20,7 @@ const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? 
 const STATO_LABEL: Record<string, string> = {
   da_ordinare: 'Da ordinare', ordinato: 'Ordinato', arrivato: 'Arrivato', consegnato: 'Consegnato', annullato: 'Annullato',
 }
-const dataIt = (s?: string | null) => (s ? new Date(s).toLocaleDateString('it-IT') : '')
+const dataIt = (s?: string | null) => (s ? formattaIstante(new Date(s), 'it') : '')
 
 interface OrdineEmbed {
   scuola_id?: string | null

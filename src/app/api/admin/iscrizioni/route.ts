@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { riassuntoCampi } from '@/lib/audit/riassunto'
 import { ensureParentIdentity } from '@/lib/auth/parent-identity'
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send'
@@ -960,7 +961,12 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           entitaId: studentId,
           azione: 'insert',
           scuolaId,
-          valoreDopo: childRecord,
+          // NON il record intero. Fino al 2026-08-01 qui passava `childRecord`, e
+          // in `audit_scritture_docente` finiva la scheda completa del bambino —
+          // nome, codice fiscale, indirizzo, allergie, note mediche — su una
+          // tabella che l'oblio non toccava. L'audit deve dire CHE COSA è stato
+          // creato e QUALI campi sono stati compilati, non esserne una copia.
+          valoreDopo: riassuntoCampi(childRecord),
         })
       }
 

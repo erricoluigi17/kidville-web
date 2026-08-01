@@ -45,8 +45,22 @@ const PRIMA_DI_REGEX = new Set([
 ])
 
 export function mascheraSorgente(src: string): SorgenteMascherato {
-  const senza = Array.from(src)
-  const strut = Array.from(src)
+  // `split('')` e NON `Array.from(src)`: `Array.from` spezza la stringa per CODE
+  // POINT, il resto di questa funzione la indicizza per UNITÀ UTF-16 (`src[i]`,
+  // `src.indexOf`). Su un file con un'emoji le due numerazioni divergono, e
+  // mascherare una coppia di surrogati con un solo `x` accorciava il risultato:
+  // `struttura` tornava PIÙ CORTA del sorgente, e ogni indice successivo era
+  // spostato.
+  //
+  // Non è teoria: misurato il 2026-08-01 su `TaskCard.tsx` (85 653 caratteri,
+  // due «👤» dentro una stringa) — `struttura.length` era 85 652. Da lì in poi
+  // ogni `senzaCommenti.slice(indiceDaStruttura, …)` leggeva una finestra
+  // spostata di un carattere e ogni `riga()` poteva nominare la riga sbagliata.
+  // Sei lock si appoggiano a questa funzione, fra cui `isolamento-sede-coverage`
+  // e `scope-vuoto-nega`: un ritaglio spostato lì è un FALSO VERDE su una
+  // query di isolamento fra sedi.
+  const senza = src.split('')
+  const strut = src.split('')
   const n = src.length
   // Pila dei template literal aperti. Il valore è la profondità di graffe dentro
   // `${…}`: 0 = siamo nel testo del template, >0 = siamo dentro un'espressione.

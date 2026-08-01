@@ -17,6 +17,7 @@ import {
     renderTemplate,
     type SollecitiConfig,
 } from './solleciti'
+import { formattaIstante } from '@/i18n/config'
 
 // Motore d'invio dei solleciti (manuale e cron). Regole:
 //  • anti-spam: mai due invii entro la cadenza minima (ultimo_sollecito_il);
@@ -154,7 +155,7 @@ export async function sollecitaPagamenti(
             descrizione: pag.descrizione ?? '—',
             importo: formatEuro(pag.importo),
             residuo: formatEuro(residuo),
-            scadenza: pag.scadenza ? new Date(pag.scadenza).toLocaleDateString('it-IT') : '—',
+            scadenza: pag.scadenza ? formattaIstante(new Date(pag.scadenza), 'it') : '—',
             scuola: scuolaNome,
             giorni_ritardo: giorniRitardo,
         }

@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Loader2, Flag, ShieldAlert, CheckCircle2, Inbox } from 'lucide-react';
 import { CockpitSelect } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
+import { formattaIstante } from '@/i18n/config';
 
 // =============================================================================
 // Coda di moderazione (C5 §2 — pannello Direzione).
@@ -38,7 +39,7 @@ type Filtro = 'aperta' | 'in_lavorazione' | 'chiusa' | 'tutte';
 function fmtDate(iso: string | null, locale: string) {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' });
+    return formattaIstante(new Date(iso), locale, { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
     return '';
   }

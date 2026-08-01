@@ -79,7 +79,7 @@ function classiSegmento(scelto: boolean): string {
     return `flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${
         scelto
             ? 'bg-kidville-green text-kidville-yellow shadow-sm'
-            : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'
+            : 'bg-kidville-cream text-kidville-sub border border-kidville-line hover:bg-kidville-cream-dark'
     }`;
 }
 
@@ -122,6 +122,12 @@ function sediDi(classi: ClasseAvviso[]): { id: string; nome: string }[] {
  *     non etichetta niente;
  *   · lo stato scelto si dichiara con `aria-pressed` E con una spunta, perché il
  *     colore non basta a chi non lo distingue (WCAG 1.4.1);
+ *   · le etichette sono scritte con `sub` (6,46:1 su bianco) e non più con
+ *     `muted` (2,51:1): `muted` è il token che il design system dichiara
+ *     DECORATIVO, e un'etichetta che dice cosa scrivere in un campo non è una
+ *     decorazione. Stessa sostituzione sulle pillole delle classi non scelte e
+ *     sui due segmenti «Tipo»/«Destinatari»: lì il colore è l'unica cosa che
+ *     distingue una classe destinataria da una che non lo è;
  *   · il bottone d'invio NON usa `disabled`: il browser, disabilitando un
  *     elemento che ha il fuoco, lo sposta su `<body>` — misurato — e chi naviga
  *     da tastiera si ritrova fuori dal dialogo nell'istante in cui pubblica. Si
@@ -547,7 +553,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 )}
                 {chiedeSede && (
                     <div>
-                        <label htmlFor={idSede} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                        <label htmlFor={idSede} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">
                             {t('formLabelSedePubblicazione')}
                         </label>
                         <select
@@ -569,18 +575,18 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                 <option key={s.id} value={s.id}>{s.nome}</option>
                             ))}
                         </select>
-                        <p className="font-maven text-xs text-kidville-muted mt-1.5">{t('formNotaSedePubblicazione')}</p>
+                        <p className="font-maven text-xs text-kidville-sub mt-1.5">{t('formNotaSedePubblicazione')}</p>
                     </div>
                 )}
                 <div>
-                    <label htmlFor={idTitolo} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
+                    <label htmlFor={idTitolo} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
                     {/* Il placeholder NON è l'etichetta: sparisce appena si scrive,
                         e con TalkBack il campo tornava senza nome a metà frase. */}
                     <input id={idTitolo} aria-required="true" value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
                         className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                 </div>
                 <div>
-                    <label htmlFor={idContenuto} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
+                    <label htmlFor={idContenuto} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
                     <textarea id={idContenuto} aria-required="true" value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder={t('formPlaceholderContenuto')} rows={4}
                         className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all resize-none" />
                 </div>
@@ -590,7 +596,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     screen reader annuncia «Tipo — Presa visione, premuto» invece
                     di quattro bottoni sciolti tutti uguali. */}
                 <div>
-                    <span id={idTipo} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</span>
+                    <span id={idTipo} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</span>
                     <div role="group" aria-labelledby={idTipo} className="flex gap-2">
                         <button type="button" aria-pressed={tipo === 'presa_visione'} onClick={() => setTipo('presa_visione')} className={classiSegmento(tipo === 'presa_visione')}>
                             {tipo === 'presa_visione' && <Check size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
@@ -604,12 +610,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 </div>
                 {soloClassiProprie ? (
                     <div>
-                        <span id={idClassi} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</span>
-                        <p className="font-maven text-xs text-kidville-muted mb-2">{t('formNotaLeTueClassi')}</p>
+                        <span id={idClassi} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</span>
+                        <p className="font-maven text-xs text-kidville-sub mb-2">{t('formNotaLeTueClassi')}</p>
                     </div>
                 ) : (
                     <div>
-                        <span id={idDestinatari} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</span>
+                        <span id={idDestinatari} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</span>
                         <div role="group" aria-labelledby={idDestinatari} className="flex gap-2">
                             <button type="button" aria-pressed={scope === 'globale'} onClick={() => setScope('globale')} className={classiSegmento(scope === 'globale')}>
                                 {scope === 'globale' && <Check size={14} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
@@ -646,7 +652,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                     type="button"
                                     aria-pressed={scelta}
                                     onClick={() => toggleClass(c.nome)}
-                                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${scelta ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-muted border border-kidville-line hover:bg-kidville-cream'}`}
+                                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl font-maven text-xs font-semibold transition-all ${scelta ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-white text-kidville-sub border border-kidville-line hover:bg-kidville-cream'}`}
                                 >
                                     {scelta && <Check size={12} strokeWidth={2.5} aria-hidden="true" className="shrink-0" />}
                                     {!chiedeSede && sedi.length > 1 && c.scuolaNome ? `${c.nome} — ${c.scuolaNome}` : c.nome}
@@ -660,7 +666,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     {/* Era il campo messo peggio di tutti: `read_page` sull'albero
                         di accessibilità lo dava come «textbox» con nome VUOTO —
                         non il placeholder, proprio niente. */}
-                    <label htmlFor={idScadenza} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
+                    <label htmlFor={idScadenza} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">
                         {tipo === 'presa_visione' ? t('formScadenzaAvviso') : t('formScadenzaAdesione')}
                     </label>
                     <input id={idScadenza} type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
@@ -672,7 +678,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     {/* Anche qui i controlli sono bottoni (l'`<input type="file">`
                         vero è nascosto e lo apre il bottone): etichetta di gruppo,
                         non `<label>`. */}
-                    <span id={idAllegato} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</span>
+                    <span id={idAllegato} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</span>
                     <div role="group" aria-labelledby={idAllegato} className="flex items-center gap-3">
                         {/* Nascosto ma pur sempre il campo vero: prende il nome
                             dall'intestazione del gruppo. Senza, axe lo conta fra
@@ -736,9 +742,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
                 {/* Link Esterno */}
                 <div>
-                    <label htmlFor={idLink} className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
+                    <label htmlFor={idLink} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
                     <div className="relative">
-                        <Link size={14} aria-hidden="true" className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-muted" />
+                        <Link size={14} aria-hidden="true" className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-sub" />
                         <input id={idLink} value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder={t('formPlaceholderLink')}
                             className="w-full border-2 border-kidville-line rounded-2xl pl-10 pr-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                     </div>

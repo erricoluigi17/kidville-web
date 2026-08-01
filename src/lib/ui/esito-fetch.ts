@@ -107,9 +107,65 @@ export const CODICI_ERRORE = {
      * l'operatore di uno sbaglio che non ha commesso.
      */
     VERIFICA_CLASSI_NON_RIUSCITA: 'erroreVerificaClassiNonRiuscita',
+    /**
+     * 422 — il post contiene una foto e nessuno ha dichiarato chi è ritratto
+     * (`src/lib/news/gate-consenso.ts`). Non si pubblica «non sapendo».
+     */
+    CONSENSO_FOTO_DICHIARAZIONE_MANCANTE: 'erroreConsensoFotoDichiarazioneMancante',
+    /**
+     * 422 — almeno un bambino ritratto non ha il consenso al canale «sito web».
+     * Il `error` accanto elenca QUALI (nome, all'operatore che li ha appena
+     * scelti): il codice dà la frase tradotta, la prosa il dettaglio.
+     */
+    CONSENSO_FOTO_SITO_MANCANTE: 'erroreConsensoFotoSitoMancante',
+    /**
+     * 503 — il consenso non è LEGGIBILE (colonna assente su un ambiente non
+     * migrato, guasto di lettura, id fuori dalle proprie sedi). Fail-closed:
+     * «non lo so» non vale «sì».
+     */
+    CONSENSO_FOTO_NON_VERIFICABILE: 'erroreConsensoFotoNonVerificabile',
+    /**
+     * 503 — il consenso è verificato ma il media non si è potuto spostare
+     * nell'archivio pubblico (`src/lib/news/media-bozza.ts`). Non si salva: la
+     * riga mostrerebbe un'immagine rotta o un indirizzo destinato a scadere.
+     */
+    MEDIA_NON_PROMOSSI: 'erroreMediaNonPromossi',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;
+
+/**
+ * I codici la cui PROSA porta un dettaglio che la frase tradotta non può avere:
+ * per questi il testo a schermo è «frase di catalogo — prosa del server».
+ *
+ * ─── PERCHÉ ESISTE ──────────────────────────────────────────────────────────
+ *
+ * Fino al 2026-08-01 `messaggioErrore`, appena trovava un codice, restituiva il
+ * testo di catalogo e **buttava via** l'`error` — mentre la documentazione di
+ * `CLASSI_FUORI_SEDE` (qui sopra) prometteva l'esatto contrario. Codice e
+ * commento dicevano due cose diverse, e a perderci era l'operatore: l'avviso
+ * veniva rifiutato con «alcune classi destinatarie non appartengono alla sede»,
+ * e QUALI — l'unica informazione che dice che cosa correggere — non arrivava
+ * mai a schermo.
+ *
+ * ─── PERCHÉ UN ELENCO, E NON «SEMPRE LA PROSA» ──────────────────────────────
+ *
+ * Perché i codici sono nati proprio per NON mostrarla: la prosa nasce sul
+ * server, dove il locale non esiste, ed è quella che faceva leggere a una
+ * segretaria in interfaccia inglese «Specificare la sede (scuola_id) per questa
+ * operazione». Riappenderla a tutti riaprirebbe il difetto che i codici hanno
+ * chiuso. L'aggiunta si DICHIARA, un codice per volta, e solo quando il server
+ * mette lì dentro un dato che il catalogo non può conoscere.
+ *
+ * LIMITE RESIDUO, dichiarato invece che nascosto: il dettaglio resta nella
+ * lingua del server. Per `CLASSI_FUORI_SEDE` è quasi tutto nomi di classi
+ * («3 ANNI A»), che non si traducono; il contorno sì. Si chiude quando il
+ * server manderà l'elenco in un campo suo invece che dentro la frase — allora
+ * qui si comporrà «frase tradotta + elenco» e la coda italiana sparirà.
+ */
+export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErrore>([
+    'CLASSI_FUORI_SEDE',
+]);
 
 const CATALOGHI: Record<Locale, Record<string, string>> = {
     it: it as Record<string, string>,
@@ -146,14 +202,29 @@ function testoDelCodice(codice: unknown): string | null {
     return typeof testo === 'string' && testo.trim() !== '' ? testo : null;
 }
 
+/** Il codice porta un dettaglio che la frase tradotta non può avere? */
+function portaDettaglio(codice: unknown): boolean {
+    return typeof codice === 'string' && CODICI_CON_DETTAGLIO.has(codice as CodiceErrore);
+}
+
 export async function messaggioErrore(res: Response, fallback: string): Promise<string> {
     try {
         const j: unknown = await res.json();
         const corpo = j as { error?: unknown; codice?: unknown } | null;
-        const tradotto = testoDelCodice(corpo?.codice);
-        if (tradotto) return tradotto;
         const msg = corpo?.error;
-        return typeof msg === 'string' && msg.trim() !== '' ? msg : fallback;
+        const prosa = typeof msg === 'string' && msg.trim() !== '' ? msg.trim() : null;
+        const tradotto = testoDelCodice(corpo?.codice);
+        if (tradotto) {
+            // La prosa si aggiunge SOLO per i codici dichiarati in
+            // `CODICI_CON_DETTAGLIO`, e solo se dice qualcosa in più: quando
+            // coincide col testo di catalogo (interfaccia italiana, frasi
+            // gemelle) ripeterla sarebbe rumore.
+            if (prosa && prosa !== tradotto && portaDettaglio(corpo?.codice)) {
+                return `${tradotto} — ${prosa}`;
+            }
+            return tradotto;
+        }
+        return prosa ?? fallback;
     } catch {
         return fallback;
     }

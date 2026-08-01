@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { intlDateTime } from '@/i18n/config';
+import { formattaIstante, intlDateTime } from '@/i18n/config';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
@@ -345,7 +345,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
         setIsExporting(true);
         const labels: PdfLabels = {
             titolo: t('pdfTitolo', { mese: MESI[month - 1].toUpperCase(), anno: year }),
-            meta: t('pdfMeta', { sezione, data: new Date().toLocaleDateString(locale) }),
+            meta: t('pdfMeta', { sezione, data: formattaIstante(new Date(), locale) }),
             studente: t('studente'),
             abbrevP: t('abbrevP'),
             abbrevA: t('abbrevA'),

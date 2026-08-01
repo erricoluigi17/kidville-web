@@ -6,6 +6,7 @@ import { Search, AlertCircle, Users, ThumbsUp, ThumbsDown, Eye, HelpCircle } fro
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { formattaIstante } from '@/i18n/config';
 
 // Monitoraggio di un avviso (stato lettura + adesioni con filtri): contenuto
 // condiviso tra il drawer mobile del docente (AvvisoDetailsDrawer) e la pagina
@@ -153,7 +154,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 studentName: `${student.nome} ${student.cognome}`,
                 classe: student.classe_sezione,
                 parentName: resp?.parent_name || t('genitoreFallback'),
-                lettoIl: resp?.letto_il ? new Date(resp.letto_il).toLocaleString(locale) : '-'
+                lettoIl: resp?.letto_il ? formattaIstante(new Date(resp.letto_il), locale, { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }) : '-'
             };
         });
 
@@ -173,7 +174,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             classe: student.classe_sezione,
             parentName: resp?.parent_name || t('genitoreFallback'),
             risposta: resp?.risposta || 'attesa', // 'si' | 'no' | 'attesa'
-            rispostoIl: resp?.risposto_il ? new Date(resp.risposto_il).toLocaleString(locale) : '-'
+            rispostoIl: resp?.risposto_il ? formattaIstante(new Date(resp.risposto_il), locale, { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }) : '-'
         };
     });
 

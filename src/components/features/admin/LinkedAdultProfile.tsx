@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { User, IdCard, Download, Mail, Phone, MapPin } from 'lucide-react';
+import { formattaIstante } from '@/i18n/config';
 
 export type AdultType = 'mother' | 'father' | 'delegate';
 
@@ -46,7 +47,7 @@ export function LinkedAdultProfile({ data, type }: Props) {
     const formatDate = (dateStr?: string) => {
         if (!dateStr) return '—';
         try {
-            return new Date(dateStr).toLocaleDateString(locale);
+            return formattaIstante(new Date(dateStr), locale);
         } catch {
             return dateStr;
         }

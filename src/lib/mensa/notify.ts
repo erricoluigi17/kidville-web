@@ -6,6 +6,7 @@ import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { logEvento } from '@/lib/logging/logger'
+import { formattaIstante } from '@/i18n/config'
 
 const PORTATA_LABEL: Record<string, string> = { primo: 'primo', secondo: 'secondo', contorno: 'contorno', frutta: 'frutta' }
 
@@ -102,7 +103,11 @@ export async function notificaAllergie(
     const dettaglio = opts.conflitti
       .map(c => `${allergeneLabel(c.allergene)} (${c.portate.map(p => PORTATA_LABEL[p] ?? p).join(', ')})`)
       .join('; ')
-    const dataLeggibile = new Date(`${opts.data}T00:00:00Z`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })
+    // `opts.data` è una colonna `date`: un GIORNO di calendario, non un istante.
+    // Si àncora a UTC e si formatta in UTC — così non può slittare col fuso del
+    // processo (Vercel gira in UTC, la cucina è a Giugliano). Il locale è `'it'`
+    // di proposito: il corpo della notifica è un DATO, non interfaccia tradotta.
+    const dataLeggibile = formattaIstante(new Date(`${opts.data}T00:00:00Z`), 'it', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
     const sez = opts.classeSezione ? ` (${opts.classeSezione})` : ''
     const titolo = '⚠️ Allergia nel menu mensa'
     const corpo = `${opts.nomeAlunno}${sez}: il menu di ${dataLeggibile} contiene allergeni a cui è sensibile → ${dettaglio}. Verificare in cucina.`

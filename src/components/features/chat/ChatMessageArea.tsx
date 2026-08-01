@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
-import { intlDateTime } from '@/i18n/config';
+import { formattaIstante } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
@@ -32,8 +32,24 @@ interface Props {
     onMarkRead?: (ids: string[]) => void;
 }
 
-function formatMessageTime(iso: string, locale: string): string {
-    return new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+/**
+ * L'ora di una bolla di chat («14:05»).
+ *
+ * `intlDateTime` e non `toLocaleTimeString(locale, …)`: quest'ultima prendeva il
+ * locale GREZZO di next-intl e nessun fuso. Due difetti in una riga sola:
+ *  · `'en'` nudo lo risolve `Intl` su **en-US** → «2:05 PM» dentro un'interfaccia
+ *    britannica dove tutto il resto è a 24 ore;
+ *  · senza `timeZone` il fuso è quello DELL'AMBIENTE — su Vercel UTC, nel
+ *    telefono di una famiglia Europe/Rome: d'estate due ore di scarto, e
+ *    l'ultimo messaggio della sera finiva nel giorno prima.
+ *
+ * Il gemello a riga 72 era già stato corretto; questo no, nello stesso file.
+ * Esportata perché è pura ed è il punto in cui il difetto si misura: il lock di
+ * forma `__tests__/architecture/date-senza-fuso.test.ts` vieta la scrittura,
+ * `__tests__/components/chat-ora-messaggio.test.ts` prova il risultato.
+ */
+export function formatMessageTime(iso: string, locale: string): string {
+    return formattaIstante(new Date(iso), locale, { hour: '2-digit', minute: '2-digit' });
 }
 
 /**
@@ -69,7 +85,7 @@ export function formatMessageDate(iso: string, locale: string, labels: Etichette
     // (giorno + mese) è localizzato tramite `Intl.DateTimeFormat(locale, …)`.
     if (d.toDateString() === today.toDateString()) return labels.oggi;
     if (d.toDateString() === yesterday.toDateString()) return labels.ieri;
-    return intlDateTime(locale, { day: 'numeric', month: 'long' }).format(d);
+    return formattaIstante(d, locale, { day: 'numeric', month: 'long' });
 }
 
 function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { date: string; messages: ChatMessage[] }[] {

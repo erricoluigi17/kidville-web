@@ -353,6 +353,15 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   // Header dinamico. Il numero dell'istanza è un VALORE composto in JS (il
   // sostantivo è tradotto, la posizione del numero è identica in it/en); i
   // plurali veri restano ICU nel riepilogo.
+  //
+  // ⚠️ Il ramo `consensi` non c'era, e la catena di ternari cadeva sul ramo
+  // finale: il passo dei CONSENSI si annunciava «Riepilogo — Controlla e invia
+  // la richiesta», cioè il titolo del passo successivo. Sotto, il corpo del
+  // passo ripeteva il titolo vero in una seconda intestazione dello stesso
+  // livello: due `h2` di cui uno mentiva, sulla schermata su cui una famiglia
+  // presta il consenso al trattamento dei dati del figlio. Un'intestazione che
+  // dice il nome di un'altra pagina non è un dettaglio estetico — è ciò che uno
+  // screen reader legge per prima cosa quando ci si arriva.
   const heading =
     current.kind === 'sede'
       ? { icon: MapPin, title: t('wizardSede'), sub: t('wizardSedeSub') }
@@ -364,6 +373,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           title: `${t('wizardAdulto')} ${current.index + 1}${current.index === 0 ? t('wizardAdultoObbligatorioSuffix') : ''}`,
           sub: t('wizardAdultoSub'),
         }
+      : current.kind === 'consensi'
+      ? { icon: Info, title: t('wizardConsensiTitolo'), sub: t('wizardConsensiSottotitolo') }
       : { icon: Check, title: t('wizardRiepilogo'), sub: t('wizardRiepilogoSub') }
 
   const HeadIcon = heading.icon
@@ -381,14 +392,28 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       </div>
 
       <div className="flex-1 w-full max-w-2xl mx-auto px-5 py-8 flex flex-col">
-        {/* Brand header */}
+        {/*
+          Brand header — ed è anche l'`<h1>` della pagina.
+
+          Fino al 2026-08-01 questa schermata non ne aveva NESSUNO: era un `div`
+          con dentro uno `span`. Su `/iscrizione` 251 famiglie hanno consegnato
+          codici fiscali di minori, allergie e note mediche (≈9 invii l'ora), e
+          chi naviga per intestazioni con uno screen reader — il modo normale di
+          orientarsi in una pagina lunga — non trovava nulla da cui partire: né
+          il nome della pagina, né il punto in cui ricominciare dopo un errore.
+          Il testo è lo stesso di prima (`wizardEyebrow` = «Iscrizione Nuovo
+          Alunno»), l'aspetto pure: cambia solo che adesso è un'intestazione.
+
+          L'icona è decorativa e viene tolta dall'albero di accessibilità, così
+          il nome dell'`h1` resta esattamente il titolo.
+        */}
         <div className="mb-6">
-          <div className="flex items-center gap-2 text-xs text-kidville-yellow-dark mb-2">
-            <UserPlus className="w-3.5 h-3.5" />
-            <span className="uppercase tracking-widest font-semibold">{t('wizardEyebrow')}</span>
-          </div>
+          <h1 className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest font-semibold text-kidville-warn-strong">
+            <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
+            {t('wizardEyebrow')}
+          </h1>
           {!done && formaDecisa && (
-            <p className="text-xs text-kidville-muted font-medium">
+            <p className="text-xs text-kidville-sub font-medium">
               {t('wizardPassoDi', { corrente: step + 1, totale: steps.length })}
             </p>
           )}
@@ -416,7 +441,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
               <PartyPopper className="w-8 h-8 text-kidville-success" />
             </div>
             <h2 className="text-xl font-semibold text-kidville-green">{t('wizardInviata')}</h2>
-            <p className="text-sm text-kidville-muted mt-1.5 max-w-sm">
+            <p className="text-sm text-kidville-sub mt-1.5 max-w-sm">
               {t('wizardInviataCorpo')}
             </p>
           </motion.div>
@@ -449,7 +474,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                     </div>
                     <div>
                       <h2 className="text-xl font-semibold text-kidville-green leading-tight">{heading.title}</h2>
-                      <p className="text-sm text-kidville-muted">{heading.sub}</p>
+                      <p className="text-sm text-kidville-sub">{heading.sub}</p>
                     </div>
                   </div>
 
@@ -478,7 +503,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                               onChange={() => { setSedeScelta(s.id); setErroreSede(false) }}
                               className="w-4 h-4 accent-kidville-green"
                             />
-                            <MapPin className={`w-4 h-4 flex-shrink-0 ${scelta ? 'text-kidville-green' : 'text-kidville-muted'}`} />
+                            <MapPin className={`w-4 h-4 flex-shrink-0 ${scelta ? 'text-kidville-green' : 'text-kidville-sub'}`} />
                             <span className={`text-sm ${scelta ? 'text-kidville-green font-semibold' : 'text-kidville-ink'}`}>
                               {s.nome}
                             </span>
@@ -522,7 +547,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                             <button
                               type="button"
                               onClick={() => { setChildCount(c => c - 1); setStep(s => Math.max(0, s - 1)) }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-muted hover:text-kidville-error text-sm transition-all"
+                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-sub hover:text-kidville-error text-sm transition-all"
                             >
                               <Trash2 className="w-4 h-4" /> {t('wizardRimuovi')}
                             </button>
@@ -569,7 +594,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                             <button
                               type="button"
                               onClick={() => { setAdultCount(a => a - 1); setStep(s => Math.max(0, s - 1)) }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-muted hover:text-kidville-error text-sm transition-all"
+                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-sub hover:text-kidville-error text-sm transition-all"
                             >
                               <Trash2 className="w-4 h-4" /> {t('wizardRimuovi')}
                             </button>
@@ -585,17 +610,10 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                       chiederlo darebbe una falsa sicurezza (vedi CONSENSI_FIELDS). */}
                   {current.kind === 'consensi' && (
                     <div className="space-y-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-kidville-green-soft grid place-items-center">
-                          <Info className="w-4.5 h-4.5 text-kidville-green" />
-                        </div>
-                        <div>
-                          <h2 className="font-barlow font-bold uppercase tracking-wide text-kidville-green">
-                            {t('wizardConsensiTitolo')}
-                          </h2>
-                          <p className="text-xs text-kidville-muted">{t('wizardConsensiSottotitolo')}</p>
-                        </div>
-                      </div>
+                      {/* Nessuna intestazione qui dentro: il titolo del passo lo
+                          dà ormai l'header dello step (ramo `consensi` di
+                          `heading`), con la stessa icona. Ripeterlo qui creava
+                          il secondo `h2` che diceva una cosa diversa dal primo. */}
                       <div className="space-y-3">
                         {CONSENSI_FIELDS.map(f => (
                           <FieldRenderer
@@ -623,7 +641,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           })}
                         </p>
                       </div>
-                      <p className="text-xs text-kidville-muted leading-relaxed">
+                      <p className="text-xs text-kidville-sub leading-relaxed">
                         {t.rich('wizardRiepilogoNota', {
                           b: (chunks) => <strong className="text-kidville-ink">{chunks}</strong>,
                         })}
@@ -638,7 +656,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
               <button
                 onClick={goPrev}
                 disabled={step === 0 || submitting}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-sub hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
                 <ArrowLeft className="w-4 h-4" /> {t('wizardIndietro')}
               </button>

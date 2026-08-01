@@ -12,6 +12,7 @@ import {
   SubmissionDetailSidebar,
   type SubmissionRow,
 } from './SubmissionDetailSidebar'
+import { formattaIstante } from '@/i18n/config'
 
 const STATUS_LABEL_KEYS: Record<FormSubmissionStatus, string> = {
   draft: 'statusBozza',
@@ -312,12 +313,12 @@ export function SubmissionsTable() {
             >
               {/* Date */}
               <div className="px-4 py-4 text-kidville-muted text-xs tabular-nums">
-                {new Date(sub.created_at).toLocaleDateString(locale, {
+                {formattaIstante(new Date(sub.created_at), locale, {
                   day: '2-digit', month: 'short', year: '2-digit',
                 })}
                 <br />
                 <span className="text-kidville-muted">
-                  {new Date(sub.created_at).toLocaleTimeString(locale, {
+                  {formattaIstante(new Date(sub.created_at), locale, {
                     hour: '2-digit', minute: '2-digit',
                   })}
                 </span>
@@ -348,7 +349,7 @@ export function SubmissionsTable() {
               <div className="px-4 py-4 text-xs">
                 {sub.signed_at ? (
                   <span className="text-kidville-success">
-                    {new Date(sub.signed_at).toLocaleDateString(locale, {
+                    {formattaIstante(new Date(sub.signed_at), locale, {
                       day: '2-digit', month: 'short',
                     })}
                   </span>

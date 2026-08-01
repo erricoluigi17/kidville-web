@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge'
 import type { NewsMedia, NewsPost, NewsTipo } from '@/lib/news/tipi'
 import { InstagramEmbed } from './InstagramEmbed'
 import { VideoEmbed } from './VideoEmbed'
+import { formattaIstante } from '@/i18n/config'
 
 // La label del tipo passa dall'i18n: la chiave è risolta dentro il componente.
 const TIPO_META: Record<NewsTipo, { labelKey: string; Icon: typeof Newspaper }> = {
@@ -17,7 +18,7 @@ const TIPO_META: Record<NewsTipo, { labelKey: string; Icon: typeof Newspaper }> 
 const fmtDataLunga = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' })
+    return formattaIstante(new Date(iso), locale, { day: 'numeric', month: 'long', year: 'numeric' })
   } catch {
     return ''
   }

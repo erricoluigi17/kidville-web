@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import { LIVELLI, livelloEtichetta } from './modello'
+import { formattaIstante } from '@/i18n/config'
 
 export interface CertificatoData {
   scuolaNome: string
@@ -51,7 +52,7 @@ export function buildCertificatoPdf(d: CertificatoData): Buffer {
   doc.setFont('Helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(100, 116, 139)
-  const nato = d.alunnoNato ? new Date(d.alunnoNato).toLocaleDateString('it-IT') : null
+  const nato = d.alunnoNato ? formattaIstante(new Date(d.alunnoNato), 'it') : null
   const meta = [nato ? `nato/a il ${nato}` : null, d.codiceFiscale ? `C.F. ${d.codiceFiscale}` : null]
     .filter(Boolean)
     .join('  ·  ')
@@ -175,7 +176,7 @@ export function buildCertificatoPdf(d: CertificatoData): Buffer {
   doc.setFont('Helvetica', 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(100, 116, 139)
-  const dataFirma = d.firmatoIl ? new Date(d.firmatoIl).toLocaleDateString('it-IT') : '—'
+  const dataFirma = d.firmatoIl ? formattaIstante(new Date(d.firmatoIl), 'it') : '—'
   const firma = d.dirigente
     ? `Certificato rilasciato e validato dal Dirigente ${d.dirigente} il ${dataFirma}.`
     : `Certificato in bozza — non ancora validato.`

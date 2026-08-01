@@ -5,6 +5,7 @@ import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, M
 import { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { condividi } from '@/lib/native/share';
+import { formatData } from '@/lib/i18n/date';
 import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
@@ -70,7 +71,7 @@ function statusBadge(opts: { isAdesione: boolean; isRead: boolean; myAnswer?: st
         return { txt: t('badgeRichiedeAdesione'), cls: 'bg-kidville-yellow text-kidville-green' };
     }
     return isRead
-        ? { txt: t('badgeLetto'), cls: 'bg-kidville-neutral-soft text-kidville-muted' }
+        ? { txt: t('badgeLetto'), cls: 'bg-kidville-neutral-soft text-kidville-sub' }
         : { txt: t('badgeDaLeggere'), cls: 'bg-kidville-green-soft text-kidville-green' };
 }
 
@@ -146,8 +147,12 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                 className="flex w-full items-start gap-3 px-5 py-4 text-left"
             >
                 {/* Icon */}
+                {/* L'icona è il segno che distingue «adesione» da «comunicazione»:
+                    va letta, quindi vale la soglia 3:1 di WCAG 1.4.11. Il token
+                    caldo che la reggeva (`yellow-dark`) sta a 1,75:1 sul proprio
+                    fondo — meno di un'ombra. `warn-strong` tiene il caldo a 4,97:1. */}
                 <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${
-                    isAdesione ? 'bg-kidville-yellow-soft text-kidville-yellow-dark' : 'bg-kidville-green-soft text-kidville-green'
+                    isAdesione ? 'bg-kidville-yellow-soft text-kidville-warn-strong' : 'bg-kidville-green-soft text-kidville-green'
                 }`}>
                     {isAdesione ? <ClipboardList size={19} strokeWidth={1.8} /> : <Megaphone size={19} strokeWidth={1.8} />}
                 </div>
@@ -157,12 +162,17 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wide ${badge.cls}`}>
                             {badge.txt}
                         </span>
-                        <span className="flex-shrink-0 font-maven text-[11px] text-kidville-muted">{timeAgo(avviso.created_at, t)}</span>
+                        <span className="flex-shrink-0 font-maven text-[11px] text-kidville-sub">{timeAgo(avviso.created_at, t)}</span>
                     </div>
-                    <h3 className="mt-1.5 truncate font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
+                    {/* `h2`, non `h3`: la card sta SEMPRE sotto l'`h1` della testata di
+                        pagina (`PageHeaderCard`) e non c'è nessuna sezione in mezzo. Con
+                        l'`h3` la bacheca del docente saltava da h1 a h3 dieci volte di
+                        fila, e chi naviga per intestazioni non aveva modo di sapere se si
+                        era perso un livello. */}
+                    <h2 className="mt-1.5 truncate font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
                         {avviso.titolo}
-                    </h3>
-                    <p className="mt-0.5 font-maven text-[11px] text-kidville-muted">
+                    </h2>
+                    <p className="mt-0.5 font-maven text-[11px] text-kidville-sub">
                         {avviso.author.first_name} {avviso.author.last_name}
                     </p>
                     {showTargetPills && (
@@ -190,7 +200,7 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                     transition={{ duration: 0.2 }}
                     className="mt-1 flex-shrink-0"
                 >
-                    <ChevronDown size={16} className="text-kidville-muted" strokeWidth={1.8} />
+                    <ChevronDown size={16} className="text-kidville-sub" strokeWidth={1.8} />
                 </motion.div>
             </button>
 
@@ -204,7 +214,11 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                 >
                     {/* Contenuto */}
                     <div className="px-5 py-4">
-                        <p className="whitespace-pre-wrap font-maven text-sm leading-relaxed text-[#55615c]">
+                        {/* `text-kidville-sub`, non l'hex letterale che c'era prima:
+                            è lo STESSO colore (#55615C), ma scritto a mano restava
+                            fuori dalle rimappature per-superficie e dall'inventario
+                            dei token. */}
+                        <p className="whitespace-pre-wrap font-maven text-sm leading-relaxed text-kidville-sub">
                             {avviso.contenuto}
                         </p>
 
@@ -217,9 +231,18 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                             }`}>
                                 <Clock size={12} strokeWidth={1.8} />
                                 {isExpired ? t('scadutoIl') : t('scadenza')}{' '}
-                                {new Date(avviso.scadenza).toLocaleDateString(locale, {
-                                    day: 'numeric', month: 'long', year: 'numeric'
-                                })}
+                                {/* `formatData`, non `toLocaleDateString(locale, …)`.
+                                    Quella chiamata aveva due difetti nello stesso
+                                    argomento: il locale GREZZO di next-intl («en»,
+                                    che Intl risolve su en-US: «8/10» letto al
+                                    contrario) e NESSUN fuso, quindi il fuso
+                                    dell'ambiente — UTC sul processo Vercel,
+                                    Europe/Rome nel browser di una famiglia. Fra le
+                                    00:00 e le 02:00 italiane la stessa scadenza
+                                    rendeva due GIORNI diversi: è la famiglia di
+                                    difetti che a gennaio ha fatto sparire un incasso
+                                    da un KPI. */}
+                                {formatData(avviso.scadenza, locale, 'lunga')}
                             </div>
                         )}
 
@@ -290,7 +313,7 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                             <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 font-maven text-xs ${
                                 myAnswer === 'si'
                                     ? 'border-kidville-success/20 bg-kidville-success-soft text-kidville-success'
-                                    : 'border-kidville-neutral/20 bg-kidville-neutral-soft text-kidville-muted'
+                                    : 'border-kidville-neutral/20 bg-kidville-neutral-soft text-kidville-sub'
                             }`}>
                                 {myAnswer === 'si' ? <ThumbsUp size={12} strokeWidth={1.8} /> : <ThumbsDown size={12} strokeWidth={1.8} />}
                                 {myAnswer === 'si' ? t('haiAderitoConferma') : t('haiDeclinato')}
@@ -301,7 +324,7 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                     {/* Stats e Azioni per insegnante */}
                     {isTeacher && (
                         <div className="flex flex-wrap items-center gap-4 border-t border-kidville-line px-5 pb-4 pt-3">
-                            <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                            <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-sub">
                                 <Eye size={12} strokeWidth={1.8} />
                                 <span>{t('hannoLetto', { count: avviso.stats.letti })}</span>
                             </div>
@@ -311,7 +334,7 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                                         <ThumbsUp size={12} strokeWidth={1.8} />
                                         <span>{avviso.stats.adesioni_si}</span>
                                     </div>
-                                    <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                                    <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-sub">
                                         <ThumbsDown size={12} strokeWidth={1.8} />
                                         <span>{avviso.stats.adesioni_no}</span>
                                     </div>

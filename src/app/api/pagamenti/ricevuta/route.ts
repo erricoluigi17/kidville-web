@@ -11,13 +11,14 @@ import { buildRicevutaPdf } from '@/lib/pagamenti/pdf'
 import { datiStruttura, isTracciabile } from '@/lib/pagamenti/fiscale'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { formattaIstante } from '@/i18n/config'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
 })
 
 const periodoIt = (p?: string | null) =>
-  p ? new Date(p).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : null
+  p ? formattaIstante(new Date(p), 'it', { month: 'long', year: 'numeric' }) : null
 
 // GET /api/pagamenti/ricevuta?pagamento_id=&userId= — ricevuta NUMERATA (A5).
 // Emissione idempotente al primo download (registro `ricevute_emesse`, una
@@ -93,7 +94,7 @@ export const GET = withRoute('pagamenti/ricevuta:GET', async (request: Request) 
       tracciabile: record?.tracciabile ?? isTracciabile(positivi.map((i) => i.metodo as string | null)),
       bollo: record?.bollo ?? false,
       dicituraBollo: record?.dati_struttura?.dicitura_bollo,
-      emessaIl: record ? new Date(record.creato_il).toLocaleDateString('it-IT') : undefined,
+      emessaIl: record ? formattaIstante(new Date(record.creato_il), 'it') : undefined,
     })
 
     const filename = record ? `ricevuta-${record.numero}-${record.anno}.pdf` : `ricevuta-${pagamentoId.slice(0, 8)}.pdf`

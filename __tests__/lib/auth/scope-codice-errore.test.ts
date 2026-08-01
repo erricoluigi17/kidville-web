@@ -98,7 +98,7 @@ describe('resolveScuolaScrittura — il diniego porta un codice traducibile', ()
 
         const b = await corpo(r.response)
         expect(b).toMatchObject({ status: 403, codice: 'SEDE_NON_ACCESSIBILE' })
-        expect(await aSchermo(b, 'en')).toBe('Site not accessible')
+        expect(await aSchermo(b, 'en')).toBe('Location not accessible')
         // Controllo POSITIVO: in italiano il testo resta quello di sempre, cioè
         // la correzione non ha cambiato ciò che legge una segretaria di Aversa.
         expect(await aSchermo(b, 'it')).toBe('Sede non accessibile')
@@ -112,7 +112,7 @@ describe('resolveScuolaScrittura — il diniego porta un codice traducibile', ()
 
         const b = await corpo(r.response)
         expect(b).toMatchObject({ status: 403, codice: 'SEDE_NON_ACCESSIBILE' })
-        expect(await aSchermo(b, 'en')).toBe('Site not accessible')
+        expect(await aSchermo(b, 'en')).toBe('Location not accessible')
     })
 
     it('400 ambiguità: `codice` SEDE_DA_SPECIFICARE, e `scuola_id` NON è più nel testo', async () => {
@@ -122,7 +122,7 @@ describe('resolveScuolaScrittura — il diniego porta un codice traducibile', ()
         const b = await corpo(r.response)
         expect(b).toMatchObject({ status: 400, codice: 'SEDE_DA_SPECIFICARE' })
         expect(b.error).not.toMatch(/scuola_id/)
-        expect(await aSchermo(b, 'en')).toBe('Please specify which site this applies to')
+        expect(await aSchermo(b, 'en')).toBe('Please specify which location this applies to')
         expect(await aSchermo(b, 'it')).toBe('Specificare la sede a cui si riferisce questa operazione')
     })
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useTranslations, useLocale } from 'next-intl'
 import { CalendarDays } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
+import { formattaIstante } from '@/i18n/config'
 
 /**
  * Sezione "Calendario · Prossimi appuntamenti" del design (DR AgendaCard).
@@ -32,14 +33,16 @@ const TIPO_CHIAVE: Record<string, string> = {
 }
 
 function giornoMese(ymd: string, locale: string): { giorno: string; mese: string } {
-  try {
-    const d = new Date(`${ymd}T00:00:00`)
-    return {
-      giorno: d.toLocaleDateString(locale, { day: 'numeric' }),
-      mese: d.toLocaleDateString(locale, { month: 'short' }).replace('.', ''),
-    }
-  } catch {
-    return { giorno: '—', mese: '' }
+  // `agenda.data` è una colonna `date`: un GIORNO di calendario, non un
+  // istante. L'istante si àncora a UTC e si formatta in UTC, così una data
+  // senza ora non può slittare col fuso del dispositivo; il `locale` passa da
+  // `intlDateTime`, che gli dà la sua REGIONE (`'en'` nudo sarebbe en-US).
+  // Gemello di `TeacherAgendaCard.giornoMese`.
+  const d = new Date(`${ymd}T00:00:00Z`)
+  if (Number.isNaN(d.getTime())) return { giorno: '—', mese: '' }
+  return {
+    giorno: formattaIstante(d, locale, { day: 'numeric', timeZone: 'UTC' }),
+    mese: formattaIstante(d, locale, { month: 'short', timeZone: 'UTC' }).replace('.', ''),
   }
 }
 

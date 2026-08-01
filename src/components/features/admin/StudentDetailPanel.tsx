@@ -10,6 +10,7 @@ import { StudentEconomicSection } from './StudentEconomicSection';
 import { AllergeniSelect } from './AllergeniSelect';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { formattaIstante } from '@/i18n/config';
 
 interface Student {
     id: string;
@@ -45,6 +46,12 @@ interface Student {
     // Liberatoria foto/video (galleria): senza consenso il bambino compare solo
     // in foto individuali visibili ai suoi genitori (regola "foto privata").
     consenso_privacy?: boolean | null;
+    // Gli altri due CANALI, distinti per legge dal primo e fra loro: sito web
+    // pubblico (bucket `news`, nessun login) e canali social (fuori dai nostri
+    // sistemi). `undefined` su un ambiente non ancora migrato: il comando resta
+    // spento e il salvataggio non nomina la colonna che non c'è.
+    consenso_foto_sito?: boolean | null;
+    consenso_foto_social?: boolean | null;
     emails?: string[];
     phone_numbers?: string[];
     student_parents?: {
@@ -510,8 +517,20 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                             />
                         )}
 
-                        {/* Liberatoria foto/video (galleria) */}
-                        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-kidville-line">
+                        {/* ─── I TRE CONSENSI FOTOGRAFICI, uno per CANALE ─────────────────
+                            Il modulo d'iscrizione li chiede separatamente perché il consenso
+                            alla pubblicazione è granulare per canale (provv. Garante 725 del
+                            27/11/2025). Fino al 2026-08-01 qui c'era una sola spunta: gli
+                            altri due consensi si potevano solo IMPORTARE da una domanda, e
+                            una famiglia che cambiava idea non aveva nessuna strada per farlo
+                            registrare — art. 7 §3 GDPR, revocare dev'essere facile quanto
+                            acconsentire. */}
+                        <div className="mt-3 pt-3 border-t border-kidville-line">
+                            <h4 className="font-barlow font-bold text-kidville-green uppercase text-[11px] tracking-wide mb-2">
+                                {t('detailConsensiTitolo')}
+                            </h4>
+
+                            {/* Galleria riservata alle famiglie della sezione */}
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input
                                     type="checkbox"
@@ -521,10 +540,38 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                                 <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailLiberatoria')}</span>
                             </label>
+                            <p className="font-maven text-[11px] text-kidville-muted mt-1 mb-3">
+                                {t('detailLiberatoriaHint')}
+                            </p>
+
+                            {/* Sito web della Scuola: canale PUBBLICO, senza login */}
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={!!form.consenso_foto_sito}
+                                    onChange={e => updateForm('consenso_foto_sito', e.target.checked)}
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                                />
+                                <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailConsensoSito')}</span>
+                            </label>
+                            <p className="font-maven text-[11px] text-kidville-muted mt-1 mb-3">
+                                {t('detailConsensoSitoHint')}
+                            </p>
+
+                            {/* Canali social: la pubblicazione avviene fuori dai nostri sistemi */}
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={!!form.consenso_foto_social}
+                                    onChange={e => updateForm('consenso_foto_social', e.target.checked)}
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                                />
+                                <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailConsensoSocial')}</span>
+                            </label>
+                            <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                                {t('detailConsensoSocialHint')}
+                            </p>
                         </div>
-                        <p className="font-maven text-[11px] text-kidville-muted mt-1">
-                            {t('detailLiberatoriaHint')}
-                        </p>
                     </section>
 
                     {/* Dati Economici (modulo Pagamenti) */}
@@ -699,7 +746,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                             
                                             <div className="text-[8px] text-kidville-muted flex justify-between pt-1 border-t border-kidville-line/30">
                                                 <span>{t('detailCategoria', { categoria: task.category })}</span>
-                                                <span>{t('detailApertoIl', { data: new Date(task.created_at).toLocaleDateString(locale) })}</span>
+                                                <span>{t('detailApertoIl', { data: formattaIstante(new Date(task.created_at), locale) })}</span>
                                             </div>
                                         </div>
                                     );

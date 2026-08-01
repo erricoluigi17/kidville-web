@@ -6,6 +6,7 @@ import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { StudentRowCard } from './StudentRowCard';
+import { formattaIstante } from '@/i18n/config';
 
 export interface Student {
     id: string;
@@ -247,7 +248,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 <>
                                                     <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
                                                         {student.data_nascita
-                                                            ? new Date(student.data_nascita).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
+                                                            ? formattaIstante(new Date(student.data_nascita), locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                                             : '—'
                                                         }
                                                     </td>

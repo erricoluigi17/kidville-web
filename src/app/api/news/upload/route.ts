@@ -7,6 +7,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff'
 import { NEWS_BUCKET } from '@/lib/news/tipi'
+import { NEWS_BUCKET_BOZZE, SCADENZA_ANTEPRIMA_SECONDI } from '@/lib/news/media-bozza'
 
 // =============================================================================
 // POST /api/news/upload — carica un media (immagine/video) nel bucket «news».
@@ -90,10 +91,34 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
     const uniqueFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExtension}`
     const filePath = `uploads/${userId}/${uniqueFileName}`
 
-    const { error } = await supabase.storage.from(NEWS_BUCKET).upload(filePath, Buffer.from(fileBuffer), {
+    // ─── IL FILE NASCE IN UN'AREA NON PUBBLICA (privacy F4, 2026-08-01) ──────
+    // Fino a oggi si caricava dritto nel bucket `news`, che è pubblico: la foto
+    // era leggibile da chiunque, senza login, PRIMA che qualcuno verificasse il
+    // consenso — e ci restava anche se il gate poi rifiutava la pubblicazione.
+    // Ora sosta in `news_bozze` (privato) e viene spostata nel bucket pubblico
+    // solo dopo il gate, da `promuoviMediaBozza`.
+    const corpo = Buffer.from(fileBuffer)
+    let bucketUsato: string = NEWS_BUCKET_BOZZE
+    let { error } = await supabase.storage.from(NEWS_BUCKET_BOZZE).upload(filePath, corpo, {
       contentType,
       upsert: true,
     })
+    if (error && /bucket not found/i.test(error.message ?? '')) {
+      // La migrazione che dichiara il bucket privato non è ancora applicata su
+      // questo progetto. Si ricade sul comportamento di prima — la funzione deve
+      // continuare a funzionare — ma è configurazione mancante in produzione,
+      // cioè un incidente: livello `error`, e col nome del bucket.
+      logEvento('storage', 'error', {
+        operazione: 'news/upload:POST',
+        esito: 'bucket-bozze-mancante',
+        bucket: NEWS_BUCKET_BOZZE,
+      }, error)
+      bucketUsato = NEWS_BUCKET
+      ;({ error } = await supabase.storage.from(NEWS_BUCKET).upload(filePath, corpo, {
+        contentType,
+        upsert: true,
+      }))
+    }
     if (error) {
       // Il bucket è dichiarato in migrazione: se lo Storage dice che non c'è,
       // la migrazione non è arrivata su questo progetto. È configurazione
@@ -103,11 +128,38 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
         logEvento('storage', 'error', {
           operazione: 'news/upload:POST',
           esito: 'bucket-mancante',
-          bucket: NEWS_BUCKET,
+          bucket: bucketUsato,
         }, error)
       }
       logErrore({ operazione: 'news/upload:POST', stato: 500, evento: 'storage' }, error)
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    if (bucketUsato === NEWS_BUCKET_BOZZE) {
+      // All'editor serve un'anteprima: un indirizzo FIRMATO e temporaneo, che
+      // non sopravvive fuori dalla sessione di lavoro. Non finisce mai in
+      // `news_posts`: la promozione lo sostituisce con quello definitivo.
+      const { data: firmato, error: errFirma } = await supabase.storage
+        .from(NEWS_BUCKET_BOZZE)
+        .createSignedUrl(filePath, SCADENZA_ANTEPRIMA_SECONDI)
+      if (errFirma || !firmato?.signedUrl) {
+        logErrore({ operazione: 'news/upload:POST', stato: 500, evento: 'storage' }, errFirma)
+        // Il file è nell'area di sosta ma non se ne può dare l'anteprima: per chi sta
+        // scrivendo il post è indistinguibile da un caricamento fallito, e il codice
+        // dice esattamente quello (invece di una prosa italiana non traducibile).
+        return NextResponse.json(
+          { error: 'Anteprima del file non disponibile', codice: 'ALLEGATO_NON_CARICATO' },
+          { status: 500 },
+        )
+      }
+      logEvento('news', 'info', {
+        operazione: 'news/upload:POST',
+        esito: 'caricato-in-sosta',
+        bucket: NEWS_BUCKET_BOZZE,
+        mime: contentType,
+        size: file.size,
+      })
+      return NextResponse.json({ fileUrl: firmato.signedUrl })
     }
 
     const { data: publicUrlData } = supabase.storage.from(NEWS_BUCKET).getPublicUrl(filePath)

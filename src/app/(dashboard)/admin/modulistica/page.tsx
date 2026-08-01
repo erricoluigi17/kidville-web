@@ -13,6 +13,7 @@ import { DateField } from '@/components/ui/DateField';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
+import { formattaIstante } from '@/i18n/config';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -427,7 +428,7 @@ function ModulisticaInner() {
       doc.setFontSize(12);
       doc.text(t('modPdfModulo', { titolo: form.title }), 20, 30);
       doc.text(t('modPdfDescrizione', { descrizione: form.description || t('modPdfNessuna') }), 20, 37);
-      doc.text(t('modPdfDataStampa', { data: new Date().toLocaleString('it-IT') }), 20, 44);
+      doc.text(t('modPdfDataStampa', { data: formattaIstante(new Date(), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }) }), 20, 44);
       
       doc.setDrawColor(0, 106, 95); // Kidville Green
       doc.setLineWidth(1);

@@ -7,6 +7,7 @@ import {
   X, FileText, Download, Clock, CheckCircle2, Hash, CheckCheck,
 } from 'lucide-react'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
+import { formattaIstante } from '@/i18n/config'
 
 export interface SubmissionRow {
   id: string
@@ -154,7 +155,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
 
               <span className="text-kidville-muted text-[11px] flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                {new Date(submission.created_at).toLocaleString(locale, {
+                {formattaIstante(new Date(submission.created_at), locale, {
                   day: '2-digit', month: 'short', year: 'numeric',
                   hour: '2-digit', minute: '2-digit',
                 })}
@@ -163,7 +164,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               {submission.signed_at && (
                 <span className="text-kidville-success text-[11px] flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  {t('sdsFirmato')} {new Date(submission.signed_at).toLocaleDateString(locale, {
+                  {t('sdsFirmato')} {formattaIstante(new Date(submission.signed_at), locale, {
                     day: '2-digit', month: 'short', year: 'numeric',
                   })}
                 </span>
@@ -226,7 +227,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 <CheckCheck className="w-4 h-4" /> {submission.gestita_il ? t('subGestita') : t('subSegnaGestita')}
                 {submission.gestita_il && (
                   <span className="rounded-pill bg-kidville-green/[0.12] px-2 py-0.5 font-maven text-[10px] font-semibold normal-case tracking-normal text-kidville-green">
-                    {new Date(submission.gestita_il).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}
+                    {formattaIstante(new Date(submission.gestita_il), locale, { day: '2-digit', month: 'short' })}
                   </span>
                 )}
               </button>

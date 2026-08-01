@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { cx } from '@/lib/ui/cx'
 import type { NewsPost, NewsTipo } from '@/lib/news/tipi'
+import { formattaIstante } from '@/i18n/config'
 
 /** Estratto di testo semplice: normalizza gli spazi e tronca con ellissi. */
 export function estrattoTesto(testo: string | null | undefined, max = 140): string {
@@ -18,7 +19,7 @@ export function estrattoTesto(testo: string | null | undefined, max = 140): stri
 const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
+    return formattaIstante(new Date(iso), locale, { day: 'numeric', month: 'short' })
   } catch {
     return ''
   }

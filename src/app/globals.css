@@ -18,6 +18,24 @@
   --color-kidville-green-soft: #E2EEEC;   /* ghost / chip / link attivo */
   --color-kidville-yellow-dark: #E6B100;
   --color-kidville-yellow-soft: #FBF0DD;
+
+  /* ── Inchiostri di BRAND (2026-08-01) ──────────────────────────────────────
+     Il riempimento verde/giallo È il brand e non si tocca. Ma come coppia
+     TESTO/FONDO, giallo #FDC400 su verde #006A5F vale 4,05:1 — e il suo
+     rovescio, essendo il contrasto simmetrico, vale esattamente lo stesso:
+     sotto AA (4,5:1) per il testo normale. Il bottone d'azione (`ui/Btn.tsx`)
+     è in Barlow grassetto a 13/15,5/17px: nessuna delle tre taglie arriva ai
+     18,66px che farebbero scattare la soglia 3:1 del «testo grande».
+     Questi due token NON sono nuovi colori del marchio: sono l'INCHIOSTRO che
+     regge sul riempimento del marchio, a tinta e saturazione invariate.
+       · yellow-ink su green 4,78:1 · su green-dark (hover) 6,51:1
+       · green-ink  su yellow 6,35:1 · su yellow-dark (hover) 5,18:1
+     NB: NON vengono rimappati in Alto Contrasto, di proposito — vivono sempre
+     sopra un riempimento `bg-kidville-*` il cui hex è già inlinato da
+     `@theme inline` e che quindi in HC non si ribalta. Rimapparli li
+     scollegherebbe dal proprio fondo. */
+  --color-kidville-yellow-ink: #FFDA5C;
+  --color-kidville-green-ink: #004A42;
   --color-kidville-cream-dark: #F6E4D2;
   --color-kidville-error-soft: #FDECEC;
   --color-kidville-error-strong: #C62828;  /* testo d'errore su error-soft (4,9:1) */
@@ -182,6 +200,10 @@ body {
   --color-kidville-green-soft: #000000;
   --color-kidville-yellow-dark: #FFE500;
   --color-kidville-yellow-soft: #1A1A1A;
+  /* `--color-kidville-yellow-ink` / `--color-kidville-green-ink` NON compaiono
+     qui APPOSTA: sono gli inchiostri del bottone di brand e stanno sempre sopra
+     un riempimento la cui utility ha l'hex inlinato (che in HC non si ribalta).
+     Ribaltare l'inchiostro senza il suo fondo darebbe giallo chiaro su giallo. */
   --color-kidville-cream-dark: #000000;
   --color-kidville-error-soft: #000000;
   --color-kidville-error-strong: #FF5252;
@@ -298,6 +320,31 @@ body {
 }
 
 /* =============================================================================
+   Inchiostro di brand — rete di sicurezza sulla COPPIA, non sul file (2026-08-01).
+
+   `bg-kidville-green text-kidville-yellow` (e il suo rovescio) compaiono su 80
+   elementi in 46 file: pillole, chip, badge, CTA scritti a mano fuori da
+   `ui/Btn.tsx`. Correggerli uno per uno vuol dire correggerne 46 oggi e
+   ritrovarne 3 nuovi domani, perché la coppia è il linguaggio del marchio e
+   continuerà a essere scritta così. Qui si corregge la COPPIA: qualunque
+   elemento che porti insieme il riempimento di brand e l'inchiostro di brand
+   riceve l'inchiostro che quel riempimento regge davvero (4,78:1 e 6,35:1
+   invece di 4,05:1). Il riempimento non cambia di un bit.
+
+   Specificità 0,2,0 e regola NON-layered: batte le utility (`@layer utilities`)
+   senza `!important`, ma perde contro qualunque remap per-superficie più
+   specifico (`.kv-admin-rowcard`, `.kv-admin-nav`, i blocchi Alto Contrasto).
+   Sta PRIMA del blocco «tab gialla» apposta: là dentro la pillola gialla viene
+   INVERTITA in verde, e a parità di specificità deve vincere l'inversione.
+   ============================================================================= */
+.bg-kidville-green.text-kidville-yellow {
+  color: var(--color-kidville-yellow-ink);
+}
+.bg-kidville-yellow.text-kidville-green {
+  color: var(--color-kidville-green-ink);
+}
+
+/* =============================================================================
    TEST reversibile "tab gialla" (2026-07-12) — attivo solo quando
    PageHeaderCard applica la classe marker `.kv-tab-giallo` (flag
    TAB_GIALLO_OVUNQUE in src/lib/ui/tab-theme.ts). Gli slot action/children dei
@@ -323,16 +370,47 @@ body {
 }
 /* Pill/badge gialli: su card gialla si invertono (verde con testo giallo).
    Va tenuto DOPO il remap dei testi: a parità di specificità il colore della
-   pill deve vincere. */
+   pill deve vincere.
+   L'inchiostro è `yellow-ink`, non `yellow`: la pill è diventata VERDE, e il
+   giallo del marchio su verde si ferma a 4,05:1 (vedi i token in cima). */
 .kv-tab-giallo .bg-kidville-yellow {
   background-color: var(--color-kidville-green);
-  color: var(--color-kidville-yellow);
+  color: var(--color-kidville-yellow-ink);
+}
+/* Una pill che porta il PROPRIO riempimento verde non sta «sulla card gialla»:
+   il remap dei testi qui sopra le darebbe verde scuro su verde (1,36:1 — il
+   bottone d'azione primario dentro una card-header sparirebbe). Specificità
+   0,3,0 → vince sul remap (0,2,0) senza `!important`. */
+.kv-tab-giallo .bg-kidville-green.text-kidville-yellow,
+.kv-tab-giallo .bg-kidville-green .text-kidville-yellow {
+  color: var(--color-kidville-yellow-ink);
 }
 /* Alto contrasto: il verde rimappa a #FFF — la pill invertita diventerebbe
    bianca con testo giallo (illeggibile su card nera): torna gialla con testo
    nero, la coppia HC canonica. */
 [data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow {
   background-color: var(--color-kidville-yellow);
+  color: #000000;
+}
+/* 🔴 BLOCCANTE del collaudo 2026-08-01, chiuso qui.
+   Le due regole qui sopra e qui sotto hanno la STESSA specificità (0,3,0) e
+   sono entrambe sensate; su un elemento che porta ENTRAMBE le classi — ed è
+   esattamente `<Btn variant="secondary">`, cioè `bg-kidville-yellow
+   text-kidville-green`, il pill «NUOVO» di /teacher/avvisi — vinceva quella
+   più in basso nel file: TESTO BIANCO SU FONDO GIALLO, 1,28:1. In Alto
+   Contrasto, cioè nella modalità pensata per chi fatica a leggere.
+   Nessuna riga diceva «bianco su giallo»: lo diceva la cascata. Qui l'ordine
+   non è più load-bearing: 0,4,0 vince comunque, sia sull'elemento sia sui suoi
+   discendenti. Lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§1), che
+   RISOLVE la cascata e misura il rapporto invece di guardare le classi. */
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow.text-kidville-green,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow.text-kidville-green-dark,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow.text-kidville-ink,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow.text-white,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow .text-kidville-green,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow .text-kidville-green-dark,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow .text-kidville-ink,
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow .text-white {
   color: #000000;
 }
 /* Alto contrasto: le utility colore sono INLINE (`@theme inline` incorpora il

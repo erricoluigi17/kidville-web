@@ -103,8 +103,19 @@ const patchBodySchema = z.object({
     section_id: z.unknown().optional(),
     importo_retta_mensile: z.unknown().optional(),
     opposizione_ade: z.unknown().optional(),
-    // Liberatoria foto/video (galleria): toggle admin sull'anagrafica alunno.
+    // ─── I TRE CONSENSI FOTOGRAFICI, uno per CANALE ──────────────────────────
+    // Sono distinti perché il consenso alla pubblicazione è granulare per canale
+    // (provv. Garante 725 del 27/11/2025), e il modulo d'iscrizione li chiede
+    // separatamente. Fino al 2026-08-01 solo il primo era scrivibile da qui: gli
+    // altri due si popolavano SOLO importando una domanda approvata, cioè una
+    // famiglia che cambiava idea non poteva essere registrata da nessuna parte.
+    // Un consenso che non si può revocare non è un consenso (art. 7 §3 GDPR).
+    /** Galleria RISERVATA alle famiglie della sezione (dentro l'app, dietro login). */
     consenso_privacy: z.unknown().optional(),
+    /** SITO WEB della Scuola: canale pubblico, senza login (bucket `news`). */
+    consenso_foto_sito: z.unknown().optional(),
+    /** CANALI SOCIAL: la pubblicazione avviene fuori dai sistemi della Scuola. */
+    consenso_foto_social: z.unknown().optional(),
     data_iscrizione: z.unknown().optional(),
     giorno_scadenza_pagamenti: z.unknown().optional(),
     genitori_separati: z.unknown().optional(),
@@ -544,7 +555,11 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
             try {
                 const updates: Record<string, unknown> = {};
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
-                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade', 'consenso_privacy',
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade',
+                    // I tre consensi fotografici, uno per canale: galleria riservata,
+                    // sito pubblico, social. Vanno tutti e tre in allowlist — con solo
+                    // il primo, la revoca degli altri due non aveva nessuna strada.
+                    'consenso_privacy', 'consenso_foto_sito', 'consenso_foto_social',
                     'data_iscrizione', 'giorno_scadenza_pagamenti'];
 
                 for (const field of allowedFields) {

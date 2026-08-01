@@ -7,6 +7,7 @@ import {
   ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
 import { useTranslations, useLocale } from 'next-intl';
+import { dataCivile, intlDateTime } from '@/i18n/config';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -54,20 +55,36 @@ type Avviso = {
 };
 type Presenza = { stato?: string };
 
+/**
+ * Occhiello di sezione («AZIONI RAPIDE», «AGENDA», …).
+ *
+ * Era `text-kidville-yellow-dark`: 1,97:1 su bianco, 1,75:1 sul giallo tenue
+ * delle sue fasce. Non è testo grande e non è un fregio — è l'unica etichetta
+ * che dice a cosa serve il blocco sotto. `warn-strong` conserva l'accento caldo
+ * del design e sta a 5,61:1 / 4,97:1.
+ */
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-yellow-dark">
+    <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-warn-strong">
       {children}
     </div>
   );
 }
 
+/**
+ * Data breve di un avviso in bacheca («31 lug»).
+ *
+ * `intlDateTime` e non `toLocaleDateString(locale, …)`: quest'ultima prendeva il
+ * locale GREZZO di next-intl («en», che Intl risolve su en-US) e NESSUN fuso,
+ * cioè quello dell'ambiente. Su Vercel il processo gira in UTC: un avviso
+ * pubblicato alle 00:30 di Roma risultava del giorno prima. Il mese abbreviato
+ * non è fra i formati di `@/lib/i18n/date`, e `intlDateTime` è proprio la via
+ * dichiarata per le opzioni fuori standard: mette `Europe/Rome` per costruzione.
+ */
 function relDate(iso: string, locale: string) {
-  try {
-    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
-  } catch {
-    return '';
-  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return intlDateTime(locale, { day: 'numeric', month: 'short' }).format(d);
 }
 
 function TeacherDashboardInner() {
@@ -142,7 +159,11 @@ function TeacherDashboardInner() {
   );
 
   // dati della sezione attiva: presenze di oggi + alunni (per allergie/conteggio).
-  const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []); // YYYY-MM-DD locale
+  // `dataCivile()` = la data di OGGI in Europe/Rome, `YYYY-MM-DD`. Prima era
+  // `new Date().toLocaleDateString('en-CA')`, cioè la data del PROCESSO: su
+  // Vercel (UTC) fra le 00:00 e le 02:00 italiane l'appello del giorno veniva
+  // chiesto per IERI — e server e browser rendevano due giorni diversi.
+  const today = useMemo(() => dataCivile(), []);
   useEffect(() => {
     if (!activeSection || !userId) return;
     let active = true;
@@ -256,7 +277,7 @@ function TeacherDashboardInner() {
                 <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('comunicazioniTitolo')}</h2>
                 <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-kidville-green px-1.5 font-barlow text-xs font-extrabold text-kidville-yellow">{avvisi.length}</span>
               </div>
-              <p className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">{t('comunicazioniSottotitolo')}</p>
+              <p className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">{t('comunicazioniSottotitolo')}</p>
             </div>
           </div>
           <div className="flex flex-col gap-2.5">
@@ -274,7 +295,7 @@ function TeacherDashboardInner() {
                         <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-green">
                           {isAdesione ? t('badgeAdesione') : t('badgePresaVisione')}
                         </span>
-                        <span className="ml-auto font-maven text-[10.5px] text-kidville-muted">
+                        <span className="ml-auto font-maven text-[10.5px] text-kidville-sub">
                           {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at, locale)}
                         </span>
                       </div>
@@ -318,7 +339,7 @@ function TeacherDashboardInner() {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
-                <div className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">
+                <div className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">
                   {t(isPrimariaOnly ? 'allergieDaSeguireClasse' : 'allergieDaSeguireSezione', { count: allergie.length, sezione: nomeSezione })}
                 </div>
               </div>
@@ -330,7 +351,12 @@ function TeacherDashboardInner() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
                   </div>
-                  <span className="inline-flex max-w-[55%] items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-yellow-dark">
+                  {/* La NOTA MEDICA di un bambino non è un accento cromatico:
+                      su `cream-dark` il giallo scuro stava a 1,59:1 — il
+                      contrasto più basso di tutta l'app, proprio sull'unica riga
+                      che un docente deve poter leggere di sfuggita. `ink` la
+                      porta a 9,51:1 (AAA). */}
+                  <span className="inline-flex max-w-[55%] items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
                     {s.note_mediche}
                   </span>
                 </div>
@@ -430,7 +456,7 @@ function TeacherDashboardInner() {
       </section>
 
       {/* footer */}
-      <div className="px-4 pb-2 pt-5 text-center font-maven text-[10.5px] text-kidville-muted">
+      <div className="px-4 pb-2 pt-5 text-center font-maven text-[10.5px] text-kidville-sub">
         {t('footerVista')} · {(me?.gradi ?? []).map((g) => gradoLabel(g)).join(' · ') || 'Kidville'}
       </div>
     </div>
@@ -440,7 +466,7 @@ function TeacherDashboardInner() {
 export default function TeacherDashboardPage() {
   const t = useTranslations('teacherNav');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-sub">{t('caricamento')}</div>}>
       <TeacherDashboardInner />
     </Suspense>
   );

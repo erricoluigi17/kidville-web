@@ -7,6 +7,7 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { BUCKET_TASK_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
 import { verificaAllegato } from '@/lib/allegati/mime';
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Il file si valida come presenza/istanza; il contenuto non è materia di zod.
@@ -51,8 +52,10 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
             });
 
         if (error) {
+            // Come nel gemello `avvisi/upload` (S31): il testo dello Storage non torna al
+            // client. Al client il codice, al log il corpo dell'errore per intero.
             logErrore({ operazione: 'tasks/upload:POST', stato: 500, evento: 'storage' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return rispostaAllegatoNonCaricato();
         }
 
         // Il caricamento riuscito lascia una riga, e la riga arriva in tabella (evento
@@ -105,7 +108,8 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
             type: file.type
         });
     } catch (error) {
+        // `withRoute` non vede le eccezioni CATTURATE: il log lo fa questo ramo, di suo.
         logErrore({ operazione: 'tasks/upload:POST', stato: 500 }, error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return rispostaAllegatoNonCaricato();
     }
 });

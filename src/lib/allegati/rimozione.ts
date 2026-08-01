@@ -203,6 +203,46 @@ export async function rimuoviAllegatoAvvisoSeOrfano(
     percorso: string | null,
     operazione: string,
 ): Promise<number> {
+    return await rimuoviSeNessunAvvisoLoUsa(supabase, percorso, operazione, avvisoId)
+}
+
+/**
+ * Cancella un allegato CARICATO E MAI PUBBLICATO: la bozza abbandonata (S35).
+ *
+ * È la gemella di sopra senza l'avviso da escludere, perché qui un avviso non c'è
+ * ancora: il file è stato messo nel bucket dall'upload e il modulo è stato chiuso
+ * (o l'allegato tolto) prima di pubblicare. Il controllo «nessuno lo referenzia»
+ * resta identico, e resta indispensabile: fra il caricamento e la chiusura la
+ * bozza può essere stata pubblicata in un'altra scheda, e allora quel file è
+ * l'allegato di una comunicazione viva.
+ *
+ * ⚠️ NON È UN GATE DI IDENTITÀ. Questa funzione non sa CHI sta chiedendo la
+ * rimozione: quello lo dimostra il sigillo (`./sigillo.ts`), che la route verifica
+ * prima di arrivare qui. Chiamarla senza quel controllo significa offrire a
+ * chiunque la cancellazione di qualunque file non ancora pubblicato.
+ *
+ * @returns quanti oggetti sono stati rimossi (0 anche quando è giusto non farlo).
+ */
+export async function rimuoviAllegatoNonPubblicato(
+    supabase: SupabaseClient,
+    percorso: string | null,
+    operazione: string,
+): Promise<number> {
+    return await rimuoviSeNessunAvvisoLoUsa(supabase, percorso, operazione, null)
+}
+
+/**
+ * Il corpo comune: si cancella solo se NESSUN avviso (escluso quello indicato)
+ * punta a quel percorso. Una copia della query per ciascuna delle due gemelle
+ * sarebbe una seconda cosa da tenere allineata, e quella che diverge sbaglia dal
+ * lato che perde un file.
+ */
+async function rimuoviSeNessunAvvisoLoUsa(
+    supabase: SupabaseClient,
+    percorso: string | null,
+    operazione: string,
+    escludiAvvisoId: string | null,
+): Promise<number> {
     if (!percorso) return 0
 
     // `ilike` copre tutte e tre le forme in cui il percorso può stare in tabella
@@ -211,10 +251,9 @@ export async function rimuoviAllegatoAvvisoSeOrfano(
     // e un jolly di troppo allarga la ricerca, cioè fa trovare un riferimento in
     // più — e un riferimento in più significa NON cancellare. Sbaglia dal lato
     // giusto.
-    const { data: altri, error } = await supabase
-        .from('avvisi')
-        .select('id')
-        .neq('id', avvisoId)
+    const base = supabase.from('avvisi').select('id')
+    const conEsclusione = escludiAvvisoId ? base.neq('id', escludiAvvisoId) : base
+    const { data: altri, error } = await conEsclusione
         .ilike('attachment_url', `%${percorso}%`)
         .limit(1)
 

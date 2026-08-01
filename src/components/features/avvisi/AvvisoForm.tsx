@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
 /**
  * Una classe destinataria, con la sua IDENTITÀ e la sua sede.
@@ -191,6 +192,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     // caricato senza uscire dal modulo. Non si archivia (scade) e non vale per un
     // avviso già salvato: lì l'anteprima si rifirma dalla pagina, non da qui.
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    // Il file caricato IN QUESTA SESSIONE e non ancora pubblicato: percorso nel bucket e
+    // sigillo che ne dimostra la paternità (S35). Sono `null` per l'allegato di un avviso
+    // già archiviato — quello non l'ha caricato questa modale e non si tocca.
+    const [percorsoCaricato, setPercorsoCaricato] = useState<string | null>(null);
+    const [sigilloCaricato, setSigilloCaricato] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     // Il messaggio del server quando rifiuta. Prima non esisteva: il modale si
     // chiudeva lo stesso e l'operatore restava convinto di aver pubblicato.
@@ -228,6 +234,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             // riapertura del modulo: accuserebbe l'operatore di un guasto vecchio.
             setErrore('');
             setScuolaId('');
+            // Alla riapertura non c'è nessun file «di questa sessione»: né in modifica
+            // (l'allegato è archiviato) né in creazione. Un sigillo sopravvissuto a una
+            // sessione precedente farebbe partire una rimozione per un file che nel
+            // frattempo può essere stato pubblicato.
+            setPercorsoCaricato(null);
+            setSigilloCaricato(null);
             if (initialAvviso) {
                 setTitolo(initialAvviso.titolo);
                 setContenuto(initialAvviso.contenuto);
@@ -292,6 +304,50 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         void processaFile(file);
     };
 
+    /**
+     * Butta via dal BUCKET un file caricato in questa sessione e mai pubblicato (S35).
+     *
+     * L'upload archivia il file subito, perché l'anteprima deve comparire mentre si scrive
+     * l'avviso; se poi si toglie l'allegato, lo si sostituisce o si chiude il modulo, quel
+     * file non lo nomina più nessuna riga. Fino al 2026-08-01 restava lì per sempre: in
+     * produzione ce n'era già uno del 24/05/2026.
+     *
+     * BEST-EFFORT E SILENZIOSA. L'operatore ha già ottenuto quello che voleva (l'allegato
+     * non c'è più nella bozza): un messaggio d'errore su una pulizia trasformerebbe un
+     * residuo tecnico in un guasto del prodotto. Ma non è muta — un catch che non logga è un
+     * bug (AGENTS §6): il fatto resta in `logClient`, che è l'unico posto in cui può esistere.
+     *
+     * `keepalive` perché il caso principale è proprio la chiusura del modulo: senza, il
+     * browser può interrompere la richiesta mentre il componente si smonta, cioè
+     * esattamente quando serve.
+     *
+     * Senza SIGILLO non parte niente: il server rifiuterebbe comunque (403), e una richiesta
+     * che non può riuscire è solo rumore. Succede quando l'allegato è quello archiviato di
+     * un avviso in modifica — che infatti non si deve toccare — o quando il segreto di firma
+     * manca sul server.
+     */
+    const scartaAllegatoCaricato = (percorso: string | null, sigillo: string | null) => {
+        if (!percorso || !sigillo) return;
+        const utente = getCurrentTeacherId(null) ?? '';
+        void fetch(`/api/avvisi/upload/rimuovi?userId=${utente}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-user-id': utente },
+            body: JSON.stringify({ percorso, sigillo }),
+            keepalive: true,
+        })
+            .then((res) => {
+                if (!res.ok) {
+                    // Il PERCORSO non si logga: apre il file, una volta firmato, e il nome
+                    // dice di che comunicazione si tratta. Lo stato è un numero e distingue
+                    // «403, il sigillo non vale più» da «500, lo Storage non risponde».
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'avviso-allegato-orfano-non-rimosso', stato: res.status });
+                }
+            })
+            .catch((err: unknown) => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-allegato-orfano-non-rimosso: ${nomeErrore(err)}` });
+            });
+    };
+
     // Punto d'ingresso unico dell'upload: lo usano sia l'<input> (che accetta anche
     // PDF/doc) sia il bottone «Scatta foto» nativo → stesso flusso, PDF intatto.
     const processaFile = async (file: File) => {
@@ -311,7 +367,13 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
             if (res.ok) {
                 const data = await res.json();
+                // Il file che c'era prima diventa un orfano nell'istante in cui questo lo
+                // sostituisce: si butta DOPO che il nuovo è arrivato, così un upload andato
+                // male non lascia la bozza senza né l'uno né l'altro.
+                scartaAllegatoCaricato(percorsoCaricato, sigilloCaricato);
                 setAttachmentUrl(data.fileUrl);
+                setPercorsoCaricato(typeof data.path === 'string' ? data.path : null);
+                setSigilloCaricato(typeof data.sigillo === 'string' ? data.sigillo : null);
                 // `previewUrl` è il link firmato che il server prepara apposta per
                 // riaprire subito ciò che si è appena caricato: finora arrivava e
                 // veniva scartato, e l'operatore poteva allegare il file sbagliato
@@ -322,12 +384,26 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 // distingue «401, l'identità non è arrivata» da «413, il file è troppo grosso».
                 // Il nome del file NON si logga: è quello di un allegato di una comunicazione.
                 logClient({ livello: 'error', evento: 'fetch', messaggio: 'avviso-upload-allegato-rifiutato', stato: res.status });
-                alert(t('formAlertUploadFallito'));
+                // IL MOTIVO DEL RIFIUTO, non un generico «riprova» (S31). Il server manda un
+                // CODICE (`ALLEGATO_TIPO_NON_AMMESSO`, `ALLEGATO_TROPPO_GRANDE`) già tradotto
+                // in italiano e in inglese: `messaggioErrore` lo risolve nella lingua
+                // dell'interfaccia e ripiega sulla prosa del server, poi sul testo generico —
+                // mai sulla stringa vuota. Finché qui c'era `alert(t('formAlertUploadFallito'))`
+                // quella traduzione esisteva e non la vedeva nessuno: chi allegava un `.txt`
+                // non aveva modo di sapere che il problema era il TIPO, e riprovava uguale.
+                //
+                // Nel riquadro `role="alert"` in testa al modulo, non in una finestra di
+                // sistema: `alert()` blocca il thread, su nativo è un dialogo che copre tutto,
+                // e il testo sparisce appena lo si chiude — mentre qui resta accanto al modulo
+                // finché non si riprova.
+                setErrore(await messaggioErrore(res, t('formAlertUploadFallito')));
                 setFileName('');
             }
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-upload-allegato-fallito: ${nomeErrore(err)}` });
-            alert(t('formAlertUploadErrore'));
+            // Guasto di TRASPORTO: non c'è nessuna risposta da leggere, quindi nessun codice
+            // da tradurre. Resta il testo generico, che qui è l'informazione giusta.
+            setErrore(t('formAlertUploadErrore'));
             setFileName('');
         } finally {
             setFileUploading(false);
@@ -335,12 +411,31 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     };
 
     const removeFile = () => {
+        // Toglierlo dalla bozza non bastava: il file era già nel bucket (S35).
+        scartaAllegatoCaricato(percorsoCaricato, sigilloCaricato);
+        setPercorsoCaricato(null);
+        setSigilloCaricato(null);
         setAttachmentUrl('');
         setFileName('');
         setPreviewUrl(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
+    };
+
+    /**
+     * La chiusura del modulo: prima si butta il file della bozza abbandonata, poi si chiude.
+     *
+     * È il caso più frequente dei due — si allega, ci si ripensa, si chiude — e fino al
+     * 2026-08-01 era quello che non lasciava traccia di sé da nessuna parte. Dopo una
+     * PUBBLICAZIONE riuscita `sigilloCaricato` è già `null`: quel file adesso è l'allegato
+     * di una comunicazione viva, e questa funzione non lo tocca.
+     */
+    const chiudi = () => {
+        scartaAllegatoCaricato(percorsoCaricato, sigilloCaricato);
+        setPercorsoCaricato(null);
+        setSigilloCaricato(null);
+        onClose();
     };
 
     // Le condizioni che rendono il modulo NON inviabile, in un posto solo: la
@@ -397,6 +492,10 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         setTitolo(''); setContenuto(''); setTipo('presa_visione');
         setScope('globale'); setSelectedClasses([]); setScadenza(''); setAttachmentUrl(''); setLinkUrl(''); setFileName('');
         setPreviewUrl(null);
+        // L'avviso è pubblicato: quel file NON è più un orfano, è il suo allegato. Il
+        // sigillo si getta senza usarlo — chiudere adesso non deve cancellare niente.
+        setPercorsoCaricato(null);
+        setSigilloCaricato(null);
         setScuolaId('');
         onClose();
     };
@@ -406,7 +505,10 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     return (
         <Modal
             open={open}
-            onClose={onClose}
+            // `chiudi`, non `onClose`: la primitiva chiama questo anche su Esc e sul tocco
+            // fuori dal dialogo, che sono modi di rinunciare alla bozza esattamente come la
+            // ✕ — e lasciavano l'allegato nel bucket allo stesso modo.
+            onClose={chiudi}
             title={titoloModale}
             labelledBy={titoloId}
             className="w-full max-w-lg max-h-[90vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden"
@@ -423,7 +525,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     finiva 2px oltre il bordo destro dei campi, misurato. */}
                 <button
                     type="button"
-                    onClick={onClose}
+                    onClick={chiudi}
                     aria-label={ts('chiudi')}
                     className="group -mr-1.5 min-w-[44px] min-h-[44px] shrink-0 flex items-center justify-center rounded-xl"
                 >

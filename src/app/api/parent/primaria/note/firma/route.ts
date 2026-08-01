@@ -9,6 +9,7 @@ import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
+import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -41,6 +42,14 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
+
+    // Tetto sui TENTATIVI di verifica del codice (sicurezza W5 · S30), sullo stesso budget
+    // delle altre tre firme del genitore — vedi `@/lib/security/otp-rate-limit`. Il codice è
+    // di sei cifre e un confronto HMAC fallito NON consuma il ticket: senza tetto provarli
+    // tutti era gratis, e ciò che si ottiene indovinando è la presa visione di una nota
+    // disciplinare apposta a nome di un genitore vero — con valore legale (CAD art. 20).
+    const troppe = limitaVerificaOtp(userId)
+    if (troppe) return troppe
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response

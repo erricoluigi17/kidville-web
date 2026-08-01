@@ -16,6 +16,8 @@ import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/st
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { RUOLI_PUBBLICAZIONE_DEFAULT } from '@/lib/scuole/admin-settings-default';
+import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso } from '@/lib/validation/avvisi';
+import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
 
 // Il ramo STAFF filtra ancora per scope/classe (dashboard cockpit). Il ramo
 // GENITORE è SERVER-DERIVED (G3): i parametri client sono ignorati, figli e
@@ -27,10 +29,12 @@ const getQuerySchema = z.object({
 
 const postBodySchema = z.object({
     // NB: `author_id` NON è più nel body (M7): l'autore è sempre la sessione.
-    titolo: z.string().min(1, 'titolo e contenuto sono obbligatori'),
-    contenuto: z.string().min(1, 'titolo e contenuto sono obbligatori'),
-    tipo: z.string().nullish(),
-    target_scope: z.string().nullish(),
+    // I massimi vengono dal DDL e stanno in `@/lib/validation/avvisi`: senza,
+    // un titolo lungo usciva come 500 col tipo della colonna dentro (S34).
+    titolo: zTitoloAvviso,
+    contenuto: zContenutoAvviso,
+    tipo: zTipoAvviso.nullish(),
+    target_scope: zTargetScopeAvviso.nullish(),
     target_classes: z.unknown().optional(),
     scadenza: z.string().nullish(),
     attachment_url: z.string().nullish(),
@@ -289,10 +293,6 @@ export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
 // Lo dicono `tsc --noEmit` e `next build`; i test no, perché a runtime il ramo
 // si comporta bene: è il tipo a non reggere, ed è il tipo che tiene onesto chi
 // aggiungerà il prossimo controllo qui dentro.
-type EsitoClassi =
-    | { ok: true; mancanti: string[] }
-    | { ok: false; errore: unknown };
-
 // ─── Chi può pubblicare, e come si dice a chi non può (S24) ──────────────────
 //
 // `avvisi_config.ruoli_pubblicazione` non elenca RUOLI, elenca due GRUPPI:
@@ -334,26 +334,6 @@ function messaggioRuoliAbilitati(abilitati: readonly string[], gruppo: string): 
         `In questa sede possono pubblicare avvisi: ${abilitati.map(etichettaGruppo).join(', ')}. ` +
         `Il tuo ruolo (${etichettaGruppo(gruppo)}) non è fra questi — Impostazioni → Avvisi.`
     );
-}
-
-async function classiMancantiNellaSede(
-    supabase: SupabaseAdmin,
-    scuolaId: string,
-    classi: string[],
-): Promise<EsitoClassi> {
-    const { data, error } = await supabase
-        .from('sections')
-        .select('name')
-        .eq('scuola_id', scuolaId)
-        .in('name', classi);
-    // PostgREST non lancia: senza questo controllo un guasto di lettura
-    // diventerebbe «nessuna classe trovata», cioè un 400 che accusa l'operatore
-    // di un errore che non ha commesso.
-    if (error) return { ok: false, errore: error };
-    const presenti = new Set(
-        (data ?? []).map((r) => String((r as { name?: unknown }).name ?? '')),
-    );
-    return { ok: true, mancanti: classi.filter((c) => !presenti.has(c)) };
 }
 
 // POST /api/avvisi
@@ -420,12 +400,10 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         // M8: 'classe' senza classi VALIDE → 400 (per TUTTI i ruoli). Niente più
         // degradazione implicita a globale: notifica e feed coincidono sempre.
-        const classiTarget = Array.isArray(target_classes)
-            ? [...new Set((target_classes as unknown[]).filter((c): c is string => typeof c === 'string' && c.trim() !== ''))]
-            : [];
+        const classiTarget = classiTargetValide(target_classes);
         if ((target_scope ?? 'globale') === 'classe' && classiTarget.length === 0) {
             return NextResponse.json(
-                { error: 'Seleziona almeno una classe destinataria per un avviso di classe.' },
+                { error: 'Seleziona almeno una classe destinataria per un avviso di classe.', codice: 'CLASSE_DESTINATARIA_MANCANTE' },
                 { status: 400 },
             );
         }
@@ -448,7 +426,7 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             if (!esito.ok) {
                 logErrore({ operazione: 'avvisi:POST', stato: 500, evento: 'db' }, esito.errore);
                 return NextResponse.json(
-                    { error: 'Verifica delle classi destinatarie non riuscita' },
+                    { error: 'Verifica delle classi destinatarie non riuscita', codice: 'VERIFICA_CLASSI_NON_RIUSCITA' },
                     { status: 500 },
                 );
             }
@@ -470,6 +448,7 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
                         error:
                             'Classi non presenti nella sede selezionata: ' +
                             `${esito.mancanti.join(', ')}. Controlla la sede di pubblicazione.`,
+                        codice: 'CLASSI_FUORI_SEDE',
                     },
                     { status: 400 },
                 );
@@ -551,8 +530,16 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
         const { data, error } = insRes;
 
         if (error) {
+            // Il corpo del guasto sta nel LOG, non nella risposta: `error.message`
+            // rigirato al client raccontava il tipo esatto della colonna
+            // (`value too long for type character varying(255)`) a chiunque sapesse
+            // mandare una stringa lunga — e a chi lavora in segreteria non diceva
+            // niente di utile. Il massimo ora è dichiarato in zod, quindi un `22001`
+            // che arrivasse comunque fin qui non è più un errore del chiamante: è la
+            // prova che il DDL e `@/lib/validation/avvisi` hanno divergiuto, e resta
+            // un 500 perché quella è la verità.
             logErrore({ operazione: 'avvisi:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Pubblicazione dell\'avviso non riuscita' }, { status: 500 });
         }
 
         await logScrittura(supabase, {

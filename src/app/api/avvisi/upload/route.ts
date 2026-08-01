@@ -7,6 +7,8 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { BUCKET_AVVISI_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
 import { verificaAllegato } from '@/lib/allegati/mime';
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
+import { firmaRimozioneAllegato } from '@/lib/allegati/sigillo';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
@@ -49,8 +51,12 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
             });
 
         if (error) {
+            // Il messaggio del fornitore resta QUI e non esce (S31): fino al 2026-08-01 la
+            // riga sotto era `{ error: error.message }`, e in segreteria arrivava
+            // «mime type text/plain is not supported». Al client un codice traducibile, al
+            // log il corpo intero — che è l'unico posto in cui quel testo può esistere.
             logErrore({ operazione: 'avvisi/upload:POST', stato: 500, evento: 'storage' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return rispostaAllegatoNonCaricato();
         }
 
         // IL CARICAMENTO RIUSCITO LASCIA UNA RIGA, E LA RIGA ARRIVA IN TABELLA.
@@ -100,13 +106,27 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
         // `fileUrl` resta col nome di prima per i client già in circolazione (il
         // modulo di pubblicazione legge quel campo e lo rigira come allegato): ora
         // contiene il PERCORSO, così anche loro salvano il dato giusto.
+        // `sigillo` è la PROVA, per la rimozione, che questo file l'ha caricato QUESTO
+        // utente adesso (S35): senza, `avvisi/upload/rimuovi` sarebbe il modo di cancellare
+        // l'allegato dell'avviso di un altro, il cui percorso si legge dal link firmato che
+        // la bacheca restituisce. `null` quando manca il segreto: in quel caso la rimozione
+        // non si offre, invece di offrirla con una firma che non protegge niente.
         return NextResponse.json({
             path: uniqueFileName,
             fileUrl: uniqueFileName,
             previewUrl: firmato?.signedUrl ?? null,
+            sigillo: firmaRimozioneAllegato({
+                bucket: BUCKET_AVVISI_ALLEGATI,
+                percorso: uniqueFileName,
+                utenteId: auth.user.id,
+            }),
         });
     } catch (error) {
+        // `withRoute` non vede le eccezioni CATTURATE: il log lo fa questo ramo, di suo.
+        // La risposta è la stessa del guasto dello Storage — dal punto di vista di chi
+        // carica è lo stesso fatto («il file non è stato caricato»), e «Internal Server
+        // Error» non è una frase che si mostra a una segretaria.
         logErrore({ operazione: 'avvisi/upload:POST', stato: 500 }, error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return rispostaAllegatoNonCaricato();
     }
 });

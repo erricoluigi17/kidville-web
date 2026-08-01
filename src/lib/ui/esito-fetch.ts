@@ -79,8 +79,34 @@ export const CODICI_ERRORE = {
     ALLEGATO_TROPPO_GRANDE: 'erroreAllegatoTroppoGrande',
     /** 400 — l'indirizzo dell'allegato non è del nostro bucket (`src/lib/chat/allegati.ts`). */
     ALLEGATO_NON_VALIDO: 'erroreAllegatoNonValido',
+    /**
+     * 500 — lo Storage ha rifiutato il caricamento per un motivo IMPREVISTO
+     * (`src/lib/allegati/risposte.ts`). Il messaggio del fornitore resta nel log: fino al
+     * 2026-08-01 usciva invece di qui, in inglese e col nome di un vincolo interno.
+     */
+    ALLEGATO_NON_CARICATO: 'erroreAllegatoNonCaricato',
+    /** 403/500 — il file appena caricato non si può togliere dal bucket (`src/lib/allegati/risposte.ts`). */
+    ALLEGATO_NON_RIMOSSO: 'erroreAllegatoNonRimosso',
     /** 429 — tetto di frequenza raggiunto (`src/lib/security/otp-rate-limit.ts`). */
     TROPPE_RICHIESTE: 'erroreTroppeRichieste',
+    /**
+     * 400 — un avviso «di classe» senza nessuna classe destinataria. Non degrada a
+     * globale in silenzio: notifica e bacheca devono sempre dire la stessa cosa.
+     */
+    CLASSE_DESTINATARIA_MANCANTE: 'erroreClasseDestinatariaMancante',
+    /**
+     * 400 — una classe destinataria non esiste nella sede dell'avviso
+     * (`src/lib/avvisi/classi-sede.ts`). Il `error` accanto elenca QUALI: il codice
+     * dà la frase tradotta, la prosa il dettaglio che solo il server conosce.
+     */
+    CLASSI_FUORI_SEDE: 'erroreClassiFuoriSede',
+    /**
+     * 500 — non è stato possibile leggere le sezioni per validare i destinatari.
+     * È un guasto NOSTRO, e va detto come tale: prima del 2026-08-01 un errore di
+     * lettura sarebbe uscito come «nessuna classe trovata», cioè un 400 che accusa
+     * l'operatore di uno sbaglio che non ha commesso.
+     */
+    VERIFICA_CLASSI_NON_RIUSCITA: 'erroreVerificaClassiNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

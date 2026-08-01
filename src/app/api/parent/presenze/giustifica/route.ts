@@ -12,6 +12,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -75,6 +76,18 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
     }
 
     const richiedeOtp = presenzeCfg.giustifica_richiede_firma_otp !== false
+
+    // Tetto sui TENTATIVI di verifica del codice (sicurezza W5 · S30), sullo stesso budget
+    // delle altre tre firme del genitore — vedi `@/lib/security/otp-rate-limit`. Il codice è
+    // di sei cifre e un confronto HMAC fallito NON consuma il ticket (`verifyTicket` non
+    // scrive niente): senza tetto provarli tutti era gratis, e ciò che si ottiene indovinando
+    // non è un accesso, è la giustificazione di un'assenza apposta a nome di un genitore vero.
+    // Il tetto vale SOLO quando l'OTP è richiesto: se la scuola l'ha disattivato non c'è nessun
+    // codice da indovinare, e contare le giustifiche sbarrerebbe soltanto chi ne ha più d'una.
+    if (richiedeOtp) {
+      const troppe = limitaVerificaOtp(userId)
+      if (troppe) return troppe
+    }
 
     // Conferma OTP email (FES) prima di procedere (se richiesta dalle impostazioni).
     const email = await getUserEmail(supabase, userId)

@@ -1050,8 +1050,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             'un pezzo di questo lock, e questo test esiste perché la cosa passi sotto gli occhi ' +
             'di qualcuno invece che in silenzio.',
         ).toEqual({
-            routeConServiceRole: 272,
-            handlerControllati: 432,
+            // 272 → 273 e 432 → 433 il 2026-08-01: è nata `avvisi/upload/rimuovi:POST`, la
+            // route che butta via l'allegato di una bozza abbandonata (S35). Non porta
+            // nessuna esenzione — `handlerEsentati` è fermo — perché non tocca nessuna
+            // tabella: la sola query su `avvisi` vive in `src/lib/allegati/rimozione.ts`, ed
+            // è deliberatamente SENZA filtro di sede (il bucket è uno per tutte e tre: se un
+            // avviso di un altro plesso punta a quell'oggetto, il file resta).
+            routeConServiceRole: 273,
+            handlerControllati: 433,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

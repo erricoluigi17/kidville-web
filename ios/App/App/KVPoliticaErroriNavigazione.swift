@@ -26,8 +26,10 @@ enum KVEsitoNavigazione: Equatable {
 /// `-999` è `NSURLErrorCancelled`: la navigazione non era fallita, era stata annullata da
 /// una seconda partita 28 ms dopo (il login faceva `router.replace` e subito
 /// `router.refresh`, corretto in `src/app/auth/login/page.tsx`). Capacitor, in
-/// `WebViewDelegationHandler.webView(_:didFailProvisionalNavigation:withError:)`, carica
-/// `server.errorPath` per QUALUNQUE errore: non distingue l'annullamento dal guasto.
+/// `WebViewDelegationHandler`, carica `server.errorPath` per QUALUNQUE errore: non distingue
+/// l'annullamento dal guasto. E lo fa in ENTRAMBI i gestori di fallimento —
+/// `didFailProvisionalNavigation` e `didFail` — quindi anche il filtro deve coprirli tutti e
+/// due: la prima correzione ne trattava uno solo e il difetto restava, con un'altra faccia.
 ///
 /// Dire a una famiglia «non hai rete» quando la rete c'è la manda a controllare il router
 /// invece che a riprovare, e fa sembrare rotta un'app che funziona.

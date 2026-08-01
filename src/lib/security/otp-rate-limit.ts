@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { rateLimit } from '@/lib/security/rate-limit'
 
 /**
- * Il limitatore di frequenza delle quattro rotte OTP del genitore.
+ * Il limitatore di frequenza delle OTTO porte OTP del genitore: quattro che
+ * SPEDISCONO il codice, quattro che lo VERIFICANO.
  *
  * ─── PERCHÉ ESISTE ──────────────────────────────────────────────────────────
  *
@@ -15,10 +16,22 @@ import { rateLimit } from '@/lib/security/rate-limit'
  * un'ipotesi di scuola: le email di credenziali sono già rimaste bloccate per mesi
  * da un `403` del provider, e nessuno se n'era accorto.
  *
+ * ─── DOVE STA LA VERIFICA (e perché tre firme su quattro erano scoperte) ────
+ *
+ * La correzione del 31 luglio mise il tetto di VERIFICA su una rotta sola, e per
+ * un motivo che vale la pena scrivere: solo `parent/forms/otp` verifica il codice
+ * dentro la rotta `…/otp` (col suo PATCH). Le altre tre lo verificano nella rotta
+ * SORELLA, quella che firma davvero — `parent/presenze/giustifica:POST`,
+ * `parent/primaria/note/firma:POST`, `parent/primaria/pagella/firma:POST` — che
+ * nel nome non ha «otp» da nessuna parte. Cercare «otp» nei percorsi trovava
+ * quattro file e ne mancava tre: il tetto ne proteggeva una su quattro mentre il
+ * test dichiarava di coprirle tutte. Chiuso il 2026-08-01 (S30); la copertura ora
+ * è per costruzione, non per elenco: `__tests__/architecture/otp-con-tetto.test.ts`.
+ *
  * ─── PERCHÉ DUE TETTI E NON UNO ─────────────────────────────────────────────
  *
- * INVIO (i quattro POST) e VERIFICA (il PATCH di `parent/forms/otp`) difendono da
- * due cose diverse, e mescolarli farebbe danno in entrambe le direzioni.
+ * INVIO (i quattro POST) e VERIFICA (i quattro handler che confrontano il codice)
+ * difendono da due cose diverse, e mescolarli farebbe danno in entrambe le direzioni.
  *
  *  · L'invio protegge una CASELLA EMAIL. Il budget è quindi UNO SOLO per tutte e
  *    quattro le rotte: la casella del genitore è una sola, e quattro tetti
@@ -28,18 +41,41 @@ import { rateLimit } from '@/lib/security/rate-limit'
  *  · La verifica protegge una FIRMA CON VALORE LEGALE. Il codice è di sei cifre
  *    (`otp-ticket.ts:135`), il confronto HMAC che fallisce NON consuma il ticket
  *    (`consumeTicket` è chiamata solo dopo un esito positivo) e il ticket vive
- *    dieci minuti: senza tetto i tentativi erano illimitati e gratuiti. Con
- *    dieci tentativi ogni dieci minuti, esaurire un milione di codici richiede
- *    circa due anni — cioè indovinare smette di essere una strada, e l'OTP torna
- *    a dimostrare quello per cui esiste: che chi firma legge quella casella.
+ *    dieci minuti: senza tetto i tentativi erano illimitati e gratuiti.
+ *
+ *    Il budget è UNO SOLO per tutte e quattro le verifiche, non uno per firma:
+ *    quattro budget indipendenti darebbero quaranta tentativi invece di dieci a
+ *    chi si limita a cambiare rotta — un tetto che si aggira senza forzarlo.
  *
  *    Sullo stesso budget dell'invio, invece, chiedere un codice nuovo
  *    consumerebbe i tentativi di digitazione, e chi sbaglia a scrivere resterebbe
  *    fuori dalla propria firma.
  *
+ * ─── QUANTO VALE DAVVERO IL TETTO (il conto, senza sconti) ──────────────────
+ *
+ * ⚠️ `rateLimit` conta IN MEMORIA, per istanza. Su Vercel le lambda concorrenti
+ * sono più d'una, quindi i numeri qui sotto sono **per istanza**: il tetto reale è
+ * N × il limite dichiarato, con N il numero di istanze calde. Chi legge «dieci
+ * tentativi ogni dieci minuti» deve leggere «dieci per ogni lambda accesa».
+ *
+ * Il tetto regge lo stesso, e non per ottimismo: le prove NON si accumulano su un
+ * codice solo. Il codice cambia a ogni ticket, e il ticket vive dieci minuti — chi
+ * ha sbagliato tutti i tentativi di una finestra ricomincia da capo su un codice
+ * nuovo, e il lavoro fatto non gli serve più. Con dieci prove per finestra la
+ * probabilità di indovinare è 10/10⁶ per istanza per finestra; per arrivare a una
+ * probabilità apprezzabile DENTRO una finestra servirebbero decine di migliaia di
+ * lambda simultanee sullo stesso genitore. È il motivo per cui la scadenza breve
+ * del ticket non è un fastidio per l'utente: è metà della difesa.
+ *
+ * Resta vero che il numero dichiarato non è garantito. Renderlo esatto vuol dire
+ * spostare il contatore su uno store condiviso (Postgres/Upstash): è da fare, ed è
+ * scritto anche in `rate-limit.ts`. Fino ad allora questo modulo alza il costo di
+ * un abuso in modo misurabile, non lo azzera — e questa riga esiste perché nessuno
+ * legga «5 codici in dieci minuti» credendo che siano cinque.
+ *
  * ─── PERCHÉ LA CHIAVE È L'UTENTE E NON L'IP ─────────────────────────────────
  *
- * Queste quattro rotte sono dietro `requireUser`: l'attore ha un nome, e l'IP no.
+ * Tutte e otto sono dietro `requireUser`: l'attore ha un nome, e l'IP no.
  * Un intero plesso dietro lo stesso NAT condividerebbe il tetto (tre genitori in
  * portineria, e il terzo non firma più), mentre chi ha una sessione valida
  * cambierebbe IP a piacere. L'id di sessione è l'unica cosa che l'attore non può
@@ -56,10 +92,16 @@ import { rateLimit } from '@/lib/security/rate-limit'
 /** Ampiezza della finestra: la stessa vita del codice OTP (`OTP_TTL_MS`). */
 export const FINESTRA_OTP_MS = 10 * 60 * 1000
 
-/** Codici SPEDITI verso la casella del genitore, in dieci minuti, su tutte e quattro le rotte. */
+/**
+ * Codici SPEDITI verso la casella del genitore, in dieci minuti, su tutte e
+ * quattro le rotte insieme. **Per istanza** (vedi il conto qui sopra).
+ */
 export const LIMITE_OTP_INVIO = 5
 
-/** Tentativi di VERIFICA del codice, in dieci minuti. Sopra questo, si indovina. */
+/**
+ * Tentativi di VERIFICA del codice, in dieci minuti, su tutte e quattro le firme
+ * insieme. Sopra questo, si indovina. **Per istanza** (vedi il conto qui sopra).
+ */
 export const LIMITE_OTP_VERIFICA = 10
 
 /**
@@ -97,7 +139,18 @@ export function limitaInvioOtp(userId: string): NextResponse | null {
   return rl.ok ? null : troppeRichieste(rl.retryAfterMs)
 }
 
-/** Come sopra, sul budget separato dei tentativi di VERIFICA del codice. */
+/**
+ * Come sopra, sul budget separato dei tentativi di VERIFICA del codice.
+ *
+ * Va chiamata DOPO il gate d'identità e PRIMA di `verifyTicket`: un tentativo
+ * bloccato non deve essere valutato (è quello il tentativo che si sta contando) né
+ * finire nel registro FEA come `verify_failed`, che altrimenti si riempirebbe di
+ * righe generate proprio da chi il tetto deve fermare.
+ *
+ * Non chiamarla quando NON c'è nessun codice da indovinare (es. la giustifica con
+ * `giustifica_richiede_firma_otp` disattivato): là conterebbe gesti legittimi e
+ * non difenderebbe niente.
+ */
 export function limitaVerificaOtp(userId: string): NextResponse | null {
   const rl = rateLimit(`otp-verifica:${userId}`, {
     limit: LIMITE_OTP_VERIFICA,

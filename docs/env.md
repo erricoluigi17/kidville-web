@@ -21,7 +21,7 @@ metterci segreti.
 |---|---|---|
 | `ALLOW_HEADER_IDENTITY` | assente = `true` | **Sigillo M4.** A `false` l'identità è SOLO da sessione Supabase (cookie): l'header `x-user-id` / query `?userId=` senza sessione → 401. Il valore diverso da sessione è comunque sempre ignorato (anti-spoof). Impostare `false` (fatto in M4.6); il default permissivo esiste solo per retro-compatibilità di rollout P0. |
 | `PARENT_READS_USE_SESSION` | assente | Flag di rollout P0 (S8/S9) per le letture genitore via sessione/RLS. |
-| `OTP_TICKET_SECRET` | derivato in dev | Segreto HMAC per i ticket OTP (FES stateless). In produzione impostarlo esplicitamente. **Segreto.** |
+| `OTP_TICKET_SECRET` | derivato in dev | Segreto HMAC per i ticket OTP (FES stateless). Dal 2026-08-01 firma anche i **sigilli di rimozione degli allegati** (`src/lib/allegati/sigillo.ts`): la prova che il file da togliere dal bucket è quello appena caricato da chi lo chiede. Ripiega su `SUPABASE_SERVICE_ROLE_KEY`; se mancano entrambe, la rimozione dell'allegato di una bozza abbandonata non si offre affatto (fail-closed, riga `config`/`error`) e i file abbandonati tornano ad accumularsi in silenzio. In produzione impostarlo esplicitamente. **Segreto.** |
 | `CRON_SECRET` | — | Bearer condiviso per gli endpoint service-to-service (es. `/api/push/dispatch` dal cron). **Segreto.** |
 | `NODE_ENV` | gestita da Next | In `production` attiva `sealDangerous` sugli endpoint di debug/seed. |
 

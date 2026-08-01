@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAvvisoInScope } from '@/lib/auth/scope-avvisi';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
+import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
+import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso } from '@/lib/validation/avvisi';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -44,10 +46,14 @@ interface RouteParams {
 // perché, per esteso. Entrambe si chiamano solo dietro ad `assertAvvisoInScope`.
 
 const putBodySchema = z.object({
-    titolo: z.string().min(1, 'Titolo e contenuto sono obbligatori'),
-    contenuto: z.string().min(1, 'Titolo e contenuto sono obbligatori'),
-    tipo: z.string().nullish(),
-    target_scope: z.string().nullish(),
+    // Stessi massimi del POST, dallo stesso modulo: il PUT riscrive le medesime
+    // colonne, e un limite copiato a mano qui si sarebbe disallineato al primo
+    // cambio di DDL — che è come il difetto S34 è sopravvissuto sugli avvisi
+    // mentre veniva chiuso sui promemoria.
+    titolo: zTitoloAvviso,
+    contenuto: zContenutoAvviso,
+    tipo: zTipoAvviso.nullish(),
+    target_scope: zTargetScopeAvviso.nullish(),
     target_classes: z.unknown().optional(),
     scadenza: z.string().nullish(),
     attachment_url: z.string().nullish(),
@@ -144,6 +150,90 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         });
         if (targetErr) return targetErr;
 
+        // ── IL GATE DI SEDE SUL TARGET, CHE QUI NON C'ERA MAI STATO (2026-08-01) ──
+        //
+        // Il POST ce l'ha dal 30 luglio; questa strada no. Aveva il gate di RUOLO
+        // qui sopra («un educator riassegna solo alle proprie classi») e si fermava
+        // lì, poi scriveva `target_classes` GREZZO. Bastava modificare un avviso per
+        // assegnarlo a una classe di un altro plesso — o a un id di sezione invece
+        // che a un nome — ricevendo **200 con la riga aggiornata**. L'avviso poi non
+        // arrivava a nessuno, ma quel silenzio è dalla parte delle famiglie e nessuno
+        // lo collega alla modifica.
+        //
+        // È lo stesso difetto C8 del piano — «il ramo del cookie non ha avuto lo
+        // stesso trattamento del ramo dichiarato» — applicato alla coppia
+        // creazione/modifica. Per questo la regola vive ora in
+        // `@/lib/avvisi/classi-sede` invece che dentro una delle due route.
+        const classiTarget = classiTargetValide(target_classes);
+        if ((target_scope ?? 'globale') === 'classe' && classiTarget.length === 0) {
+            return NextResponse.json(
+                { error: 'Seleziona almeno una classe destinataria per un avviso di classe.', codice: 'CLASSE_DESTINATARIA_MANCANTE' },
+                { status: 400 },
+            );
+        }
+        if (classiTarget.length > 0) {
+            // La sede è quella DELL'AVVISO, non quella di chi lo modifica: una
+            // modifica non sposta un avviso di plesso, e leggerla dall'utente
+            // rimetterebbe in gioco proprio l'ambiguità che il gate deve chiudere.
+            const { data: rigaSede, error: erroreSede } = await supabase
+                .from('avvisi')
+                .select('scuola_id')
+                .eq('id', id)
+                .maybeSingle();
+            if (erroreSede) {
+                logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, erroreSede);
+                return NextResponse.json(
+                    { error: 'Verifica delle classi destinatarie non riuscita', codice: 'VERIFICA_CLASSI_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            const scuolaId = (rigaSede as { scuola_id?: string } | null)?.scuola_id ?? null;
+            if (!scuolaId) {
+                // Nessuna sede sulla riga: non si indovina. Un avviso senza plesso non
+                // si può validare, e validarlo «contro tutte» equivarrebbe a non farlo.
+                logEvento('avvisi', 'warn', {
+                    operazione: 'avvisi/[id]:PUT',
+                    esito: 'avviso-senza-sede',
+                    entitaId: id,
+                });
+                return NextResponse.json(
+                    { error: 'Verifica delle classi destinatarie non riuscita', codice: 'VERIFICA_CLASSI_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            const esito = await classiMancantiNellaSede(supabase, scuolaId, classiTarget);
+            if (!esito.ok) {
+                logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, esito.errore);
+                return NextResponse.json(
+                    { error: 'Verifica delle classi destinatarie non riuscita', codice: 'VERIFICA_CLASSI_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            if (esito.mancanti.length > 0) {
+                // `warn` → persistito, come nel POST: riassegnare a una classe che non
+                // è in questa sede è o un errore d'interfaccia o un tentativo. Solo
+                // metadati non personali (i nomi di sezione sono in lista bianca).
+                logEvento('avvisi', 'warn', {
+                    operazione: 'avvisi/[id]:PUT',
+                    esito: 'classe-fuori-sede',
+                    tipo: 'target-non-nella-sede',
+                    uid: auth.user.id,
+                    entitaId: id,
+                    n_classi: esito.mancanti.length,
+                    sezione: esito.mancanti.join(','),
+                });
+                return NextResponse.json(
+                    {
+                        error:
+                            'Classi non presenti nella sede dell\'avviso: ' +
+                            `${esito.mancanti.join(', ')}. Controlla i destinatari.`,
+                        codice: 'CLASSI_FUORI_SEDE',
+                    },
+                    { status: 400 },
+                );
+            }
+        }
+
         // In tabella il PERCORSO nel bucket, mai l'indirizzo firmato che il modulo
         // di modifica rimanda indietro dopo averlo riletto.
         const allegatoNuovo = normalizzaAllegatoAvviso(attachment_url);
@@ -159,7 +249,9 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
                 contenuto,
                 tipo,
                 target_scope,
-                target_classes,
+                // L'insieme VALIDATO, mai l'array grezzo: fino al 2026-08-01 qui
+                // finivano duplicati e stringhe vuote, mai confrontati con niente.
+                target_classes: classiTarget.length > 0 ? classiTarget : null,
                 scadenza: scadenza || null,
                 attachment_url: allegatoNuovo,
             })

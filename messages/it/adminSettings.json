@@ -50,6 +50,18 @@
   "sedeRequiredDidattica": "la didattica primaria",
   "sedeRequiredPagelle": "pagelle & scrutinio",
   "sedeRequiredMensa": "la mensa",
+  "sedeRequiredModuli": "funzioni & moduli",
+  "sedeRequiredModulistica": "la modulistica",
+  "sedeRequiredDiario": "il diario",
+  "sedeRequiredPresenze": "presenze & giustifiche",
+  "sedeRequiredNote": "le note disciplinari",
+  "sedeRequiredArmadietto": "l’armadietto",
+  "sedeRequiredAvvisi": "gli avvisi",
+  "sedeRequiredChat": "la chat",
+  "sedeRequiredGalleria": "la galleria",
+  "sedeRequiredNotifiche": "le notifiche",
+  "sedeInConfigurazione": "Stai configurando",
+  "sedeSconosciuta": "Sede sconosciuta",
 
   "multiSedeTitolo": "Multi-Sede",
   "multiSedeSottotitolo": "Aggiungi, rinomina o disattiva le sedi. Azione riservata alla Direzione.",
@@ -259,7 +271,7 @@
   "avChiPubblica": "Chi può pubblicare avvisi",
   "avAllegatiMax": "Allegati: dimensione max (MB)",
   "avScadenzaDefault": "Scadenza default (giorni)",
-  "avConfermaLettura": "Conferma di lettura richiesta ai genitori",
+  "avConfermaLettura": "Presa visione richiesta ai genitori",
   "avHint": "I ruoli di pubblicazione sono applicati automaticamente al momento della creazione dell’avviso.",
 
   "chTitolo": "Chat",
@@ -354,5 +366,10 @@
 
   "pgPeriodiScrutinio": "Periodi scrutinio",
   "pgScalaGiudizi": "Scala giudizi",
-  "pgGiudiziScrutinio": "Giudizi scrutinio"
+  "pgGiudiziScrutinio": "Giudizi scrutinio",
+  "armRimuoviCategoria": "Rimuovi categoria",
+  "meEliminaAssegnazione": "Elimina assegnazione",
+  "noteRimuoviCategoria": "Rimuovi categoria",
+  "spEliminaCategoria": "Elimina categoria",
+  "spRimuoviPacchetto": "Rimuovi pacchetto"
 }

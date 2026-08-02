@@ -26,6 +26,85 @@ export function isScuolaE2E(s: SedeMinima): boolean {
   return String(s.id ?? '').startsWith('e2e00000') || /e2e/i.test(nome)
 }
 
+/** Un utente visto dal lato delle sue sedi: la primaria (`utenti.scuola_id`) e
+ *  quelle del ponte `utenti_scuole`. Basta questo per classificarlo. */
+export interface UtenteConSedi {
+  /** `utenti.scuola_id`. */
+  scuola_id?: string | null
+  /** `utenti_scuole.scuola_id` dell'utente. Vuoto se il ponte non è leggibile. */
+  sedi?: readonly (string | null | undefined)[]
+}
+
+/**
+ * True se l'utente è un account di **collaudo**: gemello di `isScuolaE2E` sulle
+ * PERSONE, e unico predicato del progetto per «questo non è un utente vero».
+ *
+ * Perché esiste — il 2026-07-29 il provisioning di Kidville Aversa e Kidville
+ * Cesa ha collegato alla loro Direzione anche `admin.e2e@kidville.test`, perché
+ * `admin/schools:POST` costruiva l'elenco dei candidati con «tutti gli admin».
+ * Quell'account ha `ruolo='admin'` e la password stava in chiaro in un
+ * repository PUBBLICO: due plessi veri con la Direzione aperta a chiunque
+ * leggesse il codice. Un filtro mancante non rompe niente e non avvisa nessuno.
+ *
+ * Regola — è di collaudo chi ha la sede PRIMARIA E2E, oppure chi ha almeno una
+ * sede e le ha TUTTE E2E. Una sola sede reale basta a farne un utente vero: il
+ * verso in cui si sbaglia è «lo tratto come reale», perché il danno di escludere
+ * un amministratore vero (una sede che non compare nel suo SedeSelector) è
+ * visibile e rimediabile, mentre quello opposto è silenzioso.
+ *
+ * ⚠️ Insieme VUOTO ⇒ **false**. `[].every(...)` è vero, e senza questa guardia
+ * ogni utente senza sede diventerebbe «di collaudo».
+ *
+ * @param nomiSedi id → nome, da una lettura di `schools`. Può essere parziale (o
+ *   vuota): il prefisso `e2e00000-…` dell'id resta il primo indizio, il nome è
+ *   solo il secondo — così il predicato regge anche quando quella lettura degrada.
+ */
+export function isUtenteCollaudo(
+  utente: UtenteConSedi,
+  nomiSedi: ReadonlyMap<string, string> = new Map(),
+): boolean {
+  const sede = (id: string): SedeMinima => ({ id, nome: nomiSedi.get(id) ?? '' })
+  const primaria = utente.scuola_id ? String(utente.scuola_id) : null
+  if (primaria && isScuolaE2E(sede(primaria))) return true
+
+  const ponte = (utente.sedi ?? []).filter(Boolean).map((s) => String(s))
+  const tutte = primaria ? [primaria, ...ponte] : ponte
+  if (tutte.length === 0) return false
+  return tutte.every((id) => isScuolaE2E(sede(id)))
+}
+
+/**
+ * Il nome di una sede, letto da `schools`. `null` se la sede non è indicata,
+ * non esiste o la lettura non riesce.
+ *
+ * Serve a chi deve NOMINARE la sede in un testo che esce dall'applicazione —
+ * l'email delle credenziali, per prima. Il nome non si deduce da altro: con tre
+ * plessi, una frase che dice la sede sbagliata è peggio di una che non la dice.
+ *
+ * Il livello del log è `info` e non `error` di proposito: il chiamante ha già
+ * un piano B che funziona (la frase generica), quindi non è un incidente — ma
+ * un ramo che non si vede è un ramo che non si corregge, e PostgREST non lancia:
+ * senza controllare `{ error }` questo sarebbe un catch muto.
+ */
+export async function nomeSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+  operazione: string,
+): Promise<string | null> {
+  if (!scuolaId) return null
+  const { data, error } = await supabase
+    .from('schools')
+    .select('nome')
+    .eq('id', scuolaId)
+    .maybeSingle()
+  if (error) {
+    logEvento('multi_sede', 'info', { operazione, esito: 'nome-sede-non-letto' }, error)
+    return null
+  }
+  const nome = (data as { nome?: string | null } | null)?.nome ?? null
+  return nome && nome.trim() !== '' ? nome : null
+}
+
 export interface EsitoSedi {
   /** `schools` grezza: E2E incluse, flag `attiva` NON applicato. Serve solo a
    *  validare uno `scuola_id` arrivato esplicitamente dal link. */

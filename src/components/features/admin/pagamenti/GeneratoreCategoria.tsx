@@ -6,6 +6,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { Layers, RefreshCw } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
@@ -198,7 +199,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                         <input type="number" min={2} max={24} value={nRate}
                             onChange={(e) => { setNRate(Math.max(2, Number(e.target.value) || 2)); setAnteprima(null); }}
                             className={cx(GC_INPUT, 'w-16')} />
-                        <span className="font-maven text-[11px] text-kidville-muted">{t('gencMensili')} ~€ {importo ? (importo / nRate).toFixed(2) : '0'} {t('gencCadauno')}</span>
+                        <span className="font-maven text-[11px] text-kidville-muted">{t('gencMensili')} ~{formatEuro(importo ? importo / nRate : 0)} {t('gencCadauno')}</span>
                     </div>
                 )}
             </div>
@@ -207,8 +208,8 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 <div className="space-y-1 rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/50 p-4">
                     <p className="font-maven text-sm font-bold text-kidville-green">{t('gencAnteprimaGenerazione')}</p>
                     <p className="font-maven text-xs text-kidville-ink">
-                        {t('gencDaGenerare')} {anteprima.candidati.length} {anteprima.candidati.length === 1 ? t('gencPagamentoSing') : t('gencPagamentoPlur')} {t('gencDa')} € {importo.toFixed(2)}
-                        {acconti && nRate >= 2 ? ` ${t('gencInRate1')}${nRate}${t('gencInRate2')}` : ''} · {t('gencTotale')} € {(anteprima.candidati.length * importo).toFixed(2)}
+                        {t('gencDaGenerare')} {anteprima.candidati.length} {anteprima.candidati.length === 1 ? t('gencPagamentoSing') : t('gencPagamentoPlur')} {t('gencDa')} {formatEuro(importo)}
+                        {acconti && nRate >= 2 ? ` ${t('gencInRate1')}${nRate}${t('gencInRate2')}` : ''} · {t('gencTotale')} {formatEuro(anteprima.candidati.length * importo)}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">{t('gencGiaPresenti')} {anteprima.giaGenerati}</p>
                     <p className="font-maven text-xs text-kidville-muted">

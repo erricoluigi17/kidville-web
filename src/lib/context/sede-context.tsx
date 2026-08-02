@@ -18,6 +18,8 @@
  *  - `sedeCorrente` → UNA sede per le pagine di configurazione (null se ambiguo,
  *                     cioè più sedi accessibili e nessuna singola scelta);
  *  - `reFetchKey`   → dipendenza stabile per i useEffect delle liste multi-sede;
+ *  - `epocaSede`    → contatore che avanza SOLO quando l'utente cambia sede: è
+ *                     la chiave di rimontaggio di `<SedeScopeBoundary>`;
  *  - `loading`      → true finché non ho caricato le sedi accessibili.
  *
  * NB: `userId` arriva da <AdminIdentityProvider> (two-pass SSR-safe), non da
@@ -25,7 +27,7 @@
  * se assente il server risolve comunque l'identità dalla sessione.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from './admin-identity';
 
@@ -42,6 +44,13 @@ export interface SediContextValue {
   effettive: string[];
   sedeCorrente: string | null;
   reFetchKey: string;
+  /**
+   * Quante volte l'utente ha cambiato sede in questa sessione. NON cambia al
+   * primo caricamento delle sedi accessibili (che pure fa passare `effettive`
+   * da [] a N): è la differenza fra «adesso so quali sedi hai» e «hai deciso di
+   * guardare un'altra sede», e solo la seconda deve ricaricare il cockpit.
+   */
+  epocaSede: number;
   loading: boolean;
   toggle: (id: string) => void;
   soloSede: (id: string) => void;
@@ -71,6 +80,9 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
   const [sedi, setSedi] = useState<Sede[]>([]);
   const [selezionate, setSelezionate] = useState<string[]>(readCookie);
   const [loading, setLoading] = useState(true);
+  // Avanza SOLO nelle azioni dell'utente (persist/toggle), mai nel caricamento
+  // iniziale delle sedi: vedi `epocaSede` in SediContextValue.
+  const [epocaSede, setEpocaSede] = useState(0);
 
   // Carica le sedi accessibili. try/finally (react-hooks 7): niente setState nel
   // ramo di errore, un solo commit a fine risoluzione.
@@ -107,6 +119,7 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
     // Se coincide con "tutte" le accessibili, memorizzo vuoto (= nessun filtro).
     setSelezionate(ids);
     writeCookie(ids);
+    setEpocaSede((n) => n + 1);
   }, []);
 
   const toggle = useCallback(
@@ -120,6 +133,7 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
         writeCookie(finale);
         return finale;
       });
+      setEpocaSede((n) => n + 1);
     },
     [sedi]
   );
@@ -139,12 +153,13 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
       effettive,
       sedeCorrente,
       reFetchKey: effettive.join(','),
+      epocaSede,
       loading,
       toggle,
       soloSede,
       tutte,
     };
-  }, [sedi, selezionate, loading, toggle, soloSede, tutte]);
+  }, [sedi, selezionate, epocaSede, loading, toggle, soloSede, tutte]);
 
   return <SediContext.Provider value={value}>{children}</SediContext.Provider>;
 }
@@ -157,20 +172,74 @@ export function useSediAttive(): SediContextValue {
 }
 
 /**
+ * Confine di ri-caricamento del cockpit al cambio di sede.
+ *
+ * PERCHÉ ESISTE. `reFetchKey` era nato come convenzione — «mettilo nelle deps
+ * dei tuoi useEffect» — e su tutto il cockpit lo referenziavano DUE file. Le
+ * altre pagine (dashboard, avvisi, messaggi, staff, sezioni, protocolli…)
+ * scaricano con dipendenze `[userId]`, `[tab]` o `[]`: dopo un cambio di sede
+ * restavano sui dati della sede precedente, senza dirlo. In home convivevano
+ * due numeri di alunni diversi, e quello grande — quello che si legge — era di
+ * un'altra sede. Una convenzione che nessuno può far rispettare non è un
+ * meccanismo: qui il ri-caricamento diventa STRUTTURALE. Cambiata la sede, il
+ * contenuto viene smontato e rimontato, quindi OGNI effetto di caricamento
+ * riparte, qualunque siano le sue dipendenze.
+ *
+ * La chiave è `epocaSede` e non `reFetchKey` di proposito: `reFetchKey` cambia
+ * anche quando arrivano le sedi accessibili (da `[]` a N) subito dopo il primo
+ * render, e userebbe un rimontaggio — cioè un doppio caricamento — all'apertura
+ * di ogni pagina.
+ *
+ * Sta DENTRO il provider e sopra il solo contenuto (`<main>`), non sopra la
+ * shell: topbar, sidebar e bottom-nav non devono sbattere le palpebre — e il
+ * menu da cui hai appena scelto la sede deve restare aperto.
+ */
+export function SedeScopeBoundary({ children }: { children: React.ReactNode }) {
+  const { epocaSede } = useSediAttive();
+  return <Fragment key={epocaSede}>{children}</Fragment>;
+}
+
+/**
  * Avviso "seleziona una sola sede" per le pagine mono-sede quando sono attive
  * più sedi (selezione ambigua). Specchia lato UI il 400 di `resolveScuolaScrittura`.
+ *
+ * È AZIONABILE. Fino al 2026-07-31 diceva «scegline una sola dal menu in alto»,
+ * ma sotto i 1024px quel menu non esisteva: sul telefono e nell'app nativa
+ * l'avviso chiedeva una cosa impossibile, e con tre sedi in produzione questo
+ * chiudeva fuori l'intera Direzione da sei pagine e da ogni scrittura. I bottoni
+ * qui sotto rendono la scelta possibile OVUNQUE l'avviso compaia, che ci sia o
+ * no un selettore nei paraggi.
  */
 export function SedeNotice({ cosa }: { cosa?: string }) {
   const t = useTranslations('shared');
+  const { sedi, soloSede } = useSediAttive();
   return (
     <div className="rounded-2xl border border-kidville-line bg-kidville-white p-8 text-center">
       <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{t('selezionaUnaSede')}</p>
       <p className="mt-2 font-maven text-[14px] text-kidville-muted">
-        {t.rich('sedeNoticeCorpo', { strong: (chunks) => <strong>{chunks}</strong> })}
+        {sedi.length > 1 ? (
+          t('sedeNoticeScegliQui')
+        ) : (
+          t.rich('sedeNoticeCorpo', { strong: (chunks) => <strong>{chunks}</strong> })
+        )}
         {/* La clausola «per gestire {cosa}» è opzionale; `cosa` arriva già tradotto
             dal namespace della pagina chiamante. Il punto finale resta sempre fuori. */}
         {cosa ? <> {t('sedeNoticePerGestire', { cosa })}</> : null}.
       </p>
+      {sedi.length > 1 && (
+        <div role="group" aria-label={t('selezionaUnaSede')} className="mt-4 flex flex-wrap justify-center gap-2">
+          {sedi.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => soloSede(s.id)}
+              className="min-h-[44px] rounded-full bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase text-kidville-white transition-colors hover:bg-kidville-green-dark"
+            >
+              {s.nome}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

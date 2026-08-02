@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Euro, Users2, FileText, Crown } from 'lucide-react';
+import { formatEuro } from '@/lib/format/valuta';
 
 // Identità app-level (M4, session-only): userId da query param, poi sessione
 // persistita da useSessionIdentity (kv_user_id). Nessun fallback demo:
@@ -238,7 +239,7 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                     <div className="flex justify-between items-center pt-1 border-t border-kidville-line">
                         <span className="font-maven text-xs text-kidville-muted">{t('econSommaQuote')}</span>
                         <span className={`font-maven text-sm font-bold ${sumMismatch ? 'text-kidville-error' : 'text-kidville-green'}`}>
-                            € {quoteSum.toFixed(2)} {sumMismatch && `≠ € ${importo.toFixed(2)}`}
+                            {formatEuro(quoteSum)} {sumMismatch && `≠ ${formatEuro(importo)}`}
                         </span>
                     </div>
                     {sumMismatch && (

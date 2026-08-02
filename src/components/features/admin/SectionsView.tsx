@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Building2, Plus, ChevronRight, Loader2 } from 'lucide-react';
+import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Plus, ChevronRight, Loader2 } from 'lucide-react';
+import { SedeIcon } from '@/components/ui/SedeIcon';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Griglia sezioni dell'anagrafica: le sedi/sezioni arrivano dai plessi
@@ -22,12 +23,18 @@ interface ScuolaScoped {
     sezioni: SezioneScoped[];
 }
 
+/** Sezione appiattita con la sua sede: l'identità di una classe è la coppia. */
+type SezioneConSede = SezioneScoped & { scuolaId: string; scuolaNome: string };
+
 interface Student {
     id: string;
     nome: string;
     cognome: string;
     classe_sezione?: string | null;
     section_id?: string | null;
+    // La sede del bambino: senza di essa il nome-classe non identifica nulla
+    // (dal 2026-07-29 «3 ANNI» esiste in tutti e tre i plessi).
+    scuola_id?: string | null;
     stato?: string;
 }
 
@@ -52,6 +59,7 @@ export function SectionsView() {
     const [newSectionType, setNewSectionType] = useState<'nido' | 'infanzia' | 'primaria'>('infanzia');
     const [newSectionScuola, setNewSectionScuola] = useState('');
     const [isCreating, setIsCreating] = useState(false);
+    const [erroreCreazione, setErroreCreazione] = useState<string | null>(null);
 
     // Niente setIsLoading(true) sincrono qui (react-hooks/set-state-in-effect):
     // al mount isLoading parte già true; i refetch da handler lo impostano loro.
@@ -61,7 +69,11 @@ export function SectionsView() {
             const secData = await secRes.json().catch(() => null);
             const groups: ScuolaScoped[] = secData?.success ? (secData.data ?? []) : [];
             setScuole(groups);
-            setNewSectionScuola(cur => cur || groups[0]?.scuolaId || '');
+            // Con un solo plesso accessibile la sede non è una scelta: è un fatto.
+            // Con più plessi NON si preseleziona il primo dell'elenco: chi crea una
+            // classe deve dire dove, altrimenti la sezione nasce nella scuola
+            // sbagliata e ci si accorge solo quando i bambini non la trovano.
+            setNewSectionScuola(cur => cur || (groups.length === 1 ? groups[0].scuolaId : ''));
 
             const perScuola = await Promise.all(
                 groups.map(async (g) => {
@@ -83,6 +95,7 @@ export function SectionsView() {
     const handleCreateSection = async () => {
         if (!newSectionName.trim() || !newSectionScuola) return;
         setIsCreating(true);
+        setErroreCreazione(null);
         try {
             const res = await fetch('/api/admin/sections', {
                 method: 'POST',
@@ -93,20 +106,36 @@ export function SectionsView() {
                 setNewSectionName('');
                 setShowNewForm(false);
                 fetchData();
+            } else {
+                // Senza questo ramo il 409 «nome già usato in questa sede» (e il
+                // 403 di scope) erano indistinguibili dal successo: il modulo
+                // restava lì immobile e si ricliccava. L'esito lo dice il server.
+                const j = await res.json().catch(() => null);
+                setErroreCreazione(j?.error ?? t('secErrCreazione'));
             }
         } catch (err) {
             // Niente nome della sezione né scuola_id nel messaggio: sono contesto scolastico,
             // e il messaggio è testo libero — nessuna whitelist lo filtra.
             logClient({ livello: 'error', evento: 'fetch', messaggio: `sezione-creazione-fallita: ${nomeErrore(err)}` });
+            setErroreCreazione(t('secErrCreazione'));
         } finally {
             setIsCreating(false);
         }
     };
 
-    const countStudents = (section: SezioneScoped) =>
-        students.filter(s => s.section_id === section.id || s.classe_sezione === section.name).length;
+    // Un bambino appartiene a UNA sezione. Se `section_id` è valorizzato, quello
+    // è il legame: vale da solo. Il nome-classe è soltanto il ripiego per le
+    // righe che il trigger `sync_alunno_section_id` non ha ancora risolto — e
+    // come ripiego va SEMPRE vincolato alla sede, altrimenti la card di «3 ANNI»
+    // di Aversa conta anche i bambini della «3 ANNI» di Giugliano e di Cesa.
+    const countStudents = (section: SezioneConSede) =>
+        students.filter(s => (
+            s.section_id
+                ? s.section_id === section.id
+                : s.classe_sezione === section.name && s.scuola_id === section.scuolaId
+        )).length;
 
-    const sections = scuole.flatMap(g => g.sezioni.map(s => ({ ...s, scuolaId: g.scuolaId, scuolaNome: g.scuolaNome })));
+    const sections: SezioneConSede[] = scuole.flatMap(g => g.sezioni.map(s => ({ ...s, scuolaId: g.scuolaId, scuolaNome: g.scuolaNome })));
     const multiSede = scuole.length > 1;
 
     if (isLoading) {
@@ -165,10 +194,12 @@ export function SectionsView() {
                             <div className="w-56">
                                 <label className="block text-sm font-bold text-kidville-ink mb-1">{t('campoSede')}</label>
                                 <select
+                                    name="nuova-sezione-sede"
                                     value={newSectionScuola}
                                     onChange={e => setNewSectionScuola(e.target.value)}
                                     className="w-full p-3 border-2 border-kidville-line rounded-input font-maven text-sm bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                                 >
+                                    <option value="">{t('secSelezionaSede')}</option>
                                     {scuole.map(g => (
                                         <option key={g.scuolaId} value={g.scuolaId}>{g.scuolaNome}</option>
                                     ))}
@@ -177,13 +208,18 @@ export function SectionsView() {
                         )}
                         <button
                             onClick={handleCreateSection}
-                            disabled={isCreating || !newSectionName.trim()}
+                            disabled={isCreating || !newSectionName.trim() || !newSectionScuola}
                             className="px-6 py-3 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] transition-transform hover:bg-kidville-green-dark active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
                         >
                             {isCreating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                             {t('secCrea')}
                         </button>
                     </div>
+                    {erroreCreazione && (
+                        <p role="alert" className="mt-3 rounded-xl border border-kidville-error/30 bg-kidville-error-soft/40 px-3 py-2 font-maven text-sm text-kidville-error">
+                            {erroreCreazione}
+                        </p>
+                    )}
                 </div>
             )}
 
@@ -208,10 +244,13 @@ export function SectionsView() {
                                 </span>
                             </div>
                             <h3 className="font-barlow font-black text-lg text-kidville-ink mb-1">{section.name}</h3>
-                            <div className="flex items-center gap-4 text-sm text-kidville-muted font-maven">
+                            {/* Alunni e SEDE non sono metadati decorativi: con tre
+                                plessi il nome della sede è metà della chiave che
+                                identifica la classe. `muted` misurava 2,51:1. */}
+                            <div className="flex items-center gap-4 text-sm text-kidville-sub font-maven">
                                 <span className="flex items-center gap-1"><User size={14} /> {t('contAlunni', { n: countStudents(section) })}</span>
                                 {multiSede && (
-                                    <span className="flex items-center gap-1"><Building2 size={14} /> {section.scuolaNome}</span>
+                                    <span className="flex items-center gap-1"><SedeIcon size={14} /> {section.scuolaNome}</span>
                                 )}
                             </div>
                             <div className="mt-3 flex items-center gap-1 text-xs font-bold text-kidville-green opacity-0 group-hover:opacity-100 transition-opacity">

@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio, getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { periodoValido } from '@/lib/certificati/stato'
-import { parseData, parseQuery } from '@/lib/validation/http'
+import { parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -33,13 +33,17 @@ export const POST = withRoute('parent/medical-certificates:POST', async (request
     if (auth.response) return auth.response
     const { user } = auth
 
-    const form = await request.formData()
+    // Content-Type sbagliato = errore del CLIENT: 400, e non l'eccezione al `catch`
+    // (`request.formData()` LANCIA). La regola vive in `parseMultipart`.
+    const form = await parseMultipart(request)
+    if ('response' in form) return form.response
+    const campi = form.data
     const parsed = parseData(postFormSchema, {
-      file: form.get('file'),
-      student_id: form.get('student_id'),
-      data_inizio: form.get('data_inizio') ? String(form.get('data_inizio')) : null,
-      data_fine: form.get('data_fine') ? String(form.get('data_fine')) : null,
-      note: form.get('note') ? String(form.get('note')) : null,
+      file: campi.get('file'),
+      student_id: campi.get('student_id'),
+      data_inizio: campi.get('data_inizio') ? String(campi.get('data_inizio')) : null,
+      data_fine: campi.get('data_fine') ? String(campi.get('data_fine')) : null,
+      note: campi.get('note') ? String(campi.get('note')) : null,
     })
     if ('response' in parsed) return parsed.response
     const { file, student_id: studentId, data_inizio: dataInizio, data_fine: dataFine, note } = parsed.data

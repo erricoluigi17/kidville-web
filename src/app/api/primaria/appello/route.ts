@@ -114,6 +114,30 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     const alunniErr = await assertAlunniInSezione(supabase, records.map((r) => r.alunnoId), sectionId)
     if (alunniErr) return alunniErr
 
+    // La SEDE della presenza, letta PRIMA di scrivere (serviva già più sotto per
+    // la notifica: qui è solo anticipata). Fino al 2026-07-31 l'upsert non
+    // portava `scuola_id` e in produzione 12 presenze su 49 sono finite in
+    // tabella con la chiave di tenant vuota: righe che nessun filtro
+    // `.in('scuola_id', plessi)` può più vedere, cioè un registro che si
+    // accorcia in silenzio. La sede è una proprietà del DATO, non del chiamante.
+    //
+    // PostgREST non lancia: si controlla `{ error }`. Sede non risolvibile ⇒ si
+    // RIFIUTA la scrittura: una presenza senza plesso è peggio di un errore.
+    const { data: sezione, error: sezErr } = await supabase
+      .from('sections')
+      .select('scuola_id')
+      .eq('id', sectionId)
+      .maybeSingle()
+    const scuolaId = (sezione?.scuola_id as string | undefined) ?? null
+    if (sezErr || !scuolaId) {
+      logEvento('db', 'error', {
+        operazione: 'primaria/appello:POST',
+        esito: 'sede-sezione-non-risolta',
+        sezione: sectionId,
+      }, sezErr)
+      return NextResponse.json({ error: 'Sede della sezione non risolvibile' }, { status: 500 })
+    }
+
     // Stato PRIMA (per audit diff).
     const alunnoIds = records.map((r) => r.alunnoId)
     const { data: prima } = await supabase
@@ -126,6 +150,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     const rows = records.map((r) => ({
       alunno_id: r.alunnoId,
       section_id: sectionId,
+      scuola_id: scuolaId,
       data,
       stato: r.stato,
       note_appello: r.noteAppello ?? null,
@@ -162,9 +187,6 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
         ((prima ?? []) as Array<{ alunno_id: string; stato?: string | null; giustificata?: boolean | null; giustificata_da?: string | null }>)
           .map((p) => [p.alunno_id, p]),
       )
-      const { data: sezione } = await supabase.from('sections').select('scuola_id').eq('id', sectionId).maybeSingle()
-      const scuolaId = (sezione?.scuola_id as string | undefined) ?? null
-
       const revocati = records
         .filter((r) => r.stato !== 'assente' && primaByAlunno.get(r.alunnoId)?.stato === 'assente')
         .map((r) => r.alunnoId)

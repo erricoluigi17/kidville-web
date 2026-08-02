@@ -50,9 +50,21 @@
   "sedeRequiredDidattica": "primary teaching",
   "sedeRequiredPagelle": "report cards & assessment",
   "sedeRequiredMensa": "the canteen",
+  "sedeRequiredModuli": "features & modules",
+  "sedeRequiredModulistica": "forms",
+  "sedeRequiredDiario": "the daily log",
+  "sedeRequiredPresenze": "attendance & absence notes",
+  "sedeRequiredNote": "disciplinary notes",
+  "sedeRequiredArmadietto": "the locker",
+  "sedeRequiredAvvisi": "notices",
+  "sedeRequiredChat": "the chat",
+  "sedeRequiredGalleria": "the gallery",
+  "sedeRequiredNotifiche": "notifications",
+  "sedeInConfigurazione": "You are configuring",
+  "sedeSconosciuta": "Unknown location",
 
-  "multiSedeTitolo": "Multi-site",
-  "multiSedeSottotitolo": "Add, rename or deactivate sites. Restricted to Management.",
+  "multiSedeTitolo": "Multi-location",
+  "multiSedeSottotitolo": "Add, rename or deactivate locations. Restricted to Management.",
 
   "sidiTitolo": "SIDI interoperability",
   "sidiSottotitolo": "Import new enrolments, Phase A alignment, attendee submission and Piattaforma Unica. Actual transmission depends on ministerial accreditation.",
@@ -162,9 +174,9 @@
   "meAttivoDal": "Active from",
   "meAggiungiAssegnazione": "Add assignment",
 
-  "scCaricamentoSedi": "Loading sites…",
+  "scCaricamentoSedi": "Loading locations…",
   "scAzioneRiservata": "Restricted to Management.",
-  "scGestioneMultiSede": "Multi-site management",
+  "scGestioneMultiSede": "Multi-location management",
   "scSoloDirezione": "Management only",
   "scDisattivata": "Deactivated",
   "scAttiva": "Active",
@@ -183,10 +195,10 @@
   "scEmail": "Email",
   "scPec": "Certified email (PEC)",
   "scSalvaAnagrafica": "Save details",
-  "scNomeSede": "Site name *",
-  "scCreaSede": "Create site",
+  "scNomeSede": "Location name *",
+  "scCreaSede": "Create location",
   "scCreazione": "Creating…",
-  "scAggiungiSede": "Add site",
+  "scAggiungiSede": "Add location",
   "scCodMecc": "School code {codice}",
 
   "stAzioneRiservataRuolo": "Restricted to Management, or you cannot change your own role.",
@@ -201,9 +213,9 @@
   "stRigeneraCredenziali": "Regenerate credentials",
   "stModifica": "Edit",
   "stRuolo": "Role",
-  "stSede": "Site",
+  "stSede": "Location",
   "stClassiAssegnate": "Assigned classes",
-  "stNessunaClasse": "No classes for this site.",
+  "stNessunaClasse": "No classes for this location.",
 
   "siStatoNonInviato": "Not sent",
   "siStatoInCorso": "In progress",
@@ -246,7 +258,7 @@
   "ieRisultato": "{alunni} pupils, {genitori} parents, {legami} links",
   "ieRigheErrori": "{count, plural, one {# row with errors} other {# rows with errors}} (rows: {righe})",
   "ieComeFunziona": "How it works:",
-  "ieComeFunzionaDesc": "the template has a column for each pupil detail and up to two parents. On import the system creates pupils and linked parents, avoiding duplicates via the tax code. The site is the active one.",
+  "ieComeFunzionaDesc": "the template has a column for each pupil detail and up to two parents. On import the system creates pupils and linked parents, avoiding duplicates via the tax code. The location is the active one.",
 
   "arTitolo": "Locker",
   "arSogliaScortaBassa": "Low stock threshold (pieces)",
@@ -259,7 +271,7 @@
   "avChiPubblica": "Who can publish notices",
   "avAllegatiMax": "Attachments: max size (MB)",
   "avScadenzaDefault": "Default expiry (days)",
-  "avConfermaLettura": "Read receipt required from parents",
+  "avConfermaLettura": "Acknowledgement required from parents",
   "avHint": "Publishing roles are applied automatically when the notice is created.",
 
   "chTitolo": "Chat",
@@ -354,5 +366,10 @@
 
   "pgPeriodiScrutinio": "Assessment periods",
   "pgScalaGiudizi": "Grade scale",
-  "pgGiudiziScrutinio": "Assessment judgements"
+  "pgGiudiziScrutinio": "Assessment judgements",
+  "armRimuoviCategoria": "Remove category",
+  "meEliminaAssegnazione": "Delete assignment",
+  "noteRimuoviCategoria": "Remove category",
+  "spEliminaCategoria": "Delete category",
+  "spRimuoviPacchetto": "Remove package"
 }

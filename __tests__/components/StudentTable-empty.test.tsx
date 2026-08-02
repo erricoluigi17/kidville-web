@@ -1,5 +1,23 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+
+// `StudentTable` legge le sedi accessibili (colonna «Sede», W3-E): in
+// produzione vive dentro `<SedeProvider>` (layout /admin), qui no. Una sola sede
+// ⇒ la colonna non compare e questi test restano quelli di prima.
+vi.mock('@/lib/context/sede-context', () => ({
+  useSediAttive: () => ({
+    sedi: [{ id: 'sede-unica', nome: 'Kidville Alfa' }],
+    selezionate: [],
+    effettive: ['sede-unica'],
+    sedeCorrente: 'sede-unica',
+    reFetchKey: 'sede-unica',
+    loading: false,
+    toggle: vi.fn(),
+    soloSede: vi.fn(),
+    tutte: vi.fn(),
+  }),
+}));
+
 import { StudentTable } from '@/components/features/admin/StudentTable';
 
 /**

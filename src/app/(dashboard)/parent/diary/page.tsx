@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
@@ -60,7 +61,7 @@ function formatOrarioEntrata(raw: string | null | undefined, locale: string): st
     if (!raw) return null;
     const d = new Date(raw);
     return !isNaN(d.getTime())
-        ? new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(d)
+        ? intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(d)
         : raw;
 }
 
@@ -174,11 +175,11 @@ function formatDayLabel(dateKey: string, t: Traduci, locale: string): string {
     const yesterday = toDateKey(new Date(Date.now() - 86400000));
     if (dateKey === today)     return t('giornoOggi');
     if (dateKey === yesterday) return t('giornoIeri');
-    return new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(d);
+    return intlDateTime(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(d);
 }
 
 function formatTime(iso: string, locale: string): string {
-    return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+    return intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
 function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
@@ -486,6 +487,7 @@ function ParentDiaryContent() {
             <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">
                 <button
                     onClick={() => goDay(-1)}
+                    aria-label={t('giornoPrecedente')}
                     className="w-9 h-9 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted transition-colors"
                 >
                     <ChevronLeft size={18} strokeWidth={1.5} />
@@ -496,7 +498,7 @@ function ParentDiaryContent() {
                         {formatDayLabel(dateKey, t, f.locale)}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {new Intl.DateTimeFormat(f.locale, {
+                        {intlDateTime(f.locale, {
                             day: 'numeric', month: 'long', year: 'numeric',
                         }).format(new Date(dateKey + 'T12:00:00'))}
                     </p>
@@ -504,6 +506,7 @@ function ParentDiaryContent() {
 
                 <button
                     onClick={() => goDay(1)}
+                    aria-label={t('giornoSuccessivo')}
                     disabled={isToday}
                     className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
                         isToday

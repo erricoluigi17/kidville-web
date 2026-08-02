@@ -53,13 +53,21 @@ function fetchDiarioPrimariaVisibile(userId: string | null): Promise<boolean> {
  * gating delle voci di navigazione — mirror di useChildSchoolType lato
  * genitore. Il fetch parte anche con userId null: l'identità si risolve dal
  * cookie di sessione (come già fa GradeWorldSwitch).
+ *
+ * `pronta` esiste per chi risolve l'identità a DUE passaggi
+ * (`useTeacherIdentity`, che deve dare `null` finché l'HTML deve combaciare col
+ * server). Senza questa guardia il primo passaggio chiederebbe i gradi con
+ * chiave `''` e il secondo con l'uuid: due chiavi nella cache, due GET su ogni
+ * pagina docente. Chi legge l'identità in modo sincrono non passa nulla e si
+ * comporta come prima.
  */
-export function useTeacherGradi(userId: string | null): TeacherGradi {
+export function useTeacherGradi(userId: string | null, pronta = true): TeacherGradi {
     const [gradi, setGradi] = useState<string[]>([]);
     const [diarioPrimariaVisibile, setDiarioPrimariaVisibile] = useState(false);
     const [ready, setReady] = useState(false);
 
     useEffect(() => {
+        if (!pronta) return;
         let active = true;
         fetchGradi(userId).then(async (g) => {
             if (!active) return;
@@ -73,7 +81,7 @@ export function useTeacherGradi(userId: string | null): TeacherGradi {
             setReady(true);
         });
         return () => { active = false; };
-    }, [userId]);
+    }, [userId, pronta]);
 
     return { gradi, ...deriveGradiFlags(gradi), diarioPrimariaVisibile, ready };
 }

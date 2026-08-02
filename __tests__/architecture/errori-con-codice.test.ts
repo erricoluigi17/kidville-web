@@ -1,0 +1,443 @@
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { CODICI_ERRORE } from '@/lib/ui/esito-fetch';
+import itShared from '../../messages/it/shared.json';
+import enShared from '../../messages/en/shared.json';
+
+/**
+ * Lock sui MESSAGGI D'ERRORE DEL SERVER — la difesa che impedisce alla categoria di ricrescere.
+ *
+ * LA STORIA. Collaudo del 2026-07-31, categoria localizzazione: con l'interfaccia in inglese la
+ * modale «New notice» rispondeva «Sede non accessibile» e «Specificare la sede (scuola_id) per
+ * questa operazione». Italiano dentro un'interfaccia inglese, e il secondo messaggio — scritto
+ * per chi legge i log — mostrava a una segretaria il nome di una colonna del database.
+ *
+ * Nessuna delle due era una traduzione dimenticata: quel testo NASCE sul server, dove il locale
+ * e il catalogo non esistono, e il client (`messaggioErrore`) lo rende testualmente. Il tester
+ * ha contato **452 messaggi d'errore italiani distinti** nelle route: tradurne due avrebbe
+ * chiuso due sintomi e lasciato in piedi la causa. Perciò il canale ha un CODICE stabile
+ * (`{ error: '…', codice: 'SEDE_NON_ACCESSIBILE' }`) e il client traduce il codice.
+ *
+ * COSA SORVEGLIA QUESTO FILE, e perché ciascuna regola.
+ *
+ *  1. **Ogni codice che esce da `src/` è dichiarato e tradotto in ENTRAMBE le lingue.** Un
+ *     codice inventato in una route e mai dichiarato non è un mezzo fix: a schermo ricadrebbe
+ *     sulla prosa italiana, cioè sul difetto di partenza, con l'aria di essere chiuso.
+ *  2. **La frase di un codice non torna a viaggiare da sola.** Le 20 copie scritte a mano dicevano
+ *     sei cose diverse per lo stesso rifiuto; ora passano tutte da `rifiutoSede()`. Se qualcuno
+ *     riscrive «Sede non accessibile» a mano in una route, quella risposta smette di essere
+ *     traducibile e nessun altro test se ne accorge.
+ *  3. **Nessun messaggio mostrato all'utente nomina una colonna del database.** È la metà di F2
+ *     che non riguarda la lingua: `scuola_id` non è un'informazione per chi lavora in segreteria.
+ *  4. **Il debito non cresce.** Le risposte d'errore ancora SENZA codice sono 1478 in 284 file:
+ *     sono l'inventario di `docs/superpowers/errori-senza-codice-allowlist.json`, che può solo
+ *     rimpicciolirsi. Una risposta nuova in un file NUOVO è vietata; in un file già in elenco è
+ *     vietato superare il numero dichiarato.
+ *
+ * PERCHÉ IL CONTEGGIO E NON LA RIGA. Le righe si spostano a ogni modifica sopra di loro: un lock
+ * sui numeri di riga sarebbe rosso per motivi che non c'entrano niente, e un lock che suona a
+ * vuoto è un lock che si impara a spegnere.
+ *
+ * COME SI PAGA IL DEBITO. Si sostituisce `NextResponse.json({ error: '…' }, { status })` con una
+ * risposta che porta anche `codice`, si dichiara il codice in `CODICI_ERRORE`
+ * (`src/lib/ui/esito-fetch.ts`) e si aggiungono le due voci ai cataloghi. Poi si abbassa il
+ * numero del file in allowlist — o si toglie la voce, se è arrivato a zero.
+ */
+
+const RADICE = process.cwd();
+const SRC = path.join(RADICE, 'src');
+const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowlist.json');
+
+/**
+ * TETTI MONOTONI DECRESCENTI, misurati il 2026-08-01 dopo la conversione dei 20 dinieghi di
+ * sede. Si abbassano, mai si alzano.
+ */
+const MAX_FILE = 284;
+const MAX_OCCORRENZE = 1478;
+
+/**
+ * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non
+ * possono tornare in nessun corpo d'errore, con o senza codice — tre di loro nominano una
+ * colonna del database, e tutte e sei dicevano cose diverse per la stessa cosa.
+ */
+const FRASI_RITIRATE = [
+    'Sede non consentita',
+    'Specificare la sede (scuola_id)',
+    'Specificare la sede (scuola_id) per questa operazione',
+    'Specificare la sede (scuola_id o sectionId): il nome della classe non la identifica',
+    'Specificare la sede: più classi con questo nome (usare section_id)',
+];
+
+/**
+ * I punti in cui i due dinieghi di sede NASCONO. Sono l'unica fonte consentita della frase, e
+ * qui il lock pretende il contrario di altrove: che `rifiutoSede` ci sia davvero. Senza questo
+ * controllo positivo, il test resterebbe verde anche se qualcuno cancellasse le chiamate — cioè
+ * proprio nel caso in cui il difetto è tornato.
+ */
+const SORGENTI_DEL_RIFIUTO = [
+    'src/lib/auth/scope.ts',
+    'src/lib/auth/sede-richiesta.ts',
+    'src/lib/mensa/scope.ts',
+];
+
+/* ────────────────────────────────────────────────────────────────────────────────
+ * LA MISURA. Testuale, come nel lock sui catch muti e per lo stesso motivo: far girare un
+ * parser vero su 285 file costa più del gate intero.
+ * ──────────────────────────────────────────────────────────────────────────────── */
+
+/** Sostituisce i commenti con spazi lasciando INTATTE le stringhe e i ritorni a capo. */
+function mascheraCommenti(sorgente: string): string {
+    let out = '';
+    let i = 0;
+    let stato: 'code' | 'riga' | 'blocco' | 'str' = 'code';
+    let apice = '';
+    while (i < sorgente.length) {
+        const c = sorgente[i];
+        const d = sorgente[i + 1];
+        if (stato === 'code') {
+            if (c === '/' && d === '/') { stato = 'riga'; out += '  '; i += 2; continue; }
+            if (c === '/' && d === '*') { stato = 'blocco'; out += '  '; i += 2; continue; }
+            if (c === '"' || c === "'" || c === '`') { stato = 'str'; apice = c; out += c; i++; continue; }
+            out += c; i++; continue;
+        }
+        if (stato === 'riga') {
+            if (c === '\n') { stato = 'code'; out += '\n'; } else out += ' ';
+            i++; continue;
+        }
+        if (stato === 'blocco') {
+            if (c === '*' && d === '/') { stato = 'code'; out += '  '; i += 2; continue; }
+            out += c === '\n' ? '\n' : ' '; i++; continue;
+        }
+        // stato === 'str'
+        if (c === '\\') { out += c + (d ?? ''); i += 2; continue; }
+        if (c === apice) stato = 'code';
+        out += c; i++;
+    }
+    return out;
+}
+
+/** Il PRIMO argomento (oggetto letterale) di ogni `NextResponse.json(`, a parentesi bilanciate. */
+function corpiJson(src: string): { testo: string; riga: number }[] {
+    const out: { testo: string; riga: number }[] = [];
+    const re = /NextResponse\.json\(\s*/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(src)) !== null) {
+        const i = m.index + m[0].length;
+        if (src[i] !== '{') continue;
+        let liv = 0;
+        let j = i;
+        for (; j < src.length; j++) {
+            const c = src[j];
+            if (c === '{') liv++;
+            else if (c === '}') { liv--; if (liv === 0) { j++; break; } }
+            else if (c === '"' || c === "'" || c === '`') {
+                const a = c;
+                j++;
+                while (j < src.length && src[j] !== a) { if (src[j] === '\\') j++; j++; }
+            }
+        }
+        out.push({ testo: src.slice(i, j), riga: src.slice(0, i).split('\n').length });
+    }
+    return out;
+}
+
+/** Le proprietà di PRIMO livello di un oggetto letterale: nome e, se è un letterale, valore. */
+function proprieta(obj: string): { nome: string; valore: string | null }[] {
+    const dentro = obj.slice(1, -1);
+    const pezzi: string[] = [];
+    let liv = 0;
+    let buf = '';
+    for (let i = 0; i < dentro.length; i++) {
+        const c = dentro[i];
+        if (c === '{' || c === '[' || c === '(') liv++;
+        else if (c === '}' || c === ']' || c === ')') liv--;
+        else if (c === '"' || c === "'" || c === '`') {
+            const a = c;
+            buf += c;
+            i++;
+            while (i < dentro.length && dentro[i] !== a) { if (dentro[i] === '\\') { buf += dentro[i]; i++; } buf += dentro[i]; i++; }
+            buf += a;
+            continue;
+        }
+        if (c === ',' && liv === 0) { pezzi.push(buf); buf = ''; continue; }
+        buf += c;
+    }
+    pezzi.push(buf);
+    const out: { nome: string; valore: string | null }[] = [];
+    for (const p of pezzi) {
+        const conValore = p.match(/^\s*(?:\.\.\.)?\s*([A-Za-z_$][\w$]*)\s*:\s*([\s\S]*)$/);
+        if (conValore) {
+            const grezzo = conValore[2].trim();
+            const lett = grezzo.match(/^'((?:[^'\\]|\\.)*)'$|^"((?:[^"\\]|\\.)*)"$/);
+            const valore = lett ? (lett[1] ?? lett[2]).replace(/\\'/g, "'").replace(/\\"/g, '"') : null;
+            out.push({ nome: conValore[1], valore });
+            continue;
+        }
+        const shorthand = p.match(/^\s*([A-Za-z_$][\w$]*)\s*$/);
+        if (shorthand) out.push({ nome: shorthand[1], valore: null });
+    }
+    return out;
+}
+
+type Errore = {
+    file: string;
+    riga: number;
+    testo: string | null;
+    conCodice: boolean;
+    /** Il codice, se è un letterale; `null` se assente o costruito da una variabile. */
+    codice: string | null;
+};
+
+function sorgenti(dir = SRC): string[] {
+    const out: string[] = [];
+    for (const voce of fs.readdirSync(dir, { withFileTypes: true })) {
+        const assoluto = path.join(dir, voce.name);
+        if (voce.isDirectory()) { out.push(...sorgenti(assoluto)); continue; }
+        if (!/\.tsx?$/.test(voce.name)) continue;
+        out.push(path.relative(RADICE, assoluto).split(path.sep).join('/'));
+    }
+    return out;
+}
+
+/** Tutte le risposte JSON che portano un `error` all'utente, con e senza `codice`. */
+function inventario(): Errore[] {
+    const out: Errore[] = [];
+    for (const f of sorgenti()) {
+        const src = mascheraCommenti(fs.readFileSync(path.join(RADICE, f), 'utf8'));
+        for (const corpo of corpiJson(src)) {
+            const props = proprieta(corpo.testo);
+            const err = props.find((p) => p.nome === 'error');
+            if (!err) continue;
+            const cod = props.find((p) => p.nome === 'codice');
+            out.push({
+                file: f,
+                riga: corpo.riga,
+                testo: err.valore,
+                conCodice: Boolean(cod),
+                codice: cod?.valore ?? null,
+            });
+        }
+    }
+    return out;
+}
+
+/**
+ * I codici che escono davvero verso il client: quelli scritti dentro un corpo che porta
+ * `error`, più gli argomenti di `rifiutoSede('X')`.
+ *
+ * NON si cerca `codice:` in tutto il file: `codice` è una parola comune e in
+ * `src/lib/competenze/modello.ts` sono i livelli di competenza («A», «B», «C», «D»). Un lock
+ * che li segnalasse come codici d'errore non dichiarati sarebbe rosso su una cosa giusta —
+ * ed è così che si impara a spegnerlo.
+ */
+function codiciUsati(): { file: string; codice: string }[] {
+    const out: { file: string; codice: string }[] = [];
+    for (const e of inventario()) {
+        if (e.codice) out.push({ file: `${e.file}:${e.riga}`, codice: e.codice });
+    }
+    for (const f of sorgenti()) {
+        const src = mascheraCommenti(fs.readFileSync(path.join(RADICE, f), 'utf8'));
+        for (const m of src.matchAll(/rifiutoSede\(\s*'([A-Z0-9_]+)'\s*\)/g)) out.push({ file: f, codice: m[1] });
+    }
+    return out;
+}
+
+type Voce = { path: string; n: number };
+type Allowlist = { totale_occorrenze: number; file: Voce[] };
+
+function leggiAllowlist(): Allowlist {
+    return JSON.parse(fs.readFileSync(ALLOWLIST, 'utf8')) as Allowlist;
+}
+
+// NB: non chiamarli `it`/`en` — `it` è la funzione di vitest.
+const catIt = itShared as Record<string, string>;
+const catEn = enShared as Record<string, string>;
+
+describe('lock — i messaggi d’errore del server hanno un codice', () => {
+    it('la misura vede davvero i corpi d’errore (controllo positivo del parser)', () => {
+        // Senza questo, un parser rotto renderebbe VERDI tutte le regole qui sotto:
+        // «zero corpi trovati» e «zero violazioni» hanno lo stesso colore.
+        const tutti = inventario();
+        expect(tutti.length).toBeGreaterThan(1000);
+
+        const noti = tutti.filter((e) => e.file === 'src/lib/auth/rifiuto-sede.ts');
+        expect(noti, 'il costruttore dei dinieghi di sede non è più visto dalla misura').toHaveLength(1);
+        expect(noti[0].conCodice, 'il corpo di `rifiutoSede` non risulta portare `codice`').toBe(true);
+    });
+
+    it('ogni codice usato in src/ è DICHIARATO e tradotto in entrambe le lingue', () => {
+        const dichiarati = CODICI_ERRORE as Record<string, string>;
+        const sconosciuti = codiciUsati()
+            .filter((u) => !dichiarati[u.codice])
+            .map((u) => `${u.file}: ${u.codice}`);
+
+        expect(
+            sconosciuti,
+            'Codice mandato al client ma non dichiarato in CODICI_ERRORE (src/lib/ui/esito-fetch.ts). ' +
+                'Il client non sa tradurlo: a schermo ricade sulla prosa italiana, cioè esattamente il ' +
+                'difetto che il codice doveva chiudere.',
+        ).toEqual([]);
+
+        const senzaTraduzione: string[] = [];
+        for (const [codice, chiave] of Object.entries(dichiarati)) {
+            if (!catIt[chiave]?.trim()) senzaTraduzione.push(`${codice} → messages/it/shared.json:${chiave}`);
+            if (!catEn[chiave]?.trim()) senzaTraduzione.push(`${codice} → messages/en/shared.json:${chiave}`);
+        }
+        expect(
+            senzaTraduzione,
+            'Codice dichiarato ma senza voce di catalogo: in quella lingua l’utente leggerebbe la prosa ' +
+                'italiana del server.',
+        ).toEqual([]);
+    });
+
+    it('i dinieghi di sede NASCONO da `rifiutoSede`, e ci nascono ancora (controllo positivo)', () => {
+        const senza = SORGENTI_DEL_RIFIUTO.filter((p) => {
+            expect(fs.existsSync(path.join(RADICE, p)), `sparito: ${p}`).toBe(true);
+            return !/rifiutoSede\(/.test(fs.readFileSync(path.join(RADICE, p), 'utf8'));
+        });
+        expect(
+            senza,
+            'Questi moduli decidono i due dinieghi di sede per 137 route: se non passano più da ' +
+                '`rifiutoSede`, il codice non parte e l’interfaccia inglese torna a mostrare l’italiano.',
+        ).toEqual([]);
+    });
+
+    it('la frase di un codice non viaggia mai SENZA il suo codice', () => {
+        const frasiTradotte = new Map<string, string>();
+        for (const [codice, chiave] of Object.entries(CODICI_ERRORE as Record<string, string>)) {
+            if (catIt[chiave]) frasiTradotte.set(catIt[chiave], codice);
+        }
+
+        const orfane = inventario()
+            .filter((e) => !e.conCodice && e.testo !== null && frasiTradotte.has(e.testo))
+            .map((e) => `${e.file}:${e.riga} → «${e.testo}» (codice ${frasiTradotte.get(e.testo!)})`);
+
+        expect(
+            orfane,
+            'Questa frase HA un codice: usa `rifiutoSede(...)` (src/lib/auth/rifiuto-sede.ts) invece di ' +
+                'riscriverla a mano. Scritta a mano viaggia senza codice, e per chi lavora in inglese ' +
+                'torna a essere italiano — che è il fallimento F1 del collaudo del 2026-07-31.',
+        ).toEqual([]);
+    });
+
+    it('le sei frasi ritirate non tornano, e nessun messaggio nomina `scuola_id`', () => {
+        const tutti = inventario();
+
+        const tornate = tutti
+            .filter((e) => e.testo !== null && FRASI_RITIRATE.includes(e.testo))
+            .map((e) => `${e.file}:${e.riga} → «${e.testo}»`);
+        expect(
+            tornate,
+            'Frase ritirata il 2026-08-01: erano sei modi diversi di dire lo stesso rifiuto. Ora se ne ' +
+                'dice uno solo, e lo costruisce `rifiutoSede(...)`.',
+        ).toEqual([]);
+
+        const conColonna = tutti
+            .filter((e) => e.testo !== null && /scuola_id/.test(e.testo))
+            .map((e) => `${e.file}:${e.riga} → «${e.testo}»`);
+        expect(
+            conColonna,
+            'Un messaggio mostrato all’utente nomina una colonna del database. Il nome del campo serve a ' +
+                'chi legge i log, e nel log ci deve restare: a una segretaria non dice niente, e racconta ' +
+                'a chiunque com’è fatto lo schema.',
+        ).toEqual([]);
+
+        // ⚠️ E il testo va inseguito DOVE SI È SPOSTATO. Con la correzione del
+        // 2026-08-01 la frase di un codice non sta più nel sorgente ma nel
+        // catalogo: guardare solo i letterali di `src/` lascerebbe rientrare
+        // `scuola_id` da `messages/`, con questa regola verde. Verificato
+        // rimettendo il difetto: senza le due righe qui sotto il lock taceva.
+        const catalogo: string[] = [];
+        for (const [codice, chiave] of Object.entries(CODICI_ERRORE as Record<string, string>)) {
+            for (const [lingua, cat] of [['it', catIt], ['en', catEn]] as const) {
+                const testo = cat[chiave];
+                if (testo && /scuola_id|section_id|sectionId/.test(testo)) {
+                    catalogo.push(`messages/${lingua}/shared.json:${chiave} (${codice}) → «${testo}»`);
+                }
+            }
+        }
+        expect(
+            catalogo,
+            'La voce di catalogo di un codice d’errore nomina una colonna del database: è la stessa ' +
+                'cosa di prima, spostata di un file. Il nome del campo vive nel log ' +
+                '(`sede-scrittura-ambigua`), non davanti a chi lavora in segreteria.',
+        ).toEqual([]);
+    });
+
+    it('l’allowlist del debito esiste, è ben formata e non ha doppioni', () => {
+        expect(
+            fs.existsSync(ALLOWLIST),
+            'Manca docs/superpowers/errori-senza-codice-allowlist.json: è l’inventario delle risposte ' +
+                'd’errore ancora senza codice. Senza, o il lock è rosso su 1478 punti legacy, o non esiste.',
+        ).toBe(true);
+
+        const a = leggiAllowlist();
+        expect(Array.isArray(a.file)).toBe(true);
+        for (const v of a.file) {
+            expect(typeof v.path, `voce senza path: ${JSON.stringify(v)}`).toBe('string');
+            expect(Number.isInteger(v.n) && v.n > 0, `voce con n non valido: ${v.path}`).toBe(true);
+            expect(v.path.startsWith('src/'), `path fuori da src/: ${v.path}`).toBe(true);
+        }
+        const doppi = a.file.map((v) => v.path).filter((p, i, arr) => arr.indexOf(p) !== i);
+        expect(doppi, 'stesso file due volte: il conteggio non sarebbe più leggibile').toEqual([]);
+        expect(
+            a.totale_occorrenze,
+            `Il totale in testa al file dice ${a.totale_occorrenze}, la somma delle voci fa ` +
+                `${a.file.reduce((s, v) => s + v.n, 0)}.`,
+        ).toBe(a.file.reduce((s, v) => s + v.n, 0));
+    });
+
+    it('nessuna risposta d’errore SENZA codice fuori dall’allowlist, e in elenco nessuna in più', () => {
+        const a = leggiAllowlist();
+        const tetto = new Map(a.file.map((v) => [v.path, v.n]));
+
+        const misurato = new Map<string, number>();
+        for (const e of inventario()) {
+            if (e.conCodice) continue;
+            misurato.set(e.file, (misurato.get(e.file) ?? 0) + 1);
+        }
+
+        const nuovi = [...misurato.entries()]
+            .filter(([f]) => !tetto.has(f))
+            .map(([f, n]) => `${f} (${n})`);
+        expect(
+            nuovi,
+            'Risposta d’errore senza `codice` in un file NON in allowlist. Non aggiungerlo all’elenco: ' +
+                'l’elenco può solo rimpicciolirsi. Dichiara un codice in CODICI_ERRORE ' +
+                '(src/lib/ui/esito-fetch.ts), mettilo nei due cataloghi e mandalo accanto a `error`. ' +
+                'Un messaggio senza codice è un messaggio che l’utente inglese legge in italiano.',
+        ).toEqual([]);
+
+        const cresciuti = [...misurato.entries()]
+            .filter(([f, n]) => tetto.has(f) && n > (tetto.get(f) as number))
+            .map(([f, n]) => `${f}: dichiarate ${tetto.get(f)}, misurate ${n}`);
+        expect(
+            cresciuti,
+            'In questi file le risposte d’errore senza codice sono AUMENTATE. Il debito è congelato al ' +
+                '2026-08-01: si può solo pagare.',
+        ).toEqual([]);
+
+        const scomparsi = a.file
+            .filter((v) => !fs.existsSync(path.join(RADICE, v.path)))
+            .map((v) => v.path);
+        expect(
+            scomparsi,
+            'File in allowlist che non esistono più: togli la voce. Una riga che non corrisponde a niente ' +
+                'fa sembrare il debito più grande di quello che è.',
+        ).toEqual([]);
+    });
+
+    it('l’allowlist può solo rimpicciolirsi (tetti monotoni decrescenti)', () => {
+        const a = leggiAllowlist();
+        expect(
+            a.file.length,
+            `L’allowlist è cresciuta a ${a.file.length} file (tetto ${MAX_FILE}). Alzare il tetto non è la ` +
+                'risposta: è la mossa che ha lasciato arrivare la categoria a 452 messaggi distinti.',
+        ).toBeLessThanOrEqual(MAX_FILE);
+        expect(
+            a.file.reduce((s, v) => s + v.n, 0),
+            `L’allowlist dichiara ${a.file.reduce((s, v) => s + v.n, 0)} risposte senza codice (tetto ${MAX_OCCORRENZE}).`,
+        ).toBeLessThanOrEqual(MAX_OCCORRENZE);
+    });
+});

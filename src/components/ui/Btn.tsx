@@ -12,11 +12,21 @@ const SIZES: Record<BtnSize, string> = {
   lg: 'h-[54px] px-[30px] text-[17px]',
 }
 
+/**
+ * Riempimento di BRAND invariato (verde #006A5F / giallo #FDC400), inchiostro
+ * che quel riempimento regge davvero. La coppia storica giallo-su-verde vale
+ * 4,05:1 in ENTRAMBI i versi (il contrasto è simmetrico) e nessuna delle tre
+ * taglie qui sopra arriva ai 18,66px del «testo grande»: la soglia applicabile
+ * è 4,5:1, non 3:1. Con gli inchiostri di brand (`*-ink`, definiti in
+ * globals.css) si passa a 4,78:1 e 6,35:1, hover compresi.
+ * `danger` usa `error-strong`: `error` su `error-soft` è 3,70:1 — stessa storia.
+ * Misure e lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§2).
+ */
 const VARIANTS: Record<BtnVariant, string> = {
-  primary: 'bg-kidville-green text-kidville-yellow hover:bg-kidville-green-dark',
-  secondary: 'bg-kidville-yellow text-kidville-green hover:bg-kidville-yellow-dark',
+  primary: 'bg-kidville-green text-kidville-yellow-ink hover:bg-kidville-green-dark',
+  secondary: 'bg-kidville-yellow text-kidville-green-ink hover:bg-kidville-yellow-dark',
   ghost: 'bg-kidville-green-soft text-kidville-green',
-  danger: 'bg-kidville-error-soft text-kidville-error',
+  danger: 'bg-kidville-error-soft text-kidville-error-strong',
 }
 
 /**

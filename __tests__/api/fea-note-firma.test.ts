@@ -38,8 +38,12 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-const auth = vi.hoisted(() => ({ getRequestUserId: vi.fn() }))
-vi.mock('@/lib/auth/require-staff', () => ({ getRequestUserId: auth.getRequestUserId }))
+// Dal 2026-07-31 l'identità viene da `requireUser` (che rispetta
+// `ALLOW_HEADER_IDENTITY`) e non più da `getRequestUserId`, che leggeva l'header
+// scavalcando l'interruttore: una firma con valore legale era apponibile a nome
+// di un genitore qualunque. Vedi __tests__/api/firma-identita-da-sessione.test.ts.
+const auth = vi.hoisted(() => ({ requireUser: vi.fn() }))
+vi.mock('@/lib/auth/require-staff', () => ({ requireUser: auth.requireUser }))
 const otp = vi.hoisted(() => ({ getUserEmail: vi.fn(), verifyTicket: vi.fn(), codeHash: vi.fn() }))
 vi.mock('@/lib/auth/otp-ticket', () => otp)
 
@@ -59,17 +63,24 @@ beforeEach(() => {
   h.state.queues = {}
   h.state.used = {}
   h.state.captured = { upsert: [], update: [], insert: [] }
-  auth.getRequestUserId.mockReturnValue('u-1')
+  auth.requireUser.mockResolvedValue({ user: { id: 'u-1', role: 'genitore' } })
   otp.getUserEmail.mockResolvedValue('genitore@example.it')
   otp.verifyTicket.mockReturnValue({ ok: true })
   otp.codeHash.mockReturnValue('SHA256-MOCKEDHASH')
 })
 
 describe('POST /api/parent/primaria/note/firma', () => {
-  it('401 senza userId', async () => {
-    auth.getRequestUserId.mockReturnValue(null)
+  it('401 senza sessione: `?userId=` nella query non basta più', async () => {
+    // È il caso che il 30/07 passava: la query portava `userId=u-1` e la route la
+    // accettava. Ora l'unica fonte è la sessione, e senza sessione `requireUser`
+    // restituisce la propria risposta di rifiuto.
+    auth.requireUser.mockResolvedValue({
+      response: new Response(JSON.stringify({ error: 'Non autenticato' }), { status: 401 }),
+    })
     const res = await POST(req({ notaId: 'n-1' }))
     expect(res.status).toBe(401)
+    // Nessuna firma registrata: il rifiuto avviene PRIMA di toccare il database.
+    expect(h.state.captured.upsert).toEqual([])
   })
 
   it('400 senza notaId', async () => {

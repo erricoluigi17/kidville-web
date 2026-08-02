@@ -20,7 +20,12 @@ test('anagrafica: lista, ricerca e tab funzionano', async ({ page }) => {
   await expect(righe.first()).toBeVisible();
 
   // Ricerca client-side: query impossibile → stato vuoto → reset.
-  const ricerca = page.getByPlaceholder('Cerca per nome, cognome o codice fiscale...');
+  // Il selettore si ferma PRIMA della punteggiatura finale: `getByPlaceholder`
+  // cerca per sottostringa, e i tre punti `...` del catalogo sono diventati
+  // l'ellissi tipografica `…` il 2026-08-01 — quattro spec sono diventati ciechi
+  // in un colpo solo. Il lock `__tests__/architecture/e2e-selettori-placeholder.test.ts`
+  // ora se ne accorge in `vitest run`, ma il selettore non deve nemmeno dipenderne.
+  const ricerca = page.getByPlaceholder('Cerca per nome, cognome o codice fiscale');
   await ricerca.fill('zzzintrovabile');
   await expect(page.getByText('Nessun alunno trovato')).toBeVisible();
   await ricerca.fill('');

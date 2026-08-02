@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { dataCivile } from '@/i18n/config';
 
 interface Alunno { id: string; nome: string; cognome: string; allergies?: string | null; allergeni?: string[] }
 interface Materia { id: string; nome: string }
@@ -23,7 +24,7 @@ export default function ClasseOverviewPage() {
   const [materie, setMaterie] = useState<Materia[]>([]);
   const [presenze, setPresenze] = useState<PresenzaRow[]>([]);
 
-  const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []);
+  const today = useMemo(() => dataCivile(), []);
 
   useEffect(() => {
     fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -14,6 +14,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      // `.in('scuola_id', plessi)`: il PDF di graduatoria è filtrato per sede.
+      // Qui le domande sono tutte della sede dell'utente — l'isolamento si prova
+      // in `modulistica-mutazioni-scope-sede.test.ts`, col finto client che filtra.
+      b.in = () => b
       b.order = () => b
       b.single = async () => ({ data: h.model, error: null })
       b.maybeSingle = async () => ({ data: h.model, error: null })
@@ -29,7 +33,8 @@ function req(modelId?: string) {
   const url = modelId
     ? `http://localhost/api/forms/export/delibera?modelId=${modelId}`
     : 'http://localhost/api/forms/export/delibera'
-  return new Request(url)
+  // `NextRequest`: la route legge le sedi attive dal cookie del SedeSelector.
+  return new NextRequest(url)
 }
 
 describe('GET /api/forms/export/delibera', () => {
@@ -40,7 +45,7 @@ describe('GET /api/forms/export/delibera', () => {
       { id: 'a', score: 10, esito_ammissione: 'ammesso', data: { nome: 'Mario', cognome: 'Rossi' } },
       { id: 'b', score: 4, esito_ammissione: 'non_ammesso', data: { nome: 'Lia', cognome: 'Bianchi' } },
     ]
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria' } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   })
 
   it('gated allo staff', async () => {

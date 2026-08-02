@@ -11,11 +11,18 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { sanificaContenuto } from '@/lib/news/sanitizza'
 import { parseInstagramUrl } from '@/lib/news/instagram'
+import { campiProva, gateConsensoFoto, scriviConDegradazione } from '@/lib/news/gate-consenso'
+import { promuoviMediaBozza } from '@/lib/news/media-bozza'
 import { NEWS_SCOPES, type NewsPost } from '@/lib/news/tipi'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 interface RouteParams {
   params: Promise<{ id: string }>
 }
+
+/** Vedi la costante gemella in `src/app/api/news/route.ts`. */
+const MEDIA_NON_PROMOSSI =
+  'Non è stato possibile pubblicare le immagini del post in questo momento: riprova fra qualche istante.'
 
 const patchBodySchema = z.object({
   titolo: z.string().min(1).optional(),
@@ -27,6 +34,10 @@ const patchBodySchema = z.object({
   copertina_url: z.string().nullish(),
   instagram_url: z.string().nullish(),
   invia_notifica: z.boolean().optional(),
+  // Dichiarazione dei bambini RITRATTI, come in `POST /api/news`. Assente = la
+  // modifica non la tocca (resta quella archiviata); `[]` = «nessun bambino è
+  // ritratto», che è una dichiarazione e va archiviata come tale.
+  bambini_ritratti: z.array(zUuid).nullish(),
 })
 
 /**
@@ -56,7 +67,7 @@ async function caricaPostConScope(
   if (post.scuola_id != null) {
     const sedi = await resolveScuoleAttive(request, supabase, user)
     if (!sedi.includes(post.scuola_id)) {
-      return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+      return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
     }
   }
   return { post }
@@ -121,13 +132,11 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
     for (const f of ['titolo', 'categoria_id', 'target_scope', 'target_gradi', 'target_classes', 'copertina_url', 'invia_notifica'] as const) {
       if (body[f] !== undefined) updates[f] = body[f]
     }
+    // La SANIFICAZIONE non avviene qui ma più in basso, dopo la promozione dei
+    // media: `contenuto_html`/`contenuto_testo` devono citare gli stessi
+    // indirizzi del JSON che finisce nella riga, e la promozione li riscrive.
     if (body.contenuto_json !== undefined) {
       updates.contenuto_json = body.contenuto_json ?? null
-      const s = body.contenuto_json != null && typeof body.contenuto_json === 'object'
-        ? sanificaContenuto(body.contenuto_json)
-        : { html: null as string | null, testo: null as string | null }
-      updates.contenuto_html = s.html
-      updates.contenuto_testo = s.testo
     }
     if (body.instagram_url !== undefined) {
       updates.instagram_url = body.instagram_url ?? null
@@ -136,9 +145,66 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
     }
+
+    // ─── Consenso fotografico sul canale PUBBLICO (privacy F4) ───────────────
+    // QUI STAVA IL BUCO: il gate viveva solo su `POST /api/news`, e bastava
+    // creare il post senza foto e aggiungere la copertina (o un nodo `image`) di
+    // qui per pubblicare la foto di un bambino senza consenso al canale «sito».
+    // La verifica gira sullo stato RISULTANTE — il post com'è dopo questa
+    // modifica — non sui soli campi che arrivano nel corpo: un post che già
+    // ritraeva bambini resta sotto controllo anche quando la PATCH cambia il
+    // titolo, perché nel frattempo un consenso può essere stato revocato.
+    const post = sc.post!
+    const copertinaDopo = 'copertina_url' in updates ? updates.copertina_url : post.copertina_url
+    const contenutoDopo = 'contenuto_json' in updates ? updates.contenuto_json : post.contenuto_json
+    const sediVerifica = post.scuola_id
+      ? [post.scuola_id]
+      : await resolveScuoleAttive(request, supabase, auth.user)
+    const gate = await gateConsensoFoto({
+      supabase,
+      copertinaUrl: copertinaDopo,
+      contenutoJson: contenutoDopo,
+      ritrattiRichiesti: body.bambini_ritratti,
+      ritrattiArchiviati: post.bambini_ritratti ?? null,
+      sedi: sediVerifica,
+      attore: auth.user,
+      operazione: 'news/[id]:PATCH',
+    })
+    if ('response' in gate) return gate.response
+    Object.assign(updates, campiProva(gate.prova, auth.user.id))
+
+    // Solo ORA i media possono diventare pubblici (vedi `@/lib/news/media-bozza`).
+    // Si promuove ciò che questa PATCH sta scrivendo, non l'intero post: i media
+    // già dentro la riga sono passati di qui la volta scorsa.
+    if ('copertina_url' in updates || 'contenuto_json' in updates) {
+      const promozione = await promuoviMediaBozza(
+        supabase,
+        { copertinaUrl: updates.copertina_url, contenutoJson: updates.contenuto_json },
+        'news/[id]:PATCH',
+      )
+      if (promozione.errore) {
+        return NextResponse.json({ error: MEDIA_NON_PROMOSSI, codice: 'MEDIA_NON_PROMOSSI' }, { status: 503 })
+      }
+      if ('copertina_url' in updates) updates.copertina_url = promozione.copertinaUrl ?? null
+      if ('contenuto_json' in updates) updates.contenuto_json = promozione.contenutoJson ?? null
+    }
+
+    // Sanificazione (chokepoint) sul contenuto DEFINITIVO.
+    if ('contenuto_json' in updates) {
+      const s = updates.contenuto_json != null && typeof updates.contenuto_json === 'object'
+        ? sanificaContenuto(updates.contenuto_json)
+        : { html: null as string | null, testo: null as string | null }
+      updates.contenuto_html = s.html
+      updates.contenuto_testo = s.testo
+    }
+
     updates.updated_at = new Date().toISOString()
 
-    const { data, error } = await supabase.from('news_posts').update(updates).eq('id', p.data).select().single()
+    const { data, error } = await scriviConDegradazione<NewsPost>(
+      updates,
+      (rec) => supabase.from('news_posts').update(rec).eq('id', p.data).select().single(),
+      'news/[id]:PATCH',
+    )
     if (error) {
       if (schemaAssente(error)) {
         logEvento('news', 'info', { operazione: 'news/[id]:PATCH', esito: 'schema-assente' })

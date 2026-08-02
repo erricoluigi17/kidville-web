@@ -75,6 +75,7 @@ export function InventoryCard({ item, onLoad }: Props) {
 
                 <button
                     onClick={onLoad}
+                    aria-label={t('lockerCaricaMateriale')}
                     className="w-9 h-9 rounded-xl bg-kidville-green text-kidville-yellow flex items-center justify-center hover:opacity-90 active:scale-95 transition-all flex-shrink-0"
                 >
                     <Package size={16} />

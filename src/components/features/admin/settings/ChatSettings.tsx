@@ -16,9 +16,9 @@ interface ChatConfig {
     risposta_fuori_orario_msg: string;
 }
 
-export function ChatSettings({ userId }: { userId: string }) {
+export function ChatSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<ChatConfig | null>(null);
     const [msg, setMsg] = useState('');
 

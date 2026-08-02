@@ -4,18 +4,24 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import { buildFrequentanti } from '@/lib/sidi/payload'
 import { serializeFrequentanti } from '@/lib/sidi/serializer'
 import { sidiTransmit } from '@/lib/sidi/client'
 import { loadSyncState, persistFaseStato } from '@/lib/sidi/sync-store'
 import { puoInviareFrequentanti } from '@/lib/sidi/sequenza'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body non viene letto; userId è consumato dal gate)
+// `scuola_id`: la sede di cui si trasmette l'elenco frequentanti. Fino al
+// 2026-07-31 non esisteva, e `resolveScuolaScrittura` veniva chiamata SENZA
+// `preferita`: per l'admin multi-plesso ripiegava in silenzio sulla sede
+// primaria, cioè si spediva al Ministero l'elenco di Giugliano mentre si
+// lavorava su Aversa. Ora la sede si dichiara — o si riceve un 400.
+const postQuerySchema = z.object({ scuola_id: zUuid.optional() })
 
-// POST /api/admin/sidi/frequentanti?userId=  — Invio flusso frequentanti.
+// POST /api/admin/sidi/frequentanti?userId=&scuola_id=  — Invio flusso frequentanti.
 // Sequenza: consentito solo dopo Fase A `inviato` (altrimenti 409). Egress GATED.
 export const POST = withRoute('admin/sidi/frequentanti:POST', async (request: NextRequest) => {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
@@ -24,7 +30,7 @@ export const POST = withRoute('admin/sidi/frequentanti:POST', async (request: Ne
     if ('response' in q) return q.response
     try {
       const supabase = await createAdminClient()
-      const sw = await resolveScuolaScrittura(request, supabase, auth.user)
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId!
 
@@ -36,12 +42,21 @@ export const POST = withRoute('admin/sidi/frequentanti:POST', async (request: Ne
         )
       }
 
-      const { data: sezioni } = await supabase.from('sections').select('id, name').eq('scuola_id', scuolaId)
-      const { data: alunni } = await supabase
+      const { data: sezioni, error: errSezioni } = await supabase.from('sections').select('id, name').eq('scuola_id', scuolaId)
+      const { data: alunni, error: errAlunni } = await supabase
         .from('alunni')
         .select('id, section_id, codice_fiscale, nome, cognome, stato')
         .eq('scuola_id', scuolaId)
-      const { data: settings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
+      const { data: settings, error: errSettings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
+
+      // PostgREST non lancia: senza questo controllo una lettura fallita
+      // diventerebbe un flusso VUOTO trasmesso al Ministero e marcato `inviato`.
+      // Meglio un 500 rumoroso che un allineamento silenziosamente sbagliato.
+      const errLettura = errSezioni ?? errAlunni ?? errSettings
+      if (errLettura) {
+        logEvento('sidi', 'error', { operazione: 'admin/sidi/frequentanti:POST', tipo: 'frequentanti', esito: 'lettura-fallita' }, errLettura)
+        return NextResponse.json({ error: 'Lettura dei dati di sede non riuscita: trasmissione annullata' }, { status: 500 })
+      }
 
       const flusso = buildFrequentanti({
         sezioni: (sezioni ?? []) as { id: string; name: string }[],

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { esitoScopeModello } from '@/lib/forms/scope-modello';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -24,7 +25,19 @@ export const GET = withRoute('admin/form-models/[id]:GET', async (request: NextR
       .eq('id', idP.data)
       .maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    if (!data) return NextResponse.json({ error: 'Modello non trovato' }, { status: 404 });
+
+    // La risposta è `select('*')`: schema del modulo, `public_token` (la
+    // capability che apre `/m/{token}` senza credenziali) e stato di
+    // pubblicazione del modello. PR #60 aveva messo in scope la sola CREAZIONE:
+    // questa lettura restava aperta su qualunque plesso.
+    // Lettura, non scrittura: i modelli GLOBALI (`scuola_id` NULL) passano —
+    // valgono per tutte le sedi ed è la loro definizione. Quelli di un'altra
+    // sede rispondono 404.
+    const negato = await esitoScopeModello(supabase, auth.user, data, {
+      operazione: 'admin/form-models/[id]:GET', perScrittura: false,
+    });
+    if (negato) return negato;
+
     return NextResponse.json(data);
   } catch (err) {
     logErrore({ operazione: 'admin/form-models/[id]:GET', stato: 500 }, err);

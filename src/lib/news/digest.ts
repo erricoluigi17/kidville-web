@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiScuola } from '@/lib/notifiche/destinatari'
+import { isScuolaE2E } from '@/lib/scuole/reali'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { logEvento, logErrore } from '@/lib/logging/logger'
 import { costruisciDigestHtml } from '@/lib/news/digest-email'
@@ -96,18 +97,45 @@ type EdizioneRow = {
   errori_count: number | null
 }
 
+/**
+ * Sedi a cui spedire il digest.
+ *
+ * LA SEDE FINTA DELLA CI NON È UNA SEDE. Qui c'era il solo `.eq('attiva', true)`,
+ * e in produzione «Kidville E2E» ha `attiva = true`: entrava nel giro, generava
+ * un'edizione e provava a spedirla ai suoi account `@kidville.test` — un TLD non
+ * instradabile, quindi solo errori di invio contati come `errori_count`. Il
+ * predicato «sede reale» è centralizzato in `@/lib/scuole/reali` proprio per non
+ * averne due versioni: qui non veniva usato.
+ *
+ * Vale anche quando la sede arriva ESPLICITA (`/news/digest/genera`): si rifiuta
+ * con un log invece di generare l'edizione in silenzio.
+ */
 async function sediBersaglio(
   supabase: SupabaseClient,
   scuolaId?: string,
 ): Promise<{ id: string; nome: string }[]> {
   if (scuolaId) {
     const { data, error } = await supabase.from('scuole').select('id, nome').eq('id', scuolaId).maybeSingle()
-    if (error || !data) return []
-    return [data as { id: string; nome: string }]
+    if (error) {
+      logEvento('news', 'warn', { operazione: 'news/digest:sedi', esito: 'query-fallita', scuola_id: scuolaId }, error)
+      return []
+    }
+    if (!data) return []
+    const sede = data as { id: string; nome: string }
+    if (isScuolaE2E(sede)) {
+      logEvento('news', 'warn', {
+        operazione: 'news/digest:sedi', esito: 'sede-di-collaudo', scuola_id: sede.id,
+      })
+      return []
+    }
+    return [sede]
   }
   const { data, error } = await supabase.from('scuole').select('id, nome').eq('attiva', true)
-  if (error || !data) return []
-  return data as { id: string; nome: string }[]
+  if (error) {
+    logEvento('news', 'error', { operazione: 'news/digest:sedi', esito: 'query-fallita' }, error)
+    return []
+  }
+  return (data ?? []).filter((s) => !isScuolaE2E(s as { id: string; nome: string })) as { id: string; nome: string }[]
 }
 
 function estremiMese(anno: number, mese: number): { inizio: string; fine: string } {

@@ -39,7 +39,27 @@ export async function enqueueNotifiche(
   params: EnqueueNotificheParams
 ): Promise<void> {
   const utenti = [...new Set(params.utenteIds ?? [])].filter(Boolean)
-  if (utenti.length === 0) return
+  if (utenti.length === 0) {
+    // IL SECONDO IMBUTO, e usciva muto come il primo. Qui arrivano anche i chiamanti che NON
+    // passano da `notificaEvento` (solleciti, merch, fattura/sync, panic-alert, locker,
+    // credenziali): per loro questa è l'unica riga che possa esistere.
+    //
+    // Il `filter(Boolean)` conta: una lista di soli id vuoti è «zero destinatari», non «un
+    // destinatario» — e chi ha invocato con `['']` crede di aver avvisato qualcuno. Il
+    // controllo del chiamante sulla lunghezza dell'array grezzo non se ne accorge.
+    //
+    // `warn`: la lista vuota può essere legittima. Ma resta persistita (`vaPersistito` tiene
+    // i warn), così «nessuna notifica accodata oggi per il tipo X nella sede Y» diventa una
+    // query invece di un'ipotesi.
+    logEvento('notifica', 'warn', {
+      operazione: 'enqueueNotifiche',
+      esito: 'nessun-destinatario',
+      tipo: params.tipo,
+      sede_id: params.scuolaId ?? null,
+      n_richiesti: params.utenteIds?.length ?? 0,
+    })
+    return
+  }
   if (!(await isNotificaAbilitata(supabase, params.tipo, params.scuolaId ?? null))) return
 
   const programmato = new Date(Date.now() + (params.bufferMin ?? 0) * 60_000).toISOString()

@@ -16,6 +16,7 @@ import {
 import { SaveCheck, SaveCelebration } from '@/components/ui/SaveConfirmation';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 
 // ============================ Tipi ============================
 type StatoRiga = 'da_ordinare' | 'ordinato' | 'arrivato' | 'consegnato' | 'annullato';
@@ -34,7 +35,10 @@ interface DaOrdGruppo { fornitore: { id: string; nome: string } | null; quantita
 interface GiacenzaCell { articolo_id: string | null; nome: string; taglia: string; caricato: number; impegnato: number; disponibile: number; inArrivo: number; daConsegnare: number }
 
 // ============================ Helper ============================
-function euro(n: number) { return `€ ${Number(n).toFixed(2)}`; }
+// La valuta ha UNA sola casa nell'app: `formatEuro` (it-IT). L'helper locale
+// concatenava a mano il simbolo e due decimali, e stampava «€ 1234.50» — punto
+// decimale, migliaia non raggruppate — mentre il resto dell'app diceva «€ 1.234,50».
+const euro = (n: number) => formatEuro(n);
 // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); il `locale`
 // arriva dai call-site (componenti con `useLocale()`).
 function dataIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'breve') : ''; }
@@ -332,9 +336,9 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
                 </select>
               )}
               <div className="flex items-center gap-1">
-                <button type="button" onClick={() => setRiga(i, { quantita: Math.max(1, r.quantita - 1) })} className="flex h-8 w-8 items-center justify-center rounded-full border border-kidville-line"><Minus size={14} /></button>
+                <button type="button" onClick={() => setRiga(i, { quantita: Math.max(1, r.quantita - 1) })} aria-label={t('merchDiminuisciQuantita')} className="flex h-8 w-8 items-center justify-center rounded-full border border-kidville-line"><Minus size={14} /></button>
                 <span className="w-6 text-center font-maven text-sm font-bold">{r.quantita}</span>
-                <button type="button" onClick={() => setRiga(i, { quantita: Math.min(200, r.quantita + 1) })} className="flex h-8 w-8 items-center justify-center rounded-full border border-kidville-line"><Plus size={14} /></button>
+                <button type="button" onClick={() => setRiga(i, { quantita: Math.min(200, r.quantita + 1) })} aria-label={t('merchAumentaQuantita')} className="flex h-8 w-8 items-center justify-center rounded-full border border-kidville-line"><Plus size={14} /></button>
               </div>
               <button type="button" onClick={() => delRiga(i)} aria-label={t('merchRimuovi')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>

@@ -15,8 +15,12 @@ export function SectionHeader({ eyebrow, title, actionLabel, actionHref, classNa
   return (
     <div className={cx('mb-3 flex items-end justify-between gap-3 px-1', className)}>
       <div className="min-w-0">
+        {/* L'occhiello è testo, non un fregio: `yellow-dark` (#E6B100) su crema
+            sta a 1,78:1 — sotto la soglia AA di 4,5:1 e sotto persino quella del
+            testo grande. `warn-strong` (#A64F09) è l'inchiostro caldo della
+            palette: 5,05:1 su crema, e l'accento dorato resta. */}
         {eyebrow && (
-          <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow-dark">
+          <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-warn-strong">
             {eyebrow}
           </p>
         )}

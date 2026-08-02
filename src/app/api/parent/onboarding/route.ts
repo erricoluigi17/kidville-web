@@ -83,12 +83,6 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
       return NextResponse.json({ error: 'Profilo genitore non trovato' }, { status: 404 })
     }
 
-    // Imposta la password sulla sessione Supabase Auth solo se il genitore è
-    // bindato (auth_user_id) e ha fornito una password.
-    if (password && parent?.auth_user_id) {
-      await admin.auth.admin.updateUserById(parent.auth_user_id as string, { password: String(password) })
-    }
-
     // C5 — Prova d'accettazione append-only (art. 1341 c.c.): una riga in
     // `consensi_accettazioni` per ogni consenso ACCETTATO fra quelli richiesti, con
     // la VERSIONE decisa SERVER-SIDE (mai dal client: un client datato o malevolo
@@ -116,6 +110,60 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
           })
         }
       }
+    }
+
+    // Imposta la password sulla sessione Supabase Auth solo se il genitore è
+    // bindato (auth_user_id) e ha fornito una password.
+    //
+    // È l'ULTIMO passo, e non per caso: se fallisce, i consensi e la loro prova
+    // d'accettazione sono già scritti e non si perdono — l'onboarding si ripete.
+    //
+    // ⚠️ IL VALORE DI RITORNO NON SI BUTTA VIA. Fino al 2026-07-31 qui c'era un
+    // `await` nudo: l'update PostgREST su `parents` era controllato con tanto di
+    // commento, e alla riga dopo l'esito di GoTrue
+    // finiva nel nulla. Se GoTrue rifiutava — policy password, utente bannato,
+    // rate limit, servizio giù — l'onboarding proseguiva e rispondeva
+    // `{ success: true, onboarded: true }`: il genitore aveva scelto una
+    // password MAI scritta, non riusciva ad accedere, e non esisteva una riga
+    // di log da nessuna parte. Dichiarare successo su una credenziale non
+    // scritta è il modo più caro di fallire in silenzio.
+    if (password && parent?.auth_user_id) {
+      const { error: pwErr } = await admin.auth.admin.updateUserById(
+        parent.auth_user_id as string,
+        { password: String(password) },
+      )
+      if (pwErr) {
+        // Il CORPO dell'errore del provider non si butta via: `message` di
+        // GoTrue può essere `undefined` (riga di auth.users non serializzabile,
+        // vista in produzione il 31/07), e `status ${…}` da solo non spiega
+        // niente. Stessa normalizzazione di parent-identity.ts e backfill.ts.
+        const stato = (pwErr as { status?: number }).status
+        logEvento('auth', 'error', {
+          operazione: 'parent/onboarding:POST',
+          esito: 'password-onboarding-non-impostata',
+          stato: typeof stato === 'number' ? stato : undefined,
+        }, pwErr)
+        // 4xx di GoTrue = la password non va bene (l'utente può cambiarla);
+        // tutto il resto è un guasto nostro. In entrambi i casi i consensi
+        // sono già salvati e l'onboarding è ripetibile: l'update è idempotente.
+        const client = typeof stato === 'number' && stato >= 400 && stato < 500
+        return NextResponse.json(
+          {
+            error: client
+              ? 'La password non è stata accettata: sceglierne un\'altra. I consensi sono stati salvati.'
+              : 'Consensi salvati, ma non è stato possibile impostare la password: riprovare fra poco.',
+          },
+          { status: client ? 400 : 500 },
+        )
+      }
+      // Regola 5: gli eventi critici loggano anche il SUCCESSO. Senza questa
+      // riga «nessun log» non distingue «password impostata» da «non è mai
+      // partito niente» — l'ambiguità che ha tenuto nascosto per mesi il
+      // guasto delle email di credenziali.
+      logEvento('auth', 'info', {
+        operazione: 'parent/onboarding:POST',
+        esito: 'password-onboarding-impostata',
+      })
     }
 
     // Notifica alla segreteria: onboarding completato (best-effort).

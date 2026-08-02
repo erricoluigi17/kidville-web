@@ -1,0 +1,49 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Via `public.test_table`: un residuo di collaudo rimasto nel database di produzione
+-- Audit globale multi-sede del 2026-07-31.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- CHE COS'È. Due colonne — `id integer`, `name text` — e nient'altro. Arriva dal
+-- baseline del 2026-07-04, cioè c'era già quando il database è stato ripulito: è
+-- una prova di qualcuno, di un giorno qualsiasi, mai rimossa.
+--
+-- PERCHÉ TOGLIERLA, se non fa niente. Perché è esattamente il posto in cui, prima o
+-- poi, qualcuno scrive «giusto una prova» — e da quel momento esiste in produzione
+-- un dato fuori da ogni inventario: fuori dalla mappa dello schema, fuori
+-- dall'audit di isolamento fra le sedi, fuori dalle regole di conservazione. In un
+-- database che contiene i codici fiscali di 152 minori, una tabella che nessuno
+-- rivendica è un rischio anche da vuota.
+--
+-- VERIFICATO IN PRODUZIONE PRIMA DI SCRIVERE QUESTA MIGRAZIONE (tutto in sola
+-- lettura), perché «tanto è di prova» non è una verifica:
+--   · righe                                              → 0
+--   · chiavi esterne che la puntano                       → 0
+--   · trigger, viste, funzioni che la nominano            → 0
+--   · pubblicazioni realtime che la includono             → 0
+--   · policy RLS                                          → 0 (RLS attiva, nessuna policy)
+--   · riferimenti in tutto il repository                  → solo il baseline, i
+--     documenti dell'audit e la fotografia delle policy. Nessuno in `src/`.
+--
+-- COSA FA: cancella la tabella e, con lei, la sequenza `test_table_id_seq` che le
+-- appartiene (è `OWNED BY` quella colonna: Postgres la porta via da sé).
+--
+-- COSA NON FA: niente CASCADE, deliberatamente. Se nel frattempo qualcosa avesse
+-- cominciato a dipendere da questa tabella, la migrazione deve FALLIRE e farcelo
+-- sapere, non trascinarsi dietro in silenzio l'oggetto che dipende. E non tocca
+-- nessun'altra tabella.
+--
+-- SE VA STORTO: non si perde nessun dato, perché non ce n'è (0 righe, verificate).
+-- Per rimetterla basta ricrearla — è nel baseline, sono cinque righe. L'errore
+-- possibile è l'opposto: che il DROP fallisca perché è comparsa una dipendenza; in
+-- quel caso la migrazione si ferma senza aver toccato niente, e c'è da capire chi
+-- ha cominciato a usarla.
+--
+-- DOPO L'APPLICAZIONE: rigenerare la fotografia delle policy
+-- (`node scripts/rls-fotografia.mjs`), che elenca ancora `test_table` fra le
+-- tabelle con RLS attiva.
+--
+-- IL LOCK: `__tests__/architecture/residui-di-collaudo.test.ts` fallisce se una
+-- tabella con un nome del genere torna a comparire nelle migrazioni.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+DROP TABLE IF EXISTS public.test_table;

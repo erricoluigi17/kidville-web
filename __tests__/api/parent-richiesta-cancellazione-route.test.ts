@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { NextResponse } from 'next/server'
 
 // =============================================================================
@@ -18,7 +19,7 @@ import { NextResponse } from 'next/server'
 
 const UTENTE_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-utente000001'
 const PARENT_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-parent000001'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 
 type Row = Record<string, unknown>
 interface Filtro { col: string; val: unknown }
@@ -72,9 +73,13 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => h.makeClient() }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn().mockResolvedValue(undefined) }))
+// `scuolaUnicaReale` risponde `null` — ed è la VERITÀ di produzione dal
+// 2026-07-29, non una comodità di test: con tre sedi reali la funzione è
+// deprecata e ritorna sempre null. Il mock che la faceva rispondere con una sede
+// mascherava esattamente il difetto W1 (`scuola_id` NULL sulla richiesta).
 vi.mock('@/lib/notifiche/destinatari', () => ({
   staffScuola: vi.fn().mockResolvedValue(['staff-1']),
-  scuolaUnicaReale: vi.fn().mockResolvedValue('d53b0fbc-a9eb-4073-b302-73d1d5abd529'),
+  scuolaUnicaReale: vi.fn().mockResolvedValue(null),
 }))
 
 import { GET, POST, DELETE } from '@/app/api/parent/account/richiesta-cancellazione/route'
@@ -100,9 +105,16 @@ const parentCollegato = (patch: Row = {}) => ({
 const filtriSu = (table: string): Filtro[] =>
   [...h.state.selects].reverse().find((s) => s.table === table)?.filtri ?? []
 
+/** Legame figlio→sede, nella forma dell'embed PostgREST `alunni!inner(scuola_id)`. */
+const figlioIn = (sede: string, id = `al-${sede}`) => ({
+  parent_id: PARENT_ID,
+  student_id: id,
+  alunni: { scuola_id: sede },
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
-  h.state.tables = { parents: [parentCollegato()], richieste_cancellazione: [] }
+  h.state.tables = { parents: [parentCollegato()], richieste_cancellazione: [], student_parents: [] }
   h.state.errors = {}
   h.state.inserts = []
   h.state.updates = []
@@ -155,6 +167,60 @@ describe('POST /api/parent/account/richiesta-cancellazione', () => {
     h.state.errors.richieste_cancellazione = { code: '23505' }
     const res = await POST(reqPost({ conferma: 'ELIMINA' }))
     expect(res.status).toBe(409)
+  })
+})
+
+// =============================================================================
+// W1 — la SEDE della richiesta. `scuolaUnicaReale` è deprecata e con tre sedi
+// reali risponde sempre `null`: una richiesta con `scuola_id NULL` è invisibile
+// al GET della Direzione (`.in('scuola_id', plessi)` scarta i NULL), la POST di
+// evasione la nega per sempre, e l'indice unico parziale su `pending` impedisce
+// di ripresentarla. Il diritto all'oblio si blocca in silenzio.
+// =============================================================================
+describe('POST /api/parent/account/richiesta-cancellazione — sede della richiesta (W1)', () => {
+  it('identità senza sede → la sede viene dal FIGLIO, non da scuolaUnicaReale', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: UTENTE_ID, role: 'genitore', scuola_id: null } })
+    h.state.tables.student_parents = [figlioIn(SEDE_B)]
+    const res = await POST(reqPost({ conferma: 'ELIMINA' }))
+    expect(res.status).toBe(200)
+    const ins = h.state.inserts.find((i) => i.table === 'richieste_cancellazione')
+    expect((ins!.value as Row).scuola_id).toBe(SEDE_B)
+  })
+
+  it('la sede dei figli VINCE su una sede dell’identità che non c’entra', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: UTENTE_ID, role: 'genitore', scuola_id: SEDE_A } })
+    h.state.tables.student_parents = [figlioIn(SEDE_B)]
+    await POST(reqPost({ conferma: 'ELIMINA' }))
+    const ins = h.state.inserts.find((i) => i.table === 'richieste_cancellazione')
+    expect((ins!.value as Row).scuola_id).toBe(SEDE_B)
+  })
+
+  it('MAI una richiesta con scuola_id null: senza sede deducibile si RIFIUTA (422)', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: UTENTE_ID, role: 'genitore', scuola_id: null } })
+    h.state.tables.student_parents = []
+    const res = await POST(reqPost({ conferma: 'ELIMINA' }))
+    expect(res.status).toBe(422)
+    expect(h.state.inserts).toHaveLength(0)
+    const j = await res.json()
+    expect(typeof j.error).toBe('string')
+    expect(j.error.length).toBeGreaterThan(0)
+  })
+
+  it('nessun insert porta mai scuola_id null o assente', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: UTENTE_ID, role: 'genitore', scuola_id: null } })
+    h.state.tables.student_parents = [figlioIn(SEDE_B)]
+    await POST(reqPost({ conferma: 'ELIMINA' }))
+    for (const ins of h.state.inserts.filter((i) => i.table === 'richieste_cancellazione')) {
+      expect((ins.value as Row).scuola_id).toBeTruthy()
+    }
+  })
+
+  it('la notifica alla Direzione parte sulla sede DEDOTTA, non su quella dell’identità', async () => {
+    const { staffScuola } = await import('@/lib/notifiche/destinatari')
+    h.requireUser.mockResolvedValue({ user: { id: UTENTE_ID, role: 'genitore', scuola_id: SEDE_A } })
+    h.state.tables.student_parents = [figlioIn(SEDE_B)]
+    await POST(reqPost({ conferma: 'ELIMINA' }))
+    expect(vi.mocked(staffScuola).mock.calls[0][1]).toBe(SEDE_B)
   })
 })
 

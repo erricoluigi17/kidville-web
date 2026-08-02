@@ -110,7 +110,10 @@ export async function emettiORecuperaRicevuta(
 
     const fiscale = (await getModuleConfig(supabase, 'fiscale_config', pagamento.scuola_id)) as FiscaleConfig
     const aruba = (await getModuleConfig(supabase, 'aruba_config', pagamento.scuola_id)) as ArubaFiscalConfig
-    const struttura = datiStruttura(fiscale, aruba)
+    const struttura = datiStruttura(fiscale, aruba, {
+        operazione: 'ricevute:emettiORecuperaRicevuta',
+        scuolaId: pagamento.scuola_id,
+    })
     const importo = Number(pagamento.importo_pagato ?? pagamento.importo)
     const bollo = bolloDovuto(importo, fiscale) > 0
     const anno = annoFiscale()
@@ -283,7 +286,10 @@ export async function emettiORecuperaRicevutaTransazione(
 
     const fiscale = (await getModuleConfig(supabase, 'fiscale_config', transazione.scuola_id)) as FiscaleConfig
     const aruba = (await getModuleConfig(supabase, 'aruba_config', transazione.scuola_id)) as ArubaFiscalConfig
-    const struttura = datiStruttura(fiscale, aruba)
+    const struttura = datiStruttura(fiscale, aruba, {
+        operazione: 'ricevute:emettiORecuperaRicevutaTransazione',
+        scuolaId: transazione.scuola_id,
+    })
     const importo = Number(transazione.importo_totale)
     const tracciabile = isTracciabile([transazione.metodo])
     const bollo = bolloDovuto(importo, fiscale) > 0

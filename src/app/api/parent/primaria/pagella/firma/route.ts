@@ -9,6 +9,7 @@ import { logFeaEvent } from '@/lib/fea/audit'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
+import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -37,6 +38,14 @@ export const POST = withRoute('parent/primaria/pagella/firma:POST', async (reque
     const auth = await requireParentOfStudent(request, studentId)
     if (auth.response) return auth.response
     const userId = auth.user.id
+
+    // Tetto sui TENTATIVI di verifica del codice (sicurezza W5 · S30), sullo stesso budget
+    // delle altre tre firme del genitore — vedi `@/lib/security/otp-rate-limit`. Il codice è
+    // di sei cifre e un confronto HMAC fallito NON consuma il ticket: senza tetto provarli
+    // tutti era gratis, e chi indovina non firma solo la ricezione della pagella — da quel
+    // momento ne vede i giudizi a schermo e ne scarica il PDF.
+    const troppe = limitaVerificaOtp(userId)
+    if (troppe) return troppe
 
     const supabase = await createAdminClient()
 

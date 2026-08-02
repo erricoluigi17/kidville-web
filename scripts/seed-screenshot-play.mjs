@@ -57,8 +57,18 @@ if (!URL_ || !SERVICE_KEY) {
 const db = createClient(URL_, SERVICE_KEY, { auth: { persistSession: false } });
 
 const SEZIONE = '219cab6a-2bf3-48d6-a443-b7aecda40f42';
-const SCUOLA = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
 const EMAIL_DEMO = 'test.inf.genitore1@kidville.test';
+
+/**
+ * La sede NON è cablata: si DERIVA dalla sezione TEST su cui lo script lavora
+ * (`sections.scuola_id`), e si risolve in `main()`. Fino al 2026-07-31 qui c'era
+ * l'uuid di Giugliano scritto a mano: dal 2026-07-29 le sedi sono tre, e una
+ * costante che vale per la sede di oggi non vale per nessuna di domani. Ricavarla
+ * dal dato la rende giusta per costruzione — soprattutto per il menù mensa, che
+ * si scrive PER SCUOLA e lo vedrebbero le famiglie del plesso sbagliato.
+ */
+let SCUOLA = null;
+let NOME_SCUOLA = '';
 
 // uuid dal prefisso riconoscibile: --revert ritrova ed elimina solo questi.
 const TAG = '5ee00000';
@@ -87,6 +97,22 @@ const ymd = (d) => d.toISOString().slice(0, 10);
 async function main() {
   console.log(`\n── seed screenshot Play — modo: ${MODO.toUpperCase()} ──`);
   console.log(`   sezione TEST Infanzia ${SEZIONE}`);
+
+  // ── Sede: derivata dalla sezione, mai cablata ────────────────────────────
+  const { data: sezione, error: errSezione } = await db
+    .from('sections').select('id, name, scuola_id').eq('id', SEZIONE).maybeSingle();
+  if (errSezione) { console.error('lettura sezione:', errSezione.message); process.exit(1); }
+  if (!sezione) { console.error(`la sezione ${SEZIONE} non esiste`); process.exit(1); }
+  if (!sezione.scuola_id) {
+    console.error(`la sezione ${SEZIONE} non dichiara la sua sede (sections.scuola_id vuoto): non si indovina`);
+    process.exit(1);
+  }
+  SCUOLA = sezione.scuola_id;
+  const { data: scuolaRow, error: errScuola } = await db
+    .from('schools').select('nome').eq('id', SCUOLA).maybeSingle();
+  if (errScuola) { console.error('lettura sede:', errScuola.message); process.exit(1); }
+  NOME_SCUOLA = scuolaRow?.nome ?? SCUOLA;
+  console.log(`   sede: ${NOME_SCUOLA} (${SCUOLA})`);
   if (!scrive && MODO !== 'revert') console.log('   (nessuna scrittura: passa --apply per applicare)\n');
 
   // ── Alunni della sezione TEST ────────────────────────────────────────────
@@ -277,7 +303,7 @@ async function main() {
       });
     }
   }
-  nota(`SCRIVE ${menu.length} righe di menù (${nSettimane} settimane di rotazione × ${giorniAttivi.length} giorni) — ⚠️ è per SCUOLA: lo vedranno anche le famiglie reali. Rimuoverlo con --revert subito dopo la cattura.`);
+  nota(`SCRIVE ${menu.length} righe di menù (${nSettimane} settimane di rotazione × ${giorniAttivi.length} giorni) — ⚠️ è per SCUOLA: lo vedranno tutte le famiglie di ${NOME_SCUOLA}, non solo la sezione TEST. Rimuoverlo con --revert subito dopo la cattura.`);
   if (scrive) must('mensa_menu_rotazione', await db.from('mensa_menu_rotazione').upsert(menu, { onConflict: 'id' }));
 
   console.log('\n── cosa fa ──');

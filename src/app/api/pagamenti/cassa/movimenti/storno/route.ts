@@ -9,6 +9,7 @@ import { verificaSogliaCassa } from '@/lib/cassa/notifiche'
 import { CASSA_SCHEMA_ASSENTE } from '@/lib/cassa/saldo'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // =============================================================================
 // MODULO CASSA · storno tracciato di un movimento (contratto §3.5).
@@ -75,7 +76,7 @@ export const POST = withRoute('pagamenti/cassa/movimenti/storno:POST', async (re
     // di una sede potrebbe stornare (mutare) un movimento di un'altra sede.
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
     if (!sedi.includes(orig.scuola_id)) {
-      return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
     }
 
     if (orig.stornato_il) return NextResponse.json({ error: 'Movimento già stornato' }, { status: 409 })

@@ -10,6 +10,7 @@ import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseInstagramUrl, buildEmbedUrl, esitoHealthCheck } from '@/lib/news/instagram'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
 import { generaEInviaDigest } from '@/lib/news/digest'
+import { verificaPermanenzaConsenso } from '@/lib/news/permanenza-consenso'
 
 // =============================================================================
 // POST /api/news/cron/run — motore cron della sezione News (pattern solleciti/run).
@@ -52,6 +53,30 @@ async function corpoDaFetch(r: EsitoEsterno): Promise<string> {
 async function eseguiTick(supabase: SupabaseClient, t0: number): Promise<NextResponse> {
   const now = new Date()
   const nowIso = now.toISOString()
+
+  // 0) IL CONSENSO FOTOGRAFICO È UNA CONDIZIONE DI PERMANENZA, non un biglietto
+  //    d'ingresso. Si rilegge PRIMA di ogni altra cosa, e la ragione dell'ordine
+  //    è il passo 1: la promozione automatica delle programmate è l'unica strada
+  //    che pubblica da sola, e non passa da nessun gate. Verificando qui, un post
+  //    il cui consenso è caduto viene ritirato prima di essere pubblicato.
+  //    Dettagli e prove: `src/lib/news/permanenza-consenso.ts`.
+  const permanenza = await verificaPermanenzaConsenso(supabase, 'news/cron:permanenza-consenso')
+  if (!permanenza.verificato) {
+    // Il consenso NON è stato riletto per un guasto. Non si pubblica al buio:
+    // rendere pubblica una foto è irreversibile, rimandare di dieci minuti no.
+    // (`disponibile: false` è un'altra cosa — ambiente senza la colonna della
+    // dichiarazione, quindi niente da verificare — e lì si prosegue.)
+    logEvento('cron', 'error', {
+      operazione: JOB,
+      esito: 'promozione-sospesa-consenso-non-verificato',
+      ms: Date.now() - t0,
+      // Si ferma l'intero tick, non la sola promozione: se `alunni` non è
+      // leggibile il guasto non è di questa funzione, e l'health-check Instagram
+      // (best-effort) riparte fra dieci minuti senza che nessuno perda niente.
+      msg: `${JOB}: consenso fotografico non riletto, tick interrotto senza pubblicare`,
+    })
+    return NextResponse.json({ success: true, promozione: 'sospesa' })
+  }
 
   // 1) Promuovi le programmate scadute → pubblicate (+ notifica idempotente).
   const { data: prog, error: progErr } = await supabase

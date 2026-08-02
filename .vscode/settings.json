@@ -1,3 +1,61 @@
 {
-  "css.lint.unknownAtRules": "ignore"
+  "css.lint.unknownAtRules": "ignore",
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // GLI 8 ERRORI DEL PANNELLO «PROBLEMI» — cosa sono, e cosa è stato provato
+  //
+  // Sintomo: 8 errori, due per ciascuno di questi quattro progetti Gradle
+  //   node_modules/@capacitor/android/capacitor      → «capacitor-android»
+  //   node_modules/@capacitor/app/android            → «capacitor-app»
+  //   node_modules/@capacitor/push-notifications/android
+  //   node_modules/@capacitor/status-bar/android
+  // «Missing Gradle project configuration folder: .settings» +
+  // «build path is incomplete. Cannot find the class file for java.lang.Object»
+  // (su due dei quattro il secondo messaggio dice java.lang.Error).
+  //
+  // NON sono difetti del progetto: non toccano `npm run build`, né il gate
+  // (eslint · tsc · vitest), né la build Android vera, che passa da android/ con
+  // Gradle e compila senza errori. Verificato contando i marker Eclipse:
+  //   strings "…/redhat.java/jdt_ws/.metadata/.plugins/org.eclipse.core.resources/.projects/"*/.markers \
+  //     | grep -cE 'Missing Gradle project configuration folder|build path is incomplete'   → 8
+  // Gli altri tre progetti importati (android, app, capacitor-cordova-android-plugins)
+  // hanno ZERO errori.
+  //
+  // ⚠️ IL RIMEDIO CHE SEMBRA OVVIO NON FUNZIONA, ed è misurato.
+  // «Aggiungi java.import.exclusions con **/node_modules/**» è inerte: quei quattro
+  // pattern sono GIÀ il default di redhat.java 1.55.0, parola per parola. E i quattro
+  // progetti non entrano per una scansione di node_modules — entrano perché
+  // `android/capacitor.settings.gradle` (rigenerato da `capacitor update`, intestato
+  // «DO NOT EDIT») li include per nome con un projectDir relativo. La documentazione
+  // dell'estensione chiude la strada di mezzo: «Currently, `Gradle` projects cannot be
+  // partially imported» — o si importa android/ con i suoi sottoprogetti, o niente.
+  //
+  // COSA DICE IL LOG DEL LANGUAGE SERVER, che è il pezzo che conta:
+  //   · 99 occorrenze di «Can't read root project location for project located at
+  //     …/node_modules/@capacitor/…» — Buildship, sui QUATTRO progetti che danno errore;
+  //   · 10 occorrenze di «ToolchainProvisioningException … languageVersion=21» — su
+  //     capacitor-camera, che invece NON dà errori nel pannello.
+  // Cioè: la toolchain 21 e gli 8 errori sono due problemi diversi.
+  //
+  // Le due righe qui sotto puntano il Gradle dell'IDE al JDK 21 che Android Studio si
+  // porta dietro (niente da installare). Chiudono il secondo problema. Sul primo NON
+  // c'è garanzia: se dopo «Java: Clean Java Language Server Workspace» + riavvio il
+  // pannello resta a 8, la causa è «Can't read root project location» di Buildship, e
+  // l'unica cosa che li toglie davvero è non importare affatto i progetti Gradle
+  // (`"java.import.gradle.enabled": false`) — al costo dell'IntelliSense Java, che qui
+  // vale poco: in android/ ci sono 49 righe di Java in tutto, e sono tutte generate
+  // (MainActivity è `extends BridgeActivity {}`, gli altri due file sono gli esempi del
+  // template Capacitor). Il codice nativo scritto a mano di questo progetto è Swift.
+  //
+  // PORTABILITÀ: i percorsi qui sotto sono di macOS con Android Studio installato.
+  // Su un'altra macchina vanno adattati, o rimossi (`/usr/libexec/java_home -V` elenca
+  // i JDK disponibili).
+  // ───────────────────────────────────────────────────────────────────────────
+  "java.import.gradle.java.home": "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-21",
+      "path": "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+    }
+  ]
 }

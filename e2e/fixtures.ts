@@ -2,13 +2,44 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 
 // Deve restare allineato a scripts/seed-e2e.mjs (UUID fissi, credenziali).
-export const PASSWORD = 'KidvilleE2E.2026!';
+
+/**
+ * La password dei 4 account del seed E2E arriva dall'AMBIENTE, mai dal repo.
+ * Copia TypeScript di `e2e/lib/e2e-password.mjs` (la testata di quel file spiega
+ * perché un letterale qui è costato due sedi di produzione); la duplicazione è la
+ * stessa già adottata in `e2e/primaria-360/config/accounts.ts`, perché gli spec
+ * Playwright non importano moduli `.mjs` dello stesso repo.
+ *
+ * Fail-closed: senza variabile si fallisce SUBITO, con il messaggio che dice cosa
+ * esportare — invece di sbattere più avanti contro un login che non riesce.
+ */
+function requireE2EPassword(): string {
+  const valore = (process.env.KV_E2E_PASSWORD || '').trim();
+  if (!valore) {
+    throw new Error(
+      "Manca la variabile d'ambiente KV_E2E_PASSWORD: è la password dei 4 account del seed E2E " +
+        '(*.e2e@kidville.test) e NON è scritta nel repo. In locale prendila dal gestore di credenziali ' +
+        "del titolare ed esportala prima di rilanciare:  export KV_E2E_PASSWORD='…'  — in CI arriva " +
+        'dal secret GitHub CI_E2E_PASSWORD.',
+    );
+  }
+  return valore;
+}
+
+export const PASSWORD = requireE2EPassword();
 
 export const EMAILS = {
   admin: 'admin.e2e@kidville.test',
   docente: 'docente.e2e@kidville.test',
   genitore: 'genitore.e2e@kidville.test',
   doppio: 'doppio.e2e@kidville.test',
+  // Sede 1: la segreteria (il ruolo che allo sportello vede l'anagrafica, e che
+  // dal 2026-07-30 è limitato alla SOLA propria sede).
+  segreteria: 'segreteria.e2e@kidville.test',
+  // Sede 2 (`isolamento-sedi.spec.ts`): personale e famiglia propri.
+  segreteria2: 'segreteria2.e2e@kidville.test',
+  docente2: 'docente2.e2e@kidville.test',
+  genitore2: 'genitore2.e2e@kidville.test',
 };
 
 export const IDS = {
@@ -19,6 +50,18 @@ export const IDS = {
   ADMIN: 'e2e00000-0000-4000-8000-000000000201',
   DOCENTE: 'e2e00000-0000-4000-8000-000000000202',
   GENITORE: 'e2e00000-0000-4000-8000-000000000203',
+  SEGRETERIA: 'e2e00000-0000-4000-8000-000000000205',
+
+  // ── Sede 2: quella che l'isolamento deve tenere fuori ────────────────────
+  // La sua sezione si chiama «Girasoli» come quella della sede 1: il nome-classe
+  // non è una chiave, e questo è il caso che il 2026-07-29 ha reso reale.
+  SCUOLA2: 'e2e00000-0000-4000-8000-000000000002',
+  SEC2_GIRASOLI: 'e2e00000-0000-4000-8000-000000000021',
+  B1: 'e2e00000-0000-4000-8000-000000000105', // Emma Eclissi-E2E (Girasoli, sede 2)
+  SEGRETERIA2: 'e2e00000-0000-4000-8000-000000000206',
+  DOCENTE2: 'e2e00000-0000-4000-8000-000000000207',
+  GENITORE2: 'e2e00000-0000-4000-8000-000000000208',
+  AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
 };
 
 export const STORAGE = {

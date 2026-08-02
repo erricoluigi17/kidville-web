@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname, useSearchParams } from 'next/navigation';
 import { ArrowLeft, LayoutGrid, ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart3, GraduationCap, FolderLock, Info } from 'lucide-react';
-import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 
 // seg '' = indice sezione (Panoramica).
 const NAV = [
@@ -31,31 +31,39 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
   const search = useSearchParams();
   const pathname = usePathname();
   const sectionId = params?.sectionId as string;
-  const userId = getCurrentTeacherId(search);
+  // Identità a due passaggi (SSR → idratazione): gli href dei tab sono
+  // renderizzati, quindi l'uuid NON può essere letto da localStorage dentro il
+  // render. `withUser` lo omette finché non è risolto: mai `userId=null`.
+  const { userId, pronta, withUser } = useTeacherIdentity(search);
   const [nomeClasse, setNomeClasse] = useState('');
   const [ruolo, setRuolo] = useState('');
+  // `?userId=` solo se c'è: la stringa «null» non è un id, e senza identità
+  // locale la richiesta la risolve comunque la sessione (resolveIdentity).
+  const q = userId ? `?userId=${encodeURIComponent(userId)}` : '';
 
   useEffect(() => {
-    if (!sectionId) return;
-    fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
+    // `pronta` evita la chiamata del passaggio di idratazione, che partirebbe
+    // senza identità e verrebbe subito rifatta: una GET in più per pagina.
+    if (!sectionId || !pronta) return;
+    fetch(`/api/primaria/classe/${sectionId}${q}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.success && d.data.section) setNomeClasse(d.data.section.name);
       })
       .catch(() => {});
-  }, [sectionId, userId]);
+  }, [sectionId, q, pronta]);
 
   useEffect(() => {
-    fetch(`/api/primaria/me?userId=${userId}`)
+    if (!pronta) return;
+    fetch(`/api/primaria/me${q}`)
       .then((r) => r.json())
       .then((d) => { if (d.success) setRuolo(d.data.ruolo || ''); })
       .catch(() => {});
-  }, [userId]);
+  }, [q, pronta]);
 
   // Staff = opera per conto del docente titolare (admin/coordinator/segreteria).
   const isStaff = ruolo === 'admin' || ruolo === 'coordinator' || ruolo === 'segreteria';
   const base = `${basePrefix}/${sectionId}`;
-  const suffix = `?userId=${userId}`;
 
   // Nel cockpit (/admin) la cornice persistente (sidebar desktop / topbar mobile)
   // è fornita da admin/layout: ClasseShell NON deve comportarsi da pagina a sé
@@ -70,7 +78,10 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
       <header className={`${inCockpit ? 'lg:sticky lg:top-0' : 'sticky top-[var(--kv-appbar-h,0px)]'} z-20 bg-kidville-green`}>
         <div className="max-w-5xl mx-auto px-4 pt-3">
           <div className="flex items-center gap-3 pb-3">
-            <Link href={`${basePrefix}${suffix}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
+            {/* Dentro c'è solo una freccia: senza nome uno screen reader annuncia
+                «link», e basta (WCAG 4.1.2). Il testo è in italiano come il resto
+                di questo componente, che non passa da next-intl. */}
+            <Link href={withUser(basePrefix)} aria-label="Torna indietro" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
               <ArrowLeft size={18} />
             </Link>
             <h1 className="font-barlow text-2xl font-black uppercase tracking-wide text-white">
@@ -87,7 +98,7 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
           </div>
           <nav className="flex gap-1.5 overflow-x-auto pb-3">
             {NAV.map(({ seg, label, icon: Icon }) => {
-              const href = seg ? `${base}/${seg}${suffix}` : `${base}${suffix}`;
+              const href = withUser(seg ? `${base}/${seg}` : base);
               const active = seg ? pathname === `${base}/${seg}` : pathname === base;
               return (
                 <Link

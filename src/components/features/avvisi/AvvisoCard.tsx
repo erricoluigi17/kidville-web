@@ -2,9 +2,11 @@
 
 import { motion } from 'framer-motion';
 import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList, Share2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { condividi } from '@/lib/native/share';
+import { formatData } from '@/lib/i18n/date';
+import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
 // (timeAgo/statusBadge) definite fuori dal componente, dove gli hook non si usano.
@@ -30,6 +32,13 @@ interface Props {
     avviso: Avviso;
     index: number;
     isTeacher?: boolean;
+    /**
+     * Le sezioni che il chiamante conosce, per tradurre `target_classes` in
+     * nomi di classe. È OPZIONALE perché non tutti hanno una fonte: il genitore
+     * non ha nessun elenco di sezioni, e in quel caso una voce che è un id si
+     * dichiara sconosciuta invece di comparire a schermo come uuid.
+     */
+    classiNote?: readonly ClasseNota[];
     onReadReceipt?: (avvisoId: string) => void;
     onAdesione?: (avvisoId: string, risposta: 'si' | 'no') => void;
     onShowDetails?: (avviso: Avviso) => void;
@@ -62,14 +71,20 @@ function statusBadge(opts: { isAdesione: boolean; isRead: boolean; myAnswer?: st
         return { txt: t('badgeRichiedeAdesione'), cls: 'bg-kidville-yellow text-kidville-green' };
     }
     return isRead
-        ? { txt: t('badgeLetto'), cls: 'bg-kidville-neutral-soft text-kidville-muted' }
+        ? { txt: t('badgeLetto'), cls: 'bg-kidville-neutral-soft text-kidville-sub' }
         : { txt: t('badgeDaLeggere'), cls: 'bg-kidville-green-soft text-kidville-green' };
 }
 
-export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
+export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
     const t = useTranslations('avvisi');
     const locale = useLocale();
     const [expanded, setExpanded] = useState(false);
+    // L'id del pannello che il bottone della testata governa. Da `useId()` e non
+    // da `avviso.id`: la stessa comunicazione può comparire due volte nella
+    // stessa pagina (bacheca + anteprima in home) e due id uguali romperebbero
+    // il riferimento proprio per chi lo usa.
+    const idCard = useId();
+    const idPannello = `avviso-corpo-${idCard}`;
     const isAdesione = avviso.tipo === 'adesione';
     const isRead = !!avviso.my_response?.letto_il;
     const myAnswer = avviso.my_response?.risposta;
@@ -79,9 +94,25 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
 
     // Target leggibile: una pill «🌐 Tutti» per gli avvisi di plesso, una pill
     // per ogni classe destinataria. Contrasto Clay Village (green su green-soft).
+    //
+    // `target_classes` è un campo ETEROGENEO: il modulo ci scrive i NOMI, ma in
+    // produzione ci sono record che portano l'ID della sezione. Finché il plesso
+    // era uno le due forme erano ugualmente leggibili (il nome era di fatto una
+    // chiave); con tre sedi non lo è più, e il collaudo iOS del 2026-07-31 (F4)
+    // ha fotografato questa card mentre stampava `219cab6a-…` come destinatario
+    // — mentre il cockpit, sullo stesso avviso, diceva «TEST Infanzia».
+    // `etichettaDestinatario` fa quella risoluzione (id → nome, sede accanto solo
+    // se deducibile) e, quando la voce è un uuid che non si risolve, NON restituisce
+    // testo: la parola la mette qui il catalogo. Un uuid non è un'informazione per
+    // un genitore né per un docente, ed è la ragione per cui non finisce nemmeno
+    // in un `title`: un attributo lo nasconde alla vista, non allo screen reader.
     const isGlobale = avviso.target_scope === 'globale';
     const classiTarget = isGlobale ? [] : (avviso.target_classes ?? []).filter(Boolean);
-    const showTargetPills = isGlobale || classiTarget.length > 0;
+    const destinatari = classiTarget.map((voce) => {
+        const e = etichettaDestinatario(voce, classiNote ?? []);
+        return { chiave: voce, testo: e.risolta ? e.testo : t('classeSconosciuta') };
+    });
+    const showTargetPills = isGlobale || destinatari.length > 0;
 
     // Decodifica allegato (JSON o link semplice)
     let fileUrl = null;
@@ -116,14 +147,35 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                 unread ? 'border-kidville-yellow/60' : 'border-kidville-line'
             }`}
         >
-            {/* Header */}
-            <button
-                onClick={handleExpand}
-                className="flex w-full items-start gap-3 px-5 py-4 text-left"
+            {/* Testata — disclosure secondo ARIA APG: intestazione → bottone
+                (`aria-expanded` + `aria-controls`) → pannello con lo stesso id.
+                Prima era un unico `<button>` che avvolgeva TUTTA la testata:
+                due difetti in una riga sola.
+                 · Nessuno dei due stati era annunciato: si premeva Invio, il
+                   corpo dell'avviso compariva, e lo screen reader continuava a
+                   dire «pulsante». Su /teacher/avvisi gli elementi con
+                   `aria-expanded` erano uno solo in tutta la pagina, ed era il
+                   menu della bottom-nav.
+                 · `<h2>`, `<p>` e `<div>` stavano DENTRO il bottone, che per
+                   content model ammette solo phrasing content: HTML non valido,
+                   e diversi screen reader appiattiscono il contenuto del bottone
+                   in un'unica etichetta — vanificando proprio la correzione
+                   h3 → h2 fatta per chi naviga per intestazioni.
+                L'area di tocco NON si restringe al titolo: il bottone si estende
+                sulla testata con uno pseudo-elemento (`after:inset-0` sopra
+                questo contenitore `relative`), così sul telefono la card si apre
+                toccandola ovunque come prima. */}
+            <div
+                data-kv-testata-avviso
+                className="relative flex w-full items-start gap-3 px-5 py-4 text-left"
             >
                 {/* Icon */}
+                {/* L'icona è il segno che distingue «adesione» da «comunicazione»:
+                    va letta, quindi vale la soglia 3:1 di WCAG 1.4.11. Il token
+                    caldo che la reggeva (`yellow-dark`) sta a 1,75:1 sul proprio
+                    fondo — meno di un'ombra. `warn-strong` tiene il caldo a 4,97:1. */}
                 <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${
-                    isAdesione ? 'bg-kidville-yellow-soft text-kidville-yellow-dark' : 'bg-kidville-green-soft text-kidville-green'
+                    isAdesione ? 'bg-kidville-yellow-soft text-kidville-warn-strong' : 'bg-kidville-green-soft text-kidville-green'
                 }`}>
                     {isAdesione ? <ClipboardList size={19} strokeWidth={1.8} /> : <Megaphone size={19} strokeWidth={1.8} />}
                 </div>
@@ -133,12 +185,33 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wide ${badge.cls}`}>
                             {badge.txt}
                         </span>
-                        <span className="flex-shrink-0 font-maven text-[11px] text-kidville-muted">{timeAgo(avviso.created_at, t)}</span>
+                        <span className="flex-shrink-0 font-maven text-[11px] text-kidville-sub">{timeAgo(avviso.created_at, t)}</span>
                     </div>
-                    <h3 className="mt-1.5 truncate font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
-                        {avviso.titolo}
-                    </h3>
-                    <p className="mt-0.5 font-maven text-[11px] text-kidville-muted">
+                    {/* `h2`, non `h3`: la card sta SEMPRE sotto l'`h1` della testata di
+                        pagina (`PageHeaderCard`) e non c'è nessuna sezione in mezzo. Con
+                        l'`h3` la bacheca del docente saltava da h1 a h3 dieci volte di
+                        fila, e chi naviga per intestazioni non aveva modo di sapere se si
+                        era perso un livello. */}
+                    <h2 className="mt-1.5 font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
+                        <button
+                            type="button"
+                            onClick={handleExpand}
+                            aria-expanded={expanded}
+                            aria-controls={idPannello}
+                            className="block w-full text-left after:absolute after:inset-0 after:content-['']"
+                        >
+                            {/* Il troncamento sta su questo `span`, non sul bottone.
+                                `truncate` porta con sé `overflow: hidden`, e un
+                                elemento che ritaglia i propri discendenti è l'ultimo
+                                posto dove mettere lo pseudo-elemento che allarga
+                                l'area di tocco: il comportamento dipenderebbe da
+                                una regola di clipping sottile invece che dalla
+                                struttura. Uno `span` resta phrasing content, quindi
+                                il bottone continua a essere HTML valido. */}
+                            <span className="block truncate">{avviso.titolo}</span>
+                        </button>
+                    </h2>
+                    <p className="mt-0.5 font-maven text-[11px] text-kidville-sub">
                         {avviso.author.first_name} {avviso.author.last_name}
                     </p>
                     {showTargetPills && (
@@ -148,12 +221,12 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                     {t('tutti')}
                                 </span>
                             ) : (
-                                classiTarget.map((classe) => (
+                                destinatari.map((d) => (
                                     <span
-                                        key={classe}
+                                        key={d.chiave}
                                         className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green"
                                     >
-                                        {classe}
+                                        {d.testo}
                                     </span>
                                 ))
                             )}
@@ -166,13 +239,14 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                     transition={{ duration: 0.2 }}
                     className="mt-1 flex-shrink-0"
                 >
-                    <ChevronDown size={16} className="text-kidville-muted" strokeWidth={1.8} />
+                    <ChevronDown size={16} className="text-kidville-sub" strokeWidth={1.8} />
                 </motion.div>
-            </button>
+            </div>
 
-            {/* Expanded content */}
+            {/* Expanded content — è il pannello puntato da `aria-controls`. */}
             {expanded && (
                 <motion.div
+                    id={idPannello}
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     transition={{ duration: 0.25 }}
@@ -180,7 +254,11 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                 >
                     {/* Contenuto */}
                     <div className="px-5 py-4">
-                        <p className="whitespace-pre-wrap font-maven text-sm leading-relaxed text-[#55615c]">
+                        {/* `text-kidville-sub`, non l'hex letterale che c'era prima:
+                            è lo STESSO colore (#55615C), ma scritto a mano restava
+                            fuori dalle rimappature per-superficie e dall'inventario
+                            dei token. */}
+                        <p className="whitespace-pre-wrap font-maven text-sm leading-relaxed text-kidville-sub">
                             {avviso.contenuto}
                         </p>
 
@@ -193,9 +271,18 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                             }`}>
                                 <Clock size={12} strokeWidth={1.8} />
                                 {isExpired ? t('scadutoIl') : t('scadenza')}{' '}
-                                {new Date(avviso.scadenza).toLocaleDateString(locale, {
-                                    day: 'numeric', month: 'long', year: 'numeric'
-                                })}
+                                {/* `formatData`, non `toLocaleDateString(locale, …)`.
+                                    Quella chiamata aveva due difetti nello stesso
+                                    argomento: il locale GREZZO di next-intl («en»,
+                                    che Intl risolve su en-US: «8/10» letto al
+                                    contrario) e NESSUN fuso, quindi il fuso
+                                    dell'ambiente — UTC sul processo Vercel,
+                                    Europe/Rome nel browser di una famiglia. Fra le
+                                    00:00 e le 02:00 italiane la stessa scadenza
+                                    rendeva due GIORNI diversi: è la famiglia di
+                                    difetti che a gennaio ha fatto sparire un incasso
+                                    da un KPI. */}
+                                {formatData(avviso.scadenza, locale, 'lunga')}
                             </div>
                         )}
 
@@ -266,7 +353,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                             <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 font-maven text-xs ${
                                 myAnswer === 'si'
                                     ? 'border-kidville-success/20 bg-kidville-success-soft text-kidville-success'
-                                    : 'border-kidville-neutral/20 bg-kidville-neutral-soft text-kidville-muted'
+                                    : 'border-kidville-neutral/20 bg-kidville-neutral-soft text-kidville-sub'
                             }`}>
                                 {myAnswer === 'si' ? <ThumbsUp size={12} strokeWidth={1.8} /> : <ThumbsDown size={12} strokeWidth={1.8} />}
                                 {myAnswer === 'si' ? t('haiAderitoConferma') : t('haiDeclinato')}
@@ -277,7 +364,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                     {/* Stats e Azioni per insegnante */}
                     {isTeacher && (
                         <div className="flex flex-wrap items-center gap-4 border-t border-kidville-line px-5 pb-4 pt-3">
-                            <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                            <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-sub">
                                 <Eye size={12} strokeWidth={1.8} />
                                 <span>{t('hannoLetto', { count: avviso.stats.letti })}</span>
                             </div>
@@ -287,7 +374,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                         <ThumbsUp size={12} strokeWidth={1.8} />
                                         <span>{avviso.stats.adesioni_si}</span>
                                     </div>
-                                    <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                                    <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-sub">
                                         <ThumbsDown size={12} strokeWidth={1.8} />
                                         <span>{avviso.stats.adesioni_no}</span>
                                     </div>

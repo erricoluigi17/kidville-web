@@ -32,13 +32,18 @@ const h = vi.hoisted(() => {
       },
     }
   }
-  return { state, makeClient }
+  return { state, makeClient, TITOLARE: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }
 })
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  // Gate d'identità della route (2026-08-02): il chiamante è l'intestatario
+  // della domanda. Il caso anonimo/estraneo sta nel test dedicato.
+  requireUser: vi.fn().mockResolvedValue({ user: { id: h.TITOLARE, role: 'genitore', scuola_id: null } }),
+}))
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 7, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('test-ip'),
@@ -76,6 +81,7 @@ describe('PATCH /api/forms/send-otp — TTL 10 minuti (m4)', () => {
             id: SID,
             otp_secret: hashOtp(SID, '424242'),
             status: 'pending_signature',
+            user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
             otp_generato_il: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
           },
           error: null,
@@ -97,6 +103,7 @@ describe('PATCH /api/forms/send-otp — TTL 10 minuti (m4)', () => {
             id: SID,
             otp_secret: hashOtp(SID, '424242'),
             status: 'pending_signature',
+            user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
             otp_generato_il: new Date().toISOString(),
           },
           error: null,
@@ -111,7 +118,7 @@ describe('PATCH /api/forms/send-otp — TTL 10 minuti (m4)', () => {
   it('otp_generato_il assente/null (DB non migrato) → comportamento attuale (200)', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: SID, otp_secret: hashOtp(SID, '424242'), status: 'pending_signature' }, error: null },
+        { data: { id: SID, otp_secret: hashOtp(SID, '424242'), status: 'pending_signature', user_id: h.TITOLARE }, error: null },
         { data: null, error: null },
       ],
     }

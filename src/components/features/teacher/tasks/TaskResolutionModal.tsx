@@ -45,6 +45,7 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
           <button
             type="button"
             onClick={onClose}
+            aria-label={t('chiudi')}
             className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted"
           >
             <X size={14} />

@@ -8,7 +8,33 @@ import { seedCertificato } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+
+// ─── Sede dell'OGGETTO, non dell'operatore ───────────────────────────────────
+// L'audit di questa route registrava `auth.user.scuola_id`: per l'unico admin
+// reale è sempre Giugliano, quindi la generazione di un certificato per una
+// classe di Cesa restava a registro come operazione di Giugliano. Un registro
+// delle scritture che attribuisce l'evento alla sede sbagliata è peggio di un
+// registro assente: dice il falso proprio quando lo si va a leggere. La sede si
+// prende dalla SEZIONE, già validata da `assertSezioneInScope` (stesso schema di
+// `admin/protocolli/genera-documento:73-77`).
+async function sedeDellaSezione(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  sectionId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('sections')
+    .select('scuola_id')
+    .eq('id', sectionId)
+    .maybeSingle()
+  if (error) {
+    // PostgREST non lancia: senza il controllo l'audit tornerebbe in silenzio
+    // alla sede dell'operatore, cioè al difetto che si sta correggendo.
+    logEvento('db', 'error', { operazione: 'admin/competenze', esito: 'sede-sezione-non-letta' }, error)
+    return null
+  }
+  return (data?.scuola_id as string | null) ?? null
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
@@ -85,6 +111,7 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     // sezione di un'altra sede passandone l'uuid.
     const fuoriScopePost = await assertSezioneInScope(supabase, auth.user, body.sectionId)
     if (fuoriScopePost) return fuoriScopePost
+    const scuolaSezione = await sedeDellaSezione(supabase, body.sectionId)
 
     let alunniIds: string[] = []
     if (body.alunnoId) alunniIds = [body.alunnoId]
@@ -108,7 +135,8 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
           entitaTipo: 'certificato_competenze',
           entitaId: r.certificatoId,
           azione: 'insert',
-          scuolaId: auth.user.scuola_id ?? null,
+          scuolaId: scuolaSezione,
+          sectionId: body.sectionId,
         })
       }
     }
@@ -133,6 +161,27 @@ export const PATCH = withRoute('admin/competenze:PATCH', async (request: NextReq
     const body = b.data
 
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: la PATCH riceve solo `certificatoId` e riscriveva i
+    // livelli (e riportava in bozza, invalidando la firma) di QUALUNQUE
+    // certificato delle tre sedi. La sezione è la fonte di verità della sede
+    // anche qui: si risolve dal certificato e poi si passa dallo stesso gate
+    // delle altre due letture.
+    const { data: cert, error: errCert } = await supabase
+      .from('certificati_competenze')
+      .select('id, section_id')
+      .eq('id', body.certificatoId)
+      .maybeSingle()
+    if (errCert) {
+      logEvento('db', 'error', { operazione: 'admin/competenze:PATCH', esito: 'certificato-non-letto' }, errCert)
+      return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+    }
+    if (!cert) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
+    const sectionId = cert.section_id as string
+    const fuoriScopePatch = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopePatch) return fuoriScopePatch
+    const scuolaSezione = await sedeDellaSezione(supabase, sectionId)
+
     const rows: { certificato_id: string; competenza_codice: string; livello: string | null; note: string | null }[] = []
     for (const l of body.livelli ?? []) {
       rows.push({ certificato_id: body.certificatoId, competenza_codice: l.competenza_codice, livello: l.livello ?? null, note: l.note ?? null })
@@ -141,17 +190,35 @@ export const PATCH = withRoute('admin/competenze:PATCH', async (request: NextReq
       rows.push({ certificato_id: body.certificatoId, competenza_codice: COMPETENZE_SIGNIFICATIVE_CODICE, livello: null, note: body.competenzeSignificative ?? null })
     }
     if (rows.length) {
-      await supabase.from('certificato_competenza_livelli').upsert(rows, { onConflict: 'certificato_id,competenza_codice' })
+      // PostgREST non lancia: senza il controllo, livelli non salvati e
+      // «salvato» a schermo erano indistinguibili.
+      const { error: errLivelli } = await supabase
+        .from('certificato_competenza_livelli')
+        .upsert(rows, { onConflict: 'certificato_id,competenza_codice' })
+      if (errLivelli) {
+        logEvento('db', 'error', { operazione: 'admin/competenze:PATCH', esito: 'livelli-non-salvati' }, errLivelli)
+        return NextResponse.json({ error: 'Salvataggio dei livelli non riuscito' }, { status: 500 })
+      }
     }
     // Una modifica invalida la firma precedente: torna in bozza.
-    await supabase.from('certificati_competenze').update({ stato: 'bozza', updated_at: new Date().toISOString() }).eq('id', body.certificatoId)
+    const { error: errStato } = await supabase
+      .from('certificati_competenze')
+      .update({ stato: 'bozza', updated_at: new Date().toISOString() })
+      .eq('id', body.certificatoId)
+    if (errStato) {
+      // Peggiore del precedente: il certificato resterebbe «firmato» con dentro
+      // livelli nuovi, cioè una firma che non copre più il contenuto.
+      logEvento('db', 'error', { operazione: 'admin/competenze:PATCH', esito: 'stato-non-riportato-in-bozza' }, errStato)
+      return NextResponse.json({ error: 'Aggiornamento del certificato non riuscito' }, { status: 500 })
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,
       entitaTipo: 'certificato_competenze',
       entitaId: body.certificatoId,
       azione: 'update',
-      scuolaId: auth.user.scuola_id ?? null,
+      scuolaId: scuolaSezione,
+      sectionId,
     })
     return NextResponse.json({ success: true })
   } catch (err) {

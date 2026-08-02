@@ -27,8 +27,30 @@ describe('PagamentoCardMobile', () => {
     );
     expect(screen.getByText('Mario Rossi')).toBeInTheDocument();
     expect(screen.getByText('Retta Settembre 2026')).toBeInTheDocument();
-    expect(screen.getByText(/Restano/)).toHaveTextContent('€ 50.00');
+    // Valuta in it-IT: virgola decimale. Questa asserzione diceva «€ 50.00» e
+    // certificava il difetto: la card mostrava il formato anglosassone alla
+    // Segreteria mentre il resto dell'app (Cassa, genitore) diceva «€ 50,00».
+    expect(screen.getByText(/Restano/)).toHaveTextContent('€ 50,00');
     expect(screen.getByText('Parziale')).toBeInTheDocument();
+  });
+
+  it('gli importi a quattro cifre raggruppano le migliaia col punto (it-IT)', () => {
+    // 1234,50 è il caso che `formatEuro` esiste per servire: l'it-IT ha
+    // minimumGroupingDigits=2 e senza `useGrouping` esplicito stamperebbe
+    // «1234,50». A mano usciva «€ 1234.50»: né virgola né raggruppamento.
+    render(
+      <PagamentoCardMobile
+        pagamento={{ ...base, importo: 1234.5, importo_pagato: 234.5, stato: 'parziale' }}
+        alunnoLabel="Mario Rossi"
+        onIncassa={() => {}}
+        onApri={() => {}}
+      />
+    );
+    expect(screen.getByText(/Totale/)).toHaveTextContent('Totale € 1.234,50');
+    expect(screen.getByText(/Totale/)).toHaveTextContent('Pagato € 234,50');
+    expect(screen.getByText(/Restano/)).toHaveTextContent('€ 1.000,00');
+    // nessun residuo di formato anglosassone in tutta la card
+    expect(document.body.textContent).not.toMatch(/\d\.\d{2}(?!\d)/);
   });
 
   it('bottone Incassa presente se non saldato e chiama onIncassa', () => {

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import type { ReactElement } from 'react'
 
 /**
@@ -31,8 +32,8 @@ describe('/iscrizione — passaggio di ?scuola= al wizard', () => {
   })
 
   it('parametro valorizzato → passa invariato (scorciatoia che salta il passo sede)', async () => {
-    await expect(scuolaIdPassato({ scuola: 'd53b0fbc-a9eb-4073-b302-73d1d5abd529' }))
-      .resolves.toBe('d53b0fbc-a9eb-4073-b302-73d1d5abd529')
+    await expect(scuolaIdPassato({ scuola: SEDE_A }))
+      .resolves.toBe(SEDE_A)
   })
 
   it('parametro VUOTO o di soli spazi → null, non stringa vuota', async () => {

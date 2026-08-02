@@ -24,5 +24,7 @@
   "pranzoPrenotato": "Pranzo prenotato!",
   "prenotazioneDisdetta": "Prenotazione disdetta",
   "operazioneNonRiuscita": "Operazione non riuscita",
-  "errore": "Errore"
+  "errore": "Errore",
+  "settimanaPrecedente": "Settimana precedente",
+  "settimanaSuccessiva": "Settimana successiva"
 }

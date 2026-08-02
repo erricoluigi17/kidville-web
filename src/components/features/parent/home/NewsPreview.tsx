@@ -10,6 +10,7 @@ import { withIdentity } from '@/lib/auth/current-user'
 import type { NewsPost, NewsTipo } from '@/lib/news/tipi'
 import { estraiFeed } from '@/components/features/news/NewsFeedList'
 import { estrattoTesto } from '@/components/features/news/NewsCard'
+import { formattaIstante } from '@/i18n/config'
 
 interface Props {
   parentId: string
@@ -25,7 +26,7 @@ const TIPO_ICON: Record<NewsTipo, typeof Newspaper> = {
 const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
+    return formattaIstante(new Date(iso), locale, { day: 'numeric', month: 'short' })
   } catch {
     return ''
   }

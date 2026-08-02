@@ -57,7 +57,10 @@ describe('CheckoutModal', () => {
     fireEvent.click(panicBtn);
 
     expect(handlePanic).toHaveBeenCalled();
-    expect(screen.getByText('Invio Allarme...')).toBeInTheDocument();
+    // L'ellissi è quella tipografica: i cataloghi sono stati uniformati il
+    // 2026-08-01 (lock `messaggi-plurali-e-glossario`), e questo testo arriva
+    // da `teacherPresenze.invioAllarme`.
+    expect(screen.getByText('Invio Allarme…')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText(/PANIC ALERT/i)).toBeInTheDocument();

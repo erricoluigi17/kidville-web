@@ -14,6 +14,9 @@
   "sezioneCon": "Section {sezione}",
   "giornoPrecedente": "Previous day",
   "giornoSuccessivo": "Next day",
+  "mesePrecedente": "Previous month",
+  "meseSuccessivo": "Next month",
+  "aggiorna": "Refresh",
   "oggi": "Today",
   "mese": "Month",
   "caricamentoAlunni": "Loading students from records…",
@@ -24,6 +27,9 @@
   "nessunAlunnoFiltro": "No students for this filter.",
   "offline": "Offline",
   "aggiornaPresenze": "Refresh attendance",
+  "salvataggioFallito": "Attendance NOT saved",
+  "salvataggioFallitoAiuto": "The server did not record the following: while it stays here, for the register these children have not been marked.",
+  "riprovaPer": "Retry for {alunno}",
   "allarmeInviato": "ALERT SENT SUCCESSFULLY!",
   "erroreInvioAllarme": "Failed to send alert.",
   "erroreReteAllarme": "Network error. Alert not sent.",
@@ -53,7 +59,7 @@
   "delegatiAutorizzati": "Authorized delegates",
   "nessunDelegato": "No registered delegates.",
   "conferma": "Confirm",
-  "invioAllarme": "Sending alert...",
+  "invioAllarme": "Sending alert…",
   "panicAlert": "PANIC ALERT - Unauthorized pickup",
   "panicDescrizione": "Blocks the check-out and sends an immediate notification to the Office and the Parent.",
   "ingresso": "Check-in",
@@ -64,5 +70,6 @@
   "nonFirmata": "Not signed",
   "quotaSaldata": "Fee paid",
   "saldata": "Paid",
-  "daSaldare": "Unpaid"
+  "daSaldare": "Unpaid",
+  "chiudi": "Close"
 }

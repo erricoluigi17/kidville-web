@@ -150,6 +150,38 @@ describe('lock — pagine legali', () => {
         }
     });
 
+    /**
+     * WCAG 3.1.2 «Lingua delle parti», livello AA.
+     *
+     * `src/app/layout.tsx` rende `<html lang={locale}>`: con l'app in inglese —
+     * ed è pubblicata in inglese sugli store — queste tre pagine venivano
+     * servite `lang="en"` con dentro un testo integralmente italiano. Misurato:
+     * `curl -H 'Cookie: KV_LOCALE=en' /privacy | grep '<html'` → `lang="en"`,
+     * mentre l'h1 è «Informativa sulla privacy» e i 19 h2 sono tutti in
+     * italiano. Uno screen reader legge l'informativa che parla di dati sanitari
+     * di minori con la pronuncia inglese, cioè non la legge affatto.
+     *
+     * La scelta di NON tradurre è deliberata (un'informativa tradotta senza
+     * validazione legale è un rischio maggiore di una non tradotta) ed è scritta
+     * nell'intestazione dei file. Finché resta così, la lingua va dichiarata
+     * dove il testo vive: sul contenitore. Il giorno in cui le pagine passeranno
+     * da `useTranslations`, questo lock va tolto insieme all'attributo — e
+     * l'asserzione qui sotto sul «testo non tradotto» è ciò che lo segnala.
+     */
+    it('le tre pagine dichiarano lang="it" sul contenitore, perché il testo NON è tradotto', () => {
+        for (const p of PAGINE) {
+            const src = leggi(p);
+            expect(
+                src,
+                `/${p} usa useTranslations: se il testo è tradotto, lang="it" cablato è SBAGLIATO e va tolto`,
+            ).not.toContain('useTranslations');
+            expect(
+                src,
+                `/${p} non dichiara lang="it": con KV_LOCALE=en il documento è lang="en" su testo italiano (WCAG 3.1.2)`,
+            ).toMatch(/<main[^>]*\slang="it"/);
+        }
+    });
+
     it('la versione dei testi coincide con le costanti usate per la prova di accettazione', () => {
         // Se il testo cambia e la costante no, il genitore accetta un documento
         // e nel registro dei consensi ne risulta un altro: la prova si svuota.

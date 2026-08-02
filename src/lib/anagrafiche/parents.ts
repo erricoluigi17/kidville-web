@@ -4,6 +4,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
+import { nomeSede } from '@/lib/scuole/reali';
 import { logEvento } from '@/lib/logging/logger';
 
 // =============================================================================
@@ -194,8 +195,15 @@ export async function linkOrCreateParent(
   let credenzialiEmail: LinkOrCreateParentResult['credenzialiEmail'];
   let identitaErrore: string | undefined;
   if (!STAFF_ROLES.includes(role)) {
+    // LA SEDE DEL GENITORE VIENE DAI FIGLI, e il legame col figlio è stato
+    // appena scritto qui sopra (punto 3): `ensureParentIdentity` lo trova. Qui
+    // si passava `scuolaId: actor.scuola_id`, cioè la sede di chi salva —
+    // l'operatore di Giugliano che registrava una famiglia di Aversa creava un
+    // genitore «di Giugliano». Ora l'operatore serve solo come criterio di
+    // scelta quando i figli stanno in più plessi, o quando non ci sono figli
+    // (anagrafica genitore creata senza alunno: lì non c'è nulla da cui dedurre).
     const identita = await ensureParentIdentity(supabase, identityInput, {
-      scuolaId: actor.scuola_id ?? null,
+      sedeOperatore: actor.scuola_id ?? null,
     });
     // Ora che un account esiste, il legame anagrafico scritto al punto 3 può
     // avere il suo gemello runtime (`legame_genitori_alunni`, FK su `utenti.id`).
@@ -208,10 +216,15 @@ export async function linkOrCreateParent(
       let emailed: boolean | null = null;
       let emailError: string | null = null;
       if (identita.createdAuth && identita.password) {
+        // Il nome della sede nel corpo: con tre plessi «Kidville» non dice a
+        // quale scuola sia stato iscritto il figlio, e il genitore non ha modo
+        // di accorgersi di un plesso sbagliato. La sede è quella che
+        // `ensureParentIdentity` ha risolto dai FIGLI, non quella di chi salva.
+        const sedeNome = await nomeSede(supabase, identita.scuolaId, 'anagrafiche/parents:credenziali');
         const invio = await sendEmailDetailed({
           to: identita.email,
           subject: 'Le tue credenziali di accesso — Kidville',
-          text: credentialsEmailBody(identityInput.first_name, identita.email, identita.password),
+          text: credentialsEmailBody(identityInput.first_name, identita.email, identita.password, sedeNome),
         });
         emailed = invio.ok;
         emailError = invio.error;

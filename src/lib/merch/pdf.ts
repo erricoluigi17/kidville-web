@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { formattaIstante } from '@/i18n/config'
 
 // Builder jsPDF dell'ordine d'acquisto (PO) al fornitore. Nessun accesso a DB:
 // input già risolto. Un PDF per fornitore (per costruzione: un PO = un fornitore).
@@ -37,7 +38,7 @@ export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
   y += 7
   doc.setFontSize(9)
   doc.setTextColor(110)
-  doc.text(`Data ${i.data ?? new Date().toLocaleDateString('it-IT')}`, 20, y)
+  doc.text(`Data ${i.data ?? formattaIstante(new Date(), 'it')}`, 20, y)
   y += 9
   doc.setTextColor(0)
 

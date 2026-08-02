@@ -103,10 +103,16 @@ describe('POST /api/pagamenti/genera — isolamento per sede', () => {
     expect(h.inserite.map((r) => (r as { alunno_id: string }).alunno_id)).toEqual([ALU_A])
   })
 
-  it('scuola_id del client di un\'altra sede: ignorato, nessuna generazione fuori plesso', async () => {
+  it('scuola_id del client di un\'altra sede: 403, e NESSUN pagamento generato', async () => {
+    // ⚠️ Comportamento atteso CAMBIATO il 2026-07-31. Qui si asseriva 201: la
+    // sede dichiarata dal client veniva IGNORATA e le rette si generavano
+    // comunque, sulla propria sede. Su un modulo contabile è il ripiego più
+    // costoso di tutti — l'operatore crede di aver emesso le rette della classe
+    // omonima dell'altro plesso, il server gliele emette sul proprio, e i
+    // duplicati si scoprono in riconciliazione. Ora si nega.
     const res = await POST(req({ ...BASE, classe_sezione: OMONIMA, scuola_id: SEDE_B }))
-    // Nessun alunno della propria sede resta escluso: si genera su SEDE_A.
-    expect(res.status).toBe(201)
-    expect(h.inserite.map((r) => (r as { alunno_id: string }).alunno_id)).toEqual([ALU_A])
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ error: 'Sede non accessibile', codice: 'SEDE_NON_ACCESSIBILE' })
+    expect(h.inserite).toEqual([])
   })
 })

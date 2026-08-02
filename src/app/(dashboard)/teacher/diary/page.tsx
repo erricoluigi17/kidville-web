@@ -2,7 +2,9 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 import { useSearchParams } from 'next/navigation';
 import { Users, WifiOff } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -17,6 +19,19 @@ function TeacherDiaryInner() {
     const f = useDateFormat();
     const search = useSearchParams();
     const userId = getCurrentTeacherId(search);
+
+    // La data di OGGI si calcola solo lato client (stesso pattern del saluto
+    // orario in /admin e /teacher). Formattarla nel corpo del render la faceva
+    // nascere due volte: sul server, che su Vercel ha l'orologio in UTC, e nel
+    // browser del docente, in Europe/Rome. Fra le 00:00 e le 02:00 italiane le
+    // due date sono GIORNI diversi — l'HTML servito portava quello prima, e
+    // React segnalava il disallineamento di idratazione. Il fuso ora è
+    // dichiarato (`intlDateTime`), ma non basta: `new Date()` è comunque un
+    // valore diverso sui due lati, quindi il calcolo resta client-only.
+    const oggiEsteso = useClientValue(
+        () => intlDateTime(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()),
+        '',
+    );
 
     // Sezioni assegnate al docente (utenti_sezioni via /api/educator-sections):
     // niente più sezione hardcoded; con più sezioni compare il selettore a pill.
@@ -105,7 +120,7 @@ function TeacherDiaryInner() {
                     <span className="capitalize">
                         {t('sottotitoloSezione', {
                             sezione: sezione ?? '',
-                            data: new Intl.DateTimeFormat(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()),
+                            data: oggiEsteso,
                         })}
                     </span>
                 }

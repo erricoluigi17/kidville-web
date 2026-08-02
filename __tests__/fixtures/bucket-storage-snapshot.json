@@ -1,0 +1,59 @@
+{
+  "_come_si_rigenera": "node __tests__/fixtures/bucket-storage-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/bucket-storage-fotografia.mjs < risposta.json",
+  "generato_il": "2026-08-01",
+  "sha256": "d7e79191f53ca87a8fb0b717c262deccd2a3843527d0bfa7bc8720e19d2e8280",
+  "bucket": [
+    {
+      "id": "avvisi_allegati",
+      "pubblico": false
+    },
+    {
+      "id": "cassa-giustificativi",
+      "pubblico": false
+    },
+    {
+      "id": "certificati-medici",
+      "pubblico": false
+    },
+    {
+      "id": "chat-allegati",
+      "pubblico": false
+    },
+    {
+      "id": "credenziali",
+      "pubblico": false
+    },
+    {
+      "id": "fatture",
+      "pubblico": false
+    },
+    {
+      "id": "form_attachments",
+      "pubblico": false
+    },
+    {
+      "id": "gallery",
+      "pubblico": false
+    },
+    {
+      "id": "news",
+      "pubblico": true
+    },
+    {
+      "id": "news_bozze",
+      "pubblico": false
+    },
+    {
+      "id": "pagelle",
+      "pubblico": false
+    },
+    {
+      "id": "protocollo",
+      "pubblico": false
+    },
+    {
+      "id": "task_allegati",
+      "pubblico": false
+    }
+  ]
+}

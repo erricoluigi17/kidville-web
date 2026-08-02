@@ -24,5 +24,7 @@
   "pranzoPrenotato": "Lunch booked!",
   "prenotazioneDisdetta": "Booking cancelled",
   "operazioneNonRiuscita": "Operation failed",
-  "errore": "Error"
+  "errore": "Error",
+  "settimanaPrecedente": "Previous week",
+  "settimanaSuccessiva": "Next week"
 }

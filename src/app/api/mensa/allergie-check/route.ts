@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { loadResolveOptions } from '@/lib/mensa/server'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import type { ResolveOptions } from '@/lib/mensa/resolveMenu'
@@ -9,6 +10,7 @@ import { parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD } from '@/lib/validation/common'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // Battito cardiaco del cron: pg_net chiama in fire-and-forget con `EXCEPTION WHEN OTHERS
 // THEN null`, quindi un job che non parte non lascia traccia — si sorveglia l'ASSENZA.
@@ -75,9 +77,13 @@ function queryFallita(azione: string, error: unknown, t0: number, canale: string
 //   Idempotente per (alunno, data) grazie al dedup in notificaAllergie.
 export const POST = withRoute('mensa/allergie-check:POST', async (request: Request) => {
   const t0 = Date.now()
+  // Chi ha lanciato il giro. `null` sul ramo cron: lì non c'è nessun utente, e il
+  // job DEVE vedere tutte le sedi. Sul ramo manuale è l'operatore, e il suo scope
+  // di sede vale come su qualunque altra schermata (R86).
+  let operatore: AppUser | null = null
   try {
     const secret = request.headers.get('x-cron-secret')
-    const isCron = !!secret && secret === process.env.CRON_SECRET
+    const isCron = segretoCronValido(secret)
     if (!isCron) {
       // Si grida SOLO se l'header c'è ma non torna: quello è un cron che bussa con la
       // chiave sbagliata, ed è il guasto invisibile. Se l'header manca del tutto non c'è
@@ -94,6 +100,7 @@ export const POST = withRoute('mensa/allergie-check:POST', async (request: Reque
       }
       const auth = await requireStaff(request)
       if (auth.response) return auth.response
+      operatore = auth.user
     }
 
     // `canale` (lista bianca) distingue il giro schedulato dal lancio manuale dello staff,
@@ -126,6 +133,30 @@ export const POST = withRoute('mensa/allergie-check:POST', async (request: Reque
 
     const supabase = await createAdminClient()
 
+    // R86 — lo scope del ramo MANUALE. Il cron è un job: itera su tutte le sedi ed
+    // è giusto così. Il lancio a mano no: è una schermata di un operatore, e
+    // `requireStaff` verifica il RUOLO, non il TENANT. Senza questo filtro la
+    // segreteria di Aversa vedeva quanti bambini pranzano a Giugliano e faceva
+    // partire gli alert verso lo staff di un plesso non suo.
+    //
+    // Scope VUOTO ⇒ 403, mai «nessun filtro»: `sediOperatore` è `null` SOLO sul ramo
+    // cron, e l'unico posto in cui `null` significa «tutte» è quello.
+    let sediOperatore: string[] | null = null
+    if (operatore) {
+      sediOperatore = await resolveScuoleAttive(request as NextRequest, supabase, operatore)
+      if (sediOperatore.length === 0) {
+        logEvento('cron', 'warn', {
+          operazione: JOB,
+          esito: 'scope-vuoto',
+          canale,
+          utente: operatore.id,
+          ruolo: operatore.role,
+          msg: `${JOB}: nessuna sede accessibile per chi ha lanciato il giro`,
+        })
+        return NextResponse.json({ error: 'Nessuna sede accessibile' }, { status: 403 })
+      }
+    }
+
     // prenotazioni attive per la data
     const { data: pren, error: errPren } = await supabase
       .from('mensa_prenotazioni')
@@ -155,11 +186,16 @@ export const POST = withRoute('mensa/allergie-check:POST', async (request: Reque
       return NextResponse.json({ success: true, data: { data, prenotati: 0, alert: 0 } })
     }
 
-    // anagrafica + allergie dei prenotati
-    const { data: alunni, error: errAlunni } = await supabase
+    // anagrafica + allergie dei prenotati. `mensa_prenotazioni` non è filtrabile per
+    // sede in modo affidabile (la sua `scuola_id` è nullable): la sede che conta è
+    // quella dell'ALUNNO, ed è qui che si restringe. Restringendo la lettura si
+    // restringono da soli anche i contatori, che escono da `rows`.
+    let qAlunni = supabase
       .from('alunni')
       .select('id, nome, cognome, classe_sezione, section_id, scuola_id, allergies, allergeni')
       .in('id', ids)
+    if (sediOperatore) qAlunni = qAlunni.in('scuola_id', sediOperatore)
+    const { data: alunni, error: errAlunni } = await qAlunni
     // È QUI che stanno le allergie. Una lettura fallita e ignorata darebbe `rows` vuoto: zero
     // conflitti trovati, zero alert inviati, `prenotati: 0` — e un «ok» in fondo. La riga di
     // errore + il 500 sono l'unica cosa che separa «oggi nessuno rischiava nulla» da «oggi non

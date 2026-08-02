@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 // =============================================================================
 // Cancellazione account via risorsa web PUBBLICA (C5 §1). Due route:
@@ -43,9 +44,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
 const sendEmail = vi.fn().mockResolvedValue(true)
 vi.mock('@/lib/email/send', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn().mockResolvedValue(undefined) }))
+// `scuolaUnicaReale` risponde `null` — ed è la VERITÀ di produzione dal
+// 2026-07-29: con tre sedi reali la funzione è deprecata e ritorna sempre null.
+// Il mock che la faceva rispondere con una sede mascherava il difetto W1
+// (richiesta con `scuola_id` NULL, invisibile a ogni Direzione).
 vi.mock('@/lib/notifiche/destinatari', () => ({
   staffScuola: vi.fn().mockResolvedValue(['staff-1']),
-  scuolaUnicaReale: vi.fn().mockResolvedValue('d53b0fbc-a9eb-4073-b302-73d1d5abd529'),
+  scuolaUnicaReale: vi.fn().mockResolvedValue(null),
 }))
 
 import { POST as POST_INIT } from '@/app/api/public/cancellazione-account/route'
@@ -55,7 +60,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { resetRateLimit } from '@/lib/security/rate-limit'
 
 const PARENT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01'
-const SCUOLA_ID = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SCUOLA_ID = SEDE_A
 
 // Il rate-limiter è un Map di modulo condiviso da tutti i test del file: senza
 // reset, il budget consumato da un test farebbe fallire il successivo.
@@ -278,5 +283,47 @@ describe('POST /api/public/cancellazione-account/conferma — verifica ticket e 
       }),
     )
     expect(res.status).toBe(409)
+  })
+})
+
+// =============================================================================
+// W1 sul CANALE PUBBLICO. Stessa catena morta del canale in-app:
+// `genitore.scuolaId ?? await scuolaUnicaReale(admin)`. Qui fa anche più danno:
+// il genitore che usa il magic-link spesso non ha più l'app, quindi non ha
+// nessun altro modo di accorgersi che la sua richiesta non è arrivata a nessuno.
+// =============================================================================
+describe('POST /api/public/cancellazione-account/conferma — sede della richiesta (W1)', () => {
+  const ticketValido = () => creaTicketCancellazione('genitore@example.com')
+  const invia = (t: ReturnType<typeof creaTicketCancellazione>) =>
+    POST_CONF(
+      req('/api/public/cancellazione-account/conferma', {
+        email: 'genitore@example.com', code: t.code, expiry: t.expiry, ticket: t.ticket,
+      }),
+    )
+
+  it('identità senza sede → la sede viene dal FIGLIO, non da scuolaUnicaReale', async () => {
+    h.state.queues = {
+      otp_ticket_consumati: [{ data: null, error: null }],
+      utenti: [{ data: [{ id: PARENT_ID, email: 'genitore@example.com', scuola_id: null }], error: null }],
+      parents: [parentAttivo],
+      student_parents: [{ data: [{ student_id: 'al-1', alunni: { scuola_id: SEDE_B } }], error: null }],
+      richieste_cancellazione: [{ data: { id: 'req-1' }, error: null }],
+    }
+    const res = await invia(ticketValido())
+    expect(res.status).toBe(200)
+    const ins = h.state.inserts.find((i) => i.table === 'richieste_cancellazione')
+    expect((ins!.value as { scuola_id?: unknown }).scuola_id).toBe(SEDE_B)
+  })
+
+  it('MAI una richiesta con scuola_id null: senza sede deducibile si RIFIUTA (422)', async () => {
+    h.state.queues = {
+      otp_ticket_consumati: [{ data: null, error: null }],
+      utenti: [{ data: [{ id: PARENT_ID, email: 'genitore@example.com', scuola_id: null }], error: null }],
+      parents: [parentAttivo],
+      student_parents: [{ data: [], error: null }],
+    }
+    const res = await invia(ticketValido())
+    expect(res.status).toBe(422)
+    expect(h.state.inserts.filter((i) => i.table === 'richieste_cancellazione')).toHaveLength(0)
   })
 })

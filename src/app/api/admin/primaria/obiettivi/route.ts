@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
-import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -122,14 +122,22 @@ export const PATCH = withRoute('admin/primaria/obiettivi:PATCH', async (request:
     delete updates.scuola_id
 
     const supabase = await createAdminClient()
+    // La sede si dichiarava alla creazione (POST, `resolveScuolaScrittura`) e si
+    // dimenticava alla modifica: PATCH e DELETE agivano per solo `id`. Il
+    // vincolo va sulla query stessa — è la forma più economica e non richiede
+    // una lettura in più.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     const { data, error } = await supabase
       .from('obiettivi_apprendimento')
       .update(updates)
       .eq('id', id)
+      .in('scuola_id', plessi)
       .select()
-      .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true, data })
+    // 0 righe = obiettivo inesistente OPPURE di un altro plesso: 404 in
+    // entrambi i casi, così la risposta non rivela l'esistenza della riga.
+    if (!data || data.length === 0) return NextResponse.json({ error: 'Obiettivo non trovato' }, { status: 404 })
+    return NextResponse.json({ success: true, data: data[0] })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/obiettivi:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -148,8 +156,15 @@ export const DELETE = withRoute('admin/primaria/obiettivi:DELETE', async (reques
     const { id } = q.data
 
     const supabase = await createAdminClient()
-    const { error } = await supabase.from('obiettivi_apprendimento').delete().eq('id', id)
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+    const { data, error } = await supabase
+      .from('obiettivi_apprendimento')
+      .delete()
+      .eq('id', id)
+      .in('scuola_id', plessi)
+      .select('id')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!data || data.length === 0) return NextResponse.json({ error: 'Obiettivo non trovato' }, { status: 404 })
     return NextResponse.json({ success: true })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/obiettivi:DELETE', stato: 500 }, err)

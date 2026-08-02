@@ -10,10 +10,10 @@
   "teacherRole": "Teacher",
   "selectTeacher": "Select a teacher",
   "selectTeacherHint": "Choose from the list or tap \"{action}\"",
-  "inputPlaceholderTeacher": "Write a message to the teacher...",
-  "inputPlaceholder": "Write a message...",
+  "inputPlaceholderTeacher": "Write a message to the teacher…",
+  "inputPlaceholder": "Write a message…",
   "backToList": "Back to the list",
-  "loadingContacts": "Loading contacts...",
+  "loadingContacts": "Loading contacts…",
   "allContactsUsed": "You already have a conversation with every available teacher! 🎉",
   "selectTeacherToStart": "Select a teacher to start a conversation",
   "teacherOf": "{name}'s teacher",
@@ -34,7 +34,7 @@
   "statusRead": "Read",
   "statusDelivered": "Delivered",
   "statusSent": "Sent",
-  "loadingMessages": "Loading messages...",
+  "loadingMessages": "Loading messages…",
   "startConversation": "Start the conversation",
   "writeMessageTo": "Write a message to {name}",
   "ugcMenuLabel": "Conversation options",
@@ -62,5 +62,6 @@
   "ugcReopenError": "Could not reopen the conversation. Please try again.",
   "ugcTermsBlockedTitle": "Accept the Terms to continue",
   "ugcTermsBlockedBody": "To write in chat you must first accept the Terms of Service.",
-  "ugcTermsBlockedCta": "Accept the Terms to continue"
+  "ugcTermsBlockedCta": "Accept the Terms to continue",
+  "chiudiNuovaChat": "Close new chat"
 }

@@ -4,9 +4,53 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock, BellRing } from 'lucide-react';
 import { livelliEffettivi, type LivelloSollecito, type SollecitiConfig } from '@/lib/pagamenti/solleciti';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { hdr, card, h3, input, label, btnPrimary } from './ui';
 
 interface Props { userId: string; scuolaId: string }
+
+/**
+ * Banda d'errore di un pannello.
+ *
+ * Fino al 2026-07-31 questi pannelli non avevano NIENTE del genere: `save()`
+ * faceva `await fetch(...)` e scartava la risposta. Un 403 di sede o il 400
+ * «Specificare la sede» spegneva lo spinner e basta — indistinguibile da un
+ * salvataggio riuscito. È la stessa cecità che per mesi ha nascosto le email
+ * non consegnate, vista dal lato dell'interfaccia.
+ */
+function ErroreBox({ testo }: { testo: string }) {
+    if (!testo) return null;
+    return (
+        <div role="alert" className="mt-3 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error-strong">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+            <span>{testo}</span>
+        </div>
+    );
+}
+
+/**
+ * Esegue una mutazione e RIPORTA l'esito: `''` = riuscita, altrimenti il
+ * messaggio da mostrare. Un rifiuto viene sempre anche loggato — lo `stato` è un
+ * numero (lista bianca di `redact`) ed è l'unica cosa che, letta dai log,
+ * distingue «sede ambigua» (400) da «sede non tua» (403) da «guasto» (500).
+ * Il corpo NON si logga: può contenere il nome di una categoria o di una classe.
+ */
+async function mutaConEsito(
+    url: string, init: RequestInit, fallback: string, evento: string,
+): Promise<string> {
+    try {
+        const res = await fetch(url, init);
+        if (!res.ok) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: evento, route: '/admin/impostazioni', stato: res.status });
+            return await messaggioErrore(res, fallback);
+        }
+        return '';
+    } catch (err) {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${evento}: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+        return fallback;
+    }
+}
 
 interface Categoria { id: string; nome: string; slug?: string; colore?: string; icona?: string; is_sistema: boolean; ordine: number }
 interface Settings {
@@ -40,6 +84,7 @@ function SollecitiSettings({ userId }: Props) {
     const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<SollecitiConfig | null>(null);
     const [saving, setSaving] = useState(false);
+    const [errore, setErrore] = useState('');
     useEffect(() => {
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
             .then(r => r.json())
@@ -54,7 +99,11 @@ function SollecitiSettings({ userId }: Props) {
     };
     const save = async () => {
         setSaving(true);
-        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ solleciti_config: { ...cfg, livelli } }) });
+        setErrore(await mutaConEsito(
+            '/api/admin/settings',
+            { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ solleciti_config: { ...cfg, livelli } }) },
+            t('erroreSalvataggio'), 'settings-solleciti-respinto',
+        ));
         setSaving(false);
     };
     return (
@@ -66,13 +115,13 @@ function SollecitiSettings({ userId }: Props) {
                     <span className="font-maven text-sm text-kidville-green">{t('spSollecitiCronAttivo')}</span>
                 </label>
                 <div className="flex items-center gap-2">
-                    <span className="font-maven text-xs text-kidville-muted">{t('spSollecitiCadenza')}</span>
+                    <span className="font-maven text-xs text-kidville-sub">{t('spSollecitiCadenza')}</span>
                     <input type="number" min={1} value={cfg.cadenza_min_giorni ?? 7}
                         onChange={e => setCfg({ ...cfg, cadenza_min_giorni: Math.max(1, Number(e.target.value) || 1) })}
                         className={`${input} w-16`} />
                 </div>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-2">
+            <p className="font-maven text-[11px] text-kidville-sub mt-2">
                 {t('spSegnaposto')} {'{alunno}'} {'{descrizione}'} {'{importo}'} {'{residuo}'} {'{scadenza}'} {'{scuola}'} {'{giorni_ritardo}'}
             </p>
             <div className="mt-3 space-y-4">
@@ -80,7 +129,7 @@ function SollecitiSettings({ userId }: Props) {
                     <div key={i} className="rounded-xl border-2 border-kidville-line p-3">
                         <div className="flex flex-wrap items-center gap-3 mb-2">
                             <span className="font-barlow text-xs font-extrabold uppercase text-kidville-green">{t('spLivello', { n: i + 1 })}</span>
-                            <span className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                            <span className="flex items-center gap-1.5 font-maven text-xs text-kidville-sub">
                                 {t('spDopo')}
                                 <input type="number" min={0} value={l.giorni_da_scadenza}
                                     onChange={e => setLivello(i, { giorni_da_scadenza: Math.max(0, Number(e.target.value) || 0) })}
@@ -96,6 +145,7 @@ function SollecitiSettings({ userId }: Props) {
                 ))}
             </div>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
+            <ErroreBox testo={errore} />
         </section>
     );
 }
@@ -113,6 +163,7 @@ function FiscaleSettings({ userId }: Props) {
     const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<FiscaleCfg | null>(null);
     const [saving, setSaving] = useState(false);
+    const [errore, setErrore] = useState('');
     useEffect(() => {
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
             .then(r => r.json())
@@ -123,7 +174,11 @@ function FiscaleSettings({ userId }: Props) {
     const set = (k: keyof FiscaleCfg, v: unknown) => setCfg({ ...cfg, [k]: v });
     const save = async () => {
         setSaving(true);
-        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ fiscale_config: cfg }) });
+        setErrore(await mutaConEsito(
+            '/api/admin/settings',
+            { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ fiscale_config: cfg }) },
+            t('erroreSalvataggio'), 'settings-fiscale-respinto',
+        ));
         setSaving(false);
     };
     const campi: [keyof FiscaleCfg, string][] = [
@@ -133,7 +188,7 @@ function FiscaleSettings({ userId }: Props) {
     return (
         <section className={card}>
             <h3 className={h3}><FileText size={16} /> {t('spDatiFiscali')}</h3>
-            <p className="font-maven text-[11px] text-kidville-muted -mt-2 mb-3">
+            <p className="font-maven text-[11px] text-kidville-sub -mt-2 mb-3">
                 {t('spFiscaleDesc')}
             </p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -157,6 +212,7 @@ function FiscaleSettings({ userId }: Props) {
                 </div>
             )}
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
+            <ErroreBox testo={errore} />
         </section>
     );
 }
@@ -165,20 +221,39 @@ function CategorieManager({ userId }: Props) {
     const t = useTranslations('adminSettings');
     const [cats, setCats] = useState<Categoria[]>([]);
     const [nuovo, setNuovo] = useState('');
+    const [errore, setErrore] = useState('');
     const load = useCallback(() => {
         fetch(`/api/admin/settings/categorie?userId=${userId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setCats(d.data); });
-    }, [userId]);
+            .then(r => r.json()).then(d => { if (d.success) setCats(d.data); })
+            .catch(err => {
+                // Un catch che non logga è un bug: senza questa riga «non ci
+                // sono categorie» e «la lettura è morta» sono la stessa cosa.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `settings-categorie-non-caricate: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+                setErrore(t('erroreCaricamentoDati'));
+            });
+    }, [userId, t]);
     useEffect(() => { load(); }, [load]);
 
     const add = async () => {
         if (!nuovo.trim()) return;
-        await fetch('/api/admin/settings/categorie', { method: 'POST', headers: hdr(userId), body: JSON.stringify({ nome: nuovo.trim() }) });
-        setNuovo(''); load();
+        const err = await mutaConEsito(
+            '/api/admin/settings/categorie',
+            { method: 'POST', headers: hdr(userId), body: JSON.stringify({ nome: nuovo.trim() }) },
+            t('erroreSalvataggio'), 'settings-categoria-nuova-respinta',
+        );
+        setErrore(err);
+        // Il testo NON si azzera quando il server ha detto di no: cancellarlo
+        // costringerebbe a riscriverlo per riprovare.
+        if (!err) setNuovo('');
+        load();
     };
     const del = async (id: string) => {
-        const res = await fetch(`/api/admin/settings/categorie?userId=${userId}&id=${id}`, { method: 'DELETE', headers: hdr(userId) });
-        if (!res.ok) { const j = await res.json(); alert(j.error); } load();
+        setErrore(await mutaConEsito(
+            `/api/admin/settings/categorie?userId=${userId}&id=${id}`,
+            { method: 'DELETE', headers: hdr(userId) },
+            t('erroreSalvataggio'), 'settings-categoria-elimina-respinta',
+        ));
+        load();
     };
 
     return (
@@ -188,8 +263,8 @@ function CategorieManager({ userId }: Props) {
                 {cats.map(c => (
                     <span key={c.id} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green">
                         {c.icona} {c.nome}
-                        {c.is_sistema ? <Lock size={11} className="text-kidville-muted" /> :
-                            <button onClick={() => del(c.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>}
+                        {c.is_sistema ? <Lock size={11} className="text-kidville-sub" /> :
+                            <button onClick={() => del(c.id)} aria-label={t('spEliminaCategoria')} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={13} /></button>}
                     </span>
                 ))}
             </div>
@@ -197,7 +272,8 @@ function CategorieManager({ userId }: Props) {
                 <input value={nuovo} onChange={e => setNuovo(e.target.value)} placeholder={t('nuovaCategoriaPlaceholder')} className={`${input} flex-1`} />
                 <button onClick={add} className={btnPrimary}><Plus size={14} /> {t('aggiungi')}</button>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
+            <p className="font-maven text-[11px] text-kidville-sub mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
+            <ErroreBox testo={errore} />
         </section>
     );
 }
@@ -206,19 +282,29 @@ function RettaMorositaSettings({ userId }: Props) {
     const t = useTranslations('adminSettings');
     const [s, setS] = useState<Settings | null>(null);
     const [saving, setSaving] = useState(false);
+    const [errore, setErrore] = useState('');
     useEffect(() => {
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setS(d.data); });
+            .then(r => r.json()).then(d => { if (d.success) setS(d.data); })
+            .catch(err => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `settings-retta-non-caricate: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+            });
     }, [userId]);
     if (!s) return null;
     const save = async () => {
         setSaving(true);
-        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({
-            retta_default_importo: s.retta_default_importo, retta_giorno_scadenza: s.retta_giorno_scadenza,
-            retta_giorno_visibilita: s.retta_giorno_visibilita,
-            retta_auto_enabled: s.retta_auto_enabled, insoluto_tolleranza_giorni: s.insoluto_tolleranza_giorni,
-            fattura_causale_template: s.fattura_causale_template,
-        }) });
+        setErrore(await mutaConEsito(
+            '/api/admin/settings',
+            {
+                method: 'PATCH', headers: hdr(userId), body: JSON.stringify({
+                    retta_default_importo: s.retta_default_importo, retta_giorno_scadenza: s.retta_giorno_scadenza,
+                    retta_giorno_visibilita: s.retta_giorno_visibilita,
+                    retta_auto_enabled: s.retta_auto_enabled, insoluto_tolleranza_giorni: s.insoluto_tolleranza_giorni,
+                    fattura_causale_template: s.fattura_causale_template,
+                }),
+            },
+            t('erroreSalvataggio'), 'settings-retta-respinto',
+        ));
         setSaving(false);
     };
     return (
@@ -229,13 +315,13 @@ function RettaMorositaSettings({ userId }: Props) {
                     <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}>{t('spGiornoScadenza')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />
-                    <p className="font-maven text-[10px] text-kidville-muted mt-0.5">{t('spGiornoScadenzaHint')}</p></div>
+                    <p className="font-maven text-[10px] text-kidville-sub mt-0.5">{t('spGiornoScadenzaHint')}</p></div>
                 <div><label className={label}>{t('spVisibileDalGiorno')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_visibilita ?? 25} onChange={e => setS({ ...s, retta_giorno_visibilita: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}><AlertTriangle size={11} className="inline" /> {t('spTolleranzaInsoluti')}</label>
                     <input type="number" value={s.insoluto_tolleranza_giorni} onChange={e => setS({ ...s, insoluto_tolleranza_giorni: Number(e.target.value) })} className={`${input} w-full`} /></div>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('spRettaVisibilitaHint')}</p>
+            <p className="font-maven text-[11px] text-kidville-sub mt-1">{t('spRettaVisibilitaHint')}</p>
             <label className="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" checked={s.retta_auto_enabled} onChange={e => setS({ ...s, retta_auto_enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
                 <span className="font-maven text-sm text-kidville-green">{t('spRettaAutoGen')}</span>
@@ -244,9 +330,10 @@ function RettaMorositaSettings({ userId }: Props) {
                 <label className={label}>{t('spCausaleFattura')}</label>
                 <input value={s.fattura_causale_template ?? ''} onChange={e => setS({ ...s, fattura_causale_template: e.target.value })}
                     placeholder="{descrizione} - {alunno}" className={`${input} w-full`} />
-                <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('spCausaleSegnaposto')} {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. {t('spCausaleModificabile')}</p>
+                <p className="font-maven text-[11px] text-kidville-sub mt-1">{t('spCausaleSegnaposto')} {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. {t('spCausaleModificabile')}</p>
             </div>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
+            <ErroreBox testo={errore} />
         </section>
     );
 }
@@ -255,13 +342,21 @@ function TicketSettings({ userId }: Props) {
     const t = useTranslations('adminSettings');
     const [pacchetti, setPacchetti] = useState<{ label: string; pezzi: number; costo: number }[]>([]);
     const [saving, setSaving] = useState(false);
+    const [errore, setErrore] = useState('');
     useEffect(() => {
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setPacchetti(d.data.ticket_pacchetti || []); });
+            .then(r => r.json()).then(d => { if (d.success) setPacchetti(d.data.ticket_pacchetti || []); })
+            .catch(err => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `settings-ticket-non-caricati: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+            });
     }, [userId]);
     const save = async () => {
         setSaving(true);
-        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ ticket_pacchetti: pacchetti }) });
+        setErrore(await mutaConEsito(
+            '/api/admin/settings',
+            { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ ticket_pacchetti: pacchetti }) },
+            t('erroreSalvataggio'), 'settings-ticket-respinto',
+        ));
         setSaving(false);
     };
     const upd = (i: number, k: string, v: string | number) => setPacchetti(pacchetti.map((p, idx) => idx === i ? { ...p, [k]: v } : p));
@@ -274,14 +369,15 @@ function TicketSettings({ userId }: Props) {
                         <input value={p.label} onChange={e => upd(i, 'label', e.target.value)} placeholder={t('spTicketNome')} className={`${input} flex-1`} />
                         <input type="number" value={p.pezzi || ''} onChange={e => upd(i, 'pezzi', Number(e.target.value))} placeholder={t('spTicketPezzi')} className={`${input} w-24`} />
                         <input type="number" value={p.costo || ''} onChange={e => upd(i, 'costo', Number(e.target.value))} placeholder="€" className={`${input} w-24`} />
-                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} aria-label={t('spRimuoviPacchetto')} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={15} /></button>
                     </div>
                 ))}
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"><Plus size={14} /> {t('spTicketAggiungiPacchetto')}</button>
+                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-sub flex items-center gap-1"><Plus size={14} /> {t('spTicketAggiungiPacchetto')}</button>
                 <button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? '…' : t('salva')}</button>
             </div>
+            <ErroreBox testo={errore} />
         </section>
     );
 }
@@ -290,27 +386,43 @@ function ArubaSettings({ userId }: Props) {
     const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<ArubaCfg | null>(null);
     const [saving, setSaving] = useState(false);
+    const [errore, setErrore] = useState('');
     const [pwd, setPwd] = useState('');
     useEffect(() => {
         fetch(`/api/admin/settings/aruba?userId=${userId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setCfg(d.data); });
+            .then(r => r.json()).then(d => { if (d.success) setCfg(d.data); })
+            .catch(err => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `settings-aruba-non-caricato: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+            });
     }, [userId]);
     if (!cfg) return null;
     const save = async () => {
         setSaving(true);
+        setErrore('');
         const body: Record<string, unknown> = {
             username: cfg.username, fiscal: cfg.fiscal, abilitato: cfg.abilitato, ambiente: cfg.ambiente,
         };
         if (pwd) body.password_ref = pwd;
-        const res = await fetch('/api/admin/settings/aruba', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify(body) });
-        const j = await res.json(); if (j.success) { setCfg(j.data); setPwd(''); }
+        try {
+            const res = await fetch('/api/admin/settings/aruba', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify(body) });
+            if (!res.ok) {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'settings-aruba-respinto', route: '/admin/impostazioni', stato: res.status });
+                setErrore(await messaggioErrore(res, t('erroreSalvataggio')));
+            } else {
+                const j = await res.json();
+                if (j.success) { setCfg(j.data); setPwd(''); }
+            }
+        } catch (err) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `settings-aruba-respinto: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+            setErrore(t('erroreRete'));
+        }
         setSaving(false);
     };
     const f = cfg.fiscal || {};
     return (
         <section className={card}>
             <h3 className={h3}><FileText size={16} /> {t('spArubaTitolo')} <span className="text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">{t('spScaffold')}</span></h3>
-            <p className="font-maven text-xs text-kidville-muted mb-3">{t('spArubaDesc')}</p>
+            <p className="font-maven text-xs text-kidville-sub mb-3">{t('spArubaDesc')}</p>
             <div className="grid grid-cols-2 gap-3">
                 <div><label className={label}>{t('spArubaUsername')}</label><input value={cfg.username} onChange={e => setCfg({ ...cfg, username: e.target.value })} className={`${input} w-full`} /></div>
                 <div><label className={label}>{t('spArubaPassword')}{cfg.has_password && t('spArubaPasswordImpostata')}</label><input type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder={cfg.has_password ? '••••••' : t('spArubaPasswordPlaceholder')} className={`${input} w-full`} /></div>
@@ -325,6 +437,7 @@ function ArubaSettings({ userId }: Props) {
                 <span className="font-maven text-sm text-kidville-green">{t('spArubaAbilita')}</span>
             </label>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
+            <ErroreBox testo={errore} />
         </section>
     );
 }

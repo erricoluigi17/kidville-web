@@ -9,6 +9,7 @@ import { CockpitPage } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoDetailsContent } from '@/components/features/avvisi/AvvisoDetailsContent';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { formattaIstante } from '@/i18n/config';
 
 // Dettaglio avviso a tutta area contenuto (sidebar e header del cockpit
 // restano): testo dell'avviso + monitoraggio letture/adesioni condiviso
@@ -87,8 +88,8 @@ function AdminAvvisoDetailInner() {
                                 {avviso.tipo === 'adesione' ? t('avvisiDettaglioTipoAdesione') : t('avvisiDettaglioTipoPresaVisione')}
                             </span>
                             <span className="font-maven text-xs text-kidville-muted">
-                                {avviso.author ? `${avviso.author.first_name} ${avviso.author.last_name}` : ''} · {new Date(avviso.created_at).toLocaleDateString(locale)}
-                                {avviso.scadenza ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: new Date(avviso.scadenza).toLocaleDateString(locale) })}` : ''}
+                                {avviso.author ? `${avviso.author.first_name} ${avviso.author.last_name}` : ''} · {formattaIstante(new Date(avviso.created_at), locale)}
+                                {avviso.scadenza ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: formattaIstante(new Date(avviso.scadenza), locale) })}` : ''}
                             </span>
                         </div>
                         <h1 className="font-barlow mt-2 text-3xl font-black uppercase leading-none text-kidville-green">{avviso.titolo}</h1>

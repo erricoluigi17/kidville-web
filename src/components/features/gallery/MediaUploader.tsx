@@ -99,7 +99,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                                     className="relative aspect-square rounded-xl overflow-hidden bg-gray-100 group">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src={p.preview} alt="" className="w-full h-full object-cover" />
-                                    <button onClick={(e) => { e.stopPropagation(); removeFile(idx); }}
+                                    <button onClick={(e) => { e.stopPropagation(); removeFile(idx); }} aria-label={t('galleryRimuoviFile')}
                                         className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                         <X size={10} strokeWidth={2} />
                                     </button>

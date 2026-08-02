@@ -7,9 +7,19 @@
  * allegati, emergenza, collegamenti, generatore documenti su richiesta.
  * Flusso "Protocolla documento" in 3 passi guidati; upload DIRETTO allo
  * storage via URL firmato (file fino a 25 MB). Eliminazione totale solo admin.
+ *
+ * ACCESSIBILITÀ (correzione 2026-08-02):
+ *  · il dettaglio si apre da un BOTTONE nella cella «Numero», non più dal solo
+ *    `<tr onClick>` — vedi il commento sulla riga della tabella e il lock
+ *    `__tests__/architecture/righe-tabella-con-comando.test.ts`;
+ *  · il testo secondario passa da `text-kidville-muted` (2,51:1 su bianco e
+ *    2,27:1 su crema — sotto i 4,5:1 di AA) a `text-kidville-sub` (6,46:1 e
+ *    5,82:1). Qui dentro `muted` dipingeva l'ORA della registrazione e la
+ *    CATEGORIA, cioè informazione del registro, non decoro. I valori dei due
+ *    token stanno in `globals.css`; qui non si scrivono hex, si usano i token.
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { formatData } from '@/lib/i18n/date';
 import {
@@ -25,6 +35,7 @@ import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { DateField } from '@/components/ui/DateField';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 
 // Traduttore next-intl passato agli helper fuori dai componenti (stesso pattern
@@ -119,7 +130,7 @@ const BTN_DANGER = 'inline-flex items-center gap-1.5 rounded-pill border border-
 
 function Spinner({ label }: { label?: string }) {
   const t = useTranslations('adminAltro');
-  return <div className="flex items-center gap-3 py-6"><div className="h-5 w-5 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" /><p className="font-maven text-sm text-kidville-muted">{label ?? t('caricamento')}</p></div>;
+  return <div className="flex items-center gap-3 py-6"><div className="h-5 w-5 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" /><p className="font-maven text-sm text-kidville-sub">{label ?? t('caricamento')}</p></div>;
 }
 
 /** Indicatore di passo del wizard "Protocolla documento". */
@@ -296,7 +307,7 @@ function ProtocolliInner() {
             <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">
               {nonMigrato ? t('protRegistroNonAttivo') : t('protNessunaRegistrazione')}
             </p>
-            <p className="max-w-md font-maven text-sm text-kidville-muted">
+            <p className="max-w-md font-maven text-sm text-kidville-sub">
               {nonMigrato
                 ? t('protTabelleAssenti')
                 : t('protNessunProtocolloFiltri')}
@@ -318,9 +329,35 @@ function ProtocolliInner() {
               </thead>
               <tbody>
                 {records.map((r) => (
+                  // Il click sulla riga resta la comodità del MOUSE. Non è lui
+                  // l'accessibilità: un `<tr role="button" tabIndex>` farebbe
+                  // del contenuto della riga (numero, data, oggetto, mittente,
+                  // badge) il nome del comando e inghiottirebbe il bottone del
+                  // PDF che ci vive dentro. Chi naviga da tastiera usa il
+                  // bottone della cella «Numero» — stesso criterio di
+                  // `StudentTable`, così la regola per «riga di tabella che apre
+                  // un dettaglio» è UNA sola in tutto il repo.
                   <tr key={r.id} className={cx(TROW, 'cursor-pointer', r.annullata_at && 'opacity-60')} onClick={() => setDettaglioId(r.id)}>
-                    <td className={cx(TD, 'whitespace-nowrap font-mono text-[13px] font-bold text-kidville-green')}>{numeroFmt(r.numero, r.anno)}</td>
-                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[13px] text-kidville-ink')}>{dataIt(r.data_registrazione, locale)} <span className="text-kidville-muted">{oraIt(r.data_registrazione, locale)}</span></td>
+                    <td className={cx(TD, 'whitespace-nowrap')}>
+                      {/* L'UNICA strada da tastiera verso il dettaglio (dove si
+                          annulla, si verifica l'impronta, si rettifica): un
+                          bottone vero, che Invio e Spazio attivano da soli.
+                          `stopPropagation` perché il click risalirebbe al <tr>. */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDettaglioId(r.id); }}
+                        aria-label={t('protApriDettaglio', { numero: numeroFmt(r.numero, r.anno) })}
+                        // `min-h-[24px]`: il bersaglio non è testo in mezzo a una
+                        // frase (che WCAG 2.2 §2.5.8 esenta), è l'unico contenuto
+                        // della cella — 24 px è il minimo AA, e la resa non cambia
+                        // perché la cella ha già 10 px di padding sopra e sotto.
+                        // `green` su bianco = 6,51:1, sulla crema dell'hover = 5,86:1.
+                        className="inline-flex min-h-[24px] items-center font-mono text-[13px] font-bold text-kidville-green hover:underline"
+                      >
+                        {numeroFmt(r.numero, r.anno)}
+                      </button>
+                    </td>
+                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[13px] text-kidville-ink')}>{dataIt(r.data_registrazione, locale)} <span className="text-kidville-sub">{oraIt(r.data_registrazione, locale)}</span></td>
                     <td className={TD}><TipoBadge tipo={r.tipo} /></td>
                     <td className={cx(TD, 'max-w-[380px] font-maven text-sm text-kidville-ink')}>
                       <span className={cx('block truncate', r.annullata_at && 'line-through')}>{r.oggetto}</span>
@@ -332,7 +369,7 @@ function ProtocolliInner() {
                       </span>
                     </td>
                     <td className={cx(TD, 'max-w-[220px] truncate font-maven text-[13px] text-kidville-ink/85')}>{r.mittente ?? r.destinatario ?? '—'}</td>
-                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[12.5px] text-kidville-muted')}>{r.categoria?.nome ?? '—'}</td>
+                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[12.5px] text-kidville-sub')}>{r.categoria?.nome ?? '—'}</td>
                     <td className={cx(TD, 'text-right')}>
                       <button
                         type="button"
@@ -396,7 +433,10 @@ function ProtocolliInner() {
       )}
 
       {toast && (
-        <div className="fixed bottom-5 right-5 z-[120] rounded-card bg-kidville-green px-4 py-3 font-maven text-sm font-semibold text-kidville-white shadow-lg">
+        // `role="status"` (live region cortese): il messaggio a comparsa è
+        // l'UNICO riscontro di download fallito, annullamento e sostituzione.
+        // Senza, chi usa uno screen reader vede l'operazione sparire in silenzio.
+        <div role="status" className="fixed bottom-5 right-5 z-[120] rounded-card bg-kidville-green px-4 py-3 font-maven text-sm font-semibold text-kidville-white shadow-lg">
           {toast}
         </div>
       )}
@@ -441,6 +481,12 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
   const [allegatiDescr, setAllegatiDescr] = useState('');
 
   const [esito, setEsito] = useState<{ numeroFormattato: string; downloadTimbrato: string | null } | null>(null);
+
+  // I due selettori di file: sono `sr-only` e li aziona un bottone vero (vedi
+  // sotto). Con `hidden` sarebbero stati `display:none`, cioè irraggiungibili
+  // con Tab — e la protocollazione, da tastiera, non sarebbe mai partita.
+  const refFile = useRef<HTMLInputElement>(null);
+  const refAllegato = useRef<HTMLInputElement>(null);
 
   const scegliFile = async (file: File | null) => {
     if (!file) return;
@@ -521,13 +567,29 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
       {busy && <div className="mb-4 flex items-center gap-2 rounded-card bg-kidville-green-soft px-3 py-2.5 font-maven text-sm text-kidville-green"><Loader2 size={16} className="animate-spin" />{busy}</div>}
 
       {passo === 1 && (
-        <label className={cx('flex cursor-pointer flex-col items-center gap-3 rounded-card border-2 border-dashed border-kidville-line bg-kidville-cream/50 px-6 py-12 text-center transition-colors hover:border-kidville-green', busy && 'pointer-events-none opacity-60')}>
+        // L'area tratteggiata resta cliccabile per il mouse, ma il COMANDO è il
+        // bottone «Sfoglia»: prima era un `<span>` dentro un `<label>`, e
+        // l'input stava a `display:none` (`hidden`) — cioè fuori dall'ordine di
+        // tabulazione. Da tastiera non si poteva protocollare niente.
+        // Pattern «A1» già in casa (`RiconciliazionePanel`): bottone vero +
+        // input `sr-only` azionato via ref.
+        <div
+          className={cx('flex cursor-pointer flex-col items-center gap-3 rounded-card border-2 border-dashed border-kidville-line bg-kidville-cream/50 px-6 py-12 text-center transition-colors hover:border-kidville-green', busy && 'pointer-events-none opacity-60')}
+          // Il click che nasce DENTRO un controllo non deve rimbalzare qui: il
+          // `.click()` programmatico sull'input genera un evento nativo che
+          // risale fino a questo div, e senza la guardia il selettore di file si
+          // aprirebbe due volte (misurato: 2 chiamate per un solo clic).
+          onClick={(e) => { if ((e.target as HTMLElement).closest('button, input')) return; refFile.current?.click(); }}
+        >
           <UploadCloud size={38} className="text-kidville-green" />
           <span className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{t('protScegliDocumento')}</span>
-          <span className="font-maven text-sm text-kidville-muted">{t.rich('protUploadHint', { mb: MAX_MB, br: () => <br /> })}</span>
-          <span className={BTN_PRIMARY}>{t('protSfoglia')}</span>
-          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { void scegliFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
-        </label>
+          <span className="font-maven text-sm text-kidville-sub">{t.rich('protUploadHint', { mb: MAX_MB, br: () => <br /> })}</span>
+          <button type="button" className={BTN_PRIMARY} disabled={!!busy} onClick={(e) => { e.stopPropagation(); refFile.current?.click(); }}>
+            {t('protSfoglia')}
+          </button>
+          <input ref={refFile} type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" tabIndex={-1} aria-hidden="true"
+            onChange={(e) => { void scegliFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
+        </div>
       )}
 
       {passo === 2 && (
@@ -614,10 +676,11 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
                 ))}
               </ul>
             )}
-            <label className={cx(BTN_GHOST, 'mt-1.5 cursor-pointer')}>
+            <button type="button" className={cx(BTN_GHOST, 'mt-1.5')} onClick={() => refAllegato.current?.click()}>
               <Plus size={13} /> {t('protAggiungiAllegato')}
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { void aggiungiAllegato(e.target.files?.[0] ?? null); e.target.value = ''; }} />
-            </label>
+            </button>
+            <input ref={refAllegato} type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" tabIndex={-1} aria-hidden="true"
+              onChange={(e) => { void aggiungiAllegato(e.target.files?.[0] ?? null); e.target.value = ''; }} />
             {allegati.length > 0 && (
               <div className="mt-2">
                 <label className={LABEL}>{t('protDescrizioneAllegati')}</label>
@@ -657,7 +720,7 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
         <div className="flex flex-col items-center gap-4 py-8 text-center">
           <SaveCheck size={44} />
           <div>
-            <p className="font-maven text-sm text-kidville-muted">{t('protNumeroAssegnato')}</p>
+            <p className="font-maven text-sm text-kidville-sub">{t('protNumeroAssegnato')}</p>
             <p className="font-barlow text-[40px] font-black leading-tight text-kidville-green">{esito.numeroFormattato}</p>
           </div>
           {esito.downloadTimbrato ? (
@@ -665,7 +728,7 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
               <Download size={16} /> {t('protScaricaTimbrato')}
             </a>
           ) : (
-            <p className="font-maven text-sm text-kidville-muted">{t('protTimbratoArchiviato')}</p>
+            <p className="font-maven text-sm text-kidville-sub">{t('protTimbratoArchiviato')}</p>
           )}
           <div className="flex gap-2">
             <button type="button" className={BTN_GHOST} onClick={() => {
@@ -691,6 +754,9 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
   const [tipoDoc, setTipoDoc] = useState('frequenza');
   const [alunni, setAlunni] = useState<Alunno[]>([]);
   const [caricoAlunni, setCaricoAlunni] = useState(true);
+  // «Lista vuota» e «lista non arrivata» sono due cose diverse, e prima erano
+  // la stessa: il `catch` era muto e la lettura era comunque sempre vuota.
+  const [alunniNonCaricati, setAlunniNonCaricati] = useState(false);
   const [ricerca, setRicerca] = useState('');
   const [alunnoId, setAlunnoId] = useState('');
   const [titolo, setTitolo] = useState('');
@@ -701,14 +767,33 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
 
   useEffect(() => {
     (async () => {
+      let lista: Alunno[] = [];
+      let fallita = false;
       try {
         const r = await fetch(`/api/admin/students?limit=1000${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`);
-        const j = await r.json().catch(() => ({}));
-        const lista = (j.data ?? j.students ?? []) as Alunno[];
-        setAlunni(Array.isArray(lista) ? lista : []);
-      } catch {
-        setAlunni([]);
+        if (!r.ok) {
+          // Prima non c'era: un 403 di sede o un 500 producevano lo stesso
+          // schermo di «non ci sono alunni», e nessuno poteva accorgersene.
+          fallita = true;
+          logClient({ livello: 'error', evento: 'fetch', messaggio: 'protocolli-alunni-non-caricati', route: '/admin/protocolli', stato: r.status });
+        } else {
+          const j: unknown = await r.json();
+          // `GET /api/admin/students` risponde con un ARRAY NUDO (`withRoute`
+          // non incapsula niente): il vecchio `j.data ?? j.students ?? []`
+          // valeva `[]` SEMPRE, e la tendina non si è mai popolata. Si accetta
+          // anche la forma incapsulata, per non legarsi a un dettaglio della
+          // route che domani potrebbe cambiare.
+          lista = Array.isArray(j)
+            ? (j as Alunno[])
+            : (((j as { data?: unknown } | null)?.data ?? []) as Alunno[]);
+          if (!Array.isArray(lista)) lista = [];
+        }
+      } catch (err) {
+        fallita = true;
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `protocolli-alunni-non-caricati: ${nomeErrore(err)}`, route: '/admin/protocolli' });
       } finally {
+        setAlunni(lista);
+        setAlunniNonCaricati(fallita);
         setCaricoAlunni(false);
       }
     })();
@@ -744,7 +829,7 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
         <div className="flex flex-col items-center gap-4 py-8 text-center">
           <CheckCircle2 size={44} className="text-kidville-success" />
           <div>
-            <p className="font-maven text-sm text-kidville-muted">{t('protDocGenerato')}</p>
+            <p className="font-maven text-sm text-kidville-sub">{t('protDocGenerato')}</p>
             <p className="font-barlow text-[40px] font-black leading-tight text-kidville-green">{esito.numeroFormattato}</p>
           </div>
           {esito.downloadTimbrato && (
@@ -786,11 +871,15 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
                     <li key={s.id}>
                       <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left font-maven text-sm text-kidville-ink hover:bg-kidville-cream" onClick={() => setAlunnoId(s.id)}>
                         <span className="truncate">{s.cognome} {s.nome}</span>
-                        <span className="shrink-0 text-[11.5px] text-kidville-muted">{s.classe_sezione ?? ''}</span>
+                        <span className="shrink-0 text-[11.5px] text-kidville-sub">{s.classe_sezione ?? ''}</span>
                       </button>
                     </li>
                   ))}
-                  {filtrati.length === 0 && <li className="px-3 py-2 font-maven text-sm text-kidville-muted">{t('protNessunAlunno')}</li>}
+                  {filtrati.length === 0 && (
+                    <li className={cx('px-3 py-2 font-maven text-sm', alunniNonCaricati ? 'text-kidville-error' : 'text-kidville-sub')}>
+                      {alunniNonCaricati ? t('protAlunniNonCaricati') : t('protNessunAlunno')}
+                    </li>
+                  )}
                 </ul>
               </>
             )}
@@ -812,7 +901,7 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
           <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => void genera()}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Stamp size={16} />} {t('protGeneraProtocolla')}
           </button>
-          <p className="font-maven text-xs text-kidville-muted">{t('protGeneraNota')}</p>
+          <p className="font-maven text-xs text-kidville-sub">{t('protGeneraNota')}</p>
         </div>
       )}
     </Drawer>
@@ -897,6 +986,8 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
   // Rettifica (solo admin, decisioni #25-26): sostituzione file + dati descrittivi
   const [inEdit, setInEdit] = useState(false);
   const [sostituendo, setSostituendo] = useState(false);
+  /** Selettore del file sostitutivo: `sr-only`, azionato dal bottone «Sostituisci file». */
+  const refSostituisci = useRef<HTMLInputElement>(null);
   const [editVals, setEditVals] = useState({
     oggetto: '', mittente: '', destinatario: '', mezzo: '',
     rifProt: '', rifData: '', allegatiDescr: '',
@@ -1027,7 +1118,7 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
       title={rec ? t('protDettaglioTitolo', { numero: numeroFmt(rec.numero, rec.anno) }) : t('protRegistrazione')}
       subtitle={rec ? t('protDettaglioSubtitle', { tipo: tipoLabel(t, rec.tipo), data: dataIt(rec.data_registrazione, locale), ora: oraIt(rec.data_registrazione, locale) }) : undefined}>
       {loading ? <Spinner /> : !rec ? (
-        <p className="font-maven text-sm text-kidville-muted">{t('protRegistrazioneNonTrovata')}</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('protRegistrazioneNonTrovata')}</p>
       ) : (
         <div className="flex flex-col gap-4">
           {rec.annullata_at && (
@@ -1116,11 +1207,12 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
             ))}
             {isAdmin && !rec.annullata_at && (
               <>
-                <label className={cx(BTN_GHOST, 'cursor-pointer', sostituendo && 'pointer-events-none opacity-50')} title={t('protSostituisciTitle')}>
+                <button type="button" className={BTN_GHOST} disabled={sostituendo} title={t('protSostituisciTitle')}
+                  onClick={() => refSostituisci.current?.click()}>
                   {sostituendo ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} {t('protSostituisciFile')}
-                  <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-                    onChange={(e) => { void sostituisciFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
-                </label>
+                </button>
+                <input ref={refSostituisci} type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" tabIndex={-1} aria-hidden="true"
+                  onChange={(e) => { void sostituisciFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
                 {!inEdit && (
                   <button type="button" className={BTN_GHOST} onClick={apriModifica}>
                     <Pencil size={13} /> {t('protModificaDati')}

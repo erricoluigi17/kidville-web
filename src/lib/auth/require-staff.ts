@@ -189,6 +189,32 @@ type MotivoDiniego = 'non-autenticato' | 'utente-sconosciuto' | 'ruolo-negato'
 const NON_AUTENTICATO = 'Non autenticato: userId mancante'
 
 /**
+ * Il testo del 403 di `requireStaff` DIPENDE DA CHI È AMMESSO — e non è una
+ * finezza di cortesia.
+ *
+ * Misurato il 2026-07-31 (collaudo frontend F1): la segreteria apriva il
+ * dettaglio di una sezione e leggeva «Accesso negato: operazione riservata allo
+ * staff». Ma la segreteria È staff — sta nel default di questo stesso gate, per
+ * il PRD §3 che equipara Segreteria↔Admin. Il messaggio era falso: la funzione
+ * era riservata alla DIREZIONE, cioè alla lista esplicita `['admin','coordinator']`
+ * che quella route passava.
+ *
+ * Un diniego è l'UNICA informazione che l'operatore ha per decidere se chiedere
+ * un permesso o segnalare un guasto. Detto male, produce segnalazioni che
+ * nessuno può chiudere — «dice che è per lo staff e io sono staff».
+ *
+ * La regola è meccanica, così non può tornare a mentire: se fra gli ammessi c'è
+ * `segreteria` il gate è quello dello staff di gestione; se non c'è, resta la
+ * sola Direzione (`admin`/`coordinator`), che è la forma usata dalle operazioni
+ * di dirigenza legate alla FEA.
+ */
+export function messaggioNegatoStaff(allowed: readonly StaffRole[]): string {
+  return allowed.includes('segreteria')
+    ? 'Accesso negato: operazione riservata allo staff'
+    : 'Accesso negato: operazione riservata alla Direzione'
+}
+
+/**
  * Identità nel contesto e via: da qui in poi ogni riga di log della richiesta porta
  * `uid`/`ruolo`/`sede`. `impostaUtente` accetta `null` (`scuola_id` è opzionale) ed è un
  * no-op fuori da una richiesta: nei ~90 test API che invocano gli handler con una `Request`
@@ -252,7 +278,7 @@ export async function requireStaff(
   request: Request,
   allowed: StaffRole[] = ['admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
-  const NEGATO = 'Accesso negato: operazione riservata allo staff'
+  const NEGATO = messaggioNegatoStaff(allowed)
   const { userId } = await resolveIdentity(request)
   if (!userId) return nega('requireStaff', 401, 'non-autenticato', NON_AUTENTICATO)
 

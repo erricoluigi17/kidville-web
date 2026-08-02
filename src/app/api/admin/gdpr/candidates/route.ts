@@ -29,9 +29,13 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRe
   // attive nel selettore. Scope vuoto ⇒ nessun candidato.
   const plessi = await resolveScuoleAttive(request, supabase, auth.user)
 
+  // `scuola_id` è nella proiezione perché il pannello lo MOSTRA: l'oblio è
+  // irreversibile e si conferma digitando un nominativo, che con tre plessi non
+  // è più univoco. Senza questa colonna la Direzione anonimizzerebbe un minore
+  // senza aver mai visto in quale sede si trova.
   const { data: alunni, error } = await supabase
     .from('alunni')
-    .select('id, nome, cognome, classe_sezione, stato')
+    .select('id, nome, cognome, classe_sezione, stato, scuola_id')
     .in('scuola_id', plessi)
     .neq('stato', 'iscritto')
     .is('anonimizzato_il', null)

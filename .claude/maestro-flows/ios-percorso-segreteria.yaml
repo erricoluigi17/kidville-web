@@ -5,27 +5,49 @@
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
-#   - dev server sull'host, porta 3000
-#   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
-#   - credenziali negli env MAESTRO_KV_EMAIL_SEGRETERIA / MAESTRO_KV_PASSWORD
-#     L'email dell'account TEST segreteria è `test.segreteria@kidville.test`; la
-#     password è quella comune degli account TEST (PRD / e2e config) — NON qui.
+#   - server di PRODUZIONE sull'host: `npm run build && npx next start -p 3100`
+#   - App.app buildata con CAP_SERVER_URL="http://localhost:3100" e installata
 #
-# Esecuzione:
-#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_SEGRETERIA" \
-#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
-#                .claude/maestro-flows/ios-percorso-segreteria.yaml
+# ⚠️ `next start`, MAI `next dev` — raccomandazione prudenziale, non causa isolata.
+# Il flow era ROSSO il 31/07 su dev server e passa 33/33 in DUE esecuzioni su due il
+# 02/08 su `next start`; ma nel mezzo il commit 462630c del 01/08 ne ha riscritto i
+# selettori, e il 01/08 era già passato 36/36. Due variabili cambiate, una sola
+# conclusione: non regge. La versione completa è in ESECUZIONI_VERDI nel lock.
+#
+# Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
+#   .claude/maestro-flows/esegui.sh ios-percorso-segreteria.yaml
+# Lo script passa le credenziali (l'account TEST è `test.segreteria@kidville.test`;
+# la password NON sta nel repo) e poi BONIFICA il log di Maestro, che altrimenti
+# conserva la password in chiaro su disco (misurato: 4 occorrenze per run, fra cui
+# «Inputting text: <password>», che nessuna scelta di flow può evitare).
 #
 # Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
 # 10.0.2.2), e non c'è tasto Indietro hardware → i "ritorni" avvengono toccando i
-# tab della bottom-nav, che è persistente su ogni pagina. Su WebView iOS
-# `hideKeyboard` fallisce ("Couldn't hide the keyboard"): la tastiera si chiude
-# con un tap sul titolo statico "Benvenuto/a!". Da questo ciclo la segreteria
-# naviga con la BOTTOM-NAV a pillola (Home · Avvisi · Contabilità · Mensa +
-# «Menu») come genitore/docente, NON più col drawer. Il tab «Menu» ha aria-label
-# "Menu · tutte le sezioni" e apre un bottom-sheet (Anagrafica in evidenza).
-# Selettori ancorati a testi STABILI: "Dashboard Direzione", "Mensa & Cucina",
-# "Anagrafica Generale".
+# tab della bottom-nav, che è persistente su ogni pagina.
+#
+# ⚠️ IL LOGIN NON SI INVIA COL TAP (misurato 2026-07-31, iPhone 17 Pro Max /
+# iOS 26.2). `tapOn: "Accedi"` con la tastiera aperta risulta COMPLETED e il form
+# NON parte: il flow prosegue e muore al 13° comando, sull'asserzione «Dashboard
+# Direzione» — due esecuzioni su due, e il verdetto scritto accusava l'app. Il tap
+# sul titolo "Benvenuto/a!" NON chiude la tastiera e `hideKeyboard` sulla WebView
+# iOS fallisce con «Couldn't hide the keyboard»: erano due rimedi scritti nel file
+# e mai verificati. `pressKey: Enter` invia il form SEMPRE (lock R15). Il dialog
+# dei permessi va gestito prima E dopo il login (lock R14).
+#
+# Da questo ciclo la segreteria naviga con la BOTTOM-NAV a pillola (Home · Avvisi ·
+# Contabilità · Mensa + «Menu») come genitore/docente, NON più col drawer. Il tab
+# «Menu» ha aria-label "Menu · tutte le sezioni" e apre un bottom-sheet (Anagrafica
+# in evidenza). Selettori ancorati a testi STABILI: "Dashboard Direzione",
+# "Mensa & Cucina", "Anagrafica Generale".
+#
+# ⚠️ NODI DUPLICATI (2026-07-31). «Mensa» e «Anagrafica» NON si toccano per
+# testo: la dashboard le ripete nella griglia «Tutti i moduli» e Maestro prende
+# la prima corrispondenza, che è la copia morta. Vedi README, «La trappola dei
+# nodi duplicati». Il difetto è stato misurato su ANDROID: qui la correzione è
+# applicata per identità del DOM, e il tap a coordinate NON è ancora stato
+# provato su simulatore. Il lock
+# `__tests__/architecture/maestro-flows-selettori.test.ts` impedisce di
+# rimettere i selettori ambigui.
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · iOS — percorso segreteria
@@ -39,6 +61,21 @@ env:
 - launchApp:
     clearState: true
 
+# ── 0. PERMESSO RIMASTO IN CODA DAL GIRO PRECEDENTE ──────────────────────────
+# `runFlow when:` valuta la condizione una volta sola e NON aspetta: da solo,
+# subito dopo il login, risultava sempre SKIPPED e il dialog compariva un istante
+# dopo, coprendo la UI. Serve l'attesa `optional: true` davanti — e due gestioni,
+# perché il permesso lasciato in coda ricompare al lancio successivo.
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 15000
+    optional: true
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
 # ── 1. LOGIN ─────────────────────────────────────────────────────────────────
 - extendedWaitUntil:
     visible: "Accedi al tuo account Kidville"
@@ -49,16 +86,18 @@ env:
 - tapOn:
     below: "Email"
 - inputText: ${KV_EMAIL}
-- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
 
 - tapOn:
     below: "Password"
 - inputText: ${KV_PASSWORD}
-- tapOn: "Benvenuto/a!"
 
-- tapOn: "Accedi"
+- pressKey: Enter
 
-# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+# ── 1b. DIALOG DEI PERMESSI DI QUESTO GIRO ───────────────────────────────────
+- extendedWaitUntil:
+    visible: "Non consentire"
+    timeout: 30000
+    optional: true
 - runFlow:
     when:
       visible: "Non consentire"
@@ -86,10 +125,30 @@ env:
 - takeScreenshot: /tmp/kv-ios-segreteria-2-avvisi
 
 # ── 4. TAB «MENSA» (la bottom-nav è persistente: niente back hardware) ────────
-- tapOn: "Mensa"
+# ⚠️ QUESTO TAB NON SI TOCCA PER TESTO. «Mensa» è un'etichetta AMBIGUA del
+# cockpit: esiste sia nella bottom-nav sia nella griglia «Tutti i moduli» in
+# fondo alla dashboard, e Maestro prende la PRIMA corrispondenza — quella morta.
+# L'ambiguità sta nel DOM, quindi vale su entrambe le piattaforme: su Android è
+# stata MISURATA il 2026-07-31 (tile fuori viewport, altezza 0, y=1857).
+# ⚠️ SU iOS LA COORDINATA NON È STATA PROVATA: il collaudo del 31/07 era solo
+# Android. È derivata dalla geometria, non misurata — se il flow fallisce qui,
+# rileggila prima di dare la colpa all'app: pillola alta 60px con
+# `paddingBottom: max(12px, env(safe-area-inset-bottom))`, su iPhone (home
+# indicator, 34pt) occupa circa il 90–96,5% dell'altezza schermo → 93% è dentro.
+# In larghezza: 5 voci `flex-1` → centri a 10/30/50/70/90%, «Mensa» è la 4ª.
+# Vale sul TELEFONO: su iPad la bottom-nav è `lg:hidden` e c'è la sidebar.
+- assertVisible:
+    text: "Menu · tutte le sezioni"   # controllo POSITIVO: la bottom-nav è a schermo
+- tapOn:
+    point: "68%,93%"
 - extendedWaitUntil:
     visible: "Mensa & Cucina"
     timeout: 45000
+# Controllo NEGATIVO, obbligatorio dopo un tap cieco: «Tutti i moduli» è la
+# griglia che esiste SOLO sulla dashboard. Se è ancora lì, non ci siamo mossi —
+# ed è esattamente il modo in cui questi flow hanno già dichiarato PASS restando
+# fermi (vedi android-screenshot-playstore.yaml, trappola 1).
+- assertNotVisible: "Tutti i moduli"
 - takeScreenshot: /tmp/kv-ios-segreteria-3-mensa
 
 # ── 5. TAB «MENU» → BOTTOM-SHEET → ANAGRAFICA ────────────────────────────────
@@ -101,12 +160,22 @@ env:
     visible: ".*Alunni, famiglie e personale.*"
     timeout: 15000
 - takeScreenshot: /tmp/kv-ios-segreteria-4-menu
+# ⚠️ Stessa ambiguità del tab «Mensa»: «Anagrafica» è anche una tile della
+# griglia «Tutti i moduli», che resta nell'albero DIETRO il foglio modale →
+# `tapOn: ".*Anagrafica.*"` prendeva la tile morta. Qui si tocca il SOTTOTITOLO
+# «Alunni, famiglie e personale», univoco in tutto il cockpit
+# (messages/it/adminNav.json → `anagraficaSub`): nessuna coordinata, nessuna
+# ambiguità — su iOS è anzi l'unico dei due tap che NON ha bisogno della prova
+# sul device, perché non dipende dalla geometria. Regex non ancorata: nella
+# WebView iOS ogni voce del foglio è UN SOLO nodo con l'accessibilityText
+# concatenato («ANAGRAFICA Alunni, famiglie e personale») e Maestro fa full-match.
 - tapOn:
-    text: ".*Anagrafica.*"
+    text: ".*Alunni, famiglie e personale.*"
 - extendedWaitUntil:
     visible: "Anagrafica Generale"
     timeout: 45000
 - assertVisible: "Gestione studenti, genitori e personale"
+- assertNotVisible: "Tutti i moduli"   # controllo negativo: dashboard lasciata davvero
 - takeScreenshot: /tmp/kv-ios-segreteria-5-anagrafica
 
 # ── 6. RITORNO AL COCKPIT (tab «Home» della bottom-nav) ──────────────────────

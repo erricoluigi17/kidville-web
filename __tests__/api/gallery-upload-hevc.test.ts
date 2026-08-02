@@ -8,12 +8,17 @@ import { MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
 // Lo STESSO sniff del client, sui primi 64KB, lo RIFIUTA con 415 + messaggio azionabile.
 // Il log porta mime + size + motivo, MAI il nome del file (può contenere PII di minori).
 
-const PUBLIC_URL = 'https://cdn.example/uploads/ed1/x.mp4';
+// Il bucket `gallery` è PRIVATO dal 2026-07-31: l'upload non risponde più con
+// un indirizzo pubblico ma con il PERCORSO nel bucket (da salvare) e un link
+// firmato per l'anteprima. `getPublicUrl` qui esplode di proposito: se il
+// codice tornasse a chiamarlo, questo test lo direbbe.
+const SIGNED_URL = 'https://firmato.test/uploads/ed1/x.mp4?token=abc';
 
 const h = vi.hoisted(() => ({
     requireDocente: vi.fn(),
     logEvento: vi.fn(),
     uploadCalls: 0,
+    uploadPath: null as string | null,
 }));
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }));
@@ -31,11 +36,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
             createBucket: async () => ({ error: null }),
             updateBucket: async () => ({ error: null }),
             from: () => ({
-                upload: async () => {
+                upload: async (path: string) => {
                     h.uploadCalls++;
+                    h.uploadPath = path;
                     return { error: null };
                 },
-                getPublicUrl: () => ({ data: { publicUrl: PUBLIC_URL } }),
+                getPublicUrl: () => {
+                    throw new Error('bucket privato: getPublicUrl non deve essere usato');
+                },
+                createSignedUrl: async () => ({ data: { signedUrl: SIGNED_URL }, error: null }),
             }),
         },
     }),
@@ -64,11 +73,12 @@ function req(file: File): Request {
 }
 
 // Solo gli eventi di DOMINIO dell'upload (via il rumore di 'route' di withRoute).
-const eventiGallery = () => h.logEvento.mock.calls.filter((c) => c[0] === 'gallery');
+const eventiGallery = () => h.logEvento.mock.calls.filter((c) => c[0] === 'galleria');
 
 beforeEach(() => {
     vi.clearAllMocks();
     h.uploadCalls = 0;
+    h.uploadPath = null;
     h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } });
 });
 
@@ -120,12 +130,15 @@ describe('POST /api/gallery/upload — HEVC rifiutato con 415', () => {
 });
 
 describe('POST /api/gallery/upload — mp4 H.264 prosegue', () => {
-    it('fourcc avc1 (mime video/mp4) → 200 con fileUrl, nessun 415, upload effettuato', async () => {
+    it('fourcc avc1 (mime video/mp4) → 200 con percorso + anteprima firmata, nessun 415, upload effettuato', async () => {
         const file = fileVideo(ascii('\x00\x00\x00\x20ftypavc1\x00\x00mdat'), 'video/mp4', 'clip.mp4');
         const res = await POST(req(file));
         expect(res.status).toBe(200);
         const j = await res.json();
-        expect(j.fileUrl).toBe(PUBLIC_URL);
+        // Quello che il client rimanda alla POST /api/gallery è il PERCORSO.
+        expect(j.path).toBe(h.uploadPath);
+        expect(j.fileUrl).toBe(h.uploadPath);
+        expect(j.previewUrl).toBe(SIGNED_URL);
         // Nessun evento di rifiuto video-non-riproducibile.
         expect(eventiGallery()).toHaveLength(0);
         expect(h.uploadCalls).toBe(1);

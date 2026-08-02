@@ -62,6 +62,22 @@ describe('CausaliPanel — modelli di causale per categoria + predefinito', () =
     expect(campo.value).toContain('{importo}');
   });
 
+  it('l\'anteprima non suggerisce il nome di una sede reale (né in chiaro né nei chip)', async () => {
+    // R13. I dati d'esempio erano cablati su «Kidville Giugliano»: un admin di Aversa
+    // che configurava le causali del SUO plesso vedeva l'anteprima finire con
+    // «GIUGLIANO», e lo stesso nome usciva nel tooltip del chip {sede}. Con una sede
+    // sola era un dettaglio; con tre è un suggerimento sbagliato, in una stringa che
+    // il genitore poi ricopia nella causale del bonifico.
+    render(<CausaliPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findByLabelText('Predefinito');
+    // Nessun plesso reale da nessuna parte: `innerHTML` copre anche gli attributi
+    // (l'esempio del chip vive in un `title`, non nel testo).
+    expect(document.body.innerHTML).not.toMatch(/giugliano|aversa|cesa/i);
+    // …e al suo posto c'è un segnaposto neutro, sia nell'anteprima sia nel chip.
+    expect(screen.getAllByText(/<SEDE>/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /\{sede\}/ }).getAttribute('title')).toContain('<SEDE>');
+  });
+
   it('il salvataggio invia PATCH con causali_config (righe compilate)', async () => {
     render(<CausaliPanel userId="u1" scuolaId="sc-1" />);
     const campo = (await screen.findByLabelText(/Gita/)) as HTMLInputElement;

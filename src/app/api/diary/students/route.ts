@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { getGenitoriDiAlunni, getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
@@ -23,6 +24,9 @@ const getBySezioneQuerySchema = z.object({
     classeSezione: z.string().optional(),
     onlyPresent: z.string().optional(),
     date: zDataYMD.optional(),
+    // La sede scelta nel SedeSelector (R70): finora non viaggiava mai, e con tre
+    // plessi il nome-classe da solo non dice più di quale sede si parli.
+    scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
 });
 
 // GET /api/diary/students?sezione=<classe>                    → lista classe (tutti)
@@ -44,18 +48,22 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
         // le email dei suoi genitori SENZA alcuna credenziale. Verificato in produzione
         // il 2026-07-30: rispondeva 200 a una richiesta anonima.
         //
-        // Genitore  → legame genitore↔figlio (`requireParentOfStudent`, unione
-        //             `legame_genitori_alunni` + `student_parents`).
+        // Genitore  → legame genitore↔figlio (`legame_genitori_alunni` +
+        //             `student_parents`).
         // Staff     → l'alunno deve essere nel proprio plesso, e per `educator` nelle
-        //             proprie sezioni (`assertAlunnoInScope`).
-        // `cuoca`   → non è genitore e non ha sezioni assegnate: `assertAlunnoInScope`
-        //             la nega. Nessun ruolo resta scoperto.
+        //             proprie sezioni.
+        // `cuoca`   → non è genitore e non ha sezioni assegnate: viene negata.
+        //             Nessun ruolo resta scoperto.
+        //
+        // Le tre righe qui sopra le fa TUTTE `requireParentOfStudent`. Fino al
+        // 2026-07-31 ne faceva una sola — il legame di famiglia — e questa route
+        // era l'UNICA delle venti che ci aggiungeva `assertAlunnoInScope` a mano.
+        // Ora che il presidio sta nel gate quel giro è stato tolto: non per
+        // risparmiare due query, ma perché una difesa duplicata QUI insegna al
+        // prossimo lettore che il gate da solo non basta — ed è esattamente la
+        // convinzione che ha lasciato scoperte le altre diciannove.
         const auth = await requireParentOfStudent(request, alunnoId);
         if (auth.response) return auth.response;
-        if (auth.user.role !== 'genitore') {
-            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunnoId);
-            if (fuoriScope) return fuoriScope;
-        }
 
         const { data: alunno, error } = await supabase
             .from('alunni')
@@ -87,20 +95,41 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
         });
     }
 
-    // ── Modalità insegnante/staff (per sezione): gate ruolo + isolamento per plesso. ──
+    // ── Modalità insegnante/staff (per sezione): gate ruolo + gate classe + isolamento per plesso. ──
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
     const admin = await createAdminClient();
-    const plessi = await scuoleDiUtente(admin, auth.user);
-    if (plessi.length === 0) return NextResponse.json([]);
 
     const q = parseQuery(request, getBySezioneQuerySchema);
     if ('response' in q) return q.response;
     // Supporta sia "sezione" che "classeSezione"; nessun default a un nome
-    // reale: entrambi assenti → '' → 0 alunni → risposta [].
+    // reale: entrambi assenti → nessuna lettura → risposta [] (contratto storico:
+    // la UI chiama questa route anche prima di aver risolto la classe).
     const sezione = q.data.sezione ?? q.data.classeSezione ?? '';
+    if (!sezione) return NextResponse.json([]);
     const onlyPresent = q.data.onlyPresent === 'true';
     const date = q.data.date ?? new Date().toISOString().split('T')[0];
+
+    // GATE prima di qualunque lettura. `requireDocente` verifica il RUOLO, non
+    // la classe: senza `soloSezioniAssegnate` un educator poteva chiedere
+    // qualunque nome di classe del proprio plesso e ricevere `note_mediche`,
+    // nome e cognome dei bambini di una sezione non sua. Il modello (PRD §3/§12,
+    // decisione del 2026-07-30) dice: educator → SOLO le sezioni assegnate.
+    // Admin/coordinator/segreteria non sono toccati: vedono tutto il plesso.
+    const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione, { soloSezioniAssegnate: true });
+    if (scopeErr) return scopeErr;
+
+    // FILTRO, complemento del gate: il gate impedisce di NOMINARE una classe
+    // altrui, il filtro impedisce che l'omonimia porti dentro i bambini
+    // dell'altra sede. `resolveScuoleAttive` (non `scuoleDiUtente`) perché il
+    // SedeSelector deve contare: prima qui il cookie non veniva nemmeno letto.
+    const attive = await resolveScuoleAttive(request, admin, auth.user);
+    const sede = restringiASedeRichiesta(attive, q.data.scuola_id, {
+        azione: 'diary/students:GET', utente: auth.user.id, ruolo: auth.user.role,
+    });
+    if (sede.response) return sede.response;
+    const plessi = sede.plessi ?? [];
+    if (plessi.length === 0) return NextResponse.json([]);
 
     const { data: alunni, error } = await admin
         .from('alunni')

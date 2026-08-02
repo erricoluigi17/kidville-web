@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { PublicContrastButton } from '@/components/ui/PublicContrastButton';
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni';
 
 // Pagina PUBBLICA (nessun login): informativa GDPR. Serve anche come
@@ -68,16 +69,32 @@ const H2 =
 const P = 'font-maven text-[15px] leading-relaxed text-kidville-ink';
 const UL = `list-disc space-y-1.5 pl-5 ${P}`;
 
+// `lang="it"` sul CONTENITORE, non sul documento: `layout.tsx` rende
+// `<html lang={locale}>` e questa pagina NON passa da next-intl — il testo legale
+// resta italiano per scelta (tradurlo senza validazione legale è un rischio
+// maggiore che non tradurlo). Con l'app in inglese il documento risultava quindi
+// `lang="en"` su un testo tutto italiano, e uno screen reader leggeva
+// l'informativa sui dati dei minori con la pronuncia sbagliata: WCAG 3.1.2
+// «Lingua delle parti». Il giorno in cui il testo verrà tradotto, questo attributo
+// va tolto — il lock `pagine-legali` lo pretende, e fallisce se resta.
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
+    <main lang="it" className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
-        >
-          <span aria-hidden="true">←</span> Torna indietro
-        </Link>
+        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ. Il comando di Alto
+            Contrasto viveva solo nei menu account, cioè dopo il login: su una
+            pagina pubblica — che per lo store è anche il recapito legale — chi ne
+            ha bisogno non poteva raggiungerlo. Sta in un componente unico proprio
+            perché queste cinque pagine non ricomincino a divergere. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
+          >
+            <span aria-hidden="true">←</span> Torna indietro
+          </Link>
+          <PublicContrastButton />
+        </div>
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">
           <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-kidville-green sm:text-4xl">
@@ -145,7 +162,8 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>fotografie e video</strong> del minore, solo se espressamente autorizzati
-                dai genitori;
+                dai genitori e <strong>solo sul canale autorizzato</strong> (galleria riservata,
+                sito web pubblico, canali social: vedi &laquo;Base giuridica&raquo;);
               </li>
               <li>
                 dati amministrativi e contabili: rette dovute, pagamenti registrati, metodo di
@@ -215,10 +233,31 @@ export default function PrivacyPage() {
                 GDPR);
               </li>
               <li>
-                per la <strong>pubblicazione di fotografie e video</strong> del minore nella
-                galleria di classe, il <strong>consenso</strong> dei genitori o degli esercenti la
-                responsabilità genitoriale (art. 6, par. 1, lett. a GDPR), specifico per ciascun
-                ambito di utilizzo e revocabile in qualsiasi momento;
+                per la <strong>pubblicazione di fotografie e video</strong> del minore, il{' '}
+                <strong>consenso</strong> dei genitori o degli esercenti la responsabilità
+                genitoriale (art. 6, par. 1, lett. a GDPR), <strong>distinto per ciascun canale</strong>{' '}
+                e revocabile in qualsiasi momento. I canali sono tre, e il consenso dato per uno{' '}
+                <strong>non vale per gli altri</strong>:
+                <ul className={UL}>
+                  <li>
+                    la <strong>galleria riservata</strong> dell&rsquo;applicazione, visibile alle
+                    sole famiglie della sezione del minore, dopo aver effettuato l&rsquo;accesso;
+                  </li>
+                  <li>
+                    il <strong>sito web della Scuola</strong> (sezione &laquo;News&raquo;): è un
+                    canale <strong>pubblico</strong>, consultabile{' '}
+                    <strong>da chiunque, senza alcun accesso</strong>, e i contenuti pubblicati
+                    possono essere indicizzati dai motori di ricerca;
+                  </li>
+                  <li>
+                    i <strong>canali social</strong> della Scuola: la pubblicazione avviene su
+                    piattaforme di terzi, fuori dai sistemi della Scuola, e ai loro contenuti si
+                    applicano anche le condizioni di quelle piattaforme.
+                  </li>
+                </ul>
+                Senza il consenso relativo a un canale, su quel canale{' '}
+                <strong>non viene pubblicata alcuna immagine del minore</strong>; il rifiuto di un
+                canale non pregiudica gli altri.
               </li>
               <li>
                 per i <strong>log tecnici</strong> e le attività di sicurezza e diagnosi, il{' '}
@@ -248,7 +287,9 @@ export default function PrivacyPage() {
               È invece <strong>facoltativo</strong> il conferimento delle fotografie e dei video:
               il rifiuto o la revoca del consenso non pregiudicano in alcun modo
               l&rsquo;iscrizione e la fruizione del servizio, ma impediscono la pubblicazione delle
-              immagini del minore nella galleria della sezione.
+              immagini del minore sul canale rifiutato. I consensi sono{' '}
+              <strong>tre e separati</strong> — galleria riservata, sito web pubblico, canali
+              social — e si possono accogliere o rifiutare uno per uno.
             </p>
           </section>
 
@@ -568,7 +609,7 @@ export default function PrivacyPage() {
           {/* Versione del testo: stessa costante usata dall'INSERT in
               consensi_accettazioni, così il testo mostrato e quello registrato
               come accettato non possono mai divergere nel tempo. */}
-          <p className="mt-8 border-t border-kidville-line pt-4 font-maven text-xs text-kidville-muted">
+          <p className="mt-8 border-t border-kidville-line pt-4 font-maven text-xs text-kidville-sub">
             Versione: {VERSIONE_PRIVACY}
           </p>
         </article>

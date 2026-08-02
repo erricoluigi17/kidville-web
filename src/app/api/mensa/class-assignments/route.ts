@@ -5,6 +5,7 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { assertConfigMensaInScope, vincoloDuplicato } from '@/lib/mensa/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -78,6 +79,12 @@ export const POST = withRoute('mensa/class-assignments:POST', async (request: Ne
       .insert({ scuola_id: sede, classe, menu_config_id, attivo_dal })
       .select('id, classe, menu_config_id, attivo_dal')
       .single()
+    if (vincoloDuplicato(error)) {
+      return NextResponse.json(
+        { error: 'Questa classe ha già un menu assegnato a partire da quella data: rimuovi prima l\'assegnazione esistente.' },
+        { status: 409 },
+      )
+    }
     if (error) throw error
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
@@ -100,6 +107,41 @@ export const PUT = withRoute('mensa/class-assignments:PUT', async (request: Next
     const { scuolaId: sede, response } = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id)
     if (response) return response
 
+    const dal = attivo_dal ?? new Date().toISOString().split('T')[0]
+    const uniche = [...new Set(classi)]
+
+    // Il conflitto si guarda PRIMA di cancellare. Questo handler è un
+    // «sostituisci l'elenco»: cancella le assegnazioni del menu e le riscrive.
+    // Da quando esiste l'indice UNIQUE (scuola_id, classe, attivo_dal)
+    // — migrazione `mensa_unique_per_sede`, R44 — l'INSERT può fallire con
+    // `23505`, e la DELETE che l'ha preceduto NON torna indietro: il menu
+    // resterebbe con zero classi assegnate e quei bambini ricadrebbero sul menu
+    // legacy della sede, cioè su ALTRI allergeni. Un rifiuto non deve costare
+    // dati. Le righe che la DELETE porterà via da sola (stesso menu) non sono
+    // un conflitto: si confrontano in JS, senza `.neq()`, così il criterio resta
+    // identico a quello della DELETE qui sotto.
+    if (uniche.length > 0) {
+      const { data: gia, error: errGia } = await supabase
+        .from('mensa_class_menu_assignment')
+        .select('id, classe, menu_config_id')
+        .eq('scuola_id', sede)
+        .eq('attivo_dal', dal)
+        .in('classe', uniche)
+      if (errGia) {
+        // PostgREST non lancia: senza questo ramo una lettura fallita passerebbe
+        // per «nessun conflitto» e si tornerebbe al delete-e-poi-si-vede.
+        logErrore({ operazione: 'mensa/class-assignments:PUT', stato: 500, evento: 'db' }, errGia)
+        return NextResponse.json({ error: 'Verifica delle assegnazioni non riuscita' }, { status: 500 })
+      }
+      const conflitti = (gia ?? []).filter((r) => r.menu_config_id !== menu_config_id)
+      if (conflitti.length > 0) {
+        return NextResponse.json(
+          { error: 'Una delle classi ha già un menu assegnato a partire da quella data: rimuovi prima l\'assegnazione esistente.' },
+          { status: 409 },
+        )
+      }
+    }
+
     const { error: delErr } = await supabase
       .from('mensa_class_menu_assignment')
       .delete()
@@ -107,11 +149,17 @@ export const PUT = withRoute('mensa/class-assignments:PUT', async (request: Next
       .eq('menu_config_id', menu_config_id)
     if (delErr) throw delErr
 
-    const dal = attivo_dal ?? new Date().toISOString().split('T')[0]
-    const uniche = [...new Set(classi)]
     if (uniche.length > 0) {
       const rows = uniche.map((classe) => ({ scuola_id: sede, classe, menu_config_id, attivo_dal: dal }))
       const { error: insErr } = await supabase.from('mensa_class_menu_assignment').insert(rows)
+      // Rete di sicurezza: il controllo qui sopra chiude la finestra, non la
+      // corsa (due operatori insieme). Resta un 409 leggibile, non un 500 muto.
+      if (vincoloDuplicato(insErr)) {
+        return NextResponse.json(
+          { error: 'Una delle classi ha già un menu assegnato a partire da quella data: rimuovi prima l\'assegnazione esistente.' },
+          { status: 409 },
+        )
+      }
       if (insErr) throw insErr
     }
     return NextResponse.json({ success: true, count: uniche.length })
@@ -130,7 +178,19 @@ export const DELETE = withRoute('mensa/class-assignments:DELETE', async (request
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const { error } = await supabase.from('mensa_class_menu_assignment').delete().eq('id', q.data.id)
+    // R44: si cancellava l'assegnazione classe→menu di un altro plesso con il solo
+    // uuid. L'assegnazione decide QUALE menu (e quindi quali allergeni) vale per
+    // una classe: toglierla riporta i bambini al menu legacy della loro sede.
+    const scope = await assertConfigMensaInScope(
+      request as NextRequest, supabase, auth.user, 'mensa_class_menu_assignment', q.data.id,
+    )
+    if (scope.response) return scope.response
+
+    const { error } = await supabase
+      .from('mensa_class_menu_assignment')
+      .delete()
+      .eq('id', q.data.id)
+      .eq('scuola_id', scope.sede as string)
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {

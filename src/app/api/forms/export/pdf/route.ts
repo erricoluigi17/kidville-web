@@ -9,6 +9,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
+import { formattaIstante } from '@/i18n/config'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -100,7 +101,7 @@ export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest
   doc.setTextColor(100, 116, 139)
   doc.text(`ID: ${id.toUpperCase()}`, 14, 34)
   doc.text(
-    `Data invio: ${new Date(submission.created_at).toLocaleString('it-IT')}`,
+    `Data invio: ${formattaIstante(new Date(submission.created_at), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })}`,
     14,
     40,
   )
@@ -128,7 +129,7 @@ export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest
   if (submission.signed_at) {
     doc.setTextColor(52, 211, 153)
     doc.text(
-      `Firmato il: ${new Date(submission.signed_at).toLocaleString('it-IT')}`,
+      `Firmato il: ${formattaIstante(new Date(submission.signed_at), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })}`,
       14,
       y,
     )
@@ -195,7 +196,7 @@ export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest
     doc.setFontSize(7.5)
     doc.setTextColor(148, 163, 184)
     doc.text(
-      `Kidville — Documento generato il ${new Date().toLocaleString('it-IT')} — Pagina ${p} di ${pageCount}`,
+      `Kidville — Documento generato il ${formattaIstante(new Date(), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })} — Pagina ${p} di ${pageCount}`,
       14,
       290,
     )

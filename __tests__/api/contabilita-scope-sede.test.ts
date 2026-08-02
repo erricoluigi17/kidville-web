@@ -58,6 +58,7 @@ const dbBase = (): DBFinto => ({
     { id: PAG_B, alunno_id: ALU_B, scuola_id: SEDE_B, importo: 250 },
   ],
   incassi: [
+    { id: 'inc-a', pagamento_id: PAG_A, importo: 100, metodo: 'contanti', note: 'INCASSO-SEDE-A' },
     { id: 'inc-b', pagamento_id: PAG_B, importo: 250, metodo: 'contanti', note: 'INCASSO-SEDE-B' },
   ],
   crediti_famiglia: [
@@ -86,9 +87,14 @@ describe('GET /api/pagamenti/incassi — gli incassi di un\'altra sede', () => {
     expect(h.tabelle).not.toContain('incassi')
   })
 
-  it('passa sul pagamento della propria sede', async () => {
+  // Controllo positivo. `not.toBe(403)` sarebbe verde anche su un 500: fino al
+  // 31/07 lo era davvero (audit R130). Qui si asserisce lo stato ESATTO e il
+  // contenuto: il ledger della PROPRIA sede arriva, quello dell'altra no.
+  it('passa sul pagamento della propria sede e restituisce il SUO ledger', async () => {
     const res = await INCASSI(req(`/api/pagamenti/incassi?pagamento_id=${PAG_A}`))
-    expect(res.status).not.toBe(403)
+    expect(res.status).toBe(200)
+    const corpo = (await res.json()) as { data: { id: string; note: string }[] }
+    expect(corpo.data.map((r) => r.note)).toEqual(['INCASSO-SEDE-A'])
   })
 })
 

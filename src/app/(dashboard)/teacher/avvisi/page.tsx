@@ -1,15 +1,16 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { Plus } from 'lucide-react';
+import { AlertTriangle, Plus } from 'lucide-react';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
-import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
+import { AvvisoForm, type ClasseAvviso, type DatiAvviso, type EsitoInvioAvviso } from '@/components/features/avvisi/AvvisoForm';
 import { AvvisoDetailsDrawer } from '@/components/features/avvisi/AvvisoDetailsDrawer';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTranslations } from 'next-intl';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherAvvisiContent() {
@@ -25,7 +26,10 @@ function TeacherAvvisiContent() {
 
     // Classi reali del docente (utenti_sezioni via /api/educator-sections):
     // niente elenco hardcoded; con 0 sezioni le pill del form restano vuote.
-    const [availableClasses, setAvailableClasses] = useState<string[]>([]);
+    const [availableClasses, setAvailableClasses] = useState<ClasseAvviso[]>([]);
+    // Esito dell'ultima operazione sulla lista (eliminazione): prima un DELETE
+    // respinto non lasciava traccia a schermo.
+    const [erroreLista, setErroreLista] = useState('');
 
     // Un educator può inviare avvisi solo alle proprie classi. Default RESTRITTIVO
     // (true) finché /api/educator-sections non conferma il ruolo: solo
@@ -37,11 +41,29 @@ function TeacherAvvisiContent() {
         fetch(`/api/educator-sections?userId=${teacherId}`)
             .then(r => (r.ok ? r.json() : null))
             .then(d => {
-                setAvailableClasses(d?.sectionNames ?? []);
+                // `sections` porta l'identità quando la route la espone; finché
+                // restituisce i soli nomi si ripiega su quelli, e la sede resta
+                // ignota: la dichiara il server (che, se resta ambigua, risponde
+                // 400 — e adesso quel 400 si vede nel modulo).
+                const righe = (d?.sections ?? []) as { id?: string; name: string; scuolaId?: string; scuolaNome?: string }[];
+                const classi: ClasseAvviso[] = righe.length > 0
+                    ? righe.map(s => ({ id: s.id ?? s.name, nome: s.name, scuolaId: s.scuolaId ?? null, scuolaNome: s.scuolaNome ?? null }))
+                    : ((d?.sectionNames ?? []) as string[]).map(n => ({ id: n, nome: n }));
+                setAvailableClasses(classi);
                 const role = d?.role;
                 setSoloClassiProprie(!(role === 'admin' || role === 'coordinator'));
             })
-            .catch(() => {});
+            .catch(err => {
+                // Un catch che non logga è un bug (AGENTS.md): senza sezioni il
+                // docente non può indirizzare nessun avviso, e senza questa riga
+                // «non ha classi» e «la chiamata è morta» sono indistinguibili.
+                logClient({
+                    livello: 'error',
+                    evento: 'fetch',
+                    messaggio: `educator-sections-non-caricate: ${nomeErrore(err)}`,
+                    route: '/teacher/avvisi',
+                });
+            });
     }, [teacherId]);
 
     const loadAvvisi = useCallback(async () => {
@@ -56,48 +78,63 @@ function TeacherAvvisiContent() {
 
     useEffect(() => { loadAvvisi(); }, [loadAvvisi]);
 
-    const handleCreateOrUpdate = async (data: {
-        titolo: string; contenuto: string; tipo: string;
-        target_scope: string; target_classes: string[]; scadenza: string | null;
-        attachment_url: string | null;
-    }) => {
-        if (!teacherId) return;
+    // Come nel cockpit: l'esito torna al modulo, che su rifiuto resta aperto col
+    // messaggio del server invece di chiudersi buttando via il testo scritto.
+    const handleCreateOrUpdate = async (data: DatiAvviso): Promise<EsitoInvioAvviso> => {
+        if (!teacherId) return { ok: false, errore: t('formErroreInvio') };
         try {
-            if (editingAvviso) {
-                // UPDATE (PUT)
-                const res = await fetch(`/api/avvisi/${editingAvviso.id}?userId=${teacherId}`, {
+            // In modifica la sede non si cambia (la PUT non tocca `scuola_id`).
+            const { scuola_id, ...comuni } = data;
+            const res = editingAvviso
+                ? await fetch(`/api/avvisi/${editingAvviso.id}?userId=${teacherId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
-                    body: JSON.stringify(data),
-                });
-                if (res.ok) {
-                    await loadAvvisi();
-                    setEditingAvviso(null);
-                }
-            } else {
-                // CREATE (POST)
-                const res = await fetch(`/api/avvisi?userId=${teacherId}`, {
+                    body: JSON.stringify(comuni),
+                })
+                : await fetch(`/api/avvisi?userId=${teacherId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
-                    body: JSON.stringify({ author_id: teacherId, ...data }),
+                    body: JSON.stringify({ author_id: teacherId, ...comuni, scuola_id }),
                 });
-                if (res.ok) await loadAvvisi();
+
+            if (!res.ok) {
+                const errore = await messaggioErrore(res, t('formErroreInvio'));
+                logClient({
+                    livello: 'error', evento: 'fetch',
+                    messaggio: editingAvviso ? 'avviso-modifica-respinta' : 'avviso-pubblicazione-respinta',
+                    route: '/teacher/avvisi', stato: res.status,
+                });
+                return { ok: false, errore };
             }
+            await loadAvvisi();
+            if (editingAvviso) setEditingAvviso(null);
+            return { ok: true };
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/avvisi' });
+            return { ok: false, errore: t('formErroreInvio') };
         }
     };
 
     const handleDelete = async (avvisoId: string) => {
         if (!teacherId) return;
         if (!window.confirm(t('avvisiConfermaElimina'))) return;
+        setErroreLista('');
         try {
             const res = await fetch(`/api/avvisi/${avvisoId}?userId=${teacherId}`, {
                 method: 'DELETE',
                 headers: { 'x-user-id': teacherId },
             });
-            if (res.ok) await loadAvvisi();
+            if (!res.ok) {
+                setErroreLista(await messaggioErrore(res, t('formErroreInvio')));
+                logClient({
+                    livello: 'error', evento: 'fetch', messaggio: 'avviso-eliminazione-respinta',
+                    route: '/teacher/avvisi', stato: res.status,
+                });
+                return;
+            }
+            await loadAvvisi();
         } catch (err) {
+            setErroreLista(t('formErroreInvio'));
             logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-eliminazione-fallita: ${nomeErrore(err)}`, route: '/teacher/avvisi' });
         }
     };
@@ -117,11 +154,18 @@ function TeacherAvvisiContent() {
             />
             <div className="mt-5">{/* contenuto */}</div>
 
+            {erroreLista && (
+                <div role="alert" className="mb-4 flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error-strong">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />
+                    <span>{erroreLista}</span>
+                </div>
+            )}
+
             {/* Loading */}
             {loading && (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">{t('avvisiCaricamento')}</p>
+                    <p className="font-maven text-sm text-kidville-sub">{t('avvisiCaricamento')}</p>
                 </div>
             )}
 
@@ -130,7 +174,7 @@ function TeacherAvvisiContent() {
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                     <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">📢</div>
                     <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">{t('avvisiVuotoTitolo')}</h2>
-                    <p className="font-maven text-kidville-muted text-sm max-w-xs">
+                    <p className="font-maven text-kidville-sub text-sm max-w-xs">
                         {t('avvisiVuotoDescrizione')}
                     </p>
                 </div>
@@ -145,6 +189,13 @@ function TeacherAvvisiContent() {
                             avviso={avviso}
                             index={idx}
                             isTeacher
+                            // Le sezioni del docente sono la stessa fonte che usa il
+                            // cockpit (`/api/educator-sections` porta id, nome e sede):
+                            // servono alla card per tradurre le voci di `target_classes`
+                            // che sono ID e non nomi. Senza, la bacheca stampava l'uuid
+                            // della sezione dove il cockpit diceva «TEST Infanzia»
+                            // (collaudo iOS del 2026-07-31, F4).
+                            classiNote={availableClasses}
                             onShowDetails={(a) => {
                                 setSelectedAvviso(a);
                                 setShowDetails(true);
@@ -180,7 +231,9 @@ function TeacherAvvisiContent() {
                     setShowDetails(false);
                     setSelectedAvviso(null);
                 }}
-                availableClasses={availableClasses}
+                // Il drawer di monitoraggio ragiona per NOMI (li confronta con
+                // `target_classes` dell'avviso): riceve i nomi, non le identità.
+                availableClasses={availableClasses.map(c => c.nome)}
             />
         </div>
     );

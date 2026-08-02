@@ -1,0 +1,375 @@
+{
+  "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
+  "generato_il": "2026-08-02",
+  "sha256": "0be7bb86b5c48c048a4048ebfead789760fd0ebc6d13b9384b13d8a855ff6e82",
+  "migrazioni": [
+    {
+      "version": "20260704120000",
+      "name": "baseline"
+    },
+    {
+      "version": "20260706105201",
+      "name": "anagrafiche_residenza_provincia_civico"
+    },
+    {
+      "version": "20260706210352",
+      "name": "db_hardening_etl_scuola_e_revoke_exec"
+    },
+    {
+      "version": "20260708174412",
+      "name": "firma_principale_unica"
+    },
+    {
+      "version": "20260708174430",
+      "name": "student_guardians_canonica"
+    },
+    {
+      "version": "20260708174440",
+      "name": "avvisi_form_model"
+    },
+    {
+      "version": "20260710130000",
+      "name": "contabilita_fiscale"
+    },
+    {
+      "version": "20260710140000",
+      "name": "contabilita_solleciti"
+    },
+    {
+      "version": "20260710150000",
+      "name": "contabilita_riconciliazione"
+    },
+    {
+      "version": "20260710160000",
+      "name": "contabilita_iscrizione_scadenze"
+    },
+    {
+      "version": "20260711120000",
+      "name": "merchandise"
+    },
+    {
+      "version": "20260711140000",
+      "name": "fatture_sync_e_fk_hardening"
+    },
+    {
+      "version": "20260711150000",
+      "name": "worm_registri_fiscali"
+    },
+    {
+      "version": "20260711160000",
+      "name": "ordini_idempotency"
+    },
+    {
+      "version": "20260711170000",
+      "name": "contabilita_stato_scaduto_prevale"
+    },
+    {
+      "version": "20260711180000",
+      "name": "mensa_ticket_ledger"
+    },
+    {
+      "version": "20260712150000",
+      "name": "registro_protocolli"
+    },
+    {
+      "version": "20260712180000",
+      "name": "notifiche_config_e_promemoria"
+    },
+    {
+      "version": "20260712200000",
+      "name": "protocolli_rettifica_admin"
+    },
+    {
+      "version": "20260712220000",
+      "name": "cron_config_vault"
+    },
+    {
+      "version": "20260713090000",
+      "name": "app_log"
+    },
+    {
+      "version": "20260714100000",
+      "name": "chat_delivered_at"
+    },
+    {
+      "version": "20260714101000",
+      "name": "mensa_alternative"
+    },
+    {
+      "version": "20260714102000",
+      "name": "multi_sede_provisioning"
+    },
+    {
+      "version": "20260714103000",
+      "name": "galleria_scuola_id"
+    },
+    {
+      "version": "20260717212758",
+      "name": "mensa_rpc_ticket_transazionale"
+    },
+    {
+      "version": "20260717212830",
+      "name": "otp_nonce_e_unique_firme"
+    },
+    {
+      "version": "20260717212832",
+      "name": "otp_sistema_a_ttl"
+    },
+    {
+      "version": "20260717212834",
+      "name": "diario_nota_per_bambino"
+    },
+    {
+      "version": "20260717221651",
+      "name": "mensa_rpc_revoke_anon_authenticated"
+    },
+    {
+      "version": "20260718195000",
+      "name": "incasso_metodo_esteso"
+    },
+    {
+      "version": "20260718200000",
+      "name": "contabilita_v2_regole"
+    },
+    {
+      "version": "20260718201000",
+      "name": "contabilita_v2_transazioni"
+    },
+    {
+      "version": "20260718300000",
+      "name": "genera_rette_v2"
+    },
+    {
+      "version": "20260718400000",
+      "name": "pagamenti_solleciti_cron"
+    },
+    {
+      "version": "20260718500000",
+      "name": "annulla_transazione_rpc"
+    },
+    {
+      "version": "20260719100000",
+      "name": "riconciliazione_v2_cross_sede"
+    },
+    {
+      "version": "20260719110000",
+      "name": "causali_config"
+    },
+    {
+      "version": "20260720100000",
+      "name": "cassa_base"
+    },
+    {
+      "version": "20260720101000",
+      "name": "cassa_config"
+    },
+    {
+      "version": "20260720191506",
+      "name": "news_base"
+    },
+    {
+      "version": "20260720191525",
+      "name": "news_cron"
+    },
+    {
+      "version": "20260720200000",
+      "name": "news_correzioni_ciclo2"
+    },
+    {
+      "version": "20260724150030",
+      "name": "richieste_cancellazione"
+    },
+    {
+      "version": "20260727080043",
+      "name": "segnalazioni"
+    },
+    {
+      "version": "20260727080102",
+      "name": "conversazioni_sospensioni"
+    },
+    {
+      "version": "20260727080115",
+      "name": "consensi_accettazioni"
+    },
+    {
+      "version": "20260727080639",
+      "name": "richieste_cancellazione_canale"
+    },
+    {
+      "version": "20260729114316",
+      "name": "provisiona_sede_admin_settings"
+    },
+    {
+      "version": "20260729114339",
+      "name": "solleciti_config_tutte_le_sedi"
+    },
+    {
+      "version": "20260730141828",
+      "name": "registro_orario_unique_per_sede"
+    },
+    {
+      "version": "20260730143833",
+      "name": "modulistica_sede_su_modelli_e_compilazioni"
+    },
+    {
+      "version": "20260730144035",
+      "name": "modulistica_backfill_sede_compilazioni_storiche"
+    },
+    {
+      "version": "20260730151739",
+      "name": "locker_config_per_sezione"
+    },
+    {
+      "version": "20260731075502",
+      "name": "iscrizione_consents_log"
+    },
+    {
+      "version": "20260731094558",
+      "name": "chiudi_policy_scaffolding_rls_aperte"
+    },
+    {
+      "version": "20260731101818",
+      "name": "fn_form_submission_etl_sede"
+    },
+    {
+      "version": "20260731102245",
+      "name": "rls_multisede_pulizia"
+    },
+    {
+      "version": "20260731112535",
+      "name": "mensa_unique_per_sede"
+    },
+    {
+      "version": "20260731113406",
+      "name": "sections_nome_per_sede"
+    },
+    {
+      "version": "20260731114449",
+      "name": "presenze_armadietto_scuola_id"
+    },
+    {
+      "version": "20260731114828",
+      "name": "presenze_armadietto_scuola_id_revoke"
+    },
+    {
+      "version": "20260731115341",
+      "name": "genera_rette_per_sede"
+    },
+    {
+      "version": "20260731122800",
+      "name": "fk_scuola_id"
+    },
+    {
+      "version": "20260731123052",
+      "name": "provisiona_sede_v2"
+    },
+    {
+      "version": "20260731140243",
+      "name": "note_firme_sola_lettura_per_authenticated"
+    },
+    {
+      "version": "20260731142105",
+      "name": "oblio_sede_obbligatoria_retention_consensi"
+    },
+    {
+      "version": "20260731165941",
+      "name": "iscrizioni_segnale_raccolta_senza_informativa"
+    },
+    {
+      "version": "20260731170007",
+      "name": "galleria_lettura_genitore_con_sede"
+    },
+    {
+      "version": "20260731191948",
+      "name": "pagamenti_rls_senza_ricorsione"
+    },
+    {
+      "version": "20260731192005",
+      "name": "bucket_gallery_limite_200mb"
+    },
+    {
+      "version": "20260731192029",
+      "name": "drop_test_table"
+    },
+    {
+      "version": "20260731192048",
+      "name": "bucket_news"
+    },
+    {
+      "version": "20260731192108",
+      "name": "allegati_avvisi_task_bucket_privati"
+    },
+    {
+      "version": "20260731192131",
+      "name": "task_interni_scuola_obbligatoria"
+    },
+    {
+      "version": "20260731211118",
+      "name": "enrollment_documento_path_indice"
+    },
+    {
+      "version": "20260731211221",
+      "name": "avvisi_config_backfill_sedi"
+    },
+    {
+      "version": "20260801081423",
+      "name": "retention_iscrizioni_e_audit"
+    },
+    {
+      "version": "20260801081446",
+      "name": "drop_enrollment_credentials"
+    },
+    {
+      "version": "20260801081502",
+      "name": "alunni_consensi_foto_per_canale"
+    },
+    {
+      "version": "20260801081513",
+      "name": "news_posts_dichiarazione_consenso"
+    },
+    {
+      "version": "20260801081531",
+      "name": "allegati_avvisi_task_mime"
+    },
+    {
+      "version": "20260801081542",
+      "name": "chat_allegati_percorso"
+    },
+    {
+      "version": "20260801081633",
+      "name": "policy_orario_per_sede"
+    },
+    {
+      "version": "20260801081644",
+      "name": "notifiche_orfane_avvisi"
+    },
+    {
+      "version": "20260801104252",
+      "name": "avvisi_target_classes_nomi"
+    },
+    {
+      "version": "20260801121248",
+      "name": "retention_iscrizioni_via_storage_api"
+    },
+    {
+      "version": "20260801130404",
+      "name": "bucket_news_bozze"
+    },
+    {
+      "version": "20260801130431",
+      "name": "app_log_bonifica_pii"
+    },
+    {
+      "version": "20260801133432",
+      "name": "retention_iscrizioni_http_non_muta"
+    },
+    {
+      "version": "20260802173446",
+      "name": "retention_iscrizioni_esito_e_sorveglianza"
+    },
+    {
+      "version": "20260802191025",
+      "name": "form_attachments_tipi_e_limite"
+    }
+  ]
+}

@@ -23,6 +23,7 @@ import { GalleriaSettings } from '@/components/features/admin/settings/GalleriaS
 import { ArmadiettoSettings } from '@/components/features/admin/settings/ArmadiettoSettings';
 import { ModulisticaSettings } from '@/components/features/admin/settings/ModulisticaSettings';
 import { NotificheSettings } from '@/components/features/admin/settings/NotificheSettings';
+import { SedeCorrente } from '@/components/features/admin/settings/SedeCorrente';
 import { PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
@@ -100,6 +101,36 @@ function Inner() {
 
     const voceAttiva = GRUPPI.flatMap((g) => g.voci).find((v) => v.id === sezione);
 
+    /**
+     * OGNI sezione di questa pagina configura UNA sede: `admin_settings`,
+     * `payment_categories`, le materie e i periodi di scrutinio hanno tutti una
+     * riga per plesso. Dieci sezioni su quindici però chiedevano la
+     * configurazione con il solo `userId`, lasciando indovinare la sede al
+     * server: con un plesso l'indovinello aveva sempre ragione, con tre scriveva
+     * (o falliva) sul plesso sbagliato in silenzio.
+     *
+     * Qui la sede diventa un prerequisito esplicito: se il selettore non ne
+     * indica UNA sola, non parte nessuna fetch e si chiede di sceglierla; se la
+     * indica, il suo NOME è la prima cosa scritta sopra il pannello.
+     *
+     * `key={sid}` non è un dettaglio di rendering: ogni pannello tiene una BOZZA
+     * locale delle modifiche non ancora salvate (`draft`), che ha la precedenza
+     * sui valori arrivati dal server. Senza il rimontaggio, cambiare sede
+     * lascerebbe in pagina le spunte di Giugliano sotto l'intestazione «Stai
+     * configurando: Aversa» — e il salvataggio successivo le scriverebbe davvero
+     * su Aversa. La sede cambia ⇒ il pannello riparte da zero.
+     */
+    const conSede = (cosa: string, pannello: (scuolaId: string) => React.ReactNode) => (
+        <SedeRequired cosa={cosa}>
+            {(sid) => (
+                <div key={sid}>
+                    <SedeCorrente scuolaId={sid} />
+                    {pannello(sid)}
+                </div>
+            )}
+        </SedeRequired>
+    );
+
     return (
         <div className="min-h-screen bg-kidville-cream/40 p-4 md:p-8">
             <div className="max-w-6xl mx-auto">
@@ -169,21 +200,21 @@ function Inner() {
                         <h2 className="md:hidden font-barlow font-black text-lg text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
                             {voceAttiva?.icon} {voceAttiva ? t(voceAttiva.labelKey) : null}
                         </h2>
-                        {userId && sezione === 'moduli' && <FunzioniMatricePanel userId={userId} />}
-                        {userId && sezione === 'pagamenti' && <SedeRequired cosa={t('sedeRequiredPagamenti')}>{(sid) => <SettingsPanel userId={userId} scuolaId={sid} />}</SedeRequired>}
-                        {userId && sezione === 'rette' && <SedeRequired cosa={t('sedeRequiredRette')}>{(sid) => <RetteSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
-                        {userId && sezione === 'modulistica' && <ModulisticaSettings userId={userId} />}
-                        {userId && sezione === 'didattica' && <SedeRequired cosa={t('sedeRequiredDidattica')}>{(sid) => <DidatticaPrimariaPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
-                        {userId && sezione === 'pagelle' && <SedeRequired cosa={t('sedeRequiredPagelle')}>{(sid) => <PagelleScrutinioPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
-                        {userId && sezione === 'diario' && <DiarioSettings userId={userId} />}
-                        {userId && sezione === 'presenze' && <PresenzeSettings userId={userId} />}
-                        {userId && sezione === 'note' && <NoteSettings userId={userId} />}
-                        {userId && sezione === 'mensa' && <SedeRequired cosa={t('sedeRequiredMensa')}>{(sid) => <MensaSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
-                        {userId && sezione === 'armadietto' && <ArmadiettoSettings userId={userId} />}
-                        {userId && sezione === 'avvisi' && <AvvisiSettings userId={userId} />}
-                        {userId && sezione === 'chat' && <ChatSettings userId={userId} />}
-                        {userId && sezione === 'galleria' && <GalleriaSettings userId={userId} />}
-                        {userId && sezione === 'notifiche' && <NotificheSettings userId={userId} />}
+                        {userId && sezione === 'moduli' && conSede(t('sedeRequiredModuli'), (sid) => <FunzioniMatricePanel userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'pagamenti' && conSede(t('sedeRequiredPagamenti'), (sid) => <SettingsPanel userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'rette' && conSede(t('sedeRequiredRette'), (sid) => <RetteSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'modulistica' && conSede(t('sedeRequiredModulistica'), (sid) => <ModulisticaSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'didattica' && conSede(t('sedeRequiredDidattica'), (sid) => <DidatticaPrimariaPanel scuolaId={sid} userId={userId} />)}
+                        {userId && sezione === 'pagelle' && conSede(t('sedeRequiredPagelle'), (sid) => <PagelleScrutinioPanel scuolaId={sid} userId={userId} />)}
+                        {userId && sezione === 'diario' && conSede(t('sedeRequiredDiario'), (sid) => <DiarioSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'presenze' && conSede(t('sedeRequiredPresenze'), (sid) => <PresenzeSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'note' && conSede(t('sedeRequiredNote'), (sid) => <NoteSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'mensa' && conSede(t('sedeRequiredMensa'), (sid) => <MensaSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'armadietto' && conSede(t('sedeRequiredArmadietto'), (sid) => <ArmadiettoSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'avvisi' && conSede(t('sedeRequiredAvvisi'), (sid) => <AvvisiSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'chat' && conSede(t('sedeRequiredChat'), (sid) => <ChatSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'galleria' && conSede(t('sedeRequiredGalleria'), (sid) => <GalleriaSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'notifiche' && conSede(t('sedeRequiredNotifiche'), (sid) => <NotificheSettings userId={userId} scuolaId={sid} />)}
                     </main>
                 </div>
             </div>

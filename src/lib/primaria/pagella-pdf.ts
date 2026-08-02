@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { formattaIstante } from '@/i18n/config'
 
 export interface PagellaData {
   scuolaNome: string
@@ -146,7 +147,7 @@ export function buildPagellaPdf(d: PagellaData): Buffer {
   doc.setFont('Helvetica', 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(100, 116, 139)
-  const dataChiusura = d.chiusoIl ? new Date(d.chiusoIl).toLocaleDateString('it-IT') : '—'
+  const dataChiusura = d.chiusoIl ? formattaIstante(new Date(d.chiusoIl), 'it') : '—'
   const firma = d.dirigente
     ? `Documento chiuso e validato dal Dirigente ${d.dirigente} il ${dataChiusura}.`
     : `Documento chiuso il ${dataChiusura}.`

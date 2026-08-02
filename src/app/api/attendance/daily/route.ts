@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
@@ -23,6 +24,10 @@ const getQuerySchema = z.object({
     data: zDataYMD.optional(),
     // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
     sezione: z.string().default(''),
+    // La sede scelta nel cockpit (W3-A). Il nome-classe da solo non identifica
+    // più una classe: «2 ANNI» esiste ad Aversa E a Cesa, e senza questo l'appello
+    // usciva UNITO fra le due, senza dirlo.
+    scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
 });
 
 const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const;
@@ -61,9 +66,21 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         // route gira in service-role. Con tre sedi «2 ANNI» esiste sia ad Aversa
         // sia a Cesa: senza questo, chi ne indovinava il nome otteneva nomi e
         // presenze dei bambini dell'altra sede.
-        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione);
+        //
+        // `soloSezioniAssegnate` (aggiunto il 2026-07-31, R108): il gate senza
+        // opzioni risponde a «di quale sede è questa classe?», non a «questa
+        // classe è tua?» — e questa route era citata come il «gemello corretto»
+        // pur avendo lo stesso buco. Educator → solo le sue sezioni.
+        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, { soloSezioniAssegnate: true });
         if (scopeErr) return scopeErr;
-        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+        const attive = await resolveScuoleAttive(request, supabase, auth.user);
+        // Sede dichiarata dal client ⇒ una sola sede. Dichiararne una non
+        // accessibile è un 403 loggato, mai un elenco allargato.
+        const sede = restringiASedeRichiesta(attive, q.data.scuola_id, {
+            azione: 'attendance/daily:GET', utente: auth.user.id, ruolo: auth.user.role,
+        });
+        if (sede.response) return sede.response;
+        const plessi = sede.plessi ?? [];
 
         const { data: rows, error } = await supabase
             .from('presenze')
@@ -117,6 +134,17 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         const { alunno_id, data, stato, orario_entrata, orario_uscita } = b.data;
 
         const supabase = await createAdminClient();
+
+        // LO SCOPE VALE ANCHE QUI, e prima di ogni scrittura. Fino al 2026-07-31
+        // questo handler aveva il solo gate di ruolo: la segreteria di una sede
+        // poteva segnare presenze e assenze sui bambini di un'altra, e con
+        // `stato:'assente'` partiva pure la notifica «tuo figlio è stato segnato
+        // assente» ai genitori dell'altro plesso. Dimostrato in produzione dal
+        // collaudo backend (rilievo F1, bloccante).
+        // Il lock non l'aveva visto perché cercava l'import a livello di FILE: la
+        // GET qui sopra lo scope ce l'aveva, e amnistiava la POST.
+        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        if (fuoriScope) return fuoriScope;
 
         // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
         // le policy scolastiche su presenze e l'aggregato realtime li richiedono.

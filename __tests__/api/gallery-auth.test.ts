@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   requireParentOfStudent: vi.fn(),
   alunni: [] as Array<Record<string, unknown>>,
+  alunno: null as Record<string, unknown> | null,
   inserted: null as Record<string, unknown> | null,
   updated: null as Record<string, unknown> | null,
   media: null as Record<string, unknown> | null,
@@ -35,13 +36,29 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.or = () => b
       b.not = () => b
       b.range = async () => ({ data: [], count: 0, error: null })
-      b.in = async () => ({ data: table === 'alunni' ? h.alunni : [], error: null })
+      // `.in()` è CHAINABLE, e il builder è «thenable»: `await …in(ids)` termina
+      // qui, ma la catena può anche proseguire. Prima `.in()` restituiva
+      // direttamente una Promise, quindi funzionava solo se era l'ULTIMA
+      // chiamata — e il filtro di sede della galleria, diventato
+      // incondizionato, è seguito da `.or()` e `.range()`: la catena si
+      // spezzava e la route rispondeva 500. Un mock che regge una sola forma
+      // di catena non prova nulla sulle altre.
+      b.in = () => b
+      b.then = (resolve: (v: unknown) => void) =>
+        resolve({ data: table === 'alunni' ? h.alunni : [], error: null })
       b.maybeSingle = async () => ({
         data:
           table === 'galleria_media_v2' ? h.media
-            : table === 'utenti' ? h.utente
-              : table === 'legame_genitori_alunni' ? h.legame
-                : null,
+            // Il figlio HA una sede. Questo mock la ometteva (`alunni` non era
+            // nella mappa → `null`), e fino al 2026-07-31 non si notava perché
+            // la route trattava «figlio senza plesso» come «nessun filtro».
+            // Ora un alunno senza sede è 403 — non è isolabile — quindi il mock
+            // deve smettere di modellare uno stato che in produzione non esiste
+            // (30 alunni su 30 hanno `scuola_id`).
+            : table === 'alunni' ? h.alunno
+              : table === 'utenti' ? h.utente
+                : table === 'legame_genitori_alunni' ? h.legame
+                  : null,
         error: null,
       })
       b.insert = (row: Record<string, unknown>) => {
@@ -75,6 +92,7 @@ beforeEach(() => {
     { id: 'a', nome: 'Ada', cognome: 'Rossi', consenso_privacy: true },
     { id: 'b', nome: 'Bea', cognome: 'Verdi', consenso_privacy: false },
   ]
+  h.alunno = { scuola_id: 'sc-1' }
   h.inserted = null
   h.updated = null
   h.media = { id: 'm1', uploaded_by: 'ed1', tag_students: ['a'], is_broadcast: false, scuola_id: 'sc-1' }

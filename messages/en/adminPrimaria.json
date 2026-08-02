@@ -9,14 +9,12 @@
   "comuneAggiungi": "Add",
   "comuneContitolare": "co-teacher",
   "comuneLivelloOrdinale": "Year {livello}",
-
   "hubEyebrow": "Teaching",
   "hubTitolo": "Primary School",
   "hubSottotitolo": "Operations area: class registers, timetable and student-file access log. Configuration (subjects, teachers, objectives, judgements, term assessment) is in Settings → Primary teaching.",
   "hubTabRegistri": "Class registers",
   "hubTabOrario": "Timetable",
   "hubTabFascicoli": "Files/Access",
-
   "registriTitolo": "Class registers",
   "registriSottotitolo": "Access everything a teacher does (register, grades, lessons, attendance, notes, term assessment) for any class, in edit mode.",
   "registriRegistroLabel": "Class register",
@@ -35,7 +33,6 @@
   "registriScrutinioDesc": "Judgements, closing, report cards, publishing",
   "registriFascicoloLabel": "Student file",
   "registriFascicoloDesc": "Confidential documents (access logged)",
-
   "orarioTempoScuola": "School time",
   "orarioModello27": "27 hours",
   "orarioModello29": "29 hours",
@@ -44,7 +41,7 @@
   "orarioGiorni6": "6 days",
   "orarioRigenera": "Regenerate periods",
   "orarioGenera": "Generate timetable",
-  "orarioAttivo": "Active: {modello}h / {giorni} days",
+  "orarioAttivo": "Active: {modello}h / {giorni, plural, one {# day} other {# days}}",
   "orarioImpostaTempo": "Set the school time to generate the grid.",
   "orarioColonnaOra": "Time",
   "orarioDocentePlaceholder": "teacher…",
@@ -63,7 +60,6 @@
   "orarioTipoLezione": "Lesson",
   "orarioTipoIntervallo": "Break",
   "orarioTipoMensa": "Lunch",
-
   "fascicoloTitolo": "Student file access log",
   "fascicoloAggiorna": "Refresh",
   "fascicoloSottotitolo": "Immutable log of access to confidential documents (IEP/PDP/health).",
@@ -78,7 +74,6 @@
   "fascicoloAzioneDownload": "Download",
   "fascicoloAzioneUpload": "Upload",
   "fascicoloAzioneDelete": "Deletion",
-
   "didatticaTabMaterie": "Subjects",
   "didatticaTabDocenti": "Teachers & Subjects",
   "didatticaTabObiettivi": "Objectives",
@@ -87,14 +82,12 @@
   "didatticaNessunaClasseTitolo": "No primary class",
   "didatticaNessunaClasseTesto": "Subjects are managed per class: first create a <b>Primary</b> section in Roster → Sections, then come back here to apply the subject preset or add them manually.",
   "didatticaCreaSezione": "Create a primary section",
-
   "classificazioneSottotitolo": "Set which levels each teacher is enabled for. The visible functions (register/grades vs diary) depend on this classification and on the function matrix.",
   "classificazioneColDocente": "Teacher",
   "classificazioneNessunDocente": "No teacher found.",
   "classificazioneGradoNido": "Nursery",
   "classificazioneGradoInfanzia": "Preschool",
   "classificazioneGradoPrimaria": "Primary",
-
   "docentiMaterieNessunClassificato": "No teacher classified as «primary». Set it in the Teacher classification tab.",
   "docentiMaterieAssociazioniPer": "Associations for the class: <b>{nome}</b>",
   "docentiMaterieNessunAssegnazione": "No assignment.",
@@ -102,7 +95,6 @@
   "docentiMaterieLabelDocente": "Teacher",
   "docentiMaterieLabelMateria": "Subject",
   "docentiMaterieAssegna": "Assign",
-
   "materiePresetLabel": "Apply subject preset by level",
   "materieApplicaPreset": "Apply preset",
   "materieBadgeCivica": "Civics",
@@ -116,7 +108,6 @@
   "materiePlaceholderNome": "E.g. Coding",
   "materieCodice": "Code",
   "materiePlaceholderCodice": "coding",
-
   "obiettiviNessuno": "No objective for this subject/level.",
   "obiettiviCodiceOpz": "Code (opt.)",
   "obiettiviPlaceholderCodice": "ITA-1",
@@ -134,23 +125,23 @@
   "obiettiviMateriaTecnologia": "Technology",
   "obiettiviMateriaReligione": "Religion/Alternative",
   "obiettiviMateriaEdCivica": "Civic Education",
-
   "giudiziScalaTitolo": "Synthetic judgement scale",
   "giudiziScalaSottotitolo": "Used ongoing and at term assessment. Preset with the 6 official judgements (Annex A). The numeric value feeds the ongoing average; the descriptive judgement is applied automatically in the report card.",
   "giudiziAttivo": "active",
   "giudiziValore": "Value",
   "giudiziPlaceholderDescrittivo": "Descriptive judgement (report card)",
   "giudiziPlaceholderNuovo": "New judgement",
+  "giudiziAggiungi": "Add judgement",
+  "giudiziElimina": "Delete judgement",
+  "giudiziErroreOperazione": "The operation failed. Please try again.",
   "giudiziTemplateTitolo": "Descriptive judgement template",
   "giudiziTemplateSottotitolo": "Composable fragments by dimension/value. Editing them overrides the default for your school.",
-
   "impostazioniTitolo": "Time constraints and notifications",
   "impostazioniSottotitolo": "Register editing windows and grade-notification send buffer. Enabling modules per level is managed in Settings → Functions & modules.",
   "impostazioniRegistroOrali": "Register/oral (days)",
   "impostazioniScrittiPratici": "Written/practical (days)",
   "impostazioniBufferNotifiche": "Notification buffer (min)",
   "impostazioniSalva": "Save settings",
-
   "scrutinioGiudiziTitolo": "Term assessment judgements by mark",
   "scrutinioGiudiziSottotitolo": "For each class level, subject and period, define the text associated with each mark. In the report card it is applied automatically to the assigned mark. Filling in a level (e.g. Year 1) applies to all sections of that level.",
   "scrutinioGiudiziLivello": "Level:",
@@ -161,7 +152,6 @@
   "scrutinioGiudiziConfiguraScala": "First configure the judgement scale (Judgements tab).",
   "scrutinioGiudiziNessunaMateria": "No coded subject for year {livello}. Configure the subjects (Subjects tab).",
   "scrutinioGiudiziPlaceholder": "Judgement text for this mark…",
-
   "periodiTitolo": "Term assessment periods",
   "periodiSottotitolo": "Define the periods (e.g. 1st term, Final assessment). Teachers will select them in the Term assessment section.",
   "periodiAnnoScolastico": "School year:",
@@ -174,5 +164,9 @@
   "periodiAriaDataFine": "Period end date",
   "periodiInserisciNome": "Enter the period name",
   "periodiAggiungiPeriodo": "Add period",
-  "periodiConfermaElimina": "Delete the period? Linked assessments will also be removed."
+  "periodiConfermaElimina": "Delete the period? Linked assessments will also be removed.",
+  "docentiMaterieRimuovi": "Remove assignment",
+  "materieElimina": "Delete subject",
+  "obiettiviElimina": "Delete objective",
+  "periodiElimina": "Delete period"
 }

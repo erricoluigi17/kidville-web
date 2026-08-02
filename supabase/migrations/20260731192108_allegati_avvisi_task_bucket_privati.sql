@@ -1,0 +1,61 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Allegati di avvisi e incarichi: i due bucket diventano PRIVATI
+-- Audit del 2026-07-31. Decisione del titolare dello stesso giorno: chiuderli.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- IL DIFETTO. `avvisi_allegati` e `task_allegati` erano `public = true`. Su un
+-- bucket pubblico lo Storage serve il file a CHIUNQUE conosca l'indirizzo: niente
+-- login, niente ruolo, niente sede, per sempre. E l'indirizzo era proprio quello
+-- che l'applicazione salvava nel database e mandava al browser di ogni famiglia:
+-- bastava copiarlo da un avviso e girarlo a qualcuno per farglielo scaricare.
+--
+-- L'allegato di un avviso non è materia pubblica: è il modulo di una gita con i
+-- nomi dei bambini, un certificato, una circolare interna. Il gate di ruolo e
+-- l'isolamento fra le tre sedi giravano tutti sul database — sul FILE non c'era
+-- niente.
+--
+-- COSA FA QUESTA MIGRAZIONE. Una cosa sola: mette `public = false` sui due
+-- bucket. Da quel momento un indirizzo `/object/public/...` risponde «non
+-- trovato» e il file si scarica soltanto con un link FIRMATO, che l'applicazione
+-- genera al momento della lettura, dietro al proprio controllo di accesso, e che
+-- scade dopo 10 minuti. È esattamente ciò che è già stato fatto sul bucket
+-- `gallery` (foto e video dei bambini) il 2026-07-31.
+--
+-- COSA NON FA.
+--  · Non cancella e non sposta nessun file: i due bucket contengono in tutto UN
+--    file (un PDF caricato in collaudo il 24/05, che oggi non è collegato a
+--    nessun avviso). Nessun contenuto viene toccato.
+--  · Non crea policy su `storage.objects`, e non è una dimenticanza: su questo
+--    database `storage.objects` NON HA NESSUNA POLICY — nemmeno per `gallery`.
+--    L'unico che legge i file è il server, con la chiave di servizio, che le
+--    policy non le attraversa. Aggiungerne qui delle nuove significherebbe
+--    inventare un modello di accesso diverso da quello in esercizio.
+--  · Non cambia il limite di dimensione né i tipi di file ammessi.
+--  · Non tocca gli altri bucket: gli otto rimanenti sono già privati.
+--
+-- SE VA STORTO. Il rischio è di un tipo solo, e non è la perdita di dati: se il
+-- codice che genera i link firmati avesse un difetto, un allegato non si
+-- aprirebbe (l'utente vede un allegato mancante) — fastidioso, visibile subito e
+-- reversibile in un secondo con:
+--     update storage.buckets set public = true where id in ('avvisi_allegati','task_allegati');
+-- Il rischio opposto — «i file restano scaricabili da chiunque» — è quello che
+-- questa migrazione elimina, ed è l'unico che non si può correggere dopo: un
+-- indirizzo pubblico già copiato resta valido finché il bucket è pubblico.
+--
+-- VA INSIEME AL CODICE. Da sola questa migrazione romperebbe gli allegati; da
+-- solo il codice non chiuderebbe la falla. Nello stesso lavoro:
+-- `src/lib/allegati/storage.ts` (link firmati, stessa forma della galleria),
+-- `avvisi/upload:POST` e `tasks/upload:POST` (archiviano il percorso, non più
+-- l'indirizzo pubblico), `avvisi:GET`, `avvisi/[id]:GET`, `tasks:GET`,
+-- `tasks/[id]:PUT` (firmano al momento della lettura).
+--
+-- NOTA PER IL DB DI COLLAUDO DELLA CI, che non è migrato: lì i bucket restano
+-- come sono. Il codice regge entrambi i casi — su un bucket pubblico il link
+-- firmato funziona lo stesso.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+update storage.buckets
+   set public = false,
+       updated_at = now()
+ where id in ('avvisi_allegati', 'task_allegati')
+   and public is distinct from false;

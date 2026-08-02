@@ -9,6 +9,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
+import { formattaIstante } from '@/i18n/config'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -98,9 +99,9 @@ export const GET = withRoute('forms/export/xlsx:GET', async (request: NextReques
       'Modello': sub.form_model?.title ?? '',
       'Stato': STATUS_LABELS[sub.status as FormSubmissionStatus] ?? sub.status,
       'Firmato il': sub.signed_at
-        ? new Date(sub.signed_at).toLocaleString('it-IT')
+        ? formattaIstante(new Date(sub.signed_at), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
         : '',
-      'Creato il': new Date(sub.created_at).toLocaleString('it-IT'),
+      'Creato il': formattaIstante(new Date(sub.created_at), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }),
     }
 
     for (const fieldId of fieldIds) {

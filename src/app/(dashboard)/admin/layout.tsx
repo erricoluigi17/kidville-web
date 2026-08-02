@@ -2,7 +2,7 @@ import { AdminSidebar } from '@/components/features/admin/AdminSidebar';
 import { AdminTopBar } from '@/components/features/admin/AdminTopBar';
 import { AdminTopBarMobile } from '@/components/features/admin/AdminTopBarMobile';
 import { AdminBottomNav } from '@/components/features/admin/AdminBottomNav';
-import { SedeProvider } from '@/lib/context/sede-context';
+import { SedeProvider, SedeScopeBoundary } from '@/lib/context/sede-context';
 import { AdminIdentityProvider } from '@/lib/context/admin-identity';
 import { requireArea } from '@/lib/auth/area-guard';
 
@@ -18,6 +18,10 @@ import { requireArea } from '@/lib/auth/area-guard';
 // lg:pb-0` del <main> libera lo spazio della bottom-nav flottante su mobile.
 // Nessun componente qui usa useSearchParams (userId è letto client-side): niente
 // Suspense → inline su ogni route, anche le dinamiche /admin/primaria/[sectionId]/*.
+// Il contenuto (e SOLO il contenuto: non la topbar, non la sidebar, non la
+// bottom-nav) sta dentro `SedeScopeBoundary`, che lo rimonta quando l'utente
+// cambia sede: senza, ogni pagina con `useEffect(…, [userId])` — cioè quasi
+// tutte — resterebbe sui dati della sede precedente senza dirlo.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // Guardia d'area (M4B.4): staff di gestione e cuoca (report /admin/mensa/cucina).
   await requireArea('admin');
@@ -29,7 +33,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <AdminTopBar />
           <div className="lg:flex">
             <AdminSidebar />
-            <main className="flex-1 min-w-0 pb-28 lg:pb-0" data-cockpit-content>{children}</main>
+            <main className="flex-1 min-w-0 pb-28 lg:pb-0" data-cockpit-content>
+              <SedeScopeBoundary>{children}</SedeScopeBoundary>
+            </main>
           </div>
           <AdminBottomNav />
         </div>

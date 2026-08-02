@@ -1,8 +1,22 @@
 /**
  * Rate-limiter in-memory a finestra scorrevole (sliding window).
  *
- * Adatto a deployment single-instance (P0). In multi-istanza va spostato su uno
- * store condiviso (Postgres/Upstash) — vedi nota "RINVIATO" nel piano P0.
+ * ⚠️ IL CONTATORE È PER ISTANZA, E IN PRODUZIONE LE ISTANZE SONO PIÙ D'UNA.
+ *
+ * Lo `store` qui sotto è una `Map` nello scope del modulo, cioè nella memoria di
+ * UN processo Node. In produzione (Vercel) ogni lambda concorrente ha il proprio
+ * modulo e quindi il proprio contatore: **il tetto effettivo è N × `limit`**, con
+ * N il numero di istanze calde in quel momento. E un'istanza riciclata riparte da
+ * zero: una finestra "di dieci minuti" può azzerarsi anche prima.
+ *
+ * Non è un dettaglio d'implementazione da tenere in un angolo: chi scrive
+ * `limit: 5` sta dichiarando un numero che il sistema NON garantisce. Ogni
+ * chiamante deve chiedersi se il proprio caso regge un tetto approssimato per
+ * eccesso — vedi `@/lib/security/otp-rate-limit`, dove la domanda è posta per
+ * esteso e ha una risposta precisa.
+ *
+ * Il tetto esatto richiede uno store condiviso (Postgres/Upstash). Resta da fare:
+ * finché non c'è, questo modulo alza il costo di un abuso, non lo azzera.
  *
  * `now` è iniettabile per test deterministici.
  */

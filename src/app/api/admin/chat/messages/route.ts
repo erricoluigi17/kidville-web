@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { firmaAllegatiChat } from '@/lib/chat/allegati';
 
 // GET /api/admin/chat/messages?thread_id=
 // Messaggi di un thread in SOLA LETTURA per la supervisione della segreteria
@@ -44,8 +45,17 @@ export const GET = withRoute('admin/chat/messages:GET', async (request: NextRequ
       .select('id, sender_id, content, attachment_url, attachment_type, created_at')
       .eq('thread_id', q.data.thread_id)
       .order('created_at', { ascending: true });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ success: true, data: data ?? [] });
+    if (error) {
+      // PostgREST non lancia: ritorna `{ error }`. Il `catch` sotto non scatta
+      // mai su questo ramo, quindi la riga di log va emessa qui (AGENTS §7).
+      logErrore({ operazione: 'admin/chat/messages:GET', stato: 500, evento: 'db' }, error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // In tabella c'è il PERCORSO nel bucket privato (S32): anche la supervisione
+    // riceve un link firmato a tempo, generato dietro a questo gate.
+    const messaggi = await firmaAllegatiChat(supabase, data ?? [], 'admin/chat/messages:GET');
+    return NextResponse.json({ success: true, data: messaggi });
   } catch (err) {
     logErrore({ operazione: 'admin/chat/messages:GET', stato: 500 }, err);
     const msg = err instanceof Error ? err.message : 'Errore interno';

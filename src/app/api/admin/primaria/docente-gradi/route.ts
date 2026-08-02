@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { assertUtenteInScope, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -67,6 +67,13 @@ export const PATCH = withRoute('admin/primaria/docente-gradi:PATCH', async (requ
     const { utenteId, gradi } = b.data
 
     const supabase = await createAdminClient()
+    // Ancora un file chiuso a metà: il GET filtra per plessi (:39-47), la PATCH
+    // faceva `.update({gradi}).eq('id', utenteId)` e basta — si riclassificava
+    // un docente di un altro plesso, cambiando quali sezioni gli compaiono. Il
+    // gate va sul SOGGETTO scritto, non solo sul valore scritto.
+    const fuoriScope = await assertUtenteInScope(supabase, auth.user, utenteId)
+    if (fuoriScope) return fuoriScope
+
     const { data, error } = await supabase
       .from('utenti')
       .update({ gradi })

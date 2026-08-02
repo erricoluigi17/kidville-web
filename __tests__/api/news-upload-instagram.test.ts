@@ -31,9 +31,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
       listBuckets: async () => ({ data: [{ name: 'news' }], error: null }),
       createBucket: async () => ({ data: null, error: null }),
       updateBucket: async () => ({ data: null, error: null }),
-      from: () => ({
+      // Dal 2026-08-01 il media sosta nel bucket PRIVATO `news_bozze` finché il
+      // gate del consenso non è passato: l'editor riceve un indirizzo firmato,
+      // non quello pubblico. Vedi `__tests__/api/news-media-area-privata.test.ts`.
+      from: (bucket: string) => ({
         upload: async (path: string) => { h.lastUploadPath = path; return { data: h.uploadError ? null : { path }, error: h.uploadError } },
-        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.test/news/${path}` } }),
+        getPublicUrl: (path: string) => ({ data: { publicUrl: `https://cdn.test/public/${bucket}/${path}` } }),
+        createSignedUrl: async (path: string) => ({ data: { signedUrl: `https://cdn.test/sign/${bucket}/${path}?token=abc` }, error: null }),
       }),
     },
   }),
@@ -77,11 +81,11 @@ describe('POST /api/news/upload', () => {
     expect(res.status).toBe(400)
   })
 
-  it('carica un\'immagine nel bucket news, path namespaced sull\'utente', async () => {
+  it('carica un\'immagine nell\'area di sosta privata, path namespaced sull\'utente', async () => {
     const res = await UPLOAD(uploadReq(new File(['x'], 'foto.png', { type: 'image/png' })))
     expect(res.status).toBe(200)
     const j = await res.json()
-    expect(j.fileUrl).toContain('/news/')
+    expect(j.fileUrl).toContain('/sign/news_bozze/')
     expect(h.lastUploadPath).toContain('edu-1')
   })
 

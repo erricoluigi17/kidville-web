@@ -7,6 +7,7 @@ import { Download, FileSpreadsheet, Receipt, RefreshCw } from 'lucide-react';
 import { SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 
 interface RicevutaRiga {
     id: string;
@@ -193,7 +194,7 @@ function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; 
                     {pdf}
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2 font-maven text-xs text-kidville-muted">
-                    <span>{dataIt(r.creato_il)} · € {Number(r.importo).toFixed(2)}</span>
+                    <span>{dataIt(r.creato_il)} · {formatEuro(r.importo)}</span>
                     <ChipsRicevuta r={r} />
                 </div>
             </div>
@@ -204,7 +205,7 @@ function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; 
             <td className={cx(TD, 'font-bold text-kidville-green')}>{r.numero}/{r.anno}</td>
             <td className={cx(TD, 'text-kidville-muted')}>{dataIt(r.creato_il)}</td>
             <td className={cx(TD, 'text-kidville-ink')}>{alunno}</td>
-            <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(r.importo).toFixed(2)}</td>
+            <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(r.importo)}</td>
             <td className={TD}><ChipsRicevuta r={r} /></td>
             <td className={cx(TD, 'text-right')}>{pdf}</td>
         </tr>

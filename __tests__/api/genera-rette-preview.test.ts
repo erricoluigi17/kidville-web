@@ -9,7 +9,12 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => ['sc-1'] }))
+// Qui la sede NON è oggetto del test (lo è in `genera-rette-sede-scrittura.test.ts`,
+// col finto client e lo scope VERO): serve solo che l'anteprima ne abbia una.
+vi.mock('@/lib/auth/scope', () => ({
+  resolveScuoleAttive: async () => ['sc-1'],
+  resolveScuolaScrittura: async () => ({ scuolaId: 'sc-1' }),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -19,9 +24,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = () => b
       b.in = () => b
       b.is = () => b
+      b.or = () => b
       b.limit = () => b
       b.maybeSingle = async () => ({
-        data: table === 'payment_categories' ? { id: 'cat-retta' } : table === 'admin_settings' ? { retta_default_importo: 150, scuola_id: 'sc-1' } : null,
+        data: table === 'admin_settings' ? { retta_default_importo: 150, scuola_id: 'sc-1' } : null,
         error: null,
       })
       b.then = (resolve: (v: unknown) => unknown) => {
@@ -31,6 +37,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
           }
           return resolve({ data: h.alunni, error: null })
         }
+        if (table === 'payment_categories') return resolve({ data: [{ id: 'cat-retta', scuola_id: null }], error: null })
         return resolve({ data: table === 'pagamenti' ? h.esistenti : [], error: null })
       }
       return b

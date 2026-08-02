@@ -18,6 +18,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      // `.in('id', plessi)` — la GET filtra per le sedi dell'utente dal
+      // 2026-07-31. Qui è un passante: questo file collauda la FORMA della
+      // route (status, audit, 404), l'isolamento fra sedi ha il suo test con un
+      // database finto vero in `schools-patch-in-scope.test.ts`.
+      b.in = () => b
       b.order = async () => ({ data: h.list, error: null })
       b.maybeSingle = async () => ({ data: h.existing, error: null })
       b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return { select: () => ({ single: async () => ({ data: { id: 'sc-new', ...row }, error: null }) }) } }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { CalendarDays } from 'lucide-react';
+import { dataCivile, intlDateTime } from '@/i18n/config';
 
 /**
  * Agenda della sezione attiva per la home docente (M6.4, DR AgendaCard):
@@ -31,27 +32,52 @@ const TIPI = [
 
 const TIPO_LABEL_KEY: Record<string, string> = Object.fromEntries(TIPI.map((ti) => [ti.value, ti.labelKey]));
 
+/**
+ * Il chip «giorno / mese» di un evento a partire dalla sua data CIVILE (`YYYY-MM-DD`).
+ *
+ * `agenda.data` è una colonna `date`: non porta né ora né fuso, e va letta come
+ * un giorno del calendario, non come un istante. Il codice precedente faceva
+ * `new Date(\`${ymd}T00:00:00\`)` — mezzanotte nel fuso DEL DISPOSITIVO — e poi
+ * `toLocaleDateString(locale, …)` senza fuso: due dipendenze dall'ambiente che
+ * si annullavano solo finché il dispositivo stava in Italia. Da un telefono
+ * regolato su un fuso a est di Roma il 1º agosto diventava il 31 luglio.
+ *
+ * Qui l'istante si àncora a UTC e si formatta in UTC: una data senza ora non può
+ * slittare. Il `locale` passa da `intlDateTime`, che gli dà la sua REGIONE
+ * (it-IT / en-GB): `'en'` nudo lo risolverebbe su en-US.
+ */
 function giornoMese(ymd: string, locale: string): { giorno: string; mese: string } {
-  try {
-    const d = new Date(`${ymd}T00:00:00`);
-    return {
-      giorno: d.toLocaleDateString(locale, { day: 'numeric' }),
-      mese: d.toLocaleDateString(locale, { month: 'short' }).replace('.', ''),
-    };
-  } catch {
-    return { giorno: '—', mese: '' };
-  }
+  const d = new Date(`${ymd}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return { giorno: '—', mese: '' };
+  return {
+    giorno: intlDateTime(locale, { day: 'numeric', timeZone: 'UTC' }).format(d),
+    mese: intlDateTime(locale, { month: 'short', timeZone: 'UTC' }).format(d).replace('.', ''),
+  };
 }
 
+// `placeholder:text-kidville-sub`, non `muted`: il suggerimento dentro un campo
+// è testo a tutti gli effetti (2,51:1 → 6,46:1 su bianco).
 const inputCls =
-  'w-full rounded-input border border-kidville-line bg-white px-3 py-2 font-maven text-sm text-kidville-ink placeholder:text-kidville-muted focus:border-kidville-green focus:outline-none';
+  'w-full rounded-input border border-kidville-line bg-white px-3 py-2 font-maven text-sm text-kidville-ink placeholder:text-kidville-sub focus:border-kidville-green focus:outline-none';
 
 export function TeacherAgendaCard({
   sezione,
+  sectionId = null,
   userId,
   gruppo = 'sezione',
 }: {
+  /** Nome della classe: serve alle etichette, non più a identificarla. */
   sezione: string;
+  /**
+   * Identità della sezione (`sections.id`). È ciò che viaggia al server.
+   *
+   * ⚠️ Fino al 2026-07-31 partiva solo il NOME, e `/api/agenda` lo risolveva con
+   * un `LIMIT 1` senza `ORDER BY`: con «2 ANNI» presente ad Aversa e a Cesa
+   * l'evento — e la notifica alle famiglie — finiva in un plesso scelto dal
+   * pianificatore di query. Oggi la route è fail-closed (400 sull'omonimo):
+   * senza `section_id` la creazione si fermerebbe.
+   */
+  sectionId?: string | null;
   userId: string | null;
   /** Lessico per grado: "sezione" (0-6) o "classe" (primaria). */
   gruppo?: 'sezione' | 'classe';
@@ -62,7 +88,11 @@ export function TeacherAgendaCard({
   const [eventi, setEventi] = useState<EventoAgenda[]>([]);
   const [loading, setLoading] = useState(true);
   const [titolo, setTitolo] = useState('');
-  const [dataEvento, setDataEvento] = useState(() => new Date().toLocaleDateString('en-CA'));
+  // Il giorno proposto è quello ITALIANO, non quello dell'orologio che rende la
+  // pagina: `new Date().toLocaleDateString('en-CA')` dava la data del PROCESSO —
+  // che su Vercel gira in UTC — e fra le 00:00 e le 02:00 di Roma proponeva ieri
+  // (e faceva divergere HTML del server e primo render del browser).
+  const [dataEvento, setDataEvento] = useState(() => dataCivile());
   const [tipo, setTipo] = useState<string>('evento');
   const [visibile, setVisibile] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -70,15 +100,21 @@ export function TeacherAgendaCard({
 
   const load = useCallback(async () => {
     try {
+      // `section_id` quando c'è: la lettura ha lo stesso perimetro della
+      // scrittura, quindi non si crea un evento che poi non si rivede (o si
+      // rivede quello dell'omonima di un'altra sede).
+      const filtro = sectionId
+        ? `section_id=${encodeURIComponent(sectionId)}`
+        : `sezione=${encodeURIComponent(sezione)}`;
       const res = await fetch(
-        `/api/agenda?sezione=${encodeURIComponent(sezione)}${userId ? `&userId=${userId}` : ''}`
+        `/api/agenda?${filtro}${userId ? `&userId=${userId}` : ''}`
       ).catch(() => null);
       const j = res?.ok ? await res.json().catch(() => null) : null;
       if (Array.isArray(j?.data)) setEventi(j.data.slice(0, 6));
     } finally {
       setLoading(false);
     }
-  }, [sezione, userId]);
+  }, [sezione, sectionId, userId]);
 
   useEffect(() => {
     if (!sezione || !userId) return;
@@ -88,7 +124,7 @@ export function TeacherAgendaCard({
   if (!sezione) {
     return (
       <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-5 text-center">
-        <p className="font-maven text-[12.5px] leading-snug text-kidville-muted">
+        <p className="font-maven text-[12.5px] leading-snug text-kidville-sub">
           {t(isClasse ? 'agendaNessunaAssegnataClasse' : 'agendaNessunaAssegnataSezione')}
         </p>
       </div>
@@ -104,7 +140,9 @@ export function TeacherAgendaCard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sezione,
+          // Identità se c'è, nome solo come ripiego: il server non deve mai
+          // scegliere fra due classi omonime al posto del docente.
+          ...(sectionId ? { section_id: sectionId } : { sezione }),
           titolo: titolo.trim(),
           data: dataEvento,
           tipo,
@@ -115,7 +153,12 @@ export function TeacherAgendaCard({
         setTitolo('');
         await load();
       } else {
-        setErrore(t('agendaErroreSalvataggio'));
+        // Il motivo del rifiuto viene dal server (es. «Specificare la sede»):
+        // una scrittura muta è una scrittura persa. Il titolo NON si azzera,
+        // così l'evento si può ancora salvare dopo aver corretto.
+        const j = res ? await res.json().catch(() => null) : null;
+        const messaggio = typeof j?.error === 'string' && j.error.trim() !== '' ? j.error : null;
+        setErrore(messaggio ?? t('agendaErroreSalvataggio'));
       }
     } finally {
       setSaving(false);
@@ -137,7 +180,7 @@ export function TeacherAgendaCard({
           <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-kidville-green-soft text-kidville-green">
             <CalendarDays size={20} />
           </span>
-          <p className="font-maven text-[12.5px] leading-snug text-kidville-muted">
+          <p className="font-maven text-[12.5px] leading-snug text-kidville-sub">
             {t(isClasse ? 'agendaNessunEventoClasse' : 'agendaNessunEventoSezione')}
           </p>
         </div>
@@ -147,7 +190,7 @@ export function TeacherAgendaCard({
             const { giorno, mese } = giornoMese(e.data, locale);
             return (
               <div key={e.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
-                <span className="flex h-10 w-10 flex-shrink-0 flex-col items-center justify-center rounded-xl bg-kidville-yellow-soft text-kidville-yellow-dark">
+                <span className="flex h-10 w-10 flex-shrink-0 flex-col items-center justify-center rounded-xl bg-kidville-yellow-soft text-kidville-warn-strong">
                   <span className="font-barlow text-[15px] font-black leading-none">{giorno}</span>
                   <span className="font-barlow text-[9px] font-bold uppercase leading-none">{mese}</span>
                 </span>
@@ -155,7 +198,7 @@ export function TeacherAgendaCard({
                   <p className="truncate font-barlow text-sm font-extrabold uppercase text-kidville-green">
                     {e.titolo}
                   </p>
-                  <p className="mt-0.5 font-maven text-[12px] leading-snug text-kidville-muted">
+                  <p className="mt-0.5 font-maven text-[12px] leading-snug text-kidville-sub">
                     {TIPO_LABEL_KEY[e.tipo] ? t(TIPO_LABEL_KEY[e.tipo]) : e.tipo}
                     {e.orario_inizio ? ` · ${t('agendaOre', { orario: e.orario_inizio.slice(0, 5) })}` : ''}
                     {e.visibile_genitori ? '' : ` · ${t('agendaSoloStaff')}`}
@@ -170,7 +213,7 @@ export function TeacherAgendaCard({
 
       {/* composer inline (M6.4) */}
       <div className="mt-3 border-t border-kidville-line pt-3">
-        <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em] text-kidville-yellow-dark">
+        <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em] text-kidville-warn-strong">
           {t('agendaNuovoEvento')}
         </p>
         <input
@@ -214,7 +257,9 @@ export function TeacherAgendaCard({
           </button>
         </div>
         {errore && (
-          <p className="mt-2 font-maven text-[12px] text-kidville-error">{errore}</p>
+          // `error-strong` (5,65:1) e non `error` (4,24:1, sotto AA su bianco):
+          // è il motivo per cui un evento NON è stato salvato, e va letto.
+          <p role="alert" className="mt-2 font-maven text-[12px] text-kidville-error-strong">{errore}</p>
         )}
       </div>
     </div>

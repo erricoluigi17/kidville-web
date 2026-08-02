@@ -14,6 +14,7 @@ import {
 } from '@/lib/pagamenti/riconciliazione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { formatEuro } from '@/lib/format/valuta'
 
 const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
 // `z.iso.date()` valida una data ISO REALE (giorno/mese esistenti), non solo la forma YYYY-MM-DD:
@@ -233,7 +234,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
     const labels = new Map(
       aperti.map((p) => [
         p.id,
-        `${p.alunno_nome ?? '—'} · ${p.descrizione ?? '—'} (residuo € ${(Number(p.importo) - Number(p.importo_pagato || 0)).toFixed(2)})`,
+        `${p.alunno_nome ?? '—'} · ${p.descrizione ?? '—'} (residuo ${formatEuro(Number(p.importo) - Number(p.importo_pagato || 0))})`,
       ]),
     )
 

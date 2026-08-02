@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -126,8 +126,6 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
     // generare pagamenti (e le notifiche ai genitori) sui bambini di un'altra
     // sede. Lo stesso `scuola_id`, se assente, lasciava la query SENZA filtro.
     const scuoleAccessibili = await resolveScuoleAttive(request, supabase, user)
-    const scuolaRichiesta =
-      body.scuola_id && scuoleAccessibili.includes(body.scuola_id) ? body.scuola_id : null
 
     // risolve l'elenco alunni target
     let alunnoIds: string[] = body.alunno_ids ?? []
@@ -151,9 +149,19 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
         return NextResponse.json({ error: 'Alunni fuori dal tuo plesso' }, { status: 403 })
       }
     } else {
+      // Selezione per NOME-CLASSE: qui la sede dev'essere UNA, e dichiarata.
+      // `.in('scuola_id', scuoleAccessibili)` in AND con `.eq('classe_sezione', …)`
+      // leggeva «sede non indicata» come «tutte quelle su cui posso operare»:
+      // con «2 ANNI» che esiste in più plessi, un solo comando emetteva
+      // pagamenti — e le notifiche ai genitori — su due sedi insieme. Una
+      // scrittura di massa non deduce il proprio perimetro da un nome ambiguo:
+      // `resolveScuolaScrittura` risponde 400 e chiede quale plesso.
+      const sw = await resolveScuolaScrittura(request, supabase, user, body.scuola_id)
+      if (sw.response) return sw.response
+      const scuolaScrittura = sw.scuolaId as string
       let alQuery = supabase.from('alunni').select('id, classe_sezione, section_id')
         .eq('stato', 'iscritto')
-        .in('scuola_id', scuolaRichiesta ? [scuolaRichiesta] : scuoleAccessibili)
+        .eq('scuola_id', scuolaScrittura)
       if (body.classe_sezione) alQuery = alQuery.eq('classe_sezione', body.classe_sezione)
       const { data: al, error: errAl } = await alQuery
       if (errAl) {
@@ -244,7 +252,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
       utente_id: user.id,
     })
     if (auditRes.error) {
-      logEvento('pagamenti', 'error', {
+      logEvento('pagamento', 'error', {
         operazione: 'pagamenti/genera:POST',
         esito: 'audit-non-scritto',
         generati,
@@ -253,11 +261,23 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
 
     // Notifica ai genitori: nuovo dovuto disponibile (best-effort). UNA
     // notifica per genitore (dedup nel wrapper), mai una per pagamento.
+    //
+    // LA SEDE DELLA NOTIFICA SI DERIVA DAI PAGAMENTI APPENA SCRITTI, non dalla
+    // sede primaria di chi ha premuto il bottone: `scuolaId` decide quale
+    // toggle «pagamento_emesso» viene consultato (`isNotificaAbilitata`) e
+    // resta scritto sulla riga di `notifiche`. Il ripiego su `user.scuola_id`
+    // faceva rispondere il toggle del plesso SBAGLIATO ogni volta che l'admin
+    // generava per una sede diversa dalla propria — cioè sempre, dal pannello
+    // che conferma con `alunno_ids` e non manda `scuola_id`. Sedi miste (solo
+    // l'admin può averne) ⇒ `null`, che il wrapper documenta come fail-open:
+    // meglio una notifica in più che la configurazione di un plesso a caso.
     if (alunniGenerati.length > 0) {
+      const sediGenerate = new Set(
+        alunniGenerati.map((aId) => (scuolaByAlunno.get(aId) as string | null | undefined) ?? null),
+      )
       await notificaEvento(supabase, {
         tipo: 'pagamento_emesso',
-        // La sede del client solo se accessibile (vedi lo scope sopra).
-        scuolaId: (scuolaRichiesta || user.scuola_id) ?? null,
+        scuolaId: sediGenerate.size === 1 ? [...sediGenerate][0] : null,
         alunnoIds: alunniGenerati,
         titolo: 'Nuovo pagamento disponibile',
         corpo: `${descrizione}: trovi il dettaglio nella sezione Pagamenti.`,

@@ -141,6 +141,9 @@
   "giudiziValore": "Valore",
   "giudiziPlaceholderDescrittivo": "Giudizio descrittivo (pagella)",
   "giudiziPlaceholderNuovo": "Nuovo giudizio",
+  "giudiziAggiungi": "Aggiungi giudizio",
+  "giudiziElimina": "Elimina giudizio",
+  "giudiziErroreOperazione": "Operazione non riuscita. Riprova.",
   "giudiziTemplateTitolo": "Template giudizio descrittivo",
   "giudiziTemplateSottotitolo": "Frammenti componibili per dimensione/valore. Modificandoli sovrascrivi il default per la tua scuola.",
 
@@ -174,5 +177,9 @@
   "periodiAriaDataFine": "Data fine periodo",
   "periodiInserisciNome": "Inserisci il nome del periodo",
   "periodiAggiungiPeriodo": "Aggiungi periodo",
-  "periodiConfermaElimina": "Eliminare il periodo? Verranno rimossi anche gli scrutini collegati."
+  "periodiConfermaElimina": "Eliminare il periodo? Verranno rimossi anche gli scrutini collegati.",
+  "docentiMaterieRimuovi": "Rimuovi assegnazione",
+  "materieElimina": "Elimina materia",
+  "obiettiviElimina": "Elimina obiettivo",
+  "periodiElimina": "Elimina periodo"
 }

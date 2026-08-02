@@ -37,7 +37,10 @@ export const GET = withRoute('attendance/delegates:GET', async (request: NextReq
 
     try {
         const admin = await createAdminClient();
-        const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione);
+        // `soloSezioniAssegnate` (2026-07-31, R108): il gate nudo non chiede
+        // «questa classe è tua?», e un educator poteva ottenere i delegati al
+        // ritiro — nome e numero di documento — di qualunque classe del plesso.
+        const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione, { soloSezioniAssegnate: true });
         if (scopeErr) return scopeErr;
         // Il gate da solo non bastava: impedisce di NOMINARE la classe di
         // un'altra sede, non che la classe OMONIMA della propria sede si porti

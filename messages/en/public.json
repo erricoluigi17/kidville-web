@@ -32,6 +32,7 @@
   "wizardBambino": "Child",
   "wizardBambinoSub": "Child's personal details",
   "wizardErroreInvio": "An error occurred while submitting. Check your details and try again.",
+  "wizardErroreInvioDatiSalvi": "The details you entered are still here: nothing to fill in again, just press \u201cSubmit request\u201d once more.",
   "wizardEyebrow": "New Student Enrollment",
   "wizardIndietro": "Back",
   "wizardInviaRichiesta": "Submit request",
@@ -46,9 +47,14 @@
   "wizardRiepilogoNota": "Press <b>Submit request</b> to send your details to the office. You will receive confirmation and login credentials after review.",
   "wizardRiepilogoSub": "Review and submit your request",
   "wizardSede": "Location",
+  "wizardSediErroreTitolo": "We can\u2019t load the locations",
+  "wizardSediErroreCorpo": "Without the list of locations we can\u2019t file the enrollment at the right one, so the form does not start from here. Check your connection and try again; if the error continues, try again in a few minutes.",
+  "wizardSediRiprova": "Try again",
+  "wizardSediVuoteTitolo": "No location is accepting online enrollments",
+  "wizardSediVuoteCorpo": "The list of locations did arrive, but right now it contains no location accepting applications from this form. We do not start it, so that you don’t fill in your child’s details with nowhere to file them: please contact the school office, or try again later.",
   "wizardSedeErrore": "Choose a location to continue",
   "wizardSedeLegenda": "Enrollment location",
-  "wizardSedeSub": "Choose the site where you want to enroll your child",
+  "wizardSedeSub": "Choose the location where you want to enroll your child",
   "wizardConsensiTitolo": "Consents and privacy notice",
   "wizardConsensiSottotitolo": "One step, then the summary"
 }

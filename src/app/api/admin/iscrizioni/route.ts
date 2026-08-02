@@ -3,15 +3,19 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { riassuntoCampi } from '@/lib/audit/riassunto'
 import { ensureParentIdentity } from '@/lib/auth/parent-identity'
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send'
+import { nomeSede } from '@/lib/scuole/reali'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
+import { CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -128,9 +132,128 @@ async function assertInvioInScope(
   )
 }
 
+// Un solo messaggio per «di un'altra sede» e per «non esiste»: la risposta non
+// deve dire a un estraneo se quel file c'è. La differenza vive nel log.
+const DOC_NEGATO =
+  'Documento non accessibile: appartiene alla domanda di un\'altra sede, oppure non è più presente.'
+
+/**
+ * Gate di SCOPE sull'ALLEGATO (multi-sede) — `?doc=<percorso>`.
+ *
+ * Il collaudo privacy del 2026-07-31 l'ha MISURATA in produzione, non dedotta:
+ * la segreteria di Aversa chiedeva un percorso preso da una domanda di
+ * Giugliano e riceveva `200 {"url": "…/object/sign/form_attachments/…"}` — e
+ * quell'URL, scaricato SENZA alcuna sessione, restituiva integra la scansione
+ * del documento d'identità di un bambino. Il bucket ne contiene 870.
+ *
+ * La causa non era lo storage: era il gate. `requireStaff` verifica CHI chiede,
+ * non CHE COSA viene chiesto, e il percorso arrivava dalla query dritto a
+ * `createSignedUrl` col client service-role. **Un gate deve verificare
+ * l'OGGETTO, non solo il soggetto.**
+ *
+ * Qui il percorso si RISOLVE alla domanda che lo contiene — con `@>` (PostgREST
+ * `cs`), interrogando direttamente le sole domande delle sedi accessibili — e si
+ * firma solo se ne esce una riga. Due rami perché il modulo d'iscrizione ha due
+ * campi `file`: il documento del minore (`data->children[]->documento_path`) e
+ * quello dell'adulto (`data->adults[]->documento_path`).
+ *
+ * Tre scelte, tutte deliberate:
+ *  · **fail-CLOSED**: se la lettura fallisce non si firma. Non sapere di chi è
+ *    un documento d'identità di un minore non può voler dire consegnarlo;
+ *  · **percorso che non si risolve ⇒ diniego**: un oggetto che non appartiene a
+ *    nessuna domanda non ha una sede da verificare, e quindi nessuno può dire
+ *    che sia suo;
+ *  · **un solo messaggio** per «di un'altra sede» e «inesistente» (`DOC_NEGATO`):
+ *    la risposta non deve dire all'estraneo se il file c'è.
+ *
+ * Ritorna una 403/503 pronta, oppure `null` se si può firmare.
+ */
+async function assertDocumentoInScope(
+  request: NextRequest,
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  user: Parameters<typeof scuoleDiUtente>[1],
+  docPath: string,
+): Promise<NextResponse | null> {
+  const sedi = await resolveScuoleAttive(request, supabase, user)
+  const rami = ['children', 'adults'] as const
+
+  // Autorizzazione: la domanda che contiene il percorso, RISTRETTA alle sedi
+  // attive. Il filtro di sede sta nella STESSA query — non «da qualche parte
+  // nell'handler» — perché è l'unico posto dove l'AND lo rende vero.
+  for (const ramo of rami) {
+    const { data, error } = await supabase
+      .from('enrollment_submissions')
+      .select('id')
+      .in('scuola_id', sedi)
+      .contains('data', { [ramo]: [{ documento_path: docPath }] })
+      .limit(1)
+      .maybeSingle()
+    if (error) {
+      // PostgREST non lancia: ritorna `{ error }`. Qui si ferma tutto — anche
+      // quando è il DB E2E non migrato: un 503 in collaudo è un fastidio, un
+      // documento d'identità firmato per chi non ne ha diritto è una fuga.
+      logEvento('multi_sede', 'error', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'documento-non-verificabile',
+        entita_tipo: 'enrollment_submissions',
+        error_code: (error as { code?: string }).code ?? null,
+      }, error)
+      return NextResponse.json(
+        { error: 'Verifica del documento non riuscita: riprovare fra poco.' },
+        { status: 503 },
+      )
+    }
+    if (data) return null
+  }
+
+  // Diniego. Prima di rispondere si guarda — SOLO per il log — se quel percorso
+  // esista in un'altra sede: distingue un tentativo cross-sede da un percorso
+  // inventato, e senza quella distinzione il log di una fuga non si legge.
+  // Legge una riga sola e la SOLA `scuola_id`: mai il `data`, che è la domanda
+  // di una famiglia. Best-effort: un errore qui non cambia l'esito.
+  let sedeAltrove: string | null = null
+  for (const ramo of rami) {
+    const { data: altrove, error: altroveErr } = await supabase
+      .from('enrollment_submissions')
+      .select('scuola_id')
+      .contains('data', { [ramo]: [{ documento_path: docPath }] })
+      .limit(1)
+      .maybeSingle()
+    if (altroveErr) {
+      logEvento('multi_sede', 'info', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'documento-origine-non-verificabile',
+        entita_tipo: 'enrollment_submissions',
+        error_code: (altroveErr as { code?: string }).code ?? null,
+      }, altroveErr)
+      break
+    }
+    const sede = (altrove as { scuola_id?: unknown } | null)?.scuola_id
+    if (typeof sede === 'string') {
+      sedeAltrove = sede
+      break
+    }
+  }
+
+  // Nel log solo uuid, ruolo ed esito. MAI il percorso: contiene il nome del
+  // file caricato dalla famiglia, che quasi sempre è il nome di una persona.
+  logEvento('multi_sede', 'warn', {
+    operazione: 'admin/iscrizioni:GET',
+    esito: sedeAltrove ? 'documento-fuori-sede' : 'documento-non-risolto',
+    azione: 'documento',
+    utente: user.id,
+    ruolo: user.role,
+    sede_id: sedeAltrove,
+    sedi_attive: sedi.length,
+  })
+  return NextResponse.json({ error: DOC_NEGATO }, { status: 403 })
+}
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
-  doc: z.string().optional(), // path storage → signed URL
+  // `max(500)` come in `pagamenti/cassa/allegato:GET`: un percorso di storage
+  // non è lungo, e una stringa senza tetto è solo superficie d'attacco in più.
+  doc: z.string().max(500).optional(), // path storage → signed URL
 })
 
 // referenteIndex resta unknown: il codice accetta qualsiasi valore e usa 0
@@ -153,18 +276,63 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     const supabase = await createAdminClient()
 
     if (docPath) {
+      // PRIMA il gate sull'oggetto, POI la firma: l'URL firmato vive 10 minuti
+      // ed è scaricabile senza sessione, quindi produrlo e poi rispondere 403
+      // sarebbe una fuga con un altro nome.
+      const fuoriScope = await assertDocumentoInScope(request, supabase, auth.user, docPath)
+      if (fuoriScope) return fuoriScope
+
       const { data, error } = await supabase.storage
         .from('form_attachments')
         .createSignedUrl(docPath, 60 * 10) // 10 minuti
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        // Un errore restituito senza log è un guasto muto: `withRoute` registra
+        // l'esito della richiesta, non il motivo dello storage. Il messaggio
+        // grezzo non torna al client (può contenere il percorso, e quindi il
+        // nome del file della famiglia).
+        logErrore({ operazione: 'admin/iscrizioni:GET', stato: 404, evento: 'storage' }, error)
+        return NextResponse.json({ error: 'Documento non trovato' }, { status: 404 })
+      }
       return NextResponse.json({ url: data.signedUrl })
     }
 
-    const { data, error } = await supabase
-      .from('enrollment_submissions')
-      .select('*')
-      .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user))
-      .order('created_at', { ascending: false })
+    // Proiezione ESPLICITA, non `select('*')`.
+    //
+    // `enrollment_submissions.credentials` è un JSONB `{email, password}` con la
+    // PASSWORD IN CHIARO dell'account creato per il genitore. Con `select('*')`
+    // usciva da qui a ogni apertura di «Moduli ricevuti», per chiunque abbia un
+    // ruolo di staff nella sede, senza scadenza. Dal 2026-07-31 non si scrive
+    // più (vedi l'update in fondo alla PATCH) e non si rilegge: per riavere una
+    // password c'è `admin/regenerate-credentials`, che la rigenera lasciando
+    // traccia. Anche `consents_log` resta fuori: è la prova dei consensi, la
+    // legge il server nella PATCH, non serve all'elenco.
+    let cols = ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at']
+    const scuole = await resolveScuoleAttive(request, supabase, auth.user)
+    const runQuery = () =>
+      supabase
+        .from('enrollment_submissions')
+        .select(cols.join(', '))
+        .in('scuola_id', scuole)
+        .order('created_at', { ascending: false })
+
+    let { data, error } = await runQuery()
+    // Resilienza pre-migration (come in admin/students:GET): `select('*')` non
+    // falliva mai, una proiezione esplicita sì. Il DB E2E della CI non è
+    // migrato: colonna assente ⇒ `42703` ⇒ la si toglie e si riprova, invece di
+    // restituire un 500 su un problema d'infrastruttura del DB di test.
+    let attempts = 0
+    while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
+      const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(error.message)?.[1]
+      if (!col || !cols.includes(col)) break
+      logEvento('db', 'info', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'colonna-assente-rimossa',
+        campo: col,
+      })
+      cols = cols.filter((c) => c !== col)
+      ;({ data, error } = await runQuery())
+      attempts++
+    }
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
   } catch (err) {
@@ -205,14 +373,25 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     }
     const invioScuolaId = (sub as { scuola_id?: string | null }).scuola_id ?? null
 
-    // Consenso alla galleria riservata, letto dalla PROVA e non dal payload
-    // grezzo: `data` è ciò che il client ha mandato, `consents_log` è ciò che il
-    // server ha verificato e congelato all'invio.
+    // Consensi fotografici, letti dalla PROVA e non dal payload grezzo: `data` è
+    // ciò che il client ha mandato, `consents_log` è ciò che il server ha
+    // verificato e congelato all'invio. Le domande anteriori al passo consensi
+    // non hanno la prova: restano a `false`, che è il default corretto — un
+    // consenso che non risulta non è un consenso.
+    //
+    // ⚠️ TUTTI E TRE, non solo la galleria (privacy F4, 2026-07-31). Fino a oggi
+    // qui si leggeva soltanto `consenso_foto_galleria`: sito e social — risposti
+    // da 141 famiglie — non arrivavano da nessuna parte. L'elenco NON si scrive
+    // a mano: viene da `CONSENSI_FOTO_CANALI`, così un quarto canale aggiunto al
+    // modulo non può più nascere senza destinazione (lock nei test).
     const provaConsensi = (sub as { consents_log?: { blocchi?: { field_id?: string; accepted?: boolean }[] } | null }).consents_log
-    const consensoFotoGalleria =
-      (provaConsensi?.blocchi ?? []).some(
-        (b) => b.field_id === 'consenso_foto_galleria' && b.accepted === true,
-      )
+    const blocchiConsenso = provaConsensi?.blocchi ?? []
+    const consensiFoto = Object.fromEntries(
+      Object.entries(CONSENSI_FOTO_CANALI).map(([fieldId, colonna]) => [
+        colonna,
+        blocchiConsenso.some((b) => b.field_id === fieldId && b.accepted === true),
+      ]),
+    ) as Record<string, boolean>
     const fuoriScope = await assertInvioInScope(supabase, auth.user, invioScuolaId, action)
     if (fuoriScope) return fuoriScope
 
@@ -634,10 +813,15 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
 
           // Invio automatico delle credenziali (solo per un account appena creato)
           if (identita.createdAuth && identita.password) {
+            // La sede nel corpo dell'email: qui è nota per certo — è quella
+            // dell'iscrizione che si sta approvando, la stessa che finisce
+            // sull'alunno. «Kidville» da solo, con tre plessi, non dice al
+            // genitore a quale scuola sia stato iscritto suo figlio.
+            const sedeNome = await nomeSede(supabase, scuolaId, 'admin/iscrizioni:POST')
             const invio = await sendEmailDetailed({
               to: adultEmail,
               subject: 'Le tue credenziali di accesso — Kidville',
-              text: credentialsEmailBody(a.first_name != null ? String(a.first_name) : null, adultEmail, identita.password),
+              text: credentialsEmailBody(a.first_name != null ? String(a.first_name) : null, adultEmail, identita.password, sedeNome),
             })
             credentialsEmailSent = invio.ok
             if (!invio.ok) {
@@ -741,13 +925,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           documento_path: c.documento_path ?? null,
           classe_sezione: classe,
           stato: 'iscritto',
-          // Liberatoria foto raccolta al momento dell'iscrizione. Senza questa
-          // riga la famiglia acconsentiva e il bambino restava comunque con
-          // `consenso_privacy = false`: la galleria avrebbe bloccato le sue foto,
-          // e nessuno avrebbe capito perché — il consenso c'era, ma non era mai
-          // arrivato dove viene letto. È il canale «galleria riservata»: il sito
-          // e i social sono consensi distinti e NON passano di qui.
-          consenso_privacy: consensoFotoGalleria,
+          // Liberatorie foto raccolte al momento dell'iscrizione, UNA PER CANALE.
+          // Senza queste righe la famiglia acconsentiva e il bambino restava
+          // comunque a `false`: il consenso c'era, ma non era mai arrivato dove
+          // viene letto. I canali NON si contaminano — la galleria riservata alle
+          // famiglie della sezione è un'altra cosa dal sito pubblico e dai social
+          // (provv. Garante 725 del 27/11/2025).
+          ...consensiFoto,
         }
         // Insert resiliente alla colonna mancante (come per i parents sopra): DB E2E
         // senza le colonne della migrazione 20260706105201 → PGRST204 → le rimuove e riprova.
@@ -777,7 +961,12 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           entitaId: studentId,
           azione: 'insert',
           scuolaId,
-          valoreDopo: childRecord,
+          // NON il record intero. Fino al 2026-08-01 qui passava `childRecord`, e
+          // in `audit_scritture_docente` finiva la scheda completa del bambino —
+          // nome, codice fiscale, indirizzo, allergie, note mediche — su una
+          // tabella che l'oblio non toccava. L'audit deve dire CHE COSA è stato
+          // creato e QUALI campi sono stati compilati, non esserne una copia.
+          valoreDopo: riassuntoCampi(childRecord),
         })
       }
 
@@ -898,17 +1087,50 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     }
 
     // 5. Import completo → aggiorna l'invio a 'approved'.
+    //
+    // `credentials` NON si scrive più (2026-07-31). Era un JSONB con la password
+    // IN CHIARO dell'account genitore, archiviata a tempo indeterminato e rilette
+    // dalla GET qui sopra da qualunque ruolo di staff della sede. La password
+    // torna nella risposta HTTP di QUESTA richiesta — l'unico momento in cui
+    // l'operatore deve poterla leggere — e finisce nell'email al genitore.
+    // Per riaverla dopo esiste `admin/regenerate-credentials`, che la rigenera
+    // (e quindi invalida la precedente) lasciando traccia dell'operazione.
+    // Insieme all'approvazione escono dalla domanda i DATI SANITARI del minore
+    // (privacy F2, 2026-07-31). Allergie e note mediche sono ora in
+    // `alunni.allergies` / `alunni.note_mediche` — dove le legge la cucina, dove
+    // le corregge la segreteria e da dove l'oblio le cancella. La copia dentro
+    // `data` è ridondante, ed è una categoria particolare (art. 9) che usciva
+    // integra da `GET /api/admin/iscrizioni` a ogni apertura di «Moduli
+    // ricevuti», per ogni ruolo di staff, senza scadenza.
+    // Solo quei due campi: la domanda accolta resta un atto amministrativo, con
+    // dentro chi ha chiesto cosa e quando. E solo QUI, dopo il ramo degli errori
+    // bloccanti: se l'import non fosse riuscito, la segreteria riproverebbe su
+    // una domanda già svuotata dei dati sanitari.
+    const at = new Date().toISOString()
+    const sanitari = scrubSanitariDomanda(data, at)
     const { error: updErr } = await supabase
       .from('enrollment_submissions')
       .update({
         status: 'approved',
         assigned_classes: assignments,
-        credentials,
-        imported_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        data: sanitari.data,
+        imported_at: at,
+        updated_at: at,
       })
       .eq('id', id)
     if (updErr) warnings.push(`Aggiornamento invio: ${updErr.message}`)
+    else if (sanitari.minoriScrubbati > 0) {
+      // Evento critico → si logga anche il SUCCESSO. Solo conteggi e uuid:
+      // `gdpr` è in EVENTI_PERSISTITI, quindi la riga resta in `app_log` e
+      // documenta che quella copia è stata tolta (e quando).
+      logEvento('gdpr', 'info', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'sanitari-rimossi-da-domanda',
+        entita_tipo: 'enrollment_submissions',
+        entita_id: id,
+        n: sanitari.minoriScrubbati,
+      })
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,

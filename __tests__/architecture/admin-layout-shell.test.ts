@@ -11,6 +11,13 @@ import path from 'node:path';
  * pillola). È un lock testuale — come `design-tokens-admin`/`logging-coverage` —
  * perché rimuovere per sbaglio una di queste righe non romperebbe la build ma
  * lascerebbe la navigazione mobile monca (o senza safe-area su WebView nativa).
+ *
+ * Dal 2026-07-31 il lock copre anche `SedeScopeBoundary` attorno al contenuto
+ * (W3-D / R74): è il confine che rimonta le pagine al cambio di sede. Toglierlo
+ * non rompe nulla — semplicemente il cockpit continua a mostrare i dati della
+ * sede precedente, in silenzio, come faceva prima. È il difetto più difficile da
+ * accorgersi che ci sia: la pagina si vede, i numeri ci sono, sono solo di
+ * un'altra scuola.
  */
 
 const LAYOUT = path.join(
@@ -40,5 +47,15 @@ describe('admin layout — shell mobile montata (Step 4)', () => {
   it('libera lo spazio della bottom-nav flottante sul contenuto (pb-28 lg:pb-0)', () => {
     expect(src).toContain('pb-28');
     expect(src).toContain('lg:pb-0');
+  });
+
+  it('avvolge il contenuto in <SedeScopeBoundary> (ri-caricamento al cambio sede)', () => {
+    expect(src).toContain('SedeScopeBoundary');
+    // Dentro il <main>, non attorno alla shell: topbar, sidebar e bottom-nav
+    // NON devono rimontarsi (il menu da cui hai scelto la sede resta aperto).
+    const main = src.match(/<main[\s\S]*?<\/main>/);
+    expect(main).not.toBeNull();
+    expect(main?.[0]).toContain('<SedeScopeBoundary>');
+    expect(main?.[0]).toContain('{children}');
   });
 });

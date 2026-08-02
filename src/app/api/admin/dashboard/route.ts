@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
+import { dataCivile, meseCivile, primoDelMeseCivile } from '@/i18n/config'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -12,8 +14,21 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 // Etichette mesi brevi (IT) per l'asse del grafico trend incassi.
 const MESI_IT = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
 
-function ymKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+/**
+ * Il mese di una data del database, in ora ITALIANA.
+ *
+ * `data_incasso` è una colonna `date` e arriva come `'2026-07-31'`: passarla a
+ * `new Date()` la interpreta come mezzanotte UTC, e `getMonth()` la rilegge poi
+ * nel fuso del processo — che su Vercel è UTC e in locale no. Due conversioni
+ * dove non ne serve nessuna: il mese di `'2026-07-31'` sono i suoi primi sette
+ * caratteri.
+ *
+ * Misurato il 2026-08-01 all'01:08 italiane (a Greenwich era ancora luglio): la
+ * dashboard cercava «questo mese» in agosto e non trovava l'incasso registrato
+ * quel giorno. Un incasso vero, sparito da un KPI.
+ */
+function ymKey(data: string) {
+  return data.slice(0, 7)
 }
 
 /**
@@ -35,12 +50,15 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   // Scope multi-sede: aggreghiamo solo sui plessi attivi/accessibili (mai cross-tenant).
   const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
-  const now = new Date()
-  const today = now.toISOString().slice(0, 10) // YYYY-MM-DD
-  const curMonthKey = ymKey(now)
+  // Tutte le date di questa route sono date CIVILI ITALIANE, non date del
+  // processo: le tre sedi sono in Campania e «oggi» è oggi per loro. Su Vercel
+  // il processo gira in UTC, quindi fra mezzanotte e le due `toISOString()`
+  // restituirebbe il giorno prima — e per due ore al giorno la dashboard
+  // parlerebbe di ieri chiamandolo oggi.
+  const today = dataCivile()
+  const curMonthKey = meseCivile()
   // Primo giorno di 5 mesi fa => finestra di 6 mesi inclusa quella corrente.
-  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
-  const sixMonthsAgoIso = sixMonthsAgo.toISOString().slice(0, 10)
+  const sixMonthsAgoIso = primoDelMeseCivile(5)
 
   const [
     alunniRes,
@@ -77,10 +95,16 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .select('id', { count: 'exact', head: true })
       .in('scuola_id', sedi)
       .eq('fattura_stato', 'in_attesa'),
-    // Incassi ultimi 6 mesi (trend + incassato mese corrente)
+    // Incassi ultimi 6 mesi (trend + incassato mese corrente).
+    // `incassi` NON ha `scuola_id`: la sede si raggiunge solo via
+    // `pagamento_id → pagamenti.scuola_id`. Il join `!inner` è quindi il filtro
+    // — e non perde righe, perché `incassi.pagamento_id` è sempre valorizzato
+    // (FK verso `pagamenti`). Senza, il primo incasso di un'altra sede entrava
+    // nel KPI di chi non deve vederlo.
     supabase
       .from('incassi')
-      .select('importo, data_incasso')
+      .select('importo, data_incasso, pagamenti!inner(scuola_id)')
+      .in('pagamenti.scuola_id', sedi)
       .gte('data_incasso', sixMonthsAgoIso),
     // Iscrizioni in attesa (conteggio)
     supabase
@@ -88,10 +112,19 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .select('id', { count: 'exact', head: true })
       .in('scuola_id', sedi)
       .eq('status', 'pending'),
-    // Iscrizioni in attesa (lista per alert)
+    // Iscrizioni in attesa (lista per alert) — SOLO l'id e la data d'arrivo.
+    //
+    // `enrollment_submissions.data` NON è una data: è la colonna JSONB con il
+    // MODULO D'ISCRIZIONE INTERO (19 campi per adulto, fra cui tipo e numero
+    // del documento d'identità e `documento_path`; 17 per minore, fra cui
+    // codice fiscale, data di nascita, residenza, `allergies` e `note_mediche`).
+    // Fino al 2026-07-31 stava in questa proiezione e finiva in risposta, così
+    // ogni caricamento della dashboard consegnava per intero le 5 domande
+    // pending più recenti. Il widget mostra «Richiesta N · da gestire» e una
+    // data: `created_at` è tutto ciò che gli serve.
     supabase
       .from('enrollment_submissions')
-      .select('id, data, status, created_at')
+      .select('id, created_at')
       .in('scuola_id', sedi)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
@@ -102,14 +135,35 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       .select('id', { count: 'exact', head: true })
       .in('scuola_id', sedi)
       .eq('data', today),
-    // Submission moduli totali
-    supabase.from('form_submissions').select('id', { count: 'exact', head: true }),
+    // Submission moduli totali — filtrate per sede: senza `.in()` il contatore
+    // includeva anche la riga della sede FINTA E2E, cioè un KPI di produzione
+    // già sbagliato oggi.
+    supabase.from('form_submissions').select('id', { count: 'exact', head: true }).in('scuola_id', sedi),
     // Submission moduli da firmare/evadere
     supabase
       .from('form_submissions')
       .select('id', { count: 'exact', head: true })
+      .in('scuola_id', sedi)
       .eq('status', 'pending_signature'),
   ])
+
+  // PostgREST non lancia: ogni aggregato si legge con `?? 0` / `?? []`, quindi
+  // un guasto diventa uno ZERO indistinguibile da «non ci sono dati». Con i
+  // filtri di sede aggiunti il 2026-07-31 il caso è concreto: sul DB E2E della
+  // CI, che non è migrato, `form_submissions.scuola_id` non esiste e PostgREST
+  // risponde `42703` sulla SELECT. La dashboard deve reggere — ma il motivo
+  // dello zero deve restare leggibile nei log, non sparire.
+  for (const [nome, res] of [
+    ['incassi', incassiRes],
+    ['form_submissions:totale', moduliTotRes],
+    ['form_submissions:da_firmare', moduliPendingRes],
+  ] as const) {
+    if (res.error) {
+      // Il nome dell'aggregato va in `evento`: è l'unico campo libero del
+      // contesto, ed è ciò che distingue «quale KPI è a zero e perché».
+      logErrore({ operazione: 'admin/dashboard:GET', stato: 200, evento: `db:${nome}` }, res.error)
+    }
+  }
 
   // --- Studenti ---
   const alunni = alunniRes.data ?? []
@@ -144,13 +198,14 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   const trendMap = new Map<string, number>()
   // Inizializza gli ultimi 6 mesi a 0 così il grafico ha sempre tutte le colonne.
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    trendMap.set(ymKey(d), 0)
+    trendMap.set(ymKey(primoDelMeseCivile(i)), 0)
   }
   let incassatoMese = 0
   for (const inc of incassi) {
-    const d = new Date(inc.data_incasso as string)
-    const key = ymKey(d)
+    // La colonna è `date`: il suo mese sono i primi sette caratteri. Passarla da
+    // `new Date()` aggiungerebbe una conversione di fuso a un dato che un fuso
+    // non ce l'ha, ed è da lì che nasceva lo scarto di un giorno.
+    const key = ymKey(String(inc.data_incasso ?? ''))
     if (trendMap.has(key)) trendMap.set(key, (trendMap.get(key) ?? 0) + Number(inc.importo ?? 0))
     if (key === curMonthKey) incassatoMese += Number(inc.importo ?? 0)
   }
@@ -160,9 +215,14 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
   })
 
   // --- Iscrizioni alert ---
-  const alertIscrizioni = (iscrizioniListRes.data ?? []).map((e) => ({
-    id: e.id as string,
-    data: (e.data ?? e.created_at) as string | null,
+  // La variabile si chiama `invio`, non `e`: `e.data` si leggeva come «la data»
+  // ed era invece la colonna JSONB col fascicolo della famiglia. Qui `data` è
+  // la CHIAVE della risposta (in italiano: la data d'arrivo, quella che il
+  // widget formatta), e il valore viene solo da `created_at` — l'unico campo
+  // che la query chiede.
+  const alertIscrizioni = (iscrizioniListRes.data ?? []).map((invio) => ({
+    id: invio.id as string,
+    data: (invio.created_at as string | null) ?? null,
   }))
 
   return NextResponse.json({

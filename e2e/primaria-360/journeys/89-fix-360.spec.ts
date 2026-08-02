@@ -58,7 +58,10 @@ test.describe('360 fix · docente1 (TEST 1A)', () => {
     const uid = readAppIds()['docente1'];
     await page.goto(withUser('/teacher/settings/locker', uid), { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2800);
-    await expect(page.getByText('Caricamento...')).toHaveCount(0);
+    // Ellissi tipografica: i cataloghi sono stati uniformati il 2026-08-01. Con
+    // i tre punti l'asserzione sarebbe rimasta verde cercando un testo che non
+    // esiste più — cioè avrebbe smesso di sorvegliare lo spinner.
+    await expect(page.getByText('Caricamento…')).toHaveCount(0);
   });
 
   test('F9 · diario 0-6 fail-closed per la primaria (empty-state, niente nido)', async ({ page }) => {

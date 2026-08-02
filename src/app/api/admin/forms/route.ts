@@ -5,7 +5,7 @@ import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
@@ -152,25 +152,39 @@ export const PATCH = withRoute('admin/forms:PATCH', async (request: NextRequest)
       if (target_classes !== undefined) updates.target_classes = target_classes;
       if (sempre_firmabile !== undefined) updates.sempre_firmabile = sempre_firmabile === true;
 
-      let res = await supabase
-        .from('forms_templates')
-        .update(updates)
-        .eq('id', id)
-        .select()
-        .single();
+      // Isolamento per sede sulla RIGA, non solo sui campi. L'allowlist qui sopra
+      // impedisce di riscrivere `scuola_id`, ma non diceva nulla su QUALE riga si
+      // tocca: `.eq('id', id)` nudo modificava il template di un altro plesso.
+      // `forms_templates.scuola_id` è NOT NULL, quindi il filtro non ha bisogno di
+      // degradare. Scope vuoto ⇒ nessuna riga colpita ⇒ 404.
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user);
+      const aggiorna = (patch: Record<string, unknown>) =>
+        supabase.from('forms_templates').update(patch).eq('id', id).in('scuola_id', sedi).select();
+
+      let res = await aggiorna(updates);
       // DB non migrato: se la PATCH portava `sempre_firmabile` e la colonna manca,
       // riprova senza — gli altri campi devono comunque salvarsi.
       if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '') && 'sempre_firmabile' in updates) {
         const rest = { ...updates };
         delete rest.sempre_firmabile;
-        res = await supabase.from('forms_templates').update(rest).eq('id', id).select().single();
+        res = await aggiorna(rest);
       }
 
       if (res.error) {
         return NextResponse.json({ error: res.error.message }, { status: 500 });
       }
+      // Zero righe colpite: o il modulo non esiste, o non è di un plesso in scope.
+      // 404 in entrambi i casi — un 403 direbbe «esiste, ma non è tuo».
+      const colpite = (res.data ?? []) as Record<string, unknown>[];
+      if (colpite.length === 0) {
+        logEvento('modulistica', 'warn', {
+          operazione: 'admin/forms:PATCH', esito: 'modulo-fuori-sede-o-inesistente',
+          utente: auth.user.id, ruolo: auth.user.role,
+        });
+        return NextResponse.json({ error: 'Modulo non trovato' }, { status: 404 });
+      }
 
-      return NextResponse.json(res.data);
+      return NextResponse.json(colpite[0]);
     } catch (err) {
       logErrore({ operazione: 'admin/forms:PATCH', stato: 500 }, err);
       const message = err instanceof Error && err.message ? err.message : 'Errore interno';
@@ -189,15 +203,33 @@ export const DELETE = withRoute('admin/forms:DELETE', async (request: NextReques
     try {
       const supabase = await createAdminClient();
 
-      const { error } = await supabase
+      // Stesso vincolo della PATCH: la DELETE si porta via anche le compilazioni
+      // collegate, quindi il template dev'essere di un plesso in scope.
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user);
+      const { data, error } = await supabase
         .from('forms_templates')
         .delete()
-        .eq('id', b.data.id);
+        .eq('id', b.data.id)
+        .in('scuola_id', sedi)
+        .select('id');
 
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
       }
+      if (((data ?? []) as unknown[]).length === 0) {
+        logEvento('modulistica', 'warn', {
+          operazione: 'admin/forms:DELETE', esito: 'modulo-fuori-sede-o-inesistente',
+          utente: auth.user.id, ruolo: auth.user.role,
+        });
+        return NextResponse.json({ error: 'Modulo non trovato' }, { status: 404 });
+      }
 
+      // Cancellazione di un modulo (e delle compilazioni collegate): evento da
+      // vedere anche quando riesce. Solo uuid e ruolo.
+      logEvento('modulistica', 'info', {
+        operazione: 'admin/forms:DELETE', esito: 'modulo-eliminato',
+        utente: auth.user.id, ruolo: auth.user.role,
+      });
       return NextResponse.json({ success: true });
     } catch (err) {
       logErrore({ operazione: 'admin/forms:DELETE', stato: 500 }, err);

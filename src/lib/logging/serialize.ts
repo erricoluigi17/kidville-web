@@ -113,6 +113,34 @@ const CODICE_FISCALE = new RegExp(
 );
 
 /**
+ * `Key (col)=(valore)` NON è l'unico modo in cui Postgres rimanda indietro il dato
+ * che ha rifiutato. La classe SQLSTATE **22** (`data_exception`) lo echeggia fra
+ * virgolette doppie: `invalid input syntax for type uuid: "…"`.
+ *
+ * Misurato il 2026-08-02: `GET /m/<token>` — e `<token>` in questo repo è
+ * dichiarato una CREDENZIALE — finiva in chiaro in `app_log.messaggio`, dove
+ * sopravviveva 30 giorni. Non lo prendeva nessuno: `redact()` è a lista bianca
+ * PER CHIAVE, e nel testo di un errore le chiavi non ci sono. È la stessa forma
+ * del guasto storico di questo progetto — una regola giusta applicata a una
+ * lista chiusa di pattern — solo su un pattern diverso.
+ *
+ * La maschera è ANCORATA alle frasi che Postgres usa per echeggiare l'input, non
+ * a «qualunque cosa fra virgolette»: `invalid value for parameter "search_path"`
+ * quota il NOME del parametro, non il valore, e mascherarlo toglierebbe la
+ * diagnosi senza togliere un dato personale. Restano in chiaro il tipo atteso e
+ * il codice SQLSTATE, che sono ciò che serve alle 3 di notte.
+ */
+const VALORE_RIFIUTATO_PG = new RegExp(
+    '((?:' +
+        'invalid input syntax for (?:type )?[^:"\\n]{0,60}' + '|' +
+        'invalid input value for enum [^:"\\n]{0,60}' + '|' +
+        'invalid value for domain [^:"\\n]{0,60}' + '|' +
+        'date/time field value out of range' +
+    '):\\s*)"[^"\\n]*"',
+    'gi',
+);
+
+/**
  * Maschera i dati personali INCORPORATI nel testo di un errore.
  *
  * Perché esiste: `redact()` è a lista bianca PER CHIAVE, ma il testo di un errore non ha
@@ -137,6 +165,7 @@ export function sanificaMessaggio(msg: string): string {
         // La soglia è larga: ciò che il taglio finale scarterà era comunque destinato al cestino.
         const mascherato = tronca(String(msg), PRE_TAGLIO)
             .replace(VINCOLO_PG, 'Key ($1)=(…)')
+            .replace(VALORE_RIFIUTATO_PG, '$1"[valore]"')
             .replace(EMAIL, '[email]')
             .replace(CODICE_FISCALE, '[cf]');
         // Si maschera PRIMA e si tronca DOPO: al contrario, un taglio a metà di un'email ne

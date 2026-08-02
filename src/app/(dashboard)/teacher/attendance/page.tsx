@@ -12,6 +12,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { formattaIstante } from '@/i18n/config';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -33,6 +34,16 @@ interface Student {
 }
 
 type FilterKey = 'tutti' | 'todo' | AttendanceStato;
+
+// Da stato del record a chiave del namespace i18n: serve all'avviso di
+// salvataggio fallito, che deve dire ANCHE cosa si stava registrando («Mario
+// Rossi — Presente»). Letterali, non `string`, perché `t()` è tipizzata.
+const CHIAVE_STATO = {
+    presente: 'presente',
+    ritardo: 'ritardo',
+    assente: 'assente',
+    uscita_anticipata: 'uscitaAnt',
+} as const;
 
 // ─── Tab ──────────────────────────────────────────────────────────────────────
 
@@ -65,7 +76,7 @@ function addDays(iso: string, n: number): string {
 
 function formatDataLunga(iso: string, locale: string): string {
     const d = new Date(iso + 'T12:00:00');
-    return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return formattaIstante(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 // ─── Navigatore Data ─────────────────────────────────────────────────────────
@@ -199,6 +210,15 @@ function TodayView({ sezione }: { sezione: string }) {
     const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    /**
+     * Salvataggi che il server NON ha accettato: `alunno_id` → stato che si
+     * stava registrando. È una MAPPA e non un singolo errore di proposito: con
+     * la rete che va e viene la maestra clicca dieci bambini di fila, e un
+     * banner che mostra solo l'ultimo racconta che gli altri nove sono andati a
+     * buon fine. Si svuota una riga alla volta, quando quella riga viene
+     * salvata davvero.
+     */
+    const [erroriSalvataggio, setErroriSalvataggio] = useState<Record<string, AttendanceStato>>({});
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOffline = !useOnlineStatus();
     const [filter, setFilter] = useState<FilterKey>('tutti');
@@ -299,28 +319,53 @@ function TodayView({ sezione }: { sezione: string }) {
             }
         }));
 
+        // Lo STATO della risposta va tenuto fuori dal `try`: nel `catch` non c'è
+        // più la `res`, e senza lo stato la riga di log dice che il salvataggio è
+        // fallito ma non perché. Non è un dettaglio: il logger di rete scarta di
+        // proposito i 401/400 (`livelloFetch`, per non annegare `app_log`), quindi
+        // un appello respinto per SESSIONE SCADUTA non lasciava NESSUNA traccia
+        // leggibile — misurato in produzione il 2026-08-02. «Riprova» e «rifai il
+        // login» sono due rimedi diversi, e alle 3 di notte si distinguono solo da
+        // qui. Resta `undefined` se la risposta non è mai arrivata (rete giù):
+        // meglio nessuno stato che uno inventato.
+        let statoHttp: number | undefined;
         try {
             const res = await fetch('/api/attendance/daily', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ alunno_id: studentId, data: selectedDate, stato, orario_entrata, orario_uscita }),
             });
+            statoHttp = res.status;
             if (!res.ok) {
                 const errData = await res.json();
                 throw new Error(errData.error ?? 'Errore salvataggio');
             }
             const saved = await res.json();
             setRecords(prev => ({ ...prev, [studentId]: saved }));
+            // Questa riga è salvata: se era in errore, esce dall'avviso.
+            setErroriSalvataggio(prev => {
+                if (!(studentId in prev)) return prev;
+                const next = { ...prev };
+                delete next[studentId];
+                return next;
+            });
         } catch (err) {
             // `err` qui è spesso l'errore del server sul record presenza: il suo `.message`
             // riecheggia `alunno_id` e lo stato del bambino. Esce solo la classe dell'errore.
-            logClient({ livello: 'error', evento: 'fetch', messaggio: `presenza-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/attendance' });
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `presenza-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/attendance', stato: statoHttp });
             // Rollback ottimistico
             setRecords(prev => {
                 const next = { ...prev };
                 delete next[studentId];
                 return next;
             });
+            // …e SUBITO l'avviso a schermo. Il rollback da solo è ingannevole:
+            // per un secondo la riga ha mostrato l'orario d'ingresso, poi è
+            // tornata com'era. Chi ha appena cliccato «Presente» legge quella
+            // sequenza come «fatto» e va avanti — il bambino resta non
+            // registrato e nessuno lo sa fino al giorno dopo, quando qualcuno
+            // legge i log. Il log serve a noi; questo serve a lei.
+            setErroriSalvataggio(prev => ({ ...prev, [studentId]: stato }));
         } finally {
             setLoadingStudentId(null);
         }
@@ -361,6 +406,17 @@ function TodayView({ sezione }: { sezione: string }) {
         Object.values(records).forEach((r) => { if (r.stato in c) c[r.stato] += 1; });
         return c;
     }, [records]);
+
+    // Righe da mostrare nell'avviso: solo quelle di cui si conosce il bambino
+    // (l'elenco alunni è già caricato quando si clicca, ma se un giorno non lo
+    // fosse un avviso senza nome sarebbe peggio di nessun avviso).
+    const righeNonSalvate = useMemo(
+        () => Object.entries(erroriSalvataggio).flatMap(([id, stato]) => {
+            const alunno = students.find(s => s.id === id);
+            return alunno ? [{ id, stato, nome: `${alunno.firstName} ${alunno.lastName}` }] : [];
+        }),
+        [erroriSalvataggio, students],
+    );
 
     const visibleStudents = useMemo(() => {
         if (filter === 'tutti') return students;
@@ -430,6 +486,44 @@ function TodayView({ sezione }: { sezione: string }) {
 
             {/* Card riepilogo + chip filtro */}
             <Summary counts={counts} total={students.length} filter={filter} onFilter={setFilter} sezione={sezione} />
+
+            {/* Presenze che il server ha rifiutato. Sta QUI, sopra la lista e
+                sotto il contatore, perché è lì che l'occhio torna dopo il click.
+                `role="alert"` lo fa annunciare anche a chi non guarda lo schermo. */}
+            {righeNonSalvate.length > 0 && (
+                <div
+                    role="alert"
+                    /* `kv-appello-avviso` è il marcatore che porta questa fascia
+                       dentro l'Alto Contrasto (globals.css, accanto a
+                       `.kv-mensa-alt`): senza, restava identica alla luce
+                       normale mentre il resto della schermata si ribaltava.
+                       `.kv-appello-row` sta sulle righe alunno, non qui. */
+                    className="kv-appello-avviso flex flex-col gap-2 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4"
+                >
+                    <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-error-strong">
+                        {t('salvataggioFallito')}
+                    </p>
+                    <ul className="flex flex-col gap-2">
+                        {righeNonSalvate.map(({ id, stato, nome }) => (
+                            <li key={id} className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-maven text-sm text-kidville-ink">
+                                    <strong className="font-semibold">{nome}</strong>
+                                    {' — '}
+                                    {t(CHIAVE_STATO[stato])}
+                                </span>
+                                <button
+                                    onClick={() => handleSetStato(id, stato)}
+                                    aria-label={t('riprovaPer', { alunno: nome })}
+                                    className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-semibold text-kidville-yellow"
+                                >
+                                    <RefreshCw size={13} /> {t('riprova')}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                    <p className="font-maven text-xs text-kidville-ink/80">{t('salvataggioFallitoAiuto')}</p>
+                </div>
+            )}
 
             {/* Lista studenti (filtrata) */}
             <div className="flex flex-col gap-2">

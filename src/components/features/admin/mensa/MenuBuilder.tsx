@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { CalendarRange, Save, Plus, Trash2, CalendarOff, UtensilsCrossed } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
@@ -340,12 +341,12 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
           {override.map(o => (
             <div key={o.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-kidville-line">
               <div className="font-maven text-sm text-kidville-green">
-                <b>{new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(`${o.data}T00:00:00Z`))}</b>
+                <b>{intlDateTime(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(`${o.data}T00:00:00Z`))}</b>
                 {o.chiuso ? <span className="ml-2 text-kidville-error">{t('chiusa')}</span> : (
                   <span className="ml-2 text-kidville-muted text-xs">{[o.portate?.primo, o.portate?.secondo, o.portate?.contorno, o.portate?.frutta].filter(Boolean).join(' · ')}</span>
                 )}
               </div>
-              <button onClick={() => rimuoviOverride(o.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+              <button onClick={() => rimuoviOverride(o.id)} aria-label={t('mbRimuoviEccezione')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>
           ))}
         </div>

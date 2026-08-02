@@ -31,7 +31,7 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                     <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase">
                         {t('uscita')}: {studentName}
                     </h2>
-                    <button onClick={onClose} className="p-2 text-kidville-muted hover:text-kidville-error transition-colors">
+                    <button onClick={onClose} aria-label={t('chiudi')} className="p-2 text-kidville-muted hover:text-kidville-error transition-colors">
                         <X size={24} />
                     </button>
                 </div>

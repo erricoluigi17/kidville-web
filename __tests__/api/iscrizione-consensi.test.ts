@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 import { NextRequest } from 'next/server'
+import { CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
 
 // =============================================================================
 // Informativa e prova dei consensi sul modulo pubblico d'iscrizione.
@@ -21,7 +23,7 @@ import { NextRequest } from 'next/server'
 //     ed è granulare per canale.
 // =============================================================================
 
-const SEDE = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SEDE = SEDE_A
 
 const h = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
@@ -52,7 +54,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         b.order = () => b
         b.in = () => b
         b.then = (res: (v: unknown) => unknown) =>
-          Promise.resolve({ data: [{ id: SEDE, nome: 'Kidville Giugliano', attiva: true }], error: null }).then(res)
+          Promise.resolve({ data: [{ id: SEDE, nome: NOME_SEDE_A, attiva: true }], error: null }).then(res)
         return b
       }
       if (table === 'form_models') {
@@ -177,19 +179,38 @@ describe('POST /api/iscrizione — la presa visione è verificata sul SERVER', (
 })
 
 describe('la liberatoria foto arriva fino al bambino', () => {
-  it('il consenso galleria si legge dalla PROVA, non dal payload grezzo', async () => {
+  it('i consensi foto si leggono dalla PROVA, non dal payload grezzo', async () => {
     // Difetto d'integrazione che questo test blocca: la famiglia acconsentiva e
     // il bambino restava con `consenso_privacy = false`, quindi la galleria gli
     // bloccava le foto. Il consenso c'era, ma non arrivava dove viene letto — e
     // nessuno avrebbe capito perché.
+    //
+    // ⚠️ 2026-08-01 — QUESTO TEST LOCKAVA IL DIFETTO SUCCESSIVO. Fino a oggi
+    // pretendeva `route.not.toContain('consenso_foto_sito')` e
+    // `not.toContain('consenso_foto_social')`, cioè inchiodava l'import a
+    // leggere UN SOLO canale su tre. Il commento diceva «sono canali distinti e
+    // non devono passare di qui» — ma «distinti» vuol dire colonne distinte, non
+    // «ignorati»: gli altri due, risposti da 141 famiglie, non arrivavano da
+    // nessuna parte (privacy F4). Il difetto era protetto da un'asserzione.
+    //
+    // Ora il legame consenso→colonna vive in `CONSENSI_FOTO_CANALI` e l'import
+    // lo percorre tutto: la prova per canale è in
+    // `__tests__/api/iscrizioni-consensi-foto-per-canale.test.ts`, che è
+    // comportamentale e cresce da sola con la mappa.
     const { readFileSync } = await import('node:fs')
     const route = readFileSync('src/app/api/admin/iscrizioni/route.ts', 'utf8')
-    expect(route).toContain('consenso_privacy: consensoFotoGalleria')
     // Dalla prova (`consents_log`), non da `data`: `data` è ciò che il client ha
     // mandato, `consents_log` è ciò che il server ha verificato e congelato.
-    expect(route).toMatch(/consents_log[\s\S]{0,400}consenso_foto_galleria/)
-    // Il sito e i social sono canali distinti e non devono passare di qui.
-    expect(route).not.toContain('consenso_foto_sito')
-    expect(route).not.toContain('consenso_foto_social')
+    expect(route).toMatch(/consents_log[\s\S]{0,600}CONSENSI_FOTO_CANALI/)
+    // L'elenco dei canali NON si scrive a mano nella route: viene dalla mappa.
+    // È l'unica difesa contro il ripetersi dell'elenco troncato al primo.
+    expect(route).toContain("from '@/lib/forms/enrollment-template'")
+    // Controllo positivo: la mappa contiene davvero i tre canali (se si
+    // svuotasse, le asserzioni qui sopra resterebbero verdi e non direbbero più
+    // niente).
+    expect(Object.keys(CONSENSI_FOTO_CANALI)).toEqual(
+      expect.arrayContaining(['consenso_foto_galleria', 'consenso_foto_sito', 'consenso_foto_social']),
+    )
+    expect(CONSENSI_FOTO_CANALI.consenso_foto_galleria).toBe('consenso_privacy')
   })
 })

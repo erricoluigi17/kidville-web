@@ -27,6 +27,9 @@ const h = vi.hoisted(() => ({
   genitoriDiGrado: vi.fn(),
   genitoriDiClassi: vi.fn(),
   genitoriDiScuola: vi.fn(),
+  // Le statistiche usano ORA lo stesso risolutore della notifica
+  // (`destinatariNews`), che sa espandere il post «tutte le sedi» su `sediReali`.
+  destinatariNews: vi.fn(),
   // canned data / capture
   post: null as Record<string, unknown> | null,
   posts: [] as Array<Record<string, unknown>>,
@@ -56,6 +59,7 @@ vi.mock('@/lib/news/sanitizza', () => ({
 vi.mock('@/lib/news/notifiche', () => ({
   notificaNewsPubblicata: (...a: unknown[]) => h.notificaNewsPubblicata(...a),
   genitoriDiGrado: (...a: unknown[]) => h.genitoriDiGrado(...a),
+  destinatariNews: (...a: unknown[]) => h.destinatariNews(...a),
 }))
 vi.mock('@/lib/notifiche/destinatari', () => ({
   genitoriDiClassi: (...a: unknown[]) => h.genitoriDiClassi(...a),
@@ -160,6 +164,7 @@ beforeEach(() => {
   h.genitoriDiGrado.mockResolvedValue([])
   h.genitoriDiClassi.mockResolvedValue([])
   h.genitoriDiScuola.mockResolvedValue([])
+  h.destinatariNews.mockResolvedValue({ destinatari: [], sediRisolte: true })
 })
 
 describe('POST /api/news — creazione e workflow', () => {
@@ -393,7 +398,7 @@ describe('GET /api/news/[id]/statistiche', () => {
   it('conta le famiglie uniche che hanno visualizzato + le famiglie target', async () => {
     h.post = { id: POST_ID, scuola_id: 'sc-1', stato: 'pubblicata', target_scope: 'globale', target_gradi: null, target_classes: null }
     h.vis = [{ utente_id: 'u1' }, { utente_id: 'u1' }, { utente_id: 'u2' }]
-    h.genitoriDiScuola.mockResolvedValue(['u1', 'u2', 'u3'])
+    h.destinatariNews.mockResolvedValue({ destinatari: ['u1', 'u2', 'u3'], sediRisolte: true })
     const res = await STATS(getReq(), params())
     expect(res.status).toBe(200)
     const j = await res.json()

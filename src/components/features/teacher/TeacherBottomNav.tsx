@@ -10,7 +10,7 @@ import {
   Image, Package, FileText, ClipboardCheck, Users, Megaphone,
   ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper,
 } from 'lucide-react';
-import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teacher-gradi';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
@@ -43,17 +43,33 @@ interface MenuGroup {
   items: MenuItem[];
 }
 
+// ── Barra principale: colori SOLO via token ─────────────────────────────────
+// Qui i colori erano tre hex scritti a mano dentro `style={{ }}`: fuori dai
+// token, quindi irraggiungibili da qualunque correzione centrale — e il grigio
+// delle voci INATTIVE (#9CA3AF) si fermava a 2,54:1 sul bianco della pillola,
+// cioè 4 voci su 5 della navigazione principale del telefono sotto AA.
+// `text-kidville-sub` vale 6,46:1. Il fondo del pill attivo lascia
+// `animate={{ backgroundColor }}` e diventa una classe: la molla resta sulla
+// scala, il colore lo fa il token (stesso schema di `AdminBottomNav`).
+const PILL = 'w-10 h-[30px] rounded-full flex items-center justify-center transition-colors duration-200';
+const ICONA = 'w-[18px] h-[18px] transition-colors duration-200';
+const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200';
+
 export default function TeacherBottomNav() {
   const t = useTranslations('teacherNav');
   const pathname = usePathname();
   const search = useSearchParams();
   const [showMenu, setShowMenu] = useState(false);
-  const userId = getCurrentTeacherId(search);
-  const withUser = (href: string) => `${href}?userId=${userId}`;
+  // Identità a due passaggi (SSR → idratazione): `withUser` omette il parametro
+  // finché l'uuid non è risolto, così l'HTML del server e il primo render del
+  // client coincidono e nessun href porta mai la stringa «null».
+  const { userId, pronta, withUser } = useTeacherIdentity(search);
 
   // Gradi del docente (utenti.gradi): pilotano quali voci esistono. Finché il
   // dato non è pronto — o per staff senza gradi — non si filtra nulla.
-  const tg = useTeacherGradi(userId);
+  // `pronta`: senza, il primo passaggio chiederebbe i gradi con identità vuota e
+  // il secondo con l'uuid → due GET a /api/primaria/me su ogni pagina docente.
+  const tg = useTeacherGradi(userId, pronta);
 
   // Mondo primaria attivo dal contesto di navigazione (fallback per i misti).
   const isPrimaria = pathname.startsWith('/teacher/primaria');
@@ -151,20 +167,16 @@ export default function TeacherBottomNav() {
                     className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                   >
                     <motion.div
-                      animate={active ? { backgroundColor: '#006A5F', scale: 1.05 } : { backgroundColor: 'transparent', scale: 1 }}
+                      animate={{ scale: active ? 1.05 : 1 }}
                       transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                      className="w-10 h-[30px] rounded-full flex items-center justify-center"
+                      className={`${PILL} ${active ? 'bg-kidville-green' : ''}`}
                     >
                       <Icon
-                        className="w-[18px] h-[18px] transition-colors duration-200"
-                        style={{ color: active ? '#FDC400' : '#9CA3AF' }}
+                        className={`${ICONA} ${active ? 'text-kidville-yellow' : 'text-kidville-sub'}`}
                         strokeWidth={2}
                       />
                     </motion.div>
-                    <span
-                      className="text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200"
-                      style={{ color: active ? '#006A5F' : '#9CA3AF' }}
-                    >
+                    <span className={`${ETICHETTA} ${active ? 'text-kidville-green' : 'text-kidville-sub'}`}>
                       {tab.label}
                     </span>
                   </button>
@@ -179,20 +191,16 @@ export default function TeacherBottomNav() {
                   className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                 >
                   <motion.div
-                    animate={active ? { backgroundColor: '#006A5F', scale: 1.05 } : { backgroundColor: 'transparent', scale: 1 }}
+                    animate={{ scale: active ? 1.05 : 1 }}
                     transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                    className="w-10 h-[30px] rounded-full flex items-center justify-center"
+                    className={`${PILL} ${active ? 'bg-kidville-green' : ''}`}
                   >
                     <Icon
-                      className="w-[18px] h-[18px] transition-colors duration-200"
-                      style={{ color: active ? '#FDC400' : '#9CA3AF' }}
+                      className={`${ICONA} ${active ? 'text-kidville-yellow' : 'text-kidville-sub'}`}
                       strokeWidth={2}
                     />
                   </motion.div>
-                  <span
-                    className="text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200"
-                    style={{ color: active ? '#006A5F' : '#9CA3AF' }}
-                  >
+                  <span className={`${ETICHETTA} ${active ? 'text-kidville-green' : 'text-kidville-sub'}`}>
                     {tab.label}
                   </span>
                 </Link>

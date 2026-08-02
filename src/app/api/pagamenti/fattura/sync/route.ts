@@ -10,8 +10,10 @@ import {
 } from '@/lib/aruba/client'
 import { mapStatoAruba, aggregaFatturaStato, type RigaFatturaAgg } from '@/lib/aruba/stato'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
+import { staffScuola } from '@/lib/notifiche/destinatari'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // POST /api/pagamenti/fattura/sync — polling stato SDI delle fatture in volo.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret` (pattern push/dispatch).
@@ -61,7 +63,7 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    if (!segretoCronValido(secret)) {
       // Si grida SOLO se l'header c'è ma non torna: quello è un cron che bussa con la chiave
       // sbagliata, ed è il guasto invisibile (se questo giro non parte, le fatture restano «in
       // volo» per sempre e nessuno si accorge di uno scarto SDI). Sul POST ANONIMO si tace: la
@@ -268,17 +270,26 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
 
       if (m.isScarto) {
         scartate++
-        const { data: staff, error: errStaff } = await supabase
-          .from('utenti')
-          .select('id')
-          .eq('scuola_id', f.scuola_id)
-          .in('ruolo', ['admin', 'coordinator', 'segreteria'])
-        // Stesso schema del `push_subscriptions` di `push/dispatch`: se questa lettura fallisce e
-        // si tira dritto, `utenteIds` è vuoto → `enqueueNotifiche` non avvisa NESSUNO dello
-        // scarto, e la fattura è ormai in stato terminale → il giro dopo non la ripesca. L'avviso
-        // di uno scarto SDI andrebbe perso per sempre, con il battito che dice «ok».
-        if (errStaff) return queryFallita('lettura staff scuola', errStaff, t0, f.scuola_id)
-        const utenteIds = ((staff ?? []) as { id: string }[]).map((u) => u.id)
+        // L'APPARTENENZA A UNA SEDE NON È `utenti.scuola_id`: è l'unione fra quella colonna e
+        // il ponte `utenti_scuole`. Qui c'era la query nuda, e per una fattura delle sedi
+        // aperte il 2026-07-29 tornava zero righe: `enqueueNotifiche` esce muto sulla lista
+        // vuota (enqueue.ts:42) e il battito chiudeva «ok, scartate: 1». `staffScuola` guarda
+        // il ponte, controlla `{ error }` da sé (PostgREST non lancia) e logga i suoi degradi.
+        const utenteIds = await staffScuola(supabase, f.scuola_id, ['admin', 'coordinator', 'segreteria'])
+        if (utenteIds.length === 0) {
+          // `error`, e qui più che altrove: lo stato terminale della fattura è GIÀ stato
+          // scritto qui sopra, quindi la riga esce da `STATI_IN_VOLO` e il giro successivo
+          // non la ripesca. Non è un avviso rimandato: è un avviso perso per sempre, su un
+          // dato con conseguenza fiscale. `scuola_id` è un uuid: resta in chiaro anche in tabella.
+          logEvento('cron', 'error', {
+            operazione: JOB,
+            esito: 'scarto-senza-destinatari',
+            scuola_id: f.scuola_id,
+            numero: f.numero,
+            msg: `${JOB}: fattura scartata e nessuno da avvisare`,
+          })
+          continue
+        }
         await enqueueNotifiche(supabase, {
           utenteIds,
           tipo: 'fattura_scartata',

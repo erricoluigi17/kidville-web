@@ -34,6 +34,27 @@
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
+> ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
+> Dal 2026-07-29 i plessi in produzione sono **tre**, non uno. Il nome di una classe ha smesso
+> di essere una chiave, e i presidi che reggono l'isolamento sono questi (dettaglio e ragioni
+> nel changelog del 2026-07-31, branch `fix/multisede-audit-globale`).
+>
+> | Presidio | Stato | Dove |
+> |---|---|---|
+> | Sedi | **3 reali** (Giugliano · Aversa · Cesa) + **1 finta** di collaudo (prefisso `e2e00000-…`), esclusa da elenchi pubblici, digest e contabilità | `src/lib/scuole/reali.ts` (`isScuolaE2E`, `sediReali`), `schools.operativa` |
+> | Sede obbligatoria in scrittura | ✅ `resolveScuolaScrittura` risponde **400** quando l'utente ha più sedi e nessuna è indicata — nessun ripiego silenzioso sulla sede primaria | `src/lib/auth/scope.ts` (+ 55 test propri) |
+> | `scuola_id` → `schools(id)` | ✅ FK su **65 tabelle su 65** (erano 34) | migr. `20260731122800_fk_scuola_id` · lock `fk-scuola-id` |
+> | Nome classe univoco nella sede | ✅ UNIQUE `(scuola_id, name)` su `sections` | migr. `20260731113406_sections_nome_per_sede` |
+> | Sede come proprietà del dato | ✅ `presenze` e `armadietto`: trigger dall'alunno + backfill + `NOT NULL` | migr. `20260731114449` |
+> | RLS per sede | ✅ 42 policy riviste (37 droppate, 5 riscritte col vincolo di plesso) + fotografia versionata di `pg_policies` | migr. `20260731102245_rls_multisede_pulizia` · lock `rls-per-sede` |
+> | Contabilità per sede | ✅ `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio**; sede di collaudo fuori dal perimetro | migr. `20260731115341` |
+> | Semantica di `scuola_id NULL` | ✅ decisa e scritta: dato di famiglia ⇒ mai NULL; configurazione ⇒ NULL = «globale» | changelog 2026-07-31 |
+> | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731123052_provisiona_sede_v2` |
+> | File negli Storage | ✅ `gallery`, `avvisi_allegati`, `task_allegati` **privati** con link firmati a scadenza breve; `news` **pubblico per scelta scritta** del titolare (blog verso l'esterno), dichiarato in migrazione | migr. `20260731192108`, `20260731192048` · `src/lib/gallery/storage.ts` · lock `bucket-storage-dichiarati` |
+> | Copertura dell'isolamento nel gate | ✅ lock per **handler** (non per file), per **scrittura**, su tabelle lette dallo schema, allowlist a match esatto `route:METODO` | `__tests__/architecture/isolamento-sede-coverage.test.ts` |
+> | Migrazioni ↔ database | ✅ **75** file = 75 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256` | lock `migrazioni-complete` |
+> | Collaudo dell'isolamento | ✅ account TEST su Aversa e Cesa · account `test.multisede.admin` (solo accesso, tre sedi) per il selettore · seed E2E a **due** sedi con sezione omonima · `e2e/isolamento-sedi.spec.ts` | `scripts/seed-test-sedi.mjs`, `scripts/seed-e2e.mjs` |
+>
 > ### Moduli Implementati
 > | Modulo | Stato | Pagine | API Routes |
 > |--------|-------|--------|------------|
@@ -65,6 +86,1062 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🗓️ Changelog — I sei E2E rossi: un puntino di sospensione, e una sede in meno di quante ce ne sono 2026-08-02 (branch `fix/multisede-audit-globale`)
+
+`Lint · Typecheck · Unit` verde, `E2E (Playwright)` rosso: **6 test su 48**, merge bloccato
+(run `30765844979`). Nessuno dei sei era un difetto di prodotto nuovo. Erano **due** cause, e
+tutte e due hanno la stessa forma: un'informazione che vive in due posti e nessuno che li tenga
+insieme.
+
+### 1. Quattro selettori accecati da un carattere — `...` diventato `…`
+
+`admin-students`, `isolamento-sedi` (× 2) e `teacher-avvisi` fallivano tutti con
+`locator.fill: Test timeout … waiting for getByPlaceholder('…')`. L'applicazione era **sana**:
+il 1° agosto un rilievo di localizzazione aveva sostituito nei cataloghi i tre punti ASCII con
+l'ellissi tipografica `…` — la forma corretta, in una quarantina di stringhe. Ma
+`getByPlaceholder()` senza `exact` cerca per **sottostringa**, e `...` non esiste dentro `…`:
+quattro selettori sono diventati ciechi nello stesso istante, in tre file di test che nessuno
+aveva toccato.
+
+Difetto di **selettore**, non di codice: il testo nuovo è migliore e resta. I selettori ora si
+fermano prima della punteggiatura, così un'altra virgola in coda non li ricompra.
+
+La correzione vera però non è quella, è il **lock**:
+`__tests__/architecture/e2e-selettori-placeholder.test.ts` estrae ogni `getByPlaceholder('…')`
+degli spec e verifica che almeno un placeholder del prodotto — cataloghi `messages/it/**` o
+letterali di `src/` — lo possa soddisfare, con la stessa semantica di Playwright. Girava rosso
+sui quattro selettori **prima** della correzione. È il gemello mancante della regola R5 del lock
+dei flow Maestro: la stessa disciplina esisteva già per una delle due suite. Costo di scoprirlo
+prima: due secondi in `vitest run`, sulla macchina di chi rinomina l'etichetta. Costo di
+scoprirlo dopo: trenta minuti di CI e un merge fermo.
+
+### 2. L'iscrizione pubblica: due sedi di collaudo, e nessuna sede da dichiarare
+
+`public-iscrizione` compilava tutti e quattro i passi — anagrafica del minore, codice fiscale,
+documento d'identità — e all'invio riceveva
+`400 {"error":"Specificare la scuola per l'iscrizione"}`. Il secondo test della coppia
+(«l'import mostra il degrado email») falliva di conseguenza: senza domanda, non c'è niente da
+importare.
+
+Le due metà della causa stavano in due file, e **ciascuna era corretta da sola**:
+
+- il wizard trattava «elenco pubblico delle sedi **vuoto**» come «una sede sola, vai avanti».
+  L'assunzione era scritta in un commento: *«o sul DB E2E, dove l'elenco pubblico è vuoto — il
+  flusso resta identico a prima»*;
+- `POST /api/iscrizione` deduce la sede solo se ne esiste **una**. Dal 2026-07-31 il seed della
+  CI ne crea **due** — serviva una seconda sede per poter provare l'isolamento fra plessi — ed
+  entrambe portano il prefisso `e2e00000-…`, quindi `isScuolaE2E` le esclude da ogni elenco
+  pubblico: `reali` vuoto, `tutte` due. Il 400 è la risposta **giusta**, e resta: con due
+  candidate, indovinare significa archiviare la domanda di un minore nel plesso sbagliato senza
+  dirlo a nessuno.
+
+L'assunzione del wizard è decaduta quel giorno e nessuno l'ha riletta. Difetto di **ambiente**
+per il test, di **codice** per il silenzio: un elenco pubblico vuoto vuol dire *«nessuna sede su
+cui iscriversi»*, ed è lo stesso difetto che il ramo d'errore aveva appena chiuso, con un'altra
+faccia. Ora il wizard lo dice **prima** che la domanda cominci, con una frase propria — «Nessuna
+sede riceve iscrizioni online» — e senza il pulsante «Riprova», che ripeterebbe la stessa
+risposta. In produzione il ramo non si attiva: verificato sul server vivo,
+`GET /api/iscrizione/sedi` risponde con le tre sedi vere (Aversa, Cesa, Giugliano).
+
+La suite E2E entra ora dal **link targato** `/iscrizione?scuola=<id>` — la scorciatoia per
+plesso che il modulo prevede da sempre, e che il POST valida contro *tutte* le sedi, di collaudo
+comprese, proprio per questo percorso.
+
+**Due test che difendevano il comportamento vecchio** sono stati riscritti, non cancellati:
+`EnrollmentWizard-sede` e `EnrollmentWizard-sedi-errore` dichiaravano «elenco vuoto → si compila»
+sotto l'etichetta *NON-REGRESSIONE*. Erano veri quando il database della CI aveva una scuola
+sola. Al loro posto c'è il caso nuovo, più quello del link targato, più — in
+`__tests__/api/iscrizione-scuola.test.ts` — le **due sedi di collaudo** che il database della CI
+ha davvero: 400 senza sede dichiarata, 201 con.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 673 file / 6308 test** · `build ok`.
+Nessuna migrazione, nessuna variabile d'ambiente nuova.
+
+---
+
+## 🗓️ Changelog — L'arretrato: 152 rilievi, e la firma che chiunque poteva chiedere 2026-08-02 (branch `fix/multisede-audit-globale`)
+
+Il secondo giro di collaudo aveva restituito 152 voci — 17 gravi, 16 minori, 119 warning — quasi
+tutte **preesistenti** e su aree che il ciclo del collaudo non aveva mai toccato. Il titolare ha
+deciso di chiuderle tutte, warning compresi, prima di qualunque merge. Dieci esecutori in
+parallelo, divisi per file.
+
+### La firma elettronica che chiunque poteva chiedere
+
+`POST /api/forms/send-otp` non verificava **nessuna identità** e accettava un `signerEmail`
+arbitrario su una submission altrui: chi conosceva un `submissionId` si faceva recapitare il codice
+all'indirizzo che voleva e **firmava al posto del genitore**, su un documento con valore legale.
+Chiuso con il gate d'identità su POST *e* PATCH, la verifica del titolo sulla firma, e il
+destinatario vincolato ai **tutori registrati in anagrafica** invece che al corpo della richiesta.
+
+Strada facendo sono emersi due difetti che nessuno aveva chiesto di cercare: la sospensione per
+morosità si aggirava **omettendo** `userId` dal body, e tre letture PostgREST ignoravano `{ error }`
+— un guasto di lettura usciva come «non trovata». La regola vale per POST e PATCH e vive in **una
+funzione sola**: è la lezione che questo branch ha già pagato due volte.
+
+### L'upload anonimo, e i 500 che raccontavano il database
+
+`POST /api/iscrizione/upload` accettava caricamenti **anonimi** nel bucket dei documenti
+d'iscrizione dei minori, senza tetto per IP e senza allowlist di tipo — mentre le tre rotte sorelle
+ce l'avevano. Ancora la porta accanto. E sei route di upload rispondevano `500` a un errore del
+**client**: un `Content-Type` sbagliato è un 400, e il 500 dice «ho un guasto io», sporcando ogni
+misura di salute. Due di esse rimandavano al chiamante il messaggio interno del runtime.
+
+### Le foto dei minori, e il consenso che non si poteva revocare
+
+La fotografia di un minore pubblicata sul blog finiva in `news`, l'unico bucket **pubblico** dei
+tredici, dichiarato escluso dall'oblio: se la famiglia esercitava il diritto all'oblio, la foto
+restava online per sempre. E la **revoca** del consenso fotografico non aveva effetto sugli articoli
+già pubblicati — il consenso era verificato alla creazione, alla modifica e alla pubblicazione, e
+poi non lo ricontrollava più nessuno. *Un consenso che non si può revocare non è un consenso.*
+
+Insieme: l'oblio dichiarava `n_file_non_rimossi: 0` **anche quando lo Storage non aveva tolto
+niente**, perché quando la risposta non era un array si assumeva che fossero stati rimossi tutti.
+Una richiesta di oblio risultava evasa mentre i file di un bambino restavano nell'archivio.
+
+### Accessibilità: 68 bottoni senza nome, non 17
+
+Il tester ne aveva contati 17; il lock scritto per impedirne il ritorno ne ha trovati **68**. È la
+differenza fra un campione e un inventario, ed è il motivo per cui ogni correzione di questo ciclo
+finisce in una regola su tutti i file invece che in una lista di file. Chiusi anche: il modale con
+cui il genitore **firma con valore legale** (non annunciato come dialogo, campo del codice senza
+nome, errore mai letto, niente Esc), i quattro campi senza etichetta del «Nuovo acquisto», il
+registro protocolli che si apriva solo col mouse, e i colori di marchio usati come inchiostro.
+
+### La domanda d'iscrizione che si perdeva
+
+Sul modulo pubblico — ~9 domande l'ora da famiglie vere — se l'elenco delle sedi non arrivava
+(429 o 500) il passo «Sede» **spariva senza dire niente**: il genitore compilava tutta la domanda e
+la perdeva all'invio. La causa: `sedi.length > 1` non distingue un elenco vuoto **per errore** da
+«c'è una sede sola».
+
+### La difesa che valeva solo fino ad Android 14
+
+`windowSoftInputMode="adjustResize"`, aggiunto il giorno prima come «unica correzione difendibile»,
+è stato **misurato** compilando un APK gemello con `adjustPan`: su **API 33** è decisivo — senza, il
+composer della chat sparisce davvero sotto la tastiera — ma su **API 36 è inerte**, perché da
+Android 15 le app con `targetSdk ≥ 35` sono edge-to-edge per forza e non ridimensionano più la
+finestra. Questa app dichiara `targetSdk 36`. La riga resta, il commento no: nessuno deve credere
+che sia la difesa su un telefono nuovo.
+
+Nella stessa misura è emerso un difetto **nuovo e non chiuso**: in orizzontale il bottone «Invia»
+è tagliato dal bordo (API 36), e su API 33 ruotando dentro una conversazione **la conversazione si
+chiude** — perché non sta nell'URL, quindi il cambio di configurazione la butta via. È debito
+dichiarato.
+
+### Il terzo collaudo, e perché il ciclo non converge a «tutto verde»
+
+Rieseguito il collaudo sulle correzioni: **sicurezza, localizzazione e log passano**; le due porte
+sui dati di minori sono chiuse e confermate da chi non le ha chiuse. Ma restano 19 rilievi gravi, e
+la loro natura è il dato che conta:
+
+- **tre erano errori introdotti oggi**, e sono stati corretti: la password degli account TEST di
+  produzione in chiaro in 303 file (Maestro la scrive anche in JSON, e la bonifica mascherava solo
+  la forma shell); le due migrazioni applicate con una `version` che in produzione era diversa dal
+  nome del file — con il lock scritto apposta **verde**, perché confrontava il repo con una
+  fotografia presa prima; e una quarta affermazione mia più forte della misura;
+- **gli altri sono arretrato profondo dell'app**, non regressioni: 239 campi con un'etichetta
+  visiva non associata al campo, 1184 punti di testo a 2,51:1, 25 pannelli che si comportano da
+  modale senza esserlo, 324 file nel bucket delle iscrizioni (430 MB) che nessuna riga del database
+  cita — quindi né la retention né l'oblio possono raggiungerli.
+
+Gli undici tester collaudano **l'intero prodotto**, non il diff: ogni giro troverà qualcosa finché
+l'app non sarà perfetta. Chiamare «ciclo non convergente» questo comportamento sarebbe sbagliato —
+sta facendo esattamente il suo mestiere. Ma significa che *«tutti gli undici in PASS»* non è una
+condizione raggiungibile in un giro: è la descrizione di un prodotto finito.
+
+### La coda: il gate che stava sotto la lettura del corpo
+
+Tre difetti sopravvissuti al giro, chiusi dopo il terzo collaudo:
+
+- **`POST /api/primaria/fascicolo` rispondeva `500` a un anonimo**, restituendogli il messaggio
+  interno del runtime. La causa non era una funzione mancante ma **l'ordine**: `formData()` sta
+  sopra il gate, *lancia* se il Content-Type non è multipart, e l'eccezione scavalcava
+  l'autenticazione finendo nel `catch` generico. Su una rotta che custodisce diagnosi, PEI, PDP e
+  verbali della 104. Ora `401`.
+- **`POST /api/public/forms/<token>/submit` rispondeva `500` su un token malformato**, e la causa
+  era **scritta in un commento**: *«il token pubblico è una stringa opaca, non un uuid»* — ma nella
+  baseline la colonna è `public_token uuid` e la valorizza `randomUUID()`. Il token storto arrivava
+  fino alla query e Postgres rispondeva `22P02`. Ora `404`, byte-identico alla risposta di un uuid
+  inesistente: chi prova a indovinare non impara niente dalla differenza.
+- Le **sei route** che leggevano `request.formData()` nudo sono sulla primitiva condivisa, e il
+  nuovo lock verifica due cose separate: che si usi la primitiva, **e che il gate preceda la
+  lettura del corpo** — perché è l'ordine, non il nome della funzione, ad aver causato il primo.
+
+Rimosso anche il file di prova che il collaudo aveva lasciato nel bucket di produzione (5 byte,
+contenuto letterale `test`): 961 file rimasti, i due documenti veri caricati quel giorno intatti.
+
+E un difetto **introdotto durante la correzione**, dichiarato da chi l'ha fatto: il `codice` del
+nuovo 404 usciva come chiave di catalogo invece che di `CODICI_ERRORE`, e il lock `errori-con-codice`
+era **verde** — perché verifica che un codice ci sia, non che si risolva. Se ne è accorto solo
+guardando il corpo della risposta sul server vivo.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 672 file / 6302 test** · `build ok`.
+Migrazioni **applicate in produzione** con l'approvazione del titolare, una per una:
+`20260802173254` (sorveglianza sulla conservazione a 24 mesi) e `20260802200000` — il bucket
+`form_attachments`, che custodisce carte d'identità, certificati e fotografie di minori, era
+configurato **senza alcun limite** (`file_size_limit` e `allowed_mime_types` entrambi `NULL`)
+ed era raggiungibile da due rotte anonime. Ora dichiara cinque tipi e un tetto di 8 MB.
+Verificato prima di applicare: i 962 file presenti sono tutti dei tipi ammessi e il più grande
+pesa 4,49 MB — nessun caricamento reale viene respinto. `get_advisors`: **0 ERROR**.
+
+È la rete che resta quando la prossima rotta di upload dimenticherà il gate applicativo, e non
+è un'ipotesi: `iscrizione/upload` è nata senza controlli ed è vissuta così finché il collaudo
+non l'ha misurata.
+
+---
+
+## 🗓️ Changelog — Il collaudo sui dispositivi: quando il gate verde certificava l'assenza della prova 2026-08-02 (branch `fix/multisede-audit-globale`)
+
+Il ciclo del 1° agosto si era chiuso col gate verde — `eslint 0` · `tsc 0` · 5741 test · `build ok`
+— e con una riga di debito scritta nero su bianco: **i tre flow Maestro iOS non erano mai stati
+eseguiti** dopo la correzione dei selettori. Erano iscritti in `FLOW_SENZA_ESECUZIONE_VERDE`, e
+questo è il punto che conta: **il verde certificava che la prova mancava, non che il collaudo
+fosse stato fatto.** Chi leggesse «gate verde» come «mobile collaudato» sbaglierebbe, e il registro
+esiste apposta perché quell'assunzione diventi una riga in diff invece di un commento rassicurante.
+
+Questo ciclo ha eseguito le prove che mancavano. Tutte e quattro hanno cambiato una conclusione che
+sembrava già scritta.
+
+### I tre flow iOS: verdi — e la spiegazione che avevo scritto era più forte della misura
+
+| flow | esito | esecuzioni |
+|---|---|---|
+| `ios-percorso-segreteria` | 33 COMPLETED, 0 FAILED | 2 su 2 |
+| `ios-percorso-genitore` | 27 COMPLETED, 0 FAILED | 2 su 2 |
+| `ios-percorso-docente` | 27 COMPLETED, 0 FAILED | 2 su 2 |
+
+**La prima versione di questo paragrafo diceva due cose false, e le ha smontate il collaudo di
+questo stesso ciclo** — il tester mobile-iOS, a cui era stato chiesto per iscritto di cercare
+«un'affermazione più forte di quanto le misure dimostrino». Le ha trovate, ed è il motivo per cui
+quella richiesta va messa in ogni collaudo:
+
+1. *«I tre flow erano in `FLOW_SENZA_ESECUZIONE_VERDE` e nessuno li aveva più lanciati.»* Falso.
+   Sotto `~/.maestro/tests` ci sono **sette esecuzioni iOS del 1° agosto**, fra le 12:51 e le
+   13:32, tutte con 0 FAILED. I flow erano già verdi undici ore dopo la correzione dei selettori.
+   Il registro dice ciò che qualcuno ha **scritto nel file**, non ciò che è stato **eseguito sulla
+   macchina**: il debito era stato iscritto alle 01:10 e nessuno l'ha tolto quando le esecuzioni
+   sono arrivate. È lo stesso difetto che il registro esiste per combattere, preso dal verso opposto
+   — e dimostra che un registro va letto **anche** contro gli artefatti, non solo contro il diff.
+2. *«Senza toccare un solo selettore.»* Falso rispetto al rosso del 31 luglio. Fra quel rosso e
+   questo verde sono cambiate **due** variabili, non una: il commit `462630c` del 1° agosto ha
+   riscritto i selettori dei tre flow (175 righe aggiunte, 54 tolte) — «Buongiorno!» → «Dashboard»,
+   «Apri la bacheca» → «Menu · tutte le sezioni», «Modifica appello» → «Fai l'appello ora|Modifica
+   appello», più la gestione dei dialoghi dei permessi. Attribuire il verde al solo cambio di server
+   era una conclusione a una variabile su un esperimento a due.
+
+**Cosa dicono davvero le misure**, senza aggiungerci niente: con i selettori di oggi e l'app servita
+da `next start`, i tre flow passano, due esecuzioni su due ciascuno; con gli stessi selettori
+passavano già il 1° agosto; il rosso del 31 luglio aveva selettori diversi *e* un server diverso,
+quindi non è isolabile su una causa sola. Che `next dev` sia inadatto resta documentato per Android
+da una misura propria («l'emulatore non idrata `next dev`», 17 luglio); su iOS resta una
+raccomandazione prudenziale, non un esperimento controllato.
+
+Per il flow **docente** la spiegazione del verde è invece chiara e non ambigua, perché non passa
+dall'ambiente: il rosso era su «Buongiorno!», il saluto **orario** che alle 22:07 diventa
+«Buonasera!»; l'ancora è ora la tab «Dashboard», che non cambia mai, e le due esecuzioni di oggi
+sono di pomeriggio. Il flow non collauda più l'orologio.
+
+Il **tap cieco a coordinate** `68%,93%` per il tab «Mensa» del cockpit funziona, e il controllo
+negativo `assertNotVisible: "Tutti i moduli"` dimostra che lo schermo si è mosso invece di restare
+fermo. Anche qui la prima stesura esagerava: non è la prima volta che gira su iOS — lo stesso flow
+era passato 36/36 il 1° agosto.
+
+`TETTO_FLOW_SENZA_ESECUZIONE_VERDE`: **4 → 1**. Resta `android-screenshot-playstore.yaml`, fuori
+dal perimetro di oggi e dichiarato come tale.
+
+### I sei login (S28): il difetto non si riproduce, e il limite è scritto
+
+Il lock diceva che i sei login consecutivi sull'app vera non erano mai stati eseguiti — e la
+versione ancora precedente di quel commento affermava il falso, cioè che la prova fosse «riportata
+nel PRD». Eseguiti: sei esecuzioni **separate** con `clearState: true`, 6 su 6 arrivate alla home,
+`assertNotVisible` sui tre testi di `offline.html` verde ogni volta, e nel log di sistema sei righe
+«filtro annullamenti agganciato» con **PID diversi** — cioè sei avvii veri. «mostro la schermata
+offline»: **0**.
+
+Il limite, che resta scritto nel lock e non va abbellito: **«navigazione annullata» compare 0
+volte**. In quelle sei sessioni l'annullamento non è avvenuto, quindi il filtro era agganciato ma
+non *esercitato*. È l'atteso dopo la correzione a monte del login, ma la prova sul dispositivo
+dimostra «non si riproduce in 6 su 6», non «il filtro intercetta». Quella metà la dimostra
+`ios/prove/filtro-annullamenti/esegui.sh`, rieseguita: 10 verifiche su 10, compresi i due controlli
+**negativi** (−1009 rete assente e −1004 server irraggiungibile *arrivano* a Capacitor, cioè la
+schermata offline compare ancora quando serve davvero).
+
+### La tastiera Android sulla chat: non riprodotta, e la garanzia che era solo un default
+
+Il rilievo era aperto perché la volta scorsa era stato misurato su una **sonda** che riproduceva il
+layout, non sulla chat vera. Rifatto sulla schermata vera, genitore e docente, due versioni di
+Android, con la tastiera confermata da `dumpsys input_method` invece che dedotta:
+
+| | tastiera chiusa | tastiera aperta | «Invia» |
+|---|---|---|---|
+| **API 36** (411×731) | `innerHeight` 731 | 399 | bottom 695 → 387, **visibile** |
+| **API 33** (393×778) | `innerHeight` 778 | 499 | bottom 766 → 487, **visibile** |
+
+`visualViewport.offsetTop` sempre 0, 12px di margine sotto il bottone. **Non riprodotto.** Anche
+l'ipotesi alternativa — un `transform` su un antenato che diventa blocco contenitore per i `fixed`
+— è **falsificata a runtime**, risalendo l'intera catena da `[aria-label="Invia messaggio"]` fino a
+`documentElement`: nessun antenato con `transform` diverso da `none`.
+
+Nessun rimedio applicativo è stato aggiunto, e in particolare **non**
+`interactive-widget=resizes-content`: i numeri dicono che il comportamento che quella direttiva
+imporrebbe è già quello di default. **Un rimedio che non fa niente è peggio del rilievo aperto**,
+perché chiude la voce e toglie a chiunque la ragione di guardarci ancora.
+
+L'unica correzione difendibile è un'altra, ed è stata fatta: il comportamento misurato dipendeva da
+un **default di sistema**, non da una nostra scelta. Senza `windowSoftInputMode` vale
+`adjustUnspecified` e decide la ROM; sulle versioni provate risolve in `adjustResize`, ma una che
+risolvesse in `adjustPan` farebbe scorrere la finestra e il composer uscirebbe davvero dallo
+schermo. Ora è dichiarato in `AndroidManifest.xml`, con un lock che ha superato la **prova di
+validità** (tolta la riga → rosso; rimessa → verde).
+
+### Gli 8 errori del pannello «Problemi»: il rimedio ovvio era inerte
+
+Non erano difetti del progetto e non hanno mai toccato il gate, `npm run build` o la build Android.
+Sono l'estensione Java dell'editor che importa come progetti a sé quattro cartelle Android dentro
+`node_modules`. Ma il rimedio che sembrava ovvio — «escludi `node_modules` dall'import» — **è
+inerte**: quei quattro pattern sono già il default di `redhat.java`, parola per parola. E i quattro
+progetti non arrivano da una scansione di `node_modules`: li include per nome
+`android/capacitor.settings.gradle`, un file che Capacitor rigenera e che si apre con «DO NOT EDIT
+THIS FILE». La documentazione dell'estensione chiude la via di mezzo: *«Gradle projects cannot be
+partially imported»*.
+
+Applicata la scelta del titolare: puntare il Gradle dell'IDE al **JDK 21 che Android Studio si
+porta dietro**, senza installare nulla. Con una riserva scritta nel file, perché i log dicono che i
+due problemi sono distinti — 99 occorrenze di «Can't read root project location» sui quattro
+progetti che danno errore, e 10 di `ToolchainProvisioningException` su `capacitor-camera`, che
+invece non ne dà. Se dopo «Java: Clean Java Language Server Workspace» il pannello resta a 8, la
+causa è la prima e l'unica cosa che li toglie è non importare affatto i progetti Gradle.
+
+### Il collaudo ha trovato due porte aperte sui dati di minori
+
+Gli undici tester hanno collaudato **l'intero branch** (48 commit, 767 file), non i quattro commit
+della giornata, e hanno restituito 10 FAIL su 11. Due rilievi erano falle di autenticazione vere,
+verificate a mano col server vivo:
+
+- **`GET /api/admin/primaria/docenti-materie` rispondeva `200` a un anonimo**, con
+  `createAdminClient()` — cioè il client service-role, con la RLS scavalcata per costruzione:
+  nome e cognome del personale, materie e id di sezione di qualunque classe di qualunque sede.
+  `POST` e `DELETE` dello stesso file avevano già `requireStaff` + `assertSezioneInScope`. È
+  ancora **la porta accanto**, per la quarta volta in questo branch.
+- **`GET /api/diary?alunno_id=` non aveva alcun gate** e restituiva `500` col messaggio interno
+  del database. Il ramo `classe_id` aveva `requireDocente`, il ramo del genitore no. Oggi non
+  espone dati perché quella tabella in produzione non esiste — il giorno in cui esistesse,
+  restituirebbe il diario di qualsiasi bambino a un anonimo.
+
+Chiuse entrambe (`200 → 401`, `500 → 401`). Ma il pezzo che conta è il lock, e la ragione per cui
+ragiona **per ramo e non per handler**: un rilevatore ingenuo «c'è un gate in questa funzione?»
+sarebbe stato **verde sulla seconda falla**, perché un gate c'era — solo, non su quella strada.
+`gate-coverage.test.ts` verifica che ogni accesso ai dati sia preceduto da un gate **nel suo ramo**,
+con 16 rotte pubbliche in allowlist verificate una per una.
+
+### Gli altri ventidue rilievi, chiusi su richiesta del titolare
+
+Fra i quali: la scheda di un alunno non si apriva **da tastiera** (25 schede irraggiungibili senza
+mouse); 26 caselle di selezione senza nome per lo screen reader; il nome della **sede** scritto a
+2,51:1, sotto la soglia AA, proprio nelle righe nuove del multi-sede; l'Alto Contrasto assente sul
+modulo pubblico d'iscrizione, da cui arrivano ~9 domande l'ora; gli importi della Contabilità in
+formato anglosassone; il client **Aruba/SDI** che buttava via il corpo dell'errore — la riproduzione
+esatta del guasto storico delle email; la fattura che non loggava né il successo né lo scarto; il
+lavoro notturno della conservazione che **non poteva accorgersi di fallire** (`pg_net` è asincrono:
+l'`EXCEPTION` non vedrà mai un 4xx del worker); la guardia che bloccava in modo permanente la
+cancellazione a 24 mesi dell'intero lotto; l'oblio GDPR che non svuotava 5 magazzini di file su 7;
+l'elenco duplicato su `/offline`; l'appello che falliva in silenzio.
+
+Ricorre una forma sola, ed è la stessa da tre cicli: **una regola giusta applicata a una lista
+chiusa**. Il divieto del grigio illeggibile valeva su sei file elencati a mano, e il ciclo dopo l'ha
+riscritto altrove; l'oblio è stato costruito per rilievo invece che partendo dall'elenco dei bucket;
+`formatEuro` esisteva e non era obbligatorio. Le correzioni di oggi sostituiscono ogni lista chiusa
+con una regola su tutti i file più un'allowlist esplicita e un tetto che può solo scendere.
+
+### Il flow Android che sembrava rotto, e non lo era
+
+Quattro esecuzioni fallite di fila sul gate «Dashboard», con un sospetto scritto nel registro che
+puntava all'app. La causa era altrove e vale come metodo: **il server `:3100` girava da ore su una
+build che era stata sostituita**, e serviva HTML con chunk che su disco non esistevano più. Niente
+CSS, React non idrata, i campi restano vuoti — e `tapOn: "Accedi"` risulta `COMPLETED` senza inviare
+niente, lasciando a schermo il messaggio nativo del browser «Please fill out this field». Il flow
+moriva due passi dopo, su un'asserzione che parlava di tutt'altro. **Un `next build` non lo ripara:
+il manifest è in memoria, serve il riavvio.** Dopo il riavvio: genitore 27/27 e docente 31/31, due
+esecuzioni su due, senza toccare i selettori.
+
+### Quello che questo ciclo NON ha provato
+
+- Tutte le misure Android sono su **emulatore**, con Gboard, in verticale, a schermo intero.
+  Restano non provati un dispositivo fisico, le tastiere di terze parti, l'orizzontale, lo
+  split-screen. **API 30 è bloccata** per una ragione diversa: quella WebView è Chrome 91 e il
+  bundle non ci gira (`SyntaxError: Unexpected token '{'`), quindi non dice niente sulla tastiera.
+- Il conteggio del pannello «Problemi» a 0 **non è dimostrato**: richiede la clean del Language
+  Server e il riavvio dell'editor, che si fanno dall'interfaccia.
+- `android-screenshot-playstore.yaml` resta senza esecuzione verde dal 28 luglio.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 648 file / 5943 test** · `build ok`.
+
+**Non ri-collaudato dagli undici tester dopo le correzioni**: il gate formale è verde e ogni
+correzione porta la sua prova di validità (difetto rimesso → rosso; tolto → verde), ma il giro
+completo dei tester su questo albero non è stato rifatto. Va detto, perché è esattamente la
+distinzione che questo ciclo ha passato la giornata a difendere.
+
+---
+
+## 🗓️ Changelog — Il ciclo di correzione ripreso dopo uno spegnimento, e i quattro difetti che nessun collaudo aveva visto 2026-08-01 (branch `fix/multisede-audit-globale`)
+
+Alle **03:50 del 1° agosto** il computer si è spento mentre undici esecutori scrivevano l'ultima
+ondata del piano di correzione. Il codice era tutto su disco; i loro report — compresa la voce
+«cosa NON ho chiuso» — sono andati persi tutti e undici.
+
+Ricostruirli a posteriori ha insegnato più del lavoro stesso: **il gate verde non dice che il
+lavoro è finito, dice che ciò che è stato scritto non è rotto.** Uno step lasciato a tre quarti —
+il codice c'è, il test c'è, ma manca il pezzo che chiudeva il difetto — passa senza fare rumore.
+Undici verificatori sui singoli step: **3 chiusi, 8 parziali**.
+
+### Le otto migrazioni in produzione, e la prova che nessuno aveva fatto
+
+Applicate una per una con l'approvazione del titolare, e verificate **contro il database** invece
+che contro i propri commenti: 3 job di conservazione (24 mesi per le domande mai evase, i dati
+sanitari che escono dalla domanda accolta, il contenuto del registro docenti a 12 mesi), la colonna
+delle password in chiaro rimossa, i consensi fotografici per canale, la dichiarazione di chi
+pubblica una foto, l'allowlist MIME dei bucket, l'ultimo link firmato a 365 giorni della chat
+riportato a percorso, le policy dell'orario per sede, 1 notifica orfana su 60. `get_advisors`:
+0 ERROR. In tutto **3 righe di dati cambiate** su 249 domande intatte.
+
+**La policy dell'orario non era mai stata provata**, e non poteva esserlo: quelle tabelle sono
+vuote in produzione, quindi «il genitore vede 0 righe» non dimostra niente — è vuoto per tutti, e
+il rilievo di sicurezza era una porta senza niente dietro. Con due righe di prova sulle due sezioni
+**omonime** «TEST Infanzia» (Giugliano e Aversa — il caso che ha aperto l'intero audit) e una
+sessione vera via PostgREST: `1 riga, quella di Giugliano` · `[] sulla riga di Aversa`. Controllo
+positivo e negativo nella stessa misura.
+
+### Quattro difetti che il collaudo non aveva visto
+
+1. **Due migrazioni con lo STESSO timestamp.** Sul disco una collisione non fa rumore; si
+   manifesta quando si applica, e delle due ne entra una sola — l'altra viene rifiutata o
+   considerata «già applicata» e **saltata in silenzio**. Il repo avrebbe detto che i genitori di
+   Aversa non leggono più l'orario di Giugliano, e il database non l'avrebbe mai saputo. Il lock
+   esistente non poteva vederla: guardava i duplicati in produzione, dove la `version` è chiave
+   primaria e la collisione è impossibile per costruzione.
+2. **Il PUT degli avvisi non ha mai avuto il gate di sede.** Il POST l'ha dal 30 luglio; la
+   MODIFICA aveva solo il gate di ruolo, poi scriveva `target_classes` grezzo. Bastava modificare
+   un avviso per assegnarlo a una classe di un altro plesso — o a un id di sezione invece che a un
+   nome — ricevendo **200 con la riga aggiornata**. In produzione due avvisi veri avevano l'id:
+   10 alunni in sezione, 10 genitori agganciati, **0 raggiunti**.
+3. **La password degli account TEST era in chiaro in 70 file** di log Maestro (278 occorrenze). Lo
+   strumento per toglierla esisteva; nessuno l'aveva mai eseguito, perché il README insegnava
+   `maestro test` a mano e non nominava lo script. E la bonifica inseguiva **un valore** — quello
+   corrente — quindi era cieca sulle password già ruotate (altre 156 righe) e lo sarebbe
+   ridiventata a ogni rotazione.
+4. **Un OTP a sei cifre provabile un milione di volte, che firmava.**
+   `PATCH /api/forms/send-otp` non aveva nessun tetto sui tentativi. Non l'ha trovato una ricerca:
+   l'ha trovato un **lock scritto per un altro step**, che invece di elencare rotte spezza ogni
+   file nei singoli handler HTTP — un lock per file sarebbe passato, perché in quella route la
+   parola `rateLimit` c'è, ma sta nel POST.
+
+### La forma ricorrente: la porta accanto
+
+Tre dei quattro hanno la stessa forma, ed è la stessa del rilievo C8 del piano: *una regola chiusa
+su una strada e lasciata aperta su quella accanto*. Il POST corretto e il PUT no; i promemoria che
+ricevono il massimo di lunghezza e gli avvisi no (dove il `500` con dentro il tipo della colonna
+era ancora riproducibile parola per parola); il tetto OTP su una firma su quattro. Ogni volta
+perché due esecutori diversi avevano in mano i due lati, e chi teneva l'uno non aveva ragione di
+guardare l'altro. La contromisura non è «stare più attenti»: è che **una regola che vale per due
+strade viva in un posto solo** — da qui `@/lib/avvisi/classi-sede` e `@/lib/validation/avvisi`.
+
+### Debito dichiarato (non chiuso, ma scritto)
+
+- I tre flow Maestro **iOS non sono mai stati eseguiti** dopo la correzione: sono iscritti in
+  `FLOW_SENZA_ESECUZIONE_VERDE`, quindi il gate è verde **perché** la prova manca, non nonostante.
+  Vale anche per i sei login consecutivi di S28, che restano da fare sul simulatore.
+  → **Chiuso il 2026-08-02**: i tre flow eseguiti due volte ciascuno e i sei login fatti sull'app
+  vera. Vedi la voce di changelog in cima. Questa riga resta com'era scritta quel giorno: è la
+  fotografia di ciò che allora era vero, non un errore da correggere.
+- Il rate-limit conta **in memoria, per istanza**: su Vercel il tetto reale è N × il limite
+  dichiarato. Regge perché i tentativi non si accumulano su un codice solo (il ticket vive dieci
+  minuti), ma il numero non è garantito finché il contatore non passa a uno store condiviso.
+- Il **login non ha un tetto applicativo**: autentica dal client con Supabase, quindi non esiste
+  una nostra route su cui appenderlo. È una decisione di prodotto, non una riga di codice.
+- Un **allegato orfano storico** in `avvisi_allegati` (24/05/2026, nessun avviso lo referenzia) e i
+  file di prova dei collaudi attendono una decisione: rimuoverli con la service key o dichiararli.
+- Restano dal ciclo precedente: i **452 messaggi d'errore italiani** nelle route (l'inventario può
+  solo rimpicciolirsi), le **11 policy `using(true)`** accettate con la motivazione scritta accanto,
+  e le **93 domande con `raccolta_senza_informativa = true`** — dove il flag documenta il problema,
+  non lo chiude.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 617 file / 5573 test** · `build ok`.
+
+---
+
+## 🗓️ Changelog — Audit globale multi-sede: 140 rilievi chiusi col gate verde, dal 400 che non arrivava mai alle foto dei bambini leggibili senza login 2026-07-31 (branch `fix/multisede-audit-globale`)
+
+Il 2026-07-29 Kidville è passata da un plesso a **tre**. Per due giorni il gate formale è rimasto
+verde — 3540 test — e non perché l'isolamento tenesse: **un filtro di sede mancante non rompe
+niente, restituisce solo più righe**. Non c'è nulla da vedere finché non esistono due sedi.
+
+Venti agenti hanno riletto il codice riga per riga e interrogato il database di produzione:
+**140 rilievi confermati** (10 bloccanti · 55 gravi · 42 minori · 33 note), raccolti in
+`docs/audit/2026-07-31-audit-globale-multisede.md`. I piani di correzione — con la **prova di
+validità obbligatoria** su ogni step (rimettere il difetto, vedere il test diventare rosso) — sono
+in `docs/superpowers/plans/2026-07-31-multisede-audit-globale.md` e nel piano di chiusura (12 step,
+3 ondate). Chiusi **tutti**, non solo i bloccanti: oltre 360 file toccati, **84 route API**,
+**19 migrazioni** applicate in produzione.
+
+### Il presupposto che era falso: «pre-lancio, nessun dato reale»
+
+`CLAUDE.md` autorizzava merge, deploy e migrazioni automatiche in produzione con una ragione sola:
+*«siamo pre-lancio, e in produzione non c'è ancora nessun dato reale di famiglie e bambini»*.
+Misurato il 31/07: `enrollment_submissions` contiene **227 domande di iscrizione vere**, con
+**152 codici fiscali distinti di minori**, 51 righe con allergie e 36 con note mediche in testo
+libero, raccolte **dal 16 luglio** dal modulo pubblico — circa **nove invii l'ora** (erano 156 la
+mattina, 227 a sera: la tabella cresceva mentre la si contava). Il lancio commerciale non c'è
+stato; i dati sono arrivati lo stesso, e nessuno aveva più riletto quel promemoria da quando il
+modulo pubblico è andato online.
+
+**La lezione, scritta in cima al file perché non torni:** «pre-lancio» è una frase sul calendario,
+non una misurazione. L'unica domanda che conta è *quante righe reali ci sono adesso*, e ha una
+risposta che si ottiene con una query. Decisione del titolare del 2026-07-31, ora nel PRD e in
+`CLAUDE.md`: ogni migrazione e ogni merge si mostrano e si fanno approvare, uno per uno. I cinque
+punti operativi (permessi in `ask`, `defaultMode`, conferma esplicita nel comando, *required
+reviewers* su GitHub) restano da applicare come **ultimo atto** del rilascio — attivarli a metà
+lavoro avrebbe bloccato la sessione che li scrive, e il testo lo dice a chi legge dopo.
+
+### La causa radice comune: il 400 promesso non esisteva
+
+`resolveScuolaScrittura` deve rispondere **400 «Specificare la sede»** a chi ha più plessi e non ne
+indica nessuno — lo dice AGENTS.md dal 29 luglio. Non è mai successo: il ripiego su
+`user.scuola_id` **precedeva** la condizione d'errore, quindi il ramo che nega era codice morto.
+La Direzione che lavorava su Aversa, guardando Aversa, si vedeva scrivere i dati su Giugliano.
+Senza un errore, senza un log, senza un test rosso.
+
+Il file non aveva **un solo test proprio**: 83 file di `__tests__/` lo *mockavano*, zero lo
+importavano — cioè l'unico modulo su cui poggia l'intera tenancy era l'unico mai verificato. Ora ne
+ha 55, ed è il primo che lo importa davvero.
+
+**Il gemello del difetto, chiuso in chiusura d'audit.** Lo stesso primitivo accettava la sede
+*dichiarata* solo se accessibile — e se **non** lo era tirava dritto: decadeva a «non dichiarata» e
+scriveva altrove, con 200/201 e senza un log. Misurato: `POST /api/mensa/alternative` con lo
+`scuola_id` di Cesa fatto da un utente di Aversa → **200, riga scritta su Aversa**; idem
+`POST /api/gallery`. Il difetto era noto e tamponato route per route, ma le chiamate sono **65 in
+54 file**: un tampone su 54 non è una difesa, è un promemoria. Il controllo è ora **dentro** il
+primitivo (sede dichiarata e non accessibile ⇒ **403** + log `warn`) e i tamponi locali sono
+spariti; in lettura `restringiASedeRichiesta` rispondeva già 403 per lo stesso caso — erano due
+risposte diverse alla stessa domanda. **Quattro test asserivano il comportamento sbagliato** e sono
+stati riscritti, non aggirati: uno mentiva in modo istruttivo — mockava `resolveScuolaScrittura`
+con «dice sempre di sì» e verificava il 403 prodotto dal tampone, cioè verificava il tampone e non
+la regola. Le asserzioni nuove sono sulla **mutazione**, non sullo status: con la sede fuori scope
+nessuna riga viene scritta da nessuna parte, e accanto c'è sempre il controllo positivo.
+
+### Le tredici famiglie di guasti
+
+| | Famiglia | Il caso peggiore che conteneva |
+|---|---|---|
+| **F1** | La sede la sceglieva il server invece di pretenderla | Ogni scrittura senza sede dichiarata finiva nel plesso primario dell'operatore |
+| **F2** | Route chiuse a metà: gate di **ruolo** scambiato per gate di **tenant** | `admin/students` PATCH rileggeva per intero la scheda di un minore di un'altra sede — note mediche, codice fiscale, indirizzo — a fronte di una scrittura innocua; il DELETE la cancellava. `admin/sections` PATCH con schema `.loose()` lasciava **riscrivere `scuola_id`**: la chiave di tenancy stessa |
+| **F3** | Il nome della classe usato come identità | Due «Girasoli» in due plessi: `.limit(1)` senza `ORDER BY` sceglieva a caso fra due gruppi di bambini |
+| **F4** | RLS dell'era mono-sede: policy che rispondono «che ruolo hai» e mai «su quale sede» | 33 tabelle con firme, pagelle e audit leggibili da **qualunque autenticato**; le policy di `presenze` davano a ogni genitore lettura **e scrittura** sull'intera sede |
+| **F5** | Due semantiche opposte per `scuola_id NULL`, e un trigger che deduceva la sede da un `ORDER BY` di uuid | `fn_form_submission_etl` archiviava **ogni minore iscritto a Cesa**, qualunque plesso avesse scelto la famiglia |
+| **F6** | Destinatari delle notifiche risolti senza il ponte `utenti_scuole` | Per Aversa e Cesa l'allarme allergie e il **panic alert** non arrivavano a nessuno, e il cron marcava l'invio come riuscito |
+| **F7** | Oggetti di collaudo dentro la produzione | La password del seed E2E era un letterale in un repository **pubblico**, su un account `ruolo='admin'` che il provisioning del 29/07 aveva collegato a **due sedi vere** |
+| **F8** | I lock e i test non tenevano | Il finto client Supabase accettava `.or()`, `.neq()`, `.not()` e li **ignorava**, e non aveva `insert()` né `delete()`: con un mock così un test d'isolamento è verde anche senza il filtro nella route |
+| **F9** | L'inventario dell'audit del 30/07 mentiva | 12 voci marcate CHIUSA che `git show --name-only` dice non essere mai state toccate |
+| **F10** | Il cockpit non era multi-sede | Sotto i 1024px l'avviso «scegline una dal menu in alto» indicava un menu che su mobile **non esisteva** |
+| **F11** | Lo schema non difendeva il tenant | 31 tabelle accettavano qualunque uuid come `scuola_id`: non una fuga, una **sparizione** — quella riga non appartiene a nessun plesso e diventa invisibile a ogni filtro |
+| **F12** | Una sede nuova nasceva vuota | Cesa aveva cinque classi di primaria senza una sola disciplina e senza scala dei giudizi. Nessun errore, da nessuna parte |
+| **F13** | Fail-open nelle librerie condivise | Scope non calcolato ⇒ si procedeva **senza filtro**, invece di negare |
+
+### I file: quello che il database proteggeva e lo Storage no
+
+Il gate di ruolo, l'isolamento per sede e la regola «foto privata» giravano tutti **sul database e
+mai sul file**. Il bucket `gallery` era **pubblico**: bastava avere — o indovinare — l'indirizzo per
+vedere la foto di un bambino **senza login, senza scadenza e fuori da ogni controllo**. Era un
+limite noto e messo per iscritto nel codice («hardening con signed-URL in un follow-up»), rimasto
+innocuo solo perché la galleria non è mai entrata in esercizio: `galleria_media_v2` e
+`galleria_media` hanno **zero righe** in produzione. Stessa forma su `avvisi_allegati` (1 file) e
+`task_allegati`, dove però l'indirizzo pubblico era proprio quello che l'app mandava al browser di
+ogni famiglia — e l'allegato di un avviso è il modulo di una gita coi nomi dei bambini.
+
+I tre bucket sono **chiusi** (`public: false`) e il codice ci parla come si parla a un bucket
+privato: in tabella si archivia il **percorso**, non un indirizzo; `GET /api/gallery` genera i link
+**firmati a 10 minuti**, in blocco (`createSignedUrls`: una chiamata per pagina, non una per foto),
+**dopo** il gate e lo scope di sede. `gallery/upload` non chiama più `getPublicUrl` — quell'indirizzo
+oggi risponde **400**, misurato — e restituisce `path` più un `previewUrl` firmato; `POST /api/gallery`
+riconosce e normalizza gli URL pubblici completi che un client vecchio potesse ancora rimandare, e
+le righe storiche salvate come URL vengono firmate lo stesso. Il fallimento della firma **non è
+silenzioso** (AGENTS §3): `error` col corpo del provider e i soli conteggi — mai il percorso, che
+porta con sé l'uuid di chi ha caricato — media con `file_url: null`, e `MediaGrid` mostra
+«Anteprima non disponibile» invece di un `<img src="">` che avrebbe fatto ripartire una richiesta
+sulla pagina stessa. **Effetto collaterale voluto**: il link «Condividi» ora **scade**. Prima era un
+indirizzo eterno e pubblico — chi lo riceveva poteva rigirarlo a chiunque, per sempre.
+
+**Il presidio che teneva chiuso il bucket non c'era.** Il blocco «assicura il bucket» chiamava
+`createBucket`/`updateBucket` **senza guardare il valore di ritorno** — e come PostgREST, lo Storage
+non lancia: ritorna `{ error }`. «Lo rimettiamo privato a ogni caricamento» era una promessa che
+nessuno verificava. Ora un fallimento si logga col corpo, e trovare il bucket **ancora pubblico**
+produce una riga `error` dedicata **prima** di richiuderlo (richiuderlo e tacere cancellerebbe la
+traccia). La stessa cecità aveva già lasciato passare una discrepanza viva: `gallery` aveva
+`file_size_limit` **50 MB** mentre il codice ne dichiara 200 — il video di una recita superava tutti
+i controlli dell'applicazione e veniva respinto dallo Storage. Il bucket `news`, che non esisteva e
+sarebbe nato **pubblico dentro un `try`** al primo caricamento, è ora dichiarato in migrazione:
+pubblico **per decisione del titolare** — è un blog rivolto all'esterno e un link firmato scadrebbe
+— che è una scelta scritta, non una configurazione subita.
+
+### Privacy: quattro schermate consegnavano più di quanto mostrassero
+
+Con 227 domande di famiglie vere in produzione, il peso di ogni risposta HTTP cambia.
+
+- **La dashboard restituiva il modulo d'iscrizione intero.** Il widget «iscrizioni in attesa» mostra
+  «Richiesta N · da gestire» e una data; la riga che lo alimentava leggeva la colonna JSONB
+  `enrollment_submissions.data`, che non è una data: è il modulo compilato dalla famiglia — 19 campi
+  per adulto (tipo e **numero del documento**, `documento_path`) e 17 per minore (**codice fiscale**,
+  data di nascita, residenza, **allergie**, **note mediche**). Il cast `as string | null` impediva a
+  TypeScript di accorgersene. Misurato prima della correzione: 5 voci, 8486 byte, CF del minore in
+  5 casi su 5, dato sanitario in 1 su 5 — **a ogni caricamento**. Ora la query chiede
+  `id, created_at` e la variabile si chiama `invio`, così `data` torna a significare «la data».
+- **Le password dei genitori erano archiviate in chiaro**, e rilette a ogni apertura di pagina.
+  L'import di una domanda crea l'account del referente e ne mostra le credenziali all'operatore:
+  quello è il flusso previsto. Il difetto era che le stesse credenziali finivano anche in
+  `enrollment_submissions.credentials` (JSONB) e tornavano da `GET /api/admin/iscrizioni`, che
+  faceva `select('*')`, a **chiunque abbia un ruolo di staff nella sede** — senza scadenza. In
+  produzione due righe valorizzate, entrambe di famiglie reali. Ora la password torna **solo** nella
+  risposta della PATCH che la genera; per riaverla c'è `admin/regenerate-credentials`, che la
+  rigenera lasciando traccia. Le due righe esistenti **non sono state toccate**: la bonifica è
+  scritta e commentata in `scripts/bonifica-credenziali-iscrizioni.sql` e la decide il titolare.
+- **Le liste d'anagrafica consegnavano il fascicolo.** `GET /api/admin/students` restituiva 43
+  colonne per alunno (`note_mediche`, `allergies`, `is_bes_dsa` — art. 9 —, `documento_path`,
+  `importo_retta_mensile`, `genitori_separati`, residenza) più l'embed `student_parents ( … parents (*) ),
+  delegates (*)`: con `limit=1000`, il valore che usano tutte le pagine, **una sola chiamata
+  consegnava il fascicolo dell'intera scuola**. `GET /api/admin/parents` faceva `select('*')`. Le
+  proiezioni sono ridotte a ciò che i componenti leggono davvero — verificato leggendo i componenti,
+  non a intuito — e il dettaglio resta il posto dove il fascicolo si apre.
+- **La nota medica esce come segnale, non come testo**: la lista accende un indicatore «Allergie», e
+  la route restituisce il solo booleano `ha_note_mediche`. La card mobile era già così; la riga di
+  tabella scriveva la nota grezza in un attributo `title` del DOM.
+
+**Metodo, e perché conta.** `finto-supabase` non emula la proiezione di `select()` — le righe tornano
+intere — e su un difetto di privacy la limitazione è dirimente: un test sul corpo sarebbe verde con
+e senza la correzione. È stato aggiunto `__tests__/fixtures/proiezione.ts`, che proietta come
+PostgREST, così «il codice fiscale del minore non esce» è una proprietà verificata sulla RISPOSTA.
+
+### L'oblio usciva dalla sua sede, e da due giorni non riusciva più a nascere
+
+Due difetti opposti sullo stesso diritto, entrambi nati il 2026-07-29 con la terza sede. Uno faceva
+**troppo**: `POST /api/admin/gdpr/richieste` verificava la sede *della richiesta* — correttamente —
+e poi raccoglieva i figli del genitore da `student_parents` **senza alcun filtro di sede**. Bastava
+un genitore con figli in due plessi perché la Direzione di uno rendesse **irreversibilmente anonimo**
+il bambino dell'altro, e ne cancellasse il documento d'identità dallo storage, senza che la
+Direzione competente lo vedesse mai — mentre la route gemella `admin/gdpr/erase` fa
+`assertAlunnoInScope` proprio perché *«è l'operazione più grave dell'applicazione e non esiste un
+annulla»*. Ora i figli si filtrano su `scuoleDiUtente` — le sedi **accessibili**, non quelle
+spuntate nel SedeSelector: una preferenza di vista non può decidere quale minore riceve l'oblio che
+suo padre ha chiesto. Un figlio con `scuola_id` nullo è fuori scope (fail-closed), e il residuo non
+si tace: compare nella risposta, nell'`esito` salvato, in un log persistito e nel riquadro di
+conferma che la Direzione legge prima di digitare `ANONIMIZZA`.
+
+L'altro non faceva **niente**: i due canali di richiesta scrivevano `scuola_id` come
+`X ?? await scuolaUnicaReale(admin)`, funzione deprecata che con tre sedi risponde **sempre `null`**.
+Una riga con sede nulla è invisibile al `GET` della Direzione (`.in('scuola_id', …)` scarta i NULL),
+negata per sempre dalla POST di evasione e irripresentabile per via dell'indice unico parziale su
+`stato='pending'`: il genitore avrebbe letto «richiesta in corso» all'infinito. Non è scattato solo
+perché tutti i 57 utenti hanno una `scuola_id`. Oggi la sede si ricava dai **figli**
+(`src/lib/gdpr/sede-richiesta.ts`), e se resta indeterminabile la richiesta si **rifiuta con un 422
+leggibile** invece di nascere in un limbo. Sotto, due vincoli `NOT NULL` (richieste di cancellazione
+e domande d'iscrizione) come rete: se un domani un terzo canale tornasse a scrivere NULL fallirebbe
+subito e a voce alta. E `consensi_accettazioni` conservava `ip` e `user_agent` **senza scadenza e
+fuori dall'oblio** — la tabella nasce senza FK su `parent_id` per sopravvivere all'anonimizzazione,
+scelta giusta per il valore probatorio che però la lasciava fuori dalla cancellazione: ora l'oblio
+li azzera e il job pg_cron **`consensi-retention`** li azzera comunque dopo 12 mesi. La prova resta:
+tipo, versione e data non si toccano — sono loro a valere per l'art. 7 §1 GDPR e l'art. 1341 c.c.,
+non l'indirizzo di rete di una famiglia.
+
+### Osservabilità: i log non arrivavano in tabella, e quelli che arrivavano mentivano
+
+- **Una riga che attribuiva l'accaduto alla causa sbagliata.** I 18 log aggiunti dall'audit passano
+  `tipo:` (`classe-fuori-sede`, `sedi-attive-non-accessibili`…) ma non `esito:`, e `testoEvento()`
+  non guardava `tipo`: in `app_log.messaggio` finiva il nome **nudo** dell'evento — **diciassette
+  righe `messaggio = "auth"`** che raccontavano cinque fatti diversi. Il danno vero è a valle:
+  `messaggio` entra nell'**impronta**, il `contesto` no, quindi due segnali diversi sulla stessa
+  route+utente+giorno cadevano nella stessa chiave e l'`ON CONFLICT` li **sommava in una riga sola**.
+  Su `/api/diary/students` un `sedi-attive-non-accessibili` è stato assorbito in una riga
+  `classe-fuori-sede`. Corretto in un punto solo — `tipo` entra in `testoEvento`, **dopo**
+  `operazione` — e cambiando il messaggio cambia l'impronta, quindi le righe si separano
+  **retroattivamente**. Non si è toccata `impronta()`: metterci il contesto avrebbe fatto entrare i
+  contatori che cambiano a ogni richiesta e ucciso la deduplica.
+- **Il `sede_id` della pubblicazione non arrivava mai**: quegli eventi sono `info` e
+  `galleria`/`modulistica`/`multi_sede` non erano in `EVENTI_PERSISTITI` — in 30 giorni **non una
+  riga**. Aggiunti dopo aver **misurato** il volume (0 media, 4 compilazioni, 10 avvisi, contro le
+  23,7 righe/giorno che `app_log` già assorbe). **`auth` non è stato aggiunto**, ed è la scelta che
+  conta: i suoi `info` non sono segnali di dominio ma i rifiuti dei gate, cioè le righe che il design
+  esclude per non fare di `app_log` una tabella di rumore.
+- **Tre sinonimi spezzavano le query in silenzio** (`galleria`/`gallery`, `modulistica`/`forms`,
+  `pagamento`/`pagamenti`) — e `EVENTI_PERSISTITI` conteneva `pagamento` al **singolare**, quindi un
+  `logEvento('pagamenti', 'info', …)` di successo non sarebbe stato persistito affatto. Nomi
+  unificati e vocabolario **chiuso** (`EVENTI_NOTI`) col lock `eventi-log`.
+- **Il log di produzione raccontava un incidente inventato**: otto righe `error`,
+  `ambiente=production`, «variabile d'ambiente critica mancante: `LOG_HASH_SALT`». A smascherarle è
+  `app_versione = null` — nessuno sha di commit, cioè **nessun deploy**. Erano i `npm run build`
+  fatti in locale: `next build` imposta `NODE_ENV='production'` su qualunque macchina, e la regola
+  era `VERCEL_ENV ?? NODE_ENV`. Il portatile di uno sviluppatore scriveva incidenti di produzione
+  nel log di produzione, al livello su cui si filtra per primo. Ora l'ambiente lo dichiara **solo
+  Vercel**; le otto righe scadono da sole con la retention a 30 giorni.
+- **Il rumore, misurato: il 79% del canale client.** `GET /api/notifiche — Failed to fetch` con
+  `stato_http = 0`: 372 occorrenze su 37 righe in 30 giorni, a livello **`error`** (in tutto, `stato 0`
+  faceva 763 occorrenze su 964). Su una WebView è ciò che il motore dice quando la richiesta viene
+  troncata da un cambio pagina o dal telefono che si addormenta. E sotto ci stava un guasto vero:
+  **41 occorrenze in un giorno** di `POST /api/iscrizione/upload → 413`, genitori che non riuscivano
+  ad allegare i documenti. Le fetch mai partite sono ora `warn`; quelle annullate da noi
+  (`AbortError`) non si spediscono affatto.
+- **Il 413 non era nostro, e il client non sapeva leggerlo.** Verificato dal vivo su produzione con
+  un multipart senza file: 4.000.000 byte → 400 della route; 5.000.000 → `HTTP/2 413`,
+  `x-vercel-error: FUNCTION_PAYLOAD_TOO_LARGE`, `content-type: text/plain`. Il limite è della
+  **piattaforma** (~4,5 MB): il «max 8MB» dichiarato dalle route era una promessa che il loro codice
+  non poteva mantenere, perché sopra soglia non viene eseguito affatto. E il client faceva
+  `await res.json()` **prima** di `res.ok`, quindi il parse lanciava `SyntaxError` e al genitore
+  usciva «Caricamento non riuscito. Riprova.» — l'invito a rifare l'unica cosa che non poteva
+  funzionare. Ora `src/lib/upload/limite-piattaforma.ts` (tetto 4 MB), controllo **prima di spedire**,
+  lettura dell'errore che guarda `res.ok` e il `content-type`, e 413 **con corpo JSON**.
+- **La data di nascita di un minore usciva in chiaro, per 30 giorni.** Nelle righe `iscrizione warn`
+  nome, cognome e CF escono hashati, ma `data_nascita` e `birth_date` passavano intatti: le date
+  erano in lista bianca **per tipo**, non per chiave. Accanto alla provincia di residenza e
+  all'orario dell'invio, quella data identifica una persona — e la persona è un bambino, in un
+  repository pubblico. `redact.ts` ora decide sulla **chiave** (radici `nascita`/`birth`): le
+  stringhe conservano la lunghezza (serve a diagnosticare il `22001` della provincia), `null` resta
+  `null`, e le date legittime continuano a passare.
+- **Un servizio terzo riceve i dati di un minore, e il suo errore veniva buttato.**
+  `fiscalCodeApi.ts` chiama `api.codicefiscale.it` dal browser mandandogli nome, cognome, sesso,
+  data e comune di nascita; sul ramo `!res.ok` non leggeva **né status né corpo**. Ora si loggano
+  entrambi, con la stretta che tiene insieme la regola 3 e la regola 8: i sei valori che abbiamo
+  appena spedito noi vengono **tolti dal corpo** prima di scriverlo. ⚠️ **La chiamata è rimasta**:
+  che i dati anagrafici di un minore vadano a un servizio terzo — senza consenso a monte e senza
+  comparire in nessuna informativa — è una decisione di titolarità, non di codice. Il fallback
+  locale calcola lo stesso codice senza far uscire niente dal dispositivo.
+- **Le notifiche alle famiglie uscivano mute.** I due imbuti da cui passa ogni notifica alle
+  famiglie — `notificaEvento` ed `enqueueNotifiche` — uscivano con un `return` nudo sulla lista
+  vuota, e il codice lo ammetteva in due commenti senza rimediarci. La condizione è viva: 2 alunni
+  su 25 a Giugliano non hanno alcuna riga in `student_parents`, quindi un avviso di classe raggiunge
+  meno famiglie di quante ce ne siano — con 201 al chiamante e nessuna traccia. Ora entrambi
+  emettono `warn` con `tipo` e `sede_id`, e `POST /api/avvisi` — che non scriveva **nulla**, né esito
+  né sede — e `POST /api/gallery` portano `n_destinatari` nella riga di successo: `n_destinatari: 0`
+  accanto a `nTag: 2` è il dato che rende leggibile «due bambini nella foto, zero famiglie avvisate».
+- **`POST /api/avvisi` poteva sfilare `scuola_id` dalla riga, in silenzio.** Su `PGRST204`/`42703`
+  l'insert ritentava fino a 4 volte **cancellando dal record la colonna nominata dall'errore**:
+  bastava che PostgREST nominasse `scuola_id` perché l'avviso nascesse **senza chiave di tenancy** —
+  invisibile nel cockpit di ogni plesso e nel feed di ogni famiglia. Ora ogni colonna sfilata lascia
+  un `warn` col proprio nome, e su `scuola_id` si passa da `degradoSedeLecito` (si prosegue senza
+  isolamento solo se non c'è niente da isolare): in produzione, con tre sedi, **500** invece di un
+  avviso orfano.
+- **Il push web (VAPID) era l'ultimo provider fuori da `externalFetch`.** `webpush.sendNotification()`
+  rifiuta con una `WebPushError` che porta `statusCode`, `headers` **e `body`** — il testo che dice
+  *perché* — e il `catch` teneva il solo `err.message`. **È la forma identica al guasto storico delle
+  email di credenziali**, sopravvissuta sull'unico canale non riscritto. Ora la richiesta passa da
+  `externalFetch`, il corpo del provider finisce in `app_log.messaggio`, il **successo** si logga,
+  410/404 restano `info` e l'assenza delle chiavi VAPID emette `config`/`error` coi nomi delle
+  variabili. A valle, `POST /api/push/dispatch` guardava solo `ok`/`gone`: qualunque altro rifiuto
+  non incrementava nulla e la notifica veniva marcata inviata comunque, mentre il battito diceva
+  `esito:'ok'`. Aggiunto il contatore `fallite` e una riga `warn` `invii-rifiutati`.
+
+### Il cockpit ingoiava i rifiuti del server, e la rete giù sembrava «non ci sono alunni»
+
+Difetti di **interfaccia** con la stessa radice: l'esito di una chiamata non arrivava mai a chi
+stava usando l'app. Non producevano nessun test rosso — non c'era niente da rendere rosso.
+
+`/admin/students/sezioni/[id]` aveva tre scritture e nessuna guardava com'era andata: cambiando il
+grado il menu lampeggiava e tornava indietro, la `PATCH` era partita e il server aveva risposto
+**400 «Specificare la sede»**, gli elementi `[role="alert"]` sulla pagina erano **zero**, la console
+muta. Dall'esterno è indistinguibile da un click non registrato, e `addTeacher` azzerava il modulo
+**prima** di sapere l'esito. In `/admin/students` le tre fetch degli elenchi erano `try { … } finally`
+**senza `catch`**: un `TypeError: Failed to fetch` usciva dall'effetto, nessuno stato d'errore,
+nessun log, e la pagina mostrava contatori a zero e «Nessun alunno trovato» — cioè un operatore
+deduce che l'archivio è vuoto, la conclusione peggiore che si possa indurre su un archivio che
+contiene le famiglie reali. **Il `try/finally` senza `catch` non era una svista**:
+`react-hooks/set-state-in-effect` (nel gate è un **errore**) fa fallire eslint se una funzione
+chiamata da un `useEffect` contiene un `setState` dentro un `catch` — verificato aggiungendone uno.
+La via d'uscita non era rinunciare al ramo d'errore ma spostarlo su **`.catch()` della promise**,
+tenendo il `finally`; entrambi i vincoli sono scritti accanto al codice, con la misura.
+
+Sulla stessa pagina, **«← Tutte le sezioni» lasciava lo spinner per sempre**: il ramo `sections`
+montava con `isLoading = true` e nessuno lo spegneva, perché `setIsLoading(false)` vive solo dentro
+i tre fetch che quel ramo non lancia — e riaprire dal menu non riparava (stessa rotta, il componente
+non si rimonta): bisognava uscire dall'area. Difetto **preesistente**, su un percorso quotidiano
+della segreteria, trovato dal collaudo iOS. La causa vera erano tre decisioni separate che leggevano
+lo stesso fatto in tre modi; ora leggono un unico predicato dichiarato una volta, `attendeElenco(v)`.
+
+`/admin/avvisi` stampava `target_classes.join(', ')` su un campo **eterogeneo** (il form ci scrive i
+nomi, due avvisi in produzione ci hanno l'**id**): un uuid dove ci si aspetta una classe. Ora ogni
+voce si risolve contro le classi dei plessi consentiti e l'etichetta porta la sede — ma **solo se
+deducibile**: un nome omonimo in due plessi resta il nome nudo, perché attribuirlo a uno dei due
+sarebbe indovinare, l'errore che tutto questo audit sta chiudendo. E il selettore di sede desktop,
+con una sede sola, diceva «TUTTE LE SEDI · 1 struttura» aprendo un menu con due voci equivalenti: la
+guardia esisteva ma valeva solo sul ramo mobile — ora vale su entrambi, e cade anche la chiamata a
+`/api/admin/dashboard` che quel ramo faceva su **ogni** pagina del cockpit.
+
+**La bottom-nav docente serviva `href="/teacher?userId=null"` a ogni caricamento.**
+`getCurrentTeacherId()` legge `window.localStorage` **dentro il corpo del componente**: sul server
+ritorna `null`, nel browser l'uuid vero. React segnalava il mismatch a livello **ERROR** su ogni
+caricamento di `/teacher`, `/teacher/diary`, `/teacher/chat`, `/teacher/gallery` — e gli attributi
+**non li ripara** («This won't be patched up»): alla docente restava sotto il dito un link con la
+stringa «null» al posto della sua identità, che viaggiava poi come `?userId=` dentro le route
+`/api/*` e diventava un 401 senza spiegazione. Lo stesso schema stava in `ClasseShell` e in
+`/teacher/primaria`. Nuovo `src/lib/auth/use-teacher-identity.ts`, gemello di `useAdminIdentity`:
+`useSyncExternalStore` con `getServerSnapshot` = il `?userId=` della URL e `getSnapshot` = l'identità
+reale; il suo `withUser()` **omette** il parametro finché l'uuid non è risolto, così `userId=null`
+diventa impossibile per costruzione e non per disciplina di chi scriverà il prossimo href. Il doppio
+passaggio raddoppiava la rete (`/api/primaria/me` due volte per pagina): chiuso con un flag `pronta`
+e con le `fetch` che partono una sola volta.
+
+**Sull'app nativa, tre difetti con la stessa radice: funzionava per chi guarda lo schermo, non per
+il sistema operativo.** La modale «Nuovo avviso» **non esisteva** per lo screen reader — nessun
+`role="dialog"`, nessun `aria-modal`, nessun focus-trap, contenuto retrostante raggiungibile: su
+Android l'albero di accessibilità continuava a esporre solo la pagina sotto, e il bottone di
+chiusura era 32×32 px e muto. Rifatta sul modello di `AdminMenuSheet`, che era già esposto
+correttamente: in questo repo esisteva già un modo giusto di fare una modale, ora ce n'è **uno solo**
+(sistemato anche lo z-index: la bottom-nav copriva «Pubblica avviso»). Il **tasto Indietro** di
+Android navigava nella cronologia anche con un overlay aperto — se stavi scrivendo un avviso, lo
+perdevi: ora un registro degli overlay chiude prima quello in cima. E **il flow Maestro committato
+era rotto, e accusava l'app di un difetto che non aveva**: `tapOn: "Mensa"` prendeva la scorciatoia
+della dashboard (fuori viewport, altezza 0) invece del tab della bottom-nav. L'app era ed è sana; la
+trappola dei nodi duplicati è ora scritta nel README dei flow.
+
+### Le diciannove migrazioni (applicate in produzione via MCP, `get_advisors` 0 ERROR)
+
+| Migrazione | Cosa fa |
+|---|---|
+| `20260731094558_chiudi_policy_scaffolding_rls_aperte` | Via 6 policy `auth.role()='authenticated'` lasciate da Studio: davvero **chiunque** poteva scrivere il registro di qualsiasi sede, annotare note disciplinari su qualsiasi minore e **inserire firme docenti a nome altrui** (valore probatorio) |
+| `20260731101818_fn_form_submission_etl_sede` | Il trigger ETL dell'iscrizione prende la sede da `NEW.scuola_id`; se manca **non crea nulla** e lo scrive in `app_log` |
+| `20260731102245_rls_multisede_pulizia` | 42 policy riviste: 37 droppate, 5 riscritte col vincolo di plesso, 1 `REVOKE`. Verificato file per file che **nessun** percorso client-side dipendesse da quelle policy |
+| `20260731112535_mensa_unique_per_sede` | Unicità della configurazione mensa per sede: due menu attivi dalla stessa data rendevano nondeterministici **gli allergeni del giorno** |
+| `20260731113406_sections_nome_per_sede` | UNIQUE `(scuola_id, name)`: l'invariante viveva solo in tre docstring, e un invariante che vive nei commenti è una speranza |
+| `20260731114449_presenze_armadietto_scuola_id` (+ `…114828_…_revoke`) | Trigger dall'alunno + backfill (12 presenze, 4 armadietti) + `NOT NULL` |
+| `20260731115341_genera_rette_per_sede` | `genera_rette_mensili/anno` con `p_scuola_id` **obbligatorio** (nessun default) + `schools.operativa`. Non è teoria: l'unica esecuzione registrata in produzione ha emesso 21 rette su Giugliano **e 4 sulla sede finta della CI** — un clic, due sedi |
+| `20260731122800_fk_scuola_id` | FK `scuola_id → schools(id)` su 31 tabelle (da 34/65 a **65/65**) e disarmo della colonna morta `alunni.fiscal_code` |
+| `20260731123052_provisiona_sede_v2` | Corredo minimo automatico per una sede nuova + **backfill idempotente** di Aversa e Cesa; ciò che resta umano esce come checklist |
+| `20260731140243_note_firme_sola_lettura_per_authenticated` | La policy sopravvissuta alla pulizia del mattino: `WITH CHECK (maestra_id = auth.uid())` vincola l'**autore** a sé stesso e nient'altro — non il ruolo (ogni utente con sessione è `authenticated`, genitori compresi), non la sede, non che insegni in quella sezione. Dimostrato con INSERT reali in transazioni annullate: un **genitore** ha scritto una nota disciplinare su un minore non suo, la segreteria di **Aversa** sul fascicolo di un minore di **Giugliano** |
+| `20260731142105_oblio_sede_obbligatoria_retention_consensi` | `richieste_cancellazione.scuola_id` e `enrollment_submissions.scuola_id` → **NOT NULL** (0 righe nulle su 227 domande) + retention 12 mesi su `ip`/`user_agent` dei consensi |
+| `20260731170007_galleria_lettura_genitore_con_sede` | La policy di lettura della galleria non nominava la sede: una foto di gruppo di Cesa era leggibile dal genitore di Giugliano. Si **aggiunge** una condizione, non se ne toglie — sbagliare deve significare «non vedono», mai «vedono troppo» |
+| `20260731191948_pagamenti_rls_senza_ricorsione` | `pagamenti` ⇄ `pagamenti_quote`: due policy che si leggevano a vicenda (**42P17**), difetto **preesistente**. La cura non è stata riscriverle ma togliere la metà del cerchio **già morta** — si appoggiava a `legame_genitori_alunni`, che ha la RLS accesa e **zero policy**. Prova rosso→verde sui dati veri: prima `42P17`, dopo il genitore legge **1** pagamento su 98. Né 0 (negava tutto) né 98 (fuga) |
+| `20260731192005_bucket_gallery_limite_200mb` | Il bucket accettava 50 MB mentre il codice ne dichiarava 200: il video di una recita superava ogni controllo dell'app e veniva respinto dallo Storage |
+| `20260731192029_drop_test_table` | Via `public.test_table`, residuo del baseline: in un database che contiene i codici fiscali di **152 minori**, una tabella che nessuno rivendica è un rischio anche da vuota |
+| `20260731192048_bucket_news` | Il bucket `news` esiste in migrazione invece di nascere **pubblico dentro un `try`** al primo caricamento: pubblico per scelta scritta del titolare, con limiti e tipi dichiarati |
+| `20260731192108_allegati_avvisi_task_bucket_privati` | `avvisi_allegati` e `task_allegati` → `public = false`. L'indirizzo pubblico era quello che l'app mandava al browser di ogni famiglia: bastava copiarlo da un avviso e girarlo a chiunque |
+| `20260731192131_task_interni_scuola_obbligatoria` | `task_interni.scuola_id` **NOT NULL** + FK: un promemoria senza plesso non compare nella bacheca di **nessuna** sede — non una fuga, una sparizione. Fatto adesso perché la tabella è vuota: fra un mese sarebbe costato una riconciliazione riga per riga |
+
+### La decisione sulla semantica di `scuola_id NULL`
+
+Era la cosa più pericolosa dell'elenco, perché non era un bug: erano **due convenzioni opposte
+convissute nello stesso schema**. In scrittura `NULL` voleva dire «tutte le sedi»; in lettura le
+query filtrano `.in('scuola_id', plessi)`, e in SQL `NULL IN (…)` non è vero — quindi la stessa
+riga significava «di tutti» a chi la scriveva e «di nessuno» a chi la leggeva. Dal 2026-07-31 vale
+una regola sola, scritta qui perché la prossima persona non debba dedurla:
+
+1. **Dato di una famiglia ⇒ `scuola_id` mai NULL.** `form_submissions` compresa: se al momento
+   dell'invio la sede non è risolvibile, la risposta è **400** e non si scrive niente. Una
+   compilazione senza sede non la vedrebbe nessuno — e sarebbe un modulo d'iscrizione perso in
+   silenzio, non un dato «globale».
+2. **Dato di configurazione ⇒ `NULL` significa «globale».** Vale per `form_models` e
+   `payment_categories`: si **legge** da tutte le sedi, si **modifica** solo da chi ha in scope
+   **tutte** le sedi reali. Un admin di un plesso solo non può cambiare sotto i piedi degli altri
+   una riga che vale per tutti.
+3. **Chi risolve una configurazione preferisce la sede al globale**: `ORDER BY scuola_id NULLS
+   LAST` — la riga di sede vince, quella globale è il ripiego.
+4. **Chi espande un «per tutti» lo fa esplicitamente**, sede per sede su `sediReali` (la finta di
+   collaudo esclusa): una news globale notificava **zero** genitori e restava marcata inviata per
+   sempre.
+
+### Il repo aveva smesso di ricostruire il database
+
+`supabase/migrations/` non ricostruiva più il database, e lo si è scoperto misurando il registro
+reale (`supabase_migrations.schema_migrations`) invece di fidarsi dei nomi dei file. **Sei
+migrazioni vivevano solo in produzione**: applicate, mai scritte nel repo — recuperate dal registro
+e riportate integrali col timestamp vero. E **quindici file già presenti portavano un timestamp
+inventato a mano**, diverso dalla `version` con cui erano stati applicati: `supabase db push` non li
+avrebbe riconosciuti come già applicati e li avrebbe **riapplicati tutti e quindici**, e **tre
+coppie erano in ordine invertito** rispetto all'applicazione reale (`fk_scuola_id` prima di
+`provisiona_sede_v2`, `presenze_armadietto` prima di `genera_rette`, `mensa_unique` prima di
+`sections_nome`) — ricostruendo il DB dai file si sarebbe rotto sulle dipendenze. Rinominati con
+`git mv` e riallineati tutti i riferimenti in PRD, audit, lock, `src/` e `scripts/`. Oggi repo e
+database coincidono: **75 migrazioni**, stessi nomi, stesso ordine.
+
+Il presidio che lo tiene: il lock `migrazioni-complete` gira **offline** (in CI le credenziali di
+produzione non ci sono e non devono esserci) e confronta la cartella con una **fotografia versionata**
+del registro. Tre accorgimenti perché non sia teatro: la fotografia porta un `sha256` del contenuto
+normalizzato, così chi la ritocca a mano per far tacere il lock fa fallire un test dedicato; il
+generatore **non legge** la cartella delle migrazioni — se la leggesse, il lock confronterebbe quella
+cartella con sé stessa, verde per costruzione, e c'è un test che lo verifica leggendo il sorgente del
+generatore; un file nuovo **in coda** è lecito, uno che si **intercala** nella storia già applicata
+no. Prova di validità in due modi: tolto un file → rosso, e dice *quale* manca; rinominato un file
+con un timestamp che ne inverte l'ordine → 3 test rossi.
+
+### I lock — quelli che avrebbero trovato tutto questo
+
+Un difetto corretto senza un lock è un difetto in attesa di tornare.
+
+- **`isolamento-sede-coverage` riscritto** — la prima versione (2026-07-30) era **verde su tutti i
+  140 rilievi**, per quattro difetti d'impianto che vale la pena ricordare: (1) **guardava il file,
+  non l'handler** — `admin/students` importava lo scope per il suo GET, PATCH e DELETE nello stesso
+  file non lo usavano affatto, e il lock vedeva un file «coperto»; (2) l'elenco delle tabelle era
+  **scritto a memoria**, sette nomi su 65 con `scuola_id`; (3) era **cieco alle scritture**; (4)
+  l'allowlist era **per prefisso**, quindi esentava anche le route non ancora nate. Ora la
+  granularità è l'**export**, come in `logging-coverage`, le tabelle le dice il database
+  (`__tests__/fixtures/tabelle-scuola-id.json`), le scritture hanno regole proprie (la clausola di
+  sede sta **nell'istruzione che scrive**, non «da qualche parte nell'handler») e ogni voce di
+  allowlist è un `route:METODO` a match esatto.
+- **`rls-per-sede`** — fotografia versionata di `pg_policies`: fallisce se una `USING (true)`
+  ricompare su una tabella sensibile, se una policy di scrittura su tabella con `scuola_id` non
+  nomina né sede né identità, o se la fotografia non corrisponde più al database. **Prima di oggi
+  nessun test guardava la RLS.**
+- **`rls-senza-ricorsione`** — nessuna policy può leggere una tabella la cui policy rilegge la prima.
+- **`fk-scuola-id`** — una colonna `scuola_id` nuova senza chiave esterna fa rosso il gate.
+- **`etl-form-submission-sede`** — il trigger dell'iscrizione non può tornare a dedurre la sede.
+- **`scope-vuoto-nega`** — vieta la **forma** del fail-open: una guardia `X.length > 0` senza ramo
+  `else` che governa un filtro su `scuola_id` costruito con la stessa lista. Allowlist inesistente,
+  per scelta.
+- **`nome-classe-con-sede`** — ogni filtro su `classe_sezione`, e ogni filtro su `name` dentro una
+  query su `sections`, deve avere `scuola_id` nella **stessa** query.
+- **`destinatari-con-ponte`** — vieta `from('utenti')` + `.eq('scuola_id', …)`, la forma che ha reso
+  muti quattro canali di notifica. L'esenzione è per **funzione**, non per file. Il lock ha subito
+  trovato una **quinta** occorrenza viva, che l'ondata precedente non aveva visto.
+- **`identita-client-negli-attributi`** — vieta che un valore letto da `localStorage` nel render —
+  anche passando per una variabile intermedia — finisca dentro un `href`/`src`.
+- **`eventi-log`** — vocabolario chiuso degli eventi: nessun `logEvento` può usare un nome non
+  dichiarato, `EVENTI_PERSISTITI` dev'esserne un sottoinsieme, e i tre sinonimi non possono
+  rientrare nemmeno aggiungendoli all'elenco.
+- **`bucket-storage-dichiarati`** — un bucket non nasce più dentro un `try` di una route.
+- **`inventario-audit-verita`** — estrae dal markdown dell'audit le route marcate CHIUSA e pretende
+  che superino il criterio del lock di copertura. Da oggi il documento non può divergere dal codice
+  in silenzio: è un file di prosa che il gate legge.
+- **`migrazioni-complete`** e **`residui-di-collaudo`** — il repo ricostruisce il database; gli
+  oggetti di prova non restano in produzione.
+- **`niente-password-nel-repo`** — allowlist **svuotata**: è caduta l'ultima eccezione, quella del
+  seed E2E. La lezione non era «serviva un'eccezione più stretta» ma «una password committata non
+  resta dove l'hai messa» — e il lock l'ha subito dimostrato, trovando la password degli account TEST
+  finita in chiaro dentro un prompt committato il giorno prima. ⚠️ Tolta, ma **il repository è
+  pubblico e resta nella storia git: va ruotata, toglierla non basta.**
+- **`migrazioni-senza-sede-cablata`** esteso da `supabase/migrations/` a `src/`, `scripts/`,
+  `__tests__/` ed `e2e/`: gli uuid reali dei tre plessi sono usciti da 30 file, sostituiti dalle
+  fixture finte di `__tests__/fixtures/sedi.ts`.
+- **Il finto Supabase ora filtra e scrive davvero** (89 → 736 righe) e **lancia** su ciò che non sa
+  emulare. Ha smascherato subito **quattro test falsi verdi**: due passavano su un 500, due non
+  asserivano nulla.
+- **Il seed E2E semina due sedi** con una sezione omonima, e `e2e/isolamento-sedi.spec.ts` fa quattro
+  percorsi reali attraverso il confine. Finora la suite era verde perché **non c'era un confine da
+  attraversare**.
+
+### L'inventario che dichiarava chiuso ciò che non lo era
+
+Dodici voci dell'audit del 30/07 erano marcate CHIUSA mentre `git log` diceva che quei file non
+erano mai stati toccati. Ognuna è stata riverificata — storia del file più lettura del codice
+attuale — e riallineata: chi era chiusa davvero cita adesso il commit vero, chi non lo era è tornata
+**APERTA**. Nessuna è stata giustificata «per intenzione»: o c'è il codice, o è aperta. Aggiunte
+anche le **verifiche negative** del 31/07 — le cose che sembravano rotte e non lo erano: un
+inventario che elenca solo i difetti costringe il prossimo audit a riscoprire ogni volta i
+non-difetti.
+
+### Collaudabilità: gli account TEST sulle altre sedi
+
+Con tre plessi l'isolamento non era **collaudabile**: non esisteva un «utente di Aversa» a cui
+chiedere se vede Cesa. Ora ci sono sei account (`test.aversa.*` e `test.cesa.*`: segreteria, docente,
+genitore per sede) creati da `scripts/seed-test-sedi.mjs` in modo idempotente, con le sedi risolte
+**per nome** e mai per uuid — elenco completo, vincoli e procedura di rimozione nella sezione
+«Account TEST sulle altre sedi» più avanti in questo documento. In ogni sede nasce con loro una
+sezione **omonima** «TEST Infanzia», deliberatamente: senza tre classi con lo stesso nome in tre
+plessi, la famiglia F3 non si può né dimostrare chiusa né vedere riaprire.
+
+Restava un ramo non provabile: il **selettore di sede**. Dei 57 utenti di produzione ne aveva più
+d'una **soltanto l'admin del titolare**, quindi l'unico modo di esercitarlo era usare le credenziali
+di una persona vera. `--multisede` crea `test.multisede.admin@kidville.test` col ponte
+`utenti_scuole` verso le tre sedi reali: deroga esplicita alla regola scritta in cima allo script —
+«un account di collaudo sta nella SUA sede» — autorizzata dal titolare e tenuta stretta. Un account
+solo, nessun bambino, nessun genitore, nessun legame: solo accesso; la sede finta della CI resta
+fuori **per costruzione** (`isSedeE2E`, lo stesso filtro che già protegge `risolviSedi`); e il ruolo
+`admin` non è comodità — `scuoleDiUtente` concede il ponte multi-plesso ai soli admin per decisione
+di prodotto del 30/07, quindi un `segreteria` multi-sede avrebbe le righe in `utenti_scuole` e
+continuerebbe a vedere una sede sola: un oggetto inerte che sembra funzionare. I test lo inchiodano,
+così chi domani allargasse il ponte se ne accorge. Le credenziali stanno nel gestore del titolare e
+si leggono da `KV_TEST_PASSWORD`: **nessun valore in nessun file**.
+
+### Il gate che verificava un ruolo solo: venti route di dati di minori, cinque in scrittura
+
+`requireParentOfStudent` è il presidio di venti endpoint che leggono o scrivono i dati di **un
+bambino indicato dal client**: diario, assenze con la giustificazione, note, pagella, armadietto,
+galleria. Verificava il legame **solo a chi era `genitore`**; ogni altro ruolo passava. E non per
+distrazione: la testata del file lo dichiarava — *«staff/educator passano: il loro scope è applicato
+altrove nelle rispettive query»*. Contati uno per uno: **diciotto call site su venti non avevano
+nulla**; `gallery:GET` aveva il solo controllo di plesso (non di sezione), aggiunto il giorno prima
+come tampone locale; `diary/students:GET` era l'unico col gate completo, scritto a mano. Il client è
+`createAdminClient()` (service-role), che scavalca la RLS: dove l'altrove non c'era, non c'era
+nessuna difesa.
+
+Misurato in produzione, non dedotto. `GET /api/diary/entries?alunno_id=<minore di Giugliano>` con la
+sessione di un educator di **Aversa** rispondeva **200** con quindici voci di diario; `GET
+/api/parent/primaria/assenze` restituiva le assenze col `giustificazione_testo`, che è testo libero
+di natura sanitaria. Ripetuto su cinque minori e **sette attori** — docenti e segreterie delle altre
+sedi, e perfino la **cuoca**: 200 per tutti. L'unico 403 arrivava all'altro genitore. In `app_log`
+nemmeno un warn: senza gate non esiste neppure il segnale che qualcuno ci abbia provato.
+
+Fra i venti call site ce n'erano **cinque in scrittura**, e il primo ha valore legale: la
+**giustifica con firma FES** (`giustificazione_firma`, `giustificata_da`), la presa visione della
+pagella, la comunicazione d'assenza, la giustifica didattica e il carico dell'armadietto. Un
+operatore di un'altra sede poteva firmare al posto della famiglia.
+
+La correzione sta **in un punto solo**: `genitore` → `genitoreHasFiglio` (invariato: al legame di
+famiglia la sede non si applica, due fratelli possono stare in due plessi); **chiunque altro** →
+`assertAlunnoInScope`, cioè plesso e — per l'`educator` — sezione assegnata, con **403** e un
+`warn` persistito `alunno-fuori-sede`. I percorsi legittimi non si stringono: l'educator vede i
+bambini delle proprie sezioni, la segreteria tutte le classi del proprio plesso, la Direzione tutti
+i plessi che ha in `utenti_scuole`. Riprovata la stessa misura sul dev server con i sette attori:
+**403 su tutte e sei le rotte per i quattro fuori scope, 200 per i tre legittimi**, e 24 righe
+`alunno-fuori-sede` in `app_log`, correlabili per ruolo e rotta.
+
+**E il lock ratificava la falla.** `isolamento-sede-coverage` esentava tredici handler «per scope
+famiglia»; undici di quelle voci descrivevano uno scope che per i ruoli diversi da genitore **non
+esisteva**, e tre dicevano testualmente «di UN alunno, verificato prima». Non sono state riscritte
+meglio: sono state **tolte**, perché il debito è stato pagato e il lock riconosce da solo il gate dal
+suo corpo. `handlerEsentati` scende da 109 a **96** — il calo più grosso mai registrato su quel
+numero. Resta una sola voce, riscritta per dire il vero: `parent/presenze/comunica-assenza:POST` fa
+un `upsert` su `presenze` **senza `scuola_id`** — l'attore è verificato, la riga nasce senza plesso.
+Debito aperto e dichiarato, non una giustificazione.
+
+### Le lezioni
+
+- **Una voce di allowlist che afferma il falso è peggio di una route non coperta**, perché spegne il
+  sospetto: la route scoperta prima o poi si trova, quella coperta a torto no. Undici righe dicevano
+  «scope famiglia» su venti endpoint dove il legame di famiglia era verificato a un ruolo su sei.
+- **Un commento che descrive una difesa non è una difesa.** *«Lo scope è applicato altrove nelle
+  rispettive query»* è stato vero, forse, per una route su venti; scritto in cima al gate condiviso è
+  diventato il permesso di non applicarlo in nessuna.
+- **Il gate verde non misura l'isolamento.** 3540 test verdi mentre 140 cose erano rotte, perché un
+  filtro di sede mancante non produce un errore: produce righe in più. Finché la sede è una sola non
+  esiste una differenza da osservare — la prima cosa che serviva era un secondo plesso su cui
+  chiedere «e questo lo vedi?».
+- **Un lock che guarda il file invece dell'handler non protegge niente**, e in più *rassicura*: un
+  import in cima al file rendeva «coperti» un PATCH e un DELETE che non chiamavano nulla. Vale per
+  ogni presidio: la granularità dev'essere quella dell'unità che può sbagliare.
+- **«Pre-lancio» è una frase sul calendario, non una misurazione.** L'unica domanda è quante righe
+  reali ci sono adesso.
+- **Un mock che ignora ciò che non sa emulare rende verdi i test sbagliati.** Il finto Supabase
+  accettava `.or()`/`.neq()` e li scartava: quattro test erano falsi verdi. Ora lancia.
+- **Un inventario che nessun test legge diverge in silenzio** — dodici voci «chiuse» senza una riga
+  di codice.
+- **La prova di validità è la sola cosa che distingue un test da una decorazione**: ogni step di
+  questo lavoro ha rimesso il difetto per vedere il test tornare rosso, e proprio così sono emersi
+  quattro test che asserivano il comportamento sbagliato e uno che verificava un tampone al posto
+  della regola.
+
+### Cosa NON è stato toccato
+
+I permessi decisi il 30/07 (segreteria = la sua sede; educator = le sue sezioni; cross-sede solo
+admin): questi step li **applicano** dove mancavano, non li ridiscutono. Il modulo pubblico
+`/iscrizione`, vivo e appena rifatto, resta com'è: le route di submit sono cambiate solo restando
+compatibili col payload che il wizard già manda. Il vincolo UNIQUE globale sul codice fiscale
+rimane: è voluto e presidiato. Le due righe con le credenziali in chiaro restano in tabella finché
+il titolare non lancia la bonifica scritta. Restano **aperti e dichiarati**: la chiamata al servizio
+terzo per il calcolo del codice fiscale (decisione di titolarità) e la rotazione della password TEST
+pubblicata nella storia git.
+
+**Gate:** eslint **0** · tsc **0** · vitest **4827 test / 555 file** (erano 3540 / 429) · build ok ·
+`get_advisors` **0 ERROR** (riverificato a chiusura: restano solo INFO e WARN preesistenti). E2E
+Playwright in CI. Prompt dell'esecutore della pipeline allineato: `.claude/agents/esecutore-opus.md`
+non dichiara più «sede di produzione unica» con l'uuid pronto da incollare.
 
 ---
 
@@ -2683,6 +3760,57 @@ report cucina).
 > Resta il fatto che **la password vecchia è nella storia git**: è morta perché ruotata, non
 > perché cancellata.
 
+**Account TEST sulle altre sedi (dal 2026-07-31) — `scripts/seed-test-sedi.mjs`.** I 41 account
+qui sopra vivono tutti a **Giugliano**. Con tre plessi in produzione questo rende l'isolamento fra
+sedi **non collaudabile**: non esiste un «utente di Aversa» a cui chiedere se vede Cesa, ed è uno
+dei motivi per cui l'audit del 2026-07-31 ha trovato 140 rilievi col gate formale verde. Lo script
+`scripts/seed-test-sedi.mjs` crea — in modo **idempotente**, risolvendo le sedi **per nome** e mai
+per uuid — il minimo necessario alla prova incrociata:
+
+| Sede | Account | Ruolo |
+|---|---|---|
+| Kidville Aversa | `test.aversa.segreteria@kidville.test` | `segreteria` |
+| Kidville Aversa | `test.aversa.docente@kidville.test` | `educator` (sezione «TEST Infanzia» di Aversa) |
+| Kidville Aversa | `test.aversa.genitore@kidville.test` | `genitore` di *Alunno1 Test Aversa* |
+| Kidville Cesa | `test.cesa.segreteria@kidville.test` | `segreteria` |
+| Kidville Cesa | `test.cesa.docente@kidville.test` | `educator` (sezione «TEST Infanzia» di Cesa) |
+| Kidville Cesa | `test.cesa.genitore@kidville.test` | `genitore` di *Alunno1 Test Cesa* |
+
+Con gli account nasce, **in ogni sede, una sezione omonima «TEST Infanzia»** — lo stesso nome della
+sezione TEST di Giugliano. È deliberato: il nome-classe scambiato per identità è la famiglia di
+difetti F3 dell'audit, e senza tre classi omonime in tre plessi non si può dimostrare né che è
+chiusa né che si riapre.
+
+Due vincoli che valgono più delle righe create. **(1)** Nessuno di questi sei account viene
+agganciato a una sede col ponte `utenti_scuole`: la sua sede è una sola, `utenti.scuola_id`. È
+esattamente il difetto chiuso il 2026-07-31 — il provisioning di Aversa e Cesa aveva collegato lì
+`admin.e2e@kidville.test`, cioè una Direzione, su due plessi veri. **(2)** La password arriva da
+`KV_TEST_PASSWORD` e lo script **fallisce subito se manca**: nessun default, nessun valore in un
+file. Lo script gira in **dry-run** per default (`node scripts/seed-test-sedi.mjs`) e scrive solo
+con `--apply`; la sua logica è collaudata da `__tests__/lib/seed-test-sedi.test.ts` sul finto
+client Supabase (fra cui «non scrive mai `utenti_scuole`» e «non tocca le righe dell'altra sede»).
+
+**L'unica deroga, esplicita: `test.multisede.admin@kidville.test`** (`--multisede`, dal
+2026-07-31). Il **selettore di sede** non era collaudabile: dei 57 utenti di produzione ne aveva più
+d'una soltanto l'admin del titolare, e l'unico modo di esercitare quel ramo era usare le credenziali
+di una persona vera. Questo account ha il ponte `utenti_scuole` verso le tre sedi reali, ed è tenuto
+stretto: **uno solo**, nessun bambino, nessun genitore, nessun legame — **solo accesso**; la sede
+finta della CI resta fuori **per costruzione** (`isSedeE2E`, lo stesso filtro che protegge
+`risolviSedi`); il ruolo `admin` non è comodità ma necessità, perché `scuoleDiUtente`
+(`src/lib/auth/scope.ts`) concede il ponte multi-plesso ai soli admin per decisione di prodotto del
+30/07 — un `segreteria` multi-sede avrebbe le righe in `utenti_scuole` e continuerebbe a vedere una
+sede sola, cioè sarebbe un oggetto inerte che sembra funzionare. I test lo inchiodano, così chi
+domani allargasse il ponte se ne accorge. Si rimuove come gli altri: riga in `utenti_scuole` →
+`utenti` → account in Supabase Auth.
+
+**Come si rimuovono.** Nell'ordine, per ciascuna sede (`<slug>` = `aversa`/`cesa`), dopo aver
+cancellato le eventuali righe prodotte dal collaudo (presenze, diario, pagamenti, avvisi):
+`legame_genitori_alunni` → `student_parents` → `parents` (per `auth_user_id`) → `alunni` (per
+`scuola_id` + cognome «Test <Sede>») → `utenti_sezioni` → `utenti` (`email LIKE 'test.<slug>.%'`) →
+`sections` (`scuola_id` + `name = 'TEST Infanzia'`) → infine i sei account in **Supabase Auth**
+(`auth.admin.deleteUser`, o dalla dashboard). Nessuna di queste righe è referenziata da dati reali:
+sono nate isolate e restano isolate.
+
 **Nota di regressione nota (aggiornata 2026-07-13):** in `parents` la colonna `citizenship` conserva in
 realtà il *ruolo* (`mother`/`father`/`educator`…) come workaround storico; la cittadinanza reale digitata
 viene sovrascritta. La tab Staff dell'anagrafica **non dipende più** da questo workaround (ora legge da
@@ -2759,7 +3887,7 @@ bypassando il normale "Soft Delete" applicato in fase di ritiro/sospensione.
 ***Flusso Dati:** Ogni operazione dell'insegnante (compilazione entrata, pranzo, nanna, bagno, attività) genera una chiamata API al server che esegue un **UPSERT** sulla tabella `eventi_diario`: se per quel bambino+tipo_evento+data esiste già un record, viene aggiornato (UPDATE); altrimenti viene creato (INSERT). La lettura degli alunni avviene tramite SELECT sulla tabella `alunni` filtrata per `classe_sezione`.
 ***Cloud Authentication:** Relazione rigorosa e vincolata. I genitori non dispongono di codici di auto-invito; è unicamente la Segreteria a creare il legame parent_id <-> student_id ed effettuare l'onboarding. L'autenticazione è gestita tramite **Supabase Auth** (`auth.users` + `auth.identities`) con email/password.
 ***Offline-First per Docenti:** Le anagrafiche degli studenti vengono salvate in un database locale IndexedDB (tramite **Dexie.js**) per permettere l'appello e il registro offline. Un **Sync Engine** personalizzato (`src/lib/offline/syncEngine.ts`) si occupa di allineare i dati locali con il database centrale PostgreSQL non appena il dispositivo torna online. Le fotografie e i media pesanti sono esclusi dal caching per minimizzare l'impatto sulla memoria del dispositivo.
-***Multi-Tenant:** La proprietà `scuola_id` (Sede di appartenenza, FK verso tabella `schools`) è obbligatoria su ogni tabella radice (`utenti`, `alunni`), garantendo isolamento logico dei dati tra plessi diversi all'interno dello stesso ambiente Kidville.
+***Multi-Tenant:** La proprietà `scuola_id` (Sede di appartenenza) è la chiave di tenancy e ha una **FK verso `schools(id)` su tutte le 65 tabelle** che la portano (dal 2026-07-31: prima erano 34, e sulle altre il database accettava qualunque uuid — una riga così non appartiene a nessun plesso e diventa invisibile a ogni filtro, senza errore e senza log). L'isolamento poggia su tre strati che devono dire la stessa cosa: **schema** (FK, `NOT NULL` dove il dato è di una famiglia, UNIQUE `(scuola_id, name)` su `sections`), **RLS** vincolata alla sede e non al solo ruolo, e **strato applicativo** (`resolveScuoleAttive` in lettura, `resolveScuolaScrittura` in scrittura — che risponde **400** quando l'utente ha più plessi e non ne indica nessuno: la sede si dichiara, non si indovina). Dal 2026-07-29 i plessi reali sono **tre**, più una sede finta di collaudo esclusa da elenchi pubblici, digest e contabilità.
 
 ---
 

@@ -97,7 +97,10 @@ export function aggregaPresenze(
     if (!sede) {
       sede = {
         scuola_id: a.scuola_id,
-        scuola: schoolById.get(a.scuola_id)?.nome || 'Sede',
+        // Vuoto, non «Sede»: questa aggregazione alimenta il cockpit, e una parola
+        // italiana decisa qui non passa più da nessun catalogo (chi la rende non
+        // può nemmeno distinguerla da un nome vero).
+        scuola: schoolById.get(a.scuola_id)?.nome || '',
         presenti: 0,
         iscritti: 0,
         assenti: 0,
@@ -113,7 +116,7 @@ export function aggregaPresenze(
       if (!classe) {
         classe = {
           section_id: a.section_id,
-          classe: sectionById.get(a.section_id)?.name || 'Classe',
+          classe: sectionById.get(a.section_id)?.name || '', // stessa regola di `scuola`
           presenti: 0,
           iscritti: 0,
           assenti: 0,

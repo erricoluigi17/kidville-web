@@ -139,5 +139,7 @@
 
   "sospensioneServiziSospesi": "Services suspended",
   "sospensioneScaduto": " ({importo} overdue)",
-  "sospensioneTesto": "Your account is suspended for an unpaid balance{scaduto}. Some services (forms, sign-ups, orders) are temporarily blocked. Pay the overdue amounts or contact the <strong>school office</strong> to regularize: reactivation is automatic once all overdue amounts are settled."
+  "sospensioneTesto": "Your account is suspended for an unpaid balance{scaduto}. Some services (forms, sign-ups, orders) are temporarily blocked. Pay the overdue amounts or contact the <strong>school office</strong> to regularize: reactivation is automatic once all overdue amounts are settled.",
+  "lockerMesePrecedente": "Previous month",
+  "lockerMeseSuccessivo": "Next month"
 }

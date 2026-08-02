@@ -309,7 +309,10 @@ export async function syncPendingGalleryMedia() {
                     continue;
                 }
 
-                const { fileUrl } = await uploadRes.json();
+                // Bucket privato: in tabella va il PERCORSO nel bucket. `fileUrl`
+                // è il nome storico dello stesso valore (ripiego per una risposta
+                // servita da una versione precedente dell'API).
+                const { path, fileUrl } = await uploadRes.json();
 
                 // 2. Salva il record nel database tramite l'API POST
                 const response = await fetch('/api/gallery', {
@@ -317,7 +320,7 @@ export async function syncPendingGalleryMedia() {
                     headers: { 'Content-Type': 'application/json', 'x-user-id': item.uploaded_by },
                     body: JSON.stringify({
                         uploaded_by: item.uploaded_by,
-                        file_url: fileUrl,
+                        file_url: path ?? fileUrl,
                         file_type: item.file_type,
                         caption: item.caption,
                         tag_students: item.tag_students,

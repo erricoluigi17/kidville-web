@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   model: null as Record<string, unknown> | null,
   inserts: [] as Record<string, unknown>[],
+  CHIAMANTE: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
 }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -22,6 +23,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
   }),
 }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  // Gate d'identità della route (2026-08-02): qui il chiamante è l'intestatario
+  // della submission — il caso anonimo/estraneo sta nel test dedicato.
+  requireUser: vi.fn().mockResolvedValue({ user: { id: h.CHIAMANTE, role: 'genitore', scuola_id: null } }),
+}))
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 7, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('ip'),

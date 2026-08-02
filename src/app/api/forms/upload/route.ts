@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
-import { parseData } from '@/lib/validation/http'
+import { parseData, parseMultipart } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -48,11 +48,14 @@ export const POST = withRoute('forms/upload:POST', async (request: Request) => {
   }
 
   try {
-    const form = await request.formData()
+    // Content-Type sbagliato = errore del CLIENT: 400, e non l'eccezione al `catch`
+    // (`request.formData()` LANCIA). La regola vive in `parseMultipart`.
+    const form = await parseMultipart(request)
+    if ('response' in form) return form.response
     const parsed = parseData(postFormSchema, {
-      file: form.get('file'),
-      folder: form.get('folder'),
-      max_size_mb: form.get('max_size_mb'),
+      file: form.data.get('file'),
+      folder: form.data.get('folder'),
+      max_size_mb: form.data.get('max_size_mb'),
     })
     if ('response' in parsed) return parsed.response
     const { file } = parsed.data

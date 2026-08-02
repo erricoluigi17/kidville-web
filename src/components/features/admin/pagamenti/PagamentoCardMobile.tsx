@@ -6,6 +6,7 @@ import { FatturaChip } from './FatturaChip';
 import { STATI_PAGAMENTO } from './stati';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 import type { PagamentoRow } from './RegistraIncassoModal';
 
 interface Props {
@@ -43,9 +44,9 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
 
             <div className="mt-2 flex items-center justify-between font-maven text-xs">
                 <span className="text-kidville-muted">
-                    {t('cardmTotale')} € {Number(pagamento.importo).toFixed(2)} · {t('cardmPagato')} € {Number(pagamento.importo_pagato || 0).toFixed(2)}
+                    {t('cardmTotale')} {formatEuro(pagamento.importo)} · {t('cardmPagato')} {formatEuro(pagamento.importo_pagato || 0)}
                 </span>
-                {!saldato && <span className="font-bold text-kidville-green">{t('cardmRestano')} € {residuo.toFixed(2)}</span>}
+                {!saldato && <span className="font-bold text-kidville-green">{t('cardmRestano')} {formatEuro(residuo)}</span>}
             </div>
 
             <div className="mt-2 flex items-center justify-between gap-2">

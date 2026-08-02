@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 
 // Pattern schools-route.test.ts: hoisted state + mock auth/audit/scope/supabase.
 const h = vi.hoisted(() => ({
@@ -15,7 +15,24 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
-vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: (...a: unknown[]) => h.scuoleDiUtente(...a) }))
+// `resolveScuolaScrittura` (W2-M): la POST non eredita più la sede dal profilo di
+// chi scrive. Qui il modulo è mockato, quindi ne va riprodotto il CONTRATTO sui
+// plessi finti; il comportamento vero è provato con lo scope reale e il finto
+// client in `merch-sede-scrittura.test.ts`.
+vi.mock('@/lib/auth/scope', () => ({
+  scuoleDiUtente: (...a: unknown[]) => h.scuoleDiUtente(...a),
+  resolveScuolaScrittura: async (
+    _req: unknown,
+    _sb: unknown,
+    _user: unknown,
+    preferita?: string | null,
+  ) => {
+    const plessi = (await h.scuoleDiUtente()) as string[]
+    if (preferita && plessi.includes(preferita)) return { scuolaId: preferita }
+    if (plessi.length === 1) return { scuolaId: plessi[0] }
+    return { response: NextResponse.json({ error: 'Specificare la sede (scuola_id)' }, { status: 400 }) }
+  },
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -44,6 +61,9 @@ const A_URL = 'http://localhost/api/admin/merch/articoli'
 const O_URL = 'http://localhost/api/admin/merch/ordini'
 const json = (url: string, body: unknown, method: string) =>
   new Request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+/** La POST risolve la sede anche dal cookie del SedeSelector: forma NextRequest. */
+const postReq = (url: string, body: unknown) =>
+  Object.assign(json(url, body, 'POST'), { cookies: { get: () => undefined } }) as unknown as NextRequest
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -80,16 +100,16 @@ describe('GET /api/admin/merch/articoli', () => {
 describe('POST /api/admin/merch/articoli', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
-    expect((await ARTPOST(json(A_URL, { nome: 'X', prezzo: 1 }, 'POST'))).status).toBe(403)
+    expect((await ARTPOST(postReq(A_URL, { nome: 'X', prezzo: 1 }))).status).toBe(403)
   })
   it('400 nome vuoto', async () => {
-    expect((await ARTPOST(json(A_URL, { nome: '  ', prezzo: 10 }, 'POST'))).status).toBe(400)
+    expect((await ARTPOST(postReq(A_URL, { nome: '  ', prezzo: 10 }))).status).toBe(400)
   })
   it('400 prezzo negativo', async () => {
-    expect((await ARTPOST(json(A_URL, { nome: 'Polo', prezzo: -3 }, 'POST'))).status).toBe(400)
+    expect((await ARTPOST(postReq(A_URL, { nome: 'Polo', prezzo: -3 }))).status).toBe(400)
   })
   it('201 crea articolo con prezzo/taglie + audit', async () => {
-    const res = await ARTPOST(json(A_URL, { nome: '  Polo Kidville ', taglie: ['S', 'M', 'L'], prezzo: '18.50' }, 'POST'))
+    const res = await ARTPOST(postReq(A_URL, { nome: '  Polo Kidville ', taglie: ['S', 'M', 'L'], prezzo: '18.50' }))
     expect(res.status).toBe(201)
     expect(h.inserts[0].row).toMatchObject({ scuola_id: 'sc-1', nome: 'Polo Kidville', prezzo: 18.5, taglie: ['S', 'M', 'L'] })
     // default categoria 'divisa' quando non specificata
@@ -98,12 +118,12 @@ describe('POST /api/admin/merch/articoli', () => {
   })
   it('201 persiste categoria/fornitore/prezzo_acquisto quando forniti', async () => {
     const FID = '33333333-3333-4333-8333-333333333333'
-    const res = await ARTPOST(json(A_URL, { nome: 'Quaderno', prezzo: 2, categoria: 'materiale', fornitore_id: FID, prezzo_acquisto: '1.20' }, 'POST'))
+    const res = await ARTPOST(postReq(A_URL, { nome: 'Quaderno', prezzo: 2, categoria: 'materiale', fornitore_id: FID, prezzo_acquisto: '1.20' }))
     expect(res.status).toBe(201)
     expect(h.inserts[0].row).toMatchObject({ categoria: 'materiale', fornitore_id: FID, prezzo_acquisto: 1.2 })
   })
   it('400 categoria non valida', async () => {
-    expect((await ARTPOST(json(A_URL, { nome: 'X', prezzo: 1, categoria: 'boh' }, 'POST'))).status).toBe(400)
+    expect((await ARTPOST(postReq(A_URL, { nome: 'X', prezzo: 1, categoria: 'boh' }))).status).toBe(400)
   })
 })
 

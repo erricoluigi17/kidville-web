@@ -40,6 +40,29 @@ export const POST = withRoute('admin/protocolli/analizza:POST', async (request: 
       if ('response' in b) return b.response
 
       const supabase = await createAdminClient()
+
+      // Perimetro PRIMA del lavoro. Il controllo duplicati stava dentro un
+      // `if (sedi.length > 0)`: con lo scope vuoto (cookie `sedi_attive` su una
+      // sede non più accessibile) la route scaricava comunque il file, ne
+      // calcolava l'impronta e rispondeva `duplicato: null` — «nessun
+      // duplicato» detto da chi non ha guardato. Su un registro DPR 445
+      // l'avviso di duplicato è l'unico presidio contro la doppia
+      // registrazione: un «no» indistinguibile da «non ho controllato» è peggio
+      // di un errore. Scope vuoto ⇒ si nega, come in `protocolli/export:GET`.
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user)
+      if (sedi.length === 0) {
+        logEvento('protocolli', 'warn', {
+          operazione: 'admin/protocolli/analizza:POST',
+          esito: 'analisi-senza-perimetro',
+          utente: auth.user.id,
+          ruolo: auth.user.role,
+        })
+        return NextResponse.json(
+          { error: 'Nessuna sede selezionata: impossibile verificare i duplicati' },
+          { status: 403 }
+        )
+      }
+
       const bytes = await scaricaProtocolloBytes(supabase, b.data.stagingPath)
       if (bytes.byteLength > PROTOCOLLO_MAX_BYTES) {
         return NextResponse.json(
@@ -57,39 +80,37 @@ export const POST = withRoute('admin/protocolli/analizza:POST', async (request: 
         dataRegistrazione: string
         oggetto: string
       } | null = null
-      const sedi = await resolveScuoleAttive(request, supabase, auth.user)
-      if (sedi.length > 0) {
-        const { data, error } = await supabase
-          .from('protocolli')
-          .select('id, anno, numero, data_registrazione, oggetto')
-          .in('scuola_id', sedi)
-          .eq('impronta_sha256', impronta)
-          .order('data_registrazione', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (!error && data) {
-          const d = data as {
-            id: string
-            anno: number
-            numero: number
-            data_registrazione: string
-            oggetto: string
-          }
-          duplicato = {
-            id: d.id,
-            numeroFormattato: formatNumeroProtocollo(d.numero, d.anno),
-            dataRegistrazione: d.data_registrazione,
-            oggetto: d.oggetto,
-          }
-        } else if (error && !SCHEMA_MANCANTE.has(error.code ?? '')) {
-          // `warn`: è una LETTURA fallita, non una scrittura persa. Il risultato è salvo
-          // (impronta e suggerimenti escono comunque, 200) e l'avviso di duplicato è per
-          // decisione #17 informativo e mai bloccante — salta solo quello.
-          logEvento('db', 'warn', {
-            operazione: 'admin/protocolli/analizza:POST',
-            esito: 'controllo-duplicati-saltato',
-          }, error)
+      // `sedi` è garantito non vuoto dal gate in testa: il filtro è sempre applicato.
+      const { data, error } = await supabase
+        .from('protocolli')
+        .select('id, anno, numero, data_registrazione, oggetto')
+        .in('scuola_id', sedi)
+        .eq('impronta_sha256', impronta)
+        .order('data_registrazione', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (!error && data) {
+        const d = data as {
+          id: string
+          anno: number
+          numero: number
+          data_registrazione: string
+          oggetto: string
         }
+        duplicato = {
+          id: d.id,
+          numeroFormattato: formatNumeroProtocollo(d.numero, d.anno),
+          dataRegistrazione: d.data_registrazione,
+          oggetto: d.oggetto,
+        }
+      } else if (error && !SCHEMA_MANCANTE.has(error.code ?? '')) {
+        // `warn`: è una LETTURA fallita, non una scrittura persa. Il risultato è salvo
+        // (impronta e suggerimenti escono comunque, 200) e l'avviso di duplicato è per
+        // decisione #17 informativo e mai bloccante — salta solo quello.
+        logEvento('db', 'warn', {
+          operazione: 'admin/protocolli/analizza:POST',
+          esito: 'controllo-duplicati-saltato',
+        }, error)
       }
 
       // Suggerimenti (decisione #8): solo sui PDF con testo; scansioni → {}.

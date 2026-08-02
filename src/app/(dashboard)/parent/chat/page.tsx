@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread, SospensioneInfo } from '@/components/features/chat/ChatThreadList';
-import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
+import { ChatMessageArea, ChatMessage, allegatoMostrabile } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { ChatConversationMenu } from '@/components/features/chat/ChatConversationMenu';
 import { ChatSuspensionBanner } from '@/components/features/chat/ChatSuspensionBanner';
@@ -117,8 +117,10 @@ function ParentChatContent() {
 
     useEffect(() => { loadContacts(); }, [loadContacts]);
 
-    const loadMessages = useCallback(async (threadId: string) => {
-        setLoadingMessages(true);
+    // `silenzioso`: ricarico di servizio (l'allegato arrivato dal Realtime va
+    // rifirmato) — non deve far comparire lo spinner al posto della conversazione.
+    const loadMessages = useCallback(async (threadId: string, silenzioso = false) => {
+        if (!silenzioso) setLoadingMessages(true);
         try {
             const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
             if (res.ok) {
@@ -150,7 +152,7 @@ function ParentChatContent() {
             // messaggi fra un genitore e la maestra, che è il dato più sensibile della pagina.
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-caricamento-messaggi-fallito: ${nomeErrore(err)}`, route: '/parent/chat' });
         } finally {
-            setLoadingMessages(false);
+            if (!silenzioso) setLoadingMessages(false);
         }
     }, [parentId]);
 
@@ -161,6 +163,13 @@ function ParentChatContent() {
             if (prev.some(m => m.id === msg.id)) return prev;
             return [...prev, msg];
         });
+        // Il Realtime consegna la riga del database GREZZA: da S32 l'allegato è
+        // un percorso nel bucket privato, e il link firmato lo genera la route.
+        // Si ricarica il thread — che firma — invece di aspettare il polling:
+        // altrimenti l'allegato resta invisibile fino a 15 secondi.
+        if (msg.attachment_url && !allegatoMostrabile(msg.attachment_url)) {
+            void loadMessages(msg.thread_id, true);
+        }
         // Il messaggio è già nel viewport → marcalo come letto immediatamente
         // (l'IntersectionObserver lo catturerà, ma lo mandiamo anche ora in background)
         fetch('/api/chat/messages/read', {
@@ -168,7 +177,7 @@ function ParentChatContent() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messageIds: [msg.id], userId: parentId }),
         }).catch(() => {/* silenzioso */});
-    }, [parentId]);
+    }, [parentId, loadMessages]);
 
     // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
     // Merge per id, mai append: è lo stesso messaggio con read_at/delivered_at aggiornati.
@@ -389,7 +398,13 @@ function ParentChatContent() {
     const terminiCta = termsBlocked ? (
         <div className="border-t border-kidville-yellow/40 bg-kidville-yellow-soft px-4 py-3">
             <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow-dark">{t('ugcTermsBlockedTitle')}</p>
-            <p className="mb-2 font-maven text-xs text-kidville-yellow-dark/80">{t('ugcTermsBlockedBody')}</p>
+            {/* Niente `/80` sull'inchiostro: l'alfa portava il corpo del banner a
+                1,56:1 sul giallo tenue — sotto il titolo, che già stava a 1,75:1.
+                La rete di sicurezza in globals.css lo riporterebbe comunque a
+                tinta piena, quindi la classe direbbe una cosa e la pagina ne
+                renderebbe un'altra. La gerarchia resta dove è leggibile: 12px
+                normale contro 14px extrabold. */}
+            <p className="mb-2 font-maven text-xs text-kidville-yellow-dark">{t('ugcTermsBlockedBody')}</p>
             <a
                 href="/parent/onboarding"
                 className="inline-flex items-center rounded-full bg-kidville-green px-4 py-2 font-barlow text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-kidville-green-dark"
@@ -562,7 +577,7 @@ function ParentChatContent() {
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{t('newChat')}</h2>
                                 </div>
-                                <button onClick={() => setShowNewChat(false)}
+                                <button onClick={() => setShowNewChat(false)} aria-label={t('chiudiNuovaChat')}
                                     className="w-8 h-8 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted">
                                     <X size={14} strokeWidth={1.5} />
                                 </button>

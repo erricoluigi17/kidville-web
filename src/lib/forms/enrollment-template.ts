@@ -146,3 +146,39 @@ export const CONSENSI_FIELDS: FormField[] = [
       'Scuola. Consenso distinto dai precedenti, facoltativo e revocabile.',
   },
 ]
+
+// ── Dove atterra ciascun consenso foto ────────────────────────────────────────
+/**
+ * `field_id` del modulo → colonna di `alunni` che lo registra.
+ *
+ * ⚠️ ESISTE PERCHÉ È GIÀ SUCCESSO. Fino al 2026-07-31 solo `consenso_foto_galleria`
+ * aveva una destinazione (`alunni.consenso_privacy`). Gli altri due — risposti da
+ * **141 famiglie** — venivano raccolti, congelati in `consents_log` e poi
+ * dimenticati: nessuna colonna, nessun lettore. Una famiglia che aveva NEGATO la
+ * pubblicazione sui social credeva di averla negata, e nel sistema il suo «no»
+ * era indistinguibile dal «sì» della famiglia accanto. Un dato raccolto e poi
+ * ignorato è peggio di un dato mancante: è una promessa non mantenuta
+ * (art. 5 §2 e art. 7 §1 GDPR).
+ *
+ * Questa mappa è la SINGOLA fonte di verità del legame consenso→colonna, ed è
+ * lockata da `__tests__/api/iscrizioni-consensi-foto-per-canale.test.ts`: un
+ * quarto canale aggiunto a `CONSENSI_FIELDS` senza destinazione fa fallire il
+ * gate, invece di restare in silenzio per mesi.
+ */
+export const CONSENSI_FOTO_CANALI = {
+  // Galleria riservata alle famiglie della sezione (app, dietro login).
+  consenso_foto_galleria: 'consenso_privacy',
+  // Sito web della Scuola: canale PUBBLICO, servito senza login (bucket `news`).
+  consenso_foto_sito: 'consenso_foto_sito',
+  // Canali social della Scuola: pubblicazione fuori dai sistemi della Scuola.
+  consenso_foto_social: 'consenso_foto_social',
+} as const
+
+export type CanaleConsensoFoto = keyof typeof CONSENSI_FOTO_CANALI
+
+/**
+ * Versione del TESTO dei consensi qui sopra. Va cambiata quando il testo cambia:
+ * è ciò che viene archiviato insieme a una dichiarazione di pubblicazione, così
+ * fra due anni si sa a quale formulazione la famiglia aveva risposto.
+ */
+export const CONSENSI_VERSIONE = '2026-07-31'

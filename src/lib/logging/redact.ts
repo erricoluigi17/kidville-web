@@ -74,12 +74,63 @@ const DA_HASHARE = insieme(
 );
 
 /**
+ * LA DATA DI NASCITA DI UN MINORE — l'unico buco che la lista bianca aveva ancora, e come
+ * si è aperto.
+ *
+ * Le DATE passano in chiaro per TIPO (vedi `DATA_ISO`): è la deroga che rende leggibile un
+ * log (istanti, scadenze, giorni) e da sola non identifica nessuno. Ma "da sola" è la
+ * parola che nasconde il difetto: la deroga guardava il VALORE e non la CHIAVE, quindi
+ * `data_nascita: '2019-05-03'` usciva in chiaro esattamente come `creato_il`. Nelle righe
+ * `iscrizione warn` di `app_log` — produzione, 30 giorni, interrogabile in SQL — nome,
+ * cognome e codice fiscale uscivano hashati, tutto il resto era redatto, e la data di
+ * nascita del bambino stava lì in chiaro accanto alla provincia di residenza e all'orario
+ * dell'invio. Tre campi che insieme identificano una persona; e la persona è un minore.
+ *
+ * La correzione va nel verso che la regola 8 di AGENTS.md impone: si RESTRINGE la lista
+ * bianca, non la si allarga. Qui la sensibilità si decide sulla CHIAVE, come per
+ * `RADICI_SEGRETE`, e per la stessa ragione: `2019-05-03` e `2026-08-31` sono
+ * indistinguibili a guardare il valore.
+ *
+ * DUE RADICI, `nascita` e `birth`, con `includes` — quindi coprono anche `dataNascita`,
+ * `DATA-NASCITA`, `date_of_birth`, `birthDate`, `birthplace`. Per gli altri campi di
+ * nascita (`comune_nascita`, `provincia_nascita`, `birth_city`…) NON cambia niente: erano
+ * già redatti perché stringhe fuori dalla lista bianca. Cambia solo che ora lo sono per una
+ * ragione dichiarata invece che per omissione.
+ *
+ * `dob` NON è qui di proposito: in questo repo non compare, e una radice di tre lettere
+ * dentro un `includes` è il modo più facile di redigere per sbaglio una chiave innocua.
+ */
+const RADICI_NASCITA = ['nascita', 'birth'];
+
+/**
  * Path e URL: MAI in chiaro. In questo repo il token del modulo pubblico è un
  * SEGMENTO di path (`/m/[token]`, `/api/public/forms/[token]/submit`) ed è una
  * capability; le query string trasportano `?userId=`, `?email=`, `?token=`.
  * Passano da `redigiPath`, che ne tiene il solo pattern.
+ *
+ * ANCHE QUI LA CHIAVE APRE E IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`, `FORMA_PATH`):
+ * `redigiPath` riduce un PATH a pattern, e su una stringa che path non è non riduce niente —
+ * la restituisce intatta. Finché bastava la chiave, `{"url":"<quello che ti pare>"}` era un
+ * canale di TESTO LIBERO verso `app_log`: `redact()` gira anche sul BODY GREZZO di ogni
+ * richiesta (`parseBody` deposita il raw PRIMA di zod), quindi la porta era aperta a chiunque
+ * sapesse fare una POST. Misurato: `"url":"NON-ESISTE-collaudo-log.pdf"` in chiaro accanto a
+ * `"fileUrl":"[redatto:str/27]"` — lo stesso valore, due trattamenti.
  */
 const CHIAVI_PATH = insieme('path', 'route', 'url');
+
+/**
+ * La FORMA di un path o di un URL: comincia con `/` (path assoluto) oppure porta uno schema
+ * (`https://`, `capacitor://`). Tutto il resto, sotto una chiave di path, è una stringa come
+ * un'altra e viene redatta come un'altra.
+ *
+ * NON accetta i path RELATIVI (`api/alunni`): sotto queste chiavi, nei log del repo, arriva
+ * sempre un `pathname` (`context.ts`, `client.ts`, `/api/logs`) o un URL intero. Accettarli
+ * significherebbe riaprire la porta a qualunque parola sciolta — «Mario Rossi» è un path
+ * relativo tanto quanto `api/alunni`. Chi ha in mano un frammento relativo e sa che è un path
+ * chiama `redigiPath` direttamente (lo fa `supabase-fetch.ts` con `object/fascicoli/…`), e lì
+ * la riduzione continua a valere.
+ */
+const FORMA_PATH = /^(\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/;
 
 /**
  * Le uniche chiavi il cui valore STRINGA esce in chiaro. Sono metadati di dominio.
@@ -161,6 +212,32 @@ function eSegreta(chiaveNorm: string): boolean {
     return RADICI_SEGRETE.some((radice) => chiaveNorm.includes(radice));
 }
 
+function eNascita(chiaveNorm: string): boolean {
+    return RADICI_NASCITA.some((radice) => chiaveNorm.includes(radice));
+}
+
+/**
+ * Il valore di un campo di nascita, redatto SENZA perdere la diagnosi.
+ *
+ * Non è `'[redatto]'` secco, e la differenza è già stata pagata una volta: la provincia
+ * viaggia in una colonna `varchar(2)` e il guasto vero era un `22001` (valore troppo
+ * lungo). Con `[redatto:str/8]` in tabella si vede subito che il campo aveva 8 caratteri
+ * invece di 2 — con `[redatto]` non si vede più niente e resta solo la riproduzione a mano.
+ * Perciò le stringhe conservano la lunghezza, esattamente come qualunque altra stringa
+ * fuori dalla lista bianca: rispetto a oggi cambia solo che la deroga «è una data, quindi
+ * passa» qui non si applica più.
+ *
+ * `null`/`undefined` passano intatti: «il campo mancava» è il 95% dei bug (§5 del design),
+ * e un `null` non è il dato di nessuno.
+ */
+function redigiNascita(v: unknown): unknown {
+    if (v === null || v === undefined) return v;
+    if (typeof v === 'string') return redigiStringa(v);
+    // Date, numeri (un epoch è una data di nascita a tutti gli effetti), oggetti annidati:
+    // niente forma da conservare, e il verso in cui si sbaglia è quello giusto.
+    return '[redatto]';
+}
+
 /**
  * Hash stabile e corto: permette di dire "è sempre lo stesso genitore" senza dire chi.
  *
@@ -174,11 +251,20 @@ function eSegreta(chiaveNorm: string): boolean {
  * 2. hasha solo `string | number`. `String({...})` è `"[object Object]"` per QUALUNQUE
  *    oggetto: l'hash sarebbe identico per persone diverse, e un hash "correlabile" che
  *    correla il falso è peggio di nessun hash.
+ * 3. non hasha il VUOTO, per la stessa ragione del punto 2 — ed è il caso che si è
+ *    presentato davvero. `hashCorrelabile('')` è una COSTANTE: in una riga `iscrizione warn`
+ *    di produzione nome, cognome, codice fiscale ed email di un adulto uscivano TUTTI come lo
+ *    stesso `#xxxxxxxx`, e quello stesso `#xxxxxxxx` compariva sulle righe di persone
+ *    DIVERSE. Un campo vuoto non è un'identità: correlarlo significa affermare che due
+ *    estranei sono la stessa persona, in una tabella che si legge per capire cosa è successo.
+ *    Esce quindi come qualunque altra stringa fuori dalla lista bianca — `[redatto:str/0]` —
+ *    che dice anche la cosa utile: «il campo c'era ed era vuoto», che è metà dei bug.
  */
 export function hashCorrelabile(valore: unknown): string {
     const salt = process.env.LOG_HASH_SALT;
     if (!salt) return '[redatto]';
     if (typeof valore !== 'string' && typeof valore !== 'number') return '[redatto]';
+    if (typeof valore === 'string' && valore.trim() === '') return redigiStringa(valore);
     return '#' + createHash('sha256').update(salt + String(valore)).digest('hex').slice(0, 8);
 }
 
@@ -217,6 +303,10 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
     if (k !== null) {
         if (eSegreta(k)) return '[redatto]';
         if (DA_HASHARE.has(k)) return v === null || v === undefined ? v : hashCorrelabile(v);
+        // PRIMA di ogni ramo per tipo, e deve stare qui: `v instanceof Date` e
+        // `stringaAutoDescrittiva` più in basso lascerebbero uscire in chiaro proprio le
+        // due forme con cui una data di nascita arriva davvero (oggetto Date e ISO).
+        if (eNascita(k)) return redigiNascita(v);
     }
 
     if (v === null || v === undefined) return v;
@@ -228,7 +318,11 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
 
     if (typeof v === 'string') {
         if (k !== null) {
-            if (CHIAVI_PATH.has(k)) return tronca(redigiPath(v));
+            // LA CHIAVE APRE, IL VALORE CONFERMA: solo ciò che ha la forma di un path o di un
+            // URL viene ridotto a pattern. Quello che path non è cade sotto, e viene redatto
+            // come qualunque altra stringa — così `url` e `fileUrl` dicono la stessa cosa
+            // dello stesso valore.
+            if (CHIAVI_PATH.has(k)) return FORMA_PATH.test(v) ? tronca(redigiPath(v)) : redigiStringa(v);
             if (IN_CHIARO.has(k)) return tronca(v);
             // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`): niente `tronca`, perché
             // un digest o ci sta intero — e allora si può cercare — o non serve a niente. Se la

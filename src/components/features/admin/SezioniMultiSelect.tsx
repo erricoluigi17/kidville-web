@@ -45,7 +45,7 @@ export function SezioniMultiSelect({
 
   if (loading) {
     return (
-      <span className="inline-flex items-center gap-2 font-maven text-sm text-kidville-muted">
+      <span className="inline-flex items-center gap-2 font-maven text-sm text-kidville-sub">
         <Loader2 size={14} className="animate-spin" /> {t('multiCaricamento')}
       </span>
     );
@@ -66,7 +66,7 @@ export function SezioniMultiSelect({
     <div className="space-y-3">
       {withLivelloFilter && (
         <div className="flex items-center gap-2">
-          <label className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted">{t('multiLivelloClasse')}</label>
+          <label className="font-maven text-[11px] uppercase tracking-wider text-kidville-sub">{t('multiLivelloClasse')}</label>
           <select
             value={livello}
             onChange={(e) => setLivello(e.target.value)}
@@ -79,12 +79,12 @@ export function SezioniMultiSelect({
         </div>
       )}
       {gruppiPieni.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">{emptyHint ?? t('multiNessunaDisp')}</p>
+        <p className="font-maven text-sm text-kidville-sub">{emptyHint ?? t('multiNessunaDisp')}</p>
       ) : (
         gruppiPieni.map((g) => (
           <div key={g.scuolaId}>
             {multiSede && (
-              <p className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted mb-1">{g.scuolaNome}</p>
+              <p className="font-maven text-[11px] uppercase tracking-wider text-kidville-sub mb-1">{g.scuolaNome}</p>
             )}
             <div className="flex flex-wrap gap-2">
               {g.sezioni.map((s) => (
@@ -95,10 +95,14 @@ export function SezioniMultiSelect({
                   className={`font-maven rounded-full px-3 py-1.5 text-sm transition ${
                     value.includes(s.name)
                       ? 'bg-kidville-green text-kidville-yellow'
-                      : 'bg-kidville-line text-kidville-muted hover:bg-kidville-green/10'
+                      : 'bg-kidville-line text-kidville-sub hover:bg-kidville-green/10'
                   }`}
                 >
-                  {s.name} <span className="opacity-60 text-xs">({s.school_type})</span>
+                  {/* `opacity-60` sul suffisso portava il grado a 1,51:1 (e a
+                      2,43:1 anche col token forte): con tre plessi il grado NON
+                      è decorazione, dice se «2 ANNI» è nido o infanzia. La
+                      gerarchia resta affidata alla sola dimensione. */}
+                  {s.name} <span className="text-xs">({s.school_type})</span>
                 </button>
               ))}
             </div>

@@ -15,9 +15,9 @@ interface GalleriaConfig {
     max_mb_per_file: number;
 }
 
-export function GalleriaSettings({ userId }: { userId: string }) {
+export function GalleriaSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<GalleriaConfig | null>(null);
     const [msg, setMsg] = useState('');
 

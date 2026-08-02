@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle, Clock, LogIn } from 'lucide-react';
 import { allergeniDelGiorno, useAllergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
@@ -70,8 +71,12 @@ export function MensaCalendar({ userId, studentId }: Props) {
   // La lingua attiva regge sia le abbreviazioni dei giorni sia la formattazione
   // dell'intervallo settimana (mese abbreviato) — altrimenti in EN si vedrebbero
   // i mesi in italiano. In IT (default e nei test) resta 'it-IT', invariato.
+  //
+  // La REGIONE non si decide più qui: questo file la sceglieva a mano ('en-GB')
+  // mentre tutto il resto dell'app usava 'en' nudo (che Intl risolve su en-US),
+  // e lo stesso prodotto leggeva «8/10/2026» in due modi opposti. Ora la mappa
+  // è una sola, in `@/i18n/config`, e `intlDateTime` dichiara anche il fuso.
   const locale = useLocale();
-  const dateLocale = locale === 'en' ? 'en-GB' : 'it-IT';
   const [weekStart, setWeekStart] = useState<Date>(() => lunediDella(new Date()));
   const [menu, setMenu] = useState<MenuGiorno[]>([]);
   const [pren, setPren] = useState<Record<string, Prenotazione>>({});
@@ -246,13 +251,13 @@ export function MensaCalendar({ userId, studentId }: Props) {
           </button>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
+          <button onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label={t('settimanaPrecedente')} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
             <ChevronLeft size={16} />
           </button>
           <span className="font-maven text-xs text-kidville-muted w-28 text-center">
-            {weekStart.toLocaleDateString(dateLocale, { day: 'numeric', month: 'short' })} – {addDays(weekStart, 6).toLocaleDateString(dateLocale, { day: 'numeric', month: 'short' })}
+            {intlDateTime(locale, { day: 'numeric', month: 'short' }).format(weekStart)} – {intlDateTime(locale, { day: 'numeric', month: 'short' }).format(addDays(weekStart, 6))}
           </span>
-          <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
+          <button onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label={t('settimanaSuccessiva')} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
             <ChevronRight size={16} />
           </button>
         </div>
@@ -327,7 +332,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
               >
                 <div className="flex items-start gap-3">
                   <div className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl flex-shrink-0 ${prenotato ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-green'}`}>
-                    <span className="font-barlow font-black text-[10px] uppercase leading-none">{d.toLocaleDateString(dateLocale, { weekday: 'short', timeZone: 'UTC' })}</span>
+                    <span className="font-barlow font-black text-[10px] uppercase leading-none">{intlDateTime(locale, { weekday: 'short', timeZone: 'UTC' }).format(d)}</span>
                     <span className="font-barlow font-black text-lg leading-none">{d.getUTCDate()}</span>
                   </div>
 

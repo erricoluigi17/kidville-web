@@ -33,8 +33,12 @@ describe('analizzaBersaglio — dall\'URL si ricava cosa stiamo facendo', () => 
 
     it('lo storage passa da redigiPath: la chiave dell\'oggetto può contenere un codice fiscale', () => {
         // Ogni chiave di upload del repo è prefissata da uuid o timestamp → segmento opaco.
+        // Il NOME DEL FILE finale esce come `[file].<estensione>` dal 2026-08-01: un allegato
+        // può chiamarsi «certificato-<cognome>.pdf», e un nome senza cifre passava in mezzo a
+        // tutte e tre le euristiche. Si tiene l'estensione (dice che era un PDF), si butta il
+        // nome (può essere quello di un minore).
         expect(analizzaBersaglio('https://x.supabase.co/storage/v1/object/fascicoli/RSSMRA85T1LA562S/pagella.pdf').nome)
-            .toBe('object/fascicoli/[tok]/pagella.pdf');
+            .toBe('object/fascicoli/[tok]/[file].pdf');
         expect(analizzaBersaglio('https://x.supabase.co/storage/v1/object/chat/11111111-2222-3333-4444-555555555555/1770000000000-referto.pdf').nome)
             .toBe('object/chat/[id]/[tok]');
     });
@@ -45,7 +49,7 @@ describe('analizzaBersaglio — dall\'URL si ricava cosa stiamo facendo', () => 
         // collidono) e gli passa in mezzo. A chiuderlo è la seconda passata, `sanificaMessaggio`
         // — che serve perché in tabella `operazione` è in lista bianca ed esce IN CHIARO.
         const b = analizzaBersaglio('https://x.supabase.co/storage/v1/object/fascicoli/RSSMRALMTLLASLMS/pagella.pdf');
-        expect(b.nome).toBe('object/fascicoli/[cf]/pagella.pdf');
+        expect(b.nome).toBe('object/fascicoli/[cf]/[file].pdf');
         expect(b.nome).not.toContain('RSSMRA');
     });
 

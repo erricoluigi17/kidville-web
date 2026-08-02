@@ -4,7 +4,9 @@ import React, { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
-import { StudentRowCard } from './StudentRowCard';
+import { useSediAttive } from '@/lib/context/sede-context';
+import { StudentRowCard, nomeCompleto } from './StudentRowCard';
+import { formattaIstante } from '@/i18n/config';
 
 export interface Student {
     id: string;
@@ -15,6 +17,11 @@ export interface Student {
     data_nascita?: string;
     classe_sezione?: string | null;
     stato?: string;
+    /** SEGNALE, non contenuto: `GET /api/admin/students` manda solo questo booleano
+     *  («c'è una nota medica»), mai il testo. Il testo vive nella scheda alunno. */
+    ha_note_mediche?: boolean;
+    /** Solo per i chiamanti che hanno già la riga completa (scheda alunno): la
+     *  LISTA non lo riceve più. Tenuto per non rompere chi passa il record intero. */
     note_mediche?: string | null;
     codice_fiscale?: string | null;
     fiscal_code?: string | null;
@@ -25,6 +32,12 @@ export interface Student {
     ruolo?: string; // per staff (utenti)
     sede_nome?: string; // per staff (nome plesso)
     classi_count?: number; // per staff (n. classi assegnate)
+    // Sede del DATO: uuid del plesso per l'alunno (`alunni.scuola_id`), elenco di
+    // plessi per il genitore — `parents` non ha (e non deve avere) una sede sua,
+    // la si deriva dai figli. Serve alla colonna «Sede» quando i plessi attivi
+    // sono più d'uno: con sezioni omonime fra sedi, due righe sono identiche.
+    scuola_id?: string | null;
+    scuole_ids?: string[];
 }
 
 interface Props {
@@ -38,12 +51,14 @@ interface Props {
 
 type SortField = 'cognome' | 'nome' | 'classe_sezione' | 'stato' | 'data_nascita';
 
+// `sub` e non `muted` sul badge «ritirato»: sta su `bg-kidville-line`, dove il
+// grigio chiaro vale 2,2:1 (sotto AA). Stessa mappa in `StudentRowCard`.
 function getStatoBadge(stato: string) {
     switch (stato) {
         case 'iscritto': return 'bg-kidville-success-soft text-kidville-success-strong border-kidville-success/30';
-        case 'ritirato': return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        case 'ritirato': return 'bg-kidville-line text-kidville-sub border-kidville-line';
         case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn-strong border-kidville-warn/30';
-        default: return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        default: return 'bg-kidville-line text-kidville-sub border-kidville-line';
     }
 }
 
@@ -51,6 +66,16 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
     const t = useTranslations('adminStudents');
     const locale = useLocale();
     const labelRuolo = useLabelRuolo();
+    // Colonna «Sede»: solo con più plessi accessibili, e solo dove non c'è già
+    // (lo staff ha `sede_nome` dalla sua API). L'uuid non dice niente a nessuno:
+    // il nome si risolve dalle sedi accessibili, come fa `ModuliRicevuti`.
+    const { sedi } = useSediAttive();
+    const mostraSede = sedi.length > 1 && currentTypeFilter !== 'staff';
+    const nomiSede = (s: Student): string => {
+        const ids = s.scuola_id ? [s.scuola_id] : (s.scuole_ids ?? []);
+        if (ids.length === 0) return t('sedeSconosciuta');
+        return ids.map((id) => sedi.find((x) => x.id === id)?.nome ?? t('sedeSconosciuta')).join(' · ');
+    };
     // Etichette di raggruppamento tradotte: la STESSA stringa deve servire sia
     // all'ordinamento sia alla reduce, così i gruppi combaciano col rendering.
     const senzaSezione = t('gruppoSenzaSezione');
@@ -95,15 +120,36 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
     const allSelected = students.length > 0 && selectedIds.size === students.length;
 
+    // L'intestazione ordinabile è un BOTTONE dentro la cella, non un `<th onClick>`.
+    //
+    // Com'era: `<th onClick>` e nient'altro — nessun `role`, nessun `tabIndex`,
+    // nessun `onKeyDown`. Non un tab stop, sordo a Invio e Spazio: da tastiera
+    // l'anagrafica non si poteva ordinare in nessun modo (WCAG 2.1.1, livello A),
+    // e niente diceva quale colonna fosse l'ordinamento corrente.
+    //
+    // È lo stesso difetto già chiuso in questo file per la RIGA — comando vero
+    // dentro la cella, click lasciato al mouse come comodità — ricomparso una
+    // cella più in alto. Il click sul `<th>` resta per il mouse; l'accessibilità
+    // è il bottone. Non `role="button"` sul `<th>`: una cella-bottone prende come
+    // nome tutto il proprio contenuto e inghiotte i controlli che ci vivono dentro.
+    //
+    // `aria-sort` sta sul `<th>` perché è lì che ARIA lo cerca (WCAG 1.3.1): una
+    // colonna alla volta porta `ascending`/`descending`, le altre `none` — e
+    // «none» va dichiarato, non omesso, altrimenti lo screen reader non sa che
+    // quelle colonne sono ordinabili.
     const renderSortHeader = (field: SortField, label: string) => (
         <th
-            className="px-3 py-3 text-left cursor-pointer select-none group"
-            onClick={() => handleSort(field)}
+            className="px-3 py-3 text-left select-none group"
+            aria-sort={sortField === field ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
         >
-            <div className="flex items-center gap-1 font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
+            <button
+                type="button"
+                onClick={() => handleSort(field)}
+                className="flex w-full cursor-pointer items-center gap-1 text-left font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide"
+            >
                 {label}
-                <ArrowUpDown size={12} className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-muted group-hover:text-kidville-muted'}`} />
-            </div>
+                <ArrowUpDown size={12} aria-hidden="true" className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-sub'}`} />
+            </button>
         </th>
     );
 
@@ -136,12 +182,20 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                         type="checkbox"
                                         checked={allSelected}
                                         onChange={onToggleSelectAll}
-                                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                        // La colonna non ha intestazione testuale: senza `aria-label`
+                                        // questa casella non ha NESSUNA fonte da cui prendere un nome.
+                                        aria-label={currentTypeFilter === 'adult' ? t('selezionaTuttiGenitori') : t('selezionaTuttiAlunni')}
+                                        className="w-4 h-4 rounded border-kidville-neutral text-kidville-green focus:ring-kidville-green cursor-pointer"
                                     />
                                 </th>
                             )}
                             {renderSortHeader('cognome', t('thCognome'))}
                             {renderSortHeader('nome', t('thNome'))}
+                            {mostraSede && (
+                                <th className="px-3 py-3 text-left">
+                                    <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thSede')}</span>
+                                </th>
+                            )}
                             {currentTypeFilter === 'child' ? (
                                 <>
                                     {renderSortHeader('data_nascita', t('thNascita'))}
@@ -171,21 +225,30 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                         {Object.entries(groupedStudents).map(([section, sectionStudents]) => (
                             <React.Fragment key={section}>
                                 {/* Group By Header — colSpan calcolato: child ha checkbox + 6 colonne = 7;
-                                    genitori/staff hanno 6 celle (lo staff senza checkbox). */}
+                                    genitori/staff hanno 6 celle (lo staff senza checkbox), più
+                                    la colonna «Sede» quando i plessi attivi sono più d'uno. */}
                                 <tr className="bg-kidville-cream/20">
-                                    <td colSpan={currentTypeFilter === 'child' ? 7 : 6} className="px-4 py-2 font-maven font-bold text-kidville-green">
+                                    <td colSpan={(currentTypeFilter === 'child' ? 7 : 6) + (mostraSede ? 1 : 0)} className="px-4 py-2 font-maven font-bold text-kidville-green">
                                         {/* Staff: niente "Sezione:" (il personale non è raggruppato per classe) e conteggio in "membri". */}
-                                        {currentTypeFilter === 'staff' ? t('gruppoPersonale') : `${t('gruppoSezionePrefix')}${section}`} <span className="text-xs font-normal text-kidville-muted">({currentTypeFilter === 'staff' ? t('contMembri', { n: sectionStudents.length }) : t('contAlunni', { n: sectionStudents.length })})</span>
+                                        {currentTypeFilter === 'staff' ? t('gruppoPersonale') : `${t('gruppoSezionePrefix')}${section}`} <span className="text-xs font-normal text-kidville-sub">({currentTypeFilter === 'staff' ? t('contMembri', { n: sectionStudents.length }) : t('contAlunni', { n: sectionStudents.length })})</span>
                                     </td>
                                 </tr>
                                 {sectionStudents.map(student => {
                                     const isSelected = selectedIds.has(student.id);
-                                    const hasAllergie = !!student.note_mediche;
+                                    // Solo un flag di presenza, come nella card mobile: la nota medica
+                                    // GREZZA (dato art. 9 GDPR di un minore) non finisce mai in un
+                                    // attributo DOM, e dalla lista non arriva nemmeno più.
+                                    const hasAllergie = student.ha_note_mediche ?? !!student.note_mediche;
                                     const hasBes = !!student.bes;
 
                                     return (
                                         <tr
                                             key={student.id}
+                                            // Il click sulla riga resta la comodità del MOUSE. Non è
+                                            // lui l'accessibilità: un `<tr role="button" tabIndex>`
+                                            // farebbe del contenuto della riga il nome del comando e
+                                            // inghiottirebbe i controlli che ci vivono dentro. Chi
+                                            // naviga da tastiera usa il bottone della cella «Cognome».
                                             className={`transition-colors cursor-pointer ${
                                                 isSelected ? 'bg-kidville-green/5' : 'hover:bg-kidville-cream'
                                             }`}
@@ -197,21 +260,46 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                         type="checkbox"
                                                         checked={isSelected}
                                                         onChange={() => onToggleSelect(student.id)}
-                                                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                                        // Senza nome, 25 caselle si annunciano tutte
+                                                        // «casella di controllo, non selezionata»: la
+                                                        // selezione massiva (sezione, mensa) diventa
+                                                        // un'operazione alla cieca su dati di minori.
+                                                        aria-label={t('selezionaRiga', { nome: nomeCompleto(student) })}
+                                                        className="w-4 h-4 rounded border-kidville-neutral text-kidville-green focus:ring-kidville-green cursor-pointer"
                                                     />
                                                 </td>
                                             )}
-                                            <td className="px-3 py-3 font-maven font-bold text-sm text-kidville-green">
-                                                {student.cognome || student.last_name}
+                                            <td className="px-3 py-3">
+                                                {/* L'UNICA strada da tastiera verso la scheda: un
+                                                    bottone vero, che Invio e Spazio attivano da soli.
+                                                    `stopPropagation` perché il click risalirebbe al
+                                                    <tr> e aprirebbe la scheda due volte. */}
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); onStudentClick(student); }}
+                                                    aria-label={t('cardApriScheda', { nome: nomeCompleto(student) })}
+                                                    className="text-left font-maven font-bold text-sm text-kidville-green hover:underline"
+                                                >
+                                                    {student.cognome || student.last_name || '—'}
+                                                </button>
                                             </td>
                                             <td className="px-3 py-3 font-maven text-sm text-kidville-green">
                                                 {student.nome || student.first_name}
                                             </td>
+                                            {mostraSede && (
+                                                // `sub` (6,46:1 su bianco) e non `muted` (2,51:1): con
+                                                // tre plessi e sezioni omonime, questa colonna è ciò
+                                                // che distingue due righe altrimenti identiche. Era la
+                                                // meno leggibile della tabella.
+                                                <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
+                                                    {nomiSede(student)}
+                                                </td>
+                                            )}
                                             {currentTypeFilter === 'child' ? (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.data_nascita
-                                                            ? new Date(student.data_nascita).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
+                                                            ? formattaIstante(new Date(student.data_nascita), locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                                             : '—'
                                                         }
                                                     </td>
@@ -228,7 +316,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                     <td className="px-3 py-3">
                                                         <div className="flex items-center gap-1.5">
                                                             {hasAllergie && (
-                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={`${t('allergie')}: ${student.note_mediche}`}>
+                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergieNotePresenti')}>
                                                                     <AlertTriangle size={12} /> {t('allergie')}
                                                                 </span>
                                                             )}
@@ -242,7 +330,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 </>
                                             ) : currentTypeFilter === 'staff' ? (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.emails && student.emails.length > 0 ? student.emails[0] : '—'}
                                                     </td>
                                                     <td className="px-3 py-3">
@@ -250,7 +338,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                             {labelRuolo(student.ruolo || '')}
                                                         </span>
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.sede_nome || '—'}
                                                     </td>
                                                     <td className="px-3 py-3 font-maven text-sm text-kidville-green font-semibold">
@@ -259,13 +347,13 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 </>
                                             ) : (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.emails && student.emails.length > 0 ? student.emails[0] : '—'}
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.phone_numbers && student.phone_numbers.length > 0 ? student.phone_numbers[0] : '—'}
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted uppercase">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub uppercase">
                                                         {student.fiscal_code || student.codice_fiscale || '—'}
                                                     </td>
                                                 </>
@@ -283,7 +371,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
             {students.length > 0 && (
                 <div data-testid="student-cards-mobile" className="sm:hidden p-3">
                     <div className="mb-3 flex items-center gap-2">
-                        <label htmlFor="student-sort-mobile" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">
+                        <label htmlFor="student-sort-mobile" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-sub">
                             {t('ordina')}
                         </label>
                         <select
@@ -315,6 +403,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                 onToggleSelect={onToggleSelect}
                                 onClick={onStudentClick}
                                 currentTypeFilter={currentTypeFilter}
+                                sedeLabel={mostraSede ? nomiSede(student) : undefined}
                             />
                         ))}
                     </div>
@@ -329,7 +418,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                     <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                         {currentTypeFilter === 'staff' ? t('vuotoStaff') : t('vuotoAlunni')}
                     </h3>
-                    <p className="font-maven text-sm text-kidville-muted max-w-xs">
+                    <p className="font-maven text-sm text-kidville-sub max-w-xs">
                         {t('vuotoSuggerimento')}
                     </p>
                 </div>

@@ -108,6 +108,9 @@ describe('GET /api/notes — note disciplinari', () => {
   it('la segreteria vede tutte le classi del proprio plesso, ma non l\'altra sede', async () => {
     h.requireDocente.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
     const res = await NOTE_GET(req('/api/notes'))
+    // Stato esatto, non solo il contenuto: vedi la regola trasversale sui test
+    // d'isolamento (piano 2026-07-31) — un `not.toContain` è vero anche su 500.
+    expect(res.status).toBe(200)
     const corpo = await res.text()
     expect(corpo).toContain('NOTA-ASSEGNATO')
     expect(corpo).toContain('NOTA-ALTRA-CLASSE')

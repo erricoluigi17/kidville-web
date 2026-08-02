@@ -4,12 +4,13 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
-import { assertClasseNomeInScope, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, assertSezioneInScope, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope';
 import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY, vincoloConflittoAssente } from '@/lib/registro/chiave-orario';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -17,8 +18,16 @@ const getQuerySchema = z.object({
 });
 
 const postBodySchema = z.object({
-    classeSezione: z.string().min(1),
-    // '' e null oggi ricadono sul fallback (prima scuola dal DB), quindi restano ammessi
+    // Identità della sezione: la forma CORRETTA (la stessa di `primaria/registro`).
+    // Con `sectionId` il nome-classe e la sede si leggono dalla sezione e non c'è
+    // niente da indovinare.
+    sectionId: zUuid.optional(),
+    // Nome-classe: ammesso per compatibilità, ma NON è più una chiave (con tre
+    // sedi «2 ANNI» esiste ad Aversa e a Cesa). Si risolve entro le sedi in
+    // perimetro e, se resta ambiguo, si risponde 400.
+    classeSezione: z.string().min(1).optional(),
+    // Sede DICHIARATA dal client: ha la precedenza sul SedeSelector (stessa
+    // precedenza di `resolveScuolaScrittura`). '' = non dichiarata.
     scuolaId: z.union([zUuid, z.literal('')]).nullish(),
     data: zDataYMD,
     // oggi: qualsiasi valore truthy (numero ≠ 0 o stringa non vuota); il CHECK 1..8 resta al DB
@@ -27,6 +36,9 @@ const postBodySchema = z.object({
     argomento: z.string().nullish(),
     compiti: z.string().nullish(),
     dataConsegnaCompiti: z.union([zDataYMD, z.literal('')]).nullish(),
+}).refine((b) => Boolean(b.sectionId || b.classeSezione), {
+    error: 'Indicare sectionId (preferito) oppure classeSezione',
+    path: ['sectionId'],
 });
 
 // GET /api/register/lessons?classeSezione=3A&data=2026-05-13
@@ -89,40 +101,96 @@ export const GET = withRoute('register/lessons:GET', async (request: NextRequest
 // Body: { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti }
 // Gate docente (M5.6): scrittura su registro_orario; la firma usa l'identità
 // risolta dal gate (niente fallback dev post-M4).
-export const POST = withRoute('register/lessons:POST', async (request: Request) => {
+export const POST = withRoute('register/lessons:POST', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
     try {
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti } = b.data;
+        const { sectionId, classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti } = b.data;
 
         // Admin client per bypassare RLS (stesso pattern delle altre API del progetto)
         const supabase = await createAdminClient();
 
-        // La classe deve appartenere ai plessi del docente (niente scritture su classi altrui)
-        const classeScope = await assertClasseNomeInScope(supabase, auth.user, classeSezione);
-        if (classeScope) return classeScope;
+        // ── La SEZIONE: un'identità, non un nome ────────────────────────────
+        // Fino al 2026-07-31 la sede usciva da `.eq('name', …).limit(1)` — un
+        // LIMIT senza ORDER BY, cioè «una qualsiasi» delle omonime — con ultimo
+        // ripiego `plessi[0]`. Argomento, compiti e FIRMA della lezione potevano
+        // così essere archiviati nel plesso sbagliato, in silenzio: la GET
+        // (`resolveScuoleAttive`, cookie-aware) poi non li mostrava nemmeno.
+        // Ora: `sectionId` risolve tutto; col solo nome si risolve DENTRO il
+        // perimetro e l'ambiguità si NEGA.
+        let sezione: { id: string; name: string; scuola_id: string };
+        if (sectionId) {
+            const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId);
+            if (scopeErr) return scopeErr;
+            const { data: row, error: sezErr } = await supabase
+                .from('sections')
+                .select('id, name, scuola_id')
+                .eq('id', sectionId)
+                .maybeSingle();
+            if (sezErr) {
+                // PostgREST non lancia: senza questo controllo un guasto di lettura
+                // diventerebbe una scrittura senza sede.
+                logEvento('registro', 'error', {
+                    operazione: 'register/lessons:POST', esito: 'sezione-non-risolta',
+                }, sezErr);
+                return NextResponse.json({ error: 'Verifica della sezione non riuscita' }, { status: 500 });
+            }
+            if (!row?.scuola_id) {
+                return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 });
+            }
+            sezione = { id: row.id as string, name: row.name as string, scuola_id: row.scuola_id as string };
+        } else {
+            // La classe deve appartenere ai plessi del docente (niente scritture su classi altrui)
+            const classeScope = await assertClasseNomeInScope(supabase, auth.user, classeSezione);
+            if (classeScope) return classeScope;
+
+            // Perimetro di risoluzione del nome. Stessa precedenza di
+            // `resolveScuolaScrittura`: la sede DICHIARATA dal client vince (se è
+            // fra le sue), altrimenti valgono le sedi attive del SedeSelector —
+            // le stesse che usa la GET, così non si scrive dove non si legge.
+            const perimetro = scuolaId && (await scuoleDiUtente(supabase, auth.user)).includes(scuolaId)
+                ? [scuolaId]
+                : await resolveScuoleAttive(request, supabase, auth.user);
+
+            const { data: omonime, error: sezErr } = await supabase
+                .from('sections')
+                .select('id, name, scuola_id')
+                .eq('name', classeSezione as string)
+                .in('scuola_id', perimetro);
+            if (sezErr) {
+                logEvento('registro', 'error', {
+                    operazione: 'register/lessons:POST', esito: 'sezione-non-risolta', sezione: classeSezione,
+                }, sezErr);
+                return NextResponse.json({ error: 'Verifica della sezione non riuscita' }, { status: 500 });
+            }
+            if ((omonime ?? []).length !== 1) {
+                // `warn` → persistito: una scrittura RIFIUTATA sul registro va
+                // letta senza risalire al corpo della richiesta. Zero righe =
+                // la classe non è nelle sedi selezionate (prima ci si finiva
+                // dentro col ripiego `plessi[0]`); più righe = omonimia.
+                logEvento('registro', 'warn', {
+                    operazione: 'register/lessons:POST',
+                    esito: (omonime ?? []).length === 0 ? 'classe-fuori-sedi-attive' : 'classe-omonima-ambigua',
+                    sezione: classeSezione,
+                    utente: auth.user.id,
+                    candidate: (omonime ?? []).length,
+                    sedi: perimetro.length,
+                });
+                // Il DETTAGLIO («il nome della classe non la identifica»,
+                // «usare sectionId») resta nella riga di log qui sopra, che è il
+                // posto in cui serve. All'operatore la richiesta è una sola, ed è
+                // la stessa di tutti gli altri rifiuti di sede: dire quale sede.
+                return rifiutoSede('SEDE_DA_SPECIFICARE');
+            }
+            const row = omonime[0];
+            sezione = { id: row.id as string, name: row.name as string, scuola_id: row.scuola_id as string };
+        }
 
         const maestraId = auth.user.id;
-
-        // Deriva lo scuola_id server-side dalla sezione risolta ENTRO i plessi consentiti,
-        // ignorando lo scuolaId grezzo del client (regola d'oro: mai fidarsi del client).
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-        const { data: sezioneRow } = await supabase
-            .from('sections')
-            .select('id, scuola_id')
-            .eq('name', classeSezione)
-            .in('scuola_id', plessi)
-            .limit(1)
-            .maybeSingle();
-        // Se scuolaId del client è tra i plessi consentiti lo rispettiamo, altrimenti la sede
-        // deriva dalla sezione; ultimo fallback: primo plesso accessibile.
-        const finalScuolaId =
-            (scuolaId && plessi.includes(scuolaId) ? scuolaId : undefined) ??
-            sezioneRow?.scuola_id ??
-            plessi[0];
+        const finalScuolaId = sezione.scuola_id;
 
         // UPSERT su registro_orario. La chiave di conflitto include la SEDE: senza,
         // il «2 ANNI» di Aversa e quello di Cesa scrivevano sulla stessa riga.
@@ -130,7 +198,7 @@ export const POST = withRoute('register/lessons:POST', async (request: Request) 
         // sul DB E2E non migrato.
         const riga = {
             scuola_id: finalScuolaId,
-            classe_sezione: classeSezione,
+            classe_sezione: sezione.name,
             data,
             ora_lezione: oraLezione,
             materia,
@@ -191,16 +259,16 @@ export const POST = withRoute('register/lessons:POST', async (request: Request) 
         // (entita_id è uuid: niente chiavi sintetiche).
         if (compiti) {
             try {
-                const destinatari = await genitoriDiClassi(supabase, finalScuolaId, [classeSezione]);
+                const destinatari = await genitoriDiClassi(supabase, finalScuolaId, [sezione.name]);
                 await notificaEvento(supabase, {
                     tipo: 'compiti',
-                    scuolaId: finalScuolaId ?? null,
+                    scuolaId: finalScuolaId,
                     utenteIds: destinatari,
-                    titolo: `Compiti assegnati — ${classeSezione}`,
+                    titolo: `Compiti assegnati — ${sezione.name}`,
                     corpo: compiti.slice(0, 140),
                     link: '/parent/compiti',
                     entitaTipo: 'registro',
-                    entitaId: (sezioneRow?.id as string | undefined) ?? null,
+                    entitaId: sezione.id,
                     bufferMin: 10,
                     debounce: true,
                 });

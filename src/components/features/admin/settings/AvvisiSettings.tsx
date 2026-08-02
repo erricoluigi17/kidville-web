@@ -14,9 +14,9 @@ interface AvvisiConfig {
     scadenza_default_giorni: number;
 }
 
-export function AvvisiSettings({ userId }: { userId: string }) {
+export function AvvisiSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<AvvisiConfig | null>(null);
     const [msg, setMsg] = useState('');
 

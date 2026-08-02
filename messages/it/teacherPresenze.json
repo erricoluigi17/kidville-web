@@ -14,6 +14,9 @@
   "sezioneCon": "Sezione {sezione}",
   "giornoPrecedente": "Giorno precedente",
   "giornoSuccessivo": "Giorno successivo",
+  "mesePrecedente": "Mese precedente",
+  "meseSuccessivo": "Mese successivo",
+  "aggiorna": "Aggiorna",
   "oggi": "Oggi",
   "mese": "Mese",
   "caricamentoAlunni": "Caricamento alunni da anagrafica…",
@@ -24,6 +27,9 @@
   "nessunAlunnoFiltro": "Nessun alunno per questo filtro.",
   "offline": "Offline",
   "aggiornaPresenze": "Aggiorna presenze",
+  "salvataggioFallito": "Presenza NON salvata",
+  "salvataggioFallitoAiuto": "Il server non ha registrato quanto segue: finché resta qui, per il registro questi bambini non sono stati segnati.",
+  "riprovaPer": "Riprova per {alunno}",
   "allarmeInviato": "ALLARME INVIATO CON SUCCESSO!",
   "erroreInvioAllarme": "Errore invio allarme.",
   "erroreReteAllarme": "Errore di rete. Allarme non inviato.",
@@ -53,7 +59,7 @@
   "delegatiAutorizzati": "Delegati Autorizzati",
   "nessunDelegato": "Nessun delegato registrato.",
   "conferma": "Conferma",
-  "invioAllarme": "Invio Allarme...",
+  "invioAllarme": "Invio Allarme…",
   "panicAlert": "PANIC ALERT - Ritiro Non Autorizzato",
   "panicDescrizione": "Blocca l'uscita e invia una notifica immediata alla Segreteria e al Genitore.",
   "ingresso": "Ingresso",
@@ -64,5 +70,6 @@
   "nonFirmata": "Non firmata",
   "quotaSaldata": "Quota saldata",
   "saldata": "Saldata",
-  "daSaldare": "Da saldare"
+  "daSaldare": "Da saldare",
+  "chiudi": "Chiudi"
 }

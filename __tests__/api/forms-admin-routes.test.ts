@@ -37,6 +37,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // non lo emula (qui non è l'oggetto del test), ma deve almeno esistere o la
       // catena si spezza con «is not a function».
       b.in = () => b
+      // `.or()`: `admin/forms/models` filtra «modello globale OPPURE di una mia
+      // sede» — un `.in()` secco scarterebbe i NULL. Qui l'isolamento non è
+      // l'oggetto del test (sta in `modulistica-mutazioni-scope-sede`, col finto
+      // client che filtra davvero): serve solo che la catena non si spezzi.
+      b.or = () => b
       b.gte = () => b
       b.lte = () => b
       b.order = () => b

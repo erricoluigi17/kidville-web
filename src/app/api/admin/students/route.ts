@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
+import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
@@ -10,7 +11,7 @@ import { riallineaScadenzeRetteFuture } from '@/lib/pagamenti/scadenze';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -102,8 +103,19 @@ const patchBodySchema = z.object({
     section_id: z.unknown().optional(),
     importo_retta_mensile: z.unknown().optional(),
     opposizione_ade: z.unknown().optional(),
-    // Liberatoria foto/video (galleria): toggle admin sull'anagrafica alunno.
+    // ─── I TRE CONSENSI FOTOGRAFICI, uno per CANALE ──────────────────────────
+    // Sono distinti perché il consenso alla pubblicazione è granulare per canale
+    // (provv. Garante 725 del 27/11/2025), e il modulo d'iscrizione li chiede
+    // separatamente. Fino al 2026-08-01 solo il primo era scrivibile da qui: gli
+    // altri due si popolavano SOLO importando una domanda approvata, cioè una
+    // famiglia che cambiava idea non poteva essere registrata da nessuna parte.
+    // Un consenso che non si può revocare non è un consenso (art. 7 §3 GDPR).
+    /** Galleria RISERVATA alle famiglie della sezione (dentro l'app, dietro login). */
     consenso_privacy: z.unknown().optional(),
+    /** SITO WEB della Scuola: canale pubblico, senza login (bucket `news`). */
+    consenso_foto_sito: z.unknown().optional(),
+    /** CANALI SOCIAL: la pubblicazione avviene fuori dai sistemi della Scuola. */
+    consenso_foto_social: z.unknown().optional(),
     data_iscrizione: z.unknown().optional(),
     giorno_scadenza_pagamenti: z.unknown().optional(),
     genitori_separati: z.unknown().optional(),
@@ -114,6 +126,131 @@ const patchBodySchema = z.object({
 const deleteBodySchema = z.object({
     id: z.string({ error: 'Campo id obbligatorio' }).min(1, 'Campo id obbligatorio'),
 });
+
+// ─── Scope di sede sulle MUTAZIONI ───────────────────────────────────────────
+// `requireStaff` dice che RUOLO hai, non su QUALE SEDE. Su una route
+// service-role (la RLS non interviene) il solo gate di ruolo lasciava alla
+// segreteria di un plesso modificare — e cancellare definitivamente — il minore
+// di un altro. Da qui in giù ogni mutazione dichiara la sua sede: gate
+// (`assertAlunnoInScope`, ricarica del batch) E filtro sulla query, sempre
+// entrambi, perché il primo impedisce di NOMINARE una riga altrui e il secondo
+// impedisce che ce ne finisca dentro una per omonimia o per corsa.
+
+/**
+ * Ricarica gli id di un batch DENTRO i plessi dell'utente.
+ *
+ * Se anche un solo id non torna — non esiste, oppure è di un'altra sede — si
+ * rifiuta l'INTERO batch (403). Un aggiornamento parziale e muto sarebbe
+ * peggio di un errore: nessuno si accorgerebbe di ciò che non è stato fatto.
+ */
+async function bersagliInScope(
+    supabase: SupabaseClient,
+    ids: unknown[],
+    plessi: string[],
+    operazione: string,
+): Promise<{ ids: string[]; sedi: string[]; sedePerId: Map<string, string> } | { response: NextResponse }> {
+    const richiesti = [...new Set(ids.filter((v): v is string => typeof v === 'string' && v !== ''))];
+    if (richiesti.length === 0 || richiesti.length !== new Set(ids).size) {
+        return { response: NextResponse.json({ error: 'ids[] deve contenere almeno un identificativo valido' }, { status: 400 }) };
+    }
+    // Scope vuoto ⇒ `.in('scuola_id', [])` non seleziona nulla ⇒ il conteggio
+    // non torna ⇒ 403. Il vuoto NEGA, non allarga.
+    const { data, error } = await supabase
+        .from('alunni')
+        .select('id, scuola_id')
+        .in('id', richiesti)
+        .in('scuola_id', plessi);
+    if (error) {
+        // PostgREST non lancia: senza questo controllo un guasto di lettura
+        // diventerebbe «zero righe» e quindi un 403 muto, indistinguibile da un
+        // tentativo cross-sede.
+        logEvento('multi_sede', 'error', { operazione, esito: 'scope-batch-non-risolto' }, error);
+        return { response: NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 }) };
+    }
+    const trovati = data ?? [];
+    if (trovati.length !== richiesti.length) {
+        logEvento('multi_sede', 'warn', {
+            operazione, esito: 'alunni-fuori-sede',
+            richiesti: richiesti.length, in_scope: trovati.length,
+        });
+        return { response: NextResponse.json({ error: 'Alcuni alunni non sono nel tuo plesso' }, { status: 403 }) };
+    }
+    return {
+        ids: richiesti,
+        sedi: [...new Set(trovati.map((r) => r.scuola_id as string))],
+        // La sede di OGNI bersaglio, per l'audit: `logScrittura` ripiega su
+        // `attore.scuola_id` quando il chiamante non la dichiara, e con un
+        // admin multi-sede quel ripiego attribuisce l'intervento al plesso
+        // sbagliato. La traccia di chi ha toccato la scheda di un minore deve
+        // dire dove sta il minore, non dove sta l'operatore.
+        sedePerId: new Map(trovati.map((r) => [r.id as string, r.scuola_id as string])),
+    };
+}
+
+/**
+ * Il nome-classe di destinazione deve esistere in OGNI sede coinvolta.
+ *
+ * Dal 2026-07-29 il nome NON è più una chiave: «2 ANNI» esiste ad Aversa e a
+ * Cesa. Il trigger `sync_alunno_section_id` risolve il nome solo dentro la sede
+ * dell'alunno, quindi un nome che lì non c'è non produce un errore: azzera
+ * `section_id`, e il bambino sparisce da registro, appello e mensa in silenzio.
+ * Meglio un 400 esplicito.
+ */
+async function classeEsisteInOgniSede(
+    supabase: SupabaseClient,
+    nome: string,
+    sedi: string[],
+    operazione: string,
+): Promise<NextResponse | null> {
+    const { data, error } = await supabase
+        .from('sections')
+        .select('scuola_id')
+        .eq('name', nome)
+        .in('scuola_id', sedi);
+    if (error) {
+        logEvento('multi_sede', 'error', { operazione, esito: 'classe-non-risolta', sezione: nome }, error);
+        return NextResponse.json({ error: 'Verifica della classe non riuscita' }, { status: 500 });
+    }
+    const coperte = new Set((data ?? []).map((r) => r.scuola_id as string));
+    const mancanti = sedi.filter((s) => !coperte.has(s));
+    if (mancanti.length > 0) {
+        logEvento('multi_sede', 'warn', {
+            operazione, esito: 'classe-inesistente-nella-sede',
+            sezione: nome, sedi_mancanti: mancanti.length,
+        });
+        return NextResponse.json(
+            { error: `La classe «${nome}» non esiste nella sede di tutti gli alunni selezionati` },
+            { status: 400 },
+        );
+    }
+    return null;
+}
+
+/** La riga indicata (sezione, gruppo mensa) deve stare in UNA delle sedi date. */
+async function rigaNelleSedi(
+    supabase: SupabaseClient,
+    tabella: 'sections' | 'gruppi_mensa',
+    id: string,
+    sedi: string[],
+    messaggio: string,
+    operazione: string,
+): Promise<NextResponse | null> {
+    const { data, error } = await supabase
+        .from(tabella)
+        .select('id, scuola_id')
+        .eq('id', id)
+        .maybeSingle();
+    if (error) {
+        logEvento('multi_sede', 'error', { operazione, esito: 'riferimento-non-risolto', entita_tipo: tabella }, error);
+        return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 });
+    }
+    const sede = (data?.scuola_id as string | null) ?? null;
+    if (!data || !sede || !sedi.includes(sede)) {
+        logEvento('multi_sede', 'warn', { operazione, esito: 'riferimento-fuori-sede', entita_tipo: tabella });
+        return NextResponse.json({ error: messaggio }, { status: 400 });
+    }
+    return null;
+}
 
 // ============================================================
 // POST /api/admin/students — Creazione nuovo alunno
@@ -237,35 +374,62 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     // Paginazione: limit clampato 1..1000 (default 200) + offset; shape array nudo invariata.
-    const { classe_sezione: classeSezione, stato, limit, offset } = q.data;
+    const { scuola_id: sedeChiesta, classe_sezione: classeSezione, stato, limit, offset } = q.data;
 
     try {
         const supabase = await createAdminClient();
 
-        const embedTail = 'student_parents ( relation_type, is_primary, parents (*) ), delegates (*)';
-        // Colonne "flat" della lista anagrafica. residence_province/residence_street_number
-        // dipendono dalla migrazione 20260706105201: se il DB non le ha ancora (es. progetto E2E CI,
-        // o finestra pre-migrate in un deploy) PostgREST risponde 42703 → le rimuoviamo e
-        // riproviamo, esattamente come già fanno POST/PATCH qui sotto.
+        // ─── Proiezione MINIMA dell'elenco (W8, 2026-07-31) ──────────────────
+        //
+        // Questa route restituiva 43 colonne per alunno — `note_mediche`,
+        // `allergies`, `allergeni`, `is_bes_dsa`/`note_bes` (dato art. 9 GDPR),
+        // `documento_path`, `importo_retta_mensile`, `genitori_separati`,
+        // `retta_split_config`, `intestatario_fatture`, residenza — PIÙ l'embed
+        // `student_parents ( … parents (*) ), delegates (*)`, cioè l'anagrafica
+        // COMPLETA di ogni adulto collegato (codice fiscale, tipo e numero del
+        // documento d'identità, indirizzo, recapiti) per OGNI riga dell'elenco.
+        // Con `limit=1000` — il valore che usano tutte le pagine — una sola
+        // chiamata consegnava il fascicolo dell'intera scuola.
+        //
+        // Niente di tutto ciò veniva mostrato da una lista: il dettaglio è
+        // `GET /api/admin/students/[id]`, che il gate di sede ce l'ha già.
+        // Le colonne rimaste sono quelle che i consumatori leggono davvero:
+        //  · `StudentTable`/`StudentRowCard`: cognome, nome, `scuola_id` (colonna
+        //    «Sede»), `data_nascita`, `classe_sezione`, `stato`, indicatore allergie;
+        //  · ricerca ed export CSV di `/admin/students`: `codice_fiscale`;
+        //  · filtri «frequentanti» di PaymentsDashboard/GeneratoreCategoria/
+        //    FiscalePanel e di `students/sezioni/[id]`: `section_id`.
+        // (`fiscal_code` su `alunni` non è mai stato popolato: il CF del minore
+        // sta in `codice_fiscale`.)
+        //
+        // `note_mediche` si LEGGE ma non si RESTITUISCE: la lista accende solo un
+        // indicatore «Allergie», e il testo libero di un minore non deve viaggiare
+        // in un elenco (né finire in un attributo del DOM). Fuori esce il booleano
+        // `ha_note_mediche`; il testo resta dietro la scheda alunno.
+        //
+        // Il ciclo 42703 qui sotto resta indispensabile: il DB E2E della CI non è
+        // migrato e una colonna assente va tolta, non trasformata in un 500.
         let cols = [
-            'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'classe_sezione', 'stato',
-            'note_mediche', 'consenso_privacy', 'creato_il', 'gender', 'citizenship', 'birth_nation',
-            'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city',
-            'residence_province', 'zip_code', 'allergies',
-            'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'fiscal_code', 'section_id',
-            'documento_path', 'importo_retta_mensile', 'genitori_separati', 'retta_split_config',
-            'intestatario_fatture', 'allergeni', 'usa_pannolino', 'sospeso', 'sospeso_motivo', 'sospeso_il',
-            'sospeso_da', 'anonimizzato_il', 'gruppo_mensa_id', 'numero_domanda_sidi',
+            'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale',
+            'classe_sezione', 'stato', 'section_id', 'note_mediche',
         ];
         // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
         const scuole = await resolveScuoleAttive(request, supabase, auth.user);
         const runQuery = () => {
             let query = supabase
                 .from('alunni')
-                .select(`${cols.join(', ')}, ${embedTail}`)
+                .select(cols.join(', '))
                 .order('cognome', { ascending: true })
                 .range(offset, offset + limit - 1)
                 .in('scuola_id', scuole);
+            // Filtro per una sola sede, SEMPRE in AND con lo scope: `scuola_id`
+            // era dichiarato nello schema zod (riga 58) ma non veniva applicato,
+            // e chi chiamava presumeva che filtrasse. `SectionsView` fa una fetch
+            // per sede e le concatena: riceveva ogni volta la lista COMPLETA, e i
+            // conteggi per classe uscivano moltiplicati per il numero di sedi.
+            // Sede chiesta fuori dallo scope ⇒ elenco VUOTO (l'AND non seleziona
+            // nulla): mai «non posso filtrare, allora eccoti tutto».
+            if (sedeChiesta) query = query.eq('scuola_id', sedeChiesta);
             if (classeSezione) query = query.eq('classe_sezione', classeSezione);
             if (stato) query = query.eq('stato', stato);
             return query;
@@ -282,7 +446,16 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        return NextResponse.json(data);
+        // La nota medica esce come SEGNALE, non come testo: `ha_note_mediche`
+        // accende l'indicatore «Allergie» nella lista, e il contenuto resta dove
+        // ha un motivo per stare (la scheda alunno). `note_mediche` non compare
+        // nella risposta nemmeno a null, così nessun componente può ricascarci.
+        const righe = ((data ?? []) as unknown as Record<string, unknown>[]).map((riga) => {
+            const { note_mediche: nota, ...resto } = riga;
+            return { ...resto, ha_note_mediche: Boolean(nota) };
+        });
+
+        return NextResponse.json(righe);
     } catch (err) {
         logErrore({ operazione: 'admin/students:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
@@ -303,23 +476,37 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
 
     try {
         const supabase = await createAdminClient();
+        // I plessi dell'utente: valgono da gate per OGNI ramo di scrittura qui
+        // sotto. Insieme vuoto ⇒ nessun alunno risulterà in scope ⇒ si nega.
+        const plessi = await scuoleDiUtente(supabase, auth.user);
 
         // Bulk assign
         if (ids && Array.isArray(ids) && body.classe_sezione) {
+            const bersagli = await bersagliInScope(supabase, ids, plessi, 'admin/students:PATCH');
+            if ('response' in bersagli) return bersagli.response;
+            const nomeClasse = typeof body.classe_sezione === 'string' ? body.classe_sezione.trim() : '';
+            if (!nomeClasse) {
+                return NextResponse.json({ error: 'classe_sezione non valida' }, { status: 400 });
+            }
+            const errClasse = await classeEsisteInOgniSede(supabase, nomeClasse, bersagli.sedi, 'admin/students:PATCH');
+            if (errClasse) return errClasse;
+
             const { data, error } = await supabase
                 .from('alunni')
                 .update({ classe_sezione: body.classe_sezione })
-                .in('id', ids)
+                .in('id', bersagli.ids)
+                .in('scuola_id', plessi)
                 .select();
 
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
             // Audit: una riga per alunno riassegnato (DL-037).
-            for (const alunnoId of ids as string[]) {
+            for (const alunnoId of bersagli.ids) {
                 await logScrittura(supabase, {
                     attore: auth.user,
                     entitaTipo: 'alunni',
                     entitaId: alunnoId,
                     azione: 'update',
+                    scuolaId: bersagli.sedePerId.get(alunnoId) ?? null,
                     valoreDopo: { classe_sezione: body.classe_sezione },
                 });
             }
@@ -329,18 +516,34 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
         // Bulk assign gruppo mensa (P5.4, DL-050). `gruppo_mensa_id` può essere
         // null per rimuovere gli alunni dal gruppo.
         if (ids && Array.isArray(ids) && gruppoMensaId !== undefined) {
+            const bersagli = await bersagliInScope(supabase, ids, plessi, 'admin/students:PATCH');
+            if ('response' in bersagli) return bersagli.response;
+            // Il gruppo mensa è una risorsa DI SEDE: assegnarne uno di un altro
+            // plesso porterebbe il bambino in un turno che nella sua sede non
+            // esiste (e nei conteggi della cucina sbagliata).
+            if (typeof gruppoMensaId === 'string' && gruppoMensaId !== '') {
+                const errGruppo = await rigaNelleSedi(
+                    supabase, 'gruppi_mensa', gruppoMensaId, bersagli.sedi,
+                    'Il gruppo mensa indicato non appartiene alla sede degli alunni selezionati',
+                    'admin/students:PATCH',
+                );
+                if (errGruppo) return errGruppo;
+            }
+
             const { data, error } = await supabase
                 .from('alunni')
                 .update({ gruppo_mensa_id: gruppoMensaId })
-                .in('id', ids)
+                .in('id', bersagli.ids)
+                .in('scuola_id', plessi)
                 .select();
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-            for (const alunnoId of ids as string[]) {
+            for (const alunnoId of bersagli.ids) {
                 await logScrittura(supabase, {
                     attore: auth.user,
                     entitaTipo: 'alunni',
                     entitaId: alunnoId,
                     azione: 'update',
+                    scuolaId: bersagli.sedePerId.get(alunnoId) ?? null,
                     valoreDopo: { gruppo_mensa_id: gruppoMensaId },
                 });
             }
@@ -352,7 +555,11 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
             try {
                 const updates: Record<string, unknown> = {};
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
-                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade', 'consenso_privacy',
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade',
+                    // I tre consensi fotografici, uno per canale: galleria riservata,
+                    // sito pubblico, social. Vanno tutti e tre in allowlist — con solo
+                    // il primo, la revoca degli altri due non aveva nessuna strada.
+                    'consenso_privacy', 'consenso_foto_sito', 'consenso_foto_social',
                     'data_iscrizione', 'giorno_scadenza_pagamenti'];
 
                 for (const field of allowedFields) {
@@ -363,14 +570,58 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 });
                 }
 
+                // Gate di tenant PRIMA di qualunque lettura o scrittura: la
+                // risposta di questa route è la riga INTERA dell'alunno (note
+                // mediche, codice fiscale, indirizzo), quindi senza questo
+                // controllo bastava una scrittura innocua su un id di un'altra
+                // sede per farsi restituire il fascicolo di quel minore.
+                const scopeErr = await assertAlunnoInScope(supabase, auth.user, id);
+                if (scopeErr) return scopeErr;
+
                 // Stato precedente per l'audit (valore prima/dopo).
                 const { data: prima } = await supabase.from('alunni').select('*').eq('id', id).maybeSingle();
                 if (!prima) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
 
+                // Riassegnazioni di classe: la destinazione deve stare NELLA
+                // SEDE dell'alunno. `section_id` è in allowlist e il trigger DB
+                // non lo corregge (risolve solo su INSERT, su cambio del nome o
+                // su `section_id` NULL): scrivendo il solo uuid, un bambino di
+                // una sede finiva puntato alla sezione di un'altra.
+                const sedeAlunno = (prima.scuola_id as string | null) ?? null;
+                const nuovaSezione = typeof updates.section_id === 'string' && updates.section_id !== ''
+                    ? updates.section_id : null;
+                const nuovaClasse = typeof updates.classe_sezione === 'string' && updates.classe_sezione.trim() !== ''
+                    ? updates.classe_sezione.trim() : null;
+                if ((nuovaSezione || nuovaClasse) && !sedeAlunno) {
+                    // Senza sede sulla riga non c'è nessun perimetro entro cui
+                    // validare la destinazione: si nega, non si indovina.
+                    logEvento('multi_sede', 'error', { operazione: 'admin/students:PATCH', esito: 'alunno-senza-sede' });
+                    return NextResponse.json({ error: 'Alunno senza sede: impossibile assegnare la classe' }, { status: 400 });
+                }
+                if (nuovaSezione && sedeAlunno) {
+                    const errSezione = await rigaNelleSedi(
+                        supabase, 'sections', nuovaSezione, [sedeAlunno],
+                        'La sezione indicata non appartiene alla sede dell\'alunno',
+                        'admin/students:PATCH',
+                    );
+                    if (errSezione) return errSezione;
+                }
+                if (nuovaClasse && sedeAlunno) {
+                    const errClasse = await classeEsisteInOgniSede(
+                        supabase, nuovaClasse, [sedeAlunno], 'admin/students:PATCH',
+                    );
+                    if (errClasse) return errClasse;
+                }
+
+                // Il filtro affianca il gate, non lo sostituisce: `.in('scuola_id',
+                // plessi)` fa sì che la riga RILETTA e restituita al client sia
+                // per costruzione dentro i plessi dell'utente, anche se fra il
+                // gate e l'update qualcuno spostasse l'alunno di sede.
                 let { data, error } = await supabase
                     .from('alunni')
                     .update(updates)
                     .eq('id', id)
+                    .in('scuola_id', plessi)
                     .select()
                     .single();
 
@@ -380,10 +631,20 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
                     if (!col || !(col in updates)) break;
                     delete updates[col];
-                    ({ data, error } = await supabase.from('alunni').update(updates).eq('id', id).select().single());
+                    ({ data, error } = await supabase.from('alunni').update(updates).eq('id', id).in('scuola_id', plessi).select().single());
                     patchAttempts++;
                 }
 
+                // Zero righe aggiornate col gate già passato (PGRST116 su
+                // `.single()`): la riga è uscita dallo scope fra il gate e
+                // l'update. Un 404 onesto, non il messaggio grezzo di Postgres
+                // dentro un 500.
+                if (error && (error as { code?: string }).code === 'PGRST116') {
+                    logEvento('multi_sede', 'warn', {
+                        operazione: 'admin/students:PATCH', esito: 'nessuna-riga-aggiornata', alunno: id,
+                    });
+                    return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
+                }
                 if (error) throw new Error(error.message);
 
                 // "Giorno di paga" cambiato → riallinea le scadenze delle rette
@@ -458,6 +719,14 @@ export const DELETE = withRoute('admin/students:DELETE', async (request: NextReq
 
     try {
         const supabase = await createAdminClient();
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+
+        // Gate di tenant PRIMA di tutto il resto — e in particolare prima della
+        // copia d'audit qui sotto, che è un `select *` (note mediche, codice
+        // fiscale) riversato in `registro_modifiche`: senza questo controllo la
+        // copia avveniva comunque, anche quando la cancellazione poi falliva.
+        const scopeErr = await assertAlunnoInScope(supabase, auth.user, id);
+        if (scopeErr) return scopeErr;
 
         // Stato prima della cancellazione (audit).
         const { data: alunno } = await supabase
@@ -479,13 +748,42 @@ export const DELETE = withRoute('admin/students:DELETE', async (request: NextReq
             nuovo_valore: null,
         });
 
-        // Cancellazione a cascata.
-        const { error } = await supabase
+        // Cancellazione a cascata, vincolata ai plessi dell'utente: il gate
+        // impedisce di NOMINARE la riga altrui, il filtro impedisce che una
+        // corsa fra la lettura e la cancellazione la faccia rientrare.
+        const { data: rimosse, error } = await supabase
             .from('alunni')
             .delete()
-            .eq('id', id);
+            .eq('id', id)
+            .in('scuola_id', plessi)
+            .select('id');
 
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+            // 23503: l'alunno ha ancora righe collegate in una delle 7 tabelle
+            // con FK NO ACTION (genitori, diario, valutazioni, armadietto,
+            // ticket mensa, pagamenti, note disciplinari). Non è un guasto del
+            // server: è il database che difende lo storico. 409 col motivo,
+            // invece del messaggio grezzo di Postgres dentro un 500.
+            if ((error as { code?: string }).code === '23503') {
+                logEvento('gdpr', 'warn', {
+                    operazione: 'admin/students:DELETE', esito: 'cancellazione-bloccata-da-riferimenti',
+                    alunno: id,
+                });
+                return NextResponse.json(
+                    { error: 'Impossibile cancellare: l\'alunno ha ancora dati collegati (genitori, pagamenti, diario). Rimuoverli prima.' },
+                    { status: 409 },
+                );
+            }
+            logErrore({ operazione: 'admin/students:DELETE', stato: 500 }, error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+        if ((rimosse ?? []).length === 0) {
+            // Zero righe toccate con il gate già passato: la riga è sparita fra
+            // la lettura e la cancellazione. Meglio un 404 onesto di un 200 che
+            // dichiara una cancellazione mai avvenuta.
+            logEvento('gdpr', 'warn', { operazione: 'admin/students:DELETE', esito: 'nessuna-riga-cancellata', alunno: id });
+            return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
+        }
 
         await logScrittura(supabase, {
             attore: auth.user,

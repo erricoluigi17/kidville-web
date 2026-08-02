@@ -9,11 +9,12 @@ import { buildRicevutaFamigliaPdf } from '@/lib/pagamenti/pdf'
 import { datiStruttura, isTracciabile } from '@/lib/pagamenti/fiscale'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { formattaIstante } from '@/i18n/config'
 
 // Schema locale: l'unico input è il param dinamico [id] (uuid della transazione).
 const idSchema = zUuid
 
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : undefined)
+const dataIt = (d?: string | null) => (d ? formattaIstante(new Date(d), 'it') : undefined)
 
 type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>
 type CaricaTransazione =
@@ -68,7 +69,12 @@ export const GET = withRoute('pagamenti/transazioni/[id]/ricevuta:GET', async (r
     const pdf = buildRicevutaFamigliaPdf({
       numero: record?.numero ?? null,
       anno: record?.anno ?? null,
-      struttura: record?.dati_struttura ?? datiStruttura(null, null),
+      struttura:
+        record?.dati_struttura ??
+        datiStruttura(null, null, {
+          operazione: 'pagamenti/transazioni/[id]/ricevuta:GET',
+          scuolaId: tx.scuola_id,
+        }),
       intestatario: record?.intestatario ?? null,
       righe: record?.righe ?? [],
       importoTotale: record ? Number(record.importo) : Number(tx.importo_totale),

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { logEvento } from '@/lib/logging/logger'
+import { riduciValoreAudit } from './riassunto'
 
 // =============================================================================
 // Audit delle scritture sulle funzioni docente (diff prima/dopo).
@@ -113,8 +114,11 @@ export async function logScrittura(
       entita_tipo: input.entitaTipo,
       entita_id: n.entitaId,
       azione: input.azione,
-      valore_prima: n.valorePrima as never,
-      valore_dopo: n.valoreDopo as never,
+      // La riduzione è QUI, nel punto di scrittura, non nei 147 chiamanti: una
+      // regola che dipende dalla disciplina di chi la adotta è una regola che
+      // fra sei mesi vale per metà del codice.
+      valore_prima: riduciValoreAudit(n.valorePrima) as never,
+      valore_dopo: riduciValoreAudit(n.valoreDopo) as never,
     })
     if (res?.error) {
       logEvento(

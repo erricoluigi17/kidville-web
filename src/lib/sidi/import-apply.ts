@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { logEvento } from '@/lib/logging/logger'
 import type { SidiDomandaRecord } from './zip-parser'
 
 export interface ApplyResult {
@@ -31,24 +32,56 @@ export async function applySidiRecords(
     let studentId: string | null = null
 
     // ① match su numero domanda (persistente, per scuola).
-    const { data: byNum } = await supabase
+    const { data: byNum, error: errNum } = await supabase
       .from('alunni')
       .select('id')
       .eq('scuola_id', scuolaId)
       .eq('numero_domanda_sidi', rec.numero_domanda)
       .maybeSingle()
+    if (errNum) {
+      // PostgREST non lancia: senza questo controllo una lettura fallita
+      // proseguiva al ramo ② e poi al ③, creando un DOPPIONE dell'alunno.
+      logEvento('sidi', 'error', { operazione: 'applySidiRecords', tipo: 'import', esito: 'match-numero-domanda-fallito' }, errNum)
+      warnings.push(`Domanda ${rec.numero_domanda}: verifica del numero domanda non riuscita, riga non applicata`)
+      continue
+    }
     if (byNum) {
       studentId = byNum.id
       matched++
     }
 
     // ② fallback su codice fiscale → stampa il numero domanda.
+    //
+    // ⚠️ ISOLAMENTO FRA SEDI (2026-07-31). Questa lettura era senza `scuola_id`,
+    // e il CF a DB è UNICO su TUTTE le sedi (`alunni_codice_fiscale_key`,
+    // vincolo voluto): un pacchetto SIDI di Aversa contenente il CF di un
+    // bambino di Giugliano gli timbrava sopra il numero domanda di Aversa e ci
+    // agganciava i genitori del pacchetto — cioè mescolava due anagrafi reali,
+    // in silenzio, contando la riga fra gli «aggiornati».
+    // Un bambino già iscritto ALTROVE non si riusa e non si duplica (l'INSERT
+    // sbatterebbe comunque sull'UNIQUE): la riga si scarta e lo si dice, perché
+    // il caso vero è un TRASFERIMENTO fra plessi, che è una decisione umana.
     if (!studentId && rec.alunno.codice_fiscale) {
-      const { data: byCf } = await supabase
+      const { data: byCf, error: errCf } = await supabase
         .from('alunni')
-        .select('id')
+        .select('id, scuola_id')
         .eq('codice_fiscale', rec.alunno.codice_fiscale)
         .maybeSingle()
+      if (errCf) {
+        logEvento('sidi', 'error', { operazione: 'applySidiRecords', tipo: 'import', esito: 'match-cf-fallito' }, errCf)
+        warnings.push(`Domanda ${rec.numero_domanda}: verifica del codice fiscale non riuscita, riga non applicata`)
+        continue
+      }
+      if (byCf && byCf.scuola_id !== scuolaId) {
+        logEvento('sidi', 'warn', {
+          operazione: 'applySidiRecords', tipo: 'import', esito: 'cf-altra-sede',
+          scuola_id: scuolaId,
+        })
+        warnings.push(
+          `Domanda ${rec.numero_domanda}: il codice fiscale risulta già iscritto in un'altra sede — serve un trasferimento, riga non applicata`
+        )
+        continue
+      }
       if (byCf) {
         studentId = byCf.id
         aggiornati++
@@ -152,7 +185,13 @@ export async function applySidiBatch(
   batchId: string,
   attore: AppUser
 ): Promise<ApplyResult & { error?: string; status?: number; alreadyApplied?: boolean }> {
-  const { data: batch } = await supabase.from('sidi_import_batches').select('*').eq('id', batchId).maybeSingle()
+  const { data: batch, error: errBatch } = await supabase.from('sidi_import_batches').select('*').eq('id', batchId).maybeSingle()
+  if (errBatch) {
+    // PostgREST non lancia: senza questo controllo un guasto di lettura usciva
+    // come 404 «Batch non trovato», cioè come un errore dell'operatore.
+    logEvento('sidi', 'error', { operazione: 'applySidiBatch', tipo: 'import', esito: 'batch-non-letto' }, errBatch)
+    return { matched: 0, creati: 0, aggiornati: 0, warnings: [], error: 'Lettura del batch non riuscita', status: 500 }
+  }
   if (!batch) return { matched: 0, creati: 0, aggiornati: 0, warnings: [], error: 'Batch non trovato', status: 404 }
   if (batch.stato === 'applied') {
     return { matched: batch.matched ?? 0, creati: batch.creati ?? 0, aggiornati: 0, warnings: [], alreadyApplied: true }
@@ -160,7 +199,7 @@ export async function applySidiBatch(
   const payload = batch.parsed_payload
   const records: SidiDomandaRecord[] = Array.isArray(payload) ? payload : (payload?.records ?? [])
   const res = await applySidiRecords(supabase, records, batch.scuola_id, attore)
-  await supabase
+  const { error: errStato } = await supabase
     .from('sidi_import_batches')
     .update({
       stato: 'applied',
@@ -170,5 +209,12 @@ export async function applySidiBatch(
       applied_at: new Date().toISOString(),
     })
     .eq('id', batchId)
+  if (errStato) {
+    // Le anagrafiche sono GIÀ state scritte: non è un fallimento
+    // dell'operazione, ma il batch resta `parsed` e chi guarda vede un import
+    // «non applicato» che invece è avvenuto. Va detto a schermo e a log.
+    logEvento('sidi', 'error', { operazione: 'applySidiBatch', tipo: 'import', esito: 'batch-non-marcato' }, errStato)
+    res.warnings.push('Import eseguito, ma lo stato del batch non è stato aggiornato: non ripetere l\'operazione senza verificare.')
+  }
   return res
 }

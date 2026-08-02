@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope } from '@/lib/auth/scope';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
+import { staffScuola } from '@/lib/notifiche/destinatari';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -44,6 +45,24 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
 
         const today = new Date().toISOString().split('T')[0];
 
+        // LA SEDE È UNA PROPRIETÀ DEL DATO, non del contesto: la presenza di un
+        // bambino appartiene al plesso del bambino. Si legge PRIMA della scrittura
+        // (serve a entrambe: alla riga di `presenze` e ai destinatari), e il valore
+        // non si indovina — `assertAlunnoInScope` qui sopra ha già garantito che
+        // l'alunno esiste e che è nel plesso di chi sta chiamando.
+        const { data: alunno, error: errAlunno } = await admin
+            .from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle();
+        const sedeAlunno = (alunno?.scuola_id as string | undefined) ?? null;
+        if (!sedeAlunno) {
+            // Non blocca il salvataggio (è un pulsante d'emergenza), ma non può tacere:
+            // senza sede la riga nasce con la chiave di tenancy vuota e l'allarme non
+            // ha un plesso a cui rivolgersi.
+            logEvento('notifica', 'error', {
+                operazione: 'panic-alert:POST',
+                esito: 'sede-non-risolta',
+            }, errAlunno ?? undefined);
+        }
+
         const { error: dbError } = await supabase
             .from('presenze')
             .upsert({
@@ -51,7 +70,8 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
                 data: today,
                 panic_alert: true,
                 sync_status: 'synced',
-                aggiornato_il: new Date().toISOString()
+                aggiornato_il: new Date().toISOString(),
+                ...(sedeAlunno ? { scuola_id: sedeAlunno } : {}),
             }, {
                 onConflict: 'alunno_id, data'
             });
@@ -64,20 +84,18 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
         // Notifica simultanea Segreteria/Direzione + genitori (servizio push P1).
         // Best-effort: un errore di notifica non deve invalidare il Panic Alert salvato.
         try {
-            const admin = await createAdminClient();
-            const { data: alunno } = await admin.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle();
             const TITOLO = '⚠️ Panic Alert — Ritiro non autorizzato';
             const CORPO = 'Segnalato un tentativo di ritiro non autorizzato. Verificare immediatamente.';
 
-            // Staff del plesso (role o ruolo, schema legacy doppio).
-            if (alunno?.scuola_id) {
-                const { data: staff } = await admin
-                    .from('utenti')
-                    .select('id, role, ruolo')
-                    .eq('scuola_id', alunno.scuola_id);
-                const staffIds = (staff ?? [])
-                    .filter((u: { role?: string | null; ruolo?: string | null }) => STAFF_PANIC.has(u.role ?? '') || STAFF_PANIC.has(u.ruolo ?? ''))
-                    .map((u: { id: string }) => u.id);
+            // Staff del plesso. NON `utenti.scuola_id`: l'appartenenza a una sede è
+            // l'unione fra quella colonna e il ponte `utenti_scuole` — e nelle sedi
+            // aperte il 2026-07-29 nessuno ha ancora quel plesso come primario.
+            // Con la query nuda, per un bambino di Aversa o Cesa la lista usciva
+            // vuota, `if (staffIds.length > 0)` non scattava e non restava NESSUNA
+            // riga: «zero destinatari» non è un'eccezione, quindi il catch qui sotto
+            // non lo vedeva. `staffScuola` guarda il ponte e logga da sé.
+            if (sedeAlunno) {
+                const staffIds = await staffScuola(admin, sedeAlunno, [...STAFF_PANIC]);
                 if (staffIds.length > 0) {
                     await enqueueNotifiche(admin, {
                         utenteIds: staffIds,
@@ -87,7 +105,18 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
                         entitaTipo: 'presenza',
                         entitaId: alunnoId,
                         bufferMin: 0,
-                        scuolaId: alunno.scuola_id as string,
+                        scuolaId: sedeAlunno,
+                    });
+                } else {
+                    // `error` e non `warn`: su un allarme di sicurezza «non c'è nessuno da
+                    // avvisare» è un incidente da riparare subito, non una configurazione
+                    // accettabile. I genitori vengono comunque avvisati qui sotto, ed è
+                    // esattamente ciò che rendeva il guasto invisibile dall'esterno.
+                    logEvento('notifica', 'error', {
+                        operazione: 'panic-alert:POST',
+                        esito: 'nessun-destinatario-staff',
+                        sede_id: sedeAlunno,
+                        tipo: 'panic_alert',
                     });
                 }
             }
@@ -101,7 +130,7 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
                 entitaTipo: 'presenza',
                 entitaId: alunnoId,
                 bufferMin: 0,
-                scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
+                scuolaId: sedeAlunno,
             });
         } catch (notifyErr) {
             // `error`, e qui più che altrove: la richiesta risponde 200 perché il Panic Alert è

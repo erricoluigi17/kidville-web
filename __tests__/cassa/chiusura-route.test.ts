@@ -1,4 +1,5 @@
 import { it, expect, vi, beforeEach, describe } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import { NextResponse, NextRequest } from 'next/server'
 import type { SaldoCassa } from '@/lib/cassa/tipi'
 
@@ -8,7 +9,7 @@ import type { SaldoCassa } from '@/lib/cassa/tipi'
 // assente (PGRST202) → 503 { disponibile:false }. Contato 128 su atteso 130 e
 // fondo 100 → differenza −2, prelievo 28, fondo lasciato 100.
 
-const SC = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SC = SEDE_A
 
 const h = vi.hoisted(() => ({
   role: 'admin' as string,

@@ -47,21 +47,69 @@ const CONTIENE_CIFRA = /\d/;
 const SEGMENTO_OPACO_MIN = 16;
 
 /**
+ * L'ESTENSIONE di un file: corta e alfanumerica. La regex si applica al solo pezzo dopo
+ * l'ultimo punto, quindi non ha niente su cui fare backtracking (`{1,8}` più `$` fallisce in
+ * otto tentativi anche su un segmento lunghissimo).
+ */
+const ESTENSIONE = /^[A-Za-z0-9]{1,8}$/;
+
+/**
+ * IL NOME DI FILE È UN DATO, NON UNA ROTTA — e le tre regole qui sopra non lo vedevano.
+ *
+ * Misurato in produzione: nella riga persistita di un guasto indotto convivevano
+ * `"url":"NON-ESISTE-collaudo-log.pdf"` IN CHIARO e `"fileUrl":"[redatto:str/27]"` — lo stesso
+ * valore, due trattamenti, solo perché una delle due chiavi passa di qui. Un nome di file senza
+ * cifre non è un uuid, non è tutto-cifre e (se è corto) non è nemmeno un segmento opaco: usciva
+ * intatto. E un allegato di avviso può chiamarsi «certificato-<cognome>.pdf»; gli URL storici
+ * dei bucket, quando erano pubblici, portano il nome ORIGINALE del file scelto dalla famiglia.
+ *
+ * SI TIENE L'ESTENSIONE, SI BUTTA IL NOME. È la stessa politica di `[redatto:str/N]` in
+ * `redact.ts`: della cosa tolta si conserva ciò che serve a diagnosticare (era un PDF, era un
+ * JPEG) e non ciò che identifica qualcuno. `pagella.pdf` e `sw.js` diventano `[file].pdf` e
+ * `[file].js`: si perde quale file, si tiene di che tipo era. È il verso in cui vogliamo
+ * sbagliare — la regola 8 di AGENTS.md dice che la lista bianca si RESTRINGE.
+ */
+function nomeDiFile(seg: string): string | null {
+    const punto = seg.lastIndexOf('.');
+    // `punto <= 0`: nessuna estensione, oppure un nome che comincia col punto (`.gitignore`),
+    // che estensione non è. `punto === seg.length - 1`: il punto è l'ultimo carattere.
+    if (punto <= 0 || punto === seg.length - 1) return null;
+    const estensione = seg.slice(punto + 1);
+    return ESTENSIONE.test(estensione) ? `[file].${estensione}` : null;
+}
+
+/**
  * Riduce un path al suo pattern: via query string e frammento, poi ogni segmento che possa
- * essere un identificativo o una credenziale diventa un segnaposto.
+ * essere un identificativo o una credenziale diventa un segnaposto, e il NOME DEL FILE finale
+ * diventa `[file].<estensione>`.
  *
  * Regge anche un URL intero (`https://app.kidville.it/m/<token>` → `https://app.kidville.it/m/[tok]`):
  * `https:` e l'host non incrociano nessuna delle tre regole, quindi restano.
+ *
+ * L'AUTORITÀ È ESCLUSA dalla regola del nome di file, ed è l'unico caso particolare del modulo:
+ * `api.resend.com` e `app.kidville.it` finiscono per `.com` e `.it`, cioè hanno esattamente la
+ * forma di un nome di file. Mascherarli cancellerebbe QUALE provider ha risposto — il dato per
+ * cui `external.ts` logga l'URL — in cambio di zero privacy: un host non è il nome di nessuno.
  */
 export function redigiPath(v: string): string {
     const senzaQuery = v.split('?')[0].split('#')[0];
-    return senzaQuery
-        .split('/')
-        .map((seg) => {
+    const parti = senzaQuery.split('/');
+    // Con uno schema (`https://host/…`) le prime tre caselle sono `https:`, `''` e l'AUTORITÀ.
+    // Anche la forma PROTOCOLLO-RELATIVA (`//host/…`) ha l'autorità in terza casella, e non è
+    // un caso di scuola: è la forma in cui l'host arriva qui davvero, perché
+    // `redigiPathNelTesto` ritaglia da un messaggio del browser la sequenza che comincia DOPO
+    // i due punti («Failed to fetch https://app.kidville.it» → `//app.kidville.it`).
+    // Senza schema e senza `//` non c'è nessuna autorità: `-1` non è l'indice di niente.
+    const autorita = parti.length >= 3 && parti[1] === ''
+        && (parti[0] === '' || parti[0].endsWith(':')) ? 2 : -1;
+    const ultimo = parti.length - 1;
+    return parti
+        .map((seg, i) => {
             if (seg === '') return seg;
             if (UUID.test(seg)) return '[id]';
             if (seg.length >= SEGMENTO_OPACO_MIN && CONTIENE_CIFRA.test(seg)) return '[tok]';
             if (SOLE_CIFRE.test(seg)) return '[n]';
+            if (i === ultimo && i !== autorita) return nomeDiFile(seg) ?? seg;
             return seg;
         })
         .join('/');

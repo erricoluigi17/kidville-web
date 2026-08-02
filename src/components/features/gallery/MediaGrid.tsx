@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { logClient } from '@/lib/logging/client';
-import { Download, Share2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Download, Share2, Play, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 
@@ -19,7 +19,13 @@ export interface Student {
 
 export interface MediaItem {
     id: string;
-    file_url: string;
+    /**
+     * Indirizzo FIRMATO a tempo, generato dalla GET della galleria (il bucket è
+     * privato). È `null` quando la firma non è riuscita: in quel caso la foto
+     * non si può mostrare, e si mostra un segnaposto invece di un'immagine
+     * rotta — il perché sta nel log lato server, a livello `error`.
+     */
+    file_url: string | null;
     file_type: string;
     caption: string | null;
     tag_students: string[];
@@ -59,6 +65,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
     };
 
     const currentIndex = lightbox ? items.findIndex(item => item.id === lightbox.id) : -1;
+    // Indirizzo firmato del media aperto nel visore, in una const: `null` quando la
+    // firma non è riuscita (bucket privato → link a tempo generato dalla GET).
+    const urlVisore = lightbox?.file_url ?? null;
 
     const handlePrev = useCallback((e?: React.MouseEvent) => {
         e?.stopPropagation();
@@ -110,7 +119,11 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
     return (
         <>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {items.map((item, idx) => (
+                {items.map((item, idx) => {
+                    // `url` in una const locale: il restringimento di tipo su
+                    // `item.file_url` non sopravvivrebbe dentro gli handler.
+                    const url = item.file_url;
+                    return (
                     <motion.div
                         key={item.id}
                         initial={{ opacity: 0, scale: 0.95 }}
@@ -127,9 +140,19 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             <div className="w-full h-full bg-gray-800 flex items-center justify-center">
                                 <Play size={32} className="text-white/80" strokeWidth={1.5} />
                             </div>
-                        ) : (
+                        ) : item.file_url ? (
                             /* eslint-disable-next-line @next/next/no-img-element */
                             <img src={item.file_url} alt={item.caption ?? t('galleryAltFoto')} className="w-full h-full object-cover" />
+                        ) : (
+                            /* Link non firmato: un `<img src="">` mostrerebbe l'icona di
+                               immagine rotta e ripartirebbe con una richiesta sulla pagina
+                               stessa. Meglio dirlo. */
+                            <div className="w-full h-full bg-kidville-cream flex flex-col items-center justify-center gap-1 px-2 text-center">
+                                <ImageOff size={22} className="text-kidville-green/40" strokeWidth={1.5} />
+                                <span className="font-maven text-[10px] leading-tight text-kidville-green/60">
+                                    {t('galleryAnteprimaNonDisponibile')}
+                                </span>
+                            </div>
                         )}
 
                         {/* Overlay on hover */}
@@ -147,14 +170,16 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             </div>
                         )}
 
-                        {/* Pulsanti Download e Condividi diretti sulla card */}
-                        {showActions && (
+                        {/* Pulsanti Download e Condividi diretti sulla card.
+                            Senza indirizzo firmato non possono fare nulla: si tolgono,
+                            invece di offrire un bottone che scarica un errore. */}
+                        {showActions && url && (
                             <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 md:group-hover:opacity-100 transition-opacity duration-200 z-10 pointer-events-auto" style={{ opacity: 1 /* rendili sempre visibili per facilità su mobile */ }}>
                                 <button
                                     onClick={async (e) => {
                                         e.stopPropagation();
                                         try {
-                                            const response = await fetch(item.file_url);
+                                            const response = await fetch(url);
                                             const blob = await response.blob();
                                             const blobUrl = window.URL.createObjectURL(blob);
                                             const a = document.createElement('a');
@@ -165,7 +190,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             document.body.removeChild(a);
                                             window.URL.revokeObjectURL(blobUrl);
                                         } catch {
-                                            window.open(item.file_url, '_blank');
+                                            window.open(url, '_blank');
                                         }
                                     }}
                                     className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-gray-100"
@@ -179,7 +204,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                         if (navigator.share) {
                                             try {
                                                 await navigator.share({
-                                                    url: item.file_url,
+                                                    url,
                                                     title: item.caption ?? t('galleryFotoDaKidville')
                                                 });
                                             } catch {
@@ -189,7 +214,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             }
                                         } else {
                                             try {
-                                                await navigator.clipboard.writeText(item.file_url);
+                                                await navigator.clipboard.writeText(url);
                                                 alert(t('mediaLinkCopiato'));
                                             } catch {
                                                 // Copia negata dal browser: l'utente lo vede subito.
@@ -204,7 +229,8 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             </div>
                         )}
                     </motion.div>
-                ))}
+                    );
+                })}
             </div>
 
             {/* Lightbox */}
@@ -237,11 +263,19 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
 
                     <div className="relative max-w-2xl w-full my-auto z-10" onClick={e => e.stopPropagation()}>
                         <div className="relative bg-white rounded-2xl overflow-hidden shadow-xl p-3 border border-kidville-green/10">
-                            {lightbox.file_type === 'video' ? (
-                                <video src={lightbox.file_url} controls className="w-full max-h-[55vh] rounded-xl bg-zinc-900" />
+                            {!urlVisore ? (
+                                /* Firma non riuscita: si dice, non si mostra un riquadro rotto. */
+                                <div className="w-full min-h-[35vh] rounded-xl bg-kidville-cream flex flex-col items-center justify-center gap-2 px-6 text-center">
+                                    <ImageOff size={32} className="text-kidville-green/40" strokeWidth={1.5} />
+                                    <span className="font-maven text-sm text-kidville-green/70">
+                                        {t('galleryAnteprimaNonDisponibile')}
+                                    </span>
+                                </div>
+                            ) : lightbox.file_type === 'video' ? (
+                                <video src={urlVisore} controls className="w-full max-h-[55vh] rounded-xl bg-zinc-900" />
                             ) : (
                                 /* eslint-disable-next-line @next/next/no-img-element */
-                                <img src={lightbox.file_url} alt={lightbox.caption ?? t('galleryAltFoto')}
+                                <img src={urlVisore} alt={lightbox.caption ?? t('galleryAltFoto')}
                                     className="w-full max-h-[55vh] object-contain rounded-xl mx-auto" />
                             )}
                         </div>
@@ -357,10 +391,10 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         {/* Actions */}
                         {showActions && (
                             <div className="flex items-center justify-center gap-3 mt-4">
-                                <button
+                                {urlVisore && <button
                                     onClick={async () => {
                                         try {
-                                            const response = await fetch(lightbox.file_url);
+                                            const response = await fetch(urlVisore);
                                             const blob = await response.blob();
                                             const blobUrl = window.URL.createObjectURL(blob);
                                             const a = document.createElement('a');
@@ -372,18 +406,18 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             window.URL.revokeObjectURL(blobUrl);
                                         } catch {
                                             logClient({ livello: 'warn', evento: 'fetch', messaggio: 'gallery-download-diretto-fallito', route: '/gallery' });
-                                            window.open(lightbox.file_url, '_blank');
+                                            window.open(urlVisore, '_blank');
                                         }
                                     }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
-                                </button>
-                                <button
+                                </button>}
+                                {urlVisore && <button
                                     onClick={async () => {
                                         if (navigator.share) {
                                             try {
                                                 await navigator.share({
-                                                    url: lightbox.file_url,
+                                                    url: urlVisore,
                                                     title: lightbox.caption ?? t('galleryFotoDaKidville')
                                                 });
                                             } catch {
@@ -391,7 +425,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             }
                                         } else {
                                             try {
-                                                await navigator.clipboard.writeText(lightbox.file_url);
+                                                await navigator.clipboard.writeText(urlVisore);
                                                 alert(t('mediaLinkCopiatoLungo'));
                                             } catch {
                                                 // Copia negata dal browser: l'utente lo vede subito.
@@ -400,7 +434,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                     }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
-                                </button>
+                                </button>}
                                 {/* Segnalazione contenuto (C5 §2): sempre etichettata, lato genitore. */}
                                 <SegnalaContenuto
                                     tipoOggetto="media_galleria"

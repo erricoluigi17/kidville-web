@@ -7,7 +7,9 @@ import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { STATI_PAGAMENTO as STATI, METODO_LABEL } from './stati';
+import { formatEuro } from '@/lib/format/valuta';
 
 interface Props { userId: string; scuolaId: string }
 interface Alunno { id: string; nome: string; cognome: string; classe_sezione?: string }
@@ -47,9 +49,23 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const [storico, setStorico] = useState<Storico | null>(null);
     const [morosi, setMorosi] = useState<Moroso[]>([]);
 
+    // I due `.catch(() => {})` di prima erano muti nel punto peggiore: qui l'elenco vuoto
+    // NON è un'informazione neutra. «Nessun moroso» è una risposta che la segreteria usa per
+    // decidere se sollecitare una famiglia, e uno storico vuoto le fa credere che una ricarica
+    // non sia mai stata fatta. Si logga anche il `!ok` (un 403 è una risposta regolare: senza
+    // questo ramo resterebbe silenzioso), con lo STATO — numero, lista bianca. Nessun nome di
+    // alunno e nessun importo lascia il dispositivo.
     const loadMorosi = useCallback(() => {
         fetch(`/api/pagamenti/ticket/morosi?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setMorosi(d.data); }).catch(() => {});
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-morosi-non-caricati', stato: r.status });
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => { if (d?.success) setMorosi(d.data); })
+            .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-morosi-non-caricati: ${nomeErrore(err)}` }));
     }, [userId, scuolaId]);
 
     useEffect(() => {
@@ -67,7 +83,15 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
 
     const loadStorico = useCallback((alunnoId: string) => {
         fetch(`/api/pagamenti/ticket/storico?userId=${userId}&alunno_id=${alunnoId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setStorico(d.data); }).catch(() => {});
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-storico-non-caricato', stato: r.status });
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => { if (d?.success) setStorico(d.data); })
+            .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-storico-non-caricato: ${nomeErrore(err)}` }));
     }, [userId]);
 
     const select = (a: Alunno) => { setSel(a); setDone(null); setStorico(null); loadSaldo(a.id); loadStorico(a.id); };
@@ -140,7 +164,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                     {pacchetti.map((p, i) => (
                                         <button key={i} onClick={() => { setPezzi(p.pezzi); setCosto(p.costo); }}
                                             className="px-3 py-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white font-maven text-xs text-kidville-green transition-colors hover:border-kidville-green">
-                                            {p.label} · {p.pezzi}{t('ticket_pz')} · €{p.costo}
+                                            {p.label} · {p.pezzi}{t('ticket_pz')} · {formatEuro(p.costo)}
                                         </button>
                                     ))}
                                 </div>
@@ -188,7 +212,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                         return (
                                             <div key={m.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-lg px-3 py-1.5">
                                                 <div className="min-w-0">
-                                                    <p className="font-maven text-xs text-kidville-ink truncate">{dataIt(m.creato_il)} · +{m.delta} {t('ticket_unit')} · € {importo.toFixed(2)}</p>
+                                                    <p className="font-maven text-xs text-kidville-ink truncate">{dataIt(m.creato_il)} · +{m.delta} {t('ticket_unit')} · {formatEuro(importo)}</p>
                                                     {met && !gratis && <p className="font-maven text-[10px] text-kidville-muted">{METODO_LABEL[met] ?? met}</p>}
                                                 </div>
                                                 {gratis

@@ -4,7 +4,7 @@
   "headerSubtitle": "La giornata a scuola, raccontata da me 🌈",
   "giornoOggi": "Oggi",
   "giornoIeri": "Ieri",
-  "caricamento": "Un attimo...",
+  "caricamento": "Un attimo…",
   "vuotoTitolo": "Nessuna voce",
   "vuotoTesto": "La maestra non ha ancora compilato il diario per questo giorno.",
   "umoreTitolo": "Umore della giornata",
@@ -15,7 +15,7 @@
   "segnalaVoce": "Segnala",
   "segnalaVoceAria": "Segnala questa voce del diario",
   "fotoTitolo": "Le foto di oggi",
-  "fotoScattate": "{count} foto scattate dalla maestra",
+  "fotoScattate": "{count, plural, one {# foto scattata dalla maestra} other {# foto scattate dalla maestra}}",
   "footerVisibilita": "📋 Le informazioni sono visibili per i 14 giorni precedenti.",
   "footerStorico": "Per lo storico completo contatta la segreteria.",
   "primariaTitolo": "Sezione non disponibile",
@@ -59,5 +59,7 @@
   "bagnoCacca": "💩 Ho fatto cacca {count, plural, one {una volta} other {# volte}}",
   "bagnoVasino": "🚽 Ho usato il vasino {count, plural, one {una volta} other {# volte}}",
   "bagnoGenerico": "Sono stato/a al bagno oggi!",
-  "eventoGenerico": "Evento registrato dalla maestra."
+  "eventoGenerico": "Evento registrato dalla maestra.",
+  "giornoPrecedente": "Giorno precedente",
+  "giornoSuccessivo": "Giorno successivo"
 }

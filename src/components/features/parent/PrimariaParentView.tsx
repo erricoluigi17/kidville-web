@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download, Lock } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { useDateFormat } from '@/lib/i18n/date';
@@ -326,7 +327,7 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
   const [code, setCode] = useState('');
   const [ticketData, setTicketData] = useState<{ expiry: number; ticket: string } | null>(null);
   const [err, setErr] = useState('');
-  const giorno = new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(assenza.data));
+  const giorno = intlDateTime(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(assenza.data));
 
   const richiediCodice = async () => {
     setBusy(true); setErr('');

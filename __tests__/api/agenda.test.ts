@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   assertSezioneInScope: vi.fn(),
   scuoleDiUtente: vi.fn(),
+  resolveScuoleAttive: vi.fn(),
+  resolveScuolaScrittura: vi.fn(),
   sezioniDiUtente: vi.fn(),
   enqueue: vi.fn(),
   rows: {} as Record<string, Record<string, unknown>[]>,
@@ -23,6 +25,12 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: h.assertSezioneInScope,
   scuoleDiUtente: h.scuoleDiUtente,
+  // W2-M: la route legge nel perimetro del SedeSelector e l'evento di plesso
+  // dichiara la sua sede. L'isolamento vero è provato in
+  // `agenda-sede-scrittura.test.ts` col finto client che filtra davvero: qui
+  // servono solo a non lasciare i due import indefiniti.
+  resolveScuoleAttive: h.resolveScuoleAttive,
+  resolveScuolaScrittura: h.resolveScuolaScrittura,
 }))
 vi.mock('@/lib/sezioni/docenti', () => ({ sezioniDiUtente: h.sezioniDiUtente }))
 vi.mock('@/lib/primaria/notifiche', () => ({ enqueueNotifichePerAlunni: h.enqueue }))
@@ -86,6 +94,8 @@ beforeEach(() => {
   h.requireDocente.mockResolvedValue({ user: { id: 'doc-1', role: 'educator', scuola_id: 'sc-1' } })
   h.assertSezioneInScope.mockResolvedValue(null)
   h.scuoleDiUtente.mockResolvedValue(['sc-1'])
+  h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
+  h.resolveScuolaScrittura.mockResolvedValue({ scuolaId: 'sc-1' })
   h.sezioniDiUtente.mockResolvedValue([SEZIONE])
 })
 

@@ -103,7 +103,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
               {o.codice && <span className="mr-2 text-xs font-semibold text-kidville-green">{o.codice}</span>}
               {o.descrizione}
             </div>
-            <button onClick={() => remove(o.id)} className="text-kidville-muted hover:text-kidville-error shrink-0">
+            <button onClick={() => remove(o.id)} aria-label={t('obiettiviElimina')} className="text-kidville-muted hover:text-kidville-error shrink-0">
               <Trash2 size={16} />
             </button>
           </li>

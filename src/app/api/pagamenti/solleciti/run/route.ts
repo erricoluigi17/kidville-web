@@ -6,6 +6,7 @@ import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import type { SollecitiConfig } from '@/lib/pagamenti/solleciti'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // Corpo vuoto ammesso: la route è service-to-service (zod per il lock di copertura).
 const bodySchema = z.object({}).passthrough().optional()
@@ -46,7 +47,7 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    if (!segretoCronValido(secret)) {
       // Si grida SOLO se l'header c'è ma non torna: quello è un cron che bussa con la chiave
       // sbagliata, ed è il guasto invisibile (un sollecito che non parte non lo reclama
       // nessuno: il moroso tace, e il silenzio sembra «tutto pagato»). Sul POST ANONIMO si

@@ -9,6 +9,8 @@ import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
 import { AllergeniSelect } from './AllergeniSelect';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { formattaIstante } from '@/i18n/config';
 
 interface Student {
     id: string;
@@ -28,6 +30,9 @@ interface Student {
     residence_province?: string | null;
     zip_code?: string | null;
     classe_sezione?: string | null;
+    // Sede del bambino: è il perimetro entro cui una classe ha senso. Arriva
+    // dalla `select *` di GET /api/admin/students/[id].
+    scuola_id?: string | null;
     stato?: string;
     data_iscrizione?: string | null;
     giorno_scadenza_pagamenti?: number | null;
@@ -41,6 +46,12 @@ interface Student {
     // Liberatoria foto/video (galleria): senza consenso il bambino compare solo
     // in foto individuali visibili ai suoi genitori (regola "foto privata").
     consenso_privacy?: boolean | null;
+    // Gli altri due CANALI, distinti per legge dal primo e fra loro: sito web
+    // pubblico (bucket `news`, nessun login) e canali social (fuori dai nostri
+    // sistemi). `undefined` su un ambiente non ancora migrato: il comando resta
+    // spento e il salvataggio non nomina la colonna che non c'è.
+    consenso_foto_sito?: boolean | null;
+    consenso_foto_social?: boolean | null;
     emails?: string[];
     phone_numbers?: string[];
     student_parents?: {
@@ -94,9 +105,22 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
     const [studentTasks, setStudentTasks] = useState<Task[]>([]);
     const [tasksLoading, setTasksLoading] = useState(true);
 
+    // Sezioni della SEDE del bambino: una classe di un altro plesso non è una
+    // destinazione possibile (il server la rifiuta da W2-C), quindi non deve
+    // nemmeno comparire nella tendina. Senza sede sulla riga non si chiede nulla:
+    // non esiste perimetro entro cui una classe sia lecita.
+    const sedeAlunno = student?.scuola_id ?? null;
     useEffect(() => {
-        fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setSections(d); }).catch(() => {});
-    }, []);
+        if (!sedeAlunno) return;
+        let annullato = false;
+        fetch(`/api/admin/sections?scuola_id=${encodeURIComponent(sedeAlunno)}`)
+            .then(r => r.json())
+            .then(d => { if (!annullato && Array.isArray(d)) setSections(d); })
+            .catch((err) => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `sezioni-sede-caricamento-fallito: ${nomeErrore(err)}` });
+            });
+        return () => { annullato = true; };
+    }, [sedeAlunno]);
 
     useEffect(() => {
         if (!student?.id) return;
@@ -185,6 +209,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
     const adultTabs = getAdultTabs();
     const activeTabData = adultTabs.find(t => t.id === activeAdultTab);
 
+    // Classe corrente non presente fra le sezioni caricate: va mostrata comunque.
+    const classeCorrente = (form.classe_sezione as string) ?? '';
+    const classeFuoriElenco =
+        classeCorrente && !sections.some(s => s.name === classeCorrente) ? classeCorrente : null;
+
     const isPage = variant === 'page';
     const shellCls = isPage
         ? 'flex w-full flex-col rounded-card bg-kidville-white shadow-sm'
@@ -211,6 +240,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {!isPage && (
                         <button
                             onClick={onClose}
+                            aria-label={t('detailChiudiScheda')}
                             className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
                         >
                             <X size={16} />
@@ -392,6 +422,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                             <div>
                                 <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoClasseSezione')}</label>
                                 <select
+                                    name="classe_sezione"
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
@@ -400,6 +431,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     {sections.map(s => (
                                         <option key={s.id} value={s.name}>{s.name} ({s.school_type})</option>
                                     ))}
+                                    {/* La classe ATTUALE del bambino, se non è più fra le
+                                        sezioni della sede (rinominata, cancellata, o riga
+                                        vecchia): senza questa voce la tendina resterebbe
+                                        vuota e sembrerebbe che il bambino non abbia classe. */}
+                                    {classeFuoriElenco && <option value={classeFuoriElenco}>{classeFuoriElenco}</option>}
                                 </select>
                             </div>
                             <div>
@@ -482,8 +518,20 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                             />
                         )}
 
-                        {/* Liberatoria foto/video (galleria) */}
-                        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-kidville-line">
+                        {/* ─── I TRE CONSENSI FOTOGRAFICI, uno per CANALE ─────────────────
+                            Il modulo d'iscrizione li chiede separatamente perché il consenso
+                            alla pubblicazione è granulare per canale (provv. Garante 725 del
+                            27/11/2025). Fino al 2026-08-01 qui c'era una sola spunta: gli
+                            altri due consensi si potevano solo IMPORTARE da una domanda, e
+                            una famiglia che cambiava idea non aveva nessuna strada per farlo
+                            registrare — art. 7 §3 GDPR, revocare dev'essere facile quanto
+                            acconsentire. */}
+                        <div className="mt-3 pt-3 border-t border-kidville-line">
+                            <h4 className="font-barlow font-bold text-kidville-green uppercase text-[11px] tracking-wide mb-2">
+                                {t('detailConsensiTitolo')}
+                            </h4>
+
+                            {/* Galleria riservata alle famiglie della sezione */}
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input
                                     type="checkbox"
@@ -493,10 +541,38 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                                 <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailLiberatoria')}</span>
                             </label>
+                            <p className="font-maven text-[11px] text-kidville-muted mt-1 mb-3">
+                                {t('detailLiberatoriaHint')}
+                            </p>
+
+                            {/* Sito web della Scuola: canale PUBBLICO, senza login */}
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={!!form.consenso_foto_sito}
+                                    onChange={e => updateForm('consenso_foto_sito', e.target.checked)}
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                                />
+                                <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailConsensoSito')}</span>
+                            </label>
+                            <p className="font-maven text-[11px] text-kidville-muted mt-1 mb-3">
+                                {t('detailConsensoSitoHint')}
+                            </p>
+
+                            {/* Canali social: la pubblicazione avviene fuori dai nostri sistemi */}
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={!!form.consenso_foto_social}
+                                    onChange={e => updateForm('consenso_foto_social', e.target.checked)}
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                                />
+                                <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailConsensoSocial')}</span>
+                            </label>
+                            <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                                {t('detailConsensoSocialHint')}
+                            </p>
                         </div>
-                        <p className="font-maven text-[11px] text-kidville-muted mt-1">
-                            {t('detailLiberatoriaHint')}
-                        </p>
                     </section>
 
                     {/* Dati Economici (modulo Pagamenti) */}
@@ -671,7 +747,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                             
                                             <div className="text-[8px] text-kidville-muted flex justify-between pt-1 border-t border-kidville-line/30">
                                                 <span>{t('detailCategoria', { categoria: task.category })}</span>
-                                                <span>{t('detailApertoIl', { data: new Date(task.created_at).toLocaleDateString(locale) })}</span>
+                                                <span>{t('detailApertoIl', { data: formattaIstante(new Date(task.created_at), locale) })}</span>
                                             </div>
                                         </div>
                                     );

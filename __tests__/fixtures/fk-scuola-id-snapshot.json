@@ -1,0 +1,411 @@
+{
+  "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
+  "generato_il": "2026-07-31",
+  "sha256": "505f2a51626e718974cd0123d3caa8ce5537ee20cb55cbbbc813267386b0fad9",
+  "tabelle": [
+    {
+      "tabella": "admin_settings",
+      "not_null": true,
+      "fk_nome": "admin_settings_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "alunni",
+      "not_null": true,
+      "fk_nome": "alunni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "app_log",
+      "not_null": false,
+      "fk_nome": "app_log_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "armadietto",
+      "not_null": true,
+      "fk_nome": "armadietto_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "audit_scritture_docente",
+      "not_null": false,
+      "fk_nome": "audit_scritture_docente_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "avvisi",
+      "not_null": false,
+      "fk_nome": "avvisi_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "cassa_categorie",
+      "not_null": false,
+      "fk_nome": "cassa_categorie_scuola_id_fkey",
+      "fk_verso": "scuole"
+    },
+    {
+      "tabella": "cassa_chiusure",
+      "not_null": true,
+      "fk_nome": "cassa_chiusure_scuola_id_fkey",
+      "fk_verso": "scuole"
+    },
+    {
+      "tabella": "cassa_movimenti",
+      "not_null": true,
+      "fk_nome": "cassa_movimenti_scuola_id_fkey",
+      "fk_verso": "scuole"
+    },
+    {
+      "tabella": "certificati_competenze",
+      "not_null": true,
+      "fk_nome": "certificati_competenze_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "conversazioni_sospensioni",
+      "not_null": false,
+      "fk_nome": "conversazioni_sospensioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "crediti_famiglia",
+      "not_null": true,
+      "fk_nome": "crediti_famiglia_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "divise_articoli",
+      "not_null": true,
+      "fk_nome": "divise_articoli_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "divise_ordini",
+      "not_null": true,
+      "fk_nome": "divise_ordini_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "enrollment_submissions",
+      "not_null": false,
+      "fk_nome": "enrollment_submissions_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "eventi_agenda",
+      "not_null": true,
+      "fk_nome": "eventi_agenda_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "fatture_emesse",
+      "not_null": true,
+      "fk_nome": "fatture_emesse_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "fatture_numerazione",
+      "not_null": true,
+      "fk_nome": "fatture_numerazione_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "form_models",
+      "not_null": false,
+      "fk_nome": "form_models_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "form_submissions",
+      "not_null": false,
+      "fk_nome": "form_submissions_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "forms_templates",
+      "not_null": true,
+      "fk_nome": "forms_templates_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "galleria_media",
+      "not_null": false,
+      "fk_nome": "galleria_media_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "galleria_media_v2",
+      "not_null": false,
+      "fk_nome": "galleria_media_v2_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "giudizi_sintetici_scala",
+      "not_null": true,
+      "fk_nome": "giudizi_sintetici_scala_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "giudizio_template",
+      "not_null": false,
+      "fk_nome": "giudizio_template_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "gruppi_mensa",
+      "not_null": true,
+      "fk_nome": "gruppi_mensa_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "materie",
+      "not_null": true,
+      "fk_nome": "materie_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_alternative",
+      "not_null": true,
+      "fk_nome": "mensa_alternative_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_class_menu_assignment",
+      "not_null": true,
+      "fk_nome": "mensa_class_menu_assignment_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_menu_config",
+      "not_null": true,
+      "fk_nome": "mensa_menu_config_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_menu_override",
+      "not_null": false,
+      "fk_nome": "mensa_menu_override_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_menu_rotazione",
+      "not_null": false,
+      "fk_nome": "mensa_menu_rotazione_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_prenotazioni",
+      "not_null": false,
+      "fk_nome": "mensa_prenotazioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "mensa_ticket_movimenti",
+      "not_null": false,
+      "fk_nome": "mensa_ticket_movimenti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "merch_fornitori",
+      "not_null": true,
+      "fk_nome": "merch_fornitori_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "merch_ordini_fornitore",
+      "not_null": true,
+      "fk_nome": "merch_ordini_fornitore_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "merch_po_numerazione",
+      "not_null": true,
+      "fk_nome": "merch_po_numerazione_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "merch_rettifiche",
+      "not_null": true,
+      "fk_nome": "merch_rettifiche_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "news_categorie",
+      "not_null": false,
+      "fk_nome": "news_categorie_scuola_id_fkey",
+      "fk_verso": "scuole"
+    },
+    {
+      "tabella": "news_digest_edizioni",
+      "not_null": true,
+      "fk_nome": "news_digest_edizioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "news_posts",
+      "not_null": false,
+      "fk_nome": "news_posts_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "obiettivi_apprendimento",
+      "not_null": true,
+      "fk_nome": "obiettivi_apprendimento_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "pagamenti",
+      "not_null": false,
+      "fk_nome": "pagamenti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "pagamenti_transazioni",
+      "not_null": true,
+      "fk_nome": "pagamenti_transazioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "payment_categories",
+      "not_null": false,
+      "fk_nome": "payment_categories_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "presenze",
+      "not_null": true,
+      "fk_nome": "presenze_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "protocolli",
+      "not_null": true,
+      "fk_nome": "protocolli_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "protocolli_categorie",
+      "not_null": true,
+      "fk_nome": "protocolli_categorie_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "protocolli_numerazione",
+      "not_null": true,
+      "fk_nome": "protocolli_numerazione_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "registro_orario",
+      "not_null": false,
+      "fk_nome": "registro_orario_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "ricevute_emesse",
+      "not_null": true,
+      "fk_nome": "ricevute_emesse_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "ricevute_numerazione",
+      "not_null": true,
+      "fk_nome": "ricevute_numerazione_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "richieste_cancellazione",
+      "not_null": false,
+      "fk_nome": "richieste_cancellazione_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "riconciliazione_import",
+      "not_null": false,
+      "fk_nome": "riconciliazione_import_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "riconciliazione_movimenti",
+      "not_null": false,
+      "fk_nome": "riconciliazione_movimenti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "scrutinio_giudizio_descrittivo",
+      "not_null": true,
+      "fk_nome": "scrutinio_giudizio_descrittivo_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "scrutinio_periodi",
+      "not_null": true,
+      "fk_nome": "scrutinio_periodi_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "sections",
+      "not_null": true,
+      "fk_nome": "sections_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "segnalazioni",
+      "not_null": false,
+      "fk_nome": "segnalazioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "sidi_import_batches",
+      "not_null": true,
+      "fk_nome": "sidi_import_batches_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "sidi_sync_state",
+      "not_null": true,
+      "fk_nome": "sidi_sync_state_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "solleciti",
+      "not_null": true,
+      "fk_nome": "solleciti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "task_interni",
+      "not_null": false,
+      "fk_nome": "task_interni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "utenti",
+      "not_null": true,
+      "fk_nome": "utenti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "utenti_scuole",
+      "not_null": true,
+      "fk_nome": "utenti_scuole_scuola_id_fkey",
+      "fk_verso": "schools"
+    }
+  ],
+  "alunni_colonne_cf": [
+    "codice_fiscale",
+    "fiscal_code"
+  ],
+  "alunni_vincoli_cf": [
+    {
+      "nome": "alunni_codice_fiscale_key",
+      "def": "UNIQUE (codice_fiscale)"
+    },
+    {
+      "nome": "alunni_fiscal_code_dismessa",
+      "def": "CHECK ((fiscal_code IS NULL))"
+    }
+  ]
+}

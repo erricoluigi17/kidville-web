@@ -10,7 +10,7 @@
   "sessioneNonValida": "Invalid session: please sign in again.",
 
   "kpiAlunniIscritti": "Enrolled pupils",
-  "kpiAlunniIscrittiSub": "enrolled status · active sites",
+  "kpiAlunniIscrittiSub": "enrolled status · active locations",
   "kpiPagamentiScaduti": "Overdue payments",
   "kpiPagamentiScadutiSub": "{count, plural, one {# entry} other {# entries}}",
   "kpiIncassatoMese": "Collected this month",
@@ -31,14 +31,14 @@
   "nessunAlunnoIscritto": "No enrolled pupils",
 
   "presenzeTitolo": "Real-time attendance",
-  "presenzeSottotitolo": "Multi-site monitoring · by site and class",
+  "presenzeSottotitolo": "Multi-location monitoring · by location and class",
   "presenzeLive": "Live · 60s",
   "presenzeDonutSub": "present",
   "presenzeTilePresenti": "Present today",
   "presenzeTileIscritti": "Enrolled",
   "presenzeTileAssenti": "Absent",
   "presenzeTileAppelli": "Missing roll calls",
-  "presenzeNessunPlesso": "No enrolled pupils in the managed sites.",
+  "presenzeNessunPlesso": "No enrolled pupils in the managed locations.",
   "sedePresenti": "{presenti}/{iscritti} present",
   "appelloMancante": "Roll call missing",
 
@@ -65,6 +65,8 @@
 
   "menuEyebrow": "All sections",
   "menuTitolo": "Menu",
+  "menuSedeGruppo": "Working location",
+  "sedeSelettoreAria": "Change location",
   "chiudi": "Close",
   "anagrafica": "Registry",
   "anagraficaSub": "Pupils, families and staff",

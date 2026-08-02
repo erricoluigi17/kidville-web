@@ -1,4 +1,5 @@
 import type { Instrumentation } from 'next';
+import { ambienteCorrente } from '@/lib/logging/ambiente';
 import { redigiPathSicuro } from '@/lib/logging/path';
 import { descriviErrore, sanificaMessaggio } from '@/lib/logging/serialize';
 
@@ -96,7 +97,12 @@ export async function register(): Promise<void> {
     try {
         const { logEvento } = await import('@/lib/logging/logger');
 
-        const ambiente = process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? 'sviluppo';
+        // `ambienteCorrente()` e NON `VERCEL_ENV ?? NODE_ENV`: quel ripiego faceva
+        // dichiarare «production» a ogni `npm run build` locale, e questo preflight —
+        // che su una macchina di sviluppo trova sempre qualche variabile assente — ha
+        // scritto per due settimane incidenti di produzione INVENTATI dentro `app_log`
+        // di produzione. Vedi la testata di `@/lib/logging/ambiente`.
+        const ambiente = ambienteCorrente();
         const critiche = variabiliCritiche();
         const assenti = critiche.filter(mancante);
 

@@ -117,7 +117,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                             <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
                                 <FileText size={18} /> {t('fatBtn_emetti_titolo')}
                             </h3>
-                            <button onClick={() => setOpen(false)} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
+                            <button onClick={() => setOpen(false)} aria-label={t('fatBtn_chiudi')} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                         </div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('fatBtn_causale_label')}</label>
                         <textarea value={causale} onChange={(e) => setCausale(e.target.value)} rows={3}

@@ -112,5 +112,6 @@
   "inserisciTicketScala": "Inserisci ticket (scala 1)",
   "notaForzaInserimento": "La segreteria può forzare l'inserimento anche con saldo a zero: il saldo andrà in negativo (debito).",
   "operazioneNonRiuscita": "Operazione non riuscita",
-  "ticketInserito": "Ticket inserito per il {data}. Nuovo saldo: {saldo}."
+  "ticketInserito": "Ticket inserito per il {data}. Nuovo saldo: {saldo}.",
+  "mbRimuoviEccezione": "Rimuovi eccezione"
 }

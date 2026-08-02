@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -65,8 +65,11 @@ const getQuerySchema = z.object({}) // lista tutto il catalogo dei propri plessi
 const zTaglie = z.array(z.string().trim().min(1)).default([])
 const zPrezzo = z.coerce.number({ error: 'Prezzo non valido' }).min(0, 'Il prezzo non può essere negativo')
 const zCategoria = z.enum(['divisa', 'materiale', 'libri', 'gadget', 'altro'])
+/** Sede DICHIARATA dal client (`''` = non dichiarata, come nelle altre route). */
+const zScuolaPreferita = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
 
 const postBodySchema = z.object({
+  scuola_id: zScuolaPreferita,
   nome: z.string().trim().min(1, 'Il nome è obbligatorio').max(120, 'Nome troppo lungo (max 120)'),
   descrizione: z.string().trim().max(500).nullish(),
   taglie: zTaglie,
@@ -115,8 +118,8 @@ export const GET = withRoute('admin/merch/articoli:GET', async (request: Request
   }
 })
 
-// POST /api/admin/merch/articoli — crea un articolo nel plesso dell'utente
-export const POST = withRoute('admin/merch/articoli:POST', async (request: Request) => {
+// POST /api/admin/merch/articoli — crea un articolo nella sede DICHIARATA
+export const POST = withRoute('admin/merch/articoli:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -125,11 +128,16 @@ export const POST = withRoute('admin/merch/articoli:POST', async (request: Reque
     if ('response' in b) return b.response
 
     const supabase = await createAdminClient()
-    const plessi = await scuoleDiUtente(supabase, auth.user)
-    const scuolaId = auth.user.scuola_id && plessi.includes(auth.user.scuola_id) ? auth.user.scuola_id : plessi[0]
-    if (!scuolaId) {
-      return NextResponse.json({ error: 'Nessun plesso associato al tuo profilo' }, { status: 400 })
-    }
+    // Ogni scrittura dichiara la sua sede. Fino al 2026-07-31 qui c'era
+    // `auth.user.scuola_id && plessi.includes(...) ? auth.user.scuola_id : plessi[0]`,
+    // che SEMBRA un ripiego «primo plesso» ma non lo è: `utenti.scuola_id` è NOT
+    // NULL ed è il primo elemento di `scuoleDiUtente`, quindi vinceva SEMPRE la
+    // sede primaria dell'operatore — e lo schema non aveva nemmeno il campo per
+    // dire un'altra sede. L'admin che lavorava su Aversa creava l'articolo a
+    // Giugliano, senza errore e senza log.
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, b.data.scuola_id)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
 
     const record: Record<string, unknown> = {
       scuola_id: scuolaId,

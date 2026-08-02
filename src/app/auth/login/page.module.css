@@ -231,7 +231,13 @@
   width: 100%;
   height: 46px;
   border-radius: 13px;
-  border: 1.6px solid var(--color-kidville-line);
+  /* Design: --kv-line. Ma il campo è BIANCO dentro una card BIANCA: il bordo è
+     l'unica cosa che dice dove comincia il controllo, e `line` su bianco vale
+     1,23:1 — praticamente invisibile (WCAG 1.4.11 chiede 3:1 per il contorno di
+     un controllo). `neutral` vale 3,10:1 restando il grigio-verde tenue del
+     design; in Alto Contrasto entrambi i token si ribaltano insieme al fondo,
+     quindi il rapporto lì resta alto. Lock: __tests__/a11y/contrasto-cascata (§4). */
+  border: 1.6px solid var(--color-kidville-neutral);
   background: var(--color-kidville-white);
   padding: 0 14px 0 46px;
   font-family: var(--font-maven);

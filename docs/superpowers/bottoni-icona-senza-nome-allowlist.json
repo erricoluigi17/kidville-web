@@ -1,0 +1,13 @@
+{
+  "che_cos_e": "Debito residuo del lock __tests__/architecture/bottone-icona-con-nome.test.ts: comandi (bottoni e link) il cui unico contenuto e un'icona e che non dichiarano un nome accessibile (aria-label / aria-labelledby / title). Uno screen reader li annuncia «pulsante» o «link», e basta. Questa lista puo solo accorciarsi: un file nuovo che scrive un comando senza nome e rosso subito.",
+  "misurato_il": "2026-08-02",
+  "totale_file": 1,
+  "totale_occorrenze": 1,
+  "file": [
+    {
+      "path": "src/app/(dashboard)/admin/protocolli/page.tsx",
+      "n": 1,
+      "motivo": "Il pulsante «+» che apre la registrazione di un nuovo protocollo. La pagina e in mano all'intervento sul rilievo di accessibilita #6 (la riga di tabella che apre il dettaglio solo col mouse), che ne sta riscrivendo i controlli nello stesso ciclo: due mani sullo stesso file nello stesso momento si sovrascrivono a vicenda. Va chiuso li, e questa voce sparisce. Gli altri due modali che stavano qui il 2026-08-02 (la firma OTP del genitore, rilievo #4, e «Nuovo acquisto» della segreteria, rilievo #5) sono stati bonificati da quegli interventi mentre questo lock veniva scritto: le loro voci sono gia state tolte, e non possono rientrare."
+    }
+  ]
+}

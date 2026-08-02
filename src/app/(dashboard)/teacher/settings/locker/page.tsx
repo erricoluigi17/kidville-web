@@ -210,11 +210,11 @@ function LockerSettingsInner() {
                             <div className="flex items-center gap-3">
                                 {/* Ordine */}
                                 <div className="flex flex-col gap-0.5">
-                                    <button onClick={() => moveOrdine(mat, 'up')} disabled={idx === 0}
+                                    <button onClick={() => moveOrdine(mat, 'up')} disabled={idx === 0} aria-label={t('lockerSpostaSu')}
                                         className="text-kidville-muted hover:text-kidville-muted disabled:opacity-20 transition-colors">
                                         <ChevronUp size={14} />
                                     </button>
-                                    <button onClick={() => moveOrdine(mat, 'down')} disabled={idx === materiali.length - 1}
+                                    <button onClick={() => moveOrdine(mat, 'down')} disabled={idx === materiali.length - 1} aria-label={t('lockerSpostaGiu')}
                                         className="text-kidville-muted hover:text-kidville-muted disabled:opacity-20 transition-colors">
                                         <ChevronDown size={14} />
                                     </button>

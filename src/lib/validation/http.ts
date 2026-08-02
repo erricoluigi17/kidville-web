@@ -121,6 +121,62 @@ export async function parseBody<S extends z.ZodType>(
 }
 
 /**
+ * Legge il corpo multipart di una richiesta di upload. Content-Type sbagliato o assente → 400.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PERCHÉ ESISTE (collaudo del 2026-08-02, backend F2)
+ *
+ * `await request.formData()` LANCIA quando il Content-Type non è multipart: non ritorna un
+ * errore. Il controllo finiva quindi nel `catch` generico delle route — che è tarato sui
+ * guasti del server — e sei rotte di upload rispondevano **500 a un errore del CLIENT**,
+ * due di esse rimandando al chiamante il messaggio interno del runtime («Content-Type was
+ * not one of "multipart/form-data"…»); una di quelle due è pubblica e anonima.
+ *
+ * Il numero non è un dettaglio di eleganza: il 500 dice «ho un guasto io», e ogni richiesta
+ * malformata scriveva una riga `error` in `app_log` — cioè il canale in cui si cercano i
+ * guasti veri si riempiva di rumore prodotto dai client, che è esattamente l'ambiguità che
+ * la regola 5 di AGENTS.md esiste per impedire.
+ *
+ * Sta QUI e non in sei `catch` perché è una regola sola: sei copie della stessa lezione
+ * divergono al primo ritocco. È lo stesso motivo per cui `parseBody` non è scritto in ogni
+ * route che legge un JSON.
+ *
+ * NON TUTTE LE ECCEZIONI SONO COLPA DEL CLIENT, e la differenza si legge dall'header. Se il
+ * Content-Type dichiarava un corpo multipart e la lettura è fallita lo stesso — una
+ * connessione caduta a metà upload, un corpo troncato — quello è un guasto, non una
+ * richiesta sbagliata: l'eccezione viene RILANCIATA e la gestisce il `catch` della route,
+ * col suo 500 e il suo log. Declassare anche quel caso a 400 significherebbe curare il
+ * rumore nascondendo i guasti veri, cioè scambiare un difetto con l'altro.
+ *
+ * IL PAYLOAD DEL CASO BUONO NON SI DEPOSITA. Un `FormData` di upload contiene il NOME dei
+ * file, e un allegato si chiama «certificato-<cognome>.pdf»: è il dato personale di un
+ * minore, in un canale che si legge tutti i giorni. Sul caso malformato si deposita invece
+ * un marcatore, per la stessa ragione di `parseBody`: «non ha loggato il corpo» e «un corpo
+ * non ce l'aveva» non devono leggersi uguali.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** I due Content-Type che `Request.formData()` sa leggere. Tutto il resto è un 400. */
+const TIPI_CON_FORM = /^\s*(multipart\/form-data|application\/x-www-form-urlencoded)\s*(;|$)/i;
+
+export async function parseMultipart(request: Request): Promise<ParseResult<FormData>> {
+    try {
+        return { data: await request.formData() };
+    } catch (err) {
+        if (TIPI_CON_FORM.test(request.headers.get('content-type') ?? '')) throw err;
+        impostaPayload('body', { esito: 'richiesta-non-multipart' });
+        return {
+            response: validationError([
+                {
+                    path: [],
+                    message: 'Richiesta non valida: il file va inviato come caricamento, non come JSON',
+                },
+            ]),
+        };
+    }
+}
+
+/**
  * Valida i query param come oggetto piatto.
  * Chiavi ripetute (?id=a&id=b) diventano array di stringhe.
  */

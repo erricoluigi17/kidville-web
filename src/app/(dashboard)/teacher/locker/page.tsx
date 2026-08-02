@@ -198,6 +198,7 @@ function TeacherLockerInner() {
                         </Link>
                         <button
                             id="refresh-btn"
+                            aria-label={t('lockerAggiorna')}
                             onClick={() => { fetchCarico(); if (view === 'consumo') fetchConsumo(); if (view === 'mensile') fetchMensile(month); }}
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
                         >
@@ -460,12 +461,12 @@ function TeacherLockerInner() {
             {view === 'mensile' && (
                 <div className="bg-white rounded-3xl p-5">
                     <div className="flex items-center justify-between mb-5">
-                        <button id="prev-month-btn" onClick={() => setMonth(m => shiftMonth(m, -1))}
+                        <button id="prev-month-btn" onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label={t('lockerMesePrecedente')}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronLeft size={18} />
                         </button>
                         <span className="text-sm font-semibold text-kidville-green/70">{t('lockerConsegneMensili')}</span>
-                        <button id="next-month-btn" onClick={() => setMonth(m => shiftMonth(m, 1))}
+                        <button id="next-month-btn" onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label={t('lockerMeseSuccessivo')}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronRightIcon size={18} />
                         </button>

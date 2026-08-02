@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 // ─── Transazione unica di famiglia (slice S4 — Contabilità v2) ────────────────
 // UN pagamento (bonifico/POS/…) che salda più voci di più figli, ricarica la
@@ -134,7 +135,46 @@ export const POST = withRoute('pagamenti/transazioni:POST', async (request: Requ
     // Scope di sede: non registrare su un plesso fuori dall'ambito dello staff.
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
     if (!sedi.includes(body.scuola_id)) {
-      return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
+
+    // LA SEDE DEL CONTENITORE NON BASTA: vanno controllate le VOCI.
+    // Fino al 2026-07-31 qui si validava soltanto `body.scuola_id`, e i
+    // `pagamento_id` delle voci non venivano mai confrontati con quella sede — né
+    // dalla RPC, che valida quadratura e importi ma non la provenienza. Il
+    // collaudo backend l'ha dimostrato incassando davvero: transazione registrata
+    // su Aversa, retta di Giugliano portata da `0.00/scaduto` a `1.00`, e due
+    // notifiche «pagamento registrato» spedite a genitori dell'altro plesso.
+    // Lo scope contabile era stato messo sul contenitore e non sul contenuto.
+    const idVoci = body.voci.map((v) => v.pagamento_id)
+    if (idVoci.length > 0) {
+      const { data: pagamentiVoci, error: errVoci } = await supabase
+        .from('pagamenti')
+        .select('id, scuola_id')
+        .in('id', idVoci)
+      // PostgREST non lancia: senza questo controllo un errore di lettura
+      // diventerebbe «nessuna voce fuori sede», cioè un permesso.
+      if (errVoci) {
+        logErrore({ operazione: 'pagamenti/transazioni:POST', stato: 500, evento: 'db' }, errVoci)
+        return NextResponse.json({ error: 'Verifica delle voci non riuscita' }, { status: 500 })
+      }
+      const trovati = new Map((pagamentiVoci ?? []).map((p) => [p.id as string, p.scuola_id as string | null]))
+      const estranee = idVoci.filter((id) => trovati.get(id) !== body.scuola_id)
+      if (estranee.length > 0) {
+        logEvento('pagamento', 'warn', {
+          operazione: 'pagamenti/transazioni:POST',
+          esito: 'voci-fuori-sede',
+          tipo: 'voci-fuori-sede',
+          sede_id: body.scuola_id,
+          n: estranee.length,
+        })
+        // Nessun id nel corpo: dire QUALI sono confermerebbe l'esistenza di
+        // pagamenti di un altro plesso a chi non ha titolo per saperlo.
+        return NextResponse.json(
+          { error: 'Una o più voci appartengono a un altro plesso' },
+          { status: 403 },
+        )
+      }
     }
 
     const payload = {

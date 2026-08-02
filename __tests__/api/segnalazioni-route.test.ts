@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextResponse, NextRequest } from 'next/server'
 
 // C5 §2 — Backend delle segnalazioni (UGC: contenuto + utente).
 //  · POST /api/segnalazioni        — requireUser; segnalante_id SEMPRE dal gate (mai dal
@@ -39,6 +39,9 @@ const h = vi.hoisted(() => ({
   insertErr: null as unknown,
   updateErr: null as unknown,
   updateResult: { id: SEG } as Record<string, unknown> | null,
+  // Riga letta dalla PATCH PRIMA di scrivere, per verificarne la sede
+  // (isolamento fra sedi, 2026-07-31). `null` = la segnalazione non esiste.
+  segnalazioneRiga: { id: SEG, scuola_id: 'sc-1' } as Record<string, unknown> | null,
   listErr: null as unknown,
   lista: [] as Array<Record<string, unknown>>,
   chatMessage: null as Record<string, unknown> | null,
@@ -76,6 +79,8 @@ function resolveSingle(s: { table: string; mode: string }) {
     if (t === 'segnalazioni') return { data: h.updateErr ? null : h.updateResult, error: h.updateErr }
     return { data: null, error: null }
   }
+  // Lettura per id della segnalazione: è il controllo di sede della PATCH.
+  if (t === 'segnalazioni') return { data: h.segnalazioneRiga, error: null }
   if (t === 'chat_messages') return { data: h.chatMessage, error: null }
   if (t === 'chat_threads') return { data: h.thread, error: null }
   if (t === 'galleria_media_v2') return { data: h.media, error: null }
@@ -132,9 +137,9 @@ const postReq = (body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-const adminGetReq = (qs = '') => new Request(`http://localhost/api/admin/segnalazioni?${qs}`)
+const adminGetReq = (qs = '') => new NextRequest(`http://localhost/api/admin/segnalazioni?${qs}`)
 const adminPatchReq = (body: unknown) =>
-  new Request('http://localhost/api/admin/segnalazioni', {
+  new NextRequest('http://localhost/api/admin/segnalazioni', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -156,6 +161,7 @@ beforeEach(() => {
   h.insertErr = null
   h.updateErr = null
   h.updateResult = { id: SEG }
+  h.segnalazioneRiga = { id: SEG, scuola_id: 'sc-1' }
   h.listErr = null
   h.lista = [{ id: SEG, tipo_oggetto: 'messaggio_chat', categoria: 'spam', stato: 'aperta' }]
   h.chatMessage = { thread_id: THREAD }
@@ -354,6 +360,13 @@ describe('PATCH /api/admin/segnalazioni — gestione', () => {
   })
 
   it('404 se la segnalazione non esiste', async () => {
+    h.segnalazioneRiga = null
+    const res = await ADMIN_PATCH(adminPatchReq({ id: SEG, stato: 'in_lavorazione' }))
+    expect(res.status).toBe(404)
+    expect(h.updated.segnalazioni).toBeUndefined()
+  })
+
+  it('404 se sparisce fra la lettura di sede e la scrittura (nessun 200 a vuoto)', async () => {
     h.updateResult = null
     const res = await ADMIN_PATCH(adminPatchReq({ id: SEG, stato: 'in_lavorazione' }))
     expect(res.status).toBe(404)

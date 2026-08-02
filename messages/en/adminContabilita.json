@@ -668,8 +668,8 @@
   "rateErrImporto": "Enter a total amount greater than 0",
   "rateErrMin2": "At least 2 instalments are required",
   "rateErrRete": "Network error",
-  "rateErrSommaMid": ") must match the total (€",
-  "rateErrSommaPre": "The sum of the instalments (€",
+  "rateErrSommaMid": ") must match the total (",
+  "rateErrSommaPre": "The sum of the instalments (",
   "rateGeneraUguali": "Generate equal instalments",
   "rateNRate": "No. instalments",
   "ratePrimaScadenza": "1st due date",
@@ -833,5 +833,11 @@
   "transTotaleVersato": "Total paid (€)",
   "transVoce": "item",
   "transVoceCap": "Item",
-  "transVociDaSaldare": "Items to settle"
+  "transVociDaSaldare": "Items to settle",
+  "merchDiminuisciQuantita": "Decrease quantity",
+  "merchAumentaQuantita": "Increase quantity",
+  "fatBtn_chiudi": "Close",
+  "rateChiudi": "Close",
+  "rateRimuoviRata": "Remove instalment",
+  "soll_aggiorna": "Refresh reminders"
 }

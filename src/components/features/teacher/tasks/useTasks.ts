@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { logClient } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import type { FormEvent } from 'react';
 import { Task } from '@/components/features/teacher/tasks/TaskCard';
 import { TaskFormData } from '@/components/features/teacher/tasks/TaskForm';
@@ -176,7 +177,16 @@ export function useTasks() {
         const data = await res.json();
         uploaded.push(data); // contains { fileUrl, name, size, type }
       } else {
-        throw new Error(`Errore caricamento per il file: ${file.name}`);
+        // IL MOTIVO DEL RIFIUTO, non solo il fatto (S31). Il server manda un CODICE
+        // (`ALLEGATO_TIPO_NON_AMMESSO`, `ALLEGATO_TROPPO_GRANDE`) già tradotto in italiano e
+        // in inglese: `messaggioErrore` lo risolve nella lingua dell'interfaccia. Finché qui
+        // c'era la sola frase generica, quella traduzione esisteva e non la leggeva nessuno —
+        // e l'insegnante riprovava con lo stesso file, che verrà rifiutato di nuovo.
+        //
+        // Il NOME resta in coda: si possono allegare più file alla stessa risoluzione, e il
+        // motivo senza il file a cui si riferisce non basta a capire quale togliere.
+        const motivo = await messaggioErrore(res, 'Il file non è stato caricato');
+        throw new Error(`${motivo} (${file.name})`);
       }
     }
     return uploaded;

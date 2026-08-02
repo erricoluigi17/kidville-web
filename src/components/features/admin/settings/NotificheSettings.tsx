@@ -25,10 +25,10 @@ const GRUPPI: { id: GruppoNotifica; labelKey: string; subKey: string }[] = [
     { id: 'staff', labelKey: 'ntGruppoStaff', subKey: 'ntGruppoStaffSub' },
 ];
 
-export function NotificheSettings({ userId }: { userId: string }) {
+export function NotificheSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
     const notifica = useTipoNotifica();
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
     const [msg, setMsg] = useState('');
 

@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf'
 import type { DatiStruttura } from './fiscale'
 import { formatEuro } from '@/lib/format/valuta'
+import { formattaIstante } from '@/i18n/config'
 
 // Builder jsPDF dei documenti della contabilità (ricevute; attestazioni in
 // pdf-attestazione). Nessun accesso a DB: input già risolto e snapshot-abile.
@@ -29,7 +30,7 @@ export interface RicevutaPdfInput {
     emessaIl?: string
 }
 
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : null)
+const dataIt = (d?: string | null) => (d ? formattaIstante(new Date(d), 'it') : null)
 
 export interface AttestazionePdfInput {
     anno: number
@@ -66,7 +67,7 @@ export function buildAttestazionePdf(i: AttestazionePdfInput) {
     y += 7
     doc.setFontSize(9)
     doc.setTextColor(110)
-    doc.text(`Rilasciata il ${new Date().toLocaleDateString('it-IT')} ai fini della dichiarazione dei redditi.`, 20, y)
+    doc.text(`Rilasciata il ${formattaIstante(new Date(), 'it')} ai fini della dichiarazione dei redditi.`, 20, y)
     y += 9
     doc.setTextColor(0)
 
@@ -135,7 +136,7 @@ export function buildRicevutaPdf(i: RicevutaPdfInput) {
     y += 7
     doc.setFontSize(9)
     doc.setTextColor(110)
-    doc.text(`Emessa il ${i.emessaIl ?? new Date().toLocaleDateString('it-IT')}`, 20, y)
+    doc.text(`Emessa il ${i.emessaIl ?? formattaIstante(new Date(), 'it')}`, 20, y)
     y += 9
     doc.setTextColor(0)
 
@@ -228,7 +229,7 @@ export function buildRicevutaFamigliaPdf(i: RicevutaFamigliaPdfInput) {
     y += 7
     doc.setFontSize(9)
     doc.setTextColor(110)
-    doc.text(`Emessa il ${i.emessaIl ?? new Date().toLocaleDateString('it-IT')}`, 20, y)
+    doc.text(`Emessa il ${i.emessaIl ?? formattaIstante(new Date(), 'it')}`, 20, y)
     y += 9
     doc.setTextColor(0)
 

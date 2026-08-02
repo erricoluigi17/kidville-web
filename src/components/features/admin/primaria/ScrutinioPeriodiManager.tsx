@@ -19,7 +19,12 @@ const annoCorrente = () => {
   return `${start}/${start + 1}`;
 };
 
-export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: string }) {
+// `scuolaId` arriva da <SedeRequired> (una sede sola, mai ambigua) e va
+// DICHIARATO al server: la route non scrive più su `utenti.scuola_id`, e con tre
+// plessi dedurre la sede dal solo cookie `sedi_attive` è un canale implicito —
+// se il cookie è stantìo o assente il periodo finirebbe nel plesso sbagliato, o
+// la scrittura verrebbe rifiutata con un 400 che l'utente non sa spiegarsi.
+export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
   const t = useTranslations('adminPrimaria');
   const f = useDateFormat();
   const [periodi, setPeriodi] = useState<Periodo[]>([]);
@@ -32,13 +37,13 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
   const load = useCallback(async () => {
     let next: Periodo[] | null = null;
     try {
-      const r = await fetch(`/api/admin/primaria/scrutinio-periodi?annoScolastico=${anno}&userId=${userId}`, { headers: { 'x-user-id': userId } });
+      const r = await fetch(`/api/admin/primaria/scrutinio-periodi?scuolaId=${scuolaId}&annoScolastico=${anno}&userId=${userId}`, { headers: { 'x-user-id': userId } });
       const d = await r.json();
       if (d.success) next = d.data;
     } finally {
       if (next) setPeriodi(next);
     }
-  }, [anno, userId]);
+  }, [scuolaId, anno, userId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -48,7 +53,7 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
     const r = await fetch(`/api/admin/primaria/scrutinio-periodi?userId=${userId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ annoScolastico: anno, nome: nome.trim(), ordine: periodi.length + 1, dataInizio: dataInizio || null, dataFine: dataFine || null }),
+      body: JSON.stringify({ scuolaId, annoScolastico: anno, nome: nome.trim(), ordine: periodi.length + 1, dataInizio: dataInizio || null, dataFine: dataFine || null }),
     });
     const d = await r.json();
     if (!r.ok) { setMsg(d.error || t('comuneErrore')); return; }
@@ -99,7 +104,7 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
               <button onClick={() => toggleAttivo(p)} className={`font-maven rounded-pill px-2.5 py-0.5 text-[11px] ${p.attivo ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-line text-kidville-muted'}`}>
                 {p.attivo ? t('periodiAttivo') : t('periodiDisattivo')}
               </button>
-              <button onClick={() => rimuovi(p.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+              <button onClick={() => rimuovi(p.id)} aria-label={t('periodiElimina')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>
           </li>
         ))}

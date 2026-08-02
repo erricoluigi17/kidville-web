@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
+import { formattaIstante, intlDateTime } from '@/i18n/config';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
@@ -24,18 +25,24 @@ interface PdfLabels {
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
+//
+// Costruzione e formattazione sono entrambe ancorate a UTC, e il giorno scelto è
+// il 15: qui non si mostra una data vera, si compila un ELENCO di nomi. Con la
+// mezzanotte locale e un fuso di lettura diverso da quello del browser il primo
+// del mese scivola al 31 del mese prima, e l'elenco parte da «Dicembre».
 function nomiMesi(locale: string): string[] {
-    const fmt = new Intl.DateTimeFormat(locale, { month: 'long' });
+    const fmt = intlDateTime(locale, { month: 'long', timeZone: 'UTC' });
     return Array.from({ length: 12 }, (_, i) => {
-        const s = fmt.format(new Date(2000, i, 1));
+        const s = fmt.format(new Date(Date.UTC(2000, i, 15)));
         return s.charAt(0).toUpperCase() + s.slice(1);
     });
 }
 function nomiGiorni(locale: string): string[] {
-    const fmt = new Intl.DateTimeFormat(locale, { weekday: 'short' });
-    // 2023-01-01 è una domenica → getDay() 0..6 = dom..sab.
+    const fmt = intlDateTime(locale, { weekday: 'short', timeZone: 'UTC' });
+    // 2023-01-01 è una domenica → getDay() 0..6 = dom..sab. A mezzogiorno UTC,
+    // così nessun fuso di lettura può farlo scivolare al giorno prima o dopo.
     return Array.from({ length: 7 }, (_, i) => {
-        const s = fmt.format(new Date(2023, 0, 1 + i));
+        const s = fmt.format(new Date(Date.UTC(2023, 0, 1 + i, 12)));
         return s.charAt(0).toUpperCase() + s.slice(1);
     });
 }
@@ -338,7 +345,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
         setIsExporting(true);
         const labels: PdfLabels = {
             titolo: t('pdfTitolo', { mese: MESI[month - 1].toUpperCase(), anno: year }),
-            meta: t('pdfMeta', { sezione, data: new Date().toLocaleDateString(locale) }),
+            meta: t('pdfMeta', { sezione, data: formattaIstante(new Date(), locale) }),
             studente: t('studente'),
             abbrevP: t('abbrevP'),
             abbrevA: t('abbrevA'),
@@ -367,7 +374,9 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
             {/* ── Header ── */}
             <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-2">
-                    <button onClick={prevMonth} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
+                    {/* Il nome accessibile non è decorazione: dentro c'è solo un glifo, e senza
+                        `aria-label` questi tre comandi si annunciano tutti «pulsante» (WCAG 4.1.2). */}
+                    <button onClick={prevMonth} aria-label={t('mesePrecedente')} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
                         <ChevronLeft size={16} />
                     </button>
                     <div className="px-2">
@@ -376,7 +385,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                         </h2>
                         <p className="font-maven text-xs text-kidville-muted">{year}</p>
                     </div>
-                    <button onClick={nextMonth} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
+                    <button onClick={nextMonth} aria-label={t('meseSuccessivo')} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
                         <ChevronRight size={16} />
                     </button>
                 </div>
@@ -388,7 +397,10 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                             <span className="font-maven text-xs text-kidville-success font-medium">{t('oggiConteggio', { presenti: todayPresenti, totale: students.length })}</span>
                         </div>
                     )}
-                    <button onClick={refresh} disabled={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
+                    {/* Nome FISSO anche mentre gira: un nome che cambia con lo stato fa perdere
+                        il riferimento a chi naviga per elenco di controlli. Lo stato lo dice
+                        `aria-busy`, che è il posto suo. */}
+                    <button onClick={refresh} disabled={isLoading} aria-label={t('aggiorna')} aria-busy={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     </button>
                     <button

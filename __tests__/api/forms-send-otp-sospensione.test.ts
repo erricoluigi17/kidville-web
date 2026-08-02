@@ -4,10 +4,16 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   assertGenitore: vi.fn(),
   insertCalled: 0,
+  CHIAMANTE: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa14',
 }))
 
 vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: () => ({ ok: true }), clientIp: () => '1.2.3.4' }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: async () => true }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  // Gate d'identità della route (2026-08-02): qui il chiamante è l'intestatario
+  // della submission — il caso anonimo/estraneo sta nel test dedicato.
+  requireUser: vi.fn().mockResolvedValue({ user: { id: h.CHIAMANTE, role: 'genitore', scuola_id: null } }),
+}))
 vi.mock('@/lib/pagamenti/sospensione', () => ({
   assertGenitoreNonSospeso: h.assertGenitore,
   // Contabilità v2: la route usa la variante flag-aware; delega su assertGenitore.
@@ -20,7 +26,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
-      b.maybeSingle = async () => ({ data: table === 'utenti' ? { email: 'p@x.it' } : null, error: null })
+      b.maybeSingle = async () => ({ data: table === 'utenti' ? { email: 'p@x.it' } : table === 'form_models' ? { schema: { pages: [] }, sempre_firmabile: false } : null, error: null })
       b.single = async () => ({ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }, error: null })
       b.update = () => ({ eq: async () => ({ error: null }) })
       b.insert = () => { h.insertCalled++; return b }

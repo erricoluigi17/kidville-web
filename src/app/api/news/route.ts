@@ -11,6 +11,9 @@ import { schemaAssente } from '@/lib/news/schema-assente'
 import { sanificaContenuto } from '@/lib/news/sanitizza'
 import { parseInstagramUrl } from '@/lib/news/instagram'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
+import { campiProva, gateConsensoFoto, scriviConDegradazione } from '@/lib/news/gate-consenso'
+import { contieneFoto } from '@/lib/news/foto-nel-post'
+import { promuoviMediaBozza } from '@/lib/news/media-bozza'
 import { NEWS_SCOPES, NEWS_STATI, NEWS_TIPI, type NewsPost } from '@/lib/news/tipi'
 
 // Query param «vuoto» → undefined (i <select> mandano '' per "nessun filtro").
@@ -40,9 +43,22 @@ const postBodySchema = z.object({
   // `scuola_id: null` = «tutte le sedi» (solo admin). Assente = risolto server-side.
   scuola_id: zUuid.nullish(),
   stato: z.enum(NEWS_STATI).optional(),
+  // Dichiarazione dei bambini RITRATTI nelle foto del post. Distingue tre casi,
+  // e la distinzione è tutto il punto: `undefined` = «non dichiarato» (rifiuto),
+  // `[]` = «nessun bambino è ritratto» (dichiarazione esplicita, archiviata),
+  // elenco = «sono ritratti questi», ciascuno da verificare sul canale «sito».
+  bambini_ritratti: z.array(zUuid).nullish(),
 })
 
 const STATI_STAFF = new Set(['bozza', 'proposta', 'programmata', 'pubblicata'])
+
+/**
+ * Il gate del consenso è passato, ma il media non si è potuto spostare
+ * nell'archivio pubblico. Si rifiuta: una riga salvata adesso mostrerebbe
+ * un'immagine rotta (il file è ancora privato) o un indirizzo che scade.
+ */
+const MEDIA_NON_PROMOSSI =
+  'Non è stato possibile pubblicare le immagini del post in questo momento: riprova fra qualche istante.'
 
 // GET /api/news — elenco gestionale (staff: sede + globali; educator: solo i propri).
 export const GET = withRoute('news:GET', async (request: NextRequest) => {
@@ -56,13 +72,19 @@ export const GET = withRoute('news:GET', async (request: NextRequest) => {
     const supabase = await createAdminClient()
     const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
+    // Scope vuoto ⇒ si NEGA. Qui c'era `else query.is('scuola_id', null)`: col
+    // cookie `sedi_attive` puntato a una sede non (più) accessibile la risposta
+    // non era «niente» ma «tutti i post globali». Il ramo globale è voluto, ma
+    // vale DENTRO il filtro di sede, non come ripiego quando il filtro manca:
+    // «vale per tutte le sedi» presuppone che una sede ce l'abbia, chi legge.
+    // Il motivo è già a log (`resolveScuoleAttive` → warn `sedi-attive-non-accessibili`).
+    if (sedi.length === 0) {
+      return NextResponse.json({ disponibile: true, posts: [] })
+    }
+
     let query = supabase.from('news_posts').select('*').order('created_at', { ascending: false })
     // Isolamento di sede: le proprie sedi + i post globali (scuola_id NULL, riservati ad admin).
-    if (sedi.length > 0) {
-      query = query.or(`scuola_id.in.(${sedi.join(',')}),scuola_id.is.null`)
-    } else {
-      query = query.is('scuola_id', null)
-    }
+    query = query.or(`scuola_id.in.(${sedi.join(',')}),scuola_id.is.null`)
     if (q.data.stato) query = query.eq('stato', q.data.stato)
     if (q.data.tipo) query = query.eq('tipo', q.data.tipo)
     if (q.data.categoria_id) query = query.eq('categoria_id', q.data.categoria_id)
@@ -124,6 +146,44 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
       scuolaId = sw.scuolaId ?? null
     }
 
+    // ─── Consenso fotografico sul canale PUBBLICO (privacy F4) ───────────────
+    // Il bucket `news` è pubblico e senza login: è il «sito web della Scuola»
+    // per cui le famiglie danno (o negano) un consenso DISTINTO da quello della
+    // galleria riservata. Il gate sta PRIMA dell'insert: una riga scritta e poi
+    // rifiutata sarebbe una pubblicazione con un altro nome. E vive in
+    // `@/lib/news/gate-consenso`, non qui: la stessa regola vale per la PATCH e
+    // per la pubblicazione, e fino al 2026-08-01 valeva solo per questa rotta.
+    // Sede della verifica: quella del post; per «tutte le sedi» (solo admin), le
+    // sedi attive di chi pubblica.
+    const sediVerifica = scuolaId ? [scuolaId] : await resolveScuoleAttive(request, supabase, auth.user)
+    const gate = await gateConsensoFoto({
+      supabase,
+      copertinaUrl: body.copertina_url,
+      contenutoJson: body.contenuto_json,
+      ritrattiRichiesti: body.bambini_ritratti,
+      sedi: sediVerifica,
+      attore: auth.user,
+      operazione: 'news:POST',
+    })
+    if ('response' in gate) return gate.response
+    const dichiarazione = gate.prova
+
+    // ─── Solo ORA il file può diventare pubblico ─────────────────────────────
+    // I media sostano nel bucket privato `news_bozze` fino a questo punto: la
+    // pubblicità è la conseguenza del consenso verificato, non la sua premessa.
+    // Se lo spostamento fallisce non si scrive niente — una riga con l'indirizzo
+    // pubblico di un file rimasto privato è un'immagine rotta sul sito.
+    const promozione = await promuoviMediaBozza(
+      supabase,
+      { copertinaUrl: body.copertina_url, contenutoJson: body.contenuto_json },
+      'news:POST',
+    )
+    if (promozione.errore) {
+      return NextResponse.json({ error: MEDIA_NON_PROMOSSI, codice: 'MEDIA_NON_PROMOSSI' }, { status: 503 })
+    }
+    const copertinaFinale = promozione.copertinaUrl
+    const contenutoFinale = promozione.contenutoJson
+
     // Stato: educator vincolato a bozza|proposta; staff libero (default bozza).
     let stato: string
     if (isEducator) {
@@ -133,10 +193,12 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     }
 
     // Contenuto rich-text: SOLO dal JSON, passato dal chokepoint di sanificazione.
+    // Si sanifica il contenuto DOPO la promozione: è quello che verrà salvato, e
+    // html/testo devono citare gli stessi indirizzi del JSON.
     let contenutoHtml: string | null = null
     let contenutoTesto: string | null = null
-    if (body.contenuto_json != null && typeof body.contenuto_json === 'object') {
-      const s = sanificaContenuto(body.contenuto_json)
+    if (contenutoFinale != null && typeof contenutoFinale === 'object') {
+      const s = sanificaContenuto(contenutoFinale)
       contenutoHtml = s.html
       contenutoTesto = s.testo
     }
@@ -145,23 +207,40 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
       tipo: body.tipo,
       stato,
       titolo: body.titolo,
-      contenuto_json: body.contenuto_json ?? null,
+      contenuto_json: contenutoFinale ?? null,
       contenuto_html: contenutoHtml,
       contenuto_testo: contenutoTesto,
       categoria_id: body.categoria_id ?? null,
       target_scope: body.target_scope,
       target_gradi: body.target_gradi ?? null,
       target_classes: body.target_classes ?? null,
-      copertina_url: body.copertina_url ?? null,
+      copertina_url: copertinaFinale ?? null,
       instagram_url: body.instagram_url ?? null,
       instagram_shortcode: instagramShortcode,
       invia_notifica: body.invia_notifica ?? true,
       scuola_id: scuolaId,
       author_id: auth.user.id,
+      // La PROVA della dichiarazione: chi, quando, su quale versione del testo,
+      // su quali bambini. Senza riga non c'è prova, e un consenso che non si può
+      // dimostrare non vale (art. 5 §2 e art. 7 §1 GDPR). `null` sui post senza
+      // foto: niente da dichiarare, e la differenza deve restare leggibile.
+      bambini_ritratti: null,
+      consenso_dichiarato_da: null,
+      consenso_dichiarato_il: null,
+      consenso_versione: null,
+      ...campiProva(dichiarazione, auth.user.id),
     }
     if (stato === 'pubblicata') record.pubblicata_il = new Date().toISOString()
 
-    const { data, error } = await supabase.from('news_posts').insert(record).select().single()
+    // Insert resiliente alla colonna mancante: il DB E2E della CI non è migrato
+    // e risponde `PGRST204`. Si rimuovono SOLO le colonne della dichiarazione —
+    // mai un campo del post — e si ritenta.
+    const res = await scriviConDegradazione<NewsPost>(
+      record,
+      (rec) => supabase.from('news_posts').insert(rec).select().single(),
+      'news:POST',
+    )
+    const { data, error } = res
     if (error) {
       if (schemaAssente(error)) {
         logEvento('news', 'info', { operazione: 'news:POST', esito: 'schema-assente' })
@@ -172,7 +251,16 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     }
 
     const post = data as NewsPost
-    logEvento('news', 'info', { operazione: 'news:POST', esito: 'creato', post_id: post.id, stato })
+    // Evento critico → si logga anche il SUCCESSO: senza, «nessun log» non
+    // distingue «consenso verificato» da «non è mai partita nessuna verifica».
+    logEvento('news', 'info', {
+      operazione: 'news:POST',
+      esito: 'creato',
+      post_id: post.id,
+      stato,
+      con_foto: contieneFoto(body.copertina_url, body.contenuto_json),
+      bambini_ritratti: dichiarazione?.bambini.length ?? 0,
+    })
 
     if (stato === 'pubblicata') {
       await notificaNewsPubblicata(supabase, {

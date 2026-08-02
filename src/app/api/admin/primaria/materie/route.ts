@@ -6,11 +6,43 @@ import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ============================================================
 // Materie (discipline) per sezione — catalogo editabile derivato dal preset.
 // ============================================================
+
+/**
+ * Carica la SEZIONE di una materia per poterne verificare il plesso.
+ *
+ * PATCH e DELETE ricevevano solo `id` e agivano sulla riga di `materie` senza
+ * mai chiedersi di chi fosse: la DELETE si porta dietro orario, obiettivi e
+ * valutazioni collegati. La sezione è la stessa fonte di verità che il POST usa
+ * per la sede, e deve esserlo anche qui.
+ *
+ * Ritorna la `NextResponse` di errore da restituire, oppure `null` se si può
+ * procedere.
+ */
+async function assertMateriaInScope(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  user: Parameters<typeof assertSezioneInScope>[1],
+  id: string,
+  operazione: string,
+): Promise<NextResponse | null> {
+  const { data: materia, error } = await supabase
+    .from('materie')
+    .select('id, section_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) {
+    // PostgREST non lancia: un guasto di lettura non deve diventare un
+    // «procedi comunque», che qui vorrebbe dire scrivere su una riga altrui.
+    logEvento('db', 'error', { operazione, esito: 'materia-non-letta' }, error)
+    return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+  }
+  if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
+  return await assertSezioneInScope(supabase, user, materia.section_id as string)
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -103,13 +135,26 @@ export const POST = withRoute('admin/primaria/materie:POST', async (request: Nex
     const body = base.data
     const supabase = await createAdminClient()
 
-    // Risolve la scuola dalla sezione (single source of truth).
+    // Isolamento per sede: il diff di PR #60 si esaurisce dentro il GET, e
+    // questo POST — preset compreso — creava materie sulle sezioni delle altre
+    // sedi. Derivare `scuola_id` dalla sezione NON è un presidio: scriveva la
+    // sede giusta, cioè quella di un plesso non proprio. Serve il gate.
     const sectionId = body.sectionId
-    const { data: section } = await supabase
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
+    // Risolve la scuola dalla sezione (single source of truth).
+    const { data: section, error: errSection } = await supabase
       .from('sections')
       .select('id, scuola_id')
       .eq('id', sectionId)
       .maybeSingle()
+    if (errSection) {
+      // PostgREST non lancia: senza controllo si finirebbe a inserire con
+      // `scuola_id: undefined`, cioè una materia senza plesso.
+      logEvento('db', 'error', { operazione: 'admin/primaria/materie:POST', esito: 'sezione-non-letta' }, errSection)
+      return NextResponse.json({ error: 'Lettura della sezione non riuscita' }, { status: 500 })
+    }
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
 
     if (action === 'apply-preset') {
@@ -182,6 +227,9 @@ export const PATCH = withRoute('admin/primaria/materie:PATCH', async (request: N
     delete updates.section_id
 
     const supabase = await createAdminClient()
+    const fuoriScope = await assertMateriaInScope(supabase, auth.user, id, 'admin/primaria/materie:PATCH')
+    if (fuoriScope) return fuoriScope
+
     const { data, error } = await supabase
       .from('materie')
       .update(updates)
@@ -208,6 +256,9 @@ export const DELETE = withRoute('admin/primaria/materie:DELETE', async (request:
     const { id } = q.data
 
     const supabase = await createAdminClient()
+    const fuoriScope = await assertMateriaInScope(supabase, auth.user, id, 'admin/primaria/materie:DELETE')
+    if (fuoriScope) return fuoriScope
+
     const { error } = await supabase.from('materie').delete().eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })

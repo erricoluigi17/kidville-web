@@ -1,12 +1,15 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+import { zTargetClassTask, zTitoloTask } from '@/lib/validation/task-interni';
+import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -22,18 +25,29 @@ const getQuerySchema = z.object({
 });
 
 const postBodySchema = z.object({
-    titolo: z.string().min(1),
+    // IL MASSIMO SI DICHIARA (2026-07-31). Fino a oggi era `z.string().min(1)` e
+    // basta: la larghezza della colonna viveva solo nel DDL, e un titolo da
+    // 100.000 caratteri usciva come `500 {"error":"value too long for type
+    // character varying(255)"}` — un 400 di validazione travestito da guasto del
+    // server, con lo schema del database raccontato al client. I due limiti
+    // stanno in `@/lib/validation/task-interni`, accanto alla riga di DDL da cui
+    // vengono, perché `tasks/[id]:PUT` scrive le stesse due colonne.
+    titolo: zTitoloTask.min(1),
     contenuto: z.string().nullable().optional(),
     priority: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
     deadline: z.string().nullable().optional(),
     assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
-    target_class: z.string().nullable().optional(),
+    target_class: zTargetClassTask.nullable().optional(),
     target_role: z.string().nullable().optional(),
     target_scope: z.string().nullable().optional(),
     student_id: z.string().nullable().optional(),
     author_id: z.string().min(1),
     compiti: z.array(z.unknown()).nullable().optional(),
+    // La sede su cui si sta lavorando. Facoltativa perché chi ha un plesso solo
+    // non ha niente da scegliere: la risolve `resolveScuolaScrittura`, che è
+    // anche l'unico punto che NEGA quando resta ambigua.
+    scuola_id: zUuid.nullish(),
 });
 
 // ─── Schema note ─────────────────────────────────────────────────────────────
@@ -272,20 +286,79 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             return NextResponse.json({ error: 'userId o studentId è richiesto' }, { status: 400 });
         }
 
-        const supabase = await createAdminClient();
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-        if (plessi.length === 0) return NextResponse.json([]);
+        // ─── CHI SEI LO DICE LA SESSIONE (2026-07-31) ────────────────────────
+        // Fino a oggi il livello di visibilità e l'identità dei filtri arrivavano
+        // dal parametro di query `userId`: il ruolo si leggeva con
+        // `.eq('id', userId)` e `activeUserId` era `userId!`. Il gate
+        // `requireDocente` c'era ed era corretto — ma verificava CHE FOSSE STAFF,
+        // non CHI FOSSE. Misurato in collaudo: un `educator` che chiamava la
+        // propria rotta con lo userId di un admin della sede diventava
+        // `isManager` e riceveva TUTTI i promemoria del plesso, compresi quelli
+        // di cui non era né autore, né assegnatario, né destinatario di classe.
+        // Un parametro che il client sceglie non può decidere i permessi.
+        //
+        // Il `userId` in query resta accettato — i client lo mandano da sempre e
+        // serve ancora a distinguere questa chiamata dal ramo `?studentId=` — ma
+        // da qui in poi non decide più niente.
+        const activeUserId = auth.user.id;
+        // `String(...)`: `AppRole` non contiene 'coordinatore', ma `loadAppUser`
+        // ricade su `utenti.ruolo` (italiano) se la colonna generata `role` è
+        // vuota. Si conserva la mappatura che c'era, senza confronti fuori tipo.
+        const ruoloSessione = String(auth.user.role ?? '');
+        const isManager = ruoloSessione === 'admin' || ruoloSessione === 'coordinator' || ruoloSessione === 'coordinatore';
 
-        // Determine role
-        let role = 'educator';
-        const { data: uEntry } = await supabase.from('utenti').select('ruolo, role').eq('id', userId ?? null).maybeSingle();
-        if (uEntry) {
-            const rawRole = uEntry.role || uEntry.ruolo;
-            if (rawRole === 'admin') role = 'admin';
-            else if (rawRole === 'coordinator' || rawRole === 'coordinatore') role = 'coordinator';
+        if (userId && userId !== activeUserId) {
+            // `warn` → persistito. Non è rumore: il client manda sempre l'id di
+            // chi ha la sessione, quindi una divergenza è o un bug del client o
+            // il tentativo che il collaudo ha misurato. Solo uuid e ruolo:
+            // nessun nome, nessun dato di minori.
+            logEvento('auth', 'warn', {
+                tipo: 'identita-da-query-ignorata',
+                operazione: 'tasks:GET',
+                utente: activeUserId,
+                ruolo: auth.user.role,
+            });
         }
 
-        const isManager = role === 'admin' || role === 'coordinator';
+        const supabase = await createAdminClient();
+        // Le sedi ATTIVE, non tutte quelle accessibili: la bacheca deve seguire
+        // il SedeSelector come ogni altro elenco. Con `scuoleDiUtente` la
+        // direzione di tre plessi vedeva sempre i promemoria di tutti e tre,
+        // qualunque sede avesse selezionato — e lo scope vuoto (cookie su una
+        // sede non più propria) nega, non allarga.
+        const plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
+        if (plessi.length === 0) return NextResponse.json([]);
+
+        // ─── IL RAMO `?studentId=` PARLA DI UN BAMBINO ───────────────────────
+        // La risposta porta nome, cognome, classe e ALLERGIE (`note_mediche`)
+        // dell'alunno collegato all'incarico — dato sanitario di un minore — e
+        // fino a oggi non c'era NESSUNA verifica: bastava un uuid qualsiasi
+        // della sede. `assertAlunnoInScope` controlla il plesso e, per chi non
+        // vede tutte le classi (l'educator), esige la sezione assegnata.
+        //
+        // Sta PRIMA della lettura di `task_interni`: un controllo applicato
+        // dopo aver interrogato la tabella è un filtro, non un gate.
+        if (studentId) {
+            const negato = await assertAlunnoInScope(supabase, auth.user, studentId);
+            if (negato) {
+                // Il `warn` lo emette la route: `withRoute` manda 401/403/404 a
+                // `info`, che su Vercel si vede ma in `app_log` non entra. Solo
+                // sul 403 — «non è tuo» è un tentativo, «non esiste» (404) è un
+                // id sbagliato, e il 500 di `scopeNonRisolto` è già un `error`
+                // suo. Un contatore di sicurezza riempito dai 404 banali non
+                // distingue più niente.
+                if (negato.status === 403) {
+                    logEvento('auth', 'warn', {
+                        tipo: 'alunno-fuori-sede',
+                        operazione: 'tasks:GET',
+                        utente: auth.user.id,
+                        ruolo: auth.user.role,
+                        stato: negato.status,
+                    });
+                }
+                return negato;
+            }
+        }
 
         // Sezioni del docente per il filtro `target_class`: fonte canonica
         // utenti_sezioni → sections.name; fallback legacy sui media taggati.
@@ -293,15 +366,23 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
         // tutti i docenti hanno legami in utenti_sezioni). Senza riscontri → []
         // (il docente vede comunque i task global/role/authored/assigned).
         let sectionNames: string[] = [];
-        if (!isManager && userId) {
-            sectionNames = await nomiSezioniDiUtente(supabase, userId);
+        if (!isManager) {
+            sectionNames = await nomiSezioniDiUtente(supabase, activeUserId);
         }
         if (!isManager && sectionNames.length === 0) {
             // Get sections from educator's media uploads (tagged students' classes)
+            // `.in('scuola_id', plessi)`: il fallback deduce le classi del
+            // docente dai media che ha caricato LUI, e un media caricato in un
+            // altro plesso (residuo di un trasferimento) non parla delle sue
+            // classi di oggi. Senza questo filtro il tag su un bambino poi
+            // transitato in sede rimetteva in gioco il nome di una classe che il
+            // docente non ha: è il gemello del difetto R112, chiuso il 30/07
+            // solo sul secondo passaggio (gli alunni, qui sotto).
             const { data: myMedia } = await supabase
                 .from('galleria_media_v2')
                 .select('tag_students')
-                .eq('uploaded_by', userId ?? null)
+                .eq('uploaded_by', activeUserId)
+                .in('scuola_id', plessi)
                 .not('tag_students', 'is', null);
 
             const myTaggedIds = (myMedia ?? [])
@@ -309,10 +390,17 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
                 .filter(Boolean);
 
             if (myTaggedIds.length > 0) {
+                // `.in('scuola_id', plessi)`: `plessi` è già calcolato sopra (e
+                // vuoto ⇒ si è già usciti). Senza il filtro, un vecchio tag su un
+                // bambino di un altro plesso faceva entrare il NOME della SUA
+                // classe fra le sezioni del docente, e da lì gli mostrava i task
+                // della classe OMONIMA della propria sede — che non è la sua.
+                // Stesso presidio già in `educator-sections` e in `chat/contacts`.
                 const { data: students } = await supabase
                     .from('alunni')
                     .select('classe_sezione')
-                    .in('id', myTaggedIds);
+                    .in('id', myTaggedIds)
+                    .in('scuola_id', plessi);
                 sectionNames = [...new Set(
                     (students ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
                 )];
@@ -327,8 +415,12 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             .order('created_at', { ascending: false });
 
         if (rowsErr) {
+            // Il testo di PostgREST (nomi di colonna, di vincolo, di host) resta
+            // nel log — con `codice`, che è il dato più utile che ha — e non
+            // torna più al client: non gli dice niente di azionabile e descrive
+            // lo schema a chi non deve conoscerlo.
             logErrore({ operazione: 'tasks:GET', stato: 500, evento: 'db' }, rowsErr);
-            return NextResponse.json({ error: rowsErr.message }, { status: 500 });
+            return NextResponse.json({ error: 'Lettura dei promemoria non riuscita' }, { status: 500 });
         }
 
         // Special filter for studentId (used in StudentDetailPanel)
@@ -337,10 +429,10 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
                 .map(row => decodeRow(row as Record<string, unknown>))
                 .filter(task => task.student_id === studentId);
             const enriched = await Promise.all(visible.map(t => enrichTask(supabase, t)));
-            return NextResponse.json(enriched);
+            // Bucket `task_allegati` PRIVATO (2026-07-31): gli allegati escono
+            // con un link firmato a tempo, generato dietro a questo gate.
+            return NextResponse.json(await firmaAllegatiTask(supabase, enriched, 'tasks:GET'));
         }
-
-        const activeUserId = userId!;
 
         // Decode and filter in JS
         const statusFilter = statusParam ? statusParam.split(',') : null;
@@ -397,7 +489,9 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
 
         const enriched = await Promise.all(visible.map(t => enrichTask(supabase, t)));
 
-        return NextResponse.json(enriched);
+        // Una sola chiamata di firma per pagina, a qualunque livello stia
+        // l'allegato (incarico, sotto-compito, commento).
+        return NextResponse.json(await firmaAllegatiTask(supabase, enriched, 'tasks:GET'));
     } catch (error) {
         logErrore({ operazione: 'tasks:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -420,6 +514,21 @@ export const POST = withRoute('tasks:POST', async (request: Request) => {
 
         const supabase = await createAdminClient();
 
+        // LA SEDE SI DICHIARA (multi-sede, 2026-07-31). Fino a oggi qui c'era
+        // `auth.user.scuola_id`, la sede PRIMARIA di chi crea il promemoria:
+        // con tre plessi non è un default, è solo la prima sede che gli è stata
+        // assegnata. Effetto reale: la direzione che nel SedeSelector stava
+        // lavorando su Cesa creava l'incarico a Giugliano — lo staff di Cesa non
+        // lo vedeva, l'autore non lo ritrovava, e la risposta era 201.
+        // `resolveScuolaScrittura` è l'unico punto che risponde 400 quando la
+        // sede resta ambigua: «dimmi dove stai scrivendo» è la risposta giusta,
+        // indovinare no.
+        const sw = await resolveScuolaScrittura(
+            request as NextRequest, supabase, auth.user, b.data.scuola_id ?? undefined,
+        );
+        if (sw.response) return sw.response;
+        const scuolaId = sw.scuolaId as string;
+
         // Build assignees array
         let assignees: string[] = [];
         if (compiti && Array.isArray(compiti) && compiti.length > 0) {
@@ -439,7 +548,10 @@ export const POST = withRoute('tasks:POST', async (request: Request) => {
             priority: priority ?? 'medium',
             category: category ?? 'generale',
             deadline: deadline ?? null,
-            compiti: (compiti ?? []) as SubTask[],
+            // Negli allegati si archivia il PERCORSO nel bucket: il client manda
+            // ciò che ha ricevuto dall'upload, e un indirizzo firmato salvato qui
+            // sarebbe morto alla prima riapertura dell'incarico.
+            compiti: normalizzaAllegatiTask((compiti ?? []) as SubTask[]),
             target_scope: target_scope ?? 'single',
             target_role: target_role ?? null,
             student_id: student_id ?? null,
@@ -457,28 +569,37 @@ export const POST = withRoute('tasks:POST', async (request: Request) => {
                 titolo,
                 contenuto,
                 completato: false,
-                scuola_id: auth.user.scuola_id ?? null, // tenant: plesso dell'attore
+                scuola_id: scuolaId, // tenant: la sede DICHIARATA, non quella primaria
             })
             .select()
             .single();
 
         if (error) {
+            // Stesso motivo della GET, e qui era il punto esatto del rilievo:
+            // `{ error: error.message }` restituiva «value too long for type
+            // character varying(255)». Il messaggio grezzo resta nel log; il
+            // `codice` PostgREST (`22001`) ci finisce insieme, quindi se un
+            // giorno la colonna si stringesse rispetto a `@/lib/validation/
+            // task-interni` la query `select … where codice='22001'` lo direbbe
+            // subito — che è la sola ragione per cui questo caso può ancora
+            // capitare, ed è un difetto NOSTRO: perciò resta 500 e non diventa
+            // un 400 addebitato a chi ha scritto il promemoria.
             logErrore({ operazione: 'tasks:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Creazione del promemoria non riuscita' }, { status: 500 });
         }
 
         await logScrittura(supabase, {
             attore: auth.user, entitaTipo: 'task', entitaId: (data as { id?: string })?.id ?? null,
-            azione: 'insert', scuolaId: auth.user.scuola_id ?? null, valoreDopo: { id: (data as { id?: string })?.id, titolo },
+            azione: 'insert', scuolaId, valoreDopo: { id: (data as { id?: string })?.id, titolo },
         });
 
         // Notifica agli assegnatari (best-effort), escluso l'autore stesso.
+        const destinatari = assignees.filter((uid) => uid && uid !== auth.user.id);
         try {
-            const destinatari = assignees.filter((uid) => uid && uid !== auth.user.id);
             if (destinatari.length > 0) {
                 await notificaEvento(supabase, {
                     tipo: 'task_assegnato',
-                    scuolaId: auth.user.scuola_id ?? null,
+                    scuolaId,
                     utenteIds: destinatari,
                     titolo: 'Nuovo incarico assegnato',
                     corpo: titolo,
@@ -498,6 +619,22 @@ export const POST = withRoute('tasks:POST', async (request: Request) => {
                 tipo: 'task_assegnato',
             }, e);
         }
+
+        // IL SUCCESSO SI LOGGA, CON LA SEDE (AGENTS, regola 5). Con i soli
+        // errori, «nessun log» non distingue «creato» da «non è mai partito
+        // niente» — ed è esattamente la coppia che qui non si distingueva: un
+        // incarico nato nel plesso sbagliato non lasciava nessuna traccia da cui
+        // accorgersene. `multi_sede` è persistito, quindi alla domanda «in quale
+        // sede è stato creato questo incarico?» `app_log` sa rispondere. Solo
+        // uuid e conteggi: nessun titolo, nessun nome.
+        logEvento('multi_sede', 'info', {
+            operazione: 'tasks:POST',
+            esito: 'promemoria-creato',
+            sede_id: scuolaId,
+            entita_tipo: 'task',
+            entita_id: (data as { id?: string })?.id ?? null,
+            n_assegnatari: destinatari.length,
+        });
 
         return NextResponse.json(decodeRow(data as Record<string, unknown>), { status: 201 });
     } catch (error) {

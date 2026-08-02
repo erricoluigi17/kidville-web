@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { after } from 'next/server';
+import { ambienteCorrente } from './ambiente';
 import { contesto, entraNelLogger, inLogger } from './context';
 import { redigiPath } from './redact';
 import { serializza } from './serialize';
@@ -381,7 +382,11 @@ function componi(riga: RigaLog): Record<string, unknown> {
         request_id: testo(c?.requestId),
         piattaforma: PIATTAFORME.has(riga.piattaforma ?? '') ? riga.piattaforma : undefined,
         app_versione: testo(process.env.VERCEL_GIT_COMMIT_SHA)?.slice(0, 7),
-        ambiente: testo(process.env.VERCEL_ENV) ?? testo(process.env.NODE_ENV) ?? 'sviluppo',
+        // Solo Vercel può dire «production»: senza `VERCEL_ENV` la riga nasce su una
+        // macchina, non nell'applicazione distribuita, e deve dire `locale`. Il ripiego su
+        // `NODE_ENV` che stava qui è lo stesso che ha riempito la tabella di produzione di
+        // incidenti falsi — vedi `@/lib/logging/ambiente`.
+        ambiente: ambienteCorrente(),
         fingerprint: impronta({
             sorgente, livello, evento, route, codice, statoHttp, utenteId, messaggio, stack,
         }),

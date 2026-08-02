@@ -20,6 +20,7 @@ const SEDE_A = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const SEDE_B = 'bbbbbbbb-0000-4000-8000-00000000000b'
 const ALU_A = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
 const ALU_B = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
+const MEDIA_A = 'd0d0d0d0-0000-4000-8000-dddddddddddd'
 const MEDIA_B = 'd1d1d1d1-1111-4111-8111-dddddddddddd'
 const ED_A = '11111111-1111-4111-8111-111111111111'
 const SEG_A = '22222222-2222-4222-8222-222222222222'
@@ -84,7 +85,16 @@ const dbBase = (): DBFinto => ({
   // Media dell'altra sede, ma con lo STESSO nome di classe: è il caso che
   // l'intersezione per nome lasciava passare.
   galleria_media_v2: [
+    { id: MEDIA_A, scuola_id: SEDE_A, target_classes: ['2 ANNI'], tag_students: [ALU_A], is_broadcast: false },
     { id: MEDIA_B, scuola_id: SEDE_B, target_classes: ['2 ANNI'], tag_students: [ALU_B], is_broadcast: false },
+  ],
+  ticket_mensa: [
+    { alunno_id: ALU_A, saldo_ticket: 7 },
+    { alunno_id: ALU_B, saldo_ticket: 99 },
+  ],
+  mensa_prenotazioni: [
+    { alunno_id: ALU_A, data: '2026-07-10', stato: 'prenotato', origine: 'genitore' },
+    { alunno_id: ALU_B, data: '2026-07-10', stato: 'prenotato', origine: 'segreteria' },
   ],
 })
 
@@ -97,13 +107,15 @@ beforeEach(() => {
 })
 
 describe('gallery PATCH/DELETE — la segreteria non tocca i media di un altro plesso', () => {
-  it('DELETE: passa sul media della PROPRIA sede (nessun falso negativo)', async () => {
+  // Controllo positivo. `not.toBe(403)` era verde su un 500 (il finto client non
+  // aveva `delete()`: TypeError → catch → 500, e 500 non è 403). Qui si asserisce
+  // lo stato ESATTO e l'EFFETTO: la riga della propria sede sparisce davvero,
+  // quella dell'altra sede resta al suo posto.
+  it('DELETE: cancella davvero il media della PROPRIA sede e lascia intatto quello dell\'altra', async () => {
     h.requireDocente.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
-    h.db.galleria_media_v2 = [
-      { id: MEDIA_B, scuola_id: SEDE_A, target_classes: ['2 ANNI'], tag_students: [ALU_A], is_broadcast: false },
-    ]
-    const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_B}`, 'DELETE'))
-    expect(res.status).not.toBe(403)
+    const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_A}`, 'DELETE'))
+    expect(res.status).toBe(200)
+    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_B])
   })
 
   it('PATCH: 403 sul media di un\'altra sede con lo stesso nome-classe', async () => {
@@ -122,6 +134,8 @@ describe('gallery PATCH/DELETE — la segreteria non tocca i media di un altro p
     h.requireDocente.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_B}`, 'DELETE'))
     expect(res.status).toBe(403)
+    // Il 403 da solo non basta: la riga dell'altra sede deve essere ancora lì.
+    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_A, MEDIA_B])
   })
 })
 
@@ -132,9 +146,16 @@ describe('mensa/prenotazioni — il ramo staff non è più libero', () => {
     expect(res.status).toBe(403)
   })
 
-  it('GET: passa sull\'alunno della propria sede', async () => {
+  it('GET: passa sull\'alunno della propria sede e restituisce le SUE prenotazioni', async () => {
     h.requireUser.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
     const res = await MENSA_GET(req(`/api/mensa/prenotazioni?alunno_id=${ALU_A}&from=2026-07-01&to=2026-07-31`))
-    expect(res.status).not.toBe(403)
+    expect(res.status).toBe(200)
+    const corpo = (await res.json()) as {
+      data: { saldo: number; prenotazioni: { origine: string }[] }
+    }
+    // Il saldo e l'origine sono quelli di ALU_A: se la route leggesse senza
+    // filtrare l'alunno, qui comparirebbero 99 e 'segreteria' (dati di ALU_B).
+    expect(corpo.data.saldo).toBe(7)
+    expect(corpo.data.prenotazioni.map((p) => p.origine)).toEqual(['genitore'])
   })
 })

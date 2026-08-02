@@ -2,17 +2,25 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
+import { isScuolaE2E, isUtenteCollaudo } from '@/lib/scuole/reali'
 import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
-import { defaultAdminSettingsRow } from '@/lib/scuole/admin-settings-default'
+import {
+  checklistSede,
+  provisionaCorredoFallback,
+  verificaCorredoSede,
+} from '@/lib/scuole/corredo-sede'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
-// Multi-Sede CRUD (DL-033). Riservato alla Direzione (admin/coordinator).
-// Aggiungi / rinomina / disattiva (soft) + config isolata per sede. Service-role
-// + scoping app + audit, coerente col resto del progetto.
+// Multi-Sede CRUD (DL-033). Aggiungi / rinomina / disattiva (soft) + config
+// isolata per sede. Service-role + scoping app + audit, coerente col resto del
+// progetto. Chi può fare che cosa — e su QUALE sede — è nel blocco qui sotto:
+// NON è più «la Direzione» in blocco, come diceva questa riga fino al 2026-07-31.
 //
 // D1 — Provisioning reale (multi-sede): `schools` è il tenant REALE (tutte le FK
 // scuola_id → schools), `scuole` è il registry anagrafico. Creare la sede solo in
@@ -20,7 +28,33 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // SedeSelector. Il POST ora provisiona in ENTRAMBI con lo stesso id (RPC
 // `provisiona_sede`, o fallback client-side sul DB E2E) e collega gli admin.
 
+// ─── Chi può fare che cosa, e su QUALE sede ─────────────────────────────────
+//
+// Fino al 2026-07-31 questo file aveva una sola lista — `DIREZIONE` — e la
+// usava per tutti e tre gli handler. Era un gate di RUOLO senza gate di
+// OGGETTO: misurato in collaudo, un `coordinator` di Giugliano riceveva
+// **HTTP 200** da `PATCH {"id":"<uuid di un'altra sede>"}` e poteva riscrivere
+// nome, città, `config` intera — dentro c'è l'anagrafica fiscale che finisce in
+// fattura: PEC, P.IVA, codice meccanografico — e il flag `attiva` di QUALUNQUE
+// plesso del deployment. La `GET` elencava tutte le sedi, compresa quella
+// fittizia della CI che `/api/iscrizione/sedi` esclude da sempre.
+//
+// La causa non era una dimenticanza locale: erano DUE modelli di autorizzazione
+// incoerenti nello stesso repository. Qui `admin` e `coordinator` erano
+// un'unica «Direzione» globale; in `src/lib/auth/scope.ts:58`
+// (`if (user.role !== 'admin') return own`) solo l'`admin` è multi-plesso. Fra i
+// due vince `scope.ts`, che è il punto in cui il modello è deciso per tutto il
+// progetto — quindi:
+//
+//  · GESTIONE (GET/PATCH) → admin e coordinator, ma **solo sulle sedi che
+//    `scuoleDiUtente` restituisce**. Il coordinator ne ha una e resta lì.
+//  · CREAZIONE (POST) → **solo admin**. Creare un plesso è un atto societario:
+//    provisiona il tenant, ci aggancia la Direzione e fa nascere il corredo.
+//    Un utente mono-plesso creerebbe una sede che poi non vedrebbe nemmeno
+//    nell'elenco (la GET filtra per `scuoleDiUtente`): il verso in cui si
+//    sbaglia è «non può», non «può e poi non se ne accorge nessuno».
 const DIREZIONE = ['admin', 'coordinator'] as const
+const CREA_SEDE = ['admin'] as const
 
 // Esito della RPC `provisiona_sede`. `{}` (né id né error) = RPC non disponibile
 // (PGRST202 sul DB E2E non migrato, o client di test senza `.rpc`): il chiamante
@@ -45,6 +79,137 @@ async function provisionaSedeViaRpc(
   // PGRST202 = funzione non trovata (DB E2E non migrato) → degrade, non è un errore.
   if (error) return error.code === 'PGRST202' ? {} : { error }
   return { id: data as string }
+}
+
+type ClientAdmin = Awaited<ReturnType<typeof createAdminClient>>
+
+/** Chi agganciare alla sede nuova, o l'errore che impedisce di deciderlo. */
+type EsitoAdmin =
+  | { ids: string[]; esclusi: number }
+  | { error: { message: string; code?: string }; evento: string }
+
+/**
+ * Gli admin da collegare alla sede nuova — **senza gli account di collaudo**.
+ *
+ * Il 2026-07-29, provisionando Kidville Aversa e Kidville Cesa, questo elenco
+ * era «tutti gli admin» (`.eq('ruolo','admin')`, nessun altro filtro) e ci è
+ * finito dentro anche `admin.e2e@kidville.test`, l'account del seed della CI, la
+ * cui password era un letterale committato in un repository PUBBLICO: Direzione
+ * a pieno titolo su due plessi veri — anagrafiche di minori, note mediche,
+ * pagamenti — e nessun segnale che fosse successo qualcosa.
+ *
+ * Il predicato è `isUtenteCollaudo` (src/lib/scuole/reali.ts), gemello di
+ * `isScuolaE2E`: uno solo per tutto il progetto. Un'euristica locale «sugli id
+ * che iniziano per e2e» sarebbe il secondo, e fra sei mesi i due non
+ * concorderebbero più.
+ *
+ * Se una delle letture necessarie a classificare fallisce si RITORNA l'errore (→
+ * 500) invece di tirare a indovinare: creare la sede collegando chiunque è
+ * esattamente il difetto da cui veniamo, e creare la sede senza collegare
+ * nessuno la lascerebbe senza Direzione. Un 500 si ritenta; una sede sbagliata
+ * va bonificata a mano sul database.
+ */
+async function adminDaCollegare(supabase: ClientAdmin): Promise<EsitoAdmin> {
+  const { data: admins, error: adminsError } = await supabase
+    .from('utenti')
+    .select('id, scuola_id')
+    .eq('ruolo', 'admin')
+  if (adminsError) return { error: adminsError, evento: 'db' }
+
+  const candidati = ((admins ?? []) as { id: string | null; scuola_id: string | null }[])
+    .filter((a) => Boolean(a.id))
+    .map((a) => ({ id: String(a.id), scuola_id: a.scuola_id ?? null }))
+  if (candidati.length === 0) return { ids: [], esclusi: 0 }
+
+  // ── Ponte `utenti_scuole`: le sedi in più di ciascun candidato ─────────────
+  // Serve per l'admin che non dichiara una sede primaria: senza il ponte le sue
+  // sedi sarebbero zero e resterebbe classificato «reale» per assenza di prove.
+  const ponte = new Map<string, string[]>()
+  const { data: legami, error: ponteError } = await supabase
+    .from('utenti_scuole')
+    .select('utente_id, scuola_id')
+    .in('utente_id', candidati.map((c) => c.id))
+  if (ponteError) {
+    // DB E2E della CI, non migrato: la tabella (o la colonna) può non esserci.
+    // Si degrada alla sola sede primaria — che è comunque il segnale che ha
+    // riconosciuto l'account di collaudo in produzione — ma lo si DICE.
+    if (!SCHEMA_ASSENTE.has(ponteError.code ?? '')) {
+      return { error: ponteError, evento: 'db-utenti-scuole' }
+    }
+    logEvento(
+      'multi_sede',
+      'info',
+      { operazione: 'admin/schools:POST', esito: 'ponte-utenti-scuole-non-disponibile' },
+      ponteError,
+    )
+  } else {
+    for (const r of (legami ?? []) as { utente_id: string | null; scuola_id: string | null }[]) {
+      if (!r.utente_id || !r.scuola_id) continue
+      const chiave = String(r.utente_id)
+      const lista = ponte.get(chiave) ?? []
+      lista.push(String(r.scuola_id))
+      ponte.set(chiave, lista)
+    }
+  }
+
+  // ── Nomi delle sedi coinvolte: il secondo indizio di `isScuolaE2E` ─────────
+  const sediIds = new Set<string>()
+  for (const c of candidati) if (c.scuola_id) sediIds.add(c.scuola_id)
+  for (const lista of ponte.values()) for (const s of lista) sediIds.add(s)
+  const nomiSedi = new Map<string, string>()
+  if (sediIds.size > 0) {
+    const { data: sedi, error: sediError } = await supabase
+      .from('schools')
+      .select('id, nome')
+      .in('id', Array.from(sediIds))
+    if (sediError) return { error: sediError, evento: 'db-schools' }
+    for (const s of (sedi ?? []) as { id: string | null; nome: string | null }[]) {
+      if (s.id) nomiSedi.set(String(s.id), s.nome ?? '')
+    }
+  }
+
+  const ids: string[] = []
+  let esclusi = 0
+  for (const c of candidati) {
+    if (isUtenteCollaudo({ scuola_id: c.scuola_id, sedi: ponte.get(c.id) }, nomiSedi)) {
+      esclusi += 1
+      continue
+    }
+    ids.push(c.id)
+  }
+  if (esclusi > 0) {
+    // Solo conteggi: l'identità di chi è stato escluso non serve a nessuno nel
+    // log, e sarebbero pur sempre dati di persone.
+    logEvento('multi_sede', 'info', {
+      operazione: 'admin/schools:POST',
+      esito: 'admin-collaudo-esclusi',
+      admin_totali: candidati.length,
+      admin_esclusi: esclusi,
+    })
+  }
+  return { ids, esclusi }
+}
+
+/**
+ * Il diniego per SEDE — stessa forma e **stesso messaggio** di
+ * `resolveScuolaScrittura` (`scope.ts:188-192`), di proposito: «ho chiesto una
+ * sede che non è mia» deve essere un segnale solo, contabile con una query
+ * sola. Cambia il campo `azione`, che dice da dove arriva.
+ *
+ * Nella riga NON entra l'uuid della sede richiesta: come nelle altre
+ * `*-fuori-scope` del modulo si registrano solo l'utente, il suo ruolo e
+ * QUANTE sedi ha. Chi indaga parte dall'utente, non dal plesso.
+ */
+function sedeFuoriScope(
+  user: { id: string; role: string },
+  azione: string,
+  accessibili: number,
+): NextResponse {
+  logEvento('auth', 'warn', {
+    tipo: 'sede-scrittura-fuori-scope', azione,
+    utente: user.id, ruolo: user.role, accessibili,
+  })
+  return rifiutoSede('SEDE_NON_ACCESSIBILE')
 }
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -85,16 +250,41 @@ export const GET = withRoute('admin/schools:GET', async (request: Request) => {
   if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
+
+  // Le sedi dell'utente, non le sedi del deployment. Scope vuoto = elenco vuoto
+  // (fail-closed: `scuoleDiUtente` ritorna `[]` anche quando la lettura del
+  // ponte fallisce, e un errore di lettura non è un permesso).
+  const plessi = await scuoleDiUtente(supabase, auth.user)
+  if (plessi.length === 0) return NextResponse.json([])
+
   const { data, error } = await supabase
     .from('scuole')
     .select('id, nome, citta, indirizzo, attiva, config, created_at')
+    .in('id', plessi)
     .order('nome', { ascending: true })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data ?? [])
+  if (error) {
+    // PostgREST non lancia: senza questa riga il 500 direbbe «è andata male» e
+    // non «quale lettura non è riuscita».
+    logErrore({ operazione: 'admin/schools:GET', stato: 500, evento: 'db-scuole' }, error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  // La sede fittizia della CI (`e2e00000-…` / nome «…E2E») non compare a un
+  // utente vero: è lo stesso predicato che `/api/iscrizione/sedi` applica al
+  // pubblico da sempre, e senza di esso un admin che se la ritrova nel ponte se
+  // la vede in elenco fra i plessi veri. Restano invece visibili agli ACCOUNT DI
+  // COLLAUDO — riconosciuti da `isUtenteCollaudo`, il predicato gemello — perché
+  // per loro quella è l'unica sede che esiste: escluderla svuoterebbe la pagina
+  // Multi-sede della CI e trasformerebbe un filtro in un guasto.
+  const righe = (data ?? []) as { id: string; nome: string }[]
+  const nomiSedi = new Map(righe.map((s) => [String(s.id), s.nome ?? '']))
+  const collaudo = isUtenteCollaudo({ scuola_id: auth.user.scuola_id, sedi: plessi }, nomiSedi)
+  const visibili = collaudo ? righe : righe.filter((s) => !isScuolaE2E({ id: s.id, nome: s.nome }))
+  return NextResponse.json(visibili)
 })
 
 export const POST = withRoute('admin/schools:POST', async (request: Request) => {
-  const auth = await requireStaff(request, [...DIREZIONE])
+  const auth = await requireStaff(request, [...CREA_SEDE])
   if (auth.response) return auth.response
 
   const b = await parseBody(request, postBodySchema)
@@ -105,16 +295,15 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
     const supabase = await createAdminClient()
 
     // Admin da collegare alla nuova sede: senza il legame in `utenti_scuole` la
-    // sede nasce senza Direzione e resta invisibile nel SedeSelector.
-    const { data: admins, error: adminsError } = await supabase
-      .from('utenti')
-      .select('id')
-      .eq('ruolo', 'admin')
-    if (adminsError) {
-      logErrore({ operazione: 'admin/schools:POST', stato: 500, evento: 'db' }, adminsError)
-      return NextResponse.json({ error: adminsError.message }, { status: 500 })
+    // sede nasce senza Direzione e resta invisibile nel SedeSelector. **Gli
+    // account di collaudo NON entrano in questo elenco** — vedi la testata di
+    // `adminDaCollegare`.
+    const scelta = await adminDaCollegare(supabase)
+    if ('error' in scelta) {
+      logErrore({ operazione: 'admin/schools:POST', stato: 500, evento: scelta.evento }, scelta.error)
+      return NextResponse.json({ error: scelta.error.message }, { status: 500 })
     }
-    const adminIds = (admins ?? []).map((a) => a.id as string).filter(Boolean)
+    const adminIds = scelta.ids
 
     // Provisioning atomico via RPC: crea in schools E scuole con lo STESSO id e
     // collega gli admin. Sul DB E2E la RPC non è deployata (PGRST202) → fallback.
@@ -162,43 +351,16 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
         }
         return NextResponse.json({ error: scuoleErr.message }, { status: 500 })
       }
-      // ── admin_settings: il registro elettronico della sede nuova ────────────
-      // Stesso inserimento che fa la RPC `provisiona_sede`
-      // (20260729120000_provisiona_sede_admin_settings.sql), qui replicato per il
-      // ramo senza RPC. NON è un accessorio: senza questa riga `loadGradoContext`
-      // legge `matrice = {}` e `requireFunzione` risponde 403 su TUTTE le funzioni
-      // docente della sede (require-grado.ts:36-44 e :64-86) — una sede che nasce
-      // col registro spento, in silenzio.
-      const { error: settingsErr } = await supabase.from('admin_settings').insert(defaultAdminSettingsRow(newId))
-      if (settingsErr) {
-        if (SCHEMA_ASSENTE.has(settingsErr.code ?? '')) {
-          // DB E2E non migrato: `admin_settings` (o una sua colonna) non c'è. È
-          // ignorabile — lì nessuno apre il registro — ma va detto, non taciuto.
-          logEvento(
-            'multi_sede',
-            'info',
-            { operazione: 'admin/schools:POST', esito: 'admin-settings-non-disponibile', sede_id: newId },
-            settingsErr,
-          )
-        } else {
-          // Configurazione mancante = `error` (AGENTS.md §4): la sede esiste ma i
-          // suoi docenti prenderanno 403 finché qualcuno non crea la riga da
-          // Impostazioni. NON si risponde 500: la sede è già in schools+scuole e
-          // un retry del client ne creerebbe una SECONDA.
-          logEvento(
-            'multi_sede',
-            'error',
-            { operazione: 'admin/schools:POST', esito: 'admin-settings-fallito', sede_id: newId },
-            settingsErr,
-          )
-        }
-      } else {
-        logEvento('multi_sede', 'info', {
-          operazione: 'admin/schools:POST',
-          esito: 'admin-settings-creato',
-          sede_id: newId,
-        })
-      }
+      // ── Il corredo minimo della sede nuova ─────────────────────────────────
+      // Stesse scritture che fa la RPC `provisiona_corredo_sede`
+      // (20260731123052_provisiona_sede_v2.sql), qui replicate per il ramo senza
+      // RPC: `admin_settings` (senza cui `loadGradoContext` legge `matrice = {}`
+      // e `requireFunzione` risponde 403 su TUTTE le funzioni docente della sede
+      // — require-grado.ts:36-44 e :64-86), la scala dei giudizi e il titolario
+      // dei protocolli. Un guasto qui NON diventa un 500: la sede è già in
+      // schools+scuole e un retry del client ne creerebbe una SECONDA. Si logga
+      // (AGENTS.md §4) e la checklist della risposta dice che cosa manca.
+      await provisionaCorredoFallback(supabase, newId, 'admin/schools:POST')
 
       // Collega gli admin (best-effort: la sede esiste comunque).
       for (const aid of adminIds) {
@@ -213,13 +375,25 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
       via = 'fallback'
     }
 
-    // Evento amministrativo critico → logga il SUCCESSO (uuid + conteggio admin
-    // collegati; MAI nomi: l'uuid è auto-descrittivo, il conteggio è un numero).
+    // ── Che cosa manca ancora, e dove si compila ─────────────────────────────
+    // Il corredo si RILEGGE dal database invece di darlo per fatto: sul ramo
+    // RPC il chiamante conosce solo l'uuid restituito, e quali pezzi contenga
+    // quella funzione lo decide la versione deployata. Una sede che «sembra
+    // pronta» è il difetto da cui veniamo (R123): Aversa e Cesa sono nate senza
+    // scala dei giudizi, senza titolario e — Cesa — senza una sola disciplina,
+    // e nessun punto dell'applicazione lo diceva.
+    const fatti = await verificaCorredoSede(supabase, sedeId, 'admin/schools:POST')
+    const checklist = checklistSede(fatti)
+
+    // Evento amministrativo critico → logga il SUCCESSO (uuid + conteggi; MAI
+    // nomi: l'uuid è auto-descrittivo, i conteggi sono numeri).
     logEvento('multi_sede', 'info', {
       operazione: 'admin/schools:POST',
       esito: via,
       sede_id: sedeId,
       admin_collegati: adminIds.length,
+      admin_esclusi: scelta.esclusi,
+      corredo_da_fare: checklist.filter((v) => v.stato === 'da_fare').length,
     })
 
     const data = {
@@ -228,6 +402,7 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
       citta: scuola.citta,
       indirizzo: scuola.indirizzo,
       attiva: true,
+      checklist,
     }
 
     await logScrittura(supabase, {
@@ -257,12 +432,30 @@ export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) =
 
   try {
     const supabase = await createAdminClient()
-    const { data: existing } = await supabase
+    const { data: existing, error: letturaErr } = await supabase
       .from('scuole')
       .select('id, config')
       .eq('id', id)
       .maybeSingle()
+    // PostgREST non lancia: senza guardare `error` una lettura FALLITA lasciava
+    // `existing` a null e la route rispondeva «Sede non trovata» — cioè
+    // affermava qualcosa su un dato che non aveva letto, e il guasto spariva
+    // dentro un diniego dall'aria normale.
+    if (letturaErr) {
+      logErrore({ operazione: 'admin/schools:PATCH', stato: 500, evento: 'db-scuole-lettura' }, letturaErr)
+      return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
+    }
     if (!existing) return NextResponse.json({ error: 'Sede non trovata' }, { status: 404 })
+
+    // ── Il gate sull'OGGETTO, non solo su chi lo chiede ──────────────────────
+    // Va DOPO il 404 di proposito: «questa sede non esiste» e «questa sede non è
+    // tua» sono due dinieghi diversi e vanno tenuti distinti — il secondo è un
+    // segnale di sicurezza e finisce in un contatore, il primo è un id sbagliato
+    // e non deve inquinarlo.
+    const plessi = await scuoleDiUtente(supabase, auth.user)
+    if (!plessi.includes(id)) {
+      return sedeFuoriScope(auth.user, 'admin/schools:PATCH', plessi.length)
+    }
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (nome !== undefined) updates.nome = String(nome).trim()

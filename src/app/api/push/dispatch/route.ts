@@ -6,6 +6,7 @@ import { sendNativePush, fcmConfigured } from '@/lib/push/native-push'
 import { parseQuery } from '@/lib/validation/http'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
@@ -89,7 +90,7 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    if (!segretoCronValido(secret)) {
       // SI GRIDA SOLO SE L'HEADER C'È MA NON TORNA. Quello è un cron che bussa con la chiave
       // sbagliata: il guasto invisibile, e il motivo per cui questa riga esiste (da fuori è
       // indistinguibile da un cron che non gira). Il POST ANONIMO, invece, tace: la route è
@@ -187,6 +188,17 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
 
     let inviate = 0
     let nativeInviate = 0
+    // IL TERZO ESITO, quello che non esisteva. Il ciclo guardava solo `ok` e `gone`:
+    // ogni altro rifiuto — `403` (chiave VAPID non autorizzata per quell'endpoint),
+    // `413` (payload troppo grande), `401` FCM, la rete giù, le credenziali sbagliate —
+    // cadeva in un ramo che non c'era. Nessun contatore, nessuna riga.
+    //
+    // E la notifica veniva marcata `push_inviata_il` lo stesso (vedi sotto: è
+    // deliberato, evita i ritentativi infiniti), quindi NON verrà mai rispedita. Il
+    // battito continuava intanto a dire `esito:'ok'` con `inviate: 0`: zero push
+    // consegnate, zero tracce — il guasto delle email di credenziali, tale e quale.
+    // Un contatore non ripara niente; rende il guasto DICIBILE, che è il primo passo.
+    let fallite = 0
     const toRemove: string[] = []
     const inviateIds: string[] = []
 
@@ -200,12 +212,14 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
           const res = await sendNativePush(s.endpoint, s.platform, payload)
           if (res.ok) nativeInviate++
           else if (res.gone) toRemove.push(s.id)
+          else fallite++
         } else {
           // Canale web (VAPID). platform 'web' o legacy null.
           if (!webOk) continue
           const res = await sendPush({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, payload)
           if (res.ok) inviate++
           else if (res.gone) toRemove.push(s.id)
+          else fallite++
         }
       }
       // marca inviata comunque (anche senza subs o con canali gated: evita ritentativi infiniti)
@@ -231,16 +245,45 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
       if (error) return queryFallita('rimozione push_subscriptions', error, t0)
     }
 
+    // I RIFIUTI ALZANO LA VOCE, E SEPARATAMENTE DAL BATTITO.
+    //
+    // Il battito è `info`: dice «il job gira». Che il provider stia rifiutando gli invii
+    // è un fatto diverso e va cercabile da solo (`livello='warn'`), altrimenti si
+    // troverebbe solo leggendo un campo dentro una riga che per definizione dice «ok».
+    //
+    // `warn` e non `error`: alcuni rifiuti sono transitori (un `429`, un `503` del push
+    // service), e questa route degrada e risponde 200 — un `error` alzerebbe anche la
+    // marca `erroreLoggato`. Ma resta PERSISTITO (`vaPersistito` tiene i warn), quindi
+    // «da mercoledì tutte le push web vengono rifiutate» diventa una query.
+    //
+    // Il `msg` dice a chiare lettere la conseguenza: quelle notifiche sono già marcate
+    // inviate e non torneranno. Chi legge il log non deve dedurlo dal codice.
+    if (fallite > 0) {
+      logEvento('cron', 'warn', {
+        operazione: JOB,
+        esito: 'invii-rifiutati',
+        fallite,
+        inviate,
+        native_inviate: nativeInviate,
+        notifiche: inviateIds.length,
+        ms: Date.now() - t0,
+        msg: `${JOB}: ${fallite} invii push rifiutati dal provider; le notifiche restano marcate inviate e NON verranno ritentate`,
+      })
+    }
+
     // I contatori sono NUMERI: `redact()` li lascia passare in chiaro anche in tabella,
     // qualunque sia la chiave. Sono la seconda metà del battito — non solo «gira», ma
     // «gira e sta facendo qualcosa»: un dispatch che parte ogni notte e invia sempre 0
-    // è rotto tanto quanto uno che non parte.
+    // è rotto tanto quanto uno che non parte. `fallite` sta accanto a `inviate` perché
+    // è la coppia che va letta insieme: `inviate: 0` da solo può voler dire «niente da
+    // fare», `inviate: 0, fallite: 27` vuol dire «il canale è giù».
     logEvento('cron', 'info', {
       operazione: JOB,
       esito: 'ok',
       ms: Date.now() - t0,
       inviate,
       native_inviate: nativeInviate,
+      fallite,
       notifiche: inviateIds.length,
       subs_rimosse: toRemove.length,
       msg: `${JOB}: ok`,
@@ -250,6 +293,7 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
       data: {
         inviate,
         native_inviate: nativeInviate,
+        fallite,
         notifiche: inviateIds.length,
         subs_rimosse: toRemove.length,
       },

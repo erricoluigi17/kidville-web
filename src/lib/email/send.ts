@@ -9,8 +9,9 @@ import { hashCorrelabile } from '@/lib/logging/redact'
  * PARLANTE. Mittente di default sovrascrivibile con `OTP_FROM_EMAIL`.
  *
  * ⚠️ DELIVERABILITY: il dominio di invio verificato su Resend è il SOTTODOMINIO
- * `mail.kidville.it` (verificato il 2026-07-13; account erricoluigi17@gmail.com; region
- * eu-west-1) — NON il dominio radice `kidville.it`. In produzione va impostata
+ * `mail.kidville.it` (verificato il 2026-07-13; l'account Resend è quello personale del
+ * titolare — l'indirizzo sta nel suo gestore di credenziali e NON in questo repo, che è
+ * pubblico; region eu-west-1) — NON il dominio radice `kidville.it`. In produzione va impostata
  * `OTP_FROM_EMAIL="Kidville <noreply@mail.kidville.it>"`: il mittente DEVE stare su
  * `@mail.kidville.it`, altrimenti Resend rifiuta con 403. Se la var manca si degrada al
  * mittente sandbox `onboarding@resend.dev`, che Resend CONSEGNA SOLO all'indirizzo del
@@ -142,16 +143,34 @@ export async function sendEmail(params: SendEmailParams): Promise<boolean> {
   return (await sendEmailDetailed(params)).ok
 }
 
-/** Corpo dell'email con le credenziali di accesso all'area genitori. */
-export function credentialsEmailBody(nome: string | null | undefined, email: string, password: string): string {
+/**
+ * Corpo dell'email con le credenziali di accesso all'area genitori.
+ *
+ * `sedeNome` — dal 2026-07-29 «Kidville» non è il nome di una scuola, è il nome
+ * di tre (Giugliano, Aversa, Cesa). «La tua iscrizione a Kidville è stata
+ * registrata» era una frase completa con una sede sola; oggi il genitore non sa
+ * a quale plesso sia stato iscritto suo figlio, e non ha modo di accorgersi se
+ * lo hanno registrato nella sede sbagliata.
+ *
+ * Il nome NON si indovina: lo passa chi manda l'email, dopo averlo risolto
+ * dalla sede del genitore (che a sua volta viene dai FIGLI). Se non è
+ * risolvibile la frase resta quella generica — vaga è meglio di falsa.
+ */
+export function credentialsEmailBody(
+  nome: string | null | undefined,
+  email: string,
+  password: string,
+  sedeNome?: string | null,
+): string {
   const saluto = nome ? `Gentile ${nome},` : 'Gentile genitore,'
+  const sede = (sedeNome ?? '').trim()
   const loginUrl = process.env.NEXT_PUBLIC_APP_URL
     ? `${process.env.NEXT_PUBLIC_APP_URL}/auth/login`
     : 'la pagina di accesso all\'area genitori'
   return [
     saluto,
     '',
-    'la tua iscrizione a Kidville è stata registrata. Di seguito le credenziali per accedere all\'area genitori:',
+    `la tua iscrizione a ${sede || 'Kidville'} è stata registrata. Di seguito le credenziali per accedere all'area genitori:`,
     '',
     `  Email: ${email}`,
     `  Password temporanea: ${password}`,
@@ -159,6 +178,6 @@ export function credentialsEmailBody(nome: string | null | undefined, email: str
     `Accedi da ${loginUrl} e, per la tua sicurezza, modifica la password al primo accesso.`,
     '',
     'A presto,',
-    'Lo staff Kidville',
+    sede ? `Lo staff di ${sede}` : 'Lo staff Kidville',
   ].join('\n')
 }

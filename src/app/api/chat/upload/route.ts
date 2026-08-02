@@ -3,26 +3,29 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
-import { parseData } from '@/lib/validation/http'
+import { parseData, parseMultipart } from '@/lib/validation/http'
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { BUCKET_CHAT_ALLEGATI, TTL_FIRMA_CHAT_S } from '@/lib/chat/allegati'
 
 // Upload allegato chat (M5.5): bucket privato `chat-allegati`, scritture solo
 // via service-role (come le altre route chat — nessuna policy storage).
-// Risponde con un URL firmato a TTL lungo: viene salvato così com'è in
-// chat_messages.attachment_url e riletto dal render esistente
-// (ChatMessageArea usa l'URL direttamente).
+//
+// RISPONDE COL PERCORSO (2026-08-01, S32). Prima rispondeva con un URL firmato a
+// **365 giorni** che il client salvava così com'era in
+// `chat_messages.attachment_url`: un link permanente travestito da link a
+// scadenza, e per giunta archiviato in chiaro. Ora in tabella va il percorso, e
+// il link lo genera la LETTURA, a tempo, dietro al suo gate
+// (`src/lib/chat/allegati.ts`).
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postFormSchema = z.object({
   file: z.instanceof(File, { error: 'Nessun file ricevuto' }),
 })
 
-const BUCKET = 'chat-allegati'
+const BUCKET = BUCKET_CHAT_ALLEGATI
 const MAX_MB = 10
-// TTL 1 anno: l'URL firmato è persistito nel messaggio; oltre la scadenza
-// l'allegato non è più raggiungibile (limite noto dello slice M5.5).
-const SIGNED_TTL_S = 60 * 60 * 24 * 365
 
 const ALLOWED_EXT = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'gif'])
 const ALLOWED_MIME = new Set([
@@ -60,8 +63,13 @@ export const POST = withRoute('chat/upload:POST', async (request: Request) => {
   }
 
   try {
-    const form = await request.formData()
-    const parsed = parseData(postFormSchema, { file: form.get('file') })
+    // Content-Type sbagliato = errore del CLIENT: 400, non 500 (collaudo 2026-08-02, F2).
+    // `request.formData()` LANCIA su un Content-Type non multipart, e finiva quindi nel
+    // `catch` qui sotto — che è tarato sui guasti del server e rimandava indietro il testo
+    // interno del runtime.
+    const form = await parseMultipart(request)
+    if ('response' in form) return form.response
+    const parsed = parseData(postFormSchema, { file: form.data.get('file') })
     if ('response' in parsed) return parsed.response
     const { file } = parsed.data
 
@@ -90,26 +98,61 @@ export const POST = withRoute('chat/upload:POST', async (request: Request) => {
         contentType: file.type || EXT_MIME[ext],
       })
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      // Il corpo dell'errore del provider non si butta via (AGENTS §3): «500» non
+      // dice niente, «mime type … is not supported» dice tutto. Prima qui non
+      // c'era nessuna riga: un allegato che non parte era invisibile.
+      logErrore({ operazione: 'chat/upload:POST', stato: 500, evento: 'storage' }, error)
+      // …e non torna al CLIENT: quel testo porta fuori il nome del bucket, i vincoli e le
+      // policy. Al client un codice traducibile, come sui gemelli `avvisi`/`tasks` (S31).
+      return rispostaAllegatoNonCaricato()
     }
 
+    // IL CARICAMENTO RIUSCITO LASCIA UNA RIGA (AGENTS §5). Senza, «nessun log di
+    // upload» non distingue «nessuno ha mandato allegati» da «gli allegati non
+    // partono più» — la stessa ambiguità che ha tenuto invisibile per mesi il
+    // guasto delle email di credenziali.
+    //
+    // Solo metadati. Il NOME del file non si logga MAI: in chat un allegato si
+    // chiama «referto-<cognome>.pdf», ed è il dato sanitario di un minore.
+    logEvento('storage', 'info', {
+      operazione: 'chat/upload:POST',
+      esito: 'allegato-caricato',
+      bucket: BUCKET,
+      mime: file.type || EXT_MIME[ext],
+      byte: file.size,
+    })
+
+    // `path` è ciò che va ARCHIVIATO in `chat_messages.attachment_url`.
+    //
+    // `url` resta SOLO per i client già installati (una WebView può servire un
+    // chunk vecchio dalla cache del service worker e leggere ancora `data.url`):
+    // è un link a TTL BREVE, e `chat/messages:POST` lo riporta comunque a
+    // percorso prima di scrivere. Nessuna delle due strade lascia più un token
+    // valido un anno dentro il database.
     const { data: signed, error: signErr } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(path, SIGNED_TTL_S)
-    if (signErr || !signed?.signedUrl) {
-      return NextResponse.json({ error: signErr?.message ?? 'Firma URL non riuscita' }, { status: 500 })
+      .createSignedUrl(path, TTL_FIRMA_CHAT_S)
+    if (signErr) {
+      // Il file È salvato: non si butta via un caricamento per un'anteprima.
+      // Ma il guasto va detto, col corpo dell'errore del provider.
+      logEvento('storage', 'error', {
+        operazione: 'chat/upload:POST',
+        esito: 'anteprima-non-firmata',
+        bucket: BUCKET,
+      }, signErr)
     }
 
     return NextResponse.json({
-      url: signed.signedUrl,
+      path,
+      url: signed?.signedUrl ?? null,
       attachment_type: file.type.startsWith('image/') ? 'image' : 'document',
       name: file.name,
     })
   } catch (err) {
+    // `withRoute` non vede le eccezioni CATTURATE: il log lo fa questo ramo, di suo.
+    // Al client un messaggio fisso: `err.message` è il testo interno del runtime, e oggi ne
+    // esce una stringa di Next — domani ne uscirebbe quello che ci finisce dentro.
     logErrore({ operazione: 'chat/upload:POST', stato: 500 }, err)
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Errore interno' },
-      { status: 500 }
-    )
+    return rispostaAllegatoNonCaricato()
   }
 })

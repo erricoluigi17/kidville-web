@@ -4,7 +4,7 @@
   "headerSubtitle": "My day at school, told by me 🌈",
   "giornoOggi": "Today",
   "giornoIeri": "Yesterday",
-  "caricamento": "One moment...",
+  "caricamento": "One moment…",
   "vuotoTitolo": "No entries",
   "vuotoTesto": "The teacher hasn't filled in the diary for this day yet.",
   "umoreTitolo": "Mood of the day",
@@ -59,5 +59,7 @@
   "bagnoCacca": "💩 I pooped {count, plural, one {once} other {# times}}",
   "bagnoVasino": "🚽 I used the potty {count, plural, one {once} other {# times}}",
   "bagnoGenerico": "I went to the bathroom today!",
-  "eventoGenerico": "Event recorded by the teacher."
+  "eventoGenerico": "Event recorded by the teacher.",
+  "giornoPrecedente": "Previous day",
+  "giornoSuccessivo": "Next day"
 }

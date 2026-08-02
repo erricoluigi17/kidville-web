@@ -88,7 +88,10 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
 
     const pdf = buildAttestazionePdf({
       anno,
-      struttura: datiStruttura(fiscale, aruba),
+      struttura: datiStruttura(fiscale, aruba, {
+        operazione: 'pagamenti/attestazione:GET',
+        scuolaId: alunno.scuola_id,
+      }),
       intestatario,
       alunno: `${alunno.nome ?? ''} ${alunno.cognome ?? ''}`.trim(),
       codiceFiscaleAlunno: alunno.codice_fiscale as string | null,

@@ -8,6 +8,7 @@ import { SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { STATI_PAGAMENTO } from './stati';
+import { formatEuro } from '@/lib/format/valuta';
 
 interface Pagamento {
     id: string;
@@ -117,7 +118,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
             <SectionTitle icon={BellRing} title={t('soll_titolo')}
                 sub={t('soll_sub')}
                 action={
-                    <button onClick={() => { setLoading(true); load(); }}
+                    <button onClick={() => { setLoading(true); load(); }} aria-label={t('soll_aggiorna')}
                         className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         <RefreshCw size={14} />
                     </button>
@@ -156,7 +157,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                         </span>
                                     </span>
                                     <span className="flex shrink-0 flex-col items-end gap-0.5 text-right">
-                                        <span className="block font-maven text-sm font-bold text-kidville-error">€ {residuo.toFixed(2)}</span>
+                                        <span className="block font-maven text-sm font-bold text-kidville-error">{formatEuro(residuo)}</span>
                                         <Badge tone={st.tone}>{st.label}</Badge>
                                     </span>
                                 </label>

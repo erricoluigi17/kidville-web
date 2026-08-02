@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { verifyTicket, consumeTicket } from '@/lib/auth/otp-ticket'
 import { risolviGenitorePerEmail } from '@/lib/gdpr/cancellazione-pubblica'
 import { notificaEvento } from '@/lib/notifiche/triggers'
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+import { staffScuola } from '@/lib/notifiche/destinatari'
+import { risolviSedeRichiestaCancellazione } from '@/lib/gdpr/sede-richiesta'
 import { parseBody } from '@/lib/validation/http'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { withRoute } from '@/lib/logging/with-route'
@@ -58,7 +59,36 @@ export const POST = withRoute('public/cancellazione-account/conferma:POST', asyn
       return NextResponse.json({ error: 'Account non trovato o già cancellato' }, { status: 404 })
     }
 
-    const scuolaId = genitore.scuolaId ?? (await scuolaUnicaReale(admin))
+    // SEDE DELLA RICHIESTA (W1). Qui c'era `genitore.scuolaId ?? scuolaUnicaReale(admin)`
+    // e `scuolaUnicaReale` è DEPRECATA: con tre sedi reali risponde sempre `null`.
+    // Una richiesta con `scuola_id NULL` non compare in nessun pannello di
+    // Direzione (`.in('scuola_id', …)` scarta i NULL), non è evadibile e non è
+    // ripresentabile (indice unico parziale su `pending`). Su QUESTO canale fa
+    // ancora più danno che in-app: chi usa il magic-link spesso non ha più
+    // l'applicazione, e non ha nessun modo di accorgersi che la sua richiesta non
+    // è arrivata a nessuno. La sede viene dai FIGLI; se resta indeterminabile si
+    // rifiuta con un messaggio leggibile.
+    const sede = await risolviSedeRichiestaCancellazione(
+      admin,
+      genitore.parentId,
+      genitore.scuolaId,
+      'public/cancellazione-account/conferma:POST',
+    )
+    if (sede.scuolaId === null) {
+      logEvento('gdpr', 'warn', {
+        operazione: 'public/cancellazione-account/conferma:POST',
+        esito: 'sede-non-determinabile',
+        motivo: sede.motivo,
+      })
+      return NextResponse.json(
+        {
+          error:
+            'Non è stato possibile stabilire la sede a cui inoltrare la richiesta. Contatta la segreteria della scuola: la cancellazione verrà registrata dal personale.',
+        },
+        { status: 422 },
+      )
+    }
+    const scuolaId = sede.scuolaId
 
     // 4) Registra la richiesta pending. L'indice unico parziale (stato='pending')
     //    impedisce doppioni: 23505 → "hai già una richiesta in corso".

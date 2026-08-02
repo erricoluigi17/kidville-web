@@ -16,18 +16,28 @@
  * Non invia NESSUNA email. Idempotente: al secondo giro non trova più nulla.
  *
  * Uso (dalla root del repo):
- *   node scripts/repair_parent_identities.mjs                # DRY-RUN: solo piano
- *   node scripts/repair_parent_identities.mjs --apply        # esegue
- *   node scripts/repair_parent_identities.mjs --apply --scuola <uuid>
+ *   node scripts/repair_parent_identities.mjs --scuola <uuid>            # DRY-RUN
+ *   node scripts/repair_parent_identities.mjs --scuola <uuid> --apply    # esegue
  *
- * `--scuola` default: Kidville Giugliano (unica sede di produzione, vedi AGENTS.md).
+ * `--scuola` è OBBLIGATORIO e non ha default. Fino al 2026-07-31 c'era l'uuid di
+ * Kidville Giugliano scritto a mano, con la motivazione «unica sede di
+ * produzione»: dal 2026-07-29 le sedi sono TRE (Giugliano, Aversa, Cesa) e quel
+ * default avrebbe scritto `utenti.scuola_id = Giugliano` anche per i genitori di
+ * Aversa e Cesa — in silenzio, sul database di produzione, perché lo script
+ * legge `.env.local`.
+ *
+ * Lo script agisce SOLO sui genitori che hanno almeno un figlio nella sede
+ * indicata: con tre plessi va lanciato tre volte, una per sede. Un genitore
+ * senza figli in quella sede viene saltato e riportato, mai agganciato «a
+ * indovinare»: è la stessa regola dell'app — ogni scrittura dichiara la sua sede.
+ *
  * Legge NEXT_PUBLIC_SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY da .env.local.
  */
 
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 
-const SCUOLA_PROD_DEFAULT = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function loadEnvLocal() {
   try {
@@ -81,18 +91,62 @@ async function main() {
   }
   const apply = process.argv.includes('--apply');
   const scuolaArg = process.argv.indexOf('--scuola');
-  const scuolaId = scuolaArg > -1 ? process.argv[scuolaArg + 1] : SCUOLA_PROD_DEFAULT;
+  const scuolaId = scuolaArg > -1 ? (process.argv[scuolaArg + 1] ?? '').trim() : '';
+  if (!UUID_RE.test(scuolaId)) {
+    console.error(
+      '❌ Manca --scuola <uuid>: la sede va DICHIARATA, non indovinata.\n' +
+        '   Le sedi di produzione sono tre e questo script scrive utenti.scuola_id.\n' +
+        '   Gli uuid si leggono da `select id, nome from scuole` (mai copiati da un file del repo).\n\n' +
+        '      node scripts/repair_parent_identities.mjs --scuola <uuid> [--apply]',
+    );
+    process.exit(1);
+  }
 
   const admin = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 
-  const { data: parents, error } = await admin
+  // La sede esiste? Un uuid sbagliato creerebbe righe `utenti` appese al nulla.
+  const { data: sede, error: errSede } = await admin
+    .from('scuole').select('id, nome').eq('id', scuolaId).maybeSingle();
+  if (errSede) throw new Error(`scuole: ${errSede.message}`);
+  if (!sede) {
+    console.error(`❌ Nessuna sede con id ${scuolaId}.`);
+    process.exit(1);
+  }
+
+  // I genitori della SEDE: quelli con almeno un figlio iscritto lì. `parents` non
+  // ha `scuola_id` (verificato: la sede del genitore si deriva dai figli), quindi
+  // il legame passa da alunni → student_parents. Due query invece di un embed:
+  // gli id per sede sono decine, e l'errore di PostgREST resta leggibile.
+  const { data: alunniSede, error: errAlunni } = await admin
+    .from('alunni').select('id').eq('scuola_id', scuolaId);
+  if (errAlunni) throw new Error(`alunni: ${errAlunni.message}`);
+  const idAlunni = (alunniSede ?? []).map((a) => a.id);
+
+  const legami = new Set();
+  if (idAlunni.length > 0) {
+    const { data: sp, error: errSp } = await admin
+      .from('student_parents').select('parent_id').in('student_id', idAlunni);
+    if (errSp) throw new Error(`student_parents: ${errSp.message}`);
+    for (const r of sp ?? []) legami.add(r.parent_id);
+  }
+
+  const { data: tuttiParents, error } = await admin
     .from('parents')
     .select('id, first_name, last_name, emails, auth_user_id')
     .is('auth_user_id', null)
     .order('created_at');
   if (error) throw new Error(error.message);
 
-  console.log(`${apply ? '🔧 APPLY' : '🔍 DRY-RUN'} — parents senza ponte auth: ${parents.length} (scuola utenti: ${scuolaId})\n`);
+  // Fuori scope ⇒ NEGA. Un genitore senza figli nella sede indicata non si
+  // ripara qui: lo si ripara lanciando lo script sulla SUA sede.
+  const parents = (tuttiParents ?? []).filter((p) => legami.has(p.id));
+  const fuoriSede = (tuttiParents ?? []).length - parents.length;
+
+  console.log(
+    `${apply ? '🔧 APPLY' : '🔍 DRY-RUN'} — sede ${sede.nome} (${scuolaId})\n` +
+      `   parents senza ponte auth con un figlio in questa sede: ${parents.length}` +
+      `${fuoriSede > 0 ? ` · saltati perché di altre sedi (o senza figli): ${fuoriSede}` : ''}\n`,
+  );
 
   const emailToId = await buildEmailIndex(admin);
   const report = { riparati: 0, authCreati: 0, authRiusati: 0, utentiCreati: 0, senzaEmail: 0, errori: 0 };

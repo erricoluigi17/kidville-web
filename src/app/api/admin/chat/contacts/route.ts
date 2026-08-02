@@ -36,9 +36,12 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
     // toccato il GEMELLO `/api/chat/contacts` (lato docente), non questa.
     // Fail-closed: nessun plesso ⇒ `.in(…, [])` ⇒ nessun contatto.
     const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+    // `scuola_id` nella proiezione: la rubrica lo MOSTRA quando le sedi attive
+    // sono più d'una. Con «2 ANNI» presente in due plessi, `nome · classe` non
+    // dice a quale famiglia si sta per scrivere.
     const { data: alunni, error } = await supabase
       .from('alunni')
-      .select('id, nome, cognome, classe_sezione')
+      .select('id, nome, cognome, classe_sezione, scuola_id')
       .in('scuola_id', plessi);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -57,7 +60,7 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
     const uMap = new Map((utenti ?? []).map((u) => [u.id, u]));
 
     const seen = new Set<string>();
-    const contatti: { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null }[] = [];
+    const contatti: { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null; scuolaId: string | null }[] = [];
     for (const a of righeAlunni) {
       for (const genitoreId of perAlunno.get(a.id as string) ?? []) {
         if (seen.has(genitoreId)) continue;
@@ -70,6 +73,7 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
           studentId: a.id as string,
           studentName: `${a.nome ?? ''} ${a.cognome ?? ''}`.trim(),
           classe: (a.classe_sezione as string | null) ?? null,
+          scuolaId: (a.scuola_id as string | null) ?? null,
         });
       }
     }

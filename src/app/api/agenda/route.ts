@@ -1,8 +1,13 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, requireUser, type AppUser } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, scuoleDiUtente } from '@/lib/auth/scope'
+import {
+  assertSezioneInScope,
+  resolveScuoleAttive,
+  resolveScuolaScrittura,
+  scuoleDiUtente,
+} from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
@@ -11,7 +16,9 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { dataCivile } from '@/i18n/config'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
 // plesso (section_id NULL) o di sezione, su eventi_agenda (migr. 20260762).
@@ -32,7 +39,10 @@ const zOrario = z
 
 const getQuerySchema = z.object({
   alunno_id: zUuid.optional(), // obbligatorio nel ramo genitore
-  sezione: z.string().trim().min(1).optional(), // filtro staff per NOME sezione
+  // Filtro staff per IDENTITÀ di sezione: è la forma da preferire — il nome non
+  // identifica più nulla («2 ANNI» esiste ad Aversa e a Cesa).
+  section_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+  sezione: z.string().trim().min(1).optional(), // ripiego: filtro per NOME sezione
   from: zDataYMD.optional(), // default: oggi
 })
 
@@ -59,32 +69,71 @@ const TIPO_LABEL: Record<(typeof TIPI_EVENTO)[number], string> = {
 }
 
 function oggiYMD(): string {
-  return new Date().toLocaleDateString('en-CA') // YYYY-MM-DD locale
+  return dataCivile() // YYYY-MM-DD nel fuso della scuola
 }
 
+type EsitoSezione = { sezione: { id: string; scuola_id: string } } | { response: NextResponse }
+
 /**
- * Risolve un NOME sezione entro i plessi dell'utente (i nomi sono unici solo
- * per scuola_id: mai risolvere fuori scope — pattern assertClasseNomeInScope).
+ * Risolve un NOME sezione entro le sedi ATTIVE dell'utente — e se il nome non
+ * identifica UNA sola sezione, NEGA.
+ *
+ * ⚠️ Fino al 2026-07-31 qui c'era `.limit(1)` su `scuoleDiUtente`, e faceva due
+ * danni insieme. (1) `LIMIT 1` senza `ORDER BY` non è «la prima»: è «una
+ * qualsiasi», e con «2 ANNI» presente ad Aversa e a Cesa l'evento — con la sua
+ * notifica alle famiglie — veniva archiviato in un plesso scelto dal
+ * pianificatore di query. (2) `scuoleDiUtente` IGNORA il SedeSelector, mentre
+ * `educator-sections`, che disegna le chip da cui parte la richiesta, usa
+ * `resolveScuoleAttive`: l'admin che aveva selezionato la sola Cesa cliccava una
+ * chip di Cesa e scriveva ad Aversa. Ora il perimetro è lo stesso delle chip, e
+ * l'omonimia residua si risolve chiedendo la sede (400), non tirando a sorte.
  */
 async function sezionePerNomeInScope(
+  request: NextRequest,
   supabase: SupabaseClient,
   user: AppUser,
   nome: string
-): Promise<{ id: string; scuola_id: string } | null> {
-  const plessi = await scuoleDiUtente(supabase, user)
-  if (plessi.length === 0) return null
-  const { data } = await supabase
+): Promise<EsitoSezione> {
+  const plessi = await resolveScuoleAttive(request, supabase, user)
+  const fuoriPlesso = () =>
+    NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
+  if (plessi.length === 0) return { response: fuoriPlesso() }
+
+  const { data, error } = await supabase
     .from('sections')
     .select('id, scuola_id')
     .eq('name', nome)
     .in('scuola_id', plessi)
-    .limit(1)
-  const row = (data ?? [])[0]
-  return row ? { id: row.id as string, scuola_id: row.scuola_id as string } : null
+  if (error) {
+    // PostgREST non lancia: senza questo controllo un guasto di lettura
+    // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.
+    logEvento('agenda', 'error', {
+      operazione: 'agenda:sezionePerNomeInScope', esito: 'sezione-non-risolta', sezione: nome,
+    }, error)
+    return { response: NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 }) }
+  }
+  if (data.length === 0) {
+    logEvento('agenda', 'warn', {
+      tipo: 'classe-fuori-sede', azione: 'agenda:sezionePerNomeInScope',
+      utente: user.id, ruolo: user.role, sezione: nome, sedi: plessi.length,
+    })
+    return { response: fuoriPlesso() }
+  }
+  if (data.length > 1) {
+    logEvento('agenda', 'warn', {
+      tipo: 'classe-omonima-ambigua', azione: 'agenda:sezionePerNomeInScope',
+      utente: user.id, ruolo: user.role, sezione: nome, candidate: data.length,
+    })
+    // Il dettaglio dell'omonimia («usare section_id») resta nella riga di log
+    // qui sopra: all'operatore serve sapere cosa fare — scegliere la sede — non
+    // il nome del parametro con cui il client glielo dirà.
+    return { response: rifiutoSede('SEDE_DA_SPECIFICARE') }
+  }
+  return { sezione: { id: data[0].id as string, scuola_id: data[0].scuola_id as string } }
 }
 
 // GET /api/agenda — genitore: ?alunno_id= ; staff: [?sezione=][&from=YYYY-MM-DD]
-export const GET = withRoute('agenda:GET', async (request: Request) => {
+export const GET = withRoute('agenda:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -140,7 +189,10 @@ export const GET = withRoute('agenda:GET', async (request: Request) => {
       return NextResponse.json({ error: 'Accesso negato: riservato al personale docente' }, { status: 403 })
     }
 
-    const plessi = await scuoleDiUtente(supabase, user)
+    // Sedi ATTIVE (SedeSelector ∩ accessibili), non tutte le accessibili: la
+    // lettura deve avere lo stesso perimetro della scrittura, altrimenti si
+    // crea un evento che poi non si rivede (o si rivede quello di un'altra sede).
+    const plessi = await resolveScuoleAttive(request, supabase, user)
     if (plessi.length === 0) {
       return NextResponse.json({ success: true, data: [] })
     }
@@ -151,18 +203,45 @@ export const GET = withRoute('agenda:GET', async (request: Request) => {
       .in('scuola_id', plessi)
       .gte('data', from)
 
-    if (q.data.sezione) {
-      const sezione = await sezionePerNomeInScope(supabase, user, q.data.sezione)
-      if (!sezione) {
-        return NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
+    // Filtro per sezione: `section_id` (identità) o, per i chiamanti vecchi, il
+    // NOME risolto in scope. In entrambi i casi la lettura si stringe anche
+    // sulla SEDE di quella sezione: gli eventi di plesso non hanno `section_id`,
+    // quindi senza questo vincolo comparivano quelli di TUTTE le sedi attive,
+    // etichettati solo «evento di plesso» e indistinguibili fra loro.
+    let sezioneFiltro: { id: string; scuola_id: string } | null = null
+    if (q.data.section_id) {
+      const scopeErr = await assertSezioneInScope(supabase, user, q.data.section_id)
+      if (scopeErr) return scopeErr
+      const { data: sez, error: errSez } = await supabase
+        .from('sections')
+        .select('id, scuola_id')
+        .eq('id', q.data.section_id)
+        .maybeSingle()
+      if (errSez) {
+        logEvento('agenda', 'error', {
+          operazione: 'agenda:GET', esito: 'sezione-non-risolta',
+        }, errSez)
+        return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
       }
+      if (!sez) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
+      sezioneFiltro = { id: sez.id as string, scuola_id: sez.scuola_id as string }
+    } else if (q.data.sezione) {
+      const esito = await sezionePerNomeInScope(request, supabase, user, q.data.sezione)
+      if ('response' in esito) return esito.response
+      const { sezione } = esito
       if (user.role === 'educator') {
         const mie = await sezioniDiUtente(supabase, user.id)
         if (!mie.includes(sezione.id)) {
           return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
         }
       }
-      query = query.or(`section_id.is.null,section_id.eq.${sezione.id}`)
+      sezioneFiltro = sezione
+    }
+
+    if (sezioneFiltro) {
+      query = query
+        .eq('scuola_id', sezioneFiltro.scuola_id)
+        .or(`section_id.is.null,section_id.eq.${sezioneFiltro.id}`)
     } else if (user.role === 'educator') {
       // Educator senza filtro: plesso + SOLO le proprie sezioni.
       const mie = await sezioniDiUtente(supabase, user.id)
@@ -186,7 +265,7 @@ export const GET = withRoute('agenda:GET', async (request: Request) => {
 })
 
 // POST /api/agenda — crea un evento (staff; educator solo proprie sezioni).
-export const POST = withRoute('agenda:POST', async (request: Request) => {
+export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -210,11 +289,9 @@ export const POST = withRoute('agenda:POST', async (request: Request) => {
     // Risoluzione sezione: section_id esplicito o nome (risolto SOLO in scope).
     let sectionId: string | null = body.section_id ?? null
     if (!sectionId && body.sezione) {
-      const sezione = await sezionePerNomeInScope(supabase, user, body.sezione)
-      if (!sezione) {
-        return NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
-      }
-      sectionId = sezione.id
+      const esito = await sezionePerNomeInScope(request, supabase, user, body.sezione)
+      if ('response' in esito) return esito.response
+      sectionId = esito.sezione.id
     }
 
     let scuolaId: string | null = null
@@ -235,8 +312,14 @@ export const POST = withRoute('agenda:POST', async (request: Request) => {
           { status: 403 }
         )
       }
-      const plessi = await scuoleDiUtente(supabase, user)
-      scuolaId = body.scuola_id && plessi.includes(body.scuola_id) ? body.scuola_id : user.scuola_id ?? plessi[0] ?? null
+      // Ogni scrittura dichiara la sua sede. Prima qui c'era
+      // `body.scuola_id ?? user.scuola_id ?? plessi[0]`: la sede primaria
+      // dell'operatore scattava SEMPRE (`utenti.scuola_id` è NOT NULL ed è il
+      // primo elemento di `scuoleDiUtente`), quindi un evento «di plesso»
+      // finiva a Giugliano anche mentre l'admin guardava Aversa.
+      const sw = await resolveScuolaScrittura(request, supabase, user, body.scuola_id)
+      if (sw.response) return sw.response
+      scuolaId = sw.scuolaId as string
     }
     if (!scuolaId) {
       return NextResponse.json({ error: 'Nessun plesso associato' }, { status: 400 })

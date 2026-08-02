@@ -40,7 +40,7 @@ async function caricaTemplate(
       .eq('id', STANDARD_ENROLLMENT_MODEL_ID)
       .maybeSingle()
     if (error) {
-      logEvento('forms', 'info', {
+      logEvento('modulistica', 'info', {
         operazione: 'iscrizione:POST',
         esito: 'fallback_template_codice',
         error_code: error.code,
@@ -49,7 +49,7 @@ async function caricaTemplate(
     }
     return extractEnrollmentTemplates((data?.schema ?? null) as FormSchemaConfig | null)
   } catch (e) {
-    logEvento('forms', 'info', {
+    logEvento('modulistica', 'info', {
       operazione: 'iscrizione:POST',
       esito: 'fallback_template_codice',
     }, e)

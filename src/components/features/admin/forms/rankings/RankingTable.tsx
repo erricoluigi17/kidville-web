@@ -16,6 +16,7 @@ const ESITO_BADGE: Record<string, { labelKey: string; bg: string; color: string 
   non_ammesso: { labelKey: 'esitoNonAmmesso', bg: 'rgba(244,114,128,0.14)', color: 'rgb(244,114,128)' },
 }
 import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './RankingAdjustModal'
+import { formattaIstante } from '@/i18n/config'
 
 /* ── helpers ───────────────────────────────────────────────── */
 
@@ -61,6 +62,8 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
     <div className="relative inline-flex" ref={ref}>
       <button
         onMouseEnter={() => setOpen(true)}
+        aria-label={t('rtDettaglioRettifiche')}
+        aria-expanded={open}
         onMouseLeave={() => setOpen(false)}
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
         className="p-1 rounded-md transition-all"
@@ -100,7 +103,7 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
                 </span>
                 <span className="text-kidville-muted leading-snug flex-1">{adj.reason}</span>
                 <span className="text-kidville-muted tabular-nums shrink-0">
-                  {adj.at ? new Date(adj.at).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) : ''}
+                  {adj.at ? formattaIstante(new Date(adj.at), locale, { day: '2-digit', month: 'short' }) : ''}
                 </span>
               </div>
             ))}
@@ -450,7 +453,7 @@ export function RankingTable() {
                   <div className="px-4 py-4 text-xs">
                     {sub.signed_at ? (
                       <span className="text-kidville-muted tabular-nums">
-                        {new Date(sub.signed_at).toLocaleDateString(locale, {
+                        {formattaIstante(new Date(sub.signed_at), locale, {
                           day: '2-digit', month: 'short', year: '2-digit',
                         })}
                       </span>

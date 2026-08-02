@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card'
 import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { cx } from '@/lib/ui/cx'
 import type { Avviso } from '@/components/features/avvisi/AvvisoCard'
+import { formattaIstante } from '@/i18n/config'
 
 interface Props {
   parentId: string
@@ -15,7 +16,7 @@ interface Props {
 
 const fmtDate = (iso: string, locale: string) => {
   try {
-    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
+    return formattaIstante(new Date(iso), locale, { day: 'numeric', month: 'short' })
   } catch {
     return ''
   }

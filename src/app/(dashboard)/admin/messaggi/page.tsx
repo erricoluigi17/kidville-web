@@ -5,7 +5,9 @@ import { useTranslations, useLocale } from 'next-intl';
 import { MessageCircle, Users, Send, Loader2, Eye } from 'lucide-react';
 import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useSediAttive } from '@/lib/context/sede-context';
 import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
+import { formattaIstante } from '@/i18n/config';
 
 interface OversightThread {
   id: string;
@@ -17,11 +19,11 @@ interface OversightThread {
 }
 interface Filtri { docenti: { id: string; nome: string }[]; genitori: { id: string; nome: string }[]; classi: string[] }
 interface Msg { id: string; sender_id: string; content: string; created_at: string }
-interface Contatto { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null }
+interface Contatto { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null; scuolaId: string | null }
 
 function fmtWhen(iso: string | null, locale: string) {
   if (!iso) return '';
-  try { return new Date(iso).toLocaleString(locale, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+  try { return formattaIstante(new Date(iso), locale, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
   catch { return ''; }
 }
 
@@ -33,6 +35,14 @@ function MessaggiInner() {
   // Etichetta risolta fuori dal `.map(t => …)` dei thread, dove `t` è ombreggiato
   // dalla variabile del thread (non è più la funzione di traduzione).
   const sospesaLabel = t('messaggiSospesa');
+  // Rubrica multi-sede: il plesso si scrive accanto al contatto SOLO quando le
+  // sedi accessibili sono più d'una (con una sola ripeterebbe la stessa parola
+  // su ogni riga). Senza, «Rossi Anna · Alfa Rossi · 2 ANNI» può essere due
+  // famiglie diverse in due scuole diverse.
+  const { sedi } = useSediAttive();
+  const piuSedi = sedi.length > 1;
+  const nomeSede = (scuolaId: string | null) =>
+    sedi.find((s) => s.id === scuolaId)?.nome ?? t('messaggiSedeSconosciuta');
   const [tab, setTab] = useState<'genitori' | 'tutti'>('genitori');
 
   // ── Tab "Tutti i messaggi" (supervisione, sola lettura) ──
@@ -188,6 +198,7 @@ function MessaggiInner() {
               >
                 <p className="font-maven text-sm font-semibold text-kidville-ink">{c.parentName}</p>
                 <p className="font-maven text-xs text-kidville-muted">{c.studentName}{c.classe ? ` · ${c.classe}` : ''}</p>
+                {piuSedi && <p className="font-maven text-xs font-semibold text-kidville-green">{nomeSede(c.scuolaId)}</p>}
               </button>
             ))}
           </div>
@@ -200,7 +211,10 @@ function MessaggiInner() {
               <>
                 <div className="border-b border-kidville-line pb-2 mb-3">
                   <p className="font-barlow font-bold text-kidville-green">{selContatto.parentName}</p>
-                  <p className="font-maven text-xs text-kidville-muted">{selContatto.studentName}{selContatto.classe ? ` · ${selContatto.classe}` : ''}</p>
+                  <p className="font-maven text-xs text-kidville-muted">
+                    {selContatto.studentName}{selContatto.classe ? ` · ${selContatto.classe}` : ''}
+                    {piuSedi ? ` · ${nomeSede(selContatto.scuolaId)}` : ''}
+                  </p>
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                   {chatMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">{t('messaggiNessunMessaggio')}</p>}
@@ -222,7 +236,7 @@ function MessaggiInner() {
                     placeholder={t('messaggiPlaceholder')}
                     className="flex-1 border-2 border-kidville-line rounded-pill px-4 py-2 font-maven text-sm focus:outline-none focus:border-kidville-green"
                   />
-                  <button onClick={invia} disabled={sending || !composer.trim() || !chatThreadId} className="flex h-10 w-10 items-center justify-center rounded-full bg-kidville-green text-white disabled:opacity-50">
+                  <button onClick={invia} disabled={sending || !composer.trim() || !chatThreadId} aria-label={t('messaggiInviaAria')} aria-busy={sending} className="flex h-10 w-10 items-center justify-center rounded-full bg-kidville-green text-white disabled:opacity-50">
                     {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                   </button>
                 </div>

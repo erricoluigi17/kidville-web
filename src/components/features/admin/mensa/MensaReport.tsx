@@ -91,10 +91,14 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
     if (!formAlunno || !formNota.trim()) return;
     setSalvando(true); setAltError(null);
     try {
+      // La sede si DICHIARA anche in scrittura: `resolveScuolaScrittura` risponde
+      // 400 a chi ha più plessi e non la indica. Prima viaggiava solo sulle
+      // letture, e alla Direzione multi-sede la registrazione di un'alternativa
+      // alimentare falliva con un errore che non poteva risolvere.
       const res = await fetch('/api/mensa/alternative', {
         method: 'POST',
         headers: hdr(userId),
-        body: JSON.stringify({ alunno_id: formAlunno, data, richiesta: formNota.trim() }),
+        body: JSON.stringify({ alunno_id: formAlunno, data, richiesta: formNota.trim(), ...(scuolaId ? { scuola_id: scuolaId } : {}) }),
       });
       const j = await res.json();
       if (j.success) { setFormNota(''); setFormAlunno(''); await loadAlternative(); }
@@ -110,6 +114,8 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
     setAltError(null);
     try {
       const qs = new URLSearchParams({ userId, alunno_id: alunnoId, data });
+      // Gemella della POST: senza sede la DELETE prende un 400 dal resolver.
+      if (scuolaId) qs.set('scuola_id', scuolaId);
       const res = await fetch(`/api/mensa/alternative?${qs}`, { method: 'DELETE', headers: hdr(userId) });
       const j = await res.json();
       if (j.success) await loadAlternative();

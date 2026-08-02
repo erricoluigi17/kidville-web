@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
@@ -19,6 +20,7 @@ import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBu
 import { Badge } from '@/components/ui/Badge';
 import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 
 // Pelle locale della dashboard contabilità, su token dell'app (allineata a
 // `Btn`/cockpit): pillole verde+giallo per le azioni, filtri come la Toolbar.
@@ -54,7 +56,7 @@ interface Alunno {
 // Mese abbreviato localizzato con iniziale maiuscola. In IT riproduce ESATTAMENTE
 // il vecchio array hardcoded (Gen, Feb, … Dic); in EN diventa Jan, Feb, … Dec.
 function meseCorto(mese1a12: number, locale: string): string {
-    const s = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(
+    const s = intlDateTime(locale, { month: 'short', timeZone: 'UTC' }).format(
         new Date(Date.UTC(2020, mese1a12 - 1, 15)),
     );
     return s.charAt(0).toUpperCase() + s.slice(1);
@@ -196,15 +198,21 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     const totals = useMemo(() => calcolaTotaliPagamenti(pagamenti), [pagamenti]);
 
-    // genera la retta del mese selezionato (per chi non ce l'ha ancora)
+    // genera la retta del mese selezionato (per chi non ce l'ha ancora), SULLA
+    // SEDE SELEZIONATA: senza `scuola_id` il server emetteva su tutti i plessi.
+    // E la risposta ora si guarda: un rifiuto (sede non dichiarata, sede di
+    // collaudo) restava altrimenti del tutto invisibile all'operatore.
     const generaMese = async () => {
         setGenerando(true);
         try {
-            await fetch('/api/pagamenti/genera-rette', {
+            const res = await fetch('/api/pagamenti/genera-rette', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({ periodo: mese.slice(0, 7) }),
+                body: JSON.stringify({ periodo: mese.slice(0, 7), scuola_id: scuolaId }),
             });
+            const j = await res.json().catch(() => null);
+            if (!res.ok || !j?.success) setError(j?.error || t('dashErrCaricamento'));
+            else setError(null);
             await load();
         } finally {
             setGenerando(false);
@@ -264,10 +272,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
             {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg */}
             <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : `€ ${totals.incassato.toFixed(2)}`} tone="success" />
-                <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : `€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
-                <StatCard icon={AlertTriangle} label={t('dashScadutoMorosita')} value={loading ? '—' : `€ ${totals.scaduto.toFixed(2)}`} tone="error" />
-                <StatCard icon={FileText} label={t('dashDaFatturare')} value={loading ? '—' : `€ ${totals.daFatturare.toFixed(2)}`}
+                <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : formatEuro(totals.incassato)} tone="success" />
+                <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : formatEuro(totals.daIncassare)} tone="warn" />
+                <StatCard icon={AlertTriangle} label={t('dashScadutoMorosita')} value={loading ? '—' : formatEuro(totals.scaduto)} tone="error" />
+                <StatCard icon={FileText} label={t('dashDaFatturare')} value={loading ? '—' : formatEuro(totals.daFatturare)}
                     sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} ${totals.nDaFatturare === 1 ? t('dashPagamentoSing') : t('dashPagamentiPlur')}` : undefined} tone="info" />
             </div>
 
@@ -372,7 +380,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>
                                             <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
                                             <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
-                                            <td className={cx(TD, 'text-right font-bold text-kidville-green')}>€ {residuo.toFixed(2)}</td>
+                                            <td className={cx(TD, 'text-right font-bold text-kidville-green')}>{formatEuro(residuo)}</td>
                                             <td className={TD}>
                                                 <Badge tone={st.tone}>{st.label}</Badge>
                                             </td>
@@ -435,15 +443,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             )}
                                         </td>
                                         <td className={cx(TD, 'text-kidville-muted')}>{a.classe_sezione || '—'}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-green')}>{p ? `€ ${Number(p.importo).toFixed(2)}` : '—'}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-green')}>{p ? formatEuro(p.importo) : '—'}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{p ? formatEuro(p.importo_pagato) : '—'}</td>
                                         <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
                                                 {st
                                                     ? <Badge tone={st.tone}>{st.label}</Badge>
                                                     : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
-                                                    <Badge tone="warn">{t('dashAcconto')} € {Number(p.importo_pagato).toFixed(2)}</Badge>
+                                                    <Badge tone="warn">{t('dashAcconto')} {formatEuro(p.importo_pagato)}</Badge>
                                                 )}
                                                 {p && <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />}
                                             </span>
@@ -548,13 +556,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         </td>
                                         <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
                                         <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(p.importo).toFixed(2)}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? `€ ${acconto.toFixed(2)}` : '—'}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(p.importo)}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? formatEuro(acconto) : '—'}</td>
                                         <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
                                                 <Badge tone={st.tone}>{st.label}</Badge>
                                                 {moroso && acconto > 0 && (
-                                                    <Badge tone="warn">{t('dashAcconto')} € {acconto.toFixed(2)}</Badge>
+                                                    <Badge tone="warn">{t('dashAcconto')} {formatEuro(acconto)}</Badge>
                                                 )}
                                                 <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />
                                             </span>

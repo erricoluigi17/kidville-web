@@ -112,5 +112,6 @@
   "inserisciTicketScala": "Add ticket (deduct 1)",
   "notaForzaInserimento": "The office can force the entry even with a zero balance: the balance will go negative (debt).",
   "operazioneNonRiuscita": "Operation failed",
-  "ticketInserito": "Ticket added for {data}. New balance: {saldo}."
+  "ticketInserito": "Ticket added for {data}. New balance: {saldo}.",
+  "mbRimuoviEccezione": "Remove exception"
 }

@@ -10,6 +10,9 @@ import { NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
+  // `admin/sedi:GET` usa `requireKitchenRead` (W3-E): la cuoca deve poter leggere
+  // la PROPRIA sede, altrimenti `SedeRequired` la chiude fuori dal Report Cucina.
+  requireKitchenRead: vi.fn(),
   logScrittura: vi.fn(),
   scuoleDiUtente: vi.fn(),
   rpc: vi.fn(),
@@ -34,7 +37,10 @@ const h = vi.hoisted(() => ({
   deletes: [] as { table: string; id: unknown }[],
 }))
 
-vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  requireStaff: h.requireStaff,
+  requireKitchenRead: h.requireKitchenRead,
+}))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: h.scuoleDiUtente }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
@@ -84,6 +90,7 @@ const reqSedi = () => new Request('http://localhost/api/admin/sedi')
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 'sc-1' } })
+  h.requireKitchenRead.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 'sc-1' } })
   h.scuoleDiUtente.mockResolvedValue(['sc-1', 'sc-2'])
   h.rpc.mockResolvedValue({ data: 'sede-uuid-rpc', error: null })
   h.adminsResult = { data: [{ id: 'admin-1' }, { id: 'admin-2' }], error: null }

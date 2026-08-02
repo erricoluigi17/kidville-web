@@ -8,10 +8,17 @@
 // elettronico spento, e non c'è nessun errore da nessuna parte che lo dica.
 //
 // Questo file è la fonte di verità TypeScript del default. La stessa identica
-// forma è replicata nella RPC SQL `public.provisiona_sede`
-// (supabase/migrations/20260729120000_provisiona_sede_admin_settings.sql): le due
-// copie servono perché il ramo di fallback della route gira sul DB E2E, dove la
-// RPC non esiste. **Se cambi qui, cambia anche là** (e viceversa).
+// forma è replicata nelle RPC SQL (`public.admin_settings_default_matrice`,
+// `public.avvisi_config_default`, richiamate da `public.provisiona_corredo_sede`):
+// le due copie servono perché il ramo di fallback della route gira sul DB E2E,
+// dove le RPC non esistono. **Se cambi qui, cambia anche là** (e viceversa).
+//
+// Le migrazioni NON si citano più per nome: sono immutabili, quindi una funzione
+// si aggiorna scrivendone un'altra con `CREATE OR REPLACE`, e un riferimento
+// scritto qui invecchierebbe alla prima riscrittura. Il lock
+// `__tests__/architecture/provisiona-sede-default-gemello.test.ts` risolve da sé
+// l'ULTIMA definizione di ciascuna funzione e la confronta con le costanti di
+// questo file.
 
 export type GradoRegistro = 'nido' | 'infanzia' | 'primaria'
 
@@ -127,11 +134,54 @@ export const DEFAULT_FUNZIONI_MATRICE: Record<GradoRegistro, Record<string, bool
  */
 export const DEFAULT_SOLLECITI_SEDE_NUOVA = { enabled: false } as const
 
+/**
+ * S24 — Chi può pubblicare avvisi in una sede NUOVA.
+ *
+ * IL DIFETTO CHE QUESTA COSTANTE CHIUDE (collaudo 2026-07-31, backend F3).
+ * Aversa e Cesa sono nate con `admin_settings.avvisi_config = {}` — la colonna è
+ * `NOT NULL DEFAULT '{}'`, quindi la riga c'era e la configurazione no. Il
+ * default viveva scritto a mano dentro `POST /api/avvisi` (`?? ['admin']`), e
+ * quel valore non coincideva con NESSUNO degli altri tre posti in cui lo stesso
+ * default è espresso:
+ *   · la schermata Impostazioni → Avvisi, che con config vuota mostra
+ *     selezionati «Segreteria/Admin» E «Docenti» (AvvisiSettings.tsx:42);
+ *   · `DEFAULT_FUNZIONI_MATRICE` qui sopra, che accende `avvisi` per tutti e tre
+ *     i gradi — cioè dichiara che i docenti gli avvisi li fanno;
+ *   · la configurazione REALE di Kidville Giugliano e delle sedi E2E
+ *     (`['admin','teacher']`), scritta dalla migrazione `20260711_settings_hub`.
+ * Il server negava ciò che l'interfaccia mostrava permesso, e la segreteria
+ * delle due sedi nuove non poteva pubblicare un avviso.
+ *
+ * Da qui in avanti il valore è UNO: lo scrive il provisioning (e la RPC gemella)
+ * e lo legge la route quando la configurazione manca ancora.
+ *
+ * I GRUPPI, non i ruoli. `admin` raccoglie la gestione — Direzione, coordinatori
+ * e segreteria (PRD §3: segreteria ≈ admin, come già in `active-role.ts:24`,
+ * `require-staff.ts:272` e `vedeTutteLeClassi`); `teacher` è l'educator.
+ */
+export const RUOLI_PUBBLICAZIONE_DEFAULT = ['admin', 'teacher'] as const
+
+/**
+ * `avvisi_config` con cui nasce una sede: **solo** `ruoli_pubblicazione`.
+ *
+ * Le altre tre chiavi della schermata (`allegati_max_mb`,
+ * `scadenza_default_giorni`, `conferma_lettura_abilitata`) NON si scrivono qui,
+ * per la stessa ragione dei livelli di sollecito: nessuna ha effetto lato
+ * server, tutte hanno già il proprio valore di ripiego nel componente, e
+ * congelarle nel database alla data della migrazione le farebbe divergere in
+ * silenzio da quelle mostrate in Impostazioni. `ruoli_pubblicazione` invece un
+ * effetto ce l'ha — decide chi riceve 403 — e per questo va scritta.
+ */
+export const DEFAULT_AVVISI_CONFIG: { ruoli_pubblicazione: string[] } = {
+  ruoli_pubblicazione: [...RUOLI_PUBBLICAZIONE_DEFAULT],
+}
+
 /** La riga `admin_settings` con cui provisionare una sede nuova. */
 export function defaultAdminSettingsRow(scuolaId: string): {
   scuola_id: string
   funzioni_matrice: Record<string, Record<string, boolean>>
   solleciti_config: { enabled: boolean }
+  avvisi_config: { ruoli_pubblicazione: string[] }
 } {
   return {
     scuola_id: scuolaId,
@@ -139,5 +189,6 @@ export function defaultAdminSettingsRow(scuolaId: string): {
     // mutare il default globale passando di qui.
     funzioni_matrice: JSON.parse(JSON.stringify(DEFAULT_FUNZIONI_MATRICE)) as Record<string, Record<string, boolean>>,
     solleciti_config: { ...DEFAULT_SOLLECITI_SEDE_NUOVA },
+    avvisi_config: { ruoli_pubblicazione: [...RUOLI_PUBBLICAZIONE_DEFAULT] },
   }
 }

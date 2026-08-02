@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -14,7 +14,24 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
-vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: (...a: unknown[]) => h.scuoleDiUtente(...a) }))
+// `resolveScuolaScrittura` (W2-M): la POST non eredita più la sede dal profilo di
+// chi scrive. Qui il modulo è mockato, quindi ne va riprodotto il CONTRATTO sui
+// plessi finti; il comportamento vero è provato con lo scope reale e il finto
+// client in `merch-sede-scrittura.test.ts`.
+vi.mock('@/lib/auth/scope', () => ({
+  scuoleDiUtente: (...a: unknown[]) => h.scuoleDiUtente(...a),
+  resolveScuolaScrittura: async (
+    _req: unknown,
+    _sb: unknown,
+    _user: unknown,
+    preferita?: string | null,
+  ) => {
+    const plessi = (await h.scuoleDiUtente()) as string[]
+    if (preferita && plessi.includes(preferita)) return { scuolaId: preferita }
+    if (plessi.length === 1) return { scuolaId: plessi[0] }
+    return { response: NextResponse.json({ error: 'Specificare la sede (scuola_id)' }, { status: 400 }) }
+  },
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -41,6 +58,9 @@ import { GET, POST, PATCH, DELETE } from '@/app/api/admin/merch/fornitori/route'
 const URL = 'http://localhost/api/admin/merch/fornitori'
 const json = (body: unknown, method: string) =>
   new Request(URL, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+/** La POST risolve la sede anche dal cookie del SedeSelector: forma NextRequest. */
+const postReq = (body: unknown) =>
+  Object.assign(json(body, 'POST'), { cookies: { get: () => undefined } }) as unknown as NextRequest
 const ID = '11111111-1111-4111-8111-111111111111'
 
 beforeEach(() => {
@@ -72,13 +92,13 @@ describe('GET /api/admin/merch/fornitori', () => {
 
 describe('POST /api/admin/merch/fornitori', () => {
   it('400 nome vuoto', async () => {
-    expect((await POST(json({ nome: '  ' }, 'POST'))).status).toBe(400)
+    expect((await POST(postReq({ nome: '  ' }))).status).toBe(400)
   })
   it('400 email non valida', async () => {
-    expect((await POST(json({ nome: 'X', email: 'non-una-email' }, 'POST'))).status).toBe(400)
+    expect((await POST(postReq({ nome: 'X', email: 'non-una-email' }))).status).toBe(400)
   })
   it('201 crea fornitore + audit', async () => {
-    const res = await POST(json({ nome: '  ForniTop  ', referente: 'Mario', email: 'a@b.it', telefono: '  ' }, 'POST'))
+    const res = await POST(postReq({ nome: '  ForniTop  ', referente: 'Mario', email: 'a@b.it', telefono: '  ' }))
     expect(res.status).toBe(201)
     expect(h.inserts[0].row).toMatchObject({ scuola_id: 'sc-1', nome: 'ForniTop', referente: 'Mario', email: 'a@b.it', attivo: true, creato_da: 'seg-1' })
     expect(h.inserts[0].row).toMatchObject({ telefono: null }) // stringa vuota → null

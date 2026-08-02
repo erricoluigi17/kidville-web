@@ -1,4 +1,5 @@
 import { Capacitor } from '@capacitor/core'
+import { chiudiOverlayInCima } from '@/lib/mobile/overlay-indietro'
 
 // Setup della shell nativa Capacitor (M10.5). Chiamato UNA sola volta e SOLO su
 // piattaforma nativa (vedi NativeInit). Ogni plugin è import dinamico e
@@ -40,11 +41,19 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
     // plugin StatusBar non disponibile: ignora
   }
 
-  // 3. Back button Android (naviga indietro o esce alla radice) + deep link
-  //    schema kidville:// (es. kidville://parent/agenda → /parent/agenda).
+  // 3. Back button Android (chiude l'overlay in cima, altrimenti naviga indietro o esce
+  //    alla radice) + deep link schema kidville:// (es. kidville://parent/agenda →
+  //    /parent/agenda).
   try {
     const { App } = await import('@capacitor/app')
     void App.addListener('backButton', ({ canGoBack }) => {
+      // La convenzione Android: Indietro chiude PRIMA il livello più alto dell'interfaccia
+      // (modale, bottom-sheet, pannello) e solo se non ce n'è nessuno torna indietro nella
+      // cronologia. Senza questa riga, con la modale «Nuovo avviso» aperta un Indietro
+      // distratto portava via la pagina e con lei l'avviso che si stava scrivendo.
+      // `chiudiOverlayInCima()` → `true` significa «evento consumato»: si esce e basta.
+      // Vedi `@/lib/mobile/overlay-indietro` per come una modale si iscrive al registro.
+      if (chiudiOverlayInCima()) return
       if (canGoBack) window.history.back()
       else void App.exitApp()
     })

@@ -12,13 +12,15 @@
  *      e le collega agli alunni (il legame runtime legame_genitori_alunni è già presente).
  *   6. Stampa la LISTA CREDENZIALI (email · password · ruolo · alunno collegato).
  *
- * Uso (dalla root): node e2e/primaria-360/scripts/seed-primaria-360.mjs
+ * Uso (dalla root): KV_SCUOLA_ID=<uuid> node e2e/primaria-360/scripts/seed-primaria-360.mjs
  * Env (.env.local): NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  * Env (shell):      KV_TEST_PASSWORD — password comune degli account TEST, non è nel repo.
+ *                   KV_SCUOLA_ID — sede della sezione TEST (le sedi di prod sono TRE).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 import { requireTestPassword } from '../../lib/test-password.mjs';
+import { requireScuolaCollaudo } from '../../lib/scuola-collaudo.mjs';
 
 function loadEnvLocal() {
   const env = {};
@@ -41,7 +43,9 @@ if (!URL_ || !SERVICE_KEY) {
 const db = createClient(URL_, SERVICE_KEY, { auth: { persistSession: false } });
 
 const SECTION = 'bb4e9f8a-c737-4d41-8634-02f8f8e48601';
-const SCUOLA = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
+// La sede si dichiara (KV_SCUOLA_ID): lo script crea account e anagrafiche con
+// `scuola_id`, e un uuid cablato li piazzerebbe nel plesso sbagliato in silenzio.
+const SCUOLA = requireScuolaCollaudo();
 const PASSWORD = requireTestPassword();
 
 // Città/CAP di comodo per i dati anagrafici di test (Giugliano in Campania).

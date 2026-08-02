@@ -31,6 +31,7 @@ import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
+import { formattaIstante } from '@/i18n/config';
 
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
@@ -291,7 +292,7 @@ function AdminDashboardInner() {
               id: s.id,
               left: s.alunno,
               right: euroFmt.format(s.importo),
-              meta: new Date(s.scadenza).toLocaleDateString(locale),
+              meta: formattaIstante(new Date(s.scadenza), locale),
             }))}
           />
           <AlertPanel
@@ -305,7 +306,7 @@ function AdminDashboardInner() {
               id: s.id,
               left: t('alertRichiesta', { n: i + 1 }),
               right: t('alertDaGestire'),
-              meta: s.data ? new Date(s.data).toLocaleDateString(locale) : '',
+              meta: s.data ? formattaIstante(new Date(s.data), locale) : '',
             }))}
           />
         </div>

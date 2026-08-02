@@ -11,6 +11,7 @@ import {
     CheckSquare, EyeOff
 } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
+import { formattaIstante } from '@/i18n/config';
 
 interface TaskAttachment {
     name: string;
@@ -179,10 +180,10 @@ export function TaskCard({
         }
     }, [expanded, isUpdated, onMarkRead]);
 
-    const createdDate = new Date(task.created_at).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const createdDate = formattaIstante(new Date(task.created_at), locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const deadlineDate = task.deadline ? new Date(task.deadline) : null;
     const isExpired = deadlineDate ? deadlineDate.getTime() < now : false;
-    const formattedDeadline = deadlineDate ? deadlineDate.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+    const formattedDeadline = deadlineDate ? formattaIstante(deadlineDate, locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
 
     const descrizione = task.descrizione || task.contenuto || '';
 
@@ -465,7 +466,7 @@ export function TaskCard({
                                                         <div key={comm.id} className="p-2.5 bg-white rounded-xl border border-kidville-line text-xs text-left">
                                                             <div className="flex items-center justify-between text-[9px] text-kidville-muted mb-1">
                                                                 <span className="font-bold text-kidville-green">{comm.author_name}</span>
-                                                                <span>{new Date(comm.created_at).toLocaleDateString(locale, {day: '2-digit', month: '2-digit', hour:'2-digit', minute:'2-digit'})}</span>
+                                                                <span>{formattaIstante(new Date(comm.created_at), locale, {day: '2-digit', month: '2-digit', hour:'2-digit', minute:'2-digit'})}</span>
                                                             </div>
                                                             <p className="font-maven text-kidville-ink leading-relaxed whitespace-pre-line">{comm.testo}</p>
                                                             {renderAttachments(comm.attachments)}
@@ -728,7 +729,7 @@ export function TaskCard({
                                                                 </span>
                                                                 {compito.resolved_at && (
                                                                     <span className="text-kidville-muted text-[8px]">
-                                                                        {new Date(compito.resolved_at).toLocaleDateString(locale, {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}
+                                                                        {formattaIstante(new Date(compito.resolved_at), locale, {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}
                                                                     </span>
                                                                 )}
                                                             </div>
@@ -841,7 +842,7 @@ export function TaskCard({
                                                                             <div key={comm.id} className="p-2 bg-kidville-cream/85 rounded-xl border border-kidville-line/50 text-[10px] text-left">
                                                                                 <div className="flex items-center justify-between text-[8px] text-kidville-muted mb-0.5">
                                                                                     <span className="font-bold text-kidville-green">{comm.author_name}</span>
-                                                                                    <span>{new Date(comm.created_at).toLocaleDateString(locale, {hour:'2-digit', minute:'2-digit'})}</span>
+                                                                                    <span>{formattaIstante(new Date(comm.created_at), locale, {hour:'2-digit', minute:'2-digit'})}</span>
                                                                                 </div>
                                                                                 <p className="font-maven text-kidville-ink leading-snug">{comm.testo}</p>
                                                                                 {renderAttachments(comm.attachments)}
@@ -950,7 +951,7 @@ export function TaskCard({
                                     </p>
                                     {task.resolved_at && (
                                         <p className="font-maven text-[10px] text-kidville-muted mt-0.5">
-                                            {t('ilData', { data: new Date(task.resolved_at).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) })}
+                                            {t('ilData', { data: formattaIstante(new Date(task.resolved_at), locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) })}
                                         </p>
                                     )}
                                     {task.resolution_notes && (

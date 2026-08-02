@@ -102,6 +102,22 @@ interface ProfiloDisponibile {
 }
 
 
+/*
+ * S28 — UNA sola navigazione per ogni uscita dal login.
+ *
+ * Qui c'erano quattro `router.replace(...)` seguiti immediatamente da `router.refresh()`.
+ * Sul simulatore iOS, 1 login su 6 finiva sulla schermata «KIDVILLE NON È RAGGIUNGIBILE»
+ * con il server perfettamente raggiungibile: WebKit registrava
+ * `Failed provisional load (isCancellation = 1, errorCode = -999)`, cioè
+ * `NSURLErrorCancelled` — la prima navigazione non falliva, veniva ANNULLATA dalla
+ * seconda partita 28 ms dopo.
+ *
+ * Il `refresh()` non aggiungeva nulla: il `replace` verso una destinazione mai visitata
+ * da questa istanza di router va comunque a prendere il payload RSC dal server, e ci va
+ * con i cookie appena scritti (sessione Supabase + ruolo attivo da /api/auth/active-role).
+ * Chi fosse tentato di rimetterlo: il lock è `__tests__/components/login-navigazione-singola.test.tsx`.
+ */
+
 /** Destinazione post-login: `?next=` onorato solo se coerente col ruolo attivo. */
 function destinazione(ruolo: string, next: string | null): string {
   if (next) {
@@ -188,7 +204,6 @@ function LoginForm() {
             persisti('kv_user_role', ruolo);
             void impostaRuoloAttivo(ruolo).then(() => {
               router.replace(destinazione(ruolo, next));
-              router.refresh();
             });
           } else if (profs && profs.length >= 2) {
             setProfili(profs);
@@ -219,7 +234,6 @@ function LoginForm() {
       }
       persisti('kv_user_role', ruolo);
       router.replace(destinazione(ruolo, next));
-      router.refresh();
     } finally {
       setLoading(false);
     }
@@ -254,7 +268,6 @@ function LoginForm() {
         persisti('kv_user_role', ruolo);
         await impostaRuoloAttivo(ruolo); // best-effort: la guardia ha il fallback ruolo unico
         router.replace(destinazione(ruolo, next));
-        router.refresh();
         return;
       }
 
@@ -262,7 +275,6 @@ function LoginForm() {
       // redirect): si onorano solo path interni alle aree; per il resto si va
       // alla radice e le guardie server-side faranno il loro lavoro.
       router.replace(next && areaFromPath(next) ? next : '/');
-      router.refresh();
     } catch {
       setError(t('erroreConnessione'));
     } finally {
@@ -273,6 +285,28 @@ function LoginForm() {
   return (
     <div className={styles.page}>
       {!highContrast && <BackgroundDeco />}
+      {/* ⚠️ QUI NON C'È IL COMANDO DI ALTO CONTRASTO, ED È UNA DECISIONE, NON UNA
+          DIMENTICANZA — ma è una decisione che va riaperta.
+
+          Il collaudo a11y del 2026-08-02 ha misurato che /auth/login è l'unica
+          superficie pubblica senza il comando (zero bottoni di contrasto nel
+          DOM): chi apre l'app per la prima volta e ha bisogno dell'alto
+          contrasto per leggere «Email» e «Password» non ha modo di accenderlo, e
+          il tema HC della login — che esiste ed è corretto (fondo nero, testo
+          bianco, bordi campi 15,91:1) — resta irraggiungibile a meno di fare
+          login altrove prima. Il rilievo è fondato.
+
+          Il comando però era stato TOLTO da qui di proposito, «perché la login
+          deve stare in una schermata sola, senza scroll», e la scelta è lockata
+          in `__tests__/components/login-contrast.test.tsx:43`. Rimetterlo è una
+          decisione di prodotto del titolare, non di un giro di pulizia dei
+          warning: per questo non è stato fatto qui.
+
+          Nota per chi deciderà: il vincolo «una schermata sola» NON sarebbe
+          violato da un comando FUORI dal flusso. `LanguageSwitcher`, due righe
+          sotto, sta già in `position:absolute` nell'angolo in alto a destra per
+          esattamente quella ragione. Il costo sarebbe una pill di ~143×38 px
+          accanto a una di 65×24, con `flex-wrap` per i 320 px. */}
       <div style={{ position: 'absolute', top: 'max(12px, env(safe-area-inset-top))', right: 12, zIndex: 10 }}>
         <LanguageSwitcher />
       </div>

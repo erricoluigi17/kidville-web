@@ -10,7 +10,9 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
+import { gateConsensoFoto } from '@/lib/news/gate-consenso'
 import type { NewsPost } from '@/lib/news/tipi'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -43,7 +45,7 @@ async function caricaPostConScope(
   if (post.scuola_id != null) {
     const sedi = await resolveScuoleAttive(request, supabase, user)
     if (!sedi.includes(post.scuola_id)) {
-      return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+      return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
     }
   }
   return { post }
@@ -79,6 +81,35 @@ export const POST = withRoute('news/[id]/pubblica:POST', async (request: NextReq
     const sc = await caricaPostConScope(request, supabase, auth.user, p.data)
     if (sc.response) return sc.response
     const post = sc.post!
+
+    // ─── Consenso fotografico: si ri-verifica al momento di RENDERE VISIBILE ──
+    // Fra la creazione e la pubblicazione può passare del tempo, e in quel tempo
+    // una famiglia può revocare (art. 7 §3 GDPR: revocare dev'essere facile
+    // quanto acconsentire). Un consenso verificato ieri non è un consenso oggi.
+    //
+    // Solo su `pubblica`/`ripubblica`: `ritira` e `pin` NON passano di qui. Se la
+    // revoca bloccasse anche il ritiro, l'unico modo di onorarla sarebbe
+    // cancellare il post — il gate diventerebbe un ostacolo alla revoca stessa.
+    if (azione === 'pubblica' || azione === 'ripubblica') {
+      const sediVerifica = post.scuola_id
+        ? [post.scuola_id]
+        : await resolveScuoleAttive(request, supabase, auth.user)
+      const gate = await gateConsensoFoto({
+        supabase,
+        copertinaUrl: post.copertina_url,
+        contenutoJson: post.contenuto_json,
+        ritrattiArchiviati: post.bambini_ritratti ?? null,
+        sedi: sediVerifica,
+        attore: auth.user,
+        operazione: 'news/[id]/pubblica:POST',
+        // I post creati prima del 2026-08-01 non hanno dichiarazione: qui non si
+        // pretende (si logga warn), perché renderebbe impossibile ripubblicare
+        // l'archivio storico. Dove il contenuto nasce o cambia, invece, resta
+        // obbligatoria — ed è lì che una foto nuova può entrare.
+        dichiarazioneObbligatoria: false,
+      })
+      if ('response' in gate) return gate.response
+    }
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     switch (azione) {

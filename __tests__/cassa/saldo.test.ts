@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { SEDE_A } from '../fixtures/sedi'
 import {
   sommaEntrateAutoContanti,
   calcolaAggregatiMovimenti,
@@ -162,7 +163,7 @@ function resolveData(st: { table: string; eqCols: string[]; isCols: string[] }, 
   return { data: [], error: null }
 }
 
-const SEDE = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const SEDE = SEDE_A
 
 describe('caricaSaldoCassa (orchestrazione — scenari di collaudo 1-4)', () => {
   it('fondo 100 + incasso contanti 50 − uscita 20 = saldo atteso 130', async () => {

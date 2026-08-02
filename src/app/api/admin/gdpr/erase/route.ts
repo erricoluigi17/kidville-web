@@ -4,12 +4,12 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { patchAlunno, patchParent, confermaValida, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
+import { confermaValida } from '@/lib/gdpr/anonimizza'
+import { anonimizzaAlunno, anonimizzaParent } from '@/lib/gdpr/esegui'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
-import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `alunno_id`: contratto storico permissivo (qualunque stringa non vuota; id
@@ -23,11 +23,40 @@ const postBodySchema = z.object({
   confirm: z.unknown().optional(),
 })
 
+// =============================================================================
 // Diritto all'oblio (DL-034). SOLO anonimizzazione (no DELETE), preserva audit +
 // fisco, dry-run + doppia conferma. Riservato alla Direzione.
+//
+// ─── QUESTA ROUTE NON SA COME SI ESEGUE UN OBLIO, E FA BENE ─────────────────
+//
+// Fino al 2026-08-02 lo sapeva: riscriveva a mano tutta la procedura —
+// anagrafica, riconciliazione, incassi, cassa, foto, domanda d'iscrizione, file.
+// Era la TERZA copia della stessa regola, accanto a `anonimizzaAlunno` e
+// `anonimizzaParent`, e come ogni copia era rimasta indietro. Misurato: il canale
+// della Direzione — cioè quello che risponde alle richieste vere delle famiglie —
+// svuotava due magazzini su sei. Restavano nell'archivio le pagelle del bambino,
+// i suoi certificati medici, gli allegati scambiati in chat e i PDF delle
+// credenziali (che contengono una password in chiaro), più il registro delle
+// scritture con il record integrale del minore. Il lock dei bucket era verde,
+// perché controllava le funzioni condivise — che erano giuste.
+//
+// «Una regola valida per due strade deve vivere in un posto solo, altrimenti
+// diverge in silenzio.» Qui le strade erano tre. Da oggi questa route fa solo le
+// cose che sono SUE — il gate di ruolo, l'isolamento di sede, il vincolo
+// «alunno non iscritto», la doppia conferma sul nominativo, chi sono i genitori
+// orfani — e per il resto chiama le stesse funzioni degli altri due canali.
+// =============================================================================
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 
+/** Il nome dell'operazione nei log applicativi. */
+const OP = 'admin/gdpr/erase:POST'
+
+// Il nome dentro `withRoute` resta un LETTERALE, non `OP`: il lock
+// `__tests__/architecture/logging-coverage.test.ts` scandisce il sorgente e lo
+// confronta carattere per carattere con `<path>:<METODO>`. Una costante lo
+// renderebbe illeggibile allo scanner — cioè spegnerebbe il presidio che
+// garantisce che ogni route abbia un nome, e per giunta in silenzio.
 export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
@@ -75,17 +104,37 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       if (!altri) parentiOrfani.push(pid)
     }
 
-    // File PII da rimuovere (binari non anonimizzabili). Il bucket `fatture` è ESCLUSO
-    // (conservazione fiscale). `documento_path` dell'alunno (se presente).
-    const fileAlunno = alunno.documento_path ? [String(alunno.documento_path)] : []
-
     if (mode === 'dryrun') {
+      // Il dry-run conta i DOCUMENTI D'IDENTITÀ che si toglieranno: quello del
+      // bambino e quello di ogni adulto orfano. Fino al 2026-07-31 contava solo
+      // il primo, e annunciava «1 file da rimuovere» mentre nel bucket ce n'erano
+      // di più — quelli degli adulti, che nessuno rimuoveva mai (privacy F3).
+      // È una STIMA per chi deve confermare: i percorsi che solo la domanda
+      // d'iscrizione conosce si scoprono in fase di esecuzione.
+      const docOrfani: (string | null)[] = []
+      if (parentiOrfani.length > 0) {
+        const { data: docRows, error: errDoc } = await supabase
+          .from('parents')
+          .select('documento_path')
+          .in('id', parentiOrfani)
+        // PostgREST non lancia: senza questo controllo un guasto di lettura
+        // diventerebbe «nessun documento», cioè un dry-run che rassicura.
+        if (errDoc) logErrore({ operazione: OP, evento: 'raccolta_documenti_orfani' }, errDoc)
+        for (const r of (docRows ?? []) as { documento_path?: string | null }[]) {
+          docOrfani.push(r.documento_path ?? null)
+        }
+      }
+      const fileAnagrafica = [
+        alunno.documento_path ? String(alunno.documento_path) : null,
+        ...docOrfani,
+      ].filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+
       return NextResponse.json({
         dryrun: true,
         alunno: 1,
         parents: parentiOrfani.length,
         parents_non_anonimizzati: parentIds.length - parentiOrfani.length,
-        file_da_rimuovere: fileAlunno.length,
+        file_da_rimuovere: fileAnagrafica.length,
         nominativo_conferma: `${(alunno.cognome ?? '').trim()} ${(alunno.nome ?? '').trim()}`.trim().toUpperCase(),
       })
     }
@@ -100,204 +149,96 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
 
     const at = new Date().toISOString()
 
-    // 1. Anonimizza l'alunno.
-    await supabase.from('alunni').update(patchAlunno(alunno_id, at)).eq('id', alunno_id)
+    // 1. IL MINORE, con tutto ciò che lo riguarda: anagrafica, bonifica
+    //    finanziaria (riconciliazione/incassi/cassa), testo libero UGC, foto di
+    //    galleria, domanda d'iscrizione, pagelle, certificati medici, allegati di
+    //    chat e registro delle scritture. Una funzione sola, la stessa degli
+    //    altri due canali.
+    const esitoAlunno = await anonimizzaAlunno(
+      supabase,
+      {
+        id: alunno_id,
+        documento_path: alunno.documento_path as string | null,
+        codice_fiscale: alunno.codice_fiscale as string | null,
+        fiscal_code: alunno.fiscal_code as string | null,
+      },
+      at,
+      OP,
+    )
 
-    // 2. Anonimizza i genitori orfani. PRIMA raccogli gli `auth_user_id`: il
-    //    patchParent li azzera, ma servono per l'oblio del tracciamento di lettura
-    //    news (passo 2b). Solo conteggi/uuid nei log: nessun auth_user_id.
+    // 2. I GENITORI ORFANI, uno per uno. `anonimizzaParent` raccoglie da sé
+    //    l'`auth_user_id`, il codice fiscale e il percorso del documento PRIMA
+    //    di azzerarli — che è l'ordine da cui dipende tutto il resto (senza il
+    //    CF la domanda d'iscrizione dell'adulto non si ritrova più).
     let newsVisualizzazioniRimosse = 0
-    const authIdsOrfani: string[] = []
-    if (parentiOrfani.length > 0) {
-      const { data: authRows, error: errAuth } = await supabase
-        .from('parents')
-        .select('auth_user_id')
-        .in('id', parentiOrfani)
-      if (errAuth) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'raccolta_auth_orfani' }, errAuth)
-      for (const r of (authRows ?? []) as { auth_user_id: string | null }[]) {
-        if (r.auth_user_id) authIdsOrfani.push(r.auth_user_id)
-      }
-    }
-
+    let consensiProvaBonificati = 0
+    let iscrizioniAdulti = 0
+    let fileAdultiRimossi = 0
+    let fileAdultiNonRimossi = 0
     for (const pid of parentiOrfani) {
-      await supabase.from('parents').update(patchParent(pid, at)).eq('id', pid)
+      const e = await anonimizzaParent(supabase, pid, at, OP)
+      newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
+      consensiProvaBonificati += e.provaConsensiScrubbate
+      iscrizioniAdulti += e.iscrizioniScrubbate
+      fileAdultiRimossi += e.fileRimossi
+      fileAdultiNonRimossi += e.fileNonRimossi
     }
 
-    // 2b. Oblio del tracciamento di lettura news (F1 privacy, ciclo 2). La tabella
-    //     `news_visualizzazioni` lega (post, utente_id = auth.uid del genitore, data):
-    //     dopo l'anonimizzazione di parents/alunni resterebbe joinabile a un'identità
-    //     a tempo indefinito («questo genitore ha letto questi post in queste date»).
-    //     DELETE sugli auth_user_id degli orfani raccolti sopra. Degrada in silenzio
-    //     se lo schema news è assente (DB E2E CI non migrato).
-    if (authIdsOrfani.length > 0) {
-      const { data: visDel, error: errVis } = await supabase
-        .from('news_visualizzazioni')
-        .delete()
-        .in('utente_id', authIdsOrfani)
-        .select('post_id')
-      if (errVis) {
-        if (!schemaAssente(errVis)) {
-          logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'oblio_news_visualizzazioni' }, errVis)
-        }
-      } else {
-        newsVisualizzazioniRimosse = (visDel ?? []).length
-      }
+    const nFileNonRimossi = esitoAlunno.fileNonRimossi + fileAdultiNonRimossi
+
+    const esito = {
+      alunno: 1,
+      parents: parentiOrfani.length,
+      file_rimossi: esitoAlunno.file + fileAdultiRimossi,
+      n_file_non_rimossi: nFileNonRimossi,
+      iscrizioni_scrubbate: esitoAlunno.iscrizioniScrubbate + iscrizioniAdulti,
+      foto_rimosse: esitoAlunno.fotoRimosse,
+      foto_sganciate: esitoAlunno.fotoSganciate,
+      riconciliazione_bonificati: esitoAlunno.riconciliazione,
+      incassi_bonificati: esitoAlunno.incassi,
+      cassa_bonificati: esitoAlunno.cassa,
+      news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
+      consensi_prova_bonificati: consensiProvaBonificati,
     }
 
-    // 3. Bonifica dei dati di riconciliazione/incassi COLLEGATI (D1). La causale
-    //    consigliata porta CF+nome del minore, che finiscono persistiti nei movimenti
-    //    (causale/controparte/suggerimenti.label), copiati nella nota dell'incasso
-    //    («Riconciliazione: …»): senza questo passo il CF resterebbe leggibile a tempo
-    //    indefinito dopo l'oblio. Il CF va letto PRIMA (patchAlunno l'ha già azzerato in DB,
-    //    ma `alunno` è il record letto in cima). Nessuna PII nei log: solo conteggi/uuid.
-    const cfAlunno = [alunno.codice_fiscale, alunno.fiscal_code]
-      .map((v) => (typeof v === 'string' ? v.trim() : ''))
-      .find((v) => v.length > 0) ?? ''
-    let riconciliazioneBonificati = 0
-    let incassiBonificati = 0
-    let cassaBonificati = 0
-
-    // Pagamenti dell'alunno anonimizzato (l'aggancio movimento→alunno passa dal pagamento).
-    const { data: pagRows, error: errPag } = await supabase
-      .from('pagamenti')
-      .select('id')
-      .eq('alunno_id', alunno_id)
-    if (errPag) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_pagamenti' }, errPag)
-    const pagIds = ((pagRows ?? []) as { id: string }[]).map((p) => p.id)
-
-    if (pagIds.length > 0) {
-      // 3a. Movimenti CONFERMATI collegati → azzera causale/controparte, scrub del `label`
-      //     (nome+cognome) nei suggerimenti. Per-riga: il patch dei suggerimenti dipende
-      //     dal valore esistente.
-      const { data: movConf, error: errMovSel } = await supabase
-        .from('riconciliazione_movimenti')
-        .select('id, suggerimenti')
-        .in('pagamento_id', pagIds)
-        .eq('stato', 'confermato')
-      if (errMovSel) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_select' }, errMovSel)
-      for (const m of (movConf ?? []) as { id: string; suggerimenti: unknown }[]) {
-        const { error: errU } = await supabase
-          .from('riconciliazione_movimenti')
-          .update({ causale: null, controparte: null, suggerimenti: scrubSuggerimenti(m.suggerimenti) })
-          .eq('id', m.id)
-        if (errU) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_update' }, errU)
-        else riconciliazioneBonificati++
-      }
-
-      // 3b. Incassi generati dalla riconciliazione (nota «Riconciliazione: …») → azzera la nota.
-      const { data: incBon, error: errInc } = await supabase
-        .from('incassi')
-        .update({ note: null })
-        .in('pagamento_id', pagIds)
-        .ilike('note', 'Riconciliazione:%')
-        .select('id')
-      if (errInc) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_incassi' }, errInc)
-      else incassiBonificati = (incBon ?? []).length
+    // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è
+    // in EVENTI_PERSISTITI) con soli conteggi e uuid. Alla famiglia è stato
+    // promesso che quei file non ci sono più.
+    if (nFileNonRimossi > 0) {
+      logEvento('gdpr', 'error', {
+        operazione: OP,
+        esito: 'oblio-parziale',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        n_file: nFileNonRimossi,
+        msg: `${OP}: ${nFileNonRimossi} file di un interessato NON sono usciti dall'archivio`,
+      })
+    } else {
+      // Evento critico → si logga anche il SUCCESSO. Con i soli errori, «nessun
+      // log» non distingue «tutto a posto» da «non è mai partito niente»: è
+      // esattamente l'ambiguità che ha nascosto per mesi il guasto delle email.
+      logEvento('gdpr', 'info', {
+        operazione: OP,
+        esito: 'oblio-eseguito',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        n_file: esito.file_rimossi,
+      })
     }
 
-    // 3c. Best-effort: movimenti NON confermati la cui causale cita il CF dell'alunno.
-    //     (Il CF è alfanumerico puro: nessun metacarattere ILIKE da escapare.)
-    if (cfAlunno) {
-      const { data: movCf, error: errMovCf } = await supabase
-        .from('riconciliazione_movimenti')
-        .update({ causale: null, controparte: null })
-        .neq('stato', 'confermato')
-        .ilike('causale', `%${cfAlunno}%`)
-        .select('id')
-      if (errMovCf) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_cf' }, errMovCf)
-      else riconciliazioneBonificati += (movCf ?? []).length
-    }
-
-    // 3d. Movimenti NON confermati agganciati all'alunno tramite i `suggerimenti`
-    //     (match per CF/nome all'import, senza `pagamento_id` top-level ancora): il
-    //     `label` porta «Nome Cognome» del minore. Azzera causale/controparte e fa lo
-    //     scrub del `label`. Senza questo, l'oblio lascerebbe il nome nel JSON persistito.
-    if (pagIds.length > 0) {
-      const pagSet = new Set(pagIds)
-      const { data: movNc, error: errNcSel } = await supabase
-        .from('riconciliazione_movimenti')
-        .select('id, suggerimenti')
-        .neq('stato', 'confermato')
-      if (errNcSel) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_nonconf_select' }, errNcSel)
-      for (const m of (movNc ?? []) as { id: string; suggerimenti: unknown }[]) {
-        const sugg = Array.isArray(m.suggerimenti) ? (m.suggerimenti as Record<string, unknown>[]) : []
-        const riferito = sugg.some(
-          (s) => s && typeof s === 'object' && pagSet.has(String((s as { pagamento_id?: unknown }).pagamento_id)),
-        )
-        if (!riferito) continue
-        const { error: errU } = await supabase
-          .from('riconciliazione_movimenti')
-          .update({ causale: null, controparte: null, suggerimenti: scrubSuggerimenti(m.suggerimenti) })
-          .eq('id', m.id)
-        if (errU) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_nonconf_update' }, errU)
-        else riconciliazioneBonificati++
-      }
-    }
-
-    // 3e. Bonifica del TESTO LIBERO dei movimenti di cassa che citano il CF (P6).
-    //     `cassa_movimenti` NON ha `alunno_id`: l'unico aggancio al minore è il CF
-    //     eventualmente scritto in descrizione/note/storno_motivo (es. categoria
-    //     «Rimborsi»). Senza questa passata il CF/nome sopravviverebbe all'oblio a
-    //     tempo indefinito. Pattern ILIKE-per-CF come 3c; il CF è alfanumerico puro
-    //     (nessun metacarattere ILIKE/`.or()` da escapare). Degrada in silenzio se lo
-    //     schema cassa è assente (DB E2E CI non migrato).
-    if (cfAlunno) {
-      const like = `%${cfAlunno}%`
-      const { data: cassaBon, error: errCassa } = await supabase
-        .from('cassa_movimenti')
-        .update({ descrizione: '[rimosso]', note: '[rimosso]', storno_motivo: '[rimosso]' })
-        .or(`descrizione.ilike.${like},note.ilike.${like},storno_motivo.ilike.${like}`)
-        .select('id')
-      if (errCassa) {
-        const code = (errCassa as { code?: string }).code ?? ''
-        const CASSA_SCHEMA_ASSENTE = ['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205']
-        if (!CASSA_SCHEMA_ASSENTE.includes(code)) {
-          logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_cassa' }, errCassa)
-        }
-      } else {
-        cassaBonificati = (cassaBon ?? []).length
-      }
-    }
-
-    // 4. Rimuovi i file PII (escluso il bucket fatture). Best-effort.
-    if (fileAlunno.length > 0) {
-      try {
-        await supabase.storage.from('form_attachments').remove(fileAlunno)
-      } catch {
-        /* file già assente o bucket diverso: ignora */
-      }
-    }
-
-    // 5. Log immutabile dell'oblio (solo conteggi/uuid: nessuna PII).
+    // 3. Log immutabile dell'oblio (solo conteggi/uuid: nessuna PII).
     await logScrittura(supabase, {
       attore: auth.user,
       entitaTipo: 'gdpr_oblio',
       entitaId: alunno_id,
       azione: 'update',
       scuolaId: auth.user.scuola_id ?? null,
-      valoreDopo: {
-        alunno_id,
-        parents_anonimizzati: parentiOrfani,
-        file_rimossi: fileAlunno.length,
-        riconciliazione_bonificati: riconciliazioneBonificati,
-        incassi_bonificati: incassiBonificati,
-        cassa_bonificati: cassaBonificati,
-        news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
-      },
+      valoreDopo: { alunno_id, parents_anonimizzati: parentiOrfani, ...esito },
     })
 
-    return NextResponse.json({
-      ok: true,
-      alunno: 1,
-      parents: parentiOrfani.length,
-      file_rimossi: fileAlunno.length,
-      riconciliazione_bonificati: riconciliazioneBonificati,
-      incassi_bonificati: incassiBonificati,
-      cassa_bonificati: cassaBonificati,
-      news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
-    })
+    return NextResponse.json({ ok: true, ...esito })
   } catch (err) {
-    logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)
+    logErrore({ operazione: OP, stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }

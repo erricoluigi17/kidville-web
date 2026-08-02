@@ -1,6 +1,6 @@
 import { getRequestConfig } from 'next-intl/server';
 import { cookies } from 'next/headers';
-import { DEFAULT_LOCALE, LOCALE_COOKIE, isLocale } from '@/i18n/config';
+import { APP_TIMEZONE, DEFAULT_LOCALE, LOCALE_COOKIE, isLocale } from '@/i18n/config';
 
 // Config di richiesta next-intl: risolve la lingua dal cookie KV_LOCALE
 // (fallback italiano) e assembla i messaggi da UN FILE PER NAMESPACE
@@ -48,5 +48,8 @@ export default getRequestConfig(async () => {
     public: (await import(`../../messages/${locale}/public.json`)).default,
   };
 
-  return { locale, messages };
+  // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del
+  // provider (useFormatter) userebbero il fuso del PROCESSO — UTC su Vercel —
+  // e il server renderebbe un giorno diverso da quello del browser italiano.
+  return { locale, timeZone: APP_TIMEZONE, messages };
 });

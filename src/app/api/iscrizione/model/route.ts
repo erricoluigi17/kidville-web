@@ -32,7 +32,7 @@ export const GET = withRoute('iscrizione/model:GET', async (request: Request) =>
     // Errore DAVVERO ignorabile (AGENTS regola 6): il wizard riceve comunque uno
     // schema valido — quello di default — e la risposta resta 200. Non è un guasto,
     // ma nemmeno silenzio: `info` perché il degrado va visto, non subìto.
-    logEvento('forms', 'info', { operazione: 'iscrizione/model:GET', esito: 'fallback_schema_default' }, err);
+    logEvento('modulistica', 'info', { operazione: 'iscrizione/model:GET', esito: 'fallback_schema_default' }, err);
     return NextResponse.json({ schema: ENROLLMENT_DEFAULT_SCHEMA });
   }
 });

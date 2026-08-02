@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { assertSedeRigaInScope, rigaNonTrovata, scopeRigaNonRisolta } from '@/lib/auth/scope-avvisi';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { zTargetClassTask, zTitoloTask } from '@/lib/validation/task-interni';
+import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 
@@ -17,13 +19,19 @@ const putBodySchema = z.object({
     status: z.string().optional(),
     resolution_notes: z.string().nullable().optional(),
     resolved_by: z.string().nullable().optional(),
-    titolo: z.string().optional(),
+    // IL MASSIMO VALE ANCHE IN AGGIORNAMENTO (2026-07-31). Il rilievo backend F1
+    // è stato misurato sulla POST, ma queste sono le stesse due colonne
+    // `varchar` e questa è l'altra strada che le scrive: dichiarare il limite
+    // solo di là avrebbe chiuso il caso misurato e lasciato aperto il gemello.
+    // Niente `.min(1)`: qui il body è un merge parziale e un campo assente
+    // significa «non toccarlo».
+    titolo: zTitoloTask.optional(),
     contenuto: z.string().nullable().optional(),
     priority: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
     deadline: z.string().nullable().optional(),
     assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
-    target_class: z.string().nullable().optional(),
+    target_class: zTargetClassTask.nullable().optional(),
     target_scope: z.string().nullable().optional(),
     student_id: z.string().nullable().optional(),
     compiti: z.array(z.unknown()).nullable().optional(),
@@ -161,15 +169,16 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             .eq('id', id)
             .maybeSingle();
 
-        if (getErr || !currentRow) {
-            return NextResponse.json({ error: 'Task non trovato' }, { status: 404 });
-        }
-
-        // Tenant: la task deve essere in un plesso dell'attore.
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-        if (!currentRow.scuola_id || !plessi.includes(currentRow.scuola_id as string)) {
-            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
-        }
+        // I tre casi restano TRE. PostgREST non lancia: fino al 2026-07-31 un
+        // guasto di lettura usciva come 404 «Task non trovato», cioè come
+        // un'affermazione su un dato che non si era letto.
+        if (getErr) return scopeRigaNonRisolta('task', getErr, { utente: auth.user.id });
+        if (!currentRow) return rigaNonTrovata('task');
+        // Tenant: la task deve essere in un plesso dell'attore (403 + `warn`).
+        const fuoriSede = await assertSedeRigaInScope(
+            supabase, auth.user, 'task', currentRow.scuola_id as string | null, 'tasks/[id]:PUT',
+        );
+        if (fuoriSede) return fuoriSede;
 
         // 2. Decode existing JSON payload
         const existing = decodeContenuto(currentRow.contenuto as string | null);
@@ -185,10 +194,21 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
         if (deadline !== undefined) updated.deadline = deadline;
         if (target_scope !== undefined) updated.target_scope = target_scope ?? 'single';
         if (student_id !== undefined) updated.student_id = student_id;
-        if (compiti !== undefined) updated.compiti = (compiti ?? []) as SubTask[];
+        // Negli allegati si archivia il PERCORSO nel bucket (privato dal
+        // 2026-07-31), mai l'indirizzo firmato: il client rimanda ciò che ha
+        // ricevuto dalla lettura, e quel token scade in dieci minuti.
+        if (compiti !== undefined) updated.compiti = normalizzaAllegatiTask((compiti ?? []) as SubTask[]);
         if (revision_feedback !== undefined) updated.revision_feedback = revision_feedback;
-        if (attachments !== undefined) updated.attachments = attachments as Attachment[] | null;
-        if (commenti !== undefined) updated.commenti = commenti as Commento[] | null;
+        // `null` resta `null` (è «togli gli allegati», non «lista vuota»): la
+        // normalizzazione non deve cambiare la semantica del merge parziale.
+        if (attachments !== undefined) {
+            updated.attachments = attachments === null
+                ? null
+                : normalizzaAllegatiTask({ attachments: attachments as Attachment[] }).attachments;
+        }
+        if (commenti !== undefined) {
+            updated.commenti = commenti === null ? null : normalizzaAllegatiTask(commenti as Commento[]);
+        }
 
         // Handle assignees update
         if (assigned_to !== undefined) {
@@ -238,8 +258,11 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             .single();
 
         if (error) {
+            // Il testo di PostgREST (nomi di colonna e di vincolo) resta nel log,
+            // dove serve alla diagnosi: al client non dice nulla di utile e
+            // descrive lo schema a chi non deve conoscerlo.
             logErrore({ operazione: 'tasks/[id]:PUT', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Aggiornamento del promemoria non riuscito' }, { status: 500 });
         }
 
         const row = data as Record<string, unknown>;
@@ -250,7 +273,10 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             scuolaId: (currentRow.scuola_id as string) ?? null, valoreDopo: { id, status: payload.status, titolo: row.titolo },
         });
 
-        return NextResponse.json({
+        // In tabella c'è il percorso; al client serve un indirizzo che si apra.
+        // Senza questa firma l'allegato appena caricato resterebbe rotto fino al
+        // ricaricamento della pagina — e nessuno collegherebbe le due cose.
+        const risposta = await firmaAllegatiTask(supabase, {
             id: row.id,
             titolo: row.titolo,
             author_id: payload.real_author_id ?? row.author_id,
@@ -260,7 +286,8 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             completato: row.completato,
             created_at: row.created_at,
             ...payload,
-        });
+        }, 'tasks/[id]:PUT');
+        return NextResponse.json(risposta);
     } catch (error) {
         logErrore({ operazione: 'tasks/[id]:PUT', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -281,12 +308,18 @@ export const DELETE = withRoute('tasks/[id]:DELETE', async (
         const id = idParsed.data;
         const supabase = await createAdminClient();
 
-        // Tenant: la task deve essere in un plesso dell'attore.
-        const { data: row } = await supabase.from('task_interni').select('scuola_id').eq('id', id).maybeSingle();
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-        if (!row || !row.scuola_id || !plessi.includes(row.scuola_id as string)) {
-            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
-        }
+        // Tenant: la task deve essere in un plesso dell'attore. Anche qui i tre
+        // casi restano TRE: fino al 2026-07-31 `error` non veniva guardato e un
+        // guasto di lettura usciva come 403 «fuori dal tuo plesso», cioè come un
+        // tentativo cross-sede — dentro il contatore che serve a riconoscerli.
+        const { data: row, error: getErr } = await supabase
+            .from('task_interni').select('scuola_id').eq('id', id).maybeSingle();
+        if (getErr) return scopeRigaNonRisolta('task', getErr, { utente: auth.user.id });
+        if (!row) return rigaNonTrovata('task');
+        const fuoriSede = await assertSedeRigaInScope(
+            supabase, auth.user, 'task', row.scuola_id as string | null, 'tasks/[id]:DELETE',
+        );
+        if (fuoriSede) return fuoriSede;
 
         const { error } = await supabase
             .from('task_interni')
@@ -295,7 +328,7 @@ export const DELETE = withRoute('tasks/[id]:DELETE', async (
 
         if (error) {
             logErrore({ operazione: 'tasks/[id]:DELETE', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return NextResponse.json({ error: 'Cancellazione del promemoria non riuscita' }, { status: 500 });
         }
 
         await logScrittura(supabase, {

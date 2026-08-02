@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  DEFAULT_AVVISI_CONFIG,
   DEFAULT_FUNZIONI_MATRICE,
   DEFAULT_SOLLECITI_SEDE_NUOVA,
   FUNZIONI_REGISTRO,
@@ -57,19 +58,30 @@ describe('default admin_settings di una sede nuova — funzioni_matrice', () => 
 })
 
 describe('default admin_settings di una sede nuova — riga da inserire', () => {
-  it('porta scuola_id, la matrice e i solleciti SPENTI (scelta esplicita: opt-in)', () => {
+  it('porta scuola_id, la matrice, i solleciti SPENTI e chi pubblica gli avvisi', () => {
     const row = defaultAdminSettingsRow('11111111-1111-4111-8111-111111111111')
     expect(row.scuola_id).toBe('11111111-1111-4111-8111-111111111111')
     expect(row.funzioni_matrice).toEqual(DEFAULT_FUNZIONI_MATRICE)
     expect(row.solleciti_config).toEqual(DEFAULT_SOLLECITI_SEDE_NUOVA)
     expect(DEFAULT_SOLLECITI_SEDE_NUOVA.enabled).toBe(false)
+    // S24: la matrice accende `avvisi` per tutti e tre i gradi, quindi la sede
+    // deve anche sapere CHI può pubblicarli — altrimenti la funzione è accesa e
+    // inutilizzabile insieme.
+    expect(row.avvisi_config).toEqual(DEFAULT_AVVISI_CONFIG)
   })
 
-  it('non scrive colonne che il DB riempie da solo (rette, mensa, timelock…)', () => {
+  it('non scrive colonne che il DB riempie da solo — con UNA eccezione dichiarata', () => {
     // Meno colonne si scrivono, meno cose si rompono quando il DB cambia default:
     // tutto ciò che ha un DEFAULT in `admin_settings` NON va replicato qui.
+    //
+    // L'ECCEZIONE è `avvisi_config`, e il collaudo del 2026-07-31 dice perché. Il
+    // DB la riempie da solo — con `'{}'`, che è un valore valido e insieme
+    // inservibile: Aversa e Cesa sono nate così, e la loro segreteria non poteva
+    // pubblicare un avviso. «Il DB ha già un default» è una buona ragione per non
+    // scrivere una colonna solo finché quel default è una configurazione USABILE;
+    // qui non lo era.
     expect(Object.keys(defaultAdminSettingsRow('x')).sort()).toEqual(
-      ['funzioni_matrice', 'scuola_id', 'solleciti_config'],
+      ['avvisi_config', 'funzioni_matrice', 'scuola_id', 'solleciti_config'],
     )
   })
 })

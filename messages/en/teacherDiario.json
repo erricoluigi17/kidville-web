@@ -32,7 +32,7 @@
   "participation_autonomia": "Independently",
   "tipo": "Type",
   "descrizioneFacoltativa": "Description (optional)",
-  "descriviAttivita": "Describe the {tipo} activity...",
+  "descriviAttivita": "Describe the {tipo} activity…",
   "partecipazione": "Participation",
   "bambiniCompilati": "{total, plural, one {{done}/{total} child filled in} other {{done}/{total} children filled in}}",
   "aggiungiAttivita": "Add activity",
@@ -56,9 +56,17 @@
   "notaPrivataTitolo": "Private note for a single child",
   "notaPrivataPlaceholder": "Private note for {nome} (optional)…",
   "notaPrivataAria": "Private note for {nome}",
-  "salvataggio": "Saving...",
+  "salvataggio": "Saving…",
   "salvaPerTutti": "Save {evento} for everyone",
   "selezionaEvento": "👆 Select an event to start filling in the diary",
   "salvatoConSuccesso": "✅ Saved successfully!",
-  "alertErroreSalvataggio": "Error while saving. Check the console."
+  "alertErroreSalvataggio": "Error while saving. Check the console.",
+  "chiudiEvento": "Close",
+  "rimuoviAttivita": "Remove activity",
+  "bagnoPipiMeno": "Decrease pee",
+  "bagnoPipiPiu": "Increase pee",
+  "bagnoCaccaMeno": "Decrease poo",
+  "bagnoCaccaPiu": "Increase poo",
+  "bagnoVasinoMeno": "Decrease potty",
+  "bagnoVasinoPiu": "Increase potty"
 }

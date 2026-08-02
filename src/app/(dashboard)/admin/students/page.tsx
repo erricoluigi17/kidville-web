@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
@@ -11,6 +11,32 @@ import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/component
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioErrore } from '@/lib/ui/esito-fetch';
+
+type TipoVista = 'child' | 'adult' | 'sections' | 'staff';
+
+/** La tab richiesta dall'URL (`?tab=sections` = back-link dal dettaglio sezione). */
+const tabDaQuery = (v: string | null): TipoVista =>
+  v === 'adult' || v === 'sections' || v === 'staff' ? v : 'child';
+
+/**
+ * «Questa tab aspetta un elenco dal server?» — e quindi: lo spinner va acceso?
+ *
+ * È l'UNICA condizione che decide, e la leggono TUTTI E TRE i punti che prima
+ * decidevano per conto proprio: l'accensione iniziale di `isLoading`, l'effetto
+ * che lancia il fetch e il cambio tab. Il difetto nasceva proprio da quella
+ * separazione: `isLoading` partiva `true` per qualunque tab, ma solo tre su
+ * quattro hanno un fetch — e `setIsLoading(false)` vive dentro `caricaElenco`.
+ * Con `?tab=sections` (la Sezioni carica da sé, dentro `SectionsView`) nessun
+ * fetch partiva, nessuno spegneva lo spinner, e «Caricamento anagrafica...»
+ * restava lì per sempre: riaprire la voce di menu non ripara — è la stessa
+ * rotta, il componente non si rimonta.
+ *
+ * Legare le tre decisioni a questa sola funzione è ciò che rende il difetto
+ * irripetibile: una tab senza elenco non può più accendere uno spinner che
+ * nessuno spegnerà, perché è lo stesso predicato a fare entrambe le cose.
+ */
+const attendeElenco = (v: TipoVista) => v !== 'sections';
 
 interface Student {
   id: string;
@@ -21,7 +47,8 @@ interface Student {
   data_nascita?: string;
   classe_sezione?: string | null;
   stato?: string;
-  note_mediche?: string | null;
+  /** Segnale «c'è una nota medica»: la lista non riceve più il testo (W8). */
+  ha_note_mediche?: boolean;
   codice_fiscale?: string | null;
   fiscal_code?: string | null;
   bes?: boolean;
@@ -44,22 +71,31 @@ function AdminStudentsInner() {
   const router = useRouter();
   const userId = search.get('userId');
   const { reFetchKey } = useSediAttive();
+  // Calcolata UNA volta: la vista iniziale e lo spinner iniziale sono due
+  // decisioni che devono nascere dallo stesso valore, non da due letture.
+  const tabIniziale = tabDaQuery(search.get('tab'));
   const [students, setStudents] = useState<Student[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => attendeElenco(tabIniziale));
+  // «Non ho potuto caricare» ≠ «non c'è nessuno».
+  //
+  // `null` = nessun errore. `''` = errore senza un messaggio del server (rete
+  // giù, corpo illeggibile) → si mostra il testo generico. Una stringa = il
+  // motivo detto dal SERVER. La traduzione avviene al render e non dentro le
+  // `useCallback`: `useTranslations` restituisce una funzione nuova a ogni
+  // render, e metterla nelle dipendenze di una callback usata da un `useEffect`
+  // farebbe ripartire l'effetto a ogni render — un ciclo di fetch infinito.
+  const [erroreElenco, setErroreElenco] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [viewType, setViewType] = useState<'child' | 'adult' | 'sections' | 'staff'>(() => {
-    const t = search.get('tab');
-    return t === 'adult' || t === 'sections' || t === 'staff' ? t : 'child';
-  });
+  const [viewType, setViewType] = useState<TipoVista>(tabIniziale);
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [targetClass, setTargetClass] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
-  const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string}[]>([]);
+  const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string, scuola_id?: string | null}[]>([]);
   // P5.4 (DL-050): gruppi mensa per la bulk assign
   const [mensaGroups, setMensaGroups] = useState<{ id: string; nome: string }[]>([]);
   const [targetMensa, setTargetMensa] = useState('');
@@ -68,9 +104,49 @@ function AdminStudentsInner() {
   // attive (il server scopa dal cookie); così reFetchKey è referenziato (deps).
   useEffect(() => {
     const hdr = { 'x-sedi': reFetchKey };
-    fetch('/api/admin/sections', { headers: hdr }).then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
-    fetch('/api/admin/gruppi-mensa', { headers: hdr }).then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
+    // Il fallimento non è più muto (AGENTS.md regola 6). Qui c'erano due `.catch(() => {})`,
+    // e l'unico effetto visibile di un guasto era un menù a tendina vuoto — che per chi sta
+    // davanti allo schermo è indistinguibile da «in questa sede non c'è nessuna sezione».
+    // Va loggato anche il `!ok`, non solo l'eccezione: un 403 arriva come risposta REGOLARE
+    // e senza questo ramo il silenzio resterebbe identico.
+    // Esce solo lo STATO (numero, lista bianca) o il NOME della classe d'errore: niente
+    // dell'elenco degli alunni lascia il dispositivo.
+    fetch('/api/admin/sections', { headers: hdr })
+      .then(r => {
+        if (!r.ok) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'admin-students-sezioni-non-caricate', stato: r.status });
+          return null;
+        }
+        return r.json();
+      })
+      .then(d => { if (Array.isArray(d)) setAvailableSections(d); })
+      .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-sezioni-non-caricate: ${nomeErrore(err)}` }));
+    fetch('/api/admin/gruppi-mensa', { headers: hdr })
+      .then(r => {
+        if (!r.ok) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'admin-students-gruppi-mensa-non-caricati', stato: r.status });
+          return null;
+        }
+        return r.json();
+      })
+      .then(d => { if (d?.success) setMensaGroups(d.data ?? []); })
+      .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin-students-gruppi-mensa-non-caricati: ${nomeErrore(err)}` }));
   }, [reFetchKey]);
+
+  // NOMI di classe univoci fra le sedi attive.
+  //
+  // Sia il filtro qui sotto sia la barra di assegnazione massiva lavorano sul
+  // NOME (`s.classe_sezione === filterClass`; PATCH `{ classe_sezione }`), non
+  // sull'identità della sezione. Dal 2026-07-29 lo stesso nome esiste in più
+  // plessi: elencare le sezioni una per una produceva tre voci «3 ANNI»
+  // identiche e con lo stesso valore — tre modi di dire la stessa cosa, offerti
+  // come se fossero scelte diverse. Un nome = una voce; a decidere in quale sede
+  // quel nome sia lecito è il server, per OGNI alunno selezionato
+  // (`classeEsisteInOgniSede`, admin/students:PATCH).
+  const nomiClasse = useMemo(
+    () => [...new Set(availableSections.map((s) => s.name))].sort((a, b) => a.localeCompare(b, 'it')),
+    [availableSections],
+  );
 
   // Toast stabile (setter di stato = identità stabile): definito prima delle fetch
   // così `fetchStaff` può usarlo nelle dipendenze senza ricrearsi a ogni render.
@@ -80,73 +156,141 @@ function AdminStudentsInner() {
     setTimeout(() => setShowToast(false), 3000);
   }, []);
 
-  const fetchStudents = useCallback(async () => {
+  /**
+   * Carica un elenco e DISTINGUE i tre esiti. Prima ce n'erano due soli — «ho
+   * dei dati» e «tutto il resto» — e «tutto il resto» finiva nella card «Nessun
+   * alunno trovato»: la rete giù raccontata come un archivio vuoto.
+   *
+   * ⚠️ DUE VINCOLI DI FORMA, entrambi imposti da `react-hooks/set-state-in-effect`
+   * (che qui è un ERRORE del gate, non un warning) e misurati, non supposti:
+   *
+   *  1. NIENTE blocco `catch`. Un `catch { setStudents([]) }` aggiunto alla
+   *     versione precedente fa fallire `eslint --max-warnings 0`. Il ramo
+   *     d'errore vive su `.catch()` DELLA PROMISE: restituisce `null` e la
+   *     gestione resta nel flusso normale, dopo l'`await`. Il motivo non si
+   *     perde — lo si cattura nella callback (`motivo`) e lo si logga.
+   *  2. IL `try { … } finally { setIsLoading(false) }` RESTA. Spostare quel
+   *     `setIsLoading(false)` nel corpo lineare (stesso codice, stessi rami)
+   *     fa scattare la regola. È la forma che l'analisi riconosce; toglierla
+   *     costa un rosso senza guadagnare niente.
+   *
+   * Da questi due vincoli era nato il difetto: il `try/finally` SENZA ramo
+   * d'errore. La via d'uscita non era rinunciare al ramo — era scriverlo qui.
+   */
+  const caricaElenco = useCallback(async (
+    url: string,
+    /** `null` = corpo inatteso: è un guasto, non una lista vuota. */
+    estrai: (corpo: unknown) => Student[] | null,
+    operazione: string,
+  ) => {
+    // Il NOME della classe d'errore, non il messaggio: `TypeError` (rete giù)
+    // contro `Error` (il server ha detto di no) è l'unica distinzione che serve
+    // al triage, ed è l'unico pezzo che può lasciare il dispositivo.
+    let motivo = '';
     try {
-      const res = await fetch(`/api/admin/students?limit=1000`, { headers: { 'x-sedi': reFetchKey } });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setStudents(data);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [reFetchKey]);
+      const res = await fetch(url, { headers: { 'x-sedi': reFetchKey } })
+        .catch((e: unknown) => { motivo = nomeErrore(e); return null; });
 
-  const fetchParents = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/admin/parents`, { headers: { 'x-sedi': reFetchKey } });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setStudents(data);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [reFetchKey]);
-
-  // Personale reale da `utenti` via /api/admin/staff (non più il workaround su
-  // parents.citizenship, che teneva la tab sempre vuota). L'errore non resta mai
-  // silenzioso: lista svuotata + toast col motivo.
-  const fetchStaff = useCallback(async () => {
-    try {
-      const res = await fetch('/api/admin/staff', { headers: { 'x-sedi': reFetchKey } });
-      const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.success) {
+      if (res === null) {
+        // La fetch non è mai arrivata: rete giù, DNS, CORS. È il caso che nessun
+        // log del server vedrà mai — e finora non lo vedeva nemmeno il client.
         setStudents([]);
-        showToastMsg(`❌ ${(j && j.error) || t('staffErrCaricamento')}`);
+        setErroreElenco('');
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${operazione}: ${motivo}`, route: '/admin/students' });
         return;
       }
-      const sedi = new Map<string, string>((j.schools ?? []).map((s: { id: string; nome: string }) => [s.id, s.nome]));
-      const nClassi = new Map<string, number>();
-      for (const a of (j.assegnazioni ?? []) as { utente_id: string }[]) {
-        nClassi.set(a.utente_id, (nClassi.get(a.utente_id) ?? 0) + 1);
+      if (!res.ok) {
+        setStudents([]);
+        setErroreElenco(await messaggioErrore(res, ''));
+        logClient({ livello: 'error', evento: 'fetch', messaggio: operazione, route: '/admin/students', stato: res.status });
+        return;
       }
-      const rows: Student[] = (j.data ?? []).map((u: { id: string; nome?: string; cognome?: string; email?: string | null; ruolo: string; scuola_id?: string | null }) => ({
-        id: u.id,
-        nome: u.nome,
-        cognome: u.cognome,
-        emails: u.email ? [u.email] : [],
-        ruolo: u.ruolo,
-        sede_nome: u.scuola_id ? (sedi.get(u.scuola_id) ?? '—') : '—',
-        classi_count: nClassi.get(u.id) ?? 0,
-      }));
-      setStudents(rows);
+      const corpo: unknown = await res.json().catch(() => null);
+      const righe = estrai(corpo);
+      if (righe === null) {
+        // 200 con un corpo che non è una lista: `if (Array.isArray(data))` senza
+        // `else` lo trattava esattamente come «non ci sono alunni».
+        setStudents([]);
+        setErroreElenco('');
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `${operazione}-corpo-inatteso`, route: '/admin/students', stato: res.status });
+        return;
+      }
+      setStudents(righe);
+      setErroreElenco(null);
     } finally {
       setIsLoading(false);
     }
-  }, [reFetchKey, showToastMsg, t]);
+  }, [reFetchKey]);
 
-  // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
-  // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).
+  const fetchStudents = useCallback(
+    () => caricaElenco(
+      `/api/admin/students?limit=1000`,
+      (c) => (Array.isArray(c) ? (c as Student[]) : null),
+      'anagrafica-alunni-non-caricata',
+    ),
+    [caricaElenco],
+  );
+
+  const fetchParents = useCallback(
+    () => caricaElenco(
+      `/api/admin/parents`,
+      (c) => (Array.isArray(c) ? (c as Student[]) : null),
+      'anagrafica-genitori-non-caricata',
+    ),
+    [caricaElenco],
+  );
+
+  // Personale reale da `utenti` via /api/admin/staff (non più il workaround su
+  // parents.citizenship, che teneva la tab sempre vuota).
+  const fetchStaff = useCallback(
+    () => caricaElenco(
+      '/api/admin/staff',
+      (c) => {
+        const j = c as { success?: boolean; data?: unknown[]; schools?: { id: string; nome: string }[]; assegnazioni?: { utente_id: string }[] } | null;
+        if (!j?.success) return null;
+        const sedi = new Map<string, string>((j.schools ?? []).map((s: { id: string; nome: string }) => [s.id, s.nome]));
+        const nClassi = new Map<string, number>();
+        for (const a of (j.assegnazioni ?? []) as { utente_id: string }[]) {
+          nClassi.set(a.utente_id, (nClassi.get(a.utente_id) ?? 0) + 1);
+        }
+        return ((j.data ?? []) as { id: string; nome?: string; cognome?: string; email?: string | null; ruolo: string; scuola_id?: string | null }[]).map((u) => ({
+          id: u.id,
+          nome: u.nome,
+          cognome: u.cognome,
+          emails: u.email ? [u.email] : [],
+          ruolo: u.ruolo,
+          sede_nome: u.scuola_id ? (sedi.get(u.scuola_id) ?? '—') : '—',
+          classi_count: nClassi.get(u.id) ?? 0,
+        }));
+      },
+      'anagrafica-staff-non-caricata',
+    ),
+    [caricaElenco],
+  );
+
+  /** Ritenta l'elenco della tab corrente. Gestore d'evento: può alzare lo spinner. */
+  const ricaricaElenco = () => {
+    setIsLoading(true);
+    setErroreElenco(null);
+    if (viewType === 'adult') void fetchParents();
+    else if (viewType === 'staff') void fetchStaff();
+    else void fetchStudents();
+  };
+
+  // NB: lo spinner viene attivato dall'inizializzazione di `isLoading` e dal
+  // cambio tab (onChange dei Tabs), non qui: setState sincrono negli effect è
+  // vietato (react-hooks/set-state-in-effect). Entrambi i punti usano
+  // `attendeElenco`, lo stesso predicato che governa la `return` qui sotto: se
+  // questo effetto non lancia nessun fetch, lo spinner non si è mai acceso.
   useEffect(() => {
+    if (!attendeElenco(viewType)) return; // Sezioni: SectionsView carica da sé.
     if (viewType === 'child') {
       fetchStudents();
     } else if (viewType === 'adult') {
       fetchParents();
-    } else if (viewType === 'staff') {
+    } else {
       fetchStaff();
     }
-    // sections tab handles its own loading
   }, [viewType, fetchStudents, fetchParents, fetchStaff]);
 
   // Lista filtrata derivata (niente state+effect: stessa resa, zero cascading render)
@@ -322,8 +466,16 @@ function AdminStudentsInner() {
             >
               <FileDown size={16} /> {t('azioneEsporta')}
             </button>
-            {/* Lo staff non si crea da qui (gestione RBAC dedicata): niente "Nuovo". */}
-            {viewType !== 'staff' && (
+            {/* Il bottone crea PERSONE, quindi vive solo dove ci sono persone.
+                Lo staff non si crea da qui (gestione RBAC dedicata), e le
+                sezioni hanno il loro «Nuova Sezione» dentro `SectionsView`.
+                ⚠️ Il predicato era `viewType !== 'staff'`: con la tab SEZIONI
+                attiva il bottone diceva «NUOVO GENITORE» e portava alla
+                creazione di un genitore — un invito a fare tutt'altro, nella
+                pagina delle classi (collaudo frontend del 2026-07-31). Elencare
+                le tab ammesse invece di escluderne una impedisce alla prossima
+                tab nuova di ereditare l'etichetta sbagliata per silenzio. */}
+            {(viewType === 'child' || viewType === 'adult') && (
               <button onClick={() => (window.location.href = '/admin/students/new')} className={HEADER_BTN}>
                 <UserPlus size={18} /> {viewType === 'child' ? t('azioneNuovoAlunno') : t('azioneNuovoGenitore')}
               </button>
@@ -336,8 +488,12 @@ function AdminStudentsInner() {
       <Tabs
         value={viewType}
         onChange={(id) => {
-          if (id !== 'sections') setIsLoading(true);
-          setViewType(id as 'child' | 'adult' | 'sections' | 'staff');
+          const v = tabDaQuery(id);
+          // Stesso predicato del montaggio: acceso se un elenco sta per partire,
+          // SPENTO altrimenti. Non `if (v !== 'sections') setIsLoading(true)`:
+          // così lo spinner non può nemmeno restare acceso da prima.
+          setIsLoading(attendeElenco(v));
+          setViewType(v);
         }}
         options={[
           { id: 'child', label: t('tabAlunni'), icon: Users },
@@ -375,8 +531,8 @@ function AdminStudentsInner() {
                 className="flex-1 md:w-40 border-2 border-kidville-line rounded-input px-3 py-2 font-maven text-sm text-kidville-ink/70 bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
               >
                 <option value="all">{t('filtroTutteClassi')}</option>
-                {availableSections.map(s => (
-                  <option key={s.id} value={s.name}>{s.name}</option>
+                {nomiClasse.map(nome => (
+                  <option key={nome} value={nome}>{nome}</option>
                 ))}
                 <option value="">{t('filtroNonAssegnata')}</option>
               </select>
@@ -401,6 +557,24 @@ function AdminStudentsInner() {
       {/* Content area — switch by viewType */}
       {viewType === 'sections' ? (
         <SectionsView />
+      ) : erroreElenco !== null ? (
+        /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
+           e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,
+           cioè due affermazioni sui dati fatte senza avere i dati. È di proposito
+           diverso dalla card vuota — colore, titolo, e un bottone da premere. */
+        <div role="alert" className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
+          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-error-soft text-kidville-error">
+            <AlertTriangle size={34} strokeWidth={1.8} />
+          </div>
+          <h3 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('listErrTitolo')}</h3>
+          <p className="font-maven mt-1 max-w-md text-sm text-kidville-muted">{erroreElenco || t('listErrCaricamento')}</p>
+          <button
+            onClick={ricaricaElenco}
+            className="mt-4 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2.5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-yellow"
+          >
+            <RotateCcw size={15} strokeWidth={2} /> {t('listErrRiprova')}
+          </button>
+        </div>
       ) : (
         <>
           {/* Statistiche rapide — solo per alunni */}
@@ -409,7 +583,9 @@ function AdminStudentsInner() {
               <StatCard icon={Users} label={t('statTotale')} value={students.length} tone="green" />
               <StatCard icon={CheckCircle2} label={t('statIscritti')} value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
               <StatCard icon={GraduationCap} label={t('statConBes')} value={students.filter((s) => s.bes).length} tone="warn" />
-              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.note_mediche).length} tone="error" />
+              {/* Conteggio dal SEGNALE, non dal testo: la lista non riceve più la
+                  nota medica (W8), riceve solo `ha_note_mediche`. */}
+              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.ha_note_mediche).length} tone="error" />
             </div>
           )}
 
@@ -428,7 +604,7 @@ function AdminStudentsInner() {
           {viewType !== 'staff' && (
             <BulkAssignBar
               selectedCount={selectedIds.size}
-              availableClasses={availableSections.map(s => s.name)}
+              availableClasses={nomiClasse}
               targetClass={targetClass}
               onTargetClassChange={setTargetClass}
               onAssign={handleBulkAssign}

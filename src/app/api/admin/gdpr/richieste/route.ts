@@ -2,13 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaParent, anonimizzaAlunno, type AlunnoOblio } from '@/lib/gdpr/esegui'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // Evasione delle richieste di cancellazione account (Direzione).
@@ -47,6 +47,11 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
       return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
     }
 
+    // Scope dei FIGLI, distinto dal filtro dell'elenco: i conteggi mostrati qui
+    // devono coincidere con ciò che la POST anonimizzerà davvero, e quella non
+    // dipende dal cookie del SedeSelector (vedi il commento nella POST).
+    const accessibili = await scuoleDiUtente(admin, auth.user)
+
     const rows = (richieste ?? []) as { id: string; parent_id: string; creata_il: string }[]
     const out: Array<Record<string, unknown>> = []
     for (const r of rows) {
@@ -63,10 +68,25 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
       const childIds = ((links ?? []) as { student_id: string }[]).map((l) => l.student_id)
       let iscritti = 0
       let nonIscritti = 0
+      let fuoriScope = 0
       if (childIds.length > 0) {
-        const { data: figli } = await admin.from('alunni').select('id, stato, anonimizzato_il').in('id', childIds)
-        for (const f of (figli ?? []) as { stato: string | null; anonimizzato_il: string | null }[]) {
+        const { data: figli } = await admin
+          .from('alunni')
+          .select('id, stato, anonimizzato_il, scuola_id')
+          .in('id', childIds)
+        for (const f of (figli ?? []) as {
+          stato: string | null
+          anonimizzato_il: string | null
+          scuola_id: string | null
+        }[]) {
           if (f.anonimizzato_il) continue
+          // Un figlio di un altro plesso non entra nei conteggi di QUESTA
+          // Direzione: si dichiara a parte, così il numero mostrato è quello su
+          // cui si potrà davvero agire. Sede assente ⇒ fuori scope (fail-closed).
+          if (!f.scuola_id || !accessibili.includes(f.scuola_id)) {
+            fuoriScope++
+            continue
+          }
           if (f.stato === 'iscritto') iscritti++
           else nonIscritti++
         }
@@ -77,6 +97,7 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
         parent_nome: nome || '—',
         alunni_iscritti: iscritti,
         alunni_non_iscritti: nonIscritti,
+        alunni_fuori_scope: fuoriScope,
       })
     }
     return NextResponse.json(out)
@@ -132,6 +153,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       id: string
       stato: string | null
       anonimizzato_il: string | null
+      scuola_id: string | null
       documento_path: string | null
       codice_fiscale: string | null
       fiscal_code: string | null
@@ -140,12 +162,38 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     if (childIds.length > 0) {
       const { data } = await admin
         .from('alunni')
-        .select('id, stato, anonimizzato_il, documento_path, codice_fiscale, fiscal_code')
+        .select('id, stato, anonimizzato_il, scuola_id, documento_path, codice_fiscale, fiscal_code')
         .in('id', childIds)
       figli = (data ?? []) as Figlio[]
     }
-    const nonIscritti = figli.filter((f) => !f.anonimizzato_il && f.stato !== 'iscritto')
-    const iscrittiMantenuti = figli.filter((f) => !f.anonimizzato_il && f.stato === 'iscritto').length
+
+    // ─── ISOLAMENTO FRA SEDI DEI FIGLI (F5) ──────────────────────────────────
+    // La sede della RICHIESTA era verificata (sopra), quella dei FIGLI no: si
+    // raccoglievano tutti i legami di `student_parents` e si anonimizzava ogni
+    // non iscritto. Un genitore con figli in due plessi bastava perché la
+    // Direzione di uno rendesse IRREVERSIBILMENTE anonimo il minore dell'altro —
+    // e ne cancellasse il documento dallo storage — senza che la Direzione
+    // competente lo vedesse mai. La route gemella `admin/gdpr/erase` fa
+    // `assertAlunnoInScope` esattamente per questo motivo: le due strade
+    // divergevano sull'operazione più grave dell'applicazione, quella senza annulla.
+    //
+    // Lo scope è `scuoleDiUtente` — le sedi ACCESSIBILI — e NON
+    // `resolveScuoleAttive`: il cookie del SedeSelector è una preferenza di
+    // vista, e non può decidere quale minore riceve l'oblio che suo padre ha
+    // chiesto. Con `resolveScuoleAttive` una spunta tolta dalla barra avrebbe
+    // ridotto in silenzio l'esecuzione, e la richiesta si chiude qui: il figlio
+    // saltato non sarebbe stato ripreso da nessuno. Per admin/coordinator (gli
+    // unici ruoli ammessi) il filtro per sede coincide con `assertAlunnoInScope`,
+    // che per loro non aggiunge il vincolo di sezione.
+    //
+    // Sede assente sulla riga ⇒ fuori scope: un minore senza plesso non è
+    // attribuibile a nessuna Direzione, e questa operazione non si indovina.
+    const accessibili = await scuoleDiUtente(admin, auth.user)
+    const vivi = figli.filter((f) => !f.anonimizzato_il)
+    const inScope = vivi.filter((f) => f.scuola_id && accessibili.includes(f.scuola_id))
+    const fuoriScope = vivi.length - inScope.length
+    const nonIscritti = inScope.filter((f) => f.stato !== 'iscritto')
+    const iscrittiMantenuti = inScope.filter((f) => f.stato === 'iscritto').length
 
     if (mode === 'dryrun') {
       return NextResponse.json({
@@ -153,6 +201,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
         parent: 1,
         alunni_non_iscritti: nonIscritti.length,
         alunni_iscritti_mantenuti: iscrittiMantenuti,
+        alunni_fuori_scope: fuoriScope,
       })
     }
 
@@ -164,35 +213,81 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     const at = new Date().toISOString()
     const op = 'admin/gdpr/richieste:POST'
 
+    // Il residuo NON si tace: la richiesta si chiude qui (stato 'evasa') ma una
+    // parte dell'oblio resta da fare in un altro plesso. Riga PERSISTITA (`gdpr`
+    // è in EVENTI_PERSISTITI) con solo conteggi e uuid: nessun dato di minori.
+    if (fuoriScope > 0) {
+      logEvento('gdpr', 'warn', {
+        operazione: op,
+        esito: 'figli-fuori-scope',
+        richiesta: id,
+        n: fuoriScope,
+      })
+    }
+
     // 1. Anonimizza il genitore richiedente.
     const rParent = await anonimizzaParent(admin, parentId, at, op)
     const newsVisualizzazioniRimosse = rParent.newsVisualizzazioniRimosse
+    // W5: prove di consenso ripulite di `ip`/`user_agent` (il fatto resta).
+    const consensiProvaBonificati = rParent.provaConsensiScrubbate ?? 0
     let segnalazioni = rParent.segnalazioniBonificate
     let sospensioni = rParent.sospensioniBonificate
+    // S22 — l'oblio segue il dato: domanda d'iscrizione, allegati e foto. I
+    // conteggi arrivano fin qui perché un oblio PARZIALE dev'essere visibile a
+    // chi lo esegue e a chi rilegge la richiesta fra un mese: `esito` viene
+    // persistito sulla riga e nell'audit. `?? 0` per prudenza sui campi nuovi.
+    let iscrizioni = rParent.iscrizioniScrubbate ?? 0
+    let file = rParent.fileRimossi ?? 0
+    let fileNonRimossi = rParent.fileNonRimossi ?? 0
+    let fotoRimosse = 0
+    let fotoSganciate = 0
 
     // 2. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
     let ricon = 0
     let incassi = 0
     let cassa = 0
-    let file = 0
     for (const f of nonIscritti) {
       const r = await anonimizzaAlunno(admin, f as AlunnoOblio, at, op)
       ricon += r.riconciliazione
       incassi += r.incassi
       cassa += r.cassa
       file += r.file
+      fileNonRimossi += r.fileNonRimossi ?? 0
+      iscrizioni += r.iscrizioniScrubbate ?? 0
+      fotoRimosse += r.fotoRimosse ?? 0
+      fotoSganciate += r.fotoSganciate ?? 0
       segnalazioni += r.segnalazioniBonificate
       sospensioni += r.sospensioniBonificate
+    }
+
+    // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
+    // che quei file non ci sono più. Riga PERSISTITA (`gdpr` è in
+    // EVENTI_PERSISTITI), solo conteggi e uuid.
+    if (fileNonRimossi > 0) {
+      logEvento('gdpr', 'error', {
+        operazione: op,
+        esito: 'oblio-parziale',
+        richiesta: id,
+        n_file: fileNonRimossi,
+      })
     }
 
     const esito = {
       parent: 1,
       alunni: nonIscritti.length,
+      // Sopravvive alla richiesta: chi la rilegge fra un mese deve poter sapere
+      // che un pezzo di quell'oblio è rimasto in carico a un altro plesso.
+      alunni_fuori_scope: fuoriScope,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
+      consensi_prova_bonificati: consensiProvaBonificati,
       riconciliazione_bonificati: ricon,
       incassi_bonificati: incassi,
       cassa_bonificati: cassa,
       file_rimossi: file,
+      n_file_non_rimossi: fileNonRimossi,
+      iscrizioni_scrubbate: iscrizioni,
+      foto_rimosse: fotoRimosse,
+      foto_sganciate: fotoSganciate,
       segnalazioni_bonificate: segnalazioni,
       sospensioni_bonificate: sospensioni,
     }

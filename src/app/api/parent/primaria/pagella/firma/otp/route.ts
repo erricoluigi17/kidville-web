@@ -1,23 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireUser } from '@/lib/auth/require-staff'
 import { sendOtp } from '@/lib/auth/otp-ticket'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseQuery } from '@/lib/validation/http'
+import { limitaInvioOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
-// nessun parametro in ingresso (userId è consumato dal gate auth, il body non viene letto)
+// Nessun parametro in ingresso: l'identità viene dalla SESSIONE (`requireUser`),
+// `?userId=` è ignorato. Fino al 2026-07-31 leggeva `getRequestUserId` in diretta,
+// scavalcando `ALLOW_HEADER_IDENTITY=false`: l'invio dell'OTP alla casella del
+// genitore era azionabile da chiunque ne conoscesse l'uuid.
+// Lock: __tests__/api/firma-identita-da-sessione.test.ts.
 const querySchema = z.object({})
 
 // POST /api/parent/primaria/pagella/firma/otp?userId=
 // Invia un OTP via email al genitore per firmare la ricezione della pagella.
 export const POST = withRoute('parent/primaria/pagella/firma/otp:POST', async (request: NextRequest) => {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
+
+    // Tetto di frequenza (sicurezza W5): budget condiviso con le altre tre rotte OTP —
+    // la casella del genitore è una sola. Vedi `@/lib/security/otp-rate-limit`.
+    const troppe = limitaInvioOtp(userId)
+    if (troppe) return troppe
 
     const q = parseQuery(request, querySchema)
     if ('response' in q) return q.response

@@ -68,7 +68,11 @@ export const GET = withRoute('admin/sections/scoped:GET', async (request: NextRe
     // sezione di una sede nuova dall'anagrafica).
     const data = plessi.map((scuolaId) => ({
       scuolaId,
-      scuolaNome: nomi.get(scuolaId) || 'Sede',
+      // Nome mancante = stringa VUOTA, mai una parola italiana: qui non esistono
+      // né il locale né il catalogo, e «Sede» finirebbe tale e quale nel badge di
+      // un'interfaccia inglese. È il contratto che la route sorella
+      // (`api/educator-sections`) usa già, e su cui il client è già scritto.
+      scuolaNome: nomi.get(scuolaId) || '',
       sezioni: visibili
         .filter((s) => s.scuola_id === scuolaId)
         .map(({ id, name, school_type }) => ({ id, name, school_type })),

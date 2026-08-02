@@ -74,6 +74,13 @@ export interface NewsPost {
   approvata_il: string | null
   scuola_id: string | null
   author_id: string
+  // Dichiarazione dei bambini ritratti nelle foto del post (privacy F4).
+  // `[]` = dichiarazione esplicita «nessun bambino ritratto»; `null`/assente =
+  // post senza foto, oppure riga anteriore alla migrazione (ambiente non migrato).
+  bambini_ritratti?: string[] | null
+  consenso_dichiarato_da?: string | null
+  consenso_dichiarato_il?: string | null
+  consenso_versione?: string | null
   created_at?: string
   updated_at?: string
 }

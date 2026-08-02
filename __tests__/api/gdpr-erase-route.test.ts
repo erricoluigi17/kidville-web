@@ -22,6 +22,8 @@ const h = vi.hoisted(() => ({
   newsVisError: null as { code: string } | null,
   newsVisDeleteFilter: null as string[] | null,
   deletedTables: [] as string[],
+  // W5 — prove di consenso dei genitori orfani (ip/user_agent da azzerare).
+  consensi: [] as { id: string }[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -38,6 +40,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'cassa_movimenti') return h.cassaBonificati
         if (table === 'parents') return h.parentsAuth
         if (table === 'news_visualizzazioni') return h.newsVisDeleted
+        if (table === 'consensi_accettazioni') return h.consensi
         if (table === 'riconciliazione_movimenti') {
           if (state.stato === 'confermato') return h.movConfermati
           if (state.neqStato === 'confermato') return h.movCfMatch
@@ -53,8 +56,22 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.in = (col: string, vals: unknown) => { if (table === 'news_visualizzazioni' && col === 'utente_id') h.newsVisDeleteFilter = vals as string[]; return b }
       b.or = () => b
       b.ilike = () => b
+      // Dal 2026-08-01 l'oblio interroga anche `enrollment_submissions` e
+      // `galleria_media_v2` con l'operatore di contenimento (`@>`): senza questo
+      // metodo il doppio di test non è più un doppio del client Supabase, e
+      // ogni caso qui sotto cadeva con un 500 «contains is not a function».
+      // I dati restano quelli di prima (nessuna asserzione cambia).
+      b.contains = () => b
       b.delete = () => { h.deletedTables.push(table); return b }
-      b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
+      // `parents` risponde anche in forma singola: da quando la route passa da
+      // `anonimizzaParent`, l'`auth_user_id` del genitore orfano si legge con
+      // `maybeSingle` prima di essere azzerato. Un doppio che qui risponde
+      // `null` renderebbe il genitore irraggiungibile in spazio-id `utenti` —
+      // cioè farebbe sembrare corretto un oblio che non tocca news e UGC.
+      b.maybeSingle = async () => ({
+        data: table === 'alunni' ? h.alunno : table === 'parents' ? (h.parentsAuth[0] ?? null) : null,
+        error: null,
+      })
       b.then = (res: (v: unknown) => unknown) => {
         if (table === 'news_visualizzazioni' && h.newsVisError) {
           return Promise.resolve({ data: null, error: h.newsVisError }).then(res)
@@ -64,7 +81,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
       return b
     },
-    storage: { from: () => ({ remove: async (paths: string[]) => { h.removed.push(...paths); return { error: null } } }) },
+    storage: {
+      from: () => ({
+        remove: async (paths: string[]) => { h.removed.push(...paths); return { error: null } },
+        // Elenca il bucket `credenziali` (nessuna tabella-indice) e verifica che
+        // i file non usciti non siano rimasti: elenco vuoto = «non c'è più».
+        list: async () => ({ data: [] as { name: string }[], error: null }),
+      }),
+    },
   }),
 }))
 
@@ -98,6 +122,7 @@ beforeEach(() => {
   h.cassaBonificati = []
   h.parentsAuth = []; h.newsVisDeleted = []; h.newsVisError = null
   h.newsVisDeleteFilter = null; h.deletedTables = []
+  h.consensi = []
 })
 
 describe('POST /api/admin/gdpr/erase', () => {
@@ -275,6 +300,26 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect(h.deletedTables).not.toContain('news_visualizzazioni')
     const json = await res.json()
     expect(json.news_visualizzazioni_rimosse).toBe(0)
+  })
+
+  it('execute: toglie ip e user_agent dalle prove di consenso dei genitori orfani (W5)', async () => {
+    h.parentsAuth = [{ auth_user_id: 'auth-1' }]
+    h.consensi = [{ id: 'c1' }, { id: 'c2' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'Rossi Marco' }))
+    expect(res.status).toBe(200)
+    const cUpd = h.updates.find((u) => u.table === 'consensi_accettazioni')
+    expect(cUpd).toBeTruthy()
+    expect(cUpd!.ip).toBeNull()
+    expect(cUpd!.user_agent).toBeNull()
+    expect(Object.keys(cUpd!)).not.toContain('versione')
+    expect((await res.json()).consensi_prova_bonificati).toBe(2)
+  })
+
+  it('execute: nessun genitore orfano → le prove di consenso non si toccano', async () => {
+    h.parentChildren = { 'p-1': [{ stato: 'iscritto', anonimizzato_il: null }] }
+    h.consensi = [{ id: 'c1' }]
+    await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'Rossi Marco' }))
+    expect(h.updates.some((u) => u.table === 'consensi_accettazioni')).toBe(false)
   })
 
   it('execute: genitore orfano senza auth_user_id → nessuna DELETE', async () => {

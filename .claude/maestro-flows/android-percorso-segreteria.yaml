@@ -23,10 +23,17 @@
 # di attesa sono generosi di proposito: la prima pagina passa dalla rete.
 # Da questo ciclo la segreteria naviga come genitore/docente: una BOTTOM-NAV a
 # pillola (Home · Avvisi · Contabilità · Mensa + «Menu») al posto del vecchio
-# drawer laterale. I 4 tab si toccano col loro testo; il tab «Menu» ha aria-label
-# "Menu · tutte le sezioni" e apre un bottom-sheet con le altre sezioni
-# (Anagrafica in evidenza). Selettori ancorati a testi STABILI del cockpit
-# ri-skinnato: "Dashboard Direzione", "Mensa & Cucina", "Anagrafica Generale".
+# drawer laterale. Il tab «Menu» ha aria-label "Menu · tutte le sezioni" e apre
+# un bottom-sheet con le altre sezioni (Anagrafica in evidenza). Selettori
+# ancorati a testi STABILI del cockpit ri-skinnato: "Dashboard Direzione",
+# "Mensa & Cucina", "Anagrafica Generale".
+#
+# ⚠️ NODI DUPLICATI (2026-07-31). «Mensa» e «Anagrafica» NON si toccano per
+# testo: la dashboard le ripete nella griglia «Tutti i moduli», e quelle copie
+# stanno fuori viewport con altezza 0 — Maestro prende la prima e tocca un'area
+# morta. Vedi README, «La trappola dei nodi duplicati». Il lock
+# `__tests__/architecture/maestro-flows-selettori.test.ts` impedisce di
+# rimetterle.
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · Android — percorso segreteria
@@ -95,10 +102,42 @@ env:
     timeout: 30000
 
 # ── 5. TAB «MENSA» ───────────────────────────────────────────────────────────
-- tapOn: "Mensa"
+# ⚠️ QUESTO TAB NON SI TOCCA PER TESTO. Sul cockpit «Mensa» è un'etichetta
+# AMBIGUA: nell'albero di accessibilità della WebView esiste DUE volte —
+#   1) la tile della griglia «Tutti i moduli» in fondo alla dashboard, misurata
+#      FUORI viewport e schiacciata ad ALTEZZA 0 (y=1857);
+#   2) il tab vero della bottom-nav.
+# Maestro prende la PRIMA corrispondenza → `tapOn: "Mensa"` toccava un'area
+# morta e non navigava (misurato il 2026-07-31 su emulatore Android). L'app è
+# sana: il tap a coordinate funziona. Spiegazione estesa nel README, sezione
+# «La trappola dei nodi duplicati».
+#
+# PERCHÉ IL PUNTO E NON `childOf`/`rightOf`: il punto è l'unica variante
+# MISURATA su questa WebView. Sull'esposizione degli attributi ARIA questo
+# runtime ci ha già smentiti due volte in direzioni opposte (la bottom-nav del
+# genitore NON espone l'aria-label, quella del cockpit sì), quindi un selettore
+# semantico non provato sarebbe soltanto la terza ipotesi — e un flow che
+# fallisce con «Element not found» non è più robusto di uno con la coordinata
+# sbagliata. La strada definitiva è un aria-label univoco sui 4 tab, ma tocca
+# `src/`: è una PROPOSTA, non è fatta qui.
+#
+# GEOMETRIA (perché 68%,93%): la bottom-nav ha 5 voci a larghezza uguale
+# (`flex-1`) → centri a 10/30/50/70/90% della larghezza; «Mensa» è la 4ª.
+# y=93% cade dentro la pillola alta 60px agganciata sopra la safe-area. Vale sul
+# TELEFONO: sopra i 1024px la bottom-nav è `lg:hidden` e c'è la sidebar.
+- assertVisible:
+    text: "Menu · tutte le sezioni"   # controllo POSITIVO: la bottom-nav è a schermo
+- tapOn:
+    point: "68%,93%"
 - extendedWaitUntil:
     visible: "Mensa & Cucina"
     timeout: 45000
+# Controllo NEGATIVO, obbligatorio dopo un tap cieco: senza, un tap che non
+# naviga passa lo stesso appena il testo atteso esiste anche nella pagina di
+# partenza — è successo davvero (vedi android-screenshot-playstore.yaml,
+# trappola 1). «Tutti i moduli» è la griglia che esiste SOLO sulla dashboard: se
+# è ancora lì, non ci siamo mossi.
+- assertNotVisible: "Tutti i moduli"
 - takeScreenshot: /tmp/kv-android-segreteria-3-mensa
 
 # ── 6. TASTO INDIETRO DI ANDROID → dashboard ─────────────────────────────────
@@ -116,12 +155,21 @@ env:
     visible: ".*Alunni, famiglie e personale.*"
     timeout: 15000
 - takeScreenshot: /tmp/kv-android-segreteria-4-menu
+# ⚠️ Stessa ambiguità del tab «Mensa»: «Anagrafica» è anche una tile della
+# griglia «Tutti i moduli», che resta nell'albero DIETRO il foglio modale →
+# `tapOn: ".*Anagrafica.*"` prendeva la tile morta. Qui si tocca il SOTTOTITOLO
+# «Alunni, famiglie e personale», che nel cockpit esiste in un solo posto
+# (messages/it/adminNav.json → `anagraficaSub`): nessuna coordinata, nessuna
+# ambiguità. Regex non ancorata perché la WebView può collassare la riga in un
+# unico nodo col testo concatenato («ANAGRAFICA Alunni, famiglie e personale») e
+# Maestro fa full-match.
 - tapOn:
-    text: ".*Anagrafica.*"
+    text: ".*Alunni, famiglie e personale.*"
 - extendedWaitUntil:
     visible: "Anagrafica Generale"
     timeout: 45000
 - assertVisible: "Gestione studenti, genitori e personale"
+- assertNotVisible: "Tutti i moduli"   # controllo negativo: dashboard lasciata davvero
 - takeScreenshot: /tmp/kv-android-segreteria-5-anagrafica
 
 # ── 8. TASTO INDIETRO DI ANDROID → dashboard ─────────────────────────────────

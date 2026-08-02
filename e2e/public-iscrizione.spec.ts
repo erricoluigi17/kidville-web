@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { IDS, STORAGE } from './fixtures';
 
 // Flusso pubblico /iscrizione (happy path) + import admin con degrado email
 // VISIBILE (provider non configurato). CF/email fissi: il seed ripulisce gli
@@ -24,7 +24,21 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   const pngPath = testInfo.outputPath('documento.png');
   writeFileSync(pngPath, PNG_1PX);
 
-  await page.goto('/iscrizione');
+  // LINK "TARGATO" PER PLESSO — `?scuola=<id>`, non `/iscrizione` nudo.
+  //
+  // Sul database della CI l'elenco pubblico delle sedi è VUOTO per costruzione:
+  // il seed crea due sedi col prefisso `e2e00000-…` e `isScuolaE2E`
+  // (src/lib/scuole/reali.ts) le esclude da ogni elenco pubblico. Senza sede
+  // nell'URL il wizard non ha nulla da far scegliere e `POST /api/iscrizione`
+  // risponde `400 «Specificare la scuola per l'iscrizione»` — giustamente: dal
+  // 2026-07-31 le sedi del seed sono DUE, e indovinarne una archivierebbe la
+  // domanda nel plesso sbagliato in silenzio (run 30765844979).
+  //
+  // Il POST valida l'id contro TUTTE le sedi, E2E incluse, proprio per questo
+  // percorso. La scelta della sede dal wizard — il caso con più plessi REALI,
+  // che su questo database non è riproducibile — è coperta dai test di
+  // `__tests__/components/EnrollmentWizard-sede.test.tsx`.
+  await page.goto(`/iscrizione?scuola=${IDS.SCUOLA}`);
   await expect(page.getByText('Iscrizione Nuovo Alunno').first()).toBeVisible();
 
   // Passo 1 — bambino (soli campi obbligatori).

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import {
     CheckCircle2, Clock, ChevronDown, Package, Bell,
     Table2, ChevronLeft, ChevronRight, RefreshCw, Zap,
@@ -259,7 +260,7 @@ function LockerInner() {
             />
             {lastUpdated && (
                 <p className="mt-2 px-1 font-maven text-[11px] text-kidville-muted">
-                    {t('lockerAggiornatoAlle', { ora: new Intl.DateTimeFormat(f.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(lastUpdated) })}
+                    {t('lockerAggiornatoAlle', { ora: intlDateTime(f.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(lastUpdated) })}
                 </p>
             )}
 
@@ -333,7 +334,7 @@ function LockerInner() {
                                                 </p>
                                                 <p className="font-maven text-xs text-kidville-muted mt-0.5 flex items-center gap-1">
                                                     <Clock size={10} />
-                                                    {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(req.creato_il))}
+                                                    {intlDateTime(f.locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(req.creato_il))}
                                                 </p>
                                             </div>
                                         </div>
@@ -374,7 +375,7 @@ function LockerInner() {
                                         <div className="flex-1">
                                             <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
                                             <p className="font-maven text-xs text-kidville-success">
-                                                {t('lockerPortareEPreso', { data: new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.preso_in_carico_il!)) })}
+                                                {t('lockerPortareEPreso', { data: intlDateTime(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.preso_in_carico_il!)) })}
                                             </p>
                                         </div>
                                     </div>
@@ -446,7 +447,7 @@ function LockerInner() {
                                                 <p className="font-maven text-sm text-kidville-muted">{req.locker_catalog.nome}</p>
                                             </div>
                                             <span className="font-maven text-xs text-kidville-muted">
-                                                {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.creato_il))}
+                                                {intlDateTime(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.creato_il))}
                                             </span>
                                         </div>
                                     ))}
@@ -466,6 +467,7 @@ function LockerInner() {
                     <div className="flex items-center justify-between mb-5">
                         <button
                             id="parent-prev-month-btn"
+                            aria-label={t('lockerMesePrecedente')}
                             onClick={() => setMonth(m => prevMonth(m))}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >
@@ -474,6 +476,7 @@ function LockerInner() {
                         <span className="text-sm font-semibold text-kidville-green/70">{t('lockerAndamentoMensileDi', { nome: childName })}</span>
                         <button
                             id="parent-next-month-btn"
+                            aria-label={t('lockerMeseSuccessivo')}
                             onClick={() => setMonth(m => nextMonth(m))}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >

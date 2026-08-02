@@ -31,6 +31,8 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
+const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
+vi.mock('@/lib/logging/logger', () => log)
 const push = vi.hoisted(() => ({ sendPush: vi.fn(), vapidConfigured: vi.fn() }))
 vi.mock('@/lib/push/web-push', () => push)
 const native = vi.hoisted(() => ({ sendNativePush: vi.fn(), fcmConfigured: vi.fn() }))
@@ -175,6 +177,119 @@ describe('POST /api/push/dispatch', () => {
     expect(native.sendNativePush).not.toHaveBeenCalled()
     expect(body.data.native_inviate).toBe(0)
     expect(h.state.calls.some((c) => c.table === 'notifiche' && c.m === 'update')).toBe(true)
+  })
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UN RIFIUTO NON È NÉ UN SUCCESSO NÉ UNA SUBSCRIPTION MORTA.
+  //
+  // Il ciclo usava solo `ok` e `gone`. Un `{ ok:false, error }` — cioè QUALUNQUE
+  // altro rifiuto del provider: 403 chiave VAPID non autorizzata, 413 payload
+  // troppo grande, 401, rete giù, credenziali FCM sbagliate — non incrementava
+  // nessun contatore e non alzava niente. La notifica veniva marcata
+  // `push_inviata_il` lo stesso (a ragione: evita ritentativi infiniti), quindi
+  // NON verrà mai rispedita, e il battito del cron continuava a dire `esito:'ok'`
+  // con `inviate: 0`. Zero push consegnate, zero tracce: il guasto delle email di
+  // credenziali riprodotto tale e quale.
+  //
+  // La marcatura NON cambia — è deliberata e documentata nella route. Cambia che
+  // adesso si CONTA e si DICE.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const righe = (livello: string) =>
+    log.logEvento.mock.calls
+      .filter((c) => c[1] === livello)
+      .map((c) => ({ evento: c[0] as string, campi: c[2] as Record<string, unknown> }))
+
+  it('rifiuto web (né ok né gone) → contatore `fallite` e riga `warn`, non un silenzio', async () => {
+    push.sendPush.mockResolvedValue({ ok: false, error: 'web_push_403: the VAPID key is not authorized' })
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a', platform: 'web' }], error: null },
+      ],
+    }
+
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.data.inviate).toBe(0)
+    expect(body.data.fallite).toBe(1)
+    // Nessuna rimozione: la subscription è viva, è l'invio ad essere stato rifiutato.
+    expect(body.data.subs_rimosse).toBe(0)
+
+    const avvisi = righe('warn').filter((r) => r.campi.esito === 'invii-rifiutati')
+    expect(avvisi).toHaveLength(1)
+    expect(avvisi[0].evento).toBe('cron')
+    expect(avvisi[0].campi).toMatchObject({ operazione: 'push-dispatch', esito: 'invii-rifiutati', fallite: 1 })
+
+    // Il battito di chiusura porta lo stesso numero: chi guarda i cron non deve
+    // dover sapere che i rifiuti si cercano da un'altra parte.
+    const battito = righe('info').filter((r) => r.campi.esito === 'ok')
+    expect(battito).toHaveLength(1)
+    expect(battito[0].campi).toMatchObject({ inviate: 0, fallite: 1, notifiche: 1 })
+  })
+
+  it('rifiuto NATIVO → stesso contatore (il canale non cambia il fatto)', async () => {
+    native.fcmConfigured.mockReturnValue(true)
+    native.sendNativePush.mockResolvedValue({ ok: false, error: 'fcm_401: Request had invalid authentication' })
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null },
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's2', utente_id: 'u1', endpoint: 'tok', p256dh: null, auth: null, platform: 'android' }], error: null },
+      ],
+    }
+
+    const body = await (await POST(req('test-secret'))).json()
+
+    expect(body.data.native_inviate).toBe(0)
+    expect(body.data.fallite).toBe(1)
+    expect(righe('warn').filter((r) => r.campi.esito === 'invii-rifiutati')).toHaveLength(1)
+  })
+
+  it('nessun rifiuto → nessuna riga di allarme, e `fallite: 0` nel battito', async () => {
+    // Il controllo positivo: la riga deve esistere SOLO quando c'è il fatto.
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null },
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a', platform: 'web' }], error: null },
+      ],
+    }
+
+    const body = await (await POST(req('test-secret'))).json()
+
+    expect(body.data.inviate).toBe(1)
+    expect(body.data.fallite).toBe(0)
+    expect(righe('warn')).toHaveLength(0)
+    expect(righe('info').filter((r) => r.campi.esito === 'ok')[0].campi).toMatchObject({ fallite: 0 })
+  })
+
+  it('una subscription «gone» NON è un rifiuto: si rimuove e non si conta fra le fallite', async () => {
+    push.sendPush.mockResolvedValue({ ok: false, gone: true })
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null },
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a', platform: 'web' }], error: null },
+        { data: null, error: null }, // delete
+      ],
+    }
+
+    const body = await (await POST(req('test-secret'))).json()
+
+    expect(body.data.subs_rimosse).toBe(1)
+    expect(body.data.fallite).toBe(0)
+    expect(righe('warn')).toHaveLength(0)
   })
 
   it('rimuove il token nativo "gone"', async () => {

@@ -13,6 +13,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations, useLocale } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { NEWS_STATI, NEWS_TIPI, type NewsPost, type NewsStato, type NewsTipo } from '@/lib/news/tipi';
 
 // Tono del badge per stato (colore) separato dall'etichetta, che è i18n e viene
@@ -37,7 +38,7 @@ const TIPO_LABEL_KEY: Record<NewsTipo, string> = { articolo: 'elencoTipoArticolo
 const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return '';
   try {
-    return new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' }).format(new Date(iso));
+    return intlDateTime(locale, { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' }).format(new Date(iso));
   } catch {
     return '';
   }

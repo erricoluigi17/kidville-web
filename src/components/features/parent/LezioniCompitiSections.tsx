@@ -2,6 +2,7 @@
 
 import { BookOpen, ClipboardList, FileText, Image as ImageIcon, CalendarClock } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 
 export interface Allegato { id: string; tipo: string; file_url: string; file_name: string | null }
@@ -23,7 +24,7 @@ function perGiorno(lezioni: Lezione[]): [string, Lezione[]][] {
 }
 
 const fmtGiorno = (g: string, locale: string) =>
-  new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(g));
+  intlDateTime(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(g));
 
 // Sezione "Lezioni": materia + argomento + allegati (sola lettura).
 export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
@@ -104,7 +105,7 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
                       // Con il datepicker docente la data non va più scritta nel
                       // testo libero, evitando la doppia indicazione.
                       <p className="mt-1.5 inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-error">
-                        <CalendarClock size={11} /> {t('compitiConsegna', { data: new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(l.data_consegna_compiti)) })}
+                        <CalendarClock size={11} /> {t('compitiConsegna', { data: intlDateTime(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(l.data_consegna_compiti)) })}
                       </p>
                     )}
                   </li>

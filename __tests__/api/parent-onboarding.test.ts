@@ -17,12 +17,20 @@ const h = vi.hoisted(() => ({
   consensiInserts: [] as Array<Record<string, unknown>>,
   consensiInsertErr: null as unknown,
   parentUpdateErr: null as unknown,
+  /** Esito di `auth.admin.updateUserById` (GoTrue): null = riuscito. */
+  pwErr: null as unknown,
+  logEvento: vi.fn(),
+  logErrore: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logEvento: h.logEvento, logErrore: h.logErrore }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
-    auth: { admin: { updateUserById: async (uid: string, attrs: unknown) => { h.pwUpdates.push({ uid, attrs }); return { data: {}, error: null } } } },
+    auth: { admin: { updateUserById: async (uid: string, attrs: unknown) => { h.pwUpdates.push({ uid, attrs }); return { data: h.pwErr ? null : {}, error: h.pwErr } } } },
     from: (table: string) => {
       const b: Record<string, unknown> = {}
       b.update = (row: Record<string, unknown>) => { h.updates.push(row); return b }
@@ -51,8 +59,14 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireUser.mockResolvedValue({ user: { id: 'p1', role: 'genitore' } })
   h.parent = { id: 'p1', auth_user_id: 'auth-1' }
-  h.updates = []; h.eqCalls = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null; h.parentNotFound = false
+  h.updates = []; h.eqCalls = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null; h.parentNotFound = false; h.pwErr = null
 })
+
+/** I `logEvento` emessi con un dato livello, per `esito`. */
+const esitiLoggati = (livello: string): string[] =>
+  h.logEvento.mock.calls
+    .filter((c) => c[1] === livello)
+    .map((c) => String((c[2] as { esito?: string })?.esito ?? ''))
 
 describe('POST /api/parent/onboarding', () => {
   it('401 senza identità', async () => {
@@ -142,5 +156,54 @@ describe('POST /api/parent/onboarding', () => {
     const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'unaPasswordLunga' }))
     expect(res.status).toBe(200)
     expect(h.pwUpdates[0]).toMatchObject({ uid: 'auth-1' })
+    // Regola 5 del logging: gli eventi critici loggano anche il SUCCESSO.
+    // Senza, «nessun log» non distingue «password impostata» da «non è mai
+    // partito niente» — l'ambiguità esatta che ha nascosto il guasto delle email.
+    expect(esitiLoggati('info')).toContain('password-onboarding-impostata')
+  })
+
+  // ── F4: la password che il genitore ha scelto può non essere mai scritta ───
+  it('GoTrue rifiuta la password ⇒ NON dichiara successo, e lascia una riga di log', async () => {
+    // Il valore di ritorno di `auth.admin.updateUserById` veniva buttato via
+    // (`await` e basta), mentre 20 righe sopra l'update PostgREST su `parents`
+    // era controllato con tanto di commento. Se GoTrue rifiutava — policy
+    // password, utente bannato, rate limit — l'onboarding rispondeva
+    // `{ success: true, onboarded: true }`: il genitore aveva scelto una
+    // password MAI scritta, non riusciva più ad accedere, e nei log non c'era
+    // una sola riga da nessuna parte.
+    h.pwErr = { name: 'AuthApiError', message: 'Password is known to be weak and easy to guess', status: 422 }
+
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'unaPasswordLunga' }))
+
+    expect(res.status).toBe(400)
+    const j = await res.json()
+    expect(j.success).toBeUndefined()
+    expect(j.onboarded).toBeUndefined()
+    expect(String(j.error)).toMatch(/password/i)
+    expect(esitiLoggati('error')).toContain('password-onboarding-non-impostata')
+    expect(esitiLoggati('info')).not.toContain('password-onboarding-impostata')
+  })
+
+  it('guasto di GoTrue (5xx) ⇒ 500, e i consensi restano salvati (l onboarding è ripetibile)', async () => {
+    h.pwErr = { name: 'AuthRetryableFetchError', message: 'service unavailable', status: 503 }
+
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'unaPasswordLunga' }))
+
+    expect(res.status).toBe(500)
+    expect((await res.json()).success).toBeUndefined()
+    // I consensi erano già stati scritti: non si perdono, e il genitore può
+    // ripetere l'onboarding (l'update è idempotente). Vale anche per la prova
+    // d'accettazione append-only: la password è l'ULTIMO passo apposta.
+    expect(h.updates[0]).toMatchObject({ consensi_gdpr: { privacy: true, termini: true } })
+    expect(h.consensiInserts).toHaveLength(2)
+    expect(esitiLoggati('error')).toContain('password-onboarding-non-impostata')
+  })
+
+  it('senza password non si tocca GoTrue e non si logga nessun esito password', async () => {
+    const res = await POST(req({ consensi: { privacy: true, termini: true } }))
+    expect(res.status).toBe(200)
+    expect(h.pwUpdates).toHaveLength(0)
+    expect(esitiLoggati('info')).not.toContain('password-onboarding-impostata')
+    expect(esitiLoggati('error')).not.toContain('password-onboarding-non-impostata')
   })
 })

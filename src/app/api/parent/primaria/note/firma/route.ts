@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
@@ -9,11 +9,16 @@ import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
+import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-// `userId` in query è consumato dal gate identità (getRequestUserId), non dall'handler.
+// L'identità viene dalla SESSIONE (`requireUser` → `resolveIdentity`), mai dalla
+// query: `?userId=` è ignorato. Fino al 2026-07-31 questa route leggeva
+// `getRequestUserId` in diretta, cioè scavalcava `ALLOW_HEADER_IDENTITY=false`, e
+// una firma con valore legale (CAD art. 20) era apponibile a nome di un genitore
+// qualunque da chiunque ne conoscesse l'uuid. Lock: __tests__/api/firma-identita-da-sessione.test.ts.
 // notaId permissivo (stringa non vuota): oggi nessun vincolo di formato (un id
 // non valido ricade nel 404 "Nota non trovata").
 // code/expiry/ticket restano pass-through (z.unknown): il codice li coercizza
@@ -34,8 +39,17 @@ const postBodySchema = z.object({
 // pattern della pagella: signature_log in nota_ricezioni + slot + audit immutabile.
 export const POST = withRoute('parent/primaria/note/firma:POST', async (request: NextRequest) => {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
+
+    // Tetto sui TENTATIVI di verifica del codice (sicurezza W5 · S30), sullo stesso budget
+    // delle altre tre firme del genitore — vedi `@/lib/security/otp-rate-limit`. Il codice è
+    // di sei cifre e un confronto HMAC fallito NON consuma il ticket: senza tetto provarli
+    // tutti era gratis, e ciò che si ottiene indovinando è la presa visione di una nota
+    // disciplinare apposta a nome di un genitore vero — con valore legale (CAD art. 20).
+    const troppe = limitaVerificaOtp(userId)
+    if (troppe) return troppe
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response

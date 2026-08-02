@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { requireEnv } from '@/lib/security/require-env';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
+import { nomeSede } from '@/lib/scuole/reali';
 import { ensureParentIdentity, firstEmail, randomPassword } from '@/lib/auth/parent-identity';
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -14,6 +15,7 @@ import { buildCredentialsPdf } from '@/lib/pdf/credentials-pdf';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
+import { formattaIstante } from '@/i18n/config';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // targetId è sempre un UUID: parents.id (PK uuid) oppure utenti.id (= auth.users id).
@@ -78,6 +80,11 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   let email: string | null = null;
   let nome: string | null = null;
   let identitaCreata = false;
+  // La sede a cui appartiene il destinatario: finisce nel corpo dell'email e
+  // nel PDF delle credenziali. Con tre plessi «Kidville» non identifica più
+  // niente, e un genitore che riceve le credenziali del plesso sbagliato non ha
+  // modo di accorgersene.
+  let sedeId: string | null = null;
 
   if (targetKind === 'parent') {
     const { data } = await admin
@@ -97,7 +104,15 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     nome = row.first_name;
     // Completa (o verifica) l'identità di accesso: account auth, ponte
     // anagrafica↔account e riga `utenti` ruolo genitore. Idempotente.
-    const identita = await ensureParentIdentity(admin, row, { scuolaId: auth.user.scuola_id ?? null });
+    //
+    // LA SEDE DEL GENITORE VIENE DAI FIGLI. Qui si passava `scuolaId:
+    // auth.user.scuola_id`, cioè la sede di CHI PREME IL BOTTONE: l'unico admin
+    // reale ha come primaria Giugliano ed è l'unico che possa gestire Aversa e
+    // Cesa, quindi al primo invio di credenziali a una famiglia di Aversa quel
+    // genitore nasceva «di Giugliano». La query giusta era già stata fatta 28
+    // righe più su da `assertParentInScope`. Ora la sede dell'operatore serve
+    // solo a sciogliere l'ambiguità di un genitore con figli in due plessi.
+    const identita = await ensureParentIdentity(admin, row, { sedeOperatore: auth.user.scuola_id ?? null });
     if (!identita.ok) {
       if (identita.reason === 'no_email') {
         return NextResponse.json(
@@ -112,6 +127,8 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
     authId = identita.authUserId;
     identitaCreata = identita.createdAuth || identita.createdUtenti || identita.boundNow;
+    // Risolta dai FIGLI dentro `ensureParentIdentity`, non da chi preme il bottone.
+    sedeId = identita.scuolaId;
 
     // Il genitore ha (finalmente) un account: allinea al runtime i legami che
     // vivono solo in `student_parents`. È il momento in cui gli 11 `parents`
@@ -137,11 +154,12 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
   } else {
     // staff: utenti.id È l'auth.users id (FK utenti_id_fkey)
-    const { data } = await admin.from('utenti').select('id, email, nome').eq('id', targetId).maybeSingle();
+    const { data } = await admin.from('utenti').select('id, email, nome, scuola_id').eq('id', targetId).maybeSingle();
     if (!data) return NextResponse.json({ error: 'Utente staff non trovato' }, { status: 404 });
     authId = (data as { id: string }).id;
     email = firstEmail((data as { email: string | null }).email);
     nome = (data as { nome: string | null }).nome;
+    sedeId = (data as { scuola_id: string | null }).scuola_id ?? null;
   }
 
   if (!email) {
@@ -154,10 +172,11 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const sedeNome = await nomeSede(admin, sedeId, 'admin/regenerate-credentials:POST');
   const invio = await sendEmailDetailed({
     to: email,
     subject: 'Le tue credenziali Kidville',
-    text: credentialsEmailBody(nome, email, password),
+    text: credentialsEmailBody(nome, email, password, sedeNome),
   });
   const emailed = invio.ok;
 
@@ -167,16 +186,38 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   try {
     const loginUrl = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/auth/login` : '/auth/login';
     const pdf = buildCredentialsPdf({
-      schoolName: 'Kidville',
+      schoolName: sedeNome ?? 'Kidville',
       nome,
       ruolo: targetKind === 'parent' ? 'Genitore' : 'Staff',
       email,
       password,
       loginUrl,
-      generatedAt: new Date().toLocaleString('it-IT'),
+      generatedAt: formattaIstante(new Date(), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }),
     });
-    // Assicura il bucket privato (idempotente: se esiste, l'errore è ignorato).
-    await admin.storage.createBucket('credenziali', { public: false }).catch(() => {});
+    // Assicura il bucket privato. Idempotente: in tutti gli ambienti il bucket ESISTE già, e
+    // il 409 «resource already exists» è l'esito ATTESO — si registra a `info` e si tira
+    // dritto (AGENTS.md regola 6: un errore ignorabile si logga spiegando perché).
+    //
+    // Qui prima c'era `.catch(() => {})`, ed era sbagliato due volte. Primo: lo Storage NON
+    // lancia, ritorna `{ error }` (regola 7), quindi quel catch non ha mai intercettato
+    // niente — l'errore veniva scartato dal fatto stesso di non guardarlo. Secondo: questo è
+    // il percorso delle CREDENZIALI, cioè il difetto storico da cui nasce l'intera regola 6.
+    // Se il bucket non si può creare, l'upload sotto fallisce e la Segreteria vede un PDF che
+    // non arriva: il motivo va detto QUI, dove si sa ancora qual è.
+    const creazioneBucket = await admin.storage.createBucket('credenziali', { public: false });
+    if (creazioneBucket.error) {
+      const giaPresente = /exist/i.test(creazioneBucket.error.message ?? '');
+      logEvento(
+        'storage',
+        giaPresente ? 'info' : 'error',
+        {
+          operazione: 'admin/regenerate-credentials:POST',
+          bucket: 'credenziali',
+          esito: giaPresente ? 'bucket-gia-presente' : 'bucket-non-creato',
+        },
+        giaPresente ? undefined : creazioneBucket.error,
+      );
+    }
     const pdfKey = `${targetId}-${Date.now()}.pdf`;
     const up = await admin.storage.from('credenziali').upload(pdfKey, pdf, { contentType: 'application/pdf', upsert: true });
     if (up.error) throw up.error;

@@ -43,11 +43,17 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
     // quelle attive del SedeSelector (cookie), ri-validate contro le accessibili.
     const plessi = await resolveScuoleAttive(request, supabase, auth.user);
 
-    // 1. Carica il template del form
+    // 1. Carica il template del form — SOLO se è di un plesso consentito.
+    //    `forms_templates.scuola_id` è NOT NULL, quindi il vincolo è applicabile
+    //    senza casi limite. Senza, si abbinava il modulo di un'altra sede alla
+    //    propria classe e se ne portava fuori la struttura (titolo, campi).
+    //    Non-trovato e fuori-scope danno la stessa 404: la risposta non deve
+    //    essere un oracolo sull'esistenza dei moduli altrui.
     const { data: template, error: tempErr } = await supabase
       .from('forms_templates')
       .select('*')
       .eq('id', formId)
+      .in('scuola_id', plessi)
       .maybeSingle();
 
     if (tempErr || !template) {

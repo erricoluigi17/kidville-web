@@ -14,9 +14,9 @@ interface NoteConfig {
     notifica_admin_su_creazione: boolean;
 }
 
-export function NoteSettings({ userId }: { userId: string }) {
+export function NoteSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
     const t = useTranslations('adminSettings');
-    const { settings, save, saving, error } = useAdminSettings(userId);
+    const { settings, save, saving, error } = useAdminSettings(userId, scuolaId);
     const [draft, setDraft] = useState<NoteConfig | null>(null);
     const [nuova, setNuova] = useState('');
     const [msg, setMsg] = useState('');
@@ -53,7 +53,7 @@ export function NoteSettings({ userId }: { userId: string }) {
                     {categorie.map((c) => (
                         <span key={c} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green capitalize">
                             {c}
-                            <button onClick={() => set({ categorie: categorie.filter((x) => x !== c) })} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>
+                            <button onClick={() => set({ categorie: categorie.filter((x) => x !== c) })} aria-label={t('noteRimuoviCategoria')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>
                         </span>
                     ))}
                 </div>

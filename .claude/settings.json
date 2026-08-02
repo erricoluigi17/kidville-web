@@ -1,9 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-
   "permissions": {
-    "defaultMode": "acceptEdits",
-
+    "defaultMode": "default",
     "allow": [
       "Read",
       "Glob",
@@ -13,7 +11,6 @@
       "TodoWrite",
       "Task",
       "Workflow",
-
       "Agent(scrittore-di-piani)",
       "Agent(esecutore-opus)",
       "Agent(tester-opus-backend)",
@@ -29,7 +26,6 @@
       "Agent(tester-opus-accessibilita)",
       "Agent(Explore)",
       "Agent(general-purpose)",
-
       "Bash(npm run:*)",
       "Bash(npm ci)",
       "Bash(npm ci:*)",
@@ -39,14 +35,9 @@
       "Bash(npx:*)",
       "Bash(node:*)",
       "Bash(tsx:*)",
-
       "Bash(git:*)",
-      "Bash(gh:*)",
-
-      "Bash(vercel:*)",
       "Bash(supabase:*)",
       "Bash(psql:*)",
-
       "Bash(maestro:*)",
       "Bash(~/.maestro/bin/maestro:*)",
       "Bash(adb:*)",
@@ -60,7 +51,6 @@
       "Bash(pod:*)",
       "Bash(open:*)",
       "Bash(java:*)",
-
       "Bash(cd:*)",
       "Bash(ls:*)",
       "Bash(pwd)",
@@ -96,22 +86,17 @@
       "Bash(kill:*)",
       "Bash(curl:*)",
       "Bash(true)",
-
       "mcp__supabase__list_tables",
       "mcp__supabase__list_migrations",
       "mcp__supabase__list_extensions",
-      "mcp__supabase__apply_migration",
-      "mcp__supabase__execute_sql",
       "mcp__supabase__get_advisors",
       "mcp__supabase__get_logs",
       "mcp__supabase__get_project_url",
       "mcp__supabase__get_publishable_keys",
       "mcp__supabase__generate_typescript_types",
       "mcp__supabase__search_docs",
-
       "mcp__claude-in-chrome__*",
       "mcp__ide__getDiagnostics",
-
       "mcp__claude_ai_Vercel__list_deployments",
       "mcp__claude_ai_Vercel__get_deployment",
       "mcp__claude_ai_Vercel__get_deployment_build_logs",
@@ -119,7 +104,6 @@
       "mcp__claude_ai_Vercel__get_runtime_errors",
       "mcp__claude_ai_Vercel__get_project",
       "mcp__claude_ai_Vercel__list_projects",
-
       "WebSearch",
       "WebFetch(domain:docs.claude.com)",
       "WebFetch(domain:code.claude.com)",
@@ -133,24 +117,18 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:capacitorjs.com)"
     ],
-
     "deny": [
       "Read(.env.local)",
       "Read(.env)",
       "Read(.env.*.local)",
-
       "Bash(npm run e2e:*)",
       "Bash(npx playwright test:*)",
       "Bash(node scripts/seed-e2e.mjs:*)",
-
       "Bash(supabase db reset:*)",
       "Bash(npx supabase db reset:*)",
-
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
-
       "Bash(sudo:*)",
-
       "Bash(rm -rf /)",
       "Bash(rm -rf ~)",
       "Bash(rm -rf ~/*)",
@@ -162,9 +140,15 @@
       "Bash(rm -rf /usr:*)",
       "Bash(rm -rf /etc:*)",
       "Bash(rm -rf /var:*)"
+    ],
+    "ask": [
+      "Bash(gh:*)",
+      "Bash(git push:*)",
+      "Bash(vercel:*)",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__execute_sql"
     ]
   },
-
   "hooks": {
     "Stop": [
       {

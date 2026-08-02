@@ -95,7 +95,9 @@ gira da sola *pianifica → implementa → collauda → correggi* finché tutti 
 `PASS` (o si ferma dopo 8 cicli). Rispetta e fa rispettare tutte le regole di questo documento:
 branch secondario, PRD aggiornato, logging obbligatorio, gate di verifica.
 
-Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **conferme umane**.
+Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **conferme umane**,
+✅ **applicate il 2026-08-03**: da quel giorno merge, deploy, migrazioni ed `execute_sql` sono in
+`ask`, e `defaultMode` è tornato a `default`.
 🔴 Dal 2026-07-31 quel blocco dice l'opposto di prima: in produzione ci sono **dati reali di
 minori** (227 domande di iscrizione, 152 codici fiscali di bambini, raccolte dal 16 luglio), e
 **ogni migrazione e ogni merge si mostrano al titolare e si fanno approvare, uno per uno**.

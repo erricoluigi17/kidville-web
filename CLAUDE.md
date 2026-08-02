@@ -156,9 +156,27 @@ Le conferme umane vanno riattivate così:
    particolare `test.segreteria@kidville.test` legge l'anagrafica dell'intera sede, e
    `test.multisede.admin@kidville.test` vede tutte e tre le sedi.
 
-**Stato di questi cinque punti**: da fare. Vengono applicati come **ultimo atto del rilascio del
-2026-07-31**, non prima — attivarli a metà lavoro avrebbe bloccato la sessione che li ha scritti.
-Se stai leggendo questa riga e i punti 1-4 risultano già applicati in `.claude/settings.json`,
-cancella questa frase; se non lo sono, **applicali prima di qualunque altra cosa**.
+**Stato di questi cinque punti: ✅ APPLICATI il 2026-08-03**, come ultimo atto del rilascio della
+PR #62 (`fc7c94a`, deploy Vercel `READY` su `app.kidville.it`). Non prima: attivarli a metà lavoro
+avrebbe bloccato la sessione che doveva applicarli.
+
+| | Dove si verifica |
+|---|---|
+| 1. cinque permessi da `allow` ad `ask` | `.claude/settings.json` → `permissions.ask` |
+| 2. `defaultMode` da `acceptEdits` a `default` | `.claude/settings.json` |
+| 3. autorizzazione «pre-lancio» rimossa dal comando | `.claude/commands/ship-cycle.md`, Caso 1 |
+| 4. *Required reviewers* sull'environment `production` | era **già attivo**: verificato via API, revisore `erricoluigi17` |
+| 5. account TEST trattati come strumenti su dati di minori | password ruotata il 31/07, log Maestro bonificati il 02/08 |
+
+Da qui in avanti **ogni migrazione e ogni merge si mostrano e si fanno approvare, uno per uno**, con
+`AskUserQuestion`. Le verifiche in lettura restano libere. Chi trova questo blocco e sta per
+scrivere in produzione non si fidi di questo paragrafo: esegua la query che conta le righe reali.
+
+⚠️ **Una protezione è stata ABBASSATA nello stesso rilascio, ed è giusto che si sappia**: su `main`
+non è più richiesta un'approvazione sulla PR (decisione del titolare del 2026-08-03 — l'unico
+account con accesso in scrittura è il suo, e GitHub non permette di approvare la propria PR, quindi
+la regola bloccava ogni rilascio senza aggiungere un controllo vero). **Restano** obbligatori i due
+check della CI (`Lint · Typecheck · Unit` ed `E2E (Playwright)`), `enforce_admins`, il divieto di
+force-push e di cancellazione del branch.
 
 Quando il lancio commerciale avverrà davvero, aggiorna anche il PRD.

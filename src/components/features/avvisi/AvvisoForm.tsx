@@ -232,6 +232,10 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     // (adjust-state-during-render, prior art: TaskForm.tsx)
     const [prevOpen, setPrevOpen] = useState(false);
     const [prevAvviso, setPrevAvviso] = useState<Avviso | null>(initialAvviso);
+    // Dichiarati qui perché servono a ENTRAMBI i blocchi di adjust-during-render:
+    // quello sull'apertura (qui sotto) e quello sull'arrivo tardivo delle classi.
+    const [prevClassi, setPrevClassi] = useState(availableClasses);
+    const [classiScelteAMano, setClassiScelteAMano] = useState(false);
     if (open !== prevOpen || initialAvviso !== prevAvviso) {
         setPrevOpen(open);
         setPrevAvviso(initialAvviso);
@@ -240,6 +244,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             // riapertura del modulo: accuserebbe l'operatore di un guasto vecchio.
             setErrore('');
             setScuolaId('');
+            // Alla riapertura la preselezione torna automatica: la scelta a mano
+            // vale per la sessione in cui è stata fatta, non per sempre.
+            setClassiScelteAMano(false);
             // Alla riapertura non c'è nessun file «di questa sessione»: né in modifica
             // (l'allegato è archiviato) né in creazione. Un sigillo sopravvissuto a una
             // sessione precedente farebbe partire una rimozione per un file che nel
@@ -300,7 +307,33 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         }
     }
 
+    // ── Le classi che arrivano DOPO l'apertura del modulo ────────────────────
+    //
+    // `availableClasses` non è un dato che c'è già: arriva da una `fetch`
+    // (`/api/educator-sections`). Il blocco qui sopra preseleziona le classi
+    // proprie nell'istante in cui `open` passa a `true`, e legge l'elenco IN
+    // QUEL MOMENTO. Se la maestra apre «Nuovo avviso» prima che la risposta sia
+    // arrivata — perché è veloce, o perché la rete è lenta — la preselezione
+    // lavora su un elenco VUOTO e non viene più rifatta.
+    //
+    // Misurato in CI il 2026-08-02 (`e2e/isolamento-sedi.spec.ts`): titolo e
+    // contenuto compilati, e «Pubblica Avviso» spento per 442 tentativi di
+    // click. Nell'albero, il gruppo «Le tue classi» aveva il bottone «Girasoli»
+    // NON premuto. Senza destinatari il modulo non è inviabile — giustamente —
+    // ma nessuno lo dice, e non si sblocca finché non si chiude e riapre.
+    //
+    // `classiScelteAMano` è la metà che impedisce al rimedio di diventare un
+    // secondo difetto: chi TOGLIE una classe di proposito non se la deve
+    // ritrovare rimessa dalla risposta di una fetch arrivata dopo.
+    if (availableClasses !== prevClassi) {
+        setPrevClassi(availableClasses);
+        if (open && !initialAvviso && soloClassiProprie && !classiScelteAMano) {
+            setSelectedClasses(availableClasses.map((c) => c.nome));
+        }
+    }
+
     const toggleClass = (c: string) => {
+        setClassiScelteAMano(true);
         setSelectedClasses(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
     };
 

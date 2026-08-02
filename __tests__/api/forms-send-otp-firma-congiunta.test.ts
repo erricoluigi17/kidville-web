@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
   upserts: [] as Record<string, unknown>[],
+  TITOLARE: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa11',
 }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -19,6 +20,21 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      b.in = () => b
+      // Letture di INSIEME (senza `.single()`): sono i legami di famiglia da cui
+      // la route ricava CHI può firmare e A QUALE indirizzo può arrivare il
+      // codice. `papa@x.it` è il 2° genitore REGISTRATO di questo alunno: è per
+      // questo che il reinvio verso di lui è ammesso.
+      b.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
+        Promise.resolve({
+          data:
+            table === 'legame_genitori_alunni' ? [{ alunno_id: 'al-1', genitore_id: h.TITOLARE }, { alunno_id: 'al-1', genitore_id: 'co-genitore' }]
+            : table === 'student_parents' ? [{ student_id: 'al-1', parent_id: 'p-1' }]
+            : table === 'parents' ? [{ id: 'p-1', auth_user_id: 'co-genitore', emails: ['papa@x.it'] }]
+            : table === 'utenti' ? [{ id: h.TITOLARE, email: h.email }, { id: 'co-genitore', email: 'papa@x.it' }]
+            : [],
+          error: null,
+        }).then(res, rej)
       b.order = async () => ({ data: table === 'fea_signatures' ? h.slots : null, error: null })
       b.maybeSingle = async () => ({
         data:
@@ -37,6 +53,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
   }),
 }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  // Gate d'identità della route (2026-08-02): il chiamante è l'intestatario
+  // della submission; anonimo ed estraneo stanno nel test dedicato.
+  requireUser: vi.fn().mockResolvedValue({ user: { id: h.TITOLARE, role: 'genitore', scuola_id: null } }),
+}))
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 7, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('ip'),
@@ -68,7 +89,7 @@ describe('POST send-otp — reinvio / 2° firmatario', () => {
   })
 
   it('reinvia: nessuna nuova submission, aggiorna otp_secret e invia al signerEmail', async () => {
-    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', status: 'pending_signature', user_id: h.TITOLARE }
     const res = await POST(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', signerEmail: 'papa@x.it' }))
     expect(res.status).toBe(200)
     const json = await res.json()
@@ -82,7 +103,7 @@ describe('POST send-otp — reinvio / 2° firmatario', () => {
 
 describe('PATCH send-otp — completamento per policy', () => {
   it('joint, 1° firmatario: resta pending → needsMoreSigners', async () => {
-    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '111111'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '111111'), status: 'pending_signature', user_id: h.TITOLARE, model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
     h.model = { signature_mode: 'joint' }
     h.slots = [] // nessuno ha ancora firmato
     const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '111111' }, 'PATCH'))
@@ -96,7 +117,7 @@ describe('PATCH send-otp — completamento per policy', () => {
   })
 
   it('joint, 2° firmatario: con 1 slot già firmato → completed', async () => {
-    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '222222'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '222222'), status: 'pending_signature', user_id: h.TITOLARE, model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
     h.model = { signature_mode: 'joint' }
     h.slots = [{ slot_index: 0, stato: 'signed' }] // primo già firmato
     const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '222222' }, 'PATCH'))
@@ -110,7 +131,7 @@ describe('PATCH send-otp — completamento per policy', () => {
   })
 
   it('single (default): completa al 1° codice', async () => {
-    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '333333'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '333333'), status: 'pending_signature', user_id: h.TITOLARE, model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
     h.model = { signature_mode: 'single' }
     h.slots = []
     const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '333333' }, 'PATCH'))

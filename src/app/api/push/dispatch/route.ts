@@ -6,6 +6,7 @@ import { sendNativePush, fcmConfigured } from '@/lib/push/native-push'
 import { parseQuery } from '@/lib/validation/http'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
@@ -89,7 +90,7 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    if (!segretoCronValido(secret)) {
       // SI GRIDA SOLO SE L'HEADER C'È MA NON TORNA. Quello è un cron che bussa con la chiave
       // sbagliata: il guasto invisibile, e il motivo per cui questa riga esiste (da fuori è
       // indistinguibile da un cron che non gira). Il POST ANONIMO, invece, tace: la route è

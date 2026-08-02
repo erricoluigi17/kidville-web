@@ -251,13 +251,13 @@ export function MensaCalendar({ userId, studentId }: Props) {
           </button>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
+          <button onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label={t('settimanaPrecedente')} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
             <ChevronLeft size={16} />
           </button>
           <span className="font-maven text-xs text-kidville-muted w-28 text-center">
             {intlDateTime(locale, { day: 'numeric', month: 'short' }).format(weekStart)} – {intlDateTime(locale, { day: 'numeric', month: 'short' }).format(addDays(weekStart, 6))}
           </span>
-          <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
+          <button onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label={t('settimanaSuccessiva')} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
             <ChevronRight size={16} />
           </button>
         </div>

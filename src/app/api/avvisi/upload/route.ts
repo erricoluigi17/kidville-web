@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { parseData } from '@/lib/validation/http';
+import { parseData, parseMultipart } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { BUCKET_AVVISI_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
@@ -18,8 +18,13 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
-        const formData = await request.formData();
-        const f = parseData(postFormSchema, { file: formData.get('file') });
+        // Content-Type sbagliato = errore del CLIENT: 400, non 500 (collaudo 2026-08-02, F2).
+        // `request.formData()` LANCIA, e finiva nel `catch` qui sotto: una richiesta
+        // malformata lasciava una riga `error` in `app_log`, cioè rumore nel canale in cui
+        // si cercano i guasti veri.
+        const formData = await parseMultipart(request);
+        if ('response' in formData) return formData.response;
+        const f = parseData(postFormSchema, { file: formData.data.get('file') });
         if ('response' in f) return f.response;
         const { file } = f.data;
 

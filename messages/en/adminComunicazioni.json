@@ -232,5 +232,6 @@
   "rteLink": "Link",
   "rtePromptLink": "Link address (https://…, http://… or mailto:)",
   "rteInserisciImmagine": "Insert image into the text",
-  "rteNotaImmagini": "images are placed in the body of the article"
+  "rteNotaImmagini": "images are placed in the body of the article",
+  "messaggiInviaAria": "Send message"
 }

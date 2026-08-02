@@ -97,6 +97,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     </div>
                     <button
                         onClick={() => setAttachment(null)}
+                        aria-label={t('chatRimuoviAllegato')}
                         className="w-7 h-7 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-sub transition-colors hover:text-kidville-green"
                     >
                         <X size={12} strokeWidth={1.5} />
@@ -128,7 +129,15 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     onClick={handleAttachClick}
                     disabled={disabled || uploading}
                     className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green-soft text-kidville-green transition-transform active:scale-95 disabled:opacity-50"
-                    aria-label={uploading ? t('chatInputAriaCaricamento') : t('chatInputAriaAllega')}
+                    // Il NOME del comando resta fisso; lo STATO lo dice `aria-busy`.
+                    // Prima l'`aria-label` alternava «Allega»/«Caricamento»: un
+                    // controllo che cambia nome mentre lavora è un controllo diverso
+                    // per chi lo comanda a voce («clicca Allega» smette di trovarlo)
+                    // e per chi ne ha memorizzato la posizione nell'elenco dei
+                    // comandi. È lo stesso pattern già scelto bene per il toggle
+                    // della password sulla login: nome fisso + attributo di stato.
+                    aria-label={t('chatInputAriaAllega')}
+                    aria-busy={uploading}
                 >
                     {uploading
                         ? <span className="w-4 h-4 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />

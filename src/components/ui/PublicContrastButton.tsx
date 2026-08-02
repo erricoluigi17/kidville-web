@@ -23,8 +23,17 @@ import { AccessibilityContext } from '@/lib/accessibility/context'
 // annuncia con la sola icona è il primo a non essere trovato da chi ne ha
 // bisogno. Il bordo è `kidville-green` (6,51:1 su bianco, 5,86:1 su crema); in
 // Alto Contrasto la coppia è forzata dalle regole `.kv-public` di `globals.css`.
+//
+// `whitespace-nowrap` NON è decorazione. Su /iscrizione il contenitore è un flex
+// SENZA `flex-wrap` (a differenza delle quattro pagine legali, che ce l'hanno):
+// il bottone viene compresso dall'occhiello accanto e va a capo DENTRO di sé.
+// Misurato a 390/375/360/320 px: 138,4×58 px con «Alto» e «contrasto» su due
+// righe e la forma pill persa, contro 143,2×38 su una riga su /assistenza. La
+// classe sta QUI e non nel contenitore perché è il componente a doversi
+// difendere ovunque venga montato — è la stessa ragione per cui il comando vive
+// in un posto solo, e `ui/Btn.tsx` la porta già nel proprio BASE.
 const CLASSI =
-  'inline-flex items-center gap-2 rounded-pill border border-kidville-green px-3.5 py-2 ' +
+  'inline-flex items-center gap-2 whitespace-nowrap rounded-pill border border-kidville-green px-3.5 py-2 ' +
   'font-maven text-sm font-semibold text-kidville-green transition-colors hover:bg-kidville-green-soft'
 
 /**

@@ -7,6 +7,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola, staffScuola } from '@/lib/notifiche/destinatari'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // =============================================================================
 // POST /api/notifiche/promemoria — giro promemoria GIORNALIERO.
@@ -65,7 +66,7 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    if (!segretoCronValido(secret)) {
       // Si grida SOLO se l'header c'è ma non torna: quello è un cron che bussa con la chiave
       // sbagliata, ed è il guasto invisibile (chiave sbagliata e job non schedulato, da fuori, si
       // assomigliano: entrambi non mandano promemoria a nessuno). Sul POST ANONIMO si tace: la

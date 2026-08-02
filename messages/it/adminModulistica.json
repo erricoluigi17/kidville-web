@@ -304,5 +304,13 @@
   "bldErrore": "Errore",
   "bldSalvaModello": "Salva Modello",
   "bldSedeTutte": "Tutte le sedi",
-  "bldSedeLabel": "Sede di destinazione del modulo"
+  "bldSedeLabel": "Sede di destinazione del modulo",
+  "modRimuoviCampo": "Rimuovi campo",
+  "ppRimuoviOpzione": "Rimuovi opzione",
+  "radjChiudi": "Chiudi",
+  "radjDiminuisci": "Diminuisci punteggio",
+  "radjAumenta": "Aumenta punteggio",
+  "rtDettaglioRettifiche": "Dettaglio delle rettifiche",
+  "sdsChiudi": "Chiudi dettaglio domanda",
+  "builderTornaIndietro": "Torna alla modulistica"
 }

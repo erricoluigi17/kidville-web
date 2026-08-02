@@ -120,15 +120,36 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
     const allSelected = students.length > 0 && selectedIds.size === students.length;
 
+    // L'intestazione ordinabile è un BOTTONE dentro la cella, non un `<th onClick>`.
+    //
+    // Com'era: `<th onClick>` e nient'altro — nessun `role`, nessun `tabIndex`,
+    // nessun `onKeyDown`. Non un tab stop, sordo a Invio e Spazio: da tastiera
+    // l'anagrafica non si poteva ordinare in nessun modo (WCAG 2.1.1, livello A),
+    // e niente diceva quale colonna fosse l'ordinamento corrente.
+    //
+    // È lo stesso difetto già chiuso in questo file per la RIGA — comando vero
+    // dentro la cella, click lasciato al mouse come comodità — ricomparso una
+    // cella più in alto. Il click sul `<th>` resta per il mouse; l'accessibilità
+    // è il bottone. Non `role="button"` sul `<th>`: una cella-bottone prende come
+    // nome tutto il proprio contenuto e inghiotte i controlli che ci vivono dentro.
+    //
+    // `aria-sort` sta sul `<th>` perché è lì che ARIA lo cerca (WCAG 1.3.1): una
+    // colonna alla volta porta `ascending`/`descending`, le altre `none` — e
+    // «none» va dichiarato, non omesso, altrimenti lo screen reader non sa che
+    // quelle colonne sono ordinabili.
     const renderSortHeader = (field: SortField, label: string) => (
         <th
-            className="px-3 py-3 text-left cursor-pointer select-none group"
-            onClick={() => handleSort(field)}
+            className="px-3 py-3 text-left select-none group"
+            aria-sort={sortField === field ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
         >
-            <div className="flex items-center gap-1 font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
+            <button
+                type="button"
+                onClick={() => handleSort(field)}
+                className="flex w-full cursor-pointer items-center gap-1 text-left font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide"
+            >
                 {label}
-                <ArrowUpDown size={12} className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-sub'}`} />
-            </div>
+                <ArrowUpDown size={12} aria-hidden="true" className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-sub'}`} />
+            </button>
         </th>
     );
 

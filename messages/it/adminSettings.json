@@ -366,5 +366,10 @@
 
   "pgPeriodiScrutinio": "Periodi scrutinio",
   "pgScalaGiudizi": "Scala giudizi",
-  "pgGiudiziScrutinio": "Giudizi scrutinio"
+  "pgGiudiziScrutinio": "Giudizi scrutinio",
+  "armRimuoviCategoria": "Rimuovi categoria",
+  "meEliminaAssegnazione": "Elimina assegnazione",
+  "noteRimuoviCategoria": "Rimuovi categoria",
+  "spEliminaCategoria": "Elimina categoria",
+  "spRimuoviPacchetto": "Rimuovi pacchetto"
 }

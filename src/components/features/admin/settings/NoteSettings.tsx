@@ -53,7 +53,7 @@ export function NoteSettings({ userId, scuolaId }: { userId: string; scuolaId: s
                     {categorie.map((c) => (
                         <span key={c} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green capitalize">
                             {c}
-                            <button onClick={() => set({ categorie: categorie.filter((x) => x !== c) })} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>
+                            <button onClick={() => set({ categorie: categorie.filter((x) => x !== c) })} aria-label={t('noteRimuoviCategoria')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>
                         </span>
                     ))}
                 </div>

@@ -39,6 +39,22 @@
             verrebbe fatta scorrere invece che ridimensionata, e il composer uscirebbe davvero
             dallo schermo. Dichiararlo è l'unica correzione difendibile: non cambia niente di ciò
             che è stato misurato, e toglie la dipendenza da chi ha compilato la ROM.
+
+            ⚠️ FIN DOVE ARRIVA QUESTA RIGA: Android 14 compreso. Non oltre.
+            Da Android 15 le app con targetSdk >= 35 sono edge-to-edge per forza e il sistema
+            IGNORA windowSoftInputMode: gli inset dell'IME arrivano alla vista e Chromium
+            WebView accorcia da sé il viewport. Questa app dichiara targetSdk 36.
+            Misurato il 2026-08-02 compilando un APK GEMELLO con adjustPan e installandolo:
+              · API 36 -> numeri IDENTICI all'APK ufficiale (ih 731->399, «Invia» bottom
+                695->387, margine 12px). L'attributo e' INERTE.
+              · API 33 -> il composer sparisce davvero sotto la tastiera. L'attributo e'
+                DECISIVO.
+            Quindi: la riga si TIENE (su Android <= 14 e' cio' che regge il composer), ma non
+            e' la difesa sui telefoni nuovi. Chi domani vedra' la tastiera coprire la barra su
+            un Android 15+ non perda tempo a rileggerla: li' servirebbe gestire gli inset
+            (WindowInsetsCompat.Type.ime) o `interactive-widget`, e allora servira' una misura
+            con visualViewport.offsetTop != 0 da esibire.
+            Il confine e' lockato in __tests__/architecture/tastiera-non-copre-composer.test.ts.
         -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"

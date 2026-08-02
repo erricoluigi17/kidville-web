@@ -346,7 +346,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
                   <span className="ml-2 text-kidville-muted text-xs">{[o.portate?.primo, o.portate?.secondo, o.portate?.contorno, o.portate?.frutta].filter(Boolean).join(' · ')}</span>
                 )}
               </div>
-              <button onClick={() => rimuoviOverride(o.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+              <button onClick={() => rimuoviOverride(o.id)} aria-label={t('mbRimuoviEccezione')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>
           ))}
         </div>

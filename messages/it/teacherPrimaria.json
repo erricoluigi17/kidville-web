@@ -9,13 +9,11 @@
   "comuneSalvataggio": "Salvataggio…",
   "comuneSi": "sì",
   "comuneNo": "no",
-
   "hubEyebrow": "Mondo Primaria",
   "hubTitolo": "Le mie classi",
   "hubNessunaClasse": "Le classi non assegnate non compaiono. Se non vedi una sezione, contatta la Segreteria.",
   "hubClasse": "Classe {name}",
   "hubAlunni": "{count, plural, one {# alunno} other {# alunni}}",
-
   "overviewPresenzeOggi": "Presenze di oggi",
   "overviewPresenti": "Presenti",
   "overviewAssenti": "Assenti",
@@ -26,7 +24,6 @@
   "overviewInClasse": "{count} in classe",
   "overviewNessunAlunno": "Nessun alunno.",
   "overviewFooter": "Usa le schede in alto per registro, valutazioni, scrutinio e fascicolo.",
-
   "appelloTitolo": "Appello",
   "appelloDataAria": "Data dell'appello",
   "appelloTuttiPresenti": "Tutti presenti",
@@ -52,7 +49,6 @@
   "appelloTotaleOre": "Totale ore",
   "appelloMateria": "Materia",
   "appelloOreMancate": "Ore mancate",
-
   "registroTitolo": "Registro di classe",
   "registroDataAria": "Data del registro",
   "registroErroreUpload": "Errore upload",
@@ -70,7 +66,6 @@
   "registroAllega": "Allega",
   "registroModifica": "Modifica",
   "registroFirma": "Firma",
-
   "firmaModalTitolo": "{ora}ª ora — Firma lezione",
   "firmaModalSelezioneOffline": "La selezione degli alunni richiede la connessione. Scegli «Tutta la classe» oppure riprova quando sei online.",
   "firmaModalClasse": "Classe",
@@ -96,7 +91,6 @@
   "firmaModalConsegnaCompiti": "Consegna compiti (facoltativa)",
   "firmaModalConsegnaAria": "Data di consegna dei compiti",
   "firmaModalAnnulla": "Annulla",
-
   "valutazioniBanner": "<strong>Voti numerici disabilitati alla primaria.</strong> La valutazione è espressa con giudizi descrittivi e sintetici (O.M. 3/2025). L'eventuale annotazione numerica è un promemoria privato del docente.",
   "valutazioniTitolo": "Valutazione in itinere",
   "valutazioniMateriaPlaceholder": "Materia…",
@@ -141,7 +135,6 @@
   "valutazioniInserisciArgomento": "Inserisci l'argomento",
   "valutazioniCollegaObiettivo": "Collega almeno un obiettivo di apprendimento",
   "valutazioniSalvata": "Valutazione salvata ✓",
-
   "scrutinioBanner": "<strong>Documento ufficiale.</strong> Solo giudizi sintetici testuali — nessun voto numerico, nessuna media. Chiusura e pubblicazione sono riservate al Dirigente.",
   "scrutinioTitolo": "Scrutinio",
   "scrutinioPeriodoPlaceholder": "Periodo…",
@@ -172,15 +165,13 @@
   "scrutinioChiuso": "Scrutinio chiuso ✓",
   "scrutinioErroreImport": "Errore import",
   "scrutinioImportate": "{count, plural, one {Importata # riga} other {Importate # righe}}",
-  "scrutinioImportateErrori": ", {count} con errori",
+  "scrutinioImportateErrori": "{count, plural, one {, # con errore} other {, # con errori}}",
   "scrutinioErroreLettura": "Errore lettura file",
-  "scrutinioPagelleGenerate": "Generate {generate}/{totale} pagelle",
+  "scrutinioPagelleGenerate": "{totale, plural, one {Generata {generate}/{totale} pagella} other {Generate {generate}/{totale} pagelle}}",
   "scrutinioConfermaPubblica": "Pubblicare i voti? I genitori potranno vedere le pagelle e riceveranno una notifica.",
   "scrutinioVotiPubblicati": "Voti pubblicati ✓",
   "scrutinioPubblicazioneRevocata": "Pubblicazione revocata ✓",
-
   "orarioTitolo": "Orario settimanale",
-
   "noteNuova": "Nuova nota",
   "noteAlunni": "Alunni",
   "noteDeselezionaTutti": "Deseleziona tutti",
@@ -198,7 +189,6 @@
   "noteNessuna": "Nessuna nota.",
   "noteSelezionaAlunniTesto": "Seleziona alunni e scrivi il testo",
   "noteInviata": "Nota inviata ✓",
-
   "fascicoloTitolo": "Fascicolo personale",
   "fascicoloBanner": "<strong>Accesso tracciato.</strong> Documenti riservati (PEI/PDP/sanitari) e pagelle: l'accesso è limitato ai docenti contitolari e alla dirigenza. Indica la <strong>finalità</strong> — ogni apertura è registrata nel log immodificabile del fascicolo.",
   "fascicoloTipo_diagnosi": "Diagnosi funzionale",
@@ -228,7 +218,6 @@
   "fascicoloDocumento": "Documento",
   "fascicoloScade": "scade {data}",
   "fascicoloApri": "Apri",
-
   "prospettoTitolo": "Prospetto valutazioni",
   "prospettoSub": "Seleziona solo l'alunno per vedere la panoramica di tutte le materie. Seleziona anche la materia per il dettaglio per obiettivo.",
   "prospettoBanner": "<strong>Strumento di lavoro del docente.</strong> La media è indicativa e non ufficiale: non compare in pagella né nelle viste delle famiglie (O.M. 3/2025).",

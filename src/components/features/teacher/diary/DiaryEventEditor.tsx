@@ -468,6 +468,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 </div>
                                 <button
                                     onClick={() => setSelectedEvent(null)}
+                                    aria-label={t('chiudiEvento')}
                                     className="w-8 h-8 rounded-xl bg-kidville-cream-dark hover:bg-kidville-cream flex items-center justify-center text-kidville-green transition-colors"
                                 >
                                     <X size={14} strokeWidth={1.5} />
@@ -587,6 +588,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     <div className="flex items-center gap-2 flex-shrink-0">
                                                         <button
                                                             onClick={() => counter(student.id, 'pipi', -1)}
+                                                            aria-label={t('bagnoPipiMeno')}
                                                             className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
                                                         >
                                                             <Minus size={10} strokeWidth={1.5} />
@@ -594,6 +596,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                         <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
                                                         <button
                                                             onClick={() => counter(student.id, 'pipi', 1)}
+                                                            aria-label={t('bagnoPipiPiu')}
                                                             className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                         >
                                                             <Plus size={10} strokeWidth={1.5} />
@@ -609,6 +612,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     <div className="flex items-center gap-2 flex-shrink-0">
                                                         <button
                                                             onClick={() => counter(student.id, 'cacca', -1)}
+                                                            aria-label={t('bagnoCaccaMeno')}
                                                             className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
                                                         >
                                                             <Minus size={10} strokeWidth={1.5} />
@@ -616,6 +620,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                         <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
                                                         <button
                                                             onClick={() => counter(student.id, 'cacca', 1)}
+                                                            aria-label={t('bagnoCaccaPiu')}
                                                             className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                         >
                                                             <Plus size={10} strokeWidth={1.5} />
@@ -631,6 +636,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     <div className="flex items-center gap-2 flex-shrink-0">
                                                         <button
                                                             onClick={() => counter(student.id, 'vasino', -1)}
+                                                            aria-label={t('bagnoVasinoMeno')}
                                                             className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
                                                         >
                                                             <Minus size={10} strokeWidth={1.5} />
@@ -638,6 +644,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                         <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
                                                         <button
                                                             onClick={() => counter(student.id, 'vasino', 1)}
+                                                            aria-label={t('bagnoVasinoPiu')}
                                                             className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                         >
                                                             <Plus size={10} strokeWidth={1.5} />

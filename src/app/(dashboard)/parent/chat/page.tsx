@@ -398,7 +398,13 @@ function ParentChatContent() {
     const terminiCta = termsBlocked ? (
         <div className="border-t border-kidville-yellow/40 bg-kidville-yellow-soft px-4 py-3">
             <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow-dark">{t('ugcTermsBlockedTitle')}</p>
-            <p className="mb-2 font-maven text-xs text-kidville-yellow-dark/80">{t('ugcTermsBlockedBody')}</p>
+            {/* Niente `/80` sull'inchiostro: l'alfa portava il corpo del banner a
+                1,56:1 sul giallo tenue — sotto il titolo, che già stava a 1,75:1.
+                La rete di sicurezza in globals.css lo riporterebbe comunque a
+                tinta piena, quindi la classe direbbe una cosa e la pagina ne
+                renderebbe un'altra. La gerarchia resta dove è leggibile: 12px
+                normale contro 14px extrabold. */}
+            <p className="mb-2 font-maven text-xs text-kidville-yellow-dark">{t('ugcTermsBlockedBody')}</p>
             <a
                 href="/parent/onboarding"
                 className="inline-flex items-center rounded-full bg-kidville-green px-4 py-2 font-barlow text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-kidville-green-dark"
@@ -571,7 +577,7 @@ function ParentChatContent() {
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{t('newChat')}</h2>
                                 </div>
-                                <button onClick={() => setShowNewChat(false)}
+                                <button onClick={() => setShowNewChat(false)} aria-label={t('chiudiNuovaChat')}
                                     className="w-8 h-8 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted">
                                     <X size={14} strokeWidth={1.5} />
                                 </button>

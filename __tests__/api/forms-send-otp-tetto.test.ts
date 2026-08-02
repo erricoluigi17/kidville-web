@@ -64,13 +64,18 @@ const h = vi.hoisted(() => {
       },
     }
   }
-  return { state, makeClient }
+  return { state, makeClient, TITOLARE: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }
 })
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  // Gate d'identità della route (2026-08-02): il chiamante è l'intestatario
+  // della domanda. Il caso anonimo/estraneo sta nel test dedicato.
+  requireUser: vi.fn().mockResolvedValue({ user: { id: h.TITOLARE, role: 'genitore', scuola_id: null } }),
+}))
 
 // `rate-limit` NON è mockato: è la macchina sotto esame. La finestra è reale e il
 // contatore è in memoria, quindi ogni test parte da una chiave diversa.
@@ -103,7 +108,7 @@ function preparaDomanda(sid: string, codiceGiusto: string, quante: number) {
       id: sid,
       otp_secret: hashOtp(sid, codiceGiusto),
       status: 'pending',
-      user_id: null,
+      user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
       model_id: 'mmmmmmmm-mmmm-4mmm-8mmm-mmmmmmmmmmmm',
       otp_generato_il: new Date().toISOString(),
     },

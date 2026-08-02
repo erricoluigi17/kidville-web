@@ -98,6 +98,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                 {searchTerm && (
                     <button
                         onClick={() => setSearchTerm('')}
+                        aria-label={t('galleryPulisciRicerca')}
                         className="absolute inset-y-0 right-0 pr-3 flex items-center text-kidville-muted hover:text-kidville-green"
                     >
                         <X size={14} />

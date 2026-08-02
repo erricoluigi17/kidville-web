@@ -99,13 +99,28 @@ import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
 
 describe('EnrollmentWizard — stringhe dal namespace public', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ json: async () => ({}) })))
+    // La forma vera delle risposte: `ok: true` e, per l'elenco sedi, un `data`
+    // ARRAY. Dal 2026-08-02 il wizard distingue «elenco vuoto» (il DB della CI:
+    // si compila) da «elenco non ottenuto» (429/500/corpo strano: si mostra
+    // l'errore), quindi un corpo `{}` senza `ok` porterebbe al pannello
+    // d'errore e non al modulo.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(url).includes('/api/iscrizione/sedi') ? { success: true, data: [] } : {},
+        }),
+      ),
+    )
   })
 
   it('eyebrow, heading e navigazione usano le chiavi wizard*', async () => {
     render(<EnrollmentWizard scuolaId={null} />)
     // Il wizard non dipinge nessun passo finché non sa se il passo sede esiste
-    // (qui la fetch delle sedi degrada: nessuna sede → si parte dal bambino).
+    // (qui l'elenco arriva VUOTO: nessuna sede da scegliere, si parte dal bambino).
     // Senza questa attesa si guarderebbe il caricamento, non il modulo.
     await waitFor(() => expect(screen.getByText('Bambino 1')).toBeInTheDocument())
     // L'heading compone il numero in JS (mock-safe): "Bambino 1" esatto.

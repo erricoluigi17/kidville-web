@@ -304,5 +304,13 @@
   "bldErrore": "Error",
   "bldSalvaModello": "Save Template",
   "bldSedeTutte": "All locations",
-  "bldSedeLabel": "Target location for the form"
+  "bldSedeLabel": "Target location for the form",
+  "modRimuoviCampo": "Remove field",
+  "ppRimuoviOpzione": "Remove option",
+  "radjChiudi": "Close",
+  "radjDiminuisci": "Decrease score",
+  "radjAumenta": "Increase score",
+  "rtDettaglioRettifiche": "Adjustments detail",
+  "sdsChiudi": "Close application detail",
+  "builderTornaIndietro": "Back to forms"
 }

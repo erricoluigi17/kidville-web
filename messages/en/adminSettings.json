@@ -366,5 +366,10 @@
 
   "pgPeriodiScrutinio": "Assessment periods",
   "pgScalaGiudizi": "Grade scale",
-  "pgGiudiziScrutinio": "Assessment judgements"
+  "pgGiudiziScrutinio": "Assessment judgements",
+  "armRimuoviCategoria": "Remove category",
+  "meEliminaAssegnazione": "Delete assignment",
+  "noteRimuoviCategoria": "Remove category",
+  "spEliminaCategoria": "Delete category",
+  "spRimuoviPacchetto": "Remove package"
 }

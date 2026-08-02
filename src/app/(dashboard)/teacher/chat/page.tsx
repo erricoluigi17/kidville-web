@@ -502,7 +502,7 @@ function TeacherChatContent() {
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{t('chatNuova')}</h2>
                                 </div>
-                                <button onClick={() => setShowNewChat(false)}
+                                <button onClick={() => setShowNewChat(false)} aria-label={t('chatChiudiNuova')}
                                     className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green">
                                     <X size={14} strokeWidth={1.5} />
                                 </button>

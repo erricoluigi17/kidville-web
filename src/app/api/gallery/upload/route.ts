@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { parseData } from '@/lib/validation/http';
+import { parseData, parseMultipart } from '@/lib/validation/http';
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
@@ -17,8 +18,10 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const formData = await request.formData();
-        const f = parseData(postFormSchema, { file: formData.get('file') });
+        // Content-Type sbagliato = errore del CLIENT: 400, non 500 (collaudo 2026-08-02, F2).
+        const formData = await parseMultipart(request);
+        if ('response' in formData) return formData.response;
+        const f = parseData(postFormSchema, { file: formData.data.get('file') });
         if ('response' in f) return f.response;
         const { file } = f.data;
         // Il path è namespaced sull'utente del gate, non su un campo client.
@@ -141,7 +144,10 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
 
         if (error) {
             logErrore({ operazione: 'gallery/upload:POST', stato: 500, evento: 'storage' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            // Il corpo dell'errore del fornitore resta nel LOG e non torna al client (S31,
+            // AGENTS §3): «mime type … is not supported» non è una frase da mostrare a
+            // un'insegnante, e porta fuori il nome del bucket e dei suoi vincoli.
+            return rispostaAllegatoNonCaricato();
         }
 
         // Link firmato per l'ANTEPRIMA immediata: il bucket è privato, quindi

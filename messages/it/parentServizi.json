@@ -139,5 +139,7 @@
 
   "sospensioneServiziSospesi": "Servizi sospesi",
   "sospensioneScaduto": " ({importo} scaduti)",
-  "sospensioneTesto": "La tua posizione risulta sospesa per morosità{scaduto}. Alcuni servizi (moduli, adesioni, ordini) sono temporaneamente bloccati. Salda gli importi scaduti o contatta la <strong>Segreteria</strong> per regolarizzare: la riattivazione è automatica una volta saldato tutto lo scaduto."
+  "sospensioneTesto": "La tua posizione risulta sospesa per morosità{scaduto}. Alcuni servizi (moduli, adesioni, ordini) sono temporaneamente bloccati. Salda gli importi scaduti o contatta la <strong>Segreteria</strong> per regolarizzare: la riattivazione è automatica una volta saldato tutto lo scaduto.",
+  "lockerMesePrecedente": "Mese precedente",
+  "lockerMeseSuccessivo": "Mese successivo"
 }

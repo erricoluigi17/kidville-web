@@ -179,7 +179,16 @@ async function corpoSicuro(res: Response, params: FiscalCodeParams): Promise<str
  * NOTI ESATTAMENTE, perché li abbiamo appena spediti noi.
  */
 function mascheraDati(testo: string, params: FiscalCodeParams): string {
-    let out = testo.replace(/\s+/g, ' ').trim().slice(0, CORPO_MAX);
+    // SI MASCHERA PRIMA, SI TRONCA DOPO. Al contrario — ed era il contrario — un
+    // valore che cade a cavallo del taglio non viene più riconosciuto e la sua
+    // prima metà resta in chiaro: misurato, `…xxxBellandi` tagliato a 300 lasciava
+    // `Bell` nel log. È lo stesso ordine, e per la stessa ragione, di
+    // `sanificaMessaggio` in `src/lib/logging/serialize.ts`.
+    //
+    // Il pre-taglio di sicurezza contro i corpi enormi resta, ma LARGO: qui non ci
+    // sono regex con backtracking, solo `split/join` e regex letterali, quindi
+    // basta impedire che un dump da megabyte giri per intero.
+    let out = testo.replace(/\s+/g, ' ').trim().slice(0, CORPO_MAX * 20);
     for (const v of Object.values(params)) {
         if (typeof v !== 'string' || v.length < MASCHERA_MIN) continue;
         out = out.split(v).join('[dato]');
@@ -187,5 +196,5 @@ function mascheraDati(testo: string, params: FiscalCodeParams): string {
         const rx = new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
         out = out.replace(rx, '[dato]');
     }
-    return out;
+    return out.slice(0, CORPO_MAX);
 }

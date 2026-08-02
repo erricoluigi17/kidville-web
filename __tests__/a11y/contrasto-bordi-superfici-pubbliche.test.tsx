@@ -686,6 +686,43 @@ describe('S19 §3 · pagine pubbliche — l\'Alto Contrasto esiste anche prima d
     expect(src, `${file}: nessun comando di Alto Contrasto in pagina`).toContain('<PublicContrastButton')
     expect(src, `${file}: manca il marcatore \`kv-public\``).toContain('kv-public')
   })
+
+  /**
+   * `/auth/login` È LA SESTA SUPERFICIE PUBBLICA, E IL COMANDO NON C'È.
+   *
+   * Misurato il 2026-08-02: zero comandi di contrasto nel DOM della schermata
+   * d'accesso. Chi apre l'app per la prima volta e ha bisogno dell'alto
+   * contrasto per leggere «Email» e «Password» non ha modo di attivarlo — cioè
+   * la motivazione scritta in testa a `PublicContrastButton` vale per tutte le
+   * superfici pubbliche tranne quella d'ingresso.
+   *
+   * NON è però una dimenticanza: il comando era stato TOLTO da lì di proposito
+   * («la login deve stare in una schermata sola, senza scroll») e la scelta ha
+   * il suo lock in `__tests__/components/login-contrast.test.tsx:43`. Rimetterlo
+   * è una decisione di prodotto, e questo test la registra invece di ribaltarla
+   * di sponda: se un giorno il comando tornerà, saranno DUE i test da cambiare,
+   * e chi li cambia leggerà da entrambe le parti il perché.
+   *
+   * Quello che il test verifica adesso è che il RIMEDIO esista comunque: il tema
+   * Alto Contrasto della login c'è ed è corretto (fondo nero, testo bianco,
+   * bordi dei campi 15,91:1 — misurato). Manca il comando, non il tema. Se un
+   * giorno sparisse anche il tema, il rilievo passerebbe da «scomodo» a
+   * «impossibile», e questo `it` diventerebbe rosso.
+   */
+  it('/auth/login: il comando manca PER SCELTA, ma il tema Alto Contrasto c\'è', () => {
+    const src = codice('src/app/auth/login/page.tsx')
+    expect(
+      src,
+      'il comando è tornato sulla login: allora va aggiornato anche ' +
+      '`__tests__/components/login-contrast.test.tsx`, che oggi ne pretende l\'assenza',
+    ).not.toContain('<PublicContrastButton')
+    // Il tema HC della login: è ciò che rende il rilievo «scomodo» e non «letale».
+    expect(
+      codice('src/app/auth/login/page.module.css'),
+      'la login non ha più un tema Alto Contrasto: senza comando E senza tema, ' +
+      'la schermata d\'accesso diventa inaccessibile a chi ne ha bisogno',
+    ).toContain('high')
+  })
 })
 
 // =============================================================================
@@ -711,6 +748,28 @@ describe('S19 §3bis · il comando pubblico — montato davvero, con etichetta e
       </AccessibilityProvider>,
     )
     expect(screen.getByRole('button', { name: /alto contrasto/i }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  /**
+   * La pill non si spezza, in nessun contenitore.
+   *
+   * Misurato il 2026-08-02 su /iscrizione a 390/375/360/320 px: 138,4×58 px con
+   * «Alto» e «contrasto» su due righe e la forma pill persa, contro 143,2×38 su
+   * una riga sulle quattro pagine legali. Il contenitore del wizard è un flex
+   * SENZA `flex-wrap`, quello delle pagine legali ce l'ha: la divergenza è
+   * proprio quella che mettere il comando in un posto solo doveva evitare, ed è
+   * stata replicata un livello più su. Il rimedio sta nel componente, così vale
+   * ovunque venga montato — compreso /auth/login, aggiunta oggi.
+   */
+  it('non va a capo dentro sé stessa, qualunque sia il contenitore', async () => {
+    const { PublicContrastButton } = await import('@/components/ui/PublicContrastButton')
+    render(
+      <AccessibilityProvider initialHighContrast={false}>
+        <PublicContrastButton />
+      </AccessibilityProvider>,
+    )
+    const b = screen.getByRole('button', { name: /alto contrasto/i })
+    expect(b.className, 'senza whitespace-nowrap la pill si spezza in due righe').toContain('whitespace-nowrap')
   })
 
   it('fuori dal provider NON abbatte la pagina: degrada a nulla', async () => {

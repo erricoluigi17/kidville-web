@@ -63,7 +63,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // I dati restano quelli di prima (nessuna asserzione cambia).
       b.contains = () => b
       b.delete = () => { h.deletedTables.push(table); return b }
-      b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
+      // `parents` risponde anche in forma singola: da quando la route passa da
+      // `anonimizzaParent`, l'`auth_user_id` del genitore orfano si legge con
+      // `maybeSingle` prima di essere azzerato. Un doppio che qui risponde
+      // `null` renderebbe il genitore irraggiungibile in spazio-id `utenti` —
+      // cioè farebbe sembrare corretto un oblio che non tocca news e UGC.
+      b.maybeSingle = async () => ({
+        data: table === 'alunni' ? h.alunno : table === 'parents' ? (h.parentsAuth[0] ?? null) : null,
+        error: null,
+      })
       b.then = (res: (v: unknown) => unknown) => {
         if (table === 'news_visualizzazioni' && h.newsVisError) {
           return Promise.resolve({ data: null, error: h.newsVisError }).then(res)
@@ -73,7 +81,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
       return b
     },
-    storage: { from: () => ({ remove: async (paths: string[]) => { h.removed.push(...paths); return { error: null } } }) },
+    storage: {
+      from: () => ({
+        remove: async (paths: string[]) => { h.removed.push(...paths); return { error: null } },
+        // Elenca il bucket `credenziali` (nessuna tabella-indice) e verifica che
+        // i file non usciti non siano rimasti: elenco vuoto = «non c'è più».
+        list: async () => ({ data: [] as { name: string }[], error: null }),
+      }),
+    },
   }),
 }))
 

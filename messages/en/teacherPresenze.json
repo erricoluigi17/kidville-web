@@ -14,6 +14,9 @@
   "sezioneCon": "Section {sezione}",
   "giornoPrecedente": "Previous day",
   "giornoSuccessivo": "Next day",
+  "mesePrecedente": "Previous month",
+  "meseSuccessivo": "Next month",
+  "aggiorna": "Refresh",
   "oggi": "Today",
   "mese": "Month",
   "caricamentoAlunni": "Loading students from records…",
@@ -67,5 +70,6 @@
   "nonFirmata": "Not signed",
   "quotaSaldata": "Fee paid",
   "saldata": "Paid",
-  "daSaldare": "Unpaid"
+  "daSaldare": "Unpaid",
+  "chiudi": "Close"
 }

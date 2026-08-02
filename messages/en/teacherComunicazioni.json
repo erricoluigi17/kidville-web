@@ -100,5 +100,7 @@
   "ugcReopenError": "Could not reopen the conversation. Please try again.",
   "ugcTermsBlockedTitle": "Accept the Terms to continue",
   "ugcTermsBlockedBody": "To write in chat you must first accept the Terms of Service.",
-  "ugcTermsBlockedCta": "Accept the Terms to continue"
+  "ugcTermsBlockedCta": "Accept the Terms to continue",
+  "chatChiudiNuova": "Close new chat",
+  "chatRimuoviAllegato": "Remove attachment"
 }

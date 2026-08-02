@@ -232,5 +232,6 @@
   "rteLink": "Link",
   "rtePromptLink": "Indirizzo del link (https://…, http://… o mailto:)",
   "rteInserisciImmagine": "Inserisci immagine nel testo",
-  "rteNotaImmagini": "le immagini finiscono nel corpo dell'articolo"
+  "rteNotaImmagini": "le immagini finiscono nel corpo dell'articolo",
+  "messaggiInviaAria": "Invia messaggio"
 }

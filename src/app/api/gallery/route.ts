@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
+import { proiettaPerGenitore } from './proiezione';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
@@ -288,14 +289,21 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             : { data: [] };
         const uploaderById = new Map((uploaders ?? []).map(u => [u.id, u]));
 
+        // `studentId` presente ⇒ chi legge è un GENITORE (il gate sopra è
+        // `requireParentOfStudent`). A lui `tag_students` — gli uuid degli altri
+        // minori ritratti nella stessa foto di gruppo — non serve e non deve
+        // uscire: GDPR art. 5.1.c. Vedi `./proiezione`.
         const enriched = page.map((media) => {
             const uploader = uploaderById.get(media.uploaded_by);
-            return {
-                ...media,
-                uploader_name: uploader
-                    ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
-                    : 'Sconosciuto',
-            };
+            return proiettaPerGenitore(
+                {
+                    ...media,
+                    uploader_name: uploader
+                        ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
+                        : 'Sconosciuto',
+                },
+                Boolean(studentId),
+            );
         });
 
         // Il bucket `gallery` è PRIVATO: in tabella c'è il percorso del file, e

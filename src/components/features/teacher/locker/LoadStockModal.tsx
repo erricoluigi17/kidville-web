@@ -120,7 +120,7 @@ export function LoadStockModal({
                             className="p-1.5 text-kidville-muted hover:text-kidville-muted transition-colors">
                             <Settings size={16} />
                         </Link>
-                        <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink">
+                        <button onClick={onClose} aria-label={t('lockerChiudiCarico')} className="text-kidville-muted hover:text-kidville-ink">
                             <X size={20} />
                         </button>
                     </div>

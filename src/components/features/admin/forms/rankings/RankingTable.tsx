@@ -62,6 +62,8 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
     <div className="relative inline-flex" ref={ref}>
       <button
         onMouseEnter={() => setOpen(true)}
+        aria-label={t('rtDettaglioRettifiche')}
+        aria-expanded={open}
         onMouseLeave={() => setOpen(false)}
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
         className="p-1 rounded-md transition-all"

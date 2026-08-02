@@ -118,7 +118,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
             <SectionTitle icon={BellRing} title={t('soll_titolo')}
                 sub={t('soll_sub')}
                 action={
-                    <button onClick={() => { setLoading(true); load(); }}
+                    <button onClick={() => { setLoading(true); load(); }} aria-label={t('soll_aggiorna')}
                         className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         <RefreshCw size={14} />
                     </button>

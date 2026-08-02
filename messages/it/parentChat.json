@@ -62,5 +62,6 @@
   "ugcReopenError": "Non è stato possibile riaprire la conversazione. Riprova.",
   "ugcTermsBlockedTitle": "Accetta i Termini per continuare",
   "ugcTermsBlockedBody": "Per scrivere in chat devi prima accettare i Termini di servizio.",
-  "ugcTermsBlockedCta": "Accetta i Termini per continuare"
+  "ugcTermsBlockedCta": "Accetta i Termini per continuare",
+  "chiudiNuovaChat": "Chiudi nuova chat"
 }

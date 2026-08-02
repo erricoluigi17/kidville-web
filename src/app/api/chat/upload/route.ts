@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
-import { parseData } from '@/lib/validation/http'
+import { parseData, parseMultipart } from '@/lib/validation/http'
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { BUCKET_CHAT_ALLEGATI, TTL_FIRMA_CHAT_S } from '@/lib/chat/allegati'
@@ -62,8 +63,13 @@ export const POST = withRoute('chat/upload:POST', async (request: Request) => {
   }
 
   try {
-    const form = await request.formData()
-    const parsed = parseData(postFormSchema, { file: form.get('file') })
+    // Content-Type sbagliato = errore del CLIENT: 400, non 500 (collaudo 2026-08-02, F2).
+    // `request.formData()` LANCIA su un Content-Type non multipart, e finiva quindi nel
+    // `catch` qui sotto — che è tarato sui guasti del server e rimandava indietro il testo
+    // interno del runtime.
+    const form = await parseMultipart(request)
+    if ('response' in form) return form.response
+    const parsed = parseData(postFormSchema, { file: form.data.get('file') })
     if ('response' in parsed) return parsed.response
     const { file } = parsed.data
 
@@ -96,7 +102,9 @@ export const POST = withRoute('chat/upload:POST', async (request: Request) => {
       // dice niente, «mime type … is not supported» dice tutto. Prima qui non
       // c'era nessuna riga: un allegato che non parte era invisibile.
       logErrore({ operazione: 'chat/upload:POST', stato: 500, evento: 'storage' }, error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      // …e non torna al CLIENT: quel testo porta fuori il nome del bucket, i vincoli e le
+      // policy. Al client un codice traducibile, come sui gemelli `avvisi`/`tasks` (S31).
+      return rispostaAllegatoNonCaricato()
     }
 
     // IL CARICAMENTO RIUSCITO LASCIA UNA RIGA (AGENTS §5). Senza, «nessun log di
@@ -141,10 +149,10 @@ export const POST = withRoute('chat/upload:POST', async (request: Request) => {
       name: file.name,
     })
   } catch (err) {
+    // `withRoute` non vede le eccezioni CATTURATE: il log lo fa questo ramo, di suo.
+    // Al client un messaggio fisso: `err.message` è il testo interno del runtime, e oggi ne
+    // esce una stringa di Next — domani ne uscirebbe quello che ci finisce dentro.
     logErrore({ operazione: 'chat/upload:POST', stato: 500 }, err)
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Errore interno' },
-      { status: 500 }
-    )
+    return rispostaAllegatoNonCaricato()
   }
 })

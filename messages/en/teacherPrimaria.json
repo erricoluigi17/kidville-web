@@ -9,13 +9,11 @@
   "comuneSalvataggio": "Saving…",
   "comuneSi": "yes",
   "comuneNo": "no",
-
   "hubEyebrow": "Primary World",
   "hubTitolo": "My classes",
   "hubNessunaClasse": "Classes you are not assigned to do not appear. If you can't see a section, contact the Office.",
   "hubClasse": "Class {name}",
   "hubAlunni": "{count, plural, one {# pupil} other {# pupils}}",
-
   "overviewPresenzeOggi": "Today's attendance",
   "overviewPresenti": "Present",
   "overviewAssenti": "Absent",
@@ -26,7 +24,6 @@
   "overviewInClasse": "{count} in class",
   "overviewNessunAlunno": "No pupils.",
   "overviewFooter": "Use the tabs above for register, grades, term assessment and student file.",
-
   "appelloTitolo": "Roll call",
   "appelloDataAria": "Roll call date",
   "appelloTuttiPresenti": "All present",
@@ -52,7 +49,6 @@
   "appelloTotaleOre": "Total hours",
   "appelloMateria": "Subject",
   "appelloOreMancate": "Missed hours",
-
   "registroTitolo": "Class register",
   "registroDataAria": "Register date",
   "registroErroreUpload": "Upload error",
@@ -70,7 +66,6 @@
   "registroAllega": "Attach",
   "registroModifica": "Edit",
   "registroFirma": "Sign",
-
   "firmaModalTitolo": "Period {ora} — Sign lesson",
   "firmaModalSelezioneOffline": "Selecting pupils requires a connection. Choose «Whole class» or try again when you are online.",
   "firmaModalClasse": "Class",
@@ -96,7 +91,6 @@
   "firmaModalConsegnaCompiti": "Homework due date (optional)",
   "firmaModalConsegnaAria": "Homework due date",
   "firmaModalAnnulla": "Cancel",
-
   "valutazioniBanner": "<strong>Numeric grades disabled in primary school.</strong> Assessment is expressed with descriptive and synthetic judgements (Min. Order 3/2025). Any numeric note is a private reminder for the teacher.",
   "valutazioniTitolo": "Ongoing assessment",
   "valutazioniMateriaPlaceholder": "Subject…",
@@ -141,7 +135,6 @@
   "valutazioniInserisciArgomento": "Enter the topic",
   "valutazioniCollegaObiettivo": "Link at least one learning objective",
   "valutazioniSalvata": "Assessment saved ✓",
-
   "scrutinioBanner": "<strong>Official document.</strong> Only textual synthetic judgements — no numeric grade, no average. Closing and publishing are reserved to the Head Teacher.",
   "scrutinioTitolo": "Term assessment",
   "scrutinioPeriodoPlaceholder": "Period…",
@@ -172,15 +165,13 @@
   "scrutinioChiuso": "Term assessment closed ✓",
   "scrutinioErroreImport": "Import error",
   "scrutinioImportate": "{count, plural, one {Imported # row} other {Imported # rows}}",
-  "scrutinioImportateErrori": ", {count} with errors",
+  "scrutinioImportateErrori": "{count, plural, one {, # with an error} other {, # with errors}}",
   "scrutinioErroreLettura": "File reading error",
-  "scrutinioPagelleGenerate": "Generated {generate}/{totale} report cards",
+  "scrutinioPagelleGenerate": "{totale, plural, one {Generated {generate}/{totale} report card} other {Generated {generate}/{totale} report cards}}",
   "scrutinioConfermaPubblica": "Publish the grades? Parents will be able to see the report cards and will receive a notification.",
   "scrutinioVotiPubblicati": "Grades published ✓",
   "scrutinioPubblicazioneRevocata": "Publication revoked ✓",
-
   "orarioTitolo": "Weekly timetable",
-
   "noteNuova": "New note",
   "noteAlunni": "Pupils",
   "noteDeselezionaTutti": "Deselect all",
@@ -198,7 +189,6 @@
   "noteNessuna": "No notes.",
   "noteSelezionaAlunniTesto": "Select pupils and write the text",
   "noteInviata": "Note sent ✓",
-
   "fascicoloTitolo": "Personal file",
   "fascicoloBanner": "<strong>Tracked access.</strong> Confidential documents (IEP/PDP/medical) and report cards: access is limited to co-holder teachers and management. Indicate the <strong>purpose</strong> — every opening is recorded in the file's immutable log.",
   "fascicoloTipo_diagnosi": "Functional diagnosis",
@@ -228,7 +218,6 @@
   "fascicoloDocumento": "Document",
   "fascicoloScade": "expires {data}",
   "fascicoloApri": "Open",
-
   "prospettoTitolo": "Grades overview",
   "prospettoSub": "Select only the pupil to see the overview of all subjects. Also select the subject for the per-objective detail.",
   "prospettoBanner": "<strong>Teacher's working tool.</strong> The average is indicative and unofficial: it does not appear on the report card nor in the families' views (Min. Order 3/2025).",

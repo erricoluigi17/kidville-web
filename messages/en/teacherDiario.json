@@ -60,5 +60,13 @@
   "salvaPerTutti": "Save {evento} for everyone",
   "selezionaEvento": "👆 Select an event to start filling in the diary",
   "salvatoConSuccesso": "✅ Saved successfully!",
-  "alertErroreSalvataggio": "Error while saving. Check the console."
+  "alertErroreSalvataggio": "Error while saving. Check the console.",
+  "chiudiEvento": "Close",
+  "rimuoviAttivita": "Remove activity",
+  "bagnoPipiMeno": "Decrease pee",
+  "bagnoPipiPiu": "Increase pee",
+  "bagnoCaccaMeno": "Decrease poo",
+  "bagnoCaccaPiu": "Increase poo",
+  "bagnoVasinoMeno": "Decrease potty",
+  "bagnoVasinoPiu": "Increase potty"
 }

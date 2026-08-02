@@ -59,5 +59,7 @@
   "bagnoCacca": "💩 Ho fatto cacca {count, plural, one {una volta} other {# volte}}",
   "bagnoVasino": "🚽 Ho usato il vasino {count, plural, one {una volta} other {# volte}}",
   "bagnoGenerico": "Sono stato/a al bagno oggi!",
-  "eventoGenerico": "Evento registrato dalla maestra."
+  "eventoGenerico": "Evento registrato dalla maestra.",
+  "giornoPrecedente": "Giorno precedente",
+  "giornoSuccessivo": "Giorno successivo"
 }

@@ -62,6 +62,49 @@ export const TIMEOUT_SONDA_MS = 3000;
 /** Attributo sul nodo dell'elenco: `react` = da qui in poi la lista è di React. */
 export const ATTRIBUTO_POSSESSO = 'data-kv-owner';
 
+/**
+ * ─── E LA STAFFETTA NON BASTAVA: IL MISMATCH DI IDRATAZIONE ────────────────
+ * La regola di possesso qui sopra risolve il DOPPIONE, non il MISMATCH.
+ * Misurato in collaudo (2026-08-02): con qualche rotta in CacheStorage,
+ * `/offline` riportava a ogni caricamento il React #418 — «Hydration failed
+ * because the server rendered HTML didn't match the client. As a result this
+ * tree will be regenerated on the client». Il markup del server ha le due liste
+ * VUOTE; il DOM, al momento dell'idratazione, ne aveva 17-18 voci per lista,
+ * messe lì da questo script. **Qualunque nodo aggiunto prima dell'idratazione è
+ * un mismatch**, e il prezzo è che React butta l'HTML del server e ricostruisce
+ * l'intero albero.
+ *
+ * La via d'uscita non è ritardare alla cieca — sarebbe rallentare proprio il
+ * caso in cui questo script è l'unica cosa che funziona — ma FARE UNA DOMANDA
+ * al documento: React arriverà?
+ *
+ *  · **Nessun `<script src=".../_next/...">` nel documento** → non c'è bundle,
+ *    React non idraterà mai: si disegna SUBITO, senza un millisecondo d'attesa.
+ *    È il caso per cui questo script esiste (documento servito dalla
+ *    CacheStorage a un'app appena installata e senza rete).
+ *  · **Il bundle c'è** → si aspetta. O React dichiara il possesso — e allora qui
+ *    non si tocca nulla, e il mismatch non può esistere — oppure uno di quegli
+ *    script FALLISCE (offline: i chunk non sono in cache), e allora l'idratazione
+ *    non avverrà mai: si disegna subito lo stesso.
+ *  · **Ultima rete**: `ATTESA_REACT_MS`. Serve al caso in cui l'evento `error`
+ *    è già passato prima che noi potessimo ascoltarlo, o in cui il bundle si
+ *    carica ma l'idratazione non arriva (un errore nel bundle stesso). Meglio un
+ *    elenco in ritardo di un elenco mai.
+ */
+
+/**
+ * Selettore dei chunk di Next nel documento. `*="/_next/"` copre sia il path
+ * relativo sia un `assetPrefix` assoluto (CDN).
+ */
+export const SELETTORE_BUNDLE_NEXT = 'script[src*="/_next/"]';
+
+/**
+ * Tetto d'attesa di React quando il bundle è nel documento. Non è il meccanismo
+ * principale (lo sono le due condizioni qui sopra): è la rete di sicurezza, e
+ * per questo può permettersi di essere generosa.
+ */
+export const ATTESA_REACT_MS = 1200;
+
 /** Attributo sui nodi creati dallo script inline: sono quelli che React rimuove. */
 export const ATTRIBUTO_INLINE = 'data-kv-inline';
 
@@ -234,6 +277,8 @@ var CLASSI=${JSON.stringify(CLASSI_LINK)};
 var ASSET=/${ASSET.source}/i;
 var POSSESSO=${JSON.stringify(ATTRIBUTO_POSSESSO)};
 var INLINE=${JSON.stringify(ATTRIBUTO_INLINE)};
+var BUNDLE=${JSON.stringify(SELETTORE_BUNDLE_NEXT)};
+var ATTESA=${ATTESA_REACT_MS};
 
 function nodi(sel){return document.querySelectorAll(sel);}
 function mostra(sel,visibile){var n=nodi(sel);for(var i=0;i<n.length;i++){n[i].hidden=!visibile;}}
@@ -286,6 +331,27 @@ visti[p]=1;rotte.push(p);
 rotte.sort();
 return rotte;
 });
+}
+
+/* QUANDO tocca a noi disegnare — vedi la testata di ATTESA_REACT_MS.
+   Chiama \`azione\` UNA volta sola, e solo se React non è (ancora) arrivato. */
+function quandoTocca(azione){
+var bundle=document.querySelectorAll(BUNDLE);
+/* Nessun chunk di Next: React non idraterà mai, la pagina è nostra. Subito. */
+if(!bundle.length){azione();return;}
+var fatto=false;
+function ora(){
+if(fatto)return;
+fatto=true;
+/* React è arrivato: da qui in poi la pagina non è più nostra. */
+if(reactPossiede())return;
+azione();
+}
+/* L'ultima rete si arma PER PRIMA: se qualcosa andasse storto qui sotto,
+   l'elenco deve comparire lo stesso. */
+setTimeout(ora,ATTESA);
+/* Un chunk che non si carica = idratazione impossibile: niente da aspettare. */
+for(var i=0;i<bundle.length;i++){bundle[i].addEventListener('error',ora);}
 }
 
 function disegna(rotte){
@@ -352,7 +418,13 @@ mostra('[data-kv-nessuna-rete]',true);
 }
 }
 
-try{rotteInCache().then(disegna,function(){});}catch(e){}
+/* La lettura della cache parte SUBITO (è la parte lenta), il disegno aspetta il
+   proprio turno: le due cose sono indipendenti, e chi arriva secondo non
+   rallenta il primo. */
+try{
+var pronte=rotteInCache().then(function(r){return r;},function(){return [];});
+quandoTocca(function(){pronte.then(disegna,function(){});});
+}catch(e){}
 try{collegaRiprova();}catch(e){}
 })();`;
 }

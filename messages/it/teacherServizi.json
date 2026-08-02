@@ -184,5 +184,12 @@
   "settingsInfo4": "Ogni classe può avere materiali diversi",
   "settingsConfermaElimina": "Eliminare «{nome}»? Questa azione non può essere annullata.",
   "settingsErrNome": "Inserisci un nome",
-  "settingsErrSezione": "Seleziona almeno una sezione"
+  "settingsErrSezione": "Seleziona almeno una sezione",
+  "lockerAggiorna": "Aggiorna",
+  "lockerMesePrecedente": "Mese precedente",
+  "lockerMeseSuccessivo": "Mese successivo",
+  "lockerSpostaSu": "Sposta su",
+  "lockerSpostaGiu": "Sposta giù",
+  "lockerCaricaMateriale": "Registra un carico",
+  "lockerChiudiCarico": "Chiudi"
 }

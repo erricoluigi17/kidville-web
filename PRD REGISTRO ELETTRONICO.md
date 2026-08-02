@@ -89,6 +89,81 @@
 
 ---
 
+## 🗓️ Changelog — L'arretrato: 152 rilievi, e la firma che chiunque poteva chiedere 2026-08-02 (branch `fix/multisede-audit-globale`)
+
+Il secondo giro di collaudo aveva restituito 152 voci — 17 gravi, 16 minori, 119 warning — quasi
+tutte **preesistenti** e su aree che il ciclo del collaudo non aveva mai toccato. Il titolare ha
+deciso di chiuderle tutte, warning compresi, prima di qualunque merge. Dieci esecutori in
+parallelo, divisi per file.
+
+### La firma elettronica che chiunque poteva chiedere
+
+`POST /api/forms/send-otp` non verificava **nessuna identità** e accettava un `signerEmail`
+arbitrario su una submission altrui: chi conosceva un `submissionId` si faceva recapitare il codice
+all'indirizzo che voleva e **firmava al posto del genitore**, su un documento con valore legale.
+Chiuso con il gate d'identità su POST *e* PATCH, la verifica del titolo sulla firma, e il
+destinatario vincolato ai **tutori registrati in anagrafica** invece che al corpo della richiesta.
+
+Strada facendo sono emersi due difetti che nessuno aveva chiesto di cercare: la sospensione per
+morosità si aggirava **omettendo** `userId` dal body, e tre letture PostgREST ignoravano `{ error }`
+— un guasto di lettura usciva come «non trovata». La regola vale per POST e PATCH e vive in **una
+funzione sola**: è la lezione che questo branch ha già pagato due volte.
+
+### L'upload anonimo, e i 500 che raccontavano il database
+
+`POST /api/iscrizione/upload` accettava caricamenti **anonimi** nel bucket dei documenti
+d'iscrizione dei minori, senza tetto per IP e senza allowlist di tipo — mentre le tre rotte sorelle
+ce l'avevano. Ancora la porta accanto. E sei route di upload rispondevano `500` a un errore del
+**client**: un `Content-Type` sbagliato è un 400, e il 500 dice «ho un guasto io», sporcando ogni
+misura di salute. Due di esse rimandavano al chiamante il messaggio interno del runtime.
+
+### Le foto dei minori, e il consenso che non si poteva revocare
+
+La fotografia di un minore pubblicata sul blog finiva in `news`, l'unico bucket **pubblico** dei
+tredici, dichiarato escluso dall'oblio: se la famiglia esercitava il diritto all'oblio, la foto
+restava online per sempre. E la **revoca** del consenso fotografico non aveva effetto sugli articoli
+già pubblicati — il consenso era verificato alla creazione, alla modifica e alla pubblicazione, e
+poi non lo ricontrollava più nessuno. *Un consenso che non si può revocare non è un consenso.*
+
+Insieme: l'oblio dichiarava `n_file_non_rimossi: 0` **anche quando lo Storage non aveva tolto
+niente**, perché quando la risposta non era un array si assumeva che fossero stati rimossi tutti.
+Una richiesta di oblio risultava evasa mentre i file di un bambino restavano nell'archivio.
+
+### Accessibilità: 68 bottoni senza nome, non 17
+
+Il tester ne aveva contati 17; il lock scritto per impedirne il ritorno ne ha trovati **68**. È la
+differenza fra un campione e un inventario, ed è il motivo per cui ogni correzione di questo ciclo
+finisce in una regola su tutti i file invece che in una lista di file. Chiusi anche: il modale con
+cui il genitore **firma con valore legale** (non annunciato come dialogo, campo del codice senza
+nome, errore mai letto, niente Esc), i quattro campi senza etichetta del «Nuovo acquisto», il
+registro protocolli che si apriva solo col mouse, e i colori di marchio usati come inchiostro.
+
+### La domanda d'iscrizione che si perdeva
+
+Sul modulo pubblico — ~9 domande l'ora da famiglie vere — se l'elenco delle sedi non arrivava
+(429 o 500) il passo «Sede» **spariva senza dire niente**: il genitore compilava tutta la domanda e
+la perdeva all'invio. La causa: `sedi.length > 1` non distingue un elenco vuoto **per errore** da
+«c'è una sede sola».
+
+### La difesa che valeva solo fino ad Android 14
+
+`windowSoftInputMode="adjustResize"`, aggiunto il giorno prima come «unica correzione difendibile»,
+è stato **misurato** compilando un APK gemello con `adjustPan`: su **API 33** è decisivo — senza, il
+composer della chat sparisce davvero sotto la tastiera — ma su **API 36 è inerte**, perché da
+Android 15 le app con `targetSdk ≥ 35` sono edge-to-edge per forza e non ridimensionano più la
+finestra. Questa app dichiara `targetSdk 36`. La riga resta, il commento no: nessuno deve credere
+che sia la difesa su un telefono nuovo.
+
+Nella stessa misura è emerso un difetto **nuovo e non chiuso**: in orizzontale il bottone «Invia»
+è tagliato dal bordo (API 36), e su API 33 ruotando dentro una conversazione **la conversazione si
+chiude** — perché non sta nell'URL, quindi il cambio di configurazione la butta via. È debito
+dichiarato.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 669 file / 6262 test** · `build ok`.
+Migrazione `20260802173254` **applicata in produzione** (advisors 0 ERROR).
+
+---
+
 ## 🗓️ Changelog — Il collaudo sui dispositivi: quando il gate verde certificava l'assenza della prova 2026-08-02 (branch `fix/multisede-audit-globale`)
 
 Il ciclo del 1° agosto si era chiuso col gate verde — `eslint 0` · `tsc 0` · 5741 test · `build ok`

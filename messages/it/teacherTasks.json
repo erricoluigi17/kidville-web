@@ -162,5 +162,7 @@
   "placeholderNoteRisoluzione": "Spiega cosa hai fatto per risolvere l'attività…",
   "caricaFileAllegati": "Carica File / Allegati (Opzionale)",
   "scegliFile": "Scegli file",
-  "confermaRisolto": "Conferma Risolto"
+  "confermaRisolto": "Conferma Risolto",
+  "chiudi": "Chiudi",
+  "rimuoviCompito": "Rimuovi compito"
 }

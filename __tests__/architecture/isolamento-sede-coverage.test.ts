@@ -891,7 +891,16 @@ const AMMESSE: Record<string, string> = {
     // ── Oblio GDPR: per definizione NON si ferma al confine della sede ───────
     // Cancellare «solo nella mia sede» sarebbe una cancellazione finta.
     'gdpr/retention-iscrizioni:POST': 'conservazione a 24 mesi: come l\'oblio, deve valere su TUTTE le sedi — una domanda mai evasa scade allo stesso modo a Giugliano, Aversa e Cesa, e un filtro di sede qui lascerebbe indietro i plessi che il job non conosce. Nessun utente da cui derivare uno scope: la chiama pg_net.',
-    'admin/gdpr/erase:POST': 'oblio: la bonifica insegue il minore ovunque compaia (movimenti bancari, cassa, riconciliazione), altrimenti non è cancellazione',
+    // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
+    // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
+    // fa il gate (`assertAlunnoInScope`, che il confine di sede lo verifica eccome,
+    // PRIMA di qualunque effetto) e poi chiama `anonimizzaAlunno`/`anonimizzaParent`.
+    // La bonifica che insegue il minore ovunque compaia — movimenti bancari, cassa,
+    // riconciliazione — è rimasta identica, ma vive in `src/lib/gdpr/esegui.ts`, dove
+    // sta scritta anche la ragione per cui non si restringe alla sede (il titolare
+    // del trattamento è la cooperativa, una sola per i tre plessi). Il lock scandisce
+    // gli handler, non le librerie: lasciare qui la voce significherebbe regalare
+    // l'esenzione alla prossima route che nascesse con questo nome.
 
     // ── Anagrafica: la ricerca del CF ALTROVE è deliberata ───────────────────
     // Serve a distinguere «bambino nuovo» da «bambino di un altra sede»: legge
@@ -1079,7 +1088,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // aggiunta una sola esenzione nuova e dichiarata
             // (`gdpr/retention-iscrizioni:POST`). Il saldo è −2, cioè un debito pagato:
             // questo numero può calare, e sale solo se qualcuno toglie un presidio.
-            handlerEsentati: 94,
+            //
+            // 94 → 93 il 2026-08-02: via anche `admin/gdpr/erase:POST`. Quella route non
+            // interroga più nessuna tabella per conto suo — fa il gate di sede e delega a
+            // `anonimizzaAlunno`/`anonimizzaParent`, le stesse funzioni degli altri due
+            // canali di oblio. Non è un presidio tolto: è la terza copia di una procedura
+            // che smette di esistere, e con lei l'esenzione che le serviva.
+            handlerEsentati: 93,
         })
     })
 })

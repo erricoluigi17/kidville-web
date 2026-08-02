@@ -116,7 +116,7 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
               {sezioneName && <span className="ml-2 rounded-pill bg-kidville-cream text-kidville-muted px-2 py-0.5 text-[11px]">{sezioneName}</span>}
               {a.e_contitolare && <span className="ml-2 rounded-pill bg-kidville-green/10 text-kidville-green px-2 py-0.5 text-[11px]">{t('comuneContitolare')}</span>}
             </div>
-            <button onClick={() => remove(a.id)} className="text-kidville-muted hover:text-kidville-error">
+            <button onClick={() => remove(a.id)} aria-label={t('docentiMaterieRimuovi')} className="text-kidville-muted hover:text-kidville-error">
               <Trash2 size={16} />
             </button>
           </li>

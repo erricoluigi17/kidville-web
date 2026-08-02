@@ -236,7 +236,7 @@ function MessaggiInner() {
                     placeholder={t('messaggiPlaceholder')}
                     className="flex-1 border-2 border-kidville-line rounded-pill px-4 py-2 font-maven text-sm focus:outline-none focus:border-kidville-green"
                   />
-                  <button onClick={invia} disabled={sending || !composer.trim() || !chatThreadId} className="flex h-10 w-10 items-center justify-center rounded-full bg-kidville-green text-white disabled:opacity-50">
+                  <button onClick={invia} disabled={sending || !composer.trim() || !chatThreadId} aria-label={t('messaggiInviaAria')} aria-busy={sending} className="flex h-10 w-10 items-center justify-center rounded-full bg-kidville-green text-white disabled:opacity-50">
                     {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                   </button>
                 </div>

@@ -74,5 +74,6 @@
   "adesioneInterattiva": "Interactive sign-up",
   "presaVisione": "Acknowledgement",
   "targetIstituto": "Target: Whole school",
-  "targetClassi": "Target: Classes ({classi})"
+  "targetClassi": "Target: Classes ({classi})",
+  "chiudiDettaglio": "Close notice detail"
 }

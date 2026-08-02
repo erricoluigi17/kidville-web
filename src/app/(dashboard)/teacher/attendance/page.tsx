@@ -319,12 +319,23 @@ function TodayView({ sezione }: { sezione: string }) {
             }
         }));
 
+        // Lo STATO della risposta va tenuto fuori dal `try`: nel `catch` non c'è
+        // più la `res`, e senza lo stato la riga di log dice che il salvataggio è
+        // fallito ma non perché. Non è un dettaglio: il logger di rete scarta di
+        // proposito i 401/400 (`livelloFetch`, per non annegare `app_log`), quindi
+        // un appello respinto per SESSIONE SCADUTA non lasciava NESSUNA traccia
+        // leggibile — misurato in produzione il 2026-08-02. «Riprova» e «rifai il
+        // login» sono due rimedi diversi, e alle 3 di notte si distinguono solo da
+        // qui. Resta `undefined` se la risposta non è mai arrivata (rete giù):
+        // meglio nessuno stato che uno inventato.
+        let statoHttp: number | undefined;
         try {
             const res = await fetch('/api/attendance/daily', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ alunno_id: studentId, data: selectedDate, stato, orario_entrata, orario_uscita }),
             });
+            statoHttp = res.status;
             if (!res.ok) {
                 const errData = await res.json();
                 throw new Error(errData.error ?? 'Errore salvataggio');
@@ -341,7 +352,7 @@ function TodayView({ sezione }: { sezione: string }) {
         } catch (err) {
             // `err` qui è spesso l'errore del server sul record presenza: il suo `.message`
             // riecheggia `alunno_id` e lo stato del bambino. Esce solo la classe dell'errore.
-            logClient({ livello: 'error', evento: 'fetch', messaggio: `presenza-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/attendance' });
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `presenza-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/attendance', stato: statoHttp });
             // Rollback ottimistico
             setRecords(prev => {
                 const next = { ...prev };
@@ -482,7 +493,12 @@ function TodayView({ sezione }: { sezione: string }) {
             {righeNonSalvate.length > 0 && (
                 <div
                     role="alert"
-                    className="flex flex-col gap-2 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4"
+                    /* `kv-appello-avviso` è il marcatore che porta questa fascia
+                       dentro l'Alto Contrasto (globals.css, accanto a
+                       `.kv-mensa-alt`): senza, restava identica alla luce
+                       normale mentre il resto della schermata si ribaltava.
+                       `.kv-appello-row` sta sulle righe alunno, non qui. */
+                    className="kv-appello-avviso flex flex-col gap-2 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4"
                 >
                     <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-error-strong">
                         {t('salvataggioFallito')}

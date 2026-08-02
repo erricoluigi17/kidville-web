@@ -42,10 +42,31 @@
   --color-kidville-success-soft: #E7F3E8;
   --color-kidville-success-strong: #1B5E20;  /* testo/stato su success-soft: 8,0:1 (badge "iscritto") */
 
+  /* ── Inchiostro GIALLO su fascia chiara (2026-08-02, a11y #2) ──────────────
+     La palette aveva l'inchiostro «forte» per il caldo (`warn-strong`) ma NON
+     per il giallo: `yellow-dark` (#E6B100) è un colore di RIEMPIMENTO — è
+     l'hover del bottone secondario — e come TESTO su fascia chiara vale fra
+     1,61:1 e 1,97:1. Era comunque usato come inchiostro in 24 punti (banner
+     della chat bloccata, badge del giudizio «Sufficiente», intestazione e
+     contatore «mancanti N» dell'appello).
+     Misure di questo token sulle 13 fasce chiare della palette — il minimo è
+     su `cream-dark`:
+       · bianco 6,25:1 · crema 5,63:1 · cream-dark 5,05:1 · yellow-soft 5,54:1
+       · yellow-light 5,89:1 · green-light 5,59:1 · green-soft 5,26:1
+       · warn-soft 5,52:1 · error-soft 5,47:1 · success-soft 5,47:1
+       · info-soft 5,49:1 · neutral-soft 5,56:1 · line 5,10:1
+     Il #8A6A00 suggerito dal collaudo è stato MISURATO e scartato: 4,09:1 su
+     `cream-dark`, cioè sotto AA proprio sulla fascia più scura.
+     Come `yellow-ink`/`green-ink`, NON viene rimappato in Alto Contrasto: vive
+     sopra fasce la cui utility ha l'hex già inlinato da `@theme inline` e che
+     quindi in HC restano chiare. Ribaltare l'inchiostro senza il suo fondo lo
+     renderebbe illeggibile proprio nella modalità pensata per chi fatica. */
+  --color-kidville-yellow-strong: #7A5C00;
+
   /* ── Stati semantici cockpit (segreteria/admin) ── */
   --color-kidville-warn: #E6720A;
   --color-kidville-warn-soft: #FBEFE2;
-  --color-kidville-warn-strong: #A64F09;  /* testo/attivo su warn-soft: bianco 5,6:1, testo su warn-soft 4,96:1 (appello "Ritardo") */
+  --color-kidville-warn-strong: #A64F09;  /* testo/attivo su warn-soft: bianco 5,61:1, testo su warn-soft 4,95:1 (appello "Ritardo"); minimo sulle fasce chiare 4,53:1 (cream-dark) */
   --color-kidville-info: #2A6FDB;
   --color-kidville-info-soft: #E9F1FB;
   --color-kidville-info-strong: #1D4FA8;  /* testo su info-soft 6,7:1 (bottone "Uscita Ant.") */
@@ -211,7 +232,19 @@ body {
   --color-kidville-success-strong: #00E676;
   --color-kidville-warn: #FFB300;
   --color-kidville-warn-soft: #1A1A1A;
-  --color-kidville-warn-strong: #FFB300;
+  /* `--color-kidville-warn-strong` e `--color-kidville-yellow-strong` NON
+     compaiono qui, per la stessa ragione di `yellow-ink`/`green-ink`: sono gli
+     INCHIOSTRI delle fasce di stato, e quelle fasce (`bg-kidville-warn-soft`,
+     `bg-kidville-yellow-soft`, `bg-white`) sono utility con l'hex già inlinato
+     da `@theme inline` — in Alto Contrasto restano CHIARE. Fino al 2026-08-02
+     `warn-strong` qui valeva #FFB300: era una dichiarazione inerte (nessun
+     `var()` la leggeva, e la utility `text-kidville-warn-strong` porta l'hex
+     dentro di sé), ma dal momento in cui la rete di sicurezza sugli inchiostri
+     di stato ha cominciato a leggerla con `var()` sarebbe diventata ambra
+     chiara su fascia chiara: 1,52:1, cioè peggio del difetto che chiude.
+     Dove la fascia in HC diventa davvero nera — `.kv-admin-rowcard`,
+     `.kv-appello-avviso` — l'inchiostro chiaro è scritto ESPLICITAMENTE nella
+     regola di quella superficie, accanto al suo fondo. */
   --color-kidville-info: #5AB0FF;
   --color-kidville-info-soft: #000000;
   --color-kidville-info-strong: #5AB0FF;
@@ -301,6 +334,36 @@ body {
    `__tests__/a11y/contrasto-token.test.ts` verifica che il contesto di questa
    regola non contenga nessun `@layer`.
    (Misura del 2026-07-31: anello 2px #006A5F, 6,51:1 — l'anello è SANO.) */
+/* L'anello di focus ha un colore anche PRIMA di accendersi (2026-08-02).
+   `transition-colors` di Tailwind v4 comprende `outline-color`, e il valore
+   INIZIALE di `outline-color` è `currentcolor`: su un controllo a testo chiaro
+   l'anello partiva bianco e ci metteva ~150 ms ad arrivare al verde — misurato
+   sul selettore lingua della login, dove nell'istante del `focusin` l'outline
+   risultava bianco su fondo chiaro. Dichiarando il colore anche a riposo la
+   transizione parte già dal colore giusto; la larghezza a riposo resta 0, per
+   cui a schermo non compare nulla di nuovo.
+   Deve stare PRIMA di `:focus-visible`: `[tabindex]` ha la stessa specificità
+   (0,1,0) della pseudo-classe, e a parità decide l'ordine.
+   Lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§9). */
+a,
+button,
+input,
+select,
+textarea,
+summary,
+[tabindex] {
+  outline-color: #006A5F;
+}
+[data-contrast="high"] a,
+[data-contrast="high"] button,
+[data-contrast="high"] input,
+[data-contrast="high"] select,
+[data-contrast="high"] textarea,
+[data-contrast="high"] summary,
+[data-contrast="high"] [tabindex] {
+  outline-color: #FFE500;
+}
+
 :focus-visible {
   outline: 2px solid #006A5F;
   outline-offset: 2px;
@@ -344,6 +407,65 @@ body {
   color: var(--color-kidville-green-ink);
 }
 
+/* 🔴 a11y #1 del collaudo 2026-08-02, chiuso qui.
+   Le due regole qui sopra pretendono che le DUE classi stiano sullo STESSO
+   elemento. Ma il fondo di sezione si mette sul CONTENITORE — ed è il caso più
+   comune, non l'eccezione. `/offline` fa esattamente così: `<main
+   class="bg-kidville-green">` e, dentro, `<h2 class="text-kidville-yellow">`.
+   Il selettore non agganciava mai e restavano i 4,05:1 di partenza, sulla
+   schermata che un genitore vede in strada, con poca rete e spesso in pieno
+   sole. Misurato sui colori computati: `parentBg: rgba(0,0,0,0)`, primo fondo
+   opaco risalendo gli antenati #006A5F.
+   La regola correggeva la coppia SCRITTA insieme, non la coppia che si FORMA
+   per ereditarietà: qui si copre anche la seconda. Specificità 0,2,0 → perde
+   comunque contro i remap per-superficie (`.kv-tab-giallo …`, i blocchi Alto
+   Contrasto), che sono almeno 0,3,0.
+   Lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§5), che monta il markup
+   VERO di `/offline` e risolve la cascata sull'albero antenato/discendente. */
+.bg-kidville-green .text-kidville-yellow {
+  color: var(--color-kidville-yellow-ink);
+}
+.bg-kidville-yellow .text-kidville-green {
+  color: var(--color-kidville-green-ink);
+}
+
+/* =============================================================================
+   Inchiostri di STATO — il giallo e l'arancio non dipingono TESTO (2026-08-02).
+
+   `text-kidville-yellow-dark` (24 usi) e `text-kidville-warn` (160) sono nati
+   come TINTE — l'hover del bottone secondario, il pallino di stato, la barra
+   dell'appello — e sono finiti a fare da inchiostro su fasce chiare: il banner
+   che spiega al genitore perché la chat è bloccata, il badge del giudizio
+   scolastico del figlio, l'intestazione e il contatore «mancanti N»
+   dell'appello. Misurati sui colori computati: da 1,56:1 a 3,10:1. Per un
+   genitore anziano al sole, quel testo semplicemente non c'è.
+
+   Si corregge la CLASSE, non i 184 punti: la coppia «tinta di stato + fascia
+   tenue» è il linguaggio del cockpit e continuerà a essere scritta così.
+   Il RIEMPIMENTO non cambia di un bit — `bg-kidville-warn` e
+   `bg-kidville-yellow-dark` restano le tinte di sempre.
+
+   Le varianti con ALFA sono nominate a parte: `text-kidville-warn/80` è una
+   CLASSE DIVERSA, e `.text-kidville-warn` non la aggancia. È lo stesso modo in
+   cui `text-kidville-ink/70` aveva lasciato scoperta la sidebar desktop. Il
+   selettore di attributo cerca la barra: `border-kidville-yellow-dark/25` non
+   contiene «text-kidville-yellow-dark/» e resta un bordo, come deve.
+
+   Specificità 0,1,0 e regola NON-layered: batte le utility (`@layer utilities`)
+   senza `!important`, e perde contro i remap per-superficie in Alto Contrasto
+   (`.kv-public`, `.kv-admin-*`), che valgono almeno 0,3,0.
+   Lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§6), che misura l'USO su
+   tutte e 13 le fasce chiare della palette — non il token.
+   ============================================================================= */
+.text-kidville-yellow-dark,
+[class*="text-kidville-yellow-dark/"] {
+  color: var(--color-kidville-yellow-strong);
+}
+.text-kidville-warn,
+[class*="text-kidville-warn/"] {
+  color: var(--color-kidville-warn-strong);
+}
+
 /* =============================================================================
    TEST reversibile "tab gialla" (2026-07-12) — attivo solo quando
    PageHeaderCard applica la classe marker `.kv-tab-giallo` (flag
@@ -383,6 +505,16 @@ body {
    0,3,0 → vince sul remap (0,2,0) senza `!important`. */
 .kv-tab-giallo .bg-kidville-green.text-kidville-yellow,
 .kv-tab-giallo .bg-kidville-green .text-kidville-yellow {
+  color: var(--color-kidville-yellow-ink);
+}
+/* Il rovescio, ed è un guasto che c'era già prima del 2026-08-02: qui sopra la
+   pill `bg-kidville-yellow` viene RIDIPINTA DI VERDE, quindi un testo
+   `text-kidville-green` al suo interno stava VERDE SU VERDE (1:1, invisibile) —
+   e la variante a discendente della rete di brand, da sola, lo porterebbe a
+   `green-ink` su verde: 1,36:1, cioè invisibile lo stesso. Sulla pill verde
+   l'inchiostro è quello che il verde regge davvero (4,78:1). Specificità 0,3,0
+   → vince sia sul remap dei testi sia sulla variante a discendente. */
+.kv-tab-giallo .bg-kidville-yellow .text-kidville-green {
   color: var(--color-kidville-yellow-ink);
 }
 /* Alto contrasto: il verde rimappa a #FFF — la pill invertita diventerebbe
@@ -468,6 +600,39 @@ select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:
 textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
   border-color: var(--color-kidville-neutral);
 }
+/* 🟠 design #2 del collaudo 2026-08-02, chiuso qui.
+   La regola qui sopra si sfila solo con `:not(:focus)`: l'HOVER non era escluso,
+   quindi vinceva anche sulle utility `hover:border-*` e i 19 select del cockpit
+   (`ui/cockpit.tsx`, `pagamenti/ui.ts`, `PaymentsDashboard`, `GeneratoreRette`,
+   `GeneratoreCategoria`, `FiscalePanel`, `TicketMensaPanel`) hanno smesso di
+   rispondere al passaggio del mouse: bordo fermo su #8A958F.
+
+   Le due correzioni «ovvie» sono entrambe sbagliate, e il lock le vieta:
+     · `:not(:hover)` → il campo SENZA utility di hover torna a
+       `border-kidville-line` appena ci passi sopra: 1,23:1, cioè il difetto
+       che questo blocco esiste per chiudere;
+     · escludere chi porta `hover:border-*` → quei 19 campi restano a 1,23:1
+       anche a riposo.
+   Qui l'affordance la dà la regola stessa: al passaggio del mouse il contorno
+   va al VERDE PIENO del marchio — 6,51:1 sul bianco, contro i 2,30:1 del
+   `border-kidville-green/50` che il componente chiedeva. Il bordo CAMBIA (è
+   quello che l'utente deve vedere) e migliora invece di peggiorare.
+
+   ⚠️ Il blocco Alto Contrasto qui sotto ha la STESSA specificità (0,3,1) e deve
+   restare DOPO: in HC il campo resta bianco e il contorno dev'essere nero anche
+   in hover. Lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§7), che risolve
+   la cascata nei due stati e in entrambe le modalità. */
+input[class*="border-kidville-line"]:hover:not(:focus),
+select[class*="border-kidville-line"]:hover:not(:focus),
+textarea[class*="border-kidville-line"]:hover:not(:focus),
+input[class*="border-kidville-muted"]:hover:not(:focus),
+select[class*="border-kidville-muted"]:hover:not(:focus),
+textarea[class*="border-kidville-muted"]:hover:not(:focus),
+input[class*="border-kidville-green/"]:not([class*="border-transparent"]):hover:not(:focus),
+select[class*="border-kidville-green/"]:not([class*="border-transparent"]):hover:not(:focus),
+textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hover:not(:focus) {
+  border-color: var(--color-kidville-green);
+}
 /* Alto Contrasto: qui NON si può usare il token. `--color-kidville-neutral`
    diventa #E0E0E0, ma il FONDO del campo non si ribalta con lui — è la utility
    `bg-white`/`bg-kidville-white`, hex già inlinato, e resta bianca: #E0E0E0 su
@@ -543,6 +708,37 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not
 }
 [data-contrast="high"] .kv-mensa-alt .bg-kidville-error-strong {
   background-color: #FF5252;
+  color: #000000;
+}
+
+/* 🟠 design #3 del collaudo 2026-08-02, chiuso qui.
+   L'avviso «presenza non salvata» dell'appello (`teacher/attendance`, marcatore
+   `.kv-appello-avviso`) è la fascia che dice al docente che la presenza di un
+   bambino NON è stata registrata. Con l'Alto Contrasto attivo restava identica
+   alla luce normale — fondo #FDECEC, titolo #C62828 — mentre accanto le righe
+   alunno diventavano bianco/nero e il body nero: stessa dinamica della sidebar
+   desktop, cioè `@theme inline` che inlina l'hex nelle utility e un elenco
+   per-superficie in cui questa fascia (nuova) non compariva. I contrasti
+   INTERNI reggevano già (4,92:1): il difetto era di COERENZA, ed è proprio la
+   superficie di sicurezza a non doverla avere.
+   Si adotta il linguaggio già scelto per l'altra superficie di sicurezza
+   (`.kv-mensa-alt`): box NERO con bordo rosso HC (6,58:1) e testo bianco (21:1).
+   L'ordine dei tre passi è quello di `.kv-public` — carta, inchiostro,
+   riempimenti — perché a parità di specificità (0,3,0) vince l'ultimo.
+   Lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§8). */
+[data-contrast="high"] .kv-appello-avviso {
+  background: #000000;
+  border-color: #FF5252;
+}
+[data-contrast="high"] .kv-appello-avviso [class*="text-kidville-"] {
+  color: #FFFFFF;
+}
+/* Il «Riprova» è una pill `bg-kidville-green`: su fondo nero il verde di brand
+   staccherebbe appena (2,18:1 contro il fondo). Diventa la pill GIALLA con
+   testo nero, la stessa coppia HC del bottone «Uscita» di `.kv-appello-row` —
+   16,46:1. DOPO l'inchiostro, così vince sul `text-kidville-yellow` del bottone. */
+[data-contrast="high"] .kv-appello-avviso .bg-kidville-green {
+  background-color: #FFE500;
   color: #000000;
 }
 
@@ -841,4 +1037,27 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not
    dichiarata come debito nel report. */
 .kv-public [class*="text-kidville-green/"] {
   color: var(--color-kidville-green);
+}
+
+/* Il SEGNAPOSTO dei campi pubblici (2026-08-02, warning del collaudo design §3).
+   `FieldRenderer` scrive `placeholder-kidville-green/40`: composto sul bianco
+   del campo fa #99C3BF, cioè 1,92:1 — e in Alto Contrasto non si ribaltava,
+   restando l'unico elemento delle superfici pubbliche fuori dal ribaltamento.
+   Il segnaposto è TESTO: 1.4.3 si applica, e su questo modulo ci arrivano circa
+   nove domande l'ora da famiglie vere. Si corregge QUI, come le etichette qui
+   sopra, perché `FieldRenderer` è condiviso con la modulistica in-app, che non
+   è il perimetro di questo intervento.
+   `sub` tiene 6,46:1 sul bianco e 5,82:1 sul crema, e resta comunque più
+   chiaro del valore digitato (`text-kidville-green`, 6,51:1) — il segnaposto
+   continua a leggersi come suggerimento, non come contenuto.
+   `opacity: 1` perché Firefox applica di suo un'opacità al segnaposto.
+   In Alto Contrasto la carta pubblica resta BIANCA (blocco «1 · La carta»):
+   l'inchiostro va a nero pieno, 21:1. Lock: contrasto-cascata §10. */
+.kv-public ::placeholder {
+  color: var(--color-kidville-sub);
+  opacity: 1;
+}
+[data-contrast="high"] .kv-public ::placeholder {
+  color: #000000;
+  opacity: 1;
 }

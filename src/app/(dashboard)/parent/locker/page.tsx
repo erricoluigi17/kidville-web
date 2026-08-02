@@ -467,6 +467,7 @@ function LockerInner() {
                     <div className="flex items-center justify-between mb-5">
                         <button
                             id="parent-prev-month-btn"
+                            aria-label={t('lockerMesePrecedente')}
                             onClick={() => setMonth(m => prevMonth(m))}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >
@@ -475,6 +476,7 @@ function LockerInner() {
                         <span className="text-sm font-semibold text-kidville-green/70">{t('lockerAndamentoMensileDi', { nome: childName })}</span>
                         <button
                             id="parent-next-month-btn"
+                            aria-label={t('lockerMeseSuccessivo')}
                             onClick={() => setMonth(m => nextMonth(m))}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >

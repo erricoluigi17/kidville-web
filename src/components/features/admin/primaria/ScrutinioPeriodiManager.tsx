@@ -104,7 +104,7 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
               <button onClick={() => toggleAttivo(p)} className={`font-maven rounded-pill px-2.5 py-0.5 text-[11px] ${p.attivo ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-line text-kidville-muted'}`}>
                 {p.attivo ? t('periodiAttivo') : t('periodiDisattivo')}
               </button>
-              <button onClick={() => rimuovi(p.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+              <button onClick={() => rimuovi(p.id)} aria-label={t('periodiElimina')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>
           </li>
         ))}

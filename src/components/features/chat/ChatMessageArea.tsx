@@ -121,6 +121,41 @@ function UnreadSeparator() {
     );
 }
 
+/**
+ * La lingua in cui l'utente STA LEGGENDO, in una funzione sola.
+ *
+ * Prima la si deduceva da `navigator.language`, cioè dalla lingua del SISTEMA
+ * OPERATIVO — e in due punti diversi dello stesso componente, con la stessa
+ * espressione ricopiata. Conseguenza misurata: una famiglia che ha messo
+ * Kidville in inglese ma tiene il telefono in italiano non vedeva «Traduci» su
+ * un messaggio italiano. È esattamente il caso d'uso per cui `src/lib/translate/`
+ * esiste, e la lingua giusta era già in mano al componente (`useLocale()`, che
+ * legge il cookie `KV_LOCALE`): si guardava l'altra.
+ *
+ * La scelta fatta dentro l'app è il segnale d'intento più forte che un utente
+ * possa dare — più del locale di sistema, che spesso è quello con cui il
+ * telefono è uscito dal negozio. Il sistema resta come RIPIEGO, per il caso in
+ * cui il locale dell'app non sia disponibile.
+ */
+export function linguaDiLettura(localeApp?: string | null, localeSistema?: string | null): string {
+    const scelta = (localeApp || '').trim() || (localeSistema || '').trim() || 'it';
+    return scelta.split('-')[0].toLowerCase() || 'it';
+}
+
+/**
+ * Quando ha senso proporre «Traduci»: se la lingua di lettura non è l'italiano
+ * (lettore straniero) oppure se il messaggio non sembra italiano (mittente
+ * straniero). Su un testo vuoto non c'è niente da tradurre.
+ */
+export function offriTraduzione(
+    localeApp: string | null | undefined,
+    localeSistema: string | null | undefined,
+    testo: string | null | undefined,
+): boolean {
+    if (!testo || !testo.trim()) return false;
+    return linguaDiLettura(localeApp, localeSistema) !== 'it' || !sembraItaliano(testo);
+}
+
 /** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
 function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
     const locale = useLocale();
@@ -131,15 +166,18 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
 
     // «Traduci» compare SOLO se una delle due lingue non è l'italiano:
     // il messaggio in arrivo non sembra italiano (mittente straniero) oppure
-    // il dispositivo di chi legge non è in italiano (lettore straniero).
-    const linguaDispositivo = (typeof navigator !== 'undefined' ? navigator.language : 'it').split('-')[0] || 'it';
-    const mostraTraduci = linguaDispositivo !== 'it' || !sembraItaliano(msg.content ?? '');
+    // chi legge non sta leggendo in italiano (lettore straniero).
+    const linguaSistema = typeof navigator !== 'undefined' ? navigator.language : null;
+    const mostraTraduci = offriTraduzione(locale, linguaSistema, msg.content);
 
     const handleTranslate = async () => {
         if (translated) { setTranslated(null); return; } // toggle: nascondi
         setTranslating(true);
         try {
-            const targetLang = (typeof navigator !== 'undefined' ? navigator.language : 'it').split('-')[0] || 'it';
+            // Stessa regola del bottone, stessa funzione: tradurre VERSO una lingua
+            // diversa da quella che ha fatto comparire il bottone sarebbe assurdo,
+            // e con due espressioni ricopiate era solo questione di tempo.
+            const targetLang = linguaDiLettura(locale, typeof navigator !== 'undefined' ? navigator.language : null);
             const res = await fetch('/api/chat/translate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': currentUserId },
@@ -191,8 +229,23 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 )
             )}
 
-            {/* Text (design: Maven 13.5px, interlinea 1.42) */}
-            <p className={`font-maven text-[13.5px] leading-[1.42] ${isMine ? 'text-white' : 'text-kidville-ink'}`}>
+            {/* Text (design: Maven 13.5px, interlinea 1.42)
+                `break-words`: il bubble è largo `min(270px,80%)` e con
+                `overflow-wrap` predefinito una parola senza spazi non va a capo.
+                Misurato a 320px: un URL da 107 caratteri produce scrollWidth 357
+                contro clientWidth 217 e deborda oltre il bordo. Cinese, thai,
+                arabo ed emoji (comprese le sequenze ZWJ) andavano già a capo da
+                soli: è la parola lunga il caso scoperto, e un link incollato in
+                chat è la cosa più comune che ci sia.
+                `dir="auto"`: senza, l'arabo eredita la direzione LTR del
+                documento e la punteggiatura di fine frase finisce a sinistra. Con
+                `auto` il browser deduce la direzione dal primo carattere forte
+                del messaggio — che è esattamente il dato che serve, ed è per
+                messaggio, non per pagina. */}
+            <p
+                dir="auto"
+                className={`font-maven text-[13.5px] leading-[1.42] break-words ${isMine ? 'text-white' : 'text-kidville-ink'}`}
+            >
                 {msg.content}
             </p>
 

@@ -6,7 +6,7 @@ import { useForm, FieldValues } from 'react-hook-form'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, ArrowRight, Check, Loader2, PartyPopper, Baby, Users,
-  Plus, Trash2, UserPlus, Info, MapPin,
+  Plus, Trash2, UserPlus, Info, MapPin, AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
@@ -39,11 +39,26 @@ interface Sede {
   nome: string
 }
 
-/** Estrae `[{ id, nome }]` dalla risposta di /api/iscrizione/sedi, scartando
- *  qualunque forma inattesa: il wizard non deve rompersi per un payload strano. */
-function sediValide(payload: unknown): Sede[] {
+/**
+ * Stato dell'elenco sedi. Sono TRE, e il difetto nasceva dall'averne due:
+ * «elenco vuoto» e «elenco non ottenuto» finivano nella stessa variabile, e
+ * `sedi.length > 1` non poteva distinguerli. Un 429 diventava «c'è una sede
+ * sola, vai avanti» — e la domanda partiva per non poter essere inviata.
+ */
+type StatoSedi = 'caricamento' | 'pronto' | 'errore'
+
+/**
+ * Estrae `[{ id, nome }]` dalla risposta di /api/iscrizione/sedi, scartando le
+ * voci di forma inattesa: il wizard non deve rompersi per un payload strano.
+ *
+ * `null` = **elenco NON ottenuto** (il corpo non contiene affatto un array
+ * `data`), che NON è la stessa cosa di un elenco vuoto: `[]` è una risposta
+ * valida — è ciò che risponde il DB della CI, dove l'elenco pubblico è vuoto —
+ * e fa proseguire; `null` è un guasto e va detto al genitore.
+ */
+function sediValide(payload: unknown): Sede[] | null {
   const data = (payload as { data?: unknown } | null)?.data
-  if (!Array.isArray(data)) return []
+  if (!Array.isArray(data)) return null
   return data
     .filter(
       (s): s is Sede =>
@@ -89,18 +104,27 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const [sedi, setSedi] = useState<Sede[]>([])
   const [sedeScelta, setSedeScelta] = useState<string | null>(null)
   const [erroreSede, setErroreSede] = useState(false)
+  /** L'invio ha fallito: si dice IN PAGINA, non con un `alert()` di sistema. */
+  const [erroreInvio, setErroreInvio] = useState(false)
   /**
-   * L'elenco sedi è stato risolto (con successo o in degrado)?
+   * Lo stato dell'elenco sedi — `caricamento` → `pronto` | `errore`.
    *
-   * Serve a NON dipingere nessun passo finché non si sa se il passo sede esiste.
-   * Senza questa attesa il primo render monta il bambino, poi l'arrivo delle sedi
-   * cambia la FORMA di `steps` e quindi la `key` dentro `AnimatePresence mode="wait"`:
-   * l'uscita del pannello vecchio non si completa e il wizard resta congelato sul
-   * bambino per sempre, mentre il contatore — che sta fuori dall'animazione —
-   * continua ad avanzare. Il difetto si manifesta solo con DUE o più sedi, che è
-   * esattamente la condizione che né jsdom né il DB di CI hanno mai avuto.
+   * `pronto` serve a NON dipingere nessun passo finché non si sa se il passo
+   * sede esiste. Senza questa attesa il primo render monta il bambino, poi
+   * l'arrivo delle sedi cambia la FORMA di `steps` e quindi la `key` dentro
+   * `AnimatePresence mode="wait"`: l'uscita del pannello vecchio non si completa
+   * e il wizard resta congelato sul bambino per sempre, mentre il contatore —
+   * che sta fuori dall'animazione — continua ad avanzare. Il difetto si
+   * manifesta solo con DUE o più sedi, che è esattamente la condizione che né
+   * jsdom né il DB di CI hanno mai avuto.
+   *
+   * `errore` è il terzo stato, ed è quello che mancava (collaudo 2026-08-02):
+   * finché l'elenco non è noto la domanda NON comincia. Vedi il commento sul
+   * ramo d'errore, più sotto.
    */
-  const [sediRisolte, setSediRisolte] = useState(false)
+  const [statoSedi, setStatoSedi] = useState<StatoSedi>('caricamento')
+  /** Cambia a ogni «Riprova»: è ciò che fa ripartire la fetch dell'elenco. */
+  const [tentativoSedi, setTentativoSedi] = useState(0)
 
   useEffect(() => {
     fetch('/api/iscrizione/model')
@@ -118,44 +142,58 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     if (sedeDaLink) return
     let annullato = false
     fetch('/api/iscrizione/sedi')
-      .then(r => {
-        if (r.ok) return r.json()
-        // Non è un'eccezione, quindi il `catch` qui sotto non scatterebbe — ma il
-        // genitore resterebbe senza scelta della sede e finirebbe sul 400 del POST.
-        // Un degrado che nessuno vede è indistinguibile dal funzionamento normale.
-        if (!annullato) {
+      .then(async r => {
+        // `!r.ok` NON è un'eccezione: il `catch` qui sotto non scatterebbe, e
+        // fino al 2026-08-02 il 429 del rate-limit passava di qui in silenzio.
+        if (!r.ok) {
           logClient({
             livello: 'error',
             evento: 'fetch',
             messaggio: 'iscrizione-sedi-non-caricate',
             stato: r.status,
           })
+          return null
         }
-        return null
+        const lista = sediValide(await r.json())
+        if (lista === null) {
+          // 200 con un corpo che non contiene l'elenco: l'elenco non c'è lo
+          // stesso, e trattarlo come «nessuna sede» è il difetto di prima con
+          // un'altra faccia.
+          logClient({
+            livello: 'error',
+            evento: 'fetch',
+            messaggio: 'iscrizione-sedi-corpo-inatteso',
+            stato: r.status,
+          })
+        }
+        return lista
       })
-      .then(j => {
+      .then(lista => {
         if (annullato) return
-        const lista = sediValide(j)
+        if (lista === null) {
+          setStatoSedi('errore')
+          return
+        }
         // Nessuna compensazione dello `step`: il primo passo non viene dipinto
-        // finché `sediRisolte` non è vero, quindi `steps` non può più cambiare
+        // finché `statoSedi` non è `pronto`, quindi `steps` non può più cambiare
         // forma sotto le mani del genitore.
-        if (lista.length > 1) setSedi(lista)
+        setSedi(lista)
+        setStatoSedi('pronto')
       })
       .catch(err => {
-        // Degrado, non blocco: si prosegue senza scelta e — se il server non sa
-        // dedurre la sede — sarà il suo 400 a parlare. Ma il silenzio no: un
-        // catch che non logga è un bug, e `logClient` non lancia.
+        // Rete giù (o JSON illeggibile). Un catch che non logga è un bug, e
+        // `logClient` non lancia.
         logClient({
           livello: 'error',
           evento: 'fetch',
           messaggio: `iscrizione-sedi-non-caricate: ${nomeErrore(err)}`,
           stack: err instanceof Error ? err.stack : undefined,
         })
+        if (annullato) return
+        setStatoSedi('errore')
       })
-      // Anche in degrado la forma è DECISA: si prosegue senza passo sede.
-      .finally(() => { if (!annullato) setSediRisolte(true) })
     return () => { annullato = true }
-  }, [sedeDaLink])
+  }, [sedeDaLink, tentativoSedi])
 
   const {
     register, control, trigger, getValues, setValue, setFocus, setError,
@@ -167,8 +205,19 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   /**
    * La FORMA di `steps` è ormai definitiva e si può dipingere il primo passo.
    * Col link già targato non c'è nessuna fetch da attendere.
+   *
+   * `errore` NON decide la forma: con l'elenco ignoto non si sa se il passo
+   * sede serva, e far cominciare la domanda significherebbe farla compilare per
+   * intero — anagrafica del minore, allergie, documenti — per poi rifiutarla.
    */
-  const formaDecisa = !!sedeDaLink || sediRisolte
+  const formaDecisa = !!sedeDaLink || statoSedi === 'pronto'
+  /** L'elenco non è arrivato: si dice, e si offre di riprovare. */
+  const sediNonCaricate = !sedeDaLink && statoSedi === 'errore'
+
+  function riprovaSedi() {
+    setStatoSedi('caricamento')
+    setTentativoSedi(n => n + 1)
+  }
   /** Scostamento introdotto dal passo sede: sposta di 1 gli indici di tutti i passi. */
   const offset = mostraSede ? 1 : 0
 
@@ -286,12 +335,16 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   }
 
   function goPrev() {
+    // Tornare indietro per correggere qualcosa spegne l'errore d'invio: tenerlo
+    // acceso lo trasformerebbe in un avviso che si impara a ignorare.
+    setErroreInvio(false)
     setDirection(-1)
     setStep(s => Math.max(0, s - 1))
   }
 
   async function handleSubmit() {
     setSubmitting(true)
+    setErroreInvio(false)
     try {
       const all = getValues()
       const children = (all.children ?? []).slice(0, childCount).filter(Boolean)
@@ -324,15 +377,20 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       }
       setDone(true)
     } catch (err) {
-      // Un catch che risponde con un alert deve loggare: `withRoute` è lato server
-      // e non vede questa eccezione. `logClient` redige il path e non lancia.
+      // Un catch che riporta l'errore all'utente deve LOGGARE: `withRoute` è lato
+      // server e non vede questa eccezione. `logClient` redige il path e non lancia.
       logClient({
         livello: 'error',
         evento: 'fetch',
         messaggio: `iscrizione-invio-fallito: ${nomeErrore(err)}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
-      alert(t('wizardErroreInvio'))
+      // NIENTE `alert()`. Il pannello di sistema non dice cosa fare, non lascia
+      // traccia in pagina, non è leggibile da chi ingrandisce i caratteri e
+      // nella WebView dell'app è ancora peggio. Il messaggio sta in pagina,
+      // accanto al bottone che si è appena premuto, e dice l'unica cosa che
+      // conta a chi ha appena compilato quattro passi: i dati sono ancora qui.
+      setErroreInvio(true)
     } finally {
       setSubmitting(false)
     }
@@ -432,10 +490,55 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           <PublicContrastButton />
         </div>
 
-        {!formaDecisa ? (
+        {sediNonCaricate ? (
+          /*
+           * L'ELENCO DELLE SEDI NON È ARRIVATO — e lo si dice.
+           *
+           * Misurato in collaudo: `GET /api/iscrizione/sedi` → 429 (tetto 30
+           * richieste ogni 10 minuti per IP; dietro il NAT di una scuola o il
+           * CGNAT di un operatore mobile quell'IP lo condividono decine di
+           * famiglie). Prima di questo ramo il guasto era muto: il modulo si
+           * apriva su «Passo 1 di 4 — Bambino 1», il genitore compilava
+           * anagrafica del minore, codice fiscale, allergie, note mediche e
+           * documento d'identità, e all'invio riceveva un 400 dentro un
+           * `alert()`. Tutto il lavoro buttato, senza una spiegazione.
+           *
+           * Con tre plessi la sede NON è deducibile: `resolveScuolaScrittura`
+           * risponde 400 se non è indicata, ed è giusto così — una domanda
+           * archiviata nel plesso sbagliato è peggio di una domanda non
+           * cominciata. Quindi qui non si prosegue: si spiega e si riprova.
+           */
+          <div
+            role="alert"
+            className="flex-1 flex flex-col items-center justify-center gap-4 py-10"
+          >
+            <div className="w-full rounded-card border border-kidville-error bg-kidville-error-soft px-5 py-4 text-left">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-kidville-error-strong">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                {t('wizardSediErroreTitolo')}
+              </h2>
+              <p className="mt-1.5 text-sm leading-relaxed text-kidville-ink">
+                {t('wizardSediErroreCorpo')}
+              </p>
+            </div>
+            {/* L'inchiostro è `yellow-ink` e non `yellow`: il riempimento di
+                brand resta lo stesso, ma la coppia giallo-su-verde vale 4,05:1 —
+                sotto AA per un testo di questa misura — mentre `yellow-ink` su
+                verde vale 4,78:1 (6,51:1 sull'hover). È la stessa scelta di
+                `Btn.tsx`, misurata in `__tests__/a11y/contrasto-cascata.test.tsx`. */}
+            <button
+              type="button"
+              onClick={riprovaSedi}
+              className="flex items-center gap-2 px-6 py-2.5 rounded-pill bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow-ink font-barlow font-bold uppercase tracking-wide text-sm transition-all"
+            >
+              <RefreshCw className="w-4 h-4" aria-hidden="true" />
+              {t('wizardSediRiprova')}
+            </button>
+          </div>
+        ) : !formaDecisa ? (
           // Attesa dell'elenco sedi: nessun passo viene dipinto finché non si sa se
           // il passo sede esiste. Dipingerne uno adesso e cambiarlo dopo congelerebbe
-          // `AnimatePresence mode="wait"` (vedi il commento su `sediRisolte`).
+          // `AnimatePresence mode="wait"` (vedi il commento su `statoSedi`).
           <div
             className="flex-1 flex items-center justify-center"
             role="status"
@@ -663,6 +766,25 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                   )}
               </motion.div>
             </div>
+
+            {/* L'invio è fallito. Sta QUI — sopra i bottoni, dentro la pagina —
+                e non in un `alert()` di sistema: il genitore ha appena premuto
+                «Invia richiesta» e deve leggere, senza chiudere niente, che il
+                lavoro fatto non è andato perduto. */}
+            {erroreInvio && (
+              <div
+                role="alert"
+                className="mt-4 rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3"
+              >
+                <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                  {t('wizardErroreInvio')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
+                  {t('wizardErroreInvioDatiSalvi')}
+                </p>
+              </div>
+            )}
 
             {/* Navigation */}
             <div className="flex items-center justify-between gap-3 pt-6 mt-4 border-t border-kidville-line">

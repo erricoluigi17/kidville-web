@@ -9,8 +9,9 @@ import { hashCorrelabile } from '@/lib/logging/redact'
  * PARLANTE. Mittente di default sovrascrivibile con `OTP_FROM_EMAIL`.
  *
  * ⚠️ DELIVERABILITY: il dominio di invio verificato su Resend è il SOTTODOMINIO
- * `mail.kidville.it` (verificato il 2026-07-13; account erricoluigi17@gmail.com; region
- * eu-west-1) — NON il dominio radice `kidville.it`. In produzione va impostata
+ * `mail.kidville.it` (verificato il 2026-07-13; l'account Resend è quello personale del
+ * titolare — l'indirizzo sta nel suo gestore di credenziali e NON in questo repo, che è
+ * pubblico; region eu-west-1) — NON il dominio radice `kidville.it`. In produzione va impostata
  * `OTP_FROM_EMAIL="Kidville <noreply@mail.kidville.it>"`: il mittente DEVE stare su
  * `@mail.kidville.it`, altrimenti Resend rifiuta con 403. Se la var manca si degrada al
  * mittente sandbox `onboarding@resend.dev`, che Resend CONSEGNA SOLO all'indirizzo del

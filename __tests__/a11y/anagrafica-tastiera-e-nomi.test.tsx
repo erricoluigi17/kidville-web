@@ -369,3 +369,52 @@ describe('S38 · il nome della sede è leggibile (AA), in tabella e su card', ()
     }
   });
 });
+
+// =============================================================================
+describe('S38bis · ORDINARE la tabella è possibile anche senza mouse', () => {
+  // Le intestazioni ordinabili erano `<th onClick>`: nessun `role`, nessun
+  // `tabIndex`, nessun `onKeyDown` — quindi non un tab stop e sorde a
+  // Invio/Spazio. Da tastiera l'anagrafica NON si poteva ordinare in nessun
+  // modo (WCAG 2.1.1, livello A), e nessuno strumento diceva quale colonna
+  // fosse l'ordinamento corrente (WCAG 1.3.1 + ARIA `aria-sort`).
+  //
+  // È lo stesso difetto già chiuso in questo file per la RIGA — comando vero
+  // dentro la cella, click sulla riga lasciato al mouse — riapparso una cella
+  // più in alto. La differenza fra le due non era progettata: era casuale.
+
+  const intestazioniOrdinabili = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll('thead th')).filter((th) => th.querySelector('button'));
+
+  it('CONTROLLO POSITIVO: le intestazioni ordinabili esistono e sono più d\'una', () => {
+    const { container } = renderTable();
+    expect(intestazioniOrdinabili(container).length).toBeGreaterThan(1);
+  });
+
+  it('ogni intestazione ordinabile porta un BOTTONE focusabile con il nome della colonna', () => {
+    const { container } = renderTable();
+    for (const th of intestazioniOrdinabili(container)) {
+      const b = th.querySelector('button')!;
+      expect(b.tagName).toBe('BUTTON');
+      expect(b.getAttribute('type')).toBe('button');
+      // WCAG 2.5.3: il nome accessibile contiene l'etichetta VISIBILE della colonna.
+      expect((b.textContent ?? '').trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('lo stato dell\'ordinamento è dichiarato con `aria-sort` sulla colonna giusta', () => {
+    const { container } = renderTable();
+    const th = intestazioniOrdinabili(container);
+    const valori = th.map((x) => x.getAttribute('aria-sort'));
+    // Una sola colonna ordinata alla volta; le altre dichiarano «none».
+    expect(valori.filter((v) => v === 'ascending' || v === 'descending')).toHaveLength(1);
+    expect(valori.every((v) => v !== null)).toBe(true);
+  });
+
+  it('premere il bottone inverte il verso, e `aria-sort` lo segue', () => {
+    const { container } = renderTable();
+    const ordinata = () => intestazioniOrdinabili(container).find((x) => x.getAttribute('aria-sort') !== 'none')!;
+    expect(ordinata().getAttribute('aria-sort')).toBe('ascending');
+    fireEvent.click(ordinata().querySelector('button')!);
+    expect(ordinata().getAttribute('aria-sort')).toBe('descending');
+  });
+});

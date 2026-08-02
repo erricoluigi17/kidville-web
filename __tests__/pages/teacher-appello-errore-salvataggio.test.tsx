@@ -54,7 +54,7 @@ const SEZIONE = 'TEST Infanzia';
 const ALUNNO = { id: 'aaaa1111-0000-4000-8000-000000000001', nome: 'Mario', cognome: 'Rossi' };
 const NOME_COMPLETO = `${ALUNNO.nome} ${ALUNNO.cognome}`;
 
-type EsitoPost = 'ok' | '503' | 'rete';
+type EsitoPost = 'ok' | '503' | 'rete' | '401';
 
 interface RigaPresenza {
     id: string;
@@ -97,6 +97,13 @@ beforeEach(() => {
         }
         if (u.includes('/api/attendance/daily') && metodo === 'POST') {
             if (esitoPost === 'rete') return Promise.reject(new TypeError('Failed to fetch'));
+            if (esitoPost === '401') {
+                return Promise.resolve({
+                    ok: false,
+                    status: 401,
+                    json: async () => ({ error: 'Non autenticato' }),
+                });
+            }
             if (esitoPost === '503') {
                 return Promise.resolve({
                     ok: false,
@@ -173,6 +180,49 @@ describe('Appello — il salvataggio fallito si vede, e si può ripetere', () =>
         const scritto = JSON.stringify(h.logClient.mock.calls);
         expect(scritto).not.toContain(ALUNNO.nome);
         expect(scritto).not.toContain(ALUNNO.cognome);
+    });
+
+    /**
+     * IL PERCHÉ DEL GUASTO DEVE ARRIVARE AL LOG, NON SOLO IL FATTO.
+     *
+     * La riga scritta qui era `presenza-salvataggio-fallito: <classe dell'errore>`
+     * e nient'altro: nessuno stato HTTP. E il logger di rete scarta di proposito i
+     * 401/400 (`livelloFetch`, per non annegare `app_log`), quindi un salvataggio
+     * respinto per SESSIONE SCADUTA non lasciava NESSUNA riga che dicesse perché —
+     * misurato in produzione: la riga delle 14:50 del 2026-08-02 non ha né un log
+     * di rete né uno di route corrispondente.
+     *
+     * «Presenza non salvata» e «sessione scaduta» richiedono due interventi
+     * diversi: uno si ritenta, l'altro si rifà il login. Senza lo stato, alle 3 di
+     * notte le due si leggono uguali.
+     */
+    it('il log porta lo STATO HTTP: 401 (sessione scaduta) e 503 non si leggono uguali', async () => {
+        esitoPost = '401';
+        await apriAppello();
+        await segnaPresente();
+
+        await waitFor(() => expect(avviso()).toBeInTheDocument());
+        expect(h.logClient).toHaveBeenCalledWith(
+            expect.objectContaining({ livello: 'error', evento: 'fetch', route: '/teacher/attendance', stato: 401 }),
+        );
+    });
+
+    it('…e lo stato non è cablato: con il 503 la riga porta 503', async () => {
+        await apriAppello();
+        await segnaPresente();
+
+        await waitFor(() => expect(avviso()).toBeInTheDocument());
+        expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ stato: 503 }));
+    });
+
+    it('rete giù: nessuno stato inventato (non c\'è stata risposta)', async () => {
+        esitoPost = 'rete';
+        await apriAppello();
+        await segnaPresente();
+
+        await waitFor(() => expect(avviso()).toBeInTheDocument());
+        const chiamata = h.logClient.mock.calls.find((c) => c[0]?.evento === 'fetch');
+        expect(chiamata?.[0]?.stato).toBeUndefined();
     });
 
     it('«Riprova» rifà la richiesta: se il server risponde, l’avviso sparisce', async () => {

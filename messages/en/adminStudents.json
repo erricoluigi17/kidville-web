@@ -394,5 +394,9 @@
   "aFormAggiungiNumero": "Add Number",
   "aFormIndirizziEmail": "Email Addresses (the first will be used for Auth)",
   "aFormPrimaria": "Primary",
-  "aFormAggiungiEmail": "Add Email"
+  "aFormAggiungiEmail": "Add Email",
+  "parentPanelChiudi": "Close parent details",
+  "detailChiudiScheda": "Close student details",
+  "aFormRimuoviTelefono": "Remove phone number",
+  "aFormRimuoviEmail": "Remove email"
 }

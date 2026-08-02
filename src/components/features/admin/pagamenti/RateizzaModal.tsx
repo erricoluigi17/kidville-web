@@ -119,7 +119,7 @@ export function RateizzaModal({
                     <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
                         <Layers size={18} /> {t('rateTitolo')}
                     </h3>
-                    <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
+                    <button onClick={onClose} aria-label={t('rateChiudi')} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
 
                 <div className="bg-kidville-cream/60 rounded-card p-3 mb-4">
@@ -168,7 +168,7 @@ export function RateizzaModal({
                                     <input type="date" value={r.scadenza}
                                         onChange={(e) => updateRata(i, { scadenza: e.target.value })}
                                         className={cx(RATA_FIELD, 'flex-1')} />
-                                    <button onClick={() => removeRata(i)} disabled={rate.length <= 2}
+                                    <button onClick={() => removeRata(i)} disabled={rate.length <= 2} aria-label={t('rateRimuoviRata')}
                                         className="text-kidville-muted hover:text-kidville-error disabled:opacity-30"><Trash2 size={15} /></button>
                                 </div>
                             ))}

@@ -285,6 +285,28 @@ function LoginForm() {
   return (
     <div className={styles.page}>
       {!highContrast && <BackgroundDeco />}
+      {/* ⚠️ QUI NON C'È IL COMANDO DI ALTO CONTRASTO, ED È UNA DECISIONE, NON UNA
+          DIMENTICANZA — ma è una decisione che va riaperta.
+
+          Il collaudo a11y del 2026-08-02 ha misurato che /auth/login è l'unica
+          superficie pubblica senza il comando (zero bottoni di contrasto nel
+          DOM): chi apre l'app per la prima volta e ha bisogno dell'alto
+          contrasto per leggere «Email» e «Password» non ha modo di accenderlo, e
+          il tema HC della login — che esiste ed è corretto (fondo nero, testo
+          bianco, bordi campi 15,91:1) — resta irraggiungibile a meno di fare
+          login altrove prima. Il rilievo è fondato.
+
+          Il comando però era stato TOLTO da qui di proposito, «perché la login
+          deve stare in una schermata sola, senza scroll», e la scelta è lockata
+          in `__tests__/components/login-contrast.test.tsx:43`. Rimetterlo è una
+          decisione di prodotto del titolare, non di un giro di pulizia dei
+          warning: per questo non è stato fatto qui.
+
+          Nota per chi deciderà: il vincolo «una schermata sola» NON sarebbe
+          violato da un comando FUORI dal flusso. `LanguageSwitcher`, due righe
+          sotto, sta già in `position:absolute` nell'angolo in alto a destra per
+          esattamente quella ragione. Il costo sarebbe una pill di ~143×38 px
+          accanto a una di 65×24, con `flex-wrap` per i 320 px. */}
       <div style={{ position: 'absolute', top: 'max(12px, env(safe-area-inset-top))', right: 12, zIndex: 10 }}>
         <LanguageSwitcher />
       </div>

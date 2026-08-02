@@ -184,5 +184,12 @@
   "settingsInfo4": "Each class can have different materials",
   "settingsConfermaElimina": "Delete \"{nome}\"? This action cannot be undone.",
   "settingsErrNome": "Enter a name",
-  "settingsErrSezione": "Select at least one section"
+  "settingsErrSezione": "Select at least one section",
+  "lockerAggiorna": "Refresh",
+  "lockerMesePrecedente": "Previous month",
+  "lockerMeseSuccessivo": "Next month",
+  "lockerSpostaSu": "Move up",
+  "lockerSpostaGiu": "Move down",
+  "lockerCaricaMateriale": "Record a stock load",
+  "lockerChiudiCarico": "Close"
 }

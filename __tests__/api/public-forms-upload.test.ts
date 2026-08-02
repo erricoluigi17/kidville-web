@@ -54,9 +54,17 @@ describe('POST /api/public/forms/[token]/upload', () => {
     expect((await POST(uploadReq(), ctx('tok'))).status).toBe(400)
   })
 
-  it('400 tipo non ammesso', async () => {
+  it('415 tipo non ammesso', async () => {
+    // 415 e non più 400 (2026-08-02): il gate sui tipi è ora quello condiviso con
+    // `iscrizione/upload` — stesso bucket, stessa regola, un modulo solo
+    // (`@/lib/upload/allegati-pubblici`) — e usa il codice che dice «questo FILE non va
+    // bene», non «questa RICHIESTA è malformata». È lo stesso status che avvisi e incarichi
+    // restituiscono dal 2026-07-31.
     const exe = new File([Buffer.from('MZ')], 'v.exe', { type: 'application/octet-stream' })
-    expect((await POST(uploadReq(exe), ctx('tok'))).status).toBe(400)
+    const res = await POST(uploadReq(exe), ctx('tok'))
+    expect(res.status).toBe(415)
+    expect(((await res.json()) as { codice?: string }).codice).toBe('ALLEGATO_PDF_O_IMMAGINE')
+    expect(h.uploads, 'Il file rifiutato non deve toccare lo Storage.').toHaveLength(0)
   })
 
   it('200 carica sotto public/{token} e ritorna path', async () => {

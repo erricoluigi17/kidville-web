@@ -124,8 +124,14 @@ describe.each([
 
     it('anche il guasto imprevisto (eccezione) risponde con un codice, non con «Internal Server Error» nudo', async () => {
         // `formData()` che lancia: è il ramo `catch` in fondo alla route.
+        //
+        // IL CONTENT-TYPE C'È, ED È IL PUNTO (2026-08-02). Da quando la lettura del corpo
+        // passa da `parseMultipart`, una richiesta che NON dichiara un corpo multipart è un
+        // errore del client e vale 400. Questo test descrive l'altro caso — il corpo era
+        // dichiarato bene e la lettura è fallita lo stesso, cioè una connessione caduta a
+        // metà upload — che resta un guasto del server: 500, con il suo log.
         const rotta = {
-            headers: new Headers(),
+            headers: new Headers({ 'content-type': 'multipart/form-data; boundary=x' }),
             url: 'http://test/api/upload',
             formData: async () => { throw new Error('boom di trasporto'); },
         } as unknown as Request;

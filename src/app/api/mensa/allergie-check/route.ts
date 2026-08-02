@@ -10,6 +10,7 @@ import { parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD } from '@/lib/validation/common'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // Battito cardiaco del cron: pg_net chiama in fire-and-forget con `EXCEPTION WHEN OTHERS
 // THEN null`, quindi un job che non parte non lascia traccia — si sorveglia l'ASSENZA.
@@ -82,7 +83,7 @@ export const POST = withRoute('mensa/allergie-check:POST', async (request: Reque
   let operatore: AppUser | null = null
   try {
     const secret = request.headers.get('x-cron-secret')
-    const isCron = !!secret && secret === process.env.CRON_SECRET
+    const isCron = segretoCronValido(secret)
     if (!isCron) {
       // Si grida SOLO se l'header c'è ma non torna: quello è un cron che bussa con la
       // chiave sbagliata, ed è il guasto invisibile. Se l'header manca del tutto non c'è

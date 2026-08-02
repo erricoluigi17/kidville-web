@@ -127,6 +127,7 @@ function ActivityAccordion({
                 {total > 1 && (
                     <button
                         onClick={e => { e.stopPropagation(); onRemove(); }}
+                        aria-label={t('rimuoviAttivita')}
                         className="w-7 h-7 rounded-lg bg-kidville-error-soft hover:bg-kidville-error-soft flex items-center justify-center text-kidville-error hover:text-kidville-error transition-colors flex-shrink-0"
                     >
                         <Trash2 size={12} strokeWidth={1.5} />

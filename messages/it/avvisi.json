@@ -74,5 +74,6 @@
   "adesioneInterattiva": "Adesione Interattiva",
   "presaVisione": "Presa visione",
   "targetIstituto": "Target: Tutto l'Istituto",
-  "targetClassi": "Target: Classi ({classi})"
+  "targetClassi": "Target: Classi ({classi})",
+  "chiudiDettaglio": "Chiudi dettaglio avviso"
 }

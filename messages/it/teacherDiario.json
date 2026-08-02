@@ -60,5 +60,13 @@
   "salvaPerTutti": "Salva {evento} per tutti",
   "selezionaEvento": "👆 Seleziona un evento per iniziare a compilare il diario",
   "salvatoConSuccesso": "✅ Salvato con successo!",
-  "alertErroreSalvataggio": "Errore nel salvataggio. Controlla la console."
+  "alertErroreSalvataggio": "Errore nel salvataggio. Controlla la console.",
+  "chiudiEvento": "Chiudi",
+  "rimuoviAttivita": "Rimuovi attività",
+  "bagnoPipiMeno": "Diminuisci pipì",
+  "bagnoPipiPiu": "Aumenta pipì",
+  "bagnoCaccaMeno": "Diminuisci cacca",
+  "bagnoCaccaPiu": "Aumenta cacca",
+  "bagnoVasinoMeno": "Diminuisci vasino",
+  "bagnoVasinoPiu": "Aumenta vasino"
 }

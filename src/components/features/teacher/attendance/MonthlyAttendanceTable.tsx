@@ -374,7 +374,9 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
             {/* ── Header ── */}
             <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-2">
-                    <button onClick={prevMonth} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
+                    {/* Il nome accessibile non è decorazione: dentro c'è solo un glifo, e senza
+                        `aria-label` questi tre comandi si annunciano tutti «pulsante» (WCAG 4.1.2). */}
+                    <button onClick={prevMonth} aria-label={t('mesePrecedente')} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
                         <ChevronLeft size={16} />
                     </button>
                     <div className="px-2">
@@ -383,7 +385,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                         </h2>
                         <p className="font-maven text-xs text-kidville-muted">{year}</p>
                     </div>
-                    <button onClick={nextMonth} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
+                    <button onClick={nextMonth} aria-label={t('meseSuccessivo')} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
                         <ChevronRight size={16} />
                     </button>
                 </div>
@@ -395,7 +397,10 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                             <span className="font-maven text-xs text-kidville-success font-medium">{t('oggiConteggio', { presenti: todayPresenti, totale: students.length })}</span>
                         </div>
                     )}
-                    <button onClick={refresh} disabled={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
+                    {/* Nome FISSO anche mentre gira: un nome che cambia con lo stato fa perdere
+                        il riferimento a chi naviga per elenco di controlli. Lo stato lo dice
+                        `aria-busy`, che è il posto suo. */}
+                    <button onClick={refresh} disabled={isLoading} aria-label={t('aggiorna')} aria-busy={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     </button>
                     <button

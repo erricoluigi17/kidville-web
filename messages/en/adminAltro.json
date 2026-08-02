@@ -164,6 +164,7 @@
   "protTabelleAssenti": "The register tables are not present in this database.",
   "protNessunProtocolloFiltri": "There are no protocols for the selected filters. Press «Register document» at the top to record the first one.",
   "protThNumero": "Number",
+  "protApriDettaglio": "Open protocol entry no. {numero}",
   "protThData": "Date",
   "protThTipo": "Type",
   "protThOggetto": "Subject",

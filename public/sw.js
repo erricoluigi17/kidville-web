@@ -109,8 +109,27 @@
 // cancellerebbe una cache v4 che non esiste su nessun dispositivo. Ciò che
 // serviva davvero — far reinstallare il Service Worker perché `precarica()`
 // riscarichi /offline — lo fa l'impronta qui sotto, che cambia i BYTE del file.
+//
+// 2026-08-02 (secondo giro) — /offline cambia ancora: lo script inline non
+// disegna più PRIMA dell'idratazione quando il bundle di Next è nel documento
+// (era il React #418 a ogni apertura: il DOM che React trovava non era quello
+// reso dal server). Stessa conclusione di sopra e per la stessa ragione:
+// `VERSIONE` resta `v4` perché v4 non è ancora rilasciata — su `main` c'è v3 —
+// e ciò che deve cambiare per far reinstallare il Service Worker sono i BYTE di
+// questo file, che l'impronta qui sotto cambia da sé.
+//
+// 2026-08-02 (terzo giro) — /offline cambia ancora, stavolta solo nei TESTI: il
+// titolo della scheda smette di essere cablato in italiano (in inglese il
+// documento rendeva `<title>Kidville — nessuna connessione</title>` con
+// `lang="en"` e il corpo tutto in EN) e il dizionario dei segmenti di rotta
+// passa da 26 a 51 voci, così l'elenco delle pagine consultabili non cade più
+// sul ripiego che capitalizza l'URL — in inglese si leggeva «Cucina» fra
+// «Office home» e «Notices». `VERSIONE` resta `v4` per la stessa ragione dei
+// due paragrafi sopra: v4 non è mai stata rilasciata, su `main` c'è ancora v3.
+// Cambia l'impronta, cioè i BYTE di questo file, ed è quello che fa
+// reinstallare il Service Worker e riscaricare /offline.
 const VERSIONE = 'v4';
-// IMPRONTA-PAGINA-OFFLINE: 8723a6a5236af41c06706412cf488be2dde9c00825bd6a71fcfc0345926f8349
+// IMPRONTA-PAGINA-OFFLINE: 5ca4f75fcf7bfc515934bdc990766e9fb9110a0f12ccb278c09c6501fa7e0bf9
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

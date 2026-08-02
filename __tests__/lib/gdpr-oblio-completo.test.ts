@@ -401,7 +401,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.limit = () => b
       b.delete = () => b
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
-      b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
+      // `parents` risponde anche in forma singola: da quando la route passa da
+      // `anonimizzaParent`, l'anagrafica dell'adulto si legge con `maybeSingle`
+      // — ed è da lì che escono il codice fiscale e il percorso del documento
+      // d'identità. Un doppio che qui risponde `null` farebbe passare per
+      // «l'adulto non ha documenti» ciò che è solo un mock incompleto.
+      b.maybeSingle = async () => ({
+        data: table === 'alunni' ? h.alunno : table === 'parents' ? (h.parents[0] ?? null) : null,
+        error: null,
+      })
       b.then = (res: (v: unknown) => unknown) => {
         let data: unknown[] = []
         if (table === 'student_parents') data = [{ parent_id: 'p-1' }]
@@ -418,6 +426,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
           if (h.removeError) return { data: null, error: h.removeError }
           return { data: paths.map((p) => ({ name: p })), error: null }
         },
+        // Serve a due cose diverse, ed entrambe passano da qui: elencare il
+        // bucket `credenziali` (che non ha nessuna tabella-indice) e VERIFICARE
+        // che un file non uscito non sia rimasto nell'archivio. Elenco vuoto =
+        // «non c'è più», che è l'esito voluto.
+        list: async () => ({ data: [] as { name: string }[], error: null }),
       }),
     },
   }),

@@ -14,6 +14,9 @@
   "sezioneCon": "Sezione {sezione}",
   "giornoPrecedente": "Giorno precedente",
   "giornoSuccessivo": "Giorno successivo",
+  "mesePrecedente": "Mese precedente",
+  "meseSuccessivo": "Mese successivo",
+  "aggiorna": "Aggiorna",
   "oggi": "Oggi",
   "mese": "Mese",
   "caricamentoAlunni": "Caricamento alunni da anagrafica…",
@@ -67,5 +70,6 @@
   "nonFirmata": "Non firmata",
   "quotaSaldata": "Quota saldata",
   "saldata": "Saldata",
-  "daSaldare": "Da saldare"
+  "daSaldare": "Da saldare",
+  "chiudi": "Chiudi"
 }

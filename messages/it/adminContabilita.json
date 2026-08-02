@@ -833,5 +833,11 @@
   "transTotaleVersato": "Totale versato (€)",
   "transVoce": "voce",
   "transVoceCap": "Voce",
-  "transVociDaSaldare": "Voci da saldare"
+  "transVociDaSaldare": "Voci da saldare",
+  "merchDiminuisciQuantita": "Diminuisci quantità",
+  "merchAumentaQuantita": "Aumenta quantità",
+  "fatBtn_chiudi": "Chiudi",
+  "rateChiudi": "Chiudi",
+  "rateRimuoviRata": "Rimuovi rata",
+  "soll_aggiorna": "Aggiorna solleciti"
 }

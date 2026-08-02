@@ -181,7 +181,7 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
                   <label className="font-maven text-xs text-kidville-muted inline-flex items-center gap-1">
                     <input type="checkbox" checked={m.attiva} onChange={() => toggleAttiva(m)} /> {t('materieAttiva')}
                   </label>
-                  <button onClick={() => removeMateria(m.id)} className="text-kidville-muted hover:text-kidville-error">
+                  <button onClick={() => removeMateria(m.id)} aria-label={t('materieElimina')} className="text-kidville-muted hover:text-kidville-error">
                     <Trash2 size={16} />
                   </button>
                 </div>

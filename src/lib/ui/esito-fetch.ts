@@ -75,6 +75,17 @@ export const CODICI_ERRORE = {
     SEDE_DA_SPECIFICARE: 'erroreSedeDaSpecificare',
     /** 415 — il tipo dell'allegato non è fra quelli ammessi (`src/lib/allegati/mime.ts`). */
     ALLEGATO_TIPO_NON_AMMESSO: 'erroreAllegatoTipoNonAmmesso',
+    /**
+     * 415 — il tipo dell'allegato non è ammesso su una porta PUBBLICA
+     * (`src/lib/upload/allegati-pubblici.ts`): lì si accettano solo PDF e immagini.
+     *
+     * È un codice suo e non `ALLEGATO_TIPO_NON_AMMESSO` perché l'elenco è diverso: fra il
+     * personale un `.docx` si allega, dal modulo pubblico d'iscrizione no. Dire a una
+     * famiglia «sono ammessi anche i documenti Word» le farebbe riprovare con un file che
+     * verrebbe respinto lo stesso — un messaggio che manda l'utente contro un muro è peggio
+     * di nessun messaggio.
+     */
+    ALLEGATO_PDF_O_IMMAGINE: 'erroreAllegatoPdfOImmagine',
     /** 413 — l'allegato supera il limite del bucket (10 MB). */
     ALLEGATO_TROPPO_GRANDE: 'erroreAllegatoTroppoGrande',
     /** 400 — l'indirizzo dell'allegato non è del nostro bucket (`src/lib/chat/allegati.ts`). */

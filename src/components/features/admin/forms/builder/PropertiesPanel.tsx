@@ -195,6 +195,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                       />
                       <button
                         onClick={() => removeOption(idx)}
+                        aria-label={t('ppRimuoviOpzione')}
                         className="flex-shrink-0 p-1 rounded-lg text-kidville-muted hover:text-kidville-error hover:bg-kidville-error/10 transition-all"
                       >
                         <X className="w-3.5 h-3.5" />

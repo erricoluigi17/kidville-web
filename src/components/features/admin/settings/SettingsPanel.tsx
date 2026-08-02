@@ -264,7 +264,7 @@ function CategorieManager({ userId }: Props) {
                     <span key={c.id} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green">
                         {c.icona} {c.nome}
                         {c.is_sistema ? <Lock size={11} className="text-kidville-sub" /> :
-                            <button onClick={() => del(c.id)} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={13} /></button>}
+                            <button onClick={() => del(c.id)} aria-label={t('spEliminaCategoria')} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={13} /></button>}
                     </span>
                 ))}
             </div>
@@ -369,7 +369,7 @@ function TicketSettings({ userId }: Props) {
                         <input value={p.label} onChange={e => upd(i, 'label', e.target.value)} placeholder={t('spTicketNome')} className={`${input} flex-1`} />
                         <input type="number" value={p.pezzi || ''} onChange={e => upd(i, 'pezzi', Number(e.target.value))} placeholder={t('spTicketPezzi')} className={`${input} w-24`} />
                         <input type="number" value={p.costo || ''} onChange={e => upd(i, 'costo', Number(e.target.value))} placeholder="€" className={`${input} w-24`} />
-                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={15} /></button>
+                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} aria-label={t('spRimuoviPacchetto')} className="text-kidville-sub hover:text-kidville-error"><Trash2 size={15} /></button>
                     </div>
                 ))}
             </div>

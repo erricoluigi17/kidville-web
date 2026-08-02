@@ -60,6 +60,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                             </div>
                             <button
                                 onClick={onClose}
+                                aria-label={t('chiudiDettaglio')}
                                 className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
                             >
                                 <X size={16} strokeWidth={1.5} />

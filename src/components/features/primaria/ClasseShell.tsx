@@ -78,7 +78,10 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
       <header className={`${inCockpit ? 'lg:sticky lg:top-0' : 'sticky top-[var(--kv-appbar-h,0px)]'} z-20 bg-kidville-green`}>
         <div className="max-w-5xl mx-auto px-4 pt-3">
           <div className="flex items-center gap-3 pb-3">
-            <Link href={withUser(basePrefix)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
+            {/* Dentro c'è solo una freccia: senza nome uno screen reader annuncia
+                «link», e basta (WCAG 4.1.2). Il testo è in italiano come il resto
+                di questo componente, che non passa da next-intl. */}
+            <Link href={withUser(basePrefix)} aria-label="Torna indietro" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
               <ArrowLeft size={18} />
             </Link>
             <h1 className="font-barlow text-2xl font-black uppercase tracking-wide text-white">

@@ -135,6 +135,50 @@ describe('sanificaMessaggio — il testo dell\'errore non aggira la redazione', 
         expect(sanificaMessaggio('alunno RSSMRA85T1LA562S non trovato')).toBe('alunno [cf] non trovato');
     });
 
+    /**
+     * `Key (col)=(valore)` non è l'unico modo in cui Postgres RIMANDA INDIETRO il
+     * valore che ha rifiutato. La classe SQLSTATE 22 (data_exception) lo echeggia
+     * fra virgolette: `invalid input syntax for type uuid: "…"`.
+     *
+     * Misurato il 2026-08-02 su questo repo: `GET /m/<token>` — dove `<token>` è
+     * dichiarato una CREDENZIALE — finiva in chiaro in `app_log.messaggio`, e ci
+     * restava 30 giorni. Il segmento di path non passa da `redact()` (che è a
+     * lista bianca PER CHIAVE) perché nel testo dell'errore non c'è nessuna
+     * chiave: passa solo di qui.
+     *
+     * Ciò che serve a diagnosticare — il codice SQLSTATE e il TIPO atteso —
+     * resta: si maschera il valore, non la diagnosi.
+     */
+    it('maschera il valore rifiutato nei messaggi di classe 22 (data_exception)', () => {
+        const out = sanificaMessaggio('invalid input syntax for type uuid: "TOKEN-DI-COLLAUDO-12345"');
+        expect(out).not.toContain('TOKEN-DI-COLLAUDO-12345');
+        expect(out).toBe('invalid input syntax for type uuid: "[valore]"');
+    });
+
+    it('maschera il valore rifiutato qualunque sia il tipo, e su ogni occorrenza della riga', () => {
+        const out = sanificaMessaggio(
+            'invalid input syntax for type integer: "mario.rossi" · invalid input syntax for type date: "31/02/2020"',
+        );
+        expect(out).not.toContain('mario.rossi');
+        expect(out).not.toContain('31/02/2020');
+        expect(out).toContain('for type integer: "[valore]"');
+        expect(out).toContain('for type date: "[valore]"');
+    });
+
+    it('maschera anche le altre forme della classe 22 che echeggiano il valore', () => {
+        expect(sanificaMessaggio('date/time field value out of range: "2020-13-45"'))
+            .toBe('date/time field value out of range: "[valore]"');
+        expect(sanificaMessaggio('invalid input value for enum ruolo: "Direttrice Rossi"'))
+            .toBe('invalid input value for enum ruolo: "[valore]"');
+    });
+
+    it('non tocca le virgolette che NON portano un valore rifiutato', () => {
+        // La maschera è ancorata alle forme di Postgres che echeggiano l'input:
+        // un messaggio qualunque con virgolette resta leggibile per intero.
+        const out = sanificaMessaggio('Could not find the table \'public.daily_routines\' in the schema cache');
+        expect(out).toContain('daily_routines');
+    });
+
     it('tronca a 500 caratteri', () => {
         expect(sanificaMessaggio('x'.repeat(2_000)).length).toBeLessThanOrEqual(500);
     });

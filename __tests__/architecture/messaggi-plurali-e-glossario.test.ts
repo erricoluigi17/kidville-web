@@ -121,6 +121,13 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     { ns: 'teacherPrimaria', chiave: 'scrutinioImportate', variabile: 'count' },
     { ns: 'teacherServizi', chiave: 'modulisticaFirmati', variabile: 'count' },
     { ns: 'teacherServizi', chiave: 'modulisticaMancanti', variabile: 'count' },
+    // Trovati dal RICONOSCITORE DI FORMA (in fondo a questo file) il 2026-08-02,
+    // cioè dal criterio che ha sostituito questa enumerazione. Restano elencati
+    // qui perché il test di sopra rende il testo e mostra la coppia 1/2: è la
+    // diagnosi migliore. Ma non sono più *loro* il perimetro.
+    { ns: 'teacherPrimaria', chiave: 'scrutinioImportateErrori', variabile: 'count' },
+    { ns: 'teacherPrimaria', chiave: 'scrutinioPagelleGenerate', variabile: 'totale', extra: { generate: 1 } },
+    { ns: 'adminPrimaria', chiave: 'orarioAttivo', variabile: 'giorni', extra: { modello: 40 } },
 ]
 
 /**
@@ -368,5 +375,122 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // Controllo positivo: l'ellissi tipografica è davvero in uso, non è che siano
         // sparite le une e le altre.
         expect(LINGUE.flatMap((l) => tutteLeStringhe(l).filter((r) => r.testo.includes('…'))).length).toBeGreaterThan(300)
+    })
+    /**
+     * ── IL RICONOSCITORE DI FORMA ────────────────────────────────────────────
+     *
+     * `CONTATORI` è un ELENCO A MANO, e un elenco a mano protegge le voci che
+     * qualcuno si è ricordato di scriverci. Il 2026-08-02 il collaudo ha trovato
+     * TRE contatori sbagliati — `scrutinioImportateErrori`, `scrutinioPagelleGenerate`,
+     * `orarioAttivo` — tutti e tre FUORI da quell'elenco, con il gate verde. È la
+     * stessa firma del difetto che questo lock era nato per chiudere: una regola
+     * giusta applicata a una lista chiusa.
+     *
+     * Qui il criterio non è più «chi è iscritto», è la FORMA: un segnaposto
+     * numerico (`{n}` o `#`) seguito da una parola alfabetica, fuori da un blocco
+     * `plural`/`select`, è un candidato contatore. Una chiave nuova entra da sola
+     * nel perimetro; per uscirne deve essere DICHIARATA qui sotto con il motivo.
+     *
+     * L'euristica dà falsi positivi — «Passo {n} di {totale}», «max {mb} MB»,
+     * «alle {ora}» — e per questo l'allowlist esiste. Non dà però falsi negativi
+     * sulla forma che conta, ed è l'unica proprietà che serve a un lock.
+     */
+    const NON_CONTATORI = new Map<string, string>([
+        // (a) il segnaposto NON è un conteggio: è una data, un'ora, un nome, un
+        //     importo, un tipo. Il sostantivo che segue non concorda con esso.
+        ['adminAltro.protAnnullataBanner', 'data e ora, non conteggi'],
+        ['adminAltro.protDettaglioSubtitle', 'tipo/data/ora, non conteggi'],
+        ['adminAltro.protDocSostituito', 'numero di protocollo: identificativo, non quantità'],
+        ['adminAltro.protEmergenzaEvento', 'data e ora'],
+        ['adminComunicazioni.editorRitrattiRimuovi', 'nome del bambino'],
+        ['adminModulistica.modConfermaApprovazioneTesto', 'cognome della famiglia'],
+        ['adminModulistica.modFamiglia', 'cognome della famiglia'],
+        ['adminModulistica.modOdtCaricato', 'nome del file'],
+        ['adminPrimaria.materieNessunObiettivoDefinito', 'codice materia e livello ordinale'],
+        ['diario.nannaDurata', 'orari di inizio e fine'],
+        ['pagamenti.importoScaduti', 'importo in euro, già formattato'],
+        ['pagamenti.restaImporto', 'importo in euro, già formattato'],
+        ['parentChat.outOfHoursFallback', 'orari di apertura'],
+        ['parentServizi.galleryInfoPrivacy', 'nome del bambino'],
+        ['parentServizi.sospensioneScaduto', 'importo in euro, già formattato'],
+        ['teacherDiario.descriviAttivita', 'tipo di attività'],
+        ['teacherDiario.salvaPerTutti', 'nome dell’evento'],
+
+        // (b) il segnaposto è un numero, ma la parola che segue è un'UNITÀ o una
+        //     preposizione: non va mai al plurale. «max 1 MB» è corretto.
+        ['adminAltro.protFileTroppoGrande', 'unità di misura (MB)'],
+        ['adminAltro.protUploadHint', 'unità di misura (MB)'],
+        ['parentForms.fileTroppoPesante', 'unità di misura (MB)'],
+        ['teacherServizi.galleryAlertVideoTroppoGrande', 'unità di misura (MB)'],
+        ['adminComunicazioni.avvisiAdesioniSiNo', '«sì»/«no»: avverbi, invarianti'],
+        ['teacherNav.adesioniSiNo', '«sì»/«no»: avverbi, invarianti'],
+        ['parentForms.firmatarioNdi2', 'forma «N di 2»: posizione in una sequenza'],
+        ['parentForms.passo', 'forma «passo N di M»: posizione in una sequenza'],
+        ['public.wizardPassoDi', 'forma «passo N di M»: posizione in una sequenza'],
+        ['teacherPresenze.pdfPiePagina', 'forma «pagina N di M»: posizione in una sequenza'],
+        ['teacherServizi.galleryFotoNofM', 'forma «foto N di M»: posizione in una sequenza'],
+
+        // (c) FRAZIONE `n/tot`: il sostantivo concorda con il totale, non con il
+        //     numeratore. «1/20 presenti» è corretto e «1/20 presente» sarebbe
+        //     sbagliato.
+        ['adminNav.sedePresenti', 'frazione presenti/iscritti'],
+        ['teacherPresenze.oggiConteggio', 'frazione presenti/totale'],
+
+        // (d) l'inglese è invariante e l'italiano non ha sostantivo: già coperte
+        //     dal test sopra tramite CONTATORI + INVARIANTI_IN_INGLESE.
+        ['teacherServizi.modulisticaFirmati', 'già in CONTATORI'],
+        ['teacherServizi.modulisticaMancanti', 'già in CONTATORI'],
+        ['teacherPrimaria.overviewInClasse', 'complemento di luogo invariante: «1 in classe» / «1 in class»'],
+
+        // (e) DEBITO DICHIARATO — sono contatori veri, non ancora portati a ICU.
+        //     Restano qui con la loro ragione invece di sparire: chi passa di qua
+        //     sa che ci sono. Sono tutti su schermate di sola SEGRETERIA e in
+        //     riepiloghi che elencano più conteggi nella stessa frase, dove
+        //     l'ICU va scritto una clausola per conteggio. Questa mappa può solo
+        //     accorciarsi: il test qui sotto ne fissa il tetto.
+        ['adminAltro.richiesteFigli', 'DEBITO: «{iscritti} iscritti» — due conteggi in una riga'],
+        ['adminModulistica.rnkDeliberaConfirm', 'DEBITO: «{posti} posti» in una conferma di segreteria'],
+        ['adminSettings.ieRisultato', 'DEBITO: tre conteggi in una riga di esito import'],
+        ['adminSettings.siImportCompletato', 'DEBITO: tre conteggi in una riga di esito import'],
+    ])
+
+    /** Un blocco ICU `plural`/`select` apre il perimetro in cui `#` è già gestito. */
+    const APRE_BLOCCO_ICU = /\{\s*\w+\s*,\s*(?:plural|select|selectordinal)\s*,/
+    /** Segnaposto numerico seguito da una parola: il candidato contatore. */
+    const SEGNAPOSTO_PIU_PAROLA = /(?:#|\{\s*\w+\s*\})\s+[A-Za-zÀ-ÿ]{2,}/
+
+    it('nessun contatore NUOVO nasce fuori dal perimetro (riconoscimento per FORMA)', () => {
+        const scoperti = new Set<string>()
+        for (const lingua of LINGUE) {
+            for (const ns of Object.keys(CATALOGHI[lingua]).sort()) {
+                for (const [chiave, valore] of vociPiatte(CATALOGHI[lingua][ns])) {
+                    if (typeof valore !== 'string') continue
+                    if (APRE_BLOCCO_ICU.test(valore)) continue
+                    if (!SEGNAPOSTO_PIU_PAROLA.test(valore)) continue
+                    const indirizzo = `${ns}.${chiave}`
+                    if (NON_CONTATORI.has(indirizzo)) continue
+                    if (CONTATORI.some((c) => `${c.ns}.${c.chiave}` === indirizzo)) continue
+                    scoperti.add(`${indirizzo} → «${valore.slice(0, 90)}»`)
+                }
+            }
+        }
+        expect(
+            [...scoperti].sort(),
+            'Segnaposto numerico seguito da una parola, fuori da un blocco plural.\n' +
+            'Se è un CONTATORE: portalo alla forma ICU «{n, plural, one {# …} other {# …}}».\n' +
+            'Se non lo è (data, ora, nome, unità di misura, frazione): dichiaralo in ' +
+            'NON_CONTATORI con il motivo, in una riga.',
+        ).toEqual([])
+    })
+
+    it('l’allowlist può solo accorciarsi', () => {
+        // Il tetto è il numero di oggi. Chi aggiunge una riga a NON_CONTATORI
+        // deve abbassarlo o spiegarsi: senza questo, l'elenco delle eccezioni
+        // diventa il posto dove i contatori sbagliati vanno a nascondersi.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(37)
+        // …e ogni eccezione porta una ragione scritta, non una riga muta.
+        for (const [chiave, motivo] of NON_CONTATORI) {
+            expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)
+        }
     })
 })

@@ -309,7 +309,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                     {formData.phones.map((phone, idx) => (
                                         <motion.div key={idx} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2">
                                             <input value={phone} onChange={(e) => handleArrayChange(idx, 'phones', e.target.value)} placeholder="+39 333 000 0000" className="flex-1 p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
-                                            <button onClick={() => removeArrayItem(idx, 'phones')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
+                                            <button onClick={() => removeArrayItem(idx, 'phones')} aria-label={t('aFormRimuoviTelefono')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
                                                 <Trash2 size={18} />
                                             </button>
                                         </motion.div>
@@ -332,7 +332,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                                 <input type="email" value={email} onChange={(e) => handleArrayChange(idx, 'emails', e.target.value)} placeholder="mario.rossi@email.com" className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors[`emails.${idx}`] ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                                                 {idx === 0 && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase font-black tracking-widest text-kidville-green bg-kidville-green/10 px-2 py-1 rounded">{t('aFormPrimaria')}</span>}
                                             </div>
-                                            <button onClick={() => removeArrayItem(idx, 'emails')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
+                                            <button onClick={() => removeArrayItem(idx, 'emails')} aria-label={t('aFormRimuoviEmail')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
                                                 <Trash2 size={18} />
                                             </button>
                                         </motion.div>

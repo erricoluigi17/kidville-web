@@ -273,17 +273,27 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
   })
 
-  it('DEGRADO — se /api/iscrizione/sedi fallisce, il genitore non resta bloccato', async () => {
+  /**
+   * ⚠️ QUESTO TEST DICEVA IL CONTRARIO, e difendeva il difetto.
+   *
+   * Fino al 2026-08-02 asseriva che «il genitore non resta bloccato»: con la
+   * fetch delle sedi fallita il modulo partiva lo stesso dal bambino, e il
+   * commento prometteva che «sarà il 400 del server a parlare». Quel 400 parla
+   * DOPO l'anagrafica del minore, il codice fiscale, le allergie, le note
+   * mediche e il documento d'identità — cioè quando il lavoro è già perduto.
+   * Con TRE sedi la sede non è deducibile: un modulo che non potrà essere
+   * inviato non deve nemmeno cominciare. La copertura completa dei tre stati
+   * sta in `EnrollmentWizard-sedi-errore.test.tsx`; qui resta il confine.
+   */
+  it('elenco sedi NON ottenuto (rete giù) → non si comincia a compilare, e lo si dice', async () => {
     mockFetch(null)
     render(<EnrollmentWizard />)
 
-    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
-
-    // Il modulo resta compilabile e inviabile: sarà il 400 del server a parlare.
-    fireEvent.change(screen.getByPlaceholderText('Nome bimbo'), { target: { value: 'Tino' } })
-    fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
-    await waitFor(() => expect(screen.getByPlaceholderText('Nome adulto')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText('Non riusciamo a caricare le sedi')).toBeInTheDocument(),
+    )
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Riprova' })).toBeInTheDocument()
   })
 
   it('?scuola= VUOTO nel link → vale come assente: si sceglie la sede e il POST la porta', async () => {
@@ -311,13 +321,17 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     expect((postBodies[0] as { scuola_id?: string }).scuola_id).toBe(ALFA.id)
   })
 
-  it('DEGRADO — se /api/iscrizione/sedi risponde 500, il genitore non resta bloccato', async () => {
+  it('elenco sedi non ottenuto (500) → stesso trattamento della rete giù', async () => {
     // Una risposta non-ok NON è un\'eccezione: se il codice guardasse solo il
-    // `catch`, questo caso passerebbe inosservato.
+    // `catch`, questo caso passerebbe inosservato — ed è esattamente ciò che
+    // succedeva col 429 del rate-limit misurato in produzione.
     mockFetch('http500')
     render(<EnrollmentWizard />)
 
-    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText('Non riusciamo a caricare le sedi')).toBeInTheDocument(),
+    )
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
   })
 

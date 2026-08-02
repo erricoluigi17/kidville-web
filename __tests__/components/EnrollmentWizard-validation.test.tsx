@@ -81,6 +81,13 @@ function mockFetch(postImpl?: () => unknown) {
     if (url.includes('/api/iscrizione/model')) {
       return Promise.resolve({ ok: true, json: async () => modelSchema })
     }
+    // L'elenco sedi va risposto con la FORMA vera della route (`{ data: [] }`):
+    // dal 2026-08-02 il wizard distingue «elenco vuoto» da «elenco non
+    // ottenuto», e un corpo `{}` significa il secondo — mostrerebbe il pannello
+    // d'errore invece del modulo. Vuoto = il DB della CI: si compila e basta.
+    if (url.includes('/api/iscrizione/sedi')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [] }) })
+    }
     if (url.includes('/api/iscrizione') && init?.method === 'POST') {
       return Promise.resolve(postImpl ? postImpl() : { ok: true, status: 201, json: async () => ({ id: 'x' }) })
     }

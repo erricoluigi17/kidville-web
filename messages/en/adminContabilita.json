@@ -833,5 +833,11 @@
   "transTotaleVersato": "Total paid (€)",
   "transVoce": "item",
   "transVoceCap": "Item",
-  "transVociDaSaldare": "Items to settle"
+  "transVociDaSaldare": "Items to settle",
+  "merchDiminuisciQuantita": "Decrease quantity",
+  "merchAumentaQuantita": "Increase quantity",
+  "fatBtn_chiudi": "Close",
+  "rateChiudi": "Close",
+  "rateRimuoviRata": "Remove instalment",
+  "soll_aggiorna": "Refresh reminders"
 }

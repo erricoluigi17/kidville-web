@@ -4,6 +4,16 @@ import { createHash } from 'crypto'
 // ── Caratterizzazione del path FIRMA LIVE del wizard moduli (P1/S0). ──
 // Questo è il flusso che `OtpSignatureModal` invoca realmente. I test fissano
 // status code + contratto JSON PRIMA del refactor FEA (rete di sicurezza R1).
+//
+// Dal 2026-08-02 la route ha un gate d'identità (`requireUser`) su entrambi gli
+// handler: il chiamante di questi test è il genitore INTESTATARIO delle
+// submission qui sotto — la stessa cosa che succede nell'app, dove il modale di
+// firma vive dentro l'area autenticata. Il caso «anonimo» e il caso «genitore
+// di un'altra famiglia» stanno in `forms-send-otp-identita-firmatario.test.ts`.
+
+// `vi.hoisted`: le factory di `vi.mock` risalgono in cima al file, e una const
+// normale non esisterebbe ancora quando vengono eseguite.
+const { GENITORE } = vi.hoisted(() => ({ GENITORE: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }))
 
 // Mock table-aware: per ogni tabella una coda FIFO di risultati, consumata
 // nell'ordine in cui la route esegue le query.
@@ -45,6 +55,9 @@ vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 7, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('test-ip'),
 }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  requireUser: vi.fn().mockResolvedValue({ user: { id: GENITORE, role: 'genitore', scuola_id: null } }),
+}))
 
 import { POST, PATCH } from '@/app/api/forms/send-otp/route'
 
@@ -76,9 +89,13 @@ describe('POST /api/forms/send-otp — crea submission + invia OTP', () => {
   it('200 crea form_submissions(pending_signature) e ritorna submissionId/email/sent', async () => {
     h.state.queues = {
       form_submissions: [{ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }, error: null }, { data: null, error: null }],
+      // 1ª lettura: lo schema (che ora è anche la prova che il modulo ESISTE:
+      // un `modelId` inesistente è 404 e non arriva più alla foreign key).
+      // 2ª: il flag `sempre_firmabile` letto dal guard sospensione.
+      form_models: [{ data: { schema: { pages: [] } }, error: null }, { data: { sempre_firmabile: false }, error: null }],
       utenti: [{ data: { email: 'genitore@example.it' }, error: null }],
     }
-    const res = await POST(jsonReq({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { campo: 'x' } }))
+    const res = await POST(jsonReq({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: GENITORE, data: { campo: 'x' } }))
     const body = await res.json()
     expect(res.status).toBe(200)
     expect(body).toMatchObject({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', email: 'genitore@example.it', sent: true })
@@ -99,7 +116,7 @@ describe('PATCH /api/forms/send-otp — verifica OTP e finalizza', () => {
 
   it('409 se già completata', async () => {
     h.state.queues = {
-      form_submissions: [{ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: 'x', status: 'completed' }, error: null }],
+      form_submissions: [{ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: 'x', status: 'completed', user_id: GENITORE }, error: null }],
     }
     const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '123456' }))
     expect(res.status).toBe(409)
@@ -108,7 +125,7 @@ describe('PATCH /api/forms/send-otp — verifica OTP e finalizza', () => {
   it('400 se il codice è errato', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '111111'), status: 'pending_signature' }, error: null },
+        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '111111'), status: 'pending_signature', user_id: GENITORE }, error: null },
       ],
     }
     const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '999999' }))
@@ -118,7 +135,7 @@ describe('PATCH /api/forms/send-otp — verifica OTP e finalizza', () => {
   it('200 con codice corretto → ok + signedAt', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '424242'), status: 'pending_signature' }, error: null },
+        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '424242'), status: 'pending_signature', user_id: GENITORE }, error: null },
         { data: null, error: null },
       ],
     }
@@ -132,7 +149,7 @@ describe('PATCH /api/forms/send-otp — verifica OTP e finalizza', () => {
   it('S7: salva signature_log su form_submissions + slot fea_signatures', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '424242'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }, error: null },
+        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '424242'), status: 'pending_signature', user_id: GENITORE }, error: null },
         { data: null, error: null },
       ],
     }

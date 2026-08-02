@@ -259,7 +259,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                             {(a.mensa_menu_config as { nome: string } | undefined)?.nome ?? menus.find(m => m.id === a.menu_config_id)?.nome ?? '—'}
                           </span>
                         </span>
-                        <button onClick={() => eliminaAssegnazione(a.id)} className="p-1 rounded text-kidville-error hover:bg-kidville-error-soft">
+                        <button onClick={() => eliminaAssegnazione(a.id)} aria-label={t('meEliminaAssegnazione')} className="p-1 rounded text-kidville-error hover:bg-kidville-error-soft">
                           <Trash2 size={13} />
                         </button>
                       </div>

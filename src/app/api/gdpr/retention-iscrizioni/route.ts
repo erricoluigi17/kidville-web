@@ -4,6 +4,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 /**
  * LA CONSERVAZIONE DELLE DOMANDE D'ISCRIZIONE, FATTA DA DOVE SI PUÒ FARE.
@@ -114,7 +115,7 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
     let canale = 'cron'
     try {
         const secret = request.headers.get('x-cron-secret')
-        const isCron = !!secret && secret === process.env.CRON_SECRET
+        const isCron = segretoCronValido(secret)
         if (!isCron) {
             // Si grida solo se l'header c'è ma non torna: quello è un cron che bussa
             // con la chiave sbagliata, ed è il guasto invisibile. Se manca del tutto,

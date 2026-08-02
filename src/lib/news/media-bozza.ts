@@ -100,20 +100,33 @@ function mappaStringhe(nodo: unknown, f: (s: string) => string, prof: number): u
   return out
 }
 
+/**
+ * Visita ogni stringa dell'albero, con lo STESSO limite di ricorsione di
+ * `mappaStringhe` — che è il punto: il JSON arriva dal client, e il tetto alla
+ * profondità è una difesa, non un dettaglio. Sta qui, esportata, perché la stessa
+ * passeggiata serve anche a `./permanenza-consenso.ts` (che cerca i file già
+ * promossi nel bucket pubblico) e due copie divergerebbero alla prima modifica.
+ */
+export function perOgniStringa(nodo: unknown, f: (s: string) => void): void {
+  mappaStringhe(
+    nodo,
+    (s) => {
+      f(s)
+      return s
+    },
+    0,
+  )
+}
+
 /** Tutti i percorsi in sosta citati da copertina e rich-text, senza duplicati. */
 function raccogliBozze(copertinaUrl: unknown, contenutoJson: unknown): string[] {
   const trovati = new Set<string>()
   const dallaCopertina = pathBozza(copertinaUrl)
   if (dallaCopertina) trovati.add(dallaCopertina)
-  mappaStringhe(
-    contenutoJson,
-    (s) => {
-      const p = pathBozza(s)
-      if (p) trovati.add(p)
-      return s
-    },
-    0,
-  )
+  perOgniStringa(contenutoJson, (s) => {
+    const p = pathBozza(s)
+    if (p) trovati.add(p)
+  })
   return [...trovati]
 }
 

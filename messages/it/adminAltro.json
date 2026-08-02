@@ -164,6 +164,7 @@
   "protTabelleAssenti": "Le tabelle del registro non sono presenti su questo database.",
   "protNessunProtocolloFiltri": "Non ci sono protocolli per i filtri scelti. Premi «Protocolla documento» in alto per registrare il primo.",
   "protThNumero": "Numero",
+  "protApriDettaglio": "Apri la registrazione n. {numero}",
   "protThData": "Data",
   "protThTipo": "Tipo",
   "protThOggetto": "Oggetto",

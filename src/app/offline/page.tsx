@@ -37,8 +37,15 @@ import { costruisciScriptOffline } from './script-offline';
 // `__tests__/offline/pagina-offline.test.tsx`.
 export const dynamic = 'force-static';
 
+// Il titolo della SCHEDA. Viene dal catalogo come tutto il resto: cablarlo qui
+// significava lasciarlo italiano anche in inglese, ed è quello che succedeva —
+// `curl -b 'KV_LOCALE=en' /offline` rendeva `<title>Kidville — nessuna
+// connessione</title>` con `documentElement.lang="en"` e il corpo tutto in
+// inglese. Il `metadata` di Next è statico per costruzione (`force-static`), e
+// la lingua la sistema lo script qui sotto: è la stessa staffetta che già
+// corregge `lang` e i blocchi `data-kv-lang`, non una strada nuova.
 export const metadata: Metadata = {
-  title: 'Kidville — nessuna connessione',
+  title: it.titoloScheda,
   description: 'Kidville non è raggiungibile: controlla la connessione e riprova.',
 };
 
@@ -49,6 +56,7 @@ if(l!=='en')return;
 var n=document.querySelectorAll('[data-kv-lang]');
 for(var i=0;i<n.length;i++){n[i].hidden=n[i].getAttribute('data-kv-lang')!=='en';}
 document.documentElement.lang='en';
+document.title=${JSON.stringify(en.titoloScheda)};
 }catch(e){}})();`;
 
 // Le etichette delle rotte sono tradotte come tutto il resto della pagina, e

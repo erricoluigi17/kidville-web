@@ -136,6 +136,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               </div>
               <button
                 onClick={onClose}
+                aria-label={t('sdsChiudi')}
                 className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-white/[0.08] transition-all flex-shrink-0"
               >
                 <X className="w-4.5 h-4.5" />

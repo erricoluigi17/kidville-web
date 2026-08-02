@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { parseData } from '@/lib/validation/http';
+import { parseData, parseMultipart } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { BUCKET_TASK_ALLEGATI, TTL_FIRMA_ALLEGATI_S } from '@/lib/allegati/storage';
@@ -19,8 +19,11 @@ export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
-        const formData = await request.formData();
-        const parsed = parseData(postFormSchema, { file: formData.get('file') });
+        // Come sul gemello `avvisi/upload`: un Content-Type sbagliato è un 400 del client,
+        // non un 500 del server (collaudo 2026-08-02, F2). La regola vive in `parseMultipart`.
+        const formData = await parseMultipart(request);
+        if ('response' in formData) return formData.response;
+        const parsed = parseData(postFormSchema, { file: formData.data.get('file') });
         if ('response' in parsed) return parsed.response;
         const { file } = parsed.data;
 

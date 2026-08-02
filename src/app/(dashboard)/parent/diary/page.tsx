@@ -487,6 +487,7 @@ function ParentDiaryContent() {
             <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">
                 <button
                     onClick={() => goDay(-1)}
+                    aria-label={t('giornoPrecedente')}
                     className="w-9 h-9 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted transition-colors"
                 >
                     <ChevronLeft size={18} strokeWidth={1.5} />
@@ -505,6 +506,7 @@ function ParentDiaryContent() {
 
                 <button
                     onClick={() => goDay(1)}
+                    aria-label={t('giornoSuccessivo')}
                     disabled={isToday}
                     className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
                         isToday

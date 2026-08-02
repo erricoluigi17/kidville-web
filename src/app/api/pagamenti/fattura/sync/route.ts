@@ -13,6 +13,7 @@ import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // POST /api/pagamenti/fattura/sync — polling stato SDI delle fatture in volo.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret` (pattern push/dispatch).
@@ -62,7 +63,7 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    if (!segretoCronValido(secret)) {
       // Si grida SOLO se l'header c'è ma non torna: quello è un cron che bussa con la chiave
       // sbagliata, ed è il guasto invisibile (se questo giro non parte, le fatture restano «in
       // volo» per sempre e nessuno si accorge di uno scarto SDI). Sul POST ANONIMO si tace: la

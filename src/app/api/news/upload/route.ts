@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { parseData } from '@/lib/validation/http'
+import { parseData, parseMultipart } from '@/lib/validation/http'
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff'
@@ -41,8 +42,10 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
 
-    const formData = await request.formData()
-    const f = parseData(postFormSchema, { file: formData.get('file') })
+    // Content-Type sbagliato = errore del CLIENT: 400, non 500 (collaudo 2026-08-02, F2).
+    const formData = await parseMultipart(request)
+    if ('response' in formData) return formData.response
+    const f = parseData(postFormSchema, { file: formData.data.get('file') })
     if ('response' in f) return f.response
     const { file } = f.data
     // Il path è namespaced sull'utente del gate, non su un campo client.
@@ -132,7 +135,10 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
         }, error)
       }
       logErrore({ operazione: 'news/upload:POST', stato: 500, evento: 'storage' }, error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      // Il messaggio del fornitore resta nel LOG (dove sopra si legge anche `bucket-mancante`)
+      // e non torna al client: al client il codice che il catalogo sa tradurre, come già fa
+      // il ramo dell'anteprima qui sotto.
+      return rispostaAllegatoNonCaricato()
     }
 
     if (bucketUsato === NEWS_BUCKET_BOZZE) {

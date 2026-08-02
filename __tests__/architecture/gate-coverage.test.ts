@@ -353,12 +353,22 @@ const PUBBLICHE: Record<string, string> = {
     'public/forms/[token]/submit:POST': 'token pubblico del modello (capability): il modello deve esistere ed essere pubblicato, + tetto 20/10 min per IP',
     'public/forms/[token]/upload:POST': 'token pubblico del modello: allegato accettato solo se il token corrisponde a un modello PUBBLICATO, + tetto 30/10 min per IP',
 
-    // ── Firma elettronica: il gate è il CODICE OTP recapitato per email ──────
-    // Non c'è sessione perché il firmatario può essere il secondo genitore, che
-    // un account non ce l'ha. Il tetto sul PATCH è arrivato il 2026-08-01: senza,
-    // un milione di combinazioni erano tutte gratuite su una firma legale.
-    'forms/send-otp:POST': "invio del codice di firma: il firmatario può essere il 2° genitore, senza account. Tetto 8/10 min per IP + sospensione morosità",
-    'forms/send-otp:PATCH': 'verifica del codice di firma: la capability È il codice ricevuto per email, con tetto sui tentativi PER SUBMISSION (`limitaVerificaOtpOggetto`)',
+    // ── Firma elettronica ────────────────────────────────────────────────────
+    // QUI C'ERANO DUE VOCI, `forms/send-otp:POST` e `:PATCH`, e la ragione
+    // scritta era: «non c'è sessione perché il firmatario può essere il secondo
+    // genitore, che un account non ce l'ha». La motivazione era vera e la
+    // conclusione sbagliata: giustificava l'assenza di una SESSIONE, ma il
+    // codice non la sostituiva con nessuna capability. Il `submissionId` non è
+    // un segreto — è l'id che il client del genitore riceve da
+    // `/api/parent/forms` — e `signerEmail` arrivava dal body senza alcun
+    // confronto con l'anagrafica. Misurato il 2026-08-02: un ANONIMO si faceva
+    // recapitare il codice di una firma altrui all'indirizzo che voleva, e poi
+    // firmava. Su un documento con valore legale, attribuito alla vittima.
+    //
+    // Il 2° firmatario senza account continua a firmare: la richiesta la fa il
+    // genitore intestatario dalla propria area, e il destinatario si prende dai
+    // tutori REGISTRATI dell'alunno. Ciò che è sparito è l'anonimo — quindi le
+    // due voci non stanno più qui, e il tetto qui sotto è sceso da 16 a 14.
     'forms/submit:POST': 'compilazione senza firma dal wizard pubblico: tetto 20/10 min per IP + guard server-side sui consensi obbligatori',
 
     // ── GDPR: la cancellazione si chiede PROPRIO quando non si ha più l'app ───
@@ -441,12 +451,18 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // sono i due difetti che hanno fatto nascere questo lock —
         // `admin/primaria/docenti-materie:GET` e `diary:GET` — e sono stati
         // corretti, non esentati.
+        //
+        // 14 dal 2026-08-02 (sera): `forms/send-otp:POST` e `:PATCH` hanno preso
+        // il gate. Erano l'esempio esatto del rischio che questa allowlist
+        // porta con sé — una motivazione plausibile («il 2° genitore non ha un
+        // account») che copriva una porta che nessuno aveva deciso di lasciare
+        // aperta. Il tetto scende: è il verso giusto.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(16)
+        ).toBe(14)
     })
 })
 

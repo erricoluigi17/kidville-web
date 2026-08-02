@@ -210,6 +210,7 @@ export function TaskForm({
                     </div>
                     <button
                         onClick={onClose}
+                        aria-label={t('chiudi')}
                         className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted"
                     >
                         <X size={14} />
@@ -440,6 +441,7 @@ export function TaskForm({
                                                     <button
                                                         type="button"
                                                         onClick={() => setCompitiList(prev => prev.filter(c => c.id !== compito.id))}
+                                                        aria-label={t('rimuoviCompito')}
                                                         className="p-2 text-kidville-muted hover:text-kidville-error rounded-xl hover:bg-kidville-error-soft transition-all flex-shrink-0"
                                                     >
                                                         <X size={14} />

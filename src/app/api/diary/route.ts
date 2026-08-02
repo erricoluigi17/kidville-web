@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope } from '@/lib/auth/scope';
+import { assertAlunnoInScope, assertSezioneInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -56,6 +56,18 @@ function erroreLettura(error: unknown): NextResponse {
     return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
 }
 
+/**
+ * Il gemello del precedente per la SCRITTURA. Il ciclo del 2026-08-02 aveva
+ * corretto il GET e lasciato il POST tre righe più su con
+ * `NextResponse.json({ error: error.message })`: la stessa mappa dello schema,
+ * dalla stessa route, per l'altro verbo. Una regola valida per due strade deve
+ * vivere in un posto solo — e qui i posti erano già due dentro lo stesso file.
+ */
+function erroreScrittura(error: unknown): NextResponse {
+    logErrore({ operazione: 'diary:POST', stato: 500, evento: 'db' }, error);
+    return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
+}
+
 // ============================================================
 // POST /api/diary — Salva un evento diario (azione docente/staff)
 // ============================================================
@@ -91,10 +103,7 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
             .select()
             .single();
 
-        if (error) {
-            logErrore({ operazione: 'diary:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
-        }
+        if (error) return erroreScrittura(error);
 
         const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
         await logScrittura(admin, {
@@ -145,6 +154,23 @@ export const GET = withRoute('diary:GET', async (request: NextRequest) => {
             if (auth.response) return auth.response;
             const q = parseQuery(request, getClasseQuerySchema);
             if ('response' in q) return q.response;
+
+            // GATE DI SEDE, non solo di ruolo. `requireDocente` dice «sei del
+            // personale»; con TRE plessi non dice «quella sezione è tua». Senza
+            // questa riga un educator di Aversa che indicasse l'uuid di una
+            // sezione di Cesa superava il ramo e arrivava alla query: l'unica
+            // ragione per cui non ne usciva nulla è che `daily_routines` non
+            // esiste in produzione. Una falla che non si arma perché la tabella
+            // manca resta una falla — si arma da sola il giorno in cui la
+            // tabella arriva. Il gemello `diary/entries:GET` l'assert ce l'ha
+            // già (`assertClasseNomeInScope`, `soloSezioniAssegnate`): stessa
+            // lettura, stesso dato, e finora una sola delle due strade.
+            // `assertSezioneInScope` include di suo il vincolo «assegnata»
+            // per chi non vede tutte le classi del plesso (cfr. vedeTutteLeClassi).
+            const adminScope = await createAdminClient();
+            const fuoriSezione = await assertSezioneInScope(adminScope, auth.user, q.data.classe_id);
+            if (fuoriSezione) return fuoriSezione;
+
             const date = q.data.date ?? new Date().toISOString().split('T')[0];
             // Vista insegnante: tutti gli eventi della classe per una data specifica
             const startOfDay = `${date}T00:00:00.000Z`;

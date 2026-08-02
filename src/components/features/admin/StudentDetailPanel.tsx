@@ -240,6 +240,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {!isPage && (
                         <button
                             onClick={onClose}
+                            aria-label={t('detailChiudiScheda')}
                             className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
                         >
                             <X size={16} />

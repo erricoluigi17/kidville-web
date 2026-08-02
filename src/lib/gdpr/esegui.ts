@@ -11,6 +11,7 @@ import { schemaAssente } from '@/lib/news/schema-assente'
 import { BUCKET_GALLERIA, percorsoNelBucket } from '@/lib/gallery/storage'
 import { percorsoNelBucket as percorsoDelBucket } from '@/lib/allegati/storage'
 import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegati'
+import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -136,6 +137,19 @@ export type CanaleOblio = 'alunno' | 'genitore'
 
 export type CoperturaBucket =
   | { stato: 'coperto'; canali: CanaleOblio[]; come: string }
+  /**
+   * Svuotato, ma NON da `anonimizzaAlunno`/`anonimizzaParent`: da un meccanismo
+   * suo, che va nominato in `come` insieme a chi lo verifica.
+   *
+   * Questo terzo stato nasce il 2026-08-02 per `news` e non è una scappatoia:
+   * senza, l'unica alternativa a «coperto» era «escluso», e un'esclusione è una
+   * frase che dice «qui dentro non c'è niente di quella famiglia». Su `news` non
+   * era vero, ed è così che una motivazione falsa ha superato il lock per due
+   * giorni. Un bucket dichiarato qui NON è verificato da questo file: la prova
+   * che il meccanismo svuoti davvero va scritta accanto al meccanismo, e per
+   * `news` sta in `__tests__/lib/news/permanenza-consenso.test.ts`.
+   */
+  | { stato: 'coperto-fuori-oblio'; come: string }
   | { stato: 'escluso'; motivo: string }
 
 export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
@@ -207,22 +221,53 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
       'Area di sosta dei media di un articolo prima della pubblicazione: i file non sono legati a nessuna persona (nessuna colonna dice di chi è la foto), quindi non c’è niente da agganciare a una richiesta di oblio. Si svuota per SCADENZA, non per interessato — vedi `supabase/migrations/20260801130404_bucket_news_bozze.sql`.',
   },
   news: {
-    stato: 'escluso',
-    motivo:
-      'Media editoriali del blog pubblico: ci vanno le immagini degli articoli, e le foto dei bambini stanno in `gallery` — che è privato ed è coperto dall’oblio. Una foto di minore finita qui sarebbe un difetto della pubblicazione (consenso non verificato), da correggere alla fonte e non con una `remove()` cieca a valle.',
+    stato: 'coperto-fuori-oblio',
+    come:
+      'Blog pubblico. Fino al 2026-08-02 questa voce diceva «escluso: ci vanno solo media editoriali, ' +
+      'le foto dei bambini stanno in `gallery`» — e la frase era FALSA: `gate-consenso.ts`, scritto lo ' +
+      'stesso giorno, esiste apposta per autorizzare le foto di minori che hanno il consenso al canale ' +
+      '«sito», e il bucket è servito senza login. La foto di un bambino obliato restava quindi pubblica ' +
+      'per sempre. Ora la svuota `verificaPermanenzaConsenso` (`src/lib/news/permanenza-consenso.ts`), ' +
+      'che il tick di `news-tick` esegue ogni 10 minuti: rilegge `alunni.consenso_foto_sito`, e per ' +
+      'revoca, `anonimizzato_il` valorizzato o riga sparita ritira il post e toglie i file dal bucket. ' +
+      'La stessa regola vale a monte — un media diventa pubblico solo dopo il gate (`promuoviMediaBozza`) ' +
+      '— così la decisione del titolare del 2026-07-31 («in `news` solo ciò che può stare pubblico») ' +
+      'è fatta rispettare ai due capi invece che soltanto scritta. NON è ancora sincrona: ' +
+      '`obliaFotoNewsAlunno`, nello stesso modulo, è il gancio pronto per `anonimizzaAlunno`, e finché ' +
+      'non lo si aggancia la finestra fra l’oblio e il ritiro è di un tick.',
   },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Le funzioni che svuotano i bucket rimasti indietro. Si appoggiano tutte a
-// `rimuoviFileOblio` (definita più sotto in questo stesso file), che è il solo
-// punto da cui una `remove()` di oblio passa: log, conteggio dei file NON usciti
-// e guasto di trasporto stanno lì, una volta sola.
+// Le funzioni che svuotano i bucket. Si appoggiano tutte a `rimuoviFileOblio`
+// (definita più sotto in questo stesso file), che è il solo punto da cui una
+// `remove()` di oblio passa e che a sua volta chiama `rimuoviEVerifica`: la
+// regola su cosa significa un `remove()` incompleto vive in un posto solo.
 //
-// Regola comune: **prima la riga, poi il file**. Se la DELETE non passa, un file
-// tolto lascerebbe in tabella un indice che punta al vuoto, e l'applicazione
-// mostrerebbe una scheda rotta invece di dire che il documento non c'è più — è
-// la stessa scelta già presa per la galleria.
+// ─── REGOLA COMUNE: PRIMA IL FILE (VERIFICATO), POI LA RIGA ─────────────────
+//
+// Fino al 2026-08-02 era il contrario, motivato così: «se la DELETE non passa,
+// un file tolto lascerebbe in tabella un indice che punta al vuoto». Il conto
+// però non torna, e la retention delle iscrizioni — scritta lo stesso giorno,
+// nello stesso repo — aveva già scelto l'ordine opposto con la ragione giusta:
+//
+//   · riga cancellata + file rimasto → il documento di un bambino resta
+//     nell'archivio e NON c'è più nessuna riga che lo nomini: invisibile, non
+//     cancellato, e senza niente da cui ripartire per toglierlo;
+//   · file rimosso + riga rimasta → una scheda rotta a schermo. Un fastidio,
+//     visibile e correggibile.
+//
+// Fra un guasto invisibile e uno visibile si sceglie il secondo. Quindi: si
+// tolgono i file, si guarda lo STATO di quelli che non risultano usciti, e si
+// cancellano soltanto le righe i cui file sono davvero fuori (o non c'erano
+// già più). Le altre restano, e il conteggio dei bloccanti torna al chiamante.
+//
+// ─── E I PERCORSI CHE NON SI SANNO LEGGERE? ────────────────────────────────
+//
+// Sono bloccanti anche loro. Prima venivano scartati con un `.filter(p => p !==
+// null)` e la riga si cancellava comunque: quel file non era né rimosso né
+// contato — zero su zero, la forma perfetta del guasto invisibile. «Non so dove
+// sia» non autorizza a distruggere l'unica traccia che dice che esiste.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -267,22 +312,63 @@ async function obliaFileDaTabella(
   // percorso — nessun campo di contenuto entra mai in memoria.
   const righe = (data ?? []) as unknown as Record<string, unknown>[]
   if (righe.length === 0) return vuoto
-  const ids = righe.map((r) => String(r.id ?? '')).filter((v) => v.length > 0)
-  const percorsi = righe
-    .map((r) => percorsoDelBucket(bucket, r[colonnaPercorso] as string | null | undefined))
-    .filter((p): p is string => p !== null)
-  if (ids.length === 0) return vuoto
 
-  const { error: errDel } = await supabase.from(tabella).delete().in('id', ids)
-  if (errDel) {
-    if (!schemaAssente(errDel)) logErrore({ operazione: op, evento: `${evento}_delete` }, errDel)
-    // I file NON si tolgono (resterebbe l'indice rotto) e la cosa deve essere
-    // VISIBILE: alla famiglia è stato risposto che quei documenti non ci sono più.
-    return { rimossi: 0, nonRimossi: percorsi.length, righe: 0 }
+  // Ogni riga si porta dietro il SUO percorso fino alla fine: è ciò che permette
+  // di trattenere una riga sola invece dell'intero lotto.
+  const mappa = righe
+    .map((r) => {
+      const id = String(r.id ?? '')
+      const grezzo = r[colonnaPercorso]
+      const testo = typeof grezzo === 'string' ? grezzo.trim() : ''
+      // «Nessun allegato» e «allegato che non so leggere» sono due cose diverse:
+      // confonderle bloccherebbe l'oblio di ogni riga senza file.
+      if (testo.length === 0) return { id, percorso: null, illeggibile: false }
+      const p = percorsoDelBucket(bucket, testo)
+      return { id, percorso: p, illeggibile: p === null }
+    })
+    .filter((m) => m.id.length > 0)
+  if (mappa.length === 0) return vuoto
+
+  const illeggibili = mappa.filter((m) => m.illeggibile).length
+  if (illeggibili > 0) {
+    // Mai il percorso nel log: è proprio il valore storto che non si sa leggere,
+    // e potrebbe essere qualunque cosa. Solo il conteggio e la tabella.
+    logEvento('gdpr', 'error', {
+      operazione: op,
+      esito: 'oblio-percorso-non-riconosciuto',
+      bucket,
+      n_file: illeggibili,
+      msg: `${op}: ${illeggibili} percorsi di \`${tabella}\` non sono riconoscibili in questo archivio: le righe NON sono state cancellate`,
+    })
   }
 
-  const esito = await rimuoviFileOblio(supabase, bucket, percorsi, op)
-  return { ...esito, righe: ids.length }
+  // ── PRIMA I FILE ──
+  const esito = await rimuoviFileOblio(
+    supabase,
+    bucket,
+    mappa.map((m) => m.percorso),
+    op,
+  )
+
+  // ── POI LE RIGHE, e solo quelle il cui file è davvero fuori ──
+  const cancellabili = mappa.filter(
+    (m) => !m.illeggibile && !(m.percorso !== null && esito.fermi.has(m.percorso)),
+  )
+  const nonRimossi = esito.nonRimossi + illeggibili
+  if (cancellabili.length === 0) return { rimossi: esito.rimossi, nonRimossi, righe: 0 }
+
+  const { error: errDel } = await supabase
+    .from(tabella)
+    .delete()
+    .in('id', cancellabili.map((m) => m.id))
+  if (errDel) {
+    // I file sono già usciti: qui resta un indice che punta al vuoto — visibile,
+    // e da correggere. Non si tace: `certificati_medici` porta anche `note` e
+    // `nota_validazione`, testo libero scritto da un genitore.
+    if (!schemaAssente(errDel)) logErrore({ operazione: op, evento: `${evento}_delete` }, errDel)
+    return { rimossi: esito.rimossi, nonRimossi, righe: 0 }
+  }
+  return { rimossi: esito.rimossi, nonRimossi, righe: cancellabili.length }
 }
 
 /**
@@ -363,21 +449,45 @@ export async function obliaAllegatiChat(
 
   // `normalizzaAllegatoChat` legge sia il percorso (la forma di oggi) sia gli
   // indirizzi firmati delle righe storiche: la stessa funzione che usa la chat
-  // in lettura, non una seconda copia da tenere allineata.
-  const percorsi = righe
-    .map((r) => normalizzaAllegatoChat(r.attachment_url))
-    .filter((p): p is string => p !== null)
+  // in lettura, non una seconda copia da tenere allineata. Chi non si riconosce
+  // resta agganciato alla sua riga: vedi la regola in cima a questa sezione.
+  const mappa = righe.map((r) => ({ id: r.id, percorso: normalizzaAllegatoChat(r.attachment_url) }))
+  const illeggibili = mappa.filter((m) => m.percorso === null).length
+  if (illeggibili > 0) {
+    logEvento('gdpr', 'error', {
+      operazione: op,
+      esito: 'oblio-percorso-non-riconosciuto',
+      bucket: BUCKET_CHAT_ALLEGATI,
+      n_file: illeggibili,
+      msg: `${op}: ${illeggibili} allegati di chat non sono riconoscibili in questo archivio: il percorso NON è stato azzerato`,
+    })
+  }
+
+  // ── PRIMA I FILE ──
+  const esito = await rimuoviFileOblio(
+    supabase,
+    BUCKET_CHAT_ALLEGATI,
+    mappa.map((m) => m.percorso),
+    op,
+  )
+
+  // ── POI IL PERCORSO IN TABELLA ── e solo per i messaggi il cui file è uscito.
+  // Azzerarlo mentre il file resta lo renderebbe irraggiungibile e non
+  // cancellato: dentro c'è l'uuid di chi ha caricato e il nome scelto da chi
+  // l'ha mandato, che quasi sempre è il nome di una persona o «referto».
+  const azzerabili = mappa.filter((m) => m.percorso !== null && !esito.fermi.has(m.percorso))
+  const nonRimossi = esito.nonRimossi + illeggibili
+  if (azzerabili.length === 0) return { rimossi: esito.rimossi, nonRimossi }
 
   const { error: errUpd } = await supabase
     .from('chat_messages')
     .update({ attachment_url: null, attachment_type: null })
-    .in('id', righe.map((r) => r.id))
+    .in('id', azzerabili.map((m) => m.id))
   if (errUpd) {
     if (!schemaAssente(errUpd)) logErrore({ operazione: op, evento: 'oblio_chat_allegati_update' }, errUpd)
-    return { rimossi: 0, nonRimossi: percorsi.length }
   }
 
-  return rimuoviFileOblio(supabase, BUCKET_CHAT_ALLEGATI, percorsi, op)
+  return { rimossi: esito.rimossi, nonRimossi }
 }
 
 /**
@@ -567,66 +677,81 @@ export async function obliaIscrizioni(
 }
 
 /**
- * Rimuove dallo storage i file di un oblio, CONTANDO quelli che non sono usciti.
+ * Rimuove dallo storage i file di un oblio e dice, percorso per percorso, su
+ * quali l'obiettivo NON è raggiunto.
  *
- * Sostituisce il `try { … } catch { /* ignora *\/ }` che c'era prima e che non
- * lasciava traccia di niente: se la rimozione falliva, il documento d'identità
- * di un minore restava nel bucket e nessuno lo sapeva — né chi aveva eseguito
- * l'oblio, né la famiglia che l'aveva chiesto.
+ * ─── IL DIFETTO CHE QUESTA FUNZIONE AVEVA ADDOSSO (misurato il 2026-08-02) ───
+ *
+ * Fino a oggi guardava soltanto `error`, e nel ramo di successo ritornava
+ * letteralmente `nonRimossi: 0`. Ma `supabase.storage.remove()` **non fallisce**
+ * sui percorsi che non escono: risponde `error: null` e semplicemente non li
+ * nomina. Peggio: quando `data` non era un array contava TUTTI i percorsi come
+ * rimossi — cioè trattava «non so» come «fatto». Risultato misurato:
+ * `/api/admin/gdpr/erase` rispondeva `n_file_non_rimossi: 0` mentre nell'archivio
+ * non era uscito niente, il log `oblio-parziale` non scattava mai, e la riga che
+ * indicizzava il documento del bambino era già stata cancellata un attimo prima.
+ * Un dato non cancellato e nemmeno più raggiungibile, con «fatto» detto alla
+ * famiglia.
+ *
+ * ─── PERCHÉ ORA È UN GUSCIO SOTTILE SOPRA `rimuoviEVerifica` ────────────────
+ *
+ * Perché la regola — «si verifica lo STATO, non il conteggio» — era già scritta,
+ * in `src/lib/storage/rimozione-verificata.ts`, e agganciata alla SOLA retention
+ * delle iscrizioni. Due copie della stessa regola in due file: la seconda diceva
+ * il contrario della prima. Qui non se ne scrive una terza: si chiama quella.
  *
  * Nel log MAI il percorso: contiene l'uuid di chi ha caricato e il nome del file
  * scelto dalla famiglia, che quasi sempre è il nome di una persona.
  */
-export async function rimuoviFileOblio(
-  supabase: SupabaseClient,
-  bucket: string,
-  percorsi: (string | null | undefined)[],
-  op: string,
-): Promise<{ rimossi: number; nonRimossi: number }> {
-  const unici = [
+interface EsitoFileOblio {
+  /** Usciti adesso dall'archivio. */
+  rimossi: number
+  /** Ancora presenti, o non verificabili: su questi l'obiettivo NON è raggiunto. */
+  nonRimossi: number
+  /** Gli stessi percorsi, per chi deve decidere quale riga NON cancellare. */
+  fermi: Set<string>
+}
+
+/** La stessa normalizzazione di `rimuoviEVerifica`: trim, niente vuoti, niente doppioni. */
+function percorsiUnici(percorsi: (string | null | undefined)[]): string[] {
+  return [
     ...new Set(
       percorsi.map((p) => (typeof p === 'string' ? p.trim() : '')).filter((p) => p.length > 0),
     ),
   ]
-  if (unici.length === 0) return { rimossi: 0, nonRimossi: 0 }
+}
 
-  try {
-    const { data, error } = await supabase.storage.from(bucket).remove(unici)
-    if (error) {
-      logEvento('storage', 'error', {
-        operazione: op,
-        esito: 'oblio-file-non-rimosso',
-        bucket,
-        n_file: unici.length,
-      }, error)
-      return { rimossi: 0, nonRimossi: unici.length }
-    }
-    // Lo Storage risponde con gli oggetti effettivamente rimossi: un percorso
-    // che non c'era più non è un guasto (l'esito voluto è comunque raggiunto),
-    // ma va detto — è il segnale di un oblio già eseguito, o di un percorso
-    // scritto in tabella e mai caricato.
-    const rimossi = Array.isArray(data) ? data.length : unici.length
-    if (rimossi < unici.length) {
-      logEvento('gdpr', 'info', {
-        operazione: op,
-        esito: 'oblio-file-gia-assenti',
-        bucket,
-        n_file: unici.length - rimossi,
-      })
-    }
-    logEvento('gdpr', 'info', { operazione: op, esito: 'oblio-file-rimossi', bucket, n_file: rimossi })
-    return { rimossi, nonRimossi: 0 }
-  } catch (e) {
-    // Guasto di TRASPORTO: `remove()` non ritorna, lancia. Stesso trattamento —
-    // e soprattutto stessa VISIBILITÀ — dell'errore restituito.
-    logEvento('storage', 'error', {
-      operazione: op,
-      esito: 'oblio-file-non-rimosso',
-      bucket,
-      n_file: unici.length,
-    }, e)
-    return { rimossi: 0, nonRimossi: unici.length }
+async function rimuoviFileOblio(
+  supabase: SupabaseClient,
+  bucket: string,
+  percorsi: (string | null | undefined)[],
+  op: string,
+): Promise<EsitoFileOblio> {
+  const unici = percorsiUnici(percorsi)
+  if (unici.length === 0) return { rimossi: 0, nonRimossi: 0, fermi: new Set() }
+
+  const esito = await rimuoviEVerifica(supabase, bucket, unici, op)
+  if (esito.erroreRimozione) {
+    // `remove()` ha risposto con un errore (o ha lanciato): nessun file è uscito
+    // e non c'è niente da verificare. `rimuoviEVerifica` ha già scritto la riga
+    // nel canale degli errori — qui si traduce soltanto in «nessuno di questi
+    // percorsi è a posto», che è ciò che serve a chi deve decidere se cancellare
+    // la riga che li indicizza.
+    return { rimossi: 0, nonRimossi: unici.length, fermi: new Set(unici) }
   }
+
+  const fermi = new Set(bloccanti(esito))
+  // Evento critico → si logga anche il SUCCESSO, con i conteggi separati: senza,
+  // «nessun log» non distinguerebbe «tutto uscito» da «non è mai partito niente».
+  logEvento('gdpr', 'info', {
+    operazione: op,
+    esito: 'oblio-file-rimossi',
+    bucket,
+    n_file: esito.rimossi.length,
+    n_gia_assenti: esito.giaAssenti.length,
+    n_bloccanti: fermi.size,
+  })
+  return { rimossi: esito.rimossi.length, nonRimossi: fermi.size, fermi }
 }
 
 /**
@@ -659,17 +784,16 @@ export async function obliaFotoAlunno(
   }
 
   const righe = (data ?? []) as { id: string; file_url?: string | null; tag_students?: unknown }[]
-  const daCancellare: string[] = []
-  const fileDaRimuovere: string[] = []
+  const daCancellare: { id: string; percorso: string | null; illeggibile: boolean }[] = []
   let fotoSganciate = 0
 
   for (const r of righe) {
     const tags = Array.isArray(r.tag_students) ? (r.tag_students as string[]) : []
     const altri = [...new Set(tags.filter((t) => t && t !== alunnoId))]
     if (altri.length === 0) {
-      daCancellare.push(r.id)
-      const p = percorsoNelBucket(r.file_url)
-      if (p) fileDaRimuovere.push(p)
+      const testo = (r.file_url ?? '').trim()
+      const p = testo.length > 0 ? percorsoNelBucket(testo) : null
+      daCancellare.push({ id: r.id, percorso: p, illeggibile: testo.length > 0 && p === null })
       continue
     }
     const { error: errU } = await supabase
@@ -683,15 +807,39 @@ export async function obliaFotoAlunno(
   let fotoRimosse = 0
   let fileNonRimossi = 0
   if (daCancellare.length > 0) {
-    const { error: errDel } = await supabase.from('galleria_media_v2').delete().in('id', daCancellare)
-    if (errDel) {
-      logErrore({ operazione: op, evento: 'oblio_galleria_delete' }, errDel)
-    } else {
-      fotoRimosse = daCancellare.length
-      // Il file si toglie DOPO la riga: se la DELETE non passa, cancellare
-      // l'immagine lascerebbe in galleria una scheda rotta al posto di una foto.
-      const esito = await rimuoviFileOblio(supabase, BUCKET_GALLERIA, fileDaRimuovere, op)
-      fileNonRimossi = esito.nonRimossi
+    const illeggibili = daCancellare.filter((m) => m.illeggibile).length
+    if (illeggibili > 0) {
+      logEvento('gdpr', 'error', {
+        operazione: op,
+        esito: 'oblio-percorso-non-riconosciuto',
+        bucket: BUCKET_GALLERIA,
+        n_file: illeggibili,
+        msg: `${op}: ${illeggibili} media della galleria non sono riconoscibili in questo archivio: le righe NON sono state cancellate`,
+      })
+    }
+
+    // ── PRIMA IL FILE ── (dal 2026-08-02: era il contrario, e una riga cancellata
+    // su una foto rimasta nell'archivio è la foto di un bambino che nessuno può
+    // più ritrovare per toglierla).
+    const esito = await rimuoviFileOblio(
+      supabase,
+      BUCKET_GALLERIA,
+      daCancellare.map((m) => m.percorso),
+      op,
+    )
+    fileNonRimossi = esito.nonRimossi + illeggibili
+
+    // ── POI LA RIGA ──
+    const cancellabili = daCancellare.filter(
+      (m) => !m.illeggibile && !(m.percorso !== null && esito.fermi.has(m.percorso)),
+    )
+    if (cancellabili.length > 0) {
+      const { error: errDel } = await supabase
+        .from('galleria_media_v2')
+        .delete()
+        .in('id', cancellabili.map((m) => m.id))
+      if (errDel) logErrore({ operazione: op, evento: 'oblio_galleria_delete' }, errDel)
+      else fotoRimosse = cancellabili.length
     }
   }
   return { fotoRimosse, fotoSganciate, fileNonRimossi }

@@ -43,16 +43,57 @@ import path from 'node:path';
  * `windowSoftInputMode` vale `adjustUnspecified` e decide la ROM; sulle versioni
  * provate risolve in `adjustResize`, ma su una che risolvesse in `adjustPan` la
  * finestra scorrerebbe invece di ridimensionarsi e il composer uscirebbe davvero
- * dallo schermo. Dichiararlo non cambia nulla di ciò che è stato misurato: toglie
- * la dipendenza da chi ha compilato la ROM.
+ * dallo schermo. Dichiararlo toglie la dipendenza da chi ha compilato la ROM.
  *
- * LIMITE DICHIARATO, che questo lock non copre e che non va abbellito: tutte le
- * misure sono su EMULATORE, con Gboard, in verticale, a schermo intero. Restano
- * non provati un dispositivo fisico, le tastiere di terze parti (SwiftKey,
- * Samsung, IME con barra candidati), l'orizzontale e lo split-screen. API 30 è
- * BLOCCATA per una ragione diversa e nota: quella WebView è Chrome 91 e il
- * bundle non ci gira (`SyntaxError: Unexpected token '{'`), quindi non dice
- * niente sulla tastiera.
+ * ⚠️ FINO AD ANDROID 14, E NON OLTRE — correzione del 2026-08-02.
+ *
+ * La frase qui sopra era scritta come se l'attributo proteggesse ovunque. Non è
+ * così, ed è stato MISURATO: compilando un APK gemello con `adjustPan` e
+ * installandolo sui due emulatori,
+ *   · API 36 → numeri IDENTICI a quelli dell'APK ufficiale con `adjustResize`
+ *     (ih 731→399, «Invia» bottom 695→387, margine 12px): l'attributo è INERTE;
+ *   · API 33 → il composer sparisce davvero sotto la tastiera: l'attributo è
+ *     DECISIVO.
+ * Il perché: da Android 15 le app con `targetSdk ≥ 35` sono edge-to-edge per
+ * forza e `windowSoftInputMode` non ridimensiona più la finestra — gli inset
+ * dell'IME arrivano alla vista e Chromium WebView accorcia da sé il viewport.
+ * Questa app dichiara `targetSdk 36`.
+ *
+ * Conseguenza pratica, ed è la ragione per cui la correzione è di PAROLE e non
+ * di codice: la riga va TENUTA (su Android ≤ 14 è ciò che regge il composer), ma
+ * chi domani vedrà la tastiera coprire la barra su un telefono nuovo non deve
+ * perdere tempo a rileggerla credendola la difesa. Su API ≥ 35 la difesa, se
+ * servisse, sarebbe gestire gli inset (`WindowInsetsCompat.Type.ime`) o
+ * `interactive-widget` — e allora servirà una misura con
+ * `visualViewport.offsetTop ≠ 0` da esibire.
+ *
+ * Va anche registrata la PROVA DI VALIDITÀ che prima non c'era: nessuno aveva
+ * mai dimostrato SUL DISPOSITIVO che quella riga servisse. Ora è dimostrato su
+ * API 33. Non è un placebo — è una difesa con un perimetro.
+ *
+ * ─── LIMITE DICHIARATO ─────────────────────────────────────────────────────
+ * Tutte le misure sono su EMULATORE, con Gboard, a schermo intero. Restano non
+ * provati un dispositivo fisico, le tastiere di terze parti (SwiftKey, Samsung,
+ * IME con barra candidati) e lo split-screen affiancato vero. API 30 è BLOCCATA
+ * per una ragione diversa e nota: quella WebView è Chrome 91 e il bundle non ci
+ * gira (`SyntaxError: Unexpected token '{'`), quindi non dice niente sulla
+ * tastiera.
+ *
+ * L'ORIZZONTALE NON È PIÙ «NON PROVATO»: è provato, e NON regge. Misurato il
+ * 2026-08-02, chat con tastiera aperta:
+ *   · API 36 landscape → viewport 150 CSS px, «Invia» top 126 / bottom 170,
+ *     margine −20: il bottone è tagliato dal bordo e resta toccabile per 24,4px
+ *     su 44 (hit-test: y=130 e y=148 → INVIA, y=166 → null);
+ *   · API 33, ruotando DENTRO una conversazione → la conversazione si CHIUDE
+ *     (si torna alla lista), la tastiera si chiude, il composer residuo è largo
+ *     33px e non prende il fuoco ai tap. Causa: la conversazione aperta non sta
+ *     nell'URL (genitore e docente restano su `/parent/chat` · `/teacher/chat`
+ *     anche dentro la conversazione), quindi il cambio di configurazione la
+ *     butta via al rimontaggio.
+ * È DEBITO DICHIARATO, non chiuso: i due rimedi (una regola di layout sotto una
+ * certa altezza di viewport, e la conversazione portata nell'URL) toccano file
+ * che erano in lavorazione da altri quando questa riga è stata scritta. Va
+ * ripreso; nel frattempo non si dica più che l'orizzontale non è provato.
  */
 
 const RADICE = process.cwd();
@@ -103,6 +144,42 @@ describe('lock: la tastiera non copre la barra di composizione della chat', () =
       modo.includes('adjustNothing'),
       `windowSoftInputMode="${modo}": \`adjustNothing\` lascia la tastiera sopra la pagina.`,
     ).toBe(false);
+  });
+
+  it('il manifest DICHIARA fin dove l\'attributo ha effetto (Android ≤ 14)', () => {
+    // Il commento diceva che la riga «toglie la dipendenza da chi ha compilato la
+    // ROM», senza aggiungere che da Android 15 (targetSdk ≥ 35, edge-to-edge
+    // forzato) il sistema la ignora e l'inset della tastiera lo applica la
+    // WebView. Misurato con un APK gemello ad `adjustPan`: su API 36 i numeri
+    // sono identici al millimetro, su API 33 il composer sparisce. Una difesa
+    // descritta più larga di quanto sia è peggio di una difesa assente: manda
+    // fuori strada chi indagherà il prossimo guasto.
+    // Si guarda SOLO il commento che parla di `windowSoftInputMode`, non l'intero
+    // manifest: «targetSdk» compare già in un altro commento (quello sui
+    // riferimenti XML), e cercarlo nel file intero rendeva questo test verde
+    // senza che nessuno avesse scritto niente. È il falso verde che questo lock
+    // esiste per non produrre.
+    const manifest = leggi(MANIFEST);
+    const commenti = manifest.match(/<!--[\s\S]*?-->/g) ?? [];
+    const blocco = commenti.find((c) => c.includes('windowSoftInputMode'));
+    expect(blocco, 'nessun commento spiega `windowSoftInputMode` nel manifest').toBeDefined();
+    expect(
+      /Android 15|targetSdk\s*(?:≥|>=)?\s*35|API\s*(?:≥|>=)\s*35/i.test(blocco ?? ''),
+      'il commento di `windowSoftInputMode` non dice che da Android 15 / targetSdk 35 ' +
+        'l\'attributo è ignorato: chi legge lo crederà la difesa anche sui telefoni nuovi. ' +
+        'Misurato con un APK gemello ad `adjustPan`: su API 36 numeri identici, su API 33 ' +
+        'il composer sparisce.',
+    ).toBe(true);
+  });
+
+  it('il targetSdk dichiarato è ancora quello su cui la misura è stata fatta', () => {
+    // Se un giorno il targetSdk scendesse sotto 35, l'attributo tornerebbe
+    // efficace ovunque e il paragrafo qui sopra andrebbe riscritto — al
+    // contrario. Il numero è il perno di tutto il ragionamento: si àncora.
+    const gradle = leggi('android/variables.gradle');
+    const target = /targetSdkVersion\s*=\s*(\d+)/.exec(gradle)?.[1];
+    expect(target, 'targetSdkVersion non trovato in android/variables.gradle').toBeDefined();
+    expect(Number(target)).toBeGreaterThanOrEqual(35);
   });
 
   it('non è stato aggiunto `interactive-widget` senza una misura che lo giustifichi', () => {

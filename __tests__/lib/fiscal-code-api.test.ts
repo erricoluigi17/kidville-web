@@ -128,6 +128,44 @@ describe('fetchFiscalCode — il provider esterno non fallisce più in silenzio'
         expect(m).not.toContain('2019-05-03')
     })
 
+    /**
+     * SI MASCHERA PRIMA, SI TRONCA DOPO.
+     *
+     * `mascheraDati` tagliava a 300 caratteri PRIMA di sostituire i valori: un
+     * cognome spezzato a metà dal taglio non veniva più riconosciuto e restava in
+     * chiaro nella coda del messaggio. È esattamente il caso limite che
+     * `sanificaMessaggio` in `serialize.ts` risolve nell'ordine giusto, con quel
+     * commento («al contrario, un taglio a metà di un'email ne lascerebbe in
+     * chiaro il primo pezzo, che è quello con nome e cognome») — la stessa regola
+     * scritta due volte e applicata bene una volta sola.
+     *
+     * Non è teorico: un corpo d'errore di un validatore che elenca i campi
+     * rifiutati supera i 300 caratteri con facilità, e il cognome di un minore è
+     * proprio ciò che ci finisce dentro.
+     */
+    it('un cognome che cade a cavallo del taglio dei 300 caratteri non resta in chiaro', async () => {
+        // Il corpo è `{"error":"` (10 caratteri) + riempimento: con 286 di
+        // riempimento il cognome inizia al carattere 296 e finisce oltre il taglio
+        // dei 300 — cioè cade ESATTAMENTE a cavallo. Il numero non è decorativo:
+        // con un riempimento qualunque il taglio butterebbe via il cognome intero
+        // e il test passerebbe senza aver misurato niente.
+        const riempimento = 'x'.repeat(286)
+        rete.mockResolvedValue(new Response(
+            `{"error":"${riempimento}Bellandi non valido, nome Aurora"}`,
+            { status: 422, headers: { 'content-type': 'application/json' } },
+        ))
+
+        await completa(fetchFiscalCode(PARAMS))
+
+        const m = messaggio()
+        expect(m).toContain('422')
+        // CONTROLLO POSITIVO: il taglio è davvero caduto lì dentro, altrimenti
+        // questa asserzione misurerebbe un caso che non si è verificato.
+        expect(m).toContain('xxxx')
+        expect(m).not.toContain('Bellandi')
+        expect(m).not.toContain('Bell')
+    })
+
     it('la chiamata al servizio terzo resta: il fallback locale calcola comunque il codice', async () => {
         rete.mockResolvedValue(new Response('nope', { status: 500 }))
 

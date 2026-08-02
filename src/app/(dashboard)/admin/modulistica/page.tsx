@@ -955,6 +955,7 @@ function ModulisticaInner() {
                       {formFields.length > 1 && (
                         <button
                           onClick={() => handleRemoveField(idx)}
+                          aria-label={t('modRimuoviCampo')}
                           className="text-kidville-muted hover:text-kidville-error transition-colors mb-2"
                         >
                           <Trash2 size={16} />

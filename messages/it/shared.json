@@ -24,6 +24,7 @@
   "datiNonAggiornati": "Dati non aggiornati — offline",
   "direzioneSegreteria": "Direzione & Segreteria",
   "erroreAllegatoTipoNonAmmesso": "Questo tipo di file non si può allegare: sono ammessi immagini, PDF e documenti Word",
+  "erroreAllegatoPdfOImmagine": "Questo tipo di file non si può allegare: sono ammessi PDF e immagini (JPG, PNG, WEBP, HEIC)",
   "erroreAllegatoTroppoGrande": "Il file è troppo grande: un allegato può pesare al massimo 10 MB",
   "erroreAllegatoNonValido": "Allegato non valido: si possono inviare solo i file caricati dalla chat",
   "erroreAllegatoNonCaricato": "Non è stato possibile caricare il file: riprova fra qualche istante",
@@ -118,5 +119,7 @@
   "segnalaChiudi": "Chiudi",
   "segnalaSuccessoTitolo": "Segnalazione inviata",
   "segnalaSuccessoCorpo": "Grazie. La Direzione esaminerà la segnalazione.",
-  "segnalaErrore": "Non è stato possibile inviare la segnalazione. Riprova."
+  "segnalaErrore": "Non è stato possibile inviare la segnalazione. Riprova.",
+  "galleryRimuoviFile": "Rimuovi file",
+  "galleryPulisciRicerca": "Cancella la ricerca"
 }

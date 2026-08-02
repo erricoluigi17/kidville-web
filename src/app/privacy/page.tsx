@@ -69,9 +69,17 @@ const H2 =
 const P = 'font-maven text-[15px] leading-relaxed text-kidville-ink';
 const UL = `list-disc space-y-1.5 pl-5 ${P}`;
 
+// `lang="it"` sul CONTENITORE, non sul documento: `layout.tsx` rende
+// `<html lang={locale}>` e questa pagina NON passa da next-intl — il testo legale
+// resta italiano per scelta (tradurlo senza validazione legale è un rischio
+// maggiore che non tradurlo). Con l'app in inglese il documento risultava quindi
+// `lang="en"` su un testo tutto italiano, e uno screen reader leggeva
+// l'informativa sui dati dei minori con la pronuncia sbagliata: WCAG 3.1.2
+// «Lingua delle parti». Il giorno in cui il testo verrà tradotto, questo attributo
+// va tolto — il lock `pagine-legali` lo pretende, e fallisce se resta.
 export default function PrivacyPage() {
   return (
-    <main className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
+    <main lang="it" className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
         {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ. Il comando di Alto
             Contrasto viveva solo nei menu account, cioè dopo il login: su una

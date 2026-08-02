@@ -162,5 +162,7 @@
   "placeholderNoteRisoluzione": "Explain what you did to resolve the task…",
   "caricaFileAllegati": "Upload files / attachments (optional)",
   "scegliFile": "Choose file",
-  "confermaRisolto": "Confirm resolved"
+  "confermaRisolto": "Confirm resolved",
+  "chiudi": "Close",
+  "rimuoviCompito": "Remove task"
 }

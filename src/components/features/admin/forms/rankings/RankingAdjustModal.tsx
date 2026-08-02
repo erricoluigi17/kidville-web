@@ -166,6 +166,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                 </div>
                 <button
                   onClick={handleClose}
+                  aria-label={t('radjChiudi')}
                   className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-white/[0.08] transition-all"
                 >
                   <X className="w-4.5 h-4.5" />
@@ -247,6 +248,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setDelta(d => d - 1)}
+                      aria-label={t('radjDiminuisci')}
                       className="p-2 rounded-lg text-kidville-muted transition-all"
                       style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     >
@@ -261,6 +263,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                     />
                     <button
                       onClick={() => setDelta(d => d + 1)}
+                      aria-label={t('radjAumenta')}
                       className="p-2 rounded-lg text-kidville-muted transition-all"
                       style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     >

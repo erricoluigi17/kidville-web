@@ -65,7 +65,10 @@ function leggi(relativo: string): string {
 
 /** Il blocco `<activity …>` della MainActivity, attributi compresi. */
 function attributiMainActivity(manifest: string): string {
-  const i = manifest.search(/<activity\b[^>]*android:name="\.MainActivity"/s);
+  // `[^>]*` attraversa già i newline (una classe negata li include): niente flag `s`,
+  // che il target di questo progetto non accetta (TS1501, e lo vede solo `tsc --noEmit`
+  // — build e vitest passano lo stesso).
+  const i = manifest.search(/<activity\b[^>]*android:name="\.MainActivity"/);
   // L'ordine degli attributi non è garantito: si cerca l'apertura del tag che
   // contiene `.MainActivity`, non una posizione fissa.
   const inizio = i >= 0 ? i : manifest.search(/<activity\b/);

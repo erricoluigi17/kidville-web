@@ -89,6 +89,123 @@
 
 ---
 
+## 🗓️ Changelog — Il collaudo sui dispositivi: quando il gate verde certificava l'assenza della prova 2026-08-02 (branch `fix/multisede-audit-globale`)
+
+Il ciclo del 1° agosto si era chiuso col gate verde — `eslint 0` · `tsc 0` · 5741 test · `build ok`
+— e con una riga di debito scritta nero su bianco: **i tre flow Maestro iOS non erano mai stati
+eseguiti** dopo la correzione dei selettori. Erano iscritti in `FLOW_SENZA_ESECUZIONE_VERDE`, e
+questo è il punto che conta: **il verde certificava che la prova mancava, non che il collaudo
+fosse stato fatto.** Chi leggesse «gate verde» come «mobile collaudato» sbaglierebbe, e il registro
+esiste apposta perché quell'assunzione diventi una riga in diff invece di un commento rassicurante.
+
+Questo ciclo ha eseguito le prove che mancavano. Tutte e quattro hanno cambiato una conclusione che
+sembrava già scritta.
+
+### I tre flow iOS: la colpa non era dell'app, era del server di sviluppo
+
+Il collaudo del 31 luglio li dava rossi e il verdetto accusava l'app: «Avvisi non visibile»,
+«Dashboard Direzione non visibile». Rieseguiti oggi su iPhone 17 Pro / iOS 26.2 **senza toccare un
+solo selettore**, con la sola differenza di servire l'app da `next start` invece che da `next dev`:
+
+| flow | esito | esecuzioni |
+|---|---|---|
+| `ios-percorso-segreteria` | 33 COMPLETED, 0 FAILED | 2 su 2 |
+| `ios-percorso-genitore` | 27 COMPLETED, 0 FAILED | 2 su 2 |
+| `ios-percorso-docente` | 27 COMPLETED, 0 FAILED | 2 su 2 |
+
+Il dev server ricompila e ricarica la WebView a metà percorso: il flow perde il campo appena
+compilato e il fallimento **sembra** un difetto dell'app. La lezione era già nel PRD per Android
+(«l'emulatore non idrata `next dev`», 17 luglio) e non era stata portata su iOS: una regola vera
+imparata su una piattaforma e mai applicata all'altra — la stessa forma della «porta accanto» che
+questo branch ha inseguito per tre cicli.
+
+Due punti che nessun test statico poteva coprire, ora misurati: il **tap cieco a coordinate**
+`68%,93%` per il tab «Mensa» del cockpit, che su iOS non era mai stato provato (la coordinata
+veniva da Android, qui era solo dedotta dalla geometria) — funziona, e il controllo negativo
+`assertNotVisible: "Tutti i moduli"` dimostra che lo schermo si è mosso invece di restare fermo; e
+il flow docente girato **di pomeriggio**, dove il rosso del 31/07 era su «Buongiorno!», cioè sul
+saluto orario che alle 22:07 diventa «Buonasera!».
+
+`TETTO_FLOW_SENZA_ESECUZIONE_VERDE`: **4 → 1**. Resta `android-screenshot-playstore.yaml`, fuori
+dal perimetro di oggi e dichiarato come tale.
+
+### I sei login (S28): il difetto non si riproduce, e il limite è scritto
+
+Il lock diceva che i sei login consecutivi sull'app vera non erano mai stati eseguiti — e la
+versione ancora precedente di quel commento affermava il falso, cioè che la prova fosse «riportata
+nel PRD». Eseguiti: sei esecuzioni **separate** con `clearState: true`, 6 su 6 arrivate alla home,
+`assertNotVisible` sui tre testi di `offline.html` verde ogni volta, e nel log di sistema sei righe
+«filtro annullamenti agganciato» con **PID diversi** — cioè sei avvii veri. «mostro la schermata
+offline»: **0**.
+
+Il limite, che resta scritto nel lock e non va abbellito: **«navigazione annullata» compare 0
+volte**. In quelle sei sessioni l'annullamento non è avvenuto, quindi il filtro era agganciato ma
+non *esercitato*. È l'atteso dopo la correzione a monte del login, ma la prova sul dispositivo
+dimostra «non si riproduce in 6 su 6», non «il filtro intercetta». Quella metà la dimostra
+`ios/prove/filtro-annullamenti/esegui.sh`, rieseguita: 10 verifiche su 10, compresi i due controlli
+**negativi** (−1009 rete assente e −1004 server irraggiungibile *arrivano* a Capacitor, cioè la
+schermata offline compare ancora quando serve davvero).
+
+### La tastiera Android sulla chat: non riprodotta, e la garanzia che era solo un default
+
+Il rilievo era aperto perché la volta scorsa era stato misurato su una **sonda** che riproduceva il
+layout, non sulla chat vera. Rifatto sulla schermata vera, genitore e docente, due versioni di
+Android, con la tastiera confermata da `dumpsys input_method` invece che dedotta:
+
+| | tastiera chiusa | tastiera aperta | «Invia» |
+|---|---|---|---|
+| **API 36** (411×731) | `innerHeight` 731 | 399 | bottom 695 → 387, **visibile** |
+| **API 33** (393×778) | `innerHeight` 778 | 499 | bottom 766 → 487, **visibile** |
+
+`visualViewport.offsetTop` sempre 0, 12px di margine sotto il bottone. **Non riprodotto.** Anche
+l'ipotesi alternativa — un `transform` su un antenato che diventa blocco contenitore per i `fixed`
+— è **falsificata a runtime**, risalendo l'intera catena da `[aria-label="Invia messaggio"]` fino a
+`documentElement`: nessun antenato con `transform` diverso da `none`.
+
+Nessun rimedio applicativo è stato aggiunto, e in particolare **non**
+`interactive-widget=resizes-content`: i numeri dicono che il comportamento che quella direttiva
+imporrebbe è già quello di default. **Un rimedio che non fa niente è peggio del rilievo aperto**,
+perché chiude la voce e toglie a chiunque la ragione di guardarci ancora.
+
+L'unica correzione difendibile è un'altra, ed è stata fatta: il comportamento misurato dipendeva da
+un **default di sistema**, non da una nostra scelta. Senza `windowSoftInputMode` vale
+`adjustUnspecified` e decide la ROM; sulle versioni provate risolve in `adjustResize`, ma una che
+risolvesse in `adjustPan` farebbe scorrere la finestra e il composer uscirebbe davvero dallo
+schermo. Ora è dichiarato in `AndroidManifest.xml`, con un lock che ha superato la **prova di
+validità** (tolta la riga → rosso; rimessa → verde).
+
+### Gli 8 errori del pannello «Problemi»: il rimedio ovvio era inerte
+
+Non erano difetti del progetto e non hanno mai toccato il gate, `npm run build` o la build Android.
+Sono l'estensione Java dell'editor che importa come progetti a sé quattro cartelle Android dentro
+`node_modules`. Ma il rimedio che sembrava ovvio — «escludi `node_modules` dall'import» — **è
+inerte**: quei quattro pattern sono già il default di `redhat.java`, parola per parola. E i quattro
+progetti non arrivano da una scansione di `node_modules`: li include per nome
+`android/capacitor.settings.gradle`, un file che Capacitor rigenera e che si apre con «DO NOT EDIT
+THIS FILE». La documentazione dell'estensione chiude la via di mezzo: *«Gradle projects cannot be
+partially imported»*.
+
+Applicata la scelta del titolare: puntare il Gradle dell'IDE al **JDK 21 che Android Studio si
+porta dietro**, senza installare nulla. Con una riserva scritta nel file, perché i log dicono che i
+due problemi sono distinti — 99 occorrenze di «Can't read root project location» sui quattro
+progetti che danno errore, e 10 di `ToolchainProvisioningException` su `capacitor-camera`, che
+invece non ne dà. Se dopo «Java: Clean Java Language Server Workspace» il pannello resta a 8, la
+causa è la prima e l'unica cosa che li toglie è non importare affatto i progetti Gradle.
+
+### Quello che questo ciclo NON ha provato
+
+- Tutte le misure Android sono su **emulatore**, con Gboard, in verticale, a schermo intero.
+  Restano non provati un dispositivo fisico, le tastiere di terze parti, l'orizzontale, lo
+  split-screen. **API 30 è bloccata** per una ragione diversa: quella WebView è Chrome 91 e il
+  bundle non ci gira (`SyntaxError: Unexpected token '{'`), quindi non dice niente sulla tastiera.
+- Il conteggio del pannello «Problemi» a 0 **non è dimostrato**: richiede la clean del Language
+  Server e il riavvio dell'editor, che si fanno dall'interfaccia.
+- `android-screenshot-playstore.yaml` resta senza esecuzione verde dal 28 luglio.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 633 file / 5744 test** · `build ok`.
+
+---
+
 ## 🗓️ Changelog — Il ciclo di correzione ripreso dopo uno spegnimento, e i quattro difetti che nessun collaudo aveva visto 2026-08-01 (branch `fix/multisede-audit-globale`)
 
 Alle **03:50 del 1° agosto** il computer si è spento mentre undici esecutori scrivevano l'ultima
@@ -156,6 +273,9 @@ strade viva in un posto solo** — da qui `@/lib/avvisi/classi-sede` e `@/lib/va
 - I tre flow Maestro **iOS non sono mai stati eseguiti** dopo la correzione: sono iscritti in
   `FLOW_SENZA_ESECUZIONE_VERDE`, quindi il gate è verde **perché** la prova manca, non nonostante.
   Vale anche per i sei login consecutivi di S28, che restano da fare sul simulatore.
+  → **Chiuso il 2026-08-02**: i tre flow eseguiti due volte ciascuno e i sei login fatti sull'app
+  vera. Vedi la voce di changelog in cima. Questa riga resta com'era scritta quel giorno: è la
+  fotografia di ciò che allora era vero, non un errore da correggere.
 - Il rate-limit conta **in memoria, per istanza**: su Vercel il tetto reale è N × il limite
   dichiarato. Regge perché i tentativi non si accumulano su un codice solo (il ticket vive dieci
   minuti), ma il numero non è garantito finché il contatore non passa a uno store condiviso.

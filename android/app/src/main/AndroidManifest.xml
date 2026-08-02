@@ -22,12 +22,31 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+        <!--
+            windowSoftInputMode: la barra di composizione della chat deve restare a schermo
+            quando si apre la tastiera. È il canale con cui le famiglie parlano con la scuola.
+
+            Perché è scritto qui e non lasciato al default (2026-08-02). Il rilievo «la tastiera
+            copre il composer» è stato misurato sulla chat VERA — genitore e docente, emulatori
+            API 36 e API 33, tastiera confermata da `dumpsys input_method` — e NON si riproduce:
+            il viewport si accorcia (innerHeight 731→399 su API 36, 778→499 su API 33,
+            `visualViewport.offsetTop` sempre 0) e il bottone «Invia» resta visibile con 12px di
+            margine. Nessun rimedio applicativo era quindi giustificato, e non ne è stato aggiunto.
+
+            MA il comportamento misurato dipendeva da un DEFAULT, non da una nostra scelta: senza
+            questa riga vale `adjustUnspecified`, e il sistema decide da sé. Sulle versioni provate
+            lo risolve in `adjustResize` — su una ROM che lo risolvesse in `adjustPan` la finestra
+            verrebbe fatta scorrere invece che ridimensionata, e il composer uscirebbe davvero
+            dallo schermo. Dichiararlo è l'unica correzione difendibile: non cambia niente di ciò
+            che è stato misurato, e toglie la dipendenza da chi ha compilato la ROM.
+        -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

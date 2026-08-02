@@ -160,7 +160,17 @@ chiude** — perché non sta nell'URL, quindi il cambio di configurazione la but
 dichiarato.
 
 Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 669 file / 6262 test** · `build ok`.
-Migrazione `20260802173254` **applicata in produzione** (advisors 0 ERROR).
+Migrazioni **applicate in produzione** con l'approvazione del titolare, una per una:
+`20260802173254` (sorveglianza sulla conservazione a 24 mesi) e `20260802200000` — il bucket
+`form_attachments`, che custodisce carte d'identità, certificati e fotografie di minori, era
+configurato **senza alcun limite** (`file_size_limit` e `allowed_mime_types` entrambi `NULL`)
+ed era raggiungibile da due rotte anonime. Ora dichiara cinque tipi e un tetto di 8 MB.
+Verificato prima di applicare: i 962 file presenti sono tutti dei tipi ammessi e il più grande
+pesa 4,49 MB — nessun caricamento reale viene respinto. `get_advisors`: **0 ERROR**.
+
+È la rete che resta quando la prossima rotta di upload dimenticherà il gate applicativo, e non
+è un'ipotesi: `iscrizione/upload` è nata senza controlli ed è vissuta così finché il collaudo
+non l'ha misurata.
 
 ---
 

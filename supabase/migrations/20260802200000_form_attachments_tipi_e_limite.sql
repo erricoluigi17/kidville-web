@@ -1,3 +1,8 @@
+-- ✅ APPLICATA IN PRODUZIONE il 2026-08-02, con l'approvazione del titolare.
+--    Verificato PRIMA: 962 file, tutti dei tipi ammessi (image/jpeg 680, application/pdf 221,
+--    image/png 60, image/heic 1), il più grande 4,49 MB contro un tetto di 8 MB.
+--    Verificato DOPO: file_size_limit = 8388608, i cinque tipi in elenco, 962 file INTATTI.
+--    get_advisors: 0 ERROR.
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- IL BUCKET DEI DOCUMENTI D'ISCRIZIONE DICHIARA COSA ACCETTA
 -- (collaudo del 2026-08-02, sicurezza F1)

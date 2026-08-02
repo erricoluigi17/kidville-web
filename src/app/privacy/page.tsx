@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { PublicContrastButton } from '@/components/ui/PublicContrastButton';
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni';
 
 // Pagina PUBBLICA (nessun login): informativa GDPR. Serve anche come
@@ -70,14 +71,22 @@ const UL = `list-disc space-y-1.5 pl-5 ${P}`;
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
+    <main className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
-        >
-          <span aria-hidden="true">←</span> Torna indietro
-        </Link>
+        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ. Il comando di Alto
+            Contrasto viveva solo nei menu account, cioè dopo il login: su una
+            pagina pubblica — che per lo store è anche il recapito legale — chi ne
+            ha bisogno non poteva raggiungerlo. Sta in un componente unico proprio
+            perché queste cinque pagine non ricomincino a divergere. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
+          >
+            <span aria-hidden="true">←</span> Torna indietro
+          </Link>
+          <PublicContrastButton />
+        </div>
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">
           <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-kidville-green sm:text-4xl">
@@ -592,7 +601,7 @@ export default function PrivacyPage() {
           {/* Versione del testo: stessa costante usata dall'INSERT in
               consensi_accettazioni, così il testo mostrato e quello registrato
               come accettato non possono mai divergere nel tempo. */}
-          <p className="mt-8 border-t border-kidville-line pt-4 font-maven text-xs text-kidville-muted">
+          <p className="mt-8 border-t border-kidville-line pt-4 font-maven text-xs text-kidville-sub">
             Versione: {VERSIONE_PRIVACY}
           </p>
         </article>

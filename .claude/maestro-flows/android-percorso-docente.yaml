@@ -31,6 +31,23 @@ env:
 - extendedWaitUntil:
     visible: "Accedi al tuo account Kidville"
     timeout: 60000
+
+# ⚠️ QUESTA ASSERZIONE NON È DECORATIVA: È IL RESPIRO CHE SERVE ALL'IDRATAZIONE.
+# Misurato il 2026-08-02, emulatore KV-play-phone / API 36. Senza di essa il flow
+# digitava troppo presto, React idratava DOPO e svuotava i campi: `tapOn: "Accedi"`
+# risultava COMPLETED, il form non partiva, e sullo schermo restava il messaggio
+# nativo del browser «Please fill out this field». Il flow moriva due passi dopo,
+# sull'asserzione «Dashboard» — facendo sembrare che la dashboard non ci fosse.
+# Due esecuzioni su due.
+#
+# Il gemello del GENITORE non aveva il difetto per un motivo ACCIDENTALE: fra
+# l'attesa e la prima digitazione ha un `assertVisible` e un `takeScreenshot`, cioè
+# due comandi che fanno passare il tempo senza che nessuno li avesse messi lì per
+# quello. Il flow docente era l'unico dei due a digitare subito — ed è l'unico che
+# è caduto. Chi toglie questa riga perché «tanto la pagina è già visibile» rimette
+# esattamente il difetto: «visibile» non è «idratata».
+- assertVisible: "Benvenuto/a!"
+
 - tapOn:
     below: "Email"
 - inputText: ${KV_EMAIL}
@@ -52,20 +69,25 @@ env:
 # non sul saluto: "Buongiorno!" è orario (src/lib/ui/greeting.ts) e di pomeriggio
 # diventa "Buon pomeriggio!".
 #
-# ⚠️ Il quinto tab si seleziona con l'ARIA-LABEL "Menu · tutte le sezioni", non
-# con la scritta «MENU» che si legge a schermo (corretto il 2026-07-31: il
-# commento precedente affermava il contrario e faceva fallire il flow al 13°
-# passo, con l'aria di un difetto dell'app). Causa vera: ARIA, non la WebView —
-# `<button aria-label={t('ariaMenu')}>` con dentro `<span>{t('tabMenu')}</span>`,
-# e l'aria-label SOSTITUISCE il contenuto nel calcolo del nome accessibile.
-# Spiegazione estesa in android-percorso-genitore.yaml e nel README; il lock
-# `__tests__/architecture/maestro-flows-selettori.test.ts` (R4, R8) impedisce che
-# «MENU» rientri.
+# ⚠️ Il quinto tab si prende con un selettore ALTERNATO, perché il nome con cui
+# arriva ad Android dipende dalla versione della WebView, non dall'app:
+#   · WebView 109 (KV-api33)     → content-desc = «Menu · tutte le sezioni»
+#   · WebView 150 (KV-play-phone) → text = «MENU», content-desc VUOTA
+# Misurato il 2026-08-02 con `adb shell uiautomator dump`: sulla dashboard il
+# quinto tab è `text="MENU" class=android.widget.Button content-desc=""`. Il
+# ponte Chromium → AccessibilityNodeInfo è cambiato per i <button> che hanno SIA
+# aria-label SIA testo interno visibile; i bottoni di sola icona espongono ancora
+# il loro aria-label. Spiegazione per esteso, con le due misure e la storia dei
+# due errori opposti, in android-percorso-genitore.yaml.
+# Il lock `__tests__/architecture/maestro-flows-selettori.test.ts` (R4, R8b)
+# continua a vietare «Menu»/«MENU» NUDI: da soli sono morti su WebView 109 e
+# ambigui col foglio aperto. L'alternanza ancorata è un'altra cosa, e regge
+# entrambe le esposizioni.
 - extendedWaitUntil:
     visible: "Dashboard"
     timeout: 60000
 - assertVisible:
-    text: "Menu · tutte le sezioni"
+    text: "Menu · tutte le sezioni|^MENU$"
 - takeScreenshot: /tmp/kv-android-docente-1-dashboard
 
 # ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
@@ -106,7 +128,7 @@ env:
 #     lock R7 pretende entrambe le cose, anche dentro un `runFlow`.
 - tapOn: "Dashboard"
 - extendedWaitUntil:
-    visible: "Menu · tutte le sezioni"
+    visible: "Menu · tutte le sezioni|^MENU$"
     timeout: 30000
 
 # Ramo A — la CTA c'è: si passa di lì, perché è il percorso reale dell'insegnante
@@ -135,7 +157,7 @@ env:
       notVisible: "Circolari e avvisi alle famiglie"
     commands:
       - tapOn:
-          text: "Menu · tutte le sezioni"
+          text: "Menu · tutte le sezioni|^MENU$"
       - extendedWaitUntil:
           visible: "Avvisi e comunicazioni"
           timeout: 20000

@@ -1,0 +1,724 @@
+{
+  "_": "Debito misurato di `text-kidville-muted` come INCHIOSTRO. Vedi __tests__/a11y/testo-muted-allowlist.test.ts. Questa lista può solo accorciarsi.",
+  "misurato_il": "2026-08-02",
+  "totale_file": 179,
+  "totale_occorrenze": 1184,
+  "file": [
+    {
+      "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/app/(dashboard)/admin/avvisi/[id]/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/admin/compiti/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/admin/diary/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/admin/forms/builder/page.tsx",
+      "n": 15
+    },
+    {
+      "path": "src/app/(dashboard)/admin/impostazioni/page.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/app/(dashboard)/admin/mensa/cucina/page.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/app/(dashboard)/admin/mensa/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/admin/merchandise/page.tsx",
+      "n": 27
+    },
+    {
+      "path": "src/app/(dashboard)/admin/messaggi/page.tsx",
+      "n": 17
+    },
+    {
+      "path": "src/app/(dashboard)/admin/modulistica/page.tsx",
+      "n": 32
+    },
+    {
+      "path": "src/app/(dashboard)/admin/news/page.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/app/(dashboard)/admin/pagamenti/page.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/app/(dashboard)/admin/page.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/app/(dashboard)/admin/primaria/[sectionId]/layout.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/admin/primaria/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/admin/protocolli/page.tsx",
+      "n": 12
+    },
+    {
+      "path": "src/app/(dashboard)/admin/students/[id]/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/admin/students/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/admin/students/sezioni/[id]/page.tsx",
+      "n": 13
+    },
+    {
+      "path": "src/app/(dashboard)/parent/attendance/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/parent/avvisi/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/parent/chat/page.tsx",
+      "n": 8
+    },
+    {
+      "path": "src/app/(dashboard)/parent/compiti/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/parent/diary/page.tsx",
+      "n": 12
+    },
+    {
+      "path": "src/app/(dashboard)/parent/gallery/page.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/app/(dashboard)/parent/lezioni/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/parent/locker/page.tsx",
+      "n": 18
+    },
+    {
+      "path": "src/app/(dashboard)/parent/mensa/page.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/app/(dashboard)/parent/modulistica/page.tsx",
+      "n": 18
+    },
+    {
+      "path": "src/app/(dashboard)/parent/news/digest/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/parent/news/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/parent/onboarding/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/parent/pagamenti/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/parent/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/parent/primaria/assenze/page.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/app/(dashboard)/parent/primaria/note/page.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/app/(dashboard)/parent/primaria/orario/page.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/app/(dashboard)/parent/primaria/page.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/app/(dashboard)/parent/primaria/pagelle/page.tsx",
+      "n": 11
+    },
+    {
+      "path": "src/app/(dashboard)/parent/primaria/valutazioni/page.tsx",
+      "n": 9
+    },
+    {
+      "path": "src/app/(dashboard)/parent/profilo/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/attendance/page.tsx",
+      "n": 9
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/chat/page.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/diary/page.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/gallery/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/locker/page.tsx",
+      "n": 18
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/mensa/page.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/modulistica/page.tsx",
+      "n": 17
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/appello/page.tsx",
+      "n": 11
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/fascicolo/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/note/page.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/orario/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/prospetto/page.tsx",
+      "n": 13
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/registro/page.tsx",
+      "n": 18
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/scrutinio/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/[sectionId]/valutazioni/page.tsx",
+      "n": 19
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/primaria/page.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/settings/locker/page.tsx",
+      "n": 16
+    },
+    {
+      "path": "src/app/(dashboard)/teacher/tasks/page.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/app/privacy/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/app/termini/page.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/AdminMenuSheet.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/admin/AdminNotificationsPanel.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/AdminSearchPanel.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/AdminSidebar.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/AllergeniSelect.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/admin/CompetenzePanel.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/FamilyRegistryManager.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/ImportExportClient.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/LinkedAdultProfile.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/components/features/admin/ParentDetailPanel.tsx",
+      "n": 24
+    },
+    {
+      "path": "src/components/features/admin/SectionsView.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/admin/SidiPanel.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/StaffDetailPanel.tsx",
+      "n": 13
+    },
+    {
+      "path": "src/components/features/admin/StudentDetailPanel.tsx",
+      "n": 41
+    },
+    {
+      "path": "src/components/features/admin/StudentEconomicSection.tsx",
+      "n": 8
+    },
+    {
+      "path": "src/components/features/admin/StudentRegistryForm.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/forms/builder/DraggableField.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/admin/forms/builder/FormBuilderCanvas.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/components/features/admin/forms/builder/PropertiesPanel.tsx",
+      "n": 27
+    },
+    {
+      "path": "src/components/features/admin/forms/rankings/RankingAdjustModal.tsx",
+      "n": 13
+    },
+    {
+      "path": "src/components/features/admin/forms/rankings/RankingTable.tsx",
+      "n": 18
+    },
+    {
+      "path": "src/components/features/admin/forms/submissions/SubmissionDetailSidebar.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/forms/submissions/SubmissionsTable.tsx",
+      "n": 16
+    },
+    {
+      "path": "src/components/features/admin/iscrizioni/ModuliInviabili.tsx",
+      "n": 8
+    },
+    {
+      "path": "src/components/features/admin/iscrizioni/ModuliRicevuti.tsx",
+      "n": 14
+    },
+    {
+      "path": "src/components/features/admin/mensa/MensaReport.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/components/features/admin/mensa/MenuBuilder.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/components/features/admin/mensa/PrenotazioneSegreteria.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/moderazione/SegnalazioniPanel.tsx",
+      "n": 13
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/AgendaScadenze.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/CausaliPanel.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/FatturaButton.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/FiscalePanel.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/GeneratoreCategoria.tsx",
+      "n": 11
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/GeneratoreRette.tsx",
+      "n": 9
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/ModificaPagamentoModal.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/MovimentoDialog.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/PagamentoCardMobile.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/PagamentoDrawer.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/PaymentsDashboard.tsx",
+      "n": 15
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/QuickAcquistoModal.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/RateizzaModal.tsx",
+      "n": 8
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/RegistraIncassoModal.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/RiconciliazionePanel.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/SollecitiPanel.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/SospensioneToggle.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/TicketMensaPanel.tsx",
+      "n": 11
+    },
+    {
+      "path": "src/components/features/admin/pagamenti/TransazioniPanel.tsx",
+      "n": 16
+    },
+    {
+      "path": "src/components/features/admin/primaria/ClassificazioneDocenti.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/primaria/DidatticaPrimariaPanel.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/primaria/DocentiMaterieManager.tsx",
+      "n": 9
+    },
+    {
+      "path": "src/components/features/admin/primaria/FascicoloAuditViewer.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/primaria/ImpostazioniManager.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/primaria/MaterieManager.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/components/features/admin/primaria/ObiettiviManager.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/primaria/OrarioManager.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/components/features/admin/primaria/RegistriClassePanel.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/admin/primaria/ScrutinioGiudiziManager.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/admin/primaria/ScrutinioPeriodiManager.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/settings/ArmadiettoSettings.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/settings/AvvisiSettings.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/settings/ChatSettings.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/settings/DiarioSettings.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/admin/settings/FunzioniMatricePanel.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/settings/GalleriaSettings.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/settings/MensaSettings.tsx",
+      "n": 14
+    },
+    {
+      "path": "src/components/features/admin/settings/ModulisticaSettings.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/settings/NoteSettings.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/settings/NotificheSettings.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/admin/settings/OblioPanel.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/components/features/admin/settings/PresenzeSettings.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/admin/settings/RetteSettings.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/admin/settings/RichiesteCancellazionePanel.tsx",
+      "n": 9
+    },
+    {
+      "path": "src/components/features/admin/settings/SchoolsPanel.tsx",
+      "n": 10
+    },
+    {
+      "path": "src/components/features/admin/settings/StaffPanel.tsx",
+      "n": 11
+    },
+    {
+      "path": "src/components/features/admin/settings/fields.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/chat/ChatConversationMenu.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/chat/ChatInput.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/chat/ChatMessageArea.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/chat/ChatThreadList.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/gallery/StudentTagger.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/news/NewsFeedList.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/parent/BottomNav.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/parent/LezioniCompitiSections.tsx",
+      "n": 7
+    },
+    {
+      "path": "src/components/features/parent/forms/OtpSignatureModal.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/parent/forms/WizardContainer.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/parent/home/AgendaTodayCard.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/parent/home/AvvisiPreview.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/parent/home/DiaryTodayCard.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/parent/home/GalleryTodayCard.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/parent/home/LockerTodayCard.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/parent/home/PresenzeTodayCard.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/parent/mensa/MensaCalendar.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/parent/pagamenti/StoricoPagamenti.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/primaria/OrarioGrid.tsx",
+      "n": 6
+    },
+    {
+      "path": "src/components/features/segnalazioni/SegnalaContenuto.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/shell/NotificationsPanel.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/teacher/CheckoutModal.tsx",
+      "n": 5
+    },
+    {
+      "path": "src/components/features/teacher/GradeWorldSwitch.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/teacher/SemaforoAutorizzazione.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/teacher/StudentAttendanceRow.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/features/teacher/TeacherBottomNav.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/teacher/attendance/MonthlyAttendanceTable.tsx",
+      "n": 17
+    },
+    {
+      "path": "src/components/features/teacher/diary/ActivityDetailInline.tsx",
+      "n": 8
+    },
+    {
+      "path": "src/components/features/teacher/diary/DiaryEventEditor.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/features/teacher/diary/MealDetailInline.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/components/features/teacher/locker/LoadStockModal.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/teacher/locker/MonthlyLockerTable.tsx",
+      "n": 11
+    },
+    {
+      "path": "src/components/features/teacher/tasks/TaskCard.tsx",
+      "n": 31
+    },
+    {
+      "path": "src/components/features/teacher/tasks/TaskEditModal.tsx",
+      "n": 3
+    },
+    {
+      "path": "src/components/features/teacher/tasks/TaskForm.tsx",
+      "n": 8
+    },
+    {
+      "path": "src/components/features/teacher/tasks/TaskResolutionModal.tsx",
+      "n": 4
+    },
+    {
+      "path": "src/components/ui/Badge.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/ui/OverflowMenu.tsx",
+      "n": 1
+    },
+    {
+      "path": "src/components/ui/cockpit.tsx",
+      "n": 2
+    },
+    {
+      "path": "src/lib/context/sede-context.tsx",
+      "n": 2
+    }
+  ]
+}

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import {
+  ATTRIBUTO_INLINE,
+  ATTRIBUTO_POSSESSO,
   etichettaRotta,
   leggiRotteInCache,
   linguaDalCookie,
@@ -36,6 +38,19 @@ import {
  * Le due implementazioni condividono le funzioni pure di `./script-offline` per
  * quanto è possibile, e `__tests__/offline/equivalenza-offline.test.ts` verifica
  * che diano lo stesso risultato sugli stessi ingressi.
+ *
+ * ─── PERCHÉ ESISTE UNA STAFFETTA, E NON SOLO DUE IMPLEMENTAZIONI ───────────
+ * «Entrambe le implementazioni servono» non basta: serve dire QUANDO tocca a
+ * chi. Senza quella regola, in produzione l'elenco è uscito DOPPIO — sei voci
+ * per tre rotte — perché la CacheStorage ha risposto DOPO l'idratazione: React
+ * aveva idratato una `<ul>` vuota e la considerava sua, lo script inline ci ha
+ * infilato i propri `<li>`, React ha appeso i suoi senza vedere gli altri.
+ * Da qui il primo effetto qui sotto: React DICHIARA il possesso su ogni lista
+ * (`data-kv-owner="react"`) e butta ciò che lo script inline aveva disegnato
+ * (`data-kv-inline`). Da quel momento lo script inline si astiene — vedi
+ * `reactPossiede()` in `./script-offline.ts`. Difeso da
+ * `__tests__/offline/elenco-offline-non-si-duplica.test.tsx`, che prova
+ * ENTRAMBI gli ordini di arrivo e il caso senza bundle.
  *
  * ─── PERCHÉ IL PRIMO RENDER È IDENTICO A QUELLO DEL SERVER ─────────────────
  * `lingua: 'it'` e `rotte: []` non sono default pigri: sono ESATTAMENTE ciò che
@@ -85,6 +100,21 @@ export default function ContenutoOffline({ testi }: { testi: Record<Lingua, Test
   const [rotte, setRotte] = useState<string[]>([]);
   const [nessunaRete, setNessunaRete] = useState(false);
   const [sondaInCorso, setSondaInCorso] = useState(false);
+
+  // Il passaggio di consegne, prima di ogni altra cosa: da qui in avanti le
+  // liste sono di React (l'attributo lo legge lo script inline, che si ferma) e
+  // ciò che lo script inline aveva già disegnato va via — altrimenti i suoi
+  // `<li>` e quelli di React si sommano. È deliberatamente una scrittura nel
+  // DOM fuori dal render: quei nodi React non li conosce, e non c'è altro modo
+  // di rimuoverli. Rimuove SOLO i nodi marcati, mai i propri.
+  useEffect(() => {
+    for (const lista of Array.from(document.querySelectorAll('[data-kv-elenco]'))) {
+      lista.setAttribute(ATTRIBUTO_POSSESSO, 'react');
+      for (const voce of Array.from(lista.querySelectorAll(`[${ATTRIBUTO_INLINE}]`))) {
+        voce.remove();
+      }
+    }
+  }, []);
 
   // `lang` sul documento è l'unico pezzo che non può stare nel render: `<html>`
   // appartiene al layout radice, che questa pagina non controlla. Scriverlo è

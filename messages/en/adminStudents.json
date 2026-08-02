@@ -72,6 +72,9 @@
 
   "cardApriScheda": "Open record of {nome}",
   "cardClassi": "{n, plural, one {# class} other {# classes}}",
+  "selezionaRiga": "Select {nome}",
+  "selezionaTuttiAlunni": "Select all visible pupils",
+  "selezionaTuttiGenitori": "Select all visible parents",
 
   "bulkGruppoMensa": "Meal group…",
   "bulkAssegnaMensa": "Assign meal",

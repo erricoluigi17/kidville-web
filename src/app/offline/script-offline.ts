@@ -38,6 +38,33 @@ export const ROTTA_SONDA = '/offline';
 /** Oltre questo tempo la sonda si arrende: meglio un «no» che un'attesa muta. */
 export const TIMEOUT_SONDA_MS = 3000;
 
+/**
+ * ─── LA STAFFETTA FRA LO SCRIPT INLINE E REACT ─────────────────────────────
+ * Due implementazioni scrivono nello stesso `<ul data-kv-elenco>` (il perché è
+ * più sotto): senza una regola di possesso, in produzione l'elenco è uscito
+ * DOPPIO — sei voci per tre rotte, ogni pagina due volte. Succede quando la
+ * CacheStorage risponde DOPO l'idratazione: React idrata una `<ul>` vuota e la
+ * fa sua, poi lo script inline vi infila i propri `<li>`, poi React appende i
+ * suoi senza vedere gli altri.
+ *
+ * La regola è una sola riga di contratto: **la lista appartiene a React da
+ * quando React lo dichiara, e da quel momento lo script inline non la tocca
+ * più**. Il possesso si dichiara con un attributo sul nodo — non con una
+ * variabile globale — perché così vale per-nodo, si azzera insieme al DOM e
+ * non sopravvive a un remount.
+ *
+ * Nell'ordine inverso (script inline prima dell'idratazione) React non può
+ * "non toccare": ha già in mano il nodo. Allora ciò che lo script inline
+ * disegna è marcato, e React lo rimuove quando prende possesso — invece di
+ * sommarcisi.
+ */
+
+/** Attributo sul nodo dell'elenco: `react` = da qui in poi la lista è di React. */
+export const ATTRIBUTO_POSSESSO = 'data-kv-owner';
+
+/** Attributo sui nodi creati dallo script inline: sono quelli che React rimuove. */
+export const ATTRIBUTO_INLINE = 'data-kv-inline';
+
 /** Etichette leggibili per le rotte, in UNA lingua. */
 export interface DizionarioEtichette {
   /** Path completo → etichetta (le home di area, che non hanno un segmento utile). */
@@ -205,9 +232,20 @@ var PREFISSO=${JSON.stringify(PREFISSO_CACHE_SHELL)};
 var DIZ=${JSON.stringify(dizionari)};
 var CLASSI=${JSON.stringify(CLASSI_LINK)};
 var ASSET=/${ASSET.source}/i;
+var POSSESSO=${JSON.stringify(ATTRIBUTO_POSSESSO)};
+var INLINE=${JSON.stringify(ATTRIBUTO_INLINE)};
 
 function nodi(sel){return document.querySelectorAll(sel);}
 function mostra(sel,visibile){var n=nodi(sel);for(var i=0;i<n.length;i++){n[i].hidden=!visibile;}}
+
+/* La staffetta: se React ha dichiarato il possesso, questa pagina non è più
+   nostra. Vale per l'elenco e per «Riprova»: due sonde per un click sono due
+   richieste di rete su una pagina che esiste perché la rete non c'è. */
+function reactPossiede(){
+var liste=nodi('[data-kv-elenco]');
+for(var i=0;i<liste.length;i++){if(liste[i].getAttribute(POSSESSO)==='react')return true;}
+return false;
+}
 
 function etichetta(lingua,path){
 var d=DIZ[lingua]||DIZ.it;
@@ -251,6 +289,7 @@ return rotte;
 }
 
 function disegna(rotte){
+if(reactPossiede())return;
 if(!rotte||!rotte.length)return;
 var liste=nodi('[data-kv-elenco]');
 for(var i=0;i<liste.length;i++){
@@ -259,6 +298,7 @@ var lingua=lista.getAttribute('data-kv-elenco')||'it';
 lista.textContent='';
 for(var r=0;r<rotte.length;r++){
 var li=document.createElement('li');
+li.setAttribute(INLINE,'');
 var a=document.createElement('a');
 a.setAttribute('href',rotte[r]);
 a.className=CLASSI;
@@ -295,6 +335,7 @@ var inCorso=false;
 var b=nodi('[data-kv-riprova]');
 for(var i=0;i<b.length;i++){
 b[i].addEventListener('click',function(ev){
+if(reactPossiede())return;
 if(ev&&ev.preventDefault)ev.preventDefault();
 if(inCorso)return;
 inCorso=true;

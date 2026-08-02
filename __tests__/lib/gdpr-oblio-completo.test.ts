@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   scrubPersonaIscrizione,
   scrubDomandaIscrizione,
   scrubSanitariDomanda,
 } from '@/lib/gdpr/anonimizza'
-import { anonimizzaParent, anonimizzaAlunno } from '@/lib/gdpr/esegui'
+import { anonimizzaParent, anonimizzaAlunno, REGISTRO_BUCKET_OBLIO } from '@/lib/gdpr/esegui'
 
 // =============================================================================
 // S22 — L'OBLIO SEGUE IL DATO, NON LA RIGA.
@@ -213,6 +215,7 @@ function makeFake(cfg: Cfg) {
       b.select = () => b
       b.eq = () => b
       b.neq = () => b
+      b.not = () => b
       b.in = (_col: string, vals: unknown) => {
         if (state.isDelete) deleted.push({ table, ids: vals })
         return b
@@ -244,6 +247,11 @@ function makeFake(cfg: Cfg) {
           if (cfg.removeError) return { data: null, error: cfg.removeError }
           return { data: cfg.removeData ?? paths.map((p) => ({ name: p })), error: null }
         },
+        // `credenziali` non ha nessuna tabella-indice: l'unico modo di ritrovare
+        // il PDF di una famiglia è elencare il bucket. Un finto client senza
+        // `list` non è un client Supabase, ed è la differenza che dal 2026-08-02
+        // decide se una password in chiaro resta lì o no.
+        list: async () => ({ data: [] as { name: string }[], error: null }),
       }),
     },
   }
@@ -472,5 +480,397 @@ describe('POST /api/admin/gdpr/erase — l’oblio segue il dato', () => {
     const json = await res.json()
     expect(json.n_file_non_rimossi).toBeGreaterThan(0)
     expect(json.file_rimossi).toBe(0)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// IL PASSAGGIO INVERSO — si parte dai BUCKET, non dai rilievi.
+//
+// IL DIFETTO, misurato il 2026-08-02 (collaudo privacy #2). Lo Storage ha 13
+// magazzini; l'oblio ne svuotava DUE (`form_attachments` e `gallery`). Restavano
+// dentro, senza scadenza e senza che nessuno lo sapesse, le pagelle del bambino
+// (32 oggetti), gli allegati scambiati in chat con la scuola (27 — dove per
+// dichiarazione della migrazione «passano certificati medici, foto di bambini»),
+// i PDF delle credenziali (8), il protocollo (2) e l'allegato di un avviso (1).
+//
+// LA CAUSA NON È LA SVISTA, È IL METODO. Il ciclo ha lavorato PER RILIEVO — una
+// domanda d'iscrizione, un documento d'identità, una foto — e ha chiuso ciascuno
+// dentro il suo bucket. Nessuno ha mai fatto il giro contrario: prendere
+// l'ELENCO dei bucket e chiedere, uno per uno, «chi lo svuota quando la famiglia
+// se ne va?». `fatture` era escluso con una ragione scritta (conservazione
+// fiscale); gli altri cinque non erano esclusi — erano **non nominati**, che è la
+// forma in cui un dato di un minore resta per sempre senza che nessuno lo abbia
+// deciso.
+//
+// COSA PRETENDE QUESTA PARTE DEL FILE.
+//  1. Ogni bucket che esiste — quelli classificati in
+//     `__tests__/architecture/bucket-storage-dichiarati.test.ts` e quelli della
+//     fotografia della produzione — compare in `REGISTRO_BUCKET_OBLIO`.
+//  2. Chi è dichiarato COPERTO viene davvero svuotato: non si crede al registro,
+//     si esegue l'oblio su un client finto e si guarda su quali bucket è finita
+//     una `remove()`. Un registro che dichiara e non fa è peggio del silenzio.
+//  3. Chi è dichiarato ESCLUSO porta la sua ragione scritta, come `fatture`.
+//     Un'esclusione motivata è una decisione; un'omissione non è niente.
+// ═════════════════════════════════════════════════════════════════════════════
+
+interface CfgB {
+  parent?: Record<string, unknown> | null
+  iscrizioni?: Record<string, unknown>[]
+  media?: Record<string, unknown>[]
+  pagelle?: { id: string; file_url: string | null }[]
+  certificati?: { id: string; file_path: string | null }[]
+  threadAlunno?: { id: string }[]
+  threadGenitore?: { id: string }[]
+  messaggi?: { id: string; attachment_url: string | null }[]
+  credenziali?: { name: string }[]
+  err?: Record<string, { code: string }>
+  removeError?: { message: string } | null
+  listError?: { message: string } | null
+}
+
+function makeFakeBucket(cfg: CfgB) {
+  const updates: Record<string, unknown>[] = []
+  const deleted: { table: string; ids: unknown }[] = []
+  const removed: { bucket: string; paths: string[] }[] = []
+  const listati: { bucket: string; prefisso: string }[] = []
+  const client = {
+    from(table: string) {
+      const st: { isDelete?: boolean; eq: Record<string, unknown> } = { eq: {} }
+      const b: Record<string, unknown> = {}
+      b.select = () => b
+      b.eq = (col: string, val: unknown) => { st.eq[col] = val; return b }
+      b.neq = () => b
+      b.not = () => b
+      b.in = (_col: string, vals: unknown) => {
+        if (st.isDelete) deleted.push({ table, ids: vals })
+        return b
+      }
+      b.is = () => b
+      b.or = () => b
+      b.ilike = () => b
+      b.contains = () => b
+      b.limit = () => b
+      b.delete = () => { st.isDelete = true; return b }
+      b.update = (row: Record<string, unknown>) => { updates.push({ table, ...row }); return b }
+      b.maybeSingle = async () => ({
+        data: table === 'parents' ? (cfg.parent ?? null) : null,
+        error: cfg.err?.[table] ?? null,
+      })
+      b.then = (res: (v: unknown) => unknown) => {
+        const error = cfg.err?.[table] ?? null
+        let data: unknown[] = []
+        if (table === 'enrollment_submissions') data = cfg.iscrizioni ?? []
+        if (table === 'galleria_media_v2') data = cfg.media ?? []
+        if (table === 'pagelle') data = cfg.pagelle ?? []
+        if (table === 'certificati_medici') data = cfg.certificati ?? []
+        // I thread di un ALUNNO si cercano per `student_id`, quelli di un
+        // GENITORE per `parent_id`: sono due insiemi diversi e il finto client
+        // deve saperli distinguere, altrimenti il canale genitore risulterebbe
+        // coperto grazie ai dati dell'altro.
+        if (table === 'chat_threads') {
+          data = ('student_id' in st.eq ? cfg.threadAlunno : cfg.threadGenitore) ?? []
+        }
+        if (table === 'chat_messages') data = cfg.messaggi ?? []
+        return Promise.resolve({ data: error ? null : data, error }).then(res)
+      }
+      return b
+    },
+    storage: {
+      from: (bucket: string) => ({
+        remove: async (paths: string[]) => {
+          removed.push({ bucket, paths })
+          if (cfg.removeError) return { data: null, error: cfg.removeError }
+          return { data: paths.map((p) => ({ name: p })), error: null }
+        },
+        list: async (prefisso: string) => {
+          listati.push({ bucket, prefisso })
+          if (cfg.listError) return { data: null, error: cfg.listError }
+          return { data: cfg.credenziali ?? [], error: null }
+        },
+      }),
+    },
+  }
+  return { client, updates, deleted, removed, listati }
+}
+
+const bucketToccati = (removed: { bucket: string; paths: string[] }[]) =>
+  [...new Set(removed.filter((r) => r.paths.length > 0).map((r) => r.bucket))].sort()
+
+describe('oblio · i bucket che restavano pieni (pagelle, certificati, chat, credenziali)', () => {
+  it('ALUNNO · la pagella esce dal bucket `pagelle`, e la riga che la indicizza sparisce', async () => {
+    const f = makeFakeBucket({ pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }] })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    const su = f.removed.find((x) => x.bucket === 'pagelle')
+    expect(su, 'nessuna `remove()` sul bucket `pagelle`: il PDF con le valutazioni resta').toBeTruthy()
+    expect(su!.paths).toEqual(['scr-1/al-1.pdf'])
+    // La riga va via insieme al file: `pagelle.file_url` senza file è un indice
+    // che punta al vuoto, e resterebbe a dire che quel bambino ha una pagella.
+    expect(f.deleted.some((d) => d.table === 'pagelle')).toBe(true)
+    expect(r.fileNonRimossi).toBe(0)
+  })
+
+  it('ALUNNO · il certificato medico esce da `certificati-medici` con la riga che lo descrive', async () => {
+    const f = makeFakeBucket({ certificati: [{ id: 'cm-1', file_path: 'al-1/uuid.pdf' }] })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    const su = f.removed.find((x) => x.bucket === 'certificati-medici')
+    expect(su, 'il certificato medico di un minore resta nel bucket').toBeTruthy()
+    expect(su!.paths).toEqual(['al-1/uuid.pdf'])
+    // `certificati_medici.note` e `nota_validazione` sono testo libero scritto
+    // da un genitore e da chi valida: la riga non si può lasciare.
+    expect(f.deleted.some((d) => d.table === 'certificati_medici')).toBe(true)
+    expect(r.fileNonRimossi).toBe(0)
+  })
+
+  it('ALUNNO · gli allegati dei suoi thread escono da `chat-allegati` e il percorso in tabella si azzera', async () => {
+    const f = makeFakeBucket({
+      threadAlunno: [{ id: 'th-1' }],
+      messaggi: [{ id: 'ms-1', attachment_url: 'auth-9/uuid-referto.pdf' }],
+    })
+    await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    const su = f.removed.find((x) => x.bucket === 'chat-allegati')
+    expect(su, 'gli allegati della chat non escono dal bucket').toBeTruthy()
+    expect(su!.paths).toEqual(['auth-9/uuid-referto.pdf'])
+    // Il percorso è esso stesso un dato: contiene l'uuid di chi ha caricato e il
+    // NOME del file scelto dalla famiglia, che quasi sempre è il nome di una
+    // persona o la parola «referto».
+    const upd = f.updates.find((u) => u.table === 'chat_messages')
+    expect(upd, '`chat_messages.attachment_url` resta scritto in tabella').toBeTruthy()
+    expect(upd!.attachment_url).toBeNull()
+  })
+
+  it('GENITORE · allegati dei SUOI thread + PDF delle credenziali escono dai bucket', async () => {
+    const f = makeFakeBucket({
+      parent: { auth_user_id: 'auth-1', fiscal_code: null, documento_path: null },
+      threadGenitore: [{ id: 'th-9' }],
+      messaggi: [{ id: 'ms-9', attachment_url: 'auth-1/uuid-foto.jpg' }],
+      credenziali: [{ name: 'p-1-1700000000000.pdf' }, { name: 'altro-1700000000000.pdf' }],
+    })
+    await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    expect(f.removed.find((x) => x.bucket === 'chat-allegati')?.paths).toEqual(['auth-1/uuid-foto.jpg'])
+    const cred = f.removed.find((x) => x.bucket === 'credenziali')
+    expect(cred, 'il PDF con la password in chiaro resta nel bucket `credenziali`').toBeTruthy()
+    // Controllo positivo E negativo nella stessa asserzione: si toglie il PDF di
+    // QUESTO genitore e non quello di un altro. Il nome del file è
+    // `<id>-<timestamp>.pdf`, quindi il confronto è sul prefisso `<id>-`: una
+    // ricerca per sottostringa toglierebbe le credenziali a una famiglia che non
+    // ha chiesto niente.
+    expect(cred!.paths).toEqual(['p-1-1700000000000.pdf'])
+  })
+
+  it('GENITORE · niente da togliere → lo Storage non si tocca affatto', async () => {
+    const f = makeFakeBucket({ parent: { auth_user_id: 'auth-1', fiscal_code: null, documento_path: null } })
+    const r = await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    expect(f.removed.filter((x) => x.paths.length > 0)).toHaveLength(0)
+    expect(r.fileRimossi).toBe(0)
+    expect(r.fileNonRimossi).toBe(0)
+  })
+
+  it('schema assente (DB E2E della CI non migrato) → nessun file, nessun rumore', async () => {
+    const f = makeFakeBucket({
+      pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }],
+      certificati: [{ id: 'cm-1', file_path: 'al-1/uuid.pdf' }],
+      threadAlunno: [{ id: 'th-1' }],
+      messaggi: [{ id: 'ms-1', attachment_url: 'auth-9/x.pdf' }],
+      err: {
+        pagelle: { code: 'PGRST205' },
+        certificati_medici: { code: 'PGRST205' },
+        chat_threads: { code: 'PGRST205' },
+        chat_messages: { code: 'PGRST205' },
+      },
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    expect(f.removed.filter((x) => x.paths.length > 0)).toHaveLength(0)
+    expect(r.fileNonRimossi).toBe(0)
+  })
+
+  it('storage KO su un bucket nuovo → l’oblio parziale è VISIBILE nel conteggio', async () => {
+    const f = makeFakeBucket({
+      pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }],
+      removeError: { message: 'storage down' },
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    expect(
+      r.fileNonRimossi,
+      'una rimozione fallita su `pagelle` non arriva a chi ha eseguito l’oblio',
+    ).toBeGreaterThan(0)
+  })
+
+  it('elenco delle credenziali non leggibile → l’oblio si dichiara INCOMPLETO', async () => {
+    // Se il bucket non si può elencare non si sa che cosa ci fosse da togliere.
+    // Rispondere «0 file non rimossi» vorrebbe dire «niente da fare», ed è
+    // esattamente l'ambiguità che ha nascosto per mesi il guasto delle email.
+    const f = makeFakeBucket({
+      parent: { auth_user_id: 'auth-1', fiscal_code: null, documento_path: null },
+      listError: { message: 'storage down' },
+    })
+    const r = await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    expect(r.fileNonRimossi).toBeGreaterThan(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IL LOCK — ogni magazzino ha un responsabile, o una ragione scritta per non averlo
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RADICE = process.cwd()
+
+/**
+ * I bucket CLASSIFICATI in `__tests__/architecture/bucket-storage-dichiarati.test.ts`.
+ *
+ * Si legge il file come TESTO, non si importa: quel lock è di un'altra famiglia
+ * (visibilità dei bucket) e importarlo ne eseguirebbe i test dentro questo file.
+ * Quello che serve qui è solo l'elenco dei nomi — cioè la domanda «quali
+ * magazzini esistono», a cui quel file risponde già ed è l'unico posto dove
+ * qualcuno si ricorderà di aggiungere il prossimo.
+ */
+function bucketClassificati(): string[] {
+  const testo = readFileSync(
+    join(RADICE, '__tests__', 'architecture', 'bucket-storage-dichiarati.test.ts'),
+    'utf8',
+  )
+  const riservati = /const RISERVATI = \[([\s\S]*?)\] as const/.exec(testo)?.[1] ?? ''
+  const pubblici =
+    /const PUBBLICI_PER_DECISIONE: Record<string, string> = \{([\s\S]*?)\n\}/.exec(testo)?.[1] ?? ''
+  const nomi = [
+    ...[...riservati.matchAll(/'([a-z0-9_-]+)'/g)].map((m) => m[1]),
+    // Le chiavi dell'oggetto: due spazi di rientro, poi il nome, poi i due punti.
+    ...[...pubblici.matchAll(/^ {2}([a-z0-9_-]+):/gm)].map((m) => m[1]),
+  ]
+  return [...new Set(nomi)].sort()
+}
+
+/** I bucket che ESISTONO davvero, dalla fotografia versionata della produzione. */
+function bucketInProduzione(): string[] {
+  const foto = JSON.parse(
+    readFileSync(join(RADICE, '__tests__', 'fixtures', 'bucket-storage-snapshot.json'), 'utf8'),
+  ) as { bucket: { id: string }[] }
+  return foto.bucket.map((b) => b.id).sort()
+}
+
+const NOTI = [...new Set([...bucketClassificati(), ...bucketInProduzione()])].sort()
+
+/** Un client finto con OGNI sorgente piena: tutto ciò che l'oblio può trovare. */
+function fakePieno() {
+  return makeFakeBucket({
+    parent: {
+      auth_user_id: 'auth-1',
+      fiscal_code: 'EEEFFF80C03H501Z',
+      documento_path: 'anagrafica/doc-adulto.pdf',
+    },
+    iscrizioni: [{ id: 'sub-1', data: domandaDiProva() }],
+    media: [{ id: 'md-1', file_url: 'uploads/u1/foto.jpg', tag_students: ['al-1'] }],
+    pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }],
+    certificati: [{ id: 'cm-1', file_path: 'al-1/uuid.pdf' }],
+    threadAlunno: [{ id: 'th-1' }],
+    threadGenitore: [{ id: 'th-9' }],
+    messaggi: [{ id: 'ms-1', attachment_url: 'auth-9/uuid-referto.pdf' }],
+    credenziali: [{ name: 'p-1-1700000000000.pdf' }, { name: 'auth-1-1700000000001.pdf' }],
+  })
+}
+
+const copertiPerCanale = (canale: 'alunno' | 'genitore') =>
+  Object.entries(REGISTRO_BUCKET_OBLIO)
+    .filter(([, v]) => v.stato === 'coperto' && v.canali.includes(canale))
+    .map(([k]) => k)
+    .sort()
+
+const esclusi = Object.entries(REGISTRO_BUCKET_OBLIO)
+  .filter(([, v]) => v.stato === 'escluso')
+  .map(([k]) => k)
+
+describe('lock · l’oblio conosce OGNI magazzino dello Storage', () => {
+  it('l’elenco dei bucket si legge davvero (sanity: se cade, tutto il resto è verde sul vuoto)', () => {
+    // Un parser rotto renderebbe questo lock verde per sempre, su niente — ed è
+    // il modo più silenzioso di non controllare nulla.
+    expect(bucketClassificati().length, 'nessun bucket letto da `bucket-storage-dichiarati.test.ts`').toBeGreaterThan(9)
+    expect(bucketInProduzione().length, 'fotografia dello Storage vuota o illeggibile').toBeGreaterThan(9)
+    expect(bucketClassificati()).toContain('form_attachments')
+    expect(bucketClassificati()).toContain('news')
+  })
+
+  it('OGNI bucket noto è nel registro dell’oblio: coperto, oppure escluso con la ragione', () => {
+    const senzaResponsabile = NOTI.filter((b) => !(b in REGISTRO_BUCKET_OBLIO))
+    expect(
+      senzaResponsabile,
+      `Questi magazzini esistono e nessuno dice chi li svuota quando una famiglia se ne va:\n` +
+        `  ${senzaResponsabile.join('\n  ')}\n` +
+        `Aggiungili a \`REGISTRO_BUCKET_OBLIO\` in \`src/lib/gdpr/esegui.ts\`: o come ` +
+        `\`coperto\` (e allora ci vuole il codice che li svuota, non basta scriverlo) o come ` +
+        `\`escluso\` con la ragione. Un bucket NON NOMINATO è la forma in cui il dato di un ` +
+        `minore resta per sempre senza che nessuno lo abbia deciso: è successo a cinque ` +
+        `magazzini su sette fino al 2026-08-02.`,
+    ).toEqual([])
+  })
+
+  it('il registro non contiene magazzini inventati (una copertura su niente è peggio del niente)', () => {
+    const fantasmi = Object.keys(REGISTRO_BUCKET_OBLIO).filter((b) => !NOTI.includes(b))
+    expect(
+      fantasmi,
+      `Il registro dell'oblio nomina bucket che non esistono: ${fantasmi.join(', ')}. ` +
+        `Se un bucket è stato cancellato, di' dove sono finiti i suoi file; se è stato ` +
+        `rinominato, il codice che lo svuota sta puntando al posto sbagliato e non se ne ` +
+        `accorge nessuno.`,
+    ).toEqual([])
+  })
+
+  it('ogni esclusione porta la sua ragione scritta, come `fatture`', () => {
+    expect(esclusi.length, 'nessuna esclusione: il registro non è stato compilato').toBeGreaterThan(0)
+    for (const b of esclusi) {
+      const voce = REGISTRO_BUCKET_OBLIO[b]
+      const motivo = voce.stato === 'escluso' ? voce.motivo : ''
+      expect(
+        motivo.trim().length,
+        `\`${b}\` è escluso dall'oblio senza una ragione scritta. Un'esclusione senza motivo ` +
+          `non è una decisione, è un'omissione con un'etichetta sopra: scrivi PERCHÉ quel ` +
+          `magazzino non si svuota (obbligo di legge? nessun aggancio all'interessato? ` +
+          `retention separata?) e chi lo ha deciso.`,
+      ).toBeGreaterThan(80)
+    }
+  })
+
+  it('ALUNNO · i bucket dichiarati coperti vengono davvero svuotati (non si crede al registro)', async () => {
+    const f = fakePieno()
+    await anonimizzaAlunno(
+      f.client as never,
+      { id: 'al-1', codice_fiscale: 'AAABBB10A01H501X', documento_path: 'anagrafica/doc-alunno.pdf' },
+      AT,
+      'test',
+    )
+    const toccati = bucketToccati(f.removed)
+    const mancanti = copertiPerCanale('alunno').filter((b) => !toccati.includes(b))
+    expect(
+      mancanti,
+      `Il registro dichiara questi bucket coperti per l'ALUNNO, ma \`anonimizzaAlunno\` non ` +
+        `ci manda nessuna \`remove()\`: ${mancanti.join(', ')}. Un registro che dichiara e ` +
+        `non fa è peggio del silenzio: fa rispondere «fatto» a una famiglia.`,
+    ).toEqual([])
+  })
+
+  it('GENITORE · i bucket dichiarati coperti vengono davvero svuotati', async () => {
+    const f = fakePieno()
+    await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    const toccati = bucketToccati(f.removed)
+    const mancanti = copertiPerCanale('genitore').filter((b) => !toccati.includes(b))
+    expect(
+      mancanti,
+      `Il registro dichiara questi bucket coperti per il GENITORE, ma \`anonimizzaParent\` ` +
+        `non ci manda nessuna \`remove()\`: ${mancanti.join(', ')}.`,
+    ).toEqual([])
+  })
+
+  it('nessun oblio tocca un bucket ESCLUSO (le fatture non si cancellano)', async () => {
+    // Il verso opposto, ed è un presidio vero: `fatture` ha dieci anni di
+    // conservazione obbligatoria, `protocollo` è un registro DPR 445. Una
+    // `remove()` di troppo qui non è un dato in più cancellato: è un obbligo di
+    // legge violato dall'automatismo che doveva rispettarne un altro.
+    const fa = fakePieno()
+    await anonimizzaAlunno(fa.client as never, { id: 'al-1', documento_path: 'anagrafica/doc.pdf' }, AT, 'test')
+    const fg = fakePieno()
+    await anonimizzaParent(fg.client as never, 'p-1', AT, 'test')
+    const toccati = [...new Set([...bucketToccati(fa.removed), ...bucketToccati(fg.removed)])]
+    expect(toccati.filter((b) => esclusi.includes(b))).toEqual([])
+    // Controllo positivo: se il fake non facesse toccare NIENTE, la riga qui
+    // sopra sarebbe verde su un oblio che non è mai partito.
+    expect(toccati.length, 'il client finto non ha prodotto nessuna rimozione').toBeGreaterThan(3)
   })
 })

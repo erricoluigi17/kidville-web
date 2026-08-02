@@ -135,6 +135,84 @@ const POTENZIALMENTE_INFO: UsoInfo[] = FILES.flatMap((f) => {
 });
 
 /**
+ * «QUESTO EVENTO CRITICO HA UN RAMO FELICE CHE PARLA?» — la domanda gemella, e quella che
+ * mancava del tutto.
+ *
+ * Il test qui sopra chiede: *«questo `info` arriva in tabella?»*. Non chiede mai il contrario:
+ * *«di questo evento persistito, ESISTE un `info`?»*. `EVENTI_PERSISTITI` è la lista degli
+ * eventi il cui SUCCESSO conta abbastanza da occupare una riga di `app_log` per trent'anni —
+ * e un evento che sta in quella lista senza emettere mai un successo è un'allowlist che
+ * promette un battito che non c'è.
+ *
+ * MISURATO IN PRODUZIONE IL 2026-08-02. `evento = 'fattura'`, 30 giorni: **una** riga, livello
+ * `error`, ZERO `info`. Gli altri eventi critici il battito ce l'avevano (email 10, push 19,
+ * cron 213, pagamento 4): mancava proprio quello dell'emissione di una fattura elettronica,
+ * cioè il documento con conseguenze fiscali. Il modulo `src/lib/aruba/emissione.ts` aveva due
+ * soli `logEvento`, entrambi su rami d'errore; il percorso felice faceva `esiti.push(…)` e
+ * basta, e la route rispondeva 200. «Nessun log evento=fattura» non distingueva «nessuno ha
+ * emesso fatture» da «l'emissione non parte più» — la stessa ambiguità, parola per parola,
+ * che ha tenuto nascosto per mesi il guasto delle email di credenziali (AGENTS.md, regola 5:
+ * «gli eventi critici loggano anche il SUCCESSO»).
+ *
+ * COSA CONTA COME «PERCORSO DI SUCCESSO», e perché due forme e non una:
+ *  1. `logEvento('<evento>', 'info', …)` col livello LETTERALE. Fail-closed di proposito: una
+ *     forma dinamica (`x ? 'info' : 'error'`) può non valere mai `info` a runtime, e non
+ *     dimostra niente. Qui l'errore costoso è il contrario di quello del test sopra —
+ *     accettare una prova debole lascerebbe l'evento muto con il lock verde.
+ *  2. `evento: '<evento>'` passato a `externalFetch(...)`. Quel modulo emette una riga `info`
+ *     sul successo PER COSTRUZIONE (external.ts: «Il battito di successo è questa riga»), ed è
+ *     l'unico modo in cui `email` e `push` hanno il loro — nel repo non esiste un
+ *     `logEvento('email', 'info', …)` scritto a mano, e non deve esistere: sarebbe una seconda
+ *     riga per la stessa chiamata, su un canale dove «un logger loquace ACCECA».
+ */
+
+/**
+ * Gli argomenti di ogni `externalFetch(…)`, a parentesi bilanciate.
+ *
+ * Non una finestra di N caratteri: nello stesso file può esserci, poco più sotto, un
+ * `logErrore({ …, evento: 'storage' })` — che è un ERRORE, non un successo — e una finestra
+ * cieca lo attribuirebbe alla chiamata osservata. Sarebbe un falso negativo, cioè il modo
+ * peggiore di sbagliare per un lock: direbbe «questo evento ha il suo battito» proprio dove
+ * non ce l'ha.
+ */
+function argomentiExternalFetch(src: string): string[] {
+    const out: string[] = [];
+    const re = /externalFetch\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(src)) !== null) {
+        const inizio = m.index + m[0].length;
+        let liv = 1;
+        let i = inizio;
+        for (; i < src.length && liv > 0; i++) {
+            const c = src[i];
+            if (c === '(') liv++;
+            else if (c === ')') liv--;
+            else if (c === '"' || c === "'" || c === '`') {
+                const apice = c;
+                i++;
+                while (i < src.length && src[i] !== apice) { if (src[i] === '\\') i++; i++; }
+            }
+        }
+        out.push(src.slice(inizio, i));
+    }
+    return out;
+}
+
+/** Gli eventi che hanno un `logEvento(evento, 'info')` LETTERALE nel sorgente. */
+const CON_INFO_LETTERALE = new Set(
+    POTENZIALMENTE_INFO.filter((u) => u.livello === "'info'").map((u) => u.evento),
+);
+
+/** Gli eventi che ottengono il battito da `externalFetch` (che su `ok` emette `info`). */
+const CON_INFO_DA_EXTERNAL_FETCH = new Set<string>();
+for (const f of FILES) {
+    for (const args of argomentiExternalFetch(senzaProsa(f))) {
+        const m = /evento:\s*'([a-z_][a-z_0-9]*)'/.exec(args);
+        if (m) CON_INFO_DA_EXTERNAL_FETCH.add(m[1]);
+    }
+}
+
+/**
  * Gli eventi i cui `info` NON vanno in tabella, e la ragione di ciascuno. La deroga si concede
  * a un EVENTO, non a una riga: chi aggiunge qui un nome sta dicendo «di questa categoria non mi
  * serve sapere in SQL che è andata bene». Se un domani uno di questi eventi acquista un
@@ -279,6 +357,48 @@ describe('vocabolario chiuso degli eventi di log', () => {
             expect(perche.length, `la deroga per '${evento}' non è motivata`).toBeGreaterThan(40);
             expect(EVENTI_NOTI.has(evento), `'${evento}' non è nemmeno un evento noto`).toBe(true);
         }
+    });
+
+    /* ── «Questo evento persistito ha un ramo felice che parla?» (fattura, 2026-08-02) ── */
+
+    it('lo scanner dei SUCCESSI vede davvero qualcosa (autoinganno: se non trova niente, il lock cade)', () => {
+        // Le due forme devono essere entrambe vive. Se una si rompesse — un refuso nella regex,
+        // un estrattore che non bilancia più le parentesi — il test qui sotto diventerebbe
+        // rosso a caso oppure, peggio, resterebbe verde su un elenco vuoto.
+        expect(CON_INFO_LETTERALE.size).toBeGreaterThan(10);
+        expect(CON_INFO_DA_EXTERNAL_FETCH.size).toBeGreaterThanOrEqual(3);
+        // I tre canali che il battito ce l'hanno SOLO grazie a `externalFetch`: nel repo non
+        // esiste (e non deve esistere) un `logEvento('email', 'info', …)` scritto a mano.
+        for (const e of ['email', 'push', 'fattura']) {
+            expect(CON_INFO_DA_EXTERNAL_FETCH.has(e), `'${e}' non risulta più osservato da externalFetch`).toBe(true);
+        }
+    });
+
+    it('ogni evento di `EVENTI_PERSISTITI` ha almeno un percorso di SUCCESSO che logga', () => {
+        const muti = [...EVENTI_PERSISTITI]
+            .filter((e) => !CON_INFO_LETTERALE.has(e) && !CON_INFO_DA_EXTERNAL_FETCH.has(e))
+            .sort();
+
+        expect(
+            muti,
+            "Questo evento è in `EVENTI_PERSISTITI` — cioè si è deciso che il suo SUCCESSO conta "
+            + 'abbastanza da stare in `app_log` — ma nel sorgente non c\'è nessun ramo felice che '
+            + 'lo emetta: né un `logEvento(evento, \'info\', …)` col livello letterale, né un '
+            + '`externalFetch(..., { evento })`. L\'allowlist promette un battito che non esiste, e '
+            + '«nessun log» continua a non distinguere «tutto ok» da «non è mai partito niente» '
+            + '(AGENTS.md, Logging obbligatorio, regola 5). O si aggiunge il log del successo dove '
+            + "l'operazione riesce, o l'evento non ha niente da fare in quella lista.",
+        ).toEqual([]);
+    });
+
+    it('`fattura` ha il suo battito: era l\'evento critico senza percorso felice', () => {
+        // REGRESSIONE MIRATA sul difetto misurato il 2026-08-02 (1 riga in 30 giorni, `error`,
+        // zero `info`, con 227 domande di iscrizione e fatture emesse davvero).
+        expect(EVENTI_PERSISTITI.has('fattura')).toBe(true);
+        expect(
+            CON_INFO_LETTERALE.has('fattura'),
+            "l'emissione della fattura non logga più il SUCCESSO (src/lib/aruba/emissione.ts)",
+        ).toBe(true);
     });
 
     it("nessun nome dell'elenco comincia per `client:` (quello spazio è del client, e solo suo)", () => {

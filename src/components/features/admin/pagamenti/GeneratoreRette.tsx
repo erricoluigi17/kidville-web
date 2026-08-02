@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 
 const GEN_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GEN_INPUT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -119,8 +120,8 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                 <div>
                     <div className="flex flex-wrap gap-4 mb-3 font-maven text-sm">
                         <span className="text-kidville-green font-bold">{previewAnno.alunni_attivi} {t('genrAlunniAttivi')}</span>
-                        <span className="text-kidville-muted">{t('genrRettaDefault')} € {Number(previewAnno.retta_default ?? 150).toFixed(2)}</span>
-                        <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} € {Number(previewAnno.totale_previsto).toFixed(2)}</span>
+                        <span className="text-kidville-muted">{t('genrRettaDefault')} {formatEuro(previewAnno.retta_default ?? 150)}</span>
+                        <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} {formatEuro(previewAnno.totale_previsto)}</span>
                     </div>
                     <div className={cx('max-h-80 overflow-y-auto border border-kidville-line rounded-card mb-4', TABLE_WRAP)}>
                         <table className={TABLE}>
@@ -134,7 +135,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                                         <td className={cx(TD, 'font-semibold text-kidville-green')}>{m.periodo.slice(0, 7)}</td>
                                         <td className={cx(TD, 'text-right text-kidville-green')}>{m.candidati}</td>
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{m.gia_generati}</td>
-                                        <td className={cx(TD, 'text-right text-kidville-muted')}>€ {Number(m.importo).toFixed(2)}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{formatEuro(m.importo)}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -149,7 +150,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <div className="flex flex-wrap gap-4 mb-3 font-maven text-sm">
                         <span className="text-kidville-green font-bold">{previewMese.candidati.length} {t('genrAlunniCandidati')}</span>
                         <span className="text-kidville-muted">{t('genrGiaGenerati')} {previewMese.gia_generati}</span>
-                        <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} € {Number(previewMese.totale_previsto).toFixed(2)}</span>
+                        <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} {formatEuro(previewMese.totale_previsto)}</span>
                     </div>
                     {previewMese.candidati.length === 0 ? (
                         <p className="font-maven text-sm text-kidville-muted py-6 text-center">{t('genrNessunAlunnoMese')}</p>
@@ -165,7 +166,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                                         <tr key={c.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{c.nome} {c.cognome}</td>
                                             <td className={cx(TD, 'text-kidville-muted')}>{c.classe_sezione ?? '—'}</td>
-                                            <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(c.importo_previsto ?? c.importo_retta_mensile ?? 0).toFixed(2)}</td>
+                                            <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(c.importo_previsto ?? c.importo_retta_mensile ?? 0)}</td>
                                             <td className={cx(TD, 'text-xs')}>{c.genitori_separati ? <span className="text-kidville-warn">{t('genrSplit')}</span> : t('genrSingolo')}</td>
                                         </tr>
                                     ))}

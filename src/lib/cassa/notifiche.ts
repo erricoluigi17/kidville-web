@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logEvento } from '@/lib/logging/logger'
+import { formatEuro } from '@/lib/format/valuta'
 import { caricaSaldoCassa } from './saldo'
 import { metodoLabel, type CassaConfig } from './tipi'
 
@@ -24,9 +25,12 @@ export const TIPO_CASSA_USCITA = 'cassa_uscita'
 const LINK_CASSA = '/admin/pagamenti?vista=cassa'
 const COLONNA_CONFIG_ASSENTE = new Set(['PGRST204', 'PGRST205', '42703', '42P01'])
 
-function euro(n: number): string {
-  return `${n.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
-}
+// La valuta passa dalla fonte unica dell'app. La versione precedente formattava
+// a mano con `toLocaleString('it-IT', { minimumFractionDigits: 2 })`: sembra
+// corretta e non lo è, perché l'it-IT ha `minimumGroupingDigits = 2` e per i
+// numeri a quattro cifre NON raggruppa — una soglia di 1500 arrivava all'admin
+// come «1500,00 €» mentre il pannello Cassa, a un clic, diceva «€ 1.500,00».
+const euro = (n: number): string => formatEuro(n)
 
 /**
  * Id degli admin della sede. DUE livelli, dal più preciso al meno preciso:

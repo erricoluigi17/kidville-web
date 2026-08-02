@@ -5,7 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
-import { StudentRowCard } from './StudentRowCard';
+import { StudentRowCard, nomeCompleto } from './StudentRowCard';
 import { formattaIstante } from '@/i18n/config';
 
 export interface Student {
@@ -51,12 +51,14 @@ interface Props {
 
 type SortField = 'cognome' | 'nome' | 'classe_sezione' | 'stato' | 'data_nascita';
 
+// `sub` e non `muted` sul badge «ritirato»: sta su `bg-kidville-line`, dove il
+// grigio chiaro vale 2,2:1 (sotto AA). Stessa mappa in `StudentRowCard`.
 function getStatoBadge(stato: string) {
     switch (stato) {
         case 'iscritto': return 'bg-kidville-success-soft text-kidville-success-strong border-kidville-success/30';
-        case 'ritirato': return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        case 'ritirato': return 'bg-kidville-line text-kidville-sub border-kidville-line';
         case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn-strong border-kidville-warn/30';
-        default: return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        default: return 'bg-kidville-line text-kidville-sub border-kidville-line';
     }
 }
 
@@ -125,7 +127,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
         >
             <div className="flex items-center gap-1 font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
                 {label}
-                <ArrowUpDown size={12} className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-muted group-hover:text-kidville-muted'}`} />
+                <ArrowUpDown size={12} className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-sub'}`} />
             </div>
         </th>
     );
@@ -159,7 +161,10 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                         type="checkbox"
                                         checked={allSelected}
                                         onChange={onToggleSelectAll}
-                                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                        // La colonna non ha intestazione testuale: senza `aria-label`
+                                        // questa casella non ha NESSUNA fonte da cui prendere un nome.
+                                        aria-label={currentTypeFilter === 'adult' ? t('selezionaTuttiGenitori') : t('selezionaTuttiAlunni')}
+                                        className="w-4 h-4 rounded border-kidville-neutral text-kidville-green focus:ring-kidville-green cursor-pointer"
                                     />
                                 </th>
                             )}
@@ -204,7 +209,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                 <tr className="bg-kidville-cream/20">
                                     <td colSpan={(currentTypeFilter === 'child' ? 7 : 6) + (mostraSede ? 1 : 0)} className="px-4 py-2 font-maven font-bold text-kidville-green">
                                         {/* Staff: niente "Sezione:" (il personale non è raggruppato per classe) e conteggio in "membri". */}
-                                        {currentTypeFilter === 'staff' ? t('gruppoPersonale') : `${t('gruppoSezionePrefix')}${section}`} <span className="text-xs font-normal text-kidville-muted">({currentTypeFilter === 'staff' ? t('contMembri', { n: sectionStudents.length }) : t('contAlunni', { n: sectionStudents.length })})</span>
+                                        {currentTypeFilter === 'staff' ? t('gruppoPersonale') : `${t('gruppoSezionePrefix')}${section}`} <span className="text-xs font-normal text-kidville-sub">({currentTypeFilter === 'staff' ? t('contMembri', { n: sectionStudents.length }) : t('contAlunni', { n: sectionStudents.length })})</span>
                                     </td>
                                 </tr>
                                 {sectionStudents.map(student => {
@@ -218,6 +223,11 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                     return (
                                         <tr
                                             key={student.id}
+                                            // Il click sulla riga resta la comodità del MOUSE. Non è
+                                            // lui l'accessibilità: un `<tr role="button" tabIndex>`
+                                            // farebbe del contenuto della riga il nome del comando e
+                                            // inghiottirebbe i controlli che ci vivono dentro. Chi
+                                            // naviga da tastiera usa il bottone della cella «Cognome».
                                             className={`transition-colors cursor-pointer ${
                                                 isSelected ? 'bg-kidville-green/5' : 'hover:bg-kidville-cream'
                                             }`}
@@ -229,24 +239,44 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                         type="checkbox"
                                                         checked={isSelected}
                                                         onChange={() => onToggleSelect(student.id)}
-                                                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                                        // Senza nome, 25 caselle si annunciano tutte
+                                                        // «casella di controllo, non selezionata»: la
+                                                        // selezione massiva (sezione, mensa) diventa
+                                                        // un'operazione alla cieca su dati di minori.
+                                                        aria-label={t('selezionaRiga', { nome: nomeCompleto(student) })}
+                                                        className="w-4 h-4 rounded border-kidville-neutral text-kidville-green focus:ring-kidville-green cursor-pointer"
                                                     />
                                                 </td>
                                             )}
-                                            <td className="px-3 py-3 font-maven font-bold text-sm text-kidville-green">
-                                                {student.cognome || student.last_name}
+                                            <td className="px-3 py-3">
+                                                {/* L'UNICA strada da tastiera verso la scheda: un
+                                                    bottone vero, che Invio e Spazio attivano da soli.
+                                                    `stopPropagation` perché il click risalirebbe al
+                                                    <tr> e aprirebbe la scheda due volte. */}
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); onStudentClick(student); }}
+                                                    aria-label={t('cardApriScheda', { nome: nomeCompleto(student) })}
+                                                    className="text-left font-maven font-bold text-sm text-kidville-green hover:underline"
+                                                >
+                                                    {student.cognome || student.last_name || '—'}
+                                                </button>
                                             </td>
                                             <td className="px-3 py-3 font-maven text-sm text-kidville-green">
                                                 {student.nome || student.first_name}
                                             </td>
                                             {mostraSede && (
-                                                <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                // `sub` (6,46:1 su bianco) e non `muted` (2,51:1): con
+                                                // tre plessi e sezioni omonime, questa colonna è ciò
+                                                // che distingue due righe altrimenti identiche. Era la
+                                                // meno leggibile della tabella.
+                                                <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                     {nomiSede(student)}
                                                 </td>
                                             )}
                                             {currentTypeFilter === 'child' ? (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.data_nascita
                                                             ? formattaIstante(new Date(student.data_nascita), locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                                             : '—'
@@ -279,7 +309,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 </>
                                             ) : currentTypeFilter === 'staff' ? (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.emails && student.emails.length > 0 ? student.emails[0] : '—'}
                                                     </td>
                                                     <td className="px-3 py-3">
@@ -287,7 +317,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                             {labelRuolo(student.ruolo || '')}
                                                         </span>
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.sede_nome || '—'}
                                                     </td>
                                                     <td className="px-3 py-3 font-maven text-sm text-kidville-green font-semibold">
@@ -296,13 +326,13 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 </>
                                             ) : (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.emails && student.emails.length > 0 ? student.emails[0] : '—'}
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub">
                                                         {student.phone_numbers && student.phone_numbers.length > 0 ? student.phone_numbers[0] : '—'}
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted uppercase">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-sub uppercase">
                                                         {student.fiscal_code || student.codice_fiscale || '—'}
                                                     </td>
                                                 </>
@@ -320,7 +350,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
             {students.length > 0 && (
                 <div data-testid="student-cards-mobile" className="sm:hidden p-3">
                     <div className="mb-3 flex items-center gap-2">
-                        <label htmlFor="student-sort-mobile" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">
+                        <label htmlFor="student-sort-mobile" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-sub">
                             {t('ordina')}
                         </label>
                         <select
@@ -367,7 +397,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                     <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                         {currentTypeFilter === 'staff' ? t('vuotoStaff') : t('vuotoAlunni')}
                     </h3>
-                    <p className="font-maven text-sm text-kidville-muted max-w-xs">
+                    <p className="font-maven text-sm text-kidville-sub max-w-xs">
                         {t('vuotoSuggerimento')}
                     </p>
                 </div>

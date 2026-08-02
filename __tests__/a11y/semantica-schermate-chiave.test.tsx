@@ -301,7 +301,13 @@ describe('S17 · AvvisoCard — livello del titolo e fuso della scadenza', () =>
 
     it('la scadenza resta il giorno ITALIANO, non quello del processo', () => {
       render(<AvvisoCard avviso={AVVISO} index={0} isTeacher />)
-      fireEvent.click(screen.getByRole('heading', { level: 2, name: AVVISO.titolo }))
+      // Il controllo che apre la card è il BOTTONE dentro l'intestazione, non
+      // l'intestazione stessa: dal 2026-08-02 la card è un disclosure APG
+      // (`h2` → `button` con `aria-expanded`/`aria-controls` → pannello), e un
+      // click sull'`h2` non discende sul bottone che contiene. Il livello del
+      // titolo resta verificato dal test qui sopra; lo STATO ha il suo lock in
+      // `__tests__/a11y/disclosure-avviso-card.test.tsx`.
+      fireEvent.click(screen.getByRole('button', { name: AVVISO.titolo }))
       const box = screen.getByText(/luglio 2026/)
       expect(box.textContent).toContain('31 luglio 2026')
       expect(box.textContent).not.toContain('30 luglio 2026')

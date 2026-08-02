@@ -72,6 +72,9 @@
 
   "cardApriScheda": "Apri scheda di {nome}",
   "cardClassi": "{n, plural, one {# classe} other {# classi}}",
+  "selezionaRiga": "Seleziona {nome}",
+  "selezionaTuttiAlunni": "Seleziona tutti gli alunni visibili",
+  "selezionaTuttiGenitori": "Seleziona tutti i genitori visibili",
 
   "bulkGruppoMensa": "Gruppo mensa…",
   "bulkAssegnaMensa": "Assegna mensa",

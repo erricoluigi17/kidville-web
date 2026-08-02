@@ -503,24 +503,58 @@ type EsecuzioneMisurata = {
 };
 
 const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
+  // ─── ANDROID, 2026-08-02: LA WEBVIEW È CAMBIATA SOTTO AI FLOW ──────────────
+  // La riga del genitore del 01/08 dichiarava 27 COMPLETED su KV-play-phone. Il
+  // 02/08, sullo STESSO emulatore e con lo stesso APK, il flow è rosso al 16°
+  // comando: «Menu · tutte le sezioni» non è più nell'albero. Non è cambiato il
+  // repo — è cambiato il motore. KV-play-phone è l'immagine col Play Store e la
+  // WebView si aggiorna da sé: oggi è la 150.0.7871.181, e per un <button> con
+  // aria-label E testo interno visibile passa ad Android il testo interno come
+  // `text`, lasciando vuota la content-desc (misurato: `text="MENU"
+  // class=android.widget.Button content-desc="" [834,1695][1036,1855]`). Su
+  // KV-api33 (WebView 109) lo stesso nodo espone ancora la desc.
+  //
+  // È il limite che questo registro dichiarava da sé — «non può accorgersi che
+  // la WebView cambia comportamento con una nuova versione» — visto succedere:
+  // la `firma` è l'impronta del FILE, quindi resta valida mentre l'ambiente si
+  // muove. Da qui la versione della WebView dentro `device`: una riga che non
+  // dice su quale motore è stata presa non è ripetibile. (Un campo dedicato
+  // sarebbe meglio di una stringa libera: vedi il report dello step.)
   {
     flow: 'android-percorso-genitore.yaml',
-    data: '2026-08-01',
-    device: 'emulatore KV-play-phone · Android 16 · APK su http://10.0.2.2:3100',
+    data: '2026-08-02',
+    device:
+      'emulatore KV-play-phone · Android 16 (API 36) · WebView com.google.android.webview ' +
+      '150.0.7871.181 · APK su http://10.0.2.2:3100 (`next start`, build di produzione)',
     esito:
-      '27 COMPLETED, 0 FAILED, tre esecuzioni di fila (login → Menu → Presenze → Avvisi → Indietro)',
-    firma: '84e3a3884c01',
+      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due, col selettore alternato. ' +
+      'Il primo tentativo di conferma era fallito sulla pagina di LOGIN, e la causa — ' +
+      'misurata, e del tutto esterna ai flow — vale la pena tenerla scritta: il server ' +
+      ':3100 girava da ore su una build che nel frattempo era stata sostituita, e serviva ' +
+      'HTML con chunk che su disco non esistevano più → niente CSS → React non idrata → ' +
+      'i campi del form restano vuoti e «Accedi» risulta COMPLETED senza inviare niente. ' +
+      'Sullo schermo restava il messaggio nativo del browser «Please fill out this field», ' +
+      'e il flow moriva due passi dopo su «Dashboard», facendo sembrare che la dashboard ' +
+      'non ci fosse. Un `next build` NON lo ripara: il manifest è in memoria, serve il ' +
+      'RIAVVIO del server. Verde dopo il riavvio, senza toccare il flow.',
+    firma: 'aa404640c8ce',
   },
   {
     flow: 'android-percorso-docente.yaml',
-    data: '2026-08-01',
-    device: 'emulatore KV-play-phone · Android 16 · APK su http://10.0.2.2:3100',
+    data: '2026-08-02',
+    device:
+      'emulatore KV-play-phone · Android 16 (API 36) · WebView com.google.android.webview ' +
+      '150.0.7871.181 · APK su http://10.0.2.2:3100 (`next start`, build di produzione, ' +
+      'server RIAVVIATO sulla build corrente)',
     esito:
-      '30 COMPLETED, 0 FAILED, due esecuzioni di fila. La bacheca è stata raggiunta dal ' +
-      'ramo B (foglio «Menu»): quel giorno la CTA della dashboard non c\'era, perché ' +
-      'dipende da `avvisiRecenti.length > 0`. Il ramo A resta e va riprovato quando ci ' +
-      'sono avvisi recenti.',
-    firma: '3991f3768c74',
+      '31 COMPLETED, 0 FAILED, DUE esecuzioni su due. Stesso selettore alternato del ' +
+      'genitore, e stessa storia: quattro esecuzioni erano fallite prima, tutte sul gate ' +
+      '«Dashboard», per il server che serviva una build sostituita. Porta anche ' +
+      '`assertVisible: "Benvenuto/a!"` prima di digitare — non è decorativa: è il respiro ' +
+      'che serve all\'idratazione, e il gemello del genitore ce l\'aveva per caso (un ' +
+      'assert e uno screenshot che facevano passare il tempo senza che nessuno li avesse ' +
+      'messi lì per quello).',
+    firma: '94b31f09846a',
   },
   {
     flow: 'android-biometria-loop.yaml',
@@ -543,15 +577,42 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
     firma: '668fd9771f28',
   },
   // ─── I TRE FLOW iOS, 2026-08-02 ────────────────────────────────────────────
-  // Erano tutti e tre in FLOW_SENZA_ESECUZIONE_VERDE: i selettori erano stati
-  // corretti il 2026-08-01 e NESSUNO li aveva più lanciati. Il gate era verde
-  // perché il debito era dichiarato — cioè il verde certificava l'ASSENZA della
-  // prova, non la sua presenza.
+  // Erano tutti e tre in FLOW_SENZA_ESECUZIONE_VERDE, e il gate era verde perché
+  // il debito era dichiarato: il verde certificava l'ASSENZA della prova, non la
+  // sua presenza. Questa parte resta vera, ed è il motivo per cui il registro
+  // esiste.
   //
-  // Misurato oggi, e il risultato smentisce il verdetto del 31/07 che accusava
-  // l'app: senza toccare un solo selettore, servendo l'app da `next start` invece
-  // che da `next dev`, tutti e tre passano. Il colpevole era l'ambiente — il dev
-  // server ricompila e ricarica la WebView a metà percorso.
+  // ⚠️ DUE AFFERMAZIONI DI QUESTO BLOCCO ERANO FALSE, e sono state scritte qui il
+  // 2026-08-02 prima che il collaudo le smontasse. Restano scritte perché il
+  // registro è l'archivio della memoria, non la sua cancellazione:
+  //
+  //   1. «i selettori erano stati corretti il 01/08 e NESSUNO li aveva più
+  //      lanciati». FALSO: sotto ~/.maestro/tests ci sono SETTE esecuzioni iOS del
+  //      2026-08-01 fra le 12:51 e le 13:32, tutte con 0 FAILED (genitore 24 e 30,
+  //      docente 30, segreteria 36). I flow erano già verdi undici ore dopo la
+  //      correzione. `FLOW_SENZA_ESECUZIONE_VERDE` registra ciò che qualcuno ha
+  //      scritto nel file, NON ciò che è stato eseguito sulla macchina: il debito
+  //      era stato iscritto alle 01:10 del 01/08 e nessuno l'ha tolto quando le
+  //      esecuzioni sono arrivate. È lo stesso difetto che il registro combatte,
+  //      nella direzione opposta.
+  //   2. «senza toccare un solo selettore». FALSO rispetto al rosso del 31/07:
+  //      fra quel rosso e questo verde sono cambiate DUE variabili, non una. Il
+  //      commit 462630c del 01/08 ha riscritto i selettori dei tre flow (175
+  //      righe aggiunte, 54 tolte): «Buongiorno!» → «Dashboard», «Modifica
+  //      appello» → «Fai l'appello ora|Modifica appello», «Apri la bacheca» →
+  //      «Menu · tutte le sezioni», più la gestione dei dialoghi dei permessi.
+  //      Attribuire il verde al solo cambio di server era una conclusione più
+  //      forte della misura.
+  //
+  // COSA DICONO DAVVERO LE MISURE, senza aggiungerci niente:
+  //   · con i selettori di oggi e l'app servita da `next start`, i tre flow
+  //     passano — due esecuzioni su due ciascuno (misura del 02/08);
+  //   · con gli stessi selettori, il 01/08 passavano già (sette esecuzioni);
+  //   · il rosso del 31/07 aveva selettori DIVERSI e un server diverso, quindi
+  //     non è isolabile su una sola causa da questi dati.
+  // Che `next dev` sia inadatto resta documentato per Android da una misura
+  // propria (PRD 2026-07-17, «l'emulatore non idrata `next dev`»); su iOS è una
+  // raccomandazione prudenziale, non un esperimento controllato.
   {
     flow: 'ios-percorso-segreteria.yaml',
     data: '2026-08-02',
@@ -560,10 +621,12 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       '(`next start`, build di produzione)',
     esito:
       '33 COMPLETED, 0 FAILED, DUE esecuzioni su due. Include il tap CIECO a coordinate ' +
-      '`point: "68%,93%"` per il tab «Mensa», che su iOS non era mai stato provato (la ' +
-      'coordinata era misurata su Android e qui solo dedotta dalla geometria): ha funzionato, ' +
-      'e il controllo negativo `assertNotVisible: "Tutti i moduli"` dimostra che lo schermo ' +
-      'si è mosso davvero invece di restare sulla dashboard.',
+      '`point: "68%,93%"` per il tab «Mensa»: la coordinata è misurata su Android e su iPhone ' +
+      'è dedotta dalla geometria, e qui funziona — il controllo negativo ' +
+      '`assertNotVisible: "Tutti i moduli"` dimostra che lo schermo si è mosso davvero invece ' +
+      'di restare sulla dashboard. NON è la prima volta che gira su iOS: lo stesso flow era ' +
+      'passato 36/36 il 2026-08-01 (~/.maestro/tests/2026-08-01_125354 e _133024). La prima ' +
+      'versione di questa riga diceva «su iOS non era mai stato provato»: era falsa.',
     firma: '46bf862d8936',
   },
   {
@@ -573,9 +636,12 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       'simulatore iPhone 17 Pro · iOS 26.2 · App.app con CAP_SERVER_URL=http://localhost:3100 ' +
       '(`next start`, build di produzione)',
     esito:
-      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due. Il 31/07 era ROSSO al 13° comando ' +
-      '(«Avvisi» non visibile) su `next dev`: il sospetto scritto allora nel registro — ' +
-      '«è l\'ambiente, non i selettori» — è ora MISURATO, ed era giusto.',
+      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due. Già verde il 2026-08-01 (tre esecuzioni, ' +
+      '24 e 30 comandi, 0 FAILED). Il 31/07 era ROSSO al 13° comando su `next dev`, ma con ' +
+      'selettori DIVERSI (riscritti dal commit 462630c del 01/08): il sospetto di allora — ' +
+      '«è l\'ambiente, non i selettori» — NON è isolato da questi dati, perché fra le due ' +
+      'misure sono cambiate entrambe le cose. La prima versione di questa riga lo dava per ' +
+      'misurato: diceva più di quanto i log dimostrino.',
     firma: 'cfd3e836a2f5',
   },
   {
@@ -585,10 +651,11 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       'simulatore iPhone 17 Pro · iOS 26.2 · App.app con CAP_SERVER_URL=http://localhost:3100 ' +
       '(`next start`, build di produzione)',
     esito:
-      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due, eseguite alle 15:40 e alle 15:44 — ' +
-      'cioè di POMERIGGIO. Conta: il rosso del 31/07 era su «Buongiorno!», il saluto orario ' +
-      'che alle 22:07 diventa «Buonasera!». Ora l\'ancora è la tab «Dashboard», che non ' +
-      'cambia mai: il flow non collauda più l\'orologio.',
+      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due, di POMERIGGIO. Conta perché il rosso ' +
+      'del 31/07 era su «Buongiorno!», il saluto ORARIO che alle 22:07 diventa «Buonasera!»: ' +
+      'l\'ancora è ora la tab «Dashboard», che non cambia mai, e il flow non collauda più ' +
+      'l\'orologio. Qui la sostituzione del selettore È la spiegazione del verde — non ' +
+      'l\'ambiente. Già verde 30/30 il 2026-08-01 (~/.maestro/tests/2026-08-01_125234 e _132906).',
     firma: 'e5f33aae091d',
   },
 ];
@@ -918,11 +985,21 @@ describe('lock: selettori dei flow Maestro (selettori morti e CTA sotto la piega
       'ios-percorso-segreteria.yaml',
     ];
     for (const f of FLOWS_CON_FOGLIO_MENU) {
+      // `some(includes)` e non `toContain`: dal 2026-08-02 alcuni flow Android usano
+      // un'ALTERNATIVA — «Menu · tutte le sezioni|^MENU$» — perché la WebView si è
+      // aggiornata da sé (109 → 150) e sul motore nuovo il nome accessibile del quinto
+      // tab non è più solo l'aria-label. L'alternativa regge entrambi i motori.
+      //
+      // La regola NON si ammorbidisce: il selettore vivo deve comunque comparire nel
+      // pattern. Quello che cade è l'uguaglianza esatta, che pretendeva che il flow non
+      // potesse difendersi da un cambio di runtime — e un lock che vieta di difendersi
+      // è un lock che qualcuno spegne.
       expect(
-        tuttiISelettori(leggiFlow(f)),
+        tuttiISelettori(leggiFlow(f)).some((s) => s.includes('Menu · tutte le sezioni')),
         `${f}: nessun riferimento al tab «Menu» della bottom-nav. Il selettore vivo è ` +
-          'l\'aria-label «Menu · tutte le sezioni» (messages/it/nav.json → ariaMenu).',
-      ).toContain('Menu · tutte le sezioni');
+          'l\'aria-label «Menu · tutte le sezioni» (messages/it/nav.json → ariaMenu); ' +
+          'può stare dentro un\'alternativa, non può mancare.',
+      ).toBe(true);
     }
   });
 

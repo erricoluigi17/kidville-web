@@ -267,6 +267,28 @@ storiche, tutte prodotte da esecuzioni lanciate a mano seguendo la versione prec
 di questo file. Lo script si occupa anche di `--device` (con due dispositivi attivi
 Maestro aggancia il primo che trova) e del timeout del driver XCUITest.
 
+La bonifica si può lanciare anche da sola, senza eseguire nessun flow — utile dopo aver
+recuperato dei log vecchi, o per ripulire lo storico dopo una rotazione della password:
+
+```bash
+export KV_TEST_PASSWORD='…'
+.claude/maestro-flows/esegui.sh --solo-bonifica
+```
+
+**Perché maschera per CLASSE di nome e non per elenco (misurato il 2026-08-02).** Fino a
+quel giorno la maschera per forma conosceva un nome solo, `MAESTRO_KV_PASSWORD=`. Ma i
+flow non usano quella variabile direttamente: la ri-dichiarano nel proprio blocco `env:`
+con un altro nome — `KV_PASSWORD: ${MAESTRO_KV_PASSWORD}`, in tutti e 10 gli YAML — e
+Maestro logga anche quella. Conteggio su `~/.maestro/tests` quel giorno: **0 occorrenze**
+di `MAESTRO_KV_PASSWORD=` in chiaro e **211 di `KV_PASSWORD=`**. Non si vedeva perché la
+maschera per valore prendeva comunque la password del giorno; si sarebbe visto alla
+rotazione successiva, sui log di prima, quando non c'è più nessun valore da inseguire.
+Era la stessa lezione già scritta nel file — *«una pulizia che insegue UN valore è cieca
+su tutti gli altri»* — applicata a metà: corretto l'elenco dei valori, lasciato un elenco
+chiuso di nomi. Ora la maschera copre il valore di **qualunque** variabile il cui nome
+finisca per `PASSWORD`, `PASSWD`, `PWD`, `SECRET`, `TOKEN`, `KEY`. Guarda `=` e non `:`
+di proposito: `pressKey: ENTER` finisce per `KEY`, e serve a capire un flow fallito.
+
 Gli account TEST vivono in **produzione** sulle sezioni "TEST Infanzia" / "TEST 1A"
 (sede Kidville Giugliano): la loro password è un segreto vero, non un valore di comodo.
 L'elenco degli account sta nel PRD (sezione «Classi di prova»); **la password non sta in

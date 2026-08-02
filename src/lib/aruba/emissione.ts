@@ -57,6 +57,56 @@ function s(v: unknown): string {
   return v == null ? '' : String(v)
 }
 
+/**
+ * Un errore che dice PRIMA cosa è successo al dominio, e sotto il guasto tecnico.
+ *
+ * Serve perché `logEvento(evento, livello, campi, err)` fa vincere l'ERRORE sui campi: il
+ * `messaggio` della riga diventa quello dell'errore passato. Con l'errore di PostgREST nudo, in
+ * `app_log.messaggio` finirebbe «duplicate key value violates unique constraint» — vero, e
+ * inutile: non dice QUALE fattura è rimasta senza registro. Messo come `cause`, `descriviErrore`
+ * lo tiene (messaggio nella `causa`, `code` promosso alla colonna `codice`) e il messaggio
+ * principale resta il fatto di dominio. Il `name` è proprio perché `get_runtime_errors` di
+ * Vercel raggruppa per *error name*.
+ */
+function erroreConCausa(messaggio: string, causa: unknown): Error {
+  const err = new Error(messaggio, { cause: causa })
+  err.name = 'FatturaRegistroError'
+  return err
+}
+
+/**
+ * L'aggregato sul PAGAMENTO non si è aggiornato — e nessuno se ne accorgerebbe.
+ *
+ * PostgREST non lancia: qui c'era `await supabase.from('pagamenti').update(…)` con l'esito
+ * scartato dalla destrutturazione (AGENTS.md, regola 7). Le due tabelle restano divergenti:
+ * `fatture_emesse` ha la sua riga, `pagamenti.fattura_stato` è rimasto indietro. In segreteria
+ * la conseguenza è visibile e muta insieme — il bottone «Invia fattura» resta lì su un
+ * pagamento che la fattura ce l'ha già. (L'idempotenza per-quota impedisce il doppio invio
+ * allo SDI; quello che manca è solo la spiegazione, ed è questa riga.)
+ *
+ * Non cambia l'esito restituito: il documento è partito davvero, e dichiarare fallita
+ * un'emissione riuscita sposterebbe il danno invece di raccontarlo.
+ */
+function segnalaStatoNonAggiornato(
+  pagamentoId: string,
+  scuolaId: string,
+  statoVoluto: 'in_attesa' | 'scartata',
+  errore: unknown,
+): void {
+  const detto = `stato fattura del pagamento non aggiornato a «${statoVoluto}»: tabelle divergenti`
+  logEvento('fattura', 'error', {
+    operazione: 'emettiFatturaPagamento',
+    esito: 'pagamento-non-aggiornato',
+    provider: 'aruba',
+    scuola_id: scuolaId,
+    // uuid: `redact` lo lascia in chiaro, quindi la riga dice QUALE pagamento riallineare.
+    // Nessun campo `stato`: lì `logEvento` ci legge uno status HTTP e lo promuove a colonna
+    // (`statoHttp`), e «in_attesa» non è uno status. Lo stato voluto sta nel messaggio.
+    pagamento_id: pagamentoId,
+    msg: detto,
+  }, erroreConCausa(detto, errore))
+}
+
 export async function emettiFatturaPagamento(
   supabase: SupabaseClient,
   pagamentoId: string,
@@ -171,6 +221,14 @@ export async function emettiFatturaPagamento(
     // Non bloccante: si prosegue col contatore interno. Resta a `warn` perché il
     // flusso continua, ma il corpo dell'errore del provider va conservato — è
     // l'unica cosa che dice se è un token scaduto o un 5xx di Aruba.
+    //
+    // ⚠️ FINO AL 2026-08-02 QUESTA FRASE ERA FALSA, ed è il motivo per cui vale la pena
+    // lasciarla scritta. Il corpo lo si voleva conservare, ma `client.ts` lo aveva già gettato
+    // a monte (`throw new Error(\`… (HTTP ${res.status})\`)`): qui arrivava «HTTP 403» e basta,
+    // mentre il commento diceva il contrario — e un commento che promette una cosa che il
+    // codice non fa FERMA L'INDAGINE di chi legge. Ora il client passa da `externalFetch` e
+    // l'eccezione porta il corpo del provider; la prova che ci arrivi davvero è in
+    // `__tests__/lib/aruba/emissione-log.test.ts`, non in questa frase.
     logEvento(
       'fattura',
       'warn',
@@ -296,9 +354,31 @@ export async function emettiFatturaPagamento(
     })
 
     if (!up.ok) {
-      await supabase
+      const { error: errScarto } = await supabase
         .from('fatture_emesse')
         .insert({ ...baseRow, sdi_stato: 2, sdi_stato_label: 'Errore upload', sdi_scarto_motivo: up.errorDescription ?? up.errorCode })
+      // IL MOTIVO DEL RIFIUTO ESCE DAL DATABASE. Prima finiva solo in
+      // `fatture_emesse.sdi_scarto_motivo` e nel corpo HTTP della risposta: nei log restava
+      // `KV_ERR evt=route stato=502`, cioè un numero. `error_code` è in lista bianca di
+      // `redact` (si legge in chiaro anche in tabella), la descrizione va nel `msg` — che
+      // diventa la colonna `app_log.messaggio`, sanificata: se Aruba echeggia un codice
+      // fiscale nel motivo dello scarto, `sanificaMessaggio` lo maschera.
+      //
+      // L'eventuale errore dell'INSERT viaggia come `cause`, non come errore principale: chi
+      // legge deve trovare per primo il motivo di Aruba (che è la notizia), col guasto del
+      // registro attaccato sotto. Passato come errore principale, il suo messaggio SOSTITUIREBBE
+      // il nostro nella colonna `messaggio` — `logEvento` dà ragione all'errore, non ai campi.
+      const dettoScarto = `fattura ${numero}/${anno} scartata da Aruba (${up.errorCode}): ${up.errorDescription ?? 'nessun motivo dal provider'}`
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento',
+        esito: 'scartata',
+        provider: 'aruba',
+        scuola_id: pag.scuola_id,
+        numero,
+        anno,
+        error_code: up.errorCode,
+        msg: dettoScarto,
+      }, errScarto ? erroreConCausa(`${dettoScarto} — e la riga di scarto NON è stata scritta a registro`, errScarto) : undefined)
       esiti.push({
         adultId: q.adultId,
         label: q.label,
@@ -309,9 +389,56 @@ export async function emettiFatturaPagamento(
       continue
     }
 
-    await supabase
+    const { error: errRegistro } = await supabase
       .from('fatture_emesse')
       .insert({ ...baseRow, aruba_filename: up.uploadFileName, sdi_stato: 1, sdi_stato_label: 'Presa in carico', inviata_il: new Date().toISOString() })
+
+    if (errRegistro) {
+      // IL CASO PIÙ VELENOSO DEL FILE. La fattura È PARTITA (Aruba ha risposto `0000` e ha
+      // dato il suo `uploadFileName`), ma la riga a registro non c'è: nessun giro di
+      // `fattura/sync` la ripescherà mai, e lo scarto SDI che arrivasse fra un'ora non lo
+      // saprebbe nessuno. PostgREST NON LANCIA — ritorna `{ error }` (AGENTS.md, regola 7) —
+      // quindi il `try/catch` della route non scatta e senza questa riga il difetto è muto.
+      //
+      // L'esito resta `ok`, ed è deliberato: dichiararlo fallito inviterebbe la segreteria a
+      // rifare l'emissione, cioè a mandare allo SDI una SECONDA fattura per lo stesso
+      // pagamento. Il documento c'è, il registro no: è un disallineamento da riparare a mano,
+      // e il `uploadFileName` nel messaggio è l'unico appiglio per ritrovarla su Aruba.
+      //
+      // L'errore di PostgREST è la `cause`: il messaggio principale deve dire QUALE fattura è
+      // rimasta orfana (col nome file), non «duplicate key value violates unique constraint».
+      // Il `code` del DB non si perde — `logEvento` lo pesca dalla causa per la colonna `codice`.
+      const dettoOrfana = `fattura ${numero}/${anno} inviata ad Aruba (${up.uploadFileName ?? 'senza nome file'}) ma NON scritta a registro: resterà fuori dal sync SDI`
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento',
+        esito: 'registro-non-scritto',
+        provider: 'aruba',
+        scuola_id: pag.scuola_id,
+        numero,
+        anno,
+        msg: dettoOrfana,
+      }, erroreConCausa(dettoOrfana, errRegistro))
+    } else {
+      // IL BATTITO (AGENTS.md, regola 5). `fattura` è in `EVENTI_PERSISTITI` proprio perché
+      // questa riga arrivi in tabella: con i soli errori, «nessun log evento=fattura» non
+      // distingue «nessuno ha emesso fatture» da «l'emissione non parte più». Misurato in
+      // produzione il 2026-08-02: 1 sola riga in 30 giorni, livello error, ZERO info.
+      //
+      // `numero`/`anno` sono numeri e `scuola_id` un uuid: `redact` li lascia in chiaro anche
+      // in tabella. Il nome file NON è in lista bianca (uscirebbe `[redatto:str/N]`), perciò
+      // sta nel `msg`, che diventa la colonna `messaggio` — in chiaro e sanificata. È la
+      // chiave con cui si ritrova la fattura sul portale Aruba e nella tabella del sync.
+      logEvento('fattura', 'info', {
+        operazione: 'emettiFatturaPagamento',
+        esito: 'inviata',
+        provider: 'aruba',
+        scuola_id: pag.scuola_id,
+        numero,
+        anno,
+        msg: `fattura ${numero}/${anno} inviata ad Aruba: ${up.uploadFileName ?? 'senza nome file'}`,
+      })
+    }
+
     esiti.push({ adultId: q.adultId, label: q.label, ok: true, numero, uploadFileName: up.uploadFileName ?? undefined })
   }
 
@@ -319,7 +446,11 @@ export async function emettiFatturaPagamento(
   const okEsiti = esiti.filter((e) => e.ok)
   const nowIso = new Date().toISOString()
   if (okEsiti.length === 0) {
-    await supabase.from('pagamenti').update({ fattura_stato: 'scartata', fattura_causale: causaleBase }).eq('id', pagamentoId)
+    const { error: errAggScarto } = await supabase
+      .from('pagamenti')
+      .update({ fattura_stato: 'scartata', fattura_causale: causaleBase })
+      .eq('id', pagamentoId)
+    if (errAggScarto) segnalaStatoNonAggiornato(pagamentoId, pag.scuola_id, 'scartata', errAggScarto)
     const first = esiti[0]
     const motivoAgg = first?.motivo === 'intestatario_mancante' ? 'intestatario_mancante' : first?.motivo === 'errore' ? 'errore' : 'scartata'
     return {
@@ -332,7 +463,7 @@ export async function emettiFatturaPagamento(
   }
 
   // Almeno una quota emessa → il pagamento va in attesa (lo SDI conferma via sync).
-  await supabase
+  const { error: errAggAttesa } = await supabase
     .from('pagamenti')
     .update({
       fattura_stato: 'in_attesa',
@@ -341,6 +472,7 @@ export async function emettiFatturaPagamento(
       fattura_emessa_il: nowIso,
     })
     .eq('id', pagamentoId)
+  if (errAggAttesa) segnalaStatoNonAggiornato(pagamentoId, pag.scuola_id, 'in_attesa', errAggAttesa)
 
   return {
     ok: true,

@@ -35,12 +35,37 @@ const deleteQuerySchema = z.object({
 })
 
 // GET /api/admin/primaria/docenti-materie?sectionId=  (opz. &utenteId=)
+//
+// ⚠️ FINO AL 2026-08-02 QUESTO GET RISPONDEVA **200 A UN ANONIMO**, ed è stato
+// misurato col server vivo, non dedotto. Apriva con `parseQuery` e andava dritto
+// a `createAdminClient()`, che è il client SERVICE-ROLE: la RLS è scavalcata per
+// costruzione, quindi non c'era nessun altro presidio. Con un `sectionId` vero
+// restituiva nome e cognome del personale, le materie e gli id di sezione di
+// QUALUNQUE classe di QUALUNQUE sede — l'organico completo delle tre sedi, senza
+// sessione.
+//
+// Il POST e il DELETE qui sotto avevano `requireStaff` + `assertSezioneInScope`
+// da sempre. Non è stata una regola mancante: è stata una regola applicata a due
+// export su tre, ed è la stessa forma — «la porta accanto» — che questo branch
+// insegue da tre cicli. Il lock che ora la vede è
+// `__tests__/architecture/gate-coverage.test.ts`.
 export const GET = withRoute('admin/primaria/docenti-materie:GET', async (request: NextRequest) => {
-  const q = parseQuery(request, getQuerySchema)
-  if ('response' in q) return q.response
-  const { sectionId, utenteId } = q.data
   try {
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId, utenteId } = q.data
+
     const supabase = await createAdminClient()
+
+    // Isolamento per sede: `sectionId` arriva dal client. Senza questa verifica
+    // il gate di ruolo da solo lasciava leggere l'organico di un altro plesso —
+    // esattamente come accadeva al POST prima dell'audit del 2026-07-30.
+    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (fuoriScopeSez) return fuoriScopeSez
+
     let query = supabase
       .from('utenti_sezioni_materie')
       .select('id, utente_id, section_id, materia_id, e_contitolare, utenti(nome, cognome), materie(nome, codice)')

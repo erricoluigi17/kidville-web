@@ -9,6 +9,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { STATI_PAGAMENTO as STATI, METODO_LABEL } from './stati';
+import { formatEuro } from '@/lib/format/valuta';
 
 interface Props { userId: string; scuolaId: string }
 interface Alunno { id: string; nome: string; cognome: string; classe_sezione?: string }
@@ -163,7 +164,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                     {pacchetti.map((p, i) => (
                                         <button key={i} onClick={() => { setPezzi(p.pezzi); setCosto(p.costo); }}
                                             className="px-3 py-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white font-maven text-xs text-kidville-green transition-colors hover:border-kidville-green">
-                                            {p.label} · {p.pezzi}{t('ticket_pz')} · €{p.costo}
+                                            {p.label} · {p.pezzi}{t('ticket_pz')} · {formatEuro(p.costo)}
                                         </button>
                                     ))}
                                 </div>
@@ -211,7 +212,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                         return (
                                             <div key={m.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-lg px-3 py-1.5">
                                                 <div className="min-w-0">
-                                                    <p className="font-maven text-xs text-kidville-ink truncate">{dataIt(m.creato_il)} · +{m.delta} {t('ticket_unit')} · € {importo.toFixed(2)}</p>
+                                                    <p className="font-maven text-xs text-kidville-ink truncate">{dataIt(m.creato_il)} · +{m.delta} {t('ticket_unit')} · {formatEuro(importo)}</p>
                                                     {met && !gratis && <p className="font-maven text-[10px] text-kidville-muted">{METODO_LABEL[met] ?? met}</p>}
                                                 </div>
                                                 {gratis

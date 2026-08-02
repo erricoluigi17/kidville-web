@@ -424,6 +424,70 @@ body {
 }
 
 /* =============================================================================
+   Il CONTORNO di un controllo si vede (2026-08-02) — WCAG 1.4.11, soglia 3:1.
+
+   Su una card bianca il bordo è l'UNICA cosa che dice dove comincia il campo, e
+   `--color-kidville-line` (#EFE7DC) su bianco vale 1,23:1: praticamente non
+   esiste. Misurato su /admin/impostazioni: 33 campi, tutti a 1,23:1. Il modulo
+   pubblico d'iscrizione usa invece la sfumatura di brand `border-kidville-green/15`
+   (#D9E9E7 composto su bianco): 1,25:1, lo stesso guasto con un altro nome.
+
+   Questo ciclo aveva già riconosciuto e corretto il difetto — ma su UN FILE SOLO
+   (`auth/login/page.module.css`, da `line` a `neutral`, 3,10:1, col criterio
+   scritto accanto). Là il campo è disegnato con `var()`; il resto dell'app usa
+   la utility `border-kidville-line`, il cui hex è INLINATO da `@theme inline` e
+   che quindi nessuna rimappatura centrale del token può raggiungere. Correggerla
+   nei 783 punti dove è scritta vuol dire correggerne 783 oggi e ritrovarne di
+   nuove domani: qui si corregge il CONTORNO, una volta, per tutti.
+
+   Il perimetro è stretto di proposito — si toccano solo i contorni DEBOLI, e
+   solo quando fanno da confine a un controllo:
+     · `border-kidville-line` (1,23:1) e `border-kidville-muted` (2,51:1)
+     · le sfumature di brand `border-kidville-green/<alfa>` (1,16–1,92:1)
+   NON si toccano:
+     · i bordi di STATO (`border-kidville-error` 4,23:1, success, warn, info):
+       sono già un segnale, e riscriverli spegnerebbe il rosso del campo in errore
+     · il `:focus` — se lo prende il componente con la sua `focus:border-*`:
+       la regola si sfila da sola con `:not(:focus)`, altrimenti, essendo
+       non-layered, vincerebbe su TUTTE le 155 `focus:border-kidville-green`
+     · un bordo dichiarato TRASPARENTE di proposito (il titolo modificabile del
+       costruttore moduli, che mostra il contorno solo al focus)
+
+   Regola NON-layered → batte le utility (`@layer utilities`) senza `!important`.
+   Lock: `__tests__/a11y/contrasto-bordi-superfici-pubbliche.test.ts` (§1), che
+   RISOLVE la cascata e misura il rapporto invece di guardare le classi.
+   ============================================================================= */
+input[class*="border-kidville-line"]:not(:focus),
+select[class*="border-kidville-line"]:not(:focus),
+textarea[class*="border-kidville-line"]:not(:focus),
+input[class*="border-kidville-muted"]:not(:focus),
+select[class*="border-kidville-muted"]:not(:focus),
+textarea[class*="border-kidville-muted"]:not(:focus),
+input[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
+  border-color: var(--color-kidville-neutral);
+}
+/* Alto Contrasto: qui NON si può usare il token. `--color-kidville-neutral`
+   diventa #E0E0E0, ma il FONDO del campo non si ribalta con lui — è la utility
+   `bg-white`/`bg-kidville-white`, hex già inlinato, e resta bianca: #E0E0E0 su
+   bianco vale 1,32:1, cioè peggio del difetto che stiamo chiudendo. Sul campo
+   bianco il contorno dell'Alto Contrasto è NERO (21:1).
+   (La login fa l'opposto ed è corretto: là fondo e bordo sono entrambi `var()`,
+   si ribaltano insieme, e il campo diventa nero con bordo #E0E0E0 → 15,91:1.) */
+[data-contrast="high"] input[class*="border-kidville-line"]:not(:focus),
+[data-contrast="high"] select[class*="border-kidville-line"]:not(:focus),
+[data-contrast="high"] textarea[class*="border-kidville-line"]:not(:focus),
+[data-contrast="high"] input[class*="border-kidville-muted"]:not(:focus),
+[data-contrast="high"] select[class*="border-kidville-muted"]:not(:focus),
+[data-contrast="high"] textarea[class*="border-kidville-muted"]:not(:focus),
+[data-contrast="high"] input[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+[data-contrast="high"] select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+[data-contrast="high"] textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
+  border-color: #000000;
+}
+
+/* =============================================================================
    Alto contrasto — schermate SAFETY-CRITICAL nuove (2026-07-14):
    appello 0-6 (StudentAttendanceRow, marker .kv-appello-row) e report mensa
    allergie/alternative (MensaReport, marker .kv-mensa-alt).
@@ -502,6 +566,27 @@ body {
 }
 [data-contrast="high"] .kv-admin-nav a:not([aria-current="page"]):hover {
   box-shadow: inset 0 0 0 2px #000000;
+}
+/* 🔴 a11y #6 del collaudo 2026-08-02, chiuso qui.
+   Le intestazioni di gruppo della sidebar («ANAGRAFICA», «DIDATTICA»,
+   «OPERATIVO», «AMMINISTRAZIONE») restavano a 2,51:1 CON l'Alto Contrasto
+   attivo — cioè identiche a come stavano senza. Le rimappature esplicite erano
+   state scritte per le superfici MOBILE nuove (`.kv-admin-sheet`,
+   `.kv-admin-rowcard`, `.kv-admin-bottomnav`) perché era lì che il ciclo stava
+   lavorando; la sidebar desktop non compariva nell'elenco e ciò che non è
+   elencato, con `@theme inline`, semplicemente non cambia.
+   La sidebar in HC resta CHIARA (`bg-kidville-white`, hex inlinato) → il testo
+   va a NERO PIENO, esattamente come nello sheet mobile. La voce ATTIVA non è
+   toccata: porta `text-white` e la regola qui sopra la tiene bianca sul pill
+   nero. Stesso elenco di token dello sheet, così le due strade non divergono
+   più. `text-kidville-ink\/70` (voci inattive) è nominato a parte: è una classe
+   con alfa e `.text-kidville-ink` non la aggancia. */
+[data-contrast="high"] .kv-admin-nav .text-kidville-green,
+[data-contrast="high"] .kv-admin-nav .text-kidville-ink,
+[data-contrast="high"] .kv-admin-nav .text-kidville-ink\/70,
+[data-contrast="high"] .kv-admin-nav .text-kidville-sub,
+[data-contrast="high"] .kv-admin-nav .text-kidville-muted {
+  color: #000000;
 }
 /* Topbar mobile del cockpit — barra VERDE del brand (`AdminTopBarMobile`): in
    alto contrasto `--color-kidville-green` diventa #FFF e i contenuti bianchi
@@ -671,4 +756,89 @@ body {
   background: #000000;
   border-color: #FFB300;
   color: #FFB300;
+}
+
+/* =============================================================================
+   Superfici PUBBLICHE — `.kv-public` (2026-08-02, a11y #7).
+
+   L'Alto Contrasto non esisteva per chi non è ancora dentro l'app. Sul modulo
+   d'iscrizione — da cui arrivano circa NOVE domande l'ora da famiglie vere — non
+   c'era alcun comando per attivarlo, e attivandolo altrove la pagina non cambiava
+   di un pixel: `--color-kidville-cream` e `--color-kidville-white` valevano #000,
+   `body` diventava nero, ma il guscio del wizard è dipinto con le utility
+   `bg-kidville-cream`/`bg-white`, il cui hex è inlinato da `@theme inline`.
+   Token ribaltati, superficie no. Due cause sovrapposte, entrambe chiuse qui:
+   il COMANDO ora c'è (`PublicContrastButton`, montato sulle 5 pagine) e le
+   superfici pubbliche hanno finalmente le loro regole.
+
+   La lingua è quella già scelta dal repo per le superfici di CONTENUTO
+   (`.kv-admin-sheet`, `.kv-admin-rowcard`): la carta resta CHIARA e l'inchiostro
+   va a NERO PIENO — 21:1, il massimo ottenibile — mentre il nero del `body`
+   fa da cornice attorno. La login va invece a fondo nero, ed è corretto: là il
+   campo è disegnato con `var()` nel suo CSS module e si ribalta insieme al token.
+
+   Ordine dei blocchi (conta, ed è l'errore che ha già prodotto un BLOCCANTE il
+   2026-08-01): prima la carta, poi l'inchiostro, poi i RIEMPIMENTI pieni — che
+   devono vincere sull'inchiostro a parità di specificità.
+   ============================================================================= */
+
+/* 1 · La carta. Tutti i fondi chiari delle pagine pubbliche diventano bianco
+   pieno: crema del guscio, bianco delle card, i soft di stato e la traccia
+   della barra di avanzamento. `bg-kidville-green-soft` NON è qui: è solo un
+   `hover:` (classe diversa) e su bianco tiene comunque 17,9:1 col nero. */
+[data-contrast="high"] .kv-public,
+[data-contrast="high"] .kv-public .bg-kidville-cream,
+[data-contrast="high"] .kv-public .bg-kidville-cream-dark,
+[data-contrast="high"] .kv-public .bg-kidville-white,
+[data-contrast="high"] .kv-public .bg-white,
+[data-contrast="high"] .kv-public .bg-kidville-green-light,
+[data-contrast="high"] .kv-public .bg-kidville-green\/5,
+[data-contrast="high"] .kv-public .bg-kidville-neutral-soft,
+[data-contrast="high"] .kv-public .bg-kidville-info-soft,
+[data-contrast="high"] .kv-public .bg-kidville-success-soft,
+[data-contrast="high"] .kv-public .bg-kidville-error-soft {
+  background-color: #FFFFFF;
+}
+
+/* 2 · L'inchiostro. Ogni testo tokenizzato va a nero: `[class*="text-kidville-"]`
+   prende in un colpo solo anche le varianti con alfa (`/70`, `/80`, `/90`), che
+   un elenco di classi esatte lascerebbe fuori — ed è esattamente il modo in cui
+   la sidebar desktop era rimasta scoperta. */
+[data-contrast="high"] .kv-public [class*="text-kidville-"],
+[data-contrast="high"] .kv-public .text-gray-500 {
+  color: #000000;
+}
+/* Bordi e divisori: neri, come nello sheet mobile. Il contorno dei CAMPI è già
+   coperto dalla regola generale sui controlli (nero anche lui). */
+[data-contrast="high"] .kv-public [class*="border-kidville-"] {
+  border-color: #000000;
+}
+
+/* 3 · I riempimenti PIENI di brand (bottone «Avanti», invio del modulo di
+   cancellazione, lingua attiva): fondo NERO con inchiostro GIALLO — 16,46:1 —
+   la stessa coppia della voce attiva della bottom-nav. Deve stare DOPO
+   l'inchiostro: a parità di specificità (0,3,0) vince l'ultima, e il difetto
+   del 2026-08-01 è nato esattamente da due regole sensate nell'ordine sbagliato.
+   La seconda regola (0,4,0) copre il testo che sta DENTRO il riempimento e che,
+   avendo la sua utility, non erediterebbe. */
+[data-contrast="high"] .kv-public .bg-kidville-green {
+  background-color: #000000;
+  color: #FFE500;
+}
+[data-contrast="high"] .kv-public .bg-kidville-green [class*="text-kidville-"],
+[data-contrast="high"] .kv-public .bg-kidville-green .text-white {
+  color: #FFE500;
+}
+
+/* Luce NORMALE — l'etichetta del campo sul modulo pubblico.
+   `FieldRenderer` scrive le etichette in `text-kidville-green/80`: sul crema del
+   wizard è #33857A, cioè 3,96:1, sotto AA. Le 17 etichette del passo «figlio»
+   sono l'unica guida che una famiglia ha per capire cosa scrivere in quale
+   campo. Si corregge QUI e non nel componente perché `FieldRenderer` è condiviso
+   con la modulistica in-app, che non è il perimetro di questo intervento: la
+   regola vale solo sulle superfici pubbliche. Il verde pieno tiene 5,86:1 sul
+   crema e 6,51:1 sul bianco. La causa radice — l'alfa sull'etichetta — resta
+   dichiarata come debito nel report. */
+.kv-public [class*="text-kidville-green/"] {
+  color: var(--color-kidville-green);
 }

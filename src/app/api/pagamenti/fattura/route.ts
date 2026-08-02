@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { jsPDF } from 'jspdf'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { formatEuro } from '@/lib/format/valuta'
 
 // causale: il comportamento pre-esistente accetta qualsiasi tipo e la usa solo
 // se è una stringa non vuota → unknown().optional(), il typeof resta nell'handler.
@@ -47,7 +48,10 @@ async function anteprimaPdf(opts: {
   doc.text(`Intestatario: ${opts.intestatario}`, 20, 71)
   doc.text(`Causale: ${opts.causale}`, 20, 79)
   doc.setFontSize(14)
-  doc.text(`Importo: € ${Number(opts.importo).toFixed(2)}`, 20, 92)
+  // Documento in italiano, letto da una famiglia italiana: la valuta passa da
+  // `formatEuro` come nell'altro builder PDF (`src/lib/pagamenti/pdf.ts`).
+  // L'XML per lo SDI è un'altra cosa e resta col punto decimale (fatturapa-xml.ts).
+  doc.text(`Importo: ${formatEuro(opts.importo)}`, 20, 92)
   const pdf = Buffer.from(doc.output('arraybuffer'))
   return new NextResponse(pdf, {
     status: 200,

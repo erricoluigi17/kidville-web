@@ -62,40 +62,64 @@ env:
       - tapOn: "Non consentire"
 
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
-# Bottom nav del genitore. Il quinto tab si seleziona con il suo ARIA-LABEL
-# "Menu · tutte le sezioni", NON con la scritta «MENU» che si vede a schermo.
+# Bottom nav del genitore: HOME · DIARIO · AVVISI · CHAT e il quinto tab, quello
+# che apre il foglio «tutte le sezioni». È l'unico che non si prende per la
+# scritta che si legge a schermo, e il selettore giusto DIPENDE DALLA VERSIONE
+# DELLA WEBVIEW. Per questo è alternato — non per prudenza generica.
 #
-# ⚠️ Qui è dove questo flow ha mentito per mesi (corretto il 2026-07-31, misurato
-# con `adb shell uiautomator dump` su KV-play-phone): il commento precedente
-# sosteneva che la WebView collassasse il <button> col suo <span> ed esponesse
-# «MENU». È falso, e non per colpa della WebView: è ARIA. Il quinto tab è
-#   <button aria-label={t('ariaMenu')}> <Icon/> <span>{t('tabMenu')}</span> </button>
-# e il calcolo del nome accessibile (accname, passo 2C) dice che l'`aria-label`
-# SOSTITUISCE il contenuto. Dump della home genitore: 'HOME', 'DIARIO', 'AVVISI',
-# 'CHAT' e — per il quinto tab — 'Menu · tutte le sezioni' [834,1664][1039,1824].
-# «MENU» lì non compare affatto; in una seconda misura (2026-08-01, col foglio
-# aperto) compare nella topbar a [94,63][322,63], cioè ALTO 0 px: inservibile
-# comunque, ma è bene sapere che può esistere. (Nemmeno come stringa: `tabMenu` vale
-# «Menu», la maiuscola è `text-transform: uppercase`; nei primi quattro tab
-# Chromium la applica anche al nome accessibile, ed è per questo che il dump
-# mostra 'HOME' e non 'Home'. Il match di Maestro è case-insensitive: irrilevante
-# per il selettore, decisivo per capire perché la teoria sbagliata sembrava reggere.)
-# Il lock `__tests__/architecture/maestro-flows-selettori.test.ts` (R4, R8)
-# impedisce che «MENU» rientri, e la fonte del testo è messages/it/nav.json →
-# `ariaMenu` (se cambia lì, il lock diventa rosso: R5).
+# ⚠️ Su questo tab il flow ha sbagliato DUE volte, in due modi opposti.
+#
+# (1) Fino al 2026-07-31 cercava «MENU» e non lo trovava. Il quinto tab è
+#       <button aria-label={t('ariaMenu')}> <Icon/> <span>{t('tabMenu')}</span> </button>
+#     e sulla WebView di allora il nodo arrivava ad Android con
+#     content-desc = «Menu · tutte le sezioni»: nel calcolo del nome accessibile
+#     (accname, passo 2C) l'`aria-label` prevale sul contenuto. Il commento di
+#     allora dava la colpa alla WebView; era una teoria, ed era sbagliata.
+#
+# (2) Dal 2026-08-02 non regge più nemmeno l'aria-label. MISURATO con
+#     `adb shell uiautomator dump` su KV-play-phone (Android 16 / API 36, WebView
+#     150.0.7871.181), home genitore, foglio chiuso:
+#       text="MENU"  class=android.widget.Button  content-desc=""  [834,1695][1036,1855]
+#     Chromium il nome accessibile lo calcola ancora giusto (`getPartialAXTree`:
+#     role=button, name preso dall'aria-label, il contenuto «MENU» marcato
+#     `superseded`): è cambiato il PONTE verso `AccessibilityNodeInfo`, che per un
+#     <button> con aria-label E testo interno visibile ora passa il testo interno
+#     come `text` e lascia vuota la content-desc. Sullo stesso APK su KV-api33
+#     (WebView 109) il nodo espone ancora la desc.
+#     NON è una proprietà di tutti gli aria-label, ed è il punto che tiene insieme
+#     le due misure: sulla stessa schermata la campanella resta
+#     `content-desc="Notifiche"` con `text` vuoto (misurata oggi a
+#     [937,84][1039,186]), come ogni bottone di sola icona. Il discrimine è il
+#     TESTO INTERNO VISIBILE, non l'aria-label. I tab 1-4 non c'entrano: sono
+#     <Link> senza aria-label, nome accessibile = contenuto.
+#
+# Da qui il selettore ALTERNATO «Menu · tutte le sezioni|^MENU$», che regge tutte
+# e due le esposizioni. Non è un caso di laboratorio: KV-play-phone è l'immagine
+# col Play Store, la WebView si aggiorna da sola, e l'ambiente è cambiato sotto ai
+# flow senza che nessuno toccasse il repo — cioè quello che succede sui telefoni
+# veri delle famiglie, dove le due versioni convivono.
+# Le ancore non sono decorazione: col foglio aperto l'albero contiene anche
+# «MENSA Menu e ticket pasto», e `^…$` tiene il tap lontano da lì.
+# «Menu»/«MENU» NUDI restano vietati dal lock (R4, R8b) e la lista di questo file
+# non li reintroduce: da soli sono morti su WebView 109, e col foglio aperto sono
+# ambigui — l'occhiello del foglio è un secondo nodo «MENU», misurato oggi a
+# [94,375][322,430], TextView non toccabile. Tutti i passi qui sotto lavorano a
+# foglio CHIUSO, dove il nodo «MENU» è uno solo.
+# La fonte dell'aria-label è messages/it/nav.json → `ariaMenu` (se cambia lì, R5
+# diventa rosso).
 - extendedWaitUntil:
     visible: "Avvisi"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
-    text: "Menu · tutte le sezioni"
+    text: "Menu · tutte le sezioni|^MENU$"
 - takeScreenshot: /tmp/kv-android-genitore-1-dashboard
 
 # ── 3. PRESENZE ──────────────────────────────────────────────────────────────
 # "Presenze" vive nel foglio Menu; la voce è resa con il sottotitolo univoco
 # "Assenze e giustifiche" (selettore robusto rispetto alle voci vicine).
 - tapOn:
-    text: "Menu · tutte le sezioni"
+    text: "Menu · tutte le sezioni|^MENU$"
 - extendedWaitUntil:
     visible: "Assenze e giustifiche"
     timeout: 20000
@@ -120,5 +144,5 @@ env:
     visible: "Home"
     timeout: 20000
 - assertVisible:
-    text: "Menu · tutte le sezioni"
+    text: "Menu · tutte le sezioni|^MENU$"
 - takeScreenshot: /tmp/kv-android-genitore-4-back

@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList, Share2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { condividi } from '@/lib/native/share';
 import { formatData } from '@/lib/i18n/date';
@@ -79,6 +79,12 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
     const t = useTranslations('avvisi');
     const locale = useLocale();
     const [expanded, setExpanded] = useState(false);
+    // L'id del pannello che il bottone della testata governa. Da `useId()` e non
+    // da `avviso.id`: la stessa comunicazione può comparire due volte nella
+    // stessa pagina (bacheca + anteprima in home) e due id uguali romperebbero
+    // il riferimento proprio per chi lo usa.
+    const idCard = useId();
+    const idPannello = `avviso-corpo-${idCard}`;
     const isAdesione = avviso.tipo === 'adesione';
     const isRead = !!avviso.my_response?.letto_il;
     const myAnswer = avviso.my_response?.risposta;
@@ -141,10 +147,27 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                 unread ? 'border-kidville-yellow/60' : 'border-kidville-line'
             }`}
         >
-            {/* Header */}
-            <button
-                onClick={handleExpand}
-                className="flex w-full items-start gap-3 px-5 py-4 text-left"
+            {/* Testata — disclosure secondo ARIA APG: intestazione → bottone
+                (`aria-expanded` + `aria-controls`) → pannello con lo stesso id.
+                Prima era un unico `<button>` che avvolgeva TUTTA la testata:
+                due difetti in una riga sola.
+                 · Nessuno dei due stati era annunciato: si premeva Invio, il
+                   corpo dell'avviso compariva, e lo screen reader continuava a
+                   dire «pulsante». Su /teacher/avvisi gli elementi con
+                   `aria-expanded` erano uno solo in tutta la pagina, ed era il
+                   menu della bottom-nav.
+                 · `<h2>`, `<p>` e `<div>` stavano DENTRO il bottone, che per
+                   content model ammette solo phrasing content: HTML non valido,
+                   e diversi screen reader appiattiscono il contenuto del bottone
+                   in un'unica etichetta — vanificando proprio la correzione
+                   h3 → h2 fatta per chi naviga per intestazioni.
+                L'area di tocco NON si restringe al titolo: il bottone si estende
+                sulla testata con uno pseudo-elemento (`after:inset-0` sopra
+                questo contenitore `relative`), così sul telefono la card si apre
+                toccandola ovunque come prima. */}
+            <div
+                data-kv-testata-avviso
+                className="relative flex w-full items-start gap-3 px-5 py-4 text-left"
             >
                 {/* Icon */}
                 {/* L'icona è il segno che distingue «adesione» da «comunicazione»:
@@ -169,8 +192,24 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                         l'`h3` la bacheca del docente saltava da h1 a h3 dieci volte di
                         fila, e chi naviga per intestazioni non aveva modo di sapere se si
                         era perso un livello. */}
-                    <h2 className="mt-1.5 truncate font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
-                        {avviso.titolo}
+                    <h2 className="mt-1.5 font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
+                        <button
+                            type="button"
+                            onClick={handleExpand}
+                            aria-expanded={expanded}
+                            aria-controls={idPannello}
+                            className="block w-full text-left after:absolute after:inset-0 after:content-['']"
+                        >
+                            {/* Il troncamento sta su questo `span`, non sul bottone.
+                                `truncate` porta con sé `overflow: hidden`, e un
+                                elemento che ritaglia i propri discendenti è l'ultimo
+                                posto dove mettere lo pseudo-elemento che allarga
+                                l'area di tocco: il comportamento dipenderebbe da
+                                una regola di clipping sottile invece che dalla
+                                struttura. Uno `span` resta phrasing content, quindi
+                                il bottone continua a essere HTML valido. */}
+                            <span className="block truncate">{avviso.titolo}</span>
+                        </button>
                     </h2>
                     <p className="mt-0.5 font-maven text-[11px] text-kidville-sub">
                         {avviso.author.first_name} {avviso.author.last_name}
@@ -202,11 +241,12 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
                 >
                     <ChevronDown size={16} className="text-kidville-sub" strokeWidth={1.8} />
                 </motion.div>
-            </button>
+            </div>
 
-            {/* Expanded content */}
+            {/* Expanded content — è il pannello puntato da `aria-controls`. */}
             {expanded && (
                 <motion.div
+                    id={idPannello}
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     transition={{ duration: 0.25 }}

@@ -101,11 +101,7 @@ esiste apposta perché quell'assunzione diventi una riga in diff invece di un co
 Questo ciclo ha eseguito le prove che mancavano. Tutte e quattro hanno cambiato una conclusione che
 sembrava già scritta.
 
-### I tre flow iOS: la colpa non era dell'app, era del server di sviluppo
-
-Il collaudo del 31 luglio li dava rossi e il verdetto accusava l'app: «Avvisi non visibile»,
-«Dashboard Direzione non visibile». Rieseguiti oggi su iPhone 17 Pro / iOS 26.2 **senza toccare un
-solo selettore**, con la sola differenza di servire l'app da `next start` invece che da `next dev`:
+### I tre flow iOS: verdi — e la spiegazione che avevo scritto era più forte della misura
 
 | flow | esito | esecuzioni |
 |---|---|---|
@@ -113,18 +109,41 @@ solo selettore**, con la sola differenza di servire l'app da `next start` invece
 | `ios-percorso-genitore` | 27 COMPLETED, 0 FAILED | 2 su 2 |
 | `ios-percorso-docente` | 27 COMPLETED, 0 FAILED | 2 su 2 |
 
-Il dev server ricompila e ricarica la WebView a metà percorso: il flow perde il campo appena
-compilato e il fallimento **sembra** un difetto dell'app. La lezione era già nel PRD per Android
-(«l'emulatore non idrata `next dev`», 17 luglio) e non era stata portata su iOS: una regola vera
-imparata su una piattaforma e mai applicata all'altra — la stessa forma della «porta accanto» che
-questo branch ha inseguito per tre cicli.
+**La prima versione di questo paragrafo diceva due cose false, e le ha smontate il collaudo di
+questo stesso ciclo** — il tester mobile-iOS, a cui era stato chiesto per iscritto di cercare
+«un'affermazione più forte di quanto le misure dimostrino». Le ha trovate, ed è il motivo per cui
+quella richiesta va messa in ogni collaudo:
 
-Due punti che nessun test statico poteva coprire, ora misurati: il **tap cieco a coordinate**
-`68%,93%` per il tab «Mensa» del cockpit, che su iOS non era mai stato provato (la coordinata
-veniva da Android, qui era solo dedotta dalla geometria) — funziona, e il controllo negativo
-`assertNotVisible: "Tutti i moduli"` dimostra che lo schermo si è mosso invece di restare fermo; e
-il flow docente girato **di pomeriggio**, dove il rosso del 31/07 era su «Buongiorno!», cioè sul
-saluto orario che alle 22:07 diventa «Buonasera!».
+1. *«I tre flow erano in `FLOW_SENZA_ESECUZIONE_VERDE` e nessuno li aveva più lanciati.»* Falso.
+   Sotto `~/.maestro/tests` ci sono **sette esecuzioni iOS del 1° agosto**, fra le 12:51 e le
+   13:32, tutte con 0 FAILED. I flow erano già verdi undici ore dopo la correzione dei selettori.
+   Il registro dice ciò che qualcuno ha **scritto nel file**, non ciò che è stato **eseguito sulla
+   macchina**: il debito era stato iscritto alle 01:10 e nessuno l'ha tolto quando le esecuzioni
+   sono arrivate. È lo stesso difetto che il registro esiste per combattere, preso dal verso opposto
+   — e dimostra che un registro va letto **anche** contro gli artefatti, non solo contro il diff.
+2. *«Senza toccare un solo selettore.»* Falso rispetto al rosso del 31 luglio. Fra quel rosso e
+   questo verde sono cambiate **due** variabili, non una: il commit `462630c` del 1° agosto ha
+   riscritto i selettori dei tre flow (175 righe aggiunte, 54 tolte) — «Buongiorno!» → «Dashboard»,
+   «Apri la bacheca» → «Menu · tutte le sezioni», «Modifica appello» → «Fai l'appello ora|Modifica
+   appello», più la gestione dei dialoghi dei permessi. Attribuire il verde al solo cambio di server
+   era una conclusione a una variabile su un esperimento a due.
+
+**Cosa dicono davvero le misure**, senza aggiungerci niente: con i selettori di oggi e l'app servita
+da `next start`, i tre flow passano, due esecuzioni su due ciascuno; con gli stessi selettori
+passavano già il 1° agosto; il rosso del 31 luglio aveva selettori diversi *e* un server diverso,
+quindi non è isolabile su una causa sola. Che `next dev` sia inadatto resta documentato per Android
+da una misura propria («l'emulatore non idrata `next dev`», 17 luglio); su iOS resta una
+raccomandazione prudenziale, non un esperimento controllato.
+
+Per il flow **docente** la spiegazione del verde è invece chiara e non ambigua, perché non passa
+dall'ambiente: il rosso era su «Buongiorno!», il saluto **orario** che alle 22:07 diventa
+«Buonasera!»; l'ancora è ora la tab «Dashboard», che non cambia mai, e le due esecuzioni di oggi
+sono di pomeriggio. Il flow non collauda più l'orologio.
+
+Il **tap cieco a coordinate** `68%,93%` per il tab «Mensa» del cockpit funziona, e il controllo
+negativo `assertNotVisible: "Tutti i moduli"` dimostra che lo schermo si è mosso invece di restare
+fermo. Anche qui la prima stesura esagerava: non è la prima volta che gira su iOS — lo stesso flow
+era passato 36/36 il 1° agosto.
 
 `TETTO_FLOW_SENZA_ESECUZIONE_VERDE`: **4 → 1**. Resta `android-screenshot-playstore.yaml`, fuori
 dal perimetro di oggi e dichiarato come tale.
@@ -192,6 +211,58 @@ progetti che danno errore, e 10 di `ToolchainProvisioningException` su `capacito
 invece non ne dà. Se dopo «Java: Clean Java Language Server Workspace» il pannello resta a 8, la
 causa è la prima e l'unica cosa che li toglie è non importare affatto i progetti Gradle.
 
+### Il collaudo ha trovato due porte aperte sui dati di minori
+
+Gli undici tester hanno collaudato **l'intero branch** (48 commit, 767 file), non i quattro commit
+della giornata, e hanno restituito 10 FAIL su 11. Due rilievi erano falle di autenticazione vere,
+verificate a mano col server vivo:
+
+- **`GET /api/admin/primaria/docenti-materie` rispondeva `200` a un anonimo**, con
+  `createAdminClient()` — cioè il client service-role, con la RLS scavalcata per costruzione:
+  nome e cognome del personale, materie e id di sezione di qualunque classe di qualunque sede.
+  `POST` e `DELETE` dello stesso file avevano già `requireStaff` + `assertSezioneInScope`. È
+  ancora **la porta accanto**, per la quarta volta in questo branch.
+- **`GET /api/diary?alunno_id=` non aveva alcun gate** e restituiva `500` col messaggio interno
+  del database. Il ramo `classe_id` aveva `requireDocente`, il ramo del genitore no. Oggi non
+  espone dati perché quella tabella in produzione non esiste — il giorno in cui esistesse,
+  restituirebbe il diario di qualsiasi bambino a un anonimo.
+
+Chiuse entrambe (`200 → 401`, `500 → 401`). Ma il pezzo che conta è il lock, e la ragione per cui
+ragiona **per ramo e non per handler**: un rilevatore ingenuo «c'è un gate in questa funzione?»
+sarebbe stato **verde sulla seconda falla**, perché un gate c'era — solo, non su quella strada.
+`gate-coverage.test.ts` verifica che ogni accesso ai dati sia preceduto da un gate **nel suo ramo**,
+con 16 rotte pubbliche in allowlist verificate una per una.
+
+### Gli altri ventidue rilievi, chiusi su richiesta del titolare
+
+Fra i quali: la scheda di un alunno non si apriva **da tastiera** (25 schede irraggiungibili senza
+mouse); 26 caselle di selezione senza nome per lo screen reader; il nome della **sede** scritto a
+2,51:1, sotto la soglia AA, proprio nelle righe nuove del multi-sede; l'Alto Contrasto assente sul
+modulo pubblico d'iscrizione, da cui arrivano ~9 domande l'ora; gli importi della Contabilità in
+formato anglosassone; il client **Aruba/SDI** che buttava via il corpo dell'errore — la riproduzione
+esatta del guasto storico delle email; la fattura che non loggava né il successo né lo scarto; il
+lavoro notturno della conservazione che **non poteva accorgersi di fallire** (`pg_net` è asincrono:
+l'`EXCEPTION` non vedrà mai un 4xx del worker); la guardia che bloccava in modo permanente la
+cancellazione a 24 mesi dell'intero lotto; l'oblio GDPR che non svuotava 5 magazzini di file su 7;
+l'elenco duplicato su `/offline`; l'appello che falliva in silenzio.
+
+Ricorre una forma sola, ed è la stessa da tre cicli: **una regola giusta applicata a una lista
+chiusa**. Il divieto del grigio illeggibile valeva su sei file elencati a mano, e il ciclo dopo l'ha
+riscritto altrove; l'oblio è stato costruito per rilievo invece che partendo dall'elenco dei bucket;
+`formatEuro` esisteva e non era obbligatorio. Le correzioni di oggi sostituiscono ogni lista chiusa
+con una regola su tutti i file più un'allowlist esplicita e un tetto che può solo scendere.
+
+### Il flow Android che sembrava rotto, e non lo era
+
+Quattro esecuzioni fallite di fila sul gate «Dashboard», con un sospetto scritto nel registro che
+puntava all'app. La causa era altrove e vale come metodo: **il server `:3100` girava da ore su una
+build che era stata sostituita**, e serviva HTML con chunk che su disco non esistevano più. Niente
+CSS, React non idrata, i campi restano vuoti — e `tapOn: "Accedi"` risulta `COMPLETED` senza inviare
+niente, lasciando a schermo il messaggio nativo del browser «Please fill out this field». Il flow
+moriva due passi dopo, su un'asserzione che parlava di tutt'altro. **Un `next build` non lo ripara:
+il manifest è in memoria, serve il riavvio.** Dopo il riavvio: genitore 27/27 e docente 31/31, due
+esecuzioni su due, senza toccare i selettori.
+
 ### Quello che questo ciclo NON ha provato
 
 - Tutte le misure Android sono su **emulatore**, con Gboard, in verticale, a schermo intero.
@@ -202,7 +273,12 @@ causa è la prima e l'unica cosa che li toglie è non importare affatto i proget
   Server e il riavvio dell'editor, che si fanno dall'interfaccia.
 - `android-screenshot-playstore.yaml` resta senza esecuzione verde dal 28 luglio.
 
-Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 633 file / 5744 test** · `build ok`.
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 648 file / 5943 test** · `build ok`.
+
+**Non ri-collaudato dagli undici tester dopo le correzioni**: il gate formale è verde e ogni
+correzione porta la sua prova di validità (difetto rimesso → rosso; tolto → verde), ma il giro
+completo dei tester su questo albero non è stato rifatto. Va detto, perché è esattamente la
+distinzione che questo ciclo ha passato la giornata a difendere.
 
 ---
 

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 
 /**
  * LA CONSERVAZIONE DELLE DOMANDE D'ISCRIZIONE, FATTA DA DOVE SI PUÒ FARE.
@@ -52,8 +53,27 @@ import { logEvento } from '@/lib/logging/logger'
  * PRIMA i file, POI le righe. Al contrario, un errore a metà lascerebbe i
  * documenti nel deposito senza più nessuna riga che li nomini: invisibili, non
  * cancellati — che è il modo peggiore di conservare un dato personale.
- * Se la rimozione dei file fallisce, **le righe non si toccano**: si riproverà la
- * notte dopo, con la domanda ancora lì a dire quali file cercare.
+ * Se un documento è ancora nell'archivio, **la sua riga non si tocca**: si
+ * riproverà il mese dopo, con la domanda ancora lì a dire quali file cercare.
+ *
+ * ─── LO STATO, NON IL CONTEGGIO (correzione del 2026-08-02) ─────────────────
+ *
+ * La prima stesura di questa regola confrontava i NUMERI: «se i file rimossi non
+ * sono quanti quelli attesi, non cancellare». Sembrava prudenza, era un blocco
+ * permanente. `remove()` non nomina i percorsi che non esistono più, e un file
+ * già assente non torna: il confronto non sarebbe MAI più tornato, e da lì in poi
+ * **nessuna domanda sarebbe stata cancellata**, per sempre — l'opposto esatto
+ * dell'obbligo che questa route esiste per adempiere, su dati sanitari di minori.
+ *
+ * «File non rimosso» non è sinonimo di «file ancora lì»: un percorso che non
+ * esiste più significa che l'esito voluto è GIÀ raggiunto. La regola — una sola,
+ * in un posto solo, condivisa con l'oblio su richiesta — sta in
+ * `@/lib/storage/rimozione-verificata`: dopo la rimozione si CHIEDE allo Storage
+ * lo stato dei percorsi che non risultano usciti.
+ *
+ * E la rinuncia è PER DOMANDA, non per lotto: un allegato che non esce riguarda
+ * la sua domanda, non le altre novantuno. Trattenerle tutte trasformava un guasto
+ * su un file nella violazione dei diritti di tutte le famiglie del lotto.
  */
 
 const JOB = 'iscrizioni-retention'
@@ -65,17 +85,23 @@ const BUCKET_ALLEGATI = 'form_attachments'
 
 type Domanda = { id: string; data: unknown }
 
-/** I percorsi dei documenti allegati dentro il JSON di una domanda. */
-function percorsiAllegati(righe: Domanda[]): string[] {
+const NIENTE_DA_TOGLIERE: EsitoRimozione = {
+    rimossi: [],
+    giaAssenti: [],
+    ancoraPresenti: [],
+    incerti: [],
+    erroreRimozione: false,
+}
+
+/** I percorsi dei documenti allegati dentro il JSON di UNA domanda. */
+function percorsiAllegati(riga: Domanda): string[] {
     const out = new Set<string>()
-    for (const r of righe) {
-        const d = r.data as { children?: unknown[]; adults?: unknown[] } | null
-        for (const gruppo of [d?.children, d?.adults]) {
-            if (!Array.isArray(gruppo)) continue
-            for (const p of gruppo) {
-                const path = (p as { documento_path?: unknown } | null)?.documento_path
-                if (typeof path === 'string' && path.trim() !== '') out.add(path)
-            }
+    const d = riga.data as { children?: unknown[]; adults?: unknown[] } | null
+    for (const gruppo of [d?.children, d?.adults]) {
+        if (!Array.isArray(gruppo)) continue
+        for (const p of gruppo) {
+            const path = (p as { documento_path?: unknown } | null)?.documento_path
+            if (typeof path === 'string' && path.trim() !== '') out.add(path.trim())
         }
     }
     return [...out]
@@ -141,94 +167,69 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
         }
 
         const righe = (scadute ?? []) as Domanda[]
-        const percorsi = percorsiAllegati(righe)
-        let fileTolti = 0
-        let fileFalliti = 0
+        // La domanda resta legata ai SUOI allegati fino alla fine: è ciò che permette
+        // di trattenere una riga sola invece dell'intero lotto.
+        const perDomanda = righe.map((r) => ({ id: r.id, percorsi: percorsiAllegati(r) }))
+        const tuttiIPercorsi = [...new Set(perDomanda.flatMap((d) => d.percorsi))]
 
         // ── PRIMA I FILE ──
-        if (percorsi.length > 0) {
-            const { data: rimossi, error: erroreStorage } = await supabase
-                .storage
-                .from(BUCKET_ALLEGATI)
-                .remove(percorsi)
-            if (erroreStorage) {
-                fileFalliti = percorsi.length
+        let esito = NIENTE_DA_TOGLIERE
+        if (tuttiIPercorsi.length > 0) {
+            esito = await rimuoviEVerifica(supabase, BUCKET_ALLEGATI, tuttiIPercorsi, JOB)
+            if (esito.erroreRimozione) {
+                // La chiamata è fallita: nessun file è uscito e non c'è niente da
+                // verificare. Cancellare le righe adesso renderebbe i documenti
+                // irraggiungibili invece che cancellati. Si riprova il mese dopo.
                 logEvento('cron', 'error', {
                     operazione: JOB,
                     esito: 'file-non-rimossi',
                     canale,
-                    n_file: percorsi.length,
+                    n_file: tuttiIPercorsi.length,
                     ms: Date.now() - t0,
                     msg: `${JOB}: rimozione degli allegati non riuscita, righe NON cancellate`,
-                })
-                // Non si prosegue: cancellare le righe adesso renderebbe i documenti
-                // irraggiungibili invece che cancellati. Si riprova la notte dopo.
-                return NextResponse.json(
-                    { ok: false, motivo: 'allegati-non-rimossi', domande: righe.length, file: percorsi.length },
-                    { status: 500 },
-                )
-            }
-            fileTolti = (rimossi ?? []).length
-
-            // ── `remove()` NON FALLISCE SUI PERCORSI CHE NON ESISTONO ──
-            //
-            // Restituisce `data: []` e `error: null`: dal suo punto di vista non c'è
-            // niente da fare, e ha ragione. Ma per questa route «zero file rimossi su
-            // tre attesi» non è un successo — è il caso in cui il documento d'identità
-            // di un minore resta nell'archivio mentre la riga che lo nomina sparisce.
-            // Cioè esattamente l'invariante che questa route esiste per garantire, e
-            // che il commento qui sopra promette («PRIMA i file, POI le righe»).
-            //
-            // Il conteggio va confrontato, non guardato: un errore assente non è una
-            // rimozione avvenuta. Se non combaciano ci si ferma, la riga resta, e la
-            // notte dopo si riprova con la domanda ancora lì a dire quali file cercare.
-            if (fileTolti !== percorsi.length) {
-                fileFalliti = percorsi.length - fileTolti
-                logEvento('cron', 'error', {
-                    operazione: JOB,
-                    esito: 'file-non-rimossi',
-                    canale,
-                    n_file: percorsi.length,
-                    n_file_falliti: fileFalliti,
-                    ms: Date.now() - t0,
-                    msg: `${JOB}: attesi ${percorsi.length} allegati rimossi, rimossi ${fileTolti} — righe NON cancellate`,
                 })
                 return NextResponse.json(
                     {
                         ok: false,
                         motivo: 'allegati-non-rimossi',
-                        domande: righe.length,
-                        file_attesi: percorsi.length,
-                        file_rimossi: fileTolti,
+                        domande: 0,
+                        domande_trattenute: righe.length,
+                        file: tuttiIPercorsi.length,
                     },
                     { status: 500 },
                 )
             }
         }
 
+        // Un percorso che è ancora nell'archivio — o che non si è potuto verificare —
+        // trattiene la SUA domanda, e soltanto quella.
+        const daNonToccare = new Set(bloccanti(esito))
+        const chiudibili = perDomanda.filter((d) => !d.percorsi.some((p) => daNonToccare.has(p)))
+        const trattenute = perDomanda.length - chiudibili.length
+
         // ── POI LE RIGHE ──
         let domandeCancellate = 0
-        if (righe.length > 0) {
+        if (chiudibili.length > 0) {
             const { error: erroreDelete } = await supabase
                 .from('enrollment_submissions')
                 .delete()
-                .in('id', righe.map((r) => r.id))
+                .in('id', chiudibili.map((d) => d.id))
             if (erroreDelete) {
                 logEvento('cron', 'error', {
                     operazione: JOB,
                     esito: 'cancellazione-fallita',
                     canale,
-                    n_domande: righe.length,
-                    n_file: fileTolti,
+                    n_domande: chiudibili.length,
+                    n_file: esito.rimossi.length,
                     ms: Date.now() - t0,
                     msg: `${JOB}: allegati rimossi ma righe NON cancellate`,
                 })
                 return NextResponse.json(
-                    { ok: false, motivo: 'righe-non-cancellate', file: fileTolti },
+                    { ok: false, motivo: 'righe-non-cancellate', file: esito.rimossi.length },
                     { status: 500 },
                 )
             }
-            domandeCancellate = righe.length
+            domandeCancellate = chiudibili.length
         }
 
         // Il conteggio si scrive SEMPRE, anche (soprattutto) quando è zero: «nessuna
@@ -239,17 +240,53 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             esito: 'retention-iscrizioni',
             canale,
             n_domande: domandeCancellate,
-            n_file: fileTolti,
-            n_file_falliti: fileFalliti,
+            n_domande_trattenute: trattenute,
+            n_file: esito.rimossi.length,
+            n_file_gia_assenti: esito.giaAssenti.length,
+            n_file_bloccanti: daNonToccare.size,
             mesi: MESI_CONSERVAZIONE,
             ms: Date.now() - t0,
-            msg: `${JOB}: ${domandeCancellate} domande e ${fileTolti} allegati oltre i ${MESI_CONSERVAZIONE} mesi`,
+            msg: `${JOB}: ${domandeCancellate} domande e ${esito.rimossi.length} allegati oltre i ${MESI_CONSERVAZIONE} mesi`,
         })
+
+        if (trattenute > 0) {
+            // Il lotto è stato lavorato, ma una parte no: si dichiara guasto. Un 200 qui
+            // direbbe «fatto» a chi sorveglia il lavoro notturno, e la conservazione di
+            // quelle domande resterebbe scoperta senza che nessuno lo sappia.
+            logEvento('cron', 'error', {
+                operazione: JOB,
+                esito: 'domande-trattenute',
+                canale,
+                n_domande: domandeCancellate,
+                n_domande_trattenute: trattenute,
+                n_file_bloccanti: daNonToccare.size,
+                n_file_ancora_presenti: esito.ancoraPresenti.length,
+                n_file_non_verificati: esito.incerti.length,
+                ms: Date.now() - t0,
+                msg: `${JOB}: ${trattenute} domande NON cancellate, ${daNonToccare.size} allegati ancora nell'archivio o non verificabili`,
+            })
+            return NextResponse.json(
+                {
+                    ok: false,
+                    // «Non so» e «c'è ancora» restano due fatti distinti anche nella
+                    // risposta: chi legge il registro deve poter distinguere un archivio
+                    // che non risponde da un file che non esce.
+                    motivo: esito.ancoraPresenti.length > 0 ? 'allegati-non-rimossi' : 'verifica-non-riuscita',
+                    domande: domandeCancellate,
+                    domande_trattenute: trattenute,
+                    file: esito.rimossi.length,
+                    file_bloccanti: daNonToccare.size,
+                    mesi: MESI_CONSERVAZIONE,
+                },
+                { status: 500 },
+            )
+        }
 
         return NextResponse.json({
             ok: true,
             domande: domandeCancellate,
-            file: fileTolti,
+            file: esito.rimossi.length,
+            file_gia_assenti: esito.giaAssenti.length,
             mesi: MESI_CONSERVAZIONE,
         })
     } catch (error) {

@@ -137,4 +137,19 @@ describe('notificaUscitaNonAdmin — corpo con label metodo (P1)', () => {
     expect(arg.corpo).toContain('POS')
     expect(arg.corpo).not.toContain('(pos)')
   })
+
+  // L'importo nel corpo passa da `formatEuro`. Prima era formattato a mano con
+  // `toLocaleString('it-IT', { minimumFractionDigits: 2 })`, che per i numeri a
+  // quattro cifre NON raggruppa (it-IT ha `minimumGroupingDigits = 2`): 1234,50
+  // arrivava all'admin come «1234,50 €» mentre il pannello Cassa, a un clic di
+  // distanza, mostrava «€ 1.234,50».
+  it('l\'importo nel corpo è in formato it-IT completo, migliaia comprese', async () => {
+    await notificaUscitaNonAdmin(
+      supa({ data: [{ id: 'a1', scuola_id: SC }], error: null }, { data: [{ utente_id: 'a1' }], error: null }),
+      { scuolaId: SC, movimentoId: 'm1', importo: 1234.5, metodo: 'contanti' },
+    )
+    const arg = h.notificaEvento.mock.calls[0][1] as { corpo: string }
+    expect(arg.corpo).toContain('€ 1.234,50')
+    expect(arg.corpo).not.toContain('1234,50')
+  })
 })

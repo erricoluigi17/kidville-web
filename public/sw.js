@@ -99,8 +99,18 @@
 // voce scritta con la regola vecchia («cache-first sempre») è stata salvata con
 // un criterio che non vale più, e la si butta tutta invece di fidarsi voce per
 // voce. Costa un riscaricamento del guscio alla prima apertura con rete.
+//
+// 2026-08-02 — la pagina /offline cambia ancora (la staffetta fra lo script
+// inline e React: l'elenco delle pagine usciva DOPPIO), e `VERSIONE` resta a
+// v4. Non è una dimenticanza, è la stessa regola di due paragrafi fa applicata
+// al caso opposto: il bump vale per RILASCIO, e v4 non è mai stata rilasciata —
+// `git show main:public/sw.js` dice ancora `v3`. Sui telefoni là fuori c'è la
+// cache v3, che `activate` butterà comunque appena questo file arriverà; un v5
+// cancellerebbe una cache v4 che non esiste su nessun dispositivo. Ciò che
+// serviva davvero — far reinstallare il Service Worker perché `precarica()`
+// riscarichi /offline — lo fa l'impronta qui sotto, che cambia i BYTE del file.
 const VERSIONE = 'v4';
-// IMPRONTA-PAGINA-OFFLINE: 4850a3d0226675b3761c5cdb606986e11e871bd29a74c23306ccc123ba23236a
+// IMPRONTA-PAGINA-OFFLINE: 8723a6a5236af41c06706412cf488be2dde9c00825bd6a71fcfc0345926f8349
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

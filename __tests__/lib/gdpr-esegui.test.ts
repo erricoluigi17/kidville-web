@@ -78,6 +78,7 @@ function makeFake(cfg: Cfg) {
         return b
       }
       b.neq = (col: string, val: unknown) => { if (col === 'stato') state.neqStato = String(val); return b }
+      b.not = () => b
       b.in = (col: string, vals: unknown) => {
         if (table === 'news_visualizzazioni' && col === 'utente_id') newsFilter.v = vals as string[]
         if (col === 'thread_id') state.inThread = true
@@ -100,7 +101,11 @@ function makeFake(cfg: Cfg) {
       }
       return b
     },
-    storage: { from: () => ({ remove: async () => ({ error: null }) }) },
+    // `list` c'è perché il bucket `credenziali` non ha nessuna tabella-indice:
+    // l'unico modo di ritrovare il PDF di una famiglia — dentro c'è una password
+    // in chiaro — è elencare il bucket. Un finto client senza `list` non è un
+    // client Supabase.
+    storage: { from: () => ({ remove: async () => ({ error: null }), list: async () => ({ data: [], error: null }) }) },
   }
   return { client, updates, deletedTables, orFilters, newsFilter }
 }

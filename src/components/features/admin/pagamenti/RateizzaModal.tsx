@@ -6,6 +6,7 @@ import { X, Layers, Plus, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cx } from '@/lib/ui/cx';
 import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+import { formatEuro } from '@/lib/format/valuta';
 
 // Campo compatto per la riga-rata (importo + scadenza) dentro il piano.
 const RATA_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -74,7 +75,7 @@ export function RateizzaModal({
     const submit = async () => {
         if (!desc.trim()) { setError(t('rateErrDescrizione')); return; }
         if (!rate || rate.length < 2) { setError(t('rateErrGenera2')); return; }
-        if (!sommaOk) { setError(`${t('rateErrSommaPre')} ${somma.toFixed(2)}${t('rateErrSommaMid')} ${Number(totale).toFixed(2)})`); return; }
+        if (!sommaOk) { setError(`${t('rateErrSommaPre')}${formatEuro(somma)}${t('rateErrSommaMid')}${formatEuro(totale)})`); return; }
         setSaving(true); setError(null);
         try {
             const res = await fetch('/api/pagamenti/rate', {
@@ -175,7 +176,7 @@ export function RateizzaModal({
                                 <Plus size={13} /> {t('rateAggiungiRata')}
                             </button>
                             <p className={`font-maven text-xs font-bold text-right ${sommaOk ? 'text-kidville-success' : 'text-kidville-error'}`}>
-                                {t('rateSomma')} € {somma.toFixed(2)} / € {Number(totale).toFixed(2)}
+                                {t('rateSomma')} {formatEuro(somma)} / {formatEuro(totale)}
                             </p>
                         </div>
                     )}

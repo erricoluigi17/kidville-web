@@ -47,7 +47,14 @@ export function AdminSidebar() {
           return (
             <div key={gi} className="flex flex-col gap-1">
               {group.title && (
-                <p className="px-4 pb-1 pt-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
+                // `sub` e non `muted`: l'intestazione di gruppo è testo
+                // informativo, non decorazione. `muted` su bianco vale 2,51:1
+                // (sotto AA) e a 11px in maiuscoletto è la riga più difficile
+                // della sidebar; `sub` vale 6,46:1 restando lo stesso grigio-verde
+                // del design. La controparte in Alto Contrasto — che a queste
+                // etichette non arrivava affatto — sta in globals.css, sul
+                // marcatore `.kv-admin-nav`.
+                <p className="px-4 pb-1 pt-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-sub">
                   {group.titleKey && te.has(group.titleKey) ? te(group.titleKey) : group.title}
                 </p>
               )}

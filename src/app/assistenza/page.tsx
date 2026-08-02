@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { PublicContrastButton } from '@/components/ui/PublicContrastButton';
 
 // Pagina PUBBLICA (nessun login): supporto. Serve anche come "Support URL"
 // per gli store. Mostra SOLO l'email di supporto e l'invito a contattare la
@@ -17,14 +18,22 @@ export const metadata: Metadata = {
 
 export default function AssistenzaPage() {
   return (
-    <main className="min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
+    <main className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
-        >
-          <span aria-hidden="true">←</span> Torna indietro
-        </Link>
+        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ. Il comando di Alto
+            Contrasto viveva solo nei menu account, cioè dopo il login: su una
+            pagina pubblica — che per lo store è anche il recapito legale — chi ne
+            ha bisogno non poteva raggiungerlo. Sta in un componente unico proprio
+            perché queste cinque pagine non ricomincino a divergere. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
+          >
+            <span aria-hidden="true">←</span> Torna indietro
+          </Link>
+          <PublicContrastButton />
+        </div>
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">
           <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-kidville-green sm:text-4xl">

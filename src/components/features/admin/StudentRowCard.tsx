@@ -17,13 +17,35 @@ import { formattaIstante } from '@/i18n/config';
 
 // Stessa mappa colori della riga tabella (StudentTable.getStatoBadge). Duplicata
 // qui — e non importata — per non creare un ciclo di import a runtime tra i due file.
+// `sub` e non `muted`: il badge sta su `bg-kidville-line`, dove il grigio chiaro
+// vale 2,2:1 (sotto AA). Cfr. __tests__/a11y/contrasto-token.test.ts.
 function getStatoBadge(stato: string) {
     switch (stato) {
         case 'iscritto': return 'bg-kidville-success-soft text-kidville-success-strong border-kidville-success/30';
-        case 'ritirato': return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        case 'ritirato': return 'bg-kidville-line text-kidville-sub border-kidville-line';
         case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn-strong border-kidville-warn/30';
-        default: return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        default: return 'bg-kidville-line text-kidville-sub border-kidville-line';
     }
+}
+
+/**
+ * Il nome con cui l'anagrafica CHIAMA una persona quando deve dirlo a voce: è
+ * quello che finisce nel nome accessibile del comando «apri scheda» e in quello
+ * della casella di selezione, sulla riga di tabella come sulla card.
+ *
+ * Vive QUI, non in `StudentTable`, per la stessa ragione della mappa qui sopra:
+ * la tabella importa già questa card (arco che esiste a runtime), mentre la card
+ * importa dalla tabella solo il TIPO `Student`, che sparisce in compilazione.
+ * Nell'altro verso sarebbe un ciclo di import vero.
+ *
+ * Una sola definizione perché il difetto che ha reso l'anagrafica inutilizzabile
+ * da tastiera è nato proprio da due strade con due trattamenti diversi: la card
+ * accessibile, la riga no.
+ */
+export function nomeCompleto(student: Student): string {
+    const cognome = student.cognome || student.last_name || '—';
+    const nome = student.nome || student.first_name || '';
+    return `${cognome} ${nome}`.trim();
 }
 
 interface Props {
@@ -54,7 +76,7 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
             data-student-id={student.id}
             role="button"
             tabIndex={0}
-            aria-label={t('cardApriScheda', { nome: `${cognome} ${nome}`.trim() })}
+            aria-label={t('cardApriScheda', { nome: nomeCompleto(student) })}
             onClick={() => onClick(student)}
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -78,7 +100,14 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => onToggleSelect(student.id)}
-                            className="h-5 w-5 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                            // La `<label>` che allarga il tap target a 44px non ha testo: senza
+                            // questo `aria-label` lo screen reader annuncia «casella di controllo,
+                            // non selezionata» e basta, per ogni bambino della lista (WCAG 4.1.2).
+                            aria-label={t('selezionaRiga', { nome: nomeCompleto(student) })}
+                            // `neutral` (3,10:1) e non `muted` (2,51:1): il bordo è l'unico segno
+                            // che dice dove sta la casella, e il suo fondo è quello della card
+                            // (WCAG 1.4.11, contrasto non testuale).
+                            className="h-5 w-5 rounded border-kidville-neutral text-kidville-green focus:ring-kidville-green cursor-pointer"
                         />
                     </label>
                 )}
@@ -89,7 +118,9 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                     </p>
 
                     {sedeLabel && (
-                        <p className="mt-0.5 truncate font-maven text-xs text-kidville-muted">{sedeLabel}</p>
+                        // `sub` (6,46:1) e non `muted` (2,51:1): con tre plessi il nome della
+                        // sede è ciò che distingue due bambini omonimi, non una rifinitura.
+                        <p className="mt-0.5 truncate font-maven text-xs text-kidville-sub">{sedeLabel}</p>
                     )}
 
                     {currentTypeFilter === 'child' && (

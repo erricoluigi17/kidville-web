@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { FatturaChip } from './FatturaChip';
 import { FatturaButton } from './FatturaButton';
 import { STATI_PAGAMENTO, METODO_LABEL } from './stati';
+import { formatEuro } from '@/lib/format/valuta';
 import type { PagamentoRow } from './RegistraIncassoModal';
 
 interface Incasso {
@@ -121,9 +122,9 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                     <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} />
                 </div>
                 <div className="mt-2 flex justify-between font-maven text-xs">
-                    <span className="text-kidville-muted">{t('drawerTotale')} € {Number(pagamento.importo).toFixed(2)}</span>
-                    <span className="text-kidville-muted">{t('drawerIncassato')} € {Number(pagamento.importo_pagato || 0).toFixed(2)}</span>
-                    <span className="font-bold text-kidville-green">{t('drawerRestano')} € {residuo.toFixed(2)}</span>
+                    <span className="text-kidville-muted">{t('drawerTotale')} {formatEuro(pagamento.importo)}</span>
+                    <span className="text-kidville-muted">{t('drawerIncassato')} {formatEuro(pagamento.importo_pagato || 0)}</span>
+                    <span className="font-bold text-kidville-green">{t('drawerRestano')} {formatEuro(residuo)}</span>
                 </div>
                 <div className="mt-2 flex justify-between font-maven text-[11px] text-kidville-muted">
                     <span>{t('drawerScadenza')} {fmtData(pagamento.scadenza ?? dettaglio?.scadenza)}</span>
@@ -139,7 +140,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                         {dettaglio.quote.map((q) => (
                             <div key={q.id} className="flex items-center justify-between rounded-input bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
                                 <span className="text-kidville-ink">{q.etichetta || [q.utenti?.nome, q.utenti?.cognome].filter(Boolean).join(' ') || t('drawerQuota')}</span>
-                                <span className="font-bold text-kidville-green">€ {Number(q.importo).toFixed(2)}</span>
+                                <span className="font-bold text-kidville-green">{formatEuro(q.importo)}</span>
                             </div>
                         ))}
                     </div>
@@ -163,7 +164,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                                         {storno ? t('drawerStorno') : (METODO_LABEL[i.metodo] ?? i.metodo)}
                                     </span>
                                     <span className={`font-bold ${storno ? 'text-kidville-error' : 'text-kidville-green'}`}>
-                                        {storno ? '−' : ''}€ {Math.abs(Number(i.importo)).toFixed(2)}
+                                        {storno ? '−' : ''}{formatEuro(Math.abs(Number(i.importo)))}
                                     </span>
                                 </div>
                                 <div className="mt-0.5 flex items-center justify-between font-maven text-[11px] text-kidville-muted">
@@ -187,7 +188,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                                 <div key={r.id} className="flex items-center justify-between rounded-input bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
                                     <span className="min-w-0 truncate text-kidville-ink">{r.descrizione} · {fmtData(r.scadenza)}</span>
                                     <span className="flex shrink-0 items-center gap-1.5">
-                                        <span className="text-kidville-muted">€ {Number(r.importo).toFixed(2)}</span>
+                                        <span className="text-kidville-muted">{formatEuro(r.importo)}</span>
                                         <Badge tone={rst.tone}>{rst.label}</Badge>
                                     </span>
                                 </div>

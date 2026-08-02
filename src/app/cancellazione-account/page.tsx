@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { getTranslations } from 'next-intl/server'
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher'
+import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
 import { CancellazioneForm } from './CancellazioneForm'
 
 // Pagina PUBBLICA (nessun login) di cancellazione account (C5 §1 — Google Play
@@ -29,16 +30,22 @@ export default async function CancellazioneAccountPage() {
   const tp = await getTranslations('profilo')
 
   return (
-    <main className="min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
+    <main className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="flex items-center justify-between gap-3">
+        {/* Alto Contrasto accanto al selettore di lingua: sono i due comandi che
+            servono PRIMA di poter entrare nell'app, e finora c'era solo la lingua.
+            Il componente è unico per tutte le pagine pubbliche. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
             href="/"
             className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
           >
             <span aria-hidden="true">←</span> {tc('tornaIndietro')}
           </Link>
-          <LanguageSwitcher />
+          <div className="flex flex-wrap items-center gap-2">
+            <PublicContrastButton />
+            <LanguageSwitcher />
+          </div>
         </div>
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">

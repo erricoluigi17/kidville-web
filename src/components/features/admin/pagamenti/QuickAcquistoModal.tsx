@@ -10,6 +10,7 @@ import { RateizzaModal } from './RateizzaModal';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+import { formatEuro } from '@/lib/format/valuta';
 
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
 interface Categoria { id: string; nome: string; slug?: string }
@@ -67,7 +68,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     (p) => Number(p.importo) === Number(importo) && p.scadenza && Math.abs(Date.parse(p.scadenza) - Date.parse(data)) <= SOGLIA_MS
                 );
                 if (dup) {
-                    setConfermaDup(`${t('quickDupPre')} "${dup.descrizione}" ${t('quickDupImporto')} € ${Number(dup.importo).toFixed(2)} ${t('quickDupScadenza')} ${dup.scadenza ? f.dataBreve(dup.scadenza) : '—'}.`);
+                    setConfermaDup(`${t('quickDupPre')} "${dup.descrizione}" ${t('quickDupImporto')} ${formatEuro(dup.importo)} ${t('quickDupScadenza')} ${dup.scadenza ? f.dataBreve(dup.scadenza) : '—'}.`);
                     setSaving(false);
                     return;
                 }

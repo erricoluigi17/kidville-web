@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { useAgingLabel, bucketScadenze, type AgingBucketId, type AgingPagamento } from '@/lib/pagamenti/aging';
 import { cx } from '@/lib/ui/cx';
+import { formatEuro } from '@/lib/format/valuta';
 
 const ORDINE: AgingBucketId[] = ['scaduti_oltre_30', 'scaduti_entro_30', 'settimana', 'mese'];
 const TONO: Record<AgingBucketId, { testo: string; attivo: string }> = {
@@ -47,7 +48,7 @@ export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect }: Props) {
                         </span>
                         <span className="mt-0.5 flex items-baseline gap-1.5">
                             <span className={cx('font-barlow text-xl font-black leading-none', TONO[id].testo)}>{b.count}</span>
-                            <span className="font-maven text-[11px] text-kidville-muted">€ {b.totale.toFixed(2)}</span>
+                            <span className="font-maven text-[11px] text-kidville-muted">{formatEuro(b.totale)}</span>
                         </span>
                     </button>
                 );

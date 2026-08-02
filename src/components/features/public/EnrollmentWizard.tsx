@@ -9,6 +9,7 @@ import {
   Plus, Trash2, UserPlus, Info, MapPin,
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
+import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
 import {
   CHILD_FIELDS, ADULT_FIELDS, CONSENSI_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
@@ -380,7 +381,12 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const HeadIcon = heading.icon
 
   return (
-    <div className="min-h-screen flex flex-col bg-kidville-cream text-kidville-ink">
+    // `kv-public` è il marcatore della superficie PUBBLICA: senza, l'Alto
+    // Contrasto su questa pagina non cambiava un pixel. I token si ribaltano
+    // (`--color-kidville-cream` → #000), ma il guscio è dipinto con le utility
+    // `bg-kidville-cream`/`bg-white`, il cui hex `@theme inline` ha già inlinato:
+    // le regole per-superficie in globals.css sono l'unico modo di raggiungerlo.
+    <div className="kv-public min-h-screen flex flex-col bg-kidville-cream text-kidville-ink">
       {/* Progress bar */}
       <div className="h-1 w-full bg-kidville-cream-dark">
         <motion.div
@@ -407,16 +413,23 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           L'icona è decorativa e viene tolta dall'albero di accessibilità, così
           il nome dell'`h1` resta esattamente il titolo.
         */}
-        <div className="mb-6">
-          <h1 className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest font-semibold text-kidville-warn-strong">
-            <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
-            {t('wizardEyebrow')}
-          </h1>
-          {!done && formaDecisa && (
-            <p className="text-xs text-kidville-sub font-medium">
-              {t('wizardPassoDi', { corrente: step + 1, totale: steps.length })}
-            </p>
-          )}
+        <div className="mb-6 flex items-start justify-between gap-3">
+          <div>
+            <h1 className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest font-semibold text-kidville-warn-strong">
+              <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
+              {t('wizardEyebrow')}
+            </h1>
+            {!done && formaDecisa && (
+              <p className="text-xs text-kidville-sub font-medium">
+                {t('wizardPassoDi', { corrente: step + 1, totale: steps.length })}
+              </p>
+            )}
+          </div>
+          {/* Il comando di Alto Contrasto. Su questa schermata i bottoni erano
+              DUE — «Indietro» e «Avanti» — e nessuno offriva accessibilità: è la
+              pagina da cui ~9 famiglie l'ora consegnano dati di minori, e chi
+              fatica a leggere non aveva alcun rimedio raggiungibile. */}
+          <PublicContrastButton />
         </div>
 
         {!formaDecisa ? (
@@ -538,7 +551,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                             <button
                               type="button"
                               onClick={addChild}
-                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success text-sm font-medium hover:bg-kidville-success-soft transition-all"
+                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success-strong text-sm font-medium hover:bg-kidville-success-soft transition-all"
                             >
                               <Plus className="w-4 h-4" /> {t('wizardAggiungiFiglio')}
                             </button>
@@ -562,8 +575,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                     <div className="space-y-6">
                       {current.index === 0 && (
                         <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-kidville-info-soft border border-kidville-info/20">
-                          <Info className="w-4 h-4 text-kidville-info flex-shrink-0 mt-0.5" />
-                          <p className="text-xs text-kidville-info leading-relaxed">
+                          <Info className="w-4 h-4 text-kidville-info-strong flex-shrink-0 mt-0.5" />
+                          <p className="text-xs text-kidville-info-strong leading-relaxed">
                             {t('wizardAdultoInfo')}
                           </p>
                         </div>
@@ -585,7 +598,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                             <button
                               type="button"
                               onClick={addAdult}
-                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success text-sm font-medium hover:bg-kidville-success-soft transition-all"
+                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success-strong text-sm font-medium hover:bg-kidville-success-soft transition-all"
                             >
                               <Plus className="w-4 h-4" /> {t('wizardAggiungiAdulto')}
                             </button>

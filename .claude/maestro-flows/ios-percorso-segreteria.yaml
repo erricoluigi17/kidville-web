@@ -5,8 +5,13 @@
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
-#   - dev server sull'host, porta 3000
-#   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
+#   - server di PRODUZIONE sull'host: `npm run build && npx next start -p 3100`
+#   - App.app buildata con CAP_SERVER_URL="http://localhost:3100" e installata
+#
+# ⚠️ `next start`, MAI `next dev`: il dev server ricarica la WebView a metà
+# percorso. Misurato il 2026-08-02 — questo flow, ROSSO al 13° comando il 31/07 su
+# dev server, passa 33 comandi su 33 in DUE esecuzioni su due con `next start`,
+# senza che nessun selettore sia cambiato.
 #
 # Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
 #   .claude/maestro-flows/esegui.sh ios-percorso-segreteria.yaml

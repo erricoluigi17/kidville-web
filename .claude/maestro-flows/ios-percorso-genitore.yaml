@@ -4,8 +4,14 @@
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
-#   - dev server sull'host, porta 3000
-#   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
+#   - server di PRODUZIONE sull'host: `npm run build && npx next start -p 3100`
+#   - App.app buildata con CAP_SERVER_URL="http://localhost:3100" e installata
+#
+# ⚠️ `next start`, MAI `next dev`. Misurato: il 2026-07-31 questo flow era ROSSO al
+# 13° comando («Avvisi» non visibile) servito da `next dev`, e il verdetto di
+# collaudo ne accusava i selettori. Il 2026-08-02, senza toccare un selettore ma
+# servito da `next start`, è passato 27 comandi su 27, DUE esecuzioni su due: era
+# l'ambiente: il dev server ricompila e ricarica la WebView a metà percorso.
 #
 # Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
 #   .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml

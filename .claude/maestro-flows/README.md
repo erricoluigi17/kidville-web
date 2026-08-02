@@ -314,11 +314,12 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ```bash
 xcrun simctl list devices available | grep -i iphone
-xcrun simctl boot "iPhone 16"
+xcrun simctl boot "iPhone 17 Pro"
 open -a Simulator
 
-npm run dev &                                     # host, porta 3000
-CAP_SERVER_URL="http://localhost:3000" npx cap sync ios
+# ⚠️ `next start`, MAI `next dev` — vedi sotto: è la differenza fra tre flow rossi e tre verdi.
+npm run build && npx next start -p 3100 &
+CAP_SERVER_URL="http://localhost:3100" npx cap sync ios
 xcodebuild -project ios/App/App.xcodeproj -scheme App \
   -sdk iphonesimulator -configuration Debug \
   -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build
@@ -326,6 +327,13 @@ xcrun simctl install booted ios/DerivedData/Build/Products/Debug-iphonesimulator
 
 .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml
 ```
+
+> 🔴 **Su iOS i flow si collaudano su `next start`, non su `next dev`.** Misurato il
+> 2026-08-02: il 31 luglio i tre flow iOS erano rossi su dev server e il verdetto di collaudo
+> ne accusava i selettori. Rieseguiti senza toccare un solo selettore, con l'app servita da una
+> build di produzione, sono passati tutti e tre in **due esecuzioni su due** (segreteria 33/33,
+> genitore 27/27, docente 27/27). Il dev server ricompila e ricarica la WebView a metà percorso:
+> il flow perde il campo appena compilato e il fallimento sembra un difetto dell'app.
 
 > Capacitor 8 usa Swift Package Manager: si builda con `-project`, **non** con `-workspace`.
 > `App.xcworkspace` non esiste.
@@ -336,6 +344,18 @@ xcrun simctl install booted ios/DerivedData/Build/Products/Debug-iphonesimulator
 - **Al login lascia respirare la pagina ~3 s** prima di digitare: l'hydration di Next svuota
   gli input se scrivi troppo presto. Nei flow lo fa `extendedWaitUntil`.
 - **`osascript` è bloccato dal TCC** sul simulatore iOS: usa `xcrun simctl`.
+- **`repeat: times: N` rende la prova non dimostrabile.** Maestro AGGREGA le iterazioni in una
+  riga sola (`Repeat 6 times... COMPLETED`, con i comandi elencati una volta): il log di un flow
+  girato sei volte è **indistinguibile** da quello di un flow girato una volta. Misurato il
+  2026-08-02 sulla prova dei sei login (S28), dove contare le esecuzioni *era* la prova. Quando
+  il numero di ripetizioni è ciò che si deve dimostrare, si lancia il flow N volte da fuori:
+  N log, N esiti, N conteggi.
+- **`os.Logger` scrive a livello `info`, e `log stream` di default non lo mostra.** Senza
+  `--level info` il comando gira, filtra e produce **zero righe** — che si legge come «il codice
+  non ha loggato niente» quando invece è «non stavi guardando». Misurato il 2026-08-02: la prima
+  cattura dei sei login sembrava dire che il filtro sugli annullamenti non era mai stato
+  agganciato. Il comando giusto è
+  `xcrun simctl spawn <UDID> log stream --level info --predicate 'subsystem == "it.kidville.app" AND category == "webview"'`.
 - **Con un emulatore Android attivo, i flow iOS vanno lanciati SEMPRE con `maestro --device <UDID-iOS>`.** Senza `--device`, Maestro aggancia il primo dispositivo che trova — di solito l'emulatore Android già avviato — e il flow iOS finisce sul device sbagliato (schermata bianca o passi che non matchano). L'UDID del simulatore booted si legge con `xcrun simctl list devices booted`.
 - **La JDK di sistema è la 25**, Gradle 8.14 non la digerisce ("Unsupported class file major
   version 69"): serve la JBR 21 di Android Studio.

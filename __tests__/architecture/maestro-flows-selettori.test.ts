@@ -542,6 +542,55 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       'qui: il file non è stato toccato da allora (la firma lo dimostra).',
     firma: '668fd9771f28',
   },
+  // ─── I TRE FLOW iOS, 2026-08-02 ────────────────────────────────────────────
+  // Erano tutti e tre in FLOW_SENZA_ESECUZIONE_VERDE: i selettori erano stati
+  // corretti il 2026-08-01 e NESSUNO li aveva più lanciati. Il gate era verde
+  // perché il debito era dichiarato — cioè il verde certificava l'ASSENZA della
+  // prova, non la sua presenza.
+  //
+  // Misurato oggi, e il risultato smentisce il verdetto del 31/07 che accusava
+  // l'app: senza toccare un solo selettore, servendo l'app da `next start` invece
+  // che da `next dev`, tutti e tre passano. Il colpevole era l'ambiente — il dev
+  // server ricompila e ricarica la WebView a metà percorso.
+  {
+    flow: 'ios-percorso-segreteria.yaml',
+    data: '2026-08-02',
+    device:
+      'simulatore iPhone 17 Pro · iOS 26.2 · App.app con CAP_SERVER_URL=http://localhost:3100 ' +
+      '(`next start`, build di produzione)',
+    esito:
+      '33 COMPLETED, 0 FAILED, DUE esecuzioni su due. Include il tap CIECO a coordinate ' +
+      '`point: "68%,93%"` per il tab «Mensa», che su iOS non era mai stato provato (la ' +
+      'coordinata era misurata su Android e qui solo dedotta dalla geometria): ha funzionato, ' +
+      'e il controllo negativo `assertNotVisible: "Tutti i moduli"` dimostra che lo schermo ' +
+      'si è mosso davvero invece di restare sulla dashboard.',
+    firma: '46bf862d8936',
+  },
+  {
+    flow: 'ios-percorso-genitore.yaml',
+    data: '2026-08-02',
+    device:
+      'simulatore iPhone 17 Pro · iOS 26.2 · App.app con CAP_SERVER_URL=http://localhost:3100 ' +
+      '(`next start`, build di produzione)',
+    esito:
+      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due. Il 31/07 era ROSSO al 13° comando ' +
+      '(«Avvisi» non visibile) su `next dev`: il sospetto scritto allora nel registro — ' +
+      '«è l\'ambiente, non i selettori» — è ora MISURATO, ed era giusto.',
+    firma: 'cfd3e836a2f5',
+  },
+  {
+    flow: 'ios-percorso-docente.yaml',
+    data: '2026-08-02',
+    device:
+      'simulatore iPhone 17 Pro · iOS 26.2 · App.app con CAP_SERVER_URL=http://localhost:3100 ' +
+      '(`next start`, build di produzione)',
+    esito:
+      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due, eseguite alle 15:40 e alle 15:44 — ' +
+      'cioè di POMERIGGIO. Conta: il rosso del 31/07 era su «Buongiorno!», il saluto orario ' +
+      'che alle 22:07 diventa «Buonasera!». Ora l\'ancora è la tab «Dashboard», che non ' +
+      'cambia mai: il flow non collauda più l\'orologio.',
+    firma: 'e5f33aae091d',
+  },
 ];
 
 /**
@@ -549,37 +598,23 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
  * dichiarato: il tetto può solo scendere.
  */
 const FLOW_SENZA_ESECUZIONE_VERDE: { flow: string; motivo: string }[] = [
-  {
-    flow: 'ios-percorso-genitore.yaml',
-    motivo:
-      'Collaudo mobile-ios del 2026-07-31: ROSSO al 13° comando («Avvisi» non visibile) ' +
-      'su iPhone 17 Pro Max/iOS 26.2 servito da `next dev`. Un flow equivalente scritto ' +
-      'al momento è passato 27/27: il sospetto è l\'ambiente (dev server che ricarica la ' +
-      'WebView), non i selettori. Va rifatto con una build di produzione.',
-  },
-  {
-    flow: 'ios-percorso-docente.yaml',
-    motivo:
-      'Stesso collaudo: ROSSO su «Buongiorno!», che è un saluto ORARIO — alle 22:07 la ' +
-      'pagina dice «Buonasera!». È un selettore fragile per costruzione, non una misura ' +
-      'mancante: va sostituito con un ancoraggio stabile e poi rieseguito.',
-  },
-  {
-    flow: 'ios-percorso-segreteria.yaml',
-    motivo:
-      'Stesso collaudo: ROSSO al 13° comando («Dashboard Direzione» non visibile), due ' +
-      'esecuzioni su due. Da rifare su build di produzione prima di dire se è l\'app o il flow.',
-  },
+  // I TRE FLOW iOS SONO USCITI DA QUI il 2026-08-02: eseguiti due volte ciascuno su
+  // iPhone 17 Pro / iOS 26.2 con l'app servita da `next start`, tutti verdi. Le loro
+  // righe sono in ESECUZIONI_VERDI, con data, device, esito e firma.
   {
     flow: 'android-screenshot-playstore.yaml',
     motivo:
-      'Ultima esecuzione nota 2026-07-28; non ri-misurato nel ciclo del 2026-07-31/08-01. ' +
-      'Contiene anche una spiegazione oggi smentita (vedi la deroga in AFFERMAZIONI_SMENTITE): ' +
-      'chi lo riesegue corregga entrambe le cose e tolga questa riga.',
+      'Ultima esecuzione nota 2026-07-28; non ri-misurato né nel ciclo del 2026-07-31/08-01 ' +
+      'né in quello del 2026-08-02, che era un collaudo iOS + tastiera Android e non lo ' +
+      'toccava. Contiene anche una spiegazione oggi smentita (vedi la deroga in ' +
+      'AFFERMAZIONI_SMENTITE): chi lo riesegue corregga entrambe le cose e tolga questa riga.',
   },
 ];
 
-const TETTO_FLOW_SENZA_ESECUZIONE_VERDE = 4;
+// 2026-08-02: sceso da 4 a 1. I tre flow iOS erano qui dentro perché i selettori erano
+// stati corretti il 01/08 e nessuno li aveva più lanciati — il gate era verde proprio
+// perché la prova MANCAVA, ed era dichiarata. Ora la prova c'è.
+const TETTO_FLOW_SENZA_ESECUZIONE_VERDE = 1;
 
 function leggiFlow(nome: string): string {
   return fs.readFileSync(path.join(DIR_FLOWS, nome), 'utf8');

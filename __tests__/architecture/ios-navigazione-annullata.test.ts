@@ -41,20 +41,44 @@ import path from 'node:path';
  * delegato finto al posto di quello di Capacitor e misura SE VIENE CHIAMATO — rosso col
  * difetto rimesso, verde dopo. Eseguita il 2026-08-01: 3 rosse su 10 prima, 10 verdi dopo.
  *
- * **Che cosa NON è stato provato** (non abbellirlo, e non riscriverlo come se lo fosse):
- * i sei login consecutivi sull'app vera nel simulatore non sono stati eseguiti, né in questa
- * sessione né in quella del 31/07 — la versione precedente di questo commento affermava che
- * la prova era «riportata nel PRD»: non lo era. Il comando che la eseguirebbe:
+ * **I SEI LOGIN SULL'APP VERA — eseguiti il 2026-08-02.** Fino a quel giorno questo commento
+ * diceva che non lo erano (e la versione ancora precedente affermava il falso: che la prova
+ * fosse «riportata nel PRD»). Simulatore iPhone 17 / iOS 26.2, app servita da `next start` su
+ * localhost:3100, sei esecuzioni SEPARATE di un flow Maestro con `launchApp: clearState: true`:
  *
- *   npx cap sync ios
+ *   · 6 esecuzioni su 6 arrivate alla home del genitore, 14 comandi ciascuna, 0 falliti;
+ *   · `assertNotVisible` sui tre testi di `offline.html` («non è raggiungibile», «Controlla la
+ *     connessione», «Riprova») verde in tutte e sei;
+ *   · nel log di sistema, 6 righe «filtro annullamenti agganciato al navigationDelegate», una
+ *     per avvio e con PID diversi — cioè sei avvii veri, non uno ripetuto;
+ *   · «mostro la schermata offline»: **0 occorrenze**. «filtro NON agganciato»: 0.
+ *
+ * **Il limite di questa prova, che non va abbellito.** «navigazione annullata in …» compare
+ * **0 volte**: in quelle sei sessioni l'annullamento non è mai avvenuto, quindi il filtro era
+ * agganciato ma non è stato ESERCITATO. È il risultato atteso dopo la correzione a monte (il
+ * login non fa più `router.replace` + `router.refresh` a 28 ms di distanza,
+ * `src/app/auth/login/page.tsx`), ma va detto per quello che è: la prova sul dispositivo
+ * dimostra che **il difetto non si riproduce più in 6 tentativi su 6**, non che il filtro
+ * intercetti. Che il filtro intercetti — e che lasci invece passare i guasti veri — lo dimostra
+ * `ios/prove/filtro-annullamenti/esegui.sh`, rieseguita lo stesso giorno: 10 verifiche su 10,
+ * compresi i due controlli negativi (-1009 rete assente e -1004 server irraggiungibile
+ * ARRIVANO a Capacitor, cioè la schermata offline compare ancora quando serve).
+ *
+ * Due trappole pagate nell'eseguirla, perché non si ripaghino:
+ *   · `log stream` senza `--level info` non mostra i messaggi di `os.Logger`: il comando gira,
+ *     filtra, e restituisce ZERO righe — che si legge come «il codice non logga» invece che
+ *     «non stavi guardando». La prima cattura sembrava dire che il filtro non era mai stato
+ *     agganciato;
+ *   · Maestro aggrega un `repeat: times: 6` in una riga sola di log, quindi sei login dentro un
+ *     `repeat` sono indistinguibili da uno. Le sei esecuzioni vanno lanciate da fuori.
+ *
+ *   npx cap sync ios      # con CAP_SERVER_URL=http://localhost:3100
  *   xcrun simctl boot 'iPhone 17'
  *   xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator \
  *     -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/kv-ios build
  *   xcrun simctl install booted /tmp/kv-ios/Build/Products/Debug-iphonesimulator/App.app
- *   xcrun simctl spawn booted log stream \
+ *   xcrun simctl spawn booted log stream --level info \
  *     --predicate 'subsystem == "it.kidville.app" AND category == "webview"'
- *   # poi sei login consecutivi: nel log deve comparire «navigazione annullata in …»
- *   # e MAI la schermata offline.
  */
 
 const RADICE = process.cwd();

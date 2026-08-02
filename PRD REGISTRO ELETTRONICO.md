@@ -89,6 +89,79 @@
 
 ---
 
+## 🗓️ Changelog — I sei E2E rossi: un puntino di sospensione, e una sede in meno di quante ce ne sono 2026-08-02 (branch `fix/multisede-audit-globale`)
+
+`Lint · Typecheck · Unit` verde, `E2E (Playwright)` rosso: **6 test su 48**, merge bloccato
+(run `30765844979`). Nessuno dei sei era un difetto di prodotto nuovo. Erano **due** cause, e
+tutte e due hanno la stessa forma: un'informazione che vive in due posti e nessuno che li tenga
+insieme.
+
+### 1. Quattro selettori accecati da un carattere — `...` diventato `…`
+
+`admin-students`, `isolamento-sedi` (× 2) e `teacher-avvisi` fallivano tutti con
+`locator.fill: Test timeout … waiting for getByPlaceholder('…')`. L'applicazione era **sana**:
+il 1° agosto un rilievo di localizzazione aveva sostituito nei cataloghi i tre punti ASCII con
+l'ellissi tipografica `…` — la forma corretta, in una quarantina di stringhe. Ma
+`getByPlaceholder()` senza `exact` cerca per **sottostringa**, e `...` non esiste dentro `…`:
+quattro selettori sono diventati ciechi nello stesso istante, in tre file di test che nessuno
+aveva toccato.
+
+Difetto di **selettore**, non di codice: il testo nuovo è migliore e resta. I selettori ora si
+fermano prima della punteggiatura, così un'altra virgola in coda non li ricompra.
+
+La correzione vera però non è quella, è il **lock**:
+`__tests__/architecture/e2e-selettori-placeholder.test.ts` estrae ogni `getByPlaceholder('…')`
+degli spec e verifica che almeno un placeholder del prodotto — cataloghi `messages/it/**` o
+letterali di `src/` — lo possa soddisfare, con la stessa semantica di Playwright. Girava rosso
+sui quattro selettori **prima** della correzione. È il gemello mancante della regola R5 del lock
+dei flow Maestro: la stessa disciplina esisteva già per una delle due suite. Costo di scoprirlo
+prima: due secondi in `vitest run`, sulla macchina di chi rinomina l'etichetta. Costo di
+scoprirlo dopo: trenta minuti di CI e un merge fermo.
+
+### 2. L'iscrizione pubblica: due sedi di collaudo, e nessuna sede da dichiarare
+
+`public-iscrizione` compilava tutti e quattro i passi — anagrafica del minore, codice fiscale,
+documento d'identità — e all'invio riceveva
+`400 {"error":"Specificare la scuola per l'iscrizione"}`. Il secondo test della coppia
+(«l'import mostra il degrado email») falliva di conseguenza: senza domanda, non c'è niente da
+importare.
+
+Le due metà della causa stavano in due file, e **ciascuna era corretta da sola**:
+
+- il wizard trattava «elenco pubblico delle sedi **vuoto**» come «una sede sola, vai avanti».
+  L'assunzione era scritta in un commento: *«o sul DB E2E, dove l'elenco pubblico è vuoto — il
+  flusso resta identico a prima»*;
+- `POST /api/iscrizione` deduce la sede solo se ne esiste **una**. Dal 2026-07-31 il seed della
+  CI ne crea **due** — serviva una seconda sede per poter provare l'isolamento fra plessi — ed
+  entrambe portano il prefisso `e2e00000-…`, quindi `isScuolaE2E` le esclude da ogni elenco
+  pubblico: `reali` vuoto, `tutte` due. Il 400 è la risposta **giusta**, e resta: con due
+  candidate, indovinare significa archiviare la domanda di un minore nel plesso sbagliato senza
+  dirlo a nessuno.
+
+L'assunzione del wizard è decaduta quel giorno e nessuno l'ha riletta. Difetto di **ambiente**
+per il test, di **codice** per il silenzio: un elenco pubblico vuoto vuol dire *«nessuna sede su
+cui iscriversi»*, ed è lo stesso difetto che il ramo d'errore aveva appena chiuso, con un'altra
+faccia. Ora il wizard lo dice **prima** che la domanda cominci, con una frase propria — «Nessuna
+sede riceve iscrizioni online» — e senza il pulsante «Riprova», che ripeterebbe la stessa
+risposta. In produzione il ramo non si attiva: verificato sul server vivo,
+`GET /api/iscrizione/sedi` risponde con le tre sedi vere (Aversa, Cesa, Giugliano).
+
+La suite E2E entra ora dal **link targato** `/iscrizione?scuola=<id>` — la scorciatoia per
+plesso che il modulo prevede da sempre, e che il POST valida contro *tutte* le sedi, di collaudo
+comprese, proprio per questo percorso.
+
+**Due test che difendevano il comportamento vecchio** sono stati riscritti, non cancellati:
+`EnrollmentWizard-sede` e `EnrollmentWizard-sedi-errore` dichiaravano «elenco vuoto → si compila»
+sotto l'etichetta *NON-REGRESSIONE*. Erano veri quando il database della CI aveva una scuola
+sola. Al loro posto c'è il caso nuovo, più quello del link targato, più — in
+`__tests__/api/iscrizione-scuola.test.ts` — le **due sedi di collaudo** che il database della CI
+ha davvero: 400 senza sede dichiarata, 201 con.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 673 file / 6308 test** · `build ok`.
+Nessuna migrazione, nessuna variabile d'ambiente nuova.
+
+---
+
 ## 🗓️ Changelog — L'arretrato: 152 rilievi, e la firma che chiunque poteva chiedere 2026-08-02 (branch `fix/multisede-audit-globale`)
 
 Il secondo giro di collaudo aveva restituito 152 voci — 17 gravi, 16 minori, 119 warning — quasi

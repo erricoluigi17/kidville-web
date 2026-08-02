@@ -232,12 +232,53 @@ describe('EnrollmentWizard — l\'elenco sedi non arriva', () => {
     expect(screen.getByRole('button', { name: itPublic.wizardSediRiprova })).toBeInTheDocument()
   })
 
-  it('NON-REGRESSIONE — elenco VUOTO ma OTTENUTO (DB della CI): nessun errore, si compila', async () => {
+  /**
+   * ELENCO VUOTO — misurato in CI il 2026-08-02 (run 30765844979).
+   *
+   * Fino a oggi questo caso era scritto qui come NON-REGRESSIONE: «elenco vuoto
+   * ma ottenuto (DB della CI): nessun errore, si compila». Poggiava su
+   * un'assunzione — «col DB E2E il POST deduce la sede da solo» — che era vera
+   * finché il seed creava UNA scuola e ha smesso di esserlo il 2026-07-31,
+   * quando ne ha create DUE per poter provare l'isolamento fra plessi.
+   *
+   * Da quel giorno `POST /api/iscrizione` risponde `400 {"error":"Specificare
+   * la scuola per l'iscrizione"}` — e deve continuare a farlo: dedurre la sede
+   * fra due candidate significherebbe archiviare la domanda di un minore nel
+   * plesso sbagliato, in silenzio.
+   *
+   * Il risultato osservato in CI è esattamente il difetto che il ramo `errore`
+   * ha chiuso, con un'altra faccia: quattro passi compilati — anagrafica del
+   * minore, codice fiscale, documento d'identità — e un errore generico
+   * all'invio. Un elenco pubblico VUOTO vuol dire «nessuna sede su cui
+   * iscriversi»: la domanda non deve cominciare.
+   *
+   * La frase è sua e non quella del guasto: qui l'elenco è arrivato, e dire
+   * «non riusciamo a caricare le sedi» sarebbe falso.
+   */
+  it('elenco VUOTO ma OTTENUTO: non c\'è nessuna sede, quindi la domanda non comincia', async () => {
     mockSedi([{ tipo: 'ok', sedi: [] }])
     render(<EnrollmentWizard />)
 
-    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText(itPublic.wizardSediVuoteTitolo)).toBeInTheDocument(),
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(itPublic.wizardSediVuoteTitolo)
+    expect(screen.getByText(itPublic.wizardSediVuoteCorpo)).toBeInTheDocument()
+    nienteDaCompilare()
+    // NON è il pannello del guasto: l'elenco è arrivato, dirlo sarebbe falso.
     expect(screen.queryByText(itPublic.wizardSediErroreTitolo)).not.toBeInTheDocument()
+  })
+
+  it('elenco VUOTO ma con ?scuola= nel link: la sede è già decisa, si compila', async () => {
+    // È il percorso del link "targato" per plesso, ed è quello con cui la suite
+    // E2E entra: sul DB della CI l'elenco pubblico è vuoto per costruzione (le
+    // sedi del seed hanno il prefisso `e2e00000-…` e sono escluse da ogni
+    // elenco pubblico), ma la sede la porta l'URL e il POST la accetta.
+    mockSedi([{ tipo: 'ok', sedi: [] }])
+    render(<EnrollmentWizard scuolaId={SEDE_A} />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByText(itPublic.wizardSediVuoteTitolo)).not.toBeInTheDocument()
   })
 
   it('NON-REGRESSIONE — una sola sede: nessun errore e nessun passo sede', async () => {

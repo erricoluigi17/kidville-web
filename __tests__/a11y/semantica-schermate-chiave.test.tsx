@@ -192,15 +192,26 @@ afterEach(cleanup)
 // ── /iscrizione ──────────────────────────────────────────────────────────────
 import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
 import itPublic from '../../messages/it/public.json'
+import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 
 describe('S17 · /iscrizione — la schermata dei consensi ha un nome, e si legge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // UNA sede nell'elenco: è la condizione in cui il modulo parte davvero, ed
+    // è il modulo che questa sonda deve leggere. Con l'elenco VUOTO il wizard
+    // mostra invece «nessuna sede riceve iscrizioni online» e non dipinge nessun
+    // passo (dal 2026-08-02: un elenco pubblico vuoto significa che la domanda
+    // non potrebbe essere archiviata da nessuna parte). Una sede sola tiene
+    // fuori anche il passo «Sede», quindi la schermata è la stessa di prima.
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) =>
         String(url).includes('/api/iscrizione/sedi')
-          ? Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [] }) })
+          ? Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ data: [{ id: SEDE_A, nome: NOME_SEDE_A }] }),
+            })
           : Promise.resolve({ ok: true, status: 200, json: async () => ({ schema: null }) }),
       ),
     )

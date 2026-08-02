@@ -265,12 +265,43 @@ describe('EnrollmentWizard — passo 0: scelta della sede', () => {
     expect(screen.getByRole('button', { name: /indietro/i })).toBeDisabled()
   })
 
-  it('NON-REGRESSIONE — elenco sedi vuoto (DB E2E della CI): nessun passo sede', async () => {
+  /**
+   * ⚠️ ANCHE QUESTO TEST DICEVA IL CONTRARIO, e per la stessa ragione.
+   *
+   * Si chiamava «NON-REGRESSIONE — elenco sedi vuoto (DB E2E della CI): nessun
+   * passo sede» e asseriva che con l'elenco vuoto la domanda cominciasse lo
+   * stesso. Reggeva su un'assunzione sul database della CI — «una sola scuola,
+   * quindi il POST la deduce» — decaduta il 2026-07-31, quando il seed ha
+   * cominciato a crearne DUE per poter provare l'isolamento fra plessi. Il run
+   * 30765844979 del 2026-08-02 ne ha misurato la conseguenza: quattro passi
+   * compilati e `400 «Specificare la scuola per l'iscrizione»` all'invio.
+   *
+   * Elenco pubblico vuoto = nessuna sede su cui iscriversi. La suite E2E entra
+   * dal link targato `/iscrizione?scuola=<id>`, che è il caso qui sotto.
+   */
+  it('elenco sedi vuoto → non c\'è nessuna sede: la domanda non comincia', async () => {
     mockFetch([])
     render(<EnrollmentWizard />)
 
-    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText('Nessuna sede riceve iscrizioni online')).toBeInTheDocument(),
+    )
+    expect(screen.queryByPlaceholderText('Nome bimbo')).not.toBeInTheDocument()
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    // Niente «Riprova»: l'elenco è già arrivato, ripeterlo darebbe la stessa risposta.
+    expect(screen.queryByRole('button', { name: 'Riprova' })).not.toBeInTheDocument()
+  })
+
+  it('elenco vuoto ma sede nel link (?scuola=) → si compila: la sede è già decisa', async () => {
+    // È il percorso con cui entra la suite E2E: sul database della CI l'elenco
+    // pubblico è vuoto per costruzione — le sedi del seed hanno il prefisso
+    // `e2e00000-…` ed `isScuolaE2E` le esclude da ogni elenco pubblico — ma il
+    // POST accetta l'id che arriva dal link, anche se è una sede di collaudo.
+    mockFetch([])
+    render(<EnrollmentWizard scuolaId={SEDE_A} />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByText('Nessuna sede riceve iscrizioni online')).not.toBeInTheDocument()
   })
 
   /**

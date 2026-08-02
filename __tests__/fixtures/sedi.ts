@@ -31,6 +31,18 @@ export const SEDE_B = 'bbbbbbbb-0000-4000-8000-00000000000b'
 export const SEDE_C = 'cccccccc-0000-4000-8000-00000000000c'
 /** La sede finta del seed E2E: prefisso `e2e00000`, riconosciuto da `isScuolaE2E`. */
 export const SEDE_E2E = 'e2e00000-0000-4000-8000-000000000001'
+/**
+ * La SECONDA sede finta del seed E2E.
+ *
+ * Non è un doppione per simmetria: dal 2026-07-31 il database della CI ne ha
+ * DAVVERO due (`scripts/seed-e2e.mjs`), perché l'isolamento fra plessi non si
+ * può provare con un plesso solo. Da quel giorno «l'elenco pubblico è vuoto e
+ * ce n'è una sola, quindi il server la deduce» ha smesso di essere vero, e il
+ * 2026-08-02 la suite E2E dell'iscrizione pubblica si è fermata su un 400
+ * «Specificare la scuola». Un test che vuole riprodurre il database della CI
+ * deve poter mettere DUE sedi di collaudo, non una.
+ */
+export const SEDE_E2E_DUE = 'e2e00000-0000-4000-8000-000000000002'
 
 /** Nomi visualizzabili, in ordine alfabetico crescente A → B → C. */
 export const NOME_SEDE_A = 'Kidville Alfa'
@@ -38,3 +50,5 @@ export const NOME_SEDE_B = 'Kidville Beta'
 export const NOME_SEDE_C = 'Kidville Gamma'
 /** Contiene «e2e»: è il secondo indizio con cui `isScuolaE2E` riconosce la sede di test. */
 export const NOME_SEDE_E2E = 'Kidville E2E'
+/** Come sopra, per la seconda sede di collaudo (lo stesso nome del seed). */
+export const NOME_SEDE_E2E_DUE = 'Kidville E2E Due'

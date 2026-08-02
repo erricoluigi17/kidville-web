@@ -55,7 +55,9 @@ test('la segreteria della sede 1 non trova l’alunna della sede 2 (elenco e URL
   await page.goto('/admin/students');
   await expect(page.getByText('Totale (tutti gli stati)').first()).toBeVisible({ timeout: RENDER });
 
-  const ricerca = page.getByPlaceholder('Cerca per nome, cognome o codice fiscale...');
+  // Senza la punteggiatura finale: il catalogo è passato da `...` a `…` e il
+  // match per sottostringa di Playwright non li considera equivalenti.
+  const ricerca = page.getByPlaceholder('Cerca per nome, cognome o codice fiscale');
 
   // POSITIVO: l'anagrafica della PROPRIA sede si vede. Senza questo, il
   // controllo negativo qui sotto passerebbe anche con la lista vuota per un
@@ -145,7 +147,7 @@ test('un avviso pubblicato nella sede 1 non compare nella sede 2', async ({ page
   await expect(page.getByText('📢 Nuovo Avviso').first()).toBeVisible({ timeout: AZIONE });
   await page.getByPlaceholder('Es. Gita al parco').fill(TITOLO_SEDE_1);
   await page
-    .getByPlaceholder("Scrivi il testo dell'avviso...")
+    .getByPlaceholder("Scrivi il testo dell'avviso")
     .fill('Contenuto della sede 1: non deve uscire dal plesso.');
   await page.getByRole('button', { name: 'Pubblica Avviso' }).click();
 

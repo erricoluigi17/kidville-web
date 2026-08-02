@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 
 vi.mock('framer-motion', async () => {
   const React = await import('react')
@@ -81,12 +82,19 @@ function mockFetch(postImpl?: () => unknown) {
     if (url.includes('/api/iscrizione/model')) {
       return Promise.resolve({ ok: true, json: async () => modelSchema })
     }
-    // L'elenco sedi va risposto con la FORMA vera della route (`{ data: [] }`):
-    // dal 2026-08-02 il wizard distingue «elenco vuoto» da «elenco non
-    // ottenuto», e un corpo `{}` significa il secondo — mostrerebbe il pannello
-    // d'errore invece del modulo. Vuoto = il DB della CI: si compila e basta.
+    // L'elenco sedi va risposto con la FORMA vera della route, e con ALMENO UNA
+    // sede dentro. Il wizard distingue TRE esiti — elenco non ottenuto (corpo
+    // senza `data`), elenco vuoto, elenco pieno — e i primi due fermano la
+    // domanda prima che cominci: un elenco vuoto vuol dire «nessuna sede su cui
+    // iscriversi», e dal 2026-08-02 mostra il proprio pannello invece del
+    // modulo. Qui si prova la VALIDAZIONE dei campi, quindi serve il caso in cui
+    // il modulo parte: una sede sola, che è anche il caso senza passo «Sede».
     if (url.includes('/api/iscrizione/sedi')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [] }) })
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [{ id: SEDE_A, nome: NOME_SEDE_A }] }),
+      })
     }
     if (url.includes('/api/iscrizione') && init?.method === 'POST') {
       return Promise.resolve(postImpl ? postImpl() : { ok: true, status: 201, json: async () => ({ id: 'x' }) })

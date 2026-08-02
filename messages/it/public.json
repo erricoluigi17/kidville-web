@@ -50,6 +50,8 @@
   "wizardSediErroreTitolo": "Non riusciamo a caricare le sedi",
   "wizardSediErroreCorpo": "Senza l'elenco dei plessi non possiamo registrare l'iscrizione nella sede giusta, quindi il modulo non parte da qui. Controlla la connessione e riprova; se l'errore continua, riprova fra qualche minuto.",
   "wizardSediRiprova": "Riprova",
+  "wizardSediVuoteTitolo": "Nessuna sede riceve iscrizioni online",
+  "wizardSediVuoteCorpo": "L'elenco dei plessi è arrivato, ma in questo momento non contiene nessuna sede che accetti domande da questo modulo. Non lo facciamo cominciare per non farti compilare i dati di tuo figlio senza poterli registrare da nessuna parte: contatta la segreteria, oppure riprova più tardi.",
   "wizardSedeErrore": "Scegli una sede per proseguire",
   "wizardSedeLegenda": "Sede di iscrizione",
   "wizardSedeSub": "Scegli il plesso a cui vuoi iscrivere tuo figlio",

@@ -99,8 +99,9 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const [adultFields, setAdultFields] = useState<FormField[]>(ADULT_FIELDS)
 
   // Sedi selezionabili. Il passo di scelta compare SOLO se il link non porta già
-  // la sede (?scuola=) e ce n'è più d'una: con un plesso solo — o sul DB E2E,
-  // dove l'elenco pubblico è vuoto — il flusso resta identico a prima.
+  // la sede (?scuola=) e ce n'è più d'una: con un plesso solo il flusso resta
+  // identico a prima. Se l'elenco arriva VUOTO la domanda non comincia affatto
+  // (vedi `sediVuote`): non c'è nessuna sede in cui archiviarla.
   const [sedi, setSedi] = useState<Sede[]>([])
   const [sedeScelta, setSedeScelta] = useState<string | null>(null)
   const [erroreSede, setErroreSede] = useState(false)
@@ -210,9 +211,32 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
    * sede serva, e far cominciare la domanda significherebbe farla compilare per
    * intero — anagrafica del minore, allergie, documenti — per poi rifiutarla.
    */
-  const formaDecisa = !!sedeDaLink || statoSedi === 'pronto'
+  const formaDecisa = !!sedeDaLink || (statoSedi === 'pronto' && sedi.length > 0)
   /** L'elenco non è arrivato: si dice, e si offre di riprovare. */
   const sediNonCaricate = !sedeDaLink && statoSedi === 'errore'
+  /**
+   * L'elenco è ARRIVATO ed è VUOTO: non esiste nessuna sede su cui iscriversi.
+   *
+   * Misurato in CI il 2026-08-02 (run 30765844979). Fin qui il caso era trattato
+   * come «una sede sola, vai avanti», sull'assunzione — scritta proprio qui —
+   * che sul DB di collaudo il POST deducesse la sede da solo. L'assunzione è
+   * decaduta il 2026-07-31, quando il seed ha cominciato a creare DUE sedi per
+   * poter provare l'isolamento fra plessi: `POST /api/iscrizione` risponde
+   * `400 «Specificare la scuola per l'iscrizione»` e deve continuare a farlo,
+   * perché scegliere fra due candidate significa archiviare la domanda di un
+   * minore nel plesso sbagliato senza dirlo a nessuno.
+   *
+   * Il risultato era il difetto del ramo `errore` con un'altra faccia: quattro
+   * passi compilati — anagrafica del minore, codice fiscale, note mediche,
+   * documento d'identità — e un rifiuto generico all'invio. Quindi la domanda
+   * non comincia, e si dice perché.
+   *
+   * `?scuola=` nel link resta la via d'uscita: la sede è già decisa, l'elenco
+   * pubblico non serve, e il POST accetta anche le sedi escluse dall'elenco.
+   */
+  const sediVuote = !sedeDaLink && statoSedi === 'pronto' && sedi.length === 0
+  /** Nessuna sede utilizzabile: elenco non ottenuto, oppure ottenuto e vuoto. */
+  const domandaNonPuoCominciare = sediNonCaricate || sediVuote
 
   function riprovaSedi() {
     setStatoSedi('caricamento')
@@ -490,9 +514,18 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           <PublicContrastButton />
         </div>
 
-        {sediNonCaricate ? (
+        {domandaNonPuoCominciare ? (
           /*
-           * L'ELENCO DELLE SEDI NON È ARRIVATO — e lo si dice.
+           * NON C'È NESSUNA SEDE SU CUI ISCRIVERSI — e lo si dice.
+           *
+           * Due cause, due frasi, un solo pannello: l'elenco NON è arrivato
+           * (`sediNonCaricate`, guasto → si riprova) oppure è arrivato ed è
+           * VUOTO (`sediVuote`, niente da ricaricare → si contatta la
+           * segreteria). Distinguerle non è cosmesi: dire «non riusciamo a
+           * caricare le sedi» quando l'elenco è arrivato manda il genitore a
+           * controllare la propria connessione per un problema che non ha.
+           *
+           * Il caso del guasto, per esteso.
            *
            * Misurato in collaudo: `GET /api/iscrizione/sedi` → 429 (tetto 30
            * richieste ogni 10 minuti per IP; dietro il NAT di una scuola o il
@@ -515,25 +548,31 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
             <div className="w-full rounded-card border border-kidville-error bg-kidville-error-soft px-5 py-4 text-left">
               <h2 className="flex items-center gap-2 text-base font-semibold text-kidville-error-strong">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-                {t('wizardSediErroreTitolo')}
+                {sediVuote ? t('wizardSediVuoteTitolo') : t('wizardSediErroreTitolo')}
               </h2>
               <p className="mt-1.5 text-sm leading-relaxed text-kidville-ink">
-                {t('wizardSediErroreCorpo')}
+                {sediVuote ? t('wizardSediVuoteCorpo') : t('wizardSediErroreCorpo')}
               </p>
             </div>
-            {/* L'inchiostro è `yellow-ink` e non `yellow`: il riempimento di
+            {/* «Riprova» solo per il GUASTO. Con l'elenco già arrivato e vuoto
+                non c'è niente da ricaricare: un pulsante che ripete la stessa
+                risposta insegna a non fidarsi dei pulsanti.
+
+                L'inchiostro è `yellow-ink` e non `yellow`: il riempimento di
                 brand resta lo stesso, ma la coppia giallo-su-verde vale 4,05:1 —
                 sotto AA per un testo di questa misura — mentre `yellow-ink` su
                 verde vale 4,78:1 (6,51:1 sull'hover). È la stessa scelta di
                 `Btn.tsx`, misurata in `__tests__/a11y/contrasto-cascata.test.tsx`. */}
-            <button
-              type="button"
-              onClick={riprovaSedi}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-pill bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow-ink font-barlow font-bold uppercase tracking-wide text-sm transition-all"
-            >
-              <RefreshCw className="w-4 h-4" aria-hidden="true" />
-              {t('wizardSediRiprova')}
-            </button>
+            {!sediVuote && (
+              <button
+                type="button"
+                onClick={riprovaSedi}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-pill bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow-ink font-barlow font-bold uppercase tracking-wide text-sm transition-all"
+              >
+                <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                {t('wizardSediRiprova')}
+              </button>
+            )}
           </div>
         ) : !formaDecisa ? (
           // Attesa dell'elenco sedi: nessun passo viene dipinto finché non si sa se

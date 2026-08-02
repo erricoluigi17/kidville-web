@@ -14,6 +14,8 @@ import {
   NOME_SEDE_C,
   SEDE_E2E,
   NOME_SEDE_E2E,
+  SEDE_E2E_DUE,
+  NOME_SEDE_E2E_DUE,
 } from '../fixtures/sedi'
 
 /**
@@ -85,6 +87,8 @@ const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
 const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
 const GAMMA = { id: SEDE_C, nome: NOME_SEDE_C }
 const E2E = { id: SEDE_E2E, nome: NOME_SEDE_E2E }
+/** La seconda sede di collaudo: dal 2026-07-31 il database della CI ne ha due. */
+const E2E_DUE = { id: SEDE_E2E_DUE, nome: NOME_SEDE_E2E_DUE }
 
 const invia = (scuolaId?: string) =>
   POST(
@@ -148,6 +152,41 @@ describe('POST /api/iscrizione — risoluzione della sede', () => {
     const res = await invia(E2E.id)
     expect(res.status).toBe(201)
     expect(h.inserts[0].scuola_id).toBe(E2E.id)
+  })
+
+  /**
+   * ─── IL DATABASE DELLA CI DAL 2026-07-31: DUE SEDI, ENTRAMBE DI COLLAUDO ───
+   *
+   * Il caso qui sopra («solo la sede di test → 201») descriveva il database
+   * della CI di ieri: una scuola sola, dedotta da `tutte.length === 1`. Dal
+   * 2026-07-31 il seed ne crea DUE — serve una seconda sede per poter provare
+   * l'isolamento fra plessi — e quel ramo non si applica più: `reali` è vuoto
+   * (entrambe hanno il prefisso `e2e00000-…`) e `tutte` ne ha due.
+   *
+   * Il 400 è la risposta GIUSTA, e questi due test esistono per impedire che
+   * qualcuno lo «sistemi» facendo scegliere al server: con due candidate,
+   * indovinare significa archiviare la domanda di un minore nel plesso
+   * sbagliato senza che nessuno se ne accorga. La suite E2E passa invece dal
+   * link targato `/iscrizione?scuola=<id>` — il caso subito sotto.
+   *
+   * Misurato: run 30765844979 del 2026-08-02, `POST /api/iscrizione` → 400
+   * `{"error":"Specificare la scuola per l'iscrizione"}` dopo quattro passi
+   * compilati.
+   */
+  it('DUE sedi E2E (il DB della CI di oggi) e nessuno scuola_id → 400, nessun insert', async () => {
+    h.schools = { data: [E2E, E2E_DUE], error: null }
+    const res = await invia()
+    expect(res.status).toBe(400)
+    expect(h.inserts).toHaveLength(0)
+    const json = (await res.json()) as { error: string }
+    expect(json.error).toContain('Specificare la scuola')
+  })
+
+  it('DUE sedi E2E + scuola_id dal link targato → 201 su QUELLA sede', async () => {
+    h.schools = { data: [E2E, E2E_DUE], error: null }
+    const res = await invia(E2E_DUE.id)
+    expect(res.status).toBe(201)
+    expect(h.inserts[0].scuola_id).toBe(E2E_DUE.id)
   })
 
   it('due sedi reali di cui una DISATTIVATA → 201 sull\'unica ancora attiva', async () => {

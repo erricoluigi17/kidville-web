@@ -5,6 +5,7 @@ import itShared from '../../messages/it/shared.json'
 import enShared from '../../messages/en/shared.json'
 import itPublic from '../../messages/it/public.json'
 import enPublic from '../../messages/en/public.json'
+import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 
 const IT_S = itShared as Record<string, unknown>
 const EN_S = enShared as Record<string, unknown>
@@ -100,10 +101,12 @@ import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
 describe('EnrollmentWizard — stringhe dal namespace public', () => {
   beforeEach(() => {
     // La forma vera delle risposte: `ok: true` e, per l'elenco sedi, un `data`
-    // ARRAY. Dal 2026-08-02 il wizard distingue «elenco vuoto» (il DB della CI:
-    // si compila) da «elenco non ottenuto» (429/500/corpo strano: si mostra
-    // l'errore), quindi un corpo `{}` senza `ok` porterebbe al pannello
-    // d'errore e non al modulo.
+    // ARRAY con ALMENO UNA sede dentro. Il wizard distingue tre esiti — elenco
+    // non ottenuto (429/500/corpo strano), elenco vuoto, elenco pieno — e i
+    // primi due fermano la domanda prima che cominci. Un elenco VUOTO vuol dire
+    // «nessuna sede su cui iscriversi» e dal 2026-08-02 mostra il proprio
+    // pannello: qui servono le stringhe del MODULO, quindi ci vuole una sede.
+    // Una sola: non compare il passo «Sede» e il primo passo resta il bambino.
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) =>
@@ -111,7 +114,9 @@ describe('EnrollmentWizard — stringhe dal namespace public', () => {
           ok: true,
           status: 200,
           json: async () =>
-            String(url).includes('/api/iscrizione/sedi') ? { success: true, data: [] } : {},
+            String(url).includes('/api/iscrizione/sedi')
+              ? { success: true, data: [{ id: SEDE_A, nome: NOME_SEDE_A }] }
+              : {},
         }),
       ),
     )

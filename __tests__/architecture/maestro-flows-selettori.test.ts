@@ -654,8 +654,11 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       '27 COMPLETED, 0 FAILED, DUE esecuzioni su due, di POMERIGGIO. Conta perché il rosso ' +
       'del 31/07 era su «Buongiorno!», il saluto ORARIO che alle 22:07 diventa «Buonasera!»: ' +
       'l\'ancora è ora la tab «Dashboard», che non cambia mai, e il flow non collauda più ' +
-      'l\'orologio. Qui la sostituzione del selettore È la spiegazione del verde — non ' +
-      'l\'ambiente. Già verde 30/30 il 2026-08-01 (~/.maestro/tests/2026-08-01_125234 e _132906).',
+      'l\'orologio. Attenzione a non trarne una causa certa: il selettore fragile ERA lì e ' +
+      'ora non c\'è più, ma le due esecuzioni verdi di oggi non lo dimostrano da sole — sono ' +
+      'di pomeriggio, quando anche «Buongiorno!» sarebbe passato. La prova che quell\'ancora ' +
+      'rompeva è del 31/07 (rosso alle 22:07); quella che ora non rompe più la darà una ' +
+      'esecuzione verde DI SERA, che nessuno ha ancora fatto. Già verde 30/30 il 2026-08-01 (~/.maestro/tests/2026-08-01_125234 e _132906).',
     firma: 'e5f33aae091d',
   },
 ];

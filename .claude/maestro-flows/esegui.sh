@@ -144,7 +144,17 @@ bonifica() {
       PW="$PW" perl -pi -e '
         BEGIN{$p=$ENV{PW}}
         s/\Q$p\E/***/g if length $p;
+        # forma SHELL: NOME=valore
         s/(^|[\s,({\[?&;])([A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY))=(?!\*\*\*)[^,)}\]\s]+/$1$2=***/gi;
+        # forma JSON: "NOME" : "valore"  ← misurata il 2026-08-02, e la regola sopra NON la vedeva.
+        # Maestro scrive un `commands-<flow>.json` accanto al maestro.log, e lì le variabili non
+        # stanno come `NOME=valore` ma come coppie JSON. Erano 303 file e 855 occorrenze, DUE dei
+        # quali con la password CORRENTE degli account TEST di PRODUZIONE — quelli che leggono
+        # l anagrafica di un intera sede. La bonifica girava, diceva «N file ripuliti», e passava
+        # accanto al formato piu diffuso: un rimedio che copre una forma sola e cieco su tutte le
+        # altre, che e esattamente la lezione gia scritta in cima a questo file per i VALORI e mai
+        # applicata alle FORME.
+        s/("[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)"\s*:\s*")(?!\*\*\*")[^"]+(")/$1***$2/gi;
         s/(Inputting text: )(?!\*\*\*)(?![^\s@]*@)(\S{8,})(?=\r?$)/$1***/gm;
       ' "$f"
       n=$((n + 1))

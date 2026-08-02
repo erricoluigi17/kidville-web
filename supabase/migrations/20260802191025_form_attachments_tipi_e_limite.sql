@@ -1,3 +1,11 @@
+-- ⚠️ IL NOME DI QUESTO FILE È STATO ALLINEATO ALLA PRODUZIONE il 2026-08-02.
+--    `apply_migration` (MCP) NON usa il timestamp del file: ne genera uno proprio al momento
+--    dell'applicazione. Applicando questa migrazione il repo si è ritrovato con una `version`
+--    che in produzione non esisteva — e il lock `migrazioni-complete.test.ts` era VERDE lo
+--    stesso, perché confronta il repo con una FOTOGRAFIA della produzione presa prima.
+--    Chi applica una migrazione con quello strumento: rileggi subito
+--    `supabase_migrations.schema_migrations`, rinomina il file con la version vera, e
+--    rigenera la fotografia. Altrimenti il disallineamento non lo vede nessuno.
 -- ✅ APPLICATA IN PRODUZIONE il 2026-08-02, con l'approvazione del titolare.
 --    Verificato PRIMA: 962 file, tutti dei tipi ammessi (image/jpeg 680, application/pdf 221,
 --    image/png 60, image/heic 1), il più grande 4,49 MB contro un tetto di 8 MB.

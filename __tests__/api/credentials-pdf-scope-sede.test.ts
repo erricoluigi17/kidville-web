@@ -1,3 +1,14 @@
+// @vitest-environment node
+//
+// ⚠️ AMBIENTE `node`, NON jsdom, ed è la ragione per cui questo test falliva SOLO in CI.
+// Misurato il 2026-08-02: verde in locale su Node 24, rosso in CI su Node 22 con
+// `TypeError: object.stream is not a function`. La route risponde con
+// `new NextResponse(data)` dove `data` è il Blob restituito dallo Storage; il `Blob`
+// di jsdom non espone `.stream()` come quello di Node, e la conversione che Node 24
+// tollerava su Node 22 non passa. Il difetto non era nel finto (che restituisce un
+// Blob vero) né nella route: era l'ambiente. Un test di ROTTA API non ha bisogno di
+// un finto browser — e girare in jsdom lo rendeva dipendente dalla versione di Node
+// della macchina, cioè verde qui e rosso in CI.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse, NextRequest } from 'next/server'
 import type { DBFinto } from '../fixtures/finto-supabase'

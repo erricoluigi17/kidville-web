@@ -121,5 +121,6 @@
   "segnalaSuccessoCorpo": "Grazie. La Direzione esaminerà la segnalazione.",
   "segnalaErrore": "Non è stato possibile inviare la segnalazione. Riprova.",
   "galleryRimuoviFile": "Rimuovi file",
-  "galleryPulisciRicerca": "Cancella la ricerca"
+  "galleryPulisciRicerca": "Cancella la ricerca",
+  "erroreModuloNonTrovato": "Questo modulo non è disponibile: il collegamento potrebbe essere scaduto o non essere più valido"
 }

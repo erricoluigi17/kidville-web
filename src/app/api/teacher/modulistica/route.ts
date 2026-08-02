@@ -5,7 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
-import { parseData, parseQuery } from '@/lib/validation/http';
+import { parseData, parseMultipart, parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 
@@ -115,13 +115,16 @@ export const POST = withRoute('teacher/modulistica:POST', async (request: Reques
   const staff = auth.user;
 
   try {
-    const form = await request.formData();
-    const fileEntry = form.get('file');
+    // Content-Type sbagliato = errore del CLIENT: 400, e non l'eccezione al `catch`
+    // (`request.formData()` LANCIA). La regola vive in `parseMultipart`.
+    const form = await parseMultipart(request);
+    if ('response' in form) return form.response;
+    const fileEntry = form.data.get('file');
     const file = fileEntry instanceof File ? fileEntry : null;
 
     const parsed = parseData(postFormSchema, {
-      form_id: form.get('form_id'),
-      student_id: form.get('student_id'),
+      form_id: form.data.get('form_id'),
+      student_id: form.data.get('student_id'),
     });
     if ('response' in parsed) return parsed.response;
     const { form_id: formId, student_id: studentId } = parsed.data;

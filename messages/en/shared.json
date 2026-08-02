@@ -121,5 +121,6 @@
   "segnalaSuccessoCorpo": "Thank you. The school office will review your report.",
   "segnalaErrore": "We couldn't send your report. Please try again.",
   "galleryRimuoviFile": "Remove file",
-  "galleryPulisciRicerca": "Clear search"
+  "galleryPulisciRicerca": "Clear search",
+  "erroreModuloNonTrovato": "This form is not available: the link may have expired or may no longer be valid"
 }

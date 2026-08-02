@@ -5,7 +5,7 @@ import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
-import { parseData, parseQuery } from '@/lib/validation/http'
+import { parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -60,20 +60,37 @@ export const GET = withRoute('primaria/fascicolo:GET', async (request: NextReque
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    // Il messaggio interno resta nel LOG e non torna al chiamante. Su una rotta che
+    // custodisce diagnosi e verbali della 104, il testo di un'eccezione può nominare
+    // tabelle, colonne e vincoli: al client basta sapere che il guasto è nostro.
     logErrore({ operazione: 'primaria/fascicolo:GET', stato: 500 }, err)
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
   }
 })
 
 // POST /api/primaria/fascicolo  (multipart: file, alunnoId, documentType, descrizione?, expiryDate?, userId)
 export const POST = withRoute('primaria/fascicolo:POST', async (request: NextRequest) => {
   try {
-    const formData = await request.formData()
-    // Identità dalla richiesta (sessione o header/query legacy), MAI dal formData:
-    // il campo multipart 'userId' permetterebbe di impersonare chiunque.
+    // ── IL GATE PRIMA DEL CORPO ────────────────────────────────────────────
+    // Queste due righe stavano SOTTO `await request.formData()`, ed erano tre righe di
+    // distanza che valevano un 500 a un anonimo (collaudo del 2026-08-02, F1):
+    //   curl -X POST -H 'content-type: application/json' -d '{"x":1}' …/api/primaria/fascicolo
+    //   → 500 {"error":"Content-Type was not one of \"multipart/form-data\" or …"}
+    // `formData()` LANCIA su un Content-Type non multipart: l'eccezione scavalcava il gate,
+    // finiva nel `catch` qui sotto — tarato sui guasti NOSTRI — e tornava indietro col
+    // messaggio interno del runtime. Su questa rotta, che custodisce diagnosi, PEI, PDP e
+    // verbali della 104.
+    //
+    // Identità dalla richiesta (sessione o header/query legacy), MAI dal formData: il campo
+    // multipart 'userId' permetterebbe di impersonare chiunque — ed è anche il motivo per
+    // cui il gate non ha mai avuto bisogno del corpo per funzionare.
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+
+    // Content-Type sbagliato = errore del CLIENT: 400, e non l'eccezione al `catch`.
+    const form = await parseMultipart(request)
+    if ('response' in form) return form.response
+    const formData = form.data
 
     const parsed = parseData(postFormSchema, {
       file: formData.get('file'),
@@ -159,8 +176,8 @@ export const POST = withRoute('primaria/fascicolo:POST', async (request: NextReq
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    // Come nel GET: il testo dell'eccezione vive nel log, non nella risposta.
     logErrore({ operazione: 'primaria/fascicolo:POST', stato: 500 }, err)
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
   }
 })

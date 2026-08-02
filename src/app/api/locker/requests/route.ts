@@ -136,15 +136,21 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
 // ============================================================
 export const PATCH = withRoute('locker/requests:PATCH', async (request: NextRequest) => {
     try {
-        const b = await parseBody(request, patchBodySchema);
-        if ('response' in b) return b.response;
-        const { id, stato } = b.data;
-
         // M9 — CAMBIO STATO = azione della scuola (presa in carico/evasione): gate
         // ruolo docente/staff. Gating prima del caricamento della riga per non
         // esporre nemmeno l'esistenza dell'id a un anonimo.
+        //
+        // E prima anche della LETTURA DEL CORPO (2026-08-02, F1): questo gate non ha
+        // bisogno di nessun campo del body per decidere — a differenza dei cinque
+        // `requireParentOfStudent(request, idDalCorpo)` del repo, che il corpo devono
+        // averlo — quindi non c'era ragione perché un anonimo facesse deserializzare al
+        // server un JSON prima di sentirsi dire 401.
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
+
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { id, stato } = b.data;
 
         const supabase = await createAdminClient();
 

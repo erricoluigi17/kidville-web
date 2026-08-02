@@ -180,7 +180,33 @@ l'app non sarà perfetta. Chiamare «ciclo non convergente» questo comportament
 sta facendo esattamente il suo mestiere. Ma significa che *«tutti gli undici in PASS»* non è una
 condizione raggiungibile in un giro: è la descrizione di un prodotto finito.
 
-Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 669 file / 6262 test** · `build ok`.
+### La coda: il gate che stava sotto la lettura del corpo
+
+Tre difetti sopravvissuti al giro, chiusi dopo il terzo collaudo:
+
+- **`POST /api/primaria/fascicolo` rispondeva `500` a un anonimo**, restituendogli il messaggio
+  interno del runtime. La causa non era una funzione mancante ma **l'ordine**: `formData()` sta
+  sopra il gate, *lancia* se il Content-Type non è multipart, e l'eccezione scavalcava
+  l'autenticazione finendo nel `catch` generico. Su una rotta che custodisce diagnosi, PEI, PDP e
+  verbali della 104. Ora `401`.
+- **`POST /api/public/forms/<token>/submit` rispondeva `500` su un token malformato**, e la causa
+  era **scritta in un commento**: *«il token pubblico è una stringa opaca, non un uuid»* — ma nella
+  baseline la colonna è `public_token uuid` e la valorizza `randomUUID()`. Il token storto arrivava
+  fino alla query e Postgres rispondeva `22P02`. Ora `404`, byte-identico alla risposta di un uuid
+  inesistente: chi prova a indovinare non impara niente dalla differenza.
+- Le **sei route** che leggevano `request.formData()` nudo sono sulla primitiva condivisa, e il
+  nuovo lock verifica due cose separate: che si usi la primitiva, **e che il gate preceda la
+  lettura del corpo** — perché è l'ordine, non il nome della funzione, ad aver causato il primo.
+
+Rimosso anche il file di prova che il collaudo aveva lasciato nel bucket di produzione (5 byte,
+contenuto letterale `test`): 961 file rimasti, i due documenti veri caricati quel giorno intatti.
+
+E un difetto **introdotto durante la correzione**, dichiarato da chi l'ha fatto: il `codice` del
+nuovo 404 usciva come chiave di catalogo invece che di `CODICI_ERRORE`, e il lock `errori-con-codice`
+era **verde** — perché verifica che un codice ci sia, non che si risolva. Se ne è accorto solo
+guardando il corpo della risposta sul server vivo.
+
+Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 672 file / 6302 test** · `build ok`.
 Migrazioni **applicate in produzione** con l'approvazione del titolare, una per una:
 `20260802173254` (sorveglianza sulla conservazione a 24 mesi) e `20260802200000` — il bucket
 `form_attachments`, che custodisce carte d'identità, certificati e fotografie di minori, era

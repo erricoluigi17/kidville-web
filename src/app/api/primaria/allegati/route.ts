@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
-import { parseData, parseQuery } from '@/lib/validation/http'
+import { parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
@@ -94,7 +94,11 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
     // il campo multipart 'userId' permetterebbe di impersonare chiunque.
     const userId = auth.user.id
 
-    const formData = await request.formData()
+    // Content-Type sbagliato = errore del CLIENT: 400, e non l'eccezione al `catch`
+    // (`request.formData()` LANCIA). La regola vive in `parseMultipart`.
+    const form = await parseMultipart(request)
+    if ('response' in form) return form.response
+    const formData = form.data
     const f = parseData(postFormSchema, {
       file: formData.get('file'),
       registroId: formData.get('registroId'),

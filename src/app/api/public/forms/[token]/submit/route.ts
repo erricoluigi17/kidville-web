@@ -6,7 +6,8 @@ import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consens
 import { accessoConsentito } from '@/lib/forms/publish'
 import { colonnaSedeAssente } from '@/lib/forms/degrado-sede'
 import { risolviSedeCompilazione } from '@/lib/forms/sede-compilazione'
-import { parseBody, parseData } from '@/lib/validation/http'
+import { tokenPubblico, rispostaModuloNonTrovato } from '@/lib/forms/token-pubblico'
+import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
@@ -14,8 +15,13 @@ import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.type
 // Submission ANONIMA di un modello pubblicato (DL-030). Token-scoped, service-role.
 // Solo `completed` (la firma OTP pubblica è materia della slice firma congiunta).
 
-// Il token pubblico è una stringa opaca (usata su form_models.public_token), non un uuid.
-const tokenParamSchema = z.string().min(1)
+// IL TOKEN È UN UUID, e per due anni un commento qui sopra ha detto il contrario
+// («una stringa opaca … non un uuid»), con sotto uno `z.string().min(1)` che lasciava
+// passare qualunque cosa. `form_models.public_token` è dichiarata `uuid` nella baseline e
+// la valorizza `randomUUID()`: un token storto arrivava fino alla query e Postgres
+// rispondeva `22P02`, che questa route leggeva come un guasto proprio → 500 a un anonimo
+// (collaudo del 2026-08-02, F2). La regola sta ora in `@/lib/forms/token-pubblico`, con la
+// route gemella `upload`, e risponde 404 — indistinguibile da «token inesistente».
 
 // `data` è il payload libero della submission: oggi è accettato qualsiasi valore
 // truthy (il codice controllava solo `!data`), quindi resta volutamente permissivo.
@@ -48,9 +54,11 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
 
   try {
     const rawParams = await params
-    const tk = parseData(tokenParamSchema, rawParams.token)
+    // PRIMA di qualunque query: la colonna è di tipo `uuid`, e ciò che non ne ha la forma
+    // non fa «zero righe», fa esplodere il parser di Postgres.
+    const tk = tokenPubblico(rawParams.token)
     if ('response' in tk) return tk.response
-    const token = tk.data
+    const token = tk.token
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
@@ -83,9 +91,10 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
     }
     const model = modelRes.data
 
-    if (!model || !model.published_at) {
-      return NextResponse.json({ error: 'Modulo non trovato o non pubblicato' }, { status: 404 })
-    }
+    // Stessa risposta del token malformato, alla virgola: se i tre casi — forma sbagliata,
+    // modello inesistente, modello non pubblicato — divergessero anche solo nel testo, la
+    // differenza tornerebbe misurabile da fuori.
+    if (!model || !model.published_at) return rispostaModuloNonTrovato()
     // L'accesso pubblico anonimo è consentito solo in modalità `public`.
     if (!accessoConsentito(model, false)) {
       return NextResponse.json({ error: 'Accesso riservato agli utenti registrati' }, { status: 403 })

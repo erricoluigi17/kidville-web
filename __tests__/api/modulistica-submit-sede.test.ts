@@ -57,6 +57,13 @@ const corpo = (payload: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   })
+// I TOKEN SONO UUID, e questi test usavano `'tok-glob'`/`'tok-b'`. Non era un dettaglio di
+// comodo: `form_models.public_token` è di tipo `uuid`, quindi in produzione una stringa così
+// non fa «nessuna riga» — fa rispondere a Postgres `22P02`, che è un ALTRO ramo di codice.
+// Con un doppio che risponde `{ data: null }` a qualunque valore, quel ramo non si vedeva:
+// il 2026-08-02 `POST /api/public/forms/non-un-uuid/submit` rispondeva 500 col gate verde.
+const TOKEN_GLOBALE = 'a0000000-0000-4000-8000-00000000a10b'
+const TOKEN_SEDE_B = 'b0000000-0000-4000-8000-0000000000b0'
 const ctxToken = (token: string) => ({ params: Promise.resolve({ token }) })
 
 const compilazioni = () => h.db.form_submissions ?? []
@@ -76,11 +83,11 @@ const dbBase = (): DBFinto => ({
   form_models: [
     {
       id: MODELLO_GLOBALE, title: 'Modello globale', scuola_id: null, schema: { pages: [] },
-      public_token: 'tok-glob', published_at: '2026-07-01T00:00:00Z', access_mode: 'public',
+      public_token: TOKEN_GLOBALE, published_at: '2026-07-01T00:00:00Z', access_mode: 'public',
     },
     {
       id: MODELLO_DI_SEDE_B, title: 'Modello della sede B', scuola_id: SEDE_B, schema: { pages: [] },
-      public_token: 'tok-b', published_at: '2026-07-01T00:00:00Z', access_mode: 'public',
+      public_token: TOKEN_SEDE_B, published_at: '2026-07-01T00:00:00Z', access_mode: 'public',
     },
   ],
   form_submissions: [],
@@ -128,14 +135,14 @@ describe('POST /api/forms/submit — la compilazione di un genitore nasce con un
 // ─────────────────────────────────────────────────────────────────────────────
 describe('POST /api/public/forms/[token]/submit — l\'invio anonimo da link pubblico', () => {
   it('modello di una sede: 201 e la riga porta quella sede', async () => {
-    const res = await SUBMIT_PUBBLICO(corpo({ data: { a: 1 } }), ctxToken('tok-b'))
+    const res = await SUBMIT_PUBBLICO(corpo({ data: { a: 1 } }), ctxToken(TOKEN_SEDE_B))
     expect(res.status).toBe(201)
     expect(compilazioni()).toHaveLength(1)
     expect(compilazioni()[0].scuola_id).toBe(SEDE_B)
   })
 
   it('modello globale con due sedi reali: 400 — mai una compilazione che non vedrà nessuno', async () => {
-    const res = await SUBMIT_PUBBLICO(corpo({ data: { a: 1 } }), ctxToken('tok-glob'))
+    const res = await SUBMIT_PUBBLICO(corpo({ data: { a: 1 } }), ctxToken(TOKEN_GLOBALE))
     expect(res.status).toBe(400)
     expect(compilazioni()).toHaveLength(0)
     expect(scrittureSu('form_submissions')).toHaveLength(0)
@@ -144,7 +151,7 @@ describe('POST /api/public/forms/[token]/submit — l\'invio anonimo da link pub
   it('una sola sede reale: l\'invio anonimo passa e prende quella sede', async () => {
     h.db.schools = [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_E2E, nome: NOME_SEDE_E2E }]
     h.db.scuole = [{ id: SEDE_A, attiva: true }]
-    const res = await SUBMIT_PUBBLICO(corpo({ data: { a: 1 } }), ctxToken('tok-glob'))
+    const res = await SUBMIT_PUBBLICO(corpo({ data: { a: 1 } }), ctxToken(TOKEN_GLOBALE))
     expect(res.status).toBe(201)
     expect(compilazioni()[0].scuola_id).toBe(SEDE_A)
   })

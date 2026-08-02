@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { tokenPubblico, rispostaModuloNonTrovato } from '@/lib/forms/token-pubblico'
 import { parseData, parseMultipart } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import {
   FINESTRA_UPLOAD_PUBBLICO_MS,
@@ -23,8 +24,11 @@ import {
 
 const DEFAULT_MAX_MB = 8
 
-// Il token pubblico è una stringa opaca (usata su form_models.public_token), non un uuid.
-const tokenParamSchema = z.string().min(1)
+// IL TOKEN È UN UUID — vedi `@/lib/forms/token-pubblico`. Qui il commento diceva la stessa
+// cosa falsa della rotta gemella («una stringa opaca … non un uuid»); la differenza è che
+// questa rispondeva 404 al token storto per CASO — scartava l'`error` di PostgREST e si
+// ritrovava `model` a `null`. Che è l'altro difetto, quello che nessuno misura: un guasto
+// di lettura vero diventava un 404 muto (AGENTS §7 — PostgREST non lancia, ritorna `{error}`).
 
 // max_size_mb: oggi qualsiasi valore non numerico ricade sul default (`Number(x) || 8`);
 // `.catch(undefined)` preserva quel comportamento invece di rispondere 400.
@@ -45,21 +49,29 @@ export const POST = withRoute('public/forms/[token]/upload:POST', async (
 
   try {
     const rawParams = await params
-    const tk = parseData(tokenParamSchema, rawParams.token)
+    // PRIMA della query: la colonna è `uuid`, e ciò che non ne ha la forma non fa «zero
+    // righe» — fa esplodere il parser di Postgres (`22P02`).
+    const tk = tokenPubblico(rawParams.token)
     if ('response' in tk) return tk.response
-    const token = tk.data
+    const token = tk.token
 
     const supabase = await createAdminClient()
 
     // Il token deve corrispondere a un modello pubblicato (anti-abuso storage).
-    const { data: model } = await supabase
+    const { data: model, error: modelErr } = await supabase
       .from('form_models')
       .select('id, published_at')
       .eq('public_token', token)
       .maybeSingle()
-    if (!model || !model.published_at) {
-      return NextResponse.json({ error: 'Modulo non trovato o non pubblicato' }, { status: 404 })
+    if (modelErr) {
+      // L'`error` di PostgREST veniva scartato: un guasto di lettura si travestiva da
+      // «modulo non trovato», e chi diagnosticava non aveva nulla da leggere.
+      logEvento('modulistica', 'error', {
+        operazione: 'public/forms/[token]/upload:POST', esito: 'modello-non-letto',
+      }, modelErr)
+      return rispostaAllegatoNonCaricato()
     }
+    if (!model || !model.published_at) return rispostaModuloNonTrovato()
 
     // Content-Type sbagliato = errore del CLIENT: 400 (e non l'eccezione al `catch`).
     const form = await parseMultipart(request)

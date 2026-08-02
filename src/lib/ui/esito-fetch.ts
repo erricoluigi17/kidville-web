@@ -141,6 +141,16 @@ export const CODICI_ERRORE = {
      * riga mostrerebbe un'immagine rotta o un indirizzo destinato a scadere.
      */
     MEDIA_NON_PROMOSSI: 'erroreMediaNonPromossi',
+    /**
+     * 404 — il link pubblico di un modulo non apre niente
+     * (`src/lib/forms/token-pubblico.ts`): token malformato, modello inesistente o non
+     * pubblicato. UN SOLO codice per i tre casi, ed è il punto: distinguerli direbbe a chi
+     * prova a indovinare il token quando ha imbroccato almeno la forma giusta.
+     *
+     * Lo legge una famiglia, sul telefono, fuori da qualunque sessione — cioè esattamente
+     * il pubblico per cui la lingua dell'interfaccia non è detto che sia l'italiano.
+     */
+    MODULO_NON_TROVATO: 'erroreModuloNonTrovato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

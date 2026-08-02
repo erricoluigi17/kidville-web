@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
-import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
+import { parseBody, parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { parseSidiZip } from '@/lib/sidi/zip-parser'
 import { applySidiBatch } from '@/lib/sidi/import-apply'
@@ -69,11 +69,14 @@ export const POST = withRoute('admin/sidi/import:POST', async (request: NextRequ
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
     try {
-      const form = await request.formData()
+      // Content-Type sbagliato = errore del CLIENT: 400, e non l'eccezione al `catch`
+      // (`request.formData()` LANCIA). La regola vive in `parseMultipart`.
+      const form = await parseMultipart(request)
+      if ('response' in form) return form.response
       const f = parseData(postFormSchema, {
-        file: form.get('file'),
+        file: form.data.get('file'),
         // FormData.get ritorna `null` quando il campo manca: zod vuole `undefined`.
-        scuola_id: form.get('scuola_id') ?? undefined,
+        scuola_id: form.data.get('scuola_id') ?? undefined,
       })
       if ('response' in f) return f.response
       const { file } = f.data

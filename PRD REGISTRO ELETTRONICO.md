@@ -159,6 +159,27 @@ Nella stessa misura è emerso un difetto **nuovo e non chiuso**: in orizzontale 
 chiude** — perché non sta nell'URL, quindi il cambio di configurazione la butta via. È debito
 dichiarato.
 
+### Il terzo collaudo, e perché il ciclo non converge a «tutto verde»
+
+Rieseguito il collaudo sulle correzioni: **sicurezza, localizzazione e log passano**; le due porte
+sui dati di minori sono chiuse e confermate da chi non le ha chiuse. Ma restano 19 rilievi gravi, e
+la loro natura è il dato che conta:
+
+- **tre erano errori introdotti oggi**, e sono stati corretti: la password degli account TEST di
+  produzione in chiaro in 303 file (Maestro la scrive anche in JSON, e la bonifica mascherava solo
+  la forma shell); le due migrazioni applicate con una `version` che in produzione era diversa dal
+  nome del file — con il lock scritto apposta **verde**, perché confrontava il repo con una
+  fotografia presa prima; e una quarta affermazione mia più forte della misura;
+- **gli altri sono arretrato profondo dell'app**, non regressioni: 239 campi con un'etichetta
+  visiva non associata al campo, 1184 punti di testo a 2,51:1, 25 pannelli che si comportano da
+  modale senza esserlo, 324 file nel bucket delle iscrizioni (430 MB) che nessuna riga del database
+  cita — quindi né la retention né l'oblio possono raggiungerli.
+
+Gli undici tester collaudano **l'intero prodotto**, non il diff: ogni giro troverà qualcosa finché
+l'app non sarà perfetta. Chiamare «ciclo non convergente» questo comportamento sarebbe sbagliato —
+sta facendo esattamente il suo mestiere. Ma significa che *«tutti gli undici in PASS»* non è una
+condizione raggiungibile in un giro: è la descrizione di un prodotto finito.
+
 Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 669 file / 6262 test** · `build ok`.
 Migrazioni **applicate in produzione** con l'approvazione del titolare, una per una:
 `20260802173254` (sorveglianza sulla conservazione a 24 mesi) e `20260802200000` — il bucket

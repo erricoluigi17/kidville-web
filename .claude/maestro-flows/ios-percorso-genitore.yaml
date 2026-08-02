@@ -7,11 +7,15 @@
 #   - server di PRODUZIONE sull'host: `npm run build && npx next start -p 3100`
 #   - App.app buildata con CAP_SERVER_URL="http://localhost:3100" e installata
 #
-# ⚠️ `next start`, MAI `next dev`. Misurato: il 2026-07-31 questo flow era ROSSO al
-# 13° comando («Avvisi» non visibile) servito da `next dev`, e il verdetto di
-# collaudo ne accusava i selettori. Il 2026-08-02, senza toccare un selettore ma
-# servito da `next start`, è passato 27 comandi su 27, DUE esecuzioni su due: era
-# l'ambiente: il dev server ricompila e ricarica la WebView a metà percorso.
+# ⚠️ `next start`, MAI `next dev` — ma NON perché sia stato isolato come la causa.
+# La storia per intero, perché la versione breve era falsa: il 31/07 questo flow era
+# ROSSO al 13° comando su `next dev`; il 01/08 il commit 462630c ne ha RISCRITTO i
+# selettori; il 01/08 stesso è passato verde (tre esecuzioni); il 02/08 è passato
+# verde di nuovo (27/27, due su due) su `next start`. Fra il rosso e il verde sono
+# cambiate DUE cose — i selettori e il server — quindi da questi dati non si può
+# attribuire il verde a una sola. Che `next dev` sia inadatto è documentato per
+# ANDROID da una misura propria (PRD 17/07); qui resta una raccomandazione
+# prudenziale. Vedi ESECUZIONI_VERDI nel lock per la versione completa.
 #
 # Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
 #   .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml

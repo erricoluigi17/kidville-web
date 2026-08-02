@@ -8,10 +8,11 @@
 #   - server di PRODUZIONE sull'host: `npm run build && npx next start -p 3100`
 #   - App.app buildata con CAP_SERVER_URL="http://localhost:3100" e installata
 #
-# ⚠️ `next start`, MAI `next dev`: il dev server ricarica la WebView a metà
-# percorso. Misurato il 2026-08-02 — questo flow, ROSSO al 13° comando il 31/07 su
-# dev server, passa 33 comandi su 33 in DUE esecuzioni su due con `next start`,
-# senza che nessun selettore sia cambiato.
+# ⚠️ `next start`, MAI `next dev` — raccomandazione prudenziale, non causa isolata.
+# Il flow era ROSSO il 31/07 su dev server e passa 33/33 in DUE esecuzioni su due il
+# 02/08 su `next start`; ma nel mezzo il commit 462630c del 01/08 ne ha riscritto i
+# selettori, e il 01/08 era già passato 36/36. Due variabili cambiate, una sola
+# conclusione: non regge. La versione completa è in ESECUZIONI_VERDI nel lock.
 #
 # Esecuzione — SEMPRE dallo script, mai `maestro test` a mano:
 #   .claude/maestro-flows/esegui.sh ios-percorso-segreteria.yaml

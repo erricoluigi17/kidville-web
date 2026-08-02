@@ -350,12 +350,19 @@ xcrun simctl install booted ios/DerivedData/Build/Products/Debug-iphonesimulator
 .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml
 ```
 
-> 🔴 **Su iOS i flow si collaudano su `next start`, non su `next dev`.** Misurato il
-> 2026-08-02: il 31 luglio i tre flow iOS erano rossi su dev server e il verdetto di collaudo
-> ne accusava i selettori. Rieseguiti senza toccare un solo selettore, con l'app servita da una
-> build di produzione, sono passati tutti e tre in **due esecuzioni su due** (segreteria 33/33,
-> genitore 27/27, docente 27/27). Il dev server ricompila e ricarica la WebView a metà percorso:
-> il flow perde il campo appena compilato e il fallimento sembra un difetto dell'app.
+> 🔴 **Su iOS i flow si collaudano su `next start`.** È una raccomandazione prudenziale, e la
+> distinzione conta: i tre flow iOS erano rossi il 31 luglio su dev server e sono verdi il
+> 2 agosto su `next start` (segreteria 33/33, genitore 27/27, docente 27/27, due esecuzioni su
+> due) — ma nel mezzo il commit `462630c` del 1° agosto ne ha **riscritto i selettori**, e già il
+> 1° agosto erano passati verdi. Fra il rosso e il verde sono cambiate due cose: da questi dati
+> non si isola una causa sola. Che il dev server sia inadatto è invece **misurato su Android**
+> («l'emulatore non idrata `next dev`», PRD 17 luglio).
+>
+> Quello che il 2 agosto è stato misurato davvero, e che vale per entrambe le piattaforme: **un
+> server avviato su una build poi sostituita** serve HTML con chunk che non esistono più → niente
+> CSS → React non idrata → i campi restano vuoti e «Accedi» risulta `COMPLETED` senza inviare
+> nulla, lasciando a schermo «Please fill out this field». Il flow muore passi dopo, su
+> un'asserzione che parla d'altro. Un `next build` non lo ripara: **serve riavviare il server.**
 
 > Capacitor 8 usa Swift Package Manager: si builda con `-project`, **non** con `-workspace`.
 > `App.xcworkspace` non esiste.

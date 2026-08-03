@@ -32,6 +32,7 @@
   "erroreSedeNonAccessibile": "Sede non accessibile",
   "erroreSedeDaSpecificare": "Specificare la sede a cui si riferisce questa operazione",
   "erroreTroppeRichieste": "Troppe richieste in poco tempo: riprova fra qualche minuto",
+  "erroreNotificheConteggioNonLetto": "Non è stato possibile contare le notifiche non lette: riprova fra poco",
   "erroreClasseDestinatariaMancante": "Seleziona almeno una classe destinataria per un avviso di classe",
   "erroreClassiFuoriSede": "Alcune classi destinatarie non appartengono alla sede dell’avviso: controlla i destinatari",
   "erroreVerificaClassiNonRiuscita": "Non è stato possibile verificare le classi destinatarie: riprova fra qualche istante",

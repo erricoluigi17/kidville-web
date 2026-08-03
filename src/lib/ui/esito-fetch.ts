@@ -101,6 +101,16 @@ export const CODICI_ERRORE = {
     /** 429 — tetto di frequenza raggiunto (`src/lib/security/otp-rate-limit.ts`). */
     TROPPE_RICHIESTE: 'erroreTroppeRichieste',
     /**
+     * 500 — il conteggio delle notifiche non lette non è stato letto
+     * (`src/app/api/notifiche/route.ts`). La campanella tiene l'ultimo valore noto
+     * invece di mostrare 0, che sarebbe indistinguibile da «hai letto tutto».
+     *
+     * Nasce col conteggio separato di T17-F2 (il badge si fermava a 100) e fino al
+     * 2026-08-03 rispondeva col `message` grezzo di PostgREST: prosa inglese e nomi
+     * di colonna del database dentro l'interfaccia di una segretaria.
+     */
+    NOTIFICHE_CONTEGGIO_NON_LETTO: 'erroreNotificheConteggioNonLetto',
+    /**
      * 400 — un avviso «di classe» senza nessuna classe destinataria. Non degrada a
      * globale in silenzio: notifica e bacheca devono sempre dire la stessa cosa.
      */

@@ -76,7 +76,13 @@ export const GET = withRoute('notifiche:GET', async (request: Request) => {
       // valore noto (`load()` scrive solo su `res.ok`), invece di mostrare 0 —
       // che è indistinguibile da «hai letto tutto» ed è la bugia peggiore.
       logEvento('notifica', 'error', { operazione: 'notifiche:GET', esito: 'conteggio-non-letto' }, errConteggio)
-      return NextResponse.json({ error: errConteggio.message }, { status: 500 })
+      // Il `message` di PostgREST resta nel LOG e non esce nella risposta: è prosa
+      // inglese con dentro i nomi delle colonne del database, e chi la leggerebbe è
+      // una segretaria. Al client va un codice, che il catalogo traduce.
+      return NextResponse.json(
+        { error: 'Conteggio delle notifiche non disponibile', codice: 'NOTIFICHE_CONTEGGIO_NON_LETTO' },
+        { status: 500 },
+      )
     }
 
     return NextResponse.json({ success: true, data, non_lette: count ?? 0 })

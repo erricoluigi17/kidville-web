@@ -861,6 +861,8 @@ export async function anonimizzaParent(
   op: string,
 ): Promise<{
   newsVisualizzazioniRimosse: number
+  /** Dispositivi che smettono di ricevere le notifiche della scuola. */
+  pushSubscriptionsRimosse: number
   segnalazioniBonificate: number
   sospensioniBonificate: number
   provaConsensiScrubbate: number
@@ -913,6 +915,46 @@ export async function anonimizzaParent(
       if (!schemaAssente(errVis)) logErrore({ operazione: op, evento: 'oblio_news_visualizzazioni' }, errVis)
     } else {
       newsVisualizzazioniRimosse = (visDel ?? []).length
+    }
+  }
+
+  // 3-bis. L'ISCRIZIONE PUSH DI OGNI DISPOSITIVO DI QUESTA IDENTITÀ.
+  //
+  // Misurato in produzione il 2026-08-03: `push_subscriptions` ha 77 righe, tutte e
+  // 77 con lo `user_agent` valorizzato, su 4 utenti — e questo file non la nominava
+  // da nessuna parte. Il rilievo `V1` del collaudo indicava una tabella diversa
+  // (`consents_log`, «168 righe reali»): quella tabella NON ESISTE, e l'omologa vera
+  // (`consensi_accettazioni`, punto 5 qui sotto) ha 0 righe ed era già coperta. Gli
+  // user-agent veri erano qui.
+  //
+  // SI CANCELLA LA RIGA, non si scrubba il solo `user_agent`: la riga INTERA è un
+  // identificatore. L'`endpoint` è il recapito di quel telefono ed è tutto ciò che
+  // serve per continuare a mandargli notifiche. Lasciarla dopo un'anonimizzazione
+  // vuol dire che il dispositivo di una famiglia che se n'è andata continua a
+  // ricevere le comunicazioni della scuola, agganciato a un `utente_id` che nessuno
+  // può più risolvere a una persona: il dato resta e la sua chiave di lettura no.
+  //
+  // Stessa classe di T17-F1 (il logout che non deregistrava la push): un'iscrizione
+  // che sopravvive all'identità che l'ha creata. Lì il rimedio era per il dispositivo,
+  // qui per la persona.
+  //
+  // SPAZIO-ID: `push_subscriptions.utente_id` è scritta con `auth.user.id`
+  // (= `utenti.id`), non con `parents.id` — come `news_visualizzazioni` qui sopra.
+  // Senza il ponte non si cancella niente: cancellare «a naso» toglierebbe il
+  // telefono a un'altra famiglia.
+  let pushSubscriptionsRimosse = 0
+  if (authUserId) {
+    const { data: pushDel, error: errPush } = await supabase
+      .from('push_subscriptions')
+      .delete()
+      .in('utente_id', [authUserId])
+      .select('id')
+    if (errPush) {
+      // PostgREST non lancia: ritorna `{ error }`. Un oblio che fallisce qui e tace
+      // fa rispondere «fatto» a una famiglia mentre il suo telefono resta iscritto.
+      if (!schemaAssente(errPush)) logErrore({ operazione: op, evento: 'oblio_push_subscriptions' }, errPush)
+    } else {
+      pushSubscriptionsRimosse = (pushDel ?? []).length
     }
   }
 
@@ -1019,6 +1061,7 @@ export async function anonimizzaParent(
 
   return {
     newsVisualizzazioniRimosse,
+    pushSubscriptionsRimosse,
     segnalazioniBonificate,
     sospensioniBonificate,
     provaConsensiScrubbate,

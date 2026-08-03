@@ -1,6 +1,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Le funzioni di `public` non si eseguono con la chiave pubblica
--- Collaudo del 2026-08-03, rilievo T04-F1.
+-- Le funzioni di `public` non si eseguono con la chiave pubblica — QUESTA funziona
+-- Collaudo del 2026-08-03, rilievo T04-F1. Corregge `20260803203201`, che e stata
+-- applicata, ha risposto `success` e non ha cambiato niente (il perche e qui sotto).
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
 -- IL FATTO, misurato (non dedotto) sul database di produzione il 2026-08-03:

@@ -183,7 +183,10 @@ async function assertDocumentoInScope(
   for (const ramo of rami) {
     const { data, error } = await supabase
       .from('enrollment_submissions')
-      .select('id')
+      // `scuola_id` oltre a `id`: serve al registro degli accessi qui sotto, che
+      // deve dire in quale plesso è stato letto il documento. È una colonna che
+      // questa query attraversa già (`.in('scuola_id', …)`): nessuna lettura in più.
+      .select('id, scuola_id')
       .in('scuola_id', sedi)
       .contains('data', { [ramo]: [{ documento_path: docPath }] })
       .limit(1)
@@ -203,7 +206,39 @@ async function assertDocumentoInScope(
         { status: 503 },
       )
     }
-    if (data) return null
+    if (data) {
+      // ─── IL REGISTRO DEGLI ACCESSI RIUSCITI (T06-F4) ───────────────────────
+      //
+      // Fino al 2026-08-03 restava una riga solo per i tentativi RESPINTI. Cioè
+      // il registro rispondeva alla domanda sbagliata: quella che una famiglia ha
+      // diritto di fare (art. 15 GDPR) è «chi ha visto i dati di mio figlio?», non
+      // «chi ci ha provato senza riuscirci». Da qui esce una URL firmata che vive
+      // 10 minuti ed è scaricabile SENZA sessione, sul documento d'identità di un
+      // minore: se non resta traccia di chi l'ha chiesta, non c'è nessuna risposta
+      // da dare.
+      //
+      // È anche la regola 5 di AGENTS.md — gli eventi critici loggano ANCHE il
+      // successo: senza, «nessun log» non distingue «nessuno ha guardato» da «la
+      // sorveglianza non è mai partita».
+      //
+      // `multi_sede` è in EVENTI_PERSISTITI: la riga finisce in `app_log` e
+      // sopravvive al deploy. Un registro che vive quanto un container non è un
+      // registro. E come per il diniego: MAI il percorso: contiene il nome del
+      // file caricato dalla famiglia. Solo uuid, ruolo, sede e conteggi — se no il
+      // registro degli accessi diventa un secondo archivio da proteggere.
+      logEvento('multi_sede', 'info', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'documento-firmato',
+        azione: 'documento',
+        utente: user.id,
+        ruolo: user.role,
+        sede_id: (data as { scuola_id?: unknown }).scuola_id ?? null,
+        sedi_attive: sedi.length,
+        entita_tipo: 'enrollment_submissions',
+        entita_id: (data as { id?: unknown }).id ?? null,
+      })
+      return null
+    }
   }
 
   // Diniego. Prima di rispondere si guarda — SOLO per il log — se quel percorso

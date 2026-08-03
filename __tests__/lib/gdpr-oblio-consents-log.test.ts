@@ -116,4 +116,26 @@ describe('oblio · la prova del consenso resta, l’indirizzo di rete no (V1, mi
     const scritte = f.updates.filter((u) => u.row.consents_log !== undefined)
     expect(scritte).toHaveLength(0)
   })
+
+  it('una prova già senza ip non viene riscritta a vuoto', async () => {
+    // ⟵ IL CASO CHE MANCAVA, trovato con una manomissione: togliendo la guardia
+    // «c'è qualcosa da togliere?» i due casi qui sopra restavano VERDI, perché
+    // entrambi cadono prima, sul controllo del `null`. Una guardia che nessun test
+    // esercita è una riga che il prossimo refactor cancella senza accorgersene.
+    //
+    // Riscrivere a vuoto non è innocuo: muove `updated_at` su una domanda che
+    // nessuno ha toccato, e in una tabella dove `updated_at` è il campo su cui si
+    // ragiona per capire chi ha lavorato cosa, è rumore che somiglia a lavoro.
+    const f = makeFake([
+      {
+        id: 'sub-3',
+        data: domanda(),
+        consents_log: { accettato_il: '2026-07-20T10:00:00Z', versione_informativa: 'v2' },
+      },
+    ])
+    await obliaIscrizioni(f.client as never, { codiciFiscali: [CF], documentoPaths: [] }, AT, 'test')
+
+    const scritte = f.updates.filter((u) => u.row.consents_log !== undefined)
+    expect(scritte).toHaveLength(0)
+  })
 })

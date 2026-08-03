@@ -593,6 +593,27 @@ export async function obliaPdfCredenziali(
  * Mai PII nei log: solo conteggi. Degrada in silenzio se la tabella non c'è (DB
  * E2E della CI non migrato).
  */
+/**
+ * `consents_log` senza l'indirizzo di rete, oppure `undefined` se non c'è niente
+ * da togliere — e la differenza fra le due cose è il punto.
+ *
+ * Ritornare `undefined` significa «non scrivere questa colonna». Serve perché le 93
+ * domande raccolte prima dell'informativa hanno `consents_log IS NULL`
+ * (migrazione `20260731165941`): sovrascriverle con `{}` cancellerebbe la
+ * differenza fra «informativa mai accettata» e «accettata e poi ripulita dall'oblio»,
+ * cioè proprio il fatto storico che quella migrazione esiste per conservare.
+ *
+ * Le chiavi sono quelle misurate in produzione il 2026-08-03:
+ * `{ accettato_il, blocchi, ip, userAgent, versione_informativa }`.
+ */
+function consentsLogSenzaRete(valore: unknown): Record<string, unknown> | undefined {
+  if (valore == null || typeof valore !== 'object' || Array.isArray(valore)) return undefined
+  const log = valore as Record<string, unknown>
+  if (!('ip' in log) && !('userAgent' in log) && !('user_agent' in log)) return undefined
+  const fuori = new Set(['ip', 'userAgent', 'user_agent'])
+  return Object.fromEntries(Object.entries(log).filter(([k]) => !fuori.has(k)))
+}
+
 export async function obliaIscrizioni(
   supabase: SupabaseClient,
   soggetti: SoggettiIscrizione,
@@ -619,7 +640,7 @@ export async function obliaIscrizioni(
   // Le domande candidate si raccolgono PRIMA e si scrivono UNA volta sola: una
   // domanda che contiene sia il bambino sia il genitore non va riscritta due
   // volte (la seconda ripartirebbe dal `data` già letto, non da quello scritto).
-  const candidate = new Map<string, unknown>()
+  const candidate = new Map<string, { data: unknown; consentsLog: unknown }>()
   const filtri: Record<string, unknown>[] = []
   for (const ramo of ['children', 'adults'] as const) {
     for (const cf of cfVarianti) {
@@ -632,7 +653,10 @@ export async function obliaIscrizioni(
   for (const filtro of filtri) {
     const { data, error } = await supabase
       .from('enrollment_submissions')
-      .select('id, data')
+      // `consents_log` si legge INSIEME a `data`: porta l'ip e lo user-agent della
+      // famiglia, e fino al 2026-08-03 nessuno lo toglieva (rilievo `V1`, misurato:
+      // 170 righe su 263 lo hanno, tutte e 170 con entrambi i campi).
+      .select('id, data, consents_log')
       .contains('data', filtro)
     if (error) {
       if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_iscrizioni_select' }, error)
@@ -640,19 +664,35 @@ export async function obliaIscrizioni(
       // gli altri filtri produrrebbe solo altre righe di log identiche.
       return { domandeScrubbate: 0, documenti: [] }
     }
-    for (const r of (data ?? []) as { id: string; data: unknown }[]) {
-      if (!candidate.has(r.id)) candidate.set(r.id, r.data)
+    for (const r of (data ?? []) as { id: string; data: unknown; consents_log?: unknown }[]) {
+      if (!candidate.has(r.id)) candidate.set(r.id, { data: r.data, consentsLog: r.consents_log })
     }
   }
 
   let domandeScrubbate = 0
   const documenti: string[] = []
-  for (const [id, dataOriginale] of candidate) {
-    const scrub = scrubDomandaIscrizione(dataOriginale, soggetti, at)
+  for (const [id, riga] of candidate) {
+    const scrub = scrubDomandaIscrizione(riga.data, soggetti, at)
     if (scrub.personeScrubbate === 0) continue
+    const patch: Record<string, unknown> = { data: scrub.data, updated_at: at }
+    // LA PROVA DEL CONSENSO RESTA, L'INDIRIZZO DI RETE NO.
+    //
+    // Si tolgono `ip` e `userAgent`; restano `accettato_il`, `versione_informativa`
+    // e `blocchi`. Sono LORO la prova che l'informativa è stata accettata (art. 5 §2
+    // e art. 7 §1 GDPR): l'indirizzo di rete non dimostra niente di più e identifica
+    // una persona. È la stessa scelta già fatta per `consensi_accettazioni` in
+    // `scrubProvaConsensi` — una regola valida per due archivi non può avere due
+    // risposte diverse.
+    //
+    // Si scrive SOLO se c'era qualcosa da togliere: mettere `{}` dove c'era `null`
+    // cancellerebbe la differenza fra «informativa mai accettata» e «accettata e poi
+    // ripulita», cioè il fatto storico che la migrazione 20260731165941 esiste
+    // apposta per conservare sulle 93 domande raccolte prima dell'informativa.
+    const senzaRete = consentsLogSenzaRete(riga.consentsLog)
+    if (senzaRete !== undefined) patch.consents_log = senzaRete
     const { error: errUpd } = await supabase
       .from('enrollment_submissions')
-      .update({ data: scrub.data, updated_at: at })
+      .update(patch)
       .eq('id', id)
     if (errUpd) {
       // Non si tace: questa è la riga che conserva il codice fiscale e i dati
@@ -922,10 +962,12 @@ export async function anonimizzaParent(
   //
   // Misurato in produzione il 2026-08-03: `push_subscriptions` ha 77 righe, tutte e
   // 77 con lo `user_agent` valorizzato, su 4 utenti — e questo file non la nominava
-  // da nessuna parte. Il rilievo `V1` del collaudo indicava una tabella diversa
-  // (`consents_log`, «168 righe reali»): quella tabella NON ESISTE, e l'omologa vera
-  // (`consensi_accettazioni`, punto 5 qui sotto) ha 0 righe ed era già coperta. Gli
-  // user-agent veri erano qui.
+  // da nessuna parte.
+  //
+  // È un archivio DIVERSO da quello del rilievo `V1`, che parlava di `consents_log`:
+  // quello è una COLONNA jsonb di `enrollment_submissions` (170 righe su 263 con ip e
+  // userAgent) e viene ripulito in `obliaIscrizioni`. Il rilievo era esatto; questa è
+  // una seconda falla, trovata cercandolo, e nessun tester l'aveva vista.
   //
   // SI CANCELLA LA RIGA, non si scrubba il solo `user_agent`: la riga INTERA è un
   // identificatore. L'`endpoint` è il recapito di quel telefono ed è tutto ciò che

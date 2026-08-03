@@ -48,14 +48,26 @@ vi.mock('@/lib/supabase/browser-client', () => ({
 
 import LoginPage from '@/app/auth/login/page'
 
+/**
+ * ⚠️ `/api/me` QUI RISPONDE SEMPRE 200, ED È UNA SCELTA.
+ *
+ * Fino al 2026-08-03 questa riga era `{ ok: Boolean(h.me), status: h.me ? 200 : 500 }`: **un
+ * interruttore solo per due grandezze diverse** — il corpo della risposta e la sua riuscita. Dopo
+ * la correzione W8-bis nessun test mette più `h.me = null` (nemmeno il degrado, che ora usa
+ * `SENZA_RUOLO`), quindi quel ramo 500 era codice morto: dava a chi leggeva l'apparenza di
+ * coprire «/api/me giù» senza coprirlo, e sarebbe tornato vivo per sbaglio al primo `h.me = null`
+ * scritto per tutt'altro motivo. «/api/me giù» è un guasto dichiarato e si misura dove esiste una
+ * fixture apposta per lui: `login-errori-servizio.test.tsx` (`meStato`, `meRifiuta`, `corpoRotto`,
+ * `corpoMuto`). Qui si misura la NAVIGAZIONE, e serve solo che il profilo arrivi.
+ */
 const fetchMock = vi.fn(async (url: string) => {
   if (String(url).includes('/api/auth/active-role')) {
-    return { ok: true, json: async () => ({ ok: true }) }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) }
   }
   if (String(url).includes('/api/me')) {
-    return { ok: Boolean(h.me), json: async () => h.me }
+    return { ok: true, status: 200, json: async () => h.me }
   }
-  return { ok: false, json: async () => null }
+  return { ok: false, status: 404, json: async () => null }
 })
 
 const DOCENTE = {
@@ -63,6 +75,14 @@ const DOCENTE = {
   role: 'educator',
   profili: [{ ruolo: 'educator', area: 'teacher' }],
 }
+/**
+ * La risposta ARRIVATA e VALIDA da cui però non si ricava nessun ruolo: è il vero degrado
+ * graceful, ed è la sola cosa che manda al `replace` di fondo funzione. Non va confusa con
+ * «/api/me giù», che dal 2026-08-03 è un guasto dichiarato e NON naviga affatto
+ * (`login-errori-servizio.test.tsx`): confonderle era il difetto: un 500 dopo un accesso
+ * riuscito finiva su `/`, la guardia d'area rispediva al login, e il giro non finiva mai.
+ */
+const SENZA_RUOLO = { id: 'u-1', role: null, profili: [] }
 const DOPPIO = {
   id: 'u-1',
   role: 'educator',
@@ -139,8 +159,8 @@ describe('S28 — dopo il login parte UNA sola navigazione', () => {
     expect(navigazioni()).toBe(1)
   })
 
-  it('degrado (/api/me giù): replace verso la radice e nient’altro', async () => {
-    h.me = null
+  it('degrado (profilo senza ruolo): replace verso la radice e nient’altro', async () => {
+    h.me = { ...SENZA_RUOLO }
     renderLogin()
     submitCredenziali()
 

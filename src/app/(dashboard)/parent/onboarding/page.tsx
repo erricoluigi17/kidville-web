@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { ShieldCheck, KeyRound, Loader2 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { Btn } from '@/components/ui/Btn';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Onboarding genitore (DL-045): primo accesso → password + consensi GDPR.
 // L'identità viene dalla sessione (URL → localStorage → /api/me), senza demo.
@@ -38,7 +39,8 @@ function Inner() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setError(j.error || t('erroreOperazione'));
+        // Niente prosa del server: è italiana per costruzione (T10-F1).
+        setError(soloCatalogoDaCorpo(j, t('erroreOperazione')));
         return;
       }
       router.push('/parent');

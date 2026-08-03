@@ -12,6 +12,7 @@ import { BUCKET_GALLERIA, percorsoNelBucket } from '@/lib/gallery/storage'
 import { percorsoNelBucket as percorsoDelBucket } from '@/lib/allegati/storage'
 import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegati'
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
+import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -221,20 +222,21 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
       'Area di sosta dei media di un articolo prima della pubblicazione: i file non sono legati a nessuna persona (nessuna colonna dice di chi è la foto), quindi non c’è niente da agganciare a una richiesta di oblio. Si svuota per SCADENZA, non per interessato — vedi `supabase/migrations/20260801130404_bucket_news_bozze.sql`.',
   },
   news: {
-    stato: 'coperto-fuori-oblio',
+    stato: 'coperto',
+    canali: ['alunno'],
     come:
-      'Blog pubblico. Fino al 2026-08-02 questa voce diceva «escluso: ci vanno solo media editoriali, ' +
-      'le foto dei bambini stanno in `gallery`» — e la frase era FALSA: `gate-consenso.ts`, scritto lo ' +
-      'stesso giorno, esiste apposta per autorizzare le foto di minori che hanno il consenso al canale ' +
-      '«sito», e il bucket è servito senza login. La foto di un bambino obliato restava quindi pubblica ' +
-      'per sempre. Ora la svuota `verificaPermanenzaConsenso` (`src/lib/news/permanenza-consenso.ts`), ' +
-      'che il tick di `news-tick` esegue ogni 10 minuti: rilegge `alunni.consenso_foto_sito`, e per ' +
-      'revoca, `anonimizzato_il` valorizzato o riga sparita ritira il post e toglie i file dal bucket. ' +
-      'La stessa regola vale a monte — un media diventa pubblico solo dopo il gate (`promuoviMediaBozza`) ' +
-      '— così la decisione del titolare del 2026-07-31 («in `news` solo ciò che può stare pubblico») ' +
-      'è fatta rispettare ai due capi invece che soltanto scritta. NON è ancora sincrona: ' +
-      '`obliaFotoNewsAlunno`, nello stesso modulo, è il gancio pronto per `anonimizzaAlunno`, e finché ' +
-      'non lo si aggancia la finestra fra l’oblio e il ritiro è di un tick.',
+      '`obliaFotoNewsAlunno` (`src/lib/news/permanenza-consenso.ts`), chiamata da `anonimizzaAlunno`: ' +
+      'ritira gli articoli che dichiarano il minore fra i ritratti, toglie i loro file dal bucket e ' +
+      'cancella il suo uuid dalla dichiarazione. Blog PUBBLICO, servito senza login — perciò, a ' +
+      'differenza della galleria, esce il FILE e non solo il tag: lasciarlo vorrebbe dire lasciare ' +
+      'online l’immagine di chi ha chiesto la cancellazione. Fino al 2026-08-02 questa voce diceva ' +
+      '«escluso: ci vanno solo media editoriali, le foto dei bambini stanno in `gallery`» — frase FALSA, ' +
+      'visto che `gate-consenso.ts` esiste apposta per autorizzare le foto di minori col consenso al ' +
+      'canale «sito». Al ritiro sincrono si aggiunge la rete del tick, `verificaPermanenzaConsenso` ' +
+      '(stesso modulo, ogni 10 minuti), che copre ciò che l’oblio non vede: la REVOCA senza ' +
+      'cancellazione, e i post fermi in bozza. A monte vale la regola gemella — un media diventa ' +
+      'pubblico solo dopo il gate (`promuoviMediaBozza`) — così la decisione del titolare del ' +
+      '2026-07-31 («in `news` solo ciò che può stare pubblico») è fatta rispettare ai due capi.',
   },
 }
 
@@ -591,6 +593,27 @@ export async function obliaPdfCredenziali(
  * Mai PII nei log: solo conteggi. Degrada in silenzio se la tabella non c'è (DB
  * E2E della CI non migrato).
  */
+/**
+ * `consents_log` senza l'indirizzo di rete, oppure `undefined` se non c'è niente
+ * da togliere — e la differenza fra le due cose è il punto.
+ *
+ * Ritornare `undefined` significa «non scrivere questa colonna». Serve perché le 93
+ * domande raccolte prima dell'informativa hanno `consents_log IS NULL`
+ * (migrazione `20260731165941`): sovrascriverle con `{}` cancellerebbe la
+ * differenza fra «informativa mai accettata» e «accettata e poi ripulita dall'oblio»,
+ * cioè proprio il fatto storico che quella migrazione esiste per conservare.
+ *
+ * Le chiavi sono quelle misurate in produzione il 2026-08-03:
+ * `{ accettato_il, blocchi, ip, userAgent, versione_informativa }`.
+ */
+function consentsLogSenzaRete(valore: unknown): Record<string, unknown> | undefined {
+  if (valore == null || typeof valore !== 'object' || Array.isArray(valore)) return undefined
+  const log = valore as Record<string, unknown>
+  if (!('ip' in log) && !('userAgent' in log) && !('user_agent' in log)) return undefined
+  const fuori = new Set(['ip', 'userAgent', 'user_agent'])
+  return Object.fromEntries(Object.entries(log).filter(([k]) => !fuori.has(k)))
+}
+
 export async function obliaIscrizioni(
   supabase: SupabaseClient,
   soggetti: SoggettiIscrizione,
@@ -617,7 +640,7 @@ export async function obliaIscrizioni(
   // Le domande candidate si raccolgono PRIMA e si scrivono UNA volta sola: una
   // domanda che contiene sia il bambino sia il genitore non va riscritta due
   // volte (la seconda ripartirebbe dal `data` già letto, non da quello scritto).
-  const candidate = new Map<string, unknown>()
+  const candidate = new Map<string, { data: unknown; consentsLog: unknown }>()
   const filtri: Record<string, unknown>[] = []
   for (const ramo of ['children', 'adults'] as const) {
     for (const cf of cfVarianti) {
@@ -630,7 +653,10 @@ export async function obliaIscrizioni(
   for (const filtro of filtri) {
     const { data, error } = await supabase
       .from('enrollment_submissions')
-      .select('id, data')
+      // `consents_log` si legge INSIEME a `data`: porta l'ip e lo user-agent della
+      // famiglia, e fino al 2026-08-03 nessuno lo toglieva (rilievo `V1`, misurato:
+      // 170 righe su 263 lo hanno, tutte e 170 con entrambi i campi).
+      .select('id, data, consents_log')
       .contains('data', filtro)
     if (error) {
       if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_iscrizioni_select' }, error)
@@ -638,19 +664,35 @@ export async function obliaIscrizioni(
       // gli altri filtri produrrebbe solo altre righe di log identiche.
       return { domandeScrubbate: 0, documenti: [] }
     }
-    for (const r of (data ?? []) as { id: string; data: unknown }[]) {
-      if (!candidate.has(r.id)) candidate.set(r.id, r.data)
+    for (const r of (data ?? []) as { id: string; data: unknown; consents_log?: unknown }[]) {
+      if (!candidate.has(r.id)) candidate.set(r.id, { data: r.data, consentsLog: r.consents_log })
     }
   }
 
   let domandeScrubbate = 0
   const documenti: string[] = []
-  for (const [id, dataOriginale] of candidate) {
-    const scrub = scrubDomandaIscrizione(dataOriginale, soggetti, at)
+  for (const [id, riga] of candidate) {
+    const scrub = scrubDomandaIscrizione(riga.data, soggetti, at)
     if (scrub.personeScrubbate === 0) continue
+    const patch: Record<string, unknown> = { data: scrub.data, updated_at: at }
+    // LA PROVA DEL CONSENSO RESTA, L'INDIRIZZO DI RETE NO.
+    //
+    // Si tolgono `ip` e `userAgent`; restano `accettato_il`, `versione_informativa`
+    // e `blocchi`. Sono LORO la prova che l'informativa è stata accettata (art. 5 §2
+    // e art. 7 §1 GDPR): l'indirizzo di rete non dimostra niente di più e identifica
+    // una persona. È la stessa scelta già fatta per `consensi_accettazioni` in
+    // `scrubProvaConsensi` — una regola valida per due archivi non può avere due
+    // risposte diverse.
+    //
+    // Si scrive SOLO se c'era qualcosa da togliere: mettere `{}` dove c'era `null`
+    // cancellerebbe la differenza fra «informativa mai accettata» e «accettata e poi
+    // ripulita», cioè il fatto storico che la migrazione 20260731165941 esiste
+    // apposta per conservare sulle 93 domande raccolte prima dell'informativa.
+    const senzaRete = consentsLogSenzaRete(riga.consentsLog)
+    if (senzaRete !== undefined) patch.consents_log = senzaRete
     const { error: errUpd } = await supabase
       .from('enrollment_submissions')
-      .update({ data: scrub.data, updated_at: at })
+      .update(patch)
       .eq('id', id)
     if (errUpd) {
       // Non si tace: questa è la riga che conserva il codice fiscale e i dati
@@ -859,6 +901,8 @@ export async function anonimizzaParent(
   op: string,
 ): Promise<{
   newsVisualizzazioniRimosse: number
+  /** Dispositivi che smettono di ricevere le notifiche della scuola. */
+  pushSubscriptionsRimosse: number
   segnalazioniBonificate: number
   sospensioniBonificate: number
   provaConsensiScrubbate: number
@@ -911,6 +955,48 @@ export async function anonimizzaParent(
       if (!schemaAssente(errVis)) logErrore({ operazione: op, evento: 'oblio_news_visualizzazioni' }, errVis)
     } else {
       newsVisualizzazioniRimosse = (visDel ?? []).length
+    }
+  }
+
+  // 3-bis. L'ISCRIZIONE PUSH DI OGNI DISPOSITIVO DI QUESTA IDENTITÀ.
+  //
+  // Misurato in produzione il 2026-08-03: `push_subscriptions` ha 77 righe, tutte e
+  // 77 con lo `user_agent` valorizzato, su 4 utenti — e questo file non la nominava
+  // da nessuna parte.
+  //
+  // È un archivio DIVERSO da quello del rilievo `V1`, che parlava di `consents_log`:
+  // quello è una COLONNA jsonb di `enrollment_submissions` (170 righe su 263 con ip e
+  // userAgent) e viene ripulito in `obliaIscrizioni`. Il rilievo era esatto; questa è
+  // una seconda falla, trovata cercandolo, e nessun tester l'aveva vista.
+  //
+  // SI CANCELLA LA RIGA, non si scrubba il solo `user_agent`: la riga INTERA è un
+  // identificatore. L'`endpoint` è il recapito di quel telefono ed è tutto ciò che
+  // serve per continuare a mandargli notifiche. Lasciarla dopo un'anonimizzazione
+  // vuol dire che il dispositivo di una famiglia che se n'è andata continua a
+  // ricevere le comunicazioni della scuola, agganciato a un `utente_id` che nessuno
+  // può più risolvere a una persona: il dato resta e la sua chiave di lettura no.
+  //
+  // Stessa classe di T17-F1 (il logout che non deregistrava la push): un'iscrizione
+  // che sopravvive all'identità che l'ha creata. Lì il rimedio era per il dispositivo,
+  // qui per la persona.
+  //
+  // SPAZIO-ID: `push_subscriptions.utente_id` è scritta con `auth.user.id`
+  // (= `utenti.id`), non con `parents.id` — come `news_visualizzazioni` qui sopra.
+  // Senza il ponte non si cancella niente: cancellare «a naso» toglierebbe il
+  // telefono a un'altra famiglia.
+  let pushSubscriptionsRimosse = 0
+  if (authUserId) {
+    const { data: pushDel, error: errPush } = await supabase
+      .from('push_subscriptions')
+      .delete()
+      .in('utente_id', [authUserId])
+      .select('id')
+    if (errPush) {
+      // PostgREST non lancia: ritorna `{ error }`. Un oblio che fallisce qui e tace
+      // fa rispondere «fatto» a una famiglia mentre il suo telefono resta iscritto.
+      if (!schemaAssente(errPush)) logErrore({ operazione: op, evento: 'oblio_push_subscriptions' }, errPush)
+    } else {
+      pushSubscriptionsRimosse = (pushDel ?? []).length
     }
   }
 
@@ -1017,6 +1103,7 @@ export async function anonimizzaParent(
 
   return {
     newsVisualizzazioniRimosse,
+    pushSubscriptionsRimosse,
     segnalazioniBonificate,
     sospensioniBonificate,
     provaConsensiScrubbate,
@@ -1244,6 +1331,17 @@ export async function anonimizzaAlunno(
   //     bonificare: cancellare prima i media renderebbe quel ramo cieco.
   const foto = await obliaFotoAlunno(supabase, alunno.id, op)
 
+  // 3g-bis. Le foto del minore sul BLOG PUBBLICO. È l'unico bucket servito senza
+  //     login: la galleria di 3g è privata, questo no. Fino al 2026-08-03 l'oblio
+  //     non ci arrivava da qui — `obliaFotoNewsAlunno` era scritta, testata e non
+  //     chiamata da nessuna parte in `src/` — e la copertura passava solo dal
+  //     tick, che rilegge i consensi ogni dieci minuti. Dieci minuti sono poco
+  //     per un archivio e tanto per una famiglia che ha appena esercitato un
+  //     diritto su un indirizzo pubblico. Il tick resta (prende anche i casi che
+  //     non passano di qui: la revoca senza oblio, i post fermi in bozza), ma non
+  //     è più l'unica cosa.
+  const fotoNews = await obliaFotoNewsAlunno(supabase, alunno.id, op)
+
   // 3h. GLI ALTRI MAGAZZINI (privacy #2 del 2026-08-02). Le pagelle, i
   //     certificati medici e gli allegati scambiati in chat: tre bucket che
   //     nessun canale di oblio aveva mai toccato. Vedi `REGISTRO_BUCKET_OBLIO`
@@ -1291,13 +1389,19 @@ export async function anonimizzaAlunno(
     riconciliazione,
     incassi,
     cassa,
-    file: esitoFile.rimossi + pagelle.rimossi + certificati.rimossi + allegatiChat.rimossi,
+    file:
+      esitoFile.rimossi +
+      pagelle.rimossi +
+      certificati.rimossi +
+      allegatiChat.rimossi +
+      fotoNews.fileRimossi,
     fileNonRimossi:
       esitoFile.nonRimossi +
       foto.fileNonRimossi +
       pagelle.nonRimossi +
       certificati.nonRimossi +
-      allegatiChat.nonRimossi,
+      allegatiChat.nonRimossi +
+      fotoNews.fileNonRimossi,
     segnalazioniBonificate,
     sospensioniBonificate,
     iscrizioniScrubbate: iscr.domandeScrubbate,

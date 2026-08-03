@@ -31,12 +31,21 @@ import LoginPage from '@/app/auth/login/page'
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   if (String(url).includes('/api/auth/active-role')) {
     h.activeRoleBodies.push(JSON.parse(String(init?.body ?? 'null')))
-    return { ok: h.activeRoleOk, json: async () => ({ ok: h.activeRoleOk }) }
+    return {
+      ok: h.activeRoleOk,
+      status: h.activeRoleOk ? 200 : 403,
+      json: async () => ({ ok: h.activeRoleOk }),
+    }
   }
+  // ⚠️ 200 SEMPRE, ED È UNA SCELTA. Qui c'era `{ ok: Boolean(h.me), status: h.me ? 200 : 500 }`:
+  // un interruttore solo per due grandezze diverse (il corpo e la riuscita). Dopo W8-bis nessun
+  // test mette più `h.me = null` — il degrado si prova con `SENZA_RUOLO` — quindi il ramo 500 era
+  // codice morto che dava l'apparenza di coprire «/api/me giù». Quel guasto ha una fixture sua,
+  // in `login-errori-servizio.test.tsx`; qui si misura lo SMISTAMENTO.
   if (String(url).includes('/api/me')) {
-    return { ok: Boolean(h.me), json: async () => h.me }
+    return { ok: true, status: 200, json: async () => h.me }
   }
-  return { ok: false, json: async () => null }
+  return { ok: false, status: 404, json: async () => null }
 })
 
 const DOCENTE = {
@@ -44,6 +53,13 @@ const DOCENTE = {
   role: 'educator',
   profili: [{ ruolo: 'educator', area: 'teacher' }],
 }
+/**
+ * Risposta ARRIVATA e valida, ma senza un ruolo da cui smistare: è l'unico caso che porta al
+ * `replace` di degrado. «/api/me giù» non ci porta più (dal 2026-08-03 è un guasto dichiarato,
+ * con messaggio e log e nessuna navigazione — vedi `login-errori-servizio.test.tsx`), e i due
+ * controlli sull'open redirect qui sotto devono restare agganciati al ramo che esiste davvero.
+ */
+const SENZA_RUOLO = { id: 'u-1', role: null, profili: [] }
 const DOPPIO = {
   id: 'u-1',
   role: 'educator',
@@ -101,16 +117,16 @@ describe('SMOKE M4B — login docente → /teacher', () => {
     await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/teacher'))
   })
 
-  it('degrado (/api/me giù): next con URL esterno NON viene onorato (open redirect)', async () => {
-    h.me = null
+  it('degrado (profilo senza ruolo): next con URL esterno NON viene onorato (open redirect)', async () => {
+    h.me = { ...SENZA_RUOLO }
     mockSearch = new URLSearchParams('next=https://evil.com')
     renderLogin()
     submitCredenziali()
     await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/'))
   })
 
-  it('degrado (/api/me giù): next interno a un\'area resta onorato', async () => {
-    h.me = null
+  it('degrado (profilo senza ruolo): next interno a un\'area resta onorato', async () => {
+    h.me = { ...SENZA_RUOLO }
     mockSearch = new URLSearchParams('next=/teacher/registro')
     renderLogin()
     submitCredenziali()

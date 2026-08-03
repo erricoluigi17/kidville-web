@@ -36,6 +36,7 @@ const perm = vi.hoisted(() => ({
     ritirati: 0,
     fileRimossi: 0,
     fileNonRimossi: 0,
+    fileTrattenuti: 0,
   },
   verificaPermanenzaConsenso: vi.fn<(...a: unknown[]) => Promise<Record<string, unknown>>>(),
 }))
@@ -123,7 +124,15 @@ beforeEach(() => {
   ordine.passi = []
   db.state.programmate = []
   db.state.updates = []
-  perm.esito = { disponibile: true, verificato: true, esaminati: 0, ritirati: 0, fileRimossi: 0, fileNonRimossi: 0 }
+  perm.esito = {
+    disponibile: true,
+    verificato: true,
+    esaminati: 0,
+    ritirati: 0,
+    fileRimossi: 0,
+    fileNonRimossi: 0,
+    fileTrattenuti: 0,
+  }
   perm.verificaPermanenzaConsenso.mockImplementation(async () => perm.esito)
   supa.createAdminClient.mockResolvedValue(db.client())
 })
@@ -156,6 +165,35 @@ describe('POST /api/news/cron/run · tick — il consenso si rilegge a ogni giro
     expect(news.notificaNewsPubblicata).not.toHaveBeenCalled()
     expect(log.logEvento).toHaveBeenCalledWith(
       'cron', 'error', expect.objectContaining({ esito: 'promozione-sospesa-consenso-non-verificato' }),
+    )
+  })
+
+  it('un file TRATTENUTO dopo il ritiro risale al cron, non resta un `warn` nel modulo', async () => {
+    // Il ritiro può non togliere il file: succede quando la foto di un bambino il
+    // cui consenso è caduto è nominata anche da un post che quel bambino NON lo
+    // dichiara. Si preferisce non rompere l'articolo altrui, e la conseguenza è
+    // che una foto resta a un indirizzo PUBBLICO. Fino al 2026-08-03 l'unica
+    // traccia era un `warn` dentro il modulo, ripetuto identico a ogni passata —
+    // cioè indistinguibile dal rumore, cioè invisibile. Il tick prosegue (non è un
+    // guasto della promozione), ma il numero si vede.
+    perm.esito = { ...perm.esito, ritirati: 2, fileTrattenuti: 3 }
+    const res = await tick()
+    expect(res.status).toBe(200)
+    expect(log.logEvento).toHaveBeenCalledWith(
+      'cron',
+      'error',
+      expect.objectContaining({ esito: 'file-pubblici-trattenuti', n_file: 3 }),
+    )
+  })
+
+  it('CONTROLLO POSITIVO — nessun file trattenuto → nessun allarme', async () => {
+    // Senza, «l'allarme c'è quando serve» sarebbe verde anche in un tick che grida
+    // a ogni giro: un canale d'errore che suona sempre non dice più niente.
+    await tick()
+    expect(log.logEvento).not.toHaveBeenCalledWith(
+      'cron',
+      'error',
+      expect.objectContaining({ esito: 'file-pubblici-trattenuti' }),
     )
   })
 

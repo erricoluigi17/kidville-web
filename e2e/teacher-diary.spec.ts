@@ -43,7 +43,25 @@ async function mostraTuttiIBambini(page: import('@playwright/test').Page) {
 test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await page.goto('/teacher/diary');
 
-  await expect(page.getByRole('heading', { name: 'Diario del giorno' })).toBeVisible();
+  // ⏱️ TIMEOUT ESPLICITO, come sulla riga sotto — e non è un modo di far tacere il test.
+  //
+  // Questa intestazione compare solo dopo che la pagina, che è client-side, ha finito di
+  // caricare i suoi dati. Misurato sul trace della CI del 2026-08-03: la navigazione parte
+  // a 21:05:36.5, `/api/diary/students` risponde **200** e si chiude a ~21:05:43.2 — cioè
+  // **6,7 s** dopo. Con il timeout di default (5 s) l'asserzione scadeva a ~21:05:42.5,
+  // mezzo secondo prima che la pagina avesse i dati per disegnarsi.
+  //
+  // Che NON fosse un guasto lo dicono tre misure sullo stesso trace: tutte e 11 le chiamate
+  // API tornano 200; la snapshot finale contiene «Diario del giorno»; e non contiene più
+  // «In caricamento…». La pagina si renderizza: il test la guardava troppo presto.
+  //
+  // Perché proprio qui: la CI esegue l'E2E su `next dev` (compilazione a richiesta, HMR,
+  // service worker che registra e chiede `/offline`), quindi il primo ingresso su una rotta
+  // paga la compilazione. La riga qui sotto aveva già 15 s per questo motivo: la prima ne
+  // aveva 5 per svista, ed è quella che entra per prima nella pagina.
+  await expect(page.getByRole('heading', { name: 'Diario del giorno' })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(page.getByText('Cosa vuoi registrare?')).toBeVisible({ timeout: 15_000 });
   await mostraTuttiIBambini(page);
 

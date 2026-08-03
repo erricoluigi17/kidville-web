@@ -30,10 +30,18 @@ import {
  * nel DOM da fuori perde**. L'unico modo di vincere è che sia React a sapere.
  *
  * ─── PERCHÉ LO SCRIPT INLINE RESTA ─────────────────────────────────────────
- * Non è ridondanza. Quando l'app è appena installata e non c'è rete, il Service
- * Worker ha in cache il DOCUMENTO `/offline` ma non i chunk di Next
- * (`precarica()` salva la pagina, non il suo bundle): React non idrata affatto,
- * e l'unico codice che gira è quello inline. Quindi: lo script inline copre il
+ * Non è ridondanza: è il codice che gira quando React non può girare. Fino al
+ * 2026-08-03 qui c'era scritto che il Service Worker «salva la pagina, non il
+ * suo bundle» — ed era esattamente il difetto T16-F1: `precarica()` metteva in
+ * cache UN SOLO oggetto, il documento. Con 14 chunk su 15 già in cache (i
+ * condivisi li scrive `assetStatico` navigando) React partiva, non trovava il
+ * quindicesimo e l'error boundary si mangiava la pagina — «QUALCOSA È ANDATO
+ * STORTO» al posto di «non sei in rete». Ora `precarica()` salva anche le
+ * sotto-risorse `/_next/` del documento (`precaricaSottoRisorse` in
+ * `public/sw.js`): mezzo bundle è peggio di nessun bundle.
+ * Restano i casi in cui il bundle non c'è o è monco: pre-cache interrotto a
+ * metà, `SHELL_MINIMA`, sviluppo (i chunk non sono immutabili e non si cachano),
+ * un dispositivo col Service Worker vecchio. Quindi: lo script inline copre il
  * pre-idratazione e il senza-bundle, questo componente copre tutto il resto.
  * Le due implementazioni condividono le funzioni pure di `./script-offline` per
  * quanto è possibile, e `__tests__/offline/equivalenza-offline.test.ts` verifica

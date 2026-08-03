@@ -26,7 +26,9 @@ const h = vi.hoisted(() => ({
   // canned data / capture
   alunni: [] as Array<Record<string, unknown>>,
   avvisi: [] as Array<Record<string, unknown>>,
-  author: { nome: null, cognome: null, ruolo: null, first_name: 'Anna', last_name: 'Bianchi', role: 'educator' } as Record<string, unknown>,
+  // `id` c'è perché la lettura degli autori ora è in BLOCCO (`.in('id', …)`):
+  // senza, la riga non sarebbe associabile al proprio avviso.
+  author: { id: 'aut1', nome: null, cognome: null, ruolo: null, first_name: 'Anna', last_name: 'Bianchi', role: 'educator' } as Record<string, unknown>,
   risposte: [] as Array<Record<string, unknown>>,
   // Sezioni della sede su cui si pubblica: dal 2026-07-31 il POST verifica che
   // ogni classe destinataria esista NELLA SEDE risolta (W2-B). Qui la sede è una
@@ -63,7 +65,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'alunni') return { data: h.alunni, error: null }
         if (table === 'avvisi') return { data: h.avvisi, error: null }
         if (table === 'sections') return { data: h.sezioni, error: null }
-        if (table === 'utenti') return { data: h.author, error: null }
+        if (table === 'utenti') return { data: [h.author], error: null }
         if (table === 'avvisi_risposte') {
           if (st.count) {
             if (st.notNull === 'letto_il') return { count: 0 }
@@ -82,9 +84,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.in = () => b
       b.not = (c: string) => { st.notNull = c; return b }
       b.limit = () => b
+      // Le statistiche degli avvisi si leggono in BLOCCO e paginate (T11-F2):
+      // `.range()` è la chiamata che chiude la catena, non più `.then()`.
+      b.range = async () => (table === 'avvisi_risposte'
+        ? { data: h.risposte, count: h.risposte.length, error: null }
+        : { data: [], count: 0, error: null })
       b.insert = (rec: Record<string, unknown>) => { h.lastInsert = rec; st.inserted = rec; return b }
       b.single = async () => (table === 'avvisi' && st.inserted ? { data: { id: 'new-av', ...st.inserted }, error: null } : result())
-      b.maybeSingle = async () => result()
+      // `result()` parla la lingua di PostgREST (elenchi); `maybeSingle` è la
+      // stessa lettura ridotta a una riga sola.
+      b.maybeSingle = async () => {
+        const r = result() as { data: unknown; error?: unknown }
+        return Array.isArray(r.data) ? { data: r.data[0] ?? null, error: r.error ?? null } : r
+      }
       b.then = (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => Promise.resolve(result()).then(onF, onR)
       return b
     },

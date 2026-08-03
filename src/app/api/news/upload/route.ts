@@ -84,7 +84,12 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
           size: file.size,
           motivo: analisi.motivo,
         })
-        return NextResponse.json({ error: MESSAGGIO_VIDEO_NON_CONVERTIBILE }, { status: 415 })
+        // `codice` accanto alla prosa (gemello di `gallery/upload`): il testo nasce
+        // italiano in una libreria condivisa, il codice lo fa tradurre nel client.
+        return NextResponse.json(
+          { error: MESSAGGIO_VIDEO_NON_CONVERTIBILE, codice: 'VIDEO_NON_CONVERTIBILE' },
+          { status: 415 },
+        )
       }
     }
 

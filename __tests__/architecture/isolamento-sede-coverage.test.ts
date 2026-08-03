@@ -795,7 +795,36 @@ const AMMESSE: Record<string, string> = {
     // Gate per LEGAME genitore↔figlio, fuori dall area `parent/`.
     'notes/sign:POST': 'legame genitore↔figlio (genitoreHasFiglio) sulla nota da firmare',
     'locker/notify:POST': 'legame genitore↔figlio: avviso armadietto al genitore del bambino',
-    'segnalazioni:<modulo>': 'legame genitore↔figlio + self sulla propria segnalazione',
+    // `segnalazioni:<modulo>` NON è più qui (2026-08-03). Diceva «legame
+    // genitore↔figlio + self sulla propria segnalazione», e per i genitori era
+    // vero; per tutti gli altri non c'era NIENTE — `verificaAccesso` leggeva
+    // `galleria_media_v2` e `eventi_diario` senza nessun filtro di sede, e la
+    // riga di allowlist copriva quel vuoto mentre lo faceva sembrare una scelta.
+    // Ora il modulo risolve le sedi del segnalante (`scuoleDiUtente`, o i plessi
+    // dei figli per il genitore) e filtra `.in('scuola_id', sedi)` nella stessa
+    // query.
+    //
+    // ⚠️ MA QUESTO LOCK QUEI TRE FILTRI NON LI VEDE, e la riga precedente diceva
+    // il contrario («il lock lo riconosce da solo»). MISURATO il 2026-08-03:
+    // togliendo tutti e tre i `.in('scuola_id', sedi)` dalla route, questo file
+    // resta 20/20 VERDE. Il motivo sta nelle regole scritte in cima: le letture
+    // di `galleria_media_v2` e `eventi_diario` sono `.eq('id', …).maybeSingle()`,
+    // cioè UNA RIGA, e la regola per query sugli elenchi non le guarda; la
+    // lettura d'elenco su `alunni` è agganciata a `figli`, che viene da una query
+    // precedente (`chiaveDerivata`). L'unica regola che arriva fin qui è quella
+    // d'insieme, e le basta che il modulo NOMINI uno scope: `scuoleDiUtente`
+    // dentro `sediDelSegnalante` la soddisfa. Infatti — misurato lo stesso
+    // giorno — togliendo ANCHE quella chiamata il lock diventa rosso, con
+    // `handler-senza-scope su alunni`. Cioè: qui il lock certifica che una sede
+    // si calcola, non che la si usi come filtro.
+    //
+    // L'esenzione resta tolta perché il debito è pagato davvero, non perché
+    // questo lock lo dimostri. A dimostrarlo sono i test di comportamento —
+    // `__tests__/api/segnalazioni-scope-sede.test.ts`, che con un finto client
+    // che i filtri li APPLICA diventa rosso (3 casi) appena si toglie il filtro
+    // sui media. Chi legge questa riga e sta per fidarsi del lock su una route
+    // «coperta» faccia la stessa prova: tolga il presidio e guardi se qualcosa
+    // diventa rosso. È l'unica misura che vale.
 
     // ── Scope CONVERSAZIONE: si accede solo ai thread di cui si è partecipanti ──
     // `chat_threads` porta `teacher_id`/`parent_id`: il gate è l'appartenenza,
@@ -940,8 +969,27 @@ const AMMESSE: Record<string, string> = {
     'primaria/prospetto:GET': "materie della sezione dell'alunno verificato",
     'primaria/registro:GET': 'nomi dei docenti che hanno firmato le righe già lette per sezione',
     'avvisi/[id]/risposte:POST': 'risposta a un avviso già verificato: la riga esistente si cerca per `avviso_id`',
-    'gallery:PATCH': "galleria: il media è letto, l'autorizzazione verificata (autore o docente delle classi taggate) e poi aggiornato per id",
-    'gallery:DELETE': 'idem in cancellazione',
+    // ⚠️ Queste due voci dicevano «il media è letto, l'autorizzazione verificata
+    // e poi aggiornato per id», e con quella frase esentavano l'INTERO handler.
+    // Era più larga della realtà, e la larghezza si è pagata: il `PATCH`
+    // accettava `tag_students` di minori di un'altra sede e il Privacy Lock ne
+    // restituiva NOME e COGNOME nel 422 (T05-F1, 2026-08-03). Il lock non aveva
+    // sbagliato a misurare — gli era stato detto di non guardare quell'handler.
+    // Ora ogni voce nomina LA QUERY che copre, e niente di più: il gate dei tag
+    // (`assertTagStudentsInScope`) e l'aggiornamento per id sono presìdi veri, e
+    // questo lock li riconosce da sé.
+    'gallery:PATCH':
+        "una sola lettura resta senza filtro di sede, ed è quella dei media caricati DA CHI CHIAMA " +
+        "(`select('tag_students').eq('uploaded_by', <identità del gate>)`): serve a dedurre le classi del " +
+        'docente, la chiave è la sua stessa identità e non un id scelto dal client, e gli alunni che ne ' +
+        "escono sono subito ristretti con `.in('scuola_id', plessi)`. Tutto il resto dell'handler è " +
+        'presidiato: il media è letto per id e la sua `scuola_id` confrontata con `scuoleDiUtente` prima ' +
+        'di ogni valutazione, i tag passano da `assertTagStudentsInScope` e la riga si riscrive per id.',
+    'gallery:DELETE':
+        'la stessa lettura dei propri media (stessa chiave, stessa ragione), più il `delete().eq(\'id\', id)` ' +
+        'sulla riga già letta e verificata per sede in questo stesso handler: il confronto è scritto a mano ' +
+        '(`plessi.includes(sedeMedia)`) e il lock non lo riconosce come gate, ma nega eccome — è il primo ' +
+        'blocco della DELETE, prima di qualunque permesso.',
     // `diary/checkin:GET`, `locker/inventory:GET` e `locker/inventory:POST`
     // stavano qui e dicevano «di UN alunno, verificato prima». NON era vero: la
     // verifica esisteva solo per il genitore. Ora esiste per tutti
@@ -1094,7 +1142,18 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `anonimizzaAlunno`/`anonimizzaParent`, le stesse funzioni degli altri due
             // canali di oblio. Non è un presidio tolto: è la terza copia di una procedura
             // che smette di esistere, e con lei l'esenzione che le serviva.
-            handlerEsentati: 93,
+            //
+            // 93 → 92 il 2026-08-03: via `segnalazioni:<modulo>`. Non è una route
+            // cancellata, è un debito pagato — e il debito era più grosso di quanto
+            // l'esenzione lasciasse credere: la sua ragione («legame genitore↔figlio»)
+            // descriveva il ramo dei GENITORI, mentre per docenti, segreteria e admin
+            // `verificaAccesso` non aveva alcun controllo, né di sede né d'altro. Ora
+            // media e voci di diario si leggono con `.in('scuola_id', sedi)` nella stessa
+            // query. Quello che questo lock verifica di quel presidio è però SOLO che
+            // una sede venga calcolata (regola d'insieme): i tre filtri non li vede —
+            // misurato, vedi la nota accanto alla voce tolta in AMMESSE. La prova sta
+            // in `__tests__/api/segnalazioni-scope-sede.test.ts`.
+            handlerEsentati: 92,
         })
     })
 })

@@ -80,16 +80,37 @@ export const ATTRIBUTO_POSSESSO = 'data-kv-owner';
  *
  *  · **Nessun `<script src=".../_next/...">` nel documento** → non c'è bundle,
  *    React non idraterà mai: si disegna SUBITO, senza un millisecondo d'attesa.
- *    È il caso per cui questo script esiste (documento servito dalla
- *    CacheStorage a un'app appena installata e senza rete).
+ *    Attenzione a cosa dice davvero questa condizione: guarda i TAG del
+ *    documento, non se il loro contenuto sia arrivato. `/offline` è HTML
+ *    statico e i tag ce li ha sempre, anche servito dalla CacheStorage: qui ci
+ *    si passa solo con un guscio che non ne ha (la `SHELL_MINIMA` di
+ *    `public/sw.js`).
  *  · **Il bundle c'è** → si aspetta. O React dichiara il possesso — e allora qui
  *    non si tocca nulla, e il mismatch non può esistere — oppure uno di quegli
- *    script FALLISCE (offline: i chunk non sono in cache), e allora l'idratazione
- *    non avverrà mai: si disegna subito lo stesso.
+ *    script FALLISCE, e si disegna subito lo stesso.
  *  · **Ultima rete**: `ATTESA_REACT_MS`. Serve al caso in cui l'evento `error`
  *    è già passato prima che noi potessimo ascoltarlo, o in cui il bundle si
  *    carica ma l'idratazione non arriva (un errore nel bundle stesso). Meglio un
  *    elenco in ritardo di un elenco mai.
+ *
+ * ─── QUELL'`error` NON SIGNIFICA «REACT NON ARRIVERÀ» ──────────────────────
+ * Per tre giri di questo commento qui c'era scritto che un chunk che non si
+ * carica rende «l'idratazione impossibile». È vero solo se falliscono TUTTI.
+ * Con 14 chunk su 15 in cache — che è lo stato stazionario di chi ha usato
+ * l'app qualche volta, perché i chunk condivisi con `/auth/login` li scrive
+ * `assetStatico` durante la navigazione normale — React PARTE, non trova
+ * l'unico che gli manca e muore: l'error boundary sostituisce l'intero albero,
+ * compreso ciò che questo script aveva appena disegnato. È il difetto T16-F1
+ * (misurato il 2026-08-03 su una build di produzione, 3 volte su 3): senza rete
+ * si leggeva «QUALCOSA È ANDATO STORTO» invece della pagina «non sei in rete».
+ *
+ * La correzione NON sta qui — un elenco che l'error boundary cancella un
+ * istante dopo non lo salva nessun ritardo — ma in `public/sw.js`:
+ * `precaricaSottoRisorse()` salva il documento **insieme** alle sue
+ * sotto-risorse `/_next/`, così il bundle o c'è tutto o non c'è affatto. Questo
+ * `error` resta quel che è sempre stato: l'unico segnale disponibile che
+ * qualcosa manca. Disegnare è comunque meglio che fissare un elenco vuoto fino
+ * alla scadenza, e se poi React arriva la staffetta qui sotto tiene.
  */
 
 /**
@@ -128,11 +149,14 @@ const ASSET = /\.(?:js|mjs|css|map|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|avif|ic
  * che vale DOPO l'idratazione di React.
  *
  * PERCHÉ ESISTONO DUE IMPLEMENTAZIONI. Lo script inline è l'unico che funziona
- * quando il documento arriva dalla CacheStorage senza il bundle di Next (app
- * appena installata e senza rete: `precarica()` salva /offline, non i suoi
- * chunk). React è l'unico che funziona DOPO l'idratazione, perché il DOM lo
- * possiede lui e qualunque modifica fatta da fuori viene disfatta. Servono
- * entrambi, e la duplicazione è il prezzo.
+ * quando il documento arriva dalla CacheStorage senza un bundle di Next
+ * COMPLETO: la `SHELL_MINIMA`, un pre-cache interrotto a metà, lo sviluppo (dove
+ * i chunk non sono immutabili e non si cachano), un dispositivo col Service
+ * Worker vecchio. Non è più il caso NORMALE: dal 2026-08-03 `precarica()` salva
+ * /offline **e** le sue sotto-risorse `/_next/` — prima ne salvava il solo
+ * documento, ed era il difetto T16-F1. React è l'unico che funziona DOPO
+ * l'idratazione, perché il DOM lo possiede lui e qualunque modifica fatta da
+ * fuori viene disfatta. Servono entrambi, e la duplicazione è il prezzo.
  *
  * Quel prezzo non lo si paga in silenzio: `__tests__/offline/equivalenza-offline.test.ts`
  * esegue le due implementazioni sugli STESSI ingressi e pretende lo stesso
@@ -350,7 +374,11 @@ azione();
 /* L'ultima rete si arma PER PRIMA: se qualcosa andasse storto qui sotto,
    l'elenco deve comparire lo stesso. */
 setTimeout(ora,ATTESA);
-/* Un chunk che non si carica = idratazione impossibile: niente da aspettare. */
+/* Un chunk che non si carica. Se falliscono TUTTI, React non idraterà mai e la
+   pagina è nostra; se ne manca UNO SOLO, React parte e poi muore, e l'elenco lo
+   cancella l'error boundary (il difetto T16-F1: la cura sta in public/sw.js,
+   che pre-cacha i pezzi insieme al documento). In entrambi i casi aspettare
+   ancora non serve a niente, quindi si disegna. */
 for(var i=0;i<bundle.length;i++){bundle[i].addEventListener('error',ora);}
 }
 

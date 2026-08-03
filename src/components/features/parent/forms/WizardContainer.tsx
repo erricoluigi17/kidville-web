@@ -158,7 +158,13 @@ export function WizardContainer({
         const json = await res.json()
         if (!res.ok) {
           if (res.status === 400 && mappaErroriServer(json?.campi)) return
-          throw new Error(json.error ?? 'Invio OTP fallito')
+          // ETICHETTA STABILE, non `json.error`. A schermo quella prosa non
+          // arriva comunque (il `catch` mostra `t('erroreInvioModulo')`), ma
+          // `err.stack` — che il log porta con sé — comincia con il MESSAGGIO:
+          // la frase del server ci finiva dentro tale e quale, e può contenere
+          // il nome di un bambino. Lo status è un numero: passa la lista bianca
+          // di `redact` ed è l'unica cosa che distingue un 400 da un 503.
+          throw new Error(`invio-otp-modulo: HTTP ${res.status}`)
         }
         setOtp({ submissionId: json.submissionId, devCode: json.devCode })
       } else {
@@ -178,7 +184,8 @@ export function WizardContainer({
         const json = await res.json()
         if (!res.ok) {
           if (res.status === 400 && mappaErroriServer(json?.campi)) return
-          throw new Error(json.error ?? 'Invio fallito')
+          // Etichetta stabile e non la prosa del server: vedi sopra.
+          throw new Error(`invio-modulo: HTTP ${res.status}`)
         }
         setDone(true)
       }

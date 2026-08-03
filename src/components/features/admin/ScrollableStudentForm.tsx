@@ -444,7 +444,9 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                             </AnimatePresence>
                         </div>
 
-                        <div className="p-4 bg-kidville-info-soft0/10 rounded-2xl border border-kidville-info/30">
+                        {/* `bg-kidville-info-soft0/10` non esisteva (residuo di `bg-sky-500/10`
+                            sostituito a macchina): il pannello restava senza fondo. */}
+                        <div className="p-4 bg-kidville-info/10 rounded-2xl border border-kidville-info/30">
                             <label className="flex items-center gap-3 cursor-pointer">
                                 <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-info-soft/50 bg-kidville-white text-kidville-info focus:ring-kidville-info" />
                                 <span className="font-bold text-kidville-info flex items-center gap-2">
@@ -480,7 +482,8 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
                                     exit={{ opacity: 0, height: 0 }}
-                                    className="p-6 border border-kidville-info/30 bg-kidville-info-soft0/5 rounded-2xl overflow-hidden mt-2"
+                                    // `bg-kidville-info-soft0/5` non esisteva (residuo di `bg-blue-500/5`).
+                                    className="p-6 border border-kidville-info/30 bg-kidville-info/5 rounded-2xl overflow-hidden mt-2"
                                 >
                                     <div className="flex items-center justify-between mb-4">
                                         <h4 className="font-bold text-kidville-info">{t('sFormDettagliIntestatario')}</h4>

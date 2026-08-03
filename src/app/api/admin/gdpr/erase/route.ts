@@ -172,6 +172,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     //    CF la domanda d'iscrizione dell'adulto non si ritrova più).
     let newsVisualizzazioniRimosse = 0
     let consensiProvaBonificati = 0
+    let pushRimosse = 0
     let iscrizioniAdulti = 0
     let fileAdultiRimossi = 0
     let fileAdultiNonRimossi = 0
@@ -179,6 +180,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       const e = await anonimizzaParent(supabase, pid, at, OP)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
       consensiProvaBonificati += e.provaConsensiScrubbate
+      pushRimosse += e.pushSubscriptionsRimosse
       iscrizioniAdulti += e.iscrizioniScrubbate
       fileAdultiRimossi += e.fileRimossi
       fileAdultiNonRimossi += e.fileNonRimossi
@@ -199,6 +201,10 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       cassa_bonificati: esitoAlunno.cassa,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
       consensi_prova_bonificati: consensiProvaBonificati,
+      // I dispositivi che smettono di ricevere le notifiche della scuola. Sta
+      // nell'esito e non solo nei log perché è la parte dell'oblio che la famiglia
+      // VEDE: se il telefono continua a suonare, «fatto» è una parola vuota.
+      push_subscriptions_rimosse: pushRimosse,
     }
 
     // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è

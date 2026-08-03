@@ -7,6 +7,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { Check } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Nota {
   id: string; categoria: string; testo: string;
@@ -54,7 +55,8 @@ function NoteGenitore() {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
     });
     const d = await r.json();
-    if (!r.ok) { setMsg(d.error || t('noteErroreOtp')); setOtpTarget(null); return; }
+    // Niente prosa del server: è italiana per costruzione (T10-F1).
+    if (!r.ok) { setMsg(soloCatalogoDaCorpo(d, t('noteErroreOtp'))); setOtpTarget(null); return; }
     setOtpState(d.data);
   };
 
@@ -68,7 +70,7 @@ function NoteGenitore() {
     });
     const d = await r.json();
     setFirmando(null);
-    if (!r.ok) { setMsg(d.error || t('noteFirmaNonRiuscita')); return; }
+    if (!r.ok) { setMsg(soloCatalogoDaCorpo(d, t('noteFirmaNonRiuscita'))); return; }
     setOtpState(null); setOtpCode(''); setOtpTarget(null);
     setMsg(t('noteFirmata'));
     carica();

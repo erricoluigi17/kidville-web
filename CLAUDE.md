@@ -117,6 +117,33 @@ Stato runtime (`.claude/.ship-cycle/`): `active.json` (gate armato + `session_id
 
 ---
 
+# «Tu sei il tester n. X» — kit di collaudo manuale in chat separate
+
+Accanto a `/ship-cycle`, che gira da solo in una chat sola, il repo porta un **kit di collaudo
+manuale**: venti collaudi indipendenti, ognuno in una **chat diversa**, lanciati insieme.
+
+**Quando l'utente apre una chat e scrive «tu sei il tester n. 7»** (o «tester 7», «sei il tester
+sette»), non fare domande e non improvvisare: apri `docs/collaudo/README.md`, poi
+`docs/collaudo/prompt/tester-07-*.md`, e segui quel file alla lettera. Vale per i numeri da **01 a
+20**; l'indice completo è nel README.
+
+Le tre cose che valgono per ogni tester, e che non si derogano:
+
+- **è un collaudo in sola lettura**: non si scrive codice, non si usa `git`, non si fa
+  `npm install`, sul database di produzione si fanno **solo `SELECT`**, e nell'interfaccia si
+  naviga senza salvare (il server locale `:3100` parla col DB di **produzione**);
+- **le chat girano insieme sullo stesso albero di lavoro**: un `git checkout` o un `npm install`
+  sabota le altre diciannove. La suite intera e `npm run build` sono del tester 01, l'emulatore
+  Android del 14, il simulatore iOS del 15;
+- **il report va in `docs/collaudo/risultati/tester-NN-<slug>.md`**, uno solo, il proprio — cartella
+  esclusa da git perché può contenere estratti del database di produzione. Nel report mai dati
+  personali, mai segreti: conteggi, uuid e codici d'errore.
+
+Alla fine, `docs/collaudo/SINTESI.md` contiene il prompt che unisce i venti report in una lista
+unica di difetti, deduplicata e ordinata, da cui parte la correzione.
+
+---
+
 # 🔴 IN PRODUZIONE CI SONO DATI REALI DI MINORI — le conferme umane vanno riattivate
 
 **Questo blocco, fino al 2026-07-31, diceva il falso.** Sosteneva che merge, deploy e migrazioni
@@ -156,9 +183,60 @@ Le conferme umane vanno riattivate così:
    particolare `test.segreteria@kidville.test` legge l'anagrafica dell'intera sede, e
    `test.multisede.admin@kidville.test` vede tutte e tre le sedi.
 
-**Stato di questi cinque punti**: da fare. Vengono applicati come **ultimo atto del rilascio del
-2026-07-31**, non prima — attivarli a metà lavoro avrebbe bloccato la sessione che li ha scritti.
-Se stai leggendo questa riga e i punti 1-4 risultano già applicati in `.claude/settings.json`,
-cancella questa frase; se non lo sono, **applicali prima di qualunque altra cosa**.
+**Stato di questi cinque punti: applicati il 2026-08-03 come ultimo atto del rilascio della PR #62
+(`fc7c94a`, deploy Vercel `READY` su `app.kidville.it`) e ⚠️ REVOCATI LO STESSO GIORNO** — vedi il
+riquadro «REVOCATO» qui sotto, che è la parte da leggere per prima.
+
+| | Dove si verifica |
+|---|---|
+| 1. cinque permessi da `allow` ad `ask` | `.claude/settings.json` → `permissions.ask` |
+| 2. `defaultMode` da `acceptEdits` a `default` | `.claude/settings.json` |
+| 3. autorizzazione «pre-lancio» rimossa dal comando | `.claude/commands/ship-cycle.md`, Caso 1 |
+| 4. *Required reviewers* sull'environment `production` | era **già attivo**: verificato via API, revisore `erricoluigi17` |
+| 5. account TEST trattati come strumenti su dati di minori | password ruotata il 31/07, log Maestro bonificati il 02/08 |
+
+### 🔻 REVOCATO il 2026-08-03 — le conferme sono durate un giorno
+
+**I cinque punti qui sopra sono stati revocati dal titolare il 2026-08-03**, poche ore dopo essere
+stati applicati e nel mezzo del collaudo dei venti tester. Richiesta testuale: *«far sì che vada
+tutto in automatico quando sono in automode»*, e alla domanda esplicita su cosa dovesse passare
+senza conferma la risposta è stata **«proprio tutto, migrazioni e merge compresi»**.
+
+Quindi, da oggi e finché qualcuno non riscrive questo blocco:
+
+- `Bash(gh:*)` · `Bash(git push:*)` · `Bash(vercel:*)` · `mcp__supabase__apply_migration` ·
+  `mcp__supabase__execute_sql` sono in **`allow`**, non più in `ask`;
+- `permissions.defaultMode` torna a **`acceptEdits`**;
+- **migrazioni, merge, deploy e scritture sul database di produzione non chiedono più conferma.**
+
+**Cosa questo significa, detto una volta e senza giri di parole**: `execute_sql` e
+`apply_migration` in `allow` vogliono dire che un agente può eseguire `UPDATE` e `DELETE`, e
+cambiare lo schema, sul database che al 2026-08-03 contiene **227 domande di iscrizione vere, 152
+codici fiscali di minori, allergie e note mediche in testo libero** — senza che nessun essere umano
+veda l'istruzione prima che parta. Non è un'ipotesi: è la definizione di ciò che è stato concesso.
+La `deny` resta intatta (niente `rm -rf`, niente `git push --force`, niente `db reset`, niente
+lettura dei file `.env`), ma la `deny` non protegge da una query sbagliata: protegge da un comando
+distruttivo *noto*.
+
+**Perché è scritto qui invece che nascosto**: fino al 2026-07-31 questo stesso file sosteneva il
+falso per due settimane — diceva «pre-lancio, nessun dato reale» mentre arrivavano 9 domande
+l'ora. La lezione pagata allora è che *un documento che descrive una protezione che non c'è più è
+peggio di nessun documento*. Chi legge questo blocco e sta per scrivere in produzione non si fidi
+del paragrafo: **esegua la query che conta le righe reali**, e sappia che nessuno gli chiederà
+conferma prima di eseguirla.
+
+**Come si torna indietro**, se un giorno serve: rimettere i cinque nomi sotto `permissions.ask` in
+`.claude/settings.json`, riportare `defaultMode` a `default`, e togliere
+`mcp__supabase__execute_sql` / `mcp__supabase__apply_migration` dall'`allow` di
+`~/.claude/settings.json` e di `.claude/settings.local.json` — che li contengono **entrambi**, ed è
+il motivo per cui le conferme del 2026-08-03 non sarebbero comunque mai scattate (rilievo `T19-F1`
+del collaudo, che quel giorno era stato scritto come «grave» e la misura ha confermato).
+
+⚠️ **Una protezione è stata ABBASSATA nello stesso rilascio, ed è giusto che si sappia**: su `main`
+non è più richiesta un'approvazione sulla PR (decisione del titolare del 2026-08-03 — l'unico
+account con accesso in scrittura è il suo, e GitHub non permette di approvare la propria PR, quindi
+la regola bloccava ogni rilascio senza aggiungere un controllo vero). **Restano** obbligatori i due
+check della CI (`Lint · Typecheck · Unit` ed `E2E (Playwright)`), `enforce_admins`, il divieto di
+force-push e di cancellazione del branch.
 
 Quando il lancio commerciale avverrà davvero, aggiorna anche il PRD.

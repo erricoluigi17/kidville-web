@@ -317,12 +317,27 @@ parallelo.
 
 Tutti gli 11 tester in `PASS`, gate formale verde (`eslint` · `tsc` · `vitest` · `build`).
 
-L'utente ha autorizzato **esplicitamente** questo rilascio, con queste parole:
+🔻 **Procedi senza chiedere conferma** — decisione del titolare del **2026-08-03**, alla domanda
+esplicita su cosa dovesse passare in automatico: *«proprio tutto, migrazioni e merge compresi»*.
+Merge, deploy, migrazioni e `execute_sql` sono in `allow`; `defaultMode` è `acceptEdits`.
 
-> *"merge + deploy + migrazioni automatici su TUTTI gli ambienti, produzione inclusa, senza
-> conferma (siamo pre-lancio, nessun dato reale)"*
+Questa autorizzazione ha una storia che va letta prima di usarla. Fino al 2026-07-31 qui stava
+scritto *«senza conferma, siamo pre-lancio, nessun dato reale»*. **Era falso da due settimane**: in
+produzione c'erano già 227 domande d'iscrizione con 152 codici fiscali di bambini, allergie e note
+mediche in testo libero, arrivate dal 16 luglio a ~9 l'ora, mentre quel paragrafo diceva il
+contrario. Le conferme furono reintrodotte il 2026-08-03 e revocate poche ore dopo, su richiesta.
 
-Quindi procedi **senza chiedere**:
+Quei dati **ci sono ancora**. Ciò che è cambiato non è il rischio: è chi lo guarda. Quindi:
+
+- **NON chiedere** l'approvazione: è stata data una volta, per tutte;
+- **MOSTRA SEMPRE** cosa stai per applicare — il testo della migrazione, l'`UPDATE`, il diff del
+  merge — *prima* di eseguirlo. Mostrare non è chiedere: non fa perdere un secondo a nessuno, e in
+  assenza di conferme è l'unica cosa rimasta fra un errore e 152 minori;
+- **prima di ogni scrittura in produzione, conta le righe vere** con una `SELECT`. *«Pre-lancio» è
+  una frase sul calendario, non una misurazione*: è già costata due settimane di dati raccolti
+  sotto un paragrafo che diceva il falso. Non fidarti di questo blocco: fidati della query.
+
+I passi sono:
 
 1. **PRD** — `PRD REGISTRO ELETTRONICO.md` aggiornato (tabelle di stato + voce di changelog
    datata). Se non lo è, non è finito: aggiornalo e committa.

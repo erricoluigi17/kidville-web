@@ -108,6 +108,31 @@ describe('GET /api/admin/students/[id] — il fascicolo dell\'alunno', () => {
     const res = await STUDENT_ID(req(`/api/admin/students/${ALU_A}`), ctx(ALU_A))
     expect(res.status).toBe(200)
   })
+
+  it('senza `SUPABASE_SERVICE_ROLE_KEY` risponde 503 «configurazione mancante», NON 403', async () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // È UN CAMBIO DI COMPORTAMENTO DICHIARATO (2026-08-03), e non aveva nessun test
+    // in nessuno dei due versi. Prima, se la chiave di servizio mancava, la route si
+    // costruiva il client con la chiave ANON: la RLS entrava in gioco,
+    // `assertAlunnoInScope` leggeva zero righe, e la risposta era **403 «alunno di
+    // un'altra sede»**. Cioè un guasto di CONFIGURAZIONE travestito da esito
+    // applicativo — la regola 4 di AGENTS.md esiste per questo: chi legge quel 403 va
+    // a cercare i permessi, e la chiave manca da un'altra parte.
+    //
+    // Il ripiego è caduto col passaggio al factory strumentato. Qui si àncora la
+    // differenza fra i due stati, perché è precisamente ciò che distingue il
+    // miglioramento dalla regressione: **503**, e il nome della variabile nel corpo.
+    // ─────────────────────────────────────────────────────────────────────────
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '')
+
+    const res = await STUDENT_ID(req(`/api/admin/students/${ALU_A}`), ctx(ALU_A))
+
+    expect(res.status, 'una configurazione mancante non deve travestirsi da 403').toBe(503)
+    expect(await res.text()).toContain('SUPABASE_SERVICE_ROLE_KEY')
+    // E non ha letto niente: la mancanza di configurazione si scopre PRIMA di toccare
+    // l'anagrafica di un minore.
+    expect(h.tabelle).toHaveLength(0)
+  })
 })
 
 describe('GET /api/admin/parents — elenco genitori', () => {

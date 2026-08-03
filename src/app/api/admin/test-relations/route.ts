@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 
@@ -14,12 +14,13 @@ export const GET = withRoute('admin/test-relations:GET', async (request: Request
     if (sealed) return sealed;
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
-    const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+    // Factory STRUMENTATO, non `createClient` di supabase-js. La route è `sealDangerous` (404 in
+    // produzione) e serve solo a ispezionare i legami, ma la regola non ha eccezioni «tanto è di
+    // servizio»: un client non strumentato in più è il precedente da cui nasce il settimo. Vedi
+    // `__tests__/architecture/supabase-client-strumentato.test.ts`.
+    const missingEnv = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
     if (missingEnv) return missingEnv;
-    const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-        process.env.SUPABASE_SERVICE_ROLE_KEY as string
-    );
+    const supabase = await createAdminClient();
     const { data, error } = await supabase.from('alunni').select(`
         id, cognome, nome,
         student_parents (

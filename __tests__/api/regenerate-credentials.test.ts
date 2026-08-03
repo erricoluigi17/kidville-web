@@ -1,16 +1,53 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextResponse } from 'next/server';
 
-const h = vi.hoisted(() => ({
-  requireStaff: vi.fn(),
-  sendEmail: vi.fn(),
-  logScrittura: vi.fn(),
-  ensureIdentity: vi.fn(),
-  adminRow: { data: null as unknown, error: null as unknown },
-  utentiRuolo: { data: null as unknown, error: null as unknown },
-  updateError: null as { message: string } | null,
-  updates: [] as Array<{ id: string; attrs: { password?: string; email_confirm?: boolean } }>,
-}));
+const h = vi.hoisted(() => {
+  const stato = {
+    requireStaff: vi.fn(),
+    sendEmail: vi.fn(),
+    logScrittura: vi.fn(),
+    ensureIdentity: vi.fn(),
+    adminRow: { data: null as unknown, error: null as unknown },
+    utentiRuolo: { data: null as unknown, error: null as unknown },
+    updateError: null as { message: string } | null,
+    updates: [] as Array<{ id: string; attrs: { password?: string; email_confirm?: boolean } }>,
+    /**
+     * IL FINTO CLIENT, in UNA definizione sola.
+     *
+     * Va montato su DUE moduli, e la ragione è il difetto vero di questo file: la route
+     * costruiva il client con `createClient` di `@supabase/supabase-js`, e finto quello era
+     * finto tutto. Da quando prende il client dal factory strumentato
+     * (`@/lib/supabase/server-client`), quel mock non intercetta più niente — e i test non
+     * diventavano «rossi per il motivo giusto»: rispondevano 404 perché il client VERO
+     * interrogava un database che qui non c'è. Peggio: prima di `test.env` in
+     * `vitest.config.ts`, quel database era la PRODUZIONE.
+     *
+     * Restano finti tutti e due — `@supabase/supabase-js` non perché serva alla route, ma
+     * perché se qualcuno ce la riportasse il test se ne accorgerebbe restando verde per il
+     * motivo giusto invece di parlare con la rete.
+     */
+    creaFinto: () => ({
+      // select('ruolo') su utenti = guard anti-lockout; il resto usa adminRow.
+      from: (table: string) => ({
+        select: (cols?: string) => ({
+          eq: () => ({
+            maybeSingle: () =>
+              Promise.resolve(table === 'utenti' && cols === 'ruolo' ? stato.utentiRuolo : stato.adminRow),
+          }),
+        }),
+      }),
+      auth: {
+        admin: {
+          updateUserById: async (id: string, attrs: { password?: string; email_confirm?: boolean }) => {
+            stato.updates.push({ id, attrs });
+            return { data: {}, error: stato.updateError };
+          },
+        },
+      },
+    }),
+  };
+  return stato;
+});
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }));
 // Scope di sede: concessivo di proposito. L'oggetto di questo file è il reset
@@ -35,27 +72,14 @@ vi.mock('@/lib/auth/parent-identity', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/parent-identity')>();
   return { ...actual, ensureParentIdentity: h.ensureIdentity };
 });
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    // select('ruolo') su utenti = guard anti-lockout; il resto usa adminRow.
-    from: (table: string) => ({
-      select: (cols?: string) => ({
-        eq: () => ({
-          maybeSingle: () =>
-            Promise.resolve(table === 'utenti' && cols === 'ruolo' ? h.utentiRuolo : h.adminRow),
-        }),
-      }),
-    }),
-    auth: {
-      admin: {
-        updateUserById: async (id: string, attrs: { password?: string; email_confirm?: boolean }) => {
-          h.updates.push({ id, attrs });
-          return { data: {}, error: h.updateError };
-        },
-      },
-    },
-  }),
+// Il factory STRUMENTATO: è da qui che la route prende il client (`createAdminClient`).
+vi.mock('@/lib/supabase/server-client', () => ({
+  createAdminClient: async () => h.creaFinto(),
+  createClient: async () => h.creaFinto(),
 }));
+// E il pacchetto grezzo, che la route NON usa più: resta finto perché un ritorno indietro
+// non possa passare da qui alla rete vera.
+vi.mock('@supabase/supabase-js', () => ({ createClient: () => h.creaFinto() }));
 
 import { POST } from '@/app/api/admin/regenerate-credentials/route';
 

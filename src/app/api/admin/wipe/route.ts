@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
 import { parseQuery } from '@/lib/validation/http';
@@ -12,14 +12,17 @@ const querySchema = z.object({}); // nessun parametro in ingresso
 export const POST = withRoute('admin/wipe:POST', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
-    const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+    const missingEnv = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
     if (missingEnv) return missingEnv;
     const q = parseQuery(request, querySchema);
     if ('response' in q) return q.response;
-    const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-        process.env.SUPABASE_SERVICE_ROLE_KEY as string
-    );
+    // Factory STRUMENTATO, non `createClient` di supabase-js. Qui sopra c'è un ciclo di DELETE su
+    // 25 tabelle il cui `try/catch` non scatta mai (PostgREST ritorna `{ error }`, non lancia): il
+    // `fetch` strumentato è l'unica cosa che vede quei fallimenti — un wipe «riuscito» che ha
+    // lasciato righe dietro di sé è il modo peggiore di sbagliare. Vedi
+    // `src/lib/supabase/server-client.ts` e il lock
+    // `__tests__/architecture/supabase-client-strumentato.test.ts`.
+    const supabase = await createAdminClient();
     try {
         const tablesToClear = [
             'student_parents', 'legame_genitori_alunni', 'student_adults', 

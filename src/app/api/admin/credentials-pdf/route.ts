@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -42,13 +42,17 @@ export const GET = withRoute('admin/credentials-pdf:GET', async (request: NextRe
   const targetId = CHIAVE_PDF.exec(key)?.[1] ?? null;
   if (!targetId) return NextResponse.json({ error: 'PDF non trovato' }, { status: 404 });
 
-  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+  // Factory STRUMENTATO (tetto di tempo + `{ error }` visibile anche quando il codice lo
+  // ignora), non `createClient` di supabase-js. Qui si scarica un PDF con una password IN
+  // CHIARO: se lo Storage accetta e tace, senza tetto la richiesta resta appesa e chi ha
+  // premuto «scarica» non riceve né il file né un errore. Vedi
+  // `src/lib/supabase/server-client.ts` e il lock
+  // `__tests__/architecture/supabase-client-strumentato.test.ts`.
+  //
+  // Solo `SUPABASE_SERVICE_ROLE_KEY`: l'URL lo dà `public-config.ts`, che ha un ripiego.
+  const missingEnv = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (missingEnv) return missingEnv;
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const admin = await createAdminClient();
 
   // Chi è il destinatario del PDF? La chiave è generata da
   // `admin/regenerate-credentials` come `${targetId}-${Date.now()}.pdf`, dove

@@ -10,6 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
+import { gateConsensoFoto } from '@/lib/news/gate-consenso'
 import type { NewsPost } from '@/lib/news/tipi'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
@@ -71,6 +72,45 @@ export const POST = withRoute('news/[id]/approva:POST', async (request: NextRequ
     // Il flusso di approvazione vale solo su una proposta ancora aperta.
     if (post.stato !== 'proposta') {
       return NextResponse.json({ error: 'La news non è in attesa di approvazione' }, { status: 409 })
+    }
+
+    // ─── Consenso fotografico: APPROVARE UNA PROPOSTA È PUBBLICARLA ───────────
+    // Il collaudo del 2026-08-03 ha trovato qui la quarta faccia dello stesso
+    // difetto: il gate viveva su `news:POST`, `news/[id]:PATCH` e
+    // `news/[id]/pubblica:POST`, e non su questa rotta — che nel ramo normale
+    // rende il post visibile nello stesso istante in cui lo approva. Il bucket
+    // `news` è pubblico e servito senza login: un docente propone l'articolo con
+    // la foto di un bambino, la famiglia revoca, la segreteria approva, e la foto
+    // finisce online con il gate formale verde.
+    //
+    // Solo sul ramo che RENDE VISIBILE SUBITO. Approvare tenendo il post come
+    // bozza pronta, programmarlo per una data futura e RIFIUTARE non mettono
+    // niente online — e bloccare il rifiuto lascerebbe la proposta appesa in
+    // eterno, cioè renderebbe il gate un ostacolo alla revoca stessa. Le
+    // programmate le rilegge il tick (`STATI_SORVEGLIATI`) prima di pubblicarle.
+    const pubblicaSubito = esito === 'approva' && !programmata_il && pubblica_subito !== false
+    if (pubblicaSubito) {
+      const sediVerifica = post.scuola_id
+        ? [post.scuola_id]
+        : await resolveScuoleAttive(request, supabase, auth.user)
+      const gate = await gateConsensoFoto({
+        supabase,
+        copertinaUrl: post.copertina_url,
+        contenutoJson: post.contenuto_json,
+        ritrattiArchiviati: post.bambini_ritratti ?? null,
+        sedi: sediVerifica,
+        attore: auth.user,
+        operazione: 'news/[id]/approva:POST',
+        // Come sulla pubblicazione: i post anteriori al 2026-08-01 non hanno
+        // dichiarazione, e pretenderla qui renderebbe impossibile approvare
+        // qualunque proposta vecchia. Dove il contenuto nasce o cambia resta
+        // obbligatoria — ed è lì che una foto nuova può entrare.
+        dichiarazioneObbligatoria: false,
+      })
+      if ('response' in gate) return gate.response
+      // `gate.prova` è sempre `null` qui: questa rotta non porta nessuna
+      // dichiarazione nuova (non c'è `ritrattiRichiesti` nel corpo), quindi non
+      // c'è nessuna prova da archiviare e nessuna colonna da degradare.
     }
 
     const now = new Date().toISOString()

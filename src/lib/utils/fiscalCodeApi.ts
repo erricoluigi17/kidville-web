@@ -1,4 +1,5 @@
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { conTetto, eTimeout } from '@/lib/logging/tetto';
 
 /**
  * Calcolo del codice fiscale. Gira SOLO nel browser: lo importano i tre form dell'anagrafica
@@ -33,6 +34,25 @@ export interface FiscalCodeParams {
 }
 
 const ENDPOINT = 'https://api.codicefiscale.it/api/v1/calcola';
+
+/**
+ * IL TETTO DI TEMPO, in millisecondi, sulla chiamata al servizio terzo.
+ *
+ * `fetch` non ha nessun timeout di suo: un bersaglio che ACCETTA la connessione e tace la tiene
+ * appesa senza eccezione — misurato in questo repo, 150 secondi. Qui il costo è peggiore che
+ * altrove, e va detto perché: il fallback locale calcola lo STESSO codice, senza rete e senza
+ * far uscire un dato dal dispositivo, ma sta DOPO questa chiamata. Senza tetto non parte mai —
+ * il genitore guarda un campo che non si compila mentre la risposta giusta era già nel bundle.
+ *
+ * Cinque secondi, e non dieci come lato server: qui non c'è nessuna operazione da salvare, c'è
+ * una persona che aspetta e un'alternativa istantanea. Il codice attende già 600 ms di suo, per
+ * la sola UX del caricamento.
+ *
+ * Il MECCANISMO è quello di `src/lib/logging/tetto.ts`, lo stesso dei provider server-side e di
+ * Supabase: tre strade, una primitiva sola. `tetto.ts` non importa niente e non tocca la rete,
+ * quindi entra nel bundle del browser senza portarsi dietro il logger di server.
+ */
+const TETTO_MS = 5_000;
 
 /** Quanto corpo d'errore si tiene. Come `externalFetch` lato server: abbastanza per capire. */
 const CORPO_MAX = 300;
@@ -78,7 +98,7 @@ export async function fetchFiscalCode(params: FiscalCodeParams): Promise<string>
 async function calcolaConApiEsterna(params: FiscalCodeParams): Promise<string | null> {
     let res: Response;
     try {
-        res = await fetch(ENDPOINT, {
+        res = await fetch(ENDPOINT, conTetto(ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -89,13 +109,19 @@ async function calcolaConApiEsterna(params: FiscalCodeParams): Promise<string | 
                 comune: params.comune_nascita,
                 provincia: params.provincia_nascita,
             }),
-        });
+        }, TETTO_MS));
     } catch (e) {
-        // Non ha risposto NESSUNO: DNS, rete giù, CORS, richiesta annullata. È il ramo che
-        // prima inghiottiva anche i 403 — ora ci arriva solo ciò che davvero non ha risposto,
-        // e la distinzione fra «il provider ci ha detto di no» e «il provider non c'è» è
-        // ricostruibile dai log invece che da un'ipotesi.
-        avvisa('fetch', `cf-api-esterna-non-raggiungibile-uso-fallback: ${nomeErrore(e)}`);
+        // Non ha risposto NESSUNO: DNS, rete giù, CORS, richiesta annullata, scadenza del
+        // tetto. È il ramo che prima inghiottiva anche i 403 — ora ci arriva solo ciò che
+        // davvero non ha risposto, e la distinzione fra «il provider ci ha detto di no» e «il
+        // provider non c'è» è ricostruibile dai log invece che da un'ipotesi.
+        //
+        // La SCADENZA ha una riga sua, per la stessa ragione per cui ce l'ha lato server: «non
+        // risponde» si ripara chiamando il fornitore, «non si raggiunge» si ripara sul DNS o
+        // sul firewall. Nessun parametro nel messaggio, qui come ovunque in questo file.
+        avvisa('fetch', eTimeout(e)
+            ? `cf-api-esterna-scaduta-oltre-${TETTO_MS}ms-uso-fallback`
+            : `cf-api-esterna-non-raggiungibile-uso-fallback: ${nomeErrore(e)}`);
         return null;
     }
 

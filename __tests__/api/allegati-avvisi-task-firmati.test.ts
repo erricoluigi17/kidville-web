@@ -139,6 +139,9 @@ const adminClient = {
     b.in = () => b
     b.not = (c: string) => { st.notNull = c; return b }
     b.limit = () => b
+    // Statistiche avvisi in BLOCCO e paginate (T11-F2): la catena si chiude su
+    // `.range()`, non più su `.then()`.
+    b.range = async () => ({ data: [], count: 0, error: null })
     b.insert = (rec: Record<string, unknown>) => { h.lastInsert = rec; st.inserted = rec; return b }
     b.update = (rec: Record<string, unknown>) => { h.lastUpdate = rec; st.updated = rec; return b }
     b.single = async () => {

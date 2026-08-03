@@ -105,6 +105,8 @@
   "elencoRitira": "Withdraw",
   "elencoStatistiche": "Statistics",
   "elencoElimina": "Delete",
+  "elencoAzioneFallita": "The action could not be completed: please try again.",
+  "elencoEliminazioneFallita": "The news item could not be deleted: please try again.",
 
   "categorieNuova": "New category",
   "categoriePlaceholder": "E.g. Sport and movement",

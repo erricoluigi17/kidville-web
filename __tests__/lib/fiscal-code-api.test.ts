@@ -68,6 +68,30 @@ async function completa(p: Promise<string>): Promise<string> {
     return await p
 }
 
+/**
+ * I millisecondi CHIESTI a `AbortSignal.timeout` durante `lavoro`.
+ *
+ * Serve perché il tetto non si può misurare a orologio, qui: `fetch` è un mock che risponde
+ * subito e i timer sono finti. Guardare solo che `init.signal` sia un `AbortSignal` — che è
+ * ciò che questo file faceva — non dice NIENTE su quanto valga: con `TETTO_MS` portato da
+ * 5.000 a 600.000 ogni test restava verde, e il fallback locale, che ha la risposta pronta e
+ * senza rete, non sarebbe partito per dieci minuti.
+ */
+async function tettiChiesti(lavoro: () => Promise<unknown>): Promise<number[]> {
+    const originale = AbortSignal.timeout
+    const chiesti: number[] = []
+    AbortSignal.timeout = ((ms: number) => {
+        chiesti.push(ms)
+        return originale.call(AbortSignal, ms)
+    }) as typeof AbortSignal.timeout
+    try {
+        await lavoro()
+    } finally {
+        AbortSignal.timeout = originale
+    }
+    return chiesti
+}
+
 beforeEach(() => {
     righe.length = 0
     rete = vi.fn()
@@ -105,6 +129,76 @@ describe('fetchFiscalCode — il provider esterno non fallisce più in silenzio'
         expect(m).toContain('non-raggiungibile')
         expect(m).toContain('TypeError')
         expect(m).not.toContain('403')
+    })
+
+    /**
+     * IL TETTO DI TEMPO, ed è la terza strada dello stesso difetto.
+     *
+     * `fetch` non ha nessun timeout di suo: un bersaglio che ACCETTA la connessione e tace la
+     * tiene appesa senza eccezione — misurato altrove in questo repo, 150 secondi. Qui il costo
+     * è peculiare e peggiore che altrove: il fallback locale (`codice-fiscale-js`, in bundle)
+     * calcola lo STESSO codice senza far uscire niente dal dispositivo e senza rete, ma sta
+     * DOPO la chiamata esterna. Senza tetto non parte mai: il genitore guarda un campo che non
+     * si compila mentre la risposta giusta era già dentro l'applicazione.
+     *
+     * È lo stesso meccanismo di `src/lib/logging/tetto.ts` — quello che copre i provider
+     * server-side e le chiamate a Supabase. Tre strade, una primitiva sola: è la lezione che
+     * questo ciclo ha pagato due volte.
+     */
+    it('IL TETTO: la chiamata parte con una scadenza, e il NUMERO è quello di chi sta aspettando', async () => {
+        rete.mockResolvedValue(new Response('{"codice_fiscale":"BLLRRA19E43E054O"}', {
+            status: 200, headers: { 'content-type': 'application/json' },
+        }))
+
+        const chiesti = await tettiChiesti(() => completa(fetchFiscalCode(PARAMS)))
+
+        const init = rete.mock.calls[0][1] as RequestInit
+        expect(init.signal).toBeInstanceOf(AbortSignal)
+        expect(init.signal!.aborted).toBe(false)
+        expect(init.method).toBe('POST') // e l'init vero non si perde per strada
+
+        // ⚠️ E QUANTO VALE, che è la metà che mancava. Le due sponde sono ANCORAGGI ASSOLUTI,
+        // non ricopiature della costante: se un giorno `TETTO_MS` diventasse dieci minuti, il
+        // test lo direbbe invece di seguirlo.
+        //  · sotto i 10 s perché lato browser il tetto deve essere PIÙ STRETTO di quello dei
+        //    provider server-side: lì c'è un'operazione da salvare, qui c'è una persona che
+        //    guarda un campo vuoto e un fallback locale che risponde all'istante;
+        //  · sopra il secondo perché una risposta lenta ma VERA — rete mobile, primo colpo a
+        //    freddo — deve poter arrivare: un tetto troppo stretto è l'altro modo di sbagliare.
+        expect(chiesti).toHaveLength(1)
+        expect(chiesti[0], 'il tetto è più largo di quello dei provider server-side').toBeLessThan(10_000)
+        expect(chiesti[0], 'il tetto taglia anche le risposte lente ma vere').toBeGreaterThanOrEqual(1_000)
+    })
+
+    it('una SCADENZA resta distinguibile da una rete morta, e il fallback locale risponde lo stesso', async () => {
+        rete.mockRejectedValue(
+            new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+
+        // Il codice arriva comunque: è il fallback locale, che di rete non ha bisogno.
+        const chiesti = await tettiChiesti(async () => {
+            expect(await completa(fetchFiscalCode(PARAMS))).toBe('RSSMRA19E43H501K')
+        })
+
+        const m = messaggio()
+        // «non risponde» si ripara chiamando il fornitore, «non si raggiunge» sul DNS: con una
+        // riga sola sarebbero di nuovo indistinguibili, che è il difetto di partenza del file.
+        expect(m).toContain('scaduta')
+        expect(m).not.toContain('non-raggiungibile')
+        // IL NUMERO NELLA RIGA È QUELLO DELLA VALVOLA, non una cifra scritta a mano lì accanto:
+        // «scaduta» senza il tetto non distingue «il provider è morto» da «il tetto è troppo
+        // stretto», e un numero SBAGLIATO manda a cercare la seconda quando è vera la prima.
+        //
+        // ⚠️ I DELIMITATORI SERVONO DA TUTTE E DUE LE PARTI. `toContain(`${chiesti[0]}ms`)`
+        // legava sì il numero al valore SPIATO, ma senza confini: con
+        // `oltre-${TETTO_MS * 3}ms` nel messaggio, «15000ms» CONTIENE «5000ms» e il test
+        // restava verde su una riga che dichiara un tetto tre volte più largo di quello
+        // scattato. Il pezzo di stringa qui sotto è chiuso a sinistra da `-oltre-` e a destra
+        // da `-uso-fallback`: un numero diverso non ci sta dentro in nessun modo.
+        expect(chiesti).toHaveLength(1)
+        expect(m).toContain(`-oltre-${chiesti[0]}ms-uso-fallback`)
+        // E nessun dato del minore, come su ogni altro ramo.
+        expect(m).not.toContain('Aurora')
+        expect(m).not.toContain('Bellandi')
     })
 
     it('i dati del minore NON tornano indietro nel log, nemmeno se il provider li rimanda nel corpo', async () => {

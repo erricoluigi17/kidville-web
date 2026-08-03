@@ -10,6 +10,7 @@ import { isoToIt } from '@/lib/format/data';
 import { formatEuro } from '@/lib/format/valuta';
 import { PushOptIn } from './PushOptIn';
 import { CausaleBonifico, type VoceCausale } from './CausaleBonifico';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Pagamento {
     id: string;
@@ -71,7 +72,8 @@ export function StoricoPagamenti({ userId }: Props) {
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
                 setError(null);
             } else if (j) {
-                setError(j.error || t('erroreCaricamento'));
+                // Niente prosa del server: è italiana per costruzione (T10-F1).
+                setError(soloCatalogoDaCorpo(j, t('erroreCaricamento')));
             } else {
                 setError(t('erroreRete'));
             }

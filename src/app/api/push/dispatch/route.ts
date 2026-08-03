@@ -199,30 +199,89 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
     // consegnate, zero tracce — il guasto delle email di credenziali, tale e quale.
     // Un contatore non ripara niente; rende il guasto DICIBILE, che è il primo passo.
     let fallite = 0
+    // IL QUARTO ESITO: SALTATA. Un canale non configurato non è né un successo né
+    // un rifiuto del provider — è una notifica che non è mai stata TENTATA.
+    //
+    // Il `continue` c'era già e si chiamava «degrado pulito». Non lo era: la
+    // notifica finiva comunque in `inviateIds`, veniva marcata `push_inviata_il`
+    // e non sarebbe più ripartita. Con `FCM_*` assenti da un deploy — tre
+    // variabili d'ambiente, il guasto di configurazione più banale che ci sia —
+    // ogni push nativa dell'intera scuola veniva scartata e archiviata come
+    // spedita, con il battito che diceva `esito:'ok'`. Zero consegne, zero righe,
+    // e la coda vuota a certificare che era andato tutto bene: il guasto delle
+    // email di credenziali, ricostruito pezzo per pezzo.
+    let saltateNative = 0
+    let saltateWeb = 0
+    // Notifiche NON marcate perché nessuno dei loro canali era configurato:
+    // restano in coda e partiranno da sole appena le chiavi arrivano.
+    let rimandate = 0
     const toRemove: string[] = []
     const inviateIds: string[] = []
 
     for (const n of pendenti) {
       const userSubs = subsByUser.get(n.utente_id) || []
       const payload = { title: n.titolo, body: n.corpo ?? undefined, url: n.link ?? '/', tag: n.id }
+      // Per NOTIFICA, non per giro: `tentate` conta gli invii davvero eseguiti
+      // (riusciti, rifiutati o su subscription morta — tutti e tre sono
+      // tentativi), `saltate` quelli impediti da un canale spento.
+      let tentate = 0
+      let saltate = 0
       for (const s of userSubs!) {
         if (s.platform === 'ios' || s.platform === 'android') {
-          // Canale nativo (FCM/APNs) — gated: se non configurato, saltato pulito.
-          if (!nativeOk) continue
+          // Canale nativo (FCM/APNs) — gated.
+          if (!nativeOk) {
+            saltateNative++
+            saltate++
+            continue
+          }
+          tentate++
           const res = await sendNativePush(s.endpoint, s.platform, payload)
           if (res.ok) nativeInviate++
           else if (res.gone) toRemove.push(s.id)
           else fallite++
         } else {
           // Canale web (VAPID). platform 'web' o legacy null.
-          if (!webOk) continue
+          if (!webOk) {
+            saltateWeb++
+            saltate++
+            continue
+          }
+          tentate++
           const res = await sendPush({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, payload)
           if (res.ok) inviate++
           else if (res.gone) toRemove.push(s.id)
           else fallite++
         }
       }
-      // marca inviata comunque (anche senza subs o con canali gated: evita ritentativi infiniti)
+
+      // LA REGOLA DI MARCATURA, e le tre alternative scartate.
+      //
+      // Si marca `push_inviata_il` quando c'è stato ALMENO UN TENTATIVO, oppure
+      // quando non c'era proprio nessun destinatario (zero subscription: non c'è
+      // nulla da spedire e nulla da riprovare — il comportamento di sempre, che
+      // evita i ritentativi infiniti).
+      //
+      // NON si marca solo il caso preciso in cui la notifica AVEVA destinatari e
+      // NESSUNO era raggiungibile perché il canale è spento. Quella e solo quella
+      // torna in coda.
+      //
+      //  · marcare comunque (com'era) = perderla per sempre. È il difetto;
+      //  · non marcare mai nulla di parziale = rispedire al giro dopo anche a chi
+      //    l'ha già ricevuta (un genitore con web + telefono riceverebbe due volte
+      //    ogni notifica finché FCM resta spento). Per questo basta UN tentativo;
+      //  · marcarla e rimetterla in coda a mano = una seconda tabella di stato per
+      //    un caso che si ripara mettendo tre variabili d'ambiente.
+      //
+      // PREZZO DA CONOSCERE: se il canale resta spento a lungo la coda cresce, e
+      // la `.limit(500)` di sopra pesca sempre le PIÙ VECCHIE — oltre 500
+      // rimandate, le nuove non verrebbero più raggiunte. È accettabile solo
+      // perché la condizione che ci porta è essa stessa un `error` gridato a ogni
+      // giro (sotto), con il numero in coda scritto sulla riga: la riparazione è
+      // configurare il canale, non svuotare la coda.
+      if (saltate > 0 && tentate === 0) {
+        rimandate++
+        continue
+      }
       inviateIds.push(n.id)
     }
 
@@ -268,6 +327,34 @@ export const POST = withRoute('push/dispatch:POST', async (request: Request) => 
         notifiche: inviateIds.length,
         ms: Date.now() - t0,
         msg: `${JOB}: ${fallite} invii push rifiutati dal provider; le notifiche restano marcate inviate e NON verranno ritentate`,
+      })
+    }
+
+    // UN CANALE SPENTO È UN INCIDENTE DI CONFIGURAZIONE, QUINDI `error`.
+    //
+    // Non `warn` come i rifiuti: quelli sono spesso transitori (un 429 del push
+    // service passa da solo), questo no. `FCM_PROJECT_ID`/`FCM_CLIENT_EMAIL`/
+    // `FCM_PRIVATE_KEY` assenti restano assenti finché qualcuno non le mette, e
+    // ogni giro che passa è un altro giorno di famiglie che non ricevono niente.
+    // È la regola 4 di AGENTS.md alla lettera: configurazione mancante = `error`,
+    // mai `info` — e qui, fino a oggi, non era nemmeno `info`.
+    //
+    // La riga porta il NUMERO per canale e le notifiche rimandate: «saltate_native
+    // 412, rimandate 130» dice in un colpo solo quale canale è giù e quanto
+    // arretrato ha prodotto. Il `msg` dice a chiare lettere che cosa succede
+    // adesso, perché chi legge il log non deve dedurlo dal codice.
+    if (saltateNative > 0 || saltateWeb > 0) {
+      logEvento('cron', 'error', {
+        operazione: JOB,
+        esito: 'canale-non-configurato',
+        saltate_native: saltateNative,
+        saltate_web: saltateWeb,
+        rimandate,
+        notifiche: inviateIds.length,
+        ms: Date.now() - t0,
+        msg:
+          `${JOB}: ${saltateNative} invii nativi e ${saltateWeb} web saltati per canale non configurato ` +
+          `(FCM/VAPID); ${rimandate} notifiche NON marcate, restano in coda`,
       })
     }
 

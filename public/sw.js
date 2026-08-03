@@ -128,8 +128,38 @@
 // due paragrafi sopra: v4 non è mai stata rilasciata, su `main` c'è ancora v3.
 // Cambia l'impronta, cioè i BYTE di questo file, ed è quello che fa
 // reinstallare il Service Worker e riscaricare /offline.
-const VERSIONE = 'v4';
-// IMPRONTA-PAGINA-OFFLINE: 5ca4f75fcf7bfc515934bdc990766e9fb9110a0f12ccb278c09c6501fa7e0bf9
+//
+// 2026-08-03 — `precarica()` smette di salvare il SOLO documento: salva anche le
+// sotto-risorse `/_next/` che il documento referenzia (il perché per esteso sta
+// su `precaricaSottoRisorse`: è il difetto T16-F1, l'error boundary al posto
+// della pagina «non sei in rete»). Cambia COSA finisce in cache, non COME lo si
+// serve. `VERSIONE` sale a `v5`, e il perché sta nel paragrafo qui sotto.
+//
+// 🔻 2026-08-03 — RETTIFICA DEI TRE PARAGRAFI QUI SOPRA, che dicevano il falso.
+// Sostenevano che «v4 non è mai stata rilasciata, su `main` c'è ancora v3».
+// MISURATO il 2026-08-03, con due comandi che chiunque poteva lanciare:
+//     git show main:public/sw.js | grep VERSIONE            →  dichiarava v4
+//     curl -s https://app.kidville.it/sw.js | grep VERSIONE →  dichiarava v4
+// (i due comandi si rilanciano quando serve: qui NON si ricopia la riga che
+//  stampano, perché `__tests__/offline/sw.test.ts` legge la versione da questo
+//  file con una regex — e una riga d'esempio dentro un commento la ingannerebbe.
+//  È successo davvero mentre si scriveva questo paragrafo.)
+// v4 è arrivata su `main` con `fc7c94a` (PR #62) ed **è in produzione adesso**.
+// Quindi `kidville-shell-v4` non è un'ipotesi: è popolata su ogni dispositivo che
+// ha aperto l'app dopo quel deploy — e ce l'ha scritta la `precarica()` DIFETTOSA,
+// cioè il documento SENZA i suoi pezzi. Non cambiando nome alla cache, `activate`
+// non la butta via: le voci scritte con la regola vecchia sopravviverebbero
+// mescolate a quelle nuove. Con `v5` la cache riparte pulita, che è esattamente la
+// ragione per cui questo file ha una `VERSIONE`.
+//
+// La frase era vera il 2026-08-01 ed è stata ricopiata per tre giorni senza
+// rimisurarla. È lo stesso errore, nello stesso repo, della stessa settimana: il
+// promemoria «pre-lancio, nessun dato reale» in CLAUDE.md restò appeso mentre in
+// produzione arrivavano 9 domande l'ora, e il PRD dichiara 75 migrazioni quando
+// sono 92. **Una frase su uno stato del mondo va rimisurata, non ricopiata** — e
+// qui bastavano i due comandi qui sopra.
+const VERSIONE = 'v5';
+// IMPRONTA-PAGINA-OFFLINE: c7cd1ecae022063f6338649da6efbd1f825b3988897655f702a93a07f6ddbfb0
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */
@@ -319,6 +349,105 @@ function urlOffline() {
   return self.location.origin + ROTTA_OFFLINE;
 }
 
+/**
+ * Gli URL delle sotto-risorse di build (`/_next/…`) referenziate da un documento.
+ *
+ * PERCHÉ SERVE LEGGERE L'HTML A MANO. `fetch()` dentro un Service Worker scarica
+ * dei BYTE: non è un browser che apre una pagina, non c'è nessun parser HTML, e
+ * quindi NESSUNA delle risorse referenziate dal documento viene mai richiesta.
+ * Pre-cachare il solo documento significa salvare il guscio senza i suoi pezzi —
+ * ed è il difetto T16-F1, spiegato per esteso su `precaricaSottoRisorse`.
+ *
+ * Si tiene solo ciò che comincia per `/_next/`: sono gli asset di build, gli
+ * unici il cui URL (in produzione) contiene l'hash del contenuto e quindi non
+ * cambierà mai significato. Il resto — favicon, mascotte, font — o arriva da sé
+ * alla prima visita con rete (`assetStatico`), o è cross-origin e non ci
+ * riguarda; in nessuno dei due casi la sua assenza impedisce a React di partire.
+ *
+ * `[^>]*?` non attraversa mai il `>`: si guardano gli ATTRIBUTI dei tag, mai il
+ * corpo di uno `<script>` inline — dove Next scrive i nomi dei chunk dentro
+ * `self.__next_f`, e che non sono richieste da fare.
+ */
+function sottoRisorseNext(html, base) {
+  const trovate = [];
+  const visti = new Set();
+  const TAG = /<(?:script|link)\b[^>]*?\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
+  let m;
+  while ((m = TAG.exec(html)) !== null) {
+    const grezzo = m[1];
+    if (grezzo.indexOf('/_next/') !== 0) continue;
+    let assoluto;
+    try {
+      assoluto = new URL(grezzo, base).href;
+    } catch {
+      // Attributo storto (`href="{{…}}"` di un template, un'escape malformata):
+      // non è una risorsa da scaricare, e una riga guasta non deve far saltare
+      // le altre quattordici.
+      continue;
+    }
+    if (visti.has(assoluto)) continue;
+    visti.add(assoluto);
+    trovate.push(assoluto);
+  }
+  return trovate;
+}
+
+/**
+ * Scarica e conserva le sotto-risorse del documento appena pre-cachato.
+ *
+ * ─── IL DIFETTO CHE QUESTA FUNZIONE CHIUDE (T16-F1) ────────────────────────
+ * Misurato il 2026-08-03 su una build di PRODUZIONE, 3 volte su 3: senza rete,
+ * chi aveva già usato l'app NON vedeva la pagina «non sei in rete» ma l'error
+ * boundary — «QUALCOSA È ANDATO STORTO». Non un caso limite: lo stato
+ * stazionario di chiunque avesse l'app da più di una sessione.
+ *
+ * Il documento `/offline` referenzia 15 chunk, 14 dei quali CONDIVISI con
+ * `/auth/login`; l'unico esclusivo è `ContenutoOffline` (~3,8 kB). Da qui il
+ * comportamento che sembrava assurdo — l'offline peggiorava con l'uso:
+ *  · app appena installata → in cache non c'è quasi nulla, React non parte
+ *    affatto e disegna lo script inline, com'è progettato;
+ *  · dopo un po' di navigazione → i 14 condivisi sono in cache (ce li mette
+ *    `assetStatico` durante l'uso normale), React PARTE, non trova l'unico che
+ *    gli manca, e l'error boundary sostituisce l'intero albero — cancellando
+ *    anche ciò che lo script inline aveva già disegnato.
+ * Il documento e i suoi pezzi devono quindi arrivare INSIEME: mezzo bundle è
+ * peggio di nessun bundle.
+ *
+ * Non rigetta mai, e un pezzo mancante non porta via il documento: /offline con
+ * qualche chunk in meno è comunque la pagina giusta (vince lo script inline),
+ * mentre nessun /offline è la SHELL_MINIMA. Ma un pre-cache a metà è il seme
+ * dell'error boundary, quindi si RIFERISCE.
+ */
+async function precaricaSottoRisorse(cache, html) {
+  const risorse = sottoRisorseNext(html, urlOffline());
+  let mancanti = 0;
+  await Promise.all(
+    risorse.map(async function (assoluto) {
+      try {
+        // `cache: 'reload'` per la stessa ragione del documento: non si
+        // pre-cacha una copia già vecchia presa dalla cache HTTP del browser.
+        const res = await fetch(new Request(assoluto, { cache: 'reload' }));
+        if (!res || !res.ok) {
+          mancanti += 1;
+          return;
+        }
+        // Stesso filtro del percorso normale: `conservabile()` è UNA sola, e in
+        // sviluppo tiene fuori i chunk non immutabili esattamente come fa
+        // `assetStatico`. Una seconda copia della regola qui dentro sarebbe la
+        // prossima a divergere.
+        if (!conservabile(new URL(assoluto), res)) return;
+        await cache.put(new Request(assoluto), res);
+      } catch {
+        // Rete caduta a metà pre-cache, quota esaurita, put rifiutata: non è
+        // fatale (il documento è già salvato), ma non è muto — il conteggio
+        // finisce nell'avviso qui sotto.
+        mancanti += 1;
+      }
+    })
+  );
+  if (mancanti > 0) avvisa('sw-precache-pezzi-offline-incompleta', 'warn', ROTTA_OFFLINE);
+}
+
 async function precarica() {
   try {
     const req = new Request(urlOffline(), {
@@ -331,7 +460,12 @@ async function precarica() {
     const res = await fetch(req);
     if (!res || !res.ok) throw new Error('offline non disponibile');
     const cache = await caches.open(CACHE_SHELL);
+    // Il testo si legge da un CLONE, e PRIMA di `ricostruisci(res)`: quella
+    // consuma il corpo con `.blob()`, e dopo non c'è più niente da leggere.
+    const html = await res.clone().text();
     await cache.put(new Request(urlOffline()), await ricostruisci(res));
+    // Il documento è al sicuro: da qui in avanti si aggiungono i suoi pezzi.
+    await precaricaSottoRisorse(cache, html);
   } catch {
     // Il pre-cache fallito NON deve impedire l'installazione: senza /offline
     // resta comunque SHELL_MINIMA. Ma si dice, perché il prossimo avvio senza

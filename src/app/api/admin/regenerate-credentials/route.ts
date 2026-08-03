@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { z } from 'zod';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, assertUtenteInScope } from '@/lib/auth/scope';
@@ -59,13 +59,19 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     );
   }
 
-  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+  // IL CLIENT ARRIVA DAL FACTORY STRUMENTATO, non più da `createClient` di supabase-js: quello
+  // non aveva né tetto di tempo né osservabilità, e da qui passa il RESET DI UNA PASSWORD — con
+  // l'email delle nuove credenziali a un genitore. Il perché sta in
+  // `src/lib/supabase/server-client.ts`; il lock che impedisce il ritorno indietro è
+  // `__tests__/architecture/supabase-client-strumentato.test.ts`.
+  //
+  // `NEXT_PUBLIC_SUPABASE_URL` non è più fra le env pretese: il factory usa `SUPABASE_URL` di
+  // `public-config.ts`, che ha un ripiego dichiarato e quindi non manca mai. Continuare a
+  // esigerla qui darebbe un 503 in un ambiente dove il client funziona — una precondizione
+  // falsa, che è peggio di nessuna precondizione.
+  const missingEnv = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (missingEnv) return missingEnv;
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const admin = await createAdminClient();
 
   // Isolamento per sede. Il gate di ruolo c'era, lo scope no: si resettava la
   // password di un genitore (o di un membro dello staff) di un'ALTRA sede e gli
@@ -243,7 +249,7 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }, e);
   }
 
-  await logScrittura(admin as never, {
+  await logScrittura(admin, {
     attore: auth.user,
     entitaTipo: 'credenziali',
     entitaId: targetId,

@@ -211,7 +211,14 @@ const CHIAVE_OFFLINE = `${ORIGIN}/offline`;
  * dimostrando la cancellazione — che è l'unica cosa che deve dimostrare.
  */
 const CACHE_CORRENTE = (() => {
-    const trovato = SORGENTE.match(/const VERSIONE = '([^']+)'/);
+    // `^` + `m`: la dichiarazione VERA sta a inizio riga, un commento no. Senza
+    // l'ancora, il 2026-08-03 la regex ha agganciato una riga di ESEMPIO dentro un
+    // commento di `sw.js` (l'output di `grep VERSIONE` riportato per documentare
+    // una misura) e ha letto la versione sbagliata: tre test rossi che parlavano
+    // di tutt'altro, e il sospetto — falso — che il bump avesse rotto qualcosa.
+    // Stessa famiglia della nota qui sopra sui letterali scritti a mano: un
+    // parser che legge il sorgente deve sapere cos'è codice e cosa non lo è.
+    const trovato = SORGENTE.match(/^const VERSIONE = '([^']+)'/m);
     if (!trovato) throw new Error('VERSIONE non più leggibile da public/sw.js');
     return 'kidville-shell-' + trovato[1];
 })();
@@ -293,6 +300,194 @@ describe('service worker — installazione', () => {
 
         expect(await s.caches.keys()).toEqual([CACHE_CORRENTE]);
         expect(await (await s.caches.match(CHIAVE_OFFLINE))!.text()).toContain('offline NUOVA');
+    });
+});
+
+/**
+ * ─── IL DOCUMENTO SALVATO SENZA I SUOI PEZZI ───────────────────────────────
+ * Difetto misurato in collaudo (T16-F1, 2026-08-03, build di PRODUZIONE, 3 volte
+ * su 3): senza rete, chi ha già usato l'app NON vede la pagina «non sei in rete»
+ * ma l'error boundary — «QUALCOSA È ANDATO STORTO». Ed era lo stato
+ * STAZIONARIO, non un caso limite.
+ *
+ * CAUSA RADICE: `precarica()` faceva `fetch(urlOffline())` e metteva in cache UN
+ * SOLO oggetto, il documento. La fetch di un Service Worker scarica dei BYTE,
+ * non apre una pagina: non c'è parser HTML, quindi nessuna delle sotto-risorse
+ * referenziate viene mai richiesta, né cachata.
+ *
+ * Perché il guasto PEGGIORA con l'uso, invece di migliorare. Il documento
+ * `/offline` referenzia 15 chunk, 14 dei quali condivisi con `/auth/login`;
+ * l'unico esclusivo è `ContenutoOffline` (~3,8 kB). Appena installata l'app in
+ * cache non c'è quasi nulla, React non parte affatto e disegna lo script inline
+ * — com'è progettato. Ma dopo che l'utente ha navigato un po', i 14 chunk
+ * CONDIVISI sono in cache (li scrive `assetStatico` durante la navigazione
+ * normale), React PARTE, non trova l'unico che gli manca, e l'error boundary
+ * sostituisce l'intero albero — cancellando anche ciò che lo script inline aveva
+ * già disegnato.
+ *
+ * PROVA DI VALIDITÀ: rimettendo in `precarica()` la sola `cache.put` del
+ * documento, il primo caso qui sotto torna ROSSO.
+ */
+describe('service worker — /offline si pre-cacha CON i suoi pezzi', () => {
+    let s: ScopeSW;
+    beforeEach(() => {
+        s = creaScopeSW();
+    });
+
+    const CSS_OFFLINE = `${ORIGIN}/_next/static/css/8a1d0f.css`;
+    const CHUNK_CONDIVISO = `${ORIGIN}/_next/static/chunks/main-app-3f1c9a.js`;
+    const CHUNK_ESCLUSIVO = `${ORIGIN}/_next/static/chunks/app/offline/page-9b2e77.js`;
+    /** Nominato SOLO dentro il corpo di uno script inline: non è una richiesta da fare. */
+    const CHUNK_SOLO_NOMINATO = `${ORIGIN}/_next/static/chunks/mai-richiesto-3c4d.js`;
+
+    /**
+     * Il documento `/offline` nella forma in cui Next lo emette: il CSS come
+     * `<link rel="stylesheet">`, i chunk come `<script src>` (più il `<link
+     * rel="preload">` che li anticipa), il favicon fuori da `/_next/`, e il
+     * payload RSC dentro un `<script>` inline che CITA un chunk senza chiederlo.
+     */
+    const DOCUMENTO_OFFLINE =
+        '<!doctype html><html lang="it"><head>' +
+        '<link rel="stylesheet" href="/_next/static/css/8a1d0f.css" data-precedence="next"/>' +
+        '<link rel="preload" as="script" href="/_next/static/chunks/main-app-3f1c9a.js"/>' +
+        '<script src="/_next/static/chunks/main-app-3f1c9a.js" async=""></script>' +
+        '<script src="/_next/static/chunks/app/offline/page-9b2e77.js" async=""></script>' +
+        '<link rel="icon" href="/favicon.ico"/>' +
+        '</head><body data-kv-offline>' +
+        '<script>self.__next_f.push([1,"/_next/static/chunks/mai-richiesto-3c4d.js"])</script>' +
+        '</body></html>';
+
+    /** Le sotto-risorse che il documento CHIEDE davvero (non quelle che nomina). */
+    const SOTTORISORSE = [CSS_OFFLINE, CHUNK_CONDIVISO, CHUNK_ESCLUSIVO];
+
+    /**
+     * `fetch` finta per URL. Un URL non previsto RIGETTA: così un test che si
+     * aspetta «questa risorsa non viene chiesta» fallisce anche se il SW la
+     * chiedesse e la ricevesse per caso.
+     */
+    function rispondiPerUrl(mappa: Record<string, () => Response>) {
+        s.fetch.mockImplementation(async (req: Request | string) => {
+            const url = typeof req === 'string' ? req : req.url;
+            const risposta = mappa[url];
+            if (!risposta) throw new Error(`nessuna risposta finta per ${url}`);
+            return risposta();
+        });
+    }
+
+    function documentoPiuChunk(cacheControl = CC_PROD_IMMUTABILE) {
+        const mappa: Record<string, () => Response> = {
+            [CHIAVE_OFFLINE]: () => html(DOCUMENTO_OFFLINE),
+        };
+        for (const u of SOTTORISORSE) mappa[u] = () => asset(`corpo di ${u}`, cacheControl);
+        return mappa;
+    }
+
+    /** Gli URL passati a `fetch`, qualunque sia la forma dell'argomento. */
+    function urlRichiesti(): string[] {
+        return s.fetch.mock.calls.map((c) => {
+            const primo = c[0] as Request | string;
+            return typeof primo === 'string' ? primo : primo.url;
+        });
+    }
+
+    it('salva anche le sotto-risorse `/_next/` del documento, non il solo documento', async () => {
+        rispondiPerUrl(documentoPiuChunk());
+
+        await scatenaInstall(s);
+
+        const chiavi = chiaviInCache(s);
+        expect(chiavi, 'il documento /offline').toContain(CHIAVE_OFFLINE);
+        // L'ESCLUSIVO è quello che fa la differenza fra la pagina e l'error
+        // boundary: i condivisi arrivano comunque, prima o poi, navigando.
+        expect(chiavi, 'il chunk esclusivo di /offline').toContain(CHUNK_ESCLUSIVO);
+        expect(chiavi, 'il chunk condiviso col login').toContain(CHUNK_CONDIVISO);
+        expect(chiavi, 'il CSS della pagina').toContain(CSS_OFFLINE);
+    });
+
+    it('non ne resta indietro NESSUNA: si ri-legge il documento salvato e si controlla voce per voce', async () => {
+        // Il caso sopra elenca a mano tre URL e invecchia con il documento
+        // finto. Questo no: rilegge dalla cache il documento COSÌ COM'È STATO
+        // SALVATO, ne estrae da sé i riferimenti `/_next/` e pretende che ci
+        // siano tutti. Se domani la pagina ne guadagna uno, il caso lo copre da
+        // solo.
+        rispondiPerUrl(documentoPiuChunk());
+        await scatenaInstall(s);
+
+        const salvato = await (await s.caches.match(CHIAVE_OFFLINE))!.text();
+        const riferiti = [
+            ...salvato.matchAll(/<(?:script|link)\b[^>]*?\b(?:src|href)\s*=\s*"([^"]+)"/g),
+        ]
+            .map((m) => m[1])
+            .filter((u) => u.startsWith('/_next/'));
+
+        expect(new Set(riferiti).size, 'il documento finto deve referenziare qualcosa').toBe(3);
+        const chiavi = chiaviInCache(s);
+        for (const riferito of riferiti) expect(chiavi).toContain(ORIGIN + riferito);
+    });
+
+    it('chiede SOLO ciò che il documento referenzia davvero: mai il favicon, mai un chunk citato in uno script inline', async () => {
+        rispondiPerUrl(documentoPiuChunk());
+
+        await scatenaInstall(s);
+
+        const richiesti = urlRichiesti();
+        expect(richiesti).toEqual([CHIAVE_OFFLINE, ...SOTTORISORSE]);
+        expect(richiesti).not.toContain(`${ORIGIN}/favicon.ico`);
+        // Il payload RSC di Next cita i nomi dei chunk dentro `self.__next_f`:
+        // sono stringhe in un corpo di script, non risorse da scaricare.
+        expect(richiesti).not.toContain(CHUNK_SOLO_NOMINATO);
+    });
+
+    it('in sviluppo i chunk NON si scrivono: la regola è quella di `conservabile`, non una seconda copia', async () => {
+        // `next dev` serve i chunk con `no-cache, must-revalidate`: lo stesso URL
+        // conterrà un file diverso alla prossima ricompilazione. Il documento
+        // invece si conserva: /offline resta raggiungibile anche in sviluppo.
+        rispondiPerUrl(documentoPiuChunk(CC_DEV));
+
+        await scatenaInstall(s);
+
+        expect(chiaviInCache(s)).toEqual([CHIAVE_OFFLINE]);
+    });
+
+    it('un pezzo che non si scarica non porta via il documento, e viene RIFERITO', async () => {
+        const mappa = documentoPiuChunk();
+        mappa[CHUNK_ESCLUSIVO] = () => new Response('non trovato', { status: 404 });
+        rispondiPerUrl(mappa);
+
+        await scatenaInstall(s);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const chiavi = chiaviInCache(s);
+        expect(chiavi).toContain(CHIAVE_OFFLINE);
+        expect(chiavi).toContain(CHUNK_CONDIVISO);
+        expect(chiavi).not.toContain(CHUNK_ESCLUSIVO);
+        expect(s.skipWaiting).toHaveBeenCalled();
+        // Un pre-cache a metà è il seme dell'error boundary: non può essere muto.
+        expect(s.messaggi.map((m) => m.evento)).toContain('sw-precache-pezzi-offline-incompleta');
+    });
+
+    it('un documento senza alcun `/_next/` non fa partire nessuna richiesta in più', async () => {
+        // È il caso della SHELL minima e di qualunque pagina statica: il ciclo
+        // sulle sotto-risorse deve semplicemente non avere niente da fare.
+        rispondiPerUrl({ [CHIAVE_OFFLINE]: () => html('<html><body>nessun bundle</body></html>') });
+
+        await scatenaInstall(s);
+
+        expect(urlRichiesti()).toEqual([CHIAVE_OFFLINE]);
+        expect(chiaviInCache(s)).toEqual([CHIAVE_OFFLINE]);
+        expect(s.messaggi.map((m) => m.evento)).not.toContain(
+            'sw-precache-pezzi-offline-incompleta',
+        );
+    });
+
+    it('anche `activate` porta con sé i pezzi: è il percorso di chi ha già il SW installato', async () => {
+        // `install` non scatta per chi il Service Worker ce l'ha già: la sua
+        // strada è `activate`, e passa dalla stessa `precarica()`.
+        rispondiPerUrl(documentoPiuChunk());
+
+        await scatenaActivate(s);
+
+        expect(chiaviInCache(s)).toContain(CHUNK_ESCLUSIVO);
     });
 });
 

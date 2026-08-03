@@ -105,6 +105,8 @@
   "elencoRitira": "Ritira",
   "elencoStatistiche": "Statistiche",
   "elencoElimina": "Elimina",
+  "elencoAzioneFallita": "Non è stato possibile completare l’operazione: riprova.",
+  "elencoEliminazioneFallita": "Non è stato possibile eliminare la news: riprova.",
 
   "categorieNuova": "Nuova categoria",
   "categoriePlaceholder": "Es. Sport e movimento",

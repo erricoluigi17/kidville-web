@@ -165,8 +165,13 @@ export function MonthlyLockerTable({
             </div>
 
             {/* ── Tabella scrollabile ── */}
+            {/* `bg-kidville-cream0` non esisteva (residuo di `bg-zinc-900/50`, il fondo
+                del tema scuro da cui questa tabella è stata portata): la card restava
+                trasparente sul crema della pagina e la colonna sticky `bg-white/80`
+                galleggiava senza superficie sotto. La card qui è BIANCA, come la
+                gemella `MonthlyAttendanceTable` (`bg-white` sulla stessa struttura). */}
             <div
-                className="bg-kidville-cream0 backdrop-blur-xl border border-white/10
+                className="bg-kidville-white backdrop-blur-xl border border-kidville-line
                            rounded-2xl overflow-hidden"
             >
                 <div className="overflow-x-auto">

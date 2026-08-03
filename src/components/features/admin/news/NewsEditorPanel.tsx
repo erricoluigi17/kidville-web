@@ -13,6 +13,7 @@ import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, SELECT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { useTranslations } from 'next-intl';
 import { parseInstagramUrl, buildEmbedUrl } from '@/lib/news/instagram';
 import { contieneFoto } from '@/lib/news/foto-nel-post';
@@ -226,9 +227,16 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         if (stato === 'programmata') body.programmata_il = new Date(programmataIl).toISOString();
         res = await fetch(`/api/news?userId=${userId}`, { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
       }
-      const j = (await res.json().catch(() => null)) as { error?: string } | null;
+      const j = (await res.json().catch(() => null)) as { error?: string; codice?: string } | null;
       if (!res.ok) {
-        setErrore(j?.error ?? (res.status === 404 ? t('newsNonDisponibili') : t('editorSalvataggioFallito')));
+        // `messaggioDaCorpo` e non `j?.error`: la prosa del server NASCE italiana
+        // (lì il locale non esiste), quindi mostrarla grezza faceva leggere a chi
+        // lavora in inglese la frase italiana — il fallimento F1 del collaudo del
+        // 2026-07-31, riaperto qui dentro. Il server manda un `codice` accanto
+        // all'`error` proprio perché il testo si scelga dal catalogo, dove la
+        // lingua c'è. Il ripiego resta la prosa, poi la frase locale.
+        const ripiego = res.status === 404 ? t('newsNonDisponibili') : t('editorSalvataggioFallito');
+        setErrore(messaggioDaCorpo(j, ripiego));
         return;
       }
       setSalvato(true);

@@ -216,6 +216,8 @@ function makeFake(cfg: Cfg) {
       b.eq = () => b
       b.neq = () => b
       b.not = () => b
+      b.order = () => b
+      b.range = () => b
       b.in = (_col: string, vals: unknown) => {
         if (state.isDelete) deleted.push({ table, ids: vals })
         return b
@@ -394,6 +396,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = () => b
       b.neq = () => b
       b.in = () => b
+      b.order = () => b
+      b.range = () => b
       b.is = () => b
       b.or = () => b
       b.ilike = () => b
@@ -535,6 +539,15 @@ interface CfgB {
   threadAlunno?: { id: string }[]
   threadGenitore?: { id: string }[]
   messaggi?: { id: string; attachment_url: string | null }[]
+  /** Gli articoli del blog PUBBLICO che dichiarano il minore fra i ritratti. */
+  newsPosts?: Record<string, unknown>[]
+  /**
+   * Gli ALTRI articoli, cioè quelli che possono possedere gli stessi file. È un
+   * insieme diverso dal precedente e deve restarlo: «l'articolo che ritrae il
+   * bambino» e «l'articolo che possiede il file» sono le due grandezze che la
+   * regressione del 2026-08-03 confondeva, cancellando l'immagine di un altro.
+   */
+  altriNewsPosts?: Record<string, unknown>[]
   credenziali?: { name: string }[]
   err?: Record<string, { code: string }>
   removeError?: { message: string } | null
@@ -548,12 +561,27 @@ function makeFakeBucket(cfg: CfgB) {
   const listati: { bucket: string; prefisso: string }[] = []
   const client = {
     from(table: string) {
-      const st: { isDelete?: boolean; eq: Record<string, unknown> } = { eq: {} }
+      const st: {
+        isDelete?: boolean
+        eq: Record<string, unknown>
+        neq: Record<string, unknown>
+        esclusi: string[] | null
+        finestra: { da: number; a: number } | null
+      } = { eq: {}, neq: {}, esclusi: null, finestra: null }
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = (col: string, val: unknown) => { st.eq[col] = val; return b }
-      b.neq = () => b
-      b.not = () => b
+      b.neq = (col: string, val: unknown) => { st.neq[col] = val; return b }
+      b.not = (col: string, op: string, val: unknown) => {
+        // `.not('id','in','(a,b)')`: l'esclusione dei post che stanno perdendo i
+        // propri file. Si applica DAVVERO — vedi il commento su `news_posts`.
+        if (col === 'id' && op === 'in') {
+          st.esclusi = String(val).replace(/^\(|\)$/g, '').split(',').filter((x) => x !== '')
+        }
+        return b
+      }
+      b.order = () => b
+      b.range = (da: number, a: number) => { st.finestra = { da, a }; return b }
       b.in = (_col: string, vals: unknown) => {
         if (st.isDelete) deleted.push({ table, ids: vals })
         return b
@@ -584,6 +612,26 @@ function makeFakeBucket(cfg: CfgB) {
           data = ('student_id' in st.eq ? cfg.threadAlunno : cfg.threadGenitore) ?? []
         }
         if (table === 'chat_messages') data = cfg.messaggi ?? []
+        // Due domande diverse sulla stessa tabella, e il finto client deve
+        // distinguerle: «quali articoli ritraggono questo bambino?» (per uuid) e
+        // «c'è un ALTRO articolo che nomina questo file?» (una passata a PAGINE,
+        // con i post in ritiro esclusi, prima di toglierlo dal bucket pubblico —
+        // e l'esclusione qui si applica sul serio, come nel database, perché un
+        // finto compiacente renderebbe invisibile proprio il difetto che il
+        // controllo chiude). Rispondere alla seconda con le righe
+        // della prima significa che il post risponde di sé stesso: il file non
+        // uscirebbe mai più e l'oblio smetterebbe di arrivare al bucket.
+        if (table === 'news_posts') {
+          if (st.finestra) {
+            const esclusi = new Set(st.esclusi ?? [])
+            data = [...(cfg.altriNewsPosts ?? [])]
+              .sort((x, y) => String((x as { id?: unknown }).id).localeCompare(String((y as { id?: unknown }).id)))
+              .filter((r) => !esclusi.has(String((r as { id?: unknown }).id)))
+              .slice(st.finestra.da, st.finestra.a + 1)
+          } else {
+            data = cfg.newsPosts ?? []
+          }
+        }
         return Promise.resolve({ data: error ? null : data, error }).then(res)
       }
       return b
@@ -608,6 +656,58 @@ function makeFakeBucket(cfg: CfgB) {
 
 const bucketToccati = (removed: { bucket: string; paths: string[] }[]) =>
   [...new Set(removed.filter((r) => r.paths.length > 0).map((r) => r.bucket))].sort()
+
+/** L'indirizzo pubblico che `promuoviMediaBozza` scrive nella riga di un articolo. */
+const URL_FOTO_NEWS = 'https://esempio.supabase.co/storage/v1/object/public/news/uploads/staff-1/1700-abc.jpg'
+
+describe('oblio · la foto sul blog PUBBLICO esce SUBITO, non al prossimo tick', () => {
+  // Il bucket `news` è l'unico PUBBLICO dei tredici: è servito a chiunque
+  // conosca l'indirizzo, senza login. Fino al 2026-08-03 l'oblio non ci arrivava
+  // affatto da qui — `obliaFotoNewsAlunno` era scritta, testata, e non chiamata
+  // da nessuna parte in `src/`. La copertura passava solo dal tick, che rilegge i
+  // consensi ogni dieci minuti: una finestra di dieci minuti in cui la foto di un
+  // bambino di cui è stata chiesta la cancellazione resta a un indirizzo pubblico.
+  //
+  // Dieci minuti sono poco per un archivio e sono tanto per una famiglia che ha
+  // appena esercitato un diritto. Il tick resta — è la rete che prende anche i
+  // casi che non passano da `anonimizzaAlunno` — ma non è più l'unica cosa.
+
+  it('ALUNNO · l’oblio toglie l’articolo dalla vista e il file dal bucket `news`', async () => {
+    const f = fakePieno()
+    await anonimizzaAlunno(f.client as never, { id: 'al-1', documento_path: null }, AT, 'test')
+    expect(
+      bucketToccati(f.removed),
+      'nessuna `remove()` sul bucket `news`: la foto del minore resta a un indirizzo pubblico ' +
+        'fino al prossimo tick, e nessuna riga di codice dice che qualcuno se ne occuperà',
+    ).toContain('news')
+    const upd = f.updates.find((u) => u.table === 'news_posts')
+    expect(upd, 'il post non è stato ritirato').toBeTruthy()
+    expect(upd!.stato).toBe('nascosta')
+    // L'uuid di un bambino cancellato non resta scritto nella riga: è un
+    // riferimento a una persona che ha chiesto di sparire.
+    expect(upd!.bambini_ritratti).toEqual([])
+  })
+
+  it('CONTROLLO POSITIVO — nessun articolo lo ritrae → il bucket `news` non si tocca', async () => {
+    // Senza questo controllo, un oblio che manda una `remove()` a vuoto su ogni
+    // bucket passerebbe il test qui sopra senza aver cancellato niente.
+    const f = makeFakeBucket({ newsPosts: [] })
+    await anonimizzaAlunno(f.client as never, { id: 'al-1', documento_path: null }, AT, 'test')
+    expect(bucketToccati(f.removed)).not.toContain('news')
+  })
+
+  it('il registro dell’oblio dichiara `news` coperto dal canale ALUNNO', () => {
+    // La voce e il codice devono dire la stessa cosa: finché `obliaFotoNewsAlunno`
+    // non era chiamata da nessuno, il registro lo diceva («NON è ancora sincrona»)
+    // ed era onesto. Ora che lo è, un registro fermo alla frase di prima sarebbe
+    // una descrizione falsa — la specie di frase che ha già superato questo lock
+    // una volta.
+    const voce = REGISTRO_BUCKET_OBLIO.news
+    expect(voce.stato).toBe('coperto')
+    const canali = voce.stato === 'coperto' ? voce.canali : []
+    expect(canali).toContain('alunno')
+  })
+})
 
 describe('oblio · i bucket che restavano pieni (pagelle, certificati, chat, credenziali)', () => {
   it('ALUNNO · la pagella esce dal bucket `pagelle`, e la riga che la indicizza sparisce', async () => {
@@ -777,6 +877,15 @@ function fakePieno() {
     threadAlunno: [{ id: 'th-1' }],
     threadGenitore: [{ id: 'th-9' }],
     messaggi: [{ id: 'ms-1', attachment_url: 'auth-9/uuid-referto.pdf' }],
+    newsPosts: [
+      {
+        id: 'np-1',
+        stato: 'pubblicata',
+        bambini_ritratti: ['al-1'],
+        copertina_url: URL_FOTO_NEWS,
+        contenuto_json: null,
+      },
+    ],
     credenziali: [{ name: 'p-1-1700000000000.pdf' }, { name: 'auth-1-1700000000001.pdf' }],
   })
 }

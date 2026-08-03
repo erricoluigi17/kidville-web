@@ -397,7 +397,12 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         // sui campi (stessa UI del client) e riporta l'utente all'istanza in errore,
         // invece di un alert generico.
         if (res.status === 400 && mappaErroriServer(json?.campi)) return
-        throw new Error(json.error ?? 'Invio fallito')
+        // ETICHETTA STABILE, non `json.error`. A schermo quella prosa non arriva
+        // (il `catch` accende `setErroreInvio`), ma `err.stack` comincia con il
+        // MESSAGGIO ed è ciò che `logClient` spedisce: la frase del server ci
+        // finiva dentro tale e quale, e questo è il modulo in cui una famiglia
+        // scrive il nome del figlio. Lo status è un numero e basta a capire.
+        throw new Error(`invio-iscrizione: HTTP ${res.status}`)
       }
       setDone(true)
     } catch (err) {

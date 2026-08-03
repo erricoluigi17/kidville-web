@@ -81,6 +81,24 @@ const SORGENTI_DEL_RIFIUTO = [
     'src/lib/mensa/scope.ts',
 ];
 
+/**
+ * L'UNICO `codice` non letterale ammesso, `file → espressione`.
+ *
+ * `rifiutoSede(codice)` costruisce la risposta a partire dal suo PARAMETRO: lì il
+ * valore non c'è per definizione, e pretenderlo letterale vorrebbe dire tornare a
+ * scrivere il rifiuto a mano in 137 route — cioè disfare la correzione del
+ * 2026-08-01. L'esenzione regge solo perché quel codice è controllato dall'ALTRA
+ * strada: `codiciUsati()` legge gli argomenti di ogni `rifiutoSede('X')` in `src/`,
+ * e il test qui sotto verifica che quella strada porti davvero a casa qualcosa —
+ * un'esenzione la cui copertura alternativa non funziona è un buco con un nome.
+ *
+ * L'elenco può solo rimpicciolirsi: una funzione nuova che riceve un codice da
+ * fuori va aggiunta all'analisi, non a questa mappa.
+ */
+const CODICE_NON_LETTERALE_AMMESSO = new Map<string, string>([
+    ['src/lib/auth/rifiuto-sede.ts', 'codice'],
+]);
+
 /* ────────────────────────────────────────────────────────────────────────────────
  * LA MISURA. Testuale, come nel lock sui catch muti e per lo stesso motivo: far girare un
  * parser vero su 285 file costa più del gate intero.
@@ -142,8 +160,32 @@ function corpiJson(src: string): { testo: string; riga: number }[] {
     return out;
 }
 
-/** Le proprietà di PRIMO livello di un oggetto letterale: nome e, se è un letterale, valore. */
-function proprieta(obj: string): { nome: string; valore: string | null }[] {
+/**
+ * Il valore di un `const NOME = '…'` di PRIMO livello nel file, se esiste.
+ *
+ * Serve a leggere `codice: UNA_COSTANTE`, che è il modo in cui questo repo scrive
+ * un codice quando lo manda da due punti dello stesso file. Senza, il lock vedeva
+ * `null` e smetteva di controllare (vedi il test «un `codice` che non è una
+ * stringa letterale»). Deliberatamente ingenuo: risolve SOLO la forma
+ * `const X = 'letterale'` nello stesso file, e su tutto il resto risponde `null`,
+ * che qui vale «non lo so» — e «non lo so» fa fermare il lock, non tacere.
+ */
+function costanteLetterale(sorgente: string, nome: string): string | null {
+    if (!/^[A-Za-z_$][\w$]*$/.test(nome)) return null;
+    const re = new RegExp(
+        `(?:^|\\n)\\s*(?:export\\s+)?const\\s+${nome}\\s*(?::\\s*[^=\\n]+)?=\\s*` +
+            `(?:'((?:[^'\\\\]|\\\\.)*)'|"((?:[^"\\\\]|\\\\.)*)")\\s*(?:as\\s+const\\s*)?[;\\n]`,
+    );
+    const m = re.exec(sorgente);
+    if (!m) return null;
+    return (m[1] ?? m[2] ?? '').replace(/\\'/g, "'").replace(/\\"/g, '"');
+}
+
+/**
+ * Le proprietà di PRIMO livello di un oggetto letterale: nome, valore se è un
+ * letterale, ed espressione GREZZA — che serve a risolvere `codice: UNA_COSTANTE`.
+ */
+function proprieta(obj: string): { nome: string; valore: string | null; grezzo: string | null }[] {
     const dentro = obj.slice(1, -1);
     const pezzi: string[] = [];
     let liv = 0;
@@ -164,18 +206,19 @@ function proprieta(obj: string): { nome: string; valore: string | null }[] {
         buf += c;
     }
     pezzi.push(buf);
-    const out: { nome: string; valore: string | null }[] = [];
+    const out: { nome: string; valore: string | null; grezzo: string | null }[] = [];
     for (const p of pezzi) {
         const conValore = p.match(/^\s*(?:\.\.\.)?\s*([A-Za-z_$][\w$]*)\s*:\s*([\s\S]*)$/);
         if (conValore) {
             const grezzo = conValore[2].trim();
             const lett = grezzo.match(/^'((?:[^'\\]|\\.)*)'$|^"((?:[^"\\]|\\.)*)"$/);
             const valore = lett ? (lett[1] ?? lett[2]).replace(/\\'/g, "'").replace(/\\"/g, '"') : null;
-            out.push({ nome: conValore[1], valore });
+            out.push({ nome: conValore[1], valore, grezzo });
             continue;
         }
+        // Scorciatoia (`{ error, codice }`): l'espressione È il nome stesso.
         const shorthand = p.match(/^\s*([A-Za-z_$][\w$]*)\s*$/);
-        if (shorthand) out.push({ nome: shorthand[1], valore: null });
+        if (shorthand) out.push({ nome: shorthand[1], valore: null, grezzo: shorthand[1] });
     }
     return out;
 }
@@ -185,8 +228,14 @@ type Errore = {
     riga: number;
     testo: string | null;
     conCodice: boolean;
-    /** Il codice, se è un letterale; `null` se assente o costruito da una variabile. */
+    /** Il codice: letterale, oppure risolto da un `const X = '…'` dello stesso file. */
     codice: string | null;
+    /**
+     * L'espressione del `codice` quando NON si è potuta leggere (una chiamata, un
+     * campo di un oggetto, una costante importata da altrove). Valorizzata, dice
+     * che c'è un codice che nessuna regola di questo file sta controllando.
+     */
+    codiceOpaco: string | null;
 };
 
 function sorgenti(dir = SRC): string[] {
@@ -210,12 +259,22 @@ function inventario(): Errore[] {
             const err = props.find((p) => p.nome === 'error');
             if (!err) continue;
             const cod = props.find((p) => p.nome === 'codice');
+            // `codice: UNA_COSTANTE` si risolve nel file; ciò che resta illeggibile
+            // NON diventa `null` in silenzio (era il buco: un valore che il lettore
+            // non capisce smetteva di essere confrontato con qualunque cosa).
+            let codice = cod?.valore ?? null;
+            let codiceOpaco: string | null = null;
+            if (cod && codice === null) {
+                codice = costanteLetterale(src, cod.grezzo ?? '');
+                if (codice === null) codiceOpaco = cod.grezzo ?? '(illeggibile)';
+            }
             out.push({
                 file: f,
                 riga: corpo.riga,
                 testo: err.valore,
                 conCodice: Boolean(cod),
-                codice: cod?.valore ?? null,
+                codice,
+                codiceOpaco,
             });
         }
     }
@@ -289,6 +348,63 @@ describe('lock — i messaggi d’errore del server hanno un codice', () => {
             'Codice dichiarato ma senza voce di catalogo: in quella lingua l’utente leggerebbe la prosa ' +
                 'italiana del server.',
         ).toEqual([]);
+    });
+
+    it('un `codice` che il lock non sa LEGGERE non passa inosservato', () => {
+        // IL BUCO, misurato il 2026-08-03 sulla strada accanto alla trappola del
+        // codice RIUSATO che questo ciclo ha appena chiuso. `inventario()` leggeva
+        // `codice` solo quando era una stringa letterale: con `codice: UNA_COSTANTE`
+        // il valore era `null` e da lì in poi non veniva confrontato con niente —
+        // né con `CODICI_ERRORE`, né coi due cataloghi. Un codice inventato, o
+        // riusato, o scritto male, passava il lock qualunque cosa contenesse: la
+        // regola qui sopra («ogni codice usato è dichiarato e tradotto») era verde
+        // per il motivo peggiore, cioè perché non guardava.
+        //
+        // Adesso la costante si RISOLVE quando è un `const X = '…'` dello stesso
+        // file, e ciò che resta illeggibile ferma il lock invece di farlo tacere.
+        // Un valore che il lock non sa leggere è un valore che nessuno controlla.
+        const opachi = inventario()
+            .filter((e) => e.codiceOpaco && CODICE_NON_LETTERALE_AMMESSO.get(e.file) !== e.codiceOpaco)
+            .map((e) => `${e.file}:${e.riga} → codice: ${e.codiceOpaco}`);
+
+        expect(
+            opachi,
+            'Il `codice` di questa risposta non è una stringa letterale e non è un `const X = \'…\'` ' +
+                'dello stesso file: il lock non può verificare che sia dichiarato in CODICI_ERRORE né ' +
+                'che sia tradotto nelle due lingue. Scrivilo come letterale, o come costante locale.',
+        ).toEqual([]);
+
+        // L'UNICA esenzione regge solo se la sua copertura alternativa funziona:
+        // i due codici di sede devono arrivare all'inventario dagli argomenti di
+        // `rifiutoSede('X')`. Se quella lettura si rompesse, l'esenzione qui sopra
+        // diventerebbe silenzio puro.
+        const daRifiutoSede = codiciUsati()
+            .filter((u) => u.file !== 'src/lib/auth/rifiuto-sede.ts')
+            .map((u) => u.codice);
+        for (const atteso of ['SEDE_NON_ACCESSIBILE', 'SEDE_DA_SPECIFICARE']) {
+            expect(
+                daRifiutoSede,
+                `il codice ${atteso} non risulta più usato da nessuna parte: l’esenzione di ` +
+                    '`rifiutoSede` non è più coperta da niente',
+            ).toContain(atteso);
+        }
+    });
+
+    it('la lettura delle costanti FUNZIONA (controllo positivo del lettore)', () => {
+        // Senza questo, la regola qui sopra sarebbe verde anche con un lettore che
+        // «risolve» qualunque cosa: dichiarerebbe letto ogni codice senza leggerne
+        // nemmeno uno, ed è esattamente la forma di test finto che questo ciclo sta
+        // togliendo di mezzo.
+        const finto = [
+            "const CODICE_X = 'SEDE_NON_ACCESSIBILE'",
+            'export const CODICE_Y: string = "TROPPE_RICHIESTE";',
+            'const CODICE_Z = calcola()',
+        ].join('\n');
+
+        expect(costanteLetterale(finto, 'CODICE_X')).toBe('SEDE_NON_ACCESSIBILE');
+        expect(costanteLetterale(finto, 'CODICE_Y')).toBe('TROPPE_RICHIESTE');
+        expect(costanteLetterale(finto, 'CODICE_Z'), 'una chiamata non è un valore leggibile').toBeNull();
+        expect(costanteLetterale(finto, 'CODICE_MAI_DICHIARATO')).toBeNull();
     });
 
     it('i dinieghi di sede NASCONO da `rifiutoSede`, e ci nascono ancora (controllo positivo)', () => {

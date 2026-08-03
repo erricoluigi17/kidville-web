@@ -1,5 +1,5 @@
 // =============================================================================
-// IL GATE DEL CONSENSO FOTOGRAFICO — un posto solo, tre rotte.
+// IL GATE DEL CONSENSO FOTOGRAFICO — un posto solo, quattro rotte.
 //
 // PERCHÉ ESISTE QUESTO FILE. Il controllo nasce il 2026-08-01 dentro
 // `POST /api/news` e ci resta chiuso dentro. Il collaudo dello stesso giorno lo
@@ -14,12 +14,30 @@
 // una quarta copia da tenere allineata a mano — ma toglierlo da entrambe e
 // metterlo qui, dove chi aggiunge una rotta lo trova già scritto.
 //
-// TRE PUNTI DI PASSAGGIO, e non è ridondanza:
+// QUATTRO PUNTI DI PASSAGGIO, e non è ridondanza:
 //   · `POST /api/news`            — il contenuto NASCE;
 //   · `PATCH /api/news/[id]`      — il contenuto CAMBIA (qui stava il buco);
 //   · `POST /api/news/[id]/pubblica` — il contenuto DIVENTA VISIBILE, e fra la
 //     creazione e la pubblicazione una famiglia può aver revocato (art. 7 §3
-//     GDPR: revocare deve essere facile quanto acconsentire).
+//     GDPR: revocare deve essere facile quanto acconsentire);
+//   · `POST /api/news/[id]/approva` — la segreteria approva la PROPOSTA di un
+//     docente e, nel ramo normale (`pubblica_subito !== false`), la rende
+//     visibile nello stesso istante. Aggiunto il 2026-08-03: erano tre, e la
+//     quarta rotta pubblicava senza chiedere niente a nessuno.
+//
+// ERANO TRE, POI QUATTRO — E LA PROSSIMA? Il 2026-08-03 il conteggio di questa
+// testata è stato smentito dal codice per la seconda volta. Perciò la promessa
+// non vive più qui dentro: `__tests__/architecture/news-pubblicazione-gated.test.ts`
+// enumera da solo le rotte di `news` che mettono un post in `pubblicata` (o che
+// inseriscono una riga di `news_posts`) e pretende che ciascuna nomini questo
+// gate. Se un giorno la quinta strada esiste, a dirlo è quel test — non un
+// collaudo, non un incidente, e non un commento che qualcuno ricorda di aggiornare.
+//
+// L'ALTRA METÀ, che sta altrove: `src/lib/news/permanenza-consenso.ts`. Il gate
+// risponde a «questa foto può entrare?»; la permanenza risponde a «questa foto
+// può ancora stare qui?» e alla domanda che chiude il cerchio — «quando la riga
+// se ne va, il FILE dov'è finito?» (`liberaFilePubbliciDelPost`, usata dal ritiro
+// e dalla `DELETE`).
 //
 // COSA NON FA. Non decide la sede e non guarda i ruoli: quelli restano nelle
 // route, dove `requireDocente`/`requireStaff` e `resolveScuoleAttive` sono già

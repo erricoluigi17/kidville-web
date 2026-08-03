@@ -6,6 +6,7 @@ import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { Download, Check, Award, ShieldCheck } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn, btnClass } from '@/components/ui/Btn';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
 interface CertItem { id: string; anno: string; stato: string; downloadUrl: string | null }
@@ -70,7 +71,8 @@ function PagelleGenitore() {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
     });
     const d = await r.json();
-    if (!r.ok) { setMsg(d.error || t('pagelleErroreOtp')); return; }
+    // Niente prosa del server: è italiana per costruzione (T10-F1).
+    if (!r.ok) { setMsg(soloCatalogoDaCorpo(d, t('pagelleErroreOtp'))); return; }
     setOtpState(d.data);
   };
 
@@ -84,7 +86,7 @@ function PagelleGenitore() {
     });
     const d = await r.json();
     setFirmando(null);
-    if (!r.ok) { setMsg(d.error || t('pagelleFirmaNonRiuscita')); return; }
+    if (!r.ok) { setMsg(soloCatalogoDaCorpo(d, t('pagelleFirmaNonRiuscita'))); return; }
     setOtpState(null); setOtpCode(''); setOtpTarget(null);
     setMsg(t('pagelleFirmataMsg'));
     carica();

@@ -12,6 +12,7 @@ import { SELECT, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui'
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { useTranslations, useLocale } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { NEWS_STATI, NEWS_TIPI, type NewsPost, type NewsStato, type NewsTipo } from '@/lib/news/tipi';
@@ -59,6 +60,17 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
   const [loading, setLoading] = useState(true);
   const [disponibile, setDisponibile] = useState(true);
   const [stats, setStats] = useState<Record<string, { visualizzazioni: number; famiglie_target: number }>>({});
+  // ─── IL RIFIUTO DEL SERVER NON PUÒ ARRIVARE COME SILENZIO ──────────────────
+  // Fino al 2026-08-03 le due mutazioni di questo pannello erano scritte
+  // `if (res.ok) void carica()`, senza `else`. Un rifiuto si comportava esatta-
+  // mente come un successo: nessun avviso, elenco non ricaricato, e la riga
+  // ancora lì — che a schermo somiglia a «non è successo niente».
+  // Il caso che conta è il 503 `NEWS_FILE_NON_RIMOSSI` della cancellazione: la
+  // news NON è stata eliminata perché le sue immagini non sono uscite dal bucket
+  // pubblico. Chi ha appena premuto «Elimina» deve sapere che il post c'è ancora
+  // e che deve riprovare, altrimenti se ne va convinto che la foto del bambino
+  // sia sparita — mentre è esattamente il contrario.
+  const [errore, setErrore] = useState<string | null>(null);
 
   const carica = useCallback(async () => {
     try {
@@ -84,21 +96,42 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
   }, [carica]);
 
   const azione = async (id: string, azione: 'pin' | 'ritira' | 'ripubblica') => {
+    setErrore(null);
     try {
       const res = await fetch(`/api/news/${id}/pubblica?userId=${userId}`, { method: 'POST', headers: hdr(userId), body: JSON.stringify({ azione }) });
-      if (res.ok) void carica();
+      if (!res.ok) {
+        // `messaggioDaCorpo` e non `j?.error`: la prosa del server NASCE italiana
+        // (lì il locale non esiste). Il codice accanto è ciò che permette di
+        // mostrare la frase del catalogo nella lingua di chi sta guardando.
+        const j = (await res.json().catch(() => null)) as { error?: string; codice?: string } | null;
+        setErrore(messaggioDaCorpo(j, t('elencoAzioneFallita')));
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `news-azione-${azione}-rifiutata`, route: '/admin/news', stato: res.status });
+        return;
+      }
+      void carica();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `news-azione-${azione}-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
+      setErrore(t('erroreReteRiprova'));
     }
   };
 
   const elimina = async (id: string) => {
     if (!confirm(t('elencoConfermaElimina'))) return;
+    setErrore(null);
     try {
       const res = await fetch(`/api/news/${id}?userId=${userId}`, { method: 'DELETE', headers: hdr(userId) });
-      if (res.ok) void carica();
+      if (!res.ok) {
+        // Il 503 `NEWS_FILE_NON_RIMOSSI` finisce QUI: la news non è stata
+        // eliminata perché le immagini sono ancora nel bucket pubblico.
+        const j = (await res.json().catch(() => null)) as { error?: string; codice?: string } | null;
+        setErrore(messaggioDaCorpo(j, t('elencoEliminazioneFallita')));
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'news-eliminazione-rifiutata', route: '/admin/news', stato: res.status });
+        return;
+      }
+      void carica();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `news-eliminazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
+      setErrore(t('erroreReteRiprova'));
     }
   };
 
@@ -127,6 +160,10 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
           {NEWS_TIPI.map((tp) => <option key={tp} value={tp}>{t(TIPO_LABEL_KEY[tp])}</option>)}
         </select>
       </div>
+
+      {/* Il rifiuto del server, a schermo: senza questo il 503 della cancellazione
+          arriva come silenzio assoluto e la news sembra eliminata. */}
+      {errore && <p role="alert" className="font-maven text-sm text-kidville-error-strong">{errore}</p>}
 
       {loading ? (
         <div className="flex flex-col gap-2">

@@ -7,6 +7,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 function AttendanceInner() {
     const t = useTranslations('parentServizi');
@@ -37,7 +38,10 @@ function AttendanceInner() {
             if (res.ok) {
                 setIsSubmitted(true);
             } else {
-                setError(j.error || t('attendanceErrGenerico'));
+                // La prosa del server NON si mostra: nasce dove il locale non
+                // esiste ed è italiana per costruzione (T10-F1). O il codice
+                // dichiarato, tradotto, o la frase di questo componente.
+                setError(soloCatalogoDaCorpo(j, t('attendanceErrGenerico')));
             }
         } catch {
             setError(t('attendanceErrRete'));

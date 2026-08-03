@@ -208,6 +208,10 @@ describe('lock architettura · la bonifica eseguita davvero (canarini finti, car
         chiave: 'canarino-sei', // …_KEY=
         segreto: 'canarino-sette', // …_SECRET=
         pwd: 'canarino-otto', // …_PWD=
+        // Il COOKIE DI SESSIONE Supabase: `sb-<ref>-auth-token`. Nome in minuscolo e
+        // con i TRATTINI, cioè fuori dalla classe `[A-Za-z0-9_]*` che la maschera
+        // conosceva — vedi il caso qui sotto.
+        cookie: 'canarino-nove',
     }
 
     let dir = ''
@@ -264,6 +268,10 @@ describe('lock architettura · la bonifica eseguita davvero (canarini finti, car
                 `SUPABASE_SERVICE_KEY=${CANARINI.chiave}`,
                 `KV_WEBHOOK_SECRET=${CANARINI.segreto}`,
                 `KV_PWD=${CANARINI.pwd}`,
+                // IL COOKIE DI SESSIONE, nelle due forme in cui compare davvero.
+                `set-cookie: sb-uimulkjyekgemjakmepp-auth-token=${CANARINI.cookie}; Path=/`,
+                `document.cookie = "sb-uimulkjyekgemjakmepp-auth-token=${CANARINI.cookie}; Max-Age=3600"`,
+                `{"sb-uimulkjyekgemjakmepp-auth-token": "${CANARINI.cookie}"}`,
                 // La sostituzione per VALORE resta indispensabile: copre le forme che
                 // nessuno ha ancora visto, come questa.
                 `una-riga-di-forma-mai-vista: ${VALORE_CORRENTE}`,
@@ -292,6 +300,32 @@ describe('lock architettura · la bonifica eseguita davvero (canarini finti, car
 
     afterAll(() => {
         if (dir) rmSync(dir, { recursive: true, force: true })
+    })
+
+    it('maschera il COOKIE DI SESSIONE `sb-<ref>-auth-token`, in tutte e tre le forme', () => {
+        // ⟵ IL CASO CHE MANCAVA (misurato il 2026-08-03, verifica adversariale W9r).
+        //
+        // La maschera per CLASSE conosce la famiglia `…TOKEN=`, ma il nome ammetteva
+        // solo `[A-Za-z0-9_]*`: il cookie di Supabase si chiama
+        // `sb-<ref>-auth-token`, tutto minuscolo e con i TRATTINI, e nessuna delle due
+        // regole lo vedeva. Provato eseguendo la bonifica vera su un canarino: la
+        // password veniva mascherata e il cookie restava in chiaro, riga sotto.
+        //
+        // NON È UN SEGRETO DI SECONDA FASCIA: quel valore È la sessione. Chi ce l'ha
+        // in mano è l'utente collegato finché non scade, senza sapere la password e
+        // senza passare dal login — e i flow Maestro girano sugli account TEST di
+        // PRODUZIONE, fra cui `test.segreteria@kidville.test`, che legge l'anagrafica
+        // di un'intera sede. È la stessa lezione già scritta due volte in cima a
+        // `esegui.sh` — prima per i VALORI, poi per i NOMI — applicata ora alla terza
+        // dimensione che era rimasta fuori: l'ALFABETO del nome.
+        expect(
+            dopo.senzaEstensione,
+            'il cookie di sessione è sopravvissuto alla bonifica: chi lo legge è dentro come ' +
+                'quell’utente, senza password e senza login',
+        ).not.toContain(CANARINI.cookie)
+        // Tutte e tre le forme, non solo la prima che capita.
+        expect(dopo.senzaEstensione).toContain('sb-uimulkjyekgemjakmepp-auth-token=***')
+        expect(dopo.senzaEstensione).toContain('"sb-uimulkjyekgemjakmepp-auth-token": "***"')
     })
 
     it('maschera `KV_PASSWORD=` — il secondo nome, quello che i flow dichiarano da sé', () => {

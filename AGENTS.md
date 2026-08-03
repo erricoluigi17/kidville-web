@@ -96,11 +96,14 @@ gira da sola *pianifica → implementa → collauda → correggi* finché tutti 
 branch secondario, PRD aggiornato, logging obbligatorio, gate di verifica.
 
 Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **conferme umane**.
-🔴 Dal 2026-07-31 quel blocco dice l'opposto di prima: in produzione ci sono **dati reali di
-minori** (227 domande di iscrizione, 152 codici fiscali di bambini, raccolte dal 16 luglio), e
-**ogni migrazione e ogni merge si mostrano al titolare e si fanno approvare, uno per uno**.
-Il «pre-lancio» che autorizzava le scritture automatiche non c'è più: non è mai stato vero da
-quando il modulo pubblico d'iscrizione è online.
+🔻 Quel blocco è stato **applicato e REVOCATO il 2026-08-03**, nello stesso giorno, su richiesta
+esplicita del titolare («proprio tutto, migrazioni e merge compresi»): **merge, deploy, migrazioni
+ed `execute_sql` NON chiedono più conferma**, e `defaultMode` è di nuovo `acceptEdits`.
+🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**
+(227 domande di iscrizione, 152 codici fiscali di bambini, raccolte dal 16 luglio). La differenza è
+che ora **nessun essere umano vede un `UPDATE` o una migrazione prima che parta**. Chi lavora qui
+mostri comunque cosa sta per applicare: *mostrare* non è *chiedere*, non costa niente, ed è l'unica
+cosa rimasta fra un errore e 152 minori.
 
 ## Note
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.

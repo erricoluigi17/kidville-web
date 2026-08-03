@@ -79,12 +79,53 @@ import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 const JOB = 'iscrizioni-retention'
 
-/** 24 MESI: decisione del titolare del 2026-08-01, non un default tecnico. */
+/**
+ * 24 MESI: decisione del titolare del 2026-08-01, non un default tecnico.
+ *
+ * ─── V3 · DUE DECISIONI A UN GIORNO DI DISTANZA CHE NON CONCORDANO ──────────
+ *
+ * Il 2026-07-31 la migrazione `20260731165941` chiude così, sulle 93 domande
+ * arrivate prima che il modulo registrasse l'accettazione dell'informativa:
+ * «nessuna cancellazione, NESSUNA RETENTION su questa tabella» — con la ragione
+ * scritta e citata testualmente dal titolare («non voglio assolutamente perdere
+ * questi dati»). Il 2026-08-01, il giorno dopo, nasce la regola dei 24 mesi qui
+ * sopra. Nessuna delle due nomina l'altra, e per tre giorni questa route ha
+ * cancellato senza sapere che l'altra esisteva (rilievo `V3` del collaudo).
+ *
+ * COSA SI È SCELTO, e perché in questo verso: le domande marcate
+ * `raccolta_senza_informativa` sono ESCLUSE dalla cancellazione automatica, e
+ * quando superano la soglia la route lo grida con un `warn` e il conteggio.
+ *
+ *  · la cancellazione è IRREVERSIBILE e il disaccordo è reale: davanti a due
+ *    regole che non concordano si sceglie il verso che lascia decidere una
+ *    persona, non quello che distrugge e poi si scusa. È lo stesso principio già
+ *    applicato in `liberaPercorsiPubblici` — «"non lo so" non vale "demolisci"»;
+ *  · e sono proprio le righe raccolte SENZA informativa: cancellarle in automatico
+ *    farebbe sparire la prova dell'unico episodio noto di raccolta senza
+ *    informativa, cioè il fatto che quella migrazione esiste per conservare.
+ *
+ * ⚠️ RESTA UNA DECISIONE DA PRENDERE, non una chiusa: serve che il titolare dica
+ * quale delle due regole vale per quelle 93 righe. Fino ad allora non si cancella
+ * e si vede. Nessuna urgenza di calendario — sono del 2026-07-16, la soglia cade
+ * nel 2028 — ma il codice e la migrazione ora dicono la stessa cosa.
+ */
 const MESI_CONSERVAZIONE = 24
 
 const BUCKET_ALLEGATI = 'form_attachments'
 
-type Domanda = { id: string; data: unknown }
+type Domanda = {
+    id: string
+    data: unknown
+    /**
+     * `true` = domanda ricevuta prima che il modulo pubblico registrasse
+     * l'accettazione dell'informativa (fino al 2026-07-30). Sono 93 righe, e la
+     * retention automatica NON le tocca: vedi il blocco `V3` accanto a
+     * `MESI_CONSERVAZIONE`. Opzionale perché sul DB E2E della CI, non migrato, la
+     * colonna può non esistere — e in quel caso `!== true` vale «non trattenere»,
+     * che è corretto: là dentro non ci sono le 93 domande di produzione.
+     */
+    raccolta_senza_informativa?: boolean | null
+}
 
 const NIENTE_DA_TOGLIERE: EsitoRimozione = {
     rimossi: [],
@@ -144,9 +185,17 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
         // l'opposto di una regola di cancellazione.
         const { data: scadute, error: erroreLettura } = await supabase
             .from('enrollment_submissions')
-            .select('id, data')
+            .select('id, data, raccolta_senza_informativa')
             .in('status', ['pending', 'rejected'])
             .lt('created_at', soglia.toISOString())
+            // ─── LE 93 RACCOLTE SENZA INFORMATIVA NON SI CANCELLANO DA SOLE ─────
+            // Vedi il blocco `V3` in testa a `MESI_CONSERVAZIONE`. Il filtro sta QUI
+            // e ANCHE in memoria, poco sotto: se la colonna non esistesse o il
+            // filtro non arrivasse, la seconda guardia impedisce comunque la
+            // cancellazione. È la stessa doppia esclusione di
+            // `percorsiCitatiDaAltriPost`, e per lo stesso motivo: quello che sta
+            // dopo è irreversibile.
+            .eq('raccolta_senza_informativa', false)
 
         if (erroreLettura) {
             // PostgREST non lancia: senza questo controllo un guasto di lettura
@@ -167,7 +216,28 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             return NextResponse.json({ ok: false, motivo: 'lettura-fallita' }, { status: 500 })
         }
 
-        const righe = (scadute ?? []) as Domanda[]
+        const lette = (scadute ?? []) as Domanda[]
+        // LA SECONDA GUARDIA, sulle righe già lette. Se il filtro del database non
+        // fosse arrivato — colonna assente, `eq` ignorato da un client, una modifica
+        // futura alla query — qui la riga si ferma comunque. Costa niente e toglie di
+        // mezzo un'intera classe di guasti su un'operazione che non si annulla.
+        const senzaInformativa = lette.filter((r) => r.raccolta_senza_informativa === true)
+        const righe = lette.filter((r) => r.raccolta_senza_informativa !== true)
+        if (senzaInformativa.length > 0) {
+            // Una decisione rimandata che nessuno vede è una decisione presa in
+            // silenzio. Solo conteggi: sono domande d'iscrizione di minori.
+            logEvento('cron', 'warn', {
+                operazione: JOB,
+                esito: 'trattenute-senza-informativa',
+                canale,
+                n_domande: senzaInformativa.length,
+                msg:
+                    `${JOB}: ${senzaInformativa.length} domande hanno superato i ${MESI_CONSERVAZIONE} mesi ma sono ` +
+                    `marcate \`raccolta_senza_informativa\`: NON si cancellano da sole. Le due decisioni del ` +
+                    `titolare (2026-07-31 «nessuna retention su questa tabella» e 2026-08-01 «24 mesi») non ` +
+                    `concordano, e la cancellazione è irreversibile: serve una decisione umana`,
+            })
+        }
         // La domanda resta legata ai SUOI allegati fino alla fine: è ciò che permette
         // di trattenere una riga sola invece dell'intero lotto.
         const perDomanda = righe.map((r) => ({ id: r.id, percorsi: percorsiAllegati(r) }))

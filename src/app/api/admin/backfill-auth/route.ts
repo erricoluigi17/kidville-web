@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
 import { backfillParentsAuth } from '@/lib/auth/backfill';
@@ -41,16 +41,17 @@ export const POST = withRoute('admin/backfill-auth:POST', async (request: Reques
   if ('response' in q) return q.response;
   const { dryRun } = q.data;
 
-  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+  // Factory STRUMENTATO, non `createClient` di supabase-js. Qui si CREANO account auth per i
+  // genitori, a pagine di 1000 per volta: senza tetto, un `listUsers` che non risponde teneva
+  // appesa la richiesta finché non la tagliava la piattaforma, a metà di un backfill.
+  // Vedi `src/lib/supabase/server-client.ts` e il lock
+  // `__tests__/architecture/supabase-client-strumentato.test.ts`.
+  const missingEnv = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
   if (missingEnv) return missingEnv;
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const admin = await createAdminClient();
 
   try {
-    const report = await backfillParentsAuth(admin as never, { dryRun });
+    const report = await backfillParentsAuth(admin, { dryRun });
     return NextResponse.json(report);
   } catch (e) {
     logErrore({ operazione: 'admin/backfill-auth:POST', stato: 500 }, e);

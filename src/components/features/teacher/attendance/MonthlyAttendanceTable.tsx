@@ -68,11 +68,18 @@ const KV = {
     error: '#E53935',
 };
 
+// I pallini sono il RIEMPIMENTO pieno dello stato, non la fascia chiara: la
+// cella prende la fascia `-soft`, il pallino il token pieno. Qui il pallino del
+// «presente» chiamava una classe di nome «kidville-success-soft0», nata da una
+// sostituzione di massa (era `emerald-500`: lo `0` di «500» è rimasto attaccato).
+// Una classe che non esiste non colora NIENTE: il pallino restava trasparente e
+// nessun test se ne accorgeva. L'«uscita anticipata» usava invece «blue-400»,
+// palette Tailwind di default, fuori dai token semantici.
 const STATUS_CONFIG: Record<AttendanceStatus, { short: string; bg: string; text: string; dot: string }> = {
-    presente:          { short: '✓', bg: 'bg-kidville-success-soft', text: 'text-kidville-success', dot: 'bg-kidville-success-soft0' },
+    presente:          { short: '✓', bg: 'bg-kidville-success-soft', text: 'text-kidville-success', dot: 'bg-kidville-success' },
     assente:           { short: '✗', bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     dot: 'bg-kidville-error' },
     ritardo:           { short: 'R', bg: 'bg-kidville-warn-soft',   text: 'text-kidville-warn',   dot: 'bg-kidville-warn' },
-    uscita_anticipata: { short: 'U', bg: 'bg-kidville-info-soft',    text: 'text-kidville-info',    dot: 'bg-blue-400' },
+    uscita_anticipata: { short: 'U', bg: 'bg-kidville-info-soft',    text: 'text-kidville-info',    dot: 'bg-kidville-info' },
     nessun_dato:       { short: '·', bg: '',               text: 'text-kidville-muted',    dot: 'bg-kidville-cream-dark' },
 };
 
@@ -393,7 +400,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                 <div className="flex items-center gap-2">
                     {isCurrentMonth && !isLoading && students.length > 0 && (
                         <div className="flex items-center gap-1.5 bg-kidville-success-soft border border-kidville-success/30 rounded-xl px-3 py-1.5">
-                            <span className="w-2 h-2 rounded-full bg-kidville-success-soft0 animate-pulse" />
+                            <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
                             <span className="font-maven text-xs text-kidville-success font-medium">{t('oggiConteggio', { presenti: todayPresenti, totale: students.length })}</span>
                         </div>
                     )}

@@ -277,6 +277,54 @@ describe('GET /api/admin/iscrizioni?doc= — il gate controlla l\'OGGETTO, non s
     expect(serializzato).not.toContain('documento.png')
   })
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // T06-F4 — «CHI HA VISTO I DATI DI MIO FIGLIO?» NON AVEVA RISPOSTA.
+  //
+  // Il diniego lasciava una riga (il `warn` qui sopra). L'ACCESSO RIUSCITO no: si
+  // firmava una URL che vive 10 minuti, scaricabile senza sessione, sul documento
+  // d'identità di un minore — e non restava traccia di CHI l'avesse chiesta.
+  //
+  // Un registro che annota solo i tentativi respinti risponde alla domanda
+  // sbagliata. Quella che una famiglia ha diritto di fare (art. 15 GDPR) è chi ha
+  // guardato, non chi ci ha provato senza riuscirci. Ed è anche la regola 5 di
+  // AGENTS.md: gli eventi critici loggano ANCHE il successo, se no «nessun log»
+  // non distingue «nessuno ha guardato» da «non è mai partito niente».
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  it('l’accesso RIUSCITO lascia una riga persistita con CHI ha chiesto', async () => {
+    comeStaff('seg-giugliano', [GIUGLIANO])
+    await chiediDoc(DOC_BIMBO_GIUGLIANO)
+    expect(h.firme).toHaveLength(1)
+
+    const letto = h.eventi.find((e) => e.campi?.esito === 'documento-firmato')
+    expect(
+      letto,
+      'la firma è riuscita e non è rimasta nessuna traccia: alla domanda «chi ha visto i dati ' +
+        'di mio figlio?» non si può rispondere',
+    ).toBeDefined()
+    // `multi_sede` è in EVENTI_PERSISTITI: finisce in `app_log`, non solo su stdout.
+    // Una riga che vive il tempo di un deploy non è un registro degli accessi.
+    expect(letto?.evento).toBe('multi_sede')
+    expect(letto?.campi.sede_id).toBe(GIUGLIANO)
+  })
+
+  it('e quella riga NON contiene il percorso né il nome del file della famiglia', async () => {
+    comeStaff('seg-giugliano', [GIUGLIANO])
+    await chiediDoc(DOC_BIMBO_GIUGLIANO)
+    const letto = h.eventi.find((e) => e.campi?.esito === 'documento-firmato')
+    // Senza questa riga il caso sarebbe VERDE anche con nessun log affatto:
+    // `JSON.stringify({})` non contiene niente, quindi «non contiene il percorso»
+    // sarebbe vero per la ragione sbagliata. È la forma di test finto che questa
+    // giornata ha trovato più di venti volte.
+    expect(letto).toBeDefined()
+    const serializzato = JSON.stringify(letto?.campi ?? {})
+    // Stessa regola del diniego: il percorso porta il nome del file scelto da una
+    // persona. Un registro degli accessi che per esistere deve loggare il dato che
+    // sorveglia è un secondo archivio da proteggere, non una difesa.
+    expect(serializzato).not.toContain(DOC_BIMBO_GIUGLIANO)
+    expect(serializzato).not.toContain('documento.png')
+  })
+
   it('NON REGRESSIONE — senza `?doc=` l\'elenco resta filtrato per sede', async () => {
     const res = await chiediElenco()
     expect(res.status).toBe(200)

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ShieldCheck, Loader2, AlertCircle, Mail, X, CheckCircle2, Users, RotateCcw } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch'
 
 interface Props {
   open: boolean
@@ -75,7 +76,8 @@ export function OtpSignatureModal({
       })
       const json = await res.json()
       if (!res.ok) {
-        setError(json.error ?? t('verificaFallita'))
+        // Niente prosa del server: è italiana per costruzione (T10-F1).
+        setError(soloCatalogoDaCorpo(json, t('verificaFallita')))
         return
       }
       if (json.completed) {
@@ -104,7 +106,8 @@ export function OtpSignatureModal({
       })
       const json = await res.json()
       if (!res.ok) {
-        setError(json.error ?? t('invioNonRiuscito'))
+        // Niente prosa del server: è italiana per costruzione (T10-F1).
+        setError(soloCatalogoDaCorpo(json, t('invioNonRiuscito')))
         return false
       }
       setLocalDevCode(json.devCode)

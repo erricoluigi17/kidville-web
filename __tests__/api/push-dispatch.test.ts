@@ -161,7 +161,24 @@ describe('POST /api/push/dispatch', () => {
     expect(body.data.native_inviate).toBe(1)
   })
 
-  it('FCM non configurato → token nativi saltati (degrado pulito), notifica comunque marcata', async () => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // T17-F3 — «DEGRADO PULITO» NON LO ERA: LA NOTIFICA VENIVA PERSA.
+  //
+  // Fino al 2026-08-03 questo caso pretendeva che la notifica fosse marcata
+  // `push_inviata_il` anche con FCM spento. Cioè fissava il DIFETTO: nessuna push
+  // partiva, la riga usciva dalla coda e non sarebbe più ripartita, e il battito
+  // diceva `esito:'ok'`. Con `FCM_*` assenti da un deploy — tre variabili
+  // d'ambiente — ogni push nativa della scuola veniva archiviata come spedita.
+  //
+  // La regola nuova (`route.ts:281`) è più fine di «non marcare mai»: si marca se
+  // c'è stato ALMENO UN tentativo, o se non c'era nessun destinatario. Torna in
+  // coda SOLO la notifica che aveva destinatari e nessuno raggiungibile. I due
+  // casi qui sotto tengono ferme entrambe le metà — senza il secondo, «non marcare
+  // mai» passerebbe, e un genitore con web + telefono riceverebbe ogni notifica
+  // due volte finché FCM resta spento.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  it('FCM non configurato e SOLO destinatari nativi → notifica NON marcata, resta in coda', async () => {
     native.fcmConfigured.mockReturnValue(false) // web ok (beforeEach) → nessun early-return
     h.state.queues = {
       notifiche: [
@@ -176,6 +193,33 @@ describe('POST /api/push/dispatch', () => {
     const body = await res.json()
     expect(native.sendNativePush).not.toHaveBeenCalled()
     expect(body.data.native_inviate).toBe(0)
+    // Nessun tentativo su un destinatario che c'era: la riga non si marca.
+    expect(body.data.notifiche).toBe(0)
+    expect(h.state.calls.some((c) => c.table === 'notifiche' && c.m === 'update')).toBe(false)
+  })
+
+  it('FCM non configurato ma il web sì → un tentativo c’è stato, quindi la notifica SI marca', async () => {
+    // L'altra metà della regola: senza questo caso, «non marcare mai niente di
+    // parziale» passerebbe il test qui sopra e farebbe arrivare la push due volte
+    // a chi il canale web ce l'ha.
+    native.fcmConfigured.mockReturnValue(false)
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [
+          { id: 's1', utente_id: 'u1', endpoint: 'webep', p256dh: 'p', auth: 'a', platform: 'web' },
+          { id: 's2', utente_id: 'u1', endpoint: 'fcmtok', p256dh: null, auth: null, platform: 'ios' },
+        ], error: null },
+      ],
+    }
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+    expect(native.sendNativePush).not.toHaveBeenCalled()
+    expect(push.sendPush).toHaveBeenCalledTimes(1)
+    expect(body.data.notifiche).toBe(1)
     expect(h.state.calls.some((c) => c.table === 'notifiche' && c.m === 'update')).toBe(true)
   })
 

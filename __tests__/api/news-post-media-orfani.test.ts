@@ -232,6 +232,24 @@ const corpoConDueFoto = () => ({
   bambini_ritratti: [A1],
 })
 
+/**
+ * UNA FOTO SOLA — la copertina, niente rich-text.
+ *
+ * Non è una variante per completezza: tutti i casi di questo file passano da due
+ * media, e `riportaMediaInBozza` cicla su un ELENCO. Un difetto che vive nel ramo
+ * senza ciclo — un `[0]` al posto della lista, un `for` che parte da 1, un
+ * `.slice(1)` — resterebbe verde su ogni caso a due foto e in produzione lascerebbe
+ * pubblica la foto di un bambino nel caso PIÙ comune, che è l'articolo con la sola
+ * copertina.
+ */
+const corpoConUnaFotoSola = () => ({
+  tipo: 'articolo',
+  titolo: 'Festa di fine anno',
+  copertina_url: inSosta(P_COPERTINA),
+  contenuto_json: { type: 'doc', content: [{ type: 'paragraph', content: [] }] },
+  bambini_ritratti: [A1],
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.alunni = [{ id: A1, nome: 'Anna', cognome: 'B.', consenso_foto_sito: true }]
@@ -381,6 +399,28 @@ describe('POST /api/news — un’ECCEZIONE non lascia file pubblici orfani (W1-
       'un’eccezione fra promozione e scrittura ha lasciato le foto nel bucket pubblico senza ' +
         'nessuna riga che le nomini: revoca e oblio partono dalla riga, quindi non ci arriveranno mai',
     ).toEqual(promossi().slice().sort())
+  })
+
+  it('UNA foto sola: la sanificazione lancia → torna in sosta lo stesso (il ramo senza ciclo)', async () => {
+    // Il caso che la sonda usa-e-getta del 2026-08-03 copriva e che si è perso
+    // quando è stata cancellata. Tutti gli altri casi di questo file promuovono DUE
+    // media, quindi esercitano `riportaMediaInBozza` col ciclo pieno: un difetto nel
+    // ramo a un elemento solo passerebbe inosservato — ed è il caso più comune in
+    // produzione, l'articolo con la sola copertina.
+    h.sanificaContenuto.mockImplementation(() => {
+      throw new TypeError('nodo inatteso')
+    })
+    const res = await chiamaPost(corpoConUnaFotoSola())
+
+    expect(res.status).toBe(500)
+    expect(h.insert).toBeNull()
+    // Controllo POSITIVO: la promozione era davvero avvenuta, ed era di UNO.
+    expect(promossi()).toEqual([P_COPERTINA])
+    expect(
+      riportatiInSosta(),
+      'con un media solo il ritorno in sosta non è partito: la copertina resta nel bucket ' +
+        'pubblico senza nessuna riga che la nomini, irraggiungibile da revoca e oblio',
+    ).toEqual([P_COPERTINA])
   })
 
   it('l’INSERT LANCIA (guasto di trasporto) → tutti i media tornano in sosta', async () => {

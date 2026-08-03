@@ -395,6 +395,14 @@ export default function PrivacyPage() {
                 soggetti a conservazione illimitata per obbligo archivistico);
               </li>
               <li>
+                <strong>domande di pre-iscrizione non accolte</strong> (in attesa di valutazione
+                o respinte): <strong>ventiquattro mesi</strong> dalla data di invio della domanda,
+                dopodiché la domanda e i documenti allegati — compreso il documento
+                d&rsquo;identità — sono cancellati automaticamente. Se la domanda viene accolta,
+                i dati confluiscono nella posizione dell&rsquo;alunno iscritto e seguono i tempi
+                indicati al punto precedente;
+              </li>
+              <li>
                 <strong>documenti contabili e fiscali</strong>: <strong>dieci anni</strong>, come
                 previsto dall&rsquo;art. 2220 del Codice civile e dalla normativa tributaria;
               </li>

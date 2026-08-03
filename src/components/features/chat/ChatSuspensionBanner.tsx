@@ -57,20 +57,29 @@ export function ChatSuspensionBanner({ t, currentUserId, threadId, sospensione, 
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-kidville-warn/15 text-kidville-warn">
         <Ban size={17} strokeWidth={2.2} />
       </span>
+      {/* `text-kidville-warn-dark` NON ESISTE fra i token (`--color-kidville-warn-*`
+          sono `warn`, `warn-soft`, `warn-strong`): le tre righe di questo banner non
+          ricevevano alcun colore e restavano sul colore ereditato. L'inchiostro giusto
+          sopra `warn-soft` è `warn-strong` = 4,95:1.
+          L'ALFA è stata tolta di proposito: `warn-strong/80` sullo stesso fondo scende
+          a 3,48:1 e `/70` a 2,91:1, cioè sotto AA proprio sul corpo del messaggio a
+          12px. La gerarchia la fanno peso, dimensione e corsivo, non la trasparenza.
+          L'errore di riapertura era `kidville-error` = 3,73:1 su questa fascia →
+          `error-strong` = 4,97:1. */}
       <div className="min-w-0 flex-1">
-        <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-warn-dark">
+        <p className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-warn-strong">
           {iSuspended ? t('ugcBannerISuspendedTitle') : t('ugcBannerSuspendedTitle')}
         </p>
-        <p className="font-maven text-xs text-kidville-warn-dark/80">
+        <p className="font-maven text-xs text-kidville-warn-strong">
           {iSuspended ? t('ugcBannerISuspendedBody') : t('ugcBannerSuspendedBody')}
         </p>
         {iSuspended && sospensione.motivo && (
-          <p className="mt-0.5 font-maven text-xs italic text-kidville-warn-dark/70">
+          <p className="mt-0.5 font-maven text-xs italic text-kidville-warn-strong">
             {t('ugcBannerMotivo', { motivo: sospensione.motivo })}
           </p>
         )}
         {error && (
-          <p role="alert" className="mt-1 font-maven text-xs text-kidville-error">{t('ugcReopenError')}</p>
+          <p role="alert" className="mt-1 font-maven text-xs text-kidville-error-strong">{t('ugcReopenError')}</p>
         )}
       </div>
       {iSuspended && (

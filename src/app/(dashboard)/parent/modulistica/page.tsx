@@ -13,6 +13,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
 import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
@@ -238,7 +239,8 @@ export default function ParentModulisticaPage() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        showToastMsg(`❌ ${j.error ?? t('modulisticaInvioFallito')}`);
+        // Niente prosa del server: è italiana per costruzione (T10-F1).
+        showToastMsg(`❌ ${soloCatalogoDaCorpo(j, t('modulisticaInvioFallito'))}`);
         return;
       }
       showToastMsg(t('modulisticaToastRisposteInviate'));
@@ -260,7 +262,8 @@ export default function ParentModulisticaPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        showToastMsg(`❌ ${json.error ?? t('modulisticaInvioCodiceFallito')}`);
+        // Niente prosa del server: è italiana per costruzione (T10-F1).
+        showToastMsg(`❌ ${soloCatalogoDaCorpo(json, t('modulisticaInvioCodiceFallito'))}`);
         return;
       }
       setOtpSession({ email: json.email, expiry: json.expiry, ticket: json.ticket, devCode: json.devCode });
@@ -290,7 +293,9 @@ export default function ParentModulisticaPage() {
         }),
       });
       const json = await res.json();
-      if (!res.ok) return { ok: false, error: json.error ?? t('modulisticaVerificaFallita') };
+      // `OtpEmailModal` mostra questa stringa così com'è: qui è l'ULTIMO punto in
+      // cui esiste il locale, quindi la traduzione avviene qui e non lì (T10-F1).
+      if (!res.ok) return { ok: false, error: soloCatalogoDaCorpo(json, t('modulisticaVerificaFallita')) };
 
       // Ricevuta PDF con il signature_log autorevole restituito dal server
       generateReceiptPDF(compilingForm, formAnswers, json.signature_log);

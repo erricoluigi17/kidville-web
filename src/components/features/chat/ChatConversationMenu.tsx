@@ -6,6 +6,7 @@ import { Flag, UserX, Ban } from 'lucide-react';
 import { OverflowMenu } from '@/components/ui/OverflowMenu';
 import { Modal } from '@/components/ui/Modal';
 import { logClient } from '@/lib/logging/client';
+import { messaggioSoloCatalogo } from '@/lib/ui/esito-fetch';
 import type { SospensioneInfo } from '@/components/features/chat/ChatThreadList';
 
 // =============================================================================
@@ -65,7 +66,9 @@ export function ChatConversationMenu({
   const [categoria, setCategoria] = useState<Categoria>('contenuto_inappropriato');
   const [reportNote, setReportNote] = useState('');
   const [reportSubmitting, setReportSubmitting] = useState(false);
-  const [reportError, setReportError] = useState(false);
+  // Il TESTO, non un booleano: il server può dire qualcosa di più preciso della
+  // frase generica, e finché qui c'era `false`/`true` non arrivava mai a schermo.
+  const [reportError, setReportError] = useState<string | null>(null);
   const [reportDone, setReportDone] = useState(false);
 
   // Dialog sospensione
@@ -79,13 +82,13 @@ export function ChatConversationMenu({
     setCategoria('contenuto_inappropriato');
     setReportNote('');
     setReportSubmitting(false);
-    setReportError(false);
+    setReportError(null);
     setReportDone(false);
   };
 
   const inviaSegnalazione = async () => {
     setReportSubmitting(true);
-    setReportError(false);
+    setReportError(null);
     const body =
       reportMode === 'utente'
         ? { tipo_oggetto: 'utente', segnalato_id: controparteId, categoria }
@@ -97,15 +100,22 @@ export function ChatConversationMenu({
         body: JSON.stringify({ ...body, ...(reportNote.trim() ? { motivo: reportNote.trim() } : {}) }),
       });
       if (!res.ok) {
+        // ⚠️ Il corpo si legge: è da qui che passa `SEGNALAZIONE_SENZA_PLESSO`,
+        // la 503 che dice «riprova, e se il problema resta avvisa la
+        // segreteria». Finché si scriveva `setReportError(true)` quella frase
+        // era tradotta in due lingue e non la vedeva nessuno.
+        // `messaggioSoloCatalogo` e non `messaggioErrore`: il perché — la prosa
+        // italiana e da log di questa route — sta in `esito-fetch.ts`.
+        const messaggio = await messaggioSoloCatalogo(res, s('segnalaErrore'));
         // Mai il motivo nei log (dati di minori): messaggio generico.
         logClient({ livello: 'warn', evento: 'fetch', messaggio: 'chat-segnalazione-invio-fallito', route: '/segnalazioni' });
-        setReportError(true);
+        setReportError(messaggio);
         return;
       }
       setReportDone(true);
     } catch {
       logClient({ livello: 'warn', evento: 'fetch', messaggio: 'chat-segnalazione-invio-eccezione', route: '/segnalazioni' });
-      setReportError(true);
+      setReportError(s('segnalaErrore'));
     } finally {
       setReportSubmitting(false);
     }
@@ -254,7 +264,7 @@ export function ChatConversationMenu({
             </label>
 
             {reportError && (
-              <p role="alert" className="mb-3 rounded-xl bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error">{s('segnalaErrore')}</p>
+              <p role="alert" className="mb-3 rounded-xl bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error">{reportError}</p>
             )}
 
             <div className="flex items-center justify-end gap-2">

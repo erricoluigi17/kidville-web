@@ -47,7 +47,13 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                     size: file.size,
                     motivo: analisi.motivo,
                 });
-                return NextResponse.json({ error: MESSAGGIO_VIDEO_NON_CONVERTIBILE }, { status: 415 });
+                // `codice` accanto alla prosa: quel testo nasce in una libreria condivisa
+                // client+server, dove il locale non esiste, ed è quindi italiano. Il codice
+                // lo fa tradurre a chi la lingua ce l'ha (`src/lib/ui/esito-fetch.ts`).
+                return NextResponse.json(
+                    { error: MESSAGGIO_VIDEO_NON_CONVERTIBILE, codice: 'VIDEO_NON_CONVERTIBILE' },
+                    { status: 415 }
+                );
             }
         }
 

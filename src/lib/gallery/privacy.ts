@@ -63,20 +63,47 @@ type Db = { from: (t: string) => any }
  * (≤1 taggato): in quel caso la query di consenso è pure superflua, quindi si
  * esce prima di toccare il DB.
  *
- * ⚠️ Il chiamante deve aver già verificato che quegli alunni siano nei propri
- * plessi: il nome che esce di qui è di un minore (vedi `gallery/route.ts:348`).
+ * @param sedi le sedi di chi sta pubblicando. È OBBLIGATORIO, ed è la
+ *   correzione del 2026-08-03: fino a quel giorno la precondizione «il chiamante
+ *   ha già verificato che quegli alunni siano nei suoi plessi» viveva in un
+ *   COMMENTO qui sopra — che per giunta rimandava a una riga di
+ *   `gallery/route.ts` che nel frattempo era diventata un'altra cosa. Dei due
+ *   chiamanti, il `POST` la rispettava e il `PATCH` no: il compilatore non
+ *   obbligava nessuno, e il nome di un minore di un'altra sede usciva nel 422.
+ *   Una precondizione che non sta nella FIRMA non è una precondizione: è un
+ *   auspicio. Ora la query è ristretta (`.in('scuola_id', sedi)`) e un id che non
+ *   torna indietro non è «senza consenso», è **non verificabile** — blocca lo
+ *   stesso, ma senza pronunciare nessun nome. Elenco VUOTO ⇒ si nega tutto: uno
+ *   scope vuoto non è «nessun vincolo», è «nessun permesso».
+ *
+ *   Resta comunque il gate a monte (`./tag-scope`), che risponde 403 prima di
+ *   arrivare qui: le due difese sono volutamente due, perché questa viaggia con
+ *   la primitiva e non con chi la invoca.
  */
 export async function alunniSenzaConsenso(
   supabase: Db,
   tagStudents: string[] | null | undefined,
+  sedi: string[],
 ): Promise<{ id: string; nome: string }[]> {
   const ids = [...new Set(tagStudents ?? [])]
   // Foto privata (≤1 taggato) → consentito senza interrogare il DB.
   if (ids.length <= 1) return []
+  // Nessuna sede risolta ⇒ non si può verificare niente, e «non lo so» non può
+  // valere «sì»: si bloccano tutti, con l'id al posto del nome.
+  if (sedi.length === 0) {
+    logEvento('galleria', 'warn', {
+      operazione: 'alunniSenzaConsenso',
+      esito: 'scope-vuoto',
+      // Solo il conteggio: gli id sono di minori.
+      taggati: ids.length,
+    })
+    return ids.map((id) => ({ id, nome: id }))
+  }
   const { data: rows, error } = await supabase
     .from('alunni')
     .select('id, nome, cognome, consenso_privacy')
     .in('id', ids)
+    .in('scuola_id', sedi)
   // PostgREST non lancia: ritorna `{ error }`. Senza questo controllo una
   // lettura fallita si travestiva da «nessun consenso trovato» — che qui è
   // fail-CLOSED (la pubblicazione viene negata, e va bene così) ma MUTO: chi
@@ -88,10 +115,15 @@ export async function alunniSenzaConsenso(
       esito: 'lettura-consensi-fallita',
       // Solo il conteggio: gli id sono di minori e non servono a diagnosticare.
       taggati: ids.length,
+      error_code: (error as { code?: string }).code ?? null,
     }, error)
   }
   const list = (rows ?? []) as Array<{ id: string; nome?: string; cognome?: string; consenso_privacy?: boolean }>
   const consentById = Object.fromEntries(list.map((r) => [r.id, r.consenso_privacy === true]))
+  // Il nome esce SOLO per i bambini che la query ha davvero restituito, cioè
+  // quelli nelle `sedi` di chi pubblica. Per tutti gli altri — fuori sede,
+  // inesistenti, o non leggibili per un guasto — si blocca dicendo l'id, che è
+  // ciò che il chiamante ha mandato e non rivela niente che non sappia già.
   const nameById = new Map(list.map((r) => [r.id, `${r.nome ?? ''} ${r.cognome ?? ''}`.trim()]))
   return studentiSenzaConsenso(ids, consentById).map((id) => ({ id, nome: nameById.get(id) || id }))
 }

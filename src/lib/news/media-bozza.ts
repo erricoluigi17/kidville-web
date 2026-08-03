@@ -118,6 +118,21 @@ export function perOgniStringa(nodo: unknown, f: (s: string) => void): void {
   )
 }
 
+/**
+ * La gemella che RISCRIVE invece di limitarsi a guardare, con lo stesso tetto di
+ * ricorsione e la stessa passeggiata.
+ *
+ * La usa `permanenza-consenso.ts` dopo un ritiro, per togliere dal rich-text gli
+ * indirizzi dei file che non esistono più: una riga che continua a nominare un
+ * file cancellato risponde «io lo uso» alla prossima domanda «c'è ancora qualcuno
+ * che lo nomina?», e trattiene nel bucket pubblico la foto di un altro bambino.
+ * Sta qui e non là per il motivo scritto sopra: due copie della stessa passeggiata
+ * divergerebbero alla prima modifica.
+ */
+export function mappaOgniStringa(nodo: unknown, f: (s: string) => string): unknown {
+  return mappaStringhe(nodo, f, 0)
+}
+
 /** Tutti i percorsi in sosta citati da copertina e rich-text, senza duplicati. */
 function raccogliBozze(copertinaUrl: unknown, contenutoJson: unknown): string[] {
   const trovati = new Set<string>()
@@ -135,6 +150,20 @@ export interface EsitoPromozione {
   contenutoJson: unknown
   /** Quanti file sono stati spostati nel bucket pubblico. */
   promossi: number
+  /**
+   * I percorsi che QUESTA chiamata ha spostato nel bucket pubblico.
+   *
+   * Serve al chiamante per annullare (`riportaMediaInBozza`) quando la riga poi
+   * non si scrive: senza l'elenco, l'unico modo di indovinare quali file siano
+   * appena diventati pubblici sarebbe la differenza fra prima e dopo — che
+   * comprende anche gli indirizzi pubblici già esistenti citati nel corpo della
+   * richiesta, cioè i file di UN ALTRO post. Annullare a occhio significherebbe
+   * cancellare l'immagine di qualcun altro.
+   *
+   * Contiene solo gli spostamenti RIUSCITI: un file «già promosso» da un
+   * tentativo precedente non appartiene a questa chiamata e non si tocca.
+   */
+  promossiPercorsi: string[]
   /** `true` se almeno uno spostamento è fallito: il chiamante NON deve scrivere. */
   errore: boolean
 }
@@ -155,15 +184,46 @@ export async function promuoviMediaBozza(
 ): Promise<EsitoPromozione> {
   const percorsi = raccogliBozze(input.copertinaUrl, input.contenutoJson)
   if (percorsi.length === 0) {
-    return { copertinaUrl: input.copertinaUrl, contenutoJson: input.contenutoJson, promossi: 0, errore: false }
+    return {
+      copertinaUrl: input.copertinaUrl,
+      contenutoJson: input.contenutoJson,
+      promossi: 0,
+      promossiPercorsi: [],
+      errore: false,
+    }
   }
 
   const pubblici = new Map<string, string>()
+  const promossiPercorsi: string[] = []
   let promossi = 0
   for (const percorso of percorsi) {
-    const { error } = await supabase.storage
-      .from(NEWS_BUCKET_BOZZE)
-      .move(percorso, percorso, { destinationBucket: NEWS_BUCKET })
+    // ─── IL GUASTO DI TRASPORTO NON PUÒ PORTARSI VIA L'ELENCO ────────────────
+    // `move()` può LANCIARE invece di ritornare `{ error }` (rete caduta, fetch
+    // rigettato): lo sa già `riportaMediaInBozza`, che ha un `catch` apposta.
+    // Qui l'eccezione sarebbe peggio, perché uscendo dalla funzione si porterebbe
+    // via `promossiPercorsi` — l'UNICO elenco da cui il chiamante sa che cosa ha
+    // appena reso pubblico. I file già spostati resterebbero nel bucket `news`
+    // con nessuna riga che li nomini, cioè esattamente il difetto (W1-bis) che
+    // questa coppia di funzioni esiste per chiudere, riaperto dalla via d'uscita
+    // che nessuno guarda. Si degrada perciò a `errore: true` con l'elenco intatto:
+    // il chiamante rifiuta la scrittura e rimette in sosta ciò che è uscito.
+    let esitoMove: { error?: unknown }
+    try {
+      esitoMove = await supabase.storage
+        .from(NEWS_BUCKET_BOZZE)
+        .move(percorso, percorso, { destinationBucket: NEWS_BUCKET })
+    } catch (e) {
+      // Il corpo dell'errore non si butta via nemmeno quando arriva come eccezione.
+      logErrore({ operazione, evento: 'storage', stato: 503 }, e)
+      return {
+        copertinaUrl: input.copertinaUrl,
+        contenutoJson: input.contenutoJson,
+        promossi,
+        promossiPercorsi,
+        errore: true,
+      }
+    }
+    const error = esitoMove.error
     if (error) {
       const messaggio = (error as { message?: string }).message ?? ''
       // Già promosso da una chiamata precedente (una modifica ripetuta sullo
@@ -179,13 +239,15 @@ export async function promuoviMediaBozza(
           copertinaUrl: input.copertinaUrl,
           contenutoJson: input.contenutoJson,
           promossi,
+          promossiPercorsi,
           errore: true,
         }
       }
     } else {
       promossi++
+      promossiPercorsi.push(percorso)
     }
-    const { data } = supabase.storage.from(NEWS_BUCKET).getPublicUrl(percorso)
+    const { data } = supabase.storage.from(NEWS_BUCKET_BOZZE).getPublicUrl(percorso)
     pubblici.set(percorso, data.publicUrl)
   }
 
@@ -209,6 +271,82 @@ export async function promuoviMediaBozza(
     copertinaUrl: typeof input.copertinaUrl === 'string' ? riscrivi(input.copertinaUrl) : input.copertinaUrl,
     contenutoJson: mappaStringhe(input.contenutoJson, riscrivi, 0),
     promossi,
+    promossiPercorsi,
     errore: false,
   }
+}
+
+/**
+ * Rimette in sosta i media che una scrittura mancata ha lasciato pubblici.
+ *
+ * ─── IL DIFETTO CHE CHIUDE (W1-bis, 2026-08-03) ─────────────────────────────
+ *
+ * La promozione avviene PRIMA della scrittura della riga, e deve essere così: il
+ * contenuto salvato deve citare gli indirizzi definitivi. Ma se poi la riga non
+ * si scrive — vincolo violato, database irraggiungibile, promozione fallita a
+ * metà — quei file sono già nel bucket PUBBLICO e non esiste nessuna riga che li
+ * nomini. È lo stesso guasto di W1 preso dall'altro capo: revoca del consenso e
+ * diritto all'oblio partono entrambi dalla riga, e su un file che nessuna riga
+ * cita non arrivano più. Pubblico per sempre.
+ *
+ * ─── PERCHÉ SI RIPORTA INDIETRO E NON SI CANCELLA ───────────────────────────
+ *
+ * Perché `news_bozze` è esattamente il posto in cui quei file devono stare
+ * finché una riga non li nomina: annullare lo spostamento rimette il mondo com'era
+ * un istante prima, e l'operatore che ritenta il salvataggio ritrova il suo
+ * lavoro. Cancellarli sembrerebbe più sicuro e sarebbe peggio: al secondo
+ * tentativo il client rimanda lo stesso indirizzo di sosta, `promuoviMediaBozza`
+ * troverebbe «not found», lo prenderebbe per «già promosso» e salverebbe nella
+ * riga l'indirizzo pubblico di un oggetto che non esiste più — un'immagine rotta
+ * scritta in silenzio, cioè un altro guasto invisibile al posto di quello tolto.
+ *
+ * Se nemmeno il ritorno riesce, il file resta pubblico e senza padrone: non c'è
+ * niente di meglio da fare, ma si GRIDA — con il corpo dell'errore dello Storage
+ * e col conteggio — perché è l'unico modo in cui qualcuno potrà ripulirlo.
+ */
+export async function riportaMediaInBozza(
+  supabase: Storage,
+  percorsi: string[],
+  operazione: string,
+): Promise<{ riportati: number; falliti: number }> {
+  const unici = [...new Set(percorsi.filter((p) => typeof p === 'string' && p.trim() !== ''))]
+  if (unici.length === 0) return { riportati: 0, falliti: 0 }
+
+  let riportati = 0
+  let falliti = 0
+  for (const percorso of unici) {
+    try {
+      const { error } = await supabase.storage
+        .from(NEWS_BUCKET)
+        .move(percorso, percorso, { destinationBucket: NEWS_BUCKET_BOZZE })
+      if (error) {
+        falliti++
+        // Il corpo dell'errore del provider non si butta via: uno status da solo
+        // non dice a nessuno perché un file di un minore è rimasto pubblico.
+        logErrore({ operazione, evento: 'storage', stato: 503 }, error)
+      } else {
+        riportati++
+      }
+    } catch (e) {
+      // Guasto di TRASPORTO: `move()` non ritorna, lancia. Stesso trattamento e
+      // stessa visibilità dell'errore restituito — un catch muto qui sarebbe il
+      // guasto invisibile che questa funzione esiste per impedire.
+      falliti++
+      logErrore({ operazione, evento: 'storage', stato: 503 }, e)
+    }
+  }
+
+  if (falliti > 0) {
+    logEvento('news', 'error', {
+      operazione,
+      esito: 'media-rimasti-pubblici',
+      n_file: falliti,
+      msg: `${operazione}: ${falliti} file sono rimasti nel bucket pubblico e nessuna riga li nomina`,
+    })
+  } else {
+    // Evento critico → si logga anche il SUCCESSO: «nessun log» non deve poter
+    // significare insieme «annullato» e «l'annullamento non è mai partito».
+    logEvento('news', 'info', { operazione, esito: 'media-riportati-in-sosta', n_file: riportati })
+  }
+  return { riportati, falliti }
 }

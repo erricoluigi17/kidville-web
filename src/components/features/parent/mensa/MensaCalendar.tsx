@@ -10,6 +10,7 @@ import { SaveCelebration } from '@/components/ui/SaveConfirmation';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { logClient } from '@/lib/logging/client';
 import { fetchConCache } from '@/lib/offline/read-cache';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { fetchFigliIds } from '@/lib/auth/use-parent-identity';
 
 interface Props { userId: string; studentId: string }
@@ -201,12 +202,15 @@ export function MensaCalendar({ userId, studentId }: Props) {
     setBusy(null);
     if (j.success) {
       const esito = j.data.esiti?.[0];
-      // esito.motivo / j.error arrivano dall'API (non si traducono): si traduce
-      // solo il messaggio di fallback quando l'API non ne fornisce uno.
+      // ⚠️ `esito.motivo` è ancora prosa dell'API, per giorno («mensa chiusa»,
+      // «oltre l'orario»): resta italiana finché il server non manderà un codice
+      // per ciascun motivo. È l'ultimo residuo di T10-F1 in questa schermata, ed
+      // è dichiarato invece che nascosto — a differenza di `j.error`, che sotto
+      // passa dal catalogo.
       if (esito && !esito.ok) { setMsg(esito.motivo ?? t('operazioneNonRiuscita')); }
       else { setCelebra(t('pranzoPrenotato')); }
       await load();
-    } else { setMsg(j.error ?? t('errore')); }
+    } else { setMsg(soloCatalogoDaCorpo(j, t('errore'))); }
   };
 
   const disdici = async (data: string) => {
@@ -216,7 +220,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
     });
     const j = await res.json();
     setBusy(null);
-    if (j.success) { setCelebra(t('prenotazioneDisdetta')); await load(); } else { setMsg(j.error ?? t('errore')); }
+    // Niente prosa del server: è italiana per costruzione (T10-F1).
+    if (j.success) { setCelebra(t('prenotazioneDisdetta')); await load(); } else { setMsg(soloCatalogoDaCorpo(j, t('errore'))); }
   };
 
   const giorni = menu.filter(g => {

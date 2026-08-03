@@ -42,6 +42,8 @@ import { studentiSenzaConsenso, alunniSenzaConsenso } from '@/lib/gallery/privac
 import { creaFintoSupabase, type DBFinto, type Scrittura } from '../fixtures/finto-supabase'
 
 const SEDE = '11111111-1111-4111-8111-111111111111'
+/** Un altro plesso: quello di cui non si deve mai leggere il nome di un minore. */
+const ALTRA_SEDE = '99999999-9999-4999-8999-999999999999'
 const ADMIN = '22222222-2222-4222-8222-222222222222'
 const MEDIA = '33333333-3333-4333-8333-333333333333'
 const ALU_1 = '44444444-4444-4444-8444-444444444444'
@@ -169,26 +171,31 @@ describe('studentiSenzaConsenso — il broadcast non è un lasciapassare', () =>
 // 2. La primitiva che legge il DB — il difetto stava qui: usciva PRIMA della query
 // -----------------------------------------------------------------------------
 describe('alunniSenzaConsenso — in broadcast interroga davvero l’anagrafica', () => {
-  // Come sopra: si chiama col terzo argomento di ieri, che a runtime esiste
-  // ancora eccome. Prima usciva `[]` PRIMA della query — `lette` non conteneva
-  // nemmeno `alunni`, cioè il consenso non veniva neanche guardato.
+  // Come sopra: si chiama col canale di ieri, che a runtime esiste ancora
+  // eccome. Prima usciva `[]` PRIMA della query — `lette` non conteneva nemmeno
+  // `alunni`, cioè il consenso non veniva neanche guardato.
+  //
+  // ⚠️ Dal 2026-08-03 il TERZO parametro è `sedi` ed è OBBLIGATORIO (rilievo
+  // T05-F1): il canale, se qualcuno tornasse a passarlo, finirebbe in quarta
+  // posizione. L'alias lo tiene lì apposta.
   const conCanale = alunniSenzaConsenso as unknown as (
     db: unknown,
     tag: string[] | null | undefined,
+    sedi: string[],
     broadcast?: boolean,
   ) => Promise<{ id: string; nome: string }[]>
 
   it('broadcast + due bambini senza liberatoria → li restituisce, e ha letto `alunni`', async () => {
     const lette: string[] = []
     const db: DBFinto = { alunni: alunni(false) }
-    const senza = await conCanale(creaFintoSupabase(db, lette), [ALU_1, ALU_2], true)
+    const senza = await conCanale(creaFintoSupabase(db, lette), [ALU_1, ALU_2], [SEDE], true)
     expect(senza.map((s) => s.id).sort()).toEqual([ALU_1, ALU_2].sort())
     expect(lette).toContain('alunni')
   })
 
   it('CONTROLLO POSITIVO — broadcast + due bambini CON liberatoria → []', async () => {
     const db: DBFinto = { alunni: alunni(true) }
-    const senza = await conCanale(creaFintoSupabase(db, []), [ALU_1, ALU_2], true)
+    const senza = await conCanale(creaFintoSupabase(db, []), [ALU_1, ALU_2], [SEDE], true)
     expect(senza).toEqual([])
   })
 
@@ -197,6 +204,7 @@ describe('alunniSenzaConsenso — in broadcast interroga davvero l’anagrafica'
     const senza = await alunniSenzaConsenso(
       creaFintoSupabase(db, [], { errori: { alunni: { code: '42703', message: 'column does not exist' } } }),
       [ALU_1, ALU_2],
+      [SEDE],
     )
     // Nessun consenso leggibile ⇒ si nega (e i «nomi» sono gli id, non
     // inventati): la pubblicazione si blocca, non passa per default.
@@ -204,9 +212,53 @@ describe('alunniSenzaConsenso — in broadcast interroga davvero l’anagrafica'
     const ev = eventiGalleria()
     expect(ev).toHaveLength(1)
     expect(ev[0][1]).toBe('error')
-    expect(ev[0][2]).toMatchObject({ esito: 'lettura-consensi-fallita', taggati: 2 })
+    expect(ev[0][2]).toMatchObject({ esito: 'lettura-consensi-fallita', taggati: 2, error_code: '42703' })
     // Nel log solo conteggi: niente nomi di bambini.
     expect(JSON.stringify(ev[0][2])).not.toContain('Prova')
+  })
+})
+
+// -----------------------------------------------------------------------------
+// 2-bis. La stessa primitiva, e la sede che ora deve DICHIARARE (T05-F1)
+// -----------------------------------------------------------------------------
+describe('alunniSenzaConsenso — il nome di un minore non esce dalla propria sede', () => {
+  /** Gli stessi tre bambini, ma in un ALTRO plesso. */
+  const altrove = () =>
+    alunni(false).map((a) => ({ ...a, scuola_id: ALTRA_SEDE }))
+
+  it('bambini di un’altra sede → bloccati, ma il «nome» è l’id: nessun cognome esce', async () => {
+    const db: DBFinto = { alunni: altrove() }
+    const senza = await alunniSenzaConsenso(creaFintoSupabase(db, []), [ALU_1, ALU_2], [SEDE])
+    // Fail-closed: non verificabili ⇒ bloccano. Ma il 422 che ne nasce non
+    // pronuncia nessun nome — è tutta la differenza fra un diniego e una fuga.
+    expect(senza.map((s) => s.id).sort()).toEqual([ALU_1, ALU_2].sort())
+    expect(senza.map((s) => s.nome).sort()).toEqual([ALU_1, ALU_2].sort())
+    expect(JSON.stringify(senza)).not.toContain('Prova')
+  })
+
+  it('CONTROPROVA — gli stessi due bambini, chiesti da chi ne ha titolo, hanno un nome', async () => {
+    const db: DBFinto = { alunni: alunni(false) }
+    const senza = await alunniSenzaConsenso(creaFintoSupabase(db, []), [ALU_1, ALU_2], [SEDE])
+    expect(senza.map((s) => s.nome).sort()).toEqual(['Due Prova', 'Uno Prova'])
+  })
+
+  it('scope di sede VUOTO ⇒ si nega tutto, senza nemmeno leggere l’anagrafica', async () => {
+    const lette: string[] = []
+    const db: DBFinto = { alunni: alunni(true) }
+    const senza = await alunniSenzaConsenso(creaFintoSupabase(db, lette), [ALU_1, ALU_2], [])
+    expect(senza.map((s) => s.id).sort()).toEqual([ALU_1, ALU_2].sort())
+    expect(lette).not.toContain('alunni')
+    const ev = eventiGalleria()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][1]).toBe('warn')
+    expect(ev[0][2]).toMatchObject({ esito: 'scope-vuoto', taggati: 2 })
+  })
+
+  it('la «foto privata» resta tale: un solo taggato non interroga nemmeno il DB', async () => {
+    const lette: string[] = []
+    const db: DBFinto = { alunni: altrove() }
+    expect(await alunniSenzaConsenso(creaFintoSupabase(db, lette), [ALU_1], [SEDE])).toEqual([])
+    expect(lette).toEqual([])
   })
 })
 

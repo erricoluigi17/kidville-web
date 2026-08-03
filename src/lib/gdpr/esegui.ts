@@ -12,6 +12,7 @@ import { BUCKET_GALLERIA, percorsoNelBucket } from '@/lib/gallery/storage'
 import { percorsoNelBucket as percorsoDelBucket } from '@/lib/allegati/storage'
 import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegati'
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
+import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -221,20 +222,21 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
       'Area di sosta dei media di un articolo prima della pubblicazione: i file non sono legati a nessuna persona (nessuna colonna dice di chi è la foto), quindi non c’è niente da agganciare a una richiesta di oblio. Si svuota per SCADENZA, non per interessato — vedi `supabase/migrations/20260801130404_bucket_news_bozze.sql`.',
   },
   news: {
-    stato: 'coperto-fuori-oblio',
+    stato: 'coperto',
+    canali: ['alunno'],
     come:
-      'Blog pubblico. Fino al 2026-08-02 questa voce diceva «escluso: ci vanno solo media editoriali, ' +
-      'le foto dei bambini stanno in `gallery`» — e la frase era FALSA: `gate-consenso.ts`, scritto lo ' +
-      'stesso giorno, esiste apposta per autorizzare le foto di minori che hanno il consenso al canale ' +
-      '«sito», e il bucket è servito senza login. La foto di un bambino obliato restava quindi pubblica ' +
-      'per sempre. Ora la svuota `verificaPermanenzaConsenso` (`src/lib/news/permanenza-consenso.ts`), ' +
-      'che il tick di `news-tick` esegue ogni 10 minuti: rilegge `alunni.consenso_foto_sito`, e per ' +
-      'revoca, `anonimizzato_il` valorizzato o riga sparita ritira il post e toglie i file dal bucket. ' +
-      'La stessa regola vale a monte — un media diventa pubblico solo dopo il gate (`promuoviMediaBozza`) ' +
-      '— così la decisione del titolare del 2026-07-31 («in `news` solo ciò che può stare pubblico») ' +
-      'è fatta rispettare ai due capi invece che soltanto scritta. NON è ancora sincrona: ' +
-      '`obliaFotoNewsAlunno`, nello stesso modulo, è il gancio pronto per `anonimizzaAlunno`, e finché ' +
-      'non lo si aggancia la finestra fra l’oblio e il ritiro è di un tick.',
+      '`obliaFotoNewsAlunno` (`src/lib/news/permanenza-consenso.ts`), chiamata da `anonimizzaAlunno`: ' +
+      'ritira gli articoli che dichiarano il minore fra i ritratti, toglie i loro file dal bucket e ' +
+      'cancella il suo uuid dalla dichiarazione. Blog PUBBLICO, servito senza login — perciò, a ' +
+      'differenza della galleria, esce il FILE e non solo il tag: lasciarlo vorrebbe dire lasciare ' +
+      'online l’immagine di chi ha chiesto la cancellazione. Fino al 2026-08-02 questa voce diceva ' +
+      '«escluso: ci vanno solo media editoriali, le foto dei bambini stanno in `gallery`» — frase FALSA, ' +
+      'visto che `gate-consenso.ts` esiste apposta per autorizzare le foto di minori col consenso al ' +
+      'canale «sito». Al ritiro sincrono si aggiunge la rete del tick, `verificaPermanenzaConsenso` ' +
+      '(stesso modulo, ogni 10 minuti), che copre ciò che l’oblio non vede: la REVOCA senza ' +
+      'cancellazione, e i post fermi in bozza. A monte vale la regola gemella — un media diventa ' +
+      'pubblico solo dopo il gate (`promuoviMediaBozza`) — così la decisione del titolare del ' +
+      '2026-07-31 («in `news` solo ciò che può stare pubblico») è fatta rispettare ai due capi.',
   },
 }
 
@@ -1244,6 +1246,17 @@ export async function anonimizzaAlunno(
   //     bonificare: cancellare prima i media renderebbe quel ramo cieco.
   const foto = await obliaFotoAlunno(supabase, alunno.id, op)
 
+  // 3g-bis. Le foto del minore sul BLOG PUBBLICO. È l'unico bucket servito senza
+  //     login: la galleria di 3g è privata, questo no. Fino al 2026-08-03 l'oblio
+  //     non ci arrivava da qui — `obliaFotoNewsAlunno` era scritta, testata e non
+  //     chiamata da nessuna parte in `src/` — e la copertura passava solo dal
+  //     tick, che rilegge i consensi ogni dieci minuti. Dieci minuti sono poco
+  //     per un archivio e tanto per una famiglia che ha appena esercitato un
+  //     diritto su un indirizzo pubblico. Il tick resta (prende anche i casi che
+  //     non passano di qui: la revoca senza oblio, i post fermi in bozza), ma non
+  //     è più l'unica cosa.
+  const fotoNews = await obliaFotoNewsAlunno(supabase, alunno.id, op)
+
   // 3h. GLI ALTRI MAGAZZINI (privacy #2 del 2026-08-02). Le pagelle, i
   //     certificati medici e gli allegati scambiati in chat: tre bucket che
   //     nessun canale di oblio aveva mai toccato. Vedi `REGISTRO_BUCKET_OBLIO`
@@ -1291,13 +1304,19 @@ export async function anonimizzaAlunno(
     riconciliazione,
     incassi,
     cassa,
-    file: esitoFile.rimossi + pagelle.rimossi + certificati.rimossi + allegatiChat.rimossi,
+    file:
+      esitoFile.rimossi +
+      pagelle.rimossi +
+      certificati.rimossi +
+      allegatiChat.rimossi +
+      fotoNews.fileRimossi,
     fileNonRimossi:
       esitoFile.nonRimossi +
       foto.fileNonRimossi +
       pagelle.nonRimossi +
       certificati.nonRimossi +
-      allegatiChat.nonRimossi,
+      allegatiChat.nonRimossi +
+      fotoNews.fileNonRimossi,
     segnalazioniBonificate,
     sospensioniBonificate,
     iscrizioniScrubbate: iscr.domandeScrubbate,

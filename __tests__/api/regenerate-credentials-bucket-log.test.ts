@@ -18,16 +18,57 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *  · qualunque altro errore → `error`, con l'oggetto d'errore vero passato al logger.
  */
 
-const h = vi.hoisted(() => ({
-    requireStaff: vi.fn(),
-    sendEmail: vi.fn(),
-    logScrittura: vi.fn(),
-    ensureIdentity: vi.fn(),
-    logEvento: vi.fn(),
-    /** Cosa risponde `createBucket`. `null` = creato senza errori. */
-    erroreCreateBucket: null as { message: string } | null,
-    uploadChiamato: 0,
-}));
+const h = vi.hoisted(() => {
+    const stato = {
+        requireStaff: vi.fn(),
+        sendEmail: vi.fn(),
+        logScrittura: vi.fn(),
+        ensureIdentity: vi.fn(),
+        logEvento: vi.fn(),
+        /** Cosa risponde `createBucket`. `null` = creato senza errori. */
+        erroreCreateBucket: null as { message: string } | null,
+        uploadChiamato: 0,
+        /**
+         * IL FINTO CLIENT, in una definizione sola, montata su DUE moduli.
+         *
+         * La route prende il client dal factory strumentato (`@/lib/supabase/server-client`):
+         * fingere il solo `@supabase/supabase-js` non intercettava più niente, e il test
+         * diventava rosso per il motivo sbagliato — un client VERO contro un database che qui
+         * non esiste (e che, prima di `test.env` in `vitest.config.ts`, era la PRODUZIONE).
+         */
+        creaFinto: () => ({
+            from: () => ({
+                select: () => ({
+                    eq: () => ({
+                        maybeSingle: async () => ({
+                            data: {
+                                id: 'p1',
+                                auth_user_id: 'auth-p',
+                                emails: ['p@x.test'],
+                                first_name: 'Nome',
+                                last_name: 'Cognome',
+                            },
+                            error: null,
+                        }),
+                    }),
+                }),
+            }),
+            auth: { admin: { updateUserById: async () => ({ data: {}, error: null }) } },
+            storage: {
+                // La forma VERA di supabase-js: una promise che si risolve con `{ data, error }`,
+                // non una che rifiuta. È il punto di tutto il test.
+                createBucket: async () => ({ data: null, error: stato.erroreCreateBucket }),
+                from: () => ({
+                    upload: async () => {
+                        stato.uploadChiamato += 1;
+                        return { data: { path: 'x.pdf' }, error: null };
+                    },
+                }),
+            },
+        }),
+    };
+    return stato;
+});
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }));
 vi.mock('@/lib/auth/scope', () => ({
@@ -54,38 +95,14 @@ vi.mock('@/lib/logging/logger', async (importOriginal) => {
     return { ...actual, logEvento: h.logEvento };
 });
 
-vi.mock('@supabase/supabase-js', () => ({
-    createClient: () => ({
-        from: () => ({
-            select: () => ({
-                eq: () => ({
-                    maybeSingle: async () => ({
-                        data: {
-                            id: 'p1',
-                            auth_user_id: 'auth-p',
-                            emails: ['p@x.test'],
-                            first_name: 'Nome',
-                            last_name: 'Cognome',
-                        },
-                        error: null,
-                    }),
-                }),
-            }),
-        }),
-        auth: { admin: { updateUserById: async () => ({ data: {}, error: null }) } },
-        storage: {
-            // La forma VERA di supabase-js: una promise che si risolve con `{ data, error }`,
-            // non una che rifiuta. È il punto di tutto il test.
-            createBucket: async () => ({ data: null, error: h.erroreCreateBucket }),
-            from: () => ({
-                upload: async () => {
-                    h.uploadChiamato += 1;
-                    return { data: { path: 'x.pdf' }, error: null };
-                },
-            }),
-        },
-    }),
+// Il factory STRUMENTATO: è da qui che la route prende il client (`createAdminClient`).
+vi.mock('@/lib/supabase/server-client', () => ({
+    createAdminClient: async () => h.creaFinto(),
+    createClient: async () => h.creaFinto(),
 }));
+// E il pacchetto grezzo, che la route non usa più: finto lo stesso, così un ritorno indietro
+// non arriva alla rete.
+vi.mock('@supabase/supabase-js', () => ({ createClient: () => h.creaFinto() }));
 
 import { POST } from '@/app/api/admin/regenerate-credentials/route';
 

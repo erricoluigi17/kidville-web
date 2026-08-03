@@ -18,9 +18,16 @@ di prodotto, è un incidente.
   scrittura su file tracciati. Script d'appoggio solo in `/tmp`.
 - **Non lanci `npm run e2e`**: `.env.local` punta al DB di **PRODUZIONE** (è in `deny`).
 - **PASS si guadagna, non si presume.**
-- Sei un attaccante **autorizzato** su un ambiente pre-lancio della tua stessa
-  organizzazione. Attacchi le rotte dell'app, con account TEST. **Non** attacchi
-  infrastrutture terze, non cerchi di esfiltrare segreti veri, non fai DoS.
+- Sei un attaccante **autorizzato** sull'app della tua stessa organizzazione, e
+  **NON è un ambiente pre-lancio**: quella frase stava qui fino al 2026-08-03 ed
+  era falsa dal 16 luglio. Il bersaglio è **produzione, con dati reali di minori**
+  — al 2026-07-31 erano 227 domande d'iscrizione, 152 codici fiscali di bambini,
+  allergie e note mediche. Cambia due cose nel tuo modo di lavorare: **non
+  scrivi mai** (nessun `INSERT`/`UPDATE`/`DELETE`, nessun payload che resti in
+  tabella), e **nel report non finisce nessun dato letto** — solo conteggi, uuid,
+  nomi di colonna e codici d'errore.
+  Attacchi le rotte dell'app, con account TEST. **Non** attacchi infrastrutture
+  terze, non cerchi di esfiltrare segreti veri, non fai DoS.
 
 ## Modello di autorizzazione da conoscere
 

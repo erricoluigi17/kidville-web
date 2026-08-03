@@ -191,5 +191,8 @@
   "lockerSpostaSu": "Sposta su",
   "lockerSpostaGiu": "Sposta giù",
   "lockerCaricaMateriale": "Registra un carico",
-  "lockerChiudiCarico": "Chiudi"
+  "lockerChiudiCarico": "Chiudi",
+  "galleryAlertVideoNonConvertibile": "Questo video non può essere convertito su questo dispositivo. Su iPhone: Impostazioni → Fotocamera → Formati → «Più compatibile», poi registra di nuovo. In alternativa carica un file .mp4 (H.264) o .webm.",
+  "galleryAlertVideoFormatoNonSupportato": "Formato video non supportato ({tipo}). Carica un file .mp4 (H.264) o .webm: i video .mov/HEVC (tipici di iPhone) vanno convertiti prima del caricamento.",
+  "galleryAlertVideoOltreIlLimite": "Il video supera il limite di 50 MB (dimensione attuale: {dimensione}). Accorcialo o riducine la qualità, poi riprova."
 }

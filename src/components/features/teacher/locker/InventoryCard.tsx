@@ -30,9 +30,14 @@ function getSemaforoColor(qty: number, gialla: number | string, rossa: number | 
     const sogliaGialla = parseInt(String(gialla)) || 5;
     const sogliaRossa = parseInt(String(rossa)) || 2;
 
-    if (qty <= sogliaRossa) return { bg: 'bg-kidville-error-soft', border: 'border-kidville-error/25', text: 'text-kidville-error', bar: 'bg-kidville-error-soft0', stato: 'esaurito' as const };
+    // `bar` è il riempimento PIENO della barra, come già per il giallo
+    // (`bg-kidville-warn`). Rosso e verde chiamavano invece «kidville-error-soft0»
+    // e «kidville-success-soft0»: classi inesistenti (residuo di un `-500`
+    // sostituito a macchina), quindi la barra restava trasparente — proprio nei
+    // due stati che devono segnalare qualcosa.
+    if (qty <= sogliaRossa) return { bg: 'bg-kidville-error-soft', border: 'border-kidville-error/25', text: 'text-kidville-error', bar: 'bg-kidville-error', stato: 'esaurito' as const };
     if (qty <= sogliaGialla) return { bg: 'bg-kidville-warn-soft', border: 'border-kidville-warn/30', text: 'text-kidville-warn', bar: 'bg-kidville-warn', stato: 'inEsaurimento' as const };
-    return { bg: 'bg-kidville-success-soft', border: 'border-kidville-success/30', text: 'text-kidville-success', bar: 'bg-kidville-success-soft0', stato: 'ok' as const };
+    return { bg: 'bg-kidville-success-soft', border: 'border-kidville-success/30', text: 'text-kidville-success', bar: 'bg-kidville-success', stato: 'ok' as const };
 }
 
 export function InventoryCard({ item, onLoad }: Props) {

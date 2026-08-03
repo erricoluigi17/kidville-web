@@ -119,6 +119,29 @@ export const CODICI_ERRORE = {
      */
     VERIFICA_CLASSI_NON_RIUSCITA: 'erroreVerificaClassiNonRiuscita',
     /**
+     * 403 — almeno uno dei bambini taggati in una foto non è nei plessi di chi
+     * pubblica o modifica (`src/lib/gallery/tag-scope.ts`).
+     *
+     * La prosa NON dice QUALI, ed è l'unico caso in cui il dettaglio si tace di
+     * proposito: nominarli confermerebbe l'esistenza di quei minori a chi non ha
+     * titolo di conoscerli — che è esattamente il difetto T05-F1. I conteggi
+     * stanno nel log.
+     *
+     * Lo stesso codice copre anche lo scope di sede VUOTO: per chi guarda lo
+     * schermo è lo stesso rifiuto («quei bambini non li puoi taggare»), e
+     * distinguere i due casi racconterebbe a chi prova come è andata la
+     * risoluzione delle sedi. La differenza vive nel log (`motivo: scope-vuoto`),
+     * dove serve a chi deve capire, non a chi tenta.
+     */
+    TAG_FUORI_SEDE: 'erroreTagFuoriSede',
+    /**
+     * 500 — non è stato possibile leggere l'anagrafica per verificare i bambini
+     * taggati. Gemello di `VERIFICA_CLASSI_NON_RIUSCITA`, e per la stessa
+     * ragione: un guasto di lettura non deve travestirsi da «non sono tuoi»,
+     * cioè da un 403 che accusa l'operatore di uno sbaglio che non ha commesso.
+     */
+    VERIFICA_TAG_NON_RIUSCITA: 'erroreVerificaTagNonRiuscita',
+    /**
      * 422 — il post contiene una foto e nessuno ha dichiarato chi è ritratto
      * (`src/lib/news/gate-consenso.ts`). Non si pubblica «non sapendo».
      */
@@ -142,6 +165,48 @@ export const CODICI_ERRORE = {
      */
     MEDIA_NON_PROMOSSI: 'erroreMediaNonPromossi',
     /**
+     * 503 — la news NON è stata ELIMINATA perché i suoi file non sono usciti dal
+     * bucket pubblico (`liberaFilePubbliciDelPost`, da `DELETE /api/news/[id]`).
+     * Cancellare la riga lasciando il file significherebbe una foto di minore a un
+     * indirizzo pubblico senza più nessuna riga da cui ritrovarla: si preferisce
+     * non cancellare e riprovare.
+     *
+     * VALE SOLO PER LA CANCELLAZIONE, e il gemello qui sotto esiste per questo.
+     */
+    NEWS_FILE_NON_RIMOSSI: 'erroreNewsFileNonRimossi',
+    /**
+     * 503 — la MODIFICA non è stata salvata perché le immagini sostituite non sono
+     * uscite dal bucket pubblico (`PATCH /api/news/[id]`, difetto W1).
+     *
+     * ─── PERCHÉ NON RIUSA IL CODICE DELLA DELETE ────────────────────────────────
+     *
+     * Perché il testo che l'utente legge viene dal CATALOGO, non dalla prosa del
+     * server: `messaggioDaCorpo`, appena riconosce un codice, scarta l'`error` (a
+     * meno che il codice non sia in `CODICI_CON_DETTAGLIO`). Fino al 2026-08-03 la
+     * PATCH mandava `NEWS_FILE_NON_RIMOSSI`, cioè il codice della cancellazione: a
+     * chi aveva appena cambiato la copertina di un articolo lo schermo rispondeva
+     * «la news non è stata eliminata» — il resoconto di una cancellazione che
+     * nessuno aveva chiesto. La prosa giusta c'era, nel corpo, e non arrivava mai.
+     *
+     * Il lock `errori-con-codice` non poteva vederlo: il codice era DICHIARATO e
+     * tradotto in due lingue: sbagliato, non mancante. Un codice riusato è un
+     * messaggio sbagliato che ha l'aria di essere a posto — la stessa forma delle
+     * altre trappole di questo ciclo.
+     */
+    NEWS_FILE_SOSTITUITI_NON_RIMOSSI: 'erroreNewsFileSostituitiNonRimossi',
+    /**
+     * 403 — la modifica richiama, dentro copertina o rich-text, l'immagine di un
+     * ALTRO articolo (`PATCH /api/news/[id]`). Il bucket `news` è pubblico: quegli
+     * indirizzi li conosce chiunque legga il sito, e finché una riga poteva
+     * cominciare a nominarli bastava toglierli con una seconda modifica per far
+     * cancellare il file di qualcun altro.
+     *
+     * La prosa dice che cosa fare — ricaricare l'immagine — perché il rifiuto
+     * arriva quasi sempre a chi ha incollato un'immagine da un altro articolo
+     * senza sapere che così ne stava adottando il file.
+     */
+    NEWS_MEDIA_ESTRANEO: 'erroreNewsMediaEstraneo',
+    /**
      * 404 — il link pubblico di un modulo non apre niente
      * (`src/lib/forms/token-pubblico.ts`): token malformato, modello inesistente o non
      * pubblicato. UN SOLO codice per i tre casi, ed è il punto: distinguerli direbbe a chi
@@ -151,6 +216,34 @@ export const CODICI_ERRORE = {
      * il pubblico per cui la lingua dell'interfaccia non è detto che sia l'italiano.
      */
     MODULO_NON_TROVATO: 'erroreModuloNonTrovato',
+    /**
+     * 415 — il video non è riproducibile ovunque (HEVC/QuickTime) e va convertito
+     * prima del caricamento (`src/lib/media/codec-sniff.ts`).
+     *
+     * La prosa che il server manda accanto è `MESSAGGIO_VIDEO_NON_CONVERTIBILE`,
+     * che vive in una libreria condivisa client+server e per costruzione nasce
+     * italiana: era l'ultimo testo lungo che una maestra con l'interfaccia in
+     * inglese leggeva in italiano. Il codice la traduce; il dettaglio operativo
+     * (il percorso nelle impostazioni dell'iPhone) resta nella prosa e nella
+     * frase che la pagina mostra quando la conversione fallisce sul dispositivo.
+     */
+    VIDEO_NON_CONVERTIBILE: 'erroreVideoNonConvertibile',
+    /**
+     * 503 — la segnalazione non è stata registrata perché non si è riusciti ad
+     * attribuirla a un plesso (`POST /api/segnalazioni`).
+     *
+     * È il rifiuto che ha sostituito una riga muta: prima quella segnalazione
+     * veniva scritta con `scuola_id: null`, nessuna Direzione riceveva la
+     * notifica e la moderazione la rifiutava — cioè «inviata» a schermo e
+     * invisibile a tutti. Meglio dirlo: chi segnala può riprovare o avvisare la
+     * segreteria, e nel frattempo il log a livello `error` porta il caso sotto
+     * gli occhi di qualcuno.
+     *
+     * La frase NON spiega perché: «il bambino di quella conversazione non ha un
+     * plesso in anagrafica» è la diagnosi, e la diagnosi sta nel log
+     * (`sede-non-attribuibile`), non davanti a un genitore.
+     */
+    SEGNALAZIONE_SENZA_PLESSO: 'erroreSegnalazioneSenzaPlesso',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;
@@ -228,25 +321,108 @@ function portaDettaglio(codice: unknown): boolean {
     return typeof codice === 'string' && CODICI_CON_DETTAGLIO.has(codice as CodiceErrore);
 }
 
+/**
+ * Il testo da mostrare, a partire dal CORPO già letto.
+ *
+ * ─── PERCHÉ È ESPORTATA ─────────────────────────────────────────────────────
+ * Un corpo si legge UNA volta sola: `res.json()` consuma lo stream. Qualche
+ * chiamante ha bisogno del corpo anche per altro — la galleria docente legge
+ * `nomi` dal 422 del Privacy Lock, per dire all'insegnante QUALI bambini
+ * togliere dai tag — e con la sola `messaggioErrore(res, …)` dovrebbe leggerlo
+ * due volte (impossibile) o rinunciare alla traduzione e ricadere sulla prosa
+ * italiana del server: cioè esattamente il difetto che i codici hanno chiuso.
+ *
+ * La logica «codice → catalogo, altrimenti prosa, altrimenti ripiego» resta in
+ * UN posto solo: `messaggioErrore` è il guscio che legge la risposta, questa è
+ * la decisione. Se domani nasce un terzo modo di ottenere il corpo, passerà
+ * comunque di qui.
+ */
+export function messaggioDaCorpo(corpoGrezzo: unknown, fallback: string): string {
+    const corpo = corpoGrezzo as { error?: unknown; codice?: unknown } | null;
+    const msg = corpo?.error;
+    const prosa = typeof msg === 'string' && msg.trim() !== '' ? msg.trim() : null;
+    const tradotto = testoDelCodice(corpo?.codice);
+    if (tradotto) {
+        // La prosa si aggiunge SOLO per i codici dichiarati in
+        // `CODICI_CON_DETTAGLIO`, e solo se dice qualcosa in più: quando
+        // coincide col testo di catalogo (interfaccia italiana, frasi
+        // gemelle) ripeterla sarebbe rumore.
+        if (prosa && prosa !== tradotto && portaDettaglio(corpo?.codice)) {
+            return `${tradotto} — ${prosa}`;
+        }
+        return tradotto;
+    }
+    return prosa ?? fallback;
+}
+
 export async function messaggioErrore(res: Response, fallback: string): Promise<string> {
     try {
-        const j: unknown = await res.json();
-        const corpo = j as { error?: unknown; codice?: unknown } | null;
-        const msg = corpo?.error;
-        const prosa = typeof msg === 'string' && msg.trim() !== '' ? msg.trim() : null;
-        const tradotto = testoDelCodice(corpo?.codice);
-        if (tradotto) {
-            // La prosa si aggiunge SOLO per i codici dichiarati in
-            // `CODICI_CON_DETTAGLIO`, e solo se dice qualcosa in più: quando
-            // coincide col testo di catalogo (interfaccia italiana, frasi
-            // gemelle) ripeterla sarebbe rumore.
-            if (prosa && prosa !== tradotto && portaDettaglio(corpo?.codice)) {
-                return `${tradotto} — ${prosa}`;
-            }
-            return tradotto;
-        }
-        return prosa ?? fallback;
+        return messaggioDaCorpo(await res.json(), fallback);
     } catch {
         return fallback;
     }
+}
+
+/**
+ * Come sopra, ma **senza il ripiego sulla prosa del server**: o il testo del
+ * catalogo (codice dichiarato), o il `fallback` di chi chiama.
+ *
+ * ─── PERCHÉ ESISTE UNA SECONDA REGOLA ───────────────────────────────────────
+ *
+ * `messaggioDaCorpo` mostra la prosa del server quando non riconosce un codice,
+ * e per il cockpit è la scelta giusta: quelle frasi sono scritte per chi opera
+ * («alcune classi destinatarie non appartengono alla sede»), e perderle
+ * significherebbe sostituire il motivo vero con una frase generica.
+ *
+ * Le schermate delle FAMIGLIE non hanno lo stesso corpo di errori. Su
+ * `POST /api/segnalazioni` — i due soli chiamanti di questa funzione — la prosa
+ * che il server può mandare comprende «oggetto_id obbligatorio per questo tipo
+ * di segnalazione» e «segnalato_id obbligatorio…»: testo scritto per chi legge i
+ * log, con il nome di un campo del corpo dentro, e italiano per costruzione.
+ * Mostrarlo a un genitore con l'interfaccia in inglese sarebbe **esattamente**
+ * il fallimento F2 del collaudo del 2026-07-31 («Specificare la sede
+ * (scuola_id) per questa operazione» dentro una modale inglese), riaperto in una
+ * schermata nuova.
+ *
+ * Quindi qui il ripiego non è la prosa ma la frase del componente, che è già
+ * tradotta perché passa da `useTranslations`. Il codice dichiarato continua a
+ * vincere — è il solo modo che ha il server di farsi capire in due lingue — e
+ * quando non c'è, chi guarda legge la frase generica invece di un pezzo di
+ * documentazione interna.
+ *
+ * NON è una scorciatoia per non dichiarare i codici: quando una di quelle
+ * risposte meriterà un messaggio suo, la strada resta aggiungere il codice in
+ * `CODICI_ERRORE` e le due traduzioni.
+ */
+export async function messaggioSoloCatalogo(res: Response, fallback: string): Promise<string> {
+    try {
+        return soloCatalogoDaCorpo(await res.json(), fallback);
+    } catch {
+        return fallback;
+    }
+}
+
+/**
+ * La regola di `messaggioSoloCatalogo` applicata a un corpo GIÀ letto — codice
+ * dichiarato → catalogo, tutto il resto → la frase del componente.
+ *
+ * ─── PERCHÉ SERVE ANCHE QUESTA FORMA ────────────────────────────────────────
+ *
+ * Perché `res.json()` consuma lo stream, e nelle schermate delle famiglie il
+ * corpo serve quasi sempre ANCHE per altro: la modulistica legge `email`,
+ * `expiry`, `ticket` e `signature_log` dalla stessa risposta da cui deve
+ * ricavare il messaggio d'errore; il modulo pubblico legge `campi` per riportare
+ * l'utente sul campo sbagliato. Con la sola `messaggioSoloCatalogo` quei punti
+ * dovrebbero leggere il corpo due volte (impossibile) o rinunciare alla
+ * traduzione — cioè ricadere sulla prosa italiana del server, che è esattamente
+ * il difetto T10-F1.
+ *
+ * Sta a `messaggioSoloCatalogo` come `messaggioDaCorpo` sta a `messaggioErrore`:
+ * il guscio legge la risposta, la decisione vive in un posto solo. Se domani la
+ * regola cambia — un nuovo ripiego, un secondo campo del corpo — cambia qui, e
+ * cambia per tutte e due le strade.
+ */
+export function soloCatalogoDaCorpo(corpoGrezzo: unknown, fallback: string): string {
+    const corpo = corpoGrezzo as { codice?: unknown } | null;
+    return testoDelCodice(corpo?.codice) ?? fallback;
 }

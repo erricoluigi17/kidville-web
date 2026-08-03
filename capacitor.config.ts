@@ -61,6 +61,38 @@ const config: CapacitorConfig = {
     // manca la rete — per questo il testo della pagina dice «non raggiungibile»
     // e non «sei offline».
     errorPath: 'offline.html',
+    // Questa riga è ciò che tiene «Riprova» DENTRO l'app (rilievo T14-F2 del
+    // collaudo Android 2026-08-03: il pulsante apriva app.kidville.it nel browser
+    // di sistema, e l'utente usciva dall'app perdendo la sessione nativa).
+    //
+    // `offline.html` è servito dallo schema LOCALE (`https://localhost` su Android,
+    // `capacitor://localhost` su iOS): la sua navigazione verso `app.kidville.it` è
+    // fuori origine, e Capacitor la sottopone a una decisione che finisce in un
+    // Intent verso Chrome / in `UIApplication.shared.open` —
+    //   Android · Bridge.java:389-417   `!appAllowNavigationMask.matches(url.getHost())`
+    //   iOS     · WebViewDelegationHandler.swift:95-115  `shouldAllowNavigation(to:)`
+    // — a meno che l'host non sia dichiarato QUI. Senza questa voce la maschera è
+    // `HostMask.Nothing`, e l'unica cosa che tratteneva l'utente dentro l'app era la
+    // coincidenza fra l'URL cablato nella pagina e `server.url`: vera in produzione,
+    // FALSA sull'emulatore (`10.0.2.2`) e falsa in una build senza `CAP_SERVER_URL`
+    // (dove `appUrl` ripiega su `https://localhost`). Due configurazioni su tre
+    // uscivano dall'app, ed è quella che il collaudo ha avuto in mano.
+    //
+    // Un host solo, scritto per esteso: `allowNavigation` non è una lista di comodo.
+    // Ogni voce è un dominio che può caricarsi dentro la WebView dell'app, cioè con
+    // accanto i cookie di sessione di un genitore e senza barra degli indirizzi; un
+    // `*` qui trasformerebbe l'app in un browser aperto. I link esterni veri devono
+    // continuare ad aprirsi fuori, ed è il comportamento che resta di default.
+    //
+    // Effetti collaterali verificati sul sorgente di Capacitor, perché non sono ovvi:
+    // l'host finisce anche in `allowedOriginRules` e in `authorities`
+    // (`Bridge.setAllowedOriginRules`). In produzione ci sono GIÀ entrambi — li mette
+    // `server.url` (`Bridge.initWebView`, `authorities.add(appUrlObject.getAuthority())`).
+    // In dev l'authority in più fa passare le richieste da `WebViewLocalServer
+    // .handleProxyRequest`, che però esce subito con `null` quando `jsInjector == null`,
+    // cioè su ogni WebView che supporti `DOCUMENT_START_SCRIPT` (Chrome 83+).
+    // Il lock è in `__tests__/architecture/riprova-offline-resta-nella-webview.test.ts`.
+    allowNavigation: ['app.kidville.it'],
     ...(serverUrl
       ? {
           url: serverUrl,

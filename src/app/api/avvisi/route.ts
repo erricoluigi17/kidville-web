@@ -18,6 +18,10 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 import { RUOLI_PUBBLICAZIONE_DEFAULT } from '@/lib/scuole/admin-settings-default';
 import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso, zScadenzaAvviso, zTargetClassesAvviso } from '@/lib/validation/avvisi';
 import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
+import {
+    statistichePerAvviso, autoriDegliAvvisi, rispostePerAvvisoDelGenitore,
+    AUTORE_IGNOTO, STATS_ZERO,
+} from '@/lib/avvisi/statistiche';
 
 // Il ramo STAFF filtra ancora per scope/classe (dashboard cockpit). Il ramo
 // GENITORE è SERVER-DERIVED (G3): i parametri client sono ignorati, figli e
@@ -67,37 +71,31 @@ function colonnaMancante(err: { code?: string } | null | undefined): boolean {
     return !!err && ['PGRST204', '42703'].includes(err.code ?? '');
 }
 
-// Conteggi risposte + info autore: identico per staff e genitore.
-async function autoreEStats(supabase: SupabaseAdmin, avviso: AvvisoRow) {
-    const [lettiRes, siRes, noRes, autoreRes] = await Promise.all([
-        supabase.from('avvisi_risposte').select('*', { count: 'exact', head: true })
-            .eq('avviso_id', avviso.id).not('letto_il', 'is', null),
-        supabase.from('avvisi_risposte').select('*', { count: 'exact', head: true })
-            .eq('avviso_id', avviso.id).eq('risposta', 'si'),
-        supabase.from('avvisi_risposte').select('*', { count: 'exact', head: true })
-            .eq('avviso_id', avviso.id).eq('risposta', 'no'),
-        supabase.from('utenti')
-            .select('nome, cognome, ruolo, first_name, last_name, role')
-            .eq('id', avviso.author_id).maybeSingle(),
+/**
+ * Conteggi risposte + info autore per UN ELENCO di avvisi, in blocco (T11-F2).
+ *
+ * Qui prima c'era `autoreEStats(supabase, avviso)`, chiamata dentro un `.map()`:
+ * tre `count` su `avvisi_risposte` e una `maybeSingle()` su `utenti` per OGNI
+ * avviso. Il `Promise.all` che l'avvolgeva le mandava in parallelo — e questo è
+ * esattamente ciò che rendeva il difetto invisibile: con dieci avvisi in tabella
+ * il cronometro non se ne accorge, con duecento sono ottocento round-trip verso
+ * Postgres per aprire una bacheca.
+ *
+ * Il numero di query ora è indipendente da quanti avvisi ci sono. Il conteggio
+ * resta ESATTO: vedi `@/lib/avvisi/statistiche`, dove la lettura pagina finché il
+ * `count` esatto del server non è coperto — un'aggregazione fatta su righe
+ * troncate mostrerebbe «hanno letto in 3» invece di «in 47», che è peggio di un
+ * errore perché sembra un dato.
+ */
+async function autoriEStatistiche(supabase: SupabaseAdmin, avvisi: readonly AvvisoRow[]) {
+    const [stats, autori] = await Promise.all([
+        statistichePerAvviso(supabase, avvisi.map((a) => a.id), 'avvisi:GET'),
+        autoriDegliAvvisi(supabase, avvisi.map((a) => a.author_id), 'avvisi:GET'),
     ]);
-    const author = autoreRes.data as {
-        nome?: string | null; cognome?: string | null; ruolo?: string | null;
-        first_name?: string | null; last_name?: string | null; role?: string | null;
-    } | null;
-    return {
-        author: author
-            ? {
-                first_name: author.first_name || author.nome || '?',
-                last_name: author.last_name || author.cognome || '?',
-                role: author.role || author.ruolo || 'unknown',
-            }
-            : { first_name: '?', last_name: '?', role: 'unknown' },
-        stats: {
-            letti: lettiRes.count ?? 0,
-            adesioni_si: siRes.count ?? 0,
-            adesioni_no: noRes.count ?? 0,
-        },
-    };
+    return (avviso: AvvisoRow) => ({
+        author: autori.get(avviso.author_id) ?? AUTORE_IGNOTO,
+        stats: stats.get(avviso.id) ?? { ...STATS_ZERO },
+    });
 }
 
 // Aggrega le risposte per-figlio di UN avviso in un singolo `my_response` (il
@@ -156,12 +154,12 @@ async function listaAvvisiStaff(
         );
     }
 
-    const enriched = await Promise.all(
-        filtered.map(async (avviso) => {
-            const { author, stats } = await autoreEStats(supabase, avviso);
-            return { ...avviso, author, stats, my_response: null };
-        }),
-    );
+    // Due query in tutto, non quattro per avviso: il `.map()` qui sotto non tocca
+    // più il database.
+    const arricchisci = await autoriEStatistiche(supabase, filtered);
+    const enriched = filtered.map((avviso) => ({
+        ...avviso, ...arricchisci(avviso), my_response: null,
+    }));
     // Il bucket degli allegati è PRIVATO (2026-07-31): l'indirizzo si firma qui,
     // dietro a questo gate, e vale dieci minuti. Una sola chiamata per pagina.
     return NextResponse.json(await firmaAllegatiAvvisi(supabase, enriched, 'avvisi:GET'));
@@ -208,33 +206,31 @@ async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): P
         return (a.target_classes ?? []).some((c) => classiFigli.has(c));
     });
 
-    const enriched = await Promise.all(
-        rilevanti.map(async (avviso) => {
-            const { author, stats } = await autoreEStats(supabase, avviso);
+    // Il percorso PIÙ CALDO dell'applicazione: è la home del genitore, e prima
+    // costava CINQUE query per avviso (le quattro di `autoreEStats` più le
+    // risposte del genitore, qui sotto). Ora sono tre in tutto, qualunque sia il
+    // numero di avvisi, e il `.map()` che segue è puro calcolo in memoria.
+    const [arricchisci, mieRisposte] = await Promise.all([
+        autoriEStatistiche(supabase, rilevanti),
+        rispostePerAvvisoDelGenitore(supabase, rilevanti.map((a) => a.id), parentId, 'avvisi:GET'),
+    ]);
 
-            // m3: i FIGLI cui si riferisce (globale=tutti, classe=chi è in quella classe).
-            const figliRiferiti = avviso.target_scope === 'globale'
-                ? figli
-                : figli.filter(
-                    (f) => f.classe_sezione && (avviso.target_classes ?? []).includes(f.classe_sezione),
-                );
-            const figliOut = figliRiferiti.map((f) => ({ student_id: f.id, nome: f.nome ?? '' }));
+    const enriched = rilevanti.map((avviso) => {
+        // m3: i FIGLI cui si riferisce (globale=tutti, classe=chi è in quella classe).
+        const figliRiferiti = avviso.target_scope === 'globale'
+            ? figli
+            : figli.filter(
+                (f) => f.classe_sezione && (avviso.target_classes ?? []).includes(f.classe_sezione),
+            );
+        const figliOut = figliRiferiti.map((f) => ({ student_id: f.id, nome: f.nome ?? '' }));
 
-            // Risposte del genitore per QUESTO avviso, una riga per figlio.
-            const { data: risposteRows } = await supabase
-                .from('avvisi_risposte')
-                .select('student_id, letto_il, risposta, risposto_il')
-                .eq('avviso_id', avviso.id)
-                .eq('parent_id', parentId);
-            const perFiglio = new Map<string, RispostaFiglio>();
-            for (const r of (risposteRows ?? []) as Array<{ student_id: string } & RispostaFiglio>) {
-                perFiglio.set(r.student_id, { letto_il: r.letto_il, risposta: r.risposta, risposto_il: r.risposto_il });
-            }
-            const my_response = aggregaRisposta(figliRiferiti.map((f) => f.id), perFiglio);
+        // Risposte del genitore per QUESTO avviso, una riga per figlio: la mappa
+        // è già in memoria, indicizzata per avviso e poi per alunno.
+        const perFiglio: Map<string, RispostaFiglio> = mieRisposte.get(avviso.id) ?? new Map();
+        const my_response = aggregaRisposta(figliRiferiti.map((f) => f.id), perFiglio);
 
-            return { ...avviso, author, stats, figli: figliOut, my_response };
-        }),
-    );
+        return { ...avviso, ...arricchisci(avviso), figli: figliOut, my_response };
+    });
 
     // Stessa firma del ramo staff: il genitore riceve un link a tempo, non un
     // indirizzo pubblico che resterebbe valido per chiunque, per sempre.

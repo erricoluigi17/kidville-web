@@ -1,6 +1,7 @@
 import { logEvento, type Livello, type Valore } from './logger';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
+import { conTetto, eTimeout, erroreTimeout, tettoSano } from './tetto';
 
 /**
  * Le chiamate ai provider ESTERNI (Resend, FCM, web-push, Aruba/SDI, SIDI).
@@ -39,10 +40,113 @@ import { sanificaMessaggio } from './serialize';
  * Regola d'oro del modulo, come per tutto `src/lib/logging/**`: NON LANCIA MAI. Nemmeno su
  * rete giù, nemmeno su una risposta illeggibile. Un guasto dell'osservabilità non può
  * diventare un guasto del prodotto: si restituisce un esito che il chiamante può leggere.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * E DA QUI PASSA ANCHE LA RESILIENZA, non solo l'osservabilità (vedi `TETTO_MS_DEFAULT`).
+ *
+ * Il modulo è nato per GUARDARE le chiamate ai terzi, e per questo non si era mai occupato di
+ * come finiscono. Ma è anche l'UNICA porta da cui passano tutti i provider — lo impone
+ * `__tests__/architecture/provider-esterni-osservati.test.ts` — e un tetto di tempo messo qui
+ * è un posto solo invece di tredici, valido anche per i chiamanti che non sanno di averne
+ * bisogno. L'interruzione cade poi nel ramo `catch` che c'era già: un timeout smette di essere
+ * un buco silenzioso e diventa una riga con un codice suo.
+ *
+ * ⚠️ IL MECCANISMO DEL TETTO NON STA PIÙ QUI: sta in `./tetto`, e lo condivide col gemello
+ * `supabase-fetch.ts`. Quando è nato — la mattina del 2026-08-03 — era scritto solo dentro
+ * questo file, e la strada accanto è rimasta scoperta per mezza giornata **col gate verde**.
+ * Qui restano i NUMERI (quanto aspetta ogni provider, e perché), che sono l'unica cosa che di
+ * questo modulo è davvero.
+ * ─────────────────────────────────────────────────────────────────────────────────
  */
 
 /** Quanto corpo d'errore ci si porta dietro (nell'esito e nel log). */
 const CORPO_MAX = 1_000;
+
+/**
+ * IL TETTO DI TEMPO, in millisecondi, su una chiamata a un provider esterno.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * PERCHÉ ESISTE, MISURATO E NON DEDOTTO. `fetch` non ha nessun timeout di suo. Un server
+ * locale che ACCETTA la connessione e non risponde mai, chiamato con la stessa primitiva di
+ * questo modulo, è rimasto appeso **150 secondi senza eccezione né timeout** — e sarebbe
+ * rimasto appeso finché la piattaforma non taglia la funzione. Fino al 2026-08-03 nessuno dei
+ * 13 chiamanti passava un `signal`: `AbortSignal` compariva in `src/` due volte sole, ed
+ * erano entrambe nella sonda della pagina offline.
+ *
+ * Cosa costa, e a chi. L'operatore che ha premuto «invia» aspetta senza limite e senza
+ * errore; la lambda resta occupata. Il caso peggiore è la validazione di un embed Instagram,
+ * che è SINCRONA dentro la richiesta: l'utente guarda una rotella che non finisce.
+ *
+ * UN TIMEOUT NON È UNA RETE GIÙ, e per questo ha un codice suo (vedi `erroreTimeout` in
+ * `./tetto`): «il provider non risponde» si ripara alzando il tetto o chiamando il fornitore,
+ * «il provider non si raggiunge» si ripara sul DNS o sul firewall.
+ *
+ * IL TAGLIO DI PIATTAFORMA RESTA IL LIMITE ESTERNO: un tetto per provider più alto di quello
+ * non scatta mai. Serve quindi che i valori qui sotto ci stiano DENTRO con margine — ed è un
+ * vincolo ANCORATO, non un proposito: `logging-external.test.ts` pretende che nessun provider
+ * superi i 30 secondi. Senza quell'ancoraggio i test pinnavano solo l'ORDINE relativo, e
+ * moltiplicando ogni valore per 60 la suite restava verde mentre in produzione il difetto
+ * tornava intero.
+ * ─────────────────────────────────────────────────────────────────────────────────
+ */
+const TETTO_MS_DEFAULT = 10_000;
+
+/**
+ * I provider per cui il default non è il numero giusto. Volutamente corta: un tetto per
+ * provider è una deroga, e ognuna qui dentro deve dire perché.
+ *
+ * `instagram` — è l'unica chiamata a un terzo fatta DENTRO la richiesta di un operatore che
+ * sta aspettando (la validazione dell'embed), e il suo esito è best-effort: un health-check
+ * che non risponde in quattro secondi ha già risposto. Si stringe QUI e non nella route
+ * perché il tetto per provider è precisamente ciò che permette di coprire un chiamante senza
+ * toccarne il file.
+ *
+ * `aruba` — upload del tracciato FatturaPA e polling SDI: il lavoro dall'altra parte è più
+ * grosso di una POST di due righe, e la risposta di `getByFilename` può portarsi dietro il PDF
+ * della fattura in base64. Con il default si trasformerebbe una consegna lenta ma riuscita in
+ * un fallimento fiscale.
+ */
+export const TETTI_MS_PROVIDER: ReadonlyMap<string, number> = new Map<string, number>([
+    ['instagram', 4_000],
+    ['aruba', 30_000],
+]);
+
+/**
+ * IL MASSIMO ASSOLUTO che un CHIAMANTE può chiedere con `timeoutMs`, in millisecondi.
+ *
+ * Il taglio di piattaforma è il limite esterno: un tetto più alto non scatta mai, quindi
+ * chiederne uno di mezz'ora equivale a non averne — il difetto di partenza, rientrato dalla
+ * porta che esiste per tenerlo fuori. Fino al 2026-08-03 questo limite valeva solo per la
+ * TABELLA qui sopra (e solo nei test): `tettoMs('resend', 3_600_000)` restituiva 3.600.000.
+ *
+ * 30 secondi e non meno: è il valore di `aruba`, cioè la deroga più larga che questa tabella
+ * concede, e un chiamante non deve poter chiedere più di quanto il provider più lento già
+ * ottiene. Sotto quel numero si può sempre stringere — è a questo che la valvola serve.
+ *
+ * NON tosa il valore della tabella, di proposito: quello lo misura l'ancoraggio assoluto in
+ * `__tests__/lib/logging-external.test.ts`, e un `Math.min` qui lo renderebbe verde per
+ * costruzione. Vedi `tettoSano` in `./tetto`, dove la distinzione è scritta per intero.
+ */
+const TETTO_MS_MAX = 30_000;
+
+/**
+ * Quanto si aspetta questa chiamata: la richiesta del chiamante (mai oltre `TETTO_MS_MAX`),
+ * poi il tetto del provider, poi il default. Non ha stato ed è esportata perché la tabella qui
+ * sopra sia verificabile senza aspettare dieci secondi per volta
+ * (`__tests__/lib/logging-external.test.ts`).
+ *
+ * Un valore assurdo (`0`, negativo, `NaN`, `Infinity`) NON diventa «nessun tetto»: `0` e i
+ * negativi interromperebbero la chiamata prima di farla, `NaN` e `Infinity` danno un
+ * `AbortSignal.timeout` che non scatta mai — cioè di nuovo il difetto. Si torna al tetto del
+ * provider, che è il verso giusto in cui sbagliare.
+ */
+export function tettoMs(provider: string, richiesto?: number): number {
+    try {
+        return tettoSano(richiesto, TETTI_MS_PROVIDER.get(provider) ?? TETTO_MS_DEFAULT, TETTO_MS_MAX);
+    } catch {
+        return TETTO_MS_DEFAULT;
+    }
+}
 
 /**
  * Tetto REALE, in byte, di quanto corpo si LEGGE dallo stream. Non è la stessa cosa di
@@ -100,8 +204,25 @@ export interface OpzioniEsterne {
      * nativo su console per ogni genitore che cancella l'app, inquinando il raggruppamento di
      * `get_runtime_errors` e la colonna `livello` di chi in SQL cerca «gli errori di oggi».
      * La riga resta (a `info`, e in tabella se l'evento è critico): si conta, non allarma.
+     *
+     * VALE ANCHE QUANDO LA RISPOSTA NON ARRIVA (rete giù, scadenza del tetto): lì il predicato
+     * riceve `stato: 0` e il messaggio dell'eccezione, cioè esattamente ciò che il chiamante si
+     * ritroverà nell'esito. Non è un dettaglio: `instagram` ha il tetto più stretto della
+     * tabella ed è dichiarato best-effort proprio dai due chiamanti che passano `() => 'info'`.
      */
     gravita?: (stato: number, corpo: string) => Livello;
+    /**
+     * Il tetto di tempo di QUESTA chiamata, in millisecondi. Default: quello del provider,
+     * altrimenti `TETTO_MS_DEFAULT` (vedi `tettoMs`).
+     *
+     * È la valvola ergonomica per «questa chiamata è diversa dalle altre dello stesso
+     * provider». Chi ha bisogno di governare l'interruzione per davvero — annullarla a mano,
+     * legarla alla vita della richiesta — passa il proprio `init.signal`, che vince su tutto.
+     *
+     * SERVE A STRINGERE. Si può anche allargare, ma non oltre `TETTO_MS_MAX`: una richiesta più
+     * grande viene tosata lì, perché un tetto che la piattaforma taglia prima non è un tetto.
+     */
+    timeoutMs?: number;
 }
 
 /**
@@ -116,21 +237,38 @@ export async function externalFetch(
     opzioni?: OpzioniEsterne,
 ): Promise<EsitoEsterno> {
     const t0 = Date.now();
+    const tetto = tettoMs(provider, opzioni?.timeoutMs);
 
     let res: Response;
     try {
         // `globalThis.fetch` risolto alla CHIAMATA, non al caricamento del modulo: Next 16
         // patcha il fetch globale per il proprio caching, e non c'è garanzia che l'abbia già
         // fatto quando questo modulo viene importato.
-        res = await globalThis.fetch(url, init);
+        res = await globalThis.fetch(url, conTetto(url, init, tetto));
     } catch (err) {
         // Rete giù, DNS, TLS, timeout. NON si rilancia — è il contratto di questo modulo:
         // il chiamante (l'invio di un'email, una push) deve poter degradare, non morire.
-        // Si passa l'errore ORIGINALE al logger: ha lo stack vero, che dice CHI stava
+        //
+        // Un'interruzione per scadenza si RIETICHETTA prima di loggarla: il DOMException che
+        // arriva da `AbortSignal.timeout` porta un messaggio in inglese e un `code` numerico
+        // (`23`, il codice legacy di DOMException), che nella colonna `app_log.codice` —
+        // quella su cui si interroga — sarebbe indistinguibile da uno status. Per tutto il
+        // resto si passa l'errore ORIGINALE al logger: ha lo stack vero, che dice CHI stava
         // chiamando il provider.
         const ms = Date.now() - t0;
-        emetti(provider, url, ms, undefined, 'error', opzioni, err);
-        return { ok: false, stato: 0, corpo: messaggioDi(err) };
+        const errore = eTimeout(err) ? erroreTimeout('ExternalTimeoutError', 'dal provider', tetto, err) : err;
+        const corpo = messaggioDi(errore);
+        // LA VALVOLA `gravita` VALE ANCHE QUI, e per un po' non è stato vero: questo ramo
+        // passava `'error'` CABLATO. I due chiamanti Instagram dichiarano `gravita: () => 'info'`
+        // perché l'health-check dell'embed è best-effort — e `instagram` ha il tetto PIÙ STRETTO
+        // della tabella, cioè è il percorso che finisce in scadenza più spesso di tutti. Con la
+        // valvola scavalcata, una chiamata che PRIMA del tetto non produceva nessuna riga
+        // cominciava a produrre la più rumorosa che esista: un Error nativo su console per ogni
+        // post lento, cioè l'avvelenamento di `get_runtime_errors` che `gravita` esiste per
+        // impedire. Gli argomenti sono gli stessi che il chiamante si ritrova nell'esito
+        // (`stato: 0`, il messaggio dell'eccezione), così il predicato vede ciò che vedrà lui.
+        emetti(provider, url, ms, undefined, livelloDi(0, corpo, opzioni), opzioni, errore);
+        return { ok: false, stato: 0, corpo };
     }
 
     const ms = Date.now() - t0;
@@ -223,7 +361,12 @@ function operazioneDi(url: string): string {
     }
 }
 
-/** Default `error`; il chiamante può declassare (vedi `gravita`). Un predicato che lancia non decide. */
+/**
+ * Default `error`; il chiamante può declassare (vedi `gravita`). Un predicato che lancia non
+ * decide. Chiamata da TUTTI e due i rami di fallimento — il rifiuto HTTP e la risposta che non
+ * arriva — perché una valvola che copre un percorso solo non è una valvola: è una dimenticanza
+ * che aspetta il traffico giusto.
+ */
 function livelloDi(stato: number, corpo: string, opzioni: OpzioniEsterne | undefined): Livello {
     try {
         return opzioni?.gravita?.(stato, corpo) ?? 'error';

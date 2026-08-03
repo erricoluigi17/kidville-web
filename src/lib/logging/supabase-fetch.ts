@@ -2,6 +2,7 @@ import { logEvento, type Livello, type Valore } from './logger';
 import { contesto, inLogger } from './context';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
+import { conTetto, eTimeout, erroreTimeout, tettoSano } from './tetto';
 
 /**
  * Il `fetch` strumentato dei client Supabase.
@@ -92,6 +93,22 @@ import { sanificaMessaggio } from './serialize';
  *
  * Regola d'oro dell'intero modulo: NIENTE qui dentro può lanciare. L'unica eccezione rilanciata
  * è quella di `fetch`, che è del chiamante e non nostra.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * E DA QUI PASSA ANCHE LA RESILIENZA (2026-08-03, sera). Vedi `TETTO_MS_DEFAULT`.
+ *
+ * Fino a quel giorno questo file diceva «Argomenti INTATTI. Non si tocca `init` (né lo si
+ * copia)», e non aveva nessun tetto di tempo. La mattina dello stesso giorno il gemello
+ * `external.ts` ne aveva ricevuto uno, perché era stato MISURATO che un bersaglio che accetta
+ * la connessione e tace tiene appesa la `fetch` **150 secondi senza eccezione**. Qui no — e da
+ * qui passano TUTTE le chiamate PostgREST e auth dell'applicazione: un Supabase che accetta e
+ * tace appendeva la route esattamente come faceva un provider, col gate verde.
+ *
+ * La correzione non è stata copiare il tetto: il meccanismo vive in `./tetto` e lo usano
+ * entrambe le strade, con un lock che impedisce che torni a essere scritto due volte
+ * (`__tests__/lib/logging-tetto.test.ts`). Qui restano i NUMERI, che sono l'unica cosa che di
+ * questo modulo è davvero.
+ * ─────────────────────────────────────────────────────────────────────────────────
  */
 
 type Fetch = typeof fetch;
@@ -160,6 +177,94 @@ export interface Bersaglio {
 }
 
 /**
+ * IL TETTO DI TEMPO, in millisecondi, su una chiamata a Supabase.
+ *
+ * PERCHÉ 15 SECONDI, e non un numero scelto a occhio. È il valore già MISURATO su GoTrue nello
+ * stesso ciclo: al collaudo dell'accesso una risposta lenta ma VERA è arrivata a 12 secondi, ed
+ * è la ragione per cui `TETTO_ACCESSO_MS` (`src/lib/auth/errore-accesso.ts`) sta a 15 e non più
+ * in basso. Un accesso lento deve poter riuscire; un accesso che non risponde mai no. Lo stesso
+ * numero copre il lato server, dove `resolveIdentity()` chiama `auth.getUser()` a OGNI
+ * richiesta API: se GoTrue accetta e tace, senza tetto NESSUNA route risponde più.
+ *
+ * Sul database il tetto non taglia mai una query lecita, e va detto perché: PostgREST ha il suo
+ * `statement_timeout` (ordine dei secondi) e risponde con un errore molto prima. Un silenzio di
+ * quindici secondi non è una query lenta — è una connessione appesa.
+ *
+ * ⚠️ SULL'AUTH QUESTO È IL TETTO DI UN TENTATIVO, NON DELLA CHIAMATA: nel caso peggiore la
+ * strada auth ne spende DUE, cioè ~30,2 s. Il numero è letto sul sorgente della libreria, non
+ * dedotto:
+ *
+ *  · `@supabase/auth-js` avvolge QUALUNQUE eccezione del fetch — la nostra scadenza compresa —
+ *    in un `AuthRetryableFetchError` (`lib/fetch.js`, `handleError()`: se l'errore non somiglia
+ *    a una `Response`, è ritentabile per definizione). Il nome e il `code` che ci mettiamo noi
+ *    lì non li guarda nessuno;
+ *  · `_refreshAccessToken` ritenta finché `Date.now() + 200·2^n − inizio < 30_000`
+ *    (`AUTO_REFRESH_TICK_DURATION_MS`). Con un tetto di 15 s: il 1° tentativo scade a 15.000
+ *    (15.000 + 200 < 30.000 → si dorme 200 ms e si ritenta), il 2° a 30.200 (30.200 + 400 ≥
+ *    30.000 → si smette). Due tentativi, ~30,2 s in tutto.
+ *
+ * NON C'È LA SCORCIATOIA CHE ABBIAMO CON POSTGREST. Là il retry si disinnesca dando all'errore
+ * il `code: 'ABORT_ERR'` che postgrest-js riconosce (vedi `abortDaScadenza`); qui il predicato
+ * di ritentabilità non guarda l'errore, guarda solo il tempo trascorso. L'unica leva sarebbe
+ * abbassare il tetto dell'auth — ma dimezzarlo per far tornare il conto significherebbe
+ * bocciare a 7,5 s un accesso lento e VERO da 12 s, che è il guasto opposto e peggiore.
+ *
+ * Vale sul percorso di RINNOVO (`_callRefreshToken` → `_refreshAccessToken`), non su ogni
+ * chiamata: un `getUser()` con un access token ancora valido fa una richiesta sola e si ferma
+ * al tetto. Il rinnovo però è ordinario — l'access token dura un'ora — quindi il caso peggiore
+ * è ordinario anche lui. `__tests__/lib/logging-tetto.test.ts` blocca questa aritmetica sul
+ * pacchetto vero: se un aggiornamento cambia la politica, lo si scopre quel giorno.
+ *
+ * IL TAGLIO DI PIATTAFORMA RESTA IL LIMITE ESTERNO: un tetto più alto di quello non scatta mai.
+ * `__tests__/lib/logging-tetto.test.ts` pretende che nessuna area superi i 20 secondi — un
+ * ancoraggio ASSOLUTO, perché un test che pinna solo l'ordine relativo resta verde anche se
+ * qualcuno moltiplica tutta la tabella per sessanta.
+ */
+const TETTO_MS_DEFAULT = 15_000;
+
+/**
+ * Le aree per cui il default non è il numero giusto. Volutamente corta: una deroga deve dire
+ * perché.
+ *
+ * `storage` — non è una query, è un file. Un upload da 10 MB (il tetto della chat) o il
+ * download di un fascicolo passano da qui, e il corpo si trasferisce DENTRO la stessa `fetch`
+ * che il tetto governa: tagliarlo a metà trasferimento trasformerebbe una consegna lenta ma
+ * riuscita in un fallimento. Server-to-server venti secondi sono larghissimi; da un client
+ * lento non sarebbero bastati, ma questo `fetch` non gira mai in un browser.
+ */
+export const TETTI_MS_AREA: ReadonlyMap<string, number> = new Map<string, number>([
+    ['storage', 20_000],
+]);
+
+/**
+ * IL MASSIMO ASSOLUTO che chi costruisce il client può chiedere con `timeoutMs`.
+ *
+ * Stessa ragione del gemello (`TETTO_MS_MAX` in `external.ts`): il taglio di piattaforma è il
+ * limite esterno, e un tetto più alto non scatta mai — chiederne uno di mezz'ora è rimettere
+ * il difetto dentro dalla porta che esiste per tenerlo fuori. 20 secondi perché è il valore di
+ * `storage`, la deroga più larga di questa tabella: sotto si stringe quanto si vuole.
+ *
+ * NON tosa il valore della tabella, di proposito: quello lo misura l'ancoraggio assoluto in
+ * `__tests__/lib/logging-tetto.test.ts`. Vedi `tettoSano` in `./tetto`.
+ */
+const TETTO_MS_MAX = 20_000;
+
+/**
+ * Quanto si aspetta questa chiamata: la richiesta di chi ha costruito il client (mai oltre
+ * `TETTO_MS_MAX`), poi il tetto dell'area, poi il default. Non ha stato ed è esportata perché
+ * la tabella qui sopra sia verificabile senza aspettare quindici secondi per volta.
+ *
+ * Un valore assurdo non diventa «nessun tetto»: vedi `tettoSano` in `./tetto`.
+ */
+export function tettoMsArea(area: string, richiesto?: number): number {
+    try {
+        return tettoSano(richiesto, TETTI_MS_AREA.get(area) ?? TETTO_MS_DEFAULT, TETTO_MS_MAX);
+    } catch {
+        return TETTO_MS_DEFAULT;
+    }
+}
+
+/**
  * Dall'URL si ricava cosa stiamo facendo. Non lancia mai: su un URL illeggibile ricade su
  * `altro`, perché un log approssimativo è meglio di una richiesta rotta dall'osservabilità.
  *
@@ -196,6 +301,17 @@ function bersaglio(area: Bersaglio['area'], nome: string): Bersaglio {
     return { area, nome: sanificaMessaggio(redigiPath(nome)) };
 }
 
+export interface OpzioniStrumento {
+    /**
+     * Il tetto di tempo di questo client, in millisecondi. Default: quello dell'area (vedi
+     * `tettoMsArea`). Sta sul FACTORY e non sulla singola chiamata perché il chiamante vero è
+     * supabase-js, che di questo wrapper non sa niente: chi può decidere è chi costruisce il
+     * client. Per la singola chiamata la valvola esiste già ed è quella di sempre — un
+     * `init.signal` proprio, che vince su tutto.
+     */
+    timeoutMs?: number;
+}
+
 /**
  * `base` è iniettabile per i test. Il default NON è `= fetch` (che catturerebbe il globale al
  * CARICAMENTO del modulo): Next 16 patcha `globalThis.fetch` per il proprio caching, e non c'è
@@ -203,7 +319,7 @@ function bersaglio(area: Bersaglio['area'], nome: string): Bersaglio {
  * globale si risolve a ogni CHIAMATA — quindi si usa sempre quello che Next vuole che si usi,
  * e il comportamento di cache attuale non cambia.
  */
-export function creaFetchStrumentato(base?: Fetch): Fetch {
+export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): Fetch {
     const chiama: Fetch = base ?? ((input, init) => globalThis.fetch(input, init));
 
     return async (input, init) => {
@@ -211,22 +327,38 @@ export function creaFetchStrumentato(base?: Fetch): Fetch {
         // d'errore logga, si tenta di scrivere di nuovo su `app_log` → ricorsione fino
         // all'esaurimento della memoria. È la seconda difesa: la prima è `createLogClient`,
         // che non è strumentato affatto.
+        //
+        // Qui non si mette nemmeno il tetto, ed è una scelta: questo ramo è la rete SOTTO la
+        // rete (`createLogClient` non passa affatto da qui), e attaccarci una scadenza
+        // vorrebbe dire ricalcolare l'area — cioè lavoro nel percorso che esiste per non farne.
         if (inLogger()) return chiama(input, init);
 
         const b = descrivi(input, init);
+        const tetto = tettoMsArea(b.area, opzioni?.timeoutMs);
         const t0 = Date.now();
 
         let res: Response;
         try {
-            // Argomenti INTATTI. Non si tocca `init` (né lo si copia): `signal`, `priority`,
-            // `cache`, `next` e gli header devono arrivare a Next e a undici esattamente come
-            // li ha scritti supabase-js.
-            res = await chiama(input, init);
+            // Argomenti INTATTI, TRANNE il tetto di tempo. `signal`, `priority`, `cache`, `next`
+            // e gli header arrivano a Next e a undici esattamente come li ha scritti
+            // supabase-js; l'unica aggiunta è una scadenza, e solo quando il chiamante non ne
+            // governa già una di sua (vedi `conTetto`). Senza, una connessione accettata e muta
+            // teneva appesa la route per sempre — misurato: 150 secondi, senza eccezione.
+            res = await chiama(input, conTetto(input, init, tetto));
         } catch (err) {
-            registraErroreDiRete(b, err, Date.now() - t0);
-            // RILANCIARE sempre, e l'errore ORIGINALE: postgrest-js distingue l'AbortError
-            // dagli altri (`hint: 'Request was aborted'`) leggendone `name`/`code`.
-            throw err;
+            const ms = Date.now() - t0;
+            const scaduto = eTimeout(err);
+            registraErroreDiRete(
+                b,
+                scaduto ? erroreTimeout('SupabaseTimeoutError', 'da Supabase', tetto, err) : err,
+                ms,
+                scaduto,
+            );
+            // RILANCIARE sempre. Sugli errori NON nostri si rilancia l'originale: postgrest-js
+            // distingue l'AbortError dagli altri (`hint: 'Request was aborted'`) leggendone
+            // `name`/`code`. Su una SCADENZA si rilancia invece la nostra etichetta — vedi
+            // `abortDaScadenza`, che spiega perché è l'opposto di una perdita d'informazione.
+            throw scaduto ? abortDaScadenza(tetto, err) : err;
         }
 
         const ms = Date.now() - t0;
@@ -322,17 +454,64 @@ function verràRitentato(b: Descrizione, stato: number | undefined): boolean {
  * Emissione.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-function registraErroreDiRete(b: Descrizione, err: unknown, ms: number): void {
+function registraErroreDiRete(b: Descrizione, err: unknown, ms: number, scaduto: boolean): void {
     try {
-        const abort = eAbort(err);
-        // Un abort non viene mai ritentato da postgrest (lo rilancia subito): va emesso ora.
-        if (!abort && verràRitentato(b, undefined)) return;
-        // MAI in tabella: se l'host Supabase non si raggiunge, non si raggiunge nemmeno per
-        // scriverci il log. Vedi `persistibile`.
+        const abort = !scaduto && eAbort(err);
+        // Un abort — e una scadenza — non vengono mai ritentati da postgrest (li rilancia
+        // subito): vanno emessi ora, o non li emette nessuno.
+        if (!abort && !scaduto && verràRitentato(b, undefined)) return;
+        // Una scadenza NON è un annullamento chiesto dal chiamante: resta `error`, perché è
+        // esattamente il caso in cui qualcuno deve accorgersene.
+        //
+        // IL `!scaduto` DAVANTI A `eAbort` OGGI NON CAMBIA NULLA, e va detto invece di
+        // spacciarlo per essenziale (qui c'era scritto che «`eAbort` sarebbe vero anche per la
+        // nostra etichetta»: è falso). Al logger arriviamo con l'errore di `erroreTimeout` —
+        // `name: 'SupabaseTimeoutError'`, `code: 'timeout'` — su cui `eAbort` è già falso.
+        // Resta perché in questo ramo girano DUE errori diversi e simili: quello che si LOGGA
+        // (qui) e quello che si RILANCIA a postgrest-js, che porta `code: 'ABORT_ERR'` di
+        // proposito (vedi `abortDaScadenza`). Il giorno in cui i due si scambiassero di posto —
+        // ed è uno scambio di una riga — senza questa guardia una scadenza si declasserebbe a
+        // `info` in silenzio. Costa un `&&`; il lock è in `__tests__/lib/logging-tetto.test.ts`.
+        //
+        // MAI in tabella: se l'host Supabase non si raggiunge (o non risponde), non si raggiunge
+        // nemmeno per scriverci il log. Vedi `persistibile`.
         logEvento(b.area, abort ? 'info' : 'error', campiDi(b, { ms }), err, { persisti: false });
     } catch {
         // Fail-open: l'errore di rete lo rilancia comunque il chiamante.
     }
+}
+
+/**
+ * L'errore che si RILANCIA a supabase-js quando è scaduto il tetto. NON è quello che si logga,
+ * e i due hanno due mestieri diversi — è l'unico punto del modulo in cui vale la pena averne due.
+ *
+ * PERCHÉ NON BASTA RILANCIARE L'ORIGINALE. postgrest-js ritenta da solo GET/HEAD/OPTIONS sugli
+ * errori di rete: 3 ritentativi, backoff 1s/2s/4s. Su un errore che fallisce SUBITO (connessione
+ * rifiutata) costa il solo backoff ed è la cosa giusta da fare; su una SCADENZA costerebbe un
+ * tetto INTERO per tentativo — quattro attese piene più sette secondi, cioè tanto quanto non
+ * avere un tetto. L'unica scorciatoia che postgrest-js concede è il suo primo controllo:
+ *
+ *     if (fetchError?.name === 'AbortError' || fetchError?.code === 'ABORT_ERR') throw fetchError
+ *
+ * (`node_modules/@supabase/postgrest-js/dist/index.cjs`, ramo `catch (fetchError)`). Il
+ * `TimeoutError` che arriva da `AbortSignal.timeout` non lo soddisfa: `code` è `23`, non
+ * `'ABORT_ERR'`. Quindi il `code` glielo diamo noi.
+ *
+ * NON SI PERDE NIENTE, ed è il punto: `cause` porta il DOMException originale, il messaggio
+ * porta il numero di millisecondi, il nome resta il nostro. Quello che postgrest-js consegna al
+ * codice applicativo diventa `{ error: { message: 'SupabaseTimeoutError: …', hint: 'Request was
+ * aborted (timeout or manual cancellation)', … }, status: 0 }` — cioè un `{ error }` normale,
+ * che ogni chiamante già controlla (AGENTS, regola 7). Degrada pulito, non lancia.
+ *
+ * La riga di log, invece, la scrive `erroreTimeout` con `code: 'timeout'`: è la colonna
+ * `app_log.codice`, quella su cui si interroga («quante scadenze oggi»), e un `ABORT_ERR` lì
+ * dentro rimetterebbe insieme due guasti che si riparano in modi opposti.
+ */
+function abortDaScadenza(tetto: number, causa: unknown): Error {
+    const err = new Error(`nessuna risposta da Supabase entro il tetto di ${tetto} ms`, { cause: causa });
+    err.name = 'SupabaseTimeoutError';
+    Object.assign(err, { code: 'ABORT_ERR' });
+    return err;
 }
 
 async function registraFallimento(b: Descrizione, res: Response, ms: number): Promise<void> {

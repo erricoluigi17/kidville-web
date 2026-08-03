@@ -77,6 +77,23 @@ async function eseguiTick(supabase: SupabaseClient, t0: number): Promise<NextRes
     })
     return NextResponse.json({ success: true, promozione: 'sospesa' })
   }
+  if (permanenza.fileTrattenuti > 0) {
+    // UN RITIRO CHE NON HA TOLTO IL FILE. Succede quando la foto di un bambino il
+    // cui consenso è caduto è nominata anche da un post che quel bambino NON lo
+    // dichiara: si preferisce non romperlo, e il file resta a un indirizzo
+    // PUBBLICO. Fino al 2026-08-03 l'unica traccia era un `warn` dentro il modulo,
+    // cioè una riga identica a ogni passata — indistinguibile dal rumore. Qui
+    // risale al canale del cron, che è quello che qualcuno guarda: un file che
+    // nessuna passata riesce a togliere deve diventare una cosa che si VEDE.
+    logEvento('cron', 'error', {
+      operazione: JOB,
+      esito: 'file-pubblici-trattenuti',
+      n_file: permanenza.fileTrattenuti,
+      n_post: permanenza.ritirati,
+      ms: Date.now() - t0,
+      msg: `${JOB}: ${permanenza.fileTrattenuti} file restano nel bucket pubblico dopo un ritiro per consenso o oblio, perché un altro post li nomina ancora`,
+    })
+  }
 
   // 1) Promuovi le programmate scadute → pubblicate (+ notifica idempotente).
   const { data: prog, error: progErr } = await supabase

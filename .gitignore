@@ -79,3 +79,10 @@ design-reference/
 # corrispondenza col legale. Il repository è PUBBLICO — questa cartella non ci
 # entra, e non deve poterci entrare per sbaglio con un `git add -A`.
 PER-AVVOCATO/
+
+# Report del collaudo manuale (docs/collaudo/): li scrivono i tester leggendo il
+# database di PRODUZIONE, dove ci sono dati reali di minori. I prompt del kit
+# sono versionati, i risultati NO. Il repository è PUBBLICO.
+docs/collaudo/risultati/*
+!docs/collaudo/risultati/.gitkeep
+docs/collaudo/risultati-*/

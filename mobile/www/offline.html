@@ -25,6 +25,43 @@
       `status` 0. Vale come «raggiungibile» il fatto stesso che la promise si
       risolva: un controllo su `res.ok` qui non navigherebbe MAI.
 
+      «Riprova» RICARICA DENTRO LA WEBVIEW e non apre il browser di sistema —
+      ma non è questa pagina a garantirlo, ed è bene saperlo prima di toccarla.
+      Fino al 2026-08-03 il pulsante usciva davvero dall'app (rilievo T14-F2):
+      questa pagina vive sullo schema locale, quindi la sua navigazione verso
+      `app.kidville.it` è fuori origine, e Capacitor la manda al browser di
+      sistema a meno che l'host non stia in `server.allowNavigation`
+      (`capacitor.config.ts`). Senza quella riga l'utente usciva dall'app,
+      perdeva la sessione nativa e finiva in Chrome — su PRODUZIONE, anche con
+      una build di collaudo puntata altrove.
+
+      Conseguenza operativa: `URL_APP` qui sotto e `server.allowNavigation` sono
+      due metà della stessa decisione. Cambiarne una sola rimette il difetto, e
+      per questo i due file sono tenuti insieme da un lock
+      (`__tests__/architecture/riprova-offline-resta-nella-webview.test.ts`).
+      Nel lock lo schema è vietato: `allowNavigation: ['https://app.kidville.it']`
+      NON funzionerebbe, perché né HostMask (Android) né doesHost (iOS) tolgono
+      lo schema — spezzano su `.` e confrontano i pezzi.
+      L'URL resta cablato perché la pagina non ha modo di leggere `server.url`:
+      su origine locale il bridge di Capacitor NON è iniettato quando l'app è
+      servita da un host remoto.
+
+      PREZZO DA SAPERE, e ancora aperto (rilievo W9): `URL_APP` è un letterale di
+      PRODUZIONE, non una funzione della build. In una build di collaudo
+      (`CAP_SERVER_URL` puntata all'emulatore, 10.0.2.2:3100) «Riprova» porta
+      quindi su app.kidville.it DENTRO la WebView, ma senza bridge:
+      `Bridge.loadWebView`
+      limita `addDocumentStartJavaScript` alla sola origine configurata
+      (`Bridge.java:266-274`), quindi lì `window.Capacitor` non esiste — niente
+      fotocamera, push, biometria, share, badge — e l'utente resta sui dati veri
+      delle famiglie senza barra degli indirizzi. Prima del 2026-08-03 finiva
+      sugli stessi dati ma in Chrome, cioè con una via d'uscita.
+      Non è stato chiuso qui perché richiede di cambiare il MODO di compilare
+      (`cap sync` non passa da nessuno script npm né dalla CI: è digitato a mano
+      in una decina di documenti), e un generatore che quelle righe non invocano
+      farebbe sembrare risolto un problema che resterebbe. Chi rimette mano alla
+      shell nativa lo chiuda insieme a quei documenti.
+
       Niente log: la pagina è su un'altra origine e per ipotesi senza rete, un
       log non arriverebbe da nessuna parte. L'esito lo racconta la UI.
 

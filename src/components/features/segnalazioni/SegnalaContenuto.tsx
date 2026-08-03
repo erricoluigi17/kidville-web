@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Flag } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { logClient } from '@/lib/logging/client';
+import { messaggioSoloCatalogo } from '@/lib/ui/esito-fetch';
 
 // =============================================================================
 // SegnalaContenuto (C5 §2) — trigger + dialog per segnalare un contenuto UGC.
@@ -47,14 +48,16 @@ export function SegnalaContenuto({ tipoOggetto, oggettoId, label, ariaLabel, var
   const [categoria, setCategoria] = useState<Categoria>('contenuto_inappropriato');
   const [motivo, setMotivo] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [errore, setErrore] = useState(false);
+  // Il TESTO da mostrare, non un booleano: dal 2026-08-03 il server può dire
+  // qualcosa di più preciso di «non è stato possibile inviare» — vedi `invia`.
+  const [errore, setErrore] = useState<string | null>(null);
   const [inviata, setInviata] = useState(false);
 
   const chiudi = () => {
     setOpen(false);
     // Reset per una prossima apertura pulita (dopo l'animazione di chiusura).
     setSubmitting(false);
-    setErrore(false);
+    setErrore(null);
     setInviata(false);
     setCategoria('contenuto_inappropriato');
     setMotivo('');
@@ -62,7 +65,7 @@ export function SegnalaContenuto({ tipoOggetto, oggettoId, label, ariaLabel, var
 
   const invia = async () => {
     setSubmitting(true);
-    setErrore(false);
+    setErrore(null);
     try {
       const res = await fetch('/api/segnalazioni', {
         method: 'POST',
@@ -76,15 +79,26 @@ export function SegnalaContenuto({ tipoOggetto, oggettoId, label, ariaLabel, var
         }),
       });
       if (!res.ok) {
-        // Errore d'invio: si logga un messaggio GENERICO, mai il motivo (dati di minori).
+        // ⚠️ Il CORPO si legge, e prima non si leggeva. La 503
+        // `SEGNALAZIONE_SENZA_PLESSO` («riprova, e se il problema resta avvisa
+        // la segreteria») era tradotta in due lingue e IRRAGGIUNGIBILE: qui si
+        // scriveva `setErrore(true)` e a schermo usciva sempre la frase
+        // generica. Una frase dichiarata che nessuno vede è documentazione che
+        // mente, non una traduzione.
+        //
+        // `messaggioSoloCatalogo` e non `messaggioErrore`: la prosa del server
+        // di questa route comprende «oggetto_id obbligatorio…», che davanti a un
+        // genitore non deve arrivare mai. Il perché sta in `esito-fetch.ts`.
+        const messaggio = await messaggioSoloCatalogo(res, t('segnalaErrore'));
+        // Nel log un messaggio GENERICO: mai il motivo, mai il corpo (dati di minori).
         logClient({ livello: 'warn', evento: 'fetch', messaggio: 'segnalazione-invio-fallito', route: '/segnalazioni' });
-        setErrore(true);
+        setErrore(messaggio);
         return;
       }
       setInviata(true);
     } catch {
       logClient({ livello: 'warn', evento: 'fetch', messaggio: 'segnalazione-invio-eccezione', route: '/segnalazioni' });
-      setErrore(true);
+      setErrore(t('segnalaErrore'));
     } finally {
       setSubmitting(false);
     }
@@ -190,7 +204,7 @@ export function SegnalaContenuto({ tipoOggetto, oggettoId, label, ariaLabel, var
 
             {errore && (
               <p role="alert" className="mb-3 rounded-xl bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error">
-                {t('segnalaErrore')}
+                {errore}
               </p>
             )}
 

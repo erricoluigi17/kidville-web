@@ -8,6 +8,7 @@ import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/l
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
+import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
 import { proiettaPerGenitore } from './proiezione';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
@@ -36,8 +37,15 @@ const postBodySchema = z.object({
     file_url: z.string().min(1, 'file_url è obbligatorio'),
     file_type: z.string().nullish(),
     caption: z.string().nullish(),
-    // Lasco: oggi nessun vincolo uuid sugli id taggati.
-    tag_students: z.array(z.string()).nullish(),
+    // `zUuid` e non `z.string()` (2026-08-03). Era «lasco: oggi nessun vincolo
+    // uuid sugli id taggati», e la conseguenza non era estetica: un id
+    // malformato arrivava intatto a `.in('id', ['pippo'])`, Postgres esplodeva
+    // sul cast (`22P02`), il gate lo raccoglieva su `{ error }` e rispondeva
+    // **500**. Fail-closed — nessuna fuga — ma un 500 dice «guasto nostro» su
+    // una richiesta sbagliata: sposta la colpa e sporca il segnale che serve a
+    // trovare i guasti veri. Il posto giusto per un id malformato è un 400 di
+    // validazione, prima di toccare il database.
+    tag_students: z.array(zUuid).nullish(),
     is_broadcast: z.boolean().nullish(),
     target_classes: z.array(z.string()).nullish(),
     // Sede (tenant) di pubblicazione. Facoltativa nello schema perché chi ha un
@@ -61,7 +69,9 @@ const patchBodySchema = z.object({
     // Retro-compatibilità: i client storici lo mandano ancora, ma l'identità
     // viene SOLO dal gate (il valore del body è ignorato, anti-spoof).
     userId: zUuid.optional(),
-    tag_students: z.array(z.string()).nullish(),
+    // Gemello dello schema della POST: gli id taggati sono uuid, e un id
+    // malformato è un 400 di validazione, non un 500 dal cast di Postgres.
+    tag_students: z.array(zUuid).nullish(),
     is_broadcast: z.boolean().nullish(),
     target_classes: z.array(z.string()).nullish(),
     caption: z.string().nullish(),
@@ -383,6 +393,26 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
 
         const supabase = await createAdminClient();
 
+        // Sede (tenant) del media: DICHIARATA dal client (`scuola_id`), oppure
+        // dedotta dal SedeSelector / dall'unico plesso dell'utente.
+        //
+        // ⚠️ Qui c'era `sw.scuolaId ?? auth.user.scuola_id ?? null`, cioè la
+        // risposta del resolver veniva IGNORATA: `sw.response` non era nemmeno
+        // guardata. Per l'admin multi-plesso il 400 «specificare la sede» non
+        // arrivava mai — arrivava una foto archiviata nella sua sede PRIMARIA,
+        // qualunque plesso avesse in mente. E la sede sbagliata non resta sulla
+        // riga: comanda anche i destinatari della notifica più in basso, cioè
+        // annuncia le foto ai genitori dell'altro plesso e non a quelli giusti.
+        // Chi ha un solo plesso non cambia comportamento.
+        //
+        // ⚠️ E SI RISOLVE QUI, PRIMA DEI TAG (2026-08-03). Stava dopo, ed è la
+        // ragione per cui il gate dei tag guardava la cosa sbagliata: non avendo
+        // ancora la sede del media, poteva solo confrontare i tag con TUTTI i
+        // plessi di chi opera. Vedi il blocco qui sotto.
+        const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, scuola_id ?? undefined);
+        if (sw.response) return sw.response;
+        const scuolaId = sw.scuolaId as string;
+
         // LO SCOPE DI SEDE VIENE PRIMA DEL PRIVACY LOCK, e non è un dettaglio
         // d'ordine. Fino al 2026-07-31 `alunniSenzaConsenso` interrogava `alunni`
         // con `.in('id', ids)` senza filtro di sede, e il 422 che ne usciva
@@ -392,49 +422,39 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // che ne aveva titolo e per quella di un altro plesso. Bastava conoscere
         // gli uuid — e un uuid non è un segreto.
         //
-        // `tag_students` era l'unico ingresso rimasto che accettava
-        // identificatori di minori senza chiedersi di chi fossero: GET, PATCH e
-        // DELETE di questa stessa route lo scope l'avevano già.
-        if (tagUnici.length > 0) {
-            const plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
-            // Scope vuoto ⇒ NEGA: è la regola del progetto, e qui vale doppio.
-            if (plessi.length === 0) {
-                return NextResponse.json({ error: 'Nessuna sede selezionata' }, { status: 403 });
-            }
-            const { data: alunniInScope, error: errScope } = await supabase
-                .from('alunni')
-                .select('id')
-                .in('id', tagUnici)
-                .in('scuola_id', plessi);
-            // PostgREST non lancia: senza questo controllo un errore di lettura
-            // diventerebbe «nessun alunno in scope» e poi, peggio, un permesso.
-            if (errScope) {
-                logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, errScope);
-                return NextResponse.json({ error: 'Verifica dei tag non riuscita' }, { status: 500 });
-            }
-            const ammessi = new Set((alunniInScope ?? []).map((a) => a.id as string));
-            if (tagUnici.some((id) => !ammessi.has(id))) {
-                // Solo conteggi nel log, e NIENTE nel corpo: dire quali sono
-                // confermerebbe l'esistenza di quei bambini a chi non ha titolo.
-                logEvento('galleria', 'warn', {
-                    operazione: 'gallery:POST',
-                    esito: 'tag-fuori-sede',
-                    tipo: 'tag-fuori-sede',
-                    taggati: tagUnici.length,
-                    fuoriSede: tagUnici.filter((id) => !ammessi.has(id)).length,
-                });
-                return NextResponse.json(
-                    { error: 'Uno o più bambini taggati non appartengono ai tuoi plessi.' },
-                    { status: 403 }
-                );
-            }
-        }
+        // ⚠️ Il gate NON è più scritto qui dentro (2026-08-03). Vent'anni di
+        // buone intenzioni non fanno quello che fa una funzione sola: la copia
+        // che stava in questo handler proteggeva la POST e lasciava scoperto il
+        // PATCH, che i tag li accetta esattamente allo stesso modo. Ora la regola
+        // vive in `@/lib/gallery/tag-scope` ed è chiamata da entrambi.
+        //
+        // ⚠️ E LA SEDE CHE SI DICHIARA È QUELLA DEL MEDIA, NON I PLESSI DI CHI
+        // OPERA (2026-08-03, rilievo W4/W3 del verificatore adversariale). Qui
+        // c'era `resolveScuoleAttive(...)`, cioè «tutte le sedi selezionate
+        // dall'utente», e per un admin di due plessi quell'elenco ne conteneva
+        // due. Misurato: admin con le sedi A+B attive,
+        // `POST {"scuola_id":"<A>","tag_students":["<uuid di un minore di B>"]}`
+        // ⇒ **201**, riga con `scuola_id: A` e dentro `tag_students` l'uuid di un
+        // bambino di B. Nessuno eccede il proprio titolo — le due sedi le ha
+        // entrambe — ma l'identificatore di un minore finisce nella galleria di
+        // un plesso il cui personale su quel bambino titolo non ne ha, e da lì lo
+        // vede chiunque legga quella sede (`proiettaPerGenitore` nasconde
+        // `tag_students` ai GENITORI, non ai colleghi).
+        // La proprietà giusta è una sola: **i tag appartengono alla sede DEL
+        // MEDIA**. La sede del media è `scuolaId`, ed è appena stata risolta.
+        const plessi = [scuolaId];
+        const fuoriSede = await assertTagStudentsInScope(supabase, tagUnici, plessi, 'gallery:POST');
+        if (fuoriSede) return fuoriSede;
 
         // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso
         // privacy (liberatoria foto) sulle foto di GRUPPO. Il canale non lo
         // spegne più: `alunniSenzaConsenso` non accetta nemmeno l'argomento con
-        // cui prima lo si spegneva (vedi la nota in `@/lib/gallery/privacy`).
-        const senza = await alunniSenzaConsenso(supabase, tag_students);
+        // cui prima lo si spegneva (vedi la nota in `@/lib/gallery/privacy`), e
+        // le sedi ora gliele si DICHIARA — la sede del media, per la stessa
+        // ragione del gate qui sopra: con l'elenco dei plessi dell'operatore il
+        // 422 potrebbe pronunciare il nome di un bambino di un ALTRO plesso su
+        // una foto che in quel plesso non finirà mai.
+        const senza = await alunniSenzaConsenso(supabase, tag_students, plessi);
         if (senza.length > 0) {
             // Privacy Lock scattato: nel log SOLO conteggi (mai nomi/id dei bambini,
             // che restano nel corpo della risposta per la UI dell'insegnante).
@@ -453,21 +473,6 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
                 { status: 422 }
             );
         }
-
-        // Sede (tenant) del media: DICHIARATA dal client (`scuola_id`), oppure
-        // dedotta dal SedeSelector / dall'unico plesso dell'utente.
-        //
-        // ⚠️ Qui c'era `sw.scuolaId ?? auth.user.scuola_id ?? null`, cioè la
-        // risposta del resolver veniva IGNORATA: `sw.response` non era nemmeno
-        // guardata. Per l'admin multi-plesso il 400 «specificare la sede» non
-        // arrivava mai — arrivava una foto archiviata nella sua sede PRIMARIA,
-        // qualunque plesso avesse in mente. E la sede sbagliata non resta sulla
-        // riga: comanda anche i destinatari della notifica qui sotto, cioè
-        // annuncia le foto ai genitori dell'altro plesso e non a quelli giusti.
-        // Chi ha un solo plesso non cambia comportamento.
-        const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, scuola_id ?? undefined);
-        if (sw.response) return sw.response;
-        const scuolaId = sw.scuolaId as string;
 
         // In tabella si archivia il PERCORSO nel bucket, mai un indirizzo.
         // `gallery/upload` ormai restituisce già il percorso, ma un client
@@ -786,16 +791,17 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
         // Cesa, ed era così che la maestra di Aversa poteva riscrivere (e
         // cancellare) le foto dei bambini di Cesa.
         const plessi = await scuoleDiUtente(supabase, auth.user);
-        {
-            const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
-            if (sedeMedia === null || !plessi.includes(sedeMedia)) {
-                logEvento('galleria', 'warn', {
-                    operazione: 'gallery:PATCH',
-                    esito: sedeMedia === null ? 'media-senza-sede' : 'media-fuori-sede',
-                });
-                return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
-            }
+        const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
+        if (sedeMedia === null || !plessi.includes(sedeMedia)) {
+            logEvento('galleria', 'warn', {
+                operazione: 'gallery:PATCH',
+                esito: sedeMedia === null ? 'media-senza-sede' : 'media-fuori-sede',
+            });
+            return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
         }
+        // Da qui in giù `sedeMedia` è una sede REALE e accessibile a chi opera:
+        // è LEI la sede del media, ed è con lei — non con `plessi` — che si
+        // misurano i tag e il consenso (vedi il blocco più in basso).
 
         // 2. Recupera il ruolo dell'utente da utenti
         const { data: utentiRecord } = await supabase
@@ -929,11 +935,45 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             );
         }
 
+        // LO SCOPE DI SEDE DEI TAG, gemello di quello della POST — e per tre
+        // giorni è mancato proprio qui (rilievo T05-F1 del 2026-08-03).
+        // `PATCH {"id":"<un mio media>","tag_students":["<uuid di un minore di
+        // un'altra sede>"]}` arrivava dritto al Privacy Lock, che rispondeva 422
+        // con NOME e COGNOME del bambino e l'informazione che gli manca la
+        // liberatoria. Il presidio esisteva, ma era una COPIA dentro l'handler
+        // della POST invece che una primitiva: ora è uno solo, e lo chiamano
+        // tutti e due.
+        //
+        // Si guardano i tag EFFETTIVI, come per il broadcast qui sopra: il client
+        // rimanda `tag_students` anche quando cambia solo la didascalia
+        // (`teacher/gallery/page.tsx`, `handleUpdateTags`), e un media che porta
+        // già un tag fuori sede non si tocca finché quel tag c'è — è
+        // un'anomalia, e su un'anomalia si nega (in produzione, al 2026-08-03,
+        // `galleria_media_v2` è vuota: nessun media storico da sanare).
+        // Le correzioni restano possibili: `{tag_students: []}` svuota i tag e
+        // non passa di qui.
+        //
+        // ⚠️ LA SEDE È QUELLA DEL MEDIA, NON I PLESSI DI CHI OPERA (2026-08-03,
+        // rilievo W3 del verificatore adversariale). Qui c'era `plessi`, cioè
+        // `scuoleDiUtente`: per un admin di due sedi quell'elenco ne conteneva
+        // due, e `PATCH {"id":"<un media della sede A>","tag_students":["<uuid
+        // di un minore della sede B>"]}` rispondeva **200**, scrivendo l'uuid di
+        // un bambino di B dentro una riga di A. Il gate verificava che chi opera
+        // avesse titolo su quel bambino — e ce l'aveva — ma la domanda giusta è
+        // un'altra: **questo bambino è della sede in cui il media vive?** La
+        // risposta la dà `sedeMedia`, già letta e già verificata accessibile.
+        const sediDelMedia = [sedeMedia];
+        const tagFuoriSede = await assertTagStudentsInScope(supabase, tagEffettivi, sediDelMedia, 'gallery:PATCH');
+        if (tagFuoriSede) return tagFuoriSede;
+
         // 3. Esegui l'aggiornamento
         // Privacy Lock (DL-041): valida i tag EFFETTIVI quando si modificano tag/broadcast.
         if (tag_students !== undefined || is_broadcast !== undefined) {
             const effTags = tag_students !== undefined ? tag_students : media.tag_students;
-            const senza = await alunniSenzaConsenso(supabase, effTags);
+            // Anche qui la sede del MEDIA, gemella della POST: con l'elenco dei
+            // plessi dell'operatore il 422 potrebbe pronunciare il nome di un
+            // bambino di un altro plesso.
+            const senza = await alunniSenzaConsenso(supabase, effTags, sediDelMedia);
             if (senza.length > 0) {
                 // Come nel POST: nel log solo conteggi, mai nomi/id dei bambini.
                 logEvento('galleria', 'info', {

@@ -112,7 +112,18 @@ export function processImageWithWatermark(file: File, watermarkUrl: string = '/w
  * normalizza al solo container (`video/webm;codecs=vp9` → `video/webm`), perché il file
  * prodotto da MediaRecorder porta il suffisso codec e altrimenti verrebbe scartato a torto.
  */
-export function validateVideoFile(file: File): { valid: boolean; error?: string } {
+/**
+ * Perché un video è stato rifiutato, in forma di CODICE.
+ *
+ * `error` accanto resta, ed è italiano: nasce in una libreria condivisa
+ * client+server, dove il locale non esiste. Il codice serve a chi il locale ce
+ * l'ha — la pagina — per mostrare la frase nella lingua dell'interfaccia invece
+ * della prosa italiana (stesso rimedio dei `codice:` delle route, cfr.
+ * `src/lib/ui/esito-fetch.ts`). Chi non lo legge non cambia comportamento.
+ */
+export type MotivoVideoNonValido = 'formato-non-supportato' | 'file-troppo-grande';
+
+export function validateVideoFile(file: File): { valid: boolean; error?: string; codice?: MotivoVideoNonValido } {
     if (!file.type.startsWith('video/')) {
         return { valid: true };
     }
@@ -122,6 +133,7 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
     if (!ALLOWED_MIME.includes(tipoBase)) {
         return {
             valid: false,
+            codice: 'formato-non-supportato',
             error: `Formato video non supportato (${file.type}). Carica un file .mp4 (H.264) o .webm. I video .mov/HEVC (tipici di iPhone) vanno convertiti prima del caricamento.`
         };
     }
@@ -130,6 +142,7 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
     if (file.size > MAX_SIZE) {
         return {
             valid: false,
+            codice: 'file-troppo-grande',
             error: `Il file video supera il limite massimo di 50MB. (Dimensione attuale: ${(file.size / (1024 * 1024)).toFixed(1)}MB)`
         };
     }

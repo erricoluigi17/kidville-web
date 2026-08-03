@@ -16,6 +16,26 @@ import { creaFetchStrumentato } from '../logging/supabase-fetch'
  * `resolveIdentity()` in `src/lib/auth/require-staff.ts`, cioè il GATE DI AUTENTICAZIONE.
  * Strumentare solo l'admin significherebbe non vedere mai le query che rompono i login.
  * L'unica eccezione è `createLogClient` — vedi in fondo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * QUESTO FILE È L'UNICO POSTO IN CUI SI COSTRUISCE UN CLIENT SUPABASE LATO SERVER (2026-08-03).
+ *
+ * Fino a oggi non lo era, e la differenza non si vedeva da nessuna parte. Sei route
+ * (`admin/regenerate-credentials`, `admin/credentials-pdf`, `admin/students/[id]`,
+ * `admin/backfill-auth`, `admin/test-relations`, `admin/wipe`) importavano `createClient` da
+ * `@supabase/supabase-js` e si costruivano il proprio client con la service-role key. Un client
+ * così è **muto e senza tetto**: nessuna riga quando PostgREST risponde 4xx a una scrittura che
+ * il codice non guarda (regola 7 di AGENTS.md: PostgREST non lancia, ritorna `{ error }`), e
+ * nessuna scadenza quando il bersaglio accetta la connessione e tace — misurato: 150 secondi
+ * appesi, senza eccezione. Fra quelle sei c'erano le DUE che gestiscono le credenziali dei
+ * genitori, cioè il percorso da cui nasce l'intera regola 3.
+ *
+ * La regola, adesso: **un client server-side si prende da qui, sempre.** Non è una preferenza di
+ * stile — è la sola cosa che rende vera l'invariante di `supabase-fetch.ts`, che vale per le
+ * chiamate che passano dal suo `fetch` e per nessun'altra. Il lock che lo tiene è
+ * `__tests__/architecture/supabase-client-strumentato.test.ts`, e dichiara per iscritto anche
+ * ciò che NON copre.
+ * ─────────────────────────────────────────────────────────────────────────────────
  */
 const fetchStrumentato = creaFetchStrumentato()
 

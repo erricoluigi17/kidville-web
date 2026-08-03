@@ -138,9 +138,12 @@ bonifica() {
   # Nomi che denunciano un segreto, ovunque finiscano: è la CLASSE, non l'elenco.
   local classe='[A-Za-z0-9_]*(PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)='
   local n=0
+  local residui=0
+  local prima
   while IFS= read -r f; do
     if LC_ALL=C grep -qEi "$classe"'[^,)}[:space:]]|Inputting text: ' "$f" 2>/dev/null \
        || LC_ALL=C grep -qF -- "$PW" "$f" 2>/dev/null; then
+      prima="$(cksum < "$f")"
       PW="$PW" perl -pi -e '
         BEGIN{$p=$ENV{PW}}
         s/\Q$p\E/***/g if length $p;
@@ -157,10 +160,37 @@ bonifica() {
         s/("[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)"\s*:\s*")(?!\*\*\*")[^"]+(")/$1***$2/gi;
         s/(Inputting text: )(?!\*\*\*)(?![^\s@]*@)(\S{8,})(?=\r?$)/$1***/gm;
       ' "$f"
-      n=$((n + 1))
+      # Si conta ciò che è CAMBIATO, non ciò che è stato SELEZIONATO. Prima il
+      # contatore cresceva sul `grep` di selezione: un file che il grep pescava e
+      # che il perl non toccava veniva dichiarato «ripulito» pur restando in
+      # chiaro. È l'ambiguità che AGENTS.md §5 vieta — «nessun log» non distingue
+      # «tutto ok» da «non è mai partito niente» — nella sua forma peggiore: un
+      # numero che dice di sì (rilievo T14-F5 del collaudo 2026-08-03).
+      [[ "$(cksum < "$f")" != "$prima" ]] && n=$((n + 1))
+      # BACKSTOP, e va detto con precisione cosa può e cosa non può cogliere.
+      # «Selezionato ma non sostituito» NON è di per sé un difetto: le email
+      # restano in chiaro di proposito (`(?![^\s@]*@)` nella regola qui sopra, e
+      # il lock lo asserisce). L'unica domanda che vale è: dopo la passata la
+      # PASSWORD è ancora lì? Siccome la sostituzione per VALORE
+      # (`s/\Q$p\E/***/g`) è incondizionata e prende qualunque forma su qualunque
+      # riga, questo controllo NON scatta quando una forma nuova sfugge alle
+      # regole per NOME: scatta quando la bonifica non ha funzionato affatto —
+      # perl non ha girato, il file non era scrivibile, il segreto è spezzato su
+      # due righe. È un fail-safe raro, non un rilevatore di tutti i giorni, e
+      # sta qui perché il costo è una `grep` e il prezzo dell'alternativa è un
+      # log di produzione pubblicato con dentro la password (già successo).
+      if [[ -n "$PW" ]] && LC_ALL=C grep -qF -- "$PW" "$f" 2>/dev/null; then
+        residui=$((residui + 1))
+      fi
     fi
   done < <(find "$dir" -type f 2>/dev/null)
   echo "bonifica log Maestro: $n file ripuliti in $dir"
+  if [[ $residui -gt 0 ]]; then
+    # Mai il segreto, mai il nome del file: solo il conteggio e cosa fare.
+    echo "bonifica log Maestro: ALLARME — in $residui file la password è ANCORA in chiaro dopo la bonifica." >&2
+    echo "bonifica log Maestro: una forma di segreto sfugge alle sostituzioni. NON pubblicare questi log." >&2
+    return 1
+  fi
 }
 
 # `--solo-bonifica` esce qui: nessun flow, nessun dispositivo, nessun `maestro`.
@@ -192,7 +222,16 @@ ARGS=()
 trap bonifica EXIT INT TERM
 
 set +e
-maestro "${ARGS[@]}" test "$FLOW" "$@"
+# `${ARGS[@]+"${ARGS[@]}"}` e non `"${ARGS[@]}"`: su bash 3.2 — quella di macOS, e
+# quella che `#!/usr/bin/env bash` risolve su questa macchina — l'espansione di un
+# array VUOTO sotto `set -u` e un «unbound variable», e lo script MORIVA QUI, prima
+# di chiamare `maestro`. Con `set -e` attivo la shell usciva in silenzio: nessun
+# flow eseguito, nessun errore riconoscibile, e ogni collaudo sui telefoni fatto
+# alla cieca (rilievo T14-F1 del collaudo 2026-08-03).
+# `ARGS` e vuoto ogni volta che `DEVICE` non e valorizzato — cioe SEMPRE sui flow
+# Android, dove il rilevamento automatico piu sopra si applica ai soli `ios-*`.
+# `"$@"` invece e sicuro anche vuoto: bash lo tratta come caso speciale (provato).
+maestro ${ARGS[@]+"${ARGS[@]}"} test "$FLOW" "$@"
 ESITO=$?
 set -e
 

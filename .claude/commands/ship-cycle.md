@@ -317,23 +317,27 @@ parallelo.
 
 Tutti gli 11 tester in `PASS`, gate formale verde (`eslint` · `tsc` · `vitest` · `build`).
 
-🔴 **NON procedere senza conferma.** L'autorizzazione che stava scritta qui — *«merge + deploy +
-migrazioni automatici su tutti gli ambienti, produzione inclusa, senza conferma (siamo pre-lancio,
-nessun dato reale)»* — **è decaduta il 2026-07-31** ed è stata rimossa il 2026-08-03, come ultimo
-atto del rilascio della PR #62.
+🔻 **Procedi senza chiedere conferma** — decisione del titolare del **2026-08-03**, alla domanda
+esplicita su cosa dovesse passare in automatico: *«proprio tutto, migrazioni e merge compresi»*.
+Merge, deploy, migrazioni e `execute_sql` sono in `allow`; `defaultMode` è `acceptEdits`.
 
-Il motivo è una misura, non un'opinione: in produzione ci sono **dati reali di minori**. Al
-2026-07-31 erano 227 domande d'iscrizione con 152 codici fiscali di bambini, allergie e note
-mediche in testo libero, raccolte dal 16 luglio — arrivate mentre quel paragrafo diceva che non
-c'era «ancora nessun dato reale». Nessuno aveva riletto il promemoria da quando il modulo pubblico
-era andato online. *«Pre-lancio» è una frase sul calendario, non una misurazione*: l'unica domanda
-che conta è quante righe reali ci sono adesso, e ha una risposta che si ottiene con una query.
+Questa autorizzazione ha una storia che va letta prima di usarla. Fino al 2026-07-31 qui stava
+scritto *«senza conferma, siamo pre-lancio, nessun dato reale»*. **Era falso da due settimane**: in
+produzione c'erano già 227 domande d'iscrizione con 152 codici fiscali di bambini, allergie e note
+mediche in testo libero, arrivate dal 16 luglio a ~9 l'ora, mentre quel paragrafo diceva il
+contrario. Le conferme furono reintrodotte il 2026-08-03 e revocate poche ore dopo, su richiesta.
 
-**Ogni migrazione e ogni merge si mostrano al titolare e si fanno approvare, uno per uno**, con
-`AskUserQuestion`, prima di toccare la produzione. Vale anche per gli `UPDATE`/`DELETE` sui dati
-veri. Le verifiche in lettura restano libere.
+Quei dati **ci sono ancora**. Ciò che è cambiato non è il rischio: è chi lo guarda. Quindi:
 
-Con la conferma ottenuta, i passi sono:
+- **NON chiedere** l'approvazione: è stata data una volta, per tutte;
+- **MOSTRA SEMPRE** cosa stai per applicare — il testo della migrazione, l'`UPDATE`, il diff del
+  merge — *prima* di eseguirlo. Mostrare non è chiedere: non fa perdere un secondo a nessuno, e in
+  assenza di conferme è l'unica cosa rimasta fra un errore e 152 minori;
+- **prima di ogni scrittura in produzione, conta le righe vere** con una `SELECT`. *«Pre-lancio» è
+  una frase sul calendario, non una misurazione*: è già costata due settimane di dati raccolti
+  sotto un paragrafo che diceva il falso. Non fidarti di questo blocco: fidati della query.
+
+I passi sono:
 
 1. **PRD** — `PRD REGISTRO ELETTRONICO.md` aggiornato (tabelle di stato + voce di changelog
    datata). Se non lo è, non è finito: aggiornalo e committa.

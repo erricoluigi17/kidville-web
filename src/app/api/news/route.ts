@@ -13,7 +13,8 @@ import { parseInstagramUrl } from '@/lib/news/instagram'
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
 import { campiProva, gateConsensoFoto, scriviConDegradazione } from '@/lib/news/gate-consenso'
 import { contieneFoto } from '@/lib/news/foto-nel-post'
-import { promuoviMediaBozza } from '@/lib/news/media-bozza'
+import { promuoviMediaBozza, riportaMediaInBozza } from '@/lib/news/media-bozza'
+import { mediaEstranei } from '@/lib/news/permanenza-consenso'
 import { NEWS_SCOPES, NEWS_STATI, NEWS_TIPI, type NewsPost } from '@/lib/news/tipi'
 
 // Query param «vuoto» → undefined (i <select> mandano '' per "nessun filtro").
@@ -59,6 +60,26 @@ const STATI_STAFF = new Set(['bozza', 'proposta', 'programmata', 'pubblicata'])
  */
 const MEDIA_NON_PROMOSSI =
   'Non è stato possibile pubblicare le immagini del post in questo momento: riprova fra qualche istante.'
+
+/**
+ * Un articolo non può NASCERE nominando l'immagine di un altro articolo.
+ *
+ * ─── IL PASSO 1, CHIUSO SU UNA STRADA SOLA (giro 1 → corretto nel giro 2) ────
+ *
+ * La difesa era stata scritta sulla sola `PATCH`, e la `PATCH` è la strada lunga:
+ * bastava CREARE il post con quell'indirizzo già dentro per ottenere lo stesso
+ * risultato senza incontrare nessun controllo. È la quinta volta in questa serie
+ * che la stessa regola vive su N-1 strade — e la N-esima è sempre quella che
+ * nessuno ha guardato.
+ *
+ * Vale per i due bucket insieme (`mediaEstranei`): quello pubblico, dove adottare
+ * il file di un altro apre alla sua cancellazione, e l'area di sosta privata, dove
+ * la conseguenza è peggiore — una `move()` in service-role che RENDE PUBBLICA la
+ * foto in sosta di un altro operatore, cioè una foto che sta lì proprio perché
+ * nessuno ne ha ancora verificato il consenso.
+ */
+const MEDIA_ESTRANEO =
+  'Il contenuto richiama un’immagine che appartiene a un altro articolo: caricala di nuovo con il pulsante delle immagini.'
 
 // GET /api/news — elenco gestionale (staff: sede + globali; educator: solo i propri).
 export const GET = withRoute('news:GET', async (request: NextRequest) => {
@@ -110,6 +131,24 @@ export const GET = withRoute('news:GET', async (request: NextRequest) => {
 // POST /api/news — crea un post. Il client invia SOLO contenuto_json; il server
 // sanifica (chokepoint) e salva html/testo. Educator: stato forzato a bozza|proposta.
 export const POST = withRoute('news:POST', async (request: NextRequest) => {
+  // ─── LA QUARTA VIA D'USCITA: L'ECCEZIONE (W1-quater, 2026-08-03) ───────────
+  // Le tre vie d'uscita «ordinate» — promozione fallita, insert rifiutato, schema
+  // assente — rimettono in sosta ciò che hanno appena reso pubblico. Restava
+  // aperta la quarta, che non passa da nessun `if`: un'eccezione fra la promozione
+  // e la scrittura della riga. Non è teorica — `sanificaContenuto` gira su un JSON
+  // che arriva dal CLIENT ed è chiamata DOPO la promozione, e supabase-js può
+  // rigettare invece di ritornare `{ error }` (guasto di trasporto). In entrambi i
+  // casi il file promosso resta nel bucket `news`, che è PUBBLICO, e nessuna riga
+  // di `news_posts` lo nomina: revoca del consenso e diritto all'oblio partono
+  // dalla riga, quindi su quel file non arrivano più. È la foto di un bambino,
+  // pubblica per sempre.
+  //
+  // Perciò l'elenco da rimettere in sosta vive FUORI dal `try`, insieme al client
+  // che serve a farlo: dentro, il `catch` non li vedrebbe. Si azzera appena la
+  // riga è scritta — da quel momento è LEI a nominarli, e riportarli indietro
+  // romperebbe l'articolo appena creato.
+  let clientPerAnnullo: Parameters<typeof riportaMediaInBozza>[0] | null = null
+  let daRimettere: string[] = []
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -131,6 +170,7 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     }
 
     const supabase = await createAdminClient()
+    clientPerAnnullo = supabase
 
     // Sede: `scuola_id: null` esplicito = «tutte le sedi», solo admin. Altrimenti
     // la sede si risolve server-side (mai fidarsi del client per il tenant).
@@ -144,6 +184,32 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
       const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id ?? undefined)
       if (sw.response) return sw.response
       scuolaId = sw.scuolaId ?? null
+    }
+
+    // ─── UN POST NON NASCE ADOTTANDO IL FILE DI UN ALTRO (vedi `MEDIA_ESTRANEO`) ──
+    // Prima del gate, come sulla PATCH: è il controllo più a buon mercato dei due
+    // — non tocca il database — e rifiuta il CORPO della richiesta, non il
+    // contenuto. Qui non si sta ancora decidendo se una foto si può pubblicare: si
+    // sta dicendo che quel file non è di questo articolo. `giaNominati` è vuoto per
+    // costruzione: un post che non esiste ancora non nomina niente.
+    const estranei = mediaEstranei(
+      { copertina_url: body.copertina_url, contenuto_json: body.contenuto_json },
+      [],
+      auth.user.id,
+    )
+    if (estranei.length > 0) {
+      // `warn` e non `info`: è un tentativo di far nominare alla propria riga il
+      // file di un altro post. Nel log solo i conteggi e gli uuid: mai il percorso,
+      // che porta con sé l'uuid di chi ha caricato e il nome del file scelto da una
+      // persona.
+      logEvento('news', 'warn', {
+        operazione: 'news:POST',
+        esito: 'media-di-un-altro-post',
+        utente_id: auth.user.id,
+        n_file: estranei.length,
+        msg: `news:POST: la creazione cita ${estranei.length} file che non ha caricato chi sta scrivendo: rifiutata`,
+      })
+      return NextResponse.json({ error: MEDIA_ESTRANEO, codice: 'NEWS_MEDIA_ESTRANEO' }, { status: 403 })
     }
 
     // ─── Consenso fotografico sul canale PUBBLICO (privacy F4) ───────────────
@@ -173,12 +239,27 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     // pubblicità è la conseguenza del consenso verificato, non la sua premessa.
     // Se lo spostamento fallisce non si scrive niente — una riga con l'indirizzo
     // pubblico di un file rimasto privato è un'immagine rotta sul sito.
+    //
+    // W1-bis, e vale IDENTICA qui come sulla PATCH (`news/[id]:PATCH`): da questa
+    // riga in avanti ogni via d'uscita che NON scrive la riga deve rimettere in
+    // sosta ciò che ha appena reso pubblico. Un file pubblico che nessuna riga
+    // nomina è irraggiungibile da revoca e oblio, che partono entrambi dalla riga:
+    // resta pubblico per sempre, ed è la foto di un bambino. Fino al 2026-08-03
+    // qui non c'era, e la promozione a metà strada era lo scenario PIÙ probabile —
+    // un guasto dello Storage dentro una richiesta che sta già facendo Storage.
     const promozione = await promuoviMediaBozza(
       supabase,
       { copertinaUrl: body.copertina_url, contenutoJson: body.contenuto_json },
       'news:POST',
     )
+    // Da qui in avanti l'elenco è in mano al `catch`: qualunque cosa succeda,
+    // ciò che è appena diventato pubblico torna in sosta.
+    daRimettere = promozione.promossiPercorsi
     if (promozione.errore) {
+      // Fallita a metà: i file già spostati sono pubblici e la riga non si
+      // scriverà. Si annulla lo spostamento prima di rispondere.
+      await riportaMediaInBozza(supabase, daRimettere, 'news:POST')
+      daRimettere = []
       return NextResponse.json({ error: MEDIA_NON_PROMOSSI, codice: 'MEDIA_NON_PROMOSSI' }, { status: 503 })
     }
     const copertinaFinale = promozione.copertinaUrl
@@ -242,6 +323,12 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     )
     const { data, error } = res
     if (error) {
+      // W1-bis: la riga non è nata, quindi i media appena promossi non li nomina
+      // nessuno. Tornano in sosta nel bucket privato — prima del ramo
+      // `schemaAssente`, perché anche quello è una via d'uscita senza riga: sul DB
+      // E2E della CI, non migrato, è ANZI la via d'uscita normale.
+      await riportaMediaInBozza(supabase, daRimettere, 'news:POST')
+      daRimettere = []
       if (schemaAssente(error)) {
         logEvento('news', 'info', { operazione: 'news:POST', esito: 'schema-assente' })
         return NextResponse.json({ disponibile: false }, { status: 503 })
@@ -251,6 +338,12 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     }
 
     const post = data as NewsPost
+    // LA RIGA C'È: adesso è LEI a nominare quei file, e riportarli in sosta
+    // romperebbe l'articolo appena creato. Si azzera QUI e non alla fine della
+    // funzione, perché fra questa riga e il `return` resta ancora del lavoro che
+    // può lanciare (la notifica): un `catch` che annullasse la promozione a riga
+    // già scritta lascerebbe l'articolo con l'immagine rotta.
+    daRimettere = []
     // Evento critico → si logga anche il SUCCESSO: senza, «nessun log» non
     // distingue «consenso verificato» da «non è mai partita nessuna verifica».
     logEvento('news', 'info', {
@@ -278,7 +371,15 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
 
     return NextResponse.json({ disponibile: true, post }, { status: 201 })
   } catch (err) {
+    // PRIMA la causa, POI il rimedio. `riportaMediaInBozza` scrive righe sue
+    // (`media-riportati-in-sosta` / `media-rimasti-pubblici`): loggando l'eccezione
+    // per prima, chi legge i log trova il motivo e subito sotto che cosa è stato
+    // fatto — e se un domani l'annullamento dovesse lanciare a sua volta, il
+    // motivo originale è già al sicuro invece di sparire con lui.
     logErrore({ operazione: 'news:POST', stato: 500 }, err)
+    if (clientPerAnnullo && daRimettere.length > 0) {
+      await riportaMediaInBozza(clientPerAnnullo, daRimettere, 'news:POST')
+    }
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 })

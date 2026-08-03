@@ -8,6 +8,10 @@ import { NextResponse } from 'next/server'
 const STUDENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const MEDIA_ID = '11111111-1111-4111-8111-111111111111'
 const ALTRO_USER_ID = '22222222-2222-4222-8222-222222222222'
+// Gli id degli alunni sono UUID: dal 2026-08-03 `tag_students` è `z.array(zUuid)`
+// (un id malformato è un 400 di validazione, non un 500 dal cast di Postgres).
+const ALUNNO_A = 'aaaaaaaa-1111-4111-8111-11111111111a'
+const ALUNNO_B = 'bbbbbbbb-1111-4111-8111-11111111111b'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
@@ -89,13 +93,13 @@ beforeEach(() => {
   h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } })
   h.requireParentOfStudent.mockResolvedValue({ user: { id: 'gen1', role: 'genitore', scuola_id: null } })
   h.alunni = [
-    { id: 'a', nome: 'Ada', cognome: 'Rossi', consenso_privacy: true },
-    { id: 'b', nome: 'Bea', cognome: 'Verdi', consenso_privacy: false },
+    { id: ALUNNO_A, nome: 'Ada', cognome: 'Rossi', consenso_privacy: true },
+    { id: ALUNNO_B, nome: 'Bea', cognome: 'Verdi', consenso_privacy: false },
   ]
   h.alunno = { scuola_id: 'sc-1' }
   h.inserted = null
   h.updated = null
-  h.media = { id: 'm1', uploaded_by: 'ed1', tag_students: ['a'], is_broadcast: false, scuola_id: 'sc-1' }
+  h.media = { id: 'm1', uploaded_by: 'ed1', tag_students: [ALUNNO_A], is_broadcast: false, scuola_id: 'sc-1' }
   h.utente = { ruolo: 'educator', scuola_id: 'sc-1' }
   h.legame = { genitore_id: 'gen1' }
 })
@@ -152,9 +156,9 @@ describe('PATCH /api/gallery — broadcast Direzione + identità dal gate', () =
   it('usa l\'identità del gate: il body userId ALTRUI è ignorato → 200', async () => {
     // Gate = ed1 (proprietario del media): se il codice usasse il body userId
     // (altro utente, non proprietario) l'autorizzazione educator fallirebbe.
-    const res = await PATCH(patchReq({ id: MEDIA_ID, userId: ALTRO_USER_ID, tag_students: ['a'] }))
+    const res = await PATCH(patchReq({ id: MEDIA_ID, userId: ALTRO_USER_ID, tag_students: [ALUNNO_A] }))
     expect(res.status).toBe(200)
-    expect(h.updated).toMatchObject({ tag_students: ['a'] })
+    expect(h.updated).toMatchObject({ tag_students: [ALUNNO_A] })
   })
 
   it('accetta il body SENZA userId (identità solo dal gate) → 200', async () => {

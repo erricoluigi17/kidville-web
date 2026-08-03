@@ -89,6 +89,1374 @@
 
 ---
 
+## ⏹️ Changelog — Correzione del collaudo dei 20 tester: LAVORO A METÀ, interrotto dal limite settimanale 2026-08-03 (branch `chore/conferme-umane`)
+
+**Questa voce sta in testa perché è quella che cambia come si leggono tutte le altre.** Le voci di
+changelog qui sotto descrivono correzioni **reali e presenti nel codice**, ma in gran parte
+**non verificate fino in fondo**: la sessione si è fermata a metà, con 36 agenti su 58 interrotti.
+
+**Da dove veniva.** Nella notte fra il 2 e il 3 agosto sono girati **20 tester indipendenti** sul
+commit `45491e6`. Diciannove hanno consegnato (manca il 15, iOS), tutti `FAIL`: **4 bloccanti,
+45 gravi, 41 minori, 175 warning** — 90 rilievi. Dieci verificatori adversariali hanno poi riletto
+il codice vero: **tutti e quattro i bloccanti sono scesi a `grave`** (nessuno è caduto, ma nessuno
+reggeva la soglia «non si rilascia così»), e in cambio sono emersi **cinque difetti che nessun
+tester aveva visto**, tre peggiori di quelli da cui erano partiti.
+
+**Cosa è chiuso e provato: 12 rilievi.** Ognuno verificato **rimettendo il difetto** e controllando
+che il test tornasse rosso. Fra questi: i tag di minori che attraversavano il confine di sede, le
+foto pubblicate scavalcando il gate del consenso, la pagina offline che crollava, il login che
+accusava l'utente quando il guasto era il database, i provider senza tetto (**misurato: 150 secondi
+appeso senza mai un errore**), e `esegui.sh` — che **non ha mai lanciato un collaudo Maestro**, per
+un array vuoto sotto `set -u` su bash 3.2: ogni verifica Android precedente era alla cieca.
+
+**Cosa NON è chiuso: 11 voci a metà e 65 mai aperte.** Elenco completo, con lo stato di ciascuna, in
+`docs/collaudo/risultati/000-SINTESI.md` (fuori da git: può contenere estratti del database di
+produzione). Le due da guardare per prime:
+
+1. 🔴 **Una regressione introdotta oggi e non ancora chiusa.** La correzione che impediva di
+   cancellare i file di un altro post ha creato il difetto **opposto**: `percorsiCitatiDaAltriPost`
+   esclude **un solo** post, quindi due articoli che condividono la copertina non liberano più
+   niente. Tradotto: **il diritto all'oblio non toglie la foto del bambino** in quel caso. Va
+   completata (un *insieme* di id da escludere, non uno).
+2. 🔴 **I test potevano parlare con la produzione.** `src/lib/supabase/public-config.ts:20` ha
+   l'indirizzo del Supabase di produzione **cablato come ripiego**, e `NEXT_PUBLIC_SUPABASE_URL`
+   non è impostata nella shell di sviluppo. È stato aggiunto `env` a `vitest.config.ts` per forzare
+   `localhost`, ma le due difese che quel commento promette — la guardia su `globalThis.fetch` e il
+   lock `nessun-bersaglio-di-produzione.test.ts` — **non esistono ancora**.
+
+**Stato del gate al commit**: `tsc` pulito · `eslint` 0 errori 0 warning · `vitest` **5 rossi su
+6791** (695 file su 699) · `npm run build` **non eseguito** · E2E non eseguito · **nessuna migrazione
+applicata, database di produzione mai toccato**. I 5 rossi sono descritti uno per uno nella sintesi:
+due sono lock di contabilità, due sono comportamento da capire, e uno **fissa il comportamento
+sbagliato** (le push saltate in silenzio e marcate come inviate) — lì il rosso potrebbe essere il
+progresso.
+
+**La lezione, che vale più delle correzioni.** Su 19 correzioni verificate adversarialmente
+**11 non hanno retto al primo giro**, e oltre **20 test si sono rivelati finti**: restavano verdi
+quando si toglieva ciò che dichiaravano di proteggere. Un verificatore ha chiamato un gate
+**buttandone via il verdetto**: il lock d'architettura, che cerca il *nome* della funzione, è
+rimasto **verde**. Un altro ha scoperto che una fixture usava lo stesso valore per la sede del
+media e per quella dell'operatore: separandole, **2295 test** non distinguevano più niente.
+*Un lock che cerca un nome è una rete a maglie larghe: ciò che tiene sono i test di comportamento.*
+
+---
+
+## 🗓️ Changelog — La porta di ogni richiesta non aveva tetto, sei route non avevano osservabilità, e per mezza giornata i test hanno parlato con la produzione 2026-08-03 (branch `chore/conferme-umane`)
+
+**La strada più larga di tutte era rimasta scoperta.** `src/middleware.ts` costruiva il proprio
+client Supabase **senza `global: { fetch }`** e subito dopo faceva `await supabase.auth.getUser()`.
+Il `matcher` copre tutto tranne gli asset statici: **ogni pagina e ogni route API passa di lì
+prima** di arrivare al codice protetto. È letteralmente lo scenario che `supabase-fetch.ts` cita
+per motivare il proprio tetto — «se GoTrue accetta e tace, senza tetto nessuna route risponde
+più» — su un percorso col raggio d'azione massimo. Ora il middleware prende il tetto dalla
+primitiva condivisa (`@/lib/logging/tetto`, che non importa niente e gira anche sull'Edge): **15 s
+di BUDGET sull'intera sequenza**, non per chiamata — `getUser()` fa **due** giri di rete (rinnovo
+del token, poi `/user`), e con un tetto per chiamata il caso peggiore sarebbe il doppio. Degrada
+**fail-closed** (redirect al login, non un 500 e non un passaggio libero) e lascia **una riga**,
+`KV_ERR … evt=auth code=timeout|rete`, scritta a mano perché sull'Edge il logger non si carica.
+
+**Sei route costruivano il proprio client con `createClient` di `@supabase/supabase-js`** —
+`admin/regenerate-credentials`, `admin/credentials-pdf`, `admin/students/[id]`,
+`admin/backfill-auth`, `admin/test-relations`, `admin/wipe` — cioè **muto e senza tetto**: nessuna
+riga quando PostgREST risponde 4xx a una scrittura che il codice non guarda (AGENTS.md, regola 7),
+nessuna scadenza quando il bersaglio accetta e tace. Fra quelle sei, le **due che gestiscono le
+credenziali dei genitori**: il percorso da cui nasce l'intera regola 3. Tutte e sei portate a
+`createAdminClient()`. **Un cambio di comportamento dichiarato**: `admin/students/[id]` perde il
+ripiego sulla chiave anon e ora risponde **503 «configurazione mancante»** invece di un **403**
+che travestiva un guasto di configurazione da esito applicativo — con il suo test, in entrambi i
+versi. Resta una deroga: `admin/apply-enrollment-migration` (sei `fetch` a mano; `/pg/query` non
+ha equivalente in supabase-js, ed è `sealDangerous` → 404 in produzione).
+
+**🔴 E per mezza giornata la suite ha avuto come bersaglio la produzione.** Portando le sei route
+al factory, sotto `vitest` hanno cominciato a puntare a `uimulkjyekgemjakmepp.supabase.co` — il
+database con **227 domande d'iscrizione e 152 codici fiscali di minori**. La catena: `SUPABASE_URL`
+(`public-config.ts`) ha un ripiego hard-coded sulla produzione, **serve** ed è codice di produzione;
+è una `const` valutata **all'import**; sotto vitest `.env.local` non viene caricato; e i test che
+«dirottavano su localhost» scrivevano `process.env` nel `beforeEach`, cioè **troppo tardi**. A
+fermare il danno era rimasto solo il fatto che la chiave di servizio, in quel momento, fosse
+assente: con una `SUPABASE_SERVICE_ROLE_KEY` vera in ambiente, `npx vitest run` avrebbe eseguito
+`auth.admin.updateUserById` (il reset della password di un genitore) e il ciclo di **DELETE su 25
+tabelle** di `admin/wipe` contro i dati veri. Chiuso con **tre difese**: `test.env` in
+`vitest.config.ts` (URL e chiavi finti prima di ogni import — verificato che sovrascrivono anche
+l'ambiente di shell), una **guardia su `globalThis.fetch`** in `test/setup.ts` che **lancia** su
+quell'host, e il lock nuovo `__tests__/architecture/nessun-bersaglio-di-produzione.test.ts`, che
+misura tutte e tre e **dichiara cosa non copre**. `public-config.ts` **non** è stato toccato.
+
+**Due lock nuovi, e cinque aggiramenti chiusi dopo che un verificatore adversariale li ha
+dimostrati uno per uno.**
+
+1. **`__tests__/architecture/supabase-client-strumentato.test.ts`** — un client server-side nasce
+   in un posto solo. Aggirabile in tre modi, tutti da una riga, tutti ora chiusi: un factory in
+   forma di **arrow function** (`export const … = async () =>`) era invisibile allo scanner, e
+   `blocchi.size >= 4` reggeva coi cinque vecchi → ora si pretende anche che **ogni**
+   `createServerClient(` del file cada dentro un blocco riconosciuto; un **barrel**
+   (`export { createClient } from '@supabase/supabase-js'`) non è un `import` e non veniva visto →
+   ora le ri-esportazioni contano come gli import; e `globalThis.fetch(` sfuggiva perché la regex
+   escludeva il punto — **un'esclusione scritta per non far diventare rosso il middleware, che
+   apriva il buco a tutti gli altri file** → ora il middleware sta fra le deroghe **dichiarate**,
+   con la sua ragione, e l'esclusione non copre più nessuno.
+2. **Il limite dei 30 secondi si aggirava scrivendo il tetto come espressione.** L'inventario
+   leggeva solo i letterali (`([0-9_]+)`): un `const TETTO_LENTO_MS = 15 * 60 * 1000` — mezz'ora,
+   funzionalmente nessun tetto — non entrava mai nel confronto. Ora si cattura l'**espressione** e
+   la si valuta; ciò che non è aritmetica di numeri diventa **rosso**, non invisibile.
+3. **Il test del budget del middleware misurava la grandezza sbagliata.** Leggeva `tetto=` dalla
+   **riga di log**, cioè il numero *dichiarato*, non quello *applicato* al `signal`: due
+   manomissioni distinte (tetto per chiamata spacciato per budget; tetto su **una sola** delle due
+   chiamate a GoTrue, lasciando il rinnovo del token senza scadenza) lasciavano **49/49 verdi**.
+   Ora una spia su `AbortSignal.timeout` associa ogni signal ai millisecondi chiesti, e il test
+   incrocia i due — **per identità del signal, non per ordine** — e pretende che la riga dichiari
+   lo **stesso** numero che è finito sulla `fetch`.
+4. **Sedici test preesistenti erano diventati rossi** (`regenerate-credentials`,
+   `credentials-pdf-scope-sede`, `regenerate-credentials-bucket-log`): il loro
+   `vi.mock('@supabase/supabase-js')` non intercettava più niente, e rispondevano 404 perché il
+   client **vero** interrogava un database che nei test non c'è. Riparati mockando **entrambi** i
+   moduli, con il finto client scritto **una volta sola**.
+
+**Prove di validità** (ogni difetto rimesso, e tolto): tetto per chiamata → rosso · tetto su una
+sola strada → rosso · sesto factory in arrow function senza `fetch` strumentato → rosso · barrel
+`sdk.ts` → rosso · `globalThis.fetch` verso Supabase in `test-relations` → rosso ·
+`TETTO_LENTO_MS = 15 * 60 * 1000` → rosso · `test.env` rimosso → **4 rossi**, fra cui la sonda che
+vede il client puntare alla produzione · guardia disarmata → il test è arrivato **davvero** a
+`uimulkjyekgemjakmepp` (401 senza chiave, sola lettura) · `global: { fetch: fetchStrumentato }`
+tolto da `createAdminClient` → rosso, **i mock non nascondevano la regressione** ·
+`requireEnv('SUPABASE_SERVICE_ROLE_KEY')` riportato all'URL → il 503 torna 200, rosso.
+
+**File**: `src/middleware.ts` · le sei route `src/app/api/admin/**` · `src/lib/logging/tetto.ts` ·
+`vitest.config.ts` · `test/setup.ts` · lock in
+`__tests__/architecture/supabase-client-strumentato.test.ts`,
+`__tests__/architecture/nessun-bersaglio-di-produzione.test.ts`,
+`__tests__/lib/middleware-tetto.test.ts`, `__tests__/lib/logging-tetto.test.ts`,
+`__tests__/api/anagrafica-scope-sede.test.ts` e i tre file di test riparati.
+**Nessuna migrazione, nessuna variabile d'ambiente nuova in produzione** (le due di
+`vitest.config.ts` esistono solo sotto test). Logging: la riga del middleware distingue
+`code=timeout` («non risponde») da `code=rete` («non si raggiunge»), porta l'`x-request-id` che
+correla con `withRoute` a valle, e riduce il path a **pattern** — in questo repo il path è una
+credenziale (`/m/<token>`) e gli id dei minori sono segmenti di rotta.
+
+---
+
+## 🗓️ Changelog — Il tetto di tempo: il numero che si logga non era quello che scatta, e il lock si aggirava con un alias 2026-08-03 (branch `chore/conferme-umane`)
+
+**Dove sta oggi il tetto di tempo su una `fetch`.** Il meccanismo vive in un posto solo,
+`src/lib/logging/tetto.ts` (`conTetto` · `tettoSano` · `eTimeout` · `erroreTimeout`), e lo usano
+tutte e quattro le strade: i 13 provider esterni (`logging/external.ts`), tutte le chiamate
+PostgREST/Storage/auth (`logging/supabase-fetch.ts`), il middleware — la porta di ogni pagina e
+di ogni route — e il calcolo del codice fiscale, che gira nel browser. I **numeri** restano
+accanto alla loro ragione, in due tabelle **esportate** apposta perché un lock possa scorrerle:
+`TETTI_MS_PROVIDER` (instagram 4 s, aruba 30 s, default 10 s) e `TETTI_MS_AREA` (storage 20 s,
+default 15 s).
+
+**La valvola del chiamante ha un limite superiore, e prima non ce l'aveva.** `tettoMs('resend',
+3_600_000)` restituiva 3.600.000: un'ora, cioè funzionalmente nessun tetto, perché a tagliare
+tornava la piattaforma. Adesso il richiesto viene tosato a `TETTO_MS_MAX` — **30 s** sui provider
+(il valore di `aruba`, la deroga più larga), **20 s** su Supabase (il valore di `storage`). Il
+`massimo` tosa il **richiesto** e **non il ripiego**, deliberatamente: il ripiego è il valore della
+tabella, e su quello l'ancoraggio è un test che lo misura — tosarlo qui lo renderebbe verde per
+costruzione, cioè una rete che nasconde il buco invece di segnalarlo.
+
+**Sull'auth il tetto è di UN TENTATIVO, non della chiamata.** `@supabase/auth-js` avvolge qualunque
+eccezione del fetch — la nostra scadenza compresa — in un `AuthRetryableFetchError`, e
+`_refreshAccessToken` ritenta finché `Date.now() + backoff − inizio < 30_000`. Con 15 s di tetto
+fanno **due tentativi, ~30,2 s**: il doppio di quanto il commento dichiarava. Il numero è ora
+scritto dove prima si leggeva «15 s», ed è **calcolato dal test** sull'aritmetica letta nel
+sorgente del pacchetto vero, non ricopiato.
+
+**Cosa è stato corretto in questo giro (secondo passaggio del verificatore adversariale).**
+
+1. **Il numero LOGGATO non era ancorato al numero APPLICATO.** Sono due grandezze diverse che
+   condividevano una variabile, e ogni asserzione era un `toContain('250')` su un messaggio nato da
+   quella stessa variabile: scollegandole con un `tetto * 10` **tutti e 83 i test restavano verdi**.
+   In produzione significa che `app_log.messaggio` e l'errore consegnato al chiamante dichiarano un
+   tetto che non è quello scattato — cioè mandano a cercare «il tetto è troppo stretto» quando è
+   vero «il bersaglio è morto», che è precisamente la distinzione per cui `erroreTimeout` esiste.
+   Adesso il tetto applicato si **spia** su `AbortSignal.timeout` e quello dichiarato si **estrae**
+   dal testo (`/tetto di (\d+) ms/`), e si confrontano fra loro. **Prova di validità**: rimessi i
+   `tetto * 10` (external.ts, supabase-fetch.ts ×2) e `TETTO_MS * 3` (fiscalCodeApi.ts) →
+   **7 test rossi**; ripristinati → 86 verdi.
+2. **Il lock si aggirava con un alias.** Cercava la stringa letterale `AbortSignal.timeout`:
+   `const { timeout: scadenza } = AbortSignal` e `AbortSignal['timeout'](…)` sono lo stesso
+   meccanismo e non venivano visti — misurato, 32/32 verdi con mezz'ora di attesa in un file nuovo.
+   Ora il rilevatore è per **regex, in tutte le grafie**, e si prova su sé stesso (riconosce le tre
+   evasioni, non si accende su `const { timeout } = opzioni`).
+3. **Esisteva una TERZA primitiva, non dichiarata.** Allargando il lock è saltato fuori che
+   `src/app/offline/script-offline.ts` assembla un tetto a mano (`new AbortController()` +
+   `setTimeout(() => …abort())`) da settimane. Non è un condono: è **dichiarata** col suo perché —
+   è la sola pagina che deve funzionare senza il bundle di Next e su WebView dove
+   `AbortSignal.timeout` non esiste, e la sua sonda esiste due volte (TS + stringa ES5 inlinata).
+   Il lock ora vede anche questa forma. **Prova di validità**: ricreato
+   `src/lib/notifiche/consegna-lenta.ts` nelle tre varianti misurate → tutte e tre rosse
+   (variante `AbortController` **3 rossi**, i due alias **2 rossi** ciascuno); file rimosso.
+4. **L'inventario dei tetti dipendeva dal NOME della costante.** Pretendeva `const TETTO…_MS`:
+   un tetto da mezz'ora chiamato `SCADENZA_CONSEGNA_MS` non entrava né nel controllo «nessuno è
+   smisurato» né nel confronto con i file dichiarati — e infatti aveva già lasciato fuori
+   `TIMEOUT_SONDA_MS`. Ora il filtro è sulle **parole di scadenza** (`TETTO`, `TIMEOUT`,
+   `SCADENZA`, `ATTESA`); `MS` da solo è stato **escluso di proposito** (tirerebbe dentro
+   `DEDUP_MS`, `FINESTRA_MS`, `MS_GIORNO` e i ritardi anti-flash della UI: otto voci di rumore, e
+   un inventario che chiede di dichiarare tutto smette di essere letto). Non lascia un buco, perché
+   un tetto non è un numero: è un numero **più un meccanismo**, e i tre meccanismi sono coperti.
+5. **Nessuno enumerava le `fetch` NUDE lato server.** Il lock elencava i consumatori del tetto ma
+   non il complemento: una strada nuova nasceva invisibile. Ora `FETCH_SENZA_TETTO` chiude
+   l'elenco su `src/app/api/**` + `src/lib/**` — **11 voci**, dieci di browser verso nostre route
+   (dove il tetto vive dentro la route) e una di **debito dichiarato**,
+   `admin/apply-enrollment-migration/route.ts` (già motivata in
+   `supabase-client-strumentato.test.ts`, mitigata da `sealDangerous`: 404 in produzione).
+6. **Il lock sul commento dell'auth era sbagliato nei due versi.** Troppo stretto sulla grafia
+   (vedeva solo «~30,2 s», non «circa 15 secondi»); troppo largo sul perimetro (qualunque «~N s»
+   innocuo altrove nel file lo faceva diventare rosso, e un lock che si accende sui commenti
+   innocenti viene indebolito invece che corretto). Ora si ritaglia il **solo blocco dell'auth** e
+   si guardano le sole frasi che dichiarano un **totale**. **Prova di validità**: inserita
+   «il tetto complessivo dell'accesso resta di circa 15 secondi» → rosso; aggiunto un «~5 s»
+   innocuo altrove nel file → resta verde.
+7. **Gate sbloccato**: `npx eslint __tests__/lib/logging-tetto.test.ts --max-warnings 0` era rosso
+   per un helper morto (`codice()`, mai chiamato) — da solo bastava a bloccare il rilascio. Rimosso.
+
+**File**: `src/lib/logging/tetto.ts` · `src/lib/logging/external.ts` · `src/lib/logging/supabase-fetch.ts` ·
+`src/lib/utils/fiscalCodeApi.ts` · `src/middleware.ts` · lock in `__tests__/lib/logging-tetto.test.ts`,
+`__tests__/lib/logging-external.test.ts`, `__tests__/lib/fiscal-code-api.test.ts`,
+`__tests__/lib/middleware-tetto.test.ts`, `__tests__/lib/auth-tetto-accesso.test.ts`.
+**Nessuna migrazione, nessuna variabile d'ambiente nuova.** Logging: la scadenza ha un codice suo
+(`app_log.codice = 'timeout'`) e un nome proprio per il raggruppamento di `get_runtime_errors`,
+distinto da «la rete non si raggiunge» — che si ripara in un modo opposto.
+
+---
+
+## 🗓️ Changelog — Si poteva far cancellare l'immagine di un altro articolo, anche di un'altra sede 2026-08-03 (branch `chore/conferme-umane`)
+
+**La correzione di W1 (la copertina sostituita che restava nel bucket pubblico) ha introdotto una
+falla**, ed è la voce più urgente di questo giro perché è l'unica che ha peggiorato lo stato del
+repo. Dimostrata **eseguendola**, non deducendola.
+
+Il bucket `news` è pubblico: l'indirizzo dell'immagine di un altro articolo lo conosce chiunque
+legga il sito, e `/api/news/feed` lo distribuisce in chiaro. Bastavano due mosse, entrambe
+legittime prese da sole:
+1. un educator mette quell'indirizzo nel `contenuto_json` della **propria** bozza → `200`, riga
+   scritta, nessuna rimozione;
+2. una seconda `PATCH` toglie quel nodo → il percorso della vittima finisce fra gli `usciti` →
+   `remove()` in **service-role** sul file altrui.
+La riga della vittima continua a nominarlo: **immagine rotta, permanente e invisibile** — e nemmeno
+la revoca del consenso o l'oblio possono più farci niente, perché arrivano su un file che non c'è
+più. Stessa cosa via `DELETE`, su tutta la riga, e via **ritiro del tick** dichiarando nel proprio
+post un bambino il cui consenso è caduto.
+
+**Causa**: `percorsoPubblicoNews` valida la **forma** dell'indirizzo (`uploads/<utente>/<file>`),
+mai la **proprietà**. La risposta era già scritta due volte in questo repo — la testata di
+`EsitoPromozione.promossiPercorsi` («annullare a occhio significherebbe cancellare l'immagine di
+qualcun altro») e `rimuoviSeNessunAvvisoLoUsa`, che prima di cancellare l'allegato di un avviso
+chiede se un altro avviso lo referenzia — e non era stata portata qui.
+
+**Correzione, in un posto solo.** `percorsiCitatiDaAltriPost` risponde a «c'è ancora qualcuno che
+lo nomina?» e vive **dentro `liberaPercorsiPubblici`**, cioè nell'imbuto da cui passano tutte e tre
+le strade (`PATCH`, `DELETE`, `ritiraPost`). Ricerca larga (`copertina_url`, `contenuto_html`,
+`contenuto_testo`, a lotti di 8 percorsi) e **conferma esatta riga per riga**, perché i due modi di
+sbagliare sono opposti: troppo stretto si cancella il file di un altro, troppo largo non si libera
+più niente e tornano i file pubblici orfani del difetto V4. Il file che un'altra riga nomina resta
+dov'è e l'operazione **prosegue**: è il file che non si tocca, non l'operazione. Guasto di lettura o
+tetto raggiunto ⇒ «non lo so», che qui non vale «cancella»: `503` e log `error`.
+
+**Difesa complementare, in aggiunta e non al posto**: `percorsiPubbliciEstranei`, usata da
+`news/[id]:PATCH`, rifiuta con `403` + codice `NEWS_MEDIA_ESTRANEO` (tradotto IT/EN) un corpo che
+cita indirizzi pubblici che il post non nomina già **e** che non ha caricato chi sta scrivendo. Il
+secondo ramo non è un allentamento: finché la migrazione del bucket privato `news_bozze` non è
+applicata, `news/upload:POST` ricade sul bucket pubblico e restituisce già un indirizzo pubblico —
+senza quel ramo, su quegli ambienti nessuno potrebbe più aggiungere un'immagine a un articolo.
+
+**Prova di validità** (rimesso il difetto, uno alla volta): senza la domanda sulla proprietà →
+9 test rossi nel modulo e 5 sulle rotte; controllo **troppo largo** (difetto V4) → 19 rossi nel
+modulo e 20 sulle rotte, fra cui tutti i controlli positivi; senza la difesa complementare → 2
+rossi; senza i lotti → 1 rosso. Fixture separate apposta: «il post che si modifica», «il post che
+possiede il file» e «chi ha caricato» sono tre grandezze distinte, con valori distinti.
+
+---
+
+## 🗓️ Changelog — La rete che teneva un ramo su tre, e una frase tradotta che nessuno vedeva 2026-08-03 (branch `chore/conferme-umane`)
+
+Terzo giro del verificatore adversariale, sulle correzioni del giro precedente. **Il codice era
+giusto: erano i test a non saperlo dimostrare** — e questo è il modo in cui una correzione muore
+senza che nessuno se ne accorga, perché la prossima riscrittura la disfa col gate verde.
+
+**La sede della riga di `segnalazioni` era provata per UN ramo su tre.** Il changelog qui sotto
+diceva che la sede si deduce dall'oggetto per tutti i tipi; vero nel codice, ma solo il ramo
+`media_galleria` aveva un caso che sapesse diventare rosso. Per `voce_diario` **nessun caso**
+guardava la `scuola_id` della riga; per la sezione in comune la fixture usava `SEDE_A` sia per il
+bambino-ponte sia per il primo plesso del segnalante — le due grandezze coincidevano, quindi
+sostituire il ponte con `sedi[0]` restava verde; per il ripiego di `messaggio_chat` la tabella
+`utenti` non era popolata, quindi `sedeDiUtente()` rispondeva sempre `null` e **invertire i due `??`
+non faceva rosso niente**. Le fixture ora tengono separate le grandezze e le incrociano: una seconda
+maestra (`DOCENTE_B`) che insegna nell'altro plesso, il bambino della sede B con una sezione propria,
+e i due casi di chat con le sedi scambiate (bambino in B con maestra in A, bambino in A con maestra
+in B) — così l'inversione fa rosso in tutti e due i versi, non solo in quello scritto per primo.
+
+**E la sede dei DESTINATARI della notifica non era legata a niente.** Nei 201 con staff la sede
+primaria di chi segnala coincideva sempre con quella dell'oggetto, e i casi bi-sede usavano un
+genitore, che una sede primaria non ce l'ha: con quelle fixture
+`staffScuola(supabase, segnalante.scuola_id ?? scuolaId, …)` restava verde. È l'altra metà del
+guasto «la riga esiste, nessuno la vede»: una segreteria di Aversa che segnala una foto di Giugliano
+avrebbe archiviato la riga a Giugliano e avvisato la Direzione di **Aversa**. Ora c'è un caso con
+operatore bi-sede (primaria A, scope `[A, B]`, media in B) che asserisce insieme la sede della riga,
+il destinatario di `staffScuola` e lo `scuolaId` dell'evento.
+
+**`erroreSegnalazioneSenzaPlesso` era una frase irraggiungibile.** Il codice `SEGNALAZIONE_SENZA_PLESSO`
+era dichiarato, tradotto in due lingue e documentato — e i due soli chiamanti
+(`SegnalaContenuto`, `ChatConversationMenu`) il corpo della risposta non lo leggevano: `setErrore(true)`,
+e a schermo usciva sempre la frase generica. Il lock `errori-con-codice` non poteva vederlo: il
+codice c'era, le traduzioni pure; a mancare era il tratto fra il catalogo e lo schermo, che nessuno
+misurava. Ora il corpo si legge — con `messaggioSoloCatalogo`, **non** con `messaggioErrore`, e
+la differenza è deliberata: la prosa di questa route comprende «oggetto_id obbligatorio per questo
+tipo di segnalazione», testo da log, con il nome di un campo dentro e italiano per costruzione;
+davanti a un genitore con l'interfaccia in inglese sarebbe il fallimento F2 del collaudo del
+2026-07-31 riaperto in una schermata nuova. Quindi: codice dichiarato ⇒ frase del catalogo; niente
+codice ⇒ la frase del componente, che passa da `useTranslations`; **mai** la prosa del server. Il
+legame è misurato in `__tests__/components/segnalazione-errore-tradotto.test.tsx`, che legge il
+`role="alert"` nelle due lingue e ha il suo controllo negativo.
+
+**Il lock `numeri-con-locale-esplicito` era più stretto del proprio titolo.** Fermava
+`toLocaleString(undefined, …)` e lasciava passare `new Date(x).toLocaleDateString()`,
+`n.toLocaleString()` e `new Intl.NumberFormat()` — stesso identico difetto, e per giunta la forma
+che viene in mente per prima. Un lock che ferma la variante rara e lascia passare quella comune
+protegge il proprio nome, non il codice. Esteso a entrambe le forme (`toLocale*` senza lingua e
+`Intl.*` senza lingua): in `src/` non c'era **nessuna** occorrenza, quindi non ha chiesto di
+riscrivere niente. Aggiunti un controllo positivo su cinque forme vietate e un **controllo negativo**
+su quattro forme lecite, perché il modo più rapido di far tornare verde un lock è allargarlo fino a
+vietare anche il codice giusto.
+
+**E `cifreMax` di `formattaMegabyte` non era mai esercitato**: togliere la propagazione a
+`formattaDecimale` lasciava 7 casi su 7 verdi. Un parametro pubblico che non arriva da nessuna parte
+è indistinguibile da un parametro che non esiste.
+
+**Un'asimmetria dichiarata invece che nascosta.** `assertTagStudentsInScope` ha ricevuto il degrado
+su DB non migrato (`42703` ⇒ rilettura senza filtro, solo se le sedi reali sono al più una);
+`sediDelSegnalante` no, ed è una scelta scritta ora nel sorgente: là il degrado toglie un **filtro**
+da una lettura, qui la sede serve a decidere **dove scrivere**, e proseguire senza saperlo
+significherebbe archiviare una segnalazione in un plesso indovinato — cioè riaprire da un'altra
+porta il guasto appena chiuso. Verificato che oggi il caso non si presenta: `scripts/seed-e2e.mjs`
+scrive `alunni.scuola_id`, e nessuna spec Playwright tocca le segnalazioni.
+
+**Debito, non chiuso e non chiudibile da qui.** Le righe di `segnalazioni` **già in produzione** con
+`scuola_id IS NULL` restano invisibili alla moderazione: la correzione vale per le nuove. Serve un
+`SELECT count(*) FROM segnalazioni WHERE scuola_id IS NULL` (sola lettura) e, se maggiore di zero,
+una bonifica approvata dal titolare — nessuna scrittura sui dati veri senza conferma umana.
+E resta vero ciò che il changelog qui sotto dichiara su **T4**: il coverage-lock
+`isolamento-sede-coverage` NON protegge i tre `.in('scuola_id', sedi)` di `segnalazioni`; il
+presidio è appeso ai test di comportamento, che ora però coprono tutti e tre i rami invece di uno.
+
+**Prova di validità** (15 manomissioni, una alla volta, con ripristino; fra parentesi i test
+diventati rossi): sede del ponte «sezione in comune» → `sedi[0]` **1** · sede di `voce_diario` →
+`sedi[0]` **1** · i due `??` di `messaggio_chat` invertiti **2** · notifica alla sede primaria di
+chi segnala **1** · stesso scambio sull'evento `notificaEvento` **1** · sede del media → `sedi[0]`
+**2** · via il ramo `sedi.length === 1` **1** · via il filtro `.in('scuola_id', sedi)` sui media
+**3** · `cifreMax` non propagato **1** · lock ristretto a `toLocale*(undefined` **1** · lock che
+ignora `Intl` senza lingua **1** · un vero `new Date().toLocaleDateString()` dentro `src/` **1** ·
+il corpo della risposta non letto in galleria **2** e in chat **2** · `messaggioSoloCatalogo` che
+ricade sulla prosa del server **1**.
+**E due CONTROPROVE**, che sono la parte che conta: le stesse manomissioni, applicate con le fixture
+di ieri, restano **VERDI** (25/25). Cioè la rete vecchia quei due difetti non li vedeva — non è una
+deduzione, è una misura.
+
+Gate: `npx tsc --noEmit` verde · `eslint --max-warnings 0` sui file toccati verde · test mirati
+**82/82** verdi (segnalazioni API 25 · componenti 6 + 6 + 2 · lib i18n 8 · lock architetturali
+5 + 20 + 10).
+
+---
+
+## 🗓️ Changelog — Quattro test che non sapevano diventare rossi, e una segnalazione che nessuno poteva moderare 2026-08-03 (branch `chore/conferme-umane`)
+
+Secondo giro del verificatore adversariale sulle correzioni della mattina. Il difetto di forma è
+uno solo e li spiega tutti e quattro: **una fixture che usa lo stesso valore per due grandezze
+diverse non le sta distinguendo**, e il test che ci sta sopra è verde qualunque delle due il codice
+guardi.
+
+**T1 — «i tag appartengono alla sede DEL MEDIA» non provava la sede del media.** La fixture dava
+`SEDE_A` a tre cose insieme: la sede risolta per la scrittura (`resolveScuolaScrittura`), la sede
+primaria di chi opera (`auth.user.scuola_id`) e il primo dei suoi plessi (`scuoleDiUtente[0]`).
+Misurato: sostituendo `[scuolaId]` con `[auth.user.scuola_id]` nella POST restavano verdi tutti i
+test del file — e 2295 test di `__tests__/api`. Sul `PATCH` lo stesso con `[sedeMedia]` →
+`[plessi[0]]`. Ora le tre grandezze sono diverse e l'ordine è **invertito apposta**: il media sta
+in **B**, chi opera ha `[A, B]` con A per primo e sede primaria A. Il minore ammesso è quello di B,
+quello vietato è quello di A — il contrario di ciò che direbbe qualunque scorciatoia basata su chi
+opera.
+
+**T2 — la riga di `segnalazioni` nasceva senza plesso, e nessuno poteva moderarla.** È il guasto
+vero di questo giro, ed era **dichiarato chiuso** nel changelog qui sotto: chiuso lo era, ma solo
+per il genitore mono-sede e solo sui tipi che portano un oggetto con una sede propria. Per
+`messaggio_chat` e `utente` la sede non veniva dedotta da niente (`acc.scuolaId` restava
+`undefined`), e per un genitore con figli in **due plessi** cadevano tutti i ripieghi:
+`sedi.length === 1` falso, `utenti.scuola_id` nullo (i genitori non hanno un plesso proprio),
+`scuolaUnicaReale()` nullo perché le sedi reali sono tre ⇒ `scuola_id: null`. Da lì il danno è
+doppio e silenzioso: `staffScuola(null)` non avvisa **nessuna** Direzione, e
+`admin/segnalazioni:PATCH` rifiuta esplicitamente le righe senza plesso («Segnalazione fuori dal tuo
+plesso»). Una segnalazione che esiste, che nessuno vede e che nessuno può chiudere — mentre a chi
+l'aveva mandata era stato risposto «inviata».
+Ora la sede si **deduce dall'oggetto** anche per quei due tipi: un thread di chat parla sempre di un
+bambino (`chat_threads.student_id`), e il bambino ha un plesso; in mancanza, la sede del docente del
+thread; per il tipo `utente` la sede è quella del bambino del thread condiviso, o del bambino la cui
+sezione è in comune. E se **nemmeno così** si riesce ad attribuirla, la segnalazione **non si
+scrive**: 503 e log `error`. È la regola di `resolveScuolaScrittura` applicata qui — mai indovinare
+la sede di una scrittura — e la scelta fra due mali: il rifiuto lo vede chi segnala e lo vede il
+log, la riga muta non la vede nessuno. Resta il ramo «una sola sede del segnalante», che è l'unico
+caso in cui non si sta indovinando.
+
+**T3 — «la sede della riga NON resta nulla» non provava il ramo che citava.** Il caso usava un
+genitore mono-sede su un media: la sede veniva da `acc.scuolaId` e il ramo
+`(sedi.length === 1 ? sedi[0] : null)` non entrava mai in gioco. Misurato: togliendolo restavano
+verdi tutti i 14 test del file e l'intera suite. Ora quel ramo è provato dove vive davvero — un
+bambino la cui anagrafica **non dice il plesso** (caso reale: `gallery:GET` ne ha un ramo apposta),
+con il segnalante che ha una sola sede — e accanto c'è il suo gemello: stesso scenario con due sedi
+⇒ 503, nessuna riga, nessuna notifica.
+
+**T4 — il coverage-lock dell'isolamento non protegge `segnalazioni`, e diceva di sì.** Il commento
+in `AMMESSE` («il lock lo riconosce da solo») e il changelog qui sotto affermavano una protezione
+che non c'è. Misurato: togliendo **tutti e tre** i `.in('scuola_id', sedi)` dalla route, il lock
+resta **20/20 verde**. Le due letture polimorfiche sono `.eq('id', …).maybeSingle()` — una riga, e
+la regola per query sugli elenchi non le guarda — e la lettura d'elenco su `alunni` è agganciata a
+una chiave derivata da una query precedente. L'unica regola che arriva fin lì è quella d'insieme,
+e le basta che il modulo **nomini** uno scope: togliendo anche `scuoleDiUtente` il lock diventa
+rosso (`handler-senza-scope su alunni`). Cioè: certifica che una sede si calcola, non che la si usi
+come filtro. Il lock non è stato allargato — irrigidire la regola d'insieme avrebbe acceso mezzo
+repo — ma la **promessa è stata tolta**: il commento ora dice cosa il lock verifica davvero e nomina
+i test di comportamento che verificano il resto. Una riga di allowlist che spegne il sospetto senza
+proteggere niente è peggio di una route non coperta: la seconda prima o poi si trova.
+
+**Altri due, dallo stesso giro.** `assertTagStudentsInScope` trasformava **qualunque** `{ error }` di
+PostgREST in un 500, compreso `42703` — la colonna assente sul DB E2E non migrato: il `PATCH` ora
+interroga `alunni.scuola_id` dove prima non lo faceva mai, quindi è una dipendenza di schema
+**nuova**, e la GET della stessa route quel caso lo tratta già (`colonnaSedeAssente` +
+`degradoSedeLecito`). Ora lo tratta anche il gate dei tag, con la stessa regola stretta: si prosegue
+senza filtro **solo** se non c'è niente da isolare (al più una sede reale), altrimenti si nega.
+E la dimensione dei video in `teacher/gallery` si formattava con `toLocaleString(undefined, …)`,
+cioè col locale del **runtime**: con interfaccia inglese su un browser italiano usciva «50,3 MB»
+dentro una frase inglese (e sul server, che gira in `en-US`, il contrario). Una riga più in là lo
+stesso numero aveva il difetto opposto — locale **cablato** a `it-IT`. Ora passano tutti e due da
+`formattaMegabyte(byte, locale)` (`src/lib/i18n/numero.ts`), che il locale lo pretende come
+parametro; il lock `numeri-con-locale-esplicito` vieta il ritorno della forma
+`toLocale*(undefined)` in tutto `src/`, e dichiara ciò che NON copre (la lingua cablata, che per il
+denaro è una convenzione voluta).
+
+**Contratti nuovi.** `POST /api/segnalazioni` può rispondere **503** con
+`codice: SEGNALAZIONE_SENZA_PLESSO` (dichiarato in `CODICI_ERRORE`, tradotto in `messages/it` e
+`messages/en`): è il rifiuto che sostituisce la riga muta. ~~I due client che segnalano
+(`SegnalaContenuto`, `ChatConversationMenu`) mostrano già un messaggio proprio e tradotto, quindi a
+schermo non cambia niente.~~ **⚠️ Questa frase era falsa, ed è stata smontata il giorno stesso: i due
+client il corpo della risposta non lo leggevano affatto (`if (!res.ok) setErrore(true)`), quindi la
+frase dichiarata e tradotta era IRRAGGIUNGIBILE in tutte e due le lingue. Corretta nel changelog
+qui sopra.**
+
+**Prova di validità** (eseguita, manomissione per manomissione — i numeri sono i test diventati
+rossi): sede dei tag → sede primaria di chi opera **3** · → tutti i plessi di chi opera **2** ·
+PATCH → tutti i plessi **2** · PATCH → primo plesso **3** · tolto il gate dei tag su POST **4** e su
+PATCH **4** · Privacy Lock con i plessi dell'operatore invece della sede del media **1 + 1**;
+`segnalazioni`: nessuna sede dedotta dal thread **3** · tolto il ramo «una sola sede» **1** · sede
+decisa dal primo plesso del segnalante **6** · tolto il rifiuto 503 **2** · tolto il ripiego sul
+docente del thread **1** · `contattoLegittimo` che non dice più la sede **2** · tolto il filtro di
+sede sui media **3**; degrado dei tag: `42703` che torna 500 **2** · degrado concesso su impianto
+multi-sede **1** · «degradare = lasciar passare tutto» **1** · degrado silenzioso (senza log) **1**;
+numeri: locale del runtime **4** · locale cablato `it-IT` **5** · non-finito che passa **1** ·
+megabyte decimali invece che binari **3**; e sulla PAGINA vera, rimettendo il
+`toLocaleString(undefined)` nei due punti → **1 + 1** rossi sul lock nuovo.
+Una manomissione è risultata VERDE ed è giusto scriverlo: togliere `.in('id', ids)` dalla rilettura
+del degrado non cambia niente, perché a decidere è l'insieme `ammessi` costruito dopo. Non era un
+test cieco — era una manomissione che non cambiava il comportamento; il commento nel sorgente ora
+lo dice, invece di lasciar credere che quella clausola sia il controllo.
+
+Gate: `eslint` sui file toccati (0 warning) · `npx tsc --noEmit` verde · i test mirati di API, lib e
+pagine (210) e **tutti i 722 lock di architettura** verdi.
+
+---
+
+## 🗓️ Changelog — I tag della galleria guardavano i plessi di chi opera, non quello del media · e `segnalazioni` non guardava niente 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievi **W3**, **W3-bis**, **W3-ter**, **W4** e **W5**, tutti da un verificatore adversariale con
+test propri. Sono cinque, ma la lezione è una sola e vale la pena metterla prima delle correzioni:
+**un gate che verifica il titolo di chi opera non è un gate di isolamento.** Nei tre casi qui sotto
+nessuno eccedeva il proprio ruolo — e il dato finiva lo stesso nel plesso sbagliato.
+
+**W3 — il gate dei tag verificava i plessi di CHI OPERA, non il plesso DEL MEDIA.**
+Misurato: admin con le sedi A+B attive, `POST /api/gallery` con `scuola_id: A` e
+`tag_students: [<uuid di un bambino della sede B>]` ⇒ **201**, riga scritta con `scuola_id: A` e
+l'uuid del minore di B dentro `tag_students`. L'admin le due sedi le ha davvero, quindi
+`assertTagStudentsInScope` — nata il mattino stesso, e corretta per ciò che sapeva — rispondeva
+«sì». Ma l'identificatore di un minore finiva nella galleria di un plesso il cui personale su quel
+bambino titolo non ne ha: `proiettaPerGenitore` nasconde `tag_students` ai **genitori**, non ai
+colleghi di sede. Stessa cosa sul `PATCH`.
+La proprietà giusta è una sola — **i tag appartengono alla sede DEL MEDIA** — e la sede del media
+entrambi gli handler ce l'avevano già in mano: `resolveScuolaScrittura` per la POST (che ora si
+risolve **prima** del gate, ed è il motivo per cui prima non poteva funzionare) e `media.scuola_id`
+per la PATCH. Il Privacy Lock riceve la stessa sede, per la stessa ragione: con l'elenco dei plessi
+dell'operatore il suo 422 poteva pronunciare il **nome** di un bambino di un altro plesso su una
+foto che in quel plesso non finirà mai.
+
+**W3-bis — un test che non poteva diventare rosso.** L'`it` «scope di sede vuoto ⇒ si NEGA» del
+PATCH restava verde anche togliendo quel ramo dal gate: il 403 lo produceva il controllo
+`media-fuori-sede` **a monte**. Provava il nome di un altro controllo. Il ramo ora è provato dove
+vive — sulla primitiva, in `__tests__/lib/gallery-tag-scope.test.ts` — dove niente lo può
+mascherare; e dagli handler è stato tolto, perché dopo W3 nessuno dei due può più passare uno scope
+vuoto. È il terzo test falso verde trovato in questo repo, e sempre con la stessa firma: il diniego
+arrivava, ma da un'altra parte.
+
+**W3-ter — `tag_students: z.array(z.string())`.** Un id malformato arrivava intatto a
+`.in('id', ['pippo'])`, Postgres esplodeva sul cast (`22P02`), il gate lo raccoglieva su `{ error }`
+e rispondeva **500**. Fail-closed, quindi nessuna fuga — ma un 500 dice «guasto nostro» su una
+richiesta sbagliata, e riempie di rumore il segnale che serve a trovare i guasti veri. Ora è
+`z.array(zUuid)`: **400** di validazione, prima di toccare il database.
+
+**W4 — `segnalazioni` era più scoperta di quanto fosse stato dichiarato.** La condizione reale era
+`if (isGenitore && media.is_broadcast !== true)`: per un **NON-genitore** — docente, segreteria,
+coordinatore, admin — non c'era **alcun** controllo. Una maestra di Aversa apriva una segnalazione
+su qualunque foto di Giugliano conoscendone l'uuid; la riga nasceva con la `scuola_id` **del media**,
+cioè di un plesso non suo, e la notifica «Nuova segnalazione da moderare» partiva verso la Direzione
+di quel plesso. Lo stesso per `voce_diario`, dove il ramo `if (isGenitore)` era l'unico presidio. E
+per il genitore il buco era il **broadcast**, che saltava ogni verifica: una foto istituzionale di
+un plesso dove non ha figli era segnalabile, mentre `gallery:GET` quella foto non gliela mostra.
+Ora l'oggetto deve stare in una sede del segnalante — `scuoleDiUtente` per lo staff, **le sedi dei
+figli** per il genitore (`parents` non ha `scuola_id`, e non deve averlo) — con
+`.in('scuola_id', sedi)` nella stessa query. `messaggio_chat` e `utente` restano scoped
+dall'**identità**, che è un vincolo più stretto della sede, e ora hanno il loro controllo negativo.
+Effetto collaterale che era un guasto vivo: la sede della riga non è più `null` per un genitore
+(`utenti.scuola_id` per lui è nullo, `scuolaUnicaReale` con tre plessi risponde `null`) — prima
+`staffScuola(null)` non avvisava **nessuna** Direzione, e la segnalazione esisteva senza che la
+moderazione la vedesse.
+⚠️ **Le due frasi qui sopra dicevano più di quanto fosse vero, e la correzione è nel changelog del
+giorno stesso (T2 e T4).** La sede non-`null` era garantita **solo** al genitore mono-sede e **solo**
+sui tipi che portano un oggetto con una sede propria: per `messaggio_chat` e `utente`, e per un
+genitore con figli in due plessi, la riga continuava a nascere con `scuola_id: null`. E il debito
+«pagato anche nel lock» non è mai stato verificato dal lock: `segnalazioni:<modulo>` **esce** da
+`AMMESSE` (`handlerEsentati` 93 → 92) perché il presidio c'è, ma togliendo tutti e tre i
+`.in('scuola_id', sedi)` quel lock resta verde — misurato. La sua ragione precedente — «legame
+genitore↔figlio» — descriveva il ramo dei genitori e copriva il vuoto di tutti gli altri mentre lo
+faceva sembrare una scelta.
+
+**W5 — la prosa italiana dentro un'interfaccia inglese.** `teacher/gallery/page.tsx` mostrava
+`alert(errData.error || t('…'))`: il testo del server, che nasce in una route dove il locale non
+esiste. Con `<html lang="en">` una maestra leggeva «Uno o più bambini taggati non appartengono ai
+tuoi plessi.», mentre il `codice` che serve a tradurla viaggiava nella **stessa risposta** e le
+chiavi erano già in `messages/it` e `messages/en`. Nessuno le leggeva. Ora ogni messaggio che nasce
+da una risposta passa da `messaggioErrore` — o da `messaggioDaCorpo`, la stessa decisione esposta
+per chi il corpo ce l'ha già in mano (il 422 del Privacy Lock porta `nomi`, e un corpo si legge una
+volta sola). Con l'occasione sono spariti gli ultimi tre testi italiani non traducibili di quella
+pagina (video non convertibile, formato non supportato, oltre il limite) e i due rifiuti che
+**non lasciavano nessuna riga di log**: ora `gallery-tag-rifiutato` e `gallery-delete-rifiutato`
+portano lo `stato` HTTP, che è l'unica cosa che distingue un 403 di sede da un 500.
+
+**Prova di validità** (eseguita, difetto per difetto): rimesso lo scope «plessi di chi opera» sulla
+POST → 2 rossi; sulla PATCH → 1 rosso; `z.array(z.string())` → 2 rossi; tolto il ramo dello scope
+vuoto dalla primitiva → 1 rosso sul test nuovo **e 15 verdi su quello degli handler**, che è la
+misura esatta di quanto quel test fosse cieco; tolti i due `.in('scuola_id', sedi)` di
+`segnalazioni` → 4 rossi; rimesso `alert(errData.error)` → 2 rossi sui tag, 1 sull'eliminazione.
+
+Gate: `eslint` (`src` + `__tests__`, 0 warning) · `tsc --noEmit` · i test mirati di API, lib, pagine
+e **tutti i 710 lock di architettura** verdi.
+
+---
+
+## 🗓️ Changelog — La strada accanto: il tetto di tempo copriva i provider, non Supabase 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievo **W7**, uscito dalla verifica della correzione fatta poche ore prima. La mattina
+`src/lib/logging/external.ts` aveva ricevuto un tetto di tempo di default, perché era stato
+**misurato** che una chiamata a un provider che accetta la connessione e tace resta appesa
+**150 secondi senza eccezione**. Il suo gemello no.
+
+**Il difetto.** `src/lib/logging/supabase-fetch.ts` — stesso modulo, stessa primitiva, citato da
+`external.ts` stesso — aveva **zero occorrenze** di `AbortSignal.timeout`, e un commento che
+diceva «Argomenti INTATTI. Non si tocca `init` (né lo si copia)». Da lì passano **tutte** le
+chiamate PostgREST, Storage e auth dell'applicazione, `resolveIdentity()` compresa: un Supabase
+che accetta e tace appendeva la route esattamente come faceva un provider — **col gate verde**,
+perché la regola viveva su una strada sola e nessun test guardava l'altra. È la lezione già
+pagata in questo repo (il `PUT` degli avvisi senza gate di sede, 1 OTP su 4 senza tetto): *una
+regola valida per due strade deve vivere in un posto solo*.
+
+**La correzione.** Il meccanismo è stato **estratto**, non copiato: `src/lib/logging/tetto.ts`
+(`conTetto` · `tettoSano` · `eTimeout` · `erroreTimeout`) è l'unico posto in cui si scrive una
+scadenza, e lo usano **tre** strade — i provider esterni, Supabase e il calcolo del codice
+fiscale nel browser. Un lock testuale (`__tests__/lib/logging-tetto.test.ts`) pretende che
+`AbortSignal.timeout` sia chiamato in **un solo file** di `src/lib/logging/`: è il test che
+avrebbe visto W7 il giorno stesso, e che non c'era.
+
+**I numeri, e perché.** Supabase: **15 s** di default (è il valore già misurato su GoTrue nello
+stesso ciclo — una risposta lenta ma *vera* è arrivata a 12 s, ed è la ragione di
+`TETTO_ACCESSO_MS`), **20 s** sullo Storage (un upload da 10 MB si trasferisce dentro la stessa
+`fetch`). Sul database non taglia mai una query lecita: PostgREST ha il suo `statement_timeout` e
+risponde molto prima — quindici secondi di silenzio non sono una query lenta, sono una
+connessione appesa.
+
+**Il tetto non si moltiplica per quattro.** postgrest-js **ritenta** GET/HEAD/OPTIONS sugli
+errori di rete (3 tentativi, backoff 1s/2s/4s): su un errore che fallisce subito costa il solo
+backoff, su una *scadenza* costerebbe un tetto intero per tentativo — quattro attese piene, cioè
+tanto quanto non avere un tetto. L'errore rilanciato porta perciò `code: 'ABORT_ERR'`, l'unica
+scorciatoia che postgrest-js concede; la riga di log resta invece `code: 'timeout'`, che è la
+colonna su cui si interroga. Il test legge la regola **dal sorgente del pacchetto**: se un
+aggiornamento la cambia, lo dice quel giorno.
+
+**Chiusi nello stesso intervento, misurati dallo stesso verificatore.**
+
+- **La valvola `gravita` non copriva il timeout.** Il ramo `catch` di `externalFetch` passava
+  `'error'` **cablato**, ignorando `opzioni.gravita`. I due chiamanti Instagram dichiarano
+  `gravita: () => 'info'` perché l'health-check dell'embed è best-effort — e `instagram` ha il
+  tetto **più stretto** della tabella, cioè è il percorso che finisce in scadenza più spesso di
+  tutti. Prima del tetto quella chiamata non produceva **nessuna** riga; con il tetto e la
+  valvola scavalcata produceva **la più rumorosa che esista** (un `Error` nativo su console, un
+  secchio in `get_runtime_errors` per ogni post lento). Ora il livello passa da `livelloDi()`,
+  che riceve `stato: 0` e il messaggio dell'eccezione — cioè ciò che il chiamante vedrà
+  nell'esito.
+- **Niente ancorava i tetti a un valore sensato.** I test pinnavano solo l'**ordine relativo**:
+  moltiplicando ogni valore per 60 (default 600.000 ms, aruba 1.800.000 ms) la suite restava
+  **38/38 verde** mentre in produzione a tagliare tornava la piattaforma. Aggiunto un limite
+  **assoluto**: nessun provider oltre 30 s, nessuna area Supabase oltre 20 s. È l'unica
+  asserzione che diventa rossa sotto quella mutazione — le altre 59 restano verdi, come misurato.
+- **La terza strada, nel browser.** `src/lib/utils/fiscalCodeApi.ts` chiamava il servizio terzo
+  senza `signal`. Costo peculiare: il fallback locale calcola lo **stesso** codice senza rete e
+  senza far uscire un dato dal dispositivo, ma sta **dopo** quella chiamata — senza tetto non
+  parte mai, e il genitore guarda un campo che non si compila mentre la risposta giusta era già
+  nel bundle. Tetto **5 s** (qui non c'è un'operazione da salvare: c'è una persona che aspetta e
+  un'alternativa istantanea), riga di log distinta dalla rete morta, nessun parametro loggato.
+
+**Resta aperto, e non è una dimenticanza.** `src/app/api/admin/apply-enrollment-migration/route.ts`
+ha **sei `await fetch` grezzi** verso `${SUPABASE_URL}/rest/v1/rpc/exec_sql` e `/pg/query`:
+sfuggono al lock dei provider perché l'host è un *template literal*, non passano da nessuno dei
+due wrapper e quindi non hanno né osservabilità né tetto. Non è una correzione piccola — è una
+rotta che esegue **DDL sul database di produzione** con la service-role, mentre le migrazioni
+oggi passano per lo strumento MCP `apply_migration` con approvazione umana (vedi `CLAUDE.md`).
+Va **valutata per la rimozione**, non rattoppata di nascosto.
+
+**Gate:** `eslint` 0 · `tsc --noEmit` pulito · **458 test verdi** sulle 17 suite toccate
+(`logging-*`, `fiscal-code-api`, i due form dell'anagrafica) più i **62 lock di architettura**
+(710 test). Prova di validità eseguita su tutti e quattro i difetti: rimessi uno per uno,
+ciascuno riproduce il rosso atteso.
+
+---
+
+## 🗓️ Changelog — Sostituire la copertina non toglieva la vecchia foto dal bucket pubblico 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievi **W1 · W1-bis · W2 · W6**, trovati da un verificatore adversariale con una **sonda
+eseguita**, non dedotta: «PATCH sostituzione — percorsi tolti dal bucket: `[]`», «PATCH azzeramento
+— percorsi tolti dal bucket: `[]`».
+
+**W1 — il difetto.** `PATCH /api/news/[id]` scriveva `updates.copertina_url` e non toccava lo
+Storage. Il bucket `news` è **pubblico e servito senza login**: dopo la sostituzione la vecchia
+immagine restava al suo indirizzo — che `/api/news/feed` aveva già distribuito in chiaro — e
+**nessuna riga la nominava più**. Revoca del consenso (`verificaPermanenzaConsenso`), diritto
+all'oblio (`obliaFotoNewsAlunno`) e `DELETE` calcolano tutti i percorsi da `percorsiPubbliciDelPost(post)`,
+cioè dalla riga corrente: su quel file non arrivavano più. È la **stessa classe del difetto V4**
+chiuso la mattina sulla `DELETE`, sulla strada accanto.
+
+**La correzione.** La PATCH libera la **differenza** fra i percorsi pubblici di prima e quelli di
+dopo, con la stessa funzione del ritiro e della cancellazione — `liberaPercorsiPubblici`, di cui
+`liberaFilePubbliciDelPost` è ora il caso «tutti quelli del post». Ordine: **prima il file
+verificato, poi la riga**, come già stabilito nel repo. Prezzo dichiarato in commento: se la
+rimozione fallisce si risponde `503` con la riga intatta; resta una finestra stretta in cui una
+scrittura fallita subito dopo lascia l'articolo con l'immagine rotta — guasto **visibile e
+sanabile**, preferito a un file pubblico che nessuna riga nomina (invisibile, permanente, e sopra
+la foto di un minore).
+
+**W1-bis.** La promozione nel bucket pubblico precede la scrittura della riga: se la riga non si
+scrive, i file sono già pubblici e senza padrone. Ogni via d'uscita che non scrive ora **rimette in
+sosta** ciò che ha appena reso pubblico (`riportaMediaInBozza`) — si annulla lo spostamento, non si
+cancella: cancellare farebbe salvare al ritentativo l'indirizzo pubblico di un oggetto inesistente.
+
+**W2.** `verificaPermanenzaConsenso` leggeva `.limit(200)` **senza `.order()`** e senza dire niente
+quando il tetto mordeva — mentre la correzione della mattina aveva allargato la popolazione
+sorvegliata (aggiunti `bozza` e `proposta`) a parità di tetto. Ora l'ordine è deterministico
+(`updated_at` asc, `id` a rompere il pareggio) e un `warn` dichiara la passata monca.
+
+**W6.** La testata di `obliaFotoNewsAlunno` diceva ancora «non è ancora chiamata da nessuno»: la
+chiama `src/lib/gdpr/esegui.ts` (punto 3g-bis) da poche ore. Corretta.
+
+**Il lock, irrobustito — ed è la parte che conta.** Il lock scritto la mattina cercava un **nome**
+(`f.src.includes('gateConsensoFoto')`) e un verificatore l'ha **evaso chiamando il gate e buttando
+via il verdetto** (`void gate`): restava verde. Adesso: (1) pretende che il verdetto sia usato
+(`'response' in gate` **e** `return gate.response`); (2) le regole su `delete`/`update` valgono **per
+handler** e non più per file — a livello di file la regola sui media era **vuota**, perché il nome
+della liberazione compariva comunque nella `DELETE` dello stesso file (verificato togliendo la
+liberazione dalla sola PATCH: il lock restava verde); (3) porta scritto **in testata che è una rete
+a maglie larghe**, con l'elenco di ciò che non vede; (4) delega la verifica vera a **test di
+comportamento** che eseguono le rotte e guardano che cosa finisce dentro una `remove()` e in che
+ordine — e pretende che quei file **esistano ancora**.
+
+| File | Cosa cambia |
+|---|---|
+| `src/app/api/news/[id]/route.ts` | PATCH: differenza dei percorsi pubblici → liberazione prima della scrittura; annullo della promozione su ogni uscita che non scrive; `n_file` nel log di successo |
+| `src/lib/news/permanenza-consenso.ts` | `liberaPercorsiPubblici` (primitiva condivisa da ritiro/DELETE/PATCH); `.order()` deterministico + warn sul tetto; testata di `obliaFotoNewsAlunno` corretta |
+| `src/lib/news/media-bozza.ts` | `promossiPercorsi` nell'esito; `riportaMediaInBozza` (annulla la promozione, non cancella) |
+| `__tests__/api/news-patch-file-pubblici.test.ts` | **nuovo** — 13 test di comportamento sulla mutazione dello Storage |
+| `__tests__/architecture/news-pubblicazione-gated.test.ts` | verdetto del gate usato, regole per handler, limiti dichiarati, test di comportamento richiesti |
+| `__tests__/lib/news/permanenza-consenso.test.ts` | tetto e ordine della passata, primitiva condivisa |
+
+**Prova di validità**: ogni difetto è stato **rimesso** e ha prodotto il rosso — W1 (6 test), W1-bis
+(2), W2 (2), evasione `void gate` (lock), liberazione tolta dalla sola PATCH (lock, dopo il
+passaggio per handler), test di comportamento spostato (lock).
+
+---
+
+## 🗓️ Changelog — I quattro test che non sapevano fallire, e la terza strada rimasta aperta 2026-08-03 (branch `chore/conferme-umane`)
+
+Residui della correzione W1 qui sopra, misurati dal verificatore **rimettendo il difetto**: la
+correzione era giusta, ma **quattro dei suoi test restavano verdi anche togliendo ciò che
+dichiaravano di proteggere**, e una via d'uscita non era mai stata chiusa.
+
+**Il ramo più probabile non era coperto.** Il 503 della PATCH per rimozione fallita rimette in sosta
+i media appena promossi; sostituendo quell'elenco con `[]` il file restava **13/13 verde**, perché
+l'unico scenario di rimozione fallita passava `copertina_url: null`, che non promuove niente. È il
+ramo con la probabilità più alta di tutti — un guasto dello Storage dentro una richiesta che sta
+**già** facendo Storage.
+
+**Nessuno scenario faceva uscire più di un file per volta.** Con `usciti` troncato a `.slice(0, 1)`
+il file restava **13/13 verde**: la PATCH ordinaria dell'editor — si cambia la copertina *e*
+l'immagine nell'articolo — avrebbe lasciato uno dei due pubblico per sempre, col gate pieno.
+
+**L'ordinamento di W2 era verificato a metà, e il verso sbagliato è peggio del disordine.** Il finto
+`.order()` teneva la colonna e **buttava via il secondo argomento**: con `{ ascending: false }`
+restava **36/36 verde**. Ma `ritiraPost` riscrive `updated_at`, quindi al contrario la finestra si
+riempie di post appena trattati e la coda dei più vecchi non si rilegge **mai**. Stessa cosa per la
+**priorità**: con `.order('id')` per primo la finestra si congela sui primi 200 uuid e il 201° non
+viene riletto mai più — **peggio** del difetto W2 di partenza, che almeno lasciava a ciascuno una
+probabilità.
+
+**W1-ter — la terza strada.** `POST /api/news` promuove i media nel bucket pubblico prima
+dell'insert (e deve farlo: la riga cita gli indirizzi definitivi), ma le due uscite che **non**
+scrivono la riga — promozione fallita a metà, insert rifiutato — rispondevano e basta. I file già
+spostati restavano pubblici **senza nessuna riga che li nominasse**: irraggiungibili da revoca,
+oblio e cancellazione, che partono tutti da `percorsiPubbliciDelPost(post)`. Stessa classe di
+W1/W1-bis, e la primitiva (`riportaMediaInBozza`) era già lì: chiamata dalla PATCH da tutte e tre le
+sue uscite, da `news:POST` da nessuna. Il ritorno in sosta sta **prima** del ramo `schemaAssente`,
+che sul DB E2E della CI è la via d'uscita normale.
+
+**Il messaggio della modifica raccontava una cancellazione.** La PATCH riusava
+`codice: 'NEWS_FILE_NON_RIMOSSI'`, che è il codice della `DELETE`: `messaggioDaCorpo`, appena
+riconosce un codice, mostra il **catalogo** e scarta la prosa del server, quindi a chi aveva appena
+sostituito una copertina l'interfaccia rispondeva «la news non è stata eliminata» / «the news item
+was not deleted». Il lock `errori-con-codice` non poteva vederlo — quel codice è dichiarato e
+tradotto in due lingue: **riusato, non mancante**. Ora la modifica ha il suo codice
+(`NEWS_FILE_SOSTITUITI_NON_RIMOSSI`) con le due voci di catalogo. E `NewsEditorPanel` stampava
+`j?.error` **grezzo**, scavalcando `messaggioDaCorpo`: la prosa del server nasce italiana, quindi a
+un utente EN arrivava la frase italiana — il fallimento F1 del 2026-07-31 riaperto in un componente
+nuovo.
+
+| File | Cosa cambia |
+|---|---|
+| `src/app/api/news/route.ts` | POST: `riportaMediaInBozza` su promozione fallita **e** su insert rifiutato, prima del ramo `schemaAssente` |
+| `src/app/api/news/[id]/route.ts` | PATCH: codice proprio (`NEWS_FILE_SOSTITUITI_NON_RIMOSSI`) al posto di quello della `DELETE` |
+| `src/lib/ui/esito-fetch.ts` | nuovo codice dichiarato, col perché un codice riusato è un messaggio sbagliato che sembra a posto |
+| `messages/{it,en}/shared.json` | `erroreNewsFileSostituitiNonRimossi` nelle due lingue |
+| `src/components/features/admin/news/NewsEditorPanel.tsx` | `messaggioDaCorpo(j, ripiego)` al posto di `j?.error` grezzo |
+| `__tests__/api/news-post-media-orfani.test.ts` | **nuovo** — 6 test W1-ter sulla mutazione dello Storage in `news:POST` |
+| `__tests__/components/NewsEditorPanel-errore-tradotto.test.tsx` | **nuovo** — 5 test su ciò che l'utente **legge**, in IT e in EN |
+| `__tests__/api/news-patch-file-pubblici.test.ts` | ramo «rimozione fallita **dopo** una promozione», due file che escono insieme, codice ≠ quello della `DELETE` |
+| `__tests__/lib/news/permanenza-consenso.test.ts` | il finto `.order()` non butta più via le opzioni: verso **e** priorità verificati |
+
+**Prova di validità** — otto manomissioni rimesse una per una, tutte rosse: `promossiOra → []` sulla
+PATCH (1 rosso), `usciti.slice(0,1)` (1), codice della `DELETE` riusato (2), `ascending: false` (1),
+`.order('id')` per primo (1), `promossiPercorsi → []` su promozione fallita (1) e su insert
+rifiutato (3), ritorno in sosta spostato **dopo** `schemaAssente` (1). Più `j?.error` grezzo
+rimesso nel pannello (3 rossi, e i due test sul ripiego restano verdi — misurano un'altra cosa).
+
+---
+
+## 🗓️ Changelog — La quarta via d'uscita non passava da nessun `if`, e un `void` bastava a riaprire tutto 2026-08-03 (branch `chore/conferme-umane`)
+
+Secondo giro sui residui W1. La correzione precedente aveva chiuso le vie d'uscita che passano da un
+ramo esplicito; il verificatore ne ha trovata una che non ne ha nessuno, più due difese che si
+potevano togliere senza far diventare rosso niente.
+
+**W1-quater — l'ECCEZIONE.** Fra la promozione dei media nel bucket pubblico e la scrittura della
+riga possono lanciare `sanificaContenuto` (gira su un JSON che arriva dal **client**, ed è chiamata
+**dopo** la promozione) e supabase-js, che su un guasto di **trasporto** rigetta invece di ritornare
+`{ error }` — cosa che `riportaMediaInBozza` già sapeva, con un `catch` apposta. Il `catch` esterno
+delle due rotte rispondeva 500 e non rimetteva in sosta niente: file pubblico, nessuna riga che lo
+nomini, irraggiungibile da revoca e oblio. Ora l'elenco da annullare vive **fuori** dal `try`
+(dentro, il `catch` non lo vedrebbe) e si azzera **appena la riga è scritta**: da quel momento è lei
+a nominare quei file, e riportarli indietro lascerebbe l'articolo con le immagini rotte. Chiuso anche
+il caso in cui a lanciare è la promozione stessa: uscendo, l'eccezione si portava via
+`promossiPercorsi`, cioè l'unico elenco da cui si sa che cosa è appena diventato pubblico.
+
+**Un `await` mancante non lo vedeva niente.** Rendendo fire-and-forget tutte le chiamate di
+annullamento (`void x` soddisfa `no-floating-promises`): 94 test verdi, ESLint verde, `tsc` verde. In
+produzione su Vercel Functions l'invocazione può essere congelata appena parte la risposta, e la
+`move()` di ritorno non finisce mai. I due finti client adesso rispondono su un tick successivo e
+contano le operazioni **in volo**: ogni chiamata alla rotta verifica che ne siano rimaste zero
+nell'istante in cui ha risposto.
+
+**L'invariante del ricalcolo non aveva nessun test.** `usciti` si calcola sugli `updates` **dopo** la
+promozione, non sui valori che il gate aveva in mano prima. Lo scenario è creato dalla correzione
+W1-bis stessa: un salvataggio fallisce, il file torna in sosta, l'operatore ritenta e l'editor
+rimanda l'indirizzo di **sosta** dello stesso percorso che la riga nomina già in versione pubblica.
+Riusando i valori del gate, quel percorso risulterebbe «uscito» e la rotta **cancellerebbe** dal
+bucket il file che sta per salvare: immagine rotta e foto persa insieme.
+
+**Il lock `errori-con-codice` non vedeva un codice non letterale.** `codice: UNA_COSTANTE` dava
+`null` e da lì in poi non veniva confrontato con niente — né con `CODICI_ERRORE`, né coi due
+cataloghi: passava qualunque cosa contenesse. È la strada accanto alla trappola del codice **riusato**
+chiusa poche ore prima. Ora la costante si risolve quando è un `const X = '…'` dello stesso file, e
+ciò che resta illeggibile ferma il lock. Unica esenzione dichiarata: `rifiutoSede(codice)`, che
+riceve il valore come parametro ed è coperto dall'altra lettura (gli argomenti di `rifiutoSede('X')`),
+con l'asserzione che quella copertura funzioni davvero.
+
+**Il 503 della cancellazione arrivava a schermo come silenzio.** `NewsElencoPanel` scriveva
+`if (res.ok) void carica()` senza `else`, sia sulla `DELETE` sia su pin/ritira/ripubblica. Il rifiuto
+che passa di lì è `NEWS_FILE_NON_RIMOSSI`: la news **non** è stata eliminata perché le immagini sono
+ancora nel bucket pubblico. Chi premeva «Elimina» vedeva la schermata di un'eliminazione riuscita e
+se ne andava convinto che la foto del bambino fosse sparita — la difesa più forte della catena
+diventava, sullo schermo, la sua bugia più grande.
+
+| File | Cosa cambia |
+|---|---|
+| `src/app/api/news/route.ts` | POST: elenco e client fuori dal `try`, ritorno in sosta dal `catch`, azzeramento appena la riga esiste |
+| `src/app/api/news/[id]/route.ts` | PATCH: identico, sulle quattro vie d'uscita |
+| `src/lib/news/media-bozza.ts` | `promuoviMediaBozza`: il guasto di trasporto degrada a `errore: true` con `promossiPercorsi` intatto, invece di propagare |
+| `src/components/features/admin/news/NewsElencoPanel.tsx` | `else` con `messaggioDaCorpo` su `DELETE` e su pin/ritira/ripubblica, e un `role="alert"` che lo mostra |
+| `messages/{it,en}/adminComunicazioni.json` | `elencoAzioneFallita`, `elencoEliminazioneFallita` |
+| `__tests__/architecture/errori-con-codice.test.ts` | il `codice` non letterale si risolve o ferma il lock; controllo positivo del lettore di costanti |
+| `__tests__/api/news-post-media-orfani.test.ts` | sonda «in volo» su ogni chiamata + 4 test W1-quater |
+| `__tests__/api/news-patch-file-pubblici.test.ts` | sonda «in volo» su ogni chiamata + 3 test W1-quater + il ritentativo dopo rollback |
+| `__tests__/components/NewsElencoPanel-errore-visibile.test.tsx` | **nuovo** — 5 test su ciò che l'operatore **legge** dopo un rifiuto, in IT e in EN |
+
+**Prova di validità** — otto manomissioni rimesse una per una, tutte rosse: `await → void` su tutte
+le chiamate di annullamento (12 test, verificati **uno per uno in isolamento**, ciascuno fermato dalla
+sonda «in volo»); `catch` senza ritorno in sosta su POST (2) e su PATCH (2); nessun azzeramento dopo
+l'insert riuscito (1 — è il test che tiene onesto il rimedio: senza, una notifica fallita
+riporterebbe in bozza le immagini di un articolo già pubblicato); `usciti` calcolato sui valori
+pre-promozione (1); `promuoviMediaBozza` che lascia propagare il trasporto (1); `codice` da
+un'espressione illeggibile (1) e da una costante con un valore mai dichiarato (1); `if (res.ok)`
+senza `else` nel pannello (4 rossi su 5, e il controllo positivo resta verde).
+
+---
+
+## 🗓️ Changelog — Il tetto di tempo dell'accesso stava una riga più sopra di quella che serviva 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievo W8, sulla correzione di T16-F4 scritta la mattina stessa. Il tetto c'era, ed era **sulla
+chiamata sbagliata**: copriva `signInWithPassword` e si fermava lì. Nella stessa `onSubmit`, due righe
+più sotto, `/api/me` e `/api/auth/active-role` erano attese **senza tetto**. Con `/api/me` che non
+risponde mai, dopo 300 secondi simulati il bottone era ancora `disabled` su «Accesso…», nessun
+`role="alert"`, nessun modo di riprovare — il sintomo **esatto** che T16-F4 doveva aver chiuso, rimesso
+in piedi una riga più in là e per giunta **a utente ormai autenticato**: il cookie di sessione era già
+scritto. Gli stessi due passi scoperti stavano nel picker dei ruoli (`scegliRuolo`) e nell'effetto
+`?scegli=1`, dove chi arriva è **già dentro** e la schermata non ha nemmeno un bottone: l'attesa non
+finiva mai e non compariva né il picker né il form.
+
+**Il tetto adesso è dell'INTERA sequenza, non di una chiamata** (`apriBudgetAccesso`, un budget solo
+che le tre attese si dividono). Non è un dettaglio d'implementazione: un tetto per chiamata garantisce
+che ogni chiamata finisca, e nel caso peggiore lascia il bottone bloccato per **45 secondi**, cioè tre
+volte la soglia oltre la quale `TETTO_ACCESSO_MS` dichiara che una persona conclude che l'app è rotta.
+Ciò che l'utente misura non è la latenza di una chiamata: è quanto passa da quando preme «Accedi» a
+quando succede qualcosa. Il prezzo è dichiarato nel codice: un accesso di 14 secondi lascia un secondo
+al resto e può scadere — ed è giusto così, perché a quel punto la sessione c'è e il messaggio lo dice.
+
+**Il messaggio a utente autenticato non poteva restare quello.** Il ramo `catch` diceva «Errore
+imprevisto durante l'accesso. Non dipende dalle tue credenziali…» anche a chi le credenziali le aveva
+appena viste **accettare**: una frase timida al posto di quella esatta. Due chiavi nuove in entrambi i
+cataloghi (`timeoutDopoAccesso`, `erroreDopoAccesso`): «Ti abbiamo riconosciuto, ma… **le tue
+credenziali sono corrette**». È lo stesso danno di T16-F3 — mandare a cambiare una password che
+funziona — alla schermata dopo. Nel log la fase è ora un campo (`fase=credenziali|dopo-accesso`):
+senza, in tabella un guasto a sessione già scritta e uno sulle credenziali hanno lo stesso aspetto.
+
+**I tre test finti, misurati e chiusi.** Un test che resta verde quando togli ciò che dichiara di
+proteggere è peggio di nessun test, perché compra fiducia:
+1. **«il tetto viene spento»** restava verde con `clearTimeout` disattivato: a `Promise.race` già
+   decisa un timer che scatta non produce nessun messaggio. Ma non bastava spostare il conteggio dei
+   timer in fondo — `advanceTimersByTime` li **fa scattare**, e un timer scattato non è più in volo:
+   sarebbe stato un secondo test finto al posto del primo. L'asserzione vive nell'unico istante in cui
+   la differenza esiste: flusso finito, tempo non ancora passato (`expected 3 to be +0`).
+2. **«un rifiuto che arriva dopo il tetto»** restava verde togliendo la «neutralizzazione», perché a
+   tenere gestito il perdente è `Promise.race` stessa, che aggancia i gestori a tutti i concorrenti.
+   La complessità morta è stata **rimossa** insieme alle cinque righe di commento che la dichiaravano
+   portante; la proprietà vera si misura ora dove si può vedere, con `process.on('unhandledRejection')`.
+3. **il log non era coperto**: azzerando `registraGuastoAccesso` restavano verdi tutti e 29 i test del
+   file. Per il TIMEOUT quella riga è **l'unica traccia che esista** (non produce nessuna risposta
+   HTTP). Ora c'è la spia su `logClient` — livello, esito, fase, stato — e l'asserzione che **né
+   l'email né la password** compaiano in ciò che si spedisce.
+
+**Il 429 in due namespace resta in due namespace, ed è scritto perché.** `auth.troppiTentativi` e
+`shared.erroreTroppeRichieste` dicono la stessa regola in due canali che non si toccano: qui classifica
+il client dallo `status` di auth-js, là arriva dal server come `codice` nel corpo (lock
+`errori-con-codice.test.ts`), e la login un `codice` non lo riceve mai. Le frasi non sono
+intercambiabili — «troppi tentativi di ACCESSO» a chi ha chiesto troppi OTP sarebbe falso. Il costo
+(due posti da toccare se cambia l'attesa suggerita) è dichiarato nel commento.
+
+**Prova di validità, otto difetti rimessi a mano**: `/api/me` senza tetto → **6 rossi**, col
+messaggio del rilievo stampato dal test (`Unable to find … role "alert"`, bottone `disabled`
+`aria-busy="true"` «Accesso…»); `active-role` senza tetto (submit + picker) → 2 rossi; l'effetto
+`?scegli=1` senza tetto → 2 rossi; `clearTimeout` disattivato → 4 rossi nell'unitario + 1 nel
+componente (`expected 3 to be +0`: i tre tetti della sequenza); il lavoro agganciato al solo ramo
+`resolve` → 2 rossi, uno dei quali è l'`unhandledrejection` contato; `registraGuastoAccesso` azzerata
+→ 6 rossi; il messaggio inesatto rimesso → 6 rossi; la distinzione «autenticato» tolta dal `catch` → 1
+rosso. Test: `login-errori-servizio` 29 → **45**, più il nuovo
+`__tests__/lib/auth-tetto-accesso.test.ts` (**9**).
+
+---
+
+## 🗓️ Changelog — La terza strada non aveva nessun `catch`, e quattro test dichiaravano più di quanto misurassero 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievo W8-ter, sulla correzione W8-bis. La correzione **tiene**; il verificatore ha trovato la strada
+accanto e quattro asserzioni che non sapevano diventare rosse.
+
+**Il `catch` che non c'era proprio (bloccante).** Delle tre strade post-accesso, l'effetto `?scegli=1`
+usciva con `void load();` e basta. Dentro `load` c'è `router.replace(...)`, che **lancia** se la
+navigazione viene rifiutata: con profilo unico si otteneva un `unhandledrejection` e la pagina restava
+su «Caricamento dei profili…» **per sempre**, a utente già autenticato — nessun messaggio, nessun log,
+nessun form, nemmeno un bottone da premere. Il sintomo W8 esatto sulla terza strada. Le altre due il
+loro `catch` ce l'avevano (`onSubmit`, `scegliRuolo`); è anche la regola 6 di AGENTS.md nella forma
+più grave, perché non è un `catch` che tace, è un `catch` che manca. Ora `void load().catch(…)`, con
+la guardia `cancelled` anche lì.
+
+**`kv_user_role` restava scritto per un ruolo che il server aveva rifiutato.** Due percorsi su tre
+persistevano prima della chiamata, e `onSubmit` scriveva perfino `me.role` prima di sapere quale ruolo
+sarebbe andato in gioco (cioè `educator` a chi stava per premere «Genitore»). Finché si navigava
+comunque, l'incoerenza durava un istante e la guardia d'area la risolveva; da W8-bis non si naviga
+più, quindi **resta** sulla pagina di login, e `useSessionIdentity` legge quella chiave. La sonda del
+verificatore leggeva `educator | educator | educator` dopo un 403. Ora si persiste **dopo**
+l'accettazione del server, su tutte e tre le strade.
+
+**403 e 401 non sono lo stesso guasto — decisione presa, e da ratificare.** Il ragionamento scritto nel
+codice e in questo PRD giustificava il «non navigare» col solo **401** («la sessione non si vede»,
+transitorio), mentre la fixture dei test usava solo **403** («Ruolo non disponibile per questo utente»,
+permanente in astratto): l'argomento copriva metà dei casi che decideva, e i test lucchettavano proprio
+il caso che l'argomento non nominava. **Si è scelto di tenere il trattamento unico**, con la ragione
+vera scritta accanto: la causa più probabile di un 403 in questa app è ancora **transitoria** — una
+lettura degradata in `getProfiliForAuthUid` — e la guardia d'area chiama **la stessa**
+`getSessionProfili()`, quindi non ha nessun fallback da offrire per un ruolo che a quella fonte manca.
+Costo dichiarato: se un 403 fosse davvero permanente, prima quell'utente entrava (guardia + fallback
+ruolo unico) e ora legge un messaggio. Si accetta perché l'alternativa era portarlo in un'area con un
+ruolo che il server non ha riconosciuto, per poi farlo rimbalzare in silenzio.
+⚠️ **È una decisione di prodotto e va ratificata dal titolare prima del merge.** Se un giorno si
+volesse distinguere (401 non naviga, 403 naviga), il punto da toccare è **uno**: lo `stato` dentro
+`eseguiPasso`, non i tre chiamanti.
+
+**E il `/api/me` → 401 «Utente non trovato»**, che è una risposta *legittima* per un utente autenticato
+senza riga in `utenti` né in `parents` (la classe di bug di `parents.id != auth.user.id`): resta
+classificato come **guasto**, di proposito. Non entrava nemmeno prima — finiva su `/`, e la guardia lo
+rispediva al login in silenzio; ora almeno lo legge e lascia una riga in `app_log`.
+
+**Quattro test che dichiaravano più di quanto misurassero.** `segnalaGuastoDopoAccesso` promette quattro
+cose e i test ne asserivano tre: mai `aria-invalid`. Il `catch` di `scegliRuolo` non era raggiunto da
+nessun test. La guardia `cancelled` non era misurata. E la fixture delle «tre strade» usava un solo
+stato per due grandezze diverse.
+
+| File | Cosa cambia |
+|---|---|
+| `src/app/auth/login/page.tsx` | `.catch` sull'effetto `?scegli=1` · `persisti('kv_user_role')` dopo il controllo nelle tre strade · rimossa la persistenza anticipata di `me.role` · commenti su 401/403, su `/api/me → 401` e sulle garanzie ora misurate |
+| `__tests__/components/login-errori-servizio.test.tsx` | 68 → **86**: le tre strade in prodotto con **401 e 403** (lo stato entra nell'asserzione del log, non è più scritto a mano) · `aria-invalid` spezzato fra le strade col form e quella col picker · `kv_user_role` · il `catch` di `scegliRuolo` · l'effetto smontato in volo |
+| `login-navigazione-singola.test.tsx` · `login-smistamento.test.tsx` | il mock di `/api/me` non deriva più `ok`/`status` da `h.me`: era **un interruttore per due grandezze**, e dopo W8-bis quel ramo 500 era codice morto che dava l'apparenza di coprire «/api/me giù» |
+
+**Prova di validità, sei difetti rimessi uno per uno, tutti rossi**: `.catch` tolto dall'effetto → **1**
+(il test che senza di lui non esiste); campi marcati non validi su `erroreRuolo` (M-A) → **4**;
+`catch` di `scegliRuolo` con `fase=credenziali` e stato buttato via (M-D) → **1**; `persisti` rimesso
+prima del controllo → **6**, due per strada; guardia `cancelled` scavalcata (M-E) → **1**. E il
+**controllo in direzione opposta**, che prova che la fixture distingue davvero i due stati: fatto
+tornare il 403 a navigare → **12 rossi, tutti e soli quelli del 403**, nessuno dei sei del 401.
+
+---
+
+## 🗓️ Changelog — La categoria «guasto dopo l'accesso» era nuova, e la strada accanto non la usava 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievo W8-bis, sulla correzione W8 scritta poche ore prima. Il tetto di tempo tiene; ciò che non
+teneva è la **categoria** che quella correzione aveva appena inventato (`fase=dopo-accesso`), applicata
+al timeout e a nient'altro. Sonda su `/api/me → 500` dopo un'autenticazione riuscita:
+
+    replace: [['/']] | alert: NESSUNO | log: []
+
+**Un `/api/me` che risponde male non è un «profilo non disponibile».** `leggiProfilo()` collassava
+**tre guasti diversi** — `fetch` che rifiuta, `!res.ok`, `res.json()` che rifiuta — sullo stesso `null`
+con cui diceva «questo utente non ha profili», e il ramo di degrado li spediva su `/` senza una parola.
+Da lì la guardia d'area, senza cookie di ruolo, rimandava a `?scegli=1`, dove la stessa fetch falliva
+di nuovo, `elenco` tornava vuoto e si ricadeva sul form credenziali **muto**: due schermate e un giro
+senza uscita, per un guasto che in `app_log` non lasciava niente (il 401, in particolare, il patch di
+`fetch` non lo spedisce nemmeno — vedi `livelloFetch`). I due `.catch(() => null)` erano anche la
+violazione diretta della regola 6 di AGENTS.md. Ora `passoDiRete` restituisce un esito **discriminato**
+(`{guasto:false, dato}` / `{guasto:true, errore, stato}`) e il degrado graceful resta, ma solo per ciò
+che è davvero un degrado: una risposta **arrivata e valida** da cui non si ricava un ruolo.
+
+**Lo stesso `false` del server aveva tre trattamenti su tre strade.** `POST /api/auth/active-role` ha
+tre chiamanti: `onSubmit` lo **ignorava** e navigava, il picker mostrava `erroreRuolo` **senza
+loggare**, l'effetto `?scegli=1` non leggeva nemmeno il valore di ritorno. È la forma esatta del difetto
+che W8 doveva chiudere. L'autorizzazione scritta nel codice — «best-effort sull'esito, la guardia ha il
+fallback ruolo unico» — **decade**: quel fallback vale solo se il server riesce a leggere la sessione,
+cioè precisamente ciò che un 401 da quella route dice che non riesce a fare; navigare comunque non è un
+degrado gentile, è un rimbalzo muto. Adesso i tre passi passano da `eseguiPasso` + un'unica
+`segnalaGuastoDopoAccesso` (messaggio · `aria-invalid` fermo · fine dell'attesa · log con la fase).
+⚠️ **Corretto il 2026-08-03 (W8-ter, voce sopra): questo paragrafo argomentava sul solo 401 e la
+regola la applicava anche al 403** — che è un guasto diverso, con una prognosi diversa. La regola resta
+unica, ma la ragione per il 403 è un'altra ed è ora scritta accanto al codice (`impostaRuoloAttivo`).
+
+**Il campo `fase` non era asserito dove serviva di più.** Nell'effetto `?scegli=1`, cambiare
+`'dopo-accesso'` in `'credenziali'` lasciava arrivare i rossi **solo dal messaggio**: in tabella un
+timeout della guardia d'area sarebbe finito nel conteggio dei guasti sulle credenziali — la confusione
+che quel campo è stato introdotto per eliminare. Ora è lockato su tutti e due i percorsi dell'effetto.
+
+**Un commento più forte del vero, corretto.** `conTettoDiTempo` dichiarava che un `AbortController`
+«non può esserlo col client Supabase singleton». Falso: `createBrowserClient` accetta
+`{ global: { fetch } }` esattamente come fa già `server-client.ts` con `creaFetchStrumentato()`. La
+scelta di **abbandonare** invece di annullare resta difendibile — il costo è far viaggiare il segnale
+per richiesta su un singleton condiviso da tutte le pagine — ma è una scelta, non un'impossibilità:
+«impossibile» chiude la ricerca a chi legge, «costoso» la lascia aperta.
+
+| File | Cosa cambia |
+|---|---|
+| `src/app/auth/login/page.tsx` | `passoDiRete` (esito discriminato) · `eseguiPasso` · `segnalaGuastoDopoAccesso` in `useCallback` · i tre passi post-accesso allineati |
+| `src/lib/auth/errore-accesso.ts` | il commento su `AbortController`: da «non può» a «costa, e si è scelto di no» |
+| `__tests__/components/login-errori-servizio.test.tsx` | +23 test (45 → **68**): le 4 rotture di `/api/me`, le 3 strade del ruolo attivo, il `fase=` dell'effetto, il degrado VERO |
+| `__tests__/components/login-navigazione-singola.test.tsx` · `login-smistamento.test.tsx` | il degrado si prova con «profilo senza ruolo», non più con «/api/me giù» — che ora è un guasto dichiarato |
+
+**Prova di validità, dieci manomissioni rimesse una per una, tutte rosse**: `!res.ok` inghiottito come
+prima → **16 rossi**; `fase=dopo-accesso` → `credenziali` → 12; `onSubmit` che ignora il `false` del
+ruolo → 3; il picker che mostra ma non logga → 1; l'effetto `?scegli=1` che non legge l'esito → 3;
+`res.json()` senza rete → 1; la risposta non-ok privata del proprio nome di classe → 5; lo stato HTTP
+tolto dal log → 7; `useCallback` tolto (l'effetto si rilancia: 2 fetch invece di 1) → 1. E il
+**controllo in direzione opposta**: tolto il ramo di degrado graceful → **4 rossi**, fra cui il test
+«degrado VERO» — la prova che i test nuovi misurano la *distinzione* e non un «non si naviga mai più».
+
+---
+
+## 🗓️ Changelog — I due lock nativi che si difendevano da soli: una denylist evasa e un modello più permissivo del codice vero 2026-08-03 (branch `chore/conferme-umane`)
+
+Rilievo W9, sui lock scritti la mattina stessa per T14-F2 e T14-F3 (voce qui sotto). Nessuno dei due
+proteggeva ciò che diceva di proteggere, ed erano **verdi**.
+
+**1. La clausola «il flush è sincrono» era una denylist, e la denylist è stata evasa.** Vietava per
+nome `new Thread`, `runOnUiThread`, `.post(`, `Executor`, `CompletableFuture`. Misurato:
+`android.os.AsyncTask.execute(() -> CookieManager.getInstance().flush())` dentro `onPause`
+passava **tutti e otto i test** — cioè esattamente la «correzione sbagliata» che il lock dichiarava
+di vietare, con il flush di nuovo su un thread di pool in corsa con la morte del processo. Una
+denylist è lunga quanto la fantasia di chi la scrive. Ora è una **allowlist di forma** che non nomina
+nessuna API: il flush dev'essere un'istruzione diretta del corpo — nessuna lambda (`->`) né
+riferimento a metodo (`::`) fra `super.onPause()` e la chiamata, profondità di graffe ≤ 1 — perché
+qualunque costrutto capace di portarsi via la chiamata deve **aprirsi prima** di lei. Commenti e
+stringhe vengono neutralizzati prima dell'analisi, così una graffa in una nota non falsa il conteggio.
+È la stessa lezione dei lock delle news dello stesso giorno: si cerca il **comportamento**, non un
+nome. Nel commento del lock è ora scritto **cosa non copre** (un flush reso irraggiungibile invece che
+asincrono passa; un flush spostato in un metodo privato lo fa diventare rosso anche se è corretto).
+
+**2. Il modello del test era più permissivo del codice nativo.** `mascheraCorrisponde` faceva
+`.replace(/^https?:\/\//, '')` sulla maschera, ma **né `HostMask.Simple.parse` (Android) né
+`doesHost(_:match:)` (iOS) tolgono lo schema**: spezzano su `.` e confrontano i pezzi, quindi
+`allowNavigation: ['https://app.kidville.it']` non corrisponderebbe a niente su **nessuna** delle due
+piattaforme, e «Riprova» tornerebbe a uscire dall'app. Il modello lo dava per buono: col difetto
+rimesso restavano verdi 11 test su 12. Oggi la configurazione vera è scritta **senza** schema, quindi
+funziona — ma per come è scritta, non per progetto. Ora ci sono **due porti fedeli**, uno per
+piattaforma, e non è un dettaglio di stile: le due implementazioni **non sono equivalenti**. Su
+Android `if (maskSize > 1 && hostSize != maskSize)` fa saltare il controllo di lunghezza quando la
+maschera ha un pezzo solo, cioè `allowNavigation: ['it']` farebbe entrare **qualunque sito `.it`**
+dentro la WebView, accanto ai cookie di un genitore; iOS lo rifiuterebbe. Il lock ora vieta gli schemi
+e le maschere di un segmento solo.
+
+**3. Un test ridefiniva `document.cookie` e non lo rimetteva a posto.** Innocuo finché è l'ultimo del
+file; il primo test aggiunto dopo avrebbe ereditato il finto archivio. Ripristinato in `afterEach`
+(`vi.unstubAllGlobals()` non annulla `Object.defineProperty`) e **verificato da un test**, non promesso.
+
+**Conseguenza dichiarata e NON chiusa — `URL_APP` resta un letterale di produzione.** In una build di
+collaudo (`CAP_SERVER_URL=http://10.0.2.2:3100`) «Riprova» ora carica `app.kidville.it` **dentro la
+WebView, ma senza bridge**: `Bridge.loadWebView` limita `addDocumentStartJavaScript` alla sola origine
+configurata (`Collections.singleton(allowedOrigin)`, `Bridge.java:266-274`), quindi su produzione
+`window.Capacitor` non esiste — niente fotocamera, push, biometria, share, badge. Prima di T14-F2 quel
+pulsante portava su produzione **in Chrome**, con barra degli indirizzi e via d'uscita; ora inchioda
+l'utente su produzione in una WebView senza barra e con le funzioni native morte. In entrambi i casi
+**sui dati veri delle famiglie**. Il rimedio sarebbe rendere `URL_APP` funzione della build, e **non è
+stato fatto**: `cap sync` non passa da nessuno script npm né dalla CI — è digitato a mano in una
+decina di punti fra `docs/mobile.md`, `docs/store-submission.md`, i prompt dei tester e il README dei
+flow Maestro — e la pagina non ha nessun segnale a runtime da cui dedurre il server (vive su
+un'origine diversa, senza bridge e senza storage condiviso). Un generatore agganciato a un wrapper npm
+che nessuna di quelle righe invoca renderebbe il file *sembrare* corretto lasciando le build di
+collaudo puntate a produzione: un falso verde peggiore del difetto. Chi rifà il giro sulla shell
+nativa lo chiuda insieme al cambio del modo di compilare, aggiornando anche quei documenti.
+
+**Prova di validità, quattro difetti rimessi a mano**: l'evasione `AsyncTask.execute(() -> …)` →
+rosso il criterio della lambda (prima: 8 verdi su 8); la stessa cosa con una classe anonima → rosso il
+criterio della profondità (3 > 1); lo strip dello schema rimesso nel modello → 2 rossi; lo schema
+rimesso nella configurazione vera → **6 rossi** dove il modello vecchio ne dava 1. Il lock del
+ripristino cookie: tolto l'`afterEach`, rosso. Test dei due file: 20 → **26**.
+
+---
+
+## 🗓️ Changelog — Il tasto «Riprova» che usciva dall'app, e la sessione che moriva in trenta secondi 2026-08-03 (branch `chore/conferme-umane`)
+
+Collaudo Android T14-F2 + T14-F3. Due difetti dell'app nativa, cause radice diverse, un tratto in
+comune: **nessuno dei due era visibile ai test formali**, e nessuno dei due sta nel codice
+dell'applicazione web.
+
+**T14-F2 — «Riprova» apriva il browser di sistema.** Dalla schermata di ripiego nativo
+(`mobile/www/offline.html`, `server.errorPath`) il pulsante faceva uscire l'utente dall'app: fuori la
+sessione nativa, fuori biometria e push, dentro Chrome — e **su produzione**, anche con una build di
+collaudo puntata altrove. Causa radice letta sul sorgente di Capacitor, non dedotta: la pagina vive
+sullo **schema locale** (`https://localhost` su Android, `capacitor://localhost` su iOS), quindi la
+sua navigazione verso `app.kidville.it` è fuori origine, e finisce in
+`startActivity(ACTION_VIEW)` (`Bridge.java:389-417`) o in `UIApplication.shared.open`
+(`WebViewDelegationHandler.swift:95-115`) **a meno che l'host non sia in `server.allowNavigation`** —
+che non era configurato: `HostMask.Parser.parse(null)` restituisce una maschera che non corrisponde a
+nulla. L'unica cosa che tratteneva l'utente dentro l'app era la **coincidenza** fra l'URL cablato
+nella pagina e `server.url`: vera in produzione, **falsa** sull'emulatore (`10.0.2.2`) e falsa in una
+build fatta senza `CAP_SERVER_URL` (dove `appUrl` ripiega su `https://localhost`). Due configurazioni
+su tre uscivano dall'app. Correzione: `server.allowNavigation: ['app.kidville.it']` in
+`capacitor.config.ts` — un host solo, scritto per esteso, con i link esterni che continuano ad
+aprirsi fuori.
+
+**T14-F3 — la sessione moriva se si chiudeva l'app entro ~30 secondi dal login.** L'ipotesi che il
+rilievo suggeriva («un cookie di sessione senza scadenza») **è stata falsificata prima di correggere
+qualsiasi cosa**: `@supabase/ssr` scrive ogni cookie con `Max-Age` di 400 giorni, sia dal browser sia
+dal middleware — ed è persistente. E quell'ipotesi non spiegava il dato che contava, la **finestra**:
+un cookie di sessione si perde sempre, non solo entro trenta secondi. La causa vera è nativa e sta
+scritta nella documentazione dell'SDK Android (`android/webkit/CookieSyncManager`): «browser cookies
+are saved in RAM. A separate thread saves the cookies between, **driven by a timer**». Fra la
+scrittura del cookie e il suo arrivo su disco c'è una finestra, e **nessuno la chiudeva**: in
+`@capacitor/android` 8.4.2 l'unico `flush()` vive nel plugin `CapacitorCookies` e
+`Bridge.onPause/onStop/onDestroy` non toccano i cookie. `MainActivity` era una classe dal corpo
+vuoto. Correzione: `CookieManager.getInstance().flush()` **sincrono** dentro `onPause` — il primo
+callback garantito quando l'app perde il foreground — con log di successo *e* di errore, e un `catch`
+che non fa crashare l'app. Resta scoperto, ed è detto nel codice: un processo che muore **senza**
+passare da `onPause` (crash del render process, «Arresta» dalle impostazioni) perde ancora la
+finestra.
+
+**Difesa.** Due lock nuovi, 20 casi. `riprova-offline-resta-nella-webview` **riproduce** le due
+decisioni native citate sopra e le applica alla configurazione vera nelle tre build possibili, con i
+controlli negativi che contano (un dominio estraneo deve **ancora** aprirsi fuori; nessun jolly in
+`allowNavigation`, che trasformerebbe la WebView in un browser aperto con dentro la sessione di un
+genitore). `cookie-sessione-persistito-android` blinda il flush dov'è e **com'è** — spostarlo su un
+thread lo rimetterebbe in corsa con la morte del processo — e tiene ferma l'ipotesi falsificata con
+un test di comportamento che guarda la stringa che finisce in `document.cookie`.
+
+**Prova di validità, tre difetti rimessi a mano**: `MainActivity` riportata al corpo vuoto → 7 test
+rossi; il flush spostato su un `new Thread` → rosso il test che lo vieta; `allowNavigation` rimosso →
+6 rossi, cioè esattamente le due configurazioni che uscivano dall'app su entrambe le piattaforme.
+
+**Limite da non abbellire: la prova sul dispositivo NON è stata eseguita.** `KV_TEST_PASSWORD` non era
+nell'ambiente e senza credenziali il percorso «login → chiudi → riapri» non è percorribile
+(`.claude/maestro-flows/esegui.sh` esce con codice 1). Questi lock dicono che il codice **c'è** e che
+la configurazione soddisfa la condizione che il codice nativo valuta; non che la WebView si comporti
+così su un telefono. La verifica su emulatore resta da fare. Nessuna migrazione, nessuna scrittura
+sul database.
+
+---
+
+## 🗓️ Changelog — Nessuna chiamata a un provider esterno aveva un tetto di tempo 2026-08-03 (branch `chore/conferme-umane`)
+
+Collaudo T16-F2 + T18-F3. **`fetch` non ha nessun timeout di suo**, e in questo repo nessuno gliene
+dava uno: email (Resend), push (FCM/APNs), fatturazione (Aruba/SDI), SIDI, health-check Instagram.
+Se il provider accetta la connessione e non risponde, la promise **non si risolve mai**: chi ha
+premuto «invia» aspetta senza limite e senza errore, e la funzione resta occupata fino al taglio di
+piattaforma.
+
+**Misurato, non dedotto**: un server locale che accetta e tace, chiamato con la stessa primitiva, è
+rimasto appeso **150 secondi senza eccezione né timeout**. `AbortSignal` compariva in `src/` **due
+volte sole**, entrambe nella sonda della pagina offline — nessuno dei 13 chiamanti di
+`externalFetch` ne passava uno.
+
+**Causa radice**: `src/lib/logging/external.ts` — `await globalThis.fetch(url, init)` senza
+`signal`. Il modulo era nato come strato di **osservabilità** e non aveva mai preso in carico la
+**resilienza**, pur essendo l'unica porta da cui passano tutti i provider (lo impone il lock
+`provider-esterni-osservati`).
+
+**Correzione, in un posto solo invece di tredici**: un tetto di default *dentro* `externalFetch`
+(`signal: init?.signal ?? AbortSignal.timeout(...)`). Default **10 s**; tabella per provider dove il
+default è il numero sbagliato — **Instagram 4 s** (unica chiamata sincrona con un operatore che
+aspetta: si stringe da qui senza toccarne la route) e **Aruba 30 s** (upload FatturaPA e PDF in
+base64). Sovrascrivibile per chiamata (`opzioni.timeoutMs`); un `init.signal` del chiamante vince su
+tutto. Fail-open: un runtime senza `AbortSignal.timeout` perde il tetto, non la chiamata.
+
+**Il timeout diventa visibile** — era il buco silenzioso. L'interruzione passa dal ramo `catch` che
+c'era già, ma il `DOMException` di piattaforma viene **rietichettato**: `code: 'timeout'` (colonna
+`app_log.codice`, cioè `where codice = 'timeout'`), nome proprio `ExternalTimeoutError` per il
+raggruppamento di Vercel, il tetto in millisecondi dentro il messaggio, e il motivo originale
+conservato come `cause`. Senza, in tabella sarebbe finito **`23`** — il codice legacy di
+`DOMException` — indistinguibile da uno status: di nuovo il numero che non dice nulla. «Il provider
+non risponde» e «il provider non si raggiunge» ora si separano in SQL.
+
+**Difesa**: 13 casi in `__tests__/lib/logging-external.test.ts`, di cui tre **misurati contro un
+server vero** che accetta e non risponde. Prova di validità doppia: togliendo il `signal` i tre test
+muoiono per scadenza (il difetto, alla lettera); togliendo la rietichettatura il codice torna `23`.
+Nessuna migrazione, nessuna scrittura sul DB.
+
+---
+
+## 🗓️ Changelog — La pagina «non sei in rete» che si vedeva solo la prima volta 2026-08-03 (branch `chore/conferme-umane`)
+
+Collaudo T16-F1. Senza rete, chi aveva già usato l'app non vedeva la pagina «non sei in rete» ma
+l'error boundary — **«QUALCOSA È ANDATO STORTO»**. Riprodotto 3 volte su 3 su una build di
+produzione, ed era lo **stato stazionario**, non un caso limite: l'offline funzionava appena
+installata l'app e si rompeva man mano che la si usava.
+
+**Causa radice**: `precarica()` in `public/sw.js` faceva `fetch('/offline')` e metteva in cache **un
+solo oggetto**, il documento. La `fetch` di un Service Worker scarica dei byte, non apre una pagina:
+non c'è parser HTML, quindi nessuna sotto-risorsa veniva mai richiesta. Il documento `/offline`
+referenzia 15 chunk, 14 dei quali **condivisi con `/auth/login`**; l'unico esclusivo è
+`ContenutoOffline` (~3,8 kB). Da qui il comportamento che sembrava assurdo: ad app appena installata
+in cache non c'è quasi nulla, React non parte e disegna lo script inline — com'è progettato; dopo un
+po' di navigazione i 14 condivisi ci sono (ce li mette `assetStatico` durante l'uso normale), React
+**parte**, non trova il quindicesimo e muore, e l'error boundary sostituisce l'intero albero,
+cancellando anche ciò che lo script inline aveva già disegnato. **Mezzo bundle è peggio di nessun
+bundle.**
+
+**Correzione** (decisione del titolare, «salvo anche i pezzi della pagina»): `precarica()` legge
+l'HTML del documento appena scaricato — da un `res.clone().text()` preso **prima** di
+`ricostruisci()`, che consuma il corpo — ne estrae gli attributi `src`/`href` che cominciano per
+`/_next/` e li scarica e conserva insieme al documento (`precaricaSottoRisorse`). Il filtro su cosa
+si può scrivere resta **`conservabile()`, che esisteva già**: in sviluppo i chunk non sono immutabili
+e continuano a non entrare in cache. Un pezzo che non arriva non porta via il documento, ma non è
+muto: `sw-precache-pezzi-offline-incompleta` (un pre-cache a metà è il seme dell'error boundary).
+Scartata l'alternativa «rendere /offline una pagina senza componenti client»: riaprirebbe l'incidente
+del doppio elenco già chiuso il 02/08.
+
+**L'assunto sbagliato viveva in quattro commenti** — «un chunk che non carica = idratazione
+impossibile», vero solo se falliscono **tutti** — e sono stati riscritti (`script-offline.ts` ×3,
+`ContenutoOffline.tsx`). Difesa: 7 casi nuovi in `__tests__/offline/sw.test.ts`, fra cui uno che
+rilegge dalla cache il documento **salvato** e pretende che ogni `/_next/` che referenzia sia a sua
+volta in cache. Impronta `IMPRONTA-PAGINA-OFFLINE` aggiornata; ⚠️ **`VERSIONE` (`v4`) va alzata al
+rilascio**, com'è scritto sopra la sua dichiarazione. Nessuna migrazione, nessuna scrittura sul DB.
+
+---
+
+## 🗓️ Changelog — Il gemello scoperto: `PATCH /api/gallery` rispondeva col NOME di un minore di un'altra sede 2026-08-03 (branch `chore/conferme-umane`)
+
+Collaudo T05-F1. Il 31/07 il tagging della galleria era stato chiuso: `POST /api/gallery` verifica
+che ogni bambino in `tag_students` sia nei plessi di chi pubblica, e nega **403 senza dire quali**.
+Il presidio però era stato scritto **dentro l'handler della POST** — venti righe, non una primitiva —
+e il `PATCH`, che i tag li accetta esattamente allo stesso modo, non l'ha mai avuto:
+
+```
+PATCH /api/gallery {"id":"<un mio media>","tag_students":["<uuid di un minore di un'altra sede>"]}
+  ⇒ 422 { "nomi": ["<nome e cognome veri>"], "ids": [...] }
+```
+
+cioè il nome di un bambino di un altro plesso, **più l'informazione che gli manca la liberatoria
+fotografica**, servito a chiunque ne conosca l'uuid — e un uuid non è un segreto. È la stessa fuga
+del 31/07, riaperta un metro più in là.
+
+**La causa non è una dimenticanza, è dove viveva la regola.** La precondizione di
+`alunniSenzaConsenso` («il chiamante ha già verificato che quegli alunni siano suoi») stava in un
+**commento**, che per giunta rimandava a una riga di `gallery/route.ts` diventata nel frattempo
+un'altra cosa. Un compilatore i commenti non li legge: dei due chiamanti uno rispettava la
+precondizione e l'altro no. **Una precondizione che non sta nella firma è un auspicio.**
+
+**Cosa cambia.** (a) Nasce `src/lib/gallery/tag-scope.ts` con `assertTagStudentsInScope(supabase,
+tag, sedi, operazione)`: **una** funzione, chiamata da POST *e* PATCH, 403 senza nomi né id nel corpo
+e log di soli conteggi. La copia dentro la POST è stata tolta, non affiancata. (b)
+`alunniSenzaConsenso` prende un terzo parametro **obbligatorio** `sedi` e filtra
+`.in('scuola_id', sedi)` — stesso modello di `verificaConsensoSito` (news): un id che non torna
+indietro non è «senza consenso», è **non verificabile**, blocca lo stesso ma **senza pronunciare
+nessun nome**. Scope vuoto ⇒ nega. (c) Nel PATCH si guardano i tag **effettivi** (gemello del
+controllo sul broadcast): un media che porta ancora un tag fuori sede non si modifica finché quel tag
+c'è, e la via d'uscita è la stessa richiesta con i tag corretti. (d) Due codici d'errore nuovi,
+tradotti IT/EN: `TAG_FUORI_SEDE` (403, non dice **quali** bambini di proposito) e
+`VERIFICA_TAG_NON_RIUSCITA` (500: un guasto di lettura non si traveste da «non sono tuoi»).
+
+**I test che dicevano il falso, e sono la parte che conta.** L'intestazione di
+`gallery-tag-students-scope.test.ts` prometteva «POST/PATCH» ma il file importava **solo `POST`**:
+tre `it` su un handler solo, mentre l'altro era scoperto. Ora i casi girano su entrambi. In
+`gallery-privacy.test.ts` il finto client rispondeva alla `.in('scuola_id', …)` con **tutte** le
+righe di quella sede ignorando il filtro sugli id: la sua `it` sul PATCH sarebbe rimasta verde anche
+coi tag di un altro plesso — un mock che tace è peggio di un mock che manca. La voce di allowlist
+`gallery:PATCH` del lock d'isolamento esentava l'**intero** handler: ora nomina la singola query che
+copre (i media caricati da chi chiama, chiave = la sua stessa identità).
+
+Prova di validità eseguita tre volte: tolto il gate dal PATCH → 5 test rossi (422 dove serve 403);
+tolto `.in('scuola_id', sedi)` dalla primitiva → il test torna «Uno Prova / Due Prova» invece degli
+uuid, cioè il nome esce davvero; tolto il gate dalla POST → 4 test rossi. Nessuna migrazione, nessuna
+scrittura sul DB: in produzione `galleria_media_v2` è vuota, il difetto era **latente**.
+
+---
+
+## 🗓️ Changelog — La quarta rotta che pubblicava senza chiedere, e la foto che restava pubblica dopo la cancellazione 2026-08-03 (branch `chore/conferme-umane`)
+
+Collaudo T18-F1 + V4. Il bucket `news` è l'unico **PUBBLICO** dei tredici: servito a chiunque
+conosca l'indirizzo, senza login. Il consenso al canale «sito» era già controllato in tre punti, e
+tre punti non bastavano — sempre per la stessa causa, **una regola valida per N strade e scritta su
+N-1**. Quattro buchi chiusi, e un lock perché non ce ne sia un quinto.
+
+**(a) `POST /api/news/[id]/approva` non chiamava il gate.** La segreteria approva la proposta di un
+docente e, nel ramo normale (`pubblica_subito !== false`), la rende visibile nello stesso istante:
+`grep gateConsensoFoto src/` dava tre chiamanti e questa rotta non era fra loro. Un docente propone
+l'articolo con la foto di un bambino, la famiglia revoca, la segreteria approva → foto online, gate
+formale verde. Ora il gate sta fra il controllo di stato e la costruzione di `updates`, **solo sul
+ramo che rende visibile subito**: approvare tenendo il post in bozza, programmarlo e RIFIUTARE non
+mettono niente online, e bloccare il rifiuto renderebbe il gate un ostacolo alla revoca stessa.
+
+**(b) `DELETE /api/news/[id]` cancellava la riga e lasciava il file.** L'articolo spariva dal sito,
+l'immagine del minore restava al suo indirizzo pubblico — e senza più nessuna riga che la nominasse:
+né `verificaPermanenzaConsenso` (legge `news_posts`) né `obliaFotoNewsAlunno` (cerca l'uuid in
+`bambini_ritratti`) potevano più arrivarci. Guasto **invisibile e permanente**, prodotto dal gesto
+che sembra il più definitivo. La regola «PRIMA il file (verificato), POI la riga» esisteva già dentro
+il ritiro: è stata **estratta** in `liberaFilePubbliciDelPost` e chiamata da entrambi. Se i file non
+escono, la riga non si tocca → 503 `NEWS_FILE_NON_RIMOSSI` (codice nuovo, tradotto IT/EN).
+
+**(c) Le foto ferme in BOZZA non le guardava nessuno.** Un media diventa pubblico alla **creazione**
+(`promuoviMediaBozza`), non alla pubblicazione; la sorveglianza però passava solo su
+`pubblicata`/`programmata`. Un articolo abbandonato in bozza teneva la foto del bambino a un
+indirizzo pubblico a tempo indeterminato, e la revoca non ci arrivava mai. `STATI_ESPOSTI` diventa
+**`STATI_SORVEGLIATI`** (`+ bozza, proposta`); `nascosta` resta fuori di proposito, ed è ciò che
+rende la passata idempotente. La domanda giusta non è «questo post si vede?» ma «un file di questo
+post può stare nel bucket pubblico?».
+
+**(c-bis) `obliaFotoNewsAlunno` era scritta, testata e non chiamata da nessuna parte.** Ora
+`anonimizzaAlunno` la chiama (punto 3g-bis): l'oblio toglie l'articolo dalla vista, il file dal
+bucket e l'uuid dalla dichiarazione **subito**, invece di aspettare fino a dieci minuti il tick.
+`REGISTRO_BUCKET_OBLIO.news` passa da `coperto-fuori-oblio` a **`coperto` / canale `alunno`** — e il
+lock che verifica il registro contro il codice (`gdpr-oblio-completo`) adesso lo copre davvero.
+
+**(d) Il lock, perché non ci sia una quinta strada** —
+`__tests__/architecture/news-pubblicazione-gated.test.ts`: enumera da solo le rotte sotto
+`src/app/api/news/**` che mettono un post in `pubblicata` o che inseriscono in `news_posts` e
+pretende che ciascuna nomini `gateConsensoFoto`; chi cancella deve nominare
+`liberaFilePubbliciDelPost`. Una sola eccezione, il tick del cron, **con motivo scritto e controllo
+positivo** che il meccanismo alternativo (`verificaPermanenzaConsenso`) sia davvero nel file: una
+allowlist che si limitasse a esentare sarebbe un modo elegante di riaprire il buco.
+
+In produzione oggi: 3 post pubblicati, 0 con `copertina_url`, 0 con `bambini_ritratti` — il difetto
+era **latente, non in atto**. Nessuna migrazione, nessuna scrittura sul DB.
+
+---
+
+## 🗓️ Changelog — Venti collaudi in venti chat: il kit di collaudo manuale 2026-08-03 (branch `chore/conferme-umane`)
+
+Nessuna riga di prodotto toccata: questo lavoro aggiunge **documentazione operativa**. Il repo
+aveva già `/ship-cycle`, che collauda da solo con 11 tester dentro una chat sola. Mancava il modo
+di collaudare **a mano, in parallelo, con venti chat separate** — che è quello che serve quando si
+vuole guardare una cosa alla volta fino in fondo, e quando il collaudo deve poter essere ripetuto
+senza far girare la pipeline.
+
+### 1. Il catalogo dei tipi di test — `docs/collaudo/00-TIPI-DI-TEST.md`
+
+Ricerca su cosa si collauda prima di un rilascio, riportata sul prodotto vero: livelli della
+piramide, intenti (smoke, sanity, regressione, esplorativo, limiti, migrazione dati), non
+funzionali (prestazioni, sicurezza, privacy, accessibilità, compatibilità, localizzazione,
+osservabilità, resilienza), **processo di rilascio** (parità d'ambiente, rollback, canary, smoke
+post-deploy, backup), mobile e store, contenuti. La tabella che conta è quella finale: **cosa il
+gate automatico copre già, e cosa resta scoperto**. La colonna di destra è costruita sui difetti
+che qui sono passati **col gate verde** — le email ferme con un `403` senza corpo, l'isolamento fra
+sedi con 3424 test verdi, il loop biometrico Android.
+
+### 2. Venti prompt atomici — `docs/collaudo/prompt/tester-01…20`
+
+Uno per collaudo, autosufficienti. Ognuno porta i comandi veri di questo repo, i lock architetturali
+che lo riguardano, e **le trappole già pagate** nel suo dominio (`VERSIONE` in `sw.js` che tiene
+ferme le correzioni offline sui telefoni; `10.0.2.2` su Android contro `localhost` su iOS;
+`-project` e non `-workspace` per Capacitor 8; `waitFor` su un'asserzione già vera che passa
+subito e non prova niente).
+
+Due vincoli sono cablati in ogni prompt perché venti chat girano **insieme sullo stesso albero di
+lavoro**: nessun `git`, nessun `npm install`, e una tabella di proprietà delle risorse (la suite
+intera e la build sono del tester 01, l'emulatore Android del 14, il simulatore iOS del 15).
+Il terzo vincolo è il database: `.env.local` punta a **produzione**, quindi **solo `SELECT`**,
+solo `GET` verso le API, e nessun salvataggio dall'interfaccia.
+
+Ogni prompt chiede una **prova di validità** prima di concedere un `PASS`: dimostrare che il
+collaudo *saprebbe* fallire. È la regola che qui ha già smascherato due test falsi verdi.
+
+### 3. Il formato e la sintesi — `MODELLO-REPORT.md`, `SINTESI.md`
+
+Lo schema del report è quello già in uso dagli agenti `tester-opus-*` (categoria · comandi ·
+verdetto · fallimenti con `file:riga`, causa radice e riproduzione · **warning anche quando il
+verdetto è PASS**), con in testa un blocco YAML che rende i venti report sommabili senza
+rileggerli. `SINTESI.md` è il prompt della chat finale: deduplica, **verifica adversariale dei
+bloccanti**, ricerca della causa radice comune, piano di correzione ordinato, e l'elenco di cosa
+è rimasto scoperto.
+
+### 4. Dove finiscono i risultati
+
+`docs/collaudo/risultati/` è **esclusa da git** (`.gitignore`): i report nascono leggendo il
+database di produzione, il repository è pubblico. I prompt sono versionati, i risultati no.
+
+`CLAUDE.md` guadagna il collegamento che fa funzionare la frase in una chat nuova: **«tu sei il
+tester n. X»** → apri `docs/collaudo/prompt/tester-XX-*.md` e seguilo.
+
+Gate a repo fermo: nessuna modifica a `src/`, nessuna migrazione, nessuna variabile d'ambiente
+nuova. Documentazione e `.gitignore`.
+
+---
+
 ## 🗓️ Changelog — I sei E2E rossi: un puntino di sospensione, e una sede in meno di quante ce ne sono 2026-08-02 (branch `fix/multisede-audit-globale`)
 
 `Lint · Typecheck · Unit` verde, `E2E (Playwright)` rosso: **6 test su 48**, merge bloccato

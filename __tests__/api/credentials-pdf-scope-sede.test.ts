@@ -44,25 +44,42 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
-vi.mock('@supabase/supabase-js', async () => {
+
+/**
+ * IL FINTO CLIENT va montato su DUE moduli.
+ *
+ * La route prende il client dal factory strumentato (`@/lib/supabase/server-client`), non più
+ * da `createClient` di `@supabase/supabase-js`: fingere solo il secondo non intercettava più
+ * niente e il test girava contro un client VERO — che, prima di `test.env` in
+ * `vitest.config.ts`, puntava alla PRODUZIONE. Il pacchetto grezzo resta finto lo stesso, così
+ * un eventuale ritorno indietro non arriva alla rete.
+ */
+async function fintoConStorage() {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  return {
-    createClient: () => {
-      const client = creaFintoSupabase(h.db, h.tabelle) as unknown as Record<string, unknown>
-      // Il finto client LANCIA su `storage.from(...)`: qui lo si sostituisce con
-      // uno storage che registra gli accessi, così «non ha scaricato» è una
-      // proprietà verificata e non un'assenza dedotta dallo stato HTTP.
-      client.storage = {
-        from: () => ({
-          download: async (key: string) => {
-            h.scaricate.push(key)
-            return { data: new Blob(['%PDF-1.4 finto'], { type: 'application/pdf' }), error: null }
-          },
-        }),
-      }
-      return client
-    },
+  return () => {
+    const client = creaFintoSupabase(h.db, h.tabelle) as unknown as Record<string, unknown>
+    // Il finto client LANCIA su `storage.from(...)`: qui lo si sostituisce con
+    // uno storage che registra gli accessi, così «non ha scaricato» è una
+    // proprietà verificata e non un'assenza dedotta dallo stato HTTP.
+    client.storage = {
+      from: () => ({
+        download: async (key: string) => {
+          h.scaricate.push(key)
+          return { data: new Blob(['%PDF-1.4 finto'], { type: 'application/pdf' }), error: null }
+        },
+      }),
+    }
+    return client
   }
+}
+
+vi.mock('@/lib/supabase/server-client', async () => {
+  const crea = await fintoConStorage()
+  return { createAdminClient: async () => crea(), createClient: async () => crea() }
+})
+vi.mock('@supabase/supabase-js', async () => {
+  const crea = await fintoConStorage()
+  return { createClient: () => crea() }
 })
 
 import { GET } from '@/app/api/admin/credentials-pdf/route'

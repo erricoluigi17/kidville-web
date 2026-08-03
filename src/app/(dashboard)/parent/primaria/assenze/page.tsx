@@ -8,6 +8,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { AlertCircle, Check } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Presenza {
   id: string; data: string; stato: string;
@@ -77,7 +78,8 @@ function AssenzeGenitore() {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
     });
     const d = await r.json();
-    if (!r.ok) { setMsg(d.error || t('assenzeErroreOtp')); setOtpTarget(null); return; }
+    // Niente prosa del server: è italiana per costruzione (T10-F1).
+    if (!r.ok) { setMsg(soloCatalogoDaCorpo(d, t('assenzeErroreOtp'))); setOtpTarget(null); return; }
     setOtpState(d.data);
   };
 
@@ -91,7 +93,7 @@ function AssenzeGenitore() {
     });
     const d = await r.json();
     setFirmando(false);
-    if (!r.ok) { setMsg(d.error || t('assenzeGiustNonRiuscita')); return; }
+    if (!r.ok) { setMsg(soloCatalogoDaCorpo(d, t('assenzeGiustNonRiuscita'))); return; }
     setOtpState(null); setOtpCode(''); setOtpTarget(null); setMotivo('');
     setMsg(t('assenzeGiustificataMsg'));
     carica();

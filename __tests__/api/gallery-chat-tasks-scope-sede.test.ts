@@ -36,6 +36,8 @@ const ALU_B = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
 const ALU_SENZA_SEDE = 'c3c3c3c3-3333-4333-8333-cccccccccccc'
 
 const MEDIA_MIO = 'd0d0d0d0-0000-4000-8000-dddddddddddd'
+/** Lo stesso media, ma senza il tag «di deriva» su un bambino dell'altra sede. */
+const MEDIA_MIO_PULITO = 'd5d5d5d5-5555-4555-8555-dddddddddddd'
 const MEDIA_ALTRUI_A = 'd1d1d1d1-1111-4111-8111-dddddddddddd'
 const MEDIA_SENZA_SEDE = 'd2d2d2d2-2222-4222-8222-dddddddddddd'
 const MEDIA_BC_A = 'd3d3d3d3-3333-4333-8333-dddddddddddd'
@@ -211,7 +213,12 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
     h.db.galleria_media_v2 = [
       { id: MEDIA_SENZA_SEDE, scuola_id: null, uploaded_by: ED_ALTRO, is_broadcast: false, tag_students: [], target_classes: [CLASSE_A], caption: 'originale' },
       { id: MEDIA_ALTRUI_A, scuola_id: SEDE_A, uploaded_by: ED_ALTRO, is_broadcast: false, tag_students: [], target_classes: [CLASSE_OMONIMA], caption: 'della sede A' },
+      // MEDIA_MIO porta un tag su un bambino della sede B: è la «deriva storica»
+      // che serve ai due test sulla derivazione del nome-classe qui sotto.
       { id: MEDIA_MIO, scuola_id: SEDE_A, uploaded_by: ED_A, is_broadcast: false, tag_students: [ALU_B], target_classes: null, caption: 'mio' },
+      // …e questo è lo stesso media SENZA quell'anomalia: serve a provare che il
+      // gate dei tag (T05-F1) non ha ristretto la modifica legittima.
+      { id: MEDIA_MIO_PULITO, scuola_id: SEDE_A, uploaded_by: ED_A, is_broadcast: false, tag_students: [ALU_A], target_classes: null, caption: 'mio pulito' },
     ]
   })
 
@@ -221,7 +228,7 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
     h.requireDocente.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_SENZA_SEDE}`))
     expect(res.status).toBe(403)
-    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO])
+    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO, MEDIA_MIO_PULITO])
   })
 
   it('PATCH: 403 sul media con `scuola_id` NULL, e la didascalia non cambia', async () => {
@@ -253,13 +260,42 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
   it('DELETE: il proprio media resta cancellabile (controllo positivo)', async () => {
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_MIO}`))
     expect(res.status).toBe(200)
-    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A])
+    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO_PULITO])
   })
 
   it('PATCH: il proprio media resta modificabile (controllo positivo)', async () => {
-    const res = await GALLERY_PATCH(patchReq({ id: MEDIA_MIO, caption: 'nuova didascalia' }))
+    const res = await GALLERY_PATCH(patchReq({ id: MEDIA_MIO_PULITO, caption: 'nuova didascalia' }))
     expect(res.status).toBe(200)
-    expect(h.db.galleria_media_v2.find((m) => m.id === MEDIA_MIO)?.caption).toBe('nuova didascalia')
+    expect(h.db.galleria_media_v2.find((m) => m.id === MEDIA_MIO_PULITO)?.caption).toBe('nuova didascalia')
+  })
+
+  // ── Il tag fuori sede CONGELA il media finché c'è (T05-F1, 2026-08-03) ──────
+  // Dal gate sui tag EFFETTIVI discende una conseguenza che è giusto mettere
+  // nero su bianco: un media che porta ancora un tag su un bambino di un altro
+  // plesso — deriva storica, o un bambino trasferito — non si modifica finché
+  // quel tag c'è. È fail-closed su un'anomalia, e la via d'uscita è la stessa
+  // richiesta: si rimandano i tag corretti e la riga torna modificabile.
+  // (In produzione, al 2026-08-03, `galleria_media_v2` è vuota: nessun media
+  // storico da sanare.)
+  it('PATCH: la sola didascalia su un media con un tag fuori sede → 403 che non nomina nessuno', async () => {
+    const res = await GALLERY_PATCH(patchReq({ id: MEDIA_MIO, caption: 'nuova didascalia' }))
+    expect(res.status).toBe(403)
+    const corpo = JSON.stringify(await res.json())
+    expect(corpo).not.toContain('Bea')
+    expect(corpo).not.toContain('Beta')
+    expect(corpo).not.toContain(ALU_B)
+    expect(h.db.galleria_media_v2.find((m) => m.id === MEDIA_MIO)?.caption).toBe('mio')
+    expect(esiti('galleria')).toContainEqual(
+      expect.objectContaining({ operazione: 'gallery:PATCH', esito: 'tag-fuori-sede', taggati: 1, fuoriSede: 1 }),
+    )
+  })
+
+  it('PATCH: correggendo i tag nella stessa richiesta, la riga torna modificabile', async () => {
+    const res = await GALLERY_PATCH(patchReq({ id: MEDIA_MIO, tag_students: [ALU_A], caption: 'sanata' }))
+    expect(res.status).toBe(200)
+    const riga = h.db.galleria_media_v2.find((m) => m.id === MEDIA_MIO)
+    expect(riga?.caption).toBe('sanata')
+    expect(riga?.tag_students).toEqual([ALU_A])
   })
 })
 

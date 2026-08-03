@@ -191,5 +191,8 @@
   "lockerSpostaSu": "Move up",
   "lockerSpostaGiu": "Move down",
   "lockerCaricaMateriale": "Record a stock load",
-  "lockerChiudiCarico": "Close"
+  "lockerChiudiCarico": "Close",
+  "galleryAlertVideoNonConvertibile": "This video cannot be converted on this device. On iPhone: Settings → Camera → Formats → \"Most Compatible\", then record again. Alternatively upload an .mp4 (H.264) or .webm file.",
+  "galleryAlertVideoFormatoNonSupportato": "Unsupported video format ({tipo}). Upload an .mp4 (H.264) or .webm file: .mov/HEVC videos (typical of iPhone) must be converted before uploading.",
+  "galleryAlertVideoOltreIlLimite": "The video exceeds the 50 MB limit (current size: {dimensione}). Shorten it or lower its quality, then try again."
 }

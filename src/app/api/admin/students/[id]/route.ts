@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireEnv } from '@/lib/security/require-env';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope } from '@/lib/auth/scope';
@@ -20,16 +20,20 @@ export const GET = withRoute('admin/students/[id]:GET', async (
         const auth = await requireStaff(request);
         if (auth.response) return auth.response;
 
-        const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
+        // Factory STRUMENTATO, non `createClient` di supabase-js: senza, questa route non aveva
+        // né tetto di tempo né osservabilità sul `{ error }` di PostgREST — e legge il fascicolo
+        // completo di un minore. Vedi `src/lib/supabase/server-client.ts` e il lock
+        // `__tests__/architecture/supabase-client-strumentato.test.ts`.
+        //
+        // ⚠️ CADE IL RIPIEGO SULLA CHIAVE ANON, ed è un miglioramento voluto. Prima, se
+        // `SUPABASE_SERVICE_ROLE_KEY` mancava, il client si costruiva con la chiave ANON: la RLS
+        // sarebbe entrata in gioco e `assertAlunnoInScope` avrebbe letto zero righe — cioè un
+        // 403 «alunno di un'altra sede» al posto di «manca la configurazione». Un guasto di
+        // configurazione travestito da esito applicativo è esattamente ciò che la regola 4 di
+        // AGENTS.md vieta. Ora manca la chiave → 503 che lo dice.
+        const missingEnv = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
         if (missingEnv) return missingEnv;
-        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-        if (!supabaseKey) {
-            return NextResponse.json(
-                { error: 'configurazione mancante: SUPABASE_SERVICE_ROLE_KEY' },
-                { status: 503 }
-            );
-        }
-        const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL as string, supabaseKey);
+        const supabaseAdmin = await createAdminClient();
 
         // Param dinamico: id alunno, usato come uuid nelle query (M3).
         const { id } = await context.params;

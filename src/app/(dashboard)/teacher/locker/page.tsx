@@ -436,7 +436,9 @@ function TeacherLockerInner() {
                                                                         <button
                                                                             onClick={handleConsumo}
                                                                             disabled={consumoSaving || consumoQty > item.stock}
-                                                                            className="flex-1 h-9 bg-kidville-warn text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-kidville-warn-dark active:scale-95 transition-all"
+                                                                            // `hover:bg-kidville-warn-dark` non esisteva → l'hover non cambiava
+                                                                            // nulla. `warn-strong` è il tono scuro del caldo: bianco 5,61:1.
+                                                                            className="flex-1 h-9 bg-kidville-warn text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-kidville-warn-strong active:scale-95 transition-all"
                                                                         >
                                                                             {consumoSaving ? '...' : t('lockerConferma')}
                                                                         </button>

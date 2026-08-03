@@ -375,8 +375,19 @@ describe('POST /api/news/[id]/approva', () => {
     expect(res.status).toBe(409)
   })
 
-  it('approva + pubblica subito → approvata_da valorizzato e notifica', async () => {
-    h.post = { id: POST_ID, scuola_id: 'sc-1', stato: 'proposta', titolo: 'T', target_scope: 'globale', invia_notifica: true, notifica_inviata_il: null }
+  it('approva + pubblica subito una proposta SENZA foto → approvata_da valorizzato e notifica', async () => {
+    // Fino al 2026-08-03 questo test diceva soltanto «approva → pubblicata», e
+    // restava verde su QUALUNQUE proposta: la rotta non passava dal gate del
+    // consenso fotografico, quarta strada dello stesso difetto (T18-F1). Ora la
+    // proposta è dichiarata senza foto — `copertina_url: null`, niente nodi
+    // immagine — perché è quella la ragione per cui qui il gate non scatta, non
+    // il fatto che non esista. Il gate ha il suo file:
+    // `__tests__/api/news-consenso-foto-approva.test.ts`.
+    h.post = {
+      id: POST_ID, scuola_id: 'sc-1', stato: 'proposta', titolo: 'T', target_scope: 'globale',
+      invia_notifica: true, notifica_inviata_il: null,
+      copertina_url: null, contenuto_json: null, bambini_ritratti: null,
+    }
     const res = await APPROVA(bodyReq({ esito: 'approva', pubblica_subito: true }), params())
     expect(res.status).toBe(200)
     expect(h.lastUpdate?.stato).toBe('pubblicata')

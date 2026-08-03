@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { doLogout } from '@/lib/auth/logout';
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { biometriaDisponibile, biometriaAttiva, impostaBiometria, verificaBiometria } from '@/lib/native/biometric';
 
 // Pagina «Profilo e deleghe» (attiva il placeholder della BottomNav). Contiene i
@@ -104,7 +105,8 @@ function Inner() {
         method: 'POST', headers: hdr(userId), body: JSON.stringify({ conferma }),
       });
       const j = await res.json();
-      if (!res.ok) { setErrore(j.error || t('erroreGenerico')); return; }
+      // Niente prosa del server: è italiana per costruzione (T10-F1).
+      if (!res.ok) { setErrore(soloCatalogoDaCorpo(j, t('erroreGenerico'))); return; }
       setConferma('');
       await carica();
     } catch {

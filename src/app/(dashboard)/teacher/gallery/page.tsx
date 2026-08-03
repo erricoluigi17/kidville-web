@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Tag, WifiOff } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -10,11 +10,31 @@ import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
-import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
-import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
+import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, type MotivoVideoNonValido } from '@/lib/media/processing';
+import { analizzaContenutoVideo } from '@/lib/media/codec-sniff';
 import { logClient } from '@/lib/logging/client';
+import { messaggioErrore, messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { formattaMegabyte } from '@/lib/i18n/numero';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
+
+// =============================================================================
+// GLI ERRORI DEL SERVER SI LEGGONO NELLA LINGUA DELL'INTERFACCIA (2026-08-03).
+//
+// Questa pagina mostrava i rifiuti così: `alert(errData.error || t('…'))`, cioè
+// la PROSA del server — che nasce dentro una route, dove il locale non esiste, e
+// quindi nasce italiana. Con `<html lang="en">` una maestra leggeva «Uno o più
+// bambini taggati non appartengono ai tuoi plessi.», mentre il `codice` che
+// serve a tradurla (`TAG_FUORI_SEDE`) viaggiava nella stessa risposta e le
+// chiavi erano già in `messages/it` e `messages/en`. Nessuno le leggeva.
+//
+// Da oggi ogni messaggio che nasce da una RISPOSTA passa da `messaggioErrore`
+// (o da `messaggioDaCorpo`, quando il corpo serve anche per altro: il 422 del
+// Privacy Lock porta `nomi`, e un corpo si legge una volta sola). Gli `alert`
+// che NON leggono una risposta — «Tag aggiornati», «Media eliminato», gli errori
+// di rete, i limiti dei video — restano `t(…)`: sono già nella lingua giusta, e
+// farli passare da qui non avrebbe senso perché non c'è nessuna `Response`.
+// =============================================================================
 
 interface Student {
     id: string;
@@ -28,7 +48,45 @@ type Step = 'gallery' | 'upload' | 'tag';
 
 function TeacherGalleryContent() {
     const t = useTranslations('teacherServizi');
+    // La lingua dell'INTERFACCIA (cookie `KV_LOCALE`), non quella del runtime:
+    // serve a formattare i numeri che finiscono dentro le frasi qui sotto.
+    const locale = useLocale();
     const { userId: teacherId } = useSessionIdentity();
+
+    /**
+     * Il motivo per cui un video è stato rifiutato, nella lingua dell'interfaccia.
+     *
+     * La DECISIONE resta in `validateVideoFile` (una sola, condivisa con chiunque
+     * altro la usi); qui si sceglie solo come DIRLA. Prima si mostrava `val.error`,
+     * che quella libreria costruisce in italiano perché gira anche sul server: con
+     * l'interfaccia in inglese era prosa italiana a schermo, come il 403 dei tag.
+     * `val.error` resta il ripiego per un motivo che il catalogo ancora non
+     * conosce: meglio una frase nella lingua sbagliata che nessuna frase.
+     */
+    const motivoVideoNonValido = (
+        codice: MotivoVideoNonValido | undefined,
+        file: File,
+        ripiego: string | undefined,
+    ): string => {
+        if (codice === 'formato-non-supportato') {
+            return t('galleryAlertVideoFormatoNonSupportato', { tipo: file.type || '—' });
+        }
+        if (codice === 'file-troppo-grande') {
+            // La dimensione arriva GIÀ FORMATTATA, unità compresa: `MB` è un
+            // simbolo invariante e — come gli importi in euro — non entra nella
+            // frase come parola separata (cfr. il lock `messaggi-plurali-e-glossario`,
+            // che su «{n} parola» chiede la forma ICU plurale, qui fuori luogo).
+            //
+            // ⚠️ E il SEPARATORE decimale segue la lingua dell'INTERFACCIA, non
+            // quella del runtime. Qui c'era `toLocaleString(undefined, …)`, che
+            // `undefined` lo risolve sul sistema operativo di chi guarda (o sul
+            // processo, lato server): con interfaccia inglese su un browser
+            // italiano usciva «50,3 MB» dentro una frase inglese. Stesso difetto
+            // delle date, stessa medicina: il locale è un parametro.
+            return t('galleryAlertVideoOltreIlLimite', { dimensione: formattaMegabyte(file.size, locale) });
+        }
+        return ripiego ?? t('galleryErrCaricamentoGenerico');
+    };
 
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
@@ -250,7 +308,10 @@ function TeacherGalleryContent() {
                             // Conversione impossibile su questo dispositivo: messaggio azionabile e
                             // SKIP del file (gli altri file del batch proseguono). Nessun log con PII.
                             logClient({ livello: 'warn', evento: 'js', messaggio: 'gallery-video-conversione-fallita', route: '/teacher/gallery', stato: 415 });
-                            alert(MESSAGGIO_VIDEO_NON_CONVERTIBILE);
+                            // Il testo di `MESSAGGIO_VIDEO_NON_CONVERTIBILE` vive in una
+                            // libreria condivisa client+server e nasce italiano: qui il
+                            // locale c'è, quindi si mostra la frase del catalogo.
+                            alert(t('galleryAlertVideoNonConvertibile'));
                             continue;
                         } finally {
                             setConvertingIndex(null);
@@ -258,7 +319,7 @@ function TeacherGalleryContent() {
 
                         const val = validateVideoFile(videoFile);
                         if (!val.valid) {
-                            alert(val.error);
+                            alert(motivoVideoNonValido(val.codice, videoFile, val.error));
                             continue;
                         }
                         processedFile = videoFile;
@@ -266,9 +327,14 @@ function TeacherGalleryContent() {
                         // Già riproducibile (H.264/webm): watermark + compressione, con fallback
                         // all'originale ammesso (il codec è già compatibile).
                         if (f.file.size > MAX_SIZE) {
+                            // Il gemello del messaggio qui sopra, e con lo stesso
+                            // difetto al contrario: qui il locale era CABLATO a
+                            // `it-IT`, quindi l'interfaccia inglese leggeva «50,3».
+                            // `unita: false` perché questa frase il «MB» ce l'ha
+                            // già scritto dentro, in tutti e due i cataloghi.
                             alert(t('galleryAlertVideoTroppoGrande', {
                                 nome: f.file.name,
-                                dimensione: (f.file.size / (1024 * 1024)).toLocaleString('it-IT', { maximumFractionDigits: 1 }),
+                                dimensione: formattaMegabyte(f.file.size, locale, { unita: false }),
                             }));
                         }
                         setConvertingIndex(i);
@@ -281,7 +347,7 @@ function TeacherGalleryContent() {
 
                         const val = validateVideoFile(videoFile);
                         if (!val.valid) {
-                            alert(val.error);
+                            alert(motivoVideoNonValido(val.codice, videoFile, val.error));
                             continue;
                         }
                         processedFile = videoFile;
@@ -323,8 +389,10 @@ function TeacherGalleryContent() {
                     });
 
                     if (!uploadRes.ok) {
-                        const uploadErrData = await uploadRes.json().catch(() => ({} as Record<string, unknown>));
-                        throw new Error(`«${f.file.name}»: ${uploadErrData.error || t('galleryErrCaricamentoFile')}`);
+                        // Il caricamento ha i suoi codici (tipo non ammesso, file troppo
+                        // grande, storage che rifiuta): tradotti, non serviti in italiano.
+                        const motivo = await messaggioErrore(uploadRes, t('galleryErrCaricamentoFile'));
+                        throw new Error(`«${f.file.name}»: ${motivo}`);
                     }
 
                     // Il bucket è privato: si salva il PERCORSO nel bucket, mai un
@@ -350,10 +418,15 @@ function TeacherGalleryContent() {
 
                     if (!res.ok) {
                         const errData = await res.json().catch(() => ({} as Record<string, unknown>));
+                        // Il corpo si legge UNA volta sola, e qui serve due volte: per il
+                        // messaggio e per `nomi`. Perciò `messaggioDaCorpo` e non
+                        // `messaggioErrore` — stessa decisione, corpo già in mano.
+                        const motivo = messaggioDaCorpo(errData, t('galleryErrSalvataggio'));
                         // Il 422 del Privacy Lock porta `nomi` (bambini senza liberatoria):
-                        // mostriamoli così l'insegnante sa chi togliere dai tag.
+                        // mostriamoli così l'insegnante sa chi togliere dai tag. Restano in
+                        // chiaro a schermo e SOLO lì: nei log non entrano mai (sono minori).
                         const dettagli = Array.isArray(errData.nomi) && errData.nomi.length > 0 ? ` (${(errData.nomi as string[]).join(', ')})` : '';
-                        throw new Error(`«${f.file.name}»: ${errData.error || t('galleryErrSalvataggio')}${dettagli}`);
+                        throw new Error(`«${f.file.name}»: ${motivo}${dettagli}`);
                     }
                 }
             }
@@ -390,8 +463,11 @@ function TeacherGalleryContent() {
                 alert(t('galleryAlertEliminato'));
                 await loadMedia();
             } else {
-                const errData = await res.json();
-                alert(errData.error || t('galleryErrEliminazione'));
+                // Il rifiuto ADESSO era muto nei log: restava solo a schermo, e il
+                // giorno dopo «la foto c'è ancora» non aveva nessuna riga a cui
+                // risalire. `stato` distingue un 403 di sede da un 500.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-rifiutato', route: '/teacher/gallery', stato: res.status });
+                alert(await messaggioErrore(res, t('galleryErrEliminazione')));
             }
         } catch {
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-fallito', route: '/teacher/gallery' });
@@ -415,8 +491,10 @@ function TeacherGalleryContent() {
                 alert(t('galleryAlertTagAggiornati'));
                 await loadMedia();
             } else {
-                const errData = await res.json();
-                alert(errData.error || t('galleryErrTag'));
+                // Era `alert(errData.error || …)`: il 403 `TAG_FUORI_SEDE` usciva in
+                // italiano anche con l'interfaccia in inglese. Il log non c'era affatto.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-tag-rifiutato', route: '/teacher/gallery', stato: res.status });
+                alert(await messaggioErrore(res, t('galleryErrTag')));
             }
         } catch {
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-tag-fallito', route: '/teacher/gallery' });

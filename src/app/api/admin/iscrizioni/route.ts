@@ -207,6 +207,7 @@ async function assertDocumentoInScope(
       )
     }
     if (data) {
+      const riga = data as { id?: unknown; scuola_id?: unknown }
       // ─── IL REGISTRO DEGLI ACCESSI RIUSCITI (T06-F4) ───────────────────────
       //
       // Fino al 2026-08-03 restava una riga solo per i tentativi RESPINTI. Cioè
@@ -232,10 +233,10 @@ async function assertDocumentoInScope(
         azione: 'documento',
         utente: user.id,
         ruolo: user.role,
-        sede_id: (data as { scuola_id?: unknown }).scuola_id ?? null,
+        sede_id: typeof riga.scuola_id === 'string' ? riga.scuola_id : null,
         sedi_attive: sedi.length,
         entita_tipo: 'enrollment_submissions',
-        entita_id: (data as { id?: unknown }).id ?? null,
+        entita_id: typeof riga.id === 'string' ? riga.id : null,
       })
       return null
     }

@@ -247,7 +247,18 @@ export async function promuoviMediaBozza(
       promossi++
       promossiPercorsi.push(percorso)
     }
-    const { data } = supabase.storage.from(NEWS_BUCKET_BOZZE).getPublicUrl(percorso)
+    // IL BUCKET È QUELLO DI DESTINAZIONE, non quello di sosta: la `move()` qui sopra
+    // ha già portato il file in `NEWS_BUCKET`. Chiedendo l'indirizzo a
+    // `NEWS_BUCKET_BOZZE` si otteneva un URL che non corrisponde a nessun file — ma
+    // il guaio vero non è l'immagine rotta. `percorsoPubblicoNews`
+    // (`./permanenza-consenso`) riconosce SOLO il marcatore di `NEWS_BUCKET`: una riga
+    // che nomina il bucket di sosta viene scartata, `percorsiPubbliciDelPost` torna
+    // vuoto, e revoca del consenso, oblio del minore e `DELETE` non arrivano più al
+    // file — che intanto è PUBBLICO. È la stessa classe di V4/W1/X1, rientrata dalla
+    // porta della promozione. Il legame fra le due funzioni è ora fissato da un test
+    // (`__tests__/lib/news/media-bozza-promozione-oblio.test.ts`), perché un controllo
+    // sulla sola stringa dell'indirizzo vede il sintomo e non la conseguenza.
+    const { data } = supabase.storage.from(NEWS_BUCKET).getPublicUrl(percorso)
     pubblici.set(percorso, data.publicUrl)
   }
 

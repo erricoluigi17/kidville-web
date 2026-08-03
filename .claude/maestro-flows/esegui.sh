@@ -136,7 +136,12 @@ bonifica() {
   local dir="$DIR_LOG"
   [[ -d "$dir" ]] || return 0
   # Nomi che denunciano un segreto, ovunque finiscano: è la CLASSE, non l'elenco.
-  local classe='[A-Za-z0-9_]*(PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)='
+  # Il TRATTINO nella classe deve stare anche QUI, non solo nella sostituzione: questo
+  # `grep` decide QUALI file passano al perl, e un log che contenesse solo il cookie di
+  # sessione (`sb-<ref>-auth-token=`) non verrebbe nemmeno selezionato — la maschera
+  # corretta non girerebbe mai su di lui. Selezione e sostituzione devono conoscere la
+  # stessa classe: se divergono, la seconda è cieca su ciò che la prima non pesca.
+  local classe='[A-Za-z0-9_-]*(PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)='
   local n=0
   local residui=0
   local prima
@@ -148,7 +153,16 @@ bonifica() {
         BEGIN{$p=$ENV{PW}}
         s/\Q$p\E/***/g if length $p;
         # forma SHELL: NOME=valore
-        s/(^|[\s,({\[?&;])([A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY))=(?!\*\*\*)[^,)}\]\s]+/$1$2=***/gi;
+        # I TRATTINI e gli apici nella classe del nome NON sono un dettaglio (misurato il
+        # 2026-08-03, verifica adversariale W9r): il cookie di sessione Supabase si chiama
+        # `sb-<ref>-auth-token`, tutto minuscolo e con i trattini. Finiva per `token=`, cioè
+        # dentro la famiglia già dichiarata, e la maschera non lo vedeva lo stesso perché il
+        # nome poteva contenere solo `[A-Za-z0-9_]`. Le due lezioni in cima a questo file
+        # riguardavano i VALORI e poi i NOMI; questa è la terza dimensione rimasta fuori,
+        # l ALFABETO del nome. E non è un segreto minore: quel valore E la sessione — chi lo
+        # legge e dentro come quell utente, senza password e senza login, e i flow girano
+        # sugli account TEST di PRODUZIONE.
+        s/(^|[\s,({\[?&;"\x27])([A-Za-z0-9_-]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY))=(?!\*\*\*)[^,)}\]\s;"\x27]+/$1$2=***/gi;
         # forma JSON: "NOME" : "valore"  ← misurata il 2026-08-02, e la regola sopra NON la vedeva.
         # Maestro scrive un `commands-<flow>.json` accanto al maestro.log, e lì le variabili non
         # stanno come `NOME=valore` ma come coppie JSON. Erano 303 file e 855 occorrenze, DUE dei
@@ -157,7 +171,7 @@ bonifica() {
         # accanto al formato piu diffuso: un rimedio che copre una forma sola e cieco su tutte le
         # altre, che e esattamente la lezione gia scritta in cima a questo file per i VALORI e mai
         # applicata alle FORME.
-        s/("[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)"\s*:\s*")(?!\*\*\*")[^"]+(")/$1***$2/gi;
+        s/("[A-Za-z0-9_-]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|KEY)"\s*:\s*")(?!\*\*\*")[^"]+(")/$1***$2/gi;
         s/(Inputting text: )(?!\*\*\*)(?![^\s@]*@)(\S{8,})(?=\r?$)/$1***/gm;
       ' "$f"
       # Si conta ciò che è CAMBIATO, non ciò che è stato SELEZIONATO. Prima il

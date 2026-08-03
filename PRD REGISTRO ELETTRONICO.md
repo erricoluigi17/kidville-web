@@ -52,7 +52,7 @@
 > | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731123052_provisiona_sede_v2` |
 > | File negli Storage | ✅ `gallery`, `avvisi_allegati`, `task_allegati` **privati** con link firmati a scadenza breve; `news` **pubblico per scelta scritta** del titolare (blog verso l'esterno), dichiarato in migrazione | migr. `20260731192108`, `20260731192048` · `src/lib/gallery/storage.ts` · lock `bucket-storage-dichiarati` |
 > | Copertura dell'isolamento nel gate | ✅ lock per **handler** (non per file), per **scrittura**, su tabelle lette dallo schema, allowlist a match esatto `route:METODO` | `__tests__/architecture/isolamento-sede-coverage.test.ts` |
-> | Migrazioni ↔ database | ✅ **75** file = 75 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256` | lock `migrazioni-complete` |
+> | Migrazioni ↔ database | ✅ **94** file = 94 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256` | lock `migrazioni-complete` |
 > | Collaudo dell'isolamento | ✅ account TEST su Aversa e Cesa · account `test.multisede.admin` (solo accesso, tre sedi) per il selettore · seed E2E a **due** sedi con sezione omonima · `e2e/isolamento-sedi.spec.ts` | `scripts/seed-test-sedi.mjs`, `scripts/seed-e2e.mjs` |
 >
 > ### Moduli Implementati
@@ -86,6 +86,89 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## ✅ Changelog — Il lavoro interrotto, ripreso e PROVATO: gate verde, 4 test rossi chiusi, 8 rilievi privacy/sicurezza 2026-08-03 (branch `chore/conferme-umane`)
+
+**Questa voce sostituisce quella qui sotto**, che descriveva il lavoro come interrotto e a metà.
+La ripresa è partita da una **misura dell'albero**, non dalle note — ed è stata la decisione più
+utile della giornata: **le note erano sistematicamente in ritardo sul codice**. `X1`, `X2`, le
+difese dei test contro la produzione, `T17-F1/F2/F3` e l'N+1 degli avvisi risultavano «non chiusi»
+ed erano **già scritti**. Mancava la *prova*, non il codice.
+
+### Il gate, adesso
+`tsc --noEmit` ✅ · `eslint --max-warnings 0` ✅ · `vitest` **705 file / 6812 test, 0 rossi** ✅ ·
+**`npm run build` ✅** — il comando che nella sessione interrotta non era mai stato eseguito.
+
+### I 4 test rossi, chiusi per la ragione giusta
+- **Un bug vero, non in nessuno dei 95 rilievi**: `media-bozza.ts` chiedeva l'URL pubblico al bucket
+  di SOSTA dopo aver spostato il file in quello pubblico. `percorsoPubblicoNews` riconosce solo il
+  marcatore di `news`, quindi **revoca, oblio e DELETE non trovavano più la foto del bambino**,
+  che restava pubblica. Stessa classe di `V4`/`W1`/`X1`, rientrata dalla porta della promozione.
+  Impatto misurato in produzione: 3 post, 0 con l'indirizzo sbagliato — latente, non incidente.
+- `push-dispatch`: il test fissava il **difetto** `T17-F3` (push saltate *e* marcate come inviate).
+- `errori-con-codice`: risposta nata con `T17-F2` senza codice e col messaggio grezzo del database.
+- `catch-muti-allowlist`: `native-register` ripulito → voce tolta, tetti 58→57 e 88→87.
+
+### La verifica adversariale: 6 voci su 7 erano già integre
+Smontate con le cinque manomissioni del collaudo. `X1` (esclusi → un id solo) → 4 rossi su oblio e
+revoca; `X2` (via il `global.fetch`) → 4 rossi, uno aspetta 30 s; `W7r` (×10 sui tetti, poi via
+l'`AbortSignal`) → 14 rossi, tre aspettano davvero 5 s; `W34r` (sede dell'operatore invece del
+media) → 7 rossi, la fixture separa le due sedi; `W8r` (passi post-auth fuori dal budget) → 10+
+rossi. Riscritto il **caso perso**: «una foto sola, la sanificazione lancia» — saltando il ramo
+senza ciclo cade **un test solo**, quello nuovo: gli altri 17 promuovono due media ed erano ciechi
+sul caso più comune in produzione.
+
+**`W9r` era l'unico rilievo vero, e diverso da come era scritto**: il test «nessun cookie nei log»
+non è finto, *non esiste*, e la bonifica il cookie non lo toglieva. `sb-<ref>-auth-token` finisce
+per `token=` — famiglia già coperta — ma il nome ammetteva solo `[A-Za-z0-9_]` e quello ha i
+trattini. Terza volta che quel file impara la stessa lezione: prima i VALORI, poi i NOMI, ora
+l'**alfabeto** del nome. Quel valore *è* la sessione. Esposizione reale: 1919 file, **0** con un
+cookie in chiaro — correzione preventiva.
+
+### Privacy e sicurezza (G1/G2)
+- **`V1`** — `enrollment_submissions.consents_log` conserva ip e userAgent su **170 righe su 263**;
+  l'oblio riscriveva `data` e lasciava quella colonna intatta. Ora si tolgono ip e userAgent e
+  restano `accettato_il`/`versione_informativa`/`blocchi`, che sono la prova (art. 5 §2, 7 §1).
+  *Il rilievo era esatto: l'avevo prima archiviato come sbagliato cercando una tabella con quel
+  nome, che non esiste — è una colonna.*
+- **`V2`** — trovata cercando `V1`: **`push_subscriptions`** (77 righe, 77 user-agent, 4 utenti) non
+  era nominata neppure una volta nell'oblio. Ora la riga si cancella: l'`endpoint` è il recapito di
+  quel telefono, e lasciarlo significa che il dispositivo di chi se n'è andato continua a ricevere
+  le notifiche della scuola.
+- **`V3`** — due decisioni del titolare a un giorno di distanza che si contraddicono («nessuna
+  retention» il 31/07, «24 mesi» il 01/08). Le 93 domande raccolte senza informativa sono escluse
+  dalla cancellazione automatica e il rinvio si vede con un `warn`. **Resta una decisione umana.**
+- **`T06-F2`** — l'informativa non diceva per quanto si conservano le domande non accolte. Aggiunta
+  la voce (24 mesi) **più un lock** che tiene allineati il testo pubblico e `MESI_CONSERVAZIONE`.
+- **`T06-F4`** — «chi ha visto i dati di mio figlio?» non aveva risposta: si annotavano solo i
+  tentativi respinti. Ora l'accesso riuscito lascia una riga persistita, senza il percorso.
+- **`T06-F5`** — 93 famiglie mai informate, 119 indirizzi. Testo e query **pronti e NON inviati**:
+  `docs/privacy/2026-08-03-informativa-tardiva-93-domande.md`. Serve una decisione del titolare.
+- **`V5`** — `iscrizione/model:GET`, pubblica e anonima, apriva un client service-role e ci
+  **scriveva**. Tolta la scrittura, aggiunto il tetto per IP.
+- **`T04-F1`** — 14 funzioni di `public` eseguibili con la chiave pubblica. **La prima migrazione ha
+  risposto `success` e non ha cambiato niente**: l'ACL era `{=X/postgres,…}`, cioè PUBLIC, e
+  `REVOKE ... FROM anon` toglie un permesso che non c'è. A smascherarlo è stato rileggere i permessi
+  DOPO. Gravità corretta **verso il basso**: nessuna è `SECURITY DEFINER`, la RLS reggeva comunque.
+- **`T01-F1`** — Next **16.2.4 → 16.3.0**, che chiude il *Middleware/Proxy bypass in App Router*.
+  In questo repo `src/middleware.ts` **è** il gate di autenticazione. 13 → 10 vulnerabilità.
+  Restano dichiarate: `sharp` e `xlsx` (nessun fix a monte) e la catena `@capacitor/cli`, che è
+  build tooling e non finisce nel bundle.
+
+### Migrazioni
+Disco e produzione **allineati a 94** (erano 93 vs 94: il no-op era stato applicato e non
+esisteva su disco). Il file del no-op resta nel repo, con scritto perché non ha funzionato:
+cancellarlo lascerebbe in `schema_migrations` una riga che nessuno sa spiegare.
+
+### La lezione, che vale più delle correzioni
+Tre volte in questa giornata un'operazione ha **dichiarato successo senza fare niente**: la
+migrazione `REVOKE FROM anon`, un mio `echo "TSC OK"` stampato anche a `tsc` rosso (commit
+`743dd76`), e — nel lavoro del giorno prima — la bonifica che contava i file selezionati invece di
+quelli cambiati. L'unica cosa che le ha smascherate tutte e tre è **rileggere lo stato dopo**.
+Un test che non hai visto fallire non sai se funziona; un comando che non hai riletto non sai se
+ha fatto qualcosa.
 
 ---
 
@@ -2327,7 +2410,7 @@ coppie erano in ordine invertito** rispetto all'applicazione reale (`fk_scuola_i
 `provisiona_sede_v2`, `presenze_armadietto` prima di `genera_rette`, `mensa_unique` prima di
 `sections_nome`) — ricostruendo il DB dai file si sarebbe rotto sulle dipendenze. Rinominati con
 `git mv` e riallineati tutti i riferimenti in PRD, audit, lock, `src/` e `scripts/`. Oggi repo e
-database coincidono: **75 migrazioni**, stessi nomi, stesso ordine.
+database coincidono: **94 migrazioni**, stessi nomi, stesso ordine.
 
 Il presidio che lo tiene: il lock `migrazioni-complete` gira **offline** (in CI le credenziali di
 produzione non ci sono e non devono esserci) e confronta la cartella con una **fotografia versionata**

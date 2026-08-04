@@ -113,13 +113,25 @@ jobs:
         env:
           KV_E2E_PASSWORD: ${{ secrets.CI_E2E_PASSWORD }}
         run: |
-          set -uo pipefail
-          # NIENTE `set -e`, ed è una scelta: la prima stesura ce l'aveva e moriva
-          # sulla riga `[ "$trovati" -eq 0 ] && exit 0`. Quando il test è FALSO — cioè
-          # quando c'è davvero qualcosa da bonificare — il comando composto ritorna 1 e
-          # `set -e` uccide lo script PRIMA che bonifichi alcunché. Il passo falliva, e
-          # falliva nel solo caso in cui serviva. (Misurato: run 30914455054.)
-          # Qui gli errori si gestiscono a mano, uno per uno, e l'uscita è esplicita.
+          # `set +e` ESPLICITO, e ci sono voluti due tentativi per capire perché serve.
+          #
+          # 1° tentativo (run 30914455054): lo script apriva con `set -euo pipefail` e
+          #    moriva sulla riga `[ "$trovati" -eq 0 ] && exit 0`. Quando quel test è
+          #    FALSO — cioè quando c'è davvero qualcosa da bonificare — il comando
+          #    composto ritorna 1, e con `-e` la shell chiude tutto. Il passo falliva
+          #    ESATTAMENTE nel solo caso in cui serviva.
+          # 2° tentativo (run 30915761622): tolto `-e` dal mio `set`, il passo usciva
+          #    ANCORA con 1, e senza stampare una riga. Il motivo è che `-e` non era
+          #    mio: GitHub Actions esegue i `run:` con `shell: /usr/bin/bash -e {0}`,
+          #    quindi era già attivo PRIMA della mia prima istruzione. Non scriverlo non
+          #    basta: va spento.
+          #
+          # La lezione, che vale oltre questo file: `set -e` più `condizione && azione`
+          # è una trappola classica, e in Actions il `-e` non si vede nello script.
+          # Qui gli errori si gestiscono a mano, uno per uno, e ogni uscita è esplicita.
+          set +e
+          set -u
+          set -o pipefail
           if [ ! -d playwright-report ]; then
             echo "nessun report da bonificare"
             exit 0

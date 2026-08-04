@@ -125,9 +125,28 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await salvaEAttendi(page, /Salva Merenda per tutti/);
 
   // Umore (tile attiva via diario_config della scuola E2E): Aurora → Felice.
+  //
+  // ⚠️ IL DB E2E NON SI AZZERA FRA LE RUN, e questo test scriveva come se lo facesse.
+  // Il seed è idempotente sulle anagrafiche, ma gli eventi del diario che il test SALVA
+  // restano: alla run successiva `apriEventoEAttendiRipristino` ripristina «Felice» da
+  // Supabase, e il click qui sotto — che è un TOGGLE — lo DESELEZIONA. A quel punto non
+  // c'è nessuna modifica da salvare, il POST non parte, e `salvaEAttendi` aspetta per
+  // trenta secondi una risposta che nessuno manderà.
+  // Misurato: run 30915761622, `waitForResponse` scaduto sul SECONDO salvataggio mentre
+  // il primo (merenda) era andato a buon fine. Il test era verde solo alla prima
+  // esecuzione su un database pulito, e da lì in poi dipendeva da ciò che aveva lasciato
+  // la volta prima.
   await apriEventoEAttendiRipristino(page, 'Registra Umore');
-  await page.getByRole('button', { name: 'Aurora: Felice' }).click();
-  await salvaEAttendi(page, /Salva Umore per tutti/);
+  const felice = page.getByRole('button', { name: 'Aurora: Felice' });
+  if ((await felice.getAttribute('aria-pressed')) !== 'true') {
+    await felice.click();
+    // Il click deve aver ATTECCHITO: se questa cade, il difetto è l'interazione, non il
+    // salvataggio — e si vuole saperlo qui, non trenta secondi dopo su un'altra riga.
+    await expect(felice).toHaveAttribute('aria-pressed', 'true');
+    await salvaEAttendi(page, /Salva Umore per tutti/);
+  }
+  // Se era già «Felice» non si salva nulla: non c'è niente da scrivere, e la persistenza
+  // — che è l'oggetto di questo test — è comunque quella che si verifica dopo il reload.
 
   // Persistenza: al reload la selezione umore viene ripristinata da Supabase.
   await page.reload();

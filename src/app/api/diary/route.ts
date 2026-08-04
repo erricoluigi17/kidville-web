@@ -9,7 +9,59 @@ import { notificaTitolariScrittura } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
+import { tabellaMancante } from '@/lib/db/tolleranza-schema';
+
+/**
+ * LA TABELLA CHE NON C'È — e non è un guasto da 500.
+ *
+ * Questa route legge e scrive `daily_routines`. Misurato il 2026-08-04 su
+ * `information_schema.tables`: quella tabella **non esiste nel database di
+ * produzione** e **nessuna migrazione la crea**. Il diario vero del prodotto è
+ * `eventi_diario`, servito da `/api/diary/entries`, ed è quello che l'interfaccia
+ * chiama: `/api/diary` non ha nessun chiamante dentro `src/`.
+ *
+ * In `app_log` restano 14 chiamate a `diary:GET` chiuse con 500, ognuna appaiata
+ * a un `PGRST205 "Could not find the table 'public.daily_routines' in the schema
+ * cache"`; l'ultima il 2026-08-02 alle 15:30, durante il collaudo.
+ *
+ * Un 500 dichiara «non so cosa è successo». Qui si sa, e si sa da sempre: la
+ * funzionalità non esiste in questo ambiente. Un 500 su una condizione nota e
+ * permanente produce un allarme che nessuno può chiudere e affoga i 500 veri.
+ *
+ * Quindi la si DICHIARA: 503 + `indisponibile: true`, e il nome della tabella
+ * mancante **solo nel log** — al chiamante non si regala la mappa dello schema
+ * (è la fuga chiusa su questa stessa route il 2026-08-02).
+ *
+ * ⚠️ Vale SOLO per «la tabella non c'è» (42P01/PGRST205). Qualunque altro errore
+ * — JWT scaduto, timeout, policy che nega — resta un 500 da guardare.
+ */
+const TABELLA_DIARIO = 'daily_routines';
+
+function diarioIndisponibile(
+    error: { code?: string; message?: string } | null,
+    operazione: string,
+): NextResponse | null {
+    if (!tabellaMancante(error)) return null;
+    // `warn` e non `info`: in `app_log` deve restare la differenza fra un
+    // ambiente normale e uno in cui una funzionalità semplicemente non c'è.
+    // Il nome della tabella sta QUI e non nella risposta: senza, «non
+    // disponibile» e «rotta» si assomiglierebbero e nessuno saprebbe cosa serve
+    // per farla tornare viva. Nessun dato personale: un nome di tabella e un
+    // codice d'errore.
+    logEvento('db', 'warn', {
+        operazione,
+        esito: 'tabella-assente',
+        // `error_code` e non `codice`: la lista bianca di `redact` ammette il
+        // primo e redige il secondo (`codice` è anche un livello di competenza).
+        error_code: error?.code ?? null,
+        msg: `${operazione}: tabella «${TABELLA_DIARIO}» assente — funzionalità non disponibile in questo ambiente`,
+    });
+    return NextResponse.json(
+        { error: 'Il diario giornaliero non è disponibile', indisponibile: true },
+        { status: 503 },
+    );
+}
 
 const postBodySchema = z.object({
     alunno_id: zUuid,
@@ -103,7 +155,11 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
             .select()
             .single();
 
-        if (error) return erroreScrittura(error);
+        if (error) {
+            const morta = diarioIndisponibile(error, 'diary:POST');
+            if (morta) return morta;
+            return erroreScrittura(error);
+        }
 
         const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
         await logScrittura(admin, {
@@ -184,7 +240,11 @@ export const GET = withRoute('diary:GET', async (request: NextRequest) => {
                 .lte('timestamp_evento', endOfDay)
                 .order('timestamp_evento', { ascending: true });
 
-            if (error) return erroreLettura(error);
+            if (error) {
+                const morta = diarioIndisponibile(error, 'diary:GET');
+                if (morta) return morta;
+                return erroreLettura(error);
+            }
             return NextResponse.json({ data });
 
         } else if (searchParams.get('alunno_id')) {
@@ -211,7 +271,11 @@ export const GET = withRoute('diary:GET', async (request: NextRequest) => {
                 .gte('timestamp_evento', fourteenDaysAgo.toISOString())
                 .order('timestamp_evento', { ascending: false });
 
-            if (error) return erroreLettura(error);
+            if (error) {
+                const morta = diarioIndisponibile(error, 'diary:GET');
+                if (morta) return morta;
+                return erroreLettura(error);
+            }
             return NextResponse.json({ data });
 
         } else {

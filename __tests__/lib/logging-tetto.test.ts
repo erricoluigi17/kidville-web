@@ -308,6 +308,16 @@ const TETTI_DICHIARATI = new Map<string, string>([
         'la sonda di rete della pagina `/offline` e l\'ultima attesa di React. È entrata '
         + 'nell\'inventario il 2026-08-03 non perché fosse nuova, ma perché la regola qui sotto '
         + 'pretendeva che una costante si chiamasse `TETTO…`: `TIMEOUT_SONDA_MS` non ci entrava.'],
+    ['src/lib/security/rate-limit.ts',
+        'quanto il tetto per IP aspetta il contatore condiviso su Postgres prima di degradare al '
+        + 'conteggio locale (2026-08-04). È il tetto più corto del repo — 250 ms — e il numero '
+        + 'basso È la decisione: da queste rotte passano le domande d\'iscrizione delle famiglie, '
+        + 'e un rate-limiter che aspetta mezzo secondo il proprio contatore ha già fatto più danno '
+        + 'di quanto ne eviti. Scaduto il tempo non si blocca e non si apre: si conta in locale, '
+        + 'cioè col tetto di ieri, e si lascia una riga `error` perché il fatto non passi in '
+        + 'silenzio. I due MECCANISMI non stanno qui: sono presi da `tetto.ts` '
+        + '(`segnaleConTetto`) e da `errore-accesso.ts` (`conTettoDiTempo`) — la prima stesura li '
+        + 'aveva riscritti a mano ed è questo lock ad averla respinta.'],
 ]);
 
 /**

@@ -10,6 +10,7 @@ import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { formatEuro } from '@/lib/format/valuta';
 import { Modal } from '@/components/ui/Modal';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 export interface PagamentoRow {
     id: string;
@@ -124,7 +125,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                 setEccedenza(Number(json.eccedenza));
                 return;
             }
-            if (!res.ok) { setError(json.error || t('incErroreRegistrazione')); return; }
+            if (!res.ok) { setError(messaggioDaCorpo(json, t('incErroreRegistrazione'))); return; }
             setEccedenza(null);
             // Se l'incasso salda il pagamento, resta nel popup per inviare la fattura
             if (importo >= mancante || (abbuono && isParziale)) setSaldato(true);

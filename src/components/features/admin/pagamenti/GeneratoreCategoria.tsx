@@ -8,6 +8,7 @@ import { Layers, RefreshCw } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
@@ -108,7 +109,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             if (gruppo.trim()) qs.set('gruppo', gruppo.trim());
             const res = await fetch(`/api/pagamenti/genera?${qs.toString()}`, { headers: hdr(userId) });
             const j = await res.json();
-            if (!res.ok || !j.success) { setError(j.error || t('gencErrAnteprima')); return; }
+            if (!res.ok || !j.success) { setError(messaggioDaCorpo(j, t('gencErrAnteprima'))); return; }
             setAnteprima({ candidati: j.data.candidati || [], giaGenerati: j.data.gia_generati || 0 });
         } catch {
             setError(t('gencErrRete'));
@@ -132,7 +133,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             if (acconti && nRate >= 2) body.rate = buildRate();
             const res = await fetch('/api/pagamenti/genera', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
             const j = await res.json();
-            if (!res.ok) { setError(j.error || t('gencErrGenerazione')); return; }
+            if (!res.ok) { setError(messaggioDaCorpo(j, t('gencErrGenerazione'))); return; }
             setDone(`${t('gencDoneGenerati')} ${j.data.generati} ${acconti ? t('gencDonePagamentiRateali') : t('gencDonePagamenti')}.`);
             setAnteprima(null);
         } catch {

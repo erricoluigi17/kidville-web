@@ -49,12 +49,35 @@ const RADICE = process.cwd();
 /**
  * Le schermate che una famiglia vede. `src/app/offline` è fuori di proposito:
  * non fa `fetch`, e i suoi testi passano da un catalogo suo.
+ *
+ * ─── I DUE MODULI DEL COCKPIT, DAL 2026-08-04 ──────────────────────────────
+ * Il commento qui sopra prometteva «quando il cockpit sarà convertito, si
+ * allarga questo elenco». Il 2026-08-04 sono entrati i primi due moduli:
+ * `admin/pagamenti` e `admin/settings`, 47 punti convertiti in un colpo.
+ *
+ * Non è lo stesso rimedio delle famiglie, e va detto: lì si usa
+ * `soloCatalogoDaCorpo`, che la prosa del server non la mostra MAI; nel cockpit
+ * si usa `messaggioDaCorpo`, che continua a mostrarla quando il server non
+ * dichiara un codice — perché quelle frasi sono scritte per chi opera («alcune
+ * classi destinatarie non appartengono alla sede») e perderle vorrebbe dire
+ * sostituire il motivo vero con una frase generica. La regola comune, e ciò che
+ * questo lock misura, è che la DECISIONE non stia più nel componente: nessuno
+ * legge `<corpo>.error` per conto proprio.
+ *
+ * Restano fuori gli altri moduli del cockpit (news, mensa, forms, iscrizioni,
+ * moderazione, primaria, messaggi, e le schermate `teacher`): al 2026-08-04
+ * sono **84 punti in 46 file** su tutto `src/` — 81 in `features/admin` +
+ * `features/teacher`, gli altri 3 in `chat/ChatInput`, `lib/offline/syncEngine`
+ * e una route. Il numero è scritto qui perché il prossimo che allarga il
+ * perimetro sappia quanto manca, invece di doverlo ricontare.
  */
 const PERIMETRO = [
     'src/app/(dashboard)/parent',
     'src/app/iscrizione',
     'src/components/features/parent',
     'src/components/features/public',
+    'src/components/features/admin/pagamenti',
+    'src/components/features/admin/settings',
 ];
 
 function fileDi(dir: string): string[] {
@@ -112,17 +135,23 @@ function letturePros(): { rilievi: Rilievo[]; fileVisti: number; legamiVisti: nu
     return { rilievi, fileVisti, legamiVisti };
 }
 
-describe('lock — le schermate delle famiglie non mostrano la prosa del server', () => {
+describe('lock — famiglie e cockpit convertito: la prosa del server non la sceglie il componente', () => {
     it('il perimetro esiste davvero (il lock non è verde per un errore di scansione)', () => {
         const { fileVisti, legamiVisti } = letturePros();
         // Un lock che non trova né file né corpi di risposta da controllare è
         // verde per il motivo sbagliato: è il modo in cui un test smette di
         // proteggere senza dirlo. I valori sono ANCORATI a una misura, non
         // all'ordine relativo: il 2026-08-03 il perimetro contava 51 file e 33
-        // corpi di risposta. Se si dimezza per un refactor questo diventa rosso
-        // e chiede di riguardarlo, invece di restare verde su un albero vuoto.
-        expect(fileVisti).toBeGreaterThan(40);
-        expect(legamiVisti).toBeGreaterThan(25);
+        // corpi di risposta; col cockpit (pagamenti + settings) il 2026-08-04
+        // conta 103 file e 75 corpi. Se si dimezza per un refactor questo
+        // diventa rosso e chiede di riguardarlo, invece di restare verde su un
+        // albero vuoto.
+        //
+        // Le soglie sono ALZATE insieme al perimetro, e devono esserlo: lasciarle
+        // a 40/25 avrebbe reso il lock verde anche se qualcuno avesse cancellato
+        // dalla scansione i due moduli appena convertiti.
+        expect(fileVisti).toBeGreaterThan(90);
+        expect(legamiVisti).toBeGreaterThan(65);
     });
 
     it('nessuna lettura di `.error` da un corpo di risposta', () => {

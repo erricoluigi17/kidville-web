@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
@@ -66,7 +67,8 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     ? `${t('genrGenerate')} ${j.data.generati} ${t('genrRettePerAS')} ${anno}/${anno + 1}.`
                     : `${t('genrGenerate')} ${j.data.generati} ${t('genrRettePer')} ${periodo}.`);
                 reset();
-            } else alert(j.error);
+            // `alert(j.error)` nudo mostrava «undefined» quando il corpo non portava `error`.
+            } else alert(messaggioDaCorpo(j, t('genrErrGenerazione')));
         } finally { setLoading(false); }
     };
 

@@ -3,6 +3,7 @@
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -107,7 +108,8 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             setConfermaId(n => n + 1);
             loadStorico(sel.id);
             loadMorosi();
-        } else alert(j.error);
+            // `alert(j.error)` nudo mostrava «undefined» quando il corpo non portava `error`.
+        } else alert(messaggioDaCorpo(j, t('ticket_err_ricarica')));
     };
 
     const filtered = alunni.filter(a => `${a.nome} ${a.cognome}`.toLowerCase().includes(search.toLowerCase())).slice(0, 8);

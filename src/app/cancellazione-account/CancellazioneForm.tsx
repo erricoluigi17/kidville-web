@@ -59,8 +59,12 @@ export function CancellazioneForm() {
         />
       </div>
 
+      {/* T09-F4, secondo punto: il rilievo ne nominava uno solo (la pagina di
+          conferma), ma lo stesso paragrafo d'errore, con lo stesso token e lo stesso
+          fondo bianco, sta anche qui. `error` #E53935 su bianco = 4,23:1, sotto i
+          4,5:1 di AA per il testo normale; `error-strong` #C62828 = 5,62:1. */}
       {stato === 'errore' && (
-        <p role="alert" className="font-maven text-sm text-kidville-error">
+        <p role="alert" className="font-maven text-sm text-kidville-error-strong">
           {t('cancErrore')}
         </p>
       )}

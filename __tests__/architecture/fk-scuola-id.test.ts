@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { posterioriCheContengono, sogliaFotografia } from './soglia-fotografia'
 
 /**
  * LOCK · lo SCHEMA deve difendere il tenant: nessuna colonna `scuola_id` senza vincolo.
@@ -45,6 +46,8 @@ type Vincolo = { nome: string; def: string }
 
 type Fotografia = {
     generato_il: string
+    /** L'istante dello scatto, UTC al secondo. Vedi `./soglia-fotografia`. */
+    generato_alle?: string
     sha256: string
     tabelle: Tabella[]
     alunni_colonne_cf: string[]
@@ -199,23 +202,27 @@ describe('lock architettura · integrità di schema sulle sedi (fotografia delle
         // migrazioni posteriori: se una crea/aggiunge una colonna `scuola_id` deve
         // dichiarare nello stesso file il riferimento verso le sedi (REFERENCES … o una
         // ADD CONSTRAINT … FOREIGN KEY). Vale anche se nessuno ha rigenerato la fotografia.
-        const dataFoto = foto.generato_il.replace(/-/g, '') // YYYYMMDD
-        const colpevoli = readdirSync(MIGRAZIONI)
-            .filter((f) => f.endsWith('.sql'))
-            .filter((f) => /^\d{8}/.test(f) && f.slice(0, 8) > dataFoto)
-            .filter((f) => {
-                const sql = readFileSync(join(MIGRAZIONI, f), 'utf8')
-                // Righe che DEFINISCONO la colonna (dichiarazione di tipo o ADD COLUMN),
-                // non quelle che la usano soltanto in una WHERE o in un UPDATE.
-                const introduce =
-                    /add\s+column\s+(if\s+not\s+exists\s+)?scuola_id\b/i.test(sql) ||
-                    /^\s*scuola_id\s+uuid\b/im.test(sql)
-                if (!introduce) return false
-                const dichiaraIlVincolo =
-                    /references\s+(public\.)?(schools|scuole)\b/i.test(sql) ||
-                    /foreign\s+key\s*\(\s*scuola_id\s*\)/i.test(sql)
-                return !dichiaraIlVincolo
-            })
+        //
+        // ⚠️ «PIÙ RECENTE» SI CONFRONTA AL SECONDO, NON AL GIORNO (corretto il 2026-08-04).
+        // Qui c'era `f.slice(0, 8) > foto.generato_il.replace(/-/g, '')`: le sole otto
+        // cifre della data contro le quattordici di una `version`. Una migrazione
+        // applicata LO STESSO GIORNO della fotografia non risultava mai posteriore — ed è
+        // il caso normale, perché si applica e si rigenera nella stessa sessione. Il
+        // guard nato per coprire il punto cieco della fotografia aveva lo stesso punto
+        // cieco della fotografia. Il confronto ora passa da `sogliaFotografia`.
+        const soglia = sogliaFotografia(foto)
+        const colpevoli = posterioriCheContengono(MIGRAZIONI, soglia, (sql) => {
+            // Righe che DEFINISCONO la colonna (dichiarazione di tipo o ADD COLUMN),
+            // non quelle che la usano soltanto in una WHERE o in un UPDATE.
+            const introduce =
+                /add\s+column\s+(if\s+not\s+exists\s+)?scuola_id\b/i.test(sql) ||
+                /^\s*scuola_id\s+uuid\b/im.test(sql)
+            if (!introduce) return false
+            const dichiaraIlVincolo =
+                /references\s+(public\.)?(schools|scuole)\b/i.test(sql) ||
+                /foreign\s+key\s*\(\s*scuola_id\s*\)/i.test(sql)
+            return !dichiaraIlVincolo
+        })
         expect(
             colpevoli,
             `Queste migrazioni introducono una colonna \`scuola_id\` senza dichiarare il ` +

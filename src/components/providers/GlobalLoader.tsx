@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { PageLoader } from '@/components/ui/PageLoader';
+import { rendiInerteFuoriDaConFocus } from '@/lib/accessibility/inerti';
 
 /**
  * Mostra il loader globale (variante Riflesso) SOLO sui caricamenti lenti:
@@ -40,6 +41,33 @@ export function GlobalLoader() {
   const minVisibleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownAt = useRef<number | null>(null); // quando l'overlay è comparso per una navigazione
   const prevPath = useRef(pathname);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * L'OVERLAY COPRE LA PAGINA: DEVE ANCHE RENDERLA INERTE (T09-F1, WCAG 2.2 §2.4.11).
+   *
+   * Misurato il 2026-08-03 su `/privacy`, in locale e in produzione: con l'overlay a
+   * schermo, 4 elementi su 4 raggiungibili col `Tab` risultavano coperti da
+   * `PageLoader…overlay`, `pointer-events: auto`, `aria-hidden` assente. Il focus non si
+   * vedeva, ma c'era: si poteva premere `Invio` su un comando invisibile. Vale su OGNI
+   * pagina, per almeno 700 ms (`MIN_VISIBLE_MS`) e fino a 4 s (`SAFETY_HIDE_MS`).
+   *
+   * Si rende inerte tutto ciò che sta FUORI dall'overlay, non il contrario: l'overlay è
+   * un fratello del contenuto (scelta corretta, evita la regressione da `loading.tsx`),
+   * quindi il contenuto è esattamente «i fratelli, a ogni livello, risalendo al body».
+   *
+   * `…ConFocus` invece della sola inerzia perché nel browser vero `inert` sull'antenato
+   * dell'elemento a fuoco fa CADERE il focus sul `body`, e da solo non torna: senza il
+   * salvataggio si scambierebbe un difetto AA con una perdita di focus a ogni cambio
+   * pagina. Il ripristino avviene solo se il focus è davvero rimasto sul `body` e se
+   * l'elemento è ancora nel documento (vedi `lib/accessibility/inerti.ts`).
+   */
+  useEffect(() => {
+    if (!visible) return;
+    const contenitore = overlayRef.current;
+    if (!contenitore) return;
+    return rendiInerteFuoriDaConFocus(contenitore);
+  }, [visible]);
 
   // Nasconde a fine navigazione, rispettando la durata minima a schermo. Usa un
   // ref del pathname precedente (non un boolean) → regge lo StrictMode e i re-run
@@ -142,5 +170,5 @@ export function GlobalLoader() {
     };
   }, []);
 
-  return <PageLoader visible={visible} />;
+  return <PageLoader visible={visible} ref={overlayRef} />;
 }

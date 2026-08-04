@@ -109,12 +109,21 @@ export function impronta(normalizzata) {
     return createHash('sha256').update(JSON.stringify(normalizzata)).digest('hex')
 }
 
+// L'ISTANTE dello scatto, in UTC e al secondo. `generato_il` (la sola data) non basta:
+// il guard sulle migrazioni posteriori confrontava otto cifre contro le quattordici di
+// una `version`, e una migrazione applicata LO STESSO GIORNO della fotografia non
+// risultava mai posteriore — cioe' il guard era cieco proprio nella finestra in cui
+// serve. UTC perche' UTC e' cio' che `apply_migration` mette nella `version`.
+// Vedi `__tests__/architecture/soglia-fotografia.ts`.
+const ADESSO = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+
 const stdin = readFileSync(0, 'utf8')
 const normalizzata = normalizza(estrai(stdin))
 const uscita = {
     _come_si_rigenera:
         'node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json',
-    generato_il: new Date().toISOString().slice(0, 10),
+    generato_il: ADESSO.slice(0, 10),
+    generato_alle: ADESSO,
     sha256: impronta(normalizzata),
     ...normalizzata,
 }

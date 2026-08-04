@@ -13,6 +13,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { hdr, card, h3, input, hint } from '../settings/ui';
 import { BTN_PRIMARY_AA } from './ui';
 import type { CassaCategoria } from '@/lib/cassa/tipi';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Props {
   userId: string;
@@ -49,7 +50,7 @@ export function CassaCategorieManager({ userId, scuolaId }: Props) {
         body: JSON.stringify({ scuola_id: scuolaId, nome: nuovo.trim() }),
       });
       const j = (await res.json()) as { error?: string };
-      if (!res.ok) { setError(j.error ?? t('cassaCatErrAggiungi')); return; }
+      if (!res.ok) { setError(messaggioDaCorpo(j, t('cassaCatErrAggiungi'))); return; }
       setNuovo('');
       load();
     } catch (err) {
@@ -64,7 +65,7 @@ export function CassaCategorieManager({ userId, scuolaId }: Props) {
       const res = await fetch(`/api/pagamenti/cassa/categorie?userId=${userId}&id=${id}&scuola_id=${scuolaId}`, { method: 'DELETE', headers: hdr(userId) });
       if (!res.ok) {
         const j = (await res.json()) as { error?: string };
-        setError(j.error ?? t('cassaCatErrElimina'));
+        setError(messaggioDaCorpo(j, t('cassaCatErrElimina')));
       }
       load();
     } catch (err) {

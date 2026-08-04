@@ -48,7 +48,7 @@ const postFormSchema = z.object({
 export const POST = withRoute('iscrizione/upload:POST', async (request: NextRequest) => {
   // IL TETTO PRIMA DI TUTTO, anche prima di leggere il corpo: un allegato costa molto più
   // di un JSON, e la difesa che si paga dopo aver letto 4 MB non ha difeso niente.
-  const rl = rateLimit(`iscrizione-upload:${clientIp(request)}`, {
+  const rl = await rateLimit(`iscrizione-upload:${clientIp(request)}`, {
     limit: TETTO_UPLOAD_PUBBLICO,
     windowMs: FINESTRA_UPLOAD_PUBBLICO_MS,
   })

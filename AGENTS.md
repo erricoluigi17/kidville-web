@@ -100,7 +100,8 @@ Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **con
 esplicita del titolare («proprio tutto, migrazioni e merge compresi»): **merge, deploy, migrazioni
 ed `execute_sql` NON chiedono più conferma**, e `defaultMode` è di nuovo `acceptEdits`.
 🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**
-(227 domande di iscrizione, 152 codici fiscali di bambini, raccolte dal 16 luglio). La differenza è
+(**302** domande di iscrizione e **324** codici fiscali di bambini al 2026-08-04 — erano 227 e 152
+il 31 luglio: in quattro giorni sono raddoppiati, e mentre leggi sono già di più). La differenza è
 che ora **nessun essere umano vede un `UPDATE` o una migrazione prima che parta**. Chi lavora qui
 mostri comunque cosa sta per applicare: *mostrare* non è *chiedere*, non costa niente, ed è l'unica
 cosa rimasta fra un errore e 152 minori.

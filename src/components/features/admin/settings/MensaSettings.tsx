@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { Settings, Save, Plus, Trash2, ChevronDown, ChevronUp, UtensilsCrossed, BookOpen } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -79,7 +80,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
       }),
     });
     const j = await res.json();
-    if (j.success) { setDone(true); } else alert(j.error);
+    if (j.success) { setDone(true); } else alert(messaggioDaCorpo(j, t('erroreSalvataggio')));
   };
 
   const creaMenu = async () => {
@@ -91,7 +92,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
     });
     const j = await res.json();
     setMenuLoading(false);
-    if (j.success) { setNewMenuNome(''); await loadMenus(); } else setMenuMsg(j.error);
+    if (j.success) { setNewMenuNome(''); await loadMenus(); } else setMenuMsg(messaggioDaCorpo(j, t('meErrMenu')));
   };
 
   const eliminaMenu = async (id: string) => {
@@ -100,7 +101,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
     const res = await fetch(`/api/mensa/menu-config?id=${id}`, { method: 'DELETE', headers: hdr(userId) });
     const j = await res.json();
     setMenuLoading(false);
-    if (j.success) { await loadMenus(); } else setMenuMsg(j.error);
+    if (j.success) { await loadMenus(); } else setMenuMsg(messaggioDaCorpo(j, t('meErrMenu')));
   };
 
   const aggiungiAssegnazione = async () => {
@@ -112,7 +113,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
     });
     const j = await res.json();
     setMenuLoading(false);
-    if (j.success) { setNewClasse(''); await loadMenus(); } else setMenuMsg(j.error);
+    if (j.success) { setNewClasse(''); await loadMenus(); } else setMenuMsg(messaggioDaCorpo(j, t('meErrMenu')));
   };
 
   const eliminaAssegnazione = async (id: string) => {
@@ -120,7 +121,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
     const res = await fetch(`/api/mensa/class-assignments?id=${id}`, { method: 'DELETE', headers: hdr(userId) });
     const j = await res.json();
     setMenuLoading(false);
-    if (j.success) { await loadMenus(); } else setMenuMsg(j.error);
+    if (j.success) { await loadMenus(); } else setMenuMsg(messaggioDaCorpo(j, t('meErrMenu')));
   };
 
   // Raggruppa assegnazioni per classe (mostra solo la più recente attiva + le future)

@@ -15,6 +15,7 @@ import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teacher-gradi';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
 // ============================================================================
 // TeacherBottomNav — bottom bar persistente del design (DR ins/screen-home.jsx
@@ -79,30 +80,30 @@ export default function TeacherBottomNav() {
     {
       label: t('gruppoInClasse'),
       items: [
-        { id: 'appello', label: t('voceAppelloLabel'), sub: t('voceAppelloSub'), icon: ClipboardCheck, href: '/teacher/attendance', tint: '#006A5F', grado: 'comune' },
-        { id: 'diario', label: t('voceDiarioLabel'), sub: t('voceDiarioSub'), icon: NotebookPen, href: '/teacher/diary', tint: '#2A6FDB', grado: 'infanzia' },
-        { id: 'registro', label: t('voceRegistroLabel'), sub: t('voceRegistroSub'), icon: BookOpen, href: '/teacher/primaria', tint: '#7A3FD0', grado: 'primaria' },
-        { id: 'presenze', label: t('vocePresenzeLabel'), sub: t('vocePresenzeSub'), icon: Users, href: '/teacher/attendance', tint: '#43A047', grado: 'comune' },
+        { id: 'appello', label: t('voceAppelloLabel'), sub: t('voceAppelloSub'), icon: ClipboardCheck, href: '/teacher/attendance', tint: tintaFunzione('appello'), grado: 'comune' },
+        { id: 'diario', label: t('voceDiarioLabel'), sub: t('voceDiarioSub'), icon: NotebookPen, href: '/teacher/diary', tint: tintaFunzione('diario'), grado: 'infanzia' },
+        { id: 'registro', label: t('voceRegistroLabel'), sub: t('voceRegistroSub'), icon: BookOpen, href: '/teacher/primaria', tint: tintaFunzione('registro'), grado: 'primaria' },
+        { id: 'presenze', label: t('vocePresenzeLabel'), sub: t('vocePresenzeSub'), icon: Users, href: '/teacher/attendance', tint: tintaFunzione('presenze'), grado: 'comune' },
       ],
     },
     {
       label: t('gruppoVitaScolastica'),
       items: [
-        { id: 'mensa', label: t('voceMensaLabel'), sub: t('voceMensaSub'), icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A', grado: 'comune' },
-        { id: 'foto', label: t('voceFotoLabel'), sub: t('voceFotoSub'), icon: Image, href: '/teacher/gallery', tint: '#006A5F', grado: 'comune' },
-        { id: 'bacheca', label: t('voceBachecaLabel'), sub: t('voceBachecaSub'), icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935', grado: 'comune' },
-        { id: 'news', label: t('voceNewsLabel'), sub: t('voceNewsSub'), icon: Newspaper, href: '/teacher/news', tint: '#006A5F', grado: 'comune' },
-        { id: 'calendario', label: t('voceCalendarioLabel'), sub: t('voceCalendarioSub'), icon: CalendarDays, href: null, tint: '#2A6FDB', grado: 'comune', soon: true },
+        { id: 'mensa', label: t('voceMensaLabel'), sub: t('voceMensaSub'), icon: UtensilsCrossed, href: '/teacher/mensa', tint: tintaFunzione('mensa'), grado: 'comune' },
+        { id: 'foto', label: t('voceFotoLabel'), sub: t('voceFotoSub'), icon: Image, href: '/teacher/gallery', tint: tintaFunzione('foto'), grado: 'comune' },
+        { id: 'bacheca', label: t('voceBachecaLabel'), sub: t('voceBachecaSub'), icon: Megaphone, href: '/teacher/avvisi', tint: tintaFunzione('bacheca'), grado: 'comune' },
+        { id: 'news', label: t('voceNewsLabel'), sub: t('voceNewsSub'), icon: Newspaper, href: '/teacher/news', tint: tintaFunzione('news'), grado: 'comune' },
+        { id: 'calendario', label: t('voceCalendarioLabel'), sub: t('voceCalendarioSub'), icon: CalendarDays, href: null, tint: tintaFunzione('calendario'), grado: 'comune', soon: true },
       ],
     },
     {
       label: t('gruppoStrumenti'),
       items: [
-        { id: 'attivita', label: t('voceAttivitaLabel'), sub: t('voceAttivitaSub'), icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B', grado: 'comune' },
-        { id: 'armadietto', label: t('voceArmadiettoLabel'), sub: t('voceArmadiettoSub'), icon: Package, href: '/teacher/locker', tint: '#7A3FD0', grado: 'infanzia' },
-        { id: 'moduli', label: t('voceModuliLabel'), sub: t('voceModuliSub'), icon: FileText, href: '/teacher/modulistica', tint: '#E6720A', grado: 'comune' },
-        { id: 'messaggi', label: t('voceMessaggiLabel'), sub: t('voceMessaggiSub'), icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F', grado: 'comune' },
-        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: User, href: null, tint: '#7C8A84', grado: 'comune', soon: true },
+        { id: 'attivita', label: t('voceAttivitaLabel'), sub: t('voceAttivitaSub'), icon: ListTodo, href: '/teacher/tasks', tint: tintaFunzione('attivita'), grado: 'comune' },
+        { id: 'armadietto', label: t('voceArmadiettoLabel'), sub: t('voceArmadiettoSub'), icon: Package, href: '/teacher/locker', tint: tintaFunzione('armadietto'), grado: 'infanzia' },
+        { id: 'moduli', label: t('voceModuliLabel'), sub: t('voceModuliSub'), icon: FileText, href: '/teacher/modulistica', tint: tintaFunzione('moduli'), grado: 'comune' },
+        { id: 'messaggi', label: t('voceMessaggiLabel'), sub: t('voceMessaggiSub'), icon: MessageCircle, href: '/teacher/chat', tint: tintaFunzione('messaggi'), grado: 'comune' },
+        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: User, href: null, tint: tintaFunzione('profilo'), grado: 'comune', soon: true },
       ],
     },
   ];

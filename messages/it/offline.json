@@ -17,7 +17,10 @@
       "/auth/login": "Accesso",
       "/privacy": "Privacy",
       "/termini": "Termini",
-      "/assistenza": "Assistenza"
+      "/assistenza": "Assistenza",
+      "/iscrizione": "Iscrizione",
+      "/cancellazione-account": "Cancellazione account",
+      "/cancellazione-account/conferma": "Conferma cancellazione"
     },
     "segmenti": {
       "appello": "Appello",

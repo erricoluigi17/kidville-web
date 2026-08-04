@@ -27,7 +27,7 @@ export const POST = withRoute('parent/primaria/pagella/firma/otp:POST', async (r
 
     // Tetto di frequenza (sicurezza W5): budget condiviso con le altre tre rotte OTP —
     // la casella del genitore è una sola. Vedi `@/lib/security/otp-rate-limit`.
-    const troppe = limitaInvioOtp(userId)
+    const troppe = await limitaInvioOtp(userId)
     if (troppe) return troppe
 
     const q = parseQuery(request, querySchema)

@@ -6,6 +6,7 @@ import { ShieldAlert, Loader2, Trash2, AlertTriangle, UserX } from 'lucide-react
 import { SedeIcon } from '@/components/ui/SedeIcon';
 import { cx } from '@/lib/ui/cx';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Candidato {
   id: string;
@@ -84,7 +85,7 @@ export function OblioPanel({ userId }: { userId: string }) {
     try {
       const res = await fetch('/api/admin/gdpr/erase', { method: 'POST', headers: hdr, body: JSON.stringify({ alunno_id: target.id, mode: 'execute', confirm }) });
       const j = await res.json();
-      if (!res.ok) { alert(j.error || t('errore')); return; }
+      if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
       setTarget(null);
       await load();
     } finally {

@@ -102,7 +102,12 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   });
 });
 
-test.describe('import in segreteria', () => {
+// `@solo-chromium`: il progetto `webkit` esclude questo blocco (grepInvert in
+// playwright.config.ts). Importare due volte lo stesso codice fiscale nello
+// stesso run darebbe un errore di duplicato — un rosso causato dal test
+// precedente, non dal prodotto. Il percorso PUBBLICO, invece, su WebKit si
+// ripete: è quello che i genitori compilano da Safari.
+test.describe('import in segreteria @solo-chromium', () => {
   test.use({ storageState: STORAGE.admin });
 
   test('l’import mostra il degrado email visibile', async ({ page }) => {

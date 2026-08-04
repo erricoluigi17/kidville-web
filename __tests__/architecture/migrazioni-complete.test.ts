@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { sogliaFotografia } from './soglia-fotografia'
 
 /**
  * LOCK · `supabase/migrations/` deve poter RICOSTRUIRE il database.
@@ -60,9 +61,26 @@ type Migrazione = { version: string; name: string }
 type Fotografia = {
     _come_si_rigenera: string
     generato_il: string
+    /** L'istante dello scatto, UTC al secondo. Vedi `./soglia-fotografia`. */
+    generato_alle?: string
     sha256: string
     migrazioni: Migrazione[]
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCRITTE E NON ANCORA APPLICATE — l'unica via d'uscita dalla prova
+// «la fotografia non è vecchia», e si dichiara QUI, con la ragione accanto.
+//
+// Chiave: il nome del file, esatto. Serve al caso raro ma legittimo di una
+// migrazione scritta PRIMA dello scatto della fotografia e applicata DOPO (o mai):
+// il file è più vecchio della fotografia e non compare fra le applicate, che è
+// esattamente la forma di una fotografia scaduta.
+//
+// Non è una scorciatoia per far tacere il lock: la prova gemella «non contiene voci
+// morte» diventa rossa il giorno in cui la migrazione viene applicata, e la voce va
+// tolta. Una dichiarazione che sopravvive al suo motivo è un'allowlist che marcisce.
+// ─────────────────────────────────────────────────────────────────────────────
+const IN_CODA: Record<string, string> = {}
 
 const RADICE = process.cwd()
 const CARTELLA_MIGRAZIONI = join(RADICE, 'supabase', 'migrations')
@@ -243,6 +261,65 @@ describe('lock architettura · le migrazioni del repo ricostruiscono il database
             `passate, e su un database ricostruito da zero l'ordine sarebbe diverso da quello ` +
             `reale. Se invece è già stata applicata, ${COME_RIGENERARE}`,
         ).toEqual([])
+    })
+
+    it('un file più vecchio della fotografia e assente da essa è una FOTOGRAFIA SCADUTA, non una novità', () => {
+        // ⟵ NATO DA UN CASO VERO (2026-08-04), ed è il difetto che la prova qui sopra
+        // non poteva vedere.
+        //
+        // La fotografia era ferma al 2026-08-02 con 92 voci; disco e produzione ne
+        // avevano 94. Il lock era VERDE. Perché: le due migrazioni mancanti portavano
+        // un timestamp posteriore all'ultima voce della fotografia, quindi la prova
+        // «non si intercala» le classificava come «in coda, non ancora applicate».
+        // Erano applicate da due giorni.
+        //
+        // Il buco è che quella prova guarda `ultimaApplicata`, cioè un fatto sul
+        // CONTENUTO della fotografia, e non sa NIENTE di quando la fotografia sia
+        // stata scattata. Sono due domande diverse:
+        //   · «viene dopo l'ultima migrazione che conosco?»  → può essere legittimo;
+        //   · «esisteva già quando ho guardato il database?» → se sì e non l'ho vista,
+        //     o la fotografia è vecchia o quel file non è mai stato applicato.
+        //
+        // La seconda domanda ha bisogno dell'ISTANTE dello scatto, che prima non era
+        // scritto da nessuna parte (c'era solo la data). Ora c'è: `generato_alle`.
+        //
+        // Il caso legittimo — una migrazione scritta prima dello scatto e applicata
+        // dopo — esiste, ed è per questo che c'è `IN_CODA`: si dichiara, non si
+        // indovina.
+        const soglia = sogliaFotografia(foto)
+        const applicate = new Set(FILE_SUL_DISCO.filter((f) => foto.migrazioni.map(nomeFile).includes(f)))
+        const sospette = FILE_SUL_DISCO.filter((f) => !applicate.has(f))
+            .filter((f) => {
+                const m = scomponi(f)
+                return m !== null && m.version < soglia
+            })
+            .filter((f) => !IN_CODA[f])
+        expect(
+            sospette,
+            `Questi file portano un timestamp ANTERIORE all'istante in cui la fotografia è ` +
+            `stata scattata (${foto.generato_alle ?? foto.generato_il}), eppure non risultano ` +
+            `applicati:\n  ${sospette.join('\n  ')}\n` +
+            `Esistevano già quando qualcuno ha guardato il database, quindi delle due l'una: ` +
+            `o sono applicate e la FOTOGRAFIA È VECCHIA (è il caso normale — ${COME_RIGENERARE}), ` +
+            `oppure non sono mai state applicate, e allora il loro timestamp racconta un ` +
+            `momento in cui non sono nate: rinominale con l'istante vero, o dichiarale in ` +
+            `IN_CODA con la ragione.`,
+        ).toEqual([])
+    })
+
+    it('IN_CODA non contiene voci morte (una migrazione applicata non resta «in coda»)', () => {
+        const suDisco = new Set(FILE_SUL_DISCO)
+        const applicate = new Set(foto.migrazioni.map(nomeFile))
+        const morte = Object.keys(IN_CODA).filter((f) => applicate.has(f) || !suDisco.has(f))
+        expect(
+            morte,
+            `Voci di IN_CODA che non descrivono più una migrazione scritta-e-non-applicata ` +
+            `(o è stata applicata, o il file non c'è più): rimuovile. Un'esenzione che ` +
+            `sopravvive al suo motivo è un buco che nessuno ricorda di aver aperto.`,
+        ).toEqual([])
+        for (const [f, motivo] of Object.entries(IN_CODA)) {
+            expect(motivo.length, `La voce IN_CODA «${f}» non ha una ragione scritta.`).toBeGreaterThan(20)
+        }
     })
 
     it("l'ordine alfabetico dei file è l'ordine con cui la produzione le ha applicate", () => {

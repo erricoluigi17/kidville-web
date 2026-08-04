@@ -30,7 +30,7 @@ const postBodySchema = z.object({
 // scoping app, coerente con `send-otp`. Registra lo snapshot consensi (DL-029).
 
 export const POST = withRoute('forms/submit:POST', async (request: Request) => {
-  const rl = rateLimit(`forms-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
+  const rl = await rateLimit(`forms-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'Troppe richieste. Riprova tra qualche minuto.' },

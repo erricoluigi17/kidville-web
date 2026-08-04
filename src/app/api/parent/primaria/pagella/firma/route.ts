@@ -44,7 +44,7 @@ export const POST = withRoute('parent/primaria/pagella/firma:POST', async (reque
     // di sei cifre e un confronto HMAC fallito NON consuma il ticket: senza tetto provarli
     // tutti era gratis, e chi indovina non firma solo la ricezione della pagella — da quel
     // momento ne vede i giudizi a schermo e ne scarica il PDF.
-    const troppe = limitaVerificaOtp(userId)
+    const troppe = await limitaVerificaOtp(userId)
     if (troppe) return troppe
 
     const supabase = await createAdminClient()

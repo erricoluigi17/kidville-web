@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { STATI_PAGAMENTO } from './stati';
 import { formatEuro } from '@/lib/format/valuta';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Pagamento {
     id: string;
@@ -97,7 +98,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 body: JSON.stringify({ pagamento_ids: [...selected], anteprima }),
             });
             const j = await r.json();
-            if (!r.ok || !j.success) { setError(j.error || t('soll_err_operazione')); return; }
+            if (!r.ok || !j.success) { setError(messaggioDaCorpo(j, t('soll_err_operazione'))); return; }
             if (anteprima) {
                 setAnteprime(j.data as EsitoSollecito[]);
             } else {

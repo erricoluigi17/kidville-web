@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { posterioriCheContengono, sogliaFotografia, toccaLaRls } from './soglia-fotografia'
 
 /**
  * LOCK · la RLS deve rispondere «su quale sede», non solo «che ruolo hai».
@@ -44,6 +45,8 @@ type Policy = {
 
 type Fotografia = {
     generato_il: string
+    /** L'istante dello scatto, UTC al secondo. Vedi `./soglia-fotografia`. */
+    generato_alle?: string
     sha256: string
     policy_solo_service_role: number
     policies: Policy[]
@@ -295,16 +298,29 @@ describe('lock architettura · RLS per sede (fotografia di pg_policies)', () => 
     })
 
     it('nessuna migrazione più recente della fotografia tocca le policy senza rigenerarla', () => {
-        const dataFoto = foto.generato_il.replace(/-/g, '') // YYYYMMDD
-        const inSospeso = readdirSync(MIGRAZIONI)
-            .filter((f) => f.endsWith('.sql'))
-            .filter((f) => /^\d{8}/.test(f) && f.slice(0, 8) > dataFoto)
-            .filter((f) => /\b(CREATE|DROP|ALTER)\s+POLICY\b/i.test(readFileSync(join(MIGRAZIONI, f), 'utf8')))
+        //
+        // ⚠️ QUESTO GUARD AVEVA DUE PUNTI CIECHI, ENTRAMBI CHIUSI IL 2026-08-04.
+        //
+        // 1. `f.slice(0, 8) > dataFoto` confrontava la sola DATA: una migrazione
+        //    applicata lo stesso giorno della fotografia non era mai «posteriore».
+        //    Ora il confronto è al secondo, via `sogliaFotografia` (che usa
+        //    `generato_alle`, l'istante UTC dello scatto).
+        //
+        // 2. `/(CREATE|DROP|ALTER)\s+POLICY/` non vedeva una tabella NUOVA che nasce
+        //    con `ENABLE ROW LEVEL SECURITY` (cambia `tabelle_rls_attiva`), né una
+        //    policy creata in SQL dinamico dentro un `DO $$`. Il riconoscitore vive
+        //    ora in `toccaLaRls`, con scritto lì perché il confine sta dove sta.
+        //
+        // Le due cecità si sommavano: il guard esiste per coprire l'unico punto cieco
+        // della fotografia — ciò che accade DOPO lo scatto — e non copriva né il primo
+        // giorno né le forme di scrittura che si usano proprio nelle migrazioni nuove.
+        const soglia = sogliaFotografia(foto)
+        const inSospeso = posterioriCheContengono(MIGRAZIONI, soglia, toccaLaRls)
         expect(
             inSospeso,
-            `Queste migrazioni cambiano le policy ma sono posteriori alla fotografia ` +
-            `(${foto.generato_il}): il lock starebbe controllando uno stato che non esiste più. ` +
-            `${COME_RIGENERARE}`,
+            `Queste migrazioni toccano le policy, la RLS o la colonna di sede, ma sono ` +
+            `posteriori alla fotografia (${foto.generato_alle ?? foto.generato_il}): il lock ` +
+            `starebbe controllando uno stato che non esiste più. ${COME_RIGENERARE}`,
         ).toEqual([])
     })
 

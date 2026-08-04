@@ -104,7 +104,7 @@ const postBodySchema = z.object({
 export const POST = withRoute('iscrizione:POST', async (request: NextRequest) => {
   try {
     // Rotta pubblica → rate-limit anti-abuso (5 invii / 10 min per IP).
-    const rl = rateLimit(`iscrizione:${clientIp(request)}`, { limit: 5, windowMs: 10 * 60 * 1000 })
+    const rl = await rateLimit(`iscrizione:${clientIp(request)}`, { limit: 5, windowMs: 10 * 60 * 1000 })
     if (!rl.ok) {
       return NextResponse.json(
         { error: 'Troppe richieste. Riprova tra qualche minuto.' },

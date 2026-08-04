@@ -104,11 +104,18 @@ export function impronta(normalizzata) {
     return createHash('sha256').update(JSON.stringify(normalizzata)).digest('hex')
 }
 
+// L'ISTANTE dello scatto, in UTC e al secondo — non la sola data. Vedi la nota gemella
+// in `scripts/fk-sede-fotografia.mjs` e `__tests__/architecture/soglia-fotografia.ts`:
+// il guard sulle migrazioni posteriori confrontava otto cifre contro le quattordici di
+// una `version`, e restava muto su tutto cio' che veniva applicato nello stesso giorno.
+const ADESSO = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+
 const stdin = readFileSync(0, 'utf8')
 const normalizzata = normalizza(estrai(stdin))
 const uscita = {
     _come_si_rigenera: 'node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json',
-    generato_il: new Date().toISOString().slice(0, 10),
+    generato_il: ADESSO.slice(0, 10),
+    generato_alle: ADESSO,
     sha256: impronta(normalizzata),
     ...normalizzata,
 }

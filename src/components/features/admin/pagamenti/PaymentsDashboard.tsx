@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/Badge';
 import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Pelle locale della dashboard contabilità, su token dell'app (allineata a
 // `Btn`/cockpit): pillole verde+giallo per le azioni, filtri come la Toolbar.
@@ -212,7 +213,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 body: JSON.stringify({ periodo: mese.slice(0, 7), scuola_id: scuolaId }),
             });
             const j = await res.json().catch(() => null);
-            if (!res.ok || !j?.success) setError(j?.error || t('dashErrCaricamento'));
+            if (!res.ok || !j?.success) setError(messaggioDaCorpo(j, t('dashErrCaricamento')));
             else setError(null);
             await load();
         } finally {

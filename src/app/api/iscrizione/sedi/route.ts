@@ -26,7 +26,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
  *    è più alto di quello del POST d'iscrizione).
  */
 export const GET = withRoute('iscrizione/sedi:GET', async (request: NextRequest) => {
-  const rl = rateLimit(`iscrizione-sedi:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
+  const rl = await rateLimit(`iscrizione-sedi:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'Troppe richieste. Riprova tra qualche minuto.' },

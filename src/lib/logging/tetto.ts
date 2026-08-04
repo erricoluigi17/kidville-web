@@ -79,6 +79,35 @@ export function tettoSano(richiesto: unknown, ripiego: number, massimo?: number)
 }
 
 /**
+ * Un segnale che scade da solo, per chi NON passa da un `RequestInit`.
+ *
+ * ─── PERCHÉ ESISTE, invece di scrivere `AbortSignal.timeout` sul posto ──────
+ * `conTetto` qui sotto serve chi chiama `fetch`: prende un `init` e ne restituisce
+ * uno col segnale attaccato. Ma non tutto quel che va limitato è una `fetch` con un
+ * `init` in mano — il builder di PostgREST, per esempio, vuole il segnale nudo
+ * (`.abortSignal(s)`), e il rate-limiter condiviso passa di lì.
+ *
+ * Senza questa funzione quel chiamante avrebbe due sole strade, e sono entrambe la
+ * stessa cosa che questo file esiste per impedire: scriversi `AbortSignal.timeout`
+ * per conto suo, oppure assemblare a mano un `AbortController` con un `setTimeout`
+ * che lo interrompe. Il lock `__tests__/lib/logging-tetto.test.ts` le riconosce
+ * entrambe e le respinge, ed è successo davvero — la prima stesura del tetto
+ * condiviso le aveva scritte tutte e due.
+ *
+ * FAIL-OPEN come `conTetto`: se `AbortSignal.timeout` non esiste o lancia (WebView
+ * vecchia, polyfill incompleto) si restituisce `undefined`. Il chiamante resta senza
+ * segnale — cioè senza QUESTA difesa — e deve avere la propria: chi usa questa
+ * funzione non può dedurre dal segnale che il tempo sia governato.
+ */
+export function segnaleConTetto(ms: number): AbortSignal | undefined {
+    try {
+        return AbortSignal.timeout(ms);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
  * L'`init` del chiamante con il tetto attaccato — se non ne ha già uno suo.
  *
  * IL SIGNAL DEL CHIAMANTE VINCE, e non è una cortesia: chi passa un signal sta governando la

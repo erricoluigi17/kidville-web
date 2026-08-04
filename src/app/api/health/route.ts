@@ -85,7 +85,7 @@ export const GET = withRoute('health:GET', async (request: Request) => {
         if ('response' in q) return q.response
 
         const ip = clientIp(request)
-        const tetto = rateLimit(`health:${ip}`, TETTO_PER_IP)
+        const tetto = await rateLimit(`health:${ip}`, TETTO_PER_IP)
         if (!tetto.ok) {
             // Non si logga: `withRoute` registra già i 429 a livello `warn` (e li
             // persiste). Una riga in più qui vorrebbe dire che chiunque può riempire

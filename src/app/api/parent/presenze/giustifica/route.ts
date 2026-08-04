@@ -85,7 +85,7 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
     // Il tetto vale SOLO quando l'OTP è richiesto: se la scuola l'ha disattivato non c'è nessun
     // codice da indovinare, e contare le giustifiche sbarrerebbe soltanto chi ne ha più d'una.
     if (richiedeOtp) {
-      const troppe = limitaVerificaOtp(userId)
+      const troppe = await limitaVerificaOtp(userId)
       if (troppe) return troppe
     }
 

@@ -75,8 +75,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Installa il browser Playwright
-        run: npx playwright install --with-deps chromium
+      # DUE motori, non uno. `webkit` è il browser della WebView iOS (Capacitor):
+      # il progetto `webkit` di playwright.config.ts ripete su di esso i quattro
+      # percorsi critici del genitore. Se questa riga e i progetti della config
+      # divergono, `__tests__/architecture/e2e-webkit-installato.test.ts` diventa
+      # rosso nel job `quality` — prima e più in fretta di quanto lo scoprirebbe
+      # qui un browser mancante.
+      - name: Installa i browser Playwright
+        run: npx playwright install --with-deps chromium webkit
       - name: Seed del DB E2E (scuola e2e00000-*)
         run: npm run e2e:seed
       - name: Suite E2E

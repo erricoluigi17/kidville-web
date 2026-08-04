@@ -114,21 +114,42 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     const checkInTime = formatTime(record?.orario_entrata ?? null, locale);
     const checkOutTime = formatTime(record?.orario_uscita ?? null, locale);
 
-    const borderColor = isPresente
-        ? '#22c55e'
+    // ── Bordo sinistro = UNICO segnale cromatico dello stato della riga ──────────
+    // WCAG 2.1 §1.4.11 chiede 3:1 per un segnale di stato non testuale, e i fondi
+    // adiacenti qui sono DUE: la card `bg-white` e il `hover:bg-kidville-cream`.
+    // I quattro colori di prima venivano dalla palette di default di Tailwind e non
+    // reggevano — misurati con la formula WCAG su sRGB linearizzato (bianco / crema):
+    //   #22c55e 2,28 / 2,05 · #f59e0b 2,15 / 1,93 · #3b82f6 3,68 / 3,31 · #9ca3af 2,54 / 2,29
+    // Tre su quattro sotto soglia su entrambi i fondi. E `#9ca3af` è lo STESSO valore
+    // che `TeacherBottomNav.tsx` documenta come già respinto per contrasto: una
+    // decisione presa e mai propagata.
+    // ATTENZIONE — anche i token «base» suggeriti dal collaudo (success/warn/neutral)
+    // sono stati MISURATI e scartati: success #43A047 3,30 / 2,98 · warn #E6720A
+    // 3,10 / 2,79 · neutral #8A958F 3,10 / 2,79 — passano appena sul bianco e
+    // FALLISCONO sul crema dell'hover. Reggono invece i tre inchiostri che questo
+    // stesso file usa GIÀ per i bottoni di stato (`STATI_BOTTONI`), così la riga e il
+    // bottone dicono finalmente lo stesso colore (bianco / crema):
+    //   · presente          green       #006A5F  6,51 / 5,86
+    //   · ritardo           warn-strong #A64F09  5,61 / 5,05
+    //   · uscita anticipata info        #2A6FDB  4,78 / 4,30  (tinta del badge omonimo)
+    //   · assente           sub         #55615C  6,46 / 5,82
+    // È una CLASSE e non più uno `style` inline: le rimappature per-superficie
+    // dell'Alto Contrasto agiscono sul NOME della classe e un inline-style resta
+    // irraggiungibile.
+    const bordoStato = isPresente
+        ? 'border-kidville-green'
         : isRitardo
-        ? '#f59e0b'
+        ? 'border-kidville-warn-strong'
         : isUscitaAnticipata
-        ? '#3b82f6'
+        ? 'border-kidville-info'
         : isAssente
-        ? '#9ca3af'
-        : 'transparent';
+        ? 'border-kidville-sub'
+        : 'border-transparent';
 
     return (
         <motion.div
             layout
-            className="kv-appello-row bg-white p-4 rounded-2xl shadow-sm flex flex-wrap items-center justify-between gap-y-2 border-l-4 transition-colors hover:bg-kidville-cream"
-            style={{ borderLeftColor: borderColor }}
+            className={`kv-appello-row bg-white p-4 rounded-2xl shadow-sm flex flex-wrap items-center justify-between gap-y-2 border-l-4 ${bordoStato} transition-colors hover:bg-kidville-cream`}
         >
             {/* Avatar + Info studente */}
             <div className="flex items-center gap-3 min-w-0">

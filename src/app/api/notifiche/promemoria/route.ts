@@ -8,6 +8,7 @@ import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola, staffScuola } fro
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 
 // =============================================================================
 // POST /api/notifiche/promemoria — giro promemoria GIORNALIERO.
@@ -39,24 +40,27 @@ const JOB = 'notifiche-promemoria'
 const postQuerySchema = z.object({})
 
 /**
- * TOLLERANZA D'AMBIENTE, e SOLO quella. Due codici, per nome, e nient'altro:
+ * TOLLERANZA D'AMBIENTE, e SOLO quella: `tabellaMancante` arriva da
+ * `@/lib/db/tolleranza-schema` e ammette due codici soli — `42P01` (Postgres:
+ * «relation does not exist») e `PGRST205` (PostgREST: «Could not find the table …
+ * in the schema cache»).
  *
- *  - `42P01` — Postgres: «relation does not exist».
- *  - `PGRST205` — PostgREST: «Could not find the table … in the schema cache».
+ * QUESTA FUNZIONE ERA SCRITTA QUI, e in altre due route, identica. La copia di
+ * questo file venne corretta il 2026-08-03 — le altre due no, e restarono con il
+ * regex sul messaggio per un altro giorno: la dimostrazione, sul campo, che una
+ * regola valida per tre strade non può stare in tre posti. Ora sta in uno, e il
+ * lock `__tests__/architecture/tolleranza-schema-un-posto-solo.test.ts` impedisce
+ * alla quarta copia di nascere.
  *
- * COSA È STATO TOLTO, e perché conta. Prima si accettava anche qualunque messaggio contenente
- * `does not exist`: dentro ci cadeva pure `42703 "column … does not exist"`, che NON è un
- * ambiente non migrato — è una TABELLA CHE C'È a cui manca una colonna, cioè una migrazione
- * applicata a metà su un database vivo. Un guasto vero, assorbito in silenzio perché due errori
- * diversi condividono tre parole di messaggio. La discriminante è il CODICE, non la prosa.
+ * Cosa fu tolto, e perché conta: si accettava anche qualunque messaggio contenente
+ * `does not exist`, e dentro ci cadeva pure `42703 "column … does not exist"` —
+ * che NON è un ambiente non migrato, è una TABELLA CHE C'È a cui manca una
+ * colonna, cioè una migrazione applicata a metà su un database vivo. La
+ * discriminante è il CODICE, non la prosa.
  *
  * E la tolleranza non è più il silenzio: chi chiama registra la scansione come SALTATA, e il
  * battito finale lo dichiara (`ok-parziale`). Vedi la nota sul battito in fondo al file.
  */
-function tabellaMancante(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false
-  return error.code === '42P01' || error.code === 'PGRST205'
-}
 
 /**
  * PostgREST NON LANCIA: ritorna `{ error }` (regola 7 di AGENTS.md). Le tre scansioni di questo

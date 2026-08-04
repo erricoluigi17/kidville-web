@@ -14,6 +14,8 @@ import {
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { useFoglioModale } from '@/lib/accessibility/foglio-modale';
+import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
 // grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
 type Grado = 'comune' | 'primaria' | 'infanzia';
@@ -49,6 +51,7 @@ const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider tra
 export default function BottomNav() {
   const pathname = usePathname();
   const [showMenu, setShowMenu] = useState(false);
+  const { dialogRef, closeBtnRef, onKeyDown } = useFoglioModale(showMenu, () => setShowMenu(false));
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
   // Testi della navigazione dal namespace i18n «nav» (label tab, gruppi e voci
@@ -65,42 +68,42 @@ export default function BottomNav() {
     {
       label: t('gruppoLaGiornata'),
       items: [
-        { id: 'diario', label: t('voceDiarioLabel'), sub: t('voceDiarioSub'), icon: BookOpen, href: '/parent/diary', tint: '#006A5F', grado: 'infanzia' },
-        { id: 'presenze', label: t('vocePresenzeLabel'), sub: t('vocePresenzeSub'), icon: CalendarX2, href: isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance', tint: '#E6720A', grado: 'comune' },
-        { id: 'foto', label: t('voceFotoLabel'), sub: t('voceFotoSub'), icon: Image, href: '/parent/gallery', tint: '#D14D8A', grado: 'comune' },
+        { id: 'diario', label: t('voceDiarioLabel'), sub: t('voceDiarioSub'), icon: BookOpen, href: '/parent/diary', tint: tintaFunzione('diario'), grado: 'infanzia' },
+        { id: 'presenze', label: t('vocePresenzeLabel'), sub: t('vocePresenzeSub'), icon: CalendarX2, href: isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance', tint: tintaFunzione('presenze'), grado: 'comune' },
+        { id: 'foto', label: t('voceFotoLabel'), sub: t('voceFotoSub'), icon: Image, href: '/parent/gallery', tint: tintaFunzione('foto'), grado: 'comune' },
       ],
     },
     {
       label: t('gruppoDidatticaPrimaria'),
       items: [
-        { id: 'registro', label: t('voceRegistroLabel'), sub: t('voceRegistroSub'), icon: BarChart3, href: '/parent/primaria', tint: '#2A6FDB', grado: 'primaria' },
-        { id: 'lezioni', label: t('voceLezioniLabel'), sub: t('voceLezioniSub'), icon: GraduationCap, href: '/parent/lezioni', tint: '#0E9488', grado: 'primaria' },
-        { id: 'compiti', label: t('voceCompitiLabel'), sub: t('voceCompitiSub'), icon: ClipboardList, href: '/parent/compiti', tint: '#E6720A', grado: 'primaria' },
-        { id: 'note', label: t('voceNoteLabel'), sub: t('voceNoteSub'), icon: AlertTriangle, href: '/parent/primaria/note', tint: '#B5651D', grado: 'primaria' },
-        { id: 'pagelle', label: t('vocePagelleLabel'), sub: t('vocePagelleSub'), icon: FileText, href: '/parent/primaria/pagelle', tint: '#2A6FDB', grado: 'primaria' },
+        { id: 'registro', label: t('voceRegistroLabel'), sub: t('voceRegistroSub'), icon: BarChart3, href: '/parent/primaria', tint: tintaFunzione('registro'), grado: 'primaria' },
+        { id: 'lezioni', label: t('voceLezioniLabel'), sub: t('voceLezioniSub'), icon: GraduationCap, href: '/parent/lezioni', tint: tintaFunzione('lezioni'), grado: 'primaria' },
+        { id: 'compiti', label: t('voceCompitiLabel'), sub: t('voceCompitiSub'), icon: ClipboardList, href: '/parent/compiti', tint: tintaFunzione('compiti'), grado: 'primaria' },
+        { id: 'note', label: t('voceNoteLabel'), sub: t('voceNoteSub'), icon: AlertTriangle, href: '/parent/primaria/note', tint: tintaFunzione('note'), grado: 'primaria' },
+        { id: 'pagelle', label: t('vocePagelleLabel'), sub: t('vocePagelleSub'), icon: FileText, href: '/parent/primaria/pagelle', tint: tintaFunzione('pagelle'), grado: 'primaria' },
       ],
     },
     {
       label: t('gruppoServizi'),
       items: [
-        { id: 'mensa', label: t('voceMensaLabel'), sub: t('voceMensaSub'), icon: UtensilsCrossed, href: '/parent/mensa', tint: '#1F8A5B', grado: 'comune' },
-        { id: 'armadietto', label: t('voceArmadiettoLabel'), sub: t('voceArmadiettoSub'), icon: Package, href: '/parent/locker', tint: '#C9971A', grado: 'infanzia' },
-        { id: 'pagamenti', label: t('vocePagamentiLabel'), sub: t('vocePagamentiSub'), icon: Euro, href: '/parent/pagamenti', tint: '#7A3FD0', grado: 'comune' },
+        { id: 'mensa', label: t('voceMensaLabel'), sub: t('voceMensaSub'), icon: UtensilsCrossed, href: '/parent/mensa', tint: tintaFunzione('mensa'), grado: 'comune' },
+        { id: 'armadietto', label: t('voceArmadiettoLabel'), sub: t('voceArmadiettoSub'), icon: Package, href: '/parent/locker', tint: tintaFunzione('armadietto'), grado: 'infanzia' },
+        { id: 'pagamenti', label: t('vocePagamentiLabel'), sub: t('vocePagamentiSub'), icon: Euro, href: '/parent/pagamenti', tint: tintaFunzione('pagamenti'), grado: 'comune' },
       ],
     },
     {
       label: t('gruppoComunicazioni'),
       items: [
-        { id: 'avvisi', label: t('voceAvvisiLabel'), sub: t('voceAvvisiSub'), icon: Megaphone, href: '/parent/avvisi', tint: '#006A5F', grado: 'comune' },
-        { id: 'news', label: t('voceNewsLabel'), sub: t('voceNewsSub'), icon: Newspaper, href: '/parent/news', tint: '#D14D8A', grado: 'comune' },
-        { id: 'chat', label: t('voceChatLabel'), sub: t('voceChatSub'), icon: MessageCircle, href: '/parent/chat', tint: '#2A6FDB', grado: 'comune' },
+        { id: 'avvisi', label: t('voceAvvisiLabel'), sub: t('voceAvvisiSub'), icon: Megaphone, href: '/parent/avvisi', tint: tintaFunzione('avvisi'), grado: 'comune' },
+        { id: 'news', label: t('voceNewsLabel'), sub: t('voceNewsSub'), icon: Newspaper, href: '/parent/news', tint: tintaFunzione('news'), grado: 'comune' },
+        { id: 'chat', label: t('voceChatLabel'), sub: t('voceChatSub'), icon: MessageCircle, href: '/parent/chat', tint: tintaFunzione('chat'), grado: 'comune' },
       ],
     },
     {
       label: t('gruppoDocumenti'),
       items: [
-        { id: 'modulistica', label: t('voceModulisticaLabel'), sub: t('voceModulisticaSub'), icon: FileText, href: '/parent/modulistica', tint: '#B5651D', grado: 'comune' },
-        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: IdCard, href: '/parent/profilo', tint: '#475569', grado: 'comune' },
+        { id: 'modulistica', label: t('voceModulisticaLabel'), sub: t('voceModulisticaSub'), icon: FileText, href: '/parent/modulistica', tint: tintaFunzione('modulistica'), grado: 'comune' },
+        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: IdCard, href: '/parent/profilo', tint: tintaFunzione('profilo'), grado: 'comune' },
       ],
     },
   ];
@@ -220,13 +223,27 @@ export default function BottomNav() {
               className="fixed left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-4"
               style={{ bottom: 'max(84px, calc(env(safe-area-inset-bottom) + 84px))' }}
             >
-              <div className="bg-kidville-cream rounded-[26px] shadow-2xl border border-black/5 max-h-[70vh] overflow-y-auto p-4">
+              {/* Il foglio si comporta da dialogo: `Escape` chiude, il Tab resta dentro,
+                  il focus entra sul bottone di chiusura e alla chiusura TORNA dov'era.
+                  Non passa da `ui/Modal` perché l'entrata a molla di framer-motion non
+                  sopravviverebbe alla primitiva — ma il comportamento di accessibilità
+                  non ha niente a che vedere con l'animazione, e viveva già in
+                  `AdminMenuSheet`: qui è la stessa ricetta, estratta (T08-F6 / T09). */}
+              <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="kv-menu-famiglia-titolo"
+                onKeyDown={onKeyDown}
+                className="bg-kidville-cream rounded-[26px] shadow-2xl border border-black/5 max-h-[70vh] overflow-y-auto p-4"
+              >
                 <div className="flex items-center justify-between mb-3 px-1">
                   <div>
                     <p className="font-barlow font-bold text-[10px] uppercase tracking-[0.14em] text-kidville-yellow-dark">{t('menuEyebrow')}</p>
-                    <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none">{t('menuTitolo')}</h3>
+                    <h3 id="kv-menu-famiglia-titolo" className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none">{t('menuTitolo')}</h3>
                   </div>
                   <button
+                    ref={closeBtnRef}
                     onClick={() => setShowMenu(false)}
                     aria-label={t('ariaChiudi')}
                     className="w-9 h-9 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-green"

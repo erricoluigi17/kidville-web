@@ -49,7 +49,7 @@ export const POST = withRoute('public/cancellazione-account:POST', async (reques
   // email. Il rifiuto NON va loggato qui a mano — `withRoute` persiste già ogni
   // 429 a livello `warn` (è un'anomalia, non un 4xx di routine), come per
   // `forms/send-otp`: un log esplicito sarebbe solo un doppione.
-  const rl = rateLimit(`cancellazione-account:${clientIp(request)}`, {
+  const rl = await rateLimit(`cancellazione-account:${clientIp(request)}`, {
     limit: RL_LIMITE,
     windowMs: RL_FINESTRA_MS,
   })

@@ -20,6 +20,7 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import type { CassaCategoria, CassaMetodo } from '@/lib/cassa/tipi';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Props {
   userId: string;
@@ -51,9 +52,16 @@ const CAMPO_LABEL_KEY: Record<string, string> = {
   tipo: 'cassaMovCampoTipo',
 };
 
-/** Costruisce un messaggio che NOMINA i campi rifiutati dal server. */
-function messaggioValidazione(errore: string | undefined, campi: string[], t: Traduttore): string {
-  if (campi.length === 0) return errore ?? t('cassaMovErrDefault');
+/**
+ * Costruisce un messaggio che NOMINA i campi rifiutati dal server.
+ *
+ * Riceve il CORPO, non la sola `error`: quando il rifiuto non nomina campi (403 di sede,
+ * 500) il testo lo decide `messaggioDaCorpo`, cioè il catalogo se il server ha mandato un
+ * codice dichiarato. Prima qui arrivava `j.error` e basta, e un «Sede non accessibile»
+ * finiva a schermo in italiano anche con l'interfaccia in inglese.
+ */
+function messaggioValidazione(corpo: unknown, campi: string[], t: Traduttore): string {
+  if (campi.length === 0) return messaggioDaCorpo(corpo, t('cassaMovErrDefault'));
   const nomi = campi.map((c) => { const k = CAMPO_LABEL_KEY[c]; return k ? t(k) : c; });
   return `${t('cassaMovControlla')} ${campi.length === 1 ? t('cassaMovIlCampo') : t('cassaMovICampi')}: ${nomi.join(', ')}.`;
 }
@@ -84,7 +92,7 @@ async function caricaAllegato(userId: string, scuolaId: string, file: File, t: T
     });
     const j = (await res.json()) as { error?: string; data?: { signedUrl?: string; path?: string }; signedUrl?: string; path?: string };
     const payload = j.data ?? j;
-    if (!res.ok || !payload.signedUrl || !payload.path) return { error: j.error ?? t('cassaMovFotoPrep') };
+    if (!res.ok || !payload.signedUrl || !payload.path) return { error: messaggioDaCorpo(j, t('cassaMovFotoPrep')) };
     const put = await fetch(payload.signedUrl, { method: 'PUT', headers: { 'content-type': file.type, 'x-upsert': 'false' }, body: file });
     if (!put.ok) return { error: `${t('cassaMovFotoHttpPre')}${put.status}${t('cassaMovFotoHttpPost')}` };
     return { path: payload.path };
@@ -173,7 +181,7 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
       if (!res.ok) {
         const campi = (j.details ?? []).map((d) => d.path).filter((p): p is string => typeof p === 'string' && p.length > 0);
         setCampiErrati(new Set(campi));
-        setError(messaggioValidazione(j.error, campi, t));
+        setError(messaggioValidazione(j, campi, t));
         return;
       }
       onDone();

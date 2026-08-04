@@ -131,8 +131,8 @@ function troppeRichieste(retryAfterMs: number): NextResponse {
  * qualunque invio: un tentativo bloccato non deve né spedire un'email né lasciare
  * traccia nel registro FEA, che è il libro delle firme, non dei tentativi.
  */
-export function limitaInvioOtp(userId: string): NextResponse | null {
-  const rl = rateLimit(`otp-invio:${userId}`, {
+export async function limitaInvioOtp(userId: string): Promise<NextResponse | null> {
+  const rl = await rateLimit(`otp-invio:${userId}`, {
     limit: LIMITE_OTP_INVIO,
     windowMs: FINESTRA_OTP_MS,
   })
@@ -151,8 +151,8 @@ export function limitaInvioOtp(userId: string): NextResponse | null {
  * `giustifica_richiede_firma_otp` disattivato): là conterebbe gesti legittimi e
  * non difenderebbe niente.
  */
-export function limitaVerificaOtp(userId: string): NextResponse | null {
-  const rl = rateLimit(`otp-verifica:${userId}`, {
+export async function limitaVerificaOtp(userId: string): Promise<NextResponse | null> {
+  const rl = await rateLimit(`otp-verifica:${userId}`, {
     limit: LIMITE_OTP_VERIFICA,
     windowMs: FINESTRA_OTP_MS,
   })
@@ -192,8 +192,8 @@ export function limitaVerificaOtp(userId: string): NextResponse | null {
  * Vale lo stesso caveat di tutti gli altri: il contatore è **per istanza** (vedi
  * «QUANTO VALE DAVVERO IL TETTO» qui sopra).
  */
-export function limitaVerificaOtpOggetto(oggettoId: string): NextResponse | null {
-  const rl = rateLimit(`otp-verifica-oggetto:${oggettoId}`, {
+export async function limitaVerificaOtpOggetto(oggettoId: string): Promise<NextResponse | null> {
+  const rl = await rateLimit(`otp-verifica-oggetto:${oggettoId}`, {
     limit: LIMITE_OTP_VERIFICA,
     windowMs: FINESTRA_OTP_MS,
   })

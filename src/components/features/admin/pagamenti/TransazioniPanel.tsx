@@ -22,6 +22,7 @@ import { formatEuro } from '@/lib/format/valuta';
 import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY, MODAL_CARD, MODAL_SHADOW } from './ui';
 import { FatturaButton } from './FatturaButton';
 import { proponiAllocazione, round2 } from '@/lib/pagamenti/transazioni-quadratura';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 /**
  * Precompilazione del wizard «Incasso unico» quando lo si apre da un bonifico
@@ -164,7 +165,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
         try {
             const r = await fetch(`/api/pagamenti/famiglia?parent_id=${p.id}`, { headers: hdr(userId) });
             const j = await r.json();
-            if (!j?.success) { setError(j?.error || t('transErrCaricaFamiglia')); return; }
+            if (!j?.success) { setError(messaggioDaCorpo(j, t('transErrCaricaFamiglia'))); return; }
             applicaFamiglia(j.data as Famiglia);
         } catch { setError(t('transErrReteFamiglia')); }
     };
@@ -267,7 +268,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
             const j = await res.json();
             // Eccedenza mai silenziosa: 409 → apri la conferma esplicita «credito famiglia».
             if (res.status === 409 && j.eccedenza != null) { setConfermaEcc(Number(j.eccedenza)); return; }
-            if (!res.ok) { setError(j.error || t('transErrRegistrazione')); return; }
+            if (!res.ok) { setError(messaggioDaCorpo(j, t('transErrRegistrazione'))); return; }
             setConfermaEcc(null);
             setFatto({ transazioneId: j.data?.transazione_id ?? '', voci: vociIncluse });
             void caricaRegistro();
@@ -291,7 +292,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                 method: 'POST', headers: hdr(userId), body: JSON.stringify({ motivo: motivoAnnullo.trim() }),
             });
             if (res.ok) { setAnnullaTx(null); setMotivoAnnullo(''); void caricaRegistro(); }
-            else { const j = await res.json(); setError(j.error || t('transErrAnnullo')); }
+            else { const j = await res.json(); setError(messaggioDaCorpo(j, t('transErrAnnullo'))); }
         } catch { setError(t('transErrReteAnnullo')); }
         finally { setBusyAnnullo(false); }
     };

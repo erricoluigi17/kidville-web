@@ -839,5 +839,8 @@
   "fatBtn_chiudi": "Chiudi",
   "rateChiudi": "Chiudi",
   "rateRimuoviRata": "Rimuovi rata",
-  "soll_aggiorna": "Aggiorna solleciti"
+  "soll_aggiorna": "Aggiorna solleciti",
+  "fatBtn_err_emissione": "Fattura non emessa. Riprova o controlla i dati di fatturazione.",
+  "genrErrGenerazione": "Rette non generate. Riprova.",
+  "ticket_err_ricarica": "Ricarica non registrata. Riprova."
 }

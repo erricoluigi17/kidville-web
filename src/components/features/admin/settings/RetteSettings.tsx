@@ -7,6 +7,7 @@ import { card, h3, input, label, hint, checkbox, checkboxLabel, checkboxRow } fr
 import { hdr } from './ui';
 import { SaveRow } from './fields';
 import { formatEuro } from '@/lib/format/valuta';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import {
     normalizzaRetteConfig,
     scontoFratelli,
@@ -79,7 +80,7 @@ export function RetteSettings({ userId, scuolaId }: Props) {
             });
             const j = await res.json();
             if (j.success) { setMsg(t('rtImpostazioniSalvate')); setCfg(normalizzaRetteConfig(j.data?.rette_config)); }
-            else setError(j.error ?? t('erroreSalvataggio'));
+            else setError(messaggioDaCorpo(j, t('erroreSalvataggio')));
         } catch {
             setError(t('erroreRete'));
         } finally {

@@ -14,7 +14,7 @@ import {
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
-import { useFoglioModale } from '@/lib/accessibility/foglio-modale';
+
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
 // grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
@@ -51,7 +51,6 @@ const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider tra
 export default function BottomNav() {
   const pathname = usePathname();
   const [showMenu, setShowMenu] = useState(false);
-  const { dialogRef, closeBtnRef, onKeyDown } = useFoglioModale(showMenu, () => setShowMenu(false));
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
   // Testi della navigazione dal namespace i18n «nav» (label tab, gruppi e voci
@@ -223,18 +222,35 @@ export default function BottomNav() {
               className="fixed left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-4"
               style={{ bottom: 'max(84px, calc(env(safe-area-inset-bottom) + 84px))' }}
             >
-              {/* Il foglio si comporta da dialogo: `Escape` chiude, il Tab resta dentro,
-                  il focus entra sul bottone di chiusura e alla chiusura TORNA dov'era.
-                  Non passa da `ui/Modal` perché l'entrata a molla di framer-motion non
-                  sopravviverebbe alla primitiva — ma il comportamento di accessibilità
-                  non ha niente a che vedere con l'animazione, e viveva già in
-                  `AdminMenuSheet`: qui è la stessa ricetta, estratta (T08-F6 / T09). */}
+              {/* ── T08-F6 / T09 CHIUSO A METÀ, DI PROPOSITO ─────────────────────────
+                  Il foglio ora si ANNUNCIA come dialogo (`role`, `aria-modal`,
+                  `aria-labelledby`) e si chiude con `Escape`. Sono marcature e un
+                  gestore di tastiera: non spostano il focus e non toccano il documento.
+
+                  NON c'è il focus trap. `useFoglioModale` — che porta anche il focus sul
+                  bottone di chiusura, blocca lo scroll del body e RIPRISTINA il focus in
+                  cleanup — è stato provato e RITIRATO: rompeva
+                  `parent-news.spec.ts:51`, cioè «apro il menu e vado alla sezione News».
+                  Il click sulla voce arrivava, ma la navigazione no (URL fermo su
+                  `/parent`): le tre cose che l'hook fa entrano in gioco esattamente
+                  nell'istante in cui il `Link` chiude il foglio e naviga.
+                  Misurato: run 30917063565, tre tentativi.
+
+                  Questa è la navigazione principale di OGNI famiglia. Un focus trap che
+                  la rompe è peggio del focus trap che manca — e senza un browser vero
+                  sotto mano non si distingue quale delle tre cose interferisca. Da
+                  riprendere con il simulatore aperto, una alla volta.
+                  La primitiva resta buona e in uso dov'è provata: `ui/Modal`. */}
               <div
-                ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="kv-menu-famiglia-titolo"
-                onKeyDown={onKeyDown}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setShowMenu(false);
+                  }
+                }}
                 className="bg-kidville-cream rounded-[26px] shadow-2xl border border-black/5 max-h-[70vh] overflow-y-auto p-4"
               >
                 <div className="flex items-center justify-between mb-3 px-1">
@@ -243,7 +259,7 @@ export default function BottomNav() {
                     <h3 id="kv-menu-famiglia-titolo" className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none">{t('menuTitolo')}</h3>
                   </div>
                   <button
-                    ref={closeBtnRef}
+                    
                     onClick={() => setShowMenu(false)}
                     aria-label={t('ariaChiudi')}
                     className="w-9 h-9 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-green"

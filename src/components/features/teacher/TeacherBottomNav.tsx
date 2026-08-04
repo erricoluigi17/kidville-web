@@ -61,6 +61,20 @@ export default function TeacherBottomNav() {
   const pathname = usePathname();
   const search = useSearchParams();
   const [showMenu, setShowMenu] = useState(false);
+
+  // ── Il foglio si chiude QUANDO la rotta è cambiata, non quando si clicca ──
+  // Stesso difetto trovato sulla bottom-nav del genitore e corretto insieme:
+  // chiudere il foglio dentro l'`onClick` del `<Link>` smonta il link mentre
+  // Next sta portando la navigazione in una transizione React, e se il payload
+  // RSC arriva dopo lo smontaggio la navigazione si perde in silenzio. Lo
+  // schema era copiato in tutte e due le barre: la regola vive ora in tutte e
+  // due, con lo stesso lock a difenderla
+  // (`__tests__/ui/bottom-nav-menu-navigazione.test.tsx`).
+  const [rottaVista, setRottaVista] = useState(pathname);
+  if (rottaVista !== pathname) {
+    setRottaVista(pathname);
+    setShowMenu(false);
+  }
   // Identità a due passaggi (SSR → idratazione): `withUser` omette il parametro
   // finché l'uuid non è risolto, così l'HTML del server e il primo render del
   // client coincidono e nessun href porta mai la stringa «null».
@@ -304,7 +318,10 @@ export default function TeacherBottomNav() {
                             <Link
                               key={it.id}
                               href={withUser(it.href)}
-                              onClick={() => setShowMenu(false)}
+                              // Solo sulla rotta corrente: lì nessuna navigazione
+                              // avverrebbe, quindi `pathname` non cambierebbe mai e
+                              // il foglio resterebbe aperto.
+                              onClick={active ? () => setShowMenu(false) : undefined}
                               aria-current={active ? 'page' : undefined}
                               className={`flex items-center gap-[13px] px-3 py-[11px] active:bg-kidville-cream ${borderCls}`}
                             >

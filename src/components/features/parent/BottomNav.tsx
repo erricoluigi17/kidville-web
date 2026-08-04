@@ -51,6 +51,25 @@ const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider tra
 export default function BottomNav() {
   const pathname = usePathname();
   const [showMenu, setShowMenu] = useState(false);
+
+  // ── Il foglio si chiude QUANDO la rotta è cambiata, non quando si clicca ──
+  // Chiuderlo dentro l'`onClick` del `<Link>` smontava il link stesso nello
+  // stesso istante in cui Next avviava la navigazione — che è una transizione
+  // React. Se il payload RSC arrivava prima dello smontaggio la navigazione
+  // passava; se arrivava dopo, si perdeva e l'URL restava fermo. Misurato sulla
+  // traccia Playwright della run 30920578641: click ricevuto, RSC `/parent/news`
+  // 200 in 283 ms, URL su `/parent` per tutti i 5 s successivi. Non era il test
+  // fragile: sulla rete lenta di un genitore, toccare una voce del menu non
+  // portava da nessuna parte. Lock: `__tests__/ui/bottom-nav-menu-navigazione.test.tsx`.
+  // Si usa l'aggiustamento di stato in render (l'escape hatch documentato da
+  // React per lo stato derivato) e non un `useEffect`: nessun giro di render in
+  // più, e nessuna finestra in cui il foglio è aperto sulla pagina nuova.
+  const [rottaVista, setRottaVista] = useState(pathname);
+  if (rottaVista !== pathname) {
+    setRottaVista(pathname);
+    setShowMenu(false);
+  }
+
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
   // Testi della navigazione dal namespace i18n «nav» (label tab, gruppi e voci
@@ -227,19 +246,23 @@ export default function BottomNav() {
                   `aria-labelledby`) e si chiude con `Escape`. Sono marcature e un
                   gestore di tastiera: non spostano il focus e non toccano il documento.
 
-                  NON c'è il focus trap. `useFoglioModale` — che porta anche il focus sul
-                  bottone di chiusura, blocca lo scroll del body e RIPRISTINA il focus in
-                  cleanup — è stato provato e RITIRATO: rompeva
-                  `parent-news.spec.ts:51`, cioè «apro il menu e vado alla sezione News».
-                  Il click sulla voce arrivava, ma la navigazione no (URL fermo su
-                  `/parent`): le tre cose che l'hook fa entrano in gioco esattamente
-                  nell'istante in cui il `Link` chiude il foglio e naviga.
-                  Misurato: run 30917063565, tre tentativi.
+                  NON c'è il focus trap. `useFoglioModale` è stato provato e RITIRATO
+                  perché rompeva `parent-news.spec.ts:51` — «apro il menu e vado alla
+                  sezione News» (run 30917063565).
 
-                  Questa è la navigazione principale di OGNI famiglia. Un focus trap che
-                  la rompe è peggio del focus trap che manca — e senza un browser vero
-                  sotto mano non si distingue quale delle tre cose interferisca. Da
-                  riprendere con il simulatore aperto, una alla volta.
+                  ⚠️ RETTIFICA DEL 2026-08-04: quella diagnosi era SBAGLIATA, e questo
+                  commento l'ha sostenuta per giorni. Il focus trap non era la causa: era
+                  un aggravante. La causa vera era `onClick={() => setShowMenu(false)}`
+                  sul `<Link>` qui sotto, che smontava il link mentre Next portava la
+                  navigazione in una transizione React — corretta ora (vedi il commento in
+                  cima al componente, con la traccia che lo dimostra). Il focus trap
+                  aggiungeva lavoro nello stesso istante e rendeva la corsa più facile da
+                  perdere, ma toglierlo non aveva risolto niente: il test restava rosso.
+
+                  Quindi `useFoglioModale` **si può riprovare**, ora che la corsa non c'è
+                  più, e va riprovato: questa resta la navigazione principale di ogni
+                  famiglia e oggi il foglio non trattiene il focus. Da fare con un browser
+                  vero sotto mano, non alla cieca.
                   La primitiva resta buona e in uso dov'è provata: `ui/Modal`. */}
               <div
                 role="dialog"
@@ -323,7 +346,12 @@ export default function BottomNav() {
                             <Link
                               key={it.id}
                               href={it.href}
-                              onClick={() => setShowMenu(false)}
+                              // Solo sulla voce della rotta in cui si è già: lì non
+                              // avviene nessuna navigazione, quindi il cambio di
+                              // `pathname` non arriverebbe mai e il foglio resterebbe
+                              // aperto per sempre. Altrove NON si chiude qui: vedi il
+                              // commento in cima al componente.
+                              onClick={active ? () => setShowMenu(false) : undefined}
                               aria-current={active ? 'page' : undefined}
                               className={`flex items-center gap-[13px] px-3 py-[11px] active:bg-kidville-cream ${borderCls}`}
                             >

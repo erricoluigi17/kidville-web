@@ -101,7 +101,16 @@ export async function attendiFineCaricamento(page: Page) {
   await page
     .locator('[data-visible="true"][role="status"]')
     .waitFor({ state: 'hidden', timeout: 10_000 })
-    .catch(() => {
-      // Non c'è mai stato, o è già sparito: è il caso normale, non un guasto.
+    .catch((errore) => {
+      // Se l'elemento non c'è mai stato la condizione è già vera e non si passa di
+      // qui: qui ci si arriva solo per TIMEOUT, cioè con l'overlay ancora a schermo
+      // dopo 10 secondi. Non si fa fallire il test — non è questo il suo oggetto — ma
+      // non si tace nemmeno: un'attesa che si arrende in silenzio è il motivo per cui
+      // `parent-news.spec.ts` è sembrato capriccioso per giorni, mentre il difetto era
+      // altrove e ben visibile. Chi legge i log della CI ora lo vede.
+      console.warn(
+        '[attendiFineCaricamento] overlay del loader ancora visibile dopo 10 s — proseguo:',
+        errore instanceof Error ? errore.message.split('\n')[0] : String(errore),
+      );
     });
 }

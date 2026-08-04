@@ -4,15 +4,27 @@
 > (Reg. UE 2022/2065). Apple deve **verificare e pubblicare** i recapiti di chi distribuisce
 > app nell'Unione Europea.
 >
-> **Perché blocca**: dal **17 febbraio 2025** nessun invio in revisione è possibile senza. Non
-> blocca il *caricamento* della build (infatti `1.0 (1)` è già su TestFlight), blocca l'**invio
-> in revisione** — e le app non conformi **vengono rimosse dallo store UE**.
+> ⚠️ **«Perché blocca l'invio» — questa riga diceva il falso, ed è stata corretta il 2026-08-05.**
+> Il testo originale sosteneva che dal 17 febbraio 2025 nessun invio in revisione fosse possibile
+> senza la dichiarazione. **Misurato il 04/08/2026: falso.** Con `TRADER_STATUS_NOT_PROVIDED`
+> ancora attivo su ITA, `POST /v1/reviewSubmissionItems` ha risposto `201` e
+> `PATCH {submitted:true}` ha portato la versione a `WAITING_FOR_REVIEW`. Il `409` che sembrava
+> confermare la tesi nominava **tutt'altro** dentro `meta.associatedErrors`: mancava `copyright`.
+>
+> **Cosa blocca davvero**: il **RILASCIO**. Finché il trader status non è *verificato*, ITA resta
+> `CANNOT_SELL` — e con la disponibilità ristretta alla sola Italia questo significa **app
+> approvata e mai pubblicata, senza che nessuna schermata lo dica**. Sono **due gate distinti**:
+> la *dichiarazione* e la *verifica del documento*, che non ha SLA.
 >
 > **Chi lo fa**: tu. Sono dichiarazioni legali sull'identità del titolare del conto, e Apple
 > chiede una verifica in due fattori su email e telefono più il caricamento di un documento.
 > Nessun agente può farle al posto tuo.
 >
-> **Stato**: 🔴 da fare. **Prima però va sciolto il nodo del §0: è la decisione che protegge te.**
+> **Stato al 2026-08-05**: 🟠 **sospeso di proposito.** La DECISIONE 1 del §0 è stata presa —
+> **opzione A, conversione dell'account in *Organization***. Il modulo DSA **non va compilato
+> dall'account individuale**: si compila dopo la conversione, a nome della cooperativa, dove
+> l'indirizzo è precompilato dal D-U-N-S e non serve caricare alcun documento.
+> 👉 Stato operativo e passi concreti: **[A1b](A1b-duns-richiesta.md), §AGGIORNAMENTO 2026-08-05**.
 
 ---
 
@@ -136,7 +148,16 @@ avviene, e il rischio 5.1.1(ix) pesa su *questa* review. Ma il prezzo per toglie
 | Coerenza col Titolare GDPR di `/privacy` | ❌ due soggetti diversi | ✅ stesso soggetto |
 | Se domani lasci la scuola o cedi il progetto | l'app è **intestata a te** | è dell'ente |
 
-### ✅ I due controlli da fare, in quest'ordine
+### ✅ I due controlli da fare, in quest'ordine — **entrambi ESEGUITI, esiti qui sotto**
+
+> **Controllo 1 → ✅ fatto il 26/07/2026: il numero esisteva già, `432360401`.** Vedi
+> [A1b](A1b-duns-richiesta.md). *«Il vincolo di allora è già caduto»* — è esattamente quello che è
+> successo, e per dieci giorni non se n'è accorto nessuno.
+>
+> **Controllo 2 → ✅ fatto il 05/08/2026: `Individual`.** E non serviva la schermata: il `TeamName`
+> del profilo di provisioning (`"luigi errico"`, team `B5ULCGG2V3`) lo dice da riga di comando.
+> ⚠️ `/v1/users` e `/v1/certificates` **non** decidono — un certificato di sviluppo porta *sempre*
+> il nome della persona fisica anche dentro un team aziendale.
 
 **Controllo 1 — cinque minuti, gratis, sblocca tutto o non sblocca niente:**
 
@@ -158,12 +179,17 @@ avviene, e il rischio 5.1.1(ix) pesa su *questa* review. Ma il prezzo per toglie
 
 - che l'ente sia una **persona giuridica riconosciuta** → ✅ la Soc. Coop. lo è;
 - che chi si iscrive abbia **autorità legale di vincolare l'ente** (legale rappresentante, o
-  delega scritta) → **verifica che sia il tuo caso**: se il legale rappresentante è un'altra
-  persona, l'iscrizione la fa quella persona, o ti serve una delega;
+  delega scritta) → ❌ **verificato il 05/08: NON è il tuo caso.** Il legale rappresentante è
+  **Errico Cesario**, Presidente del CdA; Luigi Errico è consigliere e la visura conferisce
+  *tutti* i poteri al Presidente. **Serve la delega** — testo pronto in
+  `~/Downloads/Kidville-Apple-Organization/02-delega-cesario.txt`;
 - un **sito web pubblico** intestato all'ente → ✅ `app.kidville.it`;
 - **99 $/anno**, come l'individuale (non è un sovrapprezzo: è un'altra membership).
 
-> **🟡 DECISIONE 1 — La più importante del documento. ✅ Ricerca chiusa: la risposta è A.**
+> **🟢 DECISIONE 1 — La più importante del documento. ✅ PRESA DAL TITOLARE IL 2026-08-05: A.**
+>
+> *Il modulo DSA non si compila dall'account individuale: si aspetta la conversione. Costo
+> accettato: l'app resta approvabile ma non pubblicabile nel frattempo.*
 >
 > **A. Convertire l'account esistente in Organization** intestato alla cooperativa —
 > **raccomandata, e ora quasi a costo zero.** Ti toglie di mezzo personalmente, elimina il
@@ -248,9 +274,9 @@ postale**. È l'unico modo, in quel caso, di non pubblicare il tuo domicilio.
 
 | Campo | Valore proposto | Note di tutela |
 |---|---|---|
-| **Indirizzo** | `Via Silvio Pellico 7, 81030 Cesa (CE), Italia` | È la **sede legale della cooperativa**, dato già pubblico nel registro imprese e già scritto in `/privacy` e `/termini`. Pubblicarlo non aggiunge alcuna esposizione. ⚠️ Se l'account è Individual e Apple pretende l'indirizzo della persona fisica, **usa una casella postale** e carica al Passo 4 il documento che te la associa. |
-| **Telefono** | ⬜ **DA DECIDERE — vedi DECISIONE 2** | Deve poter **ricevere un SMS/chiamata di verifica in due fattori** ed è il numero che chiunque potrà chiamare. |
-| **Email** | ⬜ **DA DECIDERE — vedi DECISIONE 3** | Deve poter **ricevere un codice di verifica**. |
+| **Indirizzo** | `Via Silvio Pellico 7, 81030 Cesa (CE), Italia` — **precompilato dal D-U-N-S**, non modificabile | Vale **solo da account Organization**, ed è il motivo per cui si aspetta la conversione: lì non si carica **nessun** documento di associazione. ⚠️ **Da account Individual questo indirizzo è indocumentabile** (verificato il 05/08): il 7 è la sede della cooperativa, il domicilio della persona fisica è il **9**, e per Apple il 7 sarebbe un *alternate address* che nessun documento intestato a lui può provare. In quello scenario le uniche vie erano il domicilio privato o una casella postale. |
+| **Telefono** | ✅ **`+39 331 815 3108`** *(DECISIONE 2 chiusa il 05/08)* | ⚠️ **Non è un cellulare personale**: è il recapito pubblico della **sede di Giugliano**, già pubblicato su `www.kidville.it`. Essendo di cellulare **riceve l'SMS** di verifica. Alternativa: `081 503 2070` (fisso di Cesa, coincide con la città della sede legale ma richiede la verifica via chiamata vocale). |
+| **Email** | ✅ **`info@kidville.it`** *(DECISIONE 3 chiusa)* | **Verificato il 05/08 che riceve davvero**: la mail `developer@email.apple.com` col D-U-N-S è arrivata lì il 26/07 alle 18:36. Il codice di verifica è quindi leggibile anche da un agente col server MCP `kidville-mail`. |
 
 > **✅ DECISIONE 2 — CHIUSA il 2026-08-04: `+39 331 815 3108`.**
 > Scelto dal titolare. Deve poter ricevere il codice di verifica (SMS o chiamata) e resta

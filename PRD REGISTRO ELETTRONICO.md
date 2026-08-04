@@ -89,6 +89,67 @@
 
 ---
 
+## 🟠 Changelog — Il DSA non si compila: prima l'account deve diventare della cooperativa 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
+
+Nessuna modifica al prodotto: è una **decisione di conformità** e l'allineamento dei documenti
+che la reggevano male. Il modulo DSA — l'ultima cosa che separa l'app dalla pubblicazione in
+Italia — **non verrà compilato dall'account individuale**.
+
+### Cosa è stato misurato, contro cosa c'era scritto
+
+| | I documenti dicevano | Misurato il 2026-08-05 |
+|---|---|---|
+| Tipo di account Apple | ignoto, «si legge a schermo in App Store Connect» | **`Individual`** — e si misura da riga di comando: `TeamName` del `.mobileprovision` = `"luigi errico"` (team `B5ULCGG2V3`). In un team *Organization* lì ci sarebbe la ragione sociale |
+| Chi dichiara, e con quale indirizzo | «persona fisica, `Via Silvio Pellico 7`» | combinazione **indocumentabile**: il **7** è la sede della cooperativa, il domicilio della persona fisica è il **9** (visura CCIAA Caserta `T 621117155`, §Amministratori) |
+| Chi può vincolare la cooperativa | implicitamente il titolare dell'account | **Errico Cesario**, Presidente del CdA. Visura, §Poteri: *«al Presidente vengono conferiti tutti i poteri di ordinaria e straordinaria amministrazione»*. Il titolare dell'account è **consigliere** → serve una **delega scritta** |
+| D-U-N-S | «in mano, serve per Google Play» | **`432360401`, intestato alla cooperativa, dal 26/07/2026.** Il vincolo che aveva imposto l'account individuale era **già caduto da dieci giorni**, e il ticket di conversione (Passo 3 di `A1b`) non era mai stato aperto |
+| `+39 331 815 3108` | trattato come recapito personale | è il **numero pubblico della sede di Giugliano**, già su `www.kidville.it`, ed essendo di cellulare riceve l'SMS di verifica |
+| `info@kidville.it` | mai verificato che ricevesse | **riceve**: la mail `developer@email.apple.com` col D-U-N-S è arrivata lì il 26/07 alle 18:36 |
+
+### Perché la conversione, e non «compilo e vediamo»
+
+Da account *Organization* l'indirizzo del modulo DSA è **precompilato dal D-U-N-S, non
+modificabile, e non richiede alcun documento di associazione**: è l'unico modo pulito di
+ottenere la sede della cooperativa sulla pagina pubblica dell'App Store. Da account individuale
+si sarebbe pubblicato **nome, domicilio e recapiti di una persona fisica**, con una verifica a
+rischio di rigetto sull'indirizzo scelto.
+
+Si aggiunge la **Guideline 5.1.1(ix)**, riverificata in vigore: *«apps … that require sensitive
+user information should be submitted by a legal entity that provides the services, and not by an
+individual developer»*. Kidville tratta allergie, note mediche e flag BES/DSA **di minori**, e il
+Titolare del trattamento dichiarato in `/privacy` è la cooperativa: chi pubblica e chi eroga il
+servizio, oggi, sono due soggetti diversi. È un motivo di rigetto documentato, e pende su
+**questa** revisione.
+
+⏳ **Un'app mai pubblicata non è trasferibile** (App Transfer pretende almeno una release): non
+esiste la scorciatoia «pubblico ora e sistemo domani».
+
+### Costo accettato
+
+Finché la conversione non è fatta, l'app resta **approvabile ma non pubblicabile**: ITA continua
+a rispondere `TRADER_STATUS_NOT_PROVIDED · CANNOT_SELL · AVAILABLE_FOR_SALE_UNRELEASED_APP`.
+Con `releaseType = AFTER_APPROVAL` e un solo territorio attivo, questo significa **approvata e
+mai pubblicata, senza che nessuna schermata lo dica** — per questo il semaforo si rilegge da
+programma:
+
+```bash
+node scripts/asc-api.mjs GET "/v2/appAvailabilities/6794883055/territoryAvailabilities?limit=200"
+```
+
+### File toccati
+
+- `docs/submission/A1b-duns-richiesta.md` — sezione «AGGIORNAMENTO 2026-08-05», tabella dei
+  requisiti e checklist riscritte sugli esiti reali
+- `docs/submission/A1-dsa-operatore-commerciale.md` — **corretta una riga che diceva il falso**
+  («dal 17 febbraio 2025 nessun invio è possibile senza il DSA»: l'invio del 04/08 è avvenuto con
+  `TRADER_STATUS_NOT_PROVIDED` attivo); DECISIONE 1/2/3 chiuse, §2 allineato
+
+📄 Testo del ticket ad Apple, delega bilingue da far firmare al Presidente e valori del modulo DSA
+stanno **fuori dal repo** — in `~/Downloads/Kidville-Apple-Organization/` — perché la delega
+contiene dati personali e **questo repository è pubblico**.
+
+---
+
 ## 🚀 Changelog — L'app iOS è in revisione, e il blocco non era quello che tutti i documenti dicevano 2026-08-04
 
 **`WAITING_FOR_REVIEW` dalle 21:32:43 UTC del 2026-08-04**, build **`1.0 (4)`**, territorio

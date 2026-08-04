@@ -151,6 +151,27 @@
         // sembri un blocco: oltre, l'utente ritocca il pulsante comunque.
         var ATTESA_MS = 6000;
 
+        // Toglie lo splash nativo, SE il bridge di Capacitor è raggiungibile da
+        // qui. In modalità aereo si arriva su questa pagina in una frazione di
+        // secondo, mentre lo splash resterebbe fino al suo tetto (6 s, vedi
+        // `capacitor.config.ts`): sei secondi di schermata d'avvio davanti a un
+        // messaggio già pronto.
+        //
+        // È un TENTATIVO e non una garanzia, per la ragione scritta più su in
+        // questo stesso file: su origine locale il bridge può non essere
+        // iniettato quando l'app è servita da un host remoto (Android,
+        // `Bridge.java:266-274`). Se `window.Capacitor` non c'è, questo blocco
+        // non fa nulla e il tetto resta l'unica via d'uscita — che è il
+        // comportamento che si avrebbe comunque senza queste righe.
+        try {
+          var ponte = window.Capacitor;
+          var splash = ponte && ponte.Plugins && ponte.Plugins.SplashScreen;
+          if (splash && typeof splash.hide === 'function') splash.hide({ fadeOutDuration: 250 });
+        } catch (e) {
+          /* nessun bridge, o plugin assente: resta il tetto del plugin. Niente
+             log perché qui non c'è rete per portarlo via — vedi la nota in cima. */
+        }
+
         // La lingua del sistema è l'unico segnale disponibile: il cookie
         // KV_LOCALE vive sull'origine remota, che qui non è raggiungibile.
         var inglese = false;

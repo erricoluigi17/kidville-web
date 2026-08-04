@@ -89,6 +89,83 @@
 
 ---
 
+## ✅ Changelog — Lo schermo bianco all'avvio, e la registrazione push che non lasciava traccia 2026-08-04 (branch `fix/splash-avvio-nativo`)
+
+**Segnalazione del titolare, sulla 1.0 (3) installata da TestFlight**: *«quando apre l'app, rimane
+per dei secondi schermo bianco»*. E, sulla prova delle notifiche: *«non so cosa dovrei fare»*.
+
+### Lo schermo bianco — cos'era davvero
+
+Non è un caricamento lento del sito: è che l'app **è una WebView che scarica `app.kidville.it`
+dalla rete**. La schermata di lancio di iOS sparisce quando il processo è pronto (qualche decimo
+di secondo), il primo HTML arriva secondi dopo, e in mezzo la WebView non ha niente da dipingere.
+Il `PageLoader` non poteva coprire quell'intervallo: fa parte della pagina che si sta ancora
+scaricando.
+
+Misurato sull'imageset, non ricordato: la schermata di lancio era **verde pieno `#006A5F`, senza
+logo**. Accanto vivevano tre `splash-2732x2732*.png` bianchi col marchio Capacitor che
+`Contents.json` **non referenziava** — residui del template, e la ragione per cui la prima
+diagnosi di questa sessione è stata sbagliata (rimossi).
+
+**La correzione**: lo splash nativo è ora la copia esatta del `PageLoader` — fondo crema
+`#FEF1E4`, lettering «Kidville» al centro, alla stessa misura. Quando l'app web è pronta lo
+splash si dissolve e sotto c'è il `PageLoader`: stesso fondo, stesso logo, nessuno stacco.
+
+| pezzo | dove |
+|---|---|
+| il PNG (2732², crema, logo a 770 px) | `scripts/genera-icone.mjs` → `assets/splash*.png` |
+| plugin, tetto, colori | `capacitor.config.ts` (`@capacitor/splash-screen` 8.0.2) |
+| chi lo toglie, e quando | `src/lib/mobile/splash.ts` ← `setupNativeShell` |
+| il fondo sotto la WebView | `ios.backgroundColor` / `android.backgroundColor` = `#FEF1E4` |
+
+Tre decisioni che vale la pena aver scritte:
+
+- **`hide()` dopo il doppio `requestAnimationFrame`**, non appena parte il JavaScript. `hide()`
+  scopre la WebView nell'istante in cui viene invocata: chiamarla troppo presto rimetterebbe a
+  schermo lo stesso lampo bianco, più corto e più fastidioso perché dopo qualcosa di finito.
+- **`launchAutoHide` resta `true`, con tetto a 6 s.** Non è il comportamento normale (l'app
+  chiama `hide()` dopo 1-3 s): è la rete di sicurezza. Con `false`, un boot in cui il JS non
+  arriva mai — server che non risponde né fallisce — lascerebbe l'app su una schermata fissa a
+  tempo indeterminato.
+- **Il tetto è anche il prezzo della modalità aereo**, dove il caricamento fallisce subito e
+  `offline.html` sta su un'origine locale in cui il bridge di Capacitor può non essere iniettato.
+  La pagina ci prova comunque; se il bridge non c'è, restano i 6 s. Ciò che rende accettabile il
+  compromesso è il livello sotto: quando lo splash se ne va si trova il **crema**, non il bianco.
+
+### La registrazione push — perché non si poteva collaudare
+
+`NativePushAutoRegister.tsx` faceva `void registerNativePush(userId).catch(() => {})`. Misura del
+2026-08-04: in `push_subscriptions` **nessuna riga `ios`** — l'ultima registrazione era del 2
+agosto, tutte `android`, tutte dall'emulatore. L'app girava su un iPhone vero e del suo tentativo
+non restava traccia da nessuna parte: `permission_denied`, `registration_error` e
+`subscribe_failed` finivano tutti nello stesso silenzio.
+
+Ora ogni ramo lascia una riga (`push-nativa-permesso-negato`, `-registrazione-fallita` col
+messaggio del sistema, `-non-registrata` con lo **stato HTTP**, `-senza-esito`), ed è stato chiuso
+un difetto che il catch muto nascondeva: `register()` consegna l'esito a uno di due listener, e se
+il sistema non chiama né l'uno né l'altro **la promise non si risolveva mai** — senza secondo
+tentativo, perché `attempted` è di modulo. Timeout a 20 s.
+
+Il **successo** non si logga da qui, e non è una deroga alla regola 5: il successo di questa
+operazione *è* la riga in `push_subscriptions`, una traccia più forte di un log — è esattamente
+quella che, contata a zero, ha rivelato il problema.
+
+### Gate e lock
+
+`eslint` 0 · `tsc` 0 · **728 file, 7014 test** · `build` ok. Due lock nuovi
+(`__tests__/architecture/splash-avvio-nativo.test.ts`, `__tests__/lib/splash-nativo.test.ts`) e
+l'allowlist dei catch muti scesa da **55 file / 85 occorrenze** a **54 / 84**, con
+`NativePushAutoRegister.tsx` iscritto fra quelli che non possono tornarci.
+
+Il lock dello splash tiene insieme le **quattro copie del crema** che nessun compilatore
+collega (CSS del `PageLoader`, `capacitor.config.ts`, generatore, `package.json`) e apre i PNG
+committati per leggerne il primo pixel: tutta la configurazione può essere giusta e l'immagine
+sbagliata — è successo, ed era il verde. Entrambi i lock sono stati **provati per mutazione**, e
+la prova ha smascherato un falso verde mio: `toContain('nascondiSplashNativo')` passava anche
+togliendo la chiamata, perché il nome resta nell'`import`.
+
+---
+
 ## ✅ Changelog — Il menu che a volte non portava da nessuna parte, e la submission App Store 2026-08-04 (branch `feat/icona-brand`)
 
 **Il test rosso su `main` era il prodotto, non il test.** L'E2E `parent-news.spec.ts:51` — «apro il

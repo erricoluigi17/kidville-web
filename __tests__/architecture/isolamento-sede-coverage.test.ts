@@ -1118,8 +1118,21 @@ describe('coverage-lock isolamento fra sedi', () => {
             // falliva PRIMA di scrivere la riga di log che avrebbe dovuto segnalarlo.
             // Porta UNA esenzione, dichiarata in AMMESSE: come l'oblio, la conservazione
             // deve valere su tutte le sedi.
-            routeConServiceRole: 274,
-            handlerControllati: 434,
+            // 274 → 275 e 434 → 435 il 2026-08-04: è nato `health:GET`, l'endpoint di
+            // salute (rilievo T20-F5 — fino a quel giorno l'unico rilevatore di guasti in
+            // produzione era la telefonata di un genitore). Usa il service role perché
+            // deve poter leggere `app_log` e sondare lo schema anche quando nessuna
+            // sessione esiste — che è il caso in cui serve.
+            //
+            // NON porta nessuna esenzione, e `handlerEsentati` resta fermo a 92: è il
+            // punto che vale la pena guardare. Un endpoint di salute non legge dati di
+            // nessuna sede — conta impronte d'errore, verifica che una tabella risponda,
+            // guarda l'ora dell'ultimo battito di un cron. Non c'è niente da isolare
+            // perché non c'è niente di nessuno. Se un domani qualcuno gli facesse
+            // restituire un conteggio per sede, quel numero dovrebbe salire, e questo
+            // lock è il posto dove il fatto diventerebbe visibile.
+            routeConServiceRole: 275,
+            handlerControllati: 435,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

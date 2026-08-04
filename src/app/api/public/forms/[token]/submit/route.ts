@@ -44,7 +44,7 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
   request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) => {
-  const rl = rateLimit(`public-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
+  const rl = await rateLimit(`public-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'Troppe richieste. Riprova tra qualche minuto.' },

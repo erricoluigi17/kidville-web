@@ -119,6 +119,9 @@
   "ricevutiImportFallito": "Import fallito",
   "ricevutiErroreImport": "Errore durante l'import",
   "ricevutiConfermaRifiuto": "Rifiutare questa richiesta di iscrizione?",
+  "ricevutiMostrate": "{n, plural, one {Mostrata # domanda su {totale}} other {Mostrate # domande su {totale}}}",
+  "ricevutiMostraAltre": "Mostra altre domande",
+  "ricevutiDettaglioNonAperto": "Domanda non apribile: ricarica la pagina o controlla la sede selezionata.",
 
   "inviabiliIntro": "Moduli personalizzabili da inviare ai genitori tramite link. Modificali nel builder e pubblicali per ottenere il link condivisibile.",
   "inviabiliNuovoModulo": "Nuovo modulo",

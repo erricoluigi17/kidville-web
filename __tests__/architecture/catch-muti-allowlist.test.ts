@@ -51,8 +51,8 @@ const ESENTE = 'src/lib/logging/';
  * il numero. Chi si trovasse a doverli ALZARE sta aggiungendo un catch muto, ed è quello il
  * momento di fermarsi, non dopo.
  */
-const MAX_FILE = 57;
-const MAX_OCCORRENZE = 87;
+const MAX_FILE = 55;
+const MAX_OCCORRENZE = 85;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

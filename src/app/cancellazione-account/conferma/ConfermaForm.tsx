@@ -48,8 +48,14 @@ export function ConfermaCancellazioneForm({
 
   return (
     <div className="space-y-4">
+      {/* T09-F4 — l'inchiostro è `error-strong` (#C62828, 5,62:1 su bianco), non
+          `error` (#E53935), che su bianco vale 4,23:1: sotto i 4,5:1 di WCAG 1.4.3
+          AA per il testo normale. Qui la soglia ridotta a 3:1 NON si applica —
+          quella vale per il «testo grande» (≥18,66px in grassetto o ≥24px) e per i
+          componenti non testuali (1.4.11); questo è un messaggio d'errore a 14px in
+          peso 400. Ed è il testo che va letto meglio di tutti gli altri. */}
       {stato === 'errore' && (
-        <p role="alert" className="font-maven text-sm text-kidville-error">
+        <p role="alert" className="font-maven text-sm text-kidville-error-strong">
           {t('cancConfermaErrore')}
         </p>
       )}

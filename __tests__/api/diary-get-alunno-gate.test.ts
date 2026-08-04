@@ -97,7 +97,13 @@ describe('GET /api/diary?alunno_id= — il ramo del genitore', () => {
     it('errore del database → 500 GENERICO: lo schema non si racconta al chiamante', async () => {
         h.risposta = {
             data: null as never,
-            error: { message: "Could not find the table 'public.daily_routines' in the schema cache", code: 'PGRST205' },
+            // ⚠️ Errore NON «tabella assente»: dal 2026-08-04 `42P01`/`PGRST205` su
+            // questa route producono un 503 dichiarato (vedi
+            // `diary-tabella-inesistente.test.ts`). Ciò che questo test protegge
+            // è un'altra cosa e resta vera per tutti gli errori: il messaggio
+            // INTERNO di PostgREST — nome dello schema, nome della tabella — non
+            // esce mai verso il chiamante.
+            error: { message: 'permission denied for table public.daily_routines', code: '42501' },
         }
         const res = await GET(req(`alunno_id=${ALUNNO}`))
         expect(res.status).toBe(500)
@@ -119,7 +125,13 @@ describe('GET /api/diary?classe_id= — il ramo del docente', () => {
     it("errore del database → 500 generico anche qui: è lo stesso schema, e la regola vale per tutte e due le strade", async () => {
         h.risposta = {
             data: null as never,
-            error: { message: "Could not find the table 'public.daily_routines' in the schema cache", code: 'PGRST205' },
+            // ⚠️ Errore NON «tabella assente»: dal 2026-08-04 `42P01`/`PGRST205` su
+            // questa route producono un 503 dichiarato (vedi
+            // `diary-tabella-inesistente.test.ts`). Ciò che questo test protegge
+            // è un'altra cosa e resta vera per tutti gli errori: il messaggio
+            // INTERNO di PostgREST — nome dello schema, nome della tabella — non
+            // esce mai verso il chiamante.
+            error: { message: 'permission denied for table public.daily_routines', code: '42501' },
         }
         const res = await GET(req('classe_id=33333333-3333-3333-3333-333333333333'))
         expect(res.status).toBe(500)
@@ -175,7 +187,13 @@ describe('POST /api/diary — l\'errore del database non si racconta al chiamant
     it('errore PostgREST → 500 senza nome di tabella né schema', async () => {
         h.risposta = {
             data: null as never,
-            error: { message: "Could not find the table 'public.daily_routines' in the schema cache", code: 'PGRST205' },
+            // ⚠️ Errore NON «tabella assente»: dal 2026-08-04 `42P01`/`PGRST205` su
+            // questa route producono un 503 dichiarato (vedi
+            // `diary-tabella-inesistente.test.ts`). Ciò che questo test protegge
+            // è un'altra cosa e resta vera per tutti gli errori: il messaggio
+            // INTERNO di PostgREST — nome dello schema, nome della tabella — non
+            // esce mai verso il chiamante.
+            error: { message: 'permission denied for table public.daily_routines', code: '42501' },
         }
         const res = await POST({
             url: 'http://test/api/diary',

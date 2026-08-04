@@ -1,5 +1,6 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -332,7 +333,7 @@ export default function SezioneDetailPage() {
             setSezione(found);
             if (!found) return;
 
-            const stuRes = await fetch(`/api/admin/students?scuola_id=${found.scuolaId}&limit=1000`)
+            const stuRes = await fetch(`/api/admin/students?scuola_id=${found.scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`)
                 .catch(() => null);
             const stuData = stuRes?.ok ? await stuRes.json().catch(() => null) : null;
             if (Array.isArray(stuData)) {

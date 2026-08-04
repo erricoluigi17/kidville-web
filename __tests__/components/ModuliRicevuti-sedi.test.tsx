@@ -51,15 +51,35 @@ const SEZIONI = [
   { id: 'sez-a2', name: 'AVERSA 2 ANNI A', scuola_id: 'sc-aversa' },
 ]
 
+// Dal 2026-08-04 (T11-F4) l'ELENCO non porta più il payload della domanda: la
+// riga d'elenco ha un `riassunto`, e il `data` completo — codici fiscali,
+// allergie, note mediche — arriva solo da `GET ?id=<uuid>`, cioè quando si apre
+// quella domanda. Il finto server qui sotto rispetta la divisione: se il
+// componente tornasse a leggere il payload dall'elenco, non lo troverebbe.
+const ELENCO = [
+  {
+    id: 'sub-aversa',
+    scuola_id: 'sc-aversa',
+    status: 'pending',
+    assigned_classes: null,
+    created_at: '2026-07-20T10:00:00Z',
+    riassunto: { bambini: 1, adulti: 1, primo_bambino: 'Ada Verdi' },
+  },
+]
+
+function rispostaPer(url: string): unknown {
+  const u = String(url)
+  if (u.includes('/api/admin/sections')) return SEZIONI
+  if (u.includes('?id=')) return { data: INVII[0] }
+  return { data: ELENCO, total: ELENCO.length }
+}
+
 const fetchMock = vi.fn()
 
 beforeEach(() => {
   vi.clearAllMocks()
   fetchMock.mockImplementation((url: string) =>
-    Promise.resolve({
-      ok: true,
-      json: async () => (String(url).includes('/api/admin/sections') ? SEZIONI : INVII),
-    }),
+    Promise.resolve({ ok: true, status: 200, json: async () => rispostaPer(url) }),
   )
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -108,10 +128,7 @@ describe('ModuliRicevuti — sede della domanda', () => {
       if (init?.method === 'PATCH') {
         return Promise.resolve({ ok: false, status: 403, json: async () => ({ error: 'Questa domanda appartiene a un\'altra sede.' }) })
       }
-      return Promise.resolve({
-        ok: true,
-        json: async () => (String(url).includes('/api/admin/sections') ? SEZIONI : INVII),
-      })
+      return Promise.resolve({ ok: true, status: 200, json: async () => rispostaPer(url) })
     })
 
     render(<ModuliRicevuti />)

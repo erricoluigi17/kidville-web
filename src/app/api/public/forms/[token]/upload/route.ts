@@ -41,7 +41,7 @@ export const POST = withRoute('public/forms/[token]/upload:POST', async (
   request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) => {
-  const rl = rateLimit(`public-upload:${clientIp(request)}`, {
+  const rl = await rateLimit(`public-upload:${clientIp(request)}`, {
     limit: TETTO_UPLOAD_PUBBLICO,
     windowMs: FINESTRA_UPLOAD_PUBBLICO_MS,
   })

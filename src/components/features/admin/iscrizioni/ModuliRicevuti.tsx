@@ -8,6 +8,7 @@ import {
   ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star, MapPin,
 } from 'lucide-react'
 import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
+import { LIMITE_ISCRIZIONI_DEFAULT } from '@/lib/api/paginazione'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
@@ -31,14 +32,28 @@ interface ImportResult {
 // risposta dell'import — vedi `ImportResult` qui sopra — e poi si rigenera da
 // «Rigenera credenziali». Il campo era dichiarato e mai letto: toglierlo evita
 // che qualcuno ci ricostruisca sopra un elenco di password.
-interface SubmissionRow {
+//
+// ⚠️ E dal 2026-08-04 (T11-F4) niente `data` NELL'ELENCO. La lista mostra il
+// nome del primo bambino e due conteggi: prima, per disegnarli, si tirava giù
+// il payload INTERO di ogni domanda — codici fiscali dei minori, ALLERGIE e
+// NOTE MEDICHE in testo libero, recapiti degli adulti. Misurato in produzione:
+// 299 domande, 514 kB verso il browser di ogni membro dello staff a ogni
+// apertura della pagina, anche senza aprire nessun dettaglio. Ora l'elenco
+// porta un `riassunto` e il payload arriva da `GET ?id=<uuid>`, cioè quando
+// qualcuno APRE quella domanda: una alla volta, e per scelta.
+interface RigaElenco {
   id: string
-  data: EnrollmentSubmissionData
   status: 'pending' | 'approved' | 'rejected'
   assigned_classes?: Record<string, string>
   created_at: string
   // Sede per cui la famiglia ha fatto domanda (scelta al passo 0 del wizard).
   scuola_id?: string | null
+  riassunto?: { bambini: number; adulti: number; primo_bambino: string | null }
+}
+
+/** La domanda APERTA: la riga d'elenco più il payload, letto dal dettaglio. */
+interface SubmissionRow extends RigaElenco {
+  data: EnrollmentSubmissionData
 }
 
 interface Section { id: string; name: string; scuola_id?: string | null }
@@ -46,10 +61,13 @@ interface Section { id: string; name: string; scuola_id?: string | null }
 export function ModuliRicevuti() {
   const t = useTranslations('adminAltro')
   const f = useDateFormat()
-  const [rows, setRows] = useState<SubmissionRow[]>([])
+  const [rows, setRows] = useState<RigaElenco[]>([])
+  const [totale, setTotale] = useState(0)
+  const [caricandoAltre, setCaricandoAltre] = useState(false)
   const [sections, setSections] = useState<Section[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<SubmissionRow | null>(null)
+  const [aprendo, setAprendo] = useState<string | null>(null)
   const [assignments, setAssignments] = useState<Record<string, string>>({})
   const [referenteIndex, setReferenteIndex] = useState(0)
   const [working, setWorking] = useState(false)
@@ -69,10 +87,16 @@ export function ModuliRicevuti() {
     try {
       const hdr = { 'x-sedi': sediKey }
       const [r, s] = await Promise.all([
-        fetch('/api/admin/iscrizioni', { headers: hdr }).then(x => x.json()),
+        fetch(`/api/admin/iscrizioni?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0`, { headers: hdr }).then(x => x.json()),
         fetch('/api/admin/sections', { headers: hdr }).then(x => x.json()),
       ])
-      if (Array.isArray(r)) setRows(r)
+      // La risposta è `{ data, total }`: `total` è il conteggio ESATTO lato
+      // database, non la lunghezza della pagina. Serve a dire all'operatore
+      // quante domande ci sono davvero, e non solo quante gliene sono arrivate.
+      if (Array.isArray(r?.data)) {
+        setRows(r.data as RigaElenco[])
+        setTotale(typeof r.total === 'number' ? r.total : r.data.length)
+      }
       if (Array.isArray(s)) setSections(s)
     } catch (e) {
       logClient({
@@ -86,11 +110,69 @@ export function ModuliRicevuti() {
     }
   }
 
-  function openDetail(row: SubmissionRow) {
-    setSelected(row)
+  /** Pagina successiva, in coda a quelle già mostrate. */
+  async function caricaAltre() {
+    setCaricandoAltre(true)
+    try {
+      const r = await fetch(
+        `/api/admin/iscrizioni?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${rows.length}`,
+        { headers: { 'x-sedi': reFetchKey } },
+      ).then(x => x.json())
+      if (Array.isArray(r?.data)) {
+        setRows(prec => [...prec, ...(r.data as RigaElenco[])])
+        if (typeof r.total === 'number') setTotale(r.total)
+      }
+    } catch (e) {
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `moduli-iscrizione-pagina-fallita: ${nomeErrore(e)}`,
+        route: '/admin/iscrizioni',
+      })
+    } finally {
+      setCaricandoAltre(false)
+    }
+  }
+
+  /**
+   * Apre una domanda: è QUI che il payload viene chiesto, per una riga sola.
+   * L'esito non si butta via — il server risponde 404 anche quando la domanda
+   * è di un'altra sede, e un pannello che resta vuoto senza dire niente è
+   * peggio di un errore.
+   */
+  async function openDetail(row: RigaElenco) {
+    setSelected(null)
+    setAprendo(row.id)
     setAssignments(row.assigned_classes ?? {})
     setReferenteIndex(0)
     setResult(null)
+    try {
+      const res = await fetch(`/api/admin/iscrizioni?id=${encodeURIComponent(row.id)}`, {
+        headers: { 'x-sedi': reFetchKey },
+      })
+      const json = await res.json()
+      if (!res.ok || !json?.data) {
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `iscrizione-dettaglio-non-aperto: http ${res.status}`,
+          route: '/admin/iscrizioni',
+        })
+        alert(json?.error ?? t('ricevutiDettaglioNonAperto'))
+        return
+      }
+      setSelected(json.data as SubmissionRow)
+    } catch (e) {
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `iscrizione-dettaglio-fallito: ${nomeErrore(e)}`,
+        route: '/admin/iscrizioni',
+      })
+      alert(t('ricevutiDettaglioNonAperto'))
+    } finally {
+      setAprendo(null)
+    }
   }
 
   async function viewDoc(path?: string) {
@@ -172,6 +254,7 @@ export function ModuliRicevuti() {
   }
 
   const pending = rows.filter(r => r.status === 'pending')
+  const tutteCaricate = rows.length >= totale
 
   return (
     <>
@@ -186,11 +269,19 @@ export function ModuliRicevuti() {
       </div>
 
       {!loading && rows.length > 0 && (
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard icon={Users} label={t('ricevutiStatTotale')} value={rows.length} tone="green" />
-          <StatCard icon={Clock} label={t('ricevutiStatAttesa')} value={pending.length} tone="warn" />
-          <StatCard icon={CheckCircle2} label={t('ricevutiStatImportate')} value={rows.filter((r) => r.status === 'approved').length} tone="success" />
-          <StatCard icon={XCircle} label={t('ricevutiStatRifiutate')} value={rows.filter((r) => r.status === 'rejected').length} tone="error" />
+        // «Totale» viene dal conteggio ESATTO del server; i tre riquadri per
+        // stato contano le righe CARICATE, quindi si mostrano solo quando sono
+        // tutte. Un conteggio parziale presentato come totale sarebbe una
+        // bugia scritta in grande — meglio un riquadro in meno.
+        <div className={`mb-6 grid grid-cols-2 gap-3 ${tutteCaricate ? 'sm:grid-cols-4' : 'sm:grid-cols-1'}`}>
+          <StatCard icon={Users} label={t('ricevutiStatTotale')} value={totale} tone="green" />
+          {tutteCaricate && (
+            <>
+              <StatCard icon={Clock} label={t('ricevutiStatAttesa')} value={pending.length} tone="warn" />
+              <StatCard icon={CheckCircle2} label={t('ricevutiStatImportate')} value={rows.filter((r) => r.status === 'approved').length} tone="success" />
+              <StatCard icon={XCircle} label={t('ricevutiStatRifiutate')} value={rows.filter((r) => r.status === 'rejected').length} tone="error" />
+            </>
+          )}
         </div>
       )}
 
@@ -211,10 +302,18 @@ export function ModuliRicevuti() {
             <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted">
               {t('ricevutiListaHeader', { attesa: pending.length, totale: rows.length })}
             </p>
+            {/* `sub` e non `muted`: la riga qui sotto È l'avviso che l'elenco è troncato —
+                l'unico segnale che dice all'operatore che ci sono domande che non sta
+                vedendo. Scriverla nel grigio a basso contrasto renderebbe poco leggibile
+                proprio la frase che esiste per farsi leggere. (lock `testo-muted-allowlist`) */}
+            {!tutteCaricate && (
+              <p className="text-xs text-kidville-sub font-maven">
+                {t('ricevutiMostrate', { n: rows.length, totale })}
+              </p>
+            )}
             {rows.map(row => {
-              const nChildren = row.data?.children?.length ?? 0
-              const nAdults = row.data?.adults?.length ?? 0
-              const firstChild = row.data?.children?.[0]
+              const nChildren = row.riassunto?.bambini ?? 0
+              const nAdults = row.riassunto?.adulti ?? 0
               return (
                 <button
                   key={row.id}
@@ -225,7 +324,7 @@ export function ModuliRicevuti() {
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="font-barlow font-bold text-kidville-ink">
-                      {firstChild ? `${firstChild.nome ?? ''} ${firstChild.cognome ?? ''}` : t('ricevutiFallbackNome')}
+                      {row.riassunto?.primo_bambino ?? t('ricevutiFallbackNome')}
                     </span>
                     <StatusBadge status={row.status} />
                   </div>
@@ -240,11 +339,26 @@ export function ModuliRicevuti() {
                 </button>
               )
             })}
+            {!tutteCaricate && (
+              <button
+                onClick={caricaAltre}
+                disabled={caricandoAltre}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-kidville-line px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green-soft disabled:opacity-50"
+              >
+                {caricandoAltre && <Loader2 size={14} className="animate-spin" />}
+                {t('ricevutiMostraAltre')}
+              </button>
+            )}
           </div>
 
           {/* Dettaglio */}
           <div>
-            {!selected ? (
+            {aprendo ? (
+              <div className="bg-kidville-white rounded-card p-10 flex items-center justify-center gap-3 border border-kidville-line">
+                <Loader2 className="w-5 h-5 animate-spin text-kidville-green" />
+                <span className="font-maven text-kidville-sub">{t('caricamento')}</span>
+              </div>
+            ) : !selected ? (
               <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line text-kidville-muted font-maven">
                 {t('ricevutiSelezionaDettagli')}
               </div>

@@ -8,11 +8,18 @@ import styles from './PageLoader.module.css';
  * NON è un boundary Suspense: va montato come *fratello* del contenuto (vedi
  * GlobalLoader in RootProviders), così non interferisce con l'hydration delle
  * pagine client (regressione appello del root app/loading.tsx, ora evitata).
+ *
+ * `ref` ESPONE IL NODO RADICE, e serve a chi lo monta per rendere inerte tutto ciò
+ * che sta FUORI dall'overlay mentre è a schermo (T09-F1: senza, il `Tab` continuava
+ * a girare sui comandi coperti — WCAG 2.2 §2.4.11). Sta qui e non in GlobalLoader
+ * perché è questo componente a possedere il proprio nodo radice; React 19 accetta
+ * `ref` come prop normale, senza `forwardRef`.
  */
-export function PageLoader({ visible }: { visible: boolean }) {
+export function PageLoader({ visible, ref }: { visible: boolean; ref?: React.Ref<HTMLDivElement> }) {
   const t = useTranslations('shared');
   return (
     <div
+      ref={ref}
       className={styles.overlay}
       data-visible={visible ? 'true' : 'false'}
       role="status"

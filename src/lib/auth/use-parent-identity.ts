@@ -3,8 +3,21 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { logClient } from '@/lib/logging/client';
+import { creaCachePromesse } from '@/lib/rete/cache-promesse';
 import { useSessionIdentity } from './use-session-identity';
 import { getCurrentStudentId } from './current-user';
+
+/**
+ * Anagrafica minima di un figlio, come la restituisce /api/parent/students.
+ * `ChildSwitcher` ha bisogno di nome, cognome e sezione: senza, dovrebbe rifare
+ * per conto suo la stessa GET che l'identità ha appena fatto.
+ */
+export interface FiglioAnagrafica {
+  id: string;
+  nome: string;
+  cognome: string;
+  classe_sezione: string | null;
+}
 
 export interface ParentIdentity {
   parentId: string | null;
@@ -64,11 +77,10 @@ export function decidiFiglioRivalidato(
 }
 
 /**
- * Chiede al backend gli id dei figli del genitore. Ritorna la lista, oppure
- * `null` se NON determinabile (rete giù, endpoint non-ok, corpo inatteso): il
- * chiamante degrada al noto. Non lancia mai.
+ * La richiesta vera. Non lancia mai: `null` significa "non determinabile"
+ * (rete giù, endpoint non-ok, corpo inatteso) e il chiamante degrada al noto.
  */
-export async function fetchFigliIds(parentId: string): Promise<string[] | null> {
+async function caricaFigli(parentId: string): Promise<FiglioAnagrafica[] | null> {
   let res: Response;
   try {
     res = await fetch(`/api/parent/students?userId=${parentId}`, {
@@ -83,9 +95,50 @@ export async function fetchFigliIds(parentId: string): Promise<string[] | null> 
   if (!res.ok) return null;
   const body = await res.json().catch(() => null);
   if (!body || !Array.isArray(body.data)) return null;
-  return (body.data as Array<{ id?: unknown }>)
-    .map((x) => x?.id)
-    .filter((v): v is string => typeof v === 'string');
+  return (body.data as Array<Record<string, unknown>>)
+    .filter((x) => typeof x?.id === 'string')
+    .map((x) => ({
+      id: x.id as string,
+      nome: typeof x.nome === 'string' ? x.nome : '',
+      cognome: typeof x.cognome === 'string' ? x.cognome : '',
+      classe_sezione: typeof x.classe_sezione === 'string' ? x.classe_sezione : null,
+    }));
+}
+
+/**
+ * Deduplica: la chiave è il **parentId**, mai una chiave fissa. Home,
+ * `useChildSchoolType` (due volte: home e BottomNav) e `ChildSwitcher` montano
+ * insieme e chiedevano cinque volte lo stesso elenco; ora la richiesta è una e
+ * chi arriva mentre è in volo si attacca a quella. Su esito non determinabile
+ * la voce viene rimossa: un blip di rete non congela un `null` per sempre.
+ */
+const cacheFigli = creaCachePromesse(caricaFigli);
+
+/**
+ * Elenco COMPLETO dei figli del genitore (anagrafica), dalla cache condivisa.
+ * `null` = non determinabile.
+ */
+export function fetchFigli(parentId: string): Promise<FiglioAnagrafica[] | null> {
+  return cacheFigli.leggi(parentId);
+}
+
+/**
+ * Butta l'elenco in cache: al cambio di figlio/di account il prossimo lettore
+ * deve ripartire dal backend, non da ciò che era vero per il genitore prima.
+ * Senza argomento svuota tutto (è anche ciò che serve fra un test e l'altro).
+ */
+export function invalidaFigliCache(parentId?: string): void {
+  cacheFigli.invalida(parentId);
+}
+
+/**
+ * Chiede al backend gli id dei figli del genitore. Ritorna la lista, oppure
+ * `null` se NON determinabile (rete giù, endpoint non-ok, corpo inatteso): il
+ * chiamante degrada al noto. Non lancia mai.
+ */
+export async function fetchFigliIds(parentId: string): Promise<string[] | null> {
+  const figli = await fetchFigli(parentId);
+  return figli ? figli.map((f) => f.id) : null;
 }
 
 /**

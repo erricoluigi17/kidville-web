@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { STORAGE, attendiFineCaricamento } from './fixtures';
 
 // Ricerca globale in TopBar (debounce 300ms, gruppi scoped sulla scuola E2E).
 test.use({ storageState: STORAGE.admin });
@@ -21,6 +21,9 @@ test('la ricerca trova l’alunna seedata e naviga al click', async ({ page }) =
 
 test('query senza corrispondenze → nessun risultato', async ({ page }) => {
   await page.goto('/admin');
+  // L'overlay del loader intercetta i click finché è a schermo: senza questa attesa
+  // il test dipende da quanto è veloce la macchina della CI (vedi `attendiFineCaricamento`).
+  await attendiFineCaricamento(page);
 
   const input = page.getByLabel('Ricerca globale');
   await input.fill('zzzintrovabile');

@@ -41,6 +41,53 @@ export function GlobalLoader() {
   const shownAt = useRef<number | null>(null); // quando l'overlay è comparso per una navigazione
   const prevPath = useRef(pathname);
 
+  /**
+   * ⏸️ T09-F1 RESTA APERTO, E QUESTA È LA RAGIONE MISURATA — non una dimenticanza.
+   *
+   * IL DIFETTO È VERO. Misurato il 2026-08-03 su `/privacy`: con l'overlay a schermo,
+   * 4 elementi su 4 raggiungibili col `Tab` risultavano coperti, `pointer-events: auto`,
+   * `aria-hidden` assente. Il focus non si vedeva ma c'era: si poteva premere `Invio` su
+   * un comando invisibile. Vale su OGNI pagina, per almeno `MIN_VISIBLE_MS`.
+   *
+   * LA CORREZIONE È STATA SCRITTA, PROVATA IN CI, E RITIRATA. Qui c'era una chiamata a
+   * `rendiInerteFuoriDaConFocus(overlay)`, che rende inerte tutto ciò che sta fuori
+   * dall'overlay. È corretta in linea di principio e sbagliata nell'effetto, e la CI lo
+   * ha dimostrato in modo non ambiguo (run 30911702345 e 30912837972):
+   *
+   *   · con l'inerzia attiva, TUTTI E TRE i `storageState` fallivano — il campo email
+   *     restava VUOTO mentre la password, riempita mezzo secondo dopo, entrava. Nessuno
+   *     spec girava;
+   *   · sistemata quella, cadevano `admin-search`, `public-iscrizione` e `teacher-diary`:
+   *     percorsi diversi, stessa forma. `fill()` non lancia, «riesce», e il valore non
+   *     entra.
+   *
+   * Cioè: **ogni interazione entro la finestra di visibilità dell'overlay viene persa,
+   * su ogni pagina**. In CI la finestra c'è quasi sempre, perché l'E2E gira su
+   * `next dev`; in produzione è più rara ma non teorica — è la rete lenta, cioè
+   * esattamente la condizione di un genitore col telefono in mano davanti a scuola.
+   *
+   * Si potrebbe obiettare che l'utente non può comunque interagire, perché l'overlay
+   * intercetta i click. Vale per il mouse. Non vale per la tastiera, per chi digita in
+   * anticipo su un campo che ha già a fuoco, e non vale per le WebView native.
+   *
+   * PERCHÉ NON SI È SCELTO IL COMPROMESSO: ritardare l'inerzia (applicarla solo se
+   * l'overlay resta oltre N ms) sposta il difetto invece di chiuderlo, e crea una
+   * finestra in cui il comportamento dipende dalla velocità della rete — cioè la cosa
+   * più difficile da provare e la più facile da rompere.
+   *
+   * COSA SERVE PER CHIUDERLO DAVVERO, ed è lavoro suo: verificare sul browser vero
+   * (tastiera, VoiceOver, WebView iOS) se convenga (a) non mostrare l'overlay quando la
+   * navigazione è già conclusa — cioè attaccare `MIN_VISIBLE_MS`, che è la causa a monte
+   * di tutto questo — oppure (b) rendere inerte il solo contenuto NON interattivo. La
+   * primitiva è pronta e provata (`src/lib/accessibility/inerti.ts`), ed è già in uso
+   * dove il perimetro è chiuso e la scelta è sicura: dentro `ui/Modal` e nel bottom-sheet
+   * della navigazione, dove l'utente ha aperto il pannello di proposito.
+   *
+   * Un difetto di accessibilità noto e scritto è peggio di un difetto chiuso. È molto
+   * meglio di una regressione funzionale su ogni pagina, rilasciata senza una prova sul
+   * browser vero.
+   */
+
   // Nasconde a fine navigazione, rispettando la durata minima a schermo. Usa un
   // ref del pathname precedente (non un boolean) → regge lo StrictMode e i re-run
   // con pathname invariato: agisce SOLO quando il pathname cambia davvero.

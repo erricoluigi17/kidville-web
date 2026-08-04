@@ -2,9 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import {
+  useParentIdentity,
+  fetchFigli,
+  invalidaFigliCache,
+  type FiglioAnagrafica,
+} from '@/lib/auth/use-parent-identity';
 
-interface Figlio { id: string; nome: string; cognome: string; classe_sezione?: string | null }
+type Figlio = FiglioAnagrafica;
 
 function initials(nome: string, cognome: string) {
   return `${nome?.[0] ?? ''}${cognome?.[0] ?? ''}`.toUpperCase();
@@ -23,12 +28,16 @@ export function ChildSwitcher() {
   // figli e la classe sono DATI: restano invariati, non si traducono.
   const t = useTranslations('nav');
 
+  // L'elenco arriva dalla cache condivisa con `useParentIdentity`: è la STESSA
+  // GET che l'identità sta già facendo per risolvere il figlio attivo. Farne
+  // una propria era la quinta richiesta identica dello stesso caricamento.
   useEffect(() => {
     if (!parentId) return;
-    fetch(`/api/parent/students?userId=${parentId}`, { headers: { 'x-user-id': parentId } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setFigli(d?.data ?? []))
-      .catch(() => {});
+    let annullato = false;
+    void fetchFigli(parentId).then((lista) => {
+      if (!annullato) setFigli(lista ?? []);
+    });
+    return () => { annullato = true; };
   }, [parentId]);
 
   // Niente da scegliere: non mostrare nulla.
@@ -37,6 +46,11 @@ export function ChildSwitcher() {
   const onSelect = (id: string) => {
     if (!id || id === studentId) return;
     try { localStorage.setItem('kv_student_id', id); } catch { /* ignore */ }
+    // La cache dell'elenco è di modulo: un ricaricamento vero la azzera da sé,
+    // ma dentro la shell nativa (WebView) e nelle navigazioni SPA non è detto.
+    // Invalidare qui è la differenza fra "riparte dal backend" e "riparte da
+    // ciò che era vero per il figlio precedente".
+    invalidaFigliCache();
     // Ricarico così ogni hook/identità rilegge il nuovo figlio.
     window.location.reload();
   };

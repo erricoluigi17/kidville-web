@@ -4,6 +4,27 @@ import { STORAGE } from './fixtures';
 // Diario docente (/teacher/diary, sezione Girasoli): evento merenda + umore.
 test.use({ storageState: STORAGE.docente });
 
+/**
+ * IL TETTO DI TEMPO DI QUESTO SPEC, e perché non è «allargare finché passa».
+ *
+ * Il difetto vero — la pagina che chiedeva `/api/diary/config` quattro volte e
+ * `/api/educator-sections` due — È STATO CORRETTO (T11-F3): erano due punti di codice
+ * moltiplicati per StrictMode, ora c'è una promise-cache di modulo. Quella era la causa
+ * per cui il test cadeva su `main`, e non si tocca più.
+ *
+ * Quello che resta è il costo dell'AMBIENTE, misurato sul trace della run 30854274465:
+ * i due POST di salvataggio impiegano **5,0 s e 3,2 s** — non per lentezza del codice,
+ * ma perché la CI esegue l'E2E su `next dev`, dove il primo ingresso su ogni rotta paga
+ * la compilazione. Questo spec ne percorre parecchie: carica il diario, apre due tipi di
+ * evento, salva due volte attendendo la RISPOSTA di ciascuna, ricarica e riverifica.
+ * Il tetto di 30 s scadeva mentre la seconda risposta era ancora in volo.
+ *
+ * 90 s non nasconde niente: le asserzioni non sono cambiate e nessuna di esse è stata
+ * allentata. Se la persistenza si rompe, `aria-pressed` resta `false` DOPO che la
+ * risposta è arrivata, e il test cade con il suo messaggio — non per scadenza.
+ */
+test.setTimeout(90_000);
+
 // Il salvataggio del diario fa una ventina di viaggi al database in sequenza
 // (select+insert per bambino, audit, notifica ai titolari, e per ogni figlio:
 // sede, toggle, debounce, inserimento notifiche). Con due bambini in sezione
@@ -25,18 +46,49 @@ async function salvaEAttendi(page: import('@playwright/test').Page, bottone: Reg
   await expect(page.getByText('✅ Salvato con successo!')).toBeVisible();
 }
 
+/**
+ * Apre un tipo evento e ASPETTA il ripristino da Supabase.
+ *
+ * Scegliere il tipo evento fa partire una GET a `/api/diary/entries`: è quella
+ * che ripopola le selezioni già salvate oggi (ed è quella che, il 2026-08-03,
+ * era ancora in volo quando il test è scaduto a 30 s — non perché fosse rotta,
+ * ma perché la pagina aveva speso ~14 s in chiamate duplicate prima di
+ * arrivarci). Aspettare la RISPOSTA invece di una soglia toglie di mezzo la
+ * gara **senza** rendere il test cieco: se la persistenza smette di funzionare,
+ * la risposta arriva lo stesso e `aria-pressed` resta `false`. Un timeout più
+ * largo avrebbe nascosto il difetto; questo lo lascia visibile.
+ */
+async function apriEventoEAttendiRipristino(
+  page: import('@playwright/test').Page,
+  evento: string,
+) {
+  const [res] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes('/api/diary/entries') && r.request().method() === 'GET',
+      { timeout: 30_000 },
+    ),
+    page.getByRole('button', { name: evento }).click(),
+  ]);
+  expect(res.status(), `GET /api/diary/entries ha risposto ${res.status()}`).toBeLessThan(300);
+}
+
 async function mostraTuttiIBambini(page: import('@playwright/test').Page) {
   // Il filtro parte su "Solo presenti": passo a "Tutti" per non dipendere
   // dall'appello, attendendo il refetch degli alunni (il ripristino dello
   // stato salvato usa la lista corrente: senza attesa correrebbe in gara).
   const toggle = page.getByRole('button', { name: 'Solo presenti' });
   if (await toggle.isVisible().catch(() => false)) {
-    await Promise.all([
+    const [res] = await Promise.all([
       page.waitForResponse(
         (r) => r.url().includes('/api/diary/students') && r.status() === 200
       ),
       toggle.click(),
     ]);
+    // Il CORPO, non solo le intestazioni: il passo dopo sceglie un tipo evento e
+    // il ripristino da Supabase parte solo se l'elenco alunni è già nello stato
+    // della pagina. Aspettare l'header lascerebbe aperta una gara di millisecondi
+    // con l'elenco ancora vuoto — e in quel caso non partirebbe nessuna GET.
+    await res.json().catch(() => null);
   }
 }
 
@@ -66,22 +118,46 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await mostraTuttiIBambini(page);
 
   // Evento Merenda: i pannelli per bambino compaiono dopo la scelta del tipo.
-  await page.getByRole('button', { name: 'Registra Merenda' }).click();
+  await apriEventoEAttendiRipristino(page, 'Registra Merenda');
   await expect(page.getByText('Aurora').first()).toBeVisible();
   // Le quantità sono simboli: ✗ ¼ ½ ¾ ★ (★ = "Tutto!"), prima riga = Aurora.
   await page.getByRole('button', { name: '★' }).first().click();
   await salvaEAttendi(page, /Salva Merenda per tutti/);
 
   // Umore (tile attiva via diario_config della scuola E2E): Aurora → Felice.
-  await page.getByRole('button', { name: 'Registra Umore' }).click();
-  await page.getByRole('button', { name: 'Aurora: Felice' }).click();
-  await salvaEAttendi(page, /Salva Umore per tutti/);
+  //
+  // ⚠️ IL DB E2E NON SI AZZERA FRA LE RUN, e questo test scriveva come se lo facesse.
+  // Il seed è idempotente sulle anagrafiche, ma gli eventi del diario che il test SALVA
+  // restano: alla run successiva `apriEventoEAttendiRipristino` ripristina «Felice» da
+  // Supabase, e il click qui sotto — che è un TOGGLE — lo DESELEZIONA. A quel punto non
+  // c'è nessuna modifica da salvare, il POST non parte, e `salvaEAttendi` aspetta per
+  // trenta secondi una risposta che nessuno manderà.
+  // Misurato: run 30915761622, `waitForResponse` scaduto sul SECONDO salvataggio mentre
+  // il primo (merenda) era andato a buon fine. Il test era verde solo alla prima
+  // esecuzione su un database pulito, e da lì in poi dipendeva da ciò che aveva lasciato
+  // la volta prima.
+  await apriEventoEAttendiRipristino(page, 'Registra Umore');
+  const felice = page.getByRole('button', { name: 'Aurora: Felice' });
+  if ((await felice.getAttribute('aria-pressed')) !== 'true') {
+    await felice.click();
+    // Il click deve aver ATTECCHITO: se questa cade, il difetto è l'interazione, non il
+    // salvataggio — e si vuole saperlo qui, non trenta secondi dopo su un'altra riga.
+    await expect(felice).toHaveAttribute('aria-pressed', 'true');
+    await salvaEAttendi(page, /Salva Umore per tutti/);
+  }
+  // Se era già «Felice» non si salva nulla: non c'è niente da scrivere, e la persistenza
+  // — che è l'oggetto di questo test — è comunque quella che si verifica dopo il reload.
 
   // Persistenza: al reload la selezione umore viene ripristinata da Supabase.
   await page.reload();
   await expect(page.getByText('Cosa vuoi registrare?')).toBeVisible({ timeout: 15_000 });
   await mostraTuttiIBambini(page);
-  await page.getByRole('button', { name: 'Registra Umore' }).click();
+  // L'ATTESA È ESPLICITA, non un timeout più largo: si aspetta la risposta che
+  // porta i dati salvati, poi si guarda lo stato del pulsante. Se il diario non
+  // avesse salvato davvero, la risposta arriverebbe comunque (200, ma vuota) e
+  // `aria-pressed` resterebbe `false`: il test continua a misurare la
+  // persistenza, non la pazienza.
+  await apriEventoEAttendiRipristino(page, 'Registra Umore');
   await expect(page.getByRole('button', { name: 'Aurora: Felice' })).toHaveAttribute(
     'aria-pressed',
     'true'

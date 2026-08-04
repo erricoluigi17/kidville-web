@@ -24,7 +24,7 @@ export const POST = withRoute('chat/translate:POST', async (request: Request) =>
   const auth = await requireUser(request)
   if (auth.response) return auth.response
 
-  const rl = rateLimit(`chat-translate:${clientIp(request)}`, { limit: 60, windowMs: 10 * 60 * 1000 })
+  const rl = await rateLimit(`chat-translate:${clientIp(request)}`, { limit: 60, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'Troppe richieste di traduzione. Riprova tra poco.' },

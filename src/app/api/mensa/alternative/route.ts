@@ -9,6 +9,7 @@ import { parseQuery, parseBody } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 
 // ─── Schemi di validazione ───────────────────────────────────────────────────
 const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
@@ -38,12 +39,18 @@ const deleteQuerySchema = z.object({
 
 // La tabella `mensa_alternative` può non esistere in alcuni ambienti (DB E2E CI
 // non migrato): in quel caso GET degrada a vuoto, POST/DELETE a un errore chiaro
-// invece di un 500 grezzo. PostgREST: 42P01 (tabella assente) / PGRST205 (schema cache).
-function tabellaMancante(error: { code?: string; message?: string } | null): boolean {
-  if (!error) return false
-  if (error.code === '42P01' || error.code === 'PGRST205' || error.code === 'PGRST204') return true
-  return /does not exist|schema cache|could not find/i.test(error.message ?? '')
-}
+// invece di un 500 grezzo.
+//
+// ⚠️ `tabellaMancante` ARRIVA DA UN MODULO CONDIVISO (`@/lib/db/tolleranza-schema`)
+// e non si riscrive qui. La copia che stava in queste righe accettava anche
+// `PGRST204` (colonna assente in INSERT/UPDATE) e qualunque messaggio contenente
+// «does not exist» — cioè pure `42703` (colonna assente in SELECT). Su
+// `mensa_alternative`, che in produzione ESISTE ed è viva, questo significava
+// rispondere «nessuna alternativa oggi» alla cucina e «funzione non ancora
+// disponibile» alla segreteria mentre la tabella era lì, con una colonna in meno.
+// Su questo endpoint una lista vuota che dovrebbe avere righe è un bambino
+// intollerante che riceve il piatto sbagliato: la tolleranza vale solo per «la
+// tabella non c'è», e la discriminante è il CODICE, non la prosa del messaggio.
 
 /**
  * La sede della scrittura deve essere QUELLA DELL'ALUNNO.

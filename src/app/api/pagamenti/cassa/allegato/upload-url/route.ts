@@ -39,7 +39,7 @@ export const POST = withRoute('pagamenti/cassa/allegato/upload-url:POST', async 
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const rl = rateLimit(`cassa-upload:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
+    const rl = await rateLimit(`cassa-upload:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
     if (!rl.ok) {
       return NextResponse.json(
         { error: 'Troppi caricamenti. Riprova tra qualche minuto.' },

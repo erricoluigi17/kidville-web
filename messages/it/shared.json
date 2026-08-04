@@ -131,6 +131,8 @@
   "erroreModuloNonTrovato": "Questo modulo non è disponibile: il collegamento potrebbe essere scaduto o non essere più valido",
   "erroreVideoNonConvertibile": "Questo video non può essere convertito: carica un file .mp4 (H.264) o .webm",
   "erroreSegnalazioneSenzaPlesso": "Non è stato possibile registrare la segnalazione: riprova, e se il problema resta avvisa la segreteria",
+  "erroreDomandaNonApribile": "Questa domanda non è apribile: ricarica la pagina o controlla la sede selezionata",
+  "erroreDomandaNonLetta": "Non è stato possibile leggere la domanda: riprova fra qualche istante",
   "classeShellIndietro": "Torna indietro",
   "classeShellClasse": "Classe {nome}",
   "classeShellClasseSenzaNome": "Classe",

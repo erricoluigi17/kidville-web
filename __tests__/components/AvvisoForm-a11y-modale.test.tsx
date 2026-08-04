@@ -274,6 +274,11 @@ const SOPRA_LA_MODALE: Readonly<Record<string, string>> = {
         'il velo biometrico deve coprire TUTTO, dialoghi compresi: ad app bloccata non si devono leggere i dati sotto',
     'src/components/ui/PageLoader.module.css':
         'il loader globale di pagina copre la navigazione in corso: se restasse sotto una modale, si vedrebbe mezza schermata cambiare',
+    'src/components/providers/ChunkErrorBoundary.tsx':
+        'il pannello «un pezzo del programma non è arrivato» (z-9998): quando manca un chunk, il ' +
+        'codice che chiuderebbe il dialogo aperto è proprio quello che non è arrivato — una modale ' +
+        'sopra questo pannello sarebbe una finestra che non si può più chiudere. Sta sotto al solo ' +
+        'gate biometrico (9999), che protegge i dati di un minore e viene prima di un guasto tecnico',
 }
 
 /**

@@ -31,6 +31,7 @@ import { CassaCategorieManager } from './CassaCategorieManager';
 import { CassaImpostazioni } from './CassaImpostazioni';
 import { metodoLabel } from '@/lib/cassa/tipi';
 import type { RigaMovimentoCassa, SaldoCassa, CassaChiusura, EntratoOggiVoce } from '@/lib/cassa/tipi';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Props {
   userId: string;
@@ -431,8 +432,8 @@ function StornoCassaModal({ userId, movimento, onClose, onDone }: { userId: stri
         body: JSON.stringify({ movimento_id: movimento.id, motivo: motivo.trim() }),
       });
       const j = (await res.json()) as { error?: string };
-      if (res.status === 409) { setError(j.error ?? t('cassaStornoNoStorno')); return; }
-      if (!res.ok) { setError(j.error ?? t('cassaStornoErrore')); return; }
+      if (res.status === 409) { setError(messaggioDaCorpo(j, t('cassaStornoNoStorno'))); return; }
+      if (!res.ok) { setError(messaggioDaCorpo(j, t('cassaStornoErrore'))); return; }
       onDone();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-storno-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });

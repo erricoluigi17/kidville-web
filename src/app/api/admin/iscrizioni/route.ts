@@ -16,6 +16,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
 import { CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
+import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -286,10 +287,33 @@ async function assertDocumentoInScope(
 }
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/**
+ * Clamp di un intero da query string, SENZA 400 e senza sorprese agli estremi.
+ *
+ * Non usa `Number(v) || default`: con quella formula `limit=0` diventerebbe il
+ * DEFAULT, cioè un valore assurdo verrebbe premiato con la pagina intera. Qui
+ * un numero c'è o non c'è: se c'è si stringe fra `min` e `max`, se non c'è (o
+ * non è un numero) vale il default.
+ */
+const interoClampato = (def: number, min: number, max: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return def
+    const n = Number(v)
+    if (!Number.isFinite(n)) return def
+    return Math.min(Math.max(Math.trunc(n), min), max)
+  }, z.number())
+
 const getQuerySchema = z.object({
   // `max(500)` come in `pagamenti/cassa/allegato:GET`: un percorso di storage
   // non è lungo, e una stringa senza tetto è solo superficie d'attacco in più.
   doc: z.string().max(500).optional(), // path storage → signed URL
+  // `?id=` — il DETTAGLIO di UNA domanda: è qui che vive il payload completo,
+  // che l'elenco non porta più. `zUuid` come nella PATCH: la chiave primaria
+  // di questa tabella è un uuid, e accettare stringhe libere allargherebbe la
+  // superficie di una query che restituisce dati sanitari di un minore.
+  id: zUuid.optional(),
+  limit: interoClampato(LIMITE_ISCRIZIONI_DEFAULT, 1, LIMITE_ISCRIZIONI_MAX),
+  offset: interoClampato(0, 0, Number.MAX_SAFE_INTEGER),
 })
 
 // referenteIndex resta unknown: il codice accetta qualsiasi valore e usa 0
@@ -301,7 +325,38 @@ const patchBodySchema = z.object({
   referenteIndex: z.unknown().optional(),
 })
 
-// GET: lista invii, oppure ?doc=<path> per ottenere una signed URL del documento.
+/**
+ * Ciò che la LISTA di «Moduli ricevuti» mostra davvero di una domanda: il nome
+ * del primo bambino e due conteggi. Nient'altro.
+ *
+ * È il sostituto del `data` intero nell'elenco. La regola che lo governa è
+ * quella dei log applicata alla risposta HTTP: **esce solo ciò che qualcuno
+ * guarda**. Il nome del primo bambino resta perché è come l'operatore riconosce
+ * la domanda in un elenco; codici fiscali, allergie, note mediche, documenti e
+ * recapiti degli adulti no — quelli si vedono aprendo la domanda (`?id=`), che
+ * è un gesto deliberato e uno alla volta.
+ *
+ * Difensiva per costruzione: `data` è un jsonb scritto da un modulo pubblico,
+ * quindi può essere qualunque cosa — anche assente, se il DB E2E della CI non
+ * ha la colonna e il ciclo 42703 l'ha tolta dalla proiezione.
+ */
+function riassumiDomanda(payload: unknown): {
+  bambini: number
+  adulti: number
+  primo_bambino: string | null
+} {
+  const d = (payload ?? {}) as { children?: unknown; adults?: unknown }
+  const bambini = Array.isArray(d.children) ? d.children : []
+  const adulti = Array.isArray(d.adults) ? d.adults : []
+  const primo = bambini[0] as { nome?: unknown; cognome?: unknown } | undefined
+  const nome = [primo?.nome, primo?.cognome]
+    .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+    .join(' ')
+  return { bambini: bambini.length, adulti: adulti.length, primo_bambino: nome || null }
+}
+
+// GET: elenco paginato (senza payload), ?id=<uuid> per il dettaglio di una
+// domanda, oppure ?doc=<path> per ottenere una signed URL del documento.
 export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
@@ -309,6 +364,7 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const docPath = q.data.doc
+    const { limit, offset } = q.data
     const supabase = await createAdminClient()
 
     if (docPath) {
@@ -344,33 +400,112 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     // legge il server nella PATCH, non serve all'elenco.
     let cols = ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at']
     const scuole = await resolveScuoleAttive(request, supabase, auth.user)
-    const runQuery = () =>
-      supabase
-        .from('enrollment_submissions')
-        .select(cols.join(', '))
-        .in('scuola_id', scuole)
-        .order('created_at', { ascending: false })
 
-    let { data, error } = await runQuery()
     // Resilienza pre-migration (come in admin/students:GET): `select('*')` non
     // falliva mai, una proiezione esplicita sì. Il DB E2E della CI non è
     // migrato: colonna assente ⇒ `42703` ⇒ la si toglie e si riprova, invece di
     // restituire un 500 su un problema d'infrastruttura del DB di test.
-    let attempts = 0
-    while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
-      const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(error.message)?.[1]
-      if (!col || !cols.includes(col)) break
-      logEvento('db', 'info', {
-        operazione: 'admin/iscrizioni:GET',
-        esito: 'colonna-assente-rimossa',
-        campo: col,
-      })
-      cols = cols.filter((c) => c !== col)
-      ;({ data, error } = await runQuery())
-      attempts++
+    // Vale per entrambi i rami (elenco e dettaglio), quindi vive in un posto solo.
+    async function conResilienza<T>(
+      esegui: (colonne: string) => PromiseLike<{ data: T; error: { code?: string; message: string } | null; count?: number | null }>,
+    ) {
+      let esito = await esegui(cols.join(', '))
+      let attempts = 0
+      while (esito.error && (esito.error as { code?: string }).code === '42703' && attempts < 5) {
+        const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(esito.error.message)?.[1]
+        if (!col || !cols.includes(col)) break
+        logEvento('db', 'info', {
+          operazione: 'admin/iscrizioni:GET',
+          esito: 'colonna-assente-rimossa',
+          campo: col,
+        })
+        cols = cols.filter((c) => c !== col)
+        esito = await esegui(cols.join(', '))
+        attempts++
+      }
+      return esito
     }
+
+    // ─── DETTAGLIO: `?id=<uuid>` ────────────────────────────────────────────
+    //
+    // È il ramo dove il payload della domanda — nomi e codici fiscali dei
+    // minori, allergie, note mediche — esce davvero, e per UNA riga alla volta:
+    // quando un operatore ha aperto quella domanda, non quando ha aperto la
+    // pagina. Il filtro di sede sta nella STESSA query dell'id (`AND`), non
+    // «da qualche parte nell'handler»: è l'unico posto in cui è vero.
+    if (q.data.id) {
+      const { data: riga, error: errDettaglio } = await conResilienza((colonne) =>
+        supabase
+          .from('enrollment_submissions')
+          .select(colonne)
+          .eq('id', q.data.id as string)
+          .in('scuola_id', scuole)
+          .maybeSingle(),
+      )
+      if (errDettaglio) {
+        logEvento('db', 'error', {
+          operazione: 'admin/iscrizioni:GET',
+          esito: 'dettaglio-non-letto',
+          entita_tipo: 'enrollment_submissions',
+          error_code: (errDettaglio as { code?: string }).code ?? null,
+        }, errDettaglio)
+        // Codice stabile, non prosa: il client traduce (`messaggioErrore`), e il
+        // `message` grezzo di PostgREST — inglese, coi nomi delle colonne — resta
+        // dov'è utile, cioè nel log qui sopra.
+        return NextResponse.json(
+          { error: 'Lettura della domanda non riuscita', codice: 'DOMANDA_NON_LETTA' },
+          { status: 500 },
+        )
+      }
+      if (!riga) {
+        // Un solo messaggio per «di un'altra sede» e per «non esiste»: la
+        // risposta non deve dire a un estraneo se quella domanda c'è. La
+        // differenza vive nel log (uuid e conteggi soltanto, mai il payload).
+        logEvento('multi_sede', 'warn', {
+          operazione: 'admin/iscrizioni:GET',
+          esito: 'dettaglio-non-in-scope',
+          utente: auth.user.id,
+          ruolo: auth.user.role,
+          entita_tipo: 'enrollment_submissions',
+          entita_id: q.data.id,
+          sedi_attive: scuole.length,
+        })
+        return NextResponse.json(
+          { error: 'Domanda non trovata', codice: 'DOMANDA_NON_APRIBILE' },
+          { status: 404 },
+        )
+      }
+      return NextResponse.json({ data: riga })
+    }
+
+    // ─── ELENCO: paginato, e SENZA il payload ───────────────────────────────
+    //
+    // Misurato in produzione il 2026-08-04: 299 domande, `data` per 329 kB, e
+    // la proiezione dell'elenco 514.435 byte contro 58.012 senza `data`. Il
+    // guadagno grosso però non è il peso: è che allergie e note mediche di 299
+    // minori non partono più verso il browser a ogni apertura della pagina,
+    // anche quando nessuno apre un dettaglio. `data` si continua a LEGGERE dal
+    // database — serve al riassunto qui sotto — ma non esce di qui.
+    const { data, error, count } = await conResilienza((colonne) =>
+      supabase
+        .from('enrollment_submissions')
+        .select(colonne, { count: 'exact' })
+        .in('scuola_id', scuole)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1),
+    )
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json(data)
+
+    const righe = ((data ?? []) as unknown as Record<string, unknown>[]).map((riga) => {
+      const { data: payload, ...resto } = riga
+      return { ...resto, riassunto: riassumiDomanda(payload) }
+    })
+    // `total` dal `count` ESATTO, non da `righe.length`: con 1000 righe rese su
+    // 1400 la lunghezza della pagina direbbe «1000», e il client non saprebbe
+    // mai delle altre 400. `offset + righe.length` è solo la rete di sicurezza
+    // per un DB che non abbia restituito il conteggio.
+    const total = typeof count === 'number' ? count : offset + righe.length
+    return NextResponse.json({ data: righe, total, limit, offset })
   } catch (err) {
     logErrore({ operazione: 'admin/iscrizioni:GET', stato: 500 }, err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })

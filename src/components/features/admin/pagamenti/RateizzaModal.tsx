@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import { cx } from '@/lib/ui/cx';
 import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { formatEuro } from '@/lib/format/valuta';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Campo compatto per la riga-rata (importo + scadenza) dentro il piano.
 const RATA_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -92,7 +93,7 @@ export function RateizzaModal({
                 }),
             });
             const j = await res.json();
-            if (!res.ok) { setError(j.error || t('rateErrCreazione')); return; }
+            if (!res.ok) { setError(messaggioDaCorpo(j, t('rateErrCreazione'))); return; }
             // sostituzione: elimina il pagamento singolo originale
             if (replacePagamentoId) {
                 await fetch(`/api/pagamenti/${replacePagamentoId}?userId=${userId}`, {

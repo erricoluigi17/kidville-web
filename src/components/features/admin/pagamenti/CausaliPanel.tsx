@@ -12,6 +12,7 @@ import {
 } from '@/lib/pagamenti/causale';
 import { hdr, card, h3, input, label, hint } from '../settings/ui';
 import { BTN_PRIMARY_AA } from './ui';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Props {
   userId: string;
@@ -161,7 +162,7 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
       });
       const j = await res.json();
       if (j.success) setMsg(t('caus_msg_salvati'));
-      else setError(j.error ?? t('caus_err_salvataggio'));
+      else setError(messaggioDaCorpo(j, t('caus_err_salvataggio')));
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `causali-impostazioni-salvataggio-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('caus_err_rete'));

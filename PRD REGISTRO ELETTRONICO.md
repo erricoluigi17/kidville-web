@@ -52,7 +52,7 @@
 > | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731123052_provisiona_sede_v2` |
 > | File negli Storage | ✅ `gallery`, `avvisi_allegati`, `task_allegati` **privati** con link firmati a scadenza breve; `news` **pubblico per scelta scritta** del titolare (blog verso l'esterno), dichiarato in migrazione | migr. `20260731192108`, `20260731192048` · `src/lib/gallery/storage.ts` · lock `bucket-storage-dichiarati` |
 > | Copertura dell'isolamento nel gate | ✅ lock per **handler** (non per file), per **scrittura**, su tabelle lette dallo schema, allowlist a match esatto `route:METODO` | `__tests__/architecture/isolamento-sede-coverage.test.ts` |
-> | Migrazioni ↔ database | ✅ **94** file = 94 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256` | lock `migrazioni-complete` |
+> | Migrazioni ↔ database | ✅ **97** file = 97 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256` | lock `migrazioni-complete` |
 > | Collaudo dell'isolamento | ✅ account TEST su Aversa e Cesa · account `test.multisede.admin` (solo accesso, tre sedi) per il selettore · seed E2E a **due** sedi con sezione omonima · `e2e/isolamento-sedi.spec.ts` | `scripts/seed-test-sedi.mjs`, `scripts/seed-e2e.mjs` |
 >
 > ### Moduli Implementati
@@ -86,6 +86,165 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## ✅ Changelog — Il resto del collaudo: l'app smette di dire «ok» quando non ha guardato 2026-08-04 (branch `fix/collaudo-residuo-g4-g8`)
+
+Chiusura dei gruppi lasciati fuori dalla PR #63: prestazioni (G4), osservabilità (G5),
+residuo notifiche (G6), rilascio e infrastruttura (G7), interfaccia (G8).
+
+**Prima di correggere, i 65 rilievi residui sono stati riverificati uno per uno.** Il
+risultato ha cambiato il piano: **49 erano ancora veri, 12 già chiusi, 6 sbagliati nei
+fatti, 2 non verificabili.** Di quelli sbagliati, il più istruttivo è `T20-F3` («due
+variabili d'ambiente presenti solo in produzione»), che era una deduzione presentata come
+misura. Correggerli alla cieca avrebbe prodotto lavoro inutile su un difetto inesistente.
+
+### Il tema comune, che non era nell'elenco dei rilievi
+
+Cinque delle correzioni di questa voce sono lo stesso difetto sotto forme diverse: **un
+sistema che dichiara un esito senza aver verificato di poterlo dichiarare.**
+
+- il cron dei promemoria scriveva `notifiche-promemoria: ok` subito dopo aver preso
+  `PGRST205` su una tabella che in produzione non esiste — ogni notte, dal 13 luglio;
+- il digest marcava un'edizione `inviata_il` con zero destinatari quando la lettura degli
+  indirizzi falliva, e l'edizione non ripartiva più: persa;
+- `npm run build` non girava in nessun punto della CI, quindi «gate verde» significava
+  tre comandi su quattro;
+- le migrazioni in attesa di approvazione si accumulavano senza che nulla le drenasse: tre
+  pulsanti armati su produzione, da 12, 35 e 140 ore;
+- e la CI su `main` era **rossa** mentre il commit che l'aveva resa tale si intitolava
+  «gate verde».
+
+Nessuno di questi era un errore di distrazione. Erano tutti casi in cui la strada del
+successo e quella del fallimento finivano nello stesso posto.
+
+### Cosa è cambiato
+
+| Rilievo | Prima | Ora |
+|---|---|---|
+| `T20-F5` | l'unico rilevatore di guasti in produzione era la telefonata di un genitore | `GET /api/health` misura cinque cose e sa dire di **no** su ognuna: DB leggibile dal service role, schema atteso presente, battito di ogni cron dentro la sua finestra, impronte d'errore attive, variabili critiche. 200 su `ok`, 503 su `down` |
+| `T20-F2` · `T12-F3` | il battito diceva `ok` senza aver guardato | terzo stato `ok-parziale`, che **nomina** la scansione saltata. E la tolleranza non inghiotte più il `42703`: una colonna mancante è una migrazione a metà, cioè un guasto |
+| `T12-F2` | 62 dei 176 punti di log del browser perdevano la pagina | il default è la pagina vera, **redatta** prima di partire — `/m/<token>` ha la credenziale nel path |
+| `T12-F4` | i job SQL notturni scrivevano `ambiente` NULL, fuori dal filtro con cui si legge la tabella | `DEFAULT` sulla colonna, 6 righe recuperate (migr. `20260804103151`) |
+| `T11-F3` | la stessa GET chiesta 5 volte a ogni apertura, e la **CI rossa** | promise-cache di modulo (lo schema che il repo aveva già scritto per il docente e mai portato al genitore) |
+| `T11-F4` | l'elenco iscrizioni restituiva ogni domanda con il `data` completo: 514 kB | paginato, e il payload esce dall'elenco: **−89%**, ed è un guadagno di privacy prima che di peso |
+| `T11-F5` | `limit=1000` ribattuto a mano in **10** file (il rilievo ne diceva 4) | costante condivisa + `X-Total-Count` + un `warn` quando il tetto morde |
+| `T11-F6` | le due tabelle ponte avevano solo la PK composita | due indici, l'indice duplicato di `parents` rimosso, statistiche rinfrescate (migr. `20260804103025`) |
+| `T17-F4` | il digest si dichiarava inviato a zero destinatari | distingue «zero famiglie» da «non ho potuto leggere», e nel secondo caso **rimanda** |
+| `T01-F2` | `npm run build` non era in CI | è nel job `quality` |
+| `T20-F4` | tre esecuzioni di `DB migrate (prod)` ferme da giorni | `cancel-in-progress`: ne resta una sola, sempre quella della testa di `main` |
+| `T03-F5` | `app_log` dichiarava «nessuna FK su `scuola_id`, il log sopravvive alla cancellazione di una sede» | la FK c'era dal 31/07 **senza `ON DELETE`**: cancellare una sede era *bloccata* da una tabella di log. Ora `ON DELETE SET NULL` |
+
+### Due migrazioni, applicate e **rilette dopo**
+
+`20260804103025` (indici delle tabelle ponte, indice duplicato rimosso, FK di `app_log` con
+`ON DELETE SET NULL`, `ANALYZE`) e `20260804103151` (`DEFAULT` su `app_log.ambiente`).
+
+Lo stato è stato misurato **prima e dopo**, perché il 3 agosto tre operazioni avevano
+dichiarato successo senza fare niente: indici 2→**4**, indice duplicato 1→**0**, FK
+`confdeltype` `a`→**`n`**, righe con `ambiente` NULL 6→**0**, statistiche 21→**36** righe
+stimate su 36 reali. Advisor: **0 ERROR**.
+
+La prima stesura della seconda migrazione **non poteva funzionare**: apriva con
+`ALTER DATABASE … SET app.ambiente`, e su Supabase il ruolo `postgres` non è superuser
+(`ERROR 42501`). Il ripiego è un letterale, con il limite scritto nel `COMMENT` della
+colonna invece che nascosto: se un giorno quella migrazione finisse sul database E2E, quel
+database scriverebbe `'production'` nei propri log mentendo.
+
+### Un errore mio, corretto da un esecutore
+
+Avevo archiviato `T12-F4` come falso misurando che «zero righe hanno `sorgente='sql'`».
+Quella query non poteva restituire altro che zero: `app_log_sorgente_check` ammette solo
+`'server'` e `'client'`. Cercare un valore che lo schema vieta non è una misura, è una
+definizione. L'esecutore ha rifatto la misura incrociando `pg_cron` con gli orari e ha
+trovato che le 6 righe sono **esattamente** i due job notturni che il rilievo denunciava.
+
+### La seconda ondata, e il modo in cui si è dovuta chiudere
+
+Sette esecutori paralleli sono stati **interrotti dal limite di sessione a metà lavoro**, e
+il loro codice è rimasto nell'albero senza che nessuno di loro potesse dichiarare la propria
+prova di validità. È la stessa situazione del 2026-08-03, e la lezione di allora è stata
+applicata: **si è partiti da una misura dell'albero, non dalle note.** Quello che si è
+trovato, e che nessun report avrebbe detto:
+
+- `DiaryTodayCard.tsx` era **sintatticamente rotto** — un agente è morto fra l'apertura e la
+  chiusura di un'espressione JSX;
+- `rateLimit` era diventata asincrona e **nessuno dei 21 chiamanti** era stato aggiornato;
+- `tabellaMancante` era stata estratta in un modulo condiviso e tolta da `promemoria`, ma
+  l'import non era mai stato aggiunto;
+- `ChunkErrorBoundary` aveva un commento che spiegava perché `capture: true` è indispensabile
+  — e il codice **non lo passava**. Sei test rossi lo dicevano;
+- tre commenti citavano un lock (`tolleranza-schema-un-posto-solo`) **che non esisteva**;
+- `BottomNav` importava due moduli che non usava: il difetto `T08-F2` era diagnosticato,
+  documentato e **non applicato**.
+
+Tutto chiuso con il gate verde, **tranne una cosa che è stata ritirata di proposito**. Le tinte
+delle funzioni sono ora prese da una mappa unica (`src/lib/ui/tinte-funzioni.ts`) e il lock che
+lo tiene fermo esiste davvero: la sua prova di validità è stata eseguita rimettendo un hex a
+mano nella nav del docente, e il lock è diventato rosso.
+
+### ⏸️ `T09-F1` resta APERTO: la correzione è stata scritta, provata in CI e ritirata
+
+Il difetto è vero: con l'overlay di caricamento a schermo, il `Tab` raggiungeva comandi
+invisibili su ogni pagina. La correzione — rendere inerte il contenuto sotto l'overlay — è
+corretta in linea di principio e **sbagliata nell'effetto**, e due run di CI l'hanno dimostrato:
+
+- con l'inerzia attiva, tutti e tre i `storageState` fallivano (campo email **vuoto**, password
+  piena): nessuno spec girava;
+- sistemata quella, cadevano `admin-search`, `public-iscrizione` e `teacher-diary` — percorsi
+  diversi, stessa forma: `fill()` non lancia, «riesce», e il valore non entra.
+
+Cioè: **ogni interazione entro la finestra di visibilità dell'overlay viene persa, su ogni
+pagina.** In CI la finestra c'è quasi sempre (l'E2E gira su `next dev`); in produzione è più
+rara ma non teorica — è la rete lenta, cioè un genitore col telefono davanti a scuola.
+
+Si sarebbe potuto mettere un'attesa in ogni spec e far diventare la CI verde. Sarebbe stato il
+modo di rilasciare un cambiamento che tocca ogni pagina avendo provato soltanto che *i test
+smettono di lamentarsi*. La causa a monte è `MIN_VISIBLE_MS`: l'overlay resta 700 ms **anche
+quando la pagina è già pronta**, ed è lì che va guardato. La ragione per esteso, con le due
+strade per chiuderlo, è nel commento di `src/components/providers/GlobalLoader.tsx`.
+
+La primitiva `src/lib/accessibility/inerti.ts` resta, provata, dove il perimetro è chiuso: in
+`ui/Modal` e nel bottom-sheet della navigazione — che era anch'esso `T08-F6`/`T09`, e lì è
+**chiuso**: il menu del telefono ora si comporta da dialogo (`role`, `aria-modal`, `Escape`,
+focus che entra e torna).
+
+### Il tetto per IP non è più indeterminato
+
+`V5`. Il rilievo diceva «61 richieste senza un solo 429, il tetto non esiste». Misurato su
+`app_log`, era **falso**: i 429 esistono e sono centinaia. Il difetto vero non era l'assenza
+del tetto ma la sua **indeterminatezza** — il contatore viveva in una `Map` per-istanza, e su
+Vercel il tetto effettivo era `N × limite`, con `N` il numero di lambda calde in quel momento.
+
+Ora il contatore è su Postgres (`tetto_frequenza`, migr. `20260804124245`), con la decisione
+presa in **un solo statement** (`INSERT … ON CONFLICT DO UPDATE … RETURNING`): due query
+separate sarebbero una corsa critica, e N richieste simultanee passerebbero tutte.
+
+La domanda vera era un'altra, e la risposta non è nessuna delle due ovvie: **se il database è
+lento, il tetto si apre o si chiude?** Fail-closed trasformerebbe un rallentamento del DB in
+un blocco delle iscrizioni, su una porta da cui arrivano ~9 domande l'ora da famiglie vere.
+Fail-open trasformerebbe un attacco al DB in un varco. La scelta è la terza: **si degrada al
+contatore locale** — chi tira giù il database non ottiene «nessun tetto», ottiene il tetto di
+ieri — e ogni degrado lascia una riga a livello `error`, strozzata a una al minuto perché un
+database giù non riempia `app_log` della propria diagnosi. Un guasto costa PRECISIONE, non
+PROTEZIONE.
+
+Verificato in produzione dopo l'applicazione: su un tetto di 3, tre colpi passano e il quarto
+è respinto con `riprova_fra_ms` coerente con la finestra.
+
+### Tre lock hanno fatto il loro mestiere
+
+`gate-coverage` ha preteso che `/api/health` fosse **dichiarata** pubblica con la ragione
+scritta (e il tetto dell'allowlist **sale** per la prima volta: 14 → 15);
+`isolamento-sede-coverage` ha preteso l'aggiornamento dei conteggi;
+`testo-muted-allowlist` ha colto due righe nuove scritte nel grigio a basso contrasto — fra
+cui, ironicamente, proprio l'avviso «mostrate N di TOT» introdotto in questo stesso lavoro
+per segnalare il troncamento.
+
+E `logging-tetto` ha colto una **terza primitiva di tetto** che stava nascendo dentro
+l'endpoint di salute. La correzione non è stata dichiararla: è stata usare quella che
+c'era già.
 
 ---
 

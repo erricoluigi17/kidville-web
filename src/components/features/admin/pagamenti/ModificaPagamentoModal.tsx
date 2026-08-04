@@ -7,6 +7,7 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { Modal } from '@/components/ui/Modal';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Campo inline compatto per la correzione di un incasso già registrato.
 const INLINE_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -89,7 +90,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 }),
             });
             const j = await res.json();
-            if (!res.ok) { setError(j.error || t('modifErrAggiornamento')); return; }
+            if (!res.ok) { setError(messaggioDaCorpo(j, t('modifErrAggiornamento'))); return; }
             onDone();
         } catch {
             setError(t('modifErrRete'));
@@ -109,7 +110,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 body: JSON.stringify({ sconto: Number(sconto), sconto_motivo: scontoMotivo.trim() }),
             });
             const j = await res.json().catch(() => ({}));
-            if (!res.ok) { setScontoMsg(j.error || t('modifScontoErrore')); return; }
+            if (!res.ok) { setScontoMsg(messaggioDaCorpo(j, t('modifScontoErrore'))); return; }
             setScontoMsg(t('modifScontoApplicato'));
             onDone();
         } catch {
@@ -124,7 +125,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
             body: JSON.stringify(editDraft),
         });
         if (res.ok) { setEditId(null); setEditDraft({}); await loadIncassi(); }
-        else { const j = await res.json().catch(() => ({})); alert(j.error || t('modifErrore')); }
+        else { const j = await res.json().catch(() => ({})); alert(messaggioDaCorpo(j, t('modifErrore'))); }
     };
 
     // Storno TRACCIATO: il motivo è obbligatorio (niente più cancellazione secca).
@@ -138,7 +139,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
             body: JSON.stringify({ incasso_id: id, motivo }),
         });
         if (res.ok) await loadIncassi();
-        else { const j = await res.json().catch(() => ({})); alert(j.error || t('modifStornoErrore')); }
+        else { const j = await res.json().catch(() => ({})); alert(messaggioDaCorpo(j, t('modifStornoErrore'))); }
     };
 
     return (

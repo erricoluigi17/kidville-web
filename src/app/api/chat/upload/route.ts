@@ -54,7 +54,7 @@ export const POST = withRoute('chat/upload:POST', async (request: Request) => {
   if (auth.response) return auth.response
 
   // Anti-abuso: upload ripetuti per IP.
-  const rl = rateLimit(`chat-upload:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
+  const rl = await rateLimit(`chat-upload:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'Troppi caricamenti. Riprova tra qualche minuto.' },

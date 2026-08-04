@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { EMAILS, IDS, login } from './fixtures';
+import { EMAILS, IDS, login, attendiFineCaricamento } from './fixtures';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ISOLAMENTO FRA SEDI — la prova che la suite E2E non poteva fare
@@ -141,6 +141,9 @@ test('un avviso pubblicato nella sede 1 non compare nella sede 2', async ({ page
   //     destinataria che esiste anche nell'altra sede.
   await entra(page, EMAILS.docente, 'teacher');
   await page.goto('/teacher/avvisi');
+  // L'overlay del loader intercetta i click finché è a schermo: senza questa attesa
+  // il test dipende da quanto è veloce la macchina della CI (vedi `attendiFineCaricamento`).
+  await attendiFineCaricamento(page);
   await expect(page.getByRole('heading', { name: 'Bacheca' })).toBeVisible({ timeout: RENDER });
 
   await page.getByRole('button', { name: 'Nuovo' }).click();

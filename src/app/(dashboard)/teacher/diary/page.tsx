@@ -10,6 +10,8 @@ import { Users, WifiOff } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
+import { fetchDiarioConfig } from '@/lib/diary/config-cache';
+import { fetchEducatorSections, sezioniDallaRisposta } from '@/lib/sezioni/educator-sections-cache';
 
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
 // alla compilazione condivisa in DiaryEventEditor (usata anche da /admin/diary).
@@ -47,16 +49,18 @@ function TeacherDiaryInner() {
 
     useEffect(() => {
         let active = true;
+        // Entrambe passano dalle cache di modulo condivise: la stessa GET la
+        // chiedono anche `useDiaryDay` (config) e la bottom-nav, e in `next dev`
+        // StrictMode raddoppia ogni effect. Erano 4 config + 2 sezioni per un
+        // solo ingresso in pagina — ~14 s prima di poter toccare un pulsante.
         Promise.all([
-            fetch(`/api/educator-sections?userId=${userId}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
-            fetch(`/api/diary/config?userId=${userId}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+            fetchEducatorSections(userId),
+            fetchDiarioConfig(userId),
         ])
             .then(([sec, conf]) => {
                 if (!active) return;
                 // Preferisci `sections` (con school_type); fallback su `sectionNames` (risposta vecchia).
-                const raw: { name: string; school_type: string | null }[] = Array.isArray(sec?.sections)
-                    ? sec.sections
-                    : (Array.isArray(sec?.sectionNames) ? sec.sectionNames.map((n: string) => ({ name: n, school_type: null })) : []);
+                const raw = sezioniDallaRisposta(sec);
                 const primariaVisibile = conf?.diario_primaria_visibile === true; // fail-closed: primaria esposta solo se attivata dall'admin
                 const filtered = primariaVisibile ? raw : raw.filter(s => s.school_type !== 'primaria');
                 const names = filtered.map(s => s.name);

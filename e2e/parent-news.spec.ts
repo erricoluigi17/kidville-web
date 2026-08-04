@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { STORAGE, attendiFineCaricamento } from './fixtures';
 
 // Feed «News» del genitore (branch feat/news): pagina feed, dettaglio, digest e
 // widget in home + voce nel Menu sheet. Il DB E2E della CI NON è migrato → il feed
@@ -50,6 +50,13 @@ test('la home genitore monta il widget News senza crash', async ({ page }) => {
 
 test('la voce «News» è presente nel Menu sheet e porta al feed', async ({ page }) => {
   await page.goto('/parent');
+  // L'overlay del loader globale intercetta i click finché è a schermo
+  // (`pointer-events: auto`): senza questa attesa il test dipende da quanto è veloce
+  // la macchina della CI. Misurato: passava in 5,6 s sulla run 30915761622 e falliva a
+  // 6,9 s sulla 30917063565 — stesso codice di pagina, nessuna modifica alla nav né
+  // alle news in mezzo. Il click «riusciva» e la navigazione non partiva, perché era
+  // l'overlay a riceverlo.
+  await attendiFineCaricamento(page);
   // Apre il Menu sheet (bottom-nav) e clicca la voce News del gruppo Comunicazioni.
   await page.getByRole('button', { name: /Menu/i }).click();
   const voceNews = page.getByRole('link', { name: /News/i }).filter({ hasText: 'Novità e comunicati' });

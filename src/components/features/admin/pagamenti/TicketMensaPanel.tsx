@@ -1,7 +1,9 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -69,7 +71,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     }, [userId, scuolaId]);
 
     useEffect(() => {
-        fetch(`/api/admin/students?scuola_id=${scuolaId}&limit=1000`).then(r => r.json())
+        fetch(`/api/admin/students?scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).then(r => r.json())
             .then(d => { if (Array.isArray(d)) setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione }))); });
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) }).then(r => r.json())
             .then(d => { if (d.success) setPacchetti(d.data.ticket_pacchetti || []); });
@@ -106,7 +108,8 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             setConfermaId(n => n + 1);
             loadStorico(sel.id);
             loadMorosi();
-        } else alert(j.error);
+            // `alert(j.error)` nudo mostrava «undefined» quando il corpo non portava `error`.
+        } else alert(messaggioDaCorpo(j, t('ticket_err_ricarica')));
     };
 
     const filtered = alunni.filter(a => `${a.nome} ${a.cognome}`.toLowerCase().includes(search.toLowerCase())).slice(0, 8);

@@ -52,7 +52,7 @@ const RL_FINESTRA_MS = 10 * 60 * 1000;
 export const GET = withRoute('iscrizione/model:GET', async (request: Request) => {
   // Prima di tutto il resto: nessun client aperto, nessuna query. Il rifiuto non
   // va loggato a mano — `withRoute` persiste già ogni 429 a livello `warn`.
-  const rl = rateLimit(`iscrizione-model:${clientIp(request)}`, {
+  const rl = await rateLimit(`iscrizione-model:${clientIp(request)}`, {
     limit: RL_LIMITE,
     windowMs: RL_FINESTRA_MS,
   });

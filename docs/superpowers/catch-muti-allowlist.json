@@ -20,7 +20,7 @@
     "senza quel ramo resta silenzioso esattamente come prima."
   ],
   "aggiornato": "2026-08-03",
-  "totale_occorrenze": 87,
+  "totale_occorrenze": 85,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -199,10 +199,6 @@
       "n": 3
     },
     {
-      "path": "src/components/features/parent/ChildSwitcher.tsx",
-      "n": 1
-    },
-    {
       "path": "src/components/features/parent/home/DiaryTodayCard.tsx",
       "n": 1
     },
@@ -228,10 +224,6 @@
     },
     {
       "path": "src/components/features/public/EnrollmentWizard.tsx",
-      "n": 1
-    },
-    {
-      "path": "src/components/features/teacher/diary/DiaryEventEditor.tsx",
       "n": 1
     },
     {

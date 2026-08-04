@@ -29,7 +29,7 @@ export const POST = withRoute('locker/notify:POST', async (request: Request) => 
   const { user } = auth
 
   // Anti-spam: ogni chiamata genera una notifica per TUTTO lo staff del plesso.
-  const rl = rateLimit(`locker-notify:${clientIp(request)}`, { limit: 10, windowMs: 10 * 60 * 1000 })
+  const rl = await rateLimit(`locker-notify:${clientIp(request)}`, { limit: 10, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'Troppi avvisi inviati. Riprova tra qualche minuto.' },

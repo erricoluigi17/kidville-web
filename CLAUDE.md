@@ -156,6 +156,26 @@ libero, raccolte **dal 16 luglio**. Il modulo pubblico riceve circa **9 invii l'
 commerciale non è avvenuto, ma i dati sono arrivati lo stesso: nessuno aveva riletto questo
 promemoria da quando il modulo pubblico è andato online.
 
+> **Rimisurato il 2026-08-04 — i numeri qui sopra sono di quattro giorni fa e sono già
+> RADDOPPIATI.**
+>
+> | | 2026-07-31 | 2026-08-04 |
+> |---|---|---|
+> | domande di iscrizione | 227 | **302** |
+> | codici fiscali distinti di minori | 152 | **324** |
+>
+> Non è una correzione di refuso: è il punto di tutto questo blocco. Il paragrafo qui sopra
+> esisteva proprio per dire «non fidarti della data, esegui la query», e chi l'ha scritto ha
+> lasciato dentro due numeri che sarebbero invecchiati in una settimana. **Anche questi due
+> invecchieranno.** Le domande sono cresciute di 8 nelle due ore in cui è stata scritta questa
+> riga.
+>
+> La query che conta, da eseguire invece di leggere:
+> ```sql
+> SELECT count(*) FROM enrollment_submissions;
+> ```
+> Chi sta per scrivere in produzione la esegua. Nessuno gli chiederà conferma prima.
+
 **La lezione, prima delle istruzioni**: «pre-lancio» è una frase sul calendario, non una
 misurazione. L'unica domanda che conta è *quante righe reali ci sono adesso in produzione*, e ha
 una risposta che si ottiene con una query. Chi legge questo file e sta per scrivere in produzione

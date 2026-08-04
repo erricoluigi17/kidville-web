@@ -11,6 +11,7 @@ import { cx } from '@/lib/ui/cx';
 import { Modal } from '@/components/ui/Modal';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { formatEuro } from '@/lib/format/valuta';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
 interface Categoria { id: string; nome: string; slug?: string }
@@ -133,7 +134,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                 }),
             });
             const json = await res.json();
-            if (!res.ok) { setError(json.error || t('quickErrCreazione')); return; }
+            if (!res.ok) { setError(messaggioDaCorpo(json, t('quickErrCreazione'))); return; }
             const pagamento = json.data;
 
             if (giaPagato) {
@@ -150,7 +151,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                 });
                 if (!incRes.ok) {
                     const j = await incRes.json().catch(() => ({}));
-                    setError(j.error || t('quickErrIncasso'));
+                    setError(messaggioDaCorpo(j, t('quickErrIncasso')));
                     setCreato({ id: pagamento.id, fattura_stato: pagamento.fattura_stato });
                     return;
                 }

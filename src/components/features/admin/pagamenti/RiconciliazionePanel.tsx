@@ -12,6 +12,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { MovimentoDialog } from './MovimentoDialog';
 import type { PrecompilaTransazione } from './TransazioniPanel';
 import { BTN_PRIMARY_AA } from './ui';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import {
   SEMAFORO,
   FILTRI,
@@ -117,7 +118,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         body: JSON.stringify({ filename: file.name, contenuto, scuola_id: scuolaId }),
       });
       const j = await r.json();
-      if (!r.ok || !j.success) { setError(j.error || t('reconErroreImport')); return; }
+      if (!r.ok || !j.success) { setError(messaggioDaCorpo(j, t('reconErroreImport'))); return; }
       setEsito(j.data as EsitoImport);
       await load();
     } catch (err) {

@@ -1,7 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-01",
-  "sha256": "72e2f66d754f61407f12a6597e16a819c57c1d63b2f2e39a40f61c20bd4a2452",
+  "generato_il": "2026-08-04",
+  "generato_alle": "2026-08-04T12:49:11Z",
+  "sha256": "22fabfe3115ffbb281da938e21455c6563fd5517af9cd173250b60486d0f9b07",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -591,6 +592,7 @@
     "giustifiche_didattiche",
     "gruppi_mensa",
     "incassi",
+    "iscrizioni_retention_esecuzioni",
     "legame_genitori_alunni",
     "locker_config",
     "materie",
@@ -657,6 +659,7 @@
     "student_parents",
     "task_interni",
     "tempo_scuola",
+    "tetto_frequenza",
     "ticket_mensa",
     "utenti",
     "utenti_scuole",

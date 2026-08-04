@@ -371,5 +371,6 @@
   "meEliminaAssegnazione": "Elimina assegnazione",
   "noteRimuoviCategoria": "Rimuovi categoria",
   "spEliminaCategoria": "Elimina categoria",
-  "spRimuoviPacchetto": "Rimuovi pacchetto"
+  "spRimuoviPacchetto": "Rimuovi pacchetto",
+  "meErrMenu": "Operazione sui menu non riuscita. Riprova."
 }

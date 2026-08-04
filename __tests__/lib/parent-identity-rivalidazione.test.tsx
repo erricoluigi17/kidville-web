@@ -21,12 +21,17 @@ import {
   rivalidaFiglio,
   decidiFiglioRivalidato,
   fetchFigliIds,
+  invalidaFigliCache,
 } from '@/lib/auth/use-parent-identity';
 
 const fetchMock = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // L'elenco dei figli ha una cache di MODULO (deduplica delle GET identiche di
+  // uno stesso caricamento): senza svuotarla, il secondo test riceverebbe la
+  // risposta finta del primo.
+  invalidaFigliCache();
   window.localStorage.clear();
   mockSearch = new URLSearchParams();
   mockPathname = '/parent/mensa';

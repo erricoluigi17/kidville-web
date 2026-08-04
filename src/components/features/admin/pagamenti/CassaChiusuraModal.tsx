@@ -17,6 +17,7 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import type { SaldoCassa, CassaNonDisponibile } from '@/lib/cassa/tipi';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Props {
   userId: string;
@@ -93,8 +94,8 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
       });
       if (res.status === 503) { setError(t('cassaChiuErr503')); return; }
       const j = (await res.json()) as (EsitoChiusura & { error?: string });
-      if (res.status === 409) { setError(j.error ?? t('cassaChiuErr409')); return; }
-      if (!res.ok) { setError(j.error ?? t('cassaChiuErrSvuot')); return; }
+      if (res.status === 409) { setError(messaggioDaCorpo(j, t('cassaChiuErr409'))); return; }
+      if (!res.ok) { setError(messaggioDaCorpo(j, t('cassaChiuErrSvuot'))); return; }
       setEsito(j);
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-chiusura-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });

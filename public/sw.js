@@ -158,8 +158,21 @@
 // produzione arrivavano 9 domande l'ora, e il PRD dichiara 75 migrazioni quando
 // sono 92. **Una frase su uno stato del mondo va rimisurata, non ricopiata** — e
 // qui bastavano i due comandi qui sopra.
-const VERSIONE = 'v5';
-// IMPRONTA-PAGINA-OFFLINE: c7cd1ecae022063f6338649da6efbd1f825b3988897655f702a93a07f6ddbfb0
+// 2026-08-04 — la pagina /offline guadagna le etichette delle QUATTRO rotte
+// pubbliche che finora cadevano sul ripiego (`/iscrizione`,
+// `/cancellazione-account`, `/cancellazione-account/conferma`), in italiano e in
+// inglese. Erano il rilievo T16-F5 del collaudo, e il lock che le pretendeva
+// guardava solo `src/app/(dashboard)`: le rotte pubbliche gli erano invisibili.
+// Un genitore che perde la rete sul modulo d'iscrizione vedeva l'URL
+// capitalizzato invece del nome della pagina — e in inglese lo vedeva in
+// italiano.
+//
+// `VERSIONE` sale a `v6` perché il cambiamento è ESATTAMENTE del tipo che questo
+// blocco esiste per proteggere: i cataloghi di /offline sono serviti dalla
+// CacheStorage, e senza un Service Worker nuovo la pagina vecchia resterebbe su
+// ogni dispositivo che l'ha già salvata. La cache riparte pulita.
+const VERSIONE = 'v6';
+// IMPRONTA-PAGINA-OFFLINE: 37da27f69c11f806fac89bf3f6e7ffa9eccc0459999688dfdc13b1c58012a86a
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

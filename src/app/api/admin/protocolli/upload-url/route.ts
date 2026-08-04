@@ -36,7 +36,7 @@ export const POST = withRoute('admin/protocolli/upload-url:POST', async (request
       const auth = await requireStaff(request, ['admin', 'segreteria'])
       if (auth.response) return auth.response
 
-      const rl = rateLimit(`protocolli-upload:${clientIp(request)}`, {
+      const rl = await rateLimit(`protocolli-upload:${clientIp(request)}`, {
         limit: 30,
         windowMs: 10 * 60 * 1000,
       })

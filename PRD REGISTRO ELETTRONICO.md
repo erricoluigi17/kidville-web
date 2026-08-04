@@ -154,6 +154,33 @@ trovato, e che nessun documento sapeva:
 key`): qualunque script locale che usi il service role non funziona. La produzione non è toccata —
 gira sulla `service_role` legacy su Vercel — ma va rigenerata.
 
+### Dopo il merge — misurato, non atteso
+
+**La produzione serve davvero il codice nuovo**, e questo chiude i tre controlli che il
+changelog delle icone aveva lasciato aperti: `/manifest.webmanifest` risponde **`200`** con
+`application/manifest+json` (non più un `307` verso il login — è la riga di `src/middleware.ts`
+cambiata dal branch, quindi è anche il test perfetto che il deploy sia arrivato), `og:image`
+risponde `200`, e **la favicon servita ha lo stesso MD5 di quella nel repo**: il triangolo di
+Vercel non c'è più.
+
+**Build `1.0 (2)`**: costruita con `CAP_SERVER_URL` di produzione, firmata `Apple
+Distribution`, `aps-environment = production`, `get-task-allow = false`, `CFBundleVersion = 2`,
+privacy manifest a 20 voci **letto dentro il bundle**. Caricata, `VALID`, agganciata alla
+versione 1.0, `IN_BETA_TESTING` su TestFlight (scade il 2026-11-02). È la prima build in cui
+`limitsNavigationsToAppBoundDomains` vale **`true`**: gli embed di News e il login vanno
+riprovati su dispositivo, perché quella configurazione non è mai girata su hardware vero.
+
+`ios/ExportOptions.plist` **ora esiste nel repository**, con `manageAppVersionAndBuildNumber:
+false` — senza quel flag Xcode incrementa il build number da solo durante l'export e si aggancia
+alla versione la build sbagliata.
+
+**Un test fragile smascherato, non nascosto.** Dopo la correzione la CI è tornata rossa su un
+test diverso — `notifications-panel.spec.ts:10` — e non per causa nostra: `isolamento-sedi.spec.ts`
+pubblica un avviso che genera una notifica per lo **stesso** account genitore E2E, e se arriva
+mentre il pannello è aperto il conteggio delle non lette risale dopo il «segna tutte lette».
+Rilanciato il solo job, passa. È una **corsa fra spec che condividono un account**, non un difetto
+del prodotto: resta aperta e andrebbe chiusa dando a quello spec un genitore tutto suo.
+
 ⚠️ **Resta un solo passaggio umano, e non è aggirabile**: la dichiarazione **DSA di operatore
 commerciale**. Verificato sullo spec OpenAPI ufficiale 4.3 di App Store Connect: `trader` compare
 **solo come enum in sola lettura**, non esiste alcun endpoint per dichiararlo. Si compila a schermo

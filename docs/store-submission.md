@@ -702,6 +702,83 @@ osservare da un simulatore. Stessa cosa per l'**offline in modalità aereo**.
 
 ---
 
+## 5-bis. Il 2026-08-04 — build `1.0 (2)` e i quattro bloccanti che nessun documento sapeva
+
+Questa sezione è la fotografia più recente e **prevale** su ciò che la checklist del §6 dice
+ancora al passato. Tutto quello che segue è stato **misurato via API**, non letto.
+
+### La build in linea è la `1.0 (2)`, non la `1.0 (1)`
+
+La `1.0 (1)` del 26 luglio era **inservibile per la submission** per due ragioni indipendenti,
+ed entrambe erano invisibili a chi guardava App Store Connect:
+
+- il **privacy manifest** è passato da 8 a 20 voci il 28 luglio, e `PrivacyInfo.xcprivacy`
+  **viaggia dentro l'`.ipa`**: modificarlo senza ricaricare non cambia nulla per Apple;
+- le **icone** sono cambiate il 4 agosto (il mascotte su tutte le piattaforme).
+
+Costruita, verificata, caricata e agganciata: `CFBundleVersion = 2`, `aps-environment =
+production`, `get-task-allow = false`, firma `Apple Distribution: luigi errico (B5ULCGG2V3)`,
+manifest a 20 voci **letto dentro il bundle**, `server.url = https://app.kidville.it` nel
+`capacitor.config.json` imbarcato. Stato `VALID`, `usesNonExemptEncryption = false`, agganciata
+alla versione 1.0, e `IN_BETA_TESTING` su TestFlight (scade il **2026-11-02**).
+
+Ora `ios/ExportOptions.plist` **esiste nel repository**, con `manageAppVersionAndBuildNumber:
+false`: senza quel flag Xcode incrementa il build number da solo durante l'export, e il numero
+che si aggancia non è quello che si crede.
+
+### I quattro bloccanti trovati misurando lo stato reale
+
+| # | Cosa | Come stava | Ora |
+|---|---|---|---|
+| 1 | 🔴 **Password dell'account demo** | il campo su App Store Connect aveva **9 caratteri** (la vecchia password comune, ruotata il 26/07); quella dedicata sul disco ne ha 24; **provate entrambe contro la produzione, respinte tutte e due** — l'account era stato ritoccato il 3 agosto e il valore corrente non esisteva da nessuna parte | riallineato con `scripts/allinea-password-revisore.mjs` e **verificato con un accesso vero** |
+| 2 | 🔴 **Fascia di prezzo** | **nessuna**: una app nuova senza prezzo non si invia | creata, gratuita, base Italia |
+| 3 | 🔴 **`contentRightsDeclaration`** | **vuota**: blocca l'invio | `USES_THIRD_PARTY_CONTENT` — la sezione News incorpora YouTube, Vimeo e Instagram |
+| 4 | **Disponibilità per territorio** | la risorsa **non esisteva proprio** (404) | **solo Italia**, 1 su 175, `availableInNewTerritories: false` |
+
+Il punto 1 merita una riga in più: era il **rigetto 5.1.1 più frequente in assoluto**, già
+armato, e nessuno se ne sarebbe accorto guardando la schermata — il campo era pieno.
+La lezione è la solita di questo repo: **un campo compilato non è una credenziale che funziona.
+Si prova il login.**
+
+### 🔴 Il DSA non esiste nell'API. Solo a schermo.
+
+Verificato sullo **spec OpenAPI ufficiale 4.3** di App Store Connect: `trader` compare in tutto
+lo spec **soltanto come enum in sola lettura**, dentro `TerritoryAvailability.contentStatuses`
+(`TRADER_STATUS_NOT_PROVIDED`, `…_VERIFICATION_FAILED`, `…_VERIFICATION_STATUS_MISSING`). Non
+esiste alcun endpoint per dichiararlo: si compila in *Business → Agreements → Compliance*.
+
+Ma quell'enum in sola lettura è **il miglior semaforo della giornata**, ed è l'unico modo di
+leggere lo stato DSA da programma:
+
+```bash
+node scripts/asc-api.mjs GET "/v2/appAvailabilities/6794883055/territoryAvailabilities?limit=200"
+# gli id dei territori sono base64: {"s":"<appId>","t":"ITA"}
+```
+
+Misurato il 2026-08-04: **ITA porta `TRADER_STATUS_NOT_PROVIDED`**, come tutti e 27 i paesi UE.
+
+⚠️ **Due gate distinti, e la checklist non li distingueva.** La *dichiarazione* sblocca l'invio
+in revisione; la *verifica del documento* da parte di Apple sblocca l'uscita sullo store, non ha
+SLA pubblicato, e con disponibilità ristretta alla sola Italia il suo fallimento significa
+**app approvata e mai pubblicata, senza che nessuna schermata lo dica**. Va riletto quel
+semaforo dopo l'approvazione, non solo prima dell'invio.
+
+### Dati demo — il menù ora è della sola classe TEST
+
+Il §4 avvertiva che «il menù mensa è per **scuola**» e per questo andava rimosso subito dopo la
+cattura. **Non è più necessario**: esiste `mensa_class_menu_assignment`, e un `mensa_menu_config`
+dedicato assegnato alla classe `TEST Infanzia` tiene il menù dentro il perimetro di prova. Le
+famiglie reali di Giugliano continuano a vedere quello che vedevano (`mensa_menu_rotazione` con
+`menu_config_id IS NULL` è **vuota in tutto il database**). Verificato riproducendo le query del
+server, non quelle della scrittura.
+
+Rinfrescati anche 100 eventi di diario su due giorni, con `creato_il` **retrodatato** oltre la
+finestra di visibilità di 10 minuti. News (3) e avvisi (4) erano già presenti: una misura
+precedente li dava a zero perché cercava `stato = 'pubblicato'`, mentre il `CHECK` dello schema
+ammette **`'pubblicata'`** — la query non poteva dare altro che zero.
+
+---
+
 ## 6. Checklist di submission
 
 ### Bloccanti — da chiudere prima di inviare
@@ -731,18 +808,22 @@ osservare da un simulatore. Stessa cosa per l'**offline in modalità aereo**.
 - [x] ~~**Rotazione della password degli account TEST** e rimozione del valore dal PRD~~
       — **fatto il 2026-07-26** (vedi §1): password ruotata sui 41 account `test.*`, valore
       tolto da tutti e 9 i file, script su `KV_TEST_PASSWORD`, lock di regressione attivo.
-- [ ] **Password dedicata all'account demo**, diversa da quella comune degli account TEST,
-      così che ruotarla dopo la review non rompa gli altri accessi (§1). Serve una
-      decisione del titolare.
+- [x] ~~**Password dedicata all'account demo**~~ — **fatto**, ma non come sembrava: al
+      2026-08-04 il campo su App Store Connect conteneva un valore di 9 caratteri, la
+      password dedicata ne ha 24, e **nessuna delle due apriva l'account**. Riallineata e
+      verificata con un accesso vero (§5-bis). Vive in `~/Documenti/kidville-play/.demo-revisore-pw`,
+      fuori dal repository.
 - [x] ~~**Account demo** compilato in App Store Connect (*Sign-in required*)~~ — **fatto il
       2026-07-26**: `test.inf.genitore1@kidville.test` in `appStoreReviewDetails`, con le note
       di review in inglese (§2). ⚠️ Resta da compilare in **Play Console** (*Accesso all'app*).
 - [x] ~~**Dati demo rinfrescati**~~ — **fatto il 2026-07-26** (§4): diario, menù, ticket,
       avvisi, news e pagamenti sulla sola classe TEST Infanzia. ⚠️ Le classi TEST **non vanno
       ripulite** per tutta la finestra di review.
-- [ ] **App Privacy labels** compilate (§3) e **coerenti** con
-      `ios/App/App/PrivacyInfo.xcprivacy`; deciso il punto aperto su salute / categorie
-      particolari.
+- [x] ~~**App Privacy labels** compilate e coerenti con `PrivacyInfo.xcprivacy`~~ —
+      **fatto il 2026-07-28**: 20 tipologie pubblicate, manifest portato da 8 a 20 voci,
+      **Health e SensitiveInfo dichiarate** (il punto aperto è chiuso in quel senso).
+      ⚠️ La parità è stata **riverificata dentro l'`.ipa`** il 2026-08-04: il manifest
+      viaggia nel binario, quindi contava caricare una build nuova (§5-bis).
 - [ ] **Descrizione, keyword e categoria per Google Play** — su App Store sono compilate
       (§5); la scheda Play è ancora vuota.
 - [ ] **Modulo «Sicurezza dei dati»** di Google Play compilato, incluso l'URL per la
@@ -754,8 +835,15 @@ osservare da un simulatore. Stessa cosa per l'**offline in modalità aereo**.
       `APP_IPHONE_67`, 6 iPad a 2064×2752 in `APP_IPAD_PRO_3GEN_129`), tutti
       `assetDeliveryState: COMPLETE`. ⚠️ Restano da produrre quelli di **Google Play**
       (telefono, icona 512×512, immagine in evidenza 1024×500).
-- [ ] **Build costruita con `CAP_SERVER_URL` HTTPS di produzione** e config rigenerati —
-      procedura e verifiche in `docs/mobile.md`, §«Prima della build per lo store».
+- [x] ~~**Build costruita con `CAP_SERVER_URL` HTTPS di produzione**~~ — **fatto il
+      2026-08-04** sulla `1.0 (2)`, con la verifica letta **dentro il bundle**
+      (`server.url = https://app.kidville.it`, `limitsNavigationsToAppBoundDomains: true`).
+      ⚠️ Il controllo prescritto in `docs/mobile.md` è un `grep -n '"url"'`: **passa
+      identico su `http://localhost:3100`**. Il config va letto come JSON e confrontato
+      con i valori attesi, non cercato con un grep.
+- [ ] 🔴 **Fascia di prezzo, diritti di contenuto e disponibilità** — creati il 2026-08-04
+      (§5-bis). Non erano in questa checklist e bloccavano l'invio in silenzio: se un
+      giorno si crea una seconda app, vanno messi qui dal primo giorno.
 - [x] ~~**Face ID provato dall'inizio alla fine su iOS**~~ — **fatto il 2026-07-26** su
       simulatore iPhone 17 Pro (iOS 26.2): attivazione dello switch in `/parent/profilo`
       con prompt nativo e match, gate biometrico al riavvio, sblocco riuscito, **e nessun

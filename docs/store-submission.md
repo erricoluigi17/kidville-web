@@ -757,11 +757,53 @@ node scripts/asc-api.mjs GET "/v2/appAvailabilities/6794883055/territoryAvailabi
 
 Misurato il 2026-08-04: **ITA porta `TRADER_STATUS_NOT_PROVIDED`**, come tutti e 27 i paesi UE.
 
-⚠️ **Due gate distinti, e la checklist non li distingueva.** La *dichiarazione* sblocca l'invio
-in revisione; la *verifica del documento* da parte di Apple sblocca l'uscita sullo store, non ha
-SLA pubblicato, e con disponibilità ristretta alla sola Italia il suo fallimento significa
-**app approvata e mai pubblicata, senza che nessuna schermata lo dica**. Va riletto quel
-semaforo dopo l'approvazione, non solo prima dell'invio.
+### ⚠️ CORREZIONE del 2026-08-04, ore 21:32 — il DSA **non** bloccava l'invio
+
+Questo paragrafo diceva che la dichiarazione DSA *«sblocca l'invio in revisione»*. **È falso, ed è
+stato misurato provando invece di dedurre**: con `TRADER_STATUS_NOT_PROVIDED` ancora su ITA,
+`POST /v1/reviewSubmissionItems` è passato (`201`) e `PATCH {submitted:true}` ha portato la
+versione a `WAITING_FOR_REVIEW`. L'app è in revisione **senza** DSA dichiarato.
+
+**Il vero blocco all'invio era un altro, e nessun documento lo nominava**: l'attributo
+`copyright` mancante sulla versione. Il `409` lo dice per nome, dentro `meta.associatedErrors`:
+
+```
+STATE_ERROR.ENTITY_STATE_INVALID → "This resource cannot be reviewed,
+   please check associated errors to see why."
+   └─ ENTITY_ERROR.ATTRIBUTE.REQUIRED
+      "You must provide a value for the attribute 'copyright'"
+```
+
+> **La lezione, che vale oltre questo campo**: un `409` di questa API non è un muro, è un
+> **elenco**. `meta.associatedErrors` nomina ogni attributo mancante, uno per uno. Da qui in
+> avanti, davanti a un rifiuto si legge quell'elenco — non si va a cercare la causa che sembra
+> più probabile. La causa «probabile» (il DSA) era sbagliata, ed è costata mezza giornata di
+> attesa di una persona.
+
+Risolto con:
+```bash
+node scripts/asc-api.mjs PATCH /v1/appStoreVersions/<id> \
+  '{"data":{"type":"appStoreVersions","id":"<id>","attributes":{"copyright":"2026 <ragione sociale>"}}}'
+```
+
+### 🔴 Ma il DSA blocca il RILASCIO, ed è peggio che bloccare l'invio
+
+Riletto il semaforo **subito dopo** l'invio riuscito:
+
+```
+ITA  available = true
+     contentStatuses = [TRADER_STATUS_NOT_PROVIDED, CANNOT_SELL,
+                        AVAILABLE_FOR_SALE_UNRELEASED_APP]
+```
+
+**`CANNOT_SELL`**. La revisione può concludersi bene e l'app **non può comunque essere
+distribuita in Italia** — che è l'unico territorio attivo. Con `releaseType: AFTER_APPROVAL`
+l'esito è: **approvata e mai pubblicata, senza che nessuna schermata lo dica.**
+
+Il momento giusto per dichiarare il DSA è quindi **durante** la finestra di revisione (24-48 h),
+non prima dell'invio: aspettarlo per inviare, come diceva questo documento, allunga i tempi senza
+proteggere da niente. Il semaforo va riletto **dopo** l'approvazione: la *verifica* del documento
+da parte di Apple non ha SLA pubblicato, ed è ciò che toglie `CANNOT_SELL`.
 
 ### Dati demo — il menù ora è della sola classe TEST
 

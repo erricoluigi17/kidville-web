@@ -89,6 +89,64 @@
 
 ---
 
+## 🚀 Changelog — L'app iOS è in revisione, e il blocco non era quello che tutti i documenti dicevano 2026-08-04
+
+**`WAITING_FOR_REVIEW` dalle 21:32:43 UTC del 2026-08-04**, build **`1.0 (4)`**, territorio
+**solo Italia**, rilascio **automatico dopo l'approvazione**.
+
+### Il blocco all'invio era `copyright`, non il DSA
+
+`docs/store-submission.md` e `docs/submission/A1-dsa-operatore-commerciale.md` sostenevano
+entrambi che la dichiarazione DSA *«sblocca l'invio in revisione»*. **Falso.** Con
+`TRADER_STATUS_NOT_PROVIDED` ancora su ITA, `POST /v1/reviewSubmissionItems` è passato `201` e
+`PATCH {submitted:true}` ha portato la versione a `WAITING_FOR_REVIEW`.
+
+Il vero motivo del `409` di stamattina stava scritto nella risposta stessa, in
+`meta.associatedErrors`, e nessuno l'aveva letto:
+
+```
+ENTITY_ERROR.ATTRIBUTE.REQUIRED
+  "You must provide a value for the attribute 'copyright'"
+```
+
+> **Lezione generalizzabile**: un `409` di questa API non è un muro, è un **elenco**.
+> `meta.associatedErrors` nomina ogni attributo mancante. Si legge quell'elenco invece di
+> attribuire il rifiuto alla causa che sembra più probabile — qui la causa «probabile» era
+> sbagliata, ed è costata mezza giornata di attesa a una persona.
+
+### 🔴 Il DSA però blocca il RILASCIO, e con un solo territorio è peggio
+
+Riletto il semaforo subito **dopo** l'invio riuscito:
+
+```
+ITA  contentStatuses = [TRADER_STATUS_NOT_PROVIDED, CANNOT_SELL,
+                        AVAILABLE_FOR_SALE_UNRELEASED_APP]
+```
+
+`CANNOT_SELL`: la revisione può concludersi bene e l'app **non può essere distribuita in
+Italia** — l'unico territorio attivo. Con `releaseType: AFTER_APPROVAL` l'esito sarebbe
+**approvata e mai pubblicata, senza che nessuna schermata lo dica**.
+
+Il momento giusto per dichiarare il DSA è quindi **durante** la finestra di revisione, non prima
+dell'invio. La *dichiarazione* toglie `TRADER_STATUS_NOT_PROVIDED`; la *verifica del documento*
+da parte di Apple toglie `CANNOT_SELL` e **non ha SLA pubblicato**.
+
+### Stato della scheda al momento dell'invio
+
+| | |
+|---|---|
+| build agganciata | `4` — `VALID`, `IN_BETA_TESTING`, scade 2026-11-02 |
+| disponibilità | 1 territorio su 175 (ITA) |
+| prezzo | fascia gratuita |
+| diritti sul contenuto | `USES_THIRD_PARTY_CONTENT` |
+| crittografia | `ITSAppUsesNonExemptEncryption = false` |
+| privacy manifest | 20 tipologie, **dentro l'`.ipa`** |
+| account revisore | `test.inf.genitore1@kidville.test`, accesso **provato** contro produzione |
+| prova offline | superata su iPhone fisico (modalità aereo) |
+| prova push | ⏳ da fare, e va fatta **da genitore**: `NativePushAutoRegister` non è montato nel layout admin |
+
+---
+
 ## ✅ Changelog — Lo schermo bianco all'avvio, e la registrazione push che non lasciava traccia 2026-08-04 (branch `fix/splash-avvio-nativo`)
 
 **Segnalazione del titolare, sulla 1.0 (3) installata da TestFlight**: *«quando apre l'app, rimane

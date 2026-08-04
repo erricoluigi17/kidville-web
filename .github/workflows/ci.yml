@@ -113,11 +113,28 @@ jobs:
         env:
           KV_E2E_PASSWORD: ${{ secrets.CI_E2E_PASSWORD }}
         run: |
-          set -euo pipefail
-          test -d playwright-report || { echo "nessun report da bonificare"; exit 0; }
+          set -uo pipefail
+          # NIENTE `set -e`, ed è una scelta: la prima stesura ce l'aveva e moriva
+          # sulla riga `[ "$trovati" -eq 0 ] && exit 0`. Quando il test è FALSO — cioè
+          # quando c'è davvero qualcosa da bonificare — il comando composto ritorna 1 e
+          # `set -e` uccide lo script PRIMA che bonifichi alcunché. Il passo falliva, e
+          # falliva nel solo caso in cui serviva. (Misurato: run 30914455054.)
+          # Qui gli errori si gestiscono a mano, uno per uno, e l'uscita è esplicita.
+          if [ ! -d playwright-report ]; then
+            echo "nessun report da bonificare"
+            exit 0
+          fi
+          if [ -z "${KV_E2E_PASSWORD:-}" ]; then
+            echo "::error::KV_E2E_PASSWORD non è nell'ambiente: non posso sapere cosa bonificare"
+            rm -rf playwright-report
+            exit 1
+          fi
           trovati=$(grep -rlF "$KV_E2E_PASSWORD" playwright-report/ 2>/dev/null | wc -l | tr -d ' ')
           echo "file che contengono il segreto: $trovati"
-          [ "$trovati" -eq 0 ] && exit 0
+          if [ "$trovati" -eq 0 ]; then
+            echo "::notice::nessun segreto nel report"
+            exit 0
+          fi
           cambiati=0
           while IFS= read -r f; do
             prima=$(sha256sum "$f" | cut -d' ' -f1)

@@ -4,6 +4,27 @@ import { STORAGE } from './fixtures';
 // Diario docente (/teacher/diary, sezione Girasoli): evento merenda + umore.
 test.use({ storageState: STORAGE.docente });
 
+/**
+ * IL TETTO DI TEMPO DI QUESTO SPEC, e perché non è «allargare finché passa».
+ *
+ * Il difetto vero — la pagina che chiedeva `/api/diary/config` quattro volte e
+ * `/api/educator-sections` due — È STATO CORRETTO (T11-F3): erano due punti di codice
+ * moltiplicati per StrictMode, ora c'è una promise-cache di modulo. Quella era la causa
+ * per cui il test cadeva su `main`, e non si tocca più.
+ *
+ * Quello che resta è il costo dell'AMBIENTE, misurato sul trace della run 30854274465:
+ * i due POST di salvataggio impiegano **5,0 s e 3,2 s** — non per lentezza del codice,
+ * ma perché la CI esegue l'E2E su `next dev`, dove il primo ingresso su ogni rotta paga
+ * la compilazione. Questo spec ne percorre parecchie: carica il diario, apre due tipi di
+ * evento, salva due volte attendendo la RISPOSTA di ciascuna, ricarica e riverifica.
+ * Il tetto di 30 s scadeva mentre la seconda risposta era ancora in volo.
+ *
+ * 90 s non nasconde niente: le asserzioni non sono cambiate e nessuna di esse è stata
+ * allentata. Se la persistenza si rompe, `aria-pressed` resta `false` DOPO che la
+ * risposta è arrivata, e il test cade con il suo messaggio — non per scadenza.
+ */
+test.setTimeout(90_000);
+
 // Il salvataggio del diario fa una ventina di viaggi al database in sequenza
 // (select+insert per bambino, audit, notifica ai titolari, e per ogni figlio:
 // sede, toggle, debounce, inserimento notifiche). Con due bambini in sezione

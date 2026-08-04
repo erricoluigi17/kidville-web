@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { PageLoader } from '@/components/ui/PageLoader';
-import { rendiInerteFuoriDaConFocus } from '@/lib/accessibility/inerti';
 
 /**
  * Mostra il loader globale (variante Riflesso) SOLO sui caricamenti lenti:
@@ -41,33 +40,53 @@ export function GlobalLoader() {
   const minVisibleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownAt = useRef<number | null>(null); // quando l'overlay è comparso per una navigazione
   const prevPath = useRef(pathname);
-  const overlayRef = useRef<HTMLDivElement>(null);
 
   /**
-   * L'OVERLAY COPRE LA PAGINA: DEVE ANCHE RENDERLA INERTE (T09-F1, WCAG 2.2 §2.4.11).
+   * ⏸️ T09-F1 RESTA APERTO, E QUESTA È LA RAGIONE MISURATA — non una dimenticanza.
    *
-   * Misurato il 2026-08-03 su `/privacy`, in locale e in produzione: con l'overlay a
-   * schermo, 4 elementi su 4 raggiungibili col `Tab` risultavano coperti da
-   * `PageLoader…overlay`, `pointer-events: auto`, `aria-hidden` assente. Il focus non si
-   * vedeva, ma c'era: si poteva premere `Invio` su un comando invisibile. Vale su OGNI
-   * pagina, per almeno 700 ms (`MIN_VISIBLE_MS`) e fino a 4 s (`SAFETY_HIDE_MS`).
+   * IL DIFETTO È VERO. Misurato il 2026-08-03 su `/privacy`: con l'overlay a schermo,
+   * 4 elementi su 4 raggiungibili col `Tab` risultavano coperti, `pointer-events: auto`,
+   * `aria-hidden` assente. Il focus non si vedeva ma c'era: si poteva premere `Invio` su
+   * un comando invisibile. Vale su OGNI pagina, per almeno `MIN_VISIBLE_MS`.
    *
-   * Si rende inerte tutto ciò che sta FUORI dall'overlay, non il contrario: l'overlay è
-   * un fratello del contenuto (scelta corretta, evita la regressione da `loading.tsx`),
-   * quindi il contenuto è esattamente «i fratelli, a ogni livello, risalendo al body».
+   * LA CORREZIONE È STATA SCRITTA, PROVATA IN CI, E RITIRATA. Qui c'era una chiamata a
+   * `rendiInerteFuoriDaConFocus(overlay)`, che rende inerte tutto ciò che sta fuori
+   * dall'overlay. È corretta in linea di principio e sbagliata nell'effetto, e la CI lo
+   * ha dimostrato in modo non ambiguo (run 30911702345 e 30912837972):
    *
-   * `…ConFocus` invece della sola inerzia perché nel browser vero `inert` sull'antenato
-   * dell'elemento a fuoco fa CADERE il focus sul `body`, e da solo non torna: senza il
-   * salvataggio si scambierebbe un difetto AA con una perdita di focus a ogni cambio
-   * pagina. Il ripristino avviene solo se il focus è davvero rimasto sul `body` e se
-   * l'elemento è ancora nel documento (vedi `lib/accessibility/inerti.ts`).
+   *   · con l'inerzia attiva, TUTTI E TRE i `storageState` fallivano — il campo email
+   *     restava VUOTO mentre la password, riempita mezzo secondo dopo, entrava. Nessuno
+   *     spec girava;
+   *   · sistemata quella, cadevano `admin-search`, `public-iscrizione` e `teacher-diary`:
+   *     percorsi diversi, stessa forma. `fill()` non lancia, «riesce», e il valore non
+   *     entra.
+   *
+   * Cioè: **ogni interazione entro la finestra di visibilità dell'overlay viene persa,
+   * su ogni pagina**. In CI la finestra c'è quasi sempre, perché l'E2E gira su
+   * `next dev`; in produzione è più rara ma non teorica — è la rete lenta, cioè
+   * esattamente la condizione di un genitore col telefono in mano davanti a scuola.
+   *
+   * Si potrebbe obiettare che l'utente non può comunque interagire, perché l'overlay
+   * intercetta i click. Vale per il mouse. Non vale per la tastiera, per chi digita in
+   * anticipo su un campo che ha già a fuoco, e non vale per le WebView native.
+   *
+   * PERCHÉ NON SI È SCELTO IL COMPROMESSO: ritardare l'inerzia (applicarla solo se
+   * l'overlay resta oltre N ms) sposta il difetto invece di chiuderlo, e crea una
+   * finestra in cui il comportamento dipende dalla velocità della rete — cioè la cosa
+   * più difficile da provare e la più facile da rompere.
+   *
+   * COSA SERVE PER CHIUDERLO DAVVERO, ed è lavoro suo: verificare sul browser vero
+   * (tastiera, VoiceOver, WebView iOS) se convenga (a) non mostrare l'overlay quando la
+   * navigazione è già conclusa — cioè attaccare `MIN_VISIBLE_MS`, che è la causa a monte
+   * di tutto questo — oppure (b) rendere inerte il solo contenuto NON interattivo. La
+   * primitiva è pronta e provata (`src/lib/accessibility/inerti.ts`), ed è già in uso
+   * dove il perimetro è chiuso e la scelta è sicura: dentro `ui/Modal` e nel bottom-sheet
+   * della navigazione, dove l'utente ha aperto il pannello di proposito.
+   *
+   * Un difetto di accessibilità noto e scritto è peggio di un difetto chiuso. È molto
+   * meglio di una regressione funzionale su ogni pagina, rilasciata senza una prova sul
+   * browser vero.
    */
-  useEffect(() => {
-    if (!visible) return;
-    const contenitore = overlayRef.current;
-    if (!contenitore) return;
-    return rendiInerteFuoriDaConFocus(contenitore);
-  }, [visible]);
 
   // Nasconde a fine navigazione, rispettando la durata minima a schermo. Usa un
   // ref del pathname precedente (non un boolean) → regge lo StrictMode e i re-run
@@ -170,5 +189,5 @@ export function GlobalLoader() {
     };
   }, []);
 
-  return <PageLoader visible={visible} ref={overlayRef} />;
+  return <PageLoader visible={visible} />;
 }

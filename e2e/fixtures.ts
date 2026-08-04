@@ -82,23 +82,17 @@ export async function login(page: Page, email: string, password: string = PASSWO
 /**
  * Attende che l'overlay di caricamento globale abbia finito di coprire la pagina.
  *
- * ─── PERCHÉ SERVE, dal 2026-08-04 ──────────────────────────────────────────
- * `GlobalLoader` rende INERTE tutto ciò che sta sotto l'overlay finché è a schermo
- * (rilievo T09-F1: prima il `Tab` raggiungeva comandi invisibili, e si poteva
- * premere Invio su un bottone che non si vedeva). La correzione è giusta e va
- * tenuta — ma ha una conseguenza che nessun test unitario poteva mostrare:
- * l'overlay resta visibile **almeno 700 ms** (`MIN_VISIBLE_MS`) a ogni
- * navigazione, e in quella finestra la pagina non accetta input.
+ * ─── DA DOVE VIENE, 2026-08-04 ─────────────────────────────────────────────
+ * Nata per convivere con l'inertizzazione del `GlobalLoader` (rilievo T09-F1),
+ * che poi è stata RITIRATA — la ragione per esteso è nel commento di
+ * `src/components/providers/GlobalLoader.tsx`: rendeva inerte ogni pagina per
+ * almeno `MIN_VISIBLE_MS`, e `fill()` «riusciva» senza scrivere niente.
  *
- * Misurato sulla run CI 30911702345: `login()` scriveva l'email dentro quella
- * finestra e il campo restava VUOTO, mentre la password — riempita mezzo secondo
- * dopo — entrava. La snapshot del fallimento mostra esattamente questo: un
- * `textbox "Email"` attivo e senza testo, sopra una password piena. Tutti e tre
- * i `storageState` cadevano, quindi NESSUNO spec girava.
- *
- * L'attesa non è un modo di far tacere il test: è ciò che fa un utente vero, che
- * il loader lo VEDE e non digita sotto un pannello opaco. Un test che scrive alla
- * cieca sotto un overlay sta misurando qualcosa che nessuno farà mai.
+ * Resta qui perché è giusta anche senza quella correzione: un utente vero il
+ * loader lo VEDE e non digita sotto un pannello opaco, e un test che scrive alla
+ * cieca durante una transizione misura qualcosa che nessuno farà mai. Toglie
+ * inoltre una fragilità latente — l'overlay intercetta i click, quindi un test
+ * che clicca mentre è a schermo dipende da quanto è veloce la macchina della CI.
  *
  * Tolleranza: se l'overlay non compare affatto (navigazione veloce, il caso
  * normale) la condizione è già vera e si prosegue subito.

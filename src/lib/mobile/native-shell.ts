@@ -1,11 +1,18 @@
 import { Capacitor } from '@capacitor/core'
 import { chiudiOverlayInCima } from '@/lib/mobile/overlay-indietro'
+import { nascondiSplashNativo } from '@/lib/mobile/splash'
 
 // Setup della shell nativa Capacitor (M10.5). Chiamato UNA sola volta e SOLO su
 // piattaforma nativa (vedi NativeInit). Ogni plugin è import dinamico e
 // best-effort: se un plugin manca, si degrada in silenzio. Nessun effetto sul web.
 
 export async function setupNativeShell(navigate: (path: string) => void): Promise<void> {
+  // 0. Toglie lo splash nativo appena l'app ha dipinto. NON si attende: i passi
+  //    qui sotto fanno import dinamici di plugin, e metterli davanti allo splash
+  //    significherebbe tenere l'utente sulla schermata d'avvio per il tempo di
+  //    caricare la status bar. Sono indipendenti, e girano in parallelo.
+  void nascondiSplashNativo()
+
   // 1. Safe-area: marca il documento come nativo e abilita viewport-fit=cover
   //    (solo qui, mai nel browser) così env(safe-area-inset-*) diventa effettivo.
   document.documentElement.classList.add('cap-native')

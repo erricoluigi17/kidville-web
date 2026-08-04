@@ -112,6 +112,48 @@ l'app su un percorso specifico (es. da una notifica push): `kidville://parent`,
 `kidville://teacher/agenda`, ecc. La gestione lato WebView instrada verso la
 route corrispondente dell'app web.
 
+## La schermata d'avvio (splash) — e perché è la stessa dell'app web
+
+**Il difetto che l'ha fatta nascere** (titolare, 2026-08-04, sulla 1.0 (3) da TestFlight):
+*«quando apre l'app, rimane per dei secondi schermo bianco»*. La causa non è un sito lento: la
+schermata di lancio di iOS sparisce quando il processo è pronto — qualche decimo di secondo — e
+il primo HTML di `app.kidville.it` arriva secondi dopo. In mezzo la WebView non ha niente da
+dipingere, e il `PageLoader` non può aiutare perché fa parte della pagina che si sta scaricando.
+
+Lo splash nativo è quindi la **copia esatta del `PageLoader`**: fondo crema `#FEF1E4`, lettering
+«Kidville» al centro. Quando l'app è pronta lo splash si dissolve e sotto c'è il `PageLoader` —
+stesso fondo, stesso logo, stessa misura: il passaggio non si vede.
+
+| pezzo | file |
+|---|---|
+| il PNG 2732², crema, logo a 770 px | `scripts/genera-icone.mjs` → `assets/splash.png`, `assets/splash-dark.png` |
+| plugin, tetto, colori | `capacitor.config.ts` → `plugins.SplashScreen` |
+| chi lo toglie, e quando | `src/lib/mobile/splash.ts`, chiamato da `setupNativeShell` |
+| il fondo sotto la WebView | `ios.backgroundColor` / `android.backgroundColor` |
+
+Si rigenera con **`npm run icone:native`**, che passa `--splashBackgroundColor '#FEF1E4'` (serve
+per le fasce che restano scoperte quando l'immagine quadrata viene adattata a uno schermo che
+quadrato non è: col bianco di default lì comparirebbe una banda chiara). Dopo, `git checkout` su
+`android/app/src/main/AndroidManifest.xml`, che `capacitor-assets` riformatta gratuitamente.
+
+**Tre cose che non sono ovvie e che è costato scoprire:**
+
+- **il logo è largo 770 px su una tela di 2732**, e non è un numero a caso.
+  `LaunchScreen.storyboard` disegna l'immagine in `scaleAspectFill`: in verticale la scala è
+  `altezzaSchermo/2732`, quindi un logo largo `L` si vede largo `L × altezzaSchermo / 2732`
+  punti. Il `PageLoader` lo mostra a `min(240px, 62vw)`; su un iPhone da 852 punti, 240 punti
+  sono `240 × 2732 / 852 ≈ 770`;
+- **il tetto (`launchShowDuration: 6000`) è anche la durata dello splash in modalità aereo.**
+  Lì il caricamento fallisce subito e la WebView passa a `offline.html`, che sta su un'origine
+  locale dove il bridge di Capacitor può non essere iniettato — quindi potrebbe non poter
+  chiedere di togliere lo splash. La pagina ci prova; se non c'è bridge, restano i 6 s. Alzare
+  il tetto migliora le reti lente e peggiora l'offline, nella stessa misura;
+- **guardare la cartella `Splash.imageset` non basta.** Fino al 2026-08-04 conteneva tre
+  `splash-2732x2732*.png` bianchi col marchio Capacitor che `Contents.json` **non
+  referenziava** (l'immagine vera era verde piena). Sono stati rimossi, e il lock
+  `__tests__/architecture/splash-avvio-nativo.test.ts` ora pretende che i file su disco siano
+  **esattamente** quelli referenziati, oltre a leggere il primo pixel di ognuno.
+
 ## Rischio revisione Apple (linea guida 4.2)
 
 Apple penalizza i **puri wrapper WebView** ("minimum functionality"). Mitigazioni

@@ -20,9 +20,10 @@
  *
  * ─── `npm run icone:native`, e perché ha quei parametri ────────────────────────────────
  * Propaga alle app native passando da `capacitor-assets`, che però non tocca solo le icone:
- *  · rigenera anche le SPLASH. Senza `--splashBackgroundColor '#006A5F'` le riscrive con lo
- *    sfondo bianco di default, cioè cambia una schermata che nessuno aveva chiesto di
- *    cambiare. Con il colore giusto restano identiche e non compaiono nel diff;
+ *  · rigenera anche le SPLASH, da `assets/splash.png` e `assets/splash-dark.png` che questo
+ *    script produce. `--splashBackgroundColor '#FEF1E4'` è il crema del `PageLoader`: serve
+ *    per le fasce che restano scoperte quando l'immagine quadrata viene adattata a uno
+ *    schermo che quadrato non è. Col bianco di default lì comparirebbe una banda chiara;
  *  · lascia dietro `icons/` e `public/manifest.webmanifest` — quest'ultimo è il danno
  *    peggiore, perché `public/` ha la precedenza sulle rotte di Next e quel file SOSTITUISCE
  *    il manifest vero (`src/app/manifest.ts`) puntando a `.webp` che non esistono. Il comando
@@ -42,6 +43,16 @@ const SORGENTE = path.join(RADICE, 'assets', 'brand-lockup.png')
 /** Verde della cornice del lockup, campionato dal pixel (5,5) della sorgente. */
 const VERDE = '#166D68'
 const BIANCO = '#FFFFFF'
+
+/**
+ * Crema del `PageLoader` — `--color-kidville-cream`, lo stesso valore letterale che sta in
+ * `src/components/ui/PageLoader.module.css`. Se cambia lì, cambia qui: sono i due lati della
+ * stessa schermata, e il senso di tutto lo splash è che non si veda il passaggio fra loro.
+ */
+const CREMA = '#FEF1E4'
+
+/** Il lettering «Kidville», la stessa immagine che il PageLoader mette al centro. */
+const LOGO = path.join(RADICE, 'public', 'logo-kidville.png')
 
 /**
  * RITAGLI misurati sulla sorgente 3200×3200 (scansione dei pixel: bordi della card bianca
@@ -193,6 +204,57 @@ const lockupNellaSafeZone = async (lato, frazione) => {
  * 16px, dove il lockup intero è una macchia verde.
  */
 
+/**
+ * LO SPLASH NATIVO — ed è la stessa schermata del `PageLoader`, non una che le somiglia.
+ *
+ * IL PROBLEMA CHE CHIUDE. La shell Capacitor carica l'app da `app.kidville.it` sulla rete.
+ * Fra il momento in cui la WebView compare e quello in cui il primo HTML arriva passano
+ * secondi, e in quei secondi la WebView è **bianca**: il `PageLoader` non può coprirli, perché
+ * fa parte della pagina che si sta ancora scaricando. L'unica cosa che può stare a schermo
+ * prima della rete è un'immagine nativa, ed è questa.
+ *
+ * PERCHÉ IDENTICA E NON SOLO «COORDINATA». Quando l'app web è pronta, lo splash nativo si
+ * dissolve e sotto c'è il `PageLoader` — stesso fondo crema, stesso lettering, stessa
+ * posizione. Se i due differissero si vedrebbe un salto proprio nel punto in cui l'utente sta
+ * già aspettando; identici, il passaggio non esiste. Per lo stesso motivo il fondo è
+ * {@link CREMA} e non il verde del marchio: il verde sarebbe bello e sbagliato, perché sotto
+ * c'è il crema.
+ *
+ * LA MISURA DEL LOGO, che non è arbitraria. `LaunchScreen.storyboard` disegna questa immagine
+ * quadrata in `scaleAspectFill`: su un telefono in verticale la scala è `altezzaSchermo/2732`,
+ * quindi un logo largo `L` px si vede largo `L × altezzaSchermo / 2732` punti. Il `PageLoader`
+ * lo mostra a `min(240px, 62vw)`; su un iPhone da 852 punti d'altezza, 240 punti si ottengono
+ * con `240 × 2732 / 852 ≈ 770`. Agli estremi della gamma resta in riga: ~188 punti su un SE
+ * (667), ~269 su un Pro Max (956).
+ *
+ * NIENTE ALONI, e nemmeno la scritta «Caricamento…». Gli aloni sfocati del `PageLoader` sono
+ * in `vmin` e seguono la forma dello schermo: approssimarli su un quadrato li farebbe cadere
+ * fuori posto proprio dove il confronto è diretto, ed è peggio che non averli. La didascalia è
+ * testo, e un testo dentro un PNG non si traduce.
+ */
+const SPLASH_LATO = 2732
+const SPLASH_LOGO_LARGHEZZA = 770
+
+async function splash() {
+  const meta = await sharp(LOGO).metadata()
+  const larghezza = SPLASH_LOGO_LARGHEZZA
+  const altezza = Math.round((larghezza * meta.height) / meta.width)
+  // `flatten` sul crema: il lettering ha canale alpha, e comporlo su una tela già crema
+  // eviterebbe l'alone chiaro che resta quando un PNG trasparente viene appiattito dopo.
+  const lettering = await sharp(LOGO).resize(larghezza, altezza).png().toBuffer()
+  return sharp({ create: { width: SPLASH_LATO, height: SPLASH_LATO, channels: 4, background: CREMA } })
+    .composite([
+      {
+        input: lettering,
+        left: Math.round((SPLASH_LATO - larghezza) / 2),
+        top: Math.round((SPLASH_LATO - altezza) / 2),
+      },
+    ])
+    .flatten({ background: CREMA })
+    .png({ compressionLevel: 9, effort: 10, palette: true, quality: 90 })
+    .toBuffer()
+}
+
 /** Tinta unita, per il livello di fondo dell'adaptive icon. */
 function tintaUnita(lato, colore) {
   return sharp({ create: { width: lato, height: lato, channels: 4, background: colore } })
@@ -305,6 +367,11 @@ async function main() {
     process.exitCode = 1
     return
   }
+  if (!existsSync(LOGO)) {
+    console.error(`Lettering mancante: ${path.relative(RADICE, LOGO)} — serve per lo splash.`)
+    process.exitCode = 1
+    return
+  }
   const meta = await sharp(SORGENTE).metadata()
   if (meta.width !== meta.height) {
     console.error(`La sorgente deve essere quadrata: trovata ${meta.width}×${meta.height}.`)
@@ -326,6 +393,13 @@ async function main() {
   // Adaptive icon: il lockup intero rimpicciolito nella safe zone, non ritagliato.
   await scrivi(path.join(RADICE, 'assets/icon-foreground.png'), await lockupNellaSafeZone(1024, TESTA_ADAPTIVE))
   await scrivi(path.join(RADICE, 'assets/icon-background.png'), await tintaUnita(1024, VERDE))
+  // Splash: la copia nativa del PageLoader. `splash-dark.png` è IDENTICA di proposito —
+  // l'app non ha un tema scuro (l'unica variante è `data-contrast="high"`, che si accende
+  // dentro l'app e non prima), quindi una versione scura qui produrrebbe uno stacco che
+  // nell'app non esiste. Senza il file, `capacitor-assets` genera il fondo bianco di default.
+  const schermataAvvio = await splash()
+  await scrivi(path.join(RADICE, 'assets/splash.png'), schermataAvvio)
+  await scrivi(path.join(RADICE, 'assets/splash-dark.png'), schermataAvvio)
 
   // ── Web: favicon e icone del sito ────────────────────────────────────────────────────
   console.log('\nIcone del sito (src/app/):')

@@ -13,7 +13,7 @@
     "e2e": "playwright test",
     "e2e:seed": "node scripts/seed-e2e.mjs",
     "icone": "node scripts/genera-icone.mjs",
-    "icone:native": "node scripts/genera-icone.mjs && capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#006A5F' --splashBackgroundColorDark '#006A5F' && rm -rf icons public/manifest.webmanifest"
+    "icone:native": "node scripts/genera-icone.mjs && capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#FEF1E4' --splashBackgroundColorDark '#FEF1E4' && rm -rf icons public/manifest.webmanifest"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -29,6 +29,7 @@
     "@capacitor/ios": "^8.4.1",
     "@capacitor/push-notifications": "^8.1.1",
     "@capacitor/share": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.2",
     "@capawesome/capacitor-badge": "^8.0.2",
     "@dnd-kit/core": "^6.3.1",

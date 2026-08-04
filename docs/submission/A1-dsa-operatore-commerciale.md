@@ -373,11 +373,32 @@ node scripts/asc-api.mjs GET "/v2/appAvailabilities/6794883055/territoryAvailabi
 
 Misurato oggi: **ITA → `TRADER_STATUS_NOT_PROVIDED`**, insieme agli altri 26 paesi UE.
 
-⚠️ **Sono due gate, non uno.** La *dichiarazione* sblocca l'invio in revisione; la *verifica
-del documento* da parte di Apple sblocca l'uscita sullo store, e non ha SLA pubblicato. Con la
-disponibilità ristretta alla sola Italia, una verifica non conclusa significa **app approvata e
-mai pubblicata, senza che nessuna schermata lo dica**. Il semaforo va riletto **dopo**
-l'approvazione, non solo prima dell'invio.
+### ⚠️ CORREZIONE del 2026-08-04, ore 21:32 — quando serve davvero
+
+Qui c'era scritto che la dichiarazione DSA *«sblocca l'invio in revisione»*. **Non è vero.**
+Misurato provando: con `TRADER_STATUS_NOT_PROVIDED` ancora su ITA, l'app è stata **inviata e
+accettata** in revisione (`WAITING_FOR_REVIEW`, 21:32:43 UTC). Il `409` che si prendeva per una
+conseguenza del DSA nominava tutt'altro — l'attributo `copyright` mancante sulla versione — e lo
+diceva per nome dentro `meta.associatedErrors`, che nessuno aveva letto.
+
+**Cosa blocca davvero il DSA**, riletto subito dopo l'invio:
+
+```
+ITA  contentStatuses = [TRADER_STATUS_NOT_PROVIDED, CANNOT_SELL,
+                        AVAILABLE_FOR_SALE_UNRELEASED_APP]
+```
+
+`CANNOT_SELL` → **il rilascio**, non l'invio. E con la disponibilità ristretta alla sola Italia
+questo è peggio, non meglio: la revisione si conclude, `releaseType: AFTER_APPROVAL` prova a
+pubblicare, e non c'è nessun territorio dove uscire. **App approvata e mai pubblicata, senza che
+nessuna schermata lo dica.**
+
+**Quindi il momento giusto è DURANTE la revisione** (24-48 h), non prima dell'invio. Aspettare il
+DSA per inviare — come diceva questa pagina — allungava i tempi senza proteggere da niente.
+
+Resta vero che i controlli sono due: la *dichiarazione* toglie `TRADER_STATUS_NOT_PROVIDED`, la
+*verifica del documento* da parte di Apple toglie `CANNOT_SELL` e **non ha SLA pubblicato**. Il
+semaforo va riletto **dopo** l'approvazione, non solo prima.
 - [ ] Email sostituita anche in `/privacy`, `/termini`, `/assistenza` *(lavoro mio, stessa PR di A3)*
 - [ ] Visura camerale recente pronta in PDF
 - [ ] (se casella postale) documento di associazione all'indirizzo pronto

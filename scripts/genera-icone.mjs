@@ -113,51 +113,6 @@ async function scrivi(destinazione, buffer) {
 }
 
 /**
- * Compone il soggetto su una tela quadrata a tinta unita.
- *
- * `larghezza` è la frazione del lato occupata dal soggetto; `base` è dove finisce il suo
- * bordo inferiore (1 = a filo della tela). Il soggetto è ANCORATO IN BASSO perché nel
- * lockup il busto è troncato dal bordo della card: centrarlo verticalmente lo farebbe
- * sembrare tagliato a mezz'aria, mentre uscendo dal bordo il taglio non si legge come tale.
- */
-async function tela({
-  lato,
-  sfondo,
-  ritaglio = 'soggetto',
-  larghezza,
-  base,
-  spostamentoX = 0,
-  dissolvenzaSotto = 0,
-}) {
-  const sorgente = sharp(SORGENTE)
-  const { width: latoSorgente } = await sorgente.metadata()
-  const b = box(RITAGLIO[ritaglio], latoSorgente)
-  const w = Math.round(lato * larghezza)
-  const h = Math.round((w * b.height) / b.width)
-  // `base` assente = centrato verticalmente (serve ai ritagli sulla testa, che non hanno un
-  // bordo da cui uscire).
-  const top = base == null ? Math.round((lato - h) / 2) : Math.round(lato * base) - h
-  const left = Math.round((lato - w) / 2 + spostamentoX * w)
-  const soggetto = await sharp(SORGENTE)
-    .extract(b)
-    .resize(w, h)
-    .composite(dissolvenzaSotto > 0 ? [{ input: sfumaturaInBasso(w, h, dissolvenzaSotto), blend: 'dest-in' }] : [])
-    .png()
-    .toBuffer()
-  return sharp({
-    create: {
-      width: lato,
-      height: lato,
-      channels: 4,
-      background: sfondo === 'trasparente' ? { r: 0, g: 0, b: 0, alpha: 0 } : sfondo,
-    },
-  })
-    .composite([{ input: soggetto, left, top }])
-    .png()
-    .toBuffer()
-}
-
-/**
  * Larghezza della testa nel foreground dell'ADAPTIVE ICON Android.
  *
  * ATTENZIONE, QUI SI SBAGLIA FACILMENTE: sembra che il PNG debba avere la safe zone del 66%
@@ -180,29 +135,63 @@ const TESTA_ADAPTIVE = 0.68
  */
 const TESTA_MASKABLE = 0.55
 
-/** L'icona quadrata piena: fondo bianco, soggetto a filo del bordo inferiore. */
-const iconaPiena = (lato) => tela({ lato, sfondo: BIANCO, larghezza: 0.8, base: 1 })
+/**
+ * IL LOCKUP COM'È STATO CONSEGNATO — nessun ritaglio, nessuna ricomposizione.
+ *
+ * ⚠️ 2026-08-04, decisione del titolare, e non è un dettaglio di gusto: **l'icona dell'app
+ * deve essere l'immagine data dal grafico, esattamente com'è.** Fino a oggi
+ * `assets/icon-only.png` conteneva `iconaPiena()`, cioè il mascotte RITAGLIATO dalla card e
+ * ricomposto su fondo bianco: sul telefono spariva il fondo verde, spariva la card e spariva
+ * il lettering «Kidville». Era una re-interpretazione del marchio fatta dallo script, non una
+ * necessità tecnica.
+ *
+ * Tecnicamente si può, e senza compromessi: la sorgente è **quadrata e senza canale alpha**,
+ * cioè già nella forma che iOS pretende. Serve solo ridimensionarla. La maschera «squircle»
+ * di iOS smussa gli angoli, dove c'è il verde di fondo: non taglia niente di leggibile.
+ *
+ * Resta un solo ritaglio, e solo dove l'alternativa è illeggibile: la **favicon a 16px**, che
+ * usa la testa. A quella dimensione il lockup intero è una macchia verde.
+ */
+const lockupIntatto = (lato) =>
+  sharp(SORGENTE).resize(lato, lato, { fit: 'cover' }).flatten({ background: VERDE }).png().toBuffer()
 
 /**
- * Il livello in primo piano dell'adaptive icon Android e delle icone «maskable».
+ * Il lockup INTERO dentro la safe zone di una maschera circolare.
  *
- * Android disegna 108dp e ne mostra 72 (66,6%): tutto ciò che sta oltre viene tagliato da
- * una maschera di forma ignota (cerchio, squircle, goccia — la sceglie il launcher).
+ * Adaptive icon Android e icone `maskable` del manifest ritagliano a cerchio. Un'immagine
+ * quadrata ci sta dentro tutta solo se occupa al massimo il quadrato inscritto (1/√2 ≈ 70,7%
+ * del lato): oltre, gli angoli — cioè la cornice e il lettering del lockup — vengono tagliati.
  *
- * QUI VA LA TESTA, NON LA FIGURA INTERA, e la ragione viene da due provini falliti:
- *  · con la figura intera al 62% il mento finiva oltre il bordo del cerchio;
- *  · rimpicciolita e ricentrata sulla testa, restava fuori dal cerchio un pezzo della MANO
- *    alzata, che nella maschera a squircle compariva come una macchia beige staccata
- *    nell'angolo — un dettaglio che a 48px si legge come un difetto dell'icona.
- * La testa da sola non ha appendici che possano essere troncate a metà: qualunque maschera
- * il launcher scelga, mostra una faccia intera.
+ * Quindi qui il lockup **non si ritaglia: si rimpicciolisce**, e attorno resta il verde del
+ * marchio. È l'unico modo di rispettare «l'immagine così com'è» su una piattaforma che
+ * impone una maschera tonda.
  */
-const primoPiano = (lato) =>
-  tela({ lato, sfondo: 'trasparente', ritaglio: 'testa', larghezza: TESTA_ADAPTIVE, dissolvenzaSotto: 0.14 })
+const lockupNellaSafeZone = async (lato, frazione) => {
+  const dentro = Math.round(lato * frazione)
+  const ridotto = await sharp(SORGENTE).resize(dentro, dentro, { fit: 'cover' }).png().toBuffer()
+  const margine = Math.round((lato - dentro) / 2)
+  return sharp({ create: { width: lato, height: lato, channels: 4, background: VERDE } })
+    .composite([{ input: ridotto, left: margine, top: margine }])
+    .png()
+    .toBuffer()
+}
 
-/** L'icona `maskable` del manifest web: stessa testa, ma con la sua safe zone (vedi sopra). */
-const iconaMaskable = (lato) =>
-  tela({ lato, sfondo: BIANCO, ritaglio: 'testa', larghezza: TESTA_MASKABLE, dissolvenzaSotto: 0.14 })
+/**
+ * ── COSA C'ERA QUI, E PERCHÉ NON C'È PIÙ ───────────────────────────────────────────────
+ * Fin qui vivevano `iconaPiena`, `primoPiano` e `iconaMaskable`: tre ricomposizioni che
+ * ritagliavano dal lockup ora la figura intera, ora la sola testa, e le rimontavano su una
+ * tela a tinta unita. Erano nate da provini veri (con la figura intera nel cerchio Android
+ * il mento usciva; rimpicciolita, restava fuori un pezzo della mano alzata, che a 48px si
+ * legge come un difetto).
+ *
+ * Sono state rimosse il 2026-08-04 perché risolvevano il problema sbagliato: **l'icona
+ * dell'app deve essere l'immagine del grafico, non una sua reinterpretazione**. Il vincolo
+ * della maschera tonda resta vero, e infatti `lockupNellaSafeZone` lo rispetta — ma
+ * rimpicciolendo l'immagine intera invece di ritagliarla.
+ *
+ * Il ritaglio sulla testa sopravvive in un solo posto, `testa()`, e solo per la favicon a
+ * 16px, dove il lockup intero è una macchia verde.
+ */
 
 /** Tinta unita, per il livello di fondo dell'adaptive icon. */
 function tintaUnita(lato, colore) {
@@ -331,13 +320,12 @@ async function main() {
 
   // ── Sorgenti per @capacitor/assets (iOS + Android nativi) ────────────────────────────
   console.log('\nMaster per le app native (assets/):')
+  // Il lockup COM'È: è l'icona che l'utente vede su iPhone e nel launcher Android.
   // Senza alpha: App Store Connect rifiuta l'icona 1024 se ha un canale di trasparenza.
-  await scrivi(
-    path.join(RADICE, 'assets/icon-only.png'),
-    await sharp(await iconaPiena(1024)).flatten({ background: BIANCO }).png().toBuffer(),
-  )
-  await scrivi(path.join(RADICE, 'assets/icon-foreground.png'), await primoPiano(1024))
-  await scrivi(path.join(RADICE, 'assets/icon-background.png'), await tintaUnita(1024, BIANCO))
+  await scrivi(path.join(RADICE, 'assets/icon-only.png'), await lockupIntatto(1024))
+  // Adaptive icon: il lockup intero rimpicciolito nella safe zone, non ritagliato.
+  await scrivi(path.join(RADICE, 'assets/icon-foreground.png'), await lockupNellaSafeZone(1024, TESTA_ADAPTIVE))
+  await scrivi(path.join(RADICE, 'assets/icon-background.png'), await tintaUnita(1024, VERDE))
 
   // ── Web: favicon e icone del sito ────────────────────────────────────────────────────
   console.log('\nIcone del sito (src/app/):')
@@ -346,20 +334,21 @@ async function main() {
   await scrivi(path.join(RADICE, 'src/app/favicon.ico'), impacchettaIco(ico))
   // 32px è ancora un favicon: meglio la testa, che a quella dimensione si riconosce.
   await scrivi(path.join(RADICE, 'src/app/icon.png'), await comprimiPng(sharp(await testa(512))).toBuffer())
-  // 180px è l'icona di «Aggiungi a Home» su iOS Safari: qui ci sta la figura intera.
+  // 180px è l'icona di «Aggiungi a Home» su iOS Safari: è a tutti gli effetti l'icona
+  // dell'app, quindi il lockup com'è.
   await scrivi(
     path.join(RADICE, 'src/app/apple-icon.png'),
-    await comprimiPng(sharp(await iconaPiena(180)).flatten({ background: BIANCO })).toBuffer(),
+    await comprimiPng(sharp(await lockupIntatto(180))).toBuffer(),
   )
   await scrivi(path.join(RADICE, 'src/app/opengraph-image.jpg'), await anteprimaLink())
 
   // ── PWA ──────────────────────────────────────────────────────────────────────────────
   console.log('\nIcone del manifest (public/):')
-  await scrivi(path.join(RADICE, 'public/icon-192.png'), await comprimiPng(sharp(await iconaPiena(192))).toBuffer())
-  await scrivi(path.join(RADICE, 'public/icon-512.png'), await comprimiPng(sharp(await iconaPiena(512))).toBuffer())
+  await scrivi(path.join(RADICE, 'public/icon-192.png'), await comprimiPng(sharp(await lockupIntatto(192))).toBuffer())
+  await scrivi(path.join(RADICE, 'public/icon-512.png'), await comprimiPng(sharp(await lockupIntatto(512))).toBuffer())
   await scrivi(
     path.join(RADICE, 'public/icon-maskable-512.png'),
-    await comprimiPng(sharp(await iconaMaskable(512))).toBuffer(),
+    await comprimiPng(sharp(await lockupNellaSafeZone(512, TESTA_MASKABLE))).toBuffer(),
   )
 
   console.log('\nFatto. Per propagare alle app native: npm run icone:native')

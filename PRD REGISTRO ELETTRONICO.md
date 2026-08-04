@@ -179,10 +179,36 @@ trovato, e che nessun report avrebbe detto:
 - `BottomNav` importava due moduli che non usava: il difetto `T08-F2` era diagnosticato,
   documentato e **non applicato**.
 
-Tutto chiuso, con il gate verde. Le tinte delle funzioni sono ora prese da una mappa unica
-(`src/lib/ui/tinte-funzioni.ts`) e il lock che lo tiene fermo esiste davvero: la sua prova di
-validità è stata eseguita rimettendo un hex a mano nella nav del docente, e il lock è
-diventato rosso.
+Tutto chiuso con il gate verde, **tranne una cosa che è stata ritirata di proposito**. Le tinte
+delle funzioni sono ora prese da una mappa unica (`src/lib/ui/tinte-funzioni.ts`) e il lock che
+lo tiene fermo esiste davvero: la sua prova di validità è stata eseguita rimettendo un hex a
+mano nella nav del docente, e il lock è diventato rosso.
+
+### ⏸️ `T09-F1` resta APERTO: la correzione è stata scritta, provata in CI e ritirata
+
+Il difetto è vero: con l'overlay di caricamento a schermo, il `Tab` raggiungeva comandi
+invisibili su ogni pagina. La correzione — rendere inerte il contenuto sotto l'overlay — è
+corretta in linea di principio e **sbagliata nell'effetto**, e due run di CI l'hanno dimostrato:
+
+- con l'inerzia attiva, tutti e tre i `storageState` fallivano (campo email **vuoto**, password
+  piena): nessuno spec girava;
+- sistemata quella, cadevano `admin-search`, `public-iscrizione` e `teacher-diary` — percorsi
+  diversi, stessa forma: `fill()` non lancia, «riesce», e il valore non entra.
+
+Cioè: **ogni interazione entro la finestra di visibilità dell'overlay viene persa, su ogni
+pagina.** In CI la finestra c'è quasi sempre (l'E2E gira su `next dev`); in produzione è più
+rara ma non teorica — è la rete lenta, cioè un genitore col telefono davanti a scuola.
+
+Si sarebbe potuto mettere un'attesa in ogni spec e far diventare la CI verde. Sarebbe stato il
+modo di rilasciare un cambiamento che tocca ogni pagina avendo provato soltanto che *i test
+smettono di lamentarsi*. La causa a monte è `MIN_VISIBLE_MS`: l'overlay resta 700 ms **anche
+quando la pagina è già pronta**, ed è lì che va guardato. La ragione per esteso, con le due
+strade per chiuderlo, è nel commento di `src/components/providers/GlobalLoader.tsx`.
+
+La primitiva `src/lib/accessibility/inerti.ts` resta, provata, dove il perimetro è chiuso: in
+`ui/Modal` e nel bottom-sheet della navigazione — che era anch'esso `T08-F6`/`T09`, e lì è
+**chiuso**: il menu del telefono ora si comporta da dialogo (`role`, `aria-modal`, `Escape`,
+focus che entra e torna).
 
 ### Il tetto per IP non è più indeterminato
 

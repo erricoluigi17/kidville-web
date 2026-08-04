@@ -73,7 +73,41 @@ export const STORAGE = {
 // Login dalla UI reale (/auth/login): sessione Supabase via cookie, niente header.
 export async function login(page: Page, email: string, password: string = PASSWORD) {
   await page.goto('/auth/login');
+  await attendiFineCaricamento(page);
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
   await page.getByRole('button', { name: 'Accedi' }).click();
+}
+
+/**
+ * Attende che l'overlay di caricamento globale abbia finito di coprire la pagina.
+ *
+ * ─── PERCHÉ SERVE, dal 2026-08-04 ──────────────────────────────────────────
+ * `GlobalLoader` rende INERTE tutto ciò che sta sotto l'overlay finché è a schermo
+ * (rilievo T09-F1: prima il `Tab` raggiungeva comandi invisibili, e si poteva
+ * premere Invio su un bottone che non si vedeva). La correzione è giusta e va
+ * tenuta — ma ha una conseguenza che nessun test unitario poteva mostrare:
+ * l'overlay resta visibile **almeno 700 ms** (`MIN_VISIBLE_MS`) a ogni
+ * navigazione, e in quella finestra la pagina non accetta input.
+ *
+ * Misurato sulla run CI 30911702345: `login()` scriveva l'email dentro quella
+ * finestra e il campo restava VUOTO, mentre la password — riempita mezzo secondo
+ * dopo — entrava. La snapshot del fallimento mostra esattamente questo: un
+ * `textbox "Email"` attivo e senza testo, sopra una password piena. Tutti e tre
+ * i `storageState` cadevano, quindi NESSUNO spec girava.
+ *
+ * L'attesa non è un modo di far tacere il test: è ciò che fa un utente vero, che
+ * il loader lo VEDE e non digita sotto un pannello opaco. Un test che scrive alla
+ * cieca sotto un overlay sta misurando qualcosa che nessuno farà mai.
+ *
+ * Tolleranza: se l'overlay non compare affatto (navigazione veloce, il caso
+ * normale) la condizione è già vera e si prosegue subito.
+ */
+export async function attendiFineCaricamento(page: Page) {
+  await page
+    .locator('[data-visible="true"][role="status"]')
+    .waitFor({ state: 'hidden', timeout: 10_000 })
+    .catch(() => {
+      // Non c'è mai stato, o è già sparito: è il caso normale, non un guasto.
+    });
 }

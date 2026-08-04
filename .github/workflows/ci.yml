@@ -87,6 +87,53 @@ jobs:
         run: npm run e2e:seed
       - name: Suite E2E
         run: npm run e2e
+      # ⚠️ LA PASSWORD FINIVA IN CHIARO DENTRO L'ARTEFATTO, E L'ARTEFATTO SI SCARICA.
+      #
+      # Misurato il 2026-08-04 sulla run 30911702345: `playwright-report/` conteneva
+      # `KV_E2E_PASSWORD` in CHIARO in tre file. Non è un caso limite ed è nuovo: è
+      # l'`error-context.md` che Playwright allega a ogni fallimento, dove la snapshot
+      # di accessibilità riporta anche il VALORE dei campi — password compresa, perché
+      # `fill()` la scrive nel DOM. Nell'artefatto della run precedente non c'era: è
+      # comparso appena un test ha cominciato a fallire sulla schermata di accesso.
+      #
+      # Questo repository è PUBBLICO, e gli artefatti delle Actions di un repository
+      # pubblico sono scaricabili. Quella password apre otto account `*.e2e@kidville.test`
+      # su un progetto Supabase separato — non la produzione — ma è comunque un segreto
+      # che esce da un secret di GitHub e finisce in un file scaricabile, ed è
+      # esattamente il modo in cui il 29 luglio un account di prova si è ritrovato in
+      # Direzione su due sedi vere.
+      #
+      # La bonifica CONTA I FILE CAMBIATI, non quelli esaminati: il 3 agosto una
+      # bonifica di questo repo dichiarava «N file ripuliti» contando i file che aveva
+      # SELEZIONATO, e il numero era vero anche quando non toccava un byte. Qui il
+      # contatore sale solo dopo una sostituzione riuscita, e se resta a zero mentre
+      # `grep` aveva trovato qualcosa il passo FALLISCE invece di tacere.
+      - name: Bonifica il report dai segreti (prima di caricarlo)
+        if: always()
+        env:
+          KV_E2E_PASSWORD: ${{ secrets.CI_E2E_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -d playwright-report || { echo "nessun report da bonificare"; exit 0; }
+          trovati=$(grep -rlF "$KV_E2E_PASSWORD" playwright-report/ 2>/dev/null | wc -l | tr -d ' ')
+          echo "file che contengono il segreto: $trovati"
+          [ "$trovati" -eq 0 ] && exit 0
+          cambiati=0
+          while IFS= read -r f; do
+            prima=$(sha256sum "$f" | cut -d' ' -f1)
+            KV_E2E_PASSWORD="$KV_E2E_PASSWORD" perl -pi -e 's/\Q$ENV{KV_E2E_PASSWORD}\E/[REDATTO]/g' "$f"
+            dopo=$(sha256sum "$f" | cut -d' ' -f1)
+            [ "$prima" != "$dopo" ] && cambiati=$((cambiati+1))
+          done < <(grep -rlF "$KV_E2E_PASSWORD" playwright-report/ 2>/dev/null)
+          echo "file effettivamente CAMBIATI: $cambiati"
+          rimasti=$(grep -rlF "$KV_E2E_PASSWORD" playwright-report/ 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$rimasti" -ne 0 ]; then
+            echo "::error::la bonifica non ha ripulito $rimasti file: l'artefatto NON viene caricato"
+            rm -rf playwright-report
+            exit 1
+          fi
+          echo "::notice::report bonificato: $cambiati file ripuliti, 0 occorrenze rimaste"
+
       - name: Report Playwright
         if: always()
         uses: actions/upload-artifact@v4

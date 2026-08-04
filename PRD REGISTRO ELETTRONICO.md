@@ -89,6 +89,69 @@
 
 ---
 
+## ✅ Changelog — L'identità visiva: via il triangolo di Vercel, e i link condivisi smettono di essere anonimi 2026-08-04 (branch `feat/icona-brand`)
+
+Il mascotte Kidville diventa l'icona su **tutte** le piattaforme. Non era una sostituzione di
+file: le tre cose qui sotto erano rimaste come le aveva lasciate `create-next-app`.
+
+**Che cosa c'era davvero, misurato e non supposto**
+
+- `src/app/favicon.ico` era **ancora il triangolo nero di Vercel**, non toccato dal commit
+  `b34e3f0 "Initial commit from Create Next App"`. È l'icona che l'app ha mostrato nelle
+  schede del browser per tutta la sua vita;
+- i `metadata` avevano solo `title` e `description`: **nessun `openGraph`, nessuna immagine,
+  nessun `metadataBase`**. Un link a `app.kidville.it` condiviso su WhatsApp arrivava senza
+  anteprima, e i client ripiegavano proprio su quel triangolo;
+- **non esisteva un manifest**: chi installava la web app da browser riceveva un'icona di
+  ripiego scelta dal sistema.
+
+**Come sono fatte le icone, e perché non è un ritaglio solo**
+
+La sorgente è una: `assets/brand-lockup.png`, il file del grafico. Ma è un *lockup* — mascotte
+in una card più il lettering — e nessuna piattaforma lo mostra così: iOS ci applica una
+maschera «squircle» e rifiuta il canale alpha, Android mostra solo il 66% centrale (il
+lettering sparirebbe), a 16px di una figura intera non resta niente di leggibile. Ogni
+piattaforma vuole un ritaglio diverso della stessa immagine, e `scripts/genera-icone.mjs`
+(`npm run icone`, `npm run icone:native`) li produce tutti da quel file solo: master nativi,
+favicon `.ico` multi-risoluzione, `apple-icon`, icone del manifest e anteprima dei link.
+
+**Quattro difetti che solo la prova a video ha fatto emergere** — i primi tre sarebbero
+arrivati fino allo store, l'ultimo fino ai genitori:
+
+1. la figura intera nella maschera circolare di Android usciva **col mento tagliato**;
+   ridotta e ricentrata, restava fuori un pezzo di **mano mozzata** nell'angolo. Nel primo
+   piano dell'adaptive icon ora va la testa, che non ha appendici da troncare;
+2. `ic_launcher.xml` avvolge i livelli in un `<inset 16.7%>`: **la safe zone la applica già
+   lui**. Applicarla anche al contenuto la contava due volte e l'icona usciva minuscola. Il
+   riferimento non è una regola a memoria ma l'icona precedente, il cui primo piano riempiva
+   il 71% del PNG; la nuova ne riempie il 69%;
+3. `capacitor-assets` lascia in `public/` un `manifest.webmanifest` che punta a `.webp`
+   inesistenti — e **`public/` ha la precedenza sulle rotte di Next**, quindi quel file
+   sostituiva il manifest vero. Il comando ora lo rimuove, ed è documentato nello script;
+4. `/manifest.webmanifest` **passava dal middleware** e sarebbe stato rediretto al login: il
+   browser lo scarica fuori dalla sessione e avrebbe letto l'HTML del login al posto del
+   JSON. `webmanifest` è ora fra le estensioni escluse dal `matcher`, accanto a `favicon.ico`.
+
+**Verificato**, non dedotto: gate completo verde (eslint · `tsc --noEmit` · 7003 test su 725
+file · `npm run build`), e con l'applicazione servita davvero — `/manifest.webmanifest`
+restituisce il manifest giusto con `application/manifest+json`, i tag `og:image`,
+`twitter:card`, `icon`, `apple-touch-icon` sono presenti nell'HTML e i sette asset rispondono
+`200`. Pesi ridotti dove contava: `icon.png` da 464 a 68 KB, l'anteprima link da 580 a 64 KB
+(JPEG: sopra qualche centinaio di KB certi client rinunciano a mostrarla).
+
+**Non toccato di proposito**: le schermate di avvio native, che mostrano ancora il logo
+precedente su fondo verde. Sono fuori dal perimetro «icona», e passare da
+`capacitor-assets` senza `--splashBackgroundColor` le riscriveva col fondo bianco — cioè una
+regressione silenziosa; il colore è ora fissato nel comando.
+
+⚠️ **Da controllare dopo il deploy**: `og:image` è assoluto e si costruisce su
+`NEXT_PUBLIC_APP_URL` (ripiego `https://app.kidville.it`). La variabile esiste su Production
+ma il suo valore è cifrato e non è stato possibile leggerlo da qui: va verificato sull'HTML
+servito. WhatsApp e iMessage tengono in cache l'anteprima per dominio: per vederla subito si
+forza dal debugger di Facebook.
+
+---
+
 ## ✅ Changelog — Il resto del collaudo: l'app smette di dire «ok» quando non ha guardato 2026-08-04 (branch `fix/collaudo-residuo-g4-g8`)
 
 Chiusura dei gruppi lasciati fuori dalla PR #63: prestazioni (G4), osservabilità (G5),

@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "gate": "tsc --noEmit && vitest run",
     "e2e": "playwright test",
-    "e2e:seed": "node scripts/seed-e2e.mjs"
+    "e2e:seed": "node scripts/seed-e2e.mjs",
+    "icone": "node scripts/genera-icone.mjs",
+    "icone:native": "node scripts/genera-icone.mjs && capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#006A5F' --splashBackgroundColorDark '#006A5F' && rm -rf icons public/manifest.webmanifest"
   },
   "engines": {
     "node": ">=22.0.0"

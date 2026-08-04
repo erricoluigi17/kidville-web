@@ -839,5 +839,8 @@
   "fatBtn_chiudi": "Close",
   "rateChiudi": "Close",
   "rateRimuoviRata": "Remove instalment",
-  "soll_aggiorna": "Refresh reminders"
+  "soll_aggiorna": "Refresh reminders",
+  "fatBtn_err_emissione": "Invoice not issued. Try again or check the billing details.",
+  "genrErrGenerazione": "Fees were not generated. Try again.",
+  "ticket_err_ricarica": "Top-up not recorded. Try again."
 }

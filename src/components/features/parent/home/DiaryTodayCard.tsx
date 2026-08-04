@@ -98,8 +98,12 @@ export function DiaryTodayCard({ studentId, href }: Props) {
                 </span>
                 <span className="font-maven text-[11px] text-kidville-muted">{fmtTime(ev.timestamp_evento)}</span>
               </div>
+              {/* `text-kidville-sub` e non l'hex letterale `#55615c`: stesso colore, ma
+                  l'hex scritto a mano resta fuori dall'inventario dei token e dalle
+                  rimappature per-superficie dell'Alto Contrasto, che agiscono sul nome
+                  della classe. */}
               {ev.note && (
-                <p className="mt-0.5 font-maven text-[12.8px] leading-snug text-[#55615c]">{ev.note}</p>
+                <p className="mt-0.5 font-maven text-[12.8px] leading-snug text-kidville-sub">{ev.note}</p>
               )}
             </div>
           </div>

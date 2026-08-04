@@ -250,11 +250,16 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         'BROWSER: hook React su `/api/me`, una nostra route. Stessa forma, stesso motivo: il tetto '
         + 'sta nella route, non nel chiamante.'],
     ['src/lib/auth/use-teacher-gradi.ts',
-        'BROWSER: hook React su `/api/primaria/me` e `/api/diary/config`, nostre route. Stessa '
-        + 'forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
+        'BROWSER: hook React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
+        + 'motivo: il tetto sta nella route, non nel chiamante. (`/api/diary/config` non si '
+        + 'chiede più da qui: è passata alla cache condivisa `src/lib/diary/config-cache.ts`.)'],
     ['src/lib/context/admin-identity.tsx',
         'BROWSER: contesto React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
         + 'motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/diary/config-cache.ts',
+        'BROWSER: `GET /api/diary/config`, una nostra route, con la cache di promesse che '
+        + 'impedisce alle tre parti della pagina del diario di chiederla tre volte (sei con '
+        + 'StrictMode). Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
     ['src/lib/native/camera.ts',
         'NON È RETE: `fetch(dataUrl)` su una `data:` URL è il modo standard di trasformare in `Blob` '
         + 'la foto che il plugin ha già in memoria. Non esce niente dal dispositivo, non c\'è nessun '
@@ -270,6 +275,10 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/push/native-register.ts',
         'BROWSER: registrazione e cancellazione del token su `/api/push/subscribe`, una nostra '
         + 'route. Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/sezioni/educator-sections-cache.ts',
+        'BROWSER: `GET /api/educator-sections`, una nostra route, con la cache di promesse che '
+        + 'la fa chiedere una volta sola per ingresso in pagina. Stessa forma, stesso motivo: il '
+        + 'tetto sta nella route, non nel chiamante.'],
 ]);
 
 /**
@@ -299,6 +308,16 @@ const TETTI_DICHIARATI = new Map<string, string>([
         'la sonda di rete della pagina `/offline` e l\'ultima attesa di React. È entrata '
         + 'nell\'inventario il 2026-08-03 non perché fosse nuova, ma perché la regola qui sotto '
         + 'pretendeva che una costante si chiamasse `TETTO…`: `TIMEOUT_SONDA_MS` non ci entrava.'],
+    ['src/lib/security/rate-limit.ts',
+        'quanto il tetto per IP aspetta il contatore condiviso su Postgres prima di degradare al '
+        + 'conteggio locale (2026-08-04). È il tetto più corto del repo — 250 ms — e il numero '
+        + 'basso È la decisione: da queste rotte passano le domande d\'iscrizione delle famiglie, '
+        + 'e un rate-limiter che aspetta mezzo secondo il proprio contatore ha già fatto più danno '
+        + 'di quanto ne eviti. Scaduto il tempo non si blocca e non si apre: si conta in locale, '
+        + 'cioè col tetto di ieri, e si lascia una riga `error` perché il fatto non passi in '
+        + 'silenzio. I due MECCANISMI non stanno qui: sono presi da `tetto.ts` '
+        + '(`segnaleConTetto`) e da `errore-accesso.ts` (`conTettoDiTempo`) — la prima stesura li '
+        + 'aveva riscritti a mano ed è questo lock ad averla respinta.'],
 ]);
 
 /**

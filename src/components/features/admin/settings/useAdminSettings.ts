@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { hdr } from './ui';
 
 /**
@@ -14,7 +15,10 @@ import { hdr } from './ui';
  * ricaricare la configurazione a ogni render — e, peggio, rende impossibile
  * accorgersi se la SEDE cade fuori dalle dipendenze, perché l'effetto riparte
  * comunque. La traduzione si fa al ritorno, dove non è dipendenza di nessuno;
- * `testo` è invece il messaggio del server, che è già una frase compiuta.
+ * `testo` è invece una frase GIÀ compiuta — dal 2026-08-04 la produce
+ * `messaggioDaCorpo`, che sceglie fra catalogo (se il server ha mandato un codice
+ * dichiarato) e prosa del server. Solo `save` la usa, ed è un gestore di eventi:
+ * lì `t` fra le dipendenze non fa ripartire nessun caricamento.
  */
 type Errore = { chiave: string } | { testo: string } | null;
 
@@ -89,7 +93,11 @@ export function useAdminSettings(userId: string, scuolaId: string) {
             });
             const j = await res.json();
             if (j.success) { setSettings(j.data); return true; }
-            setErrore(typeof j.error === 'string' ? { testo: j.error } : { chiave: 'erroreSalvataggio' });
+            // Il testo lo decide `messaggioDaCorpo`: codice dichiarato → catalogo nella lingua
+            // dell'interfaccia, altrimenti la prosa del server (che nel cockpit dice quale
+            // vincolo è saltato), altrimenti la frase generica. Prima qui passava `j.error`
+            // grezza: con l'interfaccia in inglese un 403 di sede usciva in italiano.
+            setErrore({ testo: messaggioDaCorpo(j, t('erroreSalvataggio')) });
             // Una configurazione che non si salva è un guasto operativo, non un
             // dettaglio: `withRoute` vede il 4xx lato server, ma non sa che
             // l'operatore stava salvando le impostazioni di un plesso. Nel
@@ -112,7 +120,7 @@ export function useAdminSettings(userId: string, scuolaId: string) {
         } finally {
             setSaving(false);
         }
-    }, [userId, scuolaId]);
+    }, [userId, scuolaId, t]);
 
     const error = errore === null ? null : 'testo' in errore ? errore.testo : t(errore.chiave);
 

@@ -80,23 +80,69 @@ function dimenticaToken(): void {
 }
 
 /**
+ * Quanto si aspetta un esito da APNs/FCM prima di dichiarare la registrazione persa.
+ *
+ * SENZA QUESTO NUMERO LA PROMISE NON SI RISOLVE MAI. `PushNotifications.register()` non
+ * restituisce l'esito: lo consegna a uno di due listener, `registration` o
+ * `registrationError`. Se il sistema non chiama né l'uno né l'altro — capita su iOS quando
+ * la registrazione APNs resta appesa senza errore — questa funzione resta sospesa per
+ * sempre, e siccome il chiamante marca il tentativo come «fatto» non ci sarà un secondo
+ * tentativo né una riga che lo dica. Venti secondi: molto oltre il tempo reale (meno di
+ * uno), abbastanza da non dichiarare perso un dispositivo lento su rete mobile.
+ */
+const ATTESA_REGISTRAZIONE_MS = 20_000
+
+/**
  * Richiede il permesso, registra la push nativa e invia il token a
  * /api/push/subscribe con la piattaforma. No-op (con esito) su web.
+ *
+ * OGNI ESITO LASCIA UNA RIGA, e il successo pure (regole 5 e 6 di AGENTS.md). La ragione è
+ * misurata, non teorica: il 2026-08-04 in `push_subscriptions` non esisteva NESSUNA riga
+ * `ios` — l'app girava su un iPhone vero, installata da TestFlight, e del suo tentativo di
+ * registrarsi non era rimasta traccia da nessuna parte. Con i soli errori non si distingue
+ * «l'utente ha detto no» da «il plugin è esploso» da «non è mai partito niente», e sono tre
+ * guasti con tre rimedi diversi.
+ *
+ * Il token NON entra nei log. È l'indirizzo del dispositivo, e `redact` è a lista bianca:
+ * uscirebbe comunque redatto, ma il punto è che non serve — a chi legge basta sapere se il
+ * token c'è stato e se il server l'ha accettato.
  */
 export async function registerNativePush(userId?: string | null): Promise<{ ok: boolean; error?: string }> {
   if (!isNativeApp()) return { ok: false, error: 'not_native' }
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
     const perm = await PushNotifications.requestPermissions()
-    if (perm.receive !== 'granted') return { ok: false, error: 'permission_denied' }
+    if (perm.receive !== 'granted') {
+      // `warn` e non `error`: è una scelta legittima dell'utente, non un guasto — ma spegne
+      // una funzione intera, ed è la prima spiegazione da escludere quando le notifiche «non
+      // arrivano». Non `info` perché `logClient` non lo accetta: dal client passano solo
+      // `warn` ed `error`, e la ragione è scritta nella regola 5 di `logging/client.ts`
+      // (tutto ciò che arriva a `/api/logs` viene PERSISTITO, senza filtro per livello).
+      logClient({
+        livello: 'warn',
+        evento: 'push',
+        messaggio: `push-nativa-permesso-negato: ${perm.receive}`,
+      })
+      return { ok: false, error: 'permission_denied' }
+    }
 
     return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
       let settled = false
       const done = (r: { ok: boolean; error?: string }) => {
         if (settled) return
         settled = true
+        clearTimeout(scaduta)
         resolve(r)
       }
+      const scaduta = setTimeout(() => {
+        logClient({
+          livello: 'error',
+          evento: 'push',
+          messaggio: `push-nativa-senza-esito: nessun token e nessun errore entro ${ATTESA_REGISTRAZIONE_MS} ms`,
+        })
+        done({ ok: false, error: 'registration_timeout' })
+      }, ATTESA_REGISTRAZIONE_MS)
+
       void PushNotifications.addListener('registration', (token) => {
         ricordaToken(token.value)
         fetch('/api/push/subscribe', {
@@ -104,15 +150,58 @@ export async function registerNativePush(userId?: string | null): Promise<{ ok: 
           headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
           body: JSON.stringify({ token: token.value, platform: Capacitor.getPlatform() }),
         })
-          .then((res) => done(res.ok ? { ok: true } : { ok: false, error: 'subscribe_failed' }))
-          .catch(() => done({ ok: false, error: 'subscribe_failed' }))
+          .then((res) => {
+            if (res.ok) {
+              // IL SUCCESSO NON SI LOGGA DA QUI, e non è una deroga alla regola 5 di
+              // AGENTS.md. Il successo di questa operazione **è** una riga in
+              // `push_subscriptions`: una traccia durevole e interrogabile, più forte di un
+              // log — è esattamente quella che il 2026-08-04 ha detto, contandola a zero,
+              // che nessun iPhone si era mai registrato. Aggiungere una riga di log
+              // significherebbe spedirla come `warn`, perché dal client `info` non passa:
+              // un successo travestito da anomalia, in mezzo alle anomalie vere.
+              done({ ok: true })
+              return
+            }
+            // Lo STATO è il dato che distingue una sessione scaduta (401) da una colonna
+            // mancante (5xx): senza, «subscribe_failed» non dice niente a nessuno.
+            logClient({
+              livello: 'error',
+              evento: 'push',
+              messaggio: 'push-nativa-non-registrata: il server ha rifiutato il token',
+              stato: res.status,
+            })
+            done({ ok: false, error: 'subscribe_failed' })
+          })
+          .catch((e) => {
+            logClient({
+              livello: 'error',
+              evento: 'push',
+              messaggio: `push-nativa-non-registrata: ${nomeErrore(e)}`,
+            })
+            done({ ok: false, error: 'subscribe_failed' })
+          })
       })
       void PushNotifications.addListener('registrationError', (err) => {
-        done({ ok: false, error: String((err as { error?: string })?.error ?? 'registration_error') })
+        // Il messaggio del sistema è l'unica cosa che spiega un fallimento APNs
+        // (`aps-environment` sbagliato, dispositivo senza rete, profilo non abilitato):
+        // buttarlo via è il difetto descritto dalla regola 3, applicata a un provider
+        // che qui è il sistema operativo.
+        const dettaglio = String((err as { error?: string })?.error ?? 'registration_error')
+        logClient({
+          livello: 'error',
+          evento: 'push',
+          messaggio: `push-nativa-registrazione-fallita: ${dettaglio}`,
+        })
+        done({ ok: false, error: dettaglio })
       })
       void PushNotifications.register()
     })
-  } catch {
+  } catch (e) {
+    logClient({
+      livello: 'error',
+      evento: 'push',
+      messaggio: `push-nativa-plugin-non-utilizzabile: ${nomeErrore(e)}`,
+    })
     return { ok: false, error: 'plugin_error' }
   }
 }

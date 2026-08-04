@@ -29,7 +29,7 @@ export const POST = withRoute('parent/presenze/giustifica/otp:POST', async (requ
     // Tetto di frequenza (sicurezza W5): un tentativo bloccato non spedisce email e non
     // entra nel registro FEA, che è il libro delle firme, non dei tentativi. Il budget è
     // condiviso con le altre tre rotte OTP — la casella del genitore è una sola.
-    const troppe = limitaInvioOtp(userId)
+    const troppe = await limitaInvioOtp(userId)
     if (troppe) return troppe
 
     const q = parseQuery(request, postQuerySchema)

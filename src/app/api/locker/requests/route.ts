@@ -8,6 +8,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { tabellaMancante } from '@/lib/db/tolleranza-schema';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -25,12 +26,31 @@ const patchBodySchema = z.object({
     stato: z.enum(['acknowledged', 'fulfilled']),
 });
 
-// La tabella `locker_requests` può non esistere in alcuni ambienti (modulo non
-// migrato su prod, dove esistono solo `armadietto`/`locker_config`): in quel caso
-// si degrada a vuoto invece di rispondere 500.
-function tabellaMancante(error: { code?: string; message?: string } | null): boolean {
-    if (!error) return false;
-    return error.code === '42P01' || /does not exist|schema cache|could not find/i.test(error.message ?? '');
+// La tabella `locker_requests` può non esistere in alcuni ambienti — e in
+// PRODUZIONE non esiste affatto (misurato il 2026-08-04: ci sono `armadietto` e
+// `locker_config`, e nessuna migrazione crea `locker_requests`). In quel caso si
+// degrada a vuoto invece di rispondere 500.
+//
+// ⚠️ `tabellaMancante` ARRIVA DA UN MODULO CONDIVISO e non si riscrive qui. La
+// copia che stava in queste righe decideva col REGEX SUL MESSAGGIO
+// (`/does not exist|schema cache|could not find/i`), e dentro quel regex ci
+// cadeva anche `42703 "column … does not exist"`: una COLONNA mancante — cioè
+// una migrazione applicata a metà su un database vivo — diventava «nessuna
+// richiesta armadietto». Un genitore vedeva zero righe e nessuno sapeva perché.
+// La discriminante è il CODICE, non la prosa: vedi `@/lib/db/tolleranza-schema`.
+
+/**
+ * Il 500 di una query fallita: **loggato per intero, raccontato per niente**.
+ *
+ * Qui c'era `NextResponse.json({ error: error.message })` in quattro punti, e
+ * `error.message` di PostgREST è testo interno — nome dello schema, nome della
+ * tabella, nome della colonna. È la stessa fuga già chiusa in
+ * `src/app/api/diary/route.ts`, e va chiusa insieme al regex: prima il 42703
+ * finiva nel ramo tollerato e non arrivava mai qui, ora ci arriva.
+ */
+function erroreDb(error: unknown, operazione: string): NextResponse {
+    logErrore({ operazione, stato: 500, evento: 'db' }, error);
+    return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
 }
 
 // ============================================================
@@ -70,7 +90,7 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             const { data, error } = await query;
             if (error) {
                 if (tabellaMancante(error)) return NextResponse.json([]);
-                return NextResponse.json({ error: error.message }, { status: 500 });
+                return erroreDb(error, 'locker/requests:GET');
             }
             return NextResponse.json(data);
 
@@ -115,7 +135,7 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             const { data, error } = await query;
             if (error) {
                 if (tabellaMancante(error)) return NextResponse.json([]);
-                return NextResponse.json({ error: error.message }, { status: 500 });
+                return erroreDb(error, 'locker/requests:GET');
             }
             return NextResponse.json(data);
         }
@@ -163,7 +183,7 @@ export const PATCH = withRoute('locker/requests:PATCH', async (request: NextRequ
             .maybeSingle();
         if (rigaErr) {
             if (tabellaMancante(rigaErr)) return NextResponse.json({ ok: true, degraded: true });
-            return NextResponse.json({ error: rigaErr.message }, { status: 500 });
+            return erroreDb(rigaErr, 'locker/requests:PATCH');
         }
         if (!riga) return NextResponse.json({ error: 'Richiesta non trovata' }, { status: 404 });
 
@@ -184,7 +204,7 @@ export const PATCH = withRoute('locker/requests:PATCH', async (request: NextRequ
 
         if (error) {
             if (tabellaMancante(error)) return NextResponse.json({ ok: true, degraded: true });
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            return erroreDb(error, 'locker/requests:PATCH');
         }
         return NextResponse.json(data);
     } catch (err) {

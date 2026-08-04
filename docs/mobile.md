@@ -112,6 +112,48 @@ l'app su un percorso specifico (es. da una notifica push): `kidville://parent`,
 `kidville://teacher/agenda`, ecc. La gestione lato WebView instrada verso la
 route corrispondente dell'app web.
 
+## La schermata d'avvio (splash) — e perché è la stessa dell'app web
+
+**Il difetto che l'ha fatta nascere** (titolare, 2026-08-04, sulla 1.0 (3) da TestFlight):
+*«quando apre l'app, rimane per dei secondi schermo bianco»*. La causa non è un sito lento: la
+schermata di lancio di iOS sparisce quando il processo è pronto — qualche decimo di secondo — e
+il primo HTML di `app.kidville.it` arriva secondi dopo. In mezzo la WebView non ha niente da
+dipingere, e il `PageLoader` non può aiutare perché fa parte della pagina che si sta scaricando.
+
+Lo splash nativo è quindi la **copia esatta del `PageLoader`**: fondo crema `#FEF1E4`, lettering
+«Kidville» al centro. Quando l'app è pronta lo splash si dissolve e sotto c'è il `PageLoader` —
+stesso fondo, stesso logo, stessa misura: il passaggio non si vede.
+
+| pezzo | file |
+|---|---|
+| il PNG 2732², crema, logo a 770 px | `scripts/genera-icone.mjs` → `assets/splash.png`, `assets/splash-dark.png` |
+| plugin, tetto, colori | `capacitor.config.ts` → `plugins.SplashScreen` |
+| chi lo toglie, e quando | `src/lib/mobile/splash.ts`, chiamato da `setupNativeShell` |
+| il fondo sotto la WebView | `ios.backgroundColor` / `android.backgroundColor` |
+
+Si rigenera con **`npm run icone:native`**, che passa `--splashBackgroundColor '#FEF1E4'` (serve
+per le fasce che restano scoperte quando l'immagine quadrata viene adattata a uno schermo che
+quadrato non è: col bianco di default lì comparirebbe una banda chiara). Dopo, `git checkout` su
+`android/app/src/main/AndroidManifest.xml`, che `capacitor-assets` riformatta gratuitamente.
+
+**Tre cose che non sono ovvie e che è costato scoprire:**
+
+- **il logo è largo 770 px su una tela di 2732**, e non è un numero a caso.
+  `LaunchScreen.storyboard` disegna l'immagine in `scaleAspectFill`: in verticale la scala è
+  `altezzaSchermo/2732`, quindi un logo largo `L` si vede largo `L × altezzaSchermo / 2732`
+  punti. Il `PageLoader` lo mostra a `min(240px, 62vw)`; su un iPhone da 852 punti, 240 punti
+  sono `240 × 2732 / 852 ≈ 770`;
+- **il tetto (`launchShowDuration: 6000`) è anche la durata dello splash in modalità aereo.**
+  Lì il caricamento fallisce subito e la WebView passa a `offline.html`, che sta su un'origine
+  locale dove il bridge di Capacitor può non essere iniettato — quindi potrebbe non poter
+  chiedere di togliere lo splash. La pagina ci prova; se non c'è bridge, restano i 6 s. Alzare
+  il tetto migliora le reti lente e peggiora l'offline, nella stessa misura;
+- **guardare la cartella `Splash.imageset` non basta.** Fino al 2026-08-04 conteneva tre
+  `splash-2732x2732*.png` bianchi col marchio Capacitor che `Contents.json` **non
+  referenziava** (l'immagine vera era verde piena). Sono stati rimossi, e il lock
+  `__tests__/architecture/splash-avvio-nativo.test.ts` ora pretende che i file su disco siano
+  **esattamente** quelli referenziati, oltre a leggere il primo pixel di ognuno.
+
 ## Rischio revisione Apple (linea guida 4.2)
 
 Apple penalizza i **puri wrapper WebView** ("minimum functionality"). Mitigazioni
@@ -174,11 +216,45 @@ Perciò `cap sync` va lanciato **sempre** con `CAP_SERVER_URL` esplicita, e
    `"loggingBehavior": "none"` e — su iOS — `"limitsNavigationsToAppBoundDomains":
    true`:
 
+   ⚠️ **Non con un `grep`.** Fino al 2026-08-04 qui c'era
+   `grep -n 'loggingBehavior\|"url"\|limitsNavigations'`, e **passa identico su
+   `"url": "http://localhost:3100"`**: mostra la riga, non la giudica. Era il
+   controllo più debole di questo documento, proprio nel punto che deve separare una
+   build viva da una schermata morta. Il config va letto **come JSON** e confrontato
+   con i valori attesi:
+
    ```bash
-   grep -n 'loggingBehavior\|"url"\|limitsNavigations' \
-     ios/App/App/capacitor.config.json \
-     android/app/src/main/assets/capacitor.config.json
+   python3 - <<'PY'
+   import json, sys
+   attese = {
+     'ios/App/App/capacitor.config.json': {
+       ('server','url'): 'https://app.kidville.it',
+       ('server','errorPath'): 'offline.html',
+       ('ios','limitsNavigationsToAppBoundDomains'): True,
+       ('loggingBehavior',): 'none',
+     },
+     'android/app/src/main/assets/capacitor.config.json': {
+       ('server','url'): 'https://app.kidville.it',
+       ('loggingBehavior',): 'none',
+     },
+   }
+   ko = 0
+   for percorso, regole in attese.items():
+       d = json.load(open(percorso))
+       print(percorso)
+       for chiavi, atteso in regole.items():
+           v = d
+           for k in chiavi:
+               v = (v or {}).get(k)
+           ok = v == atteso
+           ko += 0 if ok else 1
+           print(f"  {'✓' if ok else '✗'} {'.'.join(chiavi)} = {v!r}" + ('' if ok else f'  (atteso {atteso!r})'))
+   sys.exit(1 if ko else 0)
+   PY
    ```
+
+   Su iOS `server.cleartext` deve valere `false` (lo deriva `capacitor.config.ts`
+   dallo schema dell'URL: è `true` solo su `http://`).
 
 2. **iOS — controlla l'entitlement APNs nell'export dell'Archive.** Il sorgente
    `ios/App/App/App.entitlements` ha `aps-environment` = `development`; con la

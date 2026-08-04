@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Loader2, UserX, Trash2, AlertTriangle, MailWarning } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Pannello «Richieste di cancellazione account» (App Store 5.1.1(v) + GDPR art. 17).
 // Il genitore avvia la richiesta dall'app; qui la Direzione la evade: anonimizza il
@@ -71,7 +72,7 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
     try {
       const res = await fetch('/api/admin/gdpr/richieste', { method: 'POST', headers: hdr, body: JSON.stringify({ id: target.id, mode: 'execute', confirm }) });
       const j = await res.json();
-      if (!res.ok) { alert(j.error || t('errore')); return; }
+      if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
       setTarget(null);
       await load();
     } finally {

@@ -11,11 +11,16 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { MensaCalendar, decidiAzioneMensaAuth } from '@/components/features/parent/mensa/MensaCalendar';
+import { invalidaFigliCache } from '@/lib/auth/use-parent-identity';
 
 const fetchMock = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // L'autorecupero dopo il 403 passa da `fetchFigliIds`, che ora ha una cache di
+  // MODULO: senza svuotarla il test che si aspetta un figlio "buono" leggerebbe
+  // l'elenco vuoto finto dal test precedente.
+  invalidaFigliCache();
   window.localStorage.clear();
   window.localStorage.setItem('kv_student_id', 'stale');
   vi.stubGlobal('fetch', fetchMock);

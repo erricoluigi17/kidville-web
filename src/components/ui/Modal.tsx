@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro'
+import { rendiInerteFuoriDa } from '@/lib/accessibility/inerti'
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
@@ -13,91 +14,17 @@ const FOCUSABLE =
 const modalStack: symbol[] = []
 
 /**
- * REGISTRO DEI NODI RESI INERTI — perché il conteggio, e non un booleano.
+ * L'INERZIA DELLO SFONDO VIVE IN `@/lib/accessibility/inerti`, non più qui.
  *
- * Con due modali sovrapposte gli stessi nodi di sfondo vengono marcati due volte:
- * se la seconda che si chiude togliesse l'attributo d'ufficio, la pagina tornerebbe
- * raggiungibile *sotto* una modale ancora aperta — cioè il difetto che stiamo
- * chiudendo, ricomparso al secondo dialogo. Si tiene quindi un conteggio per
- * elemento e si ripristina solo quando torna a zero, ricordando anche lo stato
- * ORIGINALE (un nodo può essere già `inert` di suo: non glielo si toglie).
+ * `rendiInerteFuoriDa` è nata in questo file ed era privata. Il collaudo del 2026-08-03
+ * (T09-F1) ha misurato che il `PageLoader` — l'overlay opaco che copre la pagina a ogni
+ * navigazione lenta — aveva ESATTAMENTE lo stesso difetto che questa funzione chiude qui:
+ * il focus da tastiera restava sui comandi coperti. Il pezzo giusto era in casa e non era
+ * raggiungibile. Estratto, non riscritto: il registro dei nodi marcati è ora CONDIVISO fra
+ * modale e overlay di caricamento, ed è ciò che regge il caso «modale aperta mentre parte
+ * una navigazione» (con due registri separati, il primo a chiudersi disinnescherebbe anche
+ * l'altro). Il comportamento di questo componente non cambia di una riga.
  */
-const inerti = new Map<
-  HTMLElement,
-  { conteggio: number; aveaInert: boolean; ariaHiddenOriginale: string | null }
->()
-
-/**
- * Rende inerte tutto il documento TRANNE il sottoalbero del contenitore modale, e
- * restituisce la funzione che ripristina.
- *
- * PERCHÉ SERVE (misurato su Android il 2026-07-31). `aria-modal="true"` su un `div`
- * non esclude niente: Chromium lo onora solo per il top layer (`<dialog>` +
- * `showModal()`). Con la modale «Nuovo avviso» aperta, il dump dell'albero di
- * accessibilità conteneva ancora l'elenco degli avvisi con i suoi bottoni
- * «Modifica» ed «Elimina»: con TalkBack lo swipe portava fuori dalla modale, e i
- * comandi della pagina sotto restavano attivabili.
- *
- * PERCHÉ SI RISALE FINO A `document.body` MARCANDO I FRATELLI A OGNI LIVELLO, invece
- * di marcare i soli figli del `body`. La modale è renderizzata IN LINEA nell'albero
- * React (nessun portale): il suo contenitore è annidato in profondità dentro la
- * pagina, quindi i «fratelli a livello di body» sarebbero uno solo — il guscio che
- * contiene ANCHE la modale. Marcare i fratelli a ogni livello isola davvero il
- * sottoalbero del dialogo, senza cambiare dove la modale viene montata (un portale
- * avrebbe rotto i 15 consumatori e i loro test).
- *
- * `inert` E, SOLO DOVE NON ESISTE, `aria-hidden`. `inert` è la forma giusta: toglie
- * dall'albero di accessibilità E dal giro del focus. Dove il motore non lo conosce
- * (WebKit < 15.5; Chromium ce l'ha dalla 102) l'attributo resta comunque scritto —
- * costa nulla e diventa attivo il giorno in cui il browser si aggiorna — e si
- * affianca `aria-hidden="true"`, che almeno lo screen reader onora. Il ripiego NON
- * si applica dove `inert` esiste: `aria-hidden` su un sottoalbero ancora focusabile
- * sarebbe la violazione `aria-hidden-focus`, e lì il sottoalbero focusabile non
- * c'è più. Lo stato ORIGINALE di entrambi gli attributi si ricorda e si ripristina:
- * un nodo può essere già `inert`, o già `aria-hidden` perché decorativo, e non gli
- * si tocca niente.
- */
-const supportaInert = (): boolean =>
-  typeof HTMLElement !== 'undefined' && 'inert' in HTMLElement.prototype
-
-function rendiInerteFuoriDa(contenitore: HTMLElement): () => void {
-  const marcati: HTMLElement[] = []
-  const ripiego = !supportaInert()
-  let nodo: HTMLElement = contenitore
-  while (nodo !== document.body && nodo.parentElement) {
-    for (const fratello of Array.from(nodo.parentElement.children)) {
-      if (fratello === nodo || fratello.nodeType !== 1) continue
-      const el = fratello as HTMLElement
-      const stato = inerti.get(el)
-      if (stato) {
-        stato.conteggio += 1
-      } else {
-        inerti.set(el, {
-          conteggio: 1,
-          aveaInert: el.hasAttribute('inert'),
-          ariaHiddenOriginale: el.getAttribute('aria-hidden'),
-        })
-        el.setAttribute('inert', '')
-        if (ripiego) el.setAttribute('aria-hidden', 'true')
-      }
-      marcati.push(el)
-    }
-    nodo = nodo.parentElement
-  }
-
-  return () => {
-    for (const el of marcati) {
-      const stato = inerti.get(el)
-      if (!stato) continue
-      stato.conteggio -= 1
-      if (stato.conteggio > 0) continue
-      inerti.delete(el)
-      if (!stato.aveaInert) el.removeAttribute('inert')
-      if (stato.ariaHiddenOriginale === null) el.removeAttribute('aria-hidden')
-      else el.setAttribute('aria-hidden', stato.ariaHiddenOriginale)
-    }
-  }
-}
 
 /**
  * Un controllo entra nel giro del focus solo se è davvero a schermo.

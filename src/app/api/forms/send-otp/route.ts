@@ -350,7 +350,7 @@ async function deliverOtp(email: string, code: string): Promise<boolean> {
 export const POST = withRoute('forms/send-otp:POST', async (request: Request) => {
   try {
     // Invio OTP è abusabile (spam email) → rate-limit per IP (8 / 10 min).
-    const rl = rateLimit(`send-otp:${clientIp(request)}`, { limit: 8, windowMs: 10 * 60 * 1000 })
+    const rl = await rateLimit(`send-otp:${clientIp(request)}`, { limit: 8, windowMs: 10 * 60 * 1000 })
     if (!rl.ok) {
       return NextResponse.json(
         { error: 'Troppe richieste OTP. Riprova tra qualche minuto.' },
@@ -571,7 +571,7 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
     // Sta PRIMA di ogni lettura: un tentativo bloccato non deve nemmeno interrogare
     // il database, e soprattutto non deve arrivare al confronto — è quello il
     // tentativo che si sta contando.
-    const tettoErr = limitaVerificaOtpOggetto(submissionId)
+    const tettoErr = await limitaVerificaOtpOggetto(submissionId)
     if (tettoErr) return tettoErr
 
     const supabase = await createAdminClient()

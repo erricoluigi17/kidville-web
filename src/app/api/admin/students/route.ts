@@ -12,6 +12,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { HEADER_TOTALE } from '@/lib/api/paginazione';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -416,9 +417,14 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
         const scuole = await resolveScuoleAttive(request, supabase, auth.user);
         const runQuery = () => {
+            // `count: 'exact'` — il TOTALE, non la lunghezza della pagina.
+            // Senza, un elenco troncato è indistinguibile da un elenco
+            // completo: 1000 righe rese su 1400 e 1000 su 1000 hanno lo stesso
+            // corpo. È il conteggio che rende il troncamento osservabile
+            // (header `X-Total-Count` + il `warn` qui sotto).
             let query = supabase
                 .from('alunni')
-                .select(cols.join(', '))
+                .select(cols.join(', '), { count: 'exact' })
                 .order('cognome', { ascending: true })
                 .range(offset, offset + limit - 1)
                 .in('scuola_id', scuole);
@@ -435,13 +441,13 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
             return query;
         };
 
-        let { data, error } = await runQuery();
+        let { data, error, count } = await runQuery();
         let attempts = 0;
         while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
             const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(error.message)?.[1];
             if (!col || !cols.includes(col)) break;
             cols = cols.filter((c) => c !== col);
-            ({ data, error } = await runQuery());
+            ({ data, error, count } = await runQuery());
             attempts++;
         }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -455,7 +461,35 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
             return { ...resto, ha_note_mediche: Boolean(nota) };
         });
 
-        return NextResponse.json(righe);
+        // ─── IL TRONCAMENTO NON DEVE POTER PASSARE INOSSERVATO (T11-F5) ─────
+        //
+        // Al 2026-08-04 in produzione ci sono ~32 alunni: il tetto di 1000 non
+        // morde, e costruire oggi una UI paginata sarebbe lavoro sprecato. Ma
+        // un elenco tagliato non produce nessun errore — produce una classe con
+        // dentro meno bambini, e nessuno che se ne accorga. Quindi:
+        //
+        //  · il totale ESATTO esce sempre in `X-Total-Count`, così un chiamante
+        //    può confrontarlo con le righe che ha in mano;
+        //  · quando le righe rese sono ESATTAMENTE il tetto e il totale è
+        //    maggiore, resta una riga a `warn` (evento `db`, che
+        //    `vaPersistito` manda in `app_log` e quindi sopravvive al deploy).
+        //
+        // La doppia condizione è deliberata: `rese === limit` da solo è la
+        // normalità di una pagina piena, non un troncamento. Nel log solo
+        // numeri — mai nomi, mai il filtro di sede in chiaro.
+        const totale = typeof count === 'number' ? count : offset + righe.length;
+        if (righe.length === limit && totale > offset + righe.length) {
+            logEvento('db', 'warn', {
+                operazione: 'admin/students:GET',
+                esito: 'elenco-troncato',
+                rese: righe.length,
+                totale,
+                offset,
+                limite: limit,
+            });
+        }
+
+        return NextResponse.json(righe, { headers: { [HEADER_TOTALE]: String(totale) } });
     } catch (err) {
         logErrore({ operazione: 'admin/students:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });

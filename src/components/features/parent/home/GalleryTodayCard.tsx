@@ -63,7 +63,13 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
         </div>
         <div className="min-w-0 flex-1">
           <p className="font-barlow text-base font-black uppercase leading-none text-kidville-green">{t('titoloFotoDiOggi')}</p>
-          <p className="mt-1 font-maven text-[12.5px] text-[#55615c]">
+          {/* `text-kidville-sub`, non l'hex letterale `#55615c` che c'era prima: è lo
+              STESSO colore, ma scritto a mano restava fuori dall'inventario dei token e
+              soprattutto fuori dalle rimappature per-superficie dell'Alto Contrasto, che
+              agiscono sul NOME della classe (`[data-contrast=high] .kv-… .text-kidville-sub`)
+              e non possono raggiungere un `text-[#55615c]`. Stessa correzione già fatta in
+              `avvisi/AvvisoCard.tsx`. */}
+          <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">
             {t('galleryNuoviContenuti', { count: total })}
           </p>
         </div>

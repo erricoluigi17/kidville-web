@@ -371,5 +371,6 @@
   "meEliminaAssegnazione": "Delete assignment",
   "noteRimuoviCategoria": "Remove category",
   "spEliminaCategoria": "Delete category",
-  "spRimuoviPacchetto": "Remove package"
+  "spRimuoviPacchetto": "Remove package",
+  "meErrMenu": "The menu operation failed. Try again."
 }

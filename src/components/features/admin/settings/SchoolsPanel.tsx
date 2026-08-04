@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Building2, Loader2, Pencil, Check, X, Plus, Power, ShieldCheck, FileText } from 'lucide-react';
 import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Scuola {
   id: string;
@@ -50,7 +51,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
     setSaving(true);
     try {
       const res = await fetch('/api/admin/schools', { method: 'POST', headers: hdr, body: JSON.stringify(nuova) });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(messaggioDaCorpo(j, t('errore'))); return; }
       setNuova({ nome: '', citta: '', indirizzo: '' });
       setShowNuova(false);
       await load();
@@ -64,7 +65,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
     try {
       const res = await fetch('/api/admin/schools', { method: 'PATCH', headers: hdr, body: JSON.stringify({ id, ...body }) });
       if (res.status === 403) { alert(t('scAzioneRiservata')); return; }
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(messaggioDaCorpo(j, t('errore'))); return; }
       setEditId(null);
       setAnagId(null);
       await load();

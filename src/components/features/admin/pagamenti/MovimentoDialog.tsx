@@ -21,6 +21,7 @@ import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from '
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import {
   labelPagamentoAperto,
   movimentoMultiCf,
@@ -112,14 +113,14 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       // Nessun catch muto sul parse: un corpo non-JSON risale al catch che LOGGA.
       const j = (await r.json()) as { error?: string; success?: boolean };
       if (r.status === 409) {
-        const msg = j.error || t('movdlgOperazioneNonPossibile');
+        const msg = messaggioDaCorpo(j, t('movdlgOperazioneNonPossibile'));
         setError(msg);
         // Corsa persa / stato già cambiato da un altro operatore → risincronizza la lista.
         if (/operatore|confermato/i.test(msg)) onDone();
         return;
       }
       if (!r.ok || !j.success) {
-        setError(j.error || t('movdlgErroreOperazione'));
+        setError(messaggioDaCorpo(j, t('movdlgErroreOperazione')));
         return;
       }
       onDone();

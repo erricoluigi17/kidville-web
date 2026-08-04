@@ -49,7 +49,7 @@ export const POST = withRoute('parent/forms/otp:POST', async (request: NextReque
 
     // Tetto di frequenza (sicurezza W5): prima di qualunque query e di qualunque invio.
     // Budget condiviso con le altre tre rotte OTP — la casella del genitore è una sola.
-    const troppe = limitaInvioOtp(parentId)
+    const troppe = await limitaInvioOtp(parentId)
     if (troppe) return troppe
 
     const supabase = await createAdminClient()
@@ -92,7 +92,7 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     // il ticket (`consumeTicket` è più sotto, dopo la verifica): senza tetto, provarli
     // tutti era gratis. Separato dagli invii perché chiedere un codice nuovo non deve
     // consumare i tentativi di chi sbaglia a digitare.
-    const troppe = limitaVerificaOtp(parentId)
+    const troppe = await limitaVerificaOtp(parentId)
     if (troppe) return troppe
 
     const supabase = await createAdminClient()

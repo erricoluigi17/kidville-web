@@ -84,7 +84,12 @@
   font-size: 15px;
   font-weight: 600;
   letter-spacing: .02em;
-  color: var(--color-kidville-muted, #9AA6A2);
+  /* T09-F2 — era `--color-kidville-muted` (#9AA6A2): su questo fondo crema
+     (#FEF1E4) vale 2,27:1, contro i 4,5:1 di WCAG 1.4.3 AA. E qui la soglia del
+     «testo grande» non aiuta: 15px in peso 600 non arriva ai 18,66px che la
+     farebbero scendere a 3:1. `sub` (#55615C) vale 5,82:1 sulla stessa crema.
+     Che il testo sia `aria-hidden` non esenta: resta visibile per chi guarda. */
+  color: var(--color-kidville-sub, #55615C);
   margin: 0;
   display: inline-flex;
   gap: 2px;

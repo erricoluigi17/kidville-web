@@ -73,7 +73,44 @@ export const STORAGE = {
 // Login dalla UI reale (/auth/login): sessione Supabase via cookie, niente header.
 export async function login(page: Page, email: string, password: string = PASSWORD) {
   await page.goto('/auth/login');
+  await attendiFineCaricamento(page);
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
   await page.getByRole('button', { name: 'Accedi' }).click();
+}
+
+/**
+ * Attende che l'overlay di caricamento globale abbia finito di coprire la pagina.
+ *
+ * ─── DA DOVE VIENE, 2026-08-04 ─────────────────────────────────────────────
+ * Nata per convivere con l'inertizzazione del `GlobalLoader` (rilievo T09-F1),
+ * che poi è stata RITIRATA — la ragione per esteso è nel commento di
+ * `src/components/providers/GlobalLoader.tsx`: rendeva inerte ogni pagina per
+ * almeno `MIN_VISIBLE_MS`, e `fill()` «riusciva» senza scrivere niente.
+ *
+ * Resta qui perché è giusta anche senza quella correzione: un utente vero il
+ * loader lo VEDE e non digita sotto un pannello opaco, e un test che scrive alla
+ * cieca durante una transizione misura qualcosa che nessuno farà mai. Toglie
+ * inoltre una fragilità latente — l'overlay intercetta i click, quindi un test
+ * che clicca mentre è a schermo dipende da quanto è veloce la macchina della CI.
+ *
+ * Tolleranza: se l'overlay non compare affatto (navigazione veloce, il caso
+ * normale) la condizione è già vera e si prosegue subito.
+ */
+export async function attendiFineCaricamento(page: Page) {
+  await page
+    .locator('[data-visible="true"][role="status"]')
+    .waitFor({ state: 'hidden', timeout: 10_000 })
+    .catch((errore) => {
+      // Se l'elemento non c'è mai stato la condizione è già vera e non si passa di
+      // qui: qui ci si arriva solo per TIMEOUT, cioè con l'overlay ancora a schermo
+      // dopo 10 secondi. Non si fa fallire il test — non è questo il suo oggetto — ma
+      // non si tace nemmeno: un'attesa che si arrende in silenzio è il motivo per cui
+      // `parent-news.spec.ts` è sembrato capriccioso per giorni, mentre il difetto era
+      // altrove e ben visibile. Chi legge i log della CI ora lo vede.
+      console.warn(
+        '[attendiFineCaricamento] overlay del loader ancora visibile dopo 10 s — proseguo:',
+        errore instanceof Error ? errore.message.split('\n')[0] : String(errore),
+      );
+    });
 }

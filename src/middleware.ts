@@ -292,7 +292,13 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // Escludi asset statici e immagini; la logica pubblica/API è in middleware-rules.
+  //
+  // `webmanifest` è nell'elenco per una ragione precisa: `/manifest.webmanifest` NON è una
+  // pagina e non ha una sessione. Passando di qui verrebbe rediretto al login come qualunque
+  // rotta non pubblica, e il browser — che lo scarica prima e fuori dalla sessione — leggerebbe
+  // l'HTML del login al posto del JSON: niente installazione della web app, niente icona sulla
+  // schermata Home. Stessa logica per cui `favicon.ico` è escluso qui accanto.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|webmanifest|woff2?)$).*)',
   ],
 };

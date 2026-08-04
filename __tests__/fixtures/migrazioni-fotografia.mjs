@@ -83,12 +83,21 @@ export function impronta(normalizzata) {
     return createHash('sha256').update(JSON.stringify(normalizzata)).digest('hex')
 }
 
+// L'ISTANTE dello scatto, in UTC e al secondo — non la sola data. Qui serve a
+// distinguere due cose che il lock prima confondeva: una migrazione che sta sul disco
+// e non nella fotografia perche' e' NUOVA (scritta dopo lo scatto, non ancora
+// applicata) da una che ci sta perche' la FOTOGRAFIA E' VECCHIA. La prima e' normale,
+// la seconda e' il difetto che questo lock esiste per trovare.
+// Vedi `__tests__/architecture/soglia-fotografia.ts`.
+const ADESSO = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+
 const stdin = readFileSync(0, 'utf8')
 const normalizzata = normalizza(estrai(stdin))
 const uscita = {
     _come_si_rigenera:
         'node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json',
-    generato_il: new Date().toISOString().slice(0, 10),
+    generato_il: ADESSO.slice(0, 10),
+    generato_alle: ADESSO,
     sha256: impronta(normalizzata),
     ...normalizzata,
 }

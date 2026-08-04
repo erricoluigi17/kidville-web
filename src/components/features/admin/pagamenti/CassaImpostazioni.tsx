@@ -14,6 +14,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { hdr, card, h3, input, label, hint } from '../settings/ui';
 import { BTN_PRIMARY_AA } from './ui';
 import type { CassaConfig } from '@/lib/cassa/tipi';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Props {
   userId: string;
@@ -64,7 +65,7 @@ export function CassaImpostazioni({ userId, scuolaId }: Props) {
       });
       const j = (await res.json()) as { success?: boolean; error?: string };
       if (j.success) setMsg(t('cassaCfgSalvato'));
-      else setError(j.error ?? t('cassaCfgErrSalvataggio'));
+      else setError(messaggioDaCorpo(j, t('cassaCfgErrSalvataggio')));
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-impostazioni-salvataggio-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaCfgErroreRete'));

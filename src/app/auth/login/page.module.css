@@ -219,7 +219,13 @@
   position: absolute;
   left: 14px;
   display: flex;
-  color: var(--color-kidville-muted);
+  /* Design: --kv-muted, cioè 2,51:1 su bianco. È la stessa decisione già presa
+     dieci righe più sotto per `.eye`, e per la stessa ragione: `muted` non regge
+     nemmeno i 3:1 di WCAG 1.4.11 per un glifo. Qui l'icona duplica l'etichetta
+     (sarebbe «decorativa» e quindi esente), ma tenerla su un token diverso dal
+     suo gemello nello stesso campo significherebbe solo lasciarsi in casa
+     l'ultimo uso del grigio che non è un inchiostro. `sub` = 6,46:1. */
+  color: var(--color-kidville-sub);
   pointer-events: none;
 }
 .lead svg,
@@ -252,7 +258,13 @@
   padding-right: 52px;
 }
 .input::placeholder {
-  color: var(--color-kidville-muted);
+  /* Il segnaposto è TESTO, e su bianco `muted` (#9AA6A2) vale 2,51:1 contro i
+     4,5:1 di WCAG 1.4.3 AA — il punto meno leggibile della prima schermata
+     dell'app, e non lo nominava nessun rilievo: il lock scritto apposta per
+     questo token guardava solo i `.ts`/`.tsx`, e questo colore vive in un CSS
+     module. `sub` (#55615C) = 6,46:1. Lock nuovo:
+     `__tests__/a11y/inchiostro-muted-superfici.test.ts`. */
+  color: var(--color-kidville-sub);
   font-weight: 500;
 }
 .input:focus {

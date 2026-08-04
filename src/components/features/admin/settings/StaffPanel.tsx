@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Users, Loader2, Pencil, Check, X, ShieldCheck, KeyRound } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface StaffUser { id: string; nome?: string; cognome?: string; email?: string; ruolo: string; scuola_id?: string; gradi?: string[] }
 interface School { id: string; nome: string }
@@ -39,7 +40,7 @@ export function StaffPanel({ userId }: { userId: string }) {
       // Mai una lista eternamente vuota che nasconde un errore: se il fetch non
       // riesce, si mostra il motivo (T3).
       if (!res.ok || !j?.success) {
-        setErrore(j?.error || t('stErroreCaricamentoStaff'));
+        setErrore(messaggioDaCorpo(j, t('stErroreCaricamentoStaff')));
         return;
       }
       setErrore(null);
@@ -67,7 +68,7 @@ export function StaffPanel({ userId }: { userId: string }) {
         body: JSON.stringify({ id, ruolo: draft.ruolo, scuola_id: draft.scuola_id || undefined, section_ids: draft.section_ids }),
       });
       if (res.status === 403) { alert(t('stAzioneRiservataRuolo')); return; }
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(messaggioDaCorpo(j, t('errore'))); return; }
       setEditId(null);
       await load();
     } finally { setSaving(false); }
@@ -83,7 +84,7 @@ export function StaffPanel({ userId }: { userId: string }) {
         body: JSON.stringify({ targetKind: 'staff', targetId: u.id }),
       });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || t('errore')); return; }
+      if (!res.ok) { alert(messaggioDaCorpo(body, t('errore'))); return; }
       alert(body.pdf_notifica
         ? t('stRigeneraOkPdf')
         : body.email_inviata ? t('stRigeneraOkEmail') : (body.warning || t('stRigeneraOk')));

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { FileText, Download, Loader2, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Badge } from '@/components/ui/Badge';
@@ -81,7 +82,10 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
             });
             const j = await res.json();
             if (res.ok) { setStato(j.data?.fattura_stato ?? 'in_attesa'); setOpen(false); onEmessa?.(); }
-            else { setStato(j.data?.fattura_stato ?? 'scartata'); alert(j.error); }
+            // Senza ripiego questo `alert` mostrava la stringa «undefined» ogni volta che il
+            // server rifiutava SENZA un campo `error` (403 di scope, 500): non è un difetto di
+            // lingua, è un messaggio che non dice niente a nessuno.
+            else { setStato(j.data?.fattura_stato ?? 'scartata'); alert(messaggioDaCorpo(j, t('fatBtn_err_emissione'))); }
         } finally { setBusy(false); }
     };
 

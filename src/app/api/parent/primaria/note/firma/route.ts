@@ -48,7 +48,7 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
     // di sei cifre e un confronto HMAC fallito NON consuma il ticket: senza tetto provarli
     // tutti era gratis, e ciò che si ottiene indovinando è la presa visione di una nota
     // disciplinare apposta a nome di un genitore vero — con valore legale (CAD art. 20).
-    const troppe = limitaVerificaOtp(userId)
+    const troppe = await limitaVerificaOtp(userId)
     if (troppe) return troppe
 
     const b = await parseBody(request, postBodySchema)

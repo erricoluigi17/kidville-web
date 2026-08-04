@@ -254,6 +254,26 @@ export const CODICI_ERRORE = {
      * (`sede-non-attribuibile`), non davanti a un genitore.
      */
     SEGNALAZIONE_SENZA_PLESSO: 'erroreSegnalazioneSenzaPlesso',
+    /**
+     * 404 — la domanda d'iscrizione chiesta per id non è apribile
+     * (`GET /api/admin/iscrizioni?id=`).
+     *
+     * Un solo codice per due situazioni diverse, ed è deliberato: la domanda non
+     * esiste, oppure esiste ma è di un'altra sede. Distinguerle a schermo
+     * direbbe a chi non ha diritto di vederla che quella domanda c'è — e da qui
+     * esce il fascicolo di un minore. La differenza vive nel log
+     * (`dettaglio-non-in-scope`), che è il posto giusto per saperla.
+     */
+    DOMANDA_NON_APRIBILE: 'erroreDomandaNonApribile',
+    /**
+     * 500 — la lettura della domanda d'iscrizione non è riuscita
+     * (`GET /api/admin/iscrizioni?id=`, errore PostgREST).
+     *
+     * Il motivo tecnico resta nel log col codice d'errore: il `message` grezzo
+     * di PostgREST è prosa inglese con dentro nomi di colonne, e non è
+     * un'informazione per chi lavora in segreteria.
+     */
+    DOMANDA_NON_LETTA: 'erroreDomandaNonLetta',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

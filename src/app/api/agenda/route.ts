@@ -272,7 +272,7 @@ export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
     const user = auth.user
 
     // Anti-abuso: la creazione fa fan-out di notifiche ai genitori (conv. M5).
-    const rl = rateLimit(`agenda-post:${user.id}`, { limit: 20, windowMs: 10 * 60 * 1000 })
+    const rl = await rateLimit(`agenda-post:${user.id}`, { limit: 20, windowMs: 10 * 60 * 1000 })
     if (!rl.ok) {
       return NextResponse.json(
         { error: 'Troppi eventi creati. Riprova tra qualche minuto.' },

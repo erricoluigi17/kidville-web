@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Ban, RotateCcw, Loader2, X } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Toggle sospensione account moroso (DL-021 · Contabilità v2) — riservato alla
 // Direzione (gate server-side). Granularità FAMIGLIA: prima di sospendere mostra i
@@ -65,7 +66,7 @@ export function SospensioneToggle({
             if (res.status === 403) { alert(t('sosp_riservata')); return; }
             if (!res.ok) {
                 const j = await res.json().catch(() => ({}));
-                alert(j.error || t('sosp_err_sospensione'));
+                alert(messaggioDaCorpo(j, t('sosp_err_sospensione')));
                 return;
             }
             setOpen(false);
@@ -85,7 +86,7 @@ export function SospensioneToggle({
             if (res.status === 403) { alert(t('sosp_riservata')); return; }
             if (!res.ok) {
                 const j = await res.json().catch(() => ({}));
-                alert(j.error || t('sosp_err_riattivazione'));
+                alert(messaggioDaCorpo(j, t('sosp_err_riattivazione')));
                 return;
             }
             onChange?.();

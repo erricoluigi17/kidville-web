@@ -32,6 +32,19 @@ La colonna `enrollment_submissions.raccolta_senza_informativa` le marca (migrazi
 | periodo | dal **2026-07-16** al **2026-07-31** |
 | indirizzi email distinti | **119** (una domanda può indicare due adulti) |
 
+### Rimisurata il 2026-08-04
+
+I due numeri che contano **non sono cambiati**: `93` domande marcate
+`raccolta_senza_informativa`, `119` indirizzi distinti, primo invio `2026-07-16 10:23`,
+ultimo `2026-07-31 04:32`. Verificati con le stesse due query, rieseguite oggi.
+
+Quello che è cambiato è il contorno, e vale la pena scriverlo perché è la ragione per cui
+questo documento non può restare fermo a lungo: le domande **totali** sono passate da 264 a
+**294 in un giorno**. Il modulo continua a ricevere. Le 93 non crescono più — la falla è
+chiusa dal 30 luglio — ma il rapporto fra «quelle da informare» e «tutte» si assottiglia, e
+con esso la possibilità di far passare l'informativa tardiva per una comunicazione ordinaria
+a tutti.
+
 ## Perché è una cosa da fare, e non solo da annotare
 
 Gli art. 13 e 14 GDPR non chiedono un consenso: chiedono che l'interessato **sappia**.
@@ -75,13 +88,32 @@ dati restano.
 >
 > In particolare le segnaliamo che può in qualsiasi momento chiedere di **accedere**
 > ai dati, **correggerli**, **limitarne** il trattamento oppure ottenerne la
-> **cancellazione**, scrivendo a [indirizzo del titolare]. Se preferisce che la
+> **cancellazione**, scrivendo a **info@kidville.it**. Se preferisce che la
 > domanda e i documenti allegati vengano cancellati subito, ce lo faccia sapere e
 > provvederemo senza chiederle il motivo.
 >
 > Ci scusiamo per la mancanza.
 >
-> [Titolare del trattamento — denominazione, indirizzo, contatto del referente privacy]
+> **Scuola dell'Infanzia «La Favola» Società Cooperativa** — Titolare del trattamento
+> Via Silvio Pellico 7, 81030 Cesa (CE) · P.IVA e C.F. 03394870616 · REA CE-240763
+> info@kidville.it · PEC scuolalafavola@pec.it
+
+### Da dove vengono questi dati, e cosa resta da decidere sulla firma
+
+I riferimenti del Titolare non li ho inventati né presi da una skill: sono **gli stessi
+che l'informativa pubblicata già dichiara**, in `src/app/privacy/page.tsx:113-125`. Usare
+un contatto diverso da quello dell'informativa sarebbe l'errore peggiore in una lettera che
+serve proprio a rimandare all'informativa.
+
+Due cose restano tue e non le ho decise:
+
+- **`info@kidville.it` è una casella generica.** Va bene per l'informativa pubblicata; per
+  una comunicazione che ammette una mancanza può convenire un indirizzo che risponde a una
+  persona. La pagina privacy prevede già un blocco «Responsabile della protezione dei dati»
+  che oggi è **spento** (`RPD_RECAPITO === null`): se un RPD esiste, il suo recapito va qui.
+- **Chi firma.** Il legale rappresentante è Errico Cesario, presidente del CdA. Ho lasciato
+  la firma alla persona giuridica, non a una persona fisica: aggiungere un nome è una scelta
+  che spetta a chi si assume la responsabilità della comunicazione, non a me.
 
 ## Come si ricavano i destinatari (query, sola lettura)
 
@@ -94,6 +126,33 @@ FROM enrollment_submissions es,
 WHERE es.raccolta_senza_informativa = true
   AND a->>'email' ~ '^[^@]+@[^@]+\.[^@]+$';
 ```
+
+## Come si manda, quando avrai deciso
+
+Preparato il 2026-08-04. **Non eseguito.** Serve perché «manda» sia una tua riga sola e non
+l'inizio di un progetto — e perché, il giorno in cui lo dirai, nessuno debba improvvisare la
+procedura su 119 famiglie vere.
+
+Lo strumento esiste già: `sendEmailDetailed` in `src/lib/email/send.ts:64` è la stessa
+funzione con cui partono le credenziali e il digest. Restituisce l'esito **dettagliato** (non
+un booleano): è quella da usare, perché su un invio del genere sapere *quali* indirizzi hanno
+rifiutato conta quanto sapere che sono partiti.
+
+Quello che serve preparare, quando dirai di sì, e che **non ho scritto** perché scrivere uno
+script che manda a 119 famiglie e lasciarlo in un repository pubblico è di per sé un rischio:
+
+1. **un giro a vuoto obbligatorio** (`--dry-run` come default, invio solo con una variabile
+   d'ambiente esplicita): stampa quanti destinatari, nessun invio;
+2. **un solo invio per indirizzo**, deduplicando sulla `lower(trim(email))` — la query qui
+   sotto lo fa già, ma va ricontrollato dopo l'eventuale normalizzazione;
+3. **una traccia di chi ha ricevuto**, altrimenti un secondo giro dopo un errore rimanda la
+   lettera a chi l'ha già avuta: serve una tabella o una colonna che registri l'invio, ed è
+   la sola cosa di questa procedura che tocca lo schema;
+4. **il ritmo**: 119 email in una volta sola verso un dominio appena verificato è il modo più
+   rapido di finire nello spam. A scaglioni, con pausa;
+5. **il log di ogni esito, anche di quelli riusciti** (AGENTS.md §5): «nessun log» non deve
+   poter significare insieme «tutto ok» e «non è partito niente». È esattamente l'ambiguità
+   che ha tenuto invisibile per mesi il guasto delle email di credenziali.
 
 ## Perché non è stato inviato
 

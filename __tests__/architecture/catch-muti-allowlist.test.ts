@@ -51,8 +51,8 @@ const ESENTE = 'src/lib/logging/';
  * il numero. Chi si trovasse a doverli ALZARE sta aggiungendo un catch muto, ed è quello il
  * momento di fermarsi, non dopo.
  */
-const MAX_FILE = 57;
-const MAX_OCCORRENZE = 87;
+const MAX_FILE = 54;
+const MAX_OCCORRENZE = 84;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un
@@ -61,11 +61,20 @@ const MAX_OCCORRENZE = 87;
  * destinazione, il provider rispondeva 403 e il codice registrava solo il numero); gli altri
  * due sono le pagine di anagrafica e di ricarica ticket, dove il fallimento muto di una fetch
  * si presenta all'operatore come «l'elenco è vuoto» — indistinguibile da «non c'è nessuno».
+ *
+ * AGGIUNTO IL 2026-08-04 — `NativePushAutoRegister.tsx`, e vale la pena dire cosa è costato.
+ * Il suo `.catch(() => {})` inghiottiva l'ESITO della registrazione push nativa. Quel giorno
+ * l'app girava su un iPhone vero, installata da TestFlight: in `push_subscriptions` non
+ * c'era NESSUNA riga `ios`, e del tentativo non restava traccia da nessuna parte — non si
+ * poteva distinguere «l'utente ha detto no» da «il plugin è esploso» da «non è mai partito
+ * niente». Il file ha per giunta un `attempted` di modulo che rende il tentativo UNICO per
+ * sessione: il catch muto non perdeva un errore fra tanti, perdeva l'unico che ci fosse.
  */
 const MAI_PIU_IN_ALLOWLIST = [
     'src/app/api/admin/regenerate-credentials/route.ts',
     'src/app/(dashboard)/admin/students/page.tsx',
     'src/components/features/admin/pagamenti/TicketMensaPanel.tsx',
+    'src/components/providers/NativePushAutoRegister.tsx',
 ];
 
 /* ────────────────────────────────────────────────────────────────────────────────

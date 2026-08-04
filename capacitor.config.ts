@@ -44,8 +44,65 @@ const config: CapacitorConfig = {
   loggingBehavior: 'none',
   ios: {
     limitsNavigationsToAppBoundDomains: appBound,
+    // Il fondo della finestra sotto la WebView. Finché il primo HTML non è
+    // arrivato la WebView non dipinge nulla e si vede QUESTO: col default
+    // bianco era il lampo chiaro fra lo splash e la pagina. Crema, cioè il
+    // fondo che l'app ha comunque.
+    backgroundColor: '#FEF1E4',
+  },
+  android: {
+    backgroundColor: '#FEF1E4',
   },
   plugins: {
+    // ── Lo splash che copre l'attesa della rete ──────────────────────────────
+    //
+    // IL PROBLEMA. Questa è una WebView che carica `app.kidville.it` DALLA RETE.
+    // La schermata di lancio di iOS sparisce appena il processo è pronto, cioè
+    // dopo qualche decimo di secondo; il primo HTML arriva secondi dopo. In
+    // mezzo la WebView è vuota, e l'utente guarda uno schermo bianco. Il
+    // `PageLoader` non può coprirlo: fa parte della pagina che si sta ancora
+    // scaricando.
+    //
+    // COME SI CHIUDE. Lo splash nativo resta a schermo e lo toglie l'app web
+    // quando è pronta (`nascondiSplashNativo`, chiamata da `setupNativeShell`).
+    // L'immagine è identica al `PageLoader` — stesso crema, stesso lettering,
+    // stessa misura — quindi lo scambio fra i due non si vede.
+    //
+    // PERCHÉ `launchAutoHide` RESTA `true`, che sembra il contrario di quel che
+    // serve: è il TETTO, non il comportamento normale. Con `false` lo splash si
+    // toglie **solo** da JavaScript, e basta un boot in cui il JS non arriva
+    // mai — server lento che non risponde né fallisce, chunk che non carica —
+    // perché l'app resti bloccata su una schermata fissa per sempre.
+    //
+    // I 6 SECONDI SONO UN COMPROMESSO, e vale la pena sapere fra cosa. Il tetto
+    // non tocca il caso normale (l'app chiama `hide()` appena ha dipinto, dopo
+    // 1-3 s), ma è esattamente ciò che si paga in MODALITÀ AEREO: lì il
+    // caricamento fallisce in una frazione di secondo, la WebView passa a
+    // `errorPath` (`offline.html`) — e quella pagina sta su un'origine locale,
+    // dove il bridge di Capacitor potrebbe non essere iniettato, quindi
+    // potrebbe non poter chiedere lei di togliere lo splash. Alzare il tetto
+    // migliora le reti lente e peggiora l'offline, nella stessa misura.
+    //
+    // Ciò che rende accettabile il compromesso è il livello sotto: quando lo
+    // splash se ne va, `backgroundColor` qui sopra fa trovare il CREMA, non il
+    // bianco. Il caso peggiore non è più una schermata vuota: è la schermata
+    // d'attesa senza il logo.
+    SplashScreen: {
+      launchShowDuration: 6_000,
+      launchAutoHide: true,
+      launchFadeOutDuration: 250,
+      backgroundColor: '#FEF1E4',
+      // Nessuna rotella: il `PageLoader` sotto ha già la sua animazione, e due
+      // indicatori diversi in successione si leggono come un inciampo.
+      showSpinner: false,
+      // L'immagine è quadrata e lo schermo no: `CENTER_CROP` la scala finché
+      // copre, tenendo il logo al centro. Il default `FIT_XY` la stirerebbe.
+      androidScaleType: 'CENTER_CROP',
+      // La barra di stato resta visibile: sparire e ricomparire fa saltare il
+      // contenuto di qualche pixel proprio mentre lo splash si dissolve.
+      splashFullScreen: false,
+      splashImmersive: false,
+    },
     PushNotifications: {
       // iOS: mostra banner/suono/badge ANCHE con l'app in foreground
       // (di default iOS sopprime le notifiche quando l'app è aperta).

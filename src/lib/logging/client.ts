@@ -203,7 +203,7 @@ function eAnnullata(err: unknown): boolean {
  * difende da sé: è la porta ostile), serve a non scoprire in produzione che una riga di log
  * è stata scartata con un 400 perché il nome dell'evento era `errore-js` invece di `js`.
  */
-export type EventoNome = 'js' | 'unhandledrejection' | 'fetch' | 'react' | 'offline' | 'biometria' | 'push';
+export type EventoNome = 'js' | 'unhandledrejection' | 'fetch' | 'react' | 'offline' | 'biometria' | 'push' | 'avvio';
 
 export interface EventoClient {
     livello: 'warn' | 'error';
@@ -325,7 +325,25 @@ export function logClient(e: EventoClient): void {
             // `route` se la costruiscono da sé. Il server la ridurrebbe comunque (`appLog` →
             // `redigiPath`), ma la regola 4 dice che dal dispositivo non esce un path grezzo:
             // vale anche per chi passa di qui dall'esterno, non solo per `pagina()`.
-            route: e.route === undefined ? undefined : tronca(redigiPathSicuro(e.route), ROUTE_MAX),
+            //
+            // ⚠️ IL RIPIEGO È `pagina()`, E NON `undefined`. Misurato in produzione il
+            // 2026-08-04: 60 righe `sorgente='client'` su 309 portavano `route='/api/logs'`, e
+            // nessuna di quelle era un guasto del logger (il patch di `fetch` esclude il
+            // proprio SINK: non può generarle). Erano i 62 punti di chiamata del repo che la
+            // `route` non la passano — `modulo-allegato-upload-fallito`, `sw-senza-controllo`,
+            // `iscrizione-sedi-non-caricate`. Lasciandola `undefined` il campo NON resta vuoto:
+            // lato server `app-log.ts → rotta()` ripiega sul `contesto().path`, che per un log
+            // del browser vale sempre `/api/logs` — il nome del CAMION, non del luogo
+            // dell'incidente, cioè l'unica pagina in cui quell'errore non è mai avvenuto.
+            // La pagina la sa SOLO il client, e questo è l'ultimo punto in cui la sa ancora.
+            //
+            // `|| pagina()` e non `?? pagina()`: una `route: ''` è una rotta non dichiarata, e
+            // una stringa vuota in tabella mente esattamente come `/api/logs`. Il `|| undefined`
+            // finale è il caso in cui NEMMENO la pagina si legge (prerender, worker, `location`
+            // negata): lì il campo si lascia mancante, che è la verità — non si inventa un `''`.
+            // `redigiPathSicuro` resta sopra a tutto: `pagina()` riduce già da sé, ma la
+            // riduzione qui è idempotente e vale anche per la route che arriva dall'esterno.
+            route: tronca(redigiPathSicuro(e.route || pagina()), ROUTE_MAX) || undefined,
             stato: typeof e.stato === 'number' && Number.isInteger(e.stato) ? e.stato : undefined,
             digest: e.digest === undefined ? undefined : tronca(String(e.digest), 64),
         });

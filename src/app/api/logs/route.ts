@@ -122,7 +122,7 @@ const bodySchema = z.object({
 });
 
 export const POST = withRoute('logs:POST', async (request: Request) => {
-    const rl = rateLimit(`logs:${clientIp(request)}`, { limit: LIMITE, windowMs: FINESTRA_MS });
+    const rl = await rateLimit(`logs:${clientIp(request)}`, { limit: LIMITE, windowMs: FINESTRA_MS });
     if (!rl.ok) {
         // 429 → `withRoute` lo persiste (è fra le ANOMALIE_4XX): un burst di 429 su una route
         // pubblica è il segnale di un abuso, e vive solo se lo si conta nel tempo.

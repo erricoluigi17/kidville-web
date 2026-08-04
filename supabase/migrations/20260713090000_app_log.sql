@@ -1,4 +1,17 @@
 -- =============================================================================
+-- ⚠️ RETTIFICA (2026-08-04) — due righe di questo file dicono il falso da allora.
+--
+--   Più sotto si legge «nessuna FK (né su `utente_id` né su `scuola_id`)» e
+--   «scuola_id … SENZA FK». Era vero quando questo file è stato scritto; ha smesso
+--   di esserlo il 2026-07-31, quando l'audit multi-sede ha aggiunto
+--   `app_log_scuola_id_fkey`. Il DDL qui sotto NON è stato modificato — è la storia
+--   di ciò che fu applicato, e riscriverla sarebbe peggio che lasciarla scaduta —
+--   ma chi legge deve sapere che la parte sulle FK è superata da
+--   `20260804103025_indici_tabelle_ponte_e_indice_duplicato.sql`, che rimette il
+--   vincolo con `ON DELETE SET NULL` per le ragioni spiegate lì.
+--
+--   (Rilievo T03-F5 del collaudo del 2026-08-03.)
+-- =============================================================================
 -- APP_LOG · la memoria lunga dei log (branch feat/logging-strutturato)
 --
 --   Su Vercel Pro i Runtime Logs durano UN GIORNO e non si interrogano in SQL.

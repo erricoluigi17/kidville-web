@@ -25,18 +25,49 @@ async function salvaEAttendi(page: import('@playwright/test').Page, bottone: Reg
   await expect(page.getByText('✅ Salvato con successo!')).toBeVisible();
 }
 
+/**
+ * Apre un tipo evento e ASPETTA il ripristino da Supabase.
+ *
+ * Scegliere il tipo evento fa partire una GET a `/api/diary/entries`: è quella
+ * che ripopola le selezioni già salvate oggi (ed è quella che, il 2026-08-03,
+ * era ancora in volo quando il test è scaduto a 30 s — non perché fosse rotta,
+ * ma perché la pagina aveva speso ~14 s in chiamate duplicate prima di
+ * arrivarci). Aspettare la RISPOSTA invece di una soglia toglie di mezzo la
+ * gara **senza** rendere il test cieco: se la persistenza smette di funzionare,
+ * la risposta arriva lo stesso e `aria-pressed` resta `false`. Un timeout più
+ * largo avrebbe nascosto il difetto; questo lo lascia visibile.
+ */
+async function apriEventoEAttendiRipristino(
+  page: import('@playwright/test').Page,
+  evento: string,
+) {
+  const [res] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes('/api/diary/entries') && r.request().method() === 'GET',
+      { timeout: 30_000 },
+    ),
+    page.getByRole('button', { name: evento }).click(),
+  ]);
+  expect(res.status(), `GET /api/diary/entries ha risposto ${res.status()}`).toBeLessThan(300);
+}
+
 async function mostraTuttiIBambini(page: import('@playwright/test').Page) {
   // Il filtro parte su "Solo presenti": passo a "Tutti" per non dipendere
   // dall'appello, attendendo il refetch degli alunni (il ripristino dello
   // stato salvato usa la lista corrente: senza attesa correrebbe in gara).
   const toggle = page.getByRole('button', { name: 'Solo presenti' });
   if (await toggle.isVisible().catch(() => false)) {
-    await Promise.all([
+    const [res] = await Promise.all([
       page.waitForResponse(
         (r) => r.url().includes('/api/diary/students') && r.status() === 200
       ),
       toggle.click(),
     ]);
+    // Il CORPO, non solo le intestazioni: il passo dopo sceglie un tipo evento e
+    // il ripristino da Supabase parte solo se l'elenco alunni è già nello stato
+    // della pagina. Aspettare l'header lascerebbe aperta una gara di millisecondi
+    // con l'elenco ancora vuoto — e in quel caso non partirebbe nessuna GET.
+    await res.json().catch(() => null);
   }
 }
 
@@ -66,14 +97,14 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await mostraTuttiIBambini(page);
 
   // Evento Merenda: i pannelli per bambino compaiono dopo la scelta del tipo.
-  await page.getByRole('button', { name: 'Registra Merenda' }).click();
+  await apriEventoEAttendiRipristino(page, 'Registra Merenda');
   await expect(page.getByText('Aurora').first()).toBeVisible();
   // Le quantità sono simboli: ✗ ¼ ½ ¾ ★ (★ = "Tutto!"), prima riga = Aurora.
   await page.getByRole('button', { name: '★' }).first().click();
   await salvaEAttendi(page, /Salva Merenda per tutti/);
 
   // Umore (tile attiva via diario_config della scuola E2E): Aurora → Felice.
-  await page.getByRole('button', { name: 'Registra Umore' }).click();
+  await apriEventoEAttendiRipristino(page, 'Registra Umore');
   await page.getByRole('button', { name: 'Aurora: Felice' }).click();
   await salvaEAttendi(page, /Salva Umore per tutti/);
 
@@ -81,7 +112,12 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await page.reload();
   await expect(page.getByText('Cosa vuoi registrare?')).toBeVisible({ timeout: 15_000 });
   await mostraTuttiIBambini(page);
-  await page.getByRole('button', { name: 'Registra Umore' }).click();
+  // L'ATTESA È ESPLICITA, non un timeout più largo: si aspetta la risposta che
+  // porta i dati salvati, poi si guarda lo stato del pulsante. Se il diario non
+  // avesse salvato davvero, la risposta arriverebbe comunque (200, ma vuota) e
+  // `aria-pressed` resterebbe `false`: il test continua a misurare la
+  // persistenza, non la pazienza.
+  await apriEventoEAttendiRipristino(page, 'Registra Umore');
   await expect(page.getByRole('button', { name: 'Aurora: Felice' })).toHaveAttribute(
     'aria-pressed',
     'true'

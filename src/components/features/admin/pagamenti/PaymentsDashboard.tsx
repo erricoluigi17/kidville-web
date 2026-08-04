@@ -1,5 +1,6 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
@@ -111,7 +112,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         try {
             const [pagRes, alRes] = await Promise.all([
                 fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
-                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
+                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
             ]);
             if (pagRes?.success) { setPagamenti(pagRes.data); setError(null); }
             else setError((pagRes && pagRes.error) || t('dashErrCaricamento'));

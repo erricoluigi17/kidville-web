@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { deriveGradiFlags, type TeacherGradiFlags } from './teacher-gradi';
+import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 
 export interface TeacherGradi extends TeacherGradiFlags {
     gradi: string[];
@@ -16,7 +17,6 @@ export interface TeacherGradi extends TeacherGradiFlags {
 // è una sola (la navigazione SPA riusa la cache). Su errore la entry si
 // rimuove: il prossimo mount ritenta.
 const gradiCache = new Map<string, Promise<string[]>>();
-const diarioCache = new Map<string, Promise<boolean>>();
 
 function fetchGradi(userId: string | null): Promise<string[]> {
     const key = userId ?? '';
@@ -33,19 +33,12 @@ function fetchGradi(userId: string | null): Promise<string[]> {
     return p;
 }
 
+// La config del diario aveva qui una SECONDA cache privata dello stesso
+// endpoint che chiedono anche /teacher/diary e useDiaryDay: tre copie della
+// stessa richiesta, ognuna convinta di essere l'unica. Ora la cache è una sola
+// (`@/lib/diary/config-cache`); qui resta solo la lettura del campo che serve.
 function fetchDiarioPrimariaVisibile(userId: string | null): Promise<boolean> {
-    const key = userId ?? '';
-    const hit = diarioCache.get(key);
-    if (hit) return hit;
-    const p = fetch(`/api/diary/config${userId ? `?userId=${userId}` : ''}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((conf) => conf?.diario_primaria_visibile === true)
-        .catch(() => {
-            diarioCache.delete(key);
-            return false;
-        });
-    diarioCache.set(key, p);
-    return p;
+    return fetchDiarioConfig(userId).then((conf) => conf?.diario_primaria_visibile === true);
 }
 
 /**

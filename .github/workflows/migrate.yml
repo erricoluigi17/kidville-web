@@ -14,6 +14,19 @@ name: DB migrate (prod)
 # ⚠️  ATTIVARE SOLO DOPO IL BASELINE dello storico migrazioni (vedi docs/cicd.md).
 #     Prima del baseline `supabase db push` proverebbe a ri-applicare i file
 #     già installati a mano → errori "already exists".
+#
+# 📍 STATO REALE AL 2026-08-04, perché la riga qui sopra si legge come se il
+#    workflow fosse spento e non lo è. Il baseline È stato fatto
+#    (`supabase_migrations.schema_migrations` contiene 94 versioni, la prima è
+#    `20260704120000_baseline`), quindi l'avvertenza è superata. Ma il workflow non
+#    ha mai portato a termine un giro: le migrazioni si continuano ad applicare a
+#    mano con lo strumento MCP `apply_migration`, e ogni push lascia qui una
+#    richiesta di approvazione che nessuno evade.
+#
+#    Finché è così, questa pipeline non è la strada delle migrazioni: è una seconda
+#    strada, non usata, che resta armata. Le due possibilità oneste sono usarla
+#    davvero (approvare) o spegnerla (`if: false`, o togliere il trigger su push).
+#    Tenerla in mezzo è la sola scelta che non ha vantaggi.
 
 on:
   push:
@@ -21,6 +34,36 @@ on:
     paths:
       - 'supabase/migrations/**'
   workflow_dispatch: {}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LE ESECUZIONI IN ATTESA NON SI ACCUMULANO PIÙ (rilievo T20-F4, 2026-08-04)
+#
+# Misurato il 2026-08-04: TRE esecuzioni di questo workflow ferme in stato
+# `waiting` da 12, 35 e 140 ore (id 30854274502, 30770140384, 30453642171).
+# Nessuna è mai stata approvata; l'ultima andata a termine risale a undici
+# giorni prima.
+#
+# Il punto non è che manchi l'approvazione — quella è la protezione, e funziona.
+# È che una richiesta di approvazione non evasa non scade e non si annulla: ogni
+# push che tocca `supabase/migrations/**` ne aggiunge una. Ognuna, se approvata
+# mesi dopo, eseguirebbe `supabase db push` con lo stato del repo DI ALLORA
+# contro il database DI OGGI. Non sono avanzi inerti: sono pulsanti armati su un
+# database che contiene i dati di 152 minori, e più se ne accumulano meno è
+# chiaro quale si sta premendo.
+#
+# `cancel-in-progress` risolve l'accumulo alla radice: quando arriva una nuova
+# richiesta, quella vecchia in attesa viene annullata. Ne resta sempre e sola
+# UNA da approvare, ed è sempre quella che corrisponde alla testa di `main` —
+# cioè l'unica che abbia senso approvare.
+#
+# Il gruppo NON include il ref: su `main` la coda dev'essere una sola. Con
+# `github.ref` nel gruppo due push ravvicinati sullo stesso branch finirebbero
+# comunque nello stesso gruppo, ma esplicitarlo qui evita che un domani un
+# `workflow_dispatch` da un altro ref si crei una coda parallela silenziosa.
+# ─────────────────────────────────────────────────────────────────────────────
+concurrency:
+  group: db-migrate-prod
+  cancel-in-progress: true
 
 jobs:
   migrate:

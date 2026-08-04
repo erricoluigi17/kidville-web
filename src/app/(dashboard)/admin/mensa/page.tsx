@@ -1,5 +1,6 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { UtensilsCrossed, CalendarRange, ClipboardList, Settings, CalendarPlus, Ticket } from 'lucide-react';
@@ -26,7 +27,7 @@ function MensaInner() {
   useEffect(() => {
     if (!userId || !sedeCorrente) return; // serve identità + una sola sede attiva
     // Il server scopa gli alunni dal cookie; `x-sedi` ne fa la chiave di re-fetch.
-    fetch(`/api/admin/students?limit=1000`, { headers: { 'x-user-id': userId, 'x-sedi': sedeCorrente } }).then(r => r.json()).then(d => {
+    fetch(`/api/admin/students?limit=${LIMITE_ELENCO_ALUNNI}`, { headers: { 'x-user-id': userId, 'x-sedi': sedeCorrente } }).then(r => r.json()).then(d => {
       if (Array.isArray(d)) {
         const set = Array.from(new Set(d.map((a: { classe_sezione?: string }) => a.classe_sezione).filter(Boolean))) as string[];
         setSezioni(set.sort());

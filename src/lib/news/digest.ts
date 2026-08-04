@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiScuola } from '@/lib/notifiche/destinatari'
+import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { isScuolaE2E } from '@/lib/scuole/reali'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { logEvento, logErrore } from '@/lib/logging/logger'
@@ -17,9 +18,14 @@ import { MESI_IT } from '@/lib/news/tipi'
 // `generaEInviaDigest` è l'orchestratore usato da /news/cron/run e
 // /news/digest/genera: per ogni sede compone, persiste con ON CONFLICT DO NOTHING
 // (idempotente), poi invia SOLO se `inviata_il IS NULL` a TUTTE le famiglie della
-// sede — comunicazione istituzionale, indipendente dai toggle (decisione 14).
+// sede — comunicazione istituzionale: nessun opt-out della singola famiglia
+// (decisione 14). L'unico interruttore che conta è quello della SCUOLA: il tipo
+// `news` del pannello notifiche (`isNotificaAbilitata`). Spento ⇒ la sede si
+// salta e l'edizione NON si marca inviata, così riparte se lo si riaccende.
 // Invio SEQUENZIALE con throttle (~2/s) via sendEmailDetailed (che logga già via
-// externalFetch). PostgREST non lancia: si controlla sempre `{ error }`.
+// externalFetch). PostgREST non lancia: si controlla sempre `{ error }` — e un
+// `{ error }` sui destinatari RIMANDA l'edizione invece di dichiararla inviata a
+// zero persone (T17-F4).
 // =============================================================================
 
 export interface PostDigest {
@@ -144,15 +150,69 @@ function estremiMese(anno: number, mese: number): { inizio: string; fine: string
   return { inizio, fine }
 }
 
-async function emailFamiglie(supabase: SupabaseClient, scuolaId: string): Promise<string[]> {
+/** Esito della ricerca dei destinatari: `ok: false` = **non ho potuto leggere**. */
+interface Destinatari {
+  ok: boolean
+  emails: string[]
+}
+
+/**
+ * Le email delle famiglie della sede.
+ *
+ * «ZERO FAMIGLIE» E «NON HO POTUTO LEGGERE» NON SONO LA STESSA COSA, e qui lo
+ * erano: `if (error || !data) return []`. Un errore PostgREST sulla tabella
+ * `utenti` (che non lancia — AGENTS regola 7) usciva da questa funzione
+ * travestito da elenco vuoto e senza una riga di log (regola 6). Il chiamante
+ * spediva zero email, marcava `inviata_il` e l'edizione del mese era persa per
+ * sempre: al giro dopo la guardia di idempotenza la saltava. Esito misurato dal
+ * collaudo (T17-F4): `inviata true · destinatari_count 0 · errori_count 0`,
+ * zero email, zero log.
+ *
+ * Ora il fallimento ha un valore suo (`ok: false`) e una riga di log con il
+ * corpo dell'errore. La decisione su cosa farne è del chiamante.
+ *
+ * `genitoriDiScuola` ha la stessa ambiguità e non è correggibile da qui (la
+ * usano nove chiamanti): ritorna `[]` sia con zero alunni sia con la query
+ * fallita, loggando ma senza distinguere. Per questo, quando i genitori sono
+ * zero, si RILEGGE il conteggio degli alunni della sede: se nemmeno quello si
+ * legge, non sappiamo se ci sono famiglie, e non sapendo non si marca.
+ */
+async function emailFamiglie(supabase: SupabaseClient, scuolaId: string): Promise<Destinatari> {
   const genitori = await genitoriDiScuola(supabase, scuolaId)
-  if (genitori.length === 0) return []
+  if (genitori.length === 0) {
+    const { count, error } = await supabase
+      .from('alunni')
+      .select('id', { count: 'exact', head: true })
+      .eq('scuola_id', scuolaId)
+    if (error) {
+      logEvento('news', 'error', {
+        operazione: 'news/digest:destinatari', esito: 'alunni-non-letti', scuola_id: scuolaId,
+      }, error)
+      return { ok: false, emails: [] }
+    }
+    if ((count ?? 0) > 0) {
+      // Alunni ce ne sono, genitori collegati no: non è un guasto di lettura, ma
+      // un digest a zero destinatari va detto — altrimenti «nessuna email» e
+      // «tutto a posto» hanno lo stesso aspetto.
+      logEvento('news', 'warn', {
+        operazione: 'news/digest:destinatari', esito: 'nessun-genitore-collegato',
+        scuola_id: scuolaId, alunni: count ?? 0,
+      })
+    }
+    return { ok: true, emails: [] }
+  }
   const { data, error } = await supabase.from('utenti').select('email').in('id', genitori)
-  if (error || !data) return []
+  if (error || !data) {
+    logEvento('news', 'error', {
+      operazione: 'news/digest:destinatari', esito: 'utenti-non-letti',
+      scuola_id: scuolaId, genitori: genitori.length,
+    }, error ?? undefined)
+    return { ok: false, emails: [] }
+  }
   const emails = (data as { email: string | null }[])
     .map((u) => (u.email ?? '').trim())
     .filter((e) => e.includes('@'))
-  return [...new Set(emails)]
+  return { ok: true, emails: [...new Set(emails)] }
 }
 
 function testoFallback(titolo: string, posts: PostDigest[]): string {
@@ -257,8 +317,38 @@ export async function generaEInviaDigest(
       continue
     }
 
-    // 3) Invio a TUTTE le famiglie della sede (comunicazione istituzionale).
-    const destinatari = await emailFamiglie(supabase, sede.id)
+    // 3) L'INTERRUTTORE CHE L'ADMIN HA GIÀ IN MANO (T17-F5).
+    //
+    // Il tipo `news` esiste nel pannello notifiche (src/lib/notifiche/tipi.ts) e
+    // il gate `isNotificaAbilitata` ha nove chiamanti: il digest non era fra
+    // loro. Un admin che spegneva «News della scuola» continuava a vedere il
+    // digest partire a tutte le famiglie — due impostazioni che dicono cose
+    // opposte. `isNotificaAbilitata` è fail-open (config illeggibile ⇒ attiva),
+    // quindi qui si salta SOLO su un «no» esplicito.
+    //
+    // Non si marca `inviata_il`: se il toggle viene riacceso, l'edizione riparte.
+    if (!(await isNotificaAbilitata(supabase, 'news', sede.id))) {
+      logEvento('news', 'info', {
+        operazione: 'digest', esito: 'tipo-disattivato', scuola_id: sede.id, anno, mese,
+      })
+      edizioni.push(esito)
+      continue
+    }
+
+    // 4) Invio a TUTTE le famiglie della sede (comunicazione istituzionale).
+    const { ok: destinatariOk, emails: destinatari } = await emailFamiglie(supabase, sede.id)
+    // SE NON SI È POTUTO NEMMENO TENTARE, NON SI MARCA. È la stessa regola già
+    // scritta e provata in src/app/api/push/dispatch/route.ts (~281): «saltate > 0
+    // e tentate === 0 ⇒ rimandate++ e si continua». Marcare qui significherebbe
+    // perdere l'edizione del mese per sempre; lasciandola in coda riparte al giro
+    // successivo (il cron gira ogni giorno) appena il database torna leggibile.
+    if (!destinatariOk) {
+      logEvento('news', 'error', {
+        operazione: 'digest', esito: 'rimandata', scuola_id: sede.id, anno, mese,
+      })
+      edizioni.push(esito)
+      continue
+    }
     const testo = testoFallback(composto.titolo, (postRows ?? []) as PostDigest[])
     let errori = 0
     for (let i = 0; i < destinatari.length; i++) {
@@ -267,7 +357,7 @@ export async function generaEInviaDigest(
       if (i < destinatari.length - 1) await new Promise((r) => setTimeout(r, 500)) // throttle ~2/s
     }
 
-    // 4) Marca inviata (guardia inviata_il IS NULL contro doppio invio concorrente).
+    // 5) Marca inviata (guardia inviata_il IS NULL contro doppio invio concorrente).
     const { error: updErr } = await supabase
       .from('news_digest_edizioni')
       .update({ inviata_il: new Date().toISOString(), destinatari_count: destinatari.length, errori_count: errori })

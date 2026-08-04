@@ -19,6 +19,7 @@
  *    token stanno in `globals.css`; qui non si scrivono hex, si usano i token.
  */
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { formatData } from '@/lib/i18n/date';
@@ -770,7 +771,7 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
       let lista: Alunno[] = [];
       let fallita = false;
       try {
-        const r = await fetch(`/api/admin/students?limit=1000${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`);
+        const r = await fetch(`/api/admin/students?limit=${LIMITE_ELENCO_ALUNNI}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`);
         if (!r.ok) {
           // Prima non c'era: un 403 di sede o un 500 producevano lo stesso
           // schermo di «non ci sono alunni», e nessuno poteva accorgersene.

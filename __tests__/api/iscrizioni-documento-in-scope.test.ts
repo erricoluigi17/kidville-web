@@ -144,7 +144,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
         massimo = n
         return b
       }
-      b.order = async () => esegui()
+      b.order = () => b
+      // Dal 2026-08-04 l'elenco è paginato (`.range()`, T11-F4): la catena non
+      // finisce più su `order()`, quindi il finto client deve saperlo attraversare.
+      b.range = (da: number, a: number) => {
+        massimo = Math.min(massimo, a - da + 1)
+        return b
+      }
       b.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) =>
         Promise.resolve(esegui()).then(ok, ko)
       b.maybeSingle = async () => {
@@ -328,8 +334,12 @@ describe('GET /api/admin/iscrizioni?doc= — il gate controlla l\'OGGETTO, non s
   it('NON REGRESSIONE — senza `?doc=` l\'elenco resta filtrato per sede', async () => {
     const res = await chiediElenco()
     expect(res.status).toBe(200)
-    const json = (await res.json()) as Riga[]
-    expect(json.map((r) => r.id)).toEqual(['dom-aversa'])
+    // Dal 2026-08-04 l'elenco è paginato e restituisce `{ data, total }`
+    // (T11-F4). Il filtro di sede è quello che questo caso sorveglia, e non
+    // cambia: fuori esce solo la domanda della sede attiva.
+    const json = (await res.json()) as { data: Riga[]; total: number }
+    expect(json.data.map((r) => r.id)).toEqual(['dom-aversa'])
+    expect(json.total).toBe(1)
     expect(h.firme).toHaveLength(0)
   })
 })

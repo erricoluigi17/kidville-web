@@ -1,5 +1,6 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
@@ -57,7 +58,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
 
     useEffect(() => { loadRegistro(); }, [loadRegistro]);
     useEffect(() => {
-        fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: hdr(userId) })
+        fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`, { headers: hdr(userId) })
             .then((r) => r.json())
             .then((d) => {
                 const lista: Alunno[] = Array.isArray(d) ? d : (d.data || []);

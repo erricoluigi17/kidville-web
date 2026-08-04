@@ -95,7 +95,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (tabella === 'sections') return { data: [{ name: 'Girasoli' }], error: null }
         return { data: [], error: null }
       }
-      b.order = async () => lista()
+      // Dal 2026-08-04 l'elenco è paginato (`.range()`, T11-F4): la catena non
+      // finisce più su `order()`.
+      b.order = () => b
+      b.range = () => b
       b.then = (res: (v: unknown) => unknown) => Promise.resolve(lista()).then(res)
       b.maybeSingle = async () => {
         if (tabella === 'enrollment_submissions') return { data: h.sub, error: null }
@@ -214,7 +217,7 @@ describe('GET /api/admin/iscrizioni — l\'elenco non rilegge le password archiv
     const corpo = await res.text()
     expect(corpo).not.toContain(PASSWORD_IN_CHIARO)
     expect(corpo).not.toContain('credentials')
-    const righe = JSON.parse(corpo) as Record<string, unknown>[]
+    const righe = (JSON.parse(corpo) as { data: Record<string, unknown>[] }).data
     expect(righe).toHaveLength(1)
     expect(righe[0]).not.toHaveProperty('credentials')
   })
@@ -232,12 +235,16 @@ describe('GET /api/admin/iscrizioni — l\'elenco non rilegge le password archiv
 
   it('la pagina «Moduli ricevuti» riceve tutto ciò che le serve', async () => {
     const res = await GET(new Request('http://localhost/api/admin/iscrizioni') as never)
-    const righe = (await res.json()) as Record<string, unknown>[]
-    // I campi che `ModuliRicevuti` legge davvero: id, sede, payload del modulo,
-    // stato, classi assegnate, data d'arrivo.
-    for (const chiave of ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at']) {
+    const righe = ((await res.json()) as { data: Record<string, unknown>[] }).data
+    // I campi che la LISTA di `ModuliRicevuti` legge davvero: id, sede, stato,
+    // classi assegnate, data d'arrivo, più il riassunto (nome del primo bambino
+    // e conteggi). Dal 2026-08-04 il `data` INTERO non è più fra questi: il
+    // payload — allergie e note mediche comprese — esce solo dal dettaglio
+    // `?id=`, cioè quando qualcuno apre quella domanda (T11-F4).
+    for (const chiave of ['id', 'scuola_id', 'status', 'assigned_classes', 'created_at', 'riassunto']) {
       expect(righe[0]).toHaveProperty(chiave)
     }
+    expect(righe[0]).not.toHaveProperty('data')
   })
 
   it('su DB non migrato la colonna assente (42703) viene tolta e la lista arriva lo stesso', async () => {
@@ -247,7 +254,7 @@ describe('GET /api/admin/iscrizioni — l\'elenco non rilegge le password archiv
     h.colonneAssenti = ['scuola_id']
     const res = await GET(new Request('http://localhost/api/admin/iscrizioni') as never)
     expect(res.status).toBe(200)
-    const righe = (await res.json()) as Record<string, unknown>[]
+    const righe = ((await res.json()) as { data: Record<string, unknown>[] }).data
     expect(righe).toHaveLength(1)
     expect(righe[0]).toHaveProperty('id')
     expect(righe[0]).not.toHaveProperty('scuola_id')

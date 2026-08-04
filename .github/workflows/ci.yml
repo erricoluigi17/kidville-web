@@ -30,6 +30,20 @@ jobs:
         run: npx eslint . --max-warnings 0
       - name: Typecheck + Unit (tsc --noEmit && vitest run)
         run: npm run gate
+      # IL QUARTO COMANDO DEL GATE, che fino al 2026-08-04 non è mai girato in CI.
+      # AGENTS.md §«Gate di verifica» ne elenca quattro; qui ne giravano tre. Non è una
+      # ridondanza di `npm run gate`: `tsc --noEmit` controlla i tipi e basta, mentre
+      # `next build` è l'unico che esegue la raccolta delle rotte, la prerenderizzazione
+      # e i controlli di confine server/client — cioè la classe di guasti che i tipi non
+      # vedono (un `export const dynamic` sbagliato, un import di modulo Node dentro un
+      # Client Component, una pagina che fallisce in prerender).
+      #
+      # Misurato il 2026-08-04: `next build` non girava in NESSUN punto della pipeline
+      # prima che il codice fosse su `main`. Nemmeno nel job `e2e`, che avvia Playwright
+      # su `npm run dev`. E nessun check di Vercel è fra i required status checks. Quindi
+      # per un giorno un commit è potuto esistere senza che nessuno sapesse se compilava.
+      - name: Build (next build)
+        run: npm run build
 
   e2e:
     name: E2E (Playwright)

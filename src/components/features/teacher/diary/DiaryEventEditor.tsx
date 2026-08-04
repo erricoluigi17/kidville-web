@@ -11,6 +11,7 @@ import { MealDetailInline } from '@/components/features/teacher/diary/MealDetail
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
+import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 
 // =============================================================================
 // Compilazione del diario 0-6 per una sezione: stato + handler (useDiaryDay) e
@@ -118,13 +119,15 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
     // 'umore' visibile solo se attivo in diario_config.routine_attive (M5.4).
     const [umoreEnabled, setUmoreEnabled] = useState(false);
 
+    // Config dalla cache di modulo: è la STESSA GET che il chrome della pagina
+    // /teacher/diary fa per sapere se mostrare le sezioni primaria. Farne una
+    // propria significava due richieste identiche (quattro con StrictMode).
     useEffect(() => {
         if (!userId) return;
         let active = true;
-        fetch(`/api/diary/config?userId=${userId}`)
-            .then(r => (r.ok ? r.json() : null))
-            .then(d => { if (active && d) setUmoreEnabled(umoreAttivo(d.routine_attive)); })
-            .catch(() => {});
+        void fetchDiarioConfig(userId).then(d => {
+            if (active && d) setUmoreEnabled(umoreAttivo(d.routine_attive));
+        });
         return () => { active = false; };
     }, [userId]);
 

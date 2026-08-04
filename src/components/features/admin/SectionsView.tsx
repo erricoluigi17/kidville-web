@@ -1,5 +1,6 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
@@ -77,7 +78,7 @@ export function SectionsView() {
 
             const perScuola = await Promise.all(
                 groups.map(async (g) => {
-                    const r = await fetch(`/api/admin/students?scuola_id=${g.scuolaId}&limit=1000`).catch(() => null);
+                    const r = await fetch(`/api/admin/students?scuola_id=${g.scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).catch(() => null);
                     const d = r?.ok ? await r.json().catch(() => null) : null;
                     return Array.isArray(d) ? (d as Student[]) : [];
                 })

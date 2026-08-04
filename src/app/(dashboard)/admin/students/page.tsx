@@ -1,5 +1,6 @@
 'use client';
 
+import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -224,7 +225,7 @@ function AdminStudentsInner() {
 
   const fetchStudents = useCallback(
     () => caricaElenco(
-      `/api/admin/students?limit=1000`,
+      `/api/admin/students?limit=${LIMITE_ELENCO_ALUNNI}`,
       (c) => (Array.isArray(c) ? (c as Student[]) : null),
       'anagrafica-alunni-non-caricata',
     ),

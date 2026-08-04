@@ -119,6 +119,9 @@
   "ricevutiImportFallito": "Import failed",
   "ricevutiErroreImport": "Error during import",
   "ricevutiConfermaRifiuto": "Reject this enrollment request?",
+  "ricevutiMostrate": "{n, plural, one {Showing # request out of {totale}} other {Showing # requests out of {totale}}}",
+  "ricevutiMostraAltre": "Show more requests",
+  "ricevutiDettaglioNonAperto": "Request cannot be opened: reload the page or check the selected location.",
 
   "inviabiliIntro": "Customizable forms to send to parents via a link. Edit them in the builder and publish them to get the shareable link.",
   "inviabiliNuovoModulo": "New form",

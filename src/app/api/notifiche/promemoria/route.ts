@@ -38,9 +38,24 @@ const JOB = 'notifiche-promemoria'
 // schema vuoto per il lock zod-coverage, come /api/push/dispatch.
 const postQuerySchema = z.object({})
 
+/**
+ * TOLLERANZA D'AMBIENTE, e SOLO quella. Due codici, per nome, e nient'altro:
+ *
+ *  - `42P01` — Postgres: «relation does not exist».
+ *  - `PGRST205` — PostgREST: «Could not find the table … in the schema cache».
+ *
+ * COSA È STATO TOLTO, e perché conta. Prima si accettava anche qualunque messaggio contenente
+ * `does not exist`: dentro ci cadeva pure `42703 "column … does not exist"`, che NON è un
+ * ambiente non migrato — è una TABELLA CHE C'È a cui manca una colonna, cioè una migrazione
+ * applicata a metà su un database vivo. Un guasto vero, assorbito in silenzio perché due errori
+ * diversi condividono tre parole di messaggio. La discriminante è il CODICE, non la prosa.
+ *
+ * E la tolleranza non è più il silenzio: chi chiama registra la scansione come SALTATA, e il
+ * battito finale lo dichiara (`ok-parziale`). Vedi la nota sul battito in fondo al file.
+ */
 function tabellaMancante(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false
-  return error.code === '42P01' || /does not exist|schema cache|could not find/i.test(error.message ?? '')
+  return error.code === '42P01' || error.code === 'PGRST205'
 }
 
 /**
@@ -100,6 +115,21 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
     // ricordare» invece di «non ho guardato»: le due frasi si leggono uguali e significano
     // l'opposto. Vedi il battito in fondo.
     const falliti: string[] = []
+    // Quali delle tre scansioni NON HANNO GUARDATO perché la loro tabella non esiste in questo
+    // ambiente. È il terzo stato, e nasce da un guasto misurato: in produzione, il 2026-08-04
+    // alle 06:00:02, `PGRST205 locker_requests` e un decimo di secondo dopo «notifiche-promemoria:
+    // ok». `locker_requests` in produzione NON ESISTE — e nessuna migrazione la crea: le tabelle
+    // vere sono `armadietto` e `locker_config`. La scansione dell'armadietto era morta da sempre e
+    // il battito dichiarava di aver guardato.
+    //
+    // La tolleranza per lo schema drift è nata per il DB E2E della CI (progetto separato, mai
+    // migrato) e lì è GIUSTA: non è un job rotto, è un ambiente diverso. L'errore era applicarla
+    // indistintamente, perché in PRODUZIONE «tabella assente» non significa «ambiente non
+    // migrato»: significa funzionalità morta. Non potendo distinguere i due ambienti da qui senza
+    // inventare una variabile che qualcuno dimenticherebbe di impostare, si smette semplicemente
+    // di FINGERE: il giro resta 200 (non c'è nulla da riparare stanotte) ma non dice più «ok» —
+    // dice «ok-parziale» e NOMINA ciò che non ha guardato. Chi legge decide se è la CI o un buco.
+    const saltate: string[] = []
 
     // ── 1. Moduli non compilati ────────────────────────────────────────────────
     try {
@@ -108,7 +138,10 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         .select('id, titolo, target_scope, target_classes, scadenza, created_at, scuola_id, form_model_id')
         .not('form_model_id', 'is', null)
         .or(`scadenza.is.null,scadenza.gte.${oggi}`)
-      if (error && !tabellaMancante(error)) throw error
+      if (error) {
+        if (!tabellaMancante(error)) throw error
+        saltate.push('moduli')
+      }
 
       const cfgGiorni = new Map<string, number>()
       for (const avviso of (avvisi ?? []) as Array<{
@@ -191,6 +224,7 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         .is('reminder_inviato_il', null)
       if (error) {
         if (!tabellaMancante(error)) throw error
+        saltate.push('armadietto')
       } else {
         for (const r of (richieste ?? []) as Array<{
           id: string; alunno_id: string; quantita_residua: number | null
@@ -245,6 +279,7 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         .lte('expiry_date', soglia)
       if (error) {
         if (!tabellaMancante(error)) throw error
+        saltate.push('documenti')
       } else {
         for (const doc of (docs ?? []) as Array<{ id: string; student_id: string; document_type: string | null; expiry_date: string | null }>) {
           // Dedup: un solo avviso per documento (qualsiasi data).
@@ -316,6 +351,32 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         msg: `${JOB}: giro incompleto (${falliti.join(', ')})`,
       })
       return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    }
+
+    // IL TERZO STATO. Nessuna scansione è CADUTA — ma una o più non hanno GUARDATO, perché la
+    // loro tabella non esiste in questo ambiente. Non è un guasto (il giro resta 200: non c'è
+    // nulla da riparare stanotte, e il DB E2E della CI non deve tingersi di rosso per uno schema
+    // drift voluto), ma non è nemmeno «ok»: `esito: 'ok'` è la stringa che chi sorveglia i cron
+    // cerca per sapere che la notte è andata bene, e una scansione che non è mai partita non
+    // rende bene nessuna notte. Fra «tutto a posto» e «giro incompleto» mancava la frase vera:
+    // «ho fatto quello che potevo, e questo qui non l'ho guardato».
+    if (saltate.length > 0) {
+      logEvento('cron', 'warn', {
+        operazione: JOB,
+        esito: 'ok-parziale',
+        // `azione` è in lista bianca in `redact`: i nomi delle scansioni saltate si leggono anche
+        // in `app_log`, non solo sulla riga di Vercel. Senza i nomi, «ok-parziale» direbbe che
+        // manca qualcosa senza dire cosa — e si finirebbe a indovinare quale delle tre.
+        azione: saltate.join('+'),
+        ms: Date.now() - t0,
+        moduli: esiti.moduli,
+        armadietto: esiti.armadietto,
+        documenti: esiti.documenti,
+        msg: `${JOB}: ok parziale — scansioni saltate (tabella assente): ${saltate.join(', ')}`,
+      })
+      // `warn` e non `info`: `vaPersistito` scrive comunque gli eventi `cron`, ma il livello è ciò
+      // che distingue in tabella una notte normale da una notte in cui una funzionalità non c'era.
+      return NextResponse.json({ success: true, data: esiti, saltate })
     }
 
     // I tre contatori sono NUMERI: passano in chiaro anche in tabella. Un giro che parte

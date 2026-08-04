@@ -147,8 +147,38 @@ const DB_IN_AFFANNO = {
     hint: null,
 }
 
-/** Ambiente non migrato (il DB E2E della CI): questo sì che va assorbito in silenzio. */
+/**
+ * Ambiente non migrato (il DB E2E della CI): questo NON è un guasto — ma non è nemmeno «ho
+ * guardato». Va assorbito senza 500 e DICHIARATO: vedi `ok-parziale`.
+ */
 const TABELLA_ASSENTE = { code: '42P01', message: 'relation "avvisi" does not exist' }
+
+/**
+ * La stessa cosa vista da PostgREST invece che da Postgres, e questa NON è ipotetica: è la riga
+ * misurata in `app_log` di PRODUZIONE il 2026-08-04 alle 06:00:02, un decimo di secondo prima di
+ * «notifiche-promemoria: ok». `locker_requests` non esiste in produzione (le tabelle vere si
+ * chiamano `armadietto` e `locker_config`) e nessuna migrazione la crea: quella scansione è
+ * MORTA da sempre, e il battito la copriva.
+ */
+const TABELLA_ASSENTE_PGRST = {
+    code: 'PGRST205',
+    message: "Could not find the table 'public.locker_requests' in the schema cache",
+}
+
+/**
+ * UNA MIGRAZIONE A METÀ, che è un guasto vero e non una tolleranza d'ambiente. `42703` dice che
+ * la TABELLA c'è ma la COLONNA no: qualcuno ha applicato metà migrazione, o il codice nuovo è
+ * uscito prima dello schema. Assorbirlo come «ambiente non migrato» significa lasciar morire in
+ * silenzio una scansione su un DB che c'è ed è raggiungibile — cioè in PRODUZIONE.
+ * Il messaggio contiene `does not exist`: è esattamente la stringa su cui la vecchia euristica
+ * inciampava.
+ */
+const COLONNA_ASSENTE = {
+    code: '42703',
+    message: 'column locker_requests.reminder_inviato_il does not exist',
+    details: null,
+    hint: null,
+}
 
 function req(url: string, secret?: string): Request {
     return new Request(url, { method: 'POST', headers: secret ? { 'x-cron-secret': secret } : {} })
@@ -331,15 +361,120 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         ])
     })
 
-    it('notifiche/promemoria: tabella assente (DB E2E non migrato) resta un «ok» — non è un guasto', async () => {
-        // Regressione da non introdurre: il DB della CI E2E è un progetto separato mai migrato
-        // (memoria `e2e_ci_db_migration_drift`). Lì le tabelle mancano davvero, e assorbire lo
-        // schema drift è VOLUTO — è un DB non migrato, non un job rotto. Il fix deve gridare su
-        // un DB in affanno e tacere su un DB non migrato: sono due cose diverse.
+    it('notifiche/promemoria: tabella assente → 200 (non è un guasto) MA «ok-parziale» con le scansioni SALTATE', async () => {
+        // QUESTO TEST PRIMA ASSERIVA `battitoOk() === true`, cioè PROTEGGEVA LA BUGIA.
+        //
+        // La tolleranza per lo schema drift è nata per il DB E2E della CI, che è un progetto
+        // separato mai migrato (memoria `e2e_ci_db_migration_drift`) — ed è giusto che non faccia
+        // 500. Ma veniva applicata INDISTINTAMENTE anche in produzione, dove «tabella assente» non
+        // significa «ambiente non migrato»: significa FUNZIONALITÀ MORTA. Misurato il 2026-08-04:
+        // `PGRST205 locker_requests` alle 06:00:02.511, «notifiche-promemoria: ok» alle
+        // 06:00:02.667. La scansione dell'armadietto non è mai partita, da sempre, e il battito
+        // diceva di aver guardato.
+        //
+        // Il terzo stato è la risposta: il giro resta 200 (non c'è niente da riparare stanotte),
+        // ma NON dice «ok» — dice «ok-parziale» e NOMINA ciò che non ha guardato.
         db.state.code = {
             avvisi: [{ error: TABELLA_ASSENTE }],
-            locker_requests: [{ error: TABELLA_ASSENTE }],
+            locker_requests: [{ error: TABELLA_ASSENTE_PGRST }],
             student_documents: [{ error: TABELLA_ASSENTE }],
+        }
+
+        const res = await promemoriaPOST(req('http://localhost/api/notifiche/promemoria', SEGRETO))
+
+        // Non è un guasto: nessun 500, nessuna riga `error`. La CI E2E continua a passare.
+        expect(res.status).toBe(200)
+        expect(errori()).toHaveLength(0)
+        // Ma NON è un «ok»: chi sorveglia i cron cerca `esito: 'ok'` per sapere che la notte è
+        // andata bene, e questa notte tre scansioni su tre non hanno guardato niente.
+        expect(battitoOk()).toBe(false)
+
+        const parziali = righe().filter((r) => r.evento === 'cron' && r.campi.esito === 'ok-parziale')
+        expect(parziali).toHaveLength(1)
+        // `azione` è nella lista bianca di `redact`: i nomi delle scansioni saltate si leggono
+        // anche in `app_log`, non solo sulla riga di Vercel. Senza i nomi, «ok-parziale» direbbe
+        // che qualcosa manca senza dire cosa — e si finirebbe a indovinare.
+        expect(parziali[0].campi.azione).toBe('moduli+armadietto+documenti')
+    })
+
+    it('notifiche/promemoria: UNA sola scansione saltata → le altre due contano davvero, e il nome è solo il suo', async () => {
+        // La tolleranza non deve diventare un interruttore globale: se due scansioni hanno
+        // guardato sul serio, i loro contatori sono veri e vanno riportati. `ok-parziale` deve
+        // nominare SOLO quella che manca, o il battito passerebbe da «mento» a «grido a vuoto».
+        db.state.code = {
+            avvisi: [{ data: [] }],
+            locker_requests: [{ error: TABELLA_ASSENTE_PGRST }],
+            student_documents: [{ data: [] }],
+        }
+
+        const res = await promemoriaPOST(req('http://localhost/api/notifiche/promemoria', SEGRETO))
+
+        expect(res.status).toBe(200)
+        expect(battitoOk()).toBe(false)
+        const parziali = righe().filter((r) => r.evento === 'cron' && r.campi.esito === 'ok-parziale')
+        expect(parziali).toHaveLength(1)
+        expect(parziali[0].campi.azione).toBe('armadietto')
+    })
+
+    it('notifiche/promemoria: colonna assente (42703 = migrazione a metà) è un GUASTO, non una tolleranza', async () => {
+        // La tolleranza vale per la TABELLA che manca in un ambiente non migrato — `42P01` e
+        // `PGRST205`, due codici precisi. `42703` dice l'opposto: la tabella C'È, la colonna no.
+        // È una migrazione applicata a metà su un DB vivo, cioè un guasto in piena regola — e la
+        // vecchia euristica lo inghiottiva, perché faceva `test(/does not exist/)` sul MESSAGGIO
+        // invece di guardare il CODICE.
+        db.state.code = {
+            avvisi: [{ data: [] }],
+            locker_requests: [{ error: COLONNA_ASSENTE }],
+            student_documents: [{ data: [] }],
+        }
+
+        const res = await promemoriaPOST(req('http://localhost/api/notifiche/promemoria', SEGRETO))
+
+        expect(res.status).toBe(500)
+        expect(battitoOk()).toBe(false)
+        expect(errori()).toEqual([
+            expect.objectContaining({ esito: 'scansione-fallita', azione: 'armadietto' }),
+            expect.objectContaining({ esito: 'giro-incompleto', azione: 'armadietto' }),
+        ])
+        // Il corpo dell'errore di PostgREST non si butta via (regola 3): senza `42703` nella riga
+        // non si saprebbe che manca una MIGRAZIONE, e si andrebbe a cercare un bug nel codice.
+        // (La scansione rilancia l'oggetto PostgREST TALE E QUALE — non lo incapsula — quindi
+        // `code`, `message`, `details` e `hint` arrivano interi al 4° argomento di `logEvento`.)
+        const scansione = righe('error').find((r) => r.campi.esito === 'scansione-fallita')
+        expect(scansione?.err).toBe(COLONNA_ASSENTE)
+        // E soprattutto: un guasto non si traveste da tolleranza.
+        expect(righe().some((r) => r.campi.esito === 'ok-parziale')).toBe(false)
+    })
+
+    it('notifiche/promemoria: una caduta + una saltata → vince il GUASTO (500), non la tolleranza', async () => {
+        // Le due condizioni convivono, e l'ordine di precedenza non è un dettaglio estetico: se
+        // `ok-parziale` prevalesse, un DB in affanno verrebbe declassato a «ambiente non migrato»
+        // e il 500 sparirebbe. Il giro incompleto vince sempre.
+        db.state.code = {
+            avvisi: [{ error: DB_IN_AFFANNO }],
+            locker_requests: [{ error: TABELLA_ASSENTE_PGRST }],
+            student_documents: [{ data: [] }],
+        }
+
+        const res = await promemoriaPOST(req('http://localhost/api/notifiche/promemoria', SEGRETO))
+
+        expect(res.status).toBe(500)
+        expect(battitoOk()).toBe(false)
+        expect(righe().some((r) => r.campi.esito === 'ok-parziale')).toBe(false)
+        expect(errori()).toEqual([
+            expect.objectContaining({ esito: 'scansione-fallita', azione: 'moduli' }),
+            expect.objectContaining({ esito: 'giro-incompleto', azione: 'moduli' }),
+        ])
+    })
+
+    it('notifiche/promemoria: tre scansioni SANE → «ok» pieno (il terzo stato non grida a vuoto)', async () => {
+        // Il contro-test del terzo stato: se `ok-parziale` scattasse anche quando tutto ha
+        // guardato, sarebbe un allarme costante — e un allarme costante si smette di leggere,
+        // che è il modo in cui il guasto vero torna invisibile.
+        db.state.code = {
+            avvisi: [{ data: [] }],
+            locker_requests: [{ data: [] }],
+            student_documents: [{ data: [] }],
         }
 
         const res = await promemoriaPOST(req('http://localhost/api/notifiche/promemoria', SEGRETO))
@@ -347,6 +482,7 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         expect(res.status).toBe(200)
         expect(battitoOk()).toBe(true)
         expect(errori()).toHaveLength(0)
+        expect(righe().some((r) => r.campi.esito === 'ok-parziale')).toBe(false)
     })
 
     it('il giro sano continua a chiudere con «ok» (il fix non grida a vuoto)', async () => {

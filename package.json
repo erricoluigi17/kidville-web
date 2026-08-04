@@ -13,6 +13,9 @@
     "e2e": "playwright test",
     "e2e:seed": "node scripts/seed-e2e.mjs"
   },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",
     "@aparajita/capacitor-biometric-auth": "^10.0.0",

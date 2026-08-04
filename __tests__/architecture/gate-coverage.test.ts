@@ -382,6 +382,23 @@ const PUBBLICHE: Record<string, string> = {
 
     // ── Ingestione dei log del client ────────────────────────────────────────
     'logs:POST': "riceve gli errori del client, che spesso accadono PRIMA del login (un crash sulla schermata di accesso è esattamente ciò che si vuole vedere). L'identità, quando c'è, si deposita nel contesto ma non è richiesta; il perimetro è il tetto per IP + i cap su batch e payload",
+
+    // ── Endpoint di salute ───────────────────────────────────────────────────
+    // Un monitor esterno non ha una sessione, e non può averne una: il momento in
+    // cui serve di più è proprio quello in cui l'autenticazione è ciò che si è
+    // rotto. Un health-check dietro un gate misura il gate, non la salute.
+    //
+    // Il perimetro è quello che RESTA quando la sessione non c'è: tetto per IP, e
+    // soprattutto una risposta che non porta niente da rubare. Il corpo contiene
+    // solo nomi di controllo, booleani, millisecondi e — dove serve — un codice
+    // d'errore PostgREST. Mai il `message` di un errore (porterebbe fuori nomi di
+    // tabelle e vincoli), mai un conteggio di righe reali, mai il valore di una
+    // variabile d'ambiente: la voce `config` dice CHE una variabile manca, non
+    // quanto vale. C'è un test che lo verifica per ciascuna di queste cose.
+    //
+    // Quello che un anonimo può dedurre è dunque: se il sistema sta bene, e se un
+    // job notturno non gira. È esattamente ciò che deve poter dedurre.
+    'health:GET': "endpoint di salute per un monitor esterno, che una sessione non ce l'ha e non può averla: il caso in cui serve di più è quello in cui l'autenticazione è il guasto. Perimetro: tetto per IP + una risposta che non porta dati (nomi di controllo, booleani, ms, al più un codice d'errore — mai messaggi, mai conteggi, mai valori di variabili)",
 }
 
 function scopertiDelRepo(): { chiave: string; dettaglio: string }[] {
@@ -457,12 +474,31 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // porta con sé — una motivazione plausibile («il 2° genitore non ha un
         // account») che copriva una porta che nessuno aveva deciso di lasciare
         // aperta. Il tetto scende: è il verso giusto.
+        //
+        // 15 dal 2026-08-04, ed è una SALITA: `health:GET`. Il commento qui sopra
+        // dice «se è salito, fermati», e mi sono fermato — quindi va scritto perché
+        // questa passa e la prossima va guardata con lo stesso sospetto.
+        //
+        // La differenza con `forms/send-otp` non è che la motivazione sia più bella:
+        // è che qui non c'è NIENTE DIETRO LA PORTA. `send-otp` era pubblica e
+        // arrivava a un'azione con valore legale su dati di una famiglia; `health`
+        // è pubblica e arriva a cinque booleani sul sistema. La domanda che
+        // distingue i due casi non è «perché non può avere un gate» — a quella si
+        // risponde sempre — ma «cosa ottiene un anonimo che passa». Qui: sapere se
+        // il sistema sta bene, e se un job notturno non gira. Che è esattamente ciò
+        // che deve poter sapere, ed è la ragione per cui l'endpoint esiste.
+        //
+        // Il test che tiene ferma questa affermazione non sta qui: sta in
+        // `__tests__/api/health.test.ts`, dove si verifica che il corpo non porti
+        // mai un messaggio d'errore, mai un conteggio di righe reali, mai il valore
+        // di una variabile d'ambiente. Se quel giorno la risposta cominciasse a
+        // portare dati, questa voce non sarebbe più difendibile.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(14)
+        ).toBe(15)
     })
 })
 

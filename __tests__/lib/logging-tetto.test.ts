@@ -250,11 +250,16 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         'BROWSER: hook React su `/api/me`, una nostra route. Stessa forma, stesso motivo: il tetto '
         + 'sta nella route, non nel chiamante.'],
     ['src/lib/auth/use-teacher-gradi.ts',
-        'BROWSER: hook React su `/api/primaria/me` e `/api/diary/config`, nostre route. Stessa '
-        + 'forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
+        'BROWSER: hook React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
+        + 'motivo: il tetto sta nella route, non nel chiamante. (`/api/diary/config` non si '
+        + 'chiede più da qui: è passata alla cache condivisa `src/lib/diary/config-cache.ts`.)'],
     ['src/lib/context/admin-identity.tsx',
         'BROWSER: contesto React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
         + 'motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/diary/config-cache.ts',
+        'BROWSER: `GET /api/diary/config`, una nostra route, con la cache di promesse che '
+        + 'impedisce alle tre parti della pagina del diario di chiederla tre volte (sei con '
+        + 'StrictMode). Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
     ['src/lib/native/camera.ts',
         'NON È RETE: `fetch(dataUrl)` su una `data:` URL è il modo standard di trasformare in `Blob` '
         + 'la foto che il plugin ha già in memoria. Non esce niente dal dispositivo, non c\'è nessun '
@@ -270,6 +275,10 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/push/native-register.ts',
         'BROWSER: registrazione e cancellazione del token su `/api/push/subscribe`, una nostra '
         + 'route. Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/sezioni/educator-sections-cache.ts',
+        'BROWSER: `GET /api/educator-sections`, una nostra route, con la cache di promesse che '
+        + 'la fa chiedere una volta sola per ingresso in pagina. Stessa forma, stesso motivo: il '
+        + 'tetto sta nella route, non nel chiamante.'],
 ]);
 
 /**

@@ -131,6 +131,8 @@
   "erroreModuloNonTrovato": "This form is not available: the link may have expired or may no longer be valid",
   "erroreVideoNonConvertibile": "This video cannot be converted: upload an .mp4 (H.264) or .webm file",
   "erroreSegnalazioneSenzaPlesso": "We couldn't record your report: please try again, and let the school office know if it keeps failing",
+  "erroreDomandaNonApribile": "This request cannot be opened: reload the page or check the selected location",
+  "erroreDomandaNonLetta": "The request could not be read: please try again in a moment",
   "classeShellIndietro": "Go back",
   "classeShellClasse": "Class {nome}",
   "classeShellClasseSenzaNome": "Class",

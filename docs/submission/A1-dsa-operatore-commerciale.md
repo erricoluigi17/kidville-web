@@ -252,11 +252,11 @@ postale**. È l'unico modo, in quel caso, di non pubblicare il tuo domicilio.
 | **Telefono** | ⬜ **DA DECIDERE — vedi DECISIONE 2** | Deve poter **ricevere un SMS/chiamata di verifica in due fattori** ed è il numero che chiunque potrà chiamare. |
 | **Email** | ⬜ **DA DECIDERE — vedi DECISIONE 3** | Deve poter **ricevere un codice di verifica**. |
 
-> **🟡 DECISIONE 2 — Il numero di telefono pubblico.**
-> Serve un numero **della scuola**, non il tuo cellulare personale. Il fisso della segreteria è
-> la scelta naturale, purché possa ricevere la verifica (Apple accetta anche una chiamata
-> vocale; se proprio non riceve, esiste la **verifica manuale** su richiesta). Dimmi quale
-> numero usiamo.
+> **✅ DECISIONE 2 — CHIUSA il 2026-08-04: `+39 331 815 3108`.**
+> Scelto dal titolare. Deve poter ricevere il codice di verifica (SMS o chiamata) e resta
+> **pubblico sulla scheda App Store italiana** per tutta la vita dell'account: si può
+> sostituire, non togliere. Se il codice non arriva, la strada prevista è
+> **«request manual verification»**, che non è un ripiego di serie B.
 
 > **✅ DECISIONE 3 — CHIUSA il 2026-07-26: `info@kidville.it`.**
 > Il recapito era `lerrico7@gmail.com`, una **casella Gmail personale**, indicata in `/privacy`
@@ -347,9 +347,37 @@ applicano — vedi l'avvertenza al Passo 1 sul perché è la strada sbagliata.
 - [ ] (se assente) D-U-N-S richiesto — data richiesta: ________ · attesa 5 gg lav. – 2 settimane
 - [ ] **Controllo 2** — verificato *Entity Type* e *Legal Entity Name* dell'account Apple
 - [ ] Verificato chi è il **legale rappresentante** della cooperativa (è chi può iscrivere l'ente)
-- [ ] **DECISIONE 1** — scelto A (Organization) oppure B (Individual, rischi accettati)
-- [ ] **DECISIONE 2** — scelto il numero di telefono pubblico
-- [ ] **DECISIONE 3** — scelto l'indirizzo email pubblico
+- [x] ~~**DECISIONE 1**~~ — **B, rischi accettati** (2026-08-04): si dichiara da **persona
+      fisica**, perché la conversione a Organization non è chiusa, ma con i **recapiti della
+      cooperativa**. ⚠️ Apple chiede un documento che provi *denominazione e indirizzo del
+      dichiarante*: la visura prova la sede della **coop**, non che *luigi errico persona
+      fisica* stia in Via Silvio Pellico. Se viene contestato, la strada è quella già scritta
+      al Passo 2: **casella postale + documento che la associa**. Annotare quale PDF si carica
+      e quando: fra due settimane non ce lo si ricorda.
+- [x] ~~**DECISIONE 2**~~ — **`+39 331 815 3108`** (2026-08-04)
+- [x] ~~**DECISIONE 3**~~ — **`info@kidville.it`** (2026-07-26)
+
+---
+
+## §6 — Stato misurato, 2026-08-04
+
+**Il DSA non è compilabile via API.** Verificato sullo spec OpenAPI ufficiale 4.3: `trader`
+compare solo come **enum in sola lettura** dentro `TerritoryAvailability.contentStatuses`.
+Nessun endpoint per dichiararlo — si passa da *Business → Agreements → Compliance*.
+
+Quell'enum però si legge, ed è l'unico semaforo osservabile da programma:
+
+```bash
+node scripts/asc-api.mjs GET "/v2/appAvailabilities/6794883055/territoryAvailabilities?limit=200"
+```
+
+Misurato oggi: **ITA → `TRADER_STATUS_NOT_PROVIDED`**, insieme agli altri 26 paesi UE.
+
+⚠️ **Sono due gate, non uno.** La *dichiarazione* sblocca l'invio in revisione; la *verifica
+del documento* da parte di Apple sblocca l'uscita sullo store, e non ha SLA pubblicato. Con la
+disponibilità ristretta alla sola Italia, una verifica non conclusa significa **app approvata e
+mai pubblicata, senza che nessuna schermata lo dica**. Il semaforo va riletto **dopo**
+l'approvazione, non solo prima dell'invio.
 - [ ] Email sostituita anche in `/privacy`, `/termini`, `/assistenza` *(lavoro mio, stessa PR di A3)*
 - [ ] Visura camerale recente pronta in PDF
 - [ ] (se casella postale) documento di associazione all'indirizzo pronto

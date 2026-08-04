@@ -174,11 +174,45 @@ Perciò `cap sync` va lanciato **sempre** con `CAP_SERVER_URL` esplicita, e
    `"loggingBehavior": "none"` e — su iOS — `"limitsNavigationsToAppBoundDomains":
    true`:
 
+   ⚠️ **Non con un `grep`.** Fino al 2026-08-04 qui c'era
+   `grep -n 'loggingBehavior\|"url"\|limitsNavigations'`, e **passa identico su
+   `"url": "http://localhost:3100"`**: mostra la riga, non la giudica. Era il
+   controllo più debole di questo documento, proprio nel punto che deve separare una
+   build viva da una schermata morta. Il config va letto **come JSON** e confrontato
+   con i valori attesi:
+
    ```bash
-   grep -n 'loggingBehavior\|"url"\|limitsNavigations' \
-     ios/App/App/capacitor.config.json \
-     android/app/src/main/assets/capacitor.config.json
+   python3 - <<'PY'
+   import json, sys
+   attese = {
+     'ios/App/App/capacitor.config.json': {
+       ('server','url'): 'https://app.kidville.it',
+       ('server','errorPath'): 'offline.html',
+       ('ios','limitsNavigationsToAppBoundDomains'): True,
+       ('loggingBehavior',): 'none',
+     },
+     'android/app/src/main/assets/capacitor.config.json': {
+       ('server','url'): 'https://app.kidville.it',
+       ('loggingBehavior',): 'none',
+     },
+   }
+   ko = 0
+   for percorso, regole in attese.items():
+       d = json.load(open(percorso))
+       print(percorso)
+       for chiavi, atteso in regole.items():
+           v = d
+           for k in chiavi:
+               v = (v or {}).get(k)
+           ok = v == atteso
+           ko += 0 if ok else 1
+           print(f"  {'✓' if ok else '✗'} {'.'.join(chiavi)} = {v!r}" + ('' if ok else f'  (atteso {atteso!r})'))
+   sys.exit(1 if ko else 0)
+   PY
    ```
+
+   Su iOS `server.cleartext` deve valere `false` (lo deriva `capacitor.config.ts`
+   dallo schema dell'URL: è `true` solo su `http://`).
 
 2. **iOS — controlla l'entitlement APNs nell'export dell'Archive.** Il sorgente
    `ios/App/App/App.entitlements` ha `aps-environment` = `development`; con la

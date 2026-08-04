@@ -118,11 +118,30 @@ async function stato() {
     );
   }
 
-  const disp = await chiamata('GET', `/v1/apps/${APP_ID_KIDVILLE}/appAvailabilityV2?include=territoryAvailabilities&limit[territoryAvailabilities]=200`);
-  if (disp.ok) {
-    const terr = (disp.json.included ?? []).filter((x) => x.type === 'territoryAvailabilities');
-    const disponibili = terr.filter((t) => t.attributes.available);
-    righe.push(`DISP ${disponibili.length} territori disponibili su ${terr.length}`);
+  // Il percorso è `/v2/appAvailabilities/{appId}/territoryAvailabilities`, e l'id della
+  // risorsa È l'id dell'app. Se risponde 404 la disponibilità non è mai stata impostata:
+  // non è un errore di lettura, è una configurazione mancante che blocca l'invio.
+  const disp = await chiamata('GET', `/v2/appAvailabilities/${APP_ID_KIDVILLE}/territoryAvailabilities?limit=200`);
+  if (disp.stato === 404) {
+    righe.push('DISP nessuna disponibilità impostata (404) — blocca l\'invio');
+  } else if (disp.ok) {
+    const terr = disp.json.data ?? [];
+    // Gli id sono base64 di {"s":"<appId>","t":"ITA"}: il codice paese non è l'id.
+    const paese = (t) => {
+      try {
+        return JSON.parse(Buffer.from(t.id, 'base64url').toString()).t;
+      } catch {
+        return t.id;
+      }
+    };
+    const disponibili = terr.filter((t) => t.attributes.available).map(paese);
+    righe.push(`DISP ${disponibili.length} territori su ${terr.length}: ${disponibili.join(', ') || 'nessuno'}`);
+    // ⚠️ È l'UNICO modo di leggere lo stato DSA da programma: non esiste endpoint per
+    // dichiararlo, ma qui si vede se sta bloccando, e per quali territori.
+    const bloccati = terr.filter((t) => (t.attributes.contentStatuses ?? []).some((s) => s.startsWith('TRADER_STATUS')));
+    if (bloccati.length) {
+      righe.push(`DSA  ${bloccati.length} territori con TRADER_STATUS_* — fra cui ${bloccati.map(paese).slice(0, 5).join(', ')}…`);
+    }
   } else {
     righe.push(`DISP non leggibile (${disp.stato})`);
   }

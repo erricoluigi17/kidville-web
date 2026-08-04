@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Opzioni di export dell'`.ipa` per l'App Store.
+
+  PERCHÉ STA NEL REPO. Fino al 2026-08-04 questo file non esisteva: veniva riscritto a
+  memoria a ogni rilascio, e la sua unica traccia era una trascrizione dentro
+  `docs/store-submission.md`. Un file di configurazione che vive solo in un documento
+  è un file che prima o poi diverge dal documento.
+
+  NON CONTIENE SEGRETI: il team id è un identificativo pubblico, presente in ogni
+  binario firmato. La chiave privata e l'Issuer ID stanno fuori dal repository, che è
+  pubblico.
+
+  IL FLAG CHE COSTA CARO SE MANCA: `manageAppVersionAndBuildNumber`. Se resta al suo
+  valore predefinito (true), Xcode **incrementa da solo il build number** durante
+  l'export — e il numero che poi si legge su App Store Connect non è quello messo in
+  `CURRENT_PROJECT_VERSION`. Si scopre agganciando alla versione la build sbagliata.
+
+  Uso (dalla radice del repo, con Xcode CHIUSO e dopo
+  `CAP_SERVER_URL="https://app.kidville.it" npx cap sync ios`):
+
+    xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+      -destination 'generic/platform=iOS' -archivePath <p>.xcarchive \
+      -allowProvisioningUpdates archive
+
+    xcodebuild -exportArchive -archivePath <p>.xcarchive \
+      -exportOptionsPlist ios/ExportOptions.plist -exportPath <out> \
+      -allowProvisioningUpdates
+
+  `-allowProvisioningUpdates` è obbligatorio in ENTRAMBI i comandi: il provisioning
+  profile *App Store* non esiste come file sulla macchina, Xcode lo crea al volo. E il
+  certificato `Apple Distribution` è **cloud managed**, quindi `security find-identity`
+  NON lo mostra: la prova che esiste è l'export che riesce, non quell'elenco.
+
+  Gli entitlement vanno letti sull'`.ipa`, MAI sull'`.xcarchive`: dentro l'archive
+  l'app resta firmata `Apple Development` con `aps-environment = development`, ed è
+  normale — è l'export a rifirmare in distribuzione.
+-->
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+
+  <key>teamID</key>
+  <string>B5ULCGG2V3</string>
+
+  <key>signingStyle</key>
+  <string>automatic</string>
+
+  <key>destination</key>
+  <string>export</string>
+
+  <key>uploadSymbols</key>
+  <true/>
+
+  <!-- Il numero di build lo decide `CURRENT_PROJECT_VERSION`, non Xcode. -->
+  <key>manageAppVersionAndBuildNumber</key>
+  <false/>
+</dict>
+</plist>

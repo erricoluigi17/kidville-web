@@ -136,6 +136,7 @@ const HOST_NON_CHIAMATI = new Map<string, string>([
     ['www.w3.org', 'namespace XSD del tracciato FatturaPA (`fatturapa-xml.ts`): è una stringa dentro un XML, non un indirizzo che si contatta.'],
     ['www.youtube-nocookie.com', 'sorgente di un `<iframe>` (`VideoEmbed.tsx`): lo carica il browser del genitore, il nostro server non ci parla.'],
     ['player.vimeo.com', 'idem, l\'altro player video di `VideoEmbed.tsx`.'],
+    ['app.kidville.it', 'il NOSTRO dominio, e nemmeno come indirizzo da contattare: in `layout.tsx` è il ripiego di `metadataBase`, cioè il prefisso con cui Next scrive gli URL assoluti di `og:image` dentro l\'HTML. Nessuna richiesta parte da qui.'],
 ]);
 
 /**

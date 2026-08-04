@@ -89,6 +89,143 @@
 
 ---
 
+## ✅ Changelog — Il menu che a volte non portava da nessuna parte, e la submission App Store 2026-08-04 (branch `feat/icona-brand`)
+
+**Il test rosso su `main` era il prodotto, non il test.** L'E2E `parent-news.spec.ts:51` — «apro il
+menu e vado alla sezione News» — falliva a intermittenza da giorni, e due ipotesi erano già state
+formulate, scritte nel codice e smontate dai fatti: il focus trap (ritirato) e l'overlay del loader
+globale (mitigato, senza effetto). La traccia Playwright della run **30920578641**, scaricata invece
+che immaginata, mostra la sequenza vera:
+
+| istante | cosa succede |
+|---|---|
+| 2543 ms | il click sulla voce «News» **arriva** al link (Playwright ritenta 4 volte: il foglio stava animando) |
+| ~2600 ms | parte la richiesta RSC verso `/parent/news` |
+| ~2880 ms | la richiesta torna **`200` in 283 ms** |
+| 2899 → 7463 ms | l'URL resta `/parent`. Quattordici letture, nessun cambiamento |
+
+La navigazione parte, i dati arrivano, **la transizione non si conclude mai**. La causa è
+`onClick={() => setShowMenu(false)}` sul `<Link>` del foglio: il click avvia la navigazione di Next
+— che è una *transizione React* — e nello stesso istante **smonta il link che quella transizione sta
+portando**. Se il payload RSC arriva prima dello smontaggio la navigazione passa; se arriva dopo, si
+perde in silenzio. È una corsa, ed è per questo che sembrava capriccio: la stessa riga passava a
+5,6 s e falliva a 6,9 s.
+
+**Non era un difetto di collaudo.** È la navigazione principale di ogni famiglia: su una rete lenta
+— un genitore col telefono davanti a scuola — toccare una voce del menu **non portava da nessuna
+parte**, e nessuno se n'era accorto perché in ufficio la rete è veloce.
+
+Corretto in `BottomNav.tsx` **e** in `TeacherBottomNav.tsx` (lo schema era copiato in tutte e due):
+il foglio si chiude **quando la rotta è cambiata**, non quando si clicca — con l'aggiustamento di
+stato in render, l'escape hatch documentato da React per lo stato derivato, così non c'è un giro di
+render in più né una finestra col foglio aperto sulla pagina nuova. Unica eccezione, la voce della
+rotta in cui si è già: lì nessuna navigazione avverrebbe e il foglio resterebbe aperto per sempre.
+Lock: `__tests__/ui/bottom-nav-menu-navigazione.test.tsx`, tre casi, rosso prima e verde dopo.
+
+**Tre commenti che sostenevano il falso sono stati rettificati sul posto**, non cancellati: quello
+in `BottomNav.tsx` che attribuiva il guasto al focus trap (era un aggravante, non la causa — e ora
+`useFoglioModale` si può riprovare), quello in `parent-news.spec.ts` che lo attribuiva all'overlay, e
+il `catch` muto di `attendiFineCaricamento`, che ora almeno **avvisa** invece di arrendersi in
+silenzio. In questo repo un documento che descrive una causa inesistente è già costato settimane.
+
+### Submission App Store — quattro bloccanti trovati misurando, non leggendo
+
+Sbloccata l'API di App Store Connect (`scripts/asc-api.mjs`, client JWT ES256 senza dipendenze;
+chiave e Issuer ID restano **fuori** dal repository). Quello che la lettura dello stato reale ha
+trovato, e che nessun documento sapeva:
+
+1. 🔴 **Il revisore non sarebbe potuto entrare.** Il campo password dell'account demo su App Store
+   Connect conteneva un valore di **9 caratteri** — la vecchia password comune degli account TEST,
+   ruotata il 26 luglio — mentre la password dedicata sul disco ne ha 24. Provate entrambe contro la
+   produzione: **respinte tutte e due**. L'account era stato ritoccato il 3 agosto e il valore
+   corrente non esisteva da nessuna parte. Riallineato (`scripts/allinea-password-revisore.mjs`) e
+   **verificato con un accesso vero**, non leggendo un campo. È il rigetto 5.1.1 più frequente in
+   assoluto, ed era già armato.
+2. 🔴 **Nessuna fascia di prezzo impostata**: una app nuova senza prezzo non si invia. Creata,
+   gratuita, base Italia.
+3. 🔴 **`contentRightsDeclaration` vuoto**: altro blocco all'invio. Dichiarato
+   `USES_THIRD_PARTY_CONTENT` — la sezione News incorpora YouTube, Vimeo e Instagram, e sono nei
+   `WKAppBoundDomains` dell'`Info.plist`: dichiarare il contrario sarebbe stato falso.
+4. **Disponibilità mai impostata** (la risorsa non esisteva proprio): ora **solo Italia**, 1
+   territorio su 175, con `availableInNewTerritories: false` — altrimenti ogni nuovo mercato che
+   Apple aggiunge entrerebbe da solo.
+
+**La chiave di servizio Supabase in `.env.local` è morta** (`sb_secret_…`, `401 Unregistered API
+key`): qualunque script locale che usi il service role non funziona. La produzione non è toccata —
+gira sulla `service_role` legacy su Vercel — ma va rigenerata.
+
+⚠️ **Resta un solo passaggio umano, e non è aggirabile**: la dichiarazione **DSA di operatore
+commerciale**. Verificato sullo spec OpenAPI ufficiale 4.3 di App Store Connect: `trader` compare
+**solo come enum in sola lettura**, non esiste alcun endpoint per dichiararlo. Si compila a schermo
+in *Business → Agreements → Compliance*. Misurato via API che oggi il territorio **ITA porta
+`TRADER_STATUS_NOT_PROVIDED`** (come tutti e 27 i paesi UE): finché non è dichiarato, l'invio in
+revisione è bloccato.
+
+---
+
+## ✅ Changelog — L'identità visiva: via il triangolo di Vercel, e i link condivisi smettono di essere anonimi 2026-08-04 (branch `feat/icona-brand`)
+
+Il mascotte Kidville diventa l'icona su **tutte** le piattaforme. Non era una sostituzione di
+file: le tre cose qui sotto erano rimaste come le aveva lasciate `create-next-app`.
+
+**Che cosa c'era davvero, misurato e non supposto**
+
+- `src/app/favicon.ico` era **ancora il triangolo nero di Vercel**, non toccato dal commit
+  `b34e3f0 "Initial commit from Create Next App"`. È l'icona che l'app ha mostrato nelle
+  schede del browser per tutta la sua vita;
+- i `metadata` avevano solo `title` e `description`: **nessun `openGraph`, nessuna immagine,
+  nessun `metadataBase`**. Un link a `app.kidville.it` condiviso su WhatsApp arrivava senza
+  anteprima, e i client ripiegavano proprio su quel triangolo;
+- **non esisteva un manifest**: chi installava la web app da browser riceveva un'icona di
+  ripiego scelta dal sistema.
+
+**Come sono fatte le icone, e perché non è un ritaglio solo**
+
+La sorgente è una: `assets/brand-lockup.png`, il file del grafico. Ma è un *lockup* — mascotte
+in una card più il lettering — e nessuna piattaforma lo mostra così: iOS ci applica una
+maschera «squircle» e rifiuta il canale alpha, Android mostra solo il 66% centrale (il
+lettering sparirebbe), a 16px di una figura intera non resta niente di leggibile. Ogni
+piattaforma vuole un ritaglio diverso della stessa immagine, e `scripts/genera-icone.mjs`
+(`npm run icone`, `npm run icone:native`) li produce tutti da quel file solo: master nativi,
+favicon `.ico` multi-risoluzione, `apple-icon`, icone del manifest e anteprima dei link.
+
+**Quattro difetti che solo la prova a video ha fatto emergere** — i primi tre sarebbero
+arrivati fino allo store, l'ultimo fino ai genitori:
+
+1. la figura intera nella maschera circolare di Android usciva **col mento tagliato**;
+   ridotta e ricentrata, restava fuori un pezzo di **mano mozzata** nell'angolo. Nel primo
+   piano dell'adaptive icon ora va la testa, che non ha appendici da troncare;
+2. `ic_launcher.xml` avvolge i livelli in un `<inset 16.7%>`: **la safe zone la applica già
+   lui**. Applicarla anche al contenuto la contava due volte e l'icona usciva minuscola. Il
+   riferimento non è una regola a memoria ma l'icona precedente, il cui primo piano riempiva
+   il 71% del PNG; la nuova ne riempie il 69%;
+3. `capacitor-assets` lascia in `public/` un `manifest.webmanifest` che punta a `.webp`
+   inesistenti — e **`public/` ha la precedenza sulle rotte di Next**, quindi quel file
+   sostituiva il manifest vero. Il comando ora lo rimuove, ed è documentato nello script;
+4. `/manifest.webmanifest` **passava dal middleware** e sarebbe stato rediretto al login: il
+   browser lo scarica fuori dalla sessione e avrebbe letto l'HTML del login al posto del
+   JSON. `webmanifest` è ora fra le estensioni escluse dal `matcher`, accanto a `favicon.ico`.
+
+**Verificato**, non dedotto: gate completo verde (eslint · `tsc --noEmit` · 7003 test su 725
+file · `npm run build`), e con l'applicazione servita davvero — `/manifest.webmanifest`
+restituisce il manifest giusto con `application/manifest+json`, i tag `og:image`,
+`twitter:card`, `icon`, `apple-touch-icon` sono presenti nell'HTML e i sette asset rispondono
+`200`. Pesi ridotti dove contava: `icon.png` da 464 a 68 KB, l'anteprima link da 580 a 64 KB
+(JPEG: sopra qualche centinaio di KB certi client rinunciano a mostrarla).
+
+**Non toccato di proposito**: le schermate di avvio native, che mostrano ancora il logo
+precedente su fondo verde. Sono fuori dal perimetro «icona», e passare da
+`capacitor-assets` senza `--splashBackgroundColor` le riscriveva col fondo bianco — cioè una
+regressione silenziosa; il colore è ora fissato nel comando.
+
+⚠️ **Da controllare dopo il deploy**: `og:image` è assoluto e si costruisce su
+`NEXT_PUBLIC_APP_URL` (ripiego `https://app.kidville.it`). La variabile esiste su Production
+ma il suo valore è cifrato e non è stato possibile leggerlo da qui: va verificato sull'HTML
+servito. WhatsApp e iMessage tengono in cache l'anteprima per dominio: per vederla subito si
+forza dal debugger di Facebook.
+
+---
+
 ## ✅ Changelog — Il resto del collaudo: l'app smette di dire «ok» quando non ha guardato 2026-08-04 (branch `fix/collaudo-residuo-g4-g8`)
 
 Chiusura dei gruppi lasciati fuori dalla PR #63: prestazioni (G4), osservabilità (G5),

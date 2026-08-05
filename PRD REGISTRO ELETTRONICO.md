@@ -89,6 +89,60 @@
 
 ---
 
+## 🐞 Changelog — Il log diceva «15 secondi» dove ne erano passati 191 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
+
+Osservabilità e tetto di frequenza. Nessuna modifica funzionale visibile all'utente, ma un
+difetto che **ha prodotto una decisione sbagliata**: il messaggio d'errore ha portato a valutare
+l'acquisto di piani a pagamento per un guasto che non esisteva.
+
+### Il difetto, in una riga
+
+`conTetto` restituisce l'`init` **intatto** quando il chiamante ha già un `signal` suo — quindi il
+tetto d'area (`TETTO_MS_DEFAULT = 15_000`) **non viene applicato**. Il ramo d'errore lo scriveva
+comunque nel messaggio. Il tetto condiviso di `security/rate-limit` passa esattamente di lì, con
+un signal proprio: ogni degradazione finiva in `app_log` come *«nessuna risposta da Supabase entro
+il tetto di 15000 ms»*, evento **mai accaduto**.
+
+| | Diceva il log | Misurato su `app_log` |
+|---|---|---|
+| Durata delle chiamate «senza risposta» | 15 000 ms | **media 191 ms**, min 66, max 921 |
+| Causa registrata | `rpc_errore` (il DB ha risposto un errore) | **scadenza** del tetto del chiamante |
+| `rpc_scaduta` su 113 degradazioni | — | **zero**: il ramo non scatta mai |
+| Inizio del fenomeno | «qualcosa è rallentato il 4/08» | il **deploy** che ha introdotto il tetto condiviso (`d244eea`, 14:45 UTC; primo log 14:47:50) |
+
+`rpc_scaduta` non scattava perché `segnaleConTetto` è registrato **prima** di `conTettoDiTempo`:
+il suo timer parte per primo, l'abort si propaga per microtask e risolve la promise con `{ error }`
+prima che la corsa dichiari la scadenza.
+
+### Cosa cambia
+
+- **`tetto.ts`** — nuova `tettoNostro(input, init)`: dice se la scadenza in arrivo è la nostra.
+  `erroreTimeout` accetta `tetto: number | null` più i millisecondi **misurati**; `fraseScadenza`
+  compone il testo. Con `null` il messaggio afferma solo ciò che è vero: *«entro il tetto del
+  chiamante (interrotta dopo 191 ms)»*.
+- **`supabase-fetch.ts`** — usa `tettoNostro` per log e rilancio; `NOME_SCADENZA` in un posto solo;
+  nuova `eScadenzaSupabase(error)`, che riconosce la scadenza dall'`{ error }` di PostgREST
+  guardando il **messaggio** (su quella strada `code` è vuoto — misurato).
+- **`external.ts`** — stessa correzione: valeva identica per email, FCM, Aruba/SDI.
+- **`rate-limit.ts`** — classifica la scadenza come `rpc_scaduta` e la registra a **`warn`**, non
+  più `error`: è il degrado **progettato**, e un `error` che scatta durante il funzionamento
+  normale insegna a ignorare gli errori. Le altre cause restano `error`.
+- **`ATTESA_MASSIMA_DB_MS`: 250 → 1000 ms.** Su una distribuzione con media 191 e code a 921, un
+  tetto di 250 **garantiva** la degradazione — cioè spegneva il contatore condiviso proprio sul
+  modulo pubblico d'iscrizione, riportando il tetto per IP a `N istanze × limite`. È un budget,
+  non una misura, e va riletto sui numeri quando cambia l'infrastruttura.
+
+### Lock
+
+`__tests__/lib/rate-limit-condiviso.test.ts` — una scadenza è `rpc_scaduta` a `warn`, un errore
+vero resta `rpc_errore` a `error`; il finto PostgREST riproduce la forma reale (`code: ''`, nome
+dentro al messaggio). `__tests__/lib/logging-tetto.test.ts` — quando il tetto è del chiamante il
+messaggio **non** contiene `15000` e contiene la durata misurata.
+
+Gate: `eslint` 0 · `tsc --noEmit` 0 · **7017 test verdi su 728 file** · `build` ok.
+
+---
+
 ## 🟠 Changelog — Il DSA non si compila: prima l'account deve diventare della cooperativa 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
 
 Nessuna modifica al prodotto: è una **decisione di conformità** e l'allineamento dei documenti

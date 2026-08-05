@@ -139,6 +139,24 @@ export function conTetto(
     }
 }
 
+/**
+ * IL TETTO CHE STA PER SCADERE È IL NOSTRO?
+ *
+ * Serve a chi COMPONE il messaggio d'errore, e non è una sottigliezza: `conTetto` restituisce
+ * l'`init` intatto quando il chiamante ha già un signal suo, quindi in quel caso la scadenza che
+ * arriva **non è quella di `ms`** — è quella del chiamante, che può essere di un altro ordine di
+ * grandezza. Scrivere `ms` nel messaggio manda a cercare un bersaglio lento che non c'è.
+ *
+ * È successo, ed è costato: il tetto condiviso di `security/rate-limit` aspetta 250 ms, ma ogni
+ * degradazione finiva in `app_log` come «nessuna risposta da Supabase entro il tetto di 15000 ms»
+ * — il tetto d'AREA di `supabase-fetch`, mai applicato su quella chiamata. Le chiamate erano
+ * durate in media 191 ms. Il 2026-08-05 quel messaggio ha portato a valutare l'acquisto di un
+ * piano a pagamento per un guasto che non esisteva.
+ */
+export function tettoNostro(input: unknown, init: RequestInit | undefined): boolean {
+    return !ilChiamanteGoverna(input, init);
+}
+
 function ilChiamanteGoverna(input: unknown, init: RequestInit | undefined): boolean {
     try {
         if (init?.signal) return true;
@@ -191,11 +209,26 @@ export function eTimeout(err: unknown): boolean {
 export function erroreTimeout(
     nome: string,
     soggetto: string,
-    tetto: number,
+    tetto: number | null,
     causa: unknown,
+    msTrascorsi?: number,
 ): Error {
-    const err = new Error(`nessuna risposta ${soggetto} entro il tetto di ${tetto} ms`, { cause: causa });
+    const err = new Error(fraseScadenza(soggetto, tetto, msTrascorsi), { cause: causa });
     err.name = nome;
     Object.assign(err, { code: 'timeout' });
     return err;
+}
+
+/**
+ * Il testo di una scadenza, con dentro il numero GIUSTO.
+ *
+ * `tetto === null` significa «non è scaduto un tetto nostro»: la chiamata l'ha interrotta il
+ * signal del chiamante (vedi `tettoNostro`). In quel caso l'unico numero che possiamo affermare
+ * è quello MISURATO — quanto è durata davvero — e affermare un tetto che non è stato applicato
+ * sarebbe peggio che non scrivere nulla, perché è un numero che sembra una diagnosi.
+ */
+export function fraseScadenza(soggetto: string, tetto: number | null, msTrascorsi?: number): string {
+    if (tetto !== null) return `nessuna risposta ${soggetto} entro il tetto di ${tetto} ms`;
+    const durata = typeof msTrascorsi === 'number' ? ` dopo ${msTrascorsi} ms` : '';
+    return `nessuna risposta ${soggetto} entro il tetto del chiamante (interrotta${durata})`;
 }

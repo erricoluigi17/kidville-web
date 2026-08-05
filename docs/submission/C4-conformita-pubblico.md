@@ -22,6 +22,14 @@ Si compila da **[A2 — App Privacy labels](A2-app-privacy-labels.md)** (18 cate
 > letteralmente «form of payment», quindi si dichiara **Payment Info** *e accanto* **Other
 > Financial Info** per lo scadenziario. La divergenza va sanata nel repo, altrimenti il prossimo
 > che li legge ricasca.
+>
+> 🔴 **E infatti è ricascato, il 2026-08-05.** Compilando il modulo a schermo, il passo 3
+> (*Tipi di dati*) è stato salvato **senza** «Dati di pagamento dell'utente» e **senza**
+> «Altri contenuti generati dagli utenti» (diario, note, moduli, firme). **Play Console non ha
+> segnalato nulla**: il modulo risultava «completo» lo stesso, e sarebbe andato in revisione così.
+> Entrambi aggiunti prima dell'invio. **Nessun controllo automatico protegge da una
+> sotto-dichiarazione: l'unico controllo è rileggere questa tabella riga per riga contro lo
+> schermo.**
 
 ### 🔴 La WebView non vi esenta da nulla: vi carica tutto
 
@@ -64,7 +72,7 @@ bambino, allergie, chat, foto, riferimento del bonifico — è **«raccolto dall
 | Info personali → **Indirizzo** | SÌ | Obbligatorio | residenza in anagrafica |
 | Info personali → **ID utente** | SÌ | Obbligatorio | |
 | Info personali → **Altre info** | SÌ | Obbligatorio | data/luogo di nascita, **codice fiscale**, documento, classe, presenze |
-| **Salute e fitness → Info sulla salute** | SÌ | ⚠️ verificare nel form | allergie, intolleranze, certificati medici, **flag BES/DSA**. 📌 Su Apple il BES/DSA sta in *Sensitive Info* (disabilità): **quella casella su Play non esiste**, si mappa qui |
+| **Salute e fitness → Info sulla salute** | SÌ | **Facoltativo** ✅ *misurato* | allergie, intolleranze, certificati medici, **flag BES/DSA**. 📌 Su Apple il BES/DSA sta in *Sensitive Info* (disabilità): **quella casella su Play non esiste**, si mappa qui. ✅ **Sciolto il 2026-08-05 guardando il codice invece di dedurlo**: `src/lib/forms/enrollment-template.ts:33` dà `allergies` con `required: false`, e ogni schema zod la valida `.optional()` → il genitore **può non fornirlo**, quindi *facoltativo* |
 | Foto e video → **Foto** | SÌ | Facoltativo | foto del giorno, galleria, profilo |
 | Foto e video → **Video** | SÌ | Facoltativo | galleria di classe |
 | **File e documenti** | SÌ | Obbligatorio | certificati, modulistica |

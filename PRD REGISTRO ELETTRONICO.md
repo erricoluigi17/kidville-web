@@ -91,10 +91,20 @@
 
 ## 🟠 Changelog — Google Play: l'ostacolo non era il codice, ed era invisibile dal repo 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
 
-Obiettivo di giornata: mandare l'app in revisione su Google Play. **Non è stato possibile, e il
-motivo non è nel prodotto.** Questa voce esiste perché la ragione va scritta una volta e trovata
-da chi riprenderà: il collo di bottiglia è amministrativo, in serie, e nessuna sua parte si
-misura leggendo il repository.
+Obiettivo di giornata: mandare l'app in revisione su Google Play. **Il motivo per cui non è
+immediato non è nel prodotto.** Questa voce esiste perché la ragione va scritta una volta e
+trovata da chi riprenderà: il collo di bottiglia è amministrativo, in serie, e nessuna sua parte
+si misura leggendo il repository.
+
+> ✅ **Aggiornamento di fine giornata — il quadro qui sotto è cambiato in meglio, e va letto per
+> primo.** Il **primo** cancello (verifica del dispositivo) è **caduto**: un telefono Android
+> fisico preso in prestito lo ha chiuso in meno di un minuto. Da lì in avanti è caduto tutto il
+> resto: app **`Kidville` / `it.kidville.app` creata**, scheda dello Store salvata, `.aab`
+> `1 (1.0)` accettato, **11 moduli di conformità su 11 completi**, **canale di test chiuso
+> «Alpha» configurato** (Italia · mailing list *Tester Kidville - collaudo chiuso* · feedback
+> `info@kidville.it`) con la release `1 (1.0)` sopra.
+> **Resta in piedi solo il secondo cancello: 12 tester × 14 giorni consecutivi.**
+> Il paragrafo «Cosa resta, in ordine» in fondo a questa voce è aggiornato di conseguenza.
 
 ### Cosa si è misurato in Play Console
 
@@ -167,18 +177,51 @@ autenticato, cioè fallendo in un modo che a occhio non si vede. È lo stesso in
 con `/manifest.webmanifest`, ed è la ragione della riga aggiunta in
 `src/lib/auth/middleware-rules.ts`.
 
+### Le due lacune del modulo «Sicurezza dei dati» che nessun controllo segnala
+
+Compilando il modulo a schermo, il passo 3 (*Tipi di dati*) è stato salvato **senza** due tipi che
+`docs/submission/C4` dichiara **obbligatori**:
+
+1. **Informazioni finanziarie → «Dati di pagamento dell'utente»** — `incassi.metodo` è
+   letteralmente *form of payment*. `C4` §1 avvertiva già che i documenti del repo si
+   contraddicono su questa riga e che **vale A2**. L'avvertimento c'era, ed è stato disatteso lo
+   stesso.
+2. **Attività nell'app → «Altri contenuti generati dagli utenti»** — diario, note, moduli, firme.
+
+**Play Console non ha segnalato niente**: il modulo risultava «completo» con entrambe le voci
+mancanti, e sarebbe andato in revisione così. Google dichiara che *«il processo di revisione non è
+progettato per verificare l'accuratezza e la completezza»* delle dichiarazioni di data safety: una
+dichiarazione minimizzata **passa la revisione e fa rimuovere l'app mesi dopo**. Entrambe aggiunte
+prima dell'invio. **L'unico controllo possibile è rileggere la tabella di `C4` riga per riga
+contro lo schermo.**
+
+Nella stessa passata è stata sciolta una domanda che `C4` lasciava aperta con un
+*«⚠️ verificare nel form»*: **le informazioni sanitarie sono facoltative**, e lo si è **misurato**
+invece di dedurlo — `src/lib/forms/enrollment-template.ts:33` dà `allergies` con
+`required: false`, e ogni schema zod la valida `.optional()`.
+
+Stesso metodo sulla **dichiarazione ID pubblicità**, che i controlli pre-revisione di Google hanno
+segnalato come bloccante: la risposta («no») non è stata data a intuito ma leggendo il **manifest
+fuso di release** (`app/build/intermediates/merged_manifest/release/…`), dove
+`com.google.android.gms.permission.AD_ID` **non compare** — nemmeno portato da Firebase Cloud
+Messaging, che era l'ipotesi da escludere.
+
 ### Cosa resta, in ordine
 
-1. **Un telefono Android fisico**, in prestito per meno di un minuto — è l'unico blocco duro, e
-   serve **comunque**, anche convertendo. Google: la verifica *«should take less than a minute»*,
-   il numero del telefono *«is not used or collected»*, e *«you will not have to use same
-   device»* in futuro.
-2. Verifica del sito e conversione a organizzazione (D-U-N-S `432360401`, ragione sociale
+1. ✅ ~~Un telefono Android fisico~~ — **fatto**, con un apparecchio in prestito.
+2. **12 tester × 14 giorni consecutivi sul canale chiuso.** È l'unico blocco rimasto e **non è
+   aggirabile con codice**: il canale «Alpha» è configurato e la release è sopra, mancano le
+   persone. Servono **12 account Google distinti** che accettino l'invito e **restino iscritti**
+   per 14 giorni pieni; disinstallare l'app non rompe il conteggio, **uscire dal test sì**.
+3. Verifica del sito e conversione a organizzazione (D-U-N-S `432360401`, ragione sociale
    **SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA**). Per Google, a differenza di Apple,
    chi firma **non** deve essere il legale rappresentante: *«any individual who is authorized to
-   submit documents on behalf of the organization»*.
-3. Scheda, Data safety, Health apps declaration, IARC, pubblico 18+ — tutto già deciso in
-   `docs/submission/C3` e `C4`, da compilare a schermo.
+   submit documents on behalf of the organization»*. ⚠️ Resta **non dimostrato** che la
+   conversione annulli il gate dei 12: è un'inferenza dal perimetro testuale, non una frase di
+   Google.
+4. Intestare l'account al titolare: nome contatto ed email risultano ancora di *Giuseppe Grande*.
+5. ⚠️ **`versionCode 1` è bruciato**: il prossimo upload va incrementato a mano in
+   `android/app/build.gradle`.
 
 ---
 

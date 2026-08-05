@@ -137,10 +137,14 @@ arriva da uno schermo invece che da un'interpretazione.
 
 ## §5 — Checklist
 
-- [ ] Telefono Android fisico, non rootato, **Android 10+**, reperito in prestito
-- [ ] App **Google Play Console** installata dal Play Store
-- [ ] Accesso eseguito con **`erricoluigi17@gmail.com`** (il proprietario, non un delegato)
-- [ ] Account sviluppatore **«Luigi Errico»** selezionato
-- [ ] **Verifica** completata → la voce sparisce dalla Home di Play Console
-- [ ] Account Google **rimosso** dal telefono prestato, app disinstallata
+> ✅ **Chiusa il 2026-08-05.** La verifica è passata al primo tentativo con un telefono in
+> prestito, e la voce è sparita dalla Home di Play Console. Da lì l'account si è sbloccato e
+> `Crea app` ha perso il lucchetto.
+
+- [x] Telefono Android fisico, non rootato, **Android 10+**, reperito in prestito
+- [x] App **Google Play Console** installata dal Play Store
+- [x] Accesso eseguito con **`erricoluigi17@gmail.com`** (il proprietario, non un delegato)
+- [x] Account sviluppatore **«Luigi Errico»** selezionato
+- [x] **Verifica** completata → la voce sparisce dalla Home di Play Console
+- [ ] Account Google **rimosso** dal telefono prestato, app disinstallata ← **da fare a mano**
 - [ ] Verificato a schermo se `Cambia tipo di account` è diventato cliccabile (§4)

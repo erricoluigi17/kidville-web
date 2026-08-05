@@ -219,7 +219,7 @@ Messaging, che era l'ipotesi da escludere.
    submit documents on behalf of the organization»*. ⚠️ Resta **non dimostrato** che la
    conversione annulli il gate dei 12: è un'inferenza dal perimetro testuale, non una frase di
    Google.
-4. Intestare l'account al titolare: nome contatto ed email risultano ancora di *Giuseppe Grande*.
+4. Intestare l'account al titolare: nome contatto ed email risultano ancora di un terzo.
 5. ⚠️ **`versionCode 1` è bruciato**: il prossimo upload va incrementato a mano in
    `android/app/build.gradle`.
 

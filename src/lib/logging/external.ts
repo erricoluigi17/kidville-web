@@ -1,7 +1,7 @@
 import { logEvento, type Livello, type Valore } from './logger';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
-import { conTetto, eTimeout, erroreTimeout, tettoSano } from './tetto';
+import { conTetto, eTimeout, erroreTimeout, tettoNostro, tettoSano } from './tetto';
 
 /**
  * Le chiamate ai provider ESTERNI (Resend, FCM, web-push, Aruba/SDI, SIDI).
@@ -256,7 +256,12 @@ export async function externalFetch(
         // resto si passa l'errore ORIGINALE al logger: ha lo stack vero, che dice CHI stava
         // chiamando il provider.
         const ms = Date.now() - t0;
-        const errore = eTimeout(err) ? erroreTimeout('ExternalTimeoutError', 'dal provider', tetto, err) : err;
+        // `nostro` per la stessa ragione di `supabase-fetch`: se il chiamante ha passato un suo
+        // signal, `conTetto` non ha applicato `tetto` e scriverlo nel messaggio sarebbe una
+        // diagnosi inventata. Vedi `tettoNostro`.
+        const errore = eTimeout(err)
+            ? erroreTimeout('ExternalTimeoutError', 'dal provider', tettoNostro(url, init) ? tetto : null, err, ms)
+            : err;
         const corpo = messaggioDi(errore);
         // LA VALVOLA `gravita` VALE ANCHE QUI, e per un po' non è stato vero: questo ramo
         // passava `'error'` CABLATO. I due chiamanti Instagram dichiarano `gravita: () => 'info'`

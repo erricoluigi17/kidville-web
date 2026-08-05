@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { logEvento } from '@/lib/logging/logger';
 import { segnaleConTetto } from '@/lib/logging/tetto';
+import { eScadenzaSupabase } from '@/lib/logging/supabase-fetch';
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
 
 /**
@@ -111,8 +112,29 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
  * sola di loro.
  */
 
-/** Il tetto di tempo sulla chiamata al DB. Oltre, si degrada: appendersi è peggio. */
-export const ATTESA_MASSIMA_DB_MS = 250;
+/**
+ * Il tetto di tempo sulla chiamata al DB. Oltre, si degrada: appendersi è peggio.
+ *
+ * ─── PERCHÉ 1000 E NON PIÙ I 250 DI PARTENZA ────────────────────────────────
+ *
+ * I 250 ms iniziali erano una stima, e la produzione l'ha smentita in ventiquattro ore: dal
+ * deploy del 2026-08-04 (14:45 UTC) al giorno dopo, **tutte** le rotte pubbliche degradavano —
+ * `iscrizione-sedi`, `iscrizione-model`, `iscrizione-upload`, `logs`, `health` — e la misura su
+ * `app_log` diceva che quelle chiamate duravano in media **191 ms**, con code fino a **921 ms**.
+ * Un tetto di 250 ms su una distribuzione così **garantisce** la degradazione, cioè spegne il
+ * contatore condiviso proprio dove serve: sul modulo pubblico d'iscrizione.
+ *
+ * E degradare non è gratis. Il conteggio locale rende il tetto per IP `N istanze × limite`, cioè
+ * indeterminato — il rilievo del collaudo che questo store condiviso esisteva per chiudere.
+ *
+ * 1000 ms è un BUDGET, non una misura: è il punto oltre il quale far aspettare una famiglia
+ * costa più di quanto valga la precisione del contatore. Vale la pena rileggerlo quando cambia
+ * l'infrastruttura — e va riletto sui numeri, non sulle impressioni:
+ *
+ *     select round(avg((contesto->'campi'->>'ms')::numeric)) , max((contesto->'campi'->>'ms')::numeric)
+ *     from app_log where evento = 'db' and creato_il > now() - interval '3 days';
+ */
+export const ATTESA_MASSIMA_DB_MS = 1_000;
 
 /** Una riga di degrado al minuto per istanza: si dice, senza accecare `app_log`. */
 const SILENZIO_LOG_MS = 60_000;
@@ -208,7 +230,15 @@ function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: u
   ultimoLogDegrado = adesso;
   logEvento(
     'db',
-    'error',
+    // UNA SCADENZA NON È UN GUASTO, ed è per questo che ha un livello suo.
+    //
+    // Il degrado su tetto è un comportamento PROGETTATO: il DB non ha risposto in tempo, si
+    // conta in locale, la richiesta prosegue. Registrarlo a `error` — com'era fino al
+    // 2026-08-05 — significa far scattare un errore durante il funzionamento normale, e un
+    // errore che scatta sempre insegna a tutti a ignorare gli errori: è il modo in cui si
+    // perdono quelli veri. Le altre cause restano `error`, perché lì qualcosa è davvero rotto:
+    // la funzione non esiste, la riga non ha la forma attesa, il client è esploso.
+    motivo === 'rpc_scaduta' ? 'warn' : 'error',
     {
       operazione: 'security/rate-limit:degrado',
       azione: motivo,
@@ -284,7 +314,17 @@ async function consumaCondiviso(
       error?: { code?: string; message?: string } | null;
     };
     if (error) {
-      degrada('rpc_errore', gruppoDi(chiave), error.code, error);
+      // ─── PERCHÉ QUI NON BASTA `rpc_errore` ────────────────────────────────
+      // Il ramo `esito.scaduto` qui sopra, in pratica, NON scatta mai: `segnaleConTetto` è
+      // registrato PRIMA di `conTettoDiTempo`, quindi il suo timer parte per primo, l'abort si
+      // propaga per microtask e fa risolvere la promise con `{ error }` prima che il
+      // `setTimeout` della corsa arrivi a dire «scaduto». Risultato misurato in produzione fra
+      // il 4 e il 5 agosto 2026: **113 degradazioni, tutte etichettate `rpc_errore`, zero
+      // `rpc_scaduta`** — cioè la classificazione diceva «il database ha risposto un errore»
+      // mentre la verità era «il database non ha risposto in tempo». Due guasti che si
+      // riparano in modi opposti, indistinguibili in `app_log`.
+      const scaduta = eScadenzaSupabase(error);
+      degrada(scaduta ? 'rpc_scaduta' : 'rpc_errore', gruppoDi(chiave), error.code, error);
       return null;
     }
 

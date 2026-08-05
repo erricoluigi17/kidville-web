@@ -396,6 +396,12 @@ const NON_SONO_TEMPI = new Map<string, string>([
     ['src/lib/auth/errore-accesso.ts:ESITO_TIMEOUT_DOPO_ACCESSO',
         'stessa cosa (`\'timeoutDopoAccesso\'`): l\'esito «le credenziali erano buone ma il '
         + 'seguito non è arrivato in tempo». Una stringa, non dei millisecondi.'],
+    ['src/lib/logging/supabase-fetch.ts:NOME_SCADENZA',
+        'è il NOME dell\'errore (`\'SupabaseTimeoutError\'`), non la sua durata: marchia le '
+        + 'scadenze perché `get_runtime_errors` raggruppa per error name, e `eScadenzaSupabase` '
+        + 'lo ricerca dall\'altro capo dentro l\'`{ error }` di PostgREST. Sta in una costante '
+        + 'sola proprio perché due letterali uguali in due file sono la premessa di un '
+        + 'riconoscimento che smette di funzionare in silenzio.'],
 ]);
 
 function scadenza(nome: string): boolean {
@@ -757,6 +763,40 @@ describe('eTimeout / erroreTimeout — una scadenza non è una rete giù', () =>
         expect(err.message).toContain('da Supabase');
         // Non si butta via niente: il motivo di piattaforma resta come causa.
         expect(err.cause).toBe(causa);
+    });
+
+    /**
+     * ─── IL NUMERO NEL MESSAGGIO DEVE ESSERE QUELLO CHE HA INTERROTTO DAVVERO ────
+     *
+     * Il difetto che questo blocco chiude è costato una giornata e per poco un abbonamento.
+     * `conTetto` restituisce l'`init` INTATTO quando il chiamante ha già un signal suo — quindi
+     * il tetto d'area non viene applicato — ma il ramo d'errore scriveva comunque quel numero.
+     * In produzione il tetto condiviso di `rate-limit` aspetta un tempo suo, e ogni degradazione
+     * finiva in `app_log` come «nessuna risposta da Supabase entro il tetto di 15000 ms»: un
+     * evento mai accaduto, visto che le chiamate duravano in media 191 ms.
+     *
+     * Un numero sbagliato dentro un messaggio è peggio di nessun numero: sembra una diagnosi.
+     */
+    it('quando il tetto è del CHIAMANTE, il messaggio non spaccia il nostro per suo', async () => {
+        const { erroreTimeout, fraseScadenza, tettoNostro } = await import('@/lib/logging/tetto');
+
+        // Chi passa un signal governa la vita della chiamata: `conTetto` non ci mette il proprio.
+        expect(tettoNostro('https://x.test', { signal: AbortSignal.timeout(250) })).toBe(false);
+        expect(tettoNostro('https://x.test', undefined)).toBe(true);
+
+        const err = erroreTimeout('SupabaseTimeoutError', 'da Supabase', null, null, 191);
+
+        expect(err.message).toContain('191');
+        expect(
+            err.message,
+            'il tetto d’area non è mai stato applicato: scriverlo è inventare una diagnosi',
+        ).not.toContain('15000');
+        // Il vocabolario per `app_log` non cambia: resta ritrovabile con `codice = 'timeout'`.
+        expect((err as { code?: string }).code).toBe('timeout');
+
+        // E il caso nostro continua a portare il tetto, che è ciò che distingue
+        // «è morto» da «il tetto è troppo stretto».
+        expect(fraseScadenza('da Supabase', 15_000)).toContain('15000');
     });
 });
 

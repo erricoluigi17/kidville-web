@@ -51,7 +51,9 @@ const pg = vi.hoisted(() => {
     const righe = new Map<string, number[]>()
     const conteggi = { rpc: 0, from: 0 }
     /** Guasti simulati: `null` = tutto bene. */
-    const guasto: { modo: null | 'errore' | 'eccezione' | 'appeso' | 'malformato' } = { modo: null }
+    const guasto: { modo: null | 'errore' | 'eccezione' | 'appeso' | 'malformato' | 'scaduto' } = {
+        modo: null,
+    }
     /** Orologio del "server": monotono, indipendente dal `now` passato al client. */
     let orologio = 1_000_000
 
@@ -96,6 +98,27 @@ const pg = vi.hoisted(() => {
             if (guasto.modo === 'errore') {
                 return builder(
                     Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'funzione assente' } }),
+                )
+            }
+            /**
+             * LA SCADENZA, COM'È DAVVERO QUANDO ARRIVA QUI — e non come si immaginerebbe.
+             *
+             * Il tetto di `consumaCondiviso` è un `AbortSignal.timeout`: quando scatta,
+             * `supabase-fetch` rietichetta l'errore e postgrest-js NON lancia, consegna un
+             * `{ error }` normale con `code` **vuoto** e il nome dentro al `message`.
+             * Misurato in produzione il 2026-08-05: `error_code` era `''` su tutte le righe,
+             * ed è il motivo per cui il riconoscimento guarda il messaggio e non il codice.
+             */
+            if (guasto.modo === 'scaduto') {
+                return builder(
+                    Promise.resolve({
+                        data: null,
+                        error: {
+                            code: '',
+                            message:
+                                'SupabaseTimeoutError: nessuna risposta da Supabase entro il tetto del chiamante (interrotta dopo 191 ms)',
+                        },
+                    }),
                 )
             }
             if (guasto.modo === 'malformato') {
@@ -301,6 +324,46 @@ describe('tetto di frequenza · il degrado quando il database non risponde', () 
         const [evento, livello] = log.logEvento.mock.calls[0] ?? []
         expect(evento, "l'evento deve stare nel vocabolario chiuso di `EVENTI_NOTI`").toBe('db')
         expect(livello, 'un tetto cieco non è una nota a piè di pagina').toBe('error')
+    })
+
+    /**
+     * ─── UNA SCADENZA NON È UN ERRORE DEL DATABASE, E IL LOG DEVE SAPERLO ────────
+     *
+     * Fino al 2026-08-05 non lo sapeva, e il conto è stato salato. In produzione, fra il 4 e il
+     * 5 agosto, **113 degradazioni: tutte `rpc_errore`, nessuna `rpc_scaduta`** — perché il ramo
+     * `esito.scaduto` di `consumaCondiviso` non scatta mai (l'abort del signal vince la corsa
+     * contro il `setTimeout` e fa risolvere la promise con `{ error }`). La riga di log diceva
+     * quindi «il database ha risposto un errore» mentre la verità era «il database non ha
+     * risposto in tempo»: due guasti che si riparano in modi opposti.
+     *
+     * Il livello conta quanto la classificazione: `error` su un comportamento progettato è il
+     * modo in cui si insegna a ignorare gli errori.
+     */
+    it('una SCADENZA si distingue da un errore del DB: motivo `rpc_scaduta`, livello `warn`', async () => {
+        const A = await istanza()
+        pg.guasto.modo = 'scaduto'
+        await A.rateLimit('iscrizione-upload:203.0.113.7', { limit: 5, windowMs: 60_000 })
+
+        const [evento, livello, campi] = log.logEvento.mock.calls[0] ?? []
+        expect(evento).toBe('db')
+        expect(
+            livello,
+            'una scadenza è il degrado PROGETTATO: a `error` scatta durante il funzionamento normale',
+        ).toBe('warn')
+        expect(
+            (campi as Record<string, unknown>)?.azione,
+            'etichettata come errore del DB, manda a cercare un guasto che non c’è',
+        ).toBe('rpc_scaduta')
+    })
+
+    it('un errore VERO del database resta `rpc_errore` a livello `error`', async () => {
+        const A = await istanza()
+        pg.guasto.modo = 'errore'
+        await A.rateLimit('iscrizione:203.0.113.8', { limit: 5, windowMs: 60_000 })
+
+        const [, livello, campi] = log.logEvento.mock.calls[0] ?? []
+        expect(livello, 'qui qualcosa è rotto davvero: la funzione non esiste').toBe('error')
+        expect((campi as Record<string, unknown>)?.azione).toBe('rpc_errore')
     })
 
     it('la riga del degrado non si ripete a ogni richiesta (un DB giù non deve accecare i log)', async () => {

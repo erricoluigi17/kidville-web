@@ -2,7 +2,7 @@ import { logEvento, type Livello, type Valore } from './logger';
 import { contesto, inLogger } from './context';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
-import { conTetto, eTimeout, erroreTimeout, tettoSano } from './tetto';
+import { conTetto, eTimeout, erroreTimeout, fraseScadenza, tettoNostro, tettoSano } from './tetto';
 
 /**
  * Il `fetch` strumentato dei client Supabase.
@@ -335,6 +335,9 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
 
         const b = descrivi(input, init);
         const tetto = tettoMsArea(b.area, opzioni?.timeoutMs);
+        // Se il chiamante governa il signal, `conTetto` NON applica `tetto`: la scadenza che
+        // eventualmente arriva è la SUA, e il messaggio non deve spacciarla per la nostra.
+        const nostro = tettoNostro(input, init);
         const t0 = Date.now();
 
         let res: Response;
@@ -350,7 +353,9 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
             const scaduto = eTimeout(err);
             registraErroreDiRete(
                 b,
-                scaduto ? erroreTimeout('SupabaseTimeoutError', 'da Supabase', tetto, err) : err,
+                scaduto
+                    ? erroreTimeout(NOME_SCADENZA, 'da Supabase', nostro ? tetto : null, err, ms)
+                    : err,
                 ms,
                 scaduto,
             );
@@ -358,7 +363,7 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
             // distingue l'AbortError dagli altri (`hint: 'Request was aborted'`) leggendone
             // `name`/`code`. Su una SCADENZA si rilancia invece la nostra etichetta — vedi
             // `abortDaScadenza`, che spiega perché è l'opposto di una perdita d'informazione.
-            throw scaduto ? abortDaScadenza(tetto, err) : err;
+            throw scaduto ? abortDaScadenza(nostro ? tetto : null, ms, err) : err;
         }
 
         const ms = Date.now() - t0;
@@ -507,11 +512,43 @@ function registraErroreDiRete(b: Descrizione, err: unknown, ms: number, scaduto:
  * `app_log.codice`, quella su cui si interroga («quante scadenze oggi»), e un `ABORT_ERR` lì
  * dentro rimetterebbe insieme due guasti che si riparano in modi opposti.
  */
-function abortDaScadenza(tetto: number, causa: unknown): Error {
-    const err = new Error(`nessuna risposta da Supabase entro il tetto di ${tetto} ms`, { cause: causa });
-    err.name = 'SupabaseTimeoutError';
+function abortDaScadenza(tetto: number | null, msTrascorsi: number, causa: unknown): Error {
+    const err = new Error(fraseScadenza('da Supabase', tetto, msTrascorsi), { cause: causa });
+    err.name = NOME_SCADENZA;
     Object.assign(err, { code: 'ABORT_ERR' });
     return err;
+}
+
+/**
+ * Il nome che marchia le nostre scadenze, in un posto solo.
+ *
+ * Non è cosmesi: `eScadenzaSupabase` lo cerca dall'altro capo — dentro l'`{ error }` che
+ * postgrest-js consegna al codice applicativo — e due letterali uguali in due file diversi sono
+ * la premessa di un riconoscimento che smette di funzionare senza che nessun test lo dica.
+ */
+const NOME_SCADENZA = 'SupabaseTimeoutError';
+
+/**
+ * QUELL'`{ error }` È UNA SCADENZA NOSTRA?
+ *
+ * PostgREST non lancia: consegna `{ error: { message: 'SupabaseTimeoutError: …', hint: 'Request
+ * was aborted…' }, status: 0 }` (AGENTS.md, regola 7). Chi degrada su quell'errore deve poter
+ * distinguere **«il bersaglio non ha risposto in tempo»** da **«il bersaglio ha risposto un
+ * errore»**: si riparano in modi opposti — la prima alzando il tetto o guardando la latenza, la
+ * seconda leggendo il codice PostgREST — e senza questa distinzione finiscono nella stessa riga
+ * di log con lo stesso livello.
+ *
+ * ⚠️ Il `code` NON serve a riconoscerla: su questa strada postgrest-js consegna `code: ''`
+ * (misurato in produzione il 2026-08-05, colonna `error_code` vuota su tutte le righe). Resta
+ * il nome, che è nostro e che `NOME_SCADENZA` tiene in un posto solo.
+ */
+export function eScadenzaSupabase(errore: unknown): boolean {
+    try {
+        const messaggio = (errore as { message?: unknown } | null | undefined)?.message;
+        return typeof messaggio === 'string' && messaggio.startsWith(NOME_SCADENZA);
+    } catch {
+        return false;
+    }
 }
 
 async function registraFallimento(b: Descrizione, res: Response, ms: number): Promise<void> {

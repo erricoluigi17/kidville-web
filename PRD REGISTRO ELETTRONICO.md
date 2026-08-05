@@ -89,6 +89,99 @@
 
 ---
 
+## 🟠 Changelog — Google Play: l'ostacolo non era il codice, ed era invisibile dal repo 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
+
+Obiettivo di giornata: mandare l'app in revisione su Google Play. **Non è stato possibile, e il
+motivo non è nel prodotto.** Questa voce esiste perché la ragione va scritta una volta e trovata
+da chi riprenderà: il collo di bottiglia è amministrativo, in serie, e nessuna sua parte si
+misura leggendo il repository.
+
+### Cosa si è misurato in Play Console
+
+| Fatto | Valore |
+|---|---|
+| Account sviluppatore | **esiste** — `Luigi Errico`, ID `8247874898921386637` |
+| Tipo | **Personale** |
+| Data di creazione | **12 luglio 2026** (dal Log delle attività) |
+| App pubblicate | nessuna — `Crea app` è **col lucchetto** |
+| Verifiche in sospeso | verifica dispositivo Android · verifica identità e documenti · verifica telefono |
+| `it.kidville.app` su Play | **libero** |
+| Sito web dell'account | assente: la casella **«Non possiedo un sito web» era spuntata** |
+
+I documenti `docs/submission/C1` davano lo stato di partenza come *«su Google Play non esiste
+nulla»*: **era superato**. L'account era stato aperto il 12 luglio e nessun documento lo diceva.
+
+### I due cancelli, e perché il secondo decide il calendario
+
+1. **Verifica del dispositivo Android.** Google: *«You can use any **non-rooted physical**
+   Android mobile device that runs at least the Android 10 operating system.»*
+   **L'emulatore è stato provato davvero**, non escluso per sentito dire: AVD `KV-play-phone`,
+   immagine `google_apis_playstore` API 36.1, account aggiunto, app **Google Play Console
+   installata** (e qui una previsione è caduta: la ricerca dava l'app per «non compatibile» a
+   420 dpi — invece il pulsante *Install* c'era). Al login l'app risponde:
+   > *«You can't verify using this device. To verify, use a device running Android 10 (SDK 29) or newer.»*
+   su un emulatore **Android 16**. Il messaggio mente sulla causa — è un controllo di
+   attestazione hardware che fallisce, non una questione di versione — ma l'esito è definitivo.
+   **Un emulatore non prende `MEETS_DEVICE_INTEGRITY`**: per gli emulatori Google ha
+   un'etichetta separata, `MEETS_VIRTUAL_INTEGRITY`. Non è configurazione sbagliata, è progetto.
+
+2. **Il gate dei 12 tester.** Google, testuale: *«developers with **personal accounts created
+   after November 13, 2023**, [must] meet specific testing requirements»* → **test chiuso con 12
+   tester attivi per 14 giorni consecutivi** prima di poter *chiedere* l'accesso alla
+   produzione; fino ad allora *«Production … will be disabled»*. Un account personale del
+   12/07/2026 **è dentro il perimetro**. Requisito verificato ancora in vigore ad agosto 2026:
+   l'unica modifica mai annunciata è del **11 dicembre 2024** (da 20 tester a 12).
+   Restano permessi: creare l'app, caricare l'`.aab`, compilare la scheda, internal testing e
+   closed testing.
+
+### La decisione presa
+
+Il titolare ha dichiarato di **non disporre di 12 persone** per il test chiuso. Questo rende la
+**conversione dell'account a ORGANIZZAZIONE** non più un'opzione ma l'unica strada — che è poi
+la scelta che `docs/submission/C1` §1 aveva già preso, per ragioni indipendenti (il Titolare del
+trattamento su `/privacy` è la cooperativa; un account a nome di persona fisica su un'app che
+tratta dati sanitari di minori è una contraddizione visibile al revisore).
+
+⚠️ **Da non spacciare per certezza**: il gate dei 12 tester è documentato da Google **solo** per
+gli account personali, ma **non esiste alcuna frase di Google che dica che la conversione lo
+annulla**. È un'inferenza, ed è marcata come tale.
+
+### Il lavoro tecnico fatto oggi
+
+- **`.aab` ricostruito e firmato** (`jarsigner`: `jar verified`). Quello del 27 luglio era
+  **scaduto**: icona, splash e `capacitor.config` sono cambiati con le PR #65 · #67 · #68.
+  `capacitor.config.json` sincronizzato verificato col `cat` obbligatorio → `"url":
+  "https://app.kidville.it"`, `cleartext: false`.
+- **Grafica di scheda ricontrollata**: icona 512×512 **con** alpha, immagine in evidenza
+  1024×500 **senza** alpha, 5 screenshot 1080×1920 **senza** alpha. Sopra il minimo per
+  pubblicare. Gli screenshot contengono solo dati TEST (`ALUNNO5 TEST INF`).
+- **Prova di titolarità del dominio** per Google Search Console: `public/google8a174b25967018e2.html`
+  + una voce in `PUBLIC_PREFIXES`. È il prerequisito che sblocca `Cambia tipo di account`.
+
+### Il dettaglio che sarebbe costato un pomeriggio
+
+Il matcher di `src/middleware.ts` esclude dagli intercetti `svg|png|jpg|…|txt|webmanifest|woff2`
+ma **non `.html`**. Un file di verifica lasciato nella sola `public/` avrebbe risposto **307
+verso `/auth/login`** al crawler di Google — restando perfettamente visibile da browser
+autenticato, cioè fallendo in un modo che a occhio non si vede. È lo stesso inciampo già pagato
+con `/manifest.webmanifest`, ed è la ragione della riga aggiunta in
+`src/lib/auth/middleware-rules.ts`.
+
+### Cosa resta, in ordine
+
+1. **Un telefono Android fisico**, in prestito per meno di un minuto — è l'unico blocco duro, e
+   serve **comunque**, anche convertendo. Google: la verifica *«should take less than a minute»*,
+   il numero del telefono *«is not used or collected»*, e *«you will not have to use same
+   device»* in futuro.
+2. Verifica del sito e conversione a organizzazione (D-U-N-S `432360401`, ragione sociale
+   **SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA**). Per Google, a differenza di Apple,
+   chi firma **non** deve essere il legale rappresentante: *«any individual who is authorized to
+   submit documents on behalf of the organization»*.
+3. Scheda, Data safety, Health apps declaration, IARC, pubblico 18+ — tutto già deciso in
+   `docs/submission/C3` e `C4`, da compilare a schermo.
+
+---
+
 ## 🐞 Changelog — Il log diceva «15 secondi» dove ne erano passati 191 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
 
 Osservabilità e tetto di frequenza. Nessuna modifica funzionale visibile all'utente, ma un

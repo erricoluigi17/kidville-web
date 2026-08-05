@@ -36,6 +36,22 @@ const PUBLIC_PREFIXES = [
   // il pre-cache in `install` scaricherebbe il 307 verso /auth/login invece
   // della pagina, e offline l'app mostrerebbe un redirect al posto del ripiego.
   '/offline',
+  // Prova di titolarità del dominio per Google Search Console, prerequisito della
+  // conversione dell'account Play Console da personale a organizzazione
+  // (`Account sviluppatore → Dettagli account → Cambia tipo di account` resta
+  // disattivato finché un sito web non è verificato).
+  //
+  // Perché serve una riga qui e non basta metterlo in `public/`: il matcher di
+  // `src/middleware.ts` esclude dagli intercetti le estensioni statiche
+  // (svg|png|…|txt|webmanifest|woff2) ma **non `.html`**. Senza questa voce il
+  // crawler di verifica riceverebbe il 307 verso /auth/login e la verifica
+  // fallirebbe — con un file che a occhio è lì e si scarica benissimo da browser
+  // autenticato. È lo stesso inciampo già pagato con `/manifest.webmanifest`.
+  //
+  // Il token NON è un segreto: è nato per essere letto da chiunque, ed è la sua
+  // pubblicità a fare da prova. Non va rimosso dopo la verifica — Google lo
+  // ricontrolla e revoca la proprietà se sparisce.
+  '/google8a174b25967018e2.html',
 ];
 
 export function isPublicPath(pathname: string): boolean {

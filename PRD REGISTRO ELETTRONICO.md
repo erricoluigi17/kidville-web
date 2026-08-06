@@ -89,6 +89,82 @@
 
 ---
 
+## 💳 Changelog — I piani Pro, il progetto che si chiamava come uno di prova, e i 700 alunni che in produzione sono 32 2026-08-06 (branch `chore/piani-pro-supabase-vercel`)
+
+Giornata **senza una riga di codice**: solo infrastruttura, fatta a schermo con `claude --chrome`.
+Ne sono usciti un passaggio a pagamento su entrambe le piattaforme, una cancellazione evitata per
+un soffio, e una misura che ribalta la pianificazione della capacità.
+
+### 1. Supabase e Vercel su Pro — e la P.IVA che nessun checkout accetta
+
+Entrambe le organizzazioni erano **fuori quota sul piano gratuito**: Supabase in *grace period* per
+`Storage Size Exceeded` con restrizione annunciata dal **4 settembre**, Vercel con *Fluid Active
+CPU* a 6h53m su 4h incluse. Ora: **Supabase Pro** ($25) e **Vercel Pro** ($20), fatturati alla
+cooperativa (Via Silvio Pellico 7, 81030 Cesa).
+
+**La partita IVA `03394870616` non entra in nessuno dei due checkout**: ha il check digit corretto
+ed è regolare in Italia, ma **non è iscritta al VIES** (`isValid: false`, `userError: INVALID` dalla
+REST API della Commissione UE), e Stripe valida contro il VIES ogni numero che inizia per `IT`. Con
+la spunta *«I'm purchasing as a business»* attiva il tax ID diventa **obbligatorio** → si paga solo
+**togliendo la spunta**. L'importo non cambia: nessuna IVA aggiunta, verificato a schermo prima di
+confermare. VIES ≠ fatturazione italiana: le fatture della cooperativa non c'entrano nulla, ed è
+per questo che l'assenza dall'elenco non era mai emersa.
+
+### 2. Il progetto di produzione si chiamava `erricoluigi17's Project`
+
+Il preventivo Supabase mostrava **$35 invece di $25** perché **sul piano Pro ogni progetto oltre il
+primo costa $10/mese anche se è fermo**. Il candidato apparente alla cancellazione era
+`erricoluigi17's Project` — **che era la produzione**, col nome di default mai cambiato dal 2 maggio.
+La verifica prima di toccare qualsiasi cosa: `343` righe in `enrollment_submissions` contro `0` nel
+progetto CI. Rinominato in **`kidville-web-prod`** (`ref` invariato: `uimulkjyekgemjakmepp`).
+`kidville-web-ci` è **vuoto ma indispensabile**: è il DB degli E2E. Non c'era niente da cancellare.
+
+### 3. Il dimensionamento per ~1000 connessi, e la misura che lo rimanda
+
+| | Prima | Dopo |
+|---|---|---|
+| Compute prod | **Nano** 0,5 GB, memoria al **66%** a vuoto | **Small** 2 GB, `shared_buffers` 128 MB → **512 MB** |
+| Spend cap | ON → tetto **rigido a 500** connessioni Realtime | **OFF** → fino a **10.000**, a consumo |
+| Leaked password protection | OFF (richiedeva il Pro) | **ON**, advisor a 0 ERROR |
+
+Il resize ha richiesto **~2m20s di downtime reale** (`status: RESIZING` via API). I limiti Realtime
+dipendono **dal piano e dallo spend cap, non dalla taglia di compute**: Pro con cap 500 conn /
+500 msg-s / 500 join-s, senza cap 10.000 / 2.500 / 2.500. L'overage è `$10 per 1000` connessioni
+oltre le 500, fatturato **una volta al mese sul picco massimo del ciclo** (voce *Max in period*):
+sforare trenta volte costa quanto sforarne una. Lo spend cap è **binario** — nessun tetto
+intermedio acquistabile — e con il cap spento **Supabase non manda alcun avviso di budget**.
+
+**La misura che conta**: in produzione ci sono **58 account** (38 genitori, 12 `educator`, 8 fra
+segreteria/admin/coordinatore/cuoca) e **32 alunni** in anagrafica. I 700 alunni sono la scuola
+vera, non ciò che l'app conosce: il muro delle 500 connessioni **non era raggiungibile**, e lo
+diventerà solo il giorno del caricamento dell'organico.
+
+### 4. Il collo di bottiglia per il pieno regime è nel codice, non nel piano
+
+`src/middleware.ts:301` ha un matcher che copre **tutto tranne gli asset statici** — ogni pagina e
+tutte le 283 route API — e alla riga 262 fa `supabase.auth.getUser()`, cioè **una chiamata di rete a
+GoTrue per ogni singola richiesta**. A 1000 utenti attivi sono centinaia di chiamate al secondo
+all'Auth prima di qualunque query utile. Cura: **verifica locale del JWT** con le chiavi asimmetriche
+(sezione *JWT Keys* già presente sul progetto), tenendo `getUser()` solo dove serve la verifica
+contro il server. Da pianificare con TDD: tocca la porta d'ingresso dell'autenticazione.
+
+Nello stesso capitolo: **`revalidate` non compare in nessuna pagina** (nulla è cachato) e alcune
+route servono i file con `storage.download()` + `Buffer` invece di `createSignedUrl()`, facendo
+passare i byte dentro la funzione Vercel e pagandoli due volte. Verificato che **non** è un problema
+il logging: `vaPersistito()` scrive su `app_log` solo `error`, `warn` e una allowlist di eventi.
+
+### 5. Advisor di sicurezza dopo le modifiche
+
+`auth_leaked_password_protection` **non compare più**. Advisor a **0 ERROR**. Residui accettati
+invariati (RLS-senza-policy a livello INFO, `pg_net` in `public`, `current_parent_student_ids`
+SECURITY DEFINER). **Nuovi WARN aperti**: `worm_fatture_emesse` e `worm_ricevute_emesse` hanno il
+`search_path` mutabile.
+
+**Spesa mensile**: da $0 a **~$60** — Supabase $39,72 previsti a fine ciclo (Pro $25 + Small $14,83
++ CI $10 − $10 di crediti compute) e Vercel $20 con $20 di credito d'uso incluso.
+
+---
+
 ## 🟠 Changelog — Il DSA è stato inviato dall'account individuale, e il gate dei 12 tester era già passato 2026-08-06 (branch `chore/dsa-inviato-e-versioncode`)
 
 Giornata di sola verifica **a schermo** delle due console — l'unica cosa che nessuna API sa dire —

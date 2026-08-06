@@ -66,6 +66,14 @@ const eslintConfig = defineConfig([
     // di questo branch fallisce per il codice di un branch diverso — e chi legge il
     // rosso non ha modo di capire che non è suo. (Stessa esclusione in vitest.config.ts.)
     ".claude/**",
+    // Report e tooling del collaudo manuale: li scrivono i venti tester in chat separate,
+    // e `.gitignore` (righe 83-88) li tiene fuori dal repo perché possono contenere estratti
+    // del database di PRODUZIONE. Escluso da git ma non da ESLint, il risultato era il peggiore
+    // dei due mondi: `--max-warnings 0` falliva su file che `git status` non mostra, quindi il
+    // rosso non era né riproducibile da un altro clone né rintracciabile da chi lo vedeva.
+    // Misurato il 2026-08-06 su `docs/collaudo/risultati/genera-tabella-pdf.mjs`.
+    "docs/collaudo/risultati/**",
+    "docs/collaudo/risultati-*/**",
   ]),
 
   /**

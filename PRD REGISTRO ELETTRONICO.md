@@ -197,6 +197,12 @@ ricordate.
 - `android/app/build.gradle` — **`versionCode` 1 → 2**. L'1 è **bruciato** dalla release Alpha del
   05/08: Play non riaccetta un numero già caricato nemmeno se l'upload viene eliminato, e il
   prossimo `.aab` sarebbe stato respinto proprio nel momento di fretta.
+- `eslint.config.mjs` — **il gate era rosso per tutti, e nessuno poteva vederlo.**
+  `docs/collaudo/risultati/**` è escluso da `.gitignore` (contiene estratti del DB di produzione)
+  ma **non** lo era da ESLint: `--max-warnings 0` falliva su
+  `docs/collaudo/risultati/genera-tabella-pdf.mjs`, un file che **`git status` non mostra** e che
+  in un clone pulito non esiste nemmeno. Rosso non riproducibile e non rintracciabile — la stessa
+  ragione per cui `.claude/**` era già escluso. Ora le due esclusioni sono allineate.
 - Nessuna modifica a `src/`: nessuna route, nessun log, nessuna migrazione.
 
 ---

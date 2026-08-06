@@ -89,6 +89,124 @@
 
 ---
 
+## 🟠 Changelog — Il DSA è stato inviato dall'account individuale, e il gate dei 12 tester era già passato 2026-08-06 (branch `chore/dsa-inviato-e-versioncode`)
+
+Giornata di sola verifica **a schermo** delle due console — l'unica cosa che nessuna API sa dire —
+con `claude --chrome` da terminale. Ne sono usciti tre blocchi caduti, una decisione del giorno
+prima ribaltata dal titolare, e una trappola documentale che valeva due settimane.
+
+### 1. Google Play: il gate dei 12 tester era **già** soddisfatto, e il contatore non esiste
+
+Si cercava *«Attualmente partecipano N tester»* nella scheda Tester del canale Alpha. **Quella voce
+non esiste.** Il posto giusto è **Dashboard dell'app → «Richiedere l'accesso alla produzione»**, e
+i requisiti si leggono da barrati o no:
+
+| | |
+|---|---|
+| ✅ ~~Pubblica una release di test chiuso~~ | fatta il 05/08 alle 18:27 |
+| ✅ ~~**Disponi di almeno 12 tester per cui è stato attivato il test chiuso**~~ | **soddisfatto** |
+| ○ Esegui il test chiuso con almeno 12 tester per **almeno 14 giorni** | in corso |
+
+Cade quindi il timore scritto il 05/08 che il contatore potesse dire **0** perché conta chi ha
+*accettato* e non chi è in elenco: Google conferma ≥12 attivati. La mailing list ha **29 utenti**
+(erano ~18), installazioni **0** — e l'opt-in conta, l'installazione no. Non c'è una data d'inizio
+esposta: partendo dalla release del 05/08, la fine cade **intorno al 19-20 agosto**.
+
+⚠️ **Da qui a quella data la lista tester non si tocca**: il requisito è *continuativo*, e un
+tester che esce e rientra riparte da zero.
+
+### 2. «Cambia tipo di account» era grigio per un motivo che si è risolto in un minuto
+
+Il pulsante era disabilitato, e il tooltip diceva perché: *«Per modificare il tipo di account,
+fornisci e verifica un sito web per la tua organizzazione»*. Inserito **`https://app.kidville.it/`**
+al posto della spunta *«Non possiedo un sito web»* → *«Invia richiesta di verifica»* → **«Sito web
+verificato»** in pochi secondi, e il pulsante è diventato **cliccabile**.
+
+🔑 È stato istantaneo perché **`public/google8a174b25967018e2.html` era già nel repo e in
+produzione**: Search Console ha verificato la proprietà **da sola** («Proprietà verificata
+automaticamente — metodo: File HTML»). Un file dimenticato in `public/` ha chiuso un blocco che i
+documenti davano per lungo.
+
+Il flusso di conversione è stato **aperto e non completato**: chiede D-U-N-S (`432360401`) più
+telefono ed email, entrambi da verificare con codice. **Non si converte adesso**: il gate Play è a
+2/3 e mancano ~13 giorni; la conversione tocca l'entità a cui è agganciato il test chiuso e Google
+non documenta cosa succede al conteggio. Un account *Organization* non avrebbe affatto il requisito
+dei 12 tester — ma se la verifica dell'organizzazione durasse più dell'attesa residua, si
+pagherebbe il rischio senza incassare il beneficio.
+
+### 3. Apple: la causa era il DSA, e stavolta è **dimostrata**
+
+L'app è approvata dal 06/08 e non è sullo store. Tre riscontri concordanti a schermo, l'ultimo
+chiude il caso: **Prezzi e disponibilità → Disponibilità dell'app → «Disponibilità (Paesi o
+regioni: **0**)»**, con **Italia → ❌ *«Stato di operatore commerciale non fornito»*** e gli altri
+174 paesi «Non disponibile» perché mai selezionati. Zero paesi disponibili spiega
+`itunes.apple.com/lookup` → `resultCount:0` e la pagina prodotto → `404`.
+
+### 4. 🔻 Ribaltata la decisione del 2026-08-05: il DSA **è stato compilato** da account individuale
+
+La voce del 05/08 (più sotto) stabiliva che il modulo DSA *«non verrà compilato dall'account
+individuale»* e che si sarebbe atteso la conversione a *Organization*. **Il titolare ha deciso il
+06/08 di procedere lo stesso**, dopo che sono emersi due fatti che quella decisione non conosceva:
+
+- **Apple accetta le caselle postali** — lo scrive il secondo passo del modulo, *«Le caselle
+  postali sono accettate»*: l'obiezione «si pubblica il domicilio di una persona fisica» era
+  aggirabile, non insuperabile;
+- **la conversione non pubblica niente da sola.** Anche a conversione avvenuta il modulo DSA va
+  compilato **a mano**; e i tempi dichiarati da Apple (un giorno lavorativo) diventano **fino a tre
+  settimane** quando il D-U-N-S è recente, con telefonata di verifica di mezzo.
+
+**L'analisi del 05/08 non era sbagliata: il costo che descriveva è stato scelto consapevolmente.**
+Restano in piedi, e vanno riletti quando l'account sarà convertito: nome, indirizzo, cellulare ed
+email **di una persona fisica** sulla scheda pubblica in tutti i 27 paesi UE, e il rischio
+**5.1.1(ix)** (chi pubblica ≠ chi eroga il servizio su dati di minori).
+
+Dichiarato: *«Sono un operatore commerciale»* — che include anche *«il prodotto o il servizio è
+conforme alla normativa dell'Unione europea»*, due affermazioni in un clic solo. Email
+`info@kidville.it` e telefono `+39 331 815 3108` verificati con codice; caricata la carta
+d'identità (fronte+retro) sia al passo «nome» sia al passo «indirizzo». Esito: **Azienda →
+Conformità → *Normativa sui servizi digitali · 27 paesi o regioni · 6 ago 2026 ·* `Verifica in
+corso`**, e il banner rosso è sparito.
+
+⚠️ Subito dopo l'invio la **Disponibilità resta a «Paesi o regioni: 0»**: lo sblocco **non è
+immediato**, arriva a verifica dei documenti conclusa. *Non dare per pubblicata l'app finché
+`itunes.apple.com/lookup` non risponde `resultCount:1`.*
+
+### 5. La trappola documentale: tre fonti, tre indirizzi diversi
+
+Il modulo era stato compilato con **«Via Silvio Pellico 9»** — l'indirizzo che **App Store Connect
+stesso** mostra nel profilo pagamenti. Poi il retro della carta d'identità ha detto un'altra cosa:
+
+| Fonte | Indirizzo |
+|---|---|
+| Visura CCIAA — sede della cooperativa | Via Silvio Pellico **7** |
+| Visura CCIAA — domicilio dell'amministratore *(citato nella voce del 05/08)* | Via Silvio Pellico **9** |
+| ASC, profilo pagamenti | Via Silvio Pellico **9** |
+| **Carta d'identità, residenza** | **Vico** Silvio Pellico **7** |
+
+Apple confronta l'indirizzo dichiarato con il documento caricato: «Via … 9» sarebbe stato
+**respinto**. Il modulo **non ha un pulsante Indietro** — per correggere si annulla e si rifà da
+capo, e Apple **rimanda entrambi i codici**, email e SMS: le verifiche già superate non vengono
+ricordate.
+
+> **La regola che ne esce, e che vale oltre Apple: l'indirizzo si legge dal documento che si sta
+> per caricare, non da quello che la piattaforma ha in archivio.** Averlo scoperto prima di
+> caricare è costato dieci minuti; scoprirlo dopo sarebbe costato un rigetto.
+
+### File toccati
+
+- `android/app/build.gradle` — **`versionCode` 1 → 2**. L'1 è **bruciato** dalla release Alpha del
+  05/08: Play non riaccetta un numero già caricato nemmeno se l'upload viene eliminato, e il
+  prossimo `.aab` sarebbe stato respinto proprio nel momento di fretta.
+- `eslint.config.mjs` — **il gate era rosso per tutti, e nessuno poteva vederlo.**
+  `docs/collaudo/risultati/**` è escluso da `.gitignore` (contiene estratti del DB di produzione)
+  ma **non** lo era da ESLint: `--max-warnings 0` falliva su
+  `docs/collaudo/risultati/genera-tabella-pdf.mjs`, un file che **`git status` non mostra** e che
+  in un clone pulito non esiste nemmeno. Rosso non riproducibile e non rintracciabile — la stessa
+  ragione per cui `.claude/**` era già escluso. Ora le due esclusioni sono allineate.
+- Nessuna modifica a `src/`: nessuna route, nessun log, nessuna migrazione.
+
+---
+
 ## 🟠 Changelog — Google Play: l'ostacolo non era il codice, ed era invisibile dal repo 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
 
 Obiettivo di giornata: mandare l'app in revisione su Google Play. **Il motivo per cui non è
@@ -280,6 +398,17 @@ Gate: `eslint` 0 · `tsc --noEmit` 0 · **7017 test verdi su 728 file** · `buil
 ---
 
 ## 🟠 Changelog — Il DSA non si compila: prima l'account deve diventare della cooperativa 2026-08-05 (branch `chore/prompt-chiusura-collaudo`)
+
+> 🔻 **DECISIONE RIBALTATA IL GIORNO DOPO — leggere prima la voce del 2026-08-06.** Il 06/08 il
+> titolare ha scelto di **compilare il DSA dall'account individuale**, ed è stato inviato
+> (`Verifica in corso`). Due fatti che questa voce non conosceva: **Apple accetta le caselle
+> postali** (lo dichiara il modulo stesso), e **la conversione a Organization non compila il DSA da
+> sola** — va fatto comunque a mano, dopo un'attesa che arriva a tre settimane. L'analisi di costo
+> qui sotto resta valida: è stata **accettata**, non smentita. Restano aperti i dati personali
+> pubblici sulla scheda App Store e il rischio **5.1.1(ix)**.
+>
+> ⚠️ Anche il domicilio citato qui sotto va corretto: la **carta d'identità** dice **«Vico** Silvio
+> Pellico **7»**, non «Via … 9». Tre documenti, tre indirizzi diversi — dettaglio nella voce del 06/08.
 
 Nessuna modifica al prodotto: è una **decisione di conformità** e l'allineamento dei documenti
 che la reggevano male. Il modulo DSA — l'ultima cosa che separa l'app dalla pubblicazione in

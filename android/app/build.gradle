@@ -28,7 +28,8 @@ android {
         // build number iOS — spazi di numerazione di store diversi). Si incrementa di 1 a
         // ogni .aab caricato su Play, anche solo su Internal testing: Play non riaccetta
         // mai un versionCode già usato, nemmeno se l'upload precedente è stato eliminato.
-        versionCode 1
+        // 1 = bruciato il 2026-08-05 (release Alpha del canale di test chiuso, tuttora attiva).
+        versionCode 2
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

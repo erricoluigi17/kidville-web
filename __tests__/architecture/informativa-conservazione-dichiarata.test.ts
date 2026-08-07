@@ -236,3 +236,194 @@ describe('lock · il motivo dell’assenza scade e si dimentica', () => {
     }
   })
 })
+
+// =============================================================================
+// LO SPAZIO IN CUI IL DIFETTO È NATO: LA PAROLA «AUTOMATICAMENTE».
+// (rilievo bloccante di DUE tester indipendenti — backend e privacy, 2026-08-07)
+//
+// ─── IL FATTO ───────────────────────────────────────────────────────────────
+//
+// Le prove qui sopra erano TUTTE VERDI mentre l'informativa pubblicata prometteva
+// alle famiglie che il motivo dell'assenza «è cancellato automaticamente» dopo
+// dodici mesi, e in produzione quel meccanismo NON ESISTEVA: la migrazione che
+// crea la funzione e il lavoro notturno è stata scritta e non applicata.
+//
+// Misurato in produzione il 2026-08-07, in sola lettura:
+//   SELECT jobname FROM cron.job ORDER BY jobname;
+//     → app-log-bonifica-pii, app-log-purge, audit-docente-retention,
+//       consensi-retention, fatture-sdi-sync, iscrizioni-retention,
+//       iscrizioni-retention-esito, iscrizioni-sanitari, mensa-check-allergie,
+//       news-digest, news-retention, news-tick, notifiche-dispatch,
+//       notifiche-promemoria, pagamenti-solleciti-run, tetto-frequenza-pulizia
+//     → 'presenze-giustificazioni-retention' NON C'È.
+//   SELECT proname FROM pg_proc … WHERE proname LIKE '%retention%';
+//     → audit_docente_retention_tick, iscrizioni_retention_http,
+//       iscrizioni_retention_sorveglia, iscrizioni_retention_tick
+//     → 'presenze_giustificazioni_retention_tick' NON C'È (PGRST202 alla chiamata).
+//
+// ─── PERCHÉ LE PROVE QUI SOPRA NON BASTAVANO ────────────────────────────────
+//
+// Perché confrontano DUE FILE fra loro: il numero scritto nel SQL e il numero
+// scritto nell'informativa. Un file SQL che nessuno ha applicato è, per loro,
+// indistinguibile da un lavoro che gira ogni notte. Il gate era verde sul vuoto.
+//
+// È la lezione che questo repo ha già pagato, scritta nel suo stesso `CLAUDE.md`:
+// «un documento che descrive una protezione che non c'è più è peggio di nessun
+// documento». Qui è la stessa cosa al contrario — una protezione che non c'è
+// ANCORA — e il documento è quello che leggono le famiglie di 32 bambini, su un
+// dato relativo alla salute di un minore (art. 9 GDPR).
+//
+// ─── COSA SORVEGLIA QUESTO BLOCCO ───────────────────────────────────────────
+//
+// La regola è una sola: **l'informativa può promettere un automatismo soltanto se
+// l'automa esiste.** Da qui:
+//  1. ogni voce che dice «cancellati automaticamente» dev'essere dichiarata nella
+//     mappa qui sotto, con il nome del lavoro che la esegue — nessuno può
+//     aggiungere la parola senza dire chi la mantiene;
+//  2. quel lavoro dev'essere schedulato in una migrazione con QUEL nome;
+//  3. la migrazione che lo installa non dev'essere di quelle marcate «NON
+//     APPLICATA»: un lavoro che vive solo nel file SQL non cancella niente.
+//
+// L'impegno dei mesi resta comunque dichiarato e sorvegliato (le prove qui
+// sopra): togliere la parola «automaticamente» non accorcia né allunga il
+// termine, toglie l'affermazione che a rispettarlo sia una macchina.
+//
+// ─── COME SI TORNA A POTER SCRIVERE «AUTOMATICAMENTE» ───────────────────────
+//
+// Applicata la migrazione (`mcp__supabase__apply_migration` + `get_advisors`),
+// si attesta il fatto nella testata del file SQL con una riga
+// «APPLICATA il AAAA-MM-GG» — che è ciò che questo lock legge — e si rimette la
+// parola nella voce dell'informativa. Una riga in più nel SQL, una parola in più
+// nel testo: il paragrafo non va riscritto.
+// La prova che conta resta però la terza, e non la sa nessun test:
+//   SELECT creato_il FROM public.app_log
+//    WHERE fingerprint = 'cron:presenze-giustificazioni-retention'
+//    ORDER BY creato_il DESC LIMIT 3;   -- la notte dopo
+// =============================================================================
+
+/** La sezione «Conservazione dei dati» DELIMITATA: dal titolo al suo `</section>`. */
+const SEZIONE_CONSERVAZIONE = (() => {
+  const dal = informativa.indexOf('Conservazione dei dati')
+  const al = informativa.indexOf('</section>', dal)
+  return informativa.slice(dal, al === -1 ? undefined : al)
+})()
+
+/** Le voci dell'elenco, a spazi normalizzati: in JSX il testo va a capo dove capita. */
+const VOCI_CONSERVAZIONE = SEZIONE_CONSERVAZIONE.split('<li>')
+  .slice(1)
+  .map((voce) => voce.split('</li>')[0].replace(/\s+/g, ' ').trim())
+
+/** «cancellati automaticamente», «cancellato automaticamente», «automaticamente eliminati»… */
+const PROMESSA_DI_AUTOMATISMO =
+  /(?:cancellat|eliminat|anonimizzat|rimoss)\w*\s+automaticamente|automaticamente\s+(?:cancellat|eliminat|anonimizzat|rimoss)\w*/i
+
+/**
+ * Chi esegue davvero ciascuna promessa di automatismo dell'informativa.
+ * Una voce nuova con la parola «automaticamente» e senza riga qui = prova rossa:
+ * è il punto in cui va detto, per iscritto, chi mantiene la promessa.
+ */
+const AUTOMI_DICHIARATI: { voce: RegExp; etichetta: string; job: string }[] = [
+  {
+    voce: /pre-iscrizione non accolte/i,
+    etichetta: 'domande di pre-iscrizione non accolte',
+    job: 'iscrizioni-retention',
+  },
+  {
+    voce: /log tecnici/i,
+    etichetta: 'log tecnici di accesso e di utilizzo',
+    job: 'app-log-purge',
+  },
+  {
+    voce: /motivo dell.{0,8}assenza/i,
+    etichetta: 'motivo dell’assenza e note dell’appello',
+    job: JOB_SCADENZA,
+  },
+]
+
+/** Le migrazioni che installano `job` con quel nome (`cron.schedule('job', …)`). */
+function migrazioniCheInstallano(job: string) {
+  const re = new RegExp(`cron\\.schedule\\s*\\(\\s*'${job}'`, 'i')
+  return SQL_MIGRAZIONI.filter(({ sql }) => re.test(sql))
+}
+
+/**
+ * La migrazione è marcata «NON APPLICATA» dall'agente che l'ha scritta e nessuno
+ * ha ancora attestato il contrario con una riga «APPLICATA il AAAA-MM-GG».
+ */
+function soloSuCarta(sql: string): boolean {
+  return /NON\s+APPLICATA/i.test(sql) && !/(?<!NON\s{1,4})APPLICATA\s+(?:in\s+produzione\s+)?il\s+\d{4}-\d{2}-\d{2}/i.test(sql)
+}
+
+/** Le voci che promettono un automatismo, con l'automa che ciascuna dichiara. */
+const PROMESSE = VOCI_CONSERVAZIONE.filter((v) => PROMESSA_DI_AUTOMATISMO.test(v)).map((voce) => ({
+  voce,
+  automa: AUTOMI_DICHIARATI.find((a) => a.voce.test(voce)),
+}))
+
+describe('lock · l’informativa non promette automatismi che non esistono', () => {
+  it('la sezione «Conservazione dei dati» si legge, e ha le sue voci (sanity)', () => {
+    // Se il titolo o la forma dell'elenco cambiano, tutte le prove qui sotto
+    // girerebbero sul vuoto e direbbero «verde» senza aver guardato niente.
+    expect(
+      VOCI_CONSERVAZIONE.length,
+      'nessun `<li>` fra «Conservazione dei dati» e il suo `</section>` in src/app/privacy/page.tsx: ' +
+        'la sezione è stata spostata o riscritta, e questo lock non sta più leggendo l’informativa.',
+    ).toBeGreaterThanOrEqual(5)
+  })
+
+  it('la mappa degli automi non invecchia: ogni voce dichiarata esiste nell’informativa (sanity)', () => {
+    for (const { voce, etichetta } of AUTOMI_DICHIARATI) {
+      expect(
+        VOCI_CONSERVAZIONE.some((v) => voce.test(v)),
+        `Questo lock dichiara chi esegue la voce «${etichetta}», ma nell’informativa quella voce ` +
+          `non si trova più. Se è stata riscritta, aggiorna la mappa: una mappa che punta a un ` +
+          `testo che non c'è più non sorveglia niente.`,
+      ).toBe(true)
+    }
+  })
+
+  it('ogni promessa di automatismo dice CHI la esegue', () => {
+    for (const { voce, automa } of PROMESSE) {
+      expect(
+        automa,
+        `Questa voce dell’informativa promette una cancellazione automatica e nessuno in questo ` +
+          `lock dichiara chi la esegue:\n  «${voce}»\n` +
+          `Aggiungi la riga in \`AUTOMI_DICHIARATI\` con il nome del lavoro che la mantiene — ` +
+          `oppure togli la parola «automaticamente»: il termine si può promettere, la macchina no, ` +
+          `finché non c'è.`,
+      ).toBeTruthy()
+    }
+  })
+
+  it('e l’automa esiste nel repo, schedulato con quel nome', () => {
+    for (const { automa } of PROMESSE) {
+      if (!automa) continue
+      expect(
+        migrazioniCheInstallano(automa.job).length,
+        `L’informativa promette che «${automa.etichetta}» è cancellato automaticamente, e in ` +
+          `supabase/migrations/ non c'è nessun \`cron.schedule('${automa.job}', …)\`. ` +
+          `La promessa non è mantenuta da niente.`,
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  it('e non vive solo sulla carta: la migrazione che lo installa è APPLICATA', () => {
+    for (const { automa } of PROMESSE) {
+      if (!automa) continue
+      const installazioni = migrazioniCheInstallano(automa.job)
+      const suCarta = installazioni.filter(({ sql }) => soloSuCarta(sql))
+      expect(
+        suCarta.length,
+        `L’informativa promette alle famiglie che «${automa.etichetta}» è cancellato ` +
+          `AUTOMATICAMENTE, e il lavoro \`${automa.job}\` che dovrebbe farlo esiste soltanto nel ` +
+          `file ${suCarta.map((m) => m.file).join(', ')}, marcato «NON APPLICATA».\n` +
+          `Un file SQL non cancella niente: finché la migrazione non è applicata al database, ` +
+          `quella frase è una dichiarazione GDPR non veritiera (art. 13 §2 lett. a) su un dato ` +
+          `relativo alla salute di un minore.\n` +
+          `Le due strade, e nessuna terza: (a) applicare la migrazione e attestarlo nella sua ` +
+          `testata con «APPLICATA il AAAA-MM-GG»; (b) togliere la parola «automaticamente» dalla ` +
+          `voce — il termine in mesi resta dichiarato e resta sorvegliato dalle prove qui sopra.`,
+      ).toBe(0)
+    }
+  })
+})

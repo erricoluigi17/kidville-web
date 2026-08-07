@@ -15,7 +15,7 @@
 
   "bambiniSelezionati": "{count, plural, one {# bambino selezionato} other {# bambini selezionati}}",
   "deselezionaTutti": "Deseleziona tutti",
-  "azioneApplicata": "L'azione verrà applicata a tutti i bambini selezionati",
+  "azioneApplicata": "L’azione verrà applicata a tutti i bambini selezionati",
 
   "activity_pittura": "Pittura",
   "activity_musica": "Musica",
@@ -32,7 +32,7 @@
   "participation_autonomia": "In autonomia",
   "tipo": "Tipo",
   "descrizioneFacoltativa": "Descrizione (facoltativa)",
-  "descriviAttivita": "Descrivi l'attività di {tipo}…",
+  "descriviAttivita": "Descrivi l’attività di {tipo}…",
   "partecipazione": "Partecipazione",
   "bambiniCompilati": "{total, plural, one {{done}/{total} bambino compilato} other {{done}/{total} bambini compilati}}",
   "aggiungiAttivita": "Aggiungi attività",

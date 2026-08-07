@@ -171,8 +171,8 @@
 // blocco esiste per proteggere: i cataloghi di /offline sono serviti dalla
 // CacheStorage, e senza un Service Worker nuovo la pagina vecchia resterebbe su
 // ogni dispositivo che l'ha già salvata. La cache riparte pulita.
-const VERSIONE = 'v6';
-// IMPRONTA-PAGINA-OFFLINE: 37da27f69c11f806fac89bf3f6e7ffa9eccc0459999688dfdc13b1c58012a86a
+const VERSIONE = 'v7';
+// IMPRONTA-PAGINA-OFFLINE: 03ef4f9ba7c227073781f84bb21ebdbceb03653b9f131e1d2b1e5c54ad0d92bb
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

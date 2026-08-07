@@ -22,7 +22,7 @@ ripararli quando la UI cambia.
 ## 0. La regola dei selettori (la più importante, e la più diversa dall'originale)
 
 - **Seleziona per TESTO italiano visibile**, non per `testID`. Esempi reali:
-  `"Accedi al tuo account Kidville"`, `"Benvenuto/a!"`, `"Segnala assenza"`,
+  `"Accedi al tuo account Kidville"`, `"Benvenuto/a!"`, `"Comunica un’assenza"`,
   `"Assenze e giustifiche"`, `"Comunicazioni"`, `"Circolari e avvisi alle famiglie"`.
 - Le tab hanno **aria-label** parlanti: la tab menu è `"Menu · tutte le sezioni"` (non solo
   "Menu"). Preferisci il **sottotitolo univoco** di una voce quando ci sono testi vicini simili

@@ -164,7 +164,7 @@ describe('parent/attendance — la data proposta è quella italiana', () => {
 
         render(<ParentAttendancePage />);
 
-        const campo = await screen.findByLabelText(/^Giorno$/i);
+        const campo = await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
         // `min` in UTC direbbe 2026-08-10: un giorno che il server rifiuta con
         // ASSENZA_DATA_PASSATA, proposto dal modulo stesso come primo valido.
         expect(campo).toHaveAttribute('min', '2026-08-11');
@@ -315,7 +315,7 @@ describe('parent/attendance — annullare una comunicazione', () => {
         fireEvent.click(screen.getByRole('button', { name: /annulla.*12\/08\/2026/i }));
 
         // Il punto: l'assenza è ANCORA registrata, e il genitore deve saperlo.
-        expect(await screen.findByText(/l'assenza è ancora registrata/i)).toBeInTheDocument();
+        expect(await screen.findByText(/l['’]assenza è ancora registrata/i)).toBeInTheDocument();
         expect(screen.queryByText(/^Assenza annullata\.$/)).not.toBeInTheDocument();
     });
 
@@ -337,7 +337,7 @@ describe('parent/attendance — annullare una comunicazione', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /annulla.*12\/08\/2026/i }));
 
-        expect(await screen.findByText(/L'insegnante ha già registrato la presenza/i)).toBeInTheDocument();
+        expect(await screen.findByText(/L['’]insegnante ha già registrato la presenza/i)).toBeInTheDocument();
         // La prosa del server non si mostra MAI nelle schermate famiglia (T10-F1).
         expect(screen.queryByText(/Assenza già registrata dal docente/)).not.toBeInTheDocument();
         // Il rifiuto non cancella niente: la voce è ancora lì.
@@ -354,7 +354,7 @@ describe('parent/attendance — accessibilità', () => {
 
         render(<ParentAttendancePage />);
 
-        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        const giorno = await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
         expect(giorno.tagName).toBe('INPUT');
         const motivo = screen.getByLabelText(/^Motivo/i);
         expect(motivo.tagName).toBe('TEXTAREA');
@@ -431,7 +431,7 @@ describe('parent/attendance — la conferma d\'invio si SENTE e non perde il fuo
         });
 
         render(<ParentAttendancePage />);
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         // Chi naviga da tastiera arriva sul bottone col Tab e lo attiva con Invio:
         // il fuoco è SUL bottone quando parte l'azione.
@@ -469,7 +469,7 @@ describe('parent/attendance — la conferma d\'invio si SENTE e non perde il fuo
         await inviaConSuccesso();
 
         const h1 = screen.getByRole('heading', { level: 1 });
-        expect(h1).toHaveTextContent(/Segnala assenza/i);
+        expect(h1).toHaveTextContent(/Comunica un['’]assenza/i);
     });
 
     it('aprendo la pagina il fuoco NON viene rubato, nemmeno con il doppio montaggio di StrictMode', async () => {
@@ -486,7 +486,7 @@ describe('parent/attendance — la conferma d\'invio si SENTE e non perde il fuo
                 <ParentAttendancePage />
             </StrictMode>,
         );
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         await waitFor(() => {
             expect(
@@ -506,7 +506,7 @@ describe('parent/attendance — la conferma d\'invio si SENTE e non perde il fuo
         // Il bottone si smonta insieme alla conferma: senza un ricovero il fuoco
         // torna su `<body>`, e chi usa la tastiera deve ri-tabulare tutta la pagina
         // per arrivare al campo che è appena stato riaperto per lui.
-        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        const giorno = await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
         const modulo = giorno.closest('form')!;
         await waitFor(() => {
             expect(document.activeElement).not.toBe(document.body);
@@ -533,7 +533,7 @@ describe('parent/attendance — la conferma d\'invio si SENTE e non perde il fuo
         indietro.focus();
         fireEvent.click(indietro);
 
-        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        const giorno = await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
         await waitFor(() => expect(document.activeElement).not.toBe(document.body));
 
         const attivo = document.activeElement as HTMLElement;
@@ -586,14 +586,14 @@ describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <bo
         });
 
         render(<ParentAttendancePage />);
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         const bottone = screen.getByRole('button', { name: /^Comunica assenza$/i });
         bottone.focus();
         expect(document.activeElement).toBe(bottone);
 
         fireEvent.click(bottone);
-        await screen.findByText(/Puoi comunicare un'assenza solo da oggi in avanti/i);
+        await screen.findByText(/Puoi comunicare un['’]assenza solo da oggi in avanti/i);
 
         await waitFor(() => {
             expect(
@@ -617,7 +617,7 @@ describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <bo
         });
 
         render(<ParentAttendancePage />);
-        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        const giorno = await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
         // Prima del rifiuto il campo NON è marcato: un campo perennemente
         // «non valido» è rumore, e uno screen reader lo annuncerebbe sempre.
         expect(giorno).not.toHaveAttribute('aria-invalid', 'true');
@@ -626,9 +626,16 @@ describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <bo
         await screen.findByText(/solo da oggi in avanti/i);
 
         await waitFor(() => expect(giorno).toHaveAttribute('aria-invalid', 'true'));
+        // `aria-describedby` porta PIÙ id da quando il campo ha anche
+        // un'istruzione persistente (WCAG 3.3.2): il messaggio di rifiuto si
+        // AGGIUNGE all'istruzione, non la sostituisce — chi ascolta deve sentire
+        // sia cosa è ammesso sia perché è stato respinto. Si leggono tutti.
         const descritto = giorno.getAttribute('aria-describedby');
         expect(descritto, 'il campo non rimanda a nessun testo che spieghi il rifiuto').toBeTruthy();
-        expect(document.getElementById(descritto!)?.textContent ?? '').toMatch(/solo da oggi in avanti/i);
+        const descrizioni = descritto!.split(/\s+/).filter(Boolean)
+            .map((id) => document.getElementById(id)?.textContent ?? '')
+            .join(' ');
+        expect(descrizioni).toMatch(/solo da oggi in avanti/i);
     });
 
     it('un errore che NON riguarda la data non marca il campo come non valido', async () => {
@@ -642,10 +649,10 @@ describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <bo
         });
 
         render(<ParentAttendancePage />);
-        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        const giorno = await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         fireEvent.click(screen.getByRole('button', { name: /^Comunica assenza$/i }));
-        await screen.findByText(/Non siamo riusciti a registrare l'assenza/i);
+        await screen.findByText(/Non siamo riusciti a registrare l['’]assenza/i);
 
         expect(giorno).not.toHaveAttribute('aria-invalid', 'true');
     });
@@ -671,7 +678,7 @@ describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <bo
         expect(document.activeElement).toBe(bottone);
 
         fireEvent.click(bottone);
-        await screen.findByText(/L'insegnante ha già registrato la presenza/i);
+        await screen.findByText(/L['’]insegnante ha già registrato la presenza/i);
 
         await waitFor(() => {
             expect(document.activeElement).not.toBe(document.body);
@@ -695,7 +702,7 @@ describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <bo
         });
 
         render(<ParentAttendancePage />);
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         for (const tentativo of [1, 2]) {
             const bottone = screen.getByRole('button', { name: /^Comunica assenza$/i });
@@ -799,11 +806,11 @@ describe('parent/attendance — invio rifiutato dal server', () => {
         });
 
         render(<ParentAttendancePage />);
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         fireEvent.click(screen.getByRole('button', { name: /^Comunica assenza$/i }));
 
-        expect(await screen.findByText(/Puoi comunicare un'assenza solo da oggi in avanti/i)).toBeInTheDocument();
+        expect(await screen.findByText(/Puoi comunicare un['’]assenza solo da oggi in avanti/i)).toBeInTheDocument();
         expect(screen.queryByText('La data indicata è già passata')).not.toBeInTheDocument();
     });
 
@@ -816,7 +823,7 @@ describe('parent/attendance — invio rifiutato dal server', () => {
         });
 
         render(<ParentAttendancePage />);
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(/^Giorno dell['’]assenza$/i);
 
         fireEvent.click(screen.getByRole('button', { name: /^Comunica assenza$/i }));
         expect(await screen.findByText(/Assenza comunicata/i)).toBeInTheDocument();
@@ -854,7 +861,7 @@ describe('parent/attendance — invio rifiutato dal server', () => {
         // «Assenza annullata.» resta lì accanto all'errore appena comparso, le
         // due frasi si riferiscono a due azioni diverse e nessuno può capire
         // quale delle due è andata come dice.
-        expect(await screen.findByText(/Non siamo riusciti a registrare l'assenza/i)).toBeInTheDocument();
+        expect(await screen.findByText(/Non siamo riusciti a registrare l['’]assenza/i)).toBeInTheDocument();
         expect(screen.queryByText(/^Assenza annullata\.$/)).not.toBeInTheDocument();
     });
 });
@@ -869,7 +876,7 @@ describe('parent/attendance — identità non pronta', () => {
         fetchMock.mockResolvedValue(presenzeCon([]));
 
         render(<ParentAttendancePage />);
-        await waitFor(() => expect(screen.getByText(/Segnala assenza/i)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByText(/Comunica un['’]assenza/i)).toBeInTheDocument());
 
         expect(fetchMock).not.toHaveBeenCalled();
     });

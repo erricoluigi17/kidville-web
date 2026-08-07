@@ -200,12 +200,13 @@ env:
 # "Presenze" vive nel foglio Menu; la voce è resa con il sottotitolo univoco
 # "Assenze e giustifiche" (selettore robusto rispetto alle voci vicine).
 #
-# L'arrivo NON si prova più con «Segnala assenza». È il titolo della pagina, ma
-# è ANCHE l'azione rapida della home (home.json → azioneAssenza vale
-# «Segnala\nassenza», e il nome accessibile appiattisce gli spazi interni):
-# se il tap sul foglio non atterra si resta sulla home, dove quel testo c'è già,
-# e la tappa risulterebbe superata senza essersi mossi. «Comunica un'assenza
-# alla scuola» è il sottotitolo dell'header e vive solo su /parent/attendance.
+# L'arrivo NON si prova più con il TITOLO della pagina («Comunica un’assenza»,
+# dal 2026-08-08: era «Segnala assenza»). È il titolo, ma è ANCHE l'azione rapida
+# della home (home.json → azioneAssenza, «Comunica\nun’assenza», e il nome
+# accessibile appiattisce gli spazi interni): se il tap sul foglio non atterra si
+# resta sulla home, dove quel testo c'è già, e la tappa risulterebbe superata
+# senza essersi mossi. Si usa il SOTTOTITOLO dell'header, «Avvisa gli insegnanti
+# in anticipo: …», che sulla home non c'è.
 # La prova NEGATIVA è l'occhiello del foglio, ANCORATO: se è ancora a schermo, il
 # foglio non si è chiuso e quindi non si è navigato. Ancorato perché la forma non
 # ancorata (`.*Tutte le sezioni.*`) combacerebbe con l'aria-label del quinto tab,
@@ -223,7 +224,7 @@ env:
     timeout: 20000
 - tapOn: "Assenze e giustifiche"
 - extendedWaitUntil:
-    visible: "Comunica un.assenza alla scuola"
+    visible: "Avvisa gli insegnanti in anticipo: puoi indicare oggi o un giorno futuro."
     timeout: 45000
 - assertNotVisible: "Tutte le sezioni"
 - takeScreenshot: /tmp/kv-android-genitore-2-presenze
@@ -399,7 +400,7 @@ env:
 # con i testi delle due pagine: quello che deve esserci e quello che non deve.
 - back
 - extendedWaitUntil:
-    visible: "Comunica un.assenza alla scuola"
+    visible: "Avvisa gli insegnanti in anticipo: puoi indicare oggi o un giorno futuro."
     timeout: 20000
 - assertNotVisible: ".*avvis[oi] da gestire|Tutto in regola.*|Comunicazioni dalla scuola"
 - assertVisible:

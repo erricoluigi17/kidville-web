@@ -1,6 +1,6 @@
 {
   "inSezione": "In class",
-  "diarioDelGiorno": "Today's diary",
+  "diarioDelGiorno": "Today’s diary",
   "sottotitoloSezione": "Class {sezione} • {data}",
   "inCaricamento": "Loading…",
   "emptyPrimaria": "The 0-6 diary is not enabled for primary school.<br></br>For your class, use the <strong>Register</strong>.",
@@ -43,7 +43,7 @@
   "portataFrutta": "Fruit",
   "merenda": "Snack",
   "allergie": "Allergies",
-  "menuDelGiorno": "Today's menu",
+  "menuDelGiorno": "Today’s menu",
 
   "cosaRegistrare": "What would you like to log?",
   "numBambini": "{count, plural, one {# child} other {# children}}",

@@ -44,6 +44,13 @@ export default getRequestConfig(async () => {
     parentChat: (await import(`../../messages/${locale}/parentChat.json`)).default,
     parentPrimaria: (await import(`../../messages/${locale}/parentPrimaria.json`)).default,
     parentServizi: (await import(`../../messages/${locale}/parentServizi.json`)).default,
+    // Le frasi che le DUE schermate dell'assenza (nido·infanzia e primaria)
+    // condividono davvero: l'informativa sul motivo, l'avviso «questo giorno lo
+    // hai già comunicato», la conferma che distingue l'aggiornamento dalla
+    // creazione. Un namespace suo, e non una copia in `parentServizi` +
+    // `parentPrimaria`, perché la stessa frase scritta due volte è il difetto da
+    // cui nasce questo lavoro: le due schermate divergevano in 5 stringhe su 7.
+    parentAssenze: (await import(`../../messages/${locale}/parentAssenze.json`)).default,
     parentForms: (await import(`../../messages/${locale}/parentForms.json`)).default,
     public: (await import(`../../messages/${locale}/public.json`)).default,
   };

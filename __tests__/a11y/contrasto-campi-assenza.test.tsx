@@ -320,6 +320,28 @@ vi.mock('next/navigation', () => ({
 
 import ParentAttendancePage from '@/app/(dashboard)/parent/attendance/page';
 import { ComunicaAssenzaCard } from '@/components/features/parent/ComunicaAssenzaCard';
+// Le etichette si CHIEDONO AL CATALOGO, non si ricopiano: scritte a mano qui
+// dentro, il file è diventato rosso il 2026-08-08 su una riscrittura di
+// glossario che non toccava una riga di questi componenti — e il rosso parlava
+// di contrasto mentre il problema era un apostrofo tipografico.
+import itServizi from '../../messages/it/parentServizi.json';
+import itPrimaria from '../../messages/it/parentPrimaria.json';
+
+/**
+ * L'istruzione del campo: esiste, è LEGATA al campo (`aria-describedby`), punta
+ * a un nodo che c'è davvero, ha del testo, ed è visibile — non un testo per soli
+ * screen reader (chi vede male ne ha bisogno quanto chi ascolta). WCAG 3.3.2.
+ */
+function controllaIstruzione(campo: HTMLElement, dove: string) {
+    const descritto = campo.getAttribute('aria-describedby');
+    expect(descritto, `${dove}: il campo data non ha nessuna descrizione associata`).toBeTruthy();
+    for (const id of descritto!.split(/\s+/).filter(Boolean)) {
+        const aiuto = document.getElementById(id);
+        expect(aiuto, `${dove}: nessun elemento con id="${id}"`).toBeTruthy();
+        expect((aiuto!.textContent ?? '').trim().length, `${dove}: l'aiuto è vuoto`).toBeGreaterThan(0);
+        expect(aiuto!.className).not.toMatch(/sr-only|hidden/);
+    }
+}
 
 const fetchMock = vi.fn();
 
@@ -353,8 +375,8 @@ afterEach(() => {
 async function campiZeroSei(hc: boolean) {
     document.documentElement.setAttribute('data-contrast', hc ? 'high' : 'normal');
     render(<ParentAttendancePage />);
-    const giorno = await screen.findByLabelText(/^Giorno$/i);
-    const motivo = screen.getByLabelText(/^Motivo/i);
+    const giorno = await screen.findByLabelText(itServizi.attendanceGiorno);
+    const motivo = screen.getByLabelText(itServizi.attendanceMotivo);
     return { giorno, motivo };
 }
 
@@ -366,9 +388,9 @@ async function campiPrimaria(hc: boolean) {
     // risolvere PRIMA di toccare il DOM, altrimenti l'aggiornamento di stato
     // arriva fuori da `act()` e sporca l'output del gate con un warning.
     await act(async () => {});
-    fireEvent.click(screen.getByRole('button', { name: /nuova assenza/i }));
+    fireEvent.click(screen.getByRole('button', { name: itPrimaria.comunicaApri }));
     return {
-        data: screen.getByLabelText(/Giorno dell'assenza/i),
+        data: screen.getByLabelText(/Giorno dell['’]assenza/i),
         motivo: screen.getByLabelText(/^Motivo/i),
     };
 }
@@ -509,20 +531,32 @@ describe('a11y §2 · i segnaposti sono TESTO, e come tale si leggono', () => {
         expect(nude.flatMap((r) => r.dich).map((d) => d.prop)).toEqual(['opacity']);
     });
 
-    it('il FORMATO della data non vive solo nel segnaposto: c’è un aiuto PERSISTENTE', async () => {
-        // Un segnaposto sparisce al primo carattere digitato. Se è l'unico posto
-        // in cui è scritto `gg/mm/aaaa`, chi sbaglia il formato non ha più modo di
-        // sapere qual era — e il campo è mascherato, quindi il formato è
-        // obbligatorio. WCAG 3.3.2 (Etichette o istruzioni).
+    it('il campo data ha un’ISTRUZIONE persistente e visibile, non solo un segnaposto', async () => {
+        // ─── COS'È CAMBIATO, IL 2026-08-08, E PERCHÉ ────────────────────────
+        // Questo test pretendeva la stringa `gg/mm/aaaa` dentro l'aiuto, perché
+        // il campo era un `type="text"` MASCHERATO e il formato era
+        // un'informazione obbligatoria: un segnaposto sparisce al primo
+        // carattere digitato, e chi sbaglia non ha più modo di sapere qual era.
+        //
+        // Il campo ora è l'`<input type="date">` nativo — lo stesso della
+        // schermata gemella, che il collaudo aveva segnalato come divergente
+        // (due campi diversi per la stessa funzione). Su un campo nativo il
+        // formato lo DISEGNA IL SISTEMA: scriverlo nell'aiuto sarebbe falso
+        // appena il browser è in inglese, cioè si trasformerebbe da istruzione
+        // in bugia. L'aiuto dichiara adesso l'intervallo ammesso — ciò che `min`
+        // impone davvero.
+        //
+        // Quello che il test difende NON è cambiato, ed è il requisito vero
+        // (WCAG 3.3.2): un'istruzione che esiste, è legata al campo, e si vede.
+        // In più ora vale per ENTRAMBE le schermate: prima ne copriva una sola,
+        // e l'altra di istruzione non ne aveva nessuna.
         const { data } = await campiPrimaria(false);
-        const descritto = data.getAttribute('aria-describedby');
-        expect(descritto, 'il campo data non ha nessuna descrizione associata').toBeTruthy();
-        const aiuto = document.getElementById(descritto!);
-        expect(aiuto, `nessun elemento con id="${descritto}"`).toBeTruthy();
-        expect(aiuto!.textContent ?? '').toMatch(/gg\/mm\/aaaa/i);
-        // …e l'aiuto è visibile, non un testo per soli screen reader: chi vede
-        // male legge il formato tanto quanto chi ascolta.
-        expect(aiuto!.className).not.toMatch(/sr-only|hidden/);
+        controllaIstruzione(data, 'card primaria');
+        cleanup();
+
+        document.documentElement.setAttribute('data-contrast', 'normal');
+        render(<ParentAttendancePage />);
+        controllaIstruzione(await screen.findByLabelText(itServizi.attendanceGiorno), '/parent/attendance');
     });
 });
 
@@ -552,10 +586,16 @@ describe('a11y §3 · le frasi di /parent/attendance si leggono (WCAG 1.4.3)', (
     it('la riga che CONFERMA — l’unica che dice per quale giorno — regge AA', async () => {
         document.documentElement.setAttribute('data-contrast', 'normal');
         render(<ParentAttendancePage />);
-        await screen.findByLabelText(/^Giorno$/i);
+        await screen.findByLabelText(itServizi.attendanceGiorno);
 
-        fireEvent.click(screen.getByRole('button', { name: /^Comunica assenza$/i }));
-        const frase = await screen.findByText(/La scuola è stata notificata/i);
+        fireEvent.click(screen.getByRole('button', { name: itServizi.attendanceComunicaAssenza }));
+        // La frase si chiede al CATALOGO (fino al segnaposto `{data}`): ricopiata
+        // a mano, questo test è diventato rosso su una riscrittura di glossario
+        // che non toccava una riga del componente misurato.
+        const inizioConferma = itServizi.attendanceInviataTesto.split('{')[0].trim();
+        const frase = await screen.findByText((_t, nodo) => (nodo?.textContent ?? '').includes(inizioConferma), {
+            selector: 'p',
+        });
 
         const m = misuraEl(frase, false);
         expect(

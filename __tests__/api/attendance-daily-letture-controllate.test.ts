@@ -53,6 +53,8 @@ const h = vi.hoisted(() => ({
   errorePrima: null as { code: string; message: string } | null,
   /** Lo stato del giorno già in tabella, oppure `null` (prima marcatura). */
   statoPrima: null as string | null,
+  /** Errore iniettato sulla SCRITTURA (l'upsert della presenza). */
+  erroreUpsert: null as { code: string; message: string } | null,
   /** Le `delete` eseguite su `notifiche` (la revoca). */
   revoche: [] as string[],
 }))
@@ -96,7 +98,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
           ? { data: null, error: h.errorePrima }
           : { data: h.statoPrima ? { stato: h.statoPrima } : null, error: null }
       }
-      qb.single = async () => ({ data: { id: 'riga-1' }, error: null })
+      // L'unica `.single()` di questo handler è quella dell'upsert: è la SCRITTURA.
+      qb.single = async () =>
+        h.erroreUpsert ? { data: null, error: h.erroreUpsert } : { data: { id: 'riga-1' }, error: null }
       qb.then = (res: (v: unknown) => unknown) =>
         Promise.resolve({ data: operazione === 'delete' ? [] : [], error: null }).then(res)
       return qb
@@ -119,6 +123,7 @@ beforeEach(() => {
   h.alunnoAssente = false
   h.errorePrima = null
   h.statoPrima = null
+  h.erroreUpsert = null
   h.revoche = []
   h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'educator' }, response: null })
   h.assertAlunnoInScope.mockResolvedValue(null)
@@ -200,5 +205,66 @@ describe('lo stato precedente: in dubbio non si spedisce, in dubbio si revoca', 
     h.statoPrima = 'assente'
     await POST(req({ stato: 'assente' }))
     expect(h.notificaEvento).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * IL 500 DELLA SCRITTURA: la prosa di PostgREST resta nel log.
+ *
+ * Rilievo M10 del collaudo del 2026-08-07 (sicurezza). La risposta era:
+ *
+ *   { error: 'Errore salvataggio presenza.', details: error.message }
+ *
+ * `error.message` di PostgREST porta nomi di colonna, nomi di VINCOLO
+ * (`unique_presenza_giornaliera`), `details` e `hint`: è una mappa dello schema
+ * regalata a chiunque superi `requireDocente` — che include la segreteria. Ed è
+ * esattamente ciò che la rotta gemella dello stesso commit dichiarava di aver
+ * tolto («prosa inglese con dentro nomi di colonne, mostrata a un genitore»):
+ * la correzione era stata applicata alla rotta del genitore e non a questa, che
+ * pure era stata modificata nello stesso lavoro.
+ *
+ * Il messaggio non si perde: resta nel `logErrore` che c'era già, intero, che è
+ * dove dice PERCHÉ.
+ */
+describe('il 500 della scrittura non porta fuori il messaggio di PostgREST', () => {
+  it('nessun `details`, nessun nome di colonna o di vincolo nella risposta', async () => {
+    h.erroreUpsert = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "unique_presenza_giornaliera"',
+    }
+    const res = await POST(req({ stato: 'assente' }))
+    expect(res.status).toBe(500)
+    const corpo = (await res.json()) as Record<string, unknown>
+    expect(corpo.details, 'il `details` è il canale con cui lo schema usciva').toBeUndefined()
+    const testo = JSON.stringify(corpo)
+    expect(testo).not.toContain('unique_presenza_giornaliera')
+    expect(testo).not.toContain('duplicate key')
+  })
+
+  it('il messaggio intero resta nel log, con `evento: db` e il codice PostgREST', async () => {
+    h.erroreUpsert = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "unique_presenza_giornaliera"',
+    }
+    await POST(req({ stato: 'assente' }))
+    const riga = logErrore.mock.calls.find(
+      (c) => JSON.stringify(c[0]).includes('attendance/daily:POST') && JSON.stringify(c[0]).includes('db'),
+    )
+    expect(riga, 'togliere il messaggio dalla risposta senza tenerlo nel log sarebbe peggio del difetto').toBeTruthy()
+    expect(riga?.[0]).toMatchObject({ operazione: 'attendance/daily:POST', stato: 500, evento: 'db' })
+    expect(JSON.stringify(logErrore.mock.calls)).toContain('unique_presenza_giornaliera')
+  })
+
+  it('la risposta è la STESSA del guasto di lettura: un guasto solo, una frase sola', async () => {
+    // I due 500 di questo handler raccontano al docente la stessa cosa. Due frasi
+    // diverse per lo stesso fatto sono due frasi da tradurre, da mantenere e da
+    // sbagliare separatamente — è la ragione per cui `erroreInterno()` esiste.
+    h.erroreUpsert = { code: '42501', message: 'permission denied for table presenze' }
+    const scrittura = JSON.stringify(await (await POST(req({ stato: 'assente' }))).json())
+    h.erroreUpsert = null
+    h.erroreAlunno = { code: '42501', message: 'permission denied for table alunni' }
+    const lettura = JSON.stringify(await (await POST(req({ stato: 'assente' }))).json())
+    expect(scrittura).toBe(lettura)
   })
 })

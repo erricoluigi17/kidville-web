@@ -32,10 +32,21 @@ import { createTranslator } from 'use-intl'
  *  4. ELLISSI. 118 stringhe con tre punti contro 366 con l'ellissi tipografica, e
  *     una era a schermo («Caricamento anagrafica...»).
  *
+ *  5. APOSTROFI. Fino al 2026-08-08 questo file dichiarava, qui sotto, di NON
+ *     controllarli: «è una scelta editoriale che va fatta una volta sola e su
+ *     tutto il catalogo, non di sponda dentro un lock». La scelta non è mai stata
+ *     fatta, e nel frattempo ogni rilascio ne aggiungeva delle due specie — il
+ *     collaudo del 2026-08-07 ha misurato la stessa parola, «l'assenza», scritta
+ *     col dritto in una schermata e col tipografico nell'altra, dentro le stringhe
+ *     nate LO STESSO GIORNO. Un lock che dichiara di non guardare è il posto in cui
+ *     il difetto torna a ogni stringa nuova.
+ *     La convenzione, decisa e da qui in avanti applicata: **l'apostrofo è sempre
+ *     il tipografico U+2019** (’), in italiano e in inglese. È la forma corretta
+ *     in tipografia italiana e l'unica compatibile con l'apostrofo che le
+ *     tastiere di iOS e Android inseriscono da sole. 248 valori normalizzati in
+ *     40 file nello stesso passaggio.
+ *
  * ─── COSA NON CONTROLLA (di proposito) ────────────────────────────────────────
- *  · gli apostrofi dritti contro quelli tipografici (211 stringhe): è una scelta
- *    editoriale che va fatta una volta sola e su tutto il catalogo, non di sponda
- *    dentro un lock;
  *  · la parità delle chiavi fra le due lingue, che ha già il suo lock
  *    (`messaggi-parita-cataloghi.test.ts`).
  */
@@ -375,6 +386,66 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // Controllo positivo: l'ellissi tipografica è davvero in uso, non è che siano
         // sparite le une e le altre.
         expect(LINGUE.flatMap((l) => tutteLeStringhe(l).filter((r) => r.testo.includes('…'))).length).toBeGreaterThan(300)
+    })
+
+    /**
+     * L'UNICA voce che tiene ancora l'apostrofo dritto, con la ragione e la via
+     * d'uscita. Non è una preferenza editoriale: è un vincolo misurato di un altro
+     * lock, e va scritto qui invece di essere aggirato.
+     */
+    const APOSTROFO_DRITTO_AMMESSO = new Map<string, string>([
+        [
+            'it/teacherNav.json → appelloCtaFai',
+            'È il selettore ESATTO di `android-percorso-docente.yaml` e `ios-percorso-docente.yaml`, ' +
+            'due flow con esecuzione verde DICHIARATA su device (2026-08-02, 31 e 27 COMPLETED). ' +
+            'R9b confronta l\'impronta dei selettori con quella provata: cambiare un carattere la ' +
+            'invalida, e i due flow finirebbero in FLOW_SENZA_ESECUZIONE_VERDE, che è già al suo ' +
+            'tetto (3/3, R9c — «il tetto scende quando si collauda, non sale quando fa comodo»). ' +
+            'VIA D\'USCITA: chi rilancia i due percorsi docente su emulatore e simulatore ' +
+            'normalizzi questa stringa nello stesso passaggio, aggiorni i tre selettori nei flow ' +
+            'e la firma in ESECUZIONI_VERDI, e tolga questa riga.',
+        ],
+    ])
+
+    it('l\'unica eccezione all\'apostrofo è dichiarata, motivata e può solo sparire', () => {
+        expect(APOSTROFO_DRITTO_AMMESSO.size, 'le eccezioni all\'apostrofo non aumentano').toBeLessThanOrEqual(1)
+        for (const [voce, motivo] of APOSTROFO_DRITTO_AMMESSO) {
+            expect(motivo.length, `${voce} è dichiarata senza motivo`).toBeGreaterThan(80)
+        }
+        // E l'eccezione deve descrivere il catalogo VERO: se un giorno quella stringa
+        // venisse normalizzata, questa riga resterebbe a proteggere il nulla.
+        const testo = (CATALOGHI.it['teacherNav'] as Record<string, string>).appelloCtaFai
+        expect(testo, 'messages/it/teacherNav.json → appelloCtaFai non esiste più').toBeTypeOf('string')
+        expect(testo.includes("'"), 'l\'eccezione non serve più: togli la riga da APOSTROFO_DRITTO_AMMESSO').toBe(true)
+    })
+
+    it('l\'apostrofo è sempre quello tipografico «’», mai il dritto', () => {
+        // Il dritto (U+0027) è il carattere della tastiera del programmatore: nei
+        // cataloghi non ha nessun uso legittimo — non c'è codice, non ci sono unità di
+        // misura, e il possessivo inglese («{nome}’s day») vuole il tipografico quanto
+        // l'elisione italiana. Il difetto non è estetico: la stessa frase compariva
+        // nelle due forme in due schermate che il genitore apre lo stesso giorno.
+        const guasti = LINGUE.flatMap((lingua) =>
+            tutteLeStringhe(lingua)
+                .filter((r) => r.testo.includes("'"))
+                // `dove` vale «messages/it/teacherNav.json → appelloCtaFai»: l'indirizzo
+                // dell'eccezione è la sua coda, così la chiave dichiarata è la stessa che
+                // si legge nel rosso.
+                .filter((r) => ![...APOSTROFO_DRITTO_AMMESSO.keys()].some((k) => r.dove.endsWith(k)))
+                .map((r) => `${r.dove} = «${r.testo}»`),
+        )
+        expect(
+            guasti,
+            `Queste voci usano l'apostrofo dritto U+0027 al posto del tipografico «’» (U+2019):\n  ` +
+            `${guasti.join('\n  ')}\n` +
+            `La convenzione del catalogo è il tipografico, in entrambe le lingue. Se una stringa ` +
+            `dovesse davvero contenere il dritto, va motivata in APOSTROFO_DRITTO_AMMESSO — non ` +
+            `aggiunta in silenzio.`,
+        ).toEqual([])
+        // Controllo positivo: il tipografico è davvero in uso. Senza questa riga, il
+        // divieto qui sopra sarebbe verde anche su un catalogo in cui gli apostrofi
+        // sono spariti tutti — cioè su testi rotti in un altro modo.
+        expect(LINGUE.flatMap((l) => tutteLeStringhe(l).filter((r) => r.testo.includes('’'))).length).toBeGreaterThan(200)
     })
     /**
      * ── IL RICONOSCITORE DI FORMA ────────────────────────────────────────────

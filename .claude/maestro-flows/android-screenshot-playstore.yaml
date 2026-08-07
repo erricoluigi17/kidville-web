@@ -149,7 +149,7 @@ env:
     timeout: 30000
 - tapOn: "Assenze e giustifiche"
 - extendedWaitUntil:
-    visible: ".*Segnala assenza.*"
+    visible: ".*Comunica un.assenza.*"
     timeout: 60000
 - assertNotVisible:
     text: ".*[Cc]aricamento.*"

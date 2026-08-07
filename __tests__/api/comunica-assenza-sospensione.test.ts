@@ -66,8 +66,24 @@ vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => 
 
 import { POST } from '@/app/api/parent/presenze/comunica-assenza/route'
 import { resetRateLimit } from '@/lib/security/rate-limit'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 
-const TODAY = new Date().toISOString().slice(0, 10)
+/**
+ * «OGGI» NEL FUSO DI ROMA, non in UTC — ed è la stessa lezione che la rotta ha già scritto
+ * nel proprio codice, applicata al test che la collaudava.
+ *
+ * Era `new Date().toISOString().slice(0, 10)`, cioè la data UTC. La rotta invece confronta con
+ * `oggiFiscaleISO()` (Europe/Rome), perché il runtime di Vercel gira in UTC e fra mezzanotte e
+ * le due del mattino italiane «oggi» in UTC è ancora IERI. In quella finestra il test spediva
+ * una data del PASSATO e la rotta rispondeva — correttamente — 400 `ASSENZA_DATA_PASSATA`:
+ * rosso ogni notte per due ore, sul codice giusto. Misurato il 2026-08-08 alle 00:18 di Roma
+ * (22:18 UTC del 7).
+ *
+ * Un test che dipende dall'ora in cui gira è un test che si impara a rilanciare invece che a
+ * leggere. Qui si usa la STESSA funzione della rotta: se un giorno il fuso cambia, cambiano
+ * insieme.
+ */
+const TODAY = oggiFiscaleISO()
 const postReq = (body: unknown) =>
   new NextRequest('http://localhost/api/parent/presenze/comunica-assenza', {
     method: 'POST',

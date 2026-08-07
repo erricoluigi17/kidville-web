@@ -47,6 +47,45 @@ describe('il payload validato finisce nel contesto, già redatto', () => {
         expect(() => parseQuery(req, schema)).not.toThrow();
     });
 
+    /**
+     * IL VETTORE VERO, PERCORSO PER INTERO — rilievi M11 e M15 del collaudo del 2026-08-07.
+     *
+     * Non è la prova di `redact()` (quella sta nel suo file): è la prova che il PERCORSO che
+     * porta un body dalla rete ad `app_log` non ha una scorciatoia. `parseBody` deposita il
+     * body GREZZO **prima** di zod, apposta per poter diagnosticare i 400; da lì il payload
+     * finisce in `app_log.contesto`, che conserva 30 giorni e si interroga in SQL.
+     *
+     * Il corpo qui sotto è quello vero di `parent/presenze/comunica-assenza`, dove `motivo` è
+     * dichiarato `z.unknown()` e il testo libero è il MOTIVO dell'assenza — dato sanitario di
+     * un minore. Le due strade che erano aperte:
+     *  · il VALORE sotto una chiave in lista bianca (`stato`), che usciva in chiaro;
+     *  · la CHIAVE di un oggetto annidato, che non passava da nessuna riduzione.
+     * Un rifiuto di quella rotta lascia una riga `warn`, e i `warn` si persistono sempre:
+     * bastava un account genitore.
+     */
+    it('un body ostile non porta testo libero nel payload, né nei valori né nelle chiavi', async () => {
+        const schema = z.object({ studentId: z.string(), data: z.string(), motivo: z.unknown().optional() });
+        await conContesto({ requestId: 'r-ostile', path: '/api/parent/presenze/comunica-assenza' }, async () => {
+            const req = new Request('http://localhost/api/parent/presenze/comunica-assenza', {
+                method: 'POST',
+                body: JSON.stringify({
+                    studentId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+                    data: '2020-01-01',
+                    stato: 'IL BAMBINO HA AVUTO UNA CRISI IN MENSA',
+                    motivo: { 'E QUESTO STA NELLA CHIAVE': 1 },
+                }),
+                headers: { 'content-type': 'application/json' },
+            });
+            await parseBody(req, schema);
+            const p = JSON.stringify(contesto()?.payload);
+            expect(p).not.toContain('CRISI');
+            expect(p).not.toContain('NELLA CHIAVE');
+            // Il payload non si svuota: la diagnosi del 400 resta (uuid e data in chiaro).
+            expect(p).toContain('3f2504e0-4f89-11d3-9a0c-0305e82c3301');
+            expect(p).toContain('2020-01-01');
+        });
+    });
+
     it('il body resta leggibile per la route (non viene consumato due volte)', async () => {
         const schema = z.object({ tipo: z.string() });
         const req = new Request('http://localhost/api/x', {
@@ -164,10 +203,21 @@ describe('payload ostile: i cap reggono e niente lancia', () => {
 
     it('un payload che sopravvive ai cap ma resta enorme viene marcato, non tenuto', async () => {
         // Il testo libero si redige in un marcatore CORTO (`[redatto:str/9999]`), quindi la
-        // strada per sfondare PAYLOAD_CARATTERI_MAX passa dai valori che restano IN CHIARO:
-        // 50 righe con un `tipo` (lista bianca) da 120 caratteri. `redact` ne tiene 20 —
-        // e già quelle 20 pesano più di 2.000 caratteri.
-        const grosso = { righe: Array.from({ length: 50 }, () => ({ tipo: 'a'.repeat(120) })) };
+        // strada per sfondare PAYLOAD_CARATTERI_MAX passa dai valori che restano IN CHIARO.
+        //
+        // ⚠️ QUELLI NON SONO PIÙ «120 CARATTERI SOTTO UNA CHIAVE IN LISTA BIANCA», e questo
+        // test lo diceva fino al 2026-08-08: dal rilievo M11 la lista bianca chiede anche la
+        // FORMA del valore, e una stringa di 120 caratteri qualunque esce `[redatto:str/120]`.
+        // Ciò che resta in chiaro — e che quindi pesa ancora — sono uuid, date e numeri: cioè
+        // il payload di un import di anagrafiche, che è il caso vero per cui il tetto esiste.
+        // 50 righe, `redact` ne tiene 20, e già quelle pesano più di 2.000 caratteri.
+        const riga = {
+            id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+            alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3302',
+            creato_il: '2026-07-31T13:24:07Z',
+            tipo: 'anagrafica-import',
+        };
+        const grosso = { righe: Array.from({ length: 50 }, () => riga) };
         const p = await body(JSON.stringify(grosso));
         expect(p).toBe('[payload-troppo-grande]');
     });

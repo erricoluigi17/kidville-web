@@ -162,10 +162,11 @@ env:
 # full-match → i selettori delle voci Menu-sheet vanno in regex NON ancorata ".*…​.*".
 # Per la stessa ragione tutte le asserzioni delle tappe 3-6 sono in quella forma.
 #
-# L'arrivo NON si prova più con «Segnala assenza»: è il titolo della pagina, ma è
-# anche l'azione rapida della home (home.json → azioneAssenza, «Segnala\nassenza»,
-# che l'accname appiattisce a «Segnala assenza»). Se il tap sul foglio non
-# atterra si resta sulla home, dove quel testo c'è già.
+# L'arrivo NON si prova più con il TITOLO della pagina («Comunica un’assenza», dal
+# 2026-08-08: era «Segnala assenza»): è il titolo, ma è anche l'azione rapida della
+# home (home.json → azioneAssenza, «Comunica\nun’assenza», che l'accname appiattisce
+# allo stesso testo). Se il tap sul foglio non atterra si resta sulla home, dove
+# quel testo c'è già. Si usa il SOTTOTITOLO, «Avvisa gli insegnanti in anticipo: …».
 #
 # ⚠️ LA PROVA NEGATIVA NON È PIÙ «Tutte le sezioni», ed è l'altro difetto
 # BLOCCANTE del 2026-08-07. `.*Tutte le sezioni.*` combacia SEMPRE con
@@ -188,7 +189,7 @@ env:
     text: ".*Assenze e giustifiche.*"
 - extendedWaitUntil:
     visible:
-      text: ".*Comunica un.assenza alla scuola.*"
+      text: ".*Avvisa gli insegnanti in anticipo.*"
     timeout: 45000
 - assertNotVisible:
     text: ".*Scrivi alle maestre.*"

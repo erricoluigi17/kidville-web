@@ -10,6 +10,7 @@ import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { formattaIstante } from '@/i18n/config'
 import { rateLimit } from '@/lib/security/rate-limit'
+import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -102,21 +103,20 @@ const TIPO_NOTIFICA = 'assenza_comunicata'
 export const GIORNI_MASSIMI_IN_ANTICIPO = 60
 
 /**
- * Caratteri ammessi nel motivo dell'assenza.
+ * Caratteri ammessi nel motivo dell'assenza — la misura vive in
+ * `@/lib/presenze/limiti-testo` e si RI-ESPORTA da qui.
  *
- * 500 è la misura che questo repo usa già per il testo libero scritto da un
- * genitore — `mensa/alternative` (`richiesta`), `merch/ordini` (`note`),
- * `merch/articoli` (`descrizione`) — ed è il posto giusto in cui stare: «febbre»
- * e «visita medica dal dentista, rientra dopo pranzo» ci stanno dentro dieci
- * volte.
+ * Perché altrove: le route che scrivono `presenze.giustificazione_testo` sono
+ * DUE — questa e `parent/presenze/giustifica` — e il tetto era stato messo solo
+ * su questa. Il rilievo M14 lo diceva già («il tetto va anche sul gemello, che
+ * scrive la stessa colonna»), e con due costanti gemelle la prossima divergenza
+ * sarebbe silenziosa: una regola valida per due strade vive in un posto solo.
  *
- * Non è una comodità di validazione: `giustificazione_testo` è testo libero di
- * natura sanitaria su un MINORE (art. 9), e la minimizzazione (art. 5.1.c) si
- * impone alla fonte. In produzione è già stata scritta una riga da 200.000
- * caratteri, restituita per intero al client del genitore e alle viste dei
- * docenti.
+ * Perché ri-esportata invece che sostituita: `MOTIVO_MAX_CARATTERI` è il numero
+ * che i test di questa rotta importano per non ricopiarlo, ed è giusto che
+ * continuino a leggerlo dalla rotta che lo applica.
  */
-export const MOTIVO_MAX_CARATTERI = 500
+export { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo'
 
 /** L'ampiezza della finestra del tetto di frequenza. */
 export const TETTO_FINESTRA_MS = 10 * 60 * 1000
@@ -404,7 +404,7 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // Si misura il testo NORMALIZZATO (`trim`), che è quello che finisce in
     // tabella: rifiutare per gli spazi in coda sarebbe un rifiuto che il
     // genitore non può capire guardando ciò che ha scritto.
-    const motivoTesto = typeof motivo === 'string' ? motivo.trim() : ''
+    const motivoTesto = motivoNormalizzato(motivo) ?? ''
     if (motivoTesto.length > MOTIVO_MAX_CARATTERI) {
       logRifiuto('parent/presenze/comunica-assenza:POST', 'ASSENZA_MOTIVO_TROPPO_LUNGO', {
         alunno_id: studentId,
@@ -497,17 +497,41 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // metteva solo il trigger `trg_presenze_scuola_id`: una rete, non un
     // presidio — e una rete che il DB E2E della CI non ha, perché non è migrato.
     const sezione = (alunno.section_id as string | null) ?? null
-    const riga = {
+    // ═══ UN CAMPO VUOTO NON È «CANCELLA CIÒ CHE AVEVO SCRITTO» ═══════════════
+    //
+    // Rilievo M21 del secondo collaudo: ricomunicare lo stesso giorno con il
+    // campo «Motivo» vuoto AZZERAVA il motivo già archiviato — dato sanitario di
+    // un minore — e l'interfaccia diceva soltanto «Assenza comunicata».
+    //
+    // La causa era che UN SOLO oggetto serviva le due scritture, e su INSERT
+    // `motivoTesto || null` è giusto (non c'era niente prima) mentre su UPDATE
+    // cancella. Quindi le due righe sono ora DUE:
+    //  · `riga` — l'INSERT, che dichiara la colonna anche quando è nulla;
+    //  · `rigaAggiornamento` — l'UPDATE, che con il motivo vuoto NON NOMINA la
+    //    colonna. Nominarla a `null` la azzererebbe esattamente come prima.
+    //
+    // Il presidio dell'interfaccia (il campo che rispecchia ciò che è
+    // archiviato) NON basta e non rende questo ridondante: vale per la versione
+    // di oggi, mentre una copia vecchia dell'app installata dallo store manda
+    // ancora il campo vuoto. La regola sul dato va dove sta il dato.
+    //
+    // ⚠️ IL PREZZO, DICHIARATO: da qui non si può più svuotare il motivo
+    // lasciando in piedi l'assenza — si annulla e si ricomunica, gesto che
+    // esiste già ed è esplicito. Fra «un dato sanitario sparisce senza che
+    // nessuno l'abbia chiesto» e «per toglierlo servono due tocchi», la scelta
+    // non è in equilibrio.
+    const rigaComune = {
       alunno_id: studentId,
       scuola_id: alunno.scuola_id,
       section_id: alunno.section_id,
       data,
       stato: 'assente',
       giustificata: true,
-      giustificazione_testo: motivoTesto || null,
       giustificata_da: userId,
       giustificata_il: new Date().toISOString(),
     }
+    const riga = { ...rigaComune, giustificazione_testo: motivoTesto || null }
+    const rigaAggiornamento = motivoTesto ? riga : rigaComune
 
     const errore500 = (e: unknown) => {
       // Il `message` di PostgREST NON esce verso il client (era `{ error:
@@ -557,7 +581,7 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     const aggiornaSeNonRegistrata = async () =>
       await supabase
         .from('presenze')
-        .update(riga)
+        .update(rigaAggiornamento)
         .eq('alunno_id', studentId)
         .eq('data', data)
         .is('registrato_da', null)

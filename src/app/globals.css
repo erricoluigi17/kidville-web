@@ -167,6 +167,48 @@ body {
    e calc() delle altezze (chat). */
 [data-kv-shell] {
   --kv-appbar-h: 58px;
+  /* Altezza OCCUPATA dalla barra di navigazione in fondo (`BottomNav`,
+     `TeacherBottomNav`): la pillola (`h-[60px]`) più il margine che il suo
+     contenitore le mette sotto (`max(12px, env(safe-area-inset-bottom))`, cioè
+     la safe-area quando c'è).
+
+     Esiste per la stessa ragione di `--kv-appbar-h`: la barra è `fixed` con
+     `z-50` e sta SOPRA il contenuto, quindi chi deve restarle fuori ha bisogno
+     di sapere quanto è alta. Misurato sull'emulatore il 2026-08-07: il pulsante
+     «COMUNICA ASSENZA» di `/parent/attendance` cadeva dentro questa fascia
+     (sovrapposizione di 137px su 145) e un tocco al suo centro apriva la scheda
+     AVVISI. Il `pb-24` della pagina non protegge un elemento a metà documento:
+     riserva spazio in FONDO, non davanti alla barra.
+     Il numero non si copia a mano da nessuna parte: il lock
+     `__tests__/pages/assenze-rifiniture-secondo-collaudo.test.tsx` lo rilegge da
+     `BottomNav.tsx` e fallisce se la pillola cambia altezza. */
+  --kv-bottomnav-h: calc(60px + max(12px, env(safe-area-inset-bottom)));
+}
+
+/* =============================================================================
+   LA TASTIERA APERTA E L'APPBAR — `scroll-margin-top` sui campi della shell.
+
+   Quando la tastiera si apre, la viewport si accorcia e il browser porta in
+   vista il campo a fuoco calcolando il bordo SUPERIORE del layout: l'AppBar è
+   `sticky top-0` (58px sul web, più la safe-area nella shell nativa) e il campo
+   finisce esattamente dietro di essa. Misurato il 2026-08-07 su emulatore
+   Android, campo «Motivo» di `/parent/attendance`: dopo `inputText "prova"` il
+   testo si vedeva SOLO nella barra dei suggerimenti della tastiera; nella pagina
+   restava il bordo inferiore del riquadro e il resto era coperto dalla barra
+   verde. Con uno swipe di 250px il campo tornava visibile — cioè si scriveva
+   alla cieca finché non si scorreva a mano.
+
+   `scroll-margin-top` è ciò che il browser AGGIUNGE sopra l'elemento quando lo
+   porta in vista: dichiarare l'altezza dell'AppBar significa dire «non
+   considerare buono un allineamento che ti finisce sotto quella barra». Vale
+   sul web tanto quanto in shell nativa, perché l'AppBar è sticky in entrambe;
+   il valore è la VARIABILE, non un numero, così sui telefoni col notch (dove
+   `--kv-appbar-h` cresce dell'inset) resta esatto.
+   ============================================================================= */
+[data-kv-shell] input,
+[data-kv-shell] select,
+[data-kv-shell] textarea {
+  scroll-margin-top: var(--kv-appbar-h);
 }
 .cap-native [data-kv-shell] {
   margin-top: calc(-1 * env(safe-area-inset-top));
@@ -277,6 +319,34 @@ body {
 [data-contrast="high"] .kv-header-card {
   background: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
+}
+
+/* I RICOVERI DEL FUOCO delle schermate «comunica un'assenza» (`.kv-fuoco-esito`).
+
+   Sono i messaggi di esito — conferma, errore, paragrafo introduttivo — su cui
+   il codice sposta il fuoco quando il comando che l'utente ha premuto si smonta
+   (WCAG 2.4.3). Non sono controlli: hanno `tabIndex={-1}`, non entrano
+   nell'ordine di tabulazione, e il loro UNICO indicatore di fuoco è l'anello
+   dichiarato con `focus:ring-2 focus:ring-kidville-green`.
+
+   Ed è lì il difetto misurato il 2026-08-07: `ring-kidville-green` è una utility
+   nata da `@theme inline`, che porta l'hex #006A5F INLINATO nel `box-shadow` e
+   quindi NON partecipa al rimappaggio dei token dentro `[data-contrast="high"]`.
+   Risultato: nella stessa schermata, in Alto Contrasto, il fuoco era giallo su
+   bottoni e campi (`[data-contrast="high"] *:focus-visible`, qui sopra) e VERDE
+   su questi due punti. Il verde su card bianca resta a 6,51:1 — leggibile — ma
+   due linguaggi del fuoco nella stessa pagina sono un difetto di coerenza per
+   chi quella modalità la usa perché ne ha bisogno.
+
+   Perché una regola per-superficie e non un rimedio globale: `focus:ring-*`
+   compare su 148 elementi in `src/`, e ribaltarli tutti in blocco cambierebbe
+   schermate che nessuno ha misurato. Qui si copre la classe di elementi che ha
+   il problema, con lo stesso linguaggio del resto dell'Alto Contrasto: anello
+   giallo #FFE500 più il separatore nero che lo stacca dai fondi chiari.
+   `focus:` e non `:focus-visible`: il fuoco ci arriva DA CODICE, e le euristiche
+   di `focus-visible` su un elemento non interattivo non lo mostrerebbero. */
+[data-contrast="high"] .kv-fuoco-esito:focus {
+  box-shadow: 0 0 0 2px #FFE500, 0 0 0 4px #000000;
 }
 
 /* News — testo posato direttamente sul body (back-link, stati vuoti), fuori

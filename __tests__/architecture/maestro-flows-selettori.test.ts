@@ -1702,17 +1702,24 @@ const ETICHETTE_AMBIGUE_HOME_GENITORE: EtichettaAmbiguaHome[] = [
     ],
   },
   {
-    selettore: 'Segnala assenza',
+    // Il testo è cambiato il 2026-08-08 — era «Segnala assenza» — perché l'azione
+    // aveva QUATTRO nomi e questo era il fuori posto: il resto del prodotto (PRD,
+    // card della primaria, pulsante) dice «comunicare». L'AMBIGUITÀ NON È SPARITA
+    // col nome: `home.json:azioneAssenza` è stata cambiata insieme al titolo,
+    // apposta — se la home dicesse «Comunica un'assenza» e la pagina un'altra cosa,
+    // il genitore toccherebbe una cosa e ne aprirebbe un'altra. Le due fonti restano
+    // due, e questa voce con loro.
+    selettore: 'Comunica un’assenza',
     misurato: '2026-08-07',
     esito: 'dedotto',
     prova:
       'NON misurato sull\'albero: dedotto dai cataloghi. `home.json:azioneAssenza` vale ' +
-      '«Segnala\\nassenza» ed è l\'azione rapida della Home; il nome accessibile appiattisce ' +
-      'gli spazi interni (accname §4), quindi arriva identico al titolo della pagina ' +
-      '`parentServizi.json:attendanceTitolo`. Finché non c\'è un dump che lo smentisca, un ' +
-      'flow che prova di essere ARRIVATO su /parent/attendance con «Segnala assenza» può ' +
-      'essere soddisfatto dalla Home — che è dove si finisce quando il tap sul foglio Menu ' +
-      'non atterra. Il testo univoco costa zero: si usa quello.',
+      '«Comunica\\nun’assenza» ed è l\'azione rapida della Home; il nome accessibile ' +
+      'appiattisce gli spazi interni (accname §4), quindi arriva identico al titolo della ' +
+      'pagina `parentServizi.json:attendanceTitolo`. Finché non c\'è un dump che lo ' +
+      'smentisca, un flow che prova di essere ARRIVATO su /parent/attendance con quel ' +
+      'testo può essere soddisfatto dalla Home — che è dove si finisce quando il tap sul ' +
+      'foglio Menu non atterra. Il testo univoco costa zero: si usa quello.',
     fonti: [
       { file: 'messages/it/parentServizi.json', chiave: 'attendanceTitolo' },
       { file: 'messages/it/home.json', chiave: 'azioneAssenza', normalizzato: true },
@@ -1720,13 +1727,19 @@ const ETICHETTE_AMBIGUE_HOME_GENITORE: EtichettaAmbiguaHome[] = [
     soloDestinazione: {
       frammenti: [
         {
-          testo: 'Comunica un’assenza alla scuola',
+          testo: 'Avvisa gli insegnanti in anticipo',
           fonte: { file: 'messages/it/parentServizi.json', chiave: 'attendanceSottotitolo' },
         },
       ],
       nota:
         'Sottotitolo dell\'intestazione di /parent/attendance: in cima alla pagina, presente ' +
-        'in entrambi gli alberi (Android e iOS, 2026-08-07), e vive solo lì.',
+        'in entrambi gli alberi (Android e iOS, 2026-08-07). Era «Comunica un’assenza alla ' +
+        'scuola», cioè il titolo ripetuto con tre parole in più: dal 2026-08-08 dice la cosa ' +
+        'che il titolo non dice (QUANDO si può comunicare) ed è lo stesso testo della card ' +
+        'della primaria — le due schermate della stessa funzione ora si somigliano. Vive su ' +
+        'due pagine e non più su una: /parent/primaria/assenze porta la stessa frase, ma non ' +
+        'è sul percorso di questo flow, e la pagina di PARTENZA (la home) non la contiene — ' +
+        'che è l\'unica proprietà che serve a una prova d\'arrivo.',
     },
     soloPartenza: HERO_HOME_GENITORE,
   },

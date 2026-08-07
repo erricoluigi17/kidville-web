@@ -9,6 +9,7 @@ import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { FUOCO_ESITO } from '@/lib/ui/fuoco';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
@@ -35,6 +36,16 @@ const ROTTA = '/parent/attendance';
  * schermata, quindi l'unicità è garantita.
  */
 const ID_ERRORE_INVIO = 'attendance-errore-invio';
+
+/**
+ * L'id dell'ISTRUZIONE sul campo del giorno e quello della NOTA sul trattamento
+ * del motivo. Costanti per la stessa ragione di `ID_ERRORE_INVIO`: ci puntano
+ * due `aria-describedby`, e un id inventato in due punti diversi è il modo in
+ * cui `aria-describedby` smette di descrivere qualcosa.
+ */
+const ID_AIUTO_GIORNO = 'attendance-aiuto-giorno';
+const ID_NOTA_MOTIVO = 'attendance-nota-motivo';
+
 
 /**
  * Le due chiamate al backend vivono FUORI dal componente e non lanciano mai:
@@ -128,6 +139,15 @@ type EsitoAnnullamento = { ok: true } | { ok: false; corpo: unknown };
 
 function AttendanceInner() {
     const t = useTranslations('parentServizi');
+    /**
+     * Le frasi che questa schermata CONDIVIDE con la card della primaria — la
+     * nota sul trattamento del motivo, l'avviso «questo giorno lo hai già
+     * comunicato», la conferma che distingue l'aggiornamento dalla creazione.
+     * Vivono in un namespace loro perché sono le stesse identiche parole: la
+     * stessa frase scritta due volte in due cataloghi è il difetto da cui nasce
+     * metà di questo lavoro.
+     */
+    const ta = useTranslations('parentAssenze');
     const { parentId, studentId, ready } = useParentIdentity();
     const f = useDateFormat();
     // «Oggi» nel fuso Europe/Rome, non in UTC. Il `new Date().toISOString()` che
@@ -141,6 +161,17 @@ function AttendanceInner() {
     const [reason, setReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
+    /**
+     * L'invio appena riuscito ha AGGIORNATO una comunicazione che c'era già.
+     *
+     * Il server scrive la stessa riga in entrambi i casi — `presenze` ha UNIQUE
+     * (alunno_id, data) — e risponde 201 sempre, quindi la distinzione la fa il
+     * client, che l'elenco ce l'ha già in mano. Non è cosmesi: «Assenza
+     * comunicata» detto dopo aver sovrascritto la comunicazione di ieri è la
+     * frase che ha permesso al motivo di sparire senza che nessuno se ne
+     * accorgesse.
+     */
+    const [aggiornata, setAggiornata] = useState(false);
     const [error, setError] = useState<string | null>(null);
     /**
      * Il CODICE del rifiuto, accanto alla frase già tradotta.
@@ -176,6 +207,52 @@ function AttendanceInner() {
     const [annullando, setAnnullando] = useState<string | null>(null);
     const [esitoAnnullamento, setEsitoAnnullamento] = useState<string | null>(null);
     const [erroreAnnullamento, setErroreAnnullamento] = useState<string | null>(null);
+    /**
+     * La comunicazione GIÀ ARCHIVIATA per il giorno che il modulo mostra.
+     *
+     * ─── IL MOTIVO CANCELLATO IN SILENZIO (collaudo 2026-08-07) ──────────────
+     * Due invii consecutivi sulla stessa data: il primo con «collaudo tecnico»,
+     * il secondo — modulo riaperto, campo motivo vuoto — con il motivo a zero.
+     * HTTP 201, «Assenza comunicata», e il motivo sparito dall'elenco. Il campo
+     * è FACOLTATIVO, quindi il client lo mandava comunque (`motivo: ''`) e la
+     * route lo normalizzava a NULL nell'UPDATE della riga esistente: un dato
+     * sanitario di un minore cancellato dal fatto di non essere stato riscritto.
+     *
+     * LA REGOLA, e il perché: **il campo «Motivo» non è un foglio bianco, è lo
+     * specchio di ciò che risulta archiviato per il giorno scelto.** Lasciarlo
+     * com'è significa RICONFERMARE, non cancellare; cancellare resta possibile,
+     * ma si fa svuotando il campo — che è un gesto, non una dimenticanza.
+     */
+    const giaComunicata = comunicate.find((v) => v.data === data) ?? null;
+    /**
+     * Il giorno mostrato dal modulo, leggibile da `caricaComunicate` SENZA
+     * entrare fra le sue dipendenze. Se ci entrasse, l'effetto che legge
+     * l'elenco ripartirebbe a ogni cambio di data: una GET per ogni tocco sul
+     * calendario. Lo aggiornano gli stessi gestori che scrivono `data`.
+     */
+    const dataScelta = useRef(today);
+    /**
+     * La prima lettura riuscita dell'elenco è anche l'unico momento in cui il
+     * modulo può scoprire che il giorno GIÀ PROPOSTO (oggi) ha un motivo
+     * archiviato. Dopo, il riallineamento lo fanno i gestori.
+     */
+    const primaLettura = useRef(true);
+
+    /**
+     * Sposta il modulo su un altro giorno, riallineando il motivo a quel giorno.
+     *
+     * Il riallineamento NON è incondizionato: se né il giorno che si lascia né
+     * quello che si sceglie hanno una comunicazione in archivio, ciò che il
+     * genitore ha digitato resta dov'è. Cancellargli il testo appena scritto per
+     * il solo fatto di aver corretto la data sarebbe un difetto nuovo.
+     */
+    const cambiaGiorno = useCallback((giorno: string) => {
+        const partenza = comunicate.find((v) => v.data === dataScelta.current);
+        const arrivo = comunicate.find((v) => v.data === giorno);
+        dataScelta.current = giorno;
+        setData(giorno);
+        if (arrivo || partenza) setReason(arrivo?.giustificazione_testo ?? '');
+    }, [comunicate]);
     /**
      * Dove va il FUOCO quando la riga annullata sparisce.
      *
@@ -274,6 +351,15 @@ function AttendanceInner() {
             if (esito.ok) {
                 setComunicate(esito.voci);
                 setErroreElenco(null);
+                // Il giorno proposto all'apertura può essere GIÀ comunicato, con
+                // un motivo scritto: qui è il primo istante in cui si può
+                // saperlo, e il campo deve partire da quel testo invece che da
+                // vuoto (vedi `giaComunicata`).
+                if (primaLettura.current) {
+                    primaLettura.current = false;
+                    const gia = esito.voci.find((v) => v.data === dataScelta.current);
+                    if (gia?.giustificazione_testo) setReason(gia.giustificazione_testo);
+                }
             } else {
                 // Lista vuota + nessun messaggio sarebbe una BUGIA: «non hai
                 // comunicato niente» invece di «non sono riuscito a leggerlo».
@@ -324,7 +410,15 @@ function AttendanceInner() {
     // (decisione 2 — niente nuove API). L'endpoint crea l'assenza già giustificata.
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!parentId || !studentId || submitting) return;
+        // `!data`: il giorno è obbligatorio, e il pulsante è già disabilitato
+        // senza. La rete qui sotto serve al percorso che il bottone non copre
+        // (Invio da tastiera dentro il modulo) — sul selettore nativo di Android
+        // esiste un CLEAR, e il rifiuto che tornava dal server parlava «di questo
+        // momento» invece che del campo mancante.
+        if (!parentId || !studentId || submitting || !data) return;
+        // Il fatto che questo invio SOVRASCRIVA si decide adesso, con l'elenco
+        // ancora quello di prima: dopo la rilettura la riga c'è comunque.
+        setAggiornata(giaComunicata !== null);
         setSubmitting(true);
         setError(null);
         setCodiceErrore(null);
@@ -460,7 +554,7 @@ function AttendanceInner() {
                     // Il fuoco ci arriva solo da chi ha appena premuto un
                     // «Annulla» che il server ha rifiutato.
                     tabIndex={-1}
-                    className="mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong outline-none focus:ring-2 focus:ring-kidville-green"
+                    className={`mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong ${FUOCO_ESITO}`}
                 >
                     <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {erroreAnnullamento}
                 </div>
@@ -471,14 +565,10 @@ function AttendanceInner() {
                     role="status"
                     // `tabIndex={-1}` lo rende raggiungibile dal codice ma NON
                     // dal Tab: non entra nell'ordine di navigazione, ci finisce
-                    // solo chi arriva dal bottone appena smontato.
+                    // solo chi arriva dal bottone appena smontato. Forma e anello
+                    // vengono da `FUOCO_ESITO`, uguali per tutti i ricoveri.
                     tabIndex={-1}
-                    // `outline-none` non toglie l'indicatore, lo SOSTITUISCE con
-                    // quello della casa: l'anello verde Clay Village, sempre
-                    // visibile quando il fuoco è qui (`focus:`, non
-                    // `focus-visible:` — il fuoco arriva da codice, e le
-                    // euristiche di `focus-visible` non lo mostrerebbero).
-                    className="mt-3 rounded-xl px-1 font-maven text-xs text-kidville-success-strong outline-none focus:ring-2 focus:ring-kidville-green"
+                    className={`mt-3 rounded-xl px-1 font-maven text-xs text-kidville-success-strong ${FUOCO_ESITO}`}
                 >
                     {esitoAnnullamento}
                 </p>
@@ -509,9 +599,12 @@ function AttendanceInner() {
                     // di navigazione, ci finisce solo chi arriva dal bottone appena
                     // smontato. Stessa forma dell'esito dell'annullamento qui sopra.
                     tabIndex={-1}
-                    className="mb-2 font-barlow text-2xl font-black uppercase text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green"
+                    className={`mb-2 rounded-xl px-1 font-barlow text-2xl font-black uppercase text-kidville-green ${FUOCO_ESITO}`}
                 >
-                    {t('attendanceInviataTitolo')}
+                    {/* «Comunicata» e «aggiornata» sono due fatti diversi: il
+                        secondo ha appena SOVRASCRITTO ciò che c'era, motivo
+                        compreso, e va detto. */}
+                    {aggiornata ? ta('aggiornataTitolo') : t('attendanceInviataTitolo')}
                 </h2>
                 {/* L'UNICA riga che dice per quale giorno l'assenza è stata
                     comunicata: `sub` (6,46:1 su bianco) e non `muted` (2,51:1). */}
@@ -522,7 +615,10 @@ function AttendanceInner() {
             <Btn
                 variant="ghost"
                 size="sm"
-                onClick={() => { setIsSubmitted(false); setReason(''); setData(today); }}
+                // Il ritorno al modulo passa da `cambiaGiorno`, non da `setData`
+                // nudo: rimettere «oggi» è un cambio di giorno come gli altri, e
+                // se oggi ha già un motivo archiviato il campo deve mostrarlo.
+                onClick={() => { setIsSubmitted(false); setAggiornata(false); setReason(''); cambiaGiorno(today); }}
             >
                 {t('attendanceComunicaAltra')}
             </Btn>
@@ -544,8 +640,16 @@ function AttendanceInner() {
                         vedi `refIntro` per il perché non è il campo data. */}
                     <p
                         ref={refIntro}
+                        // L'ISTRUZIONE del campo del giorno, non solo una frase
+                        // di contorno: il campo la referenzia con
+                        // `aria-describedby` (WCAG 3.3.2), come già fa la card
+                        // gemella della primaria. Non dichiara il FORMATO — su
+                        // un `<input type="date">` lo disegna il sistema, e
+                        // scriverlo qui sarebbe falso appena il browser è in
+                        // inglese; dichiara ciò che è vero e che `min` impone.
+                        id={ID_AIUTO_GIORNO}
                         tabIndex={-1}
-                        className="font-maven text-sm text-kidville-sub outline-none focus:ring-2 focus:ring-kidville-green"
+                        className={`rounded-xl px-1 font-maven text-sm text-kidville-sub ${FUOCO_ESITO}`}
                     >
                         {t('attendanceIndicaGiorno')}
                     </p>
@@ -578,18 +682,37 @@ function AttendanceInner() {
                     type="date"
                     value={data}
                     min={today}
-                    onChange={(e) => setData(e.target.value)}
+                    onChange={(e) => cambiaGiorno(e.target.value)}
                     // Il campo dichiara di essere lui il problema SOLO quando il
                     // rifiuto parla della data (`ASSENZA_DATA_*`), e rimanda al
                     // messaggio che dice perché. Su un rifiuto generico resta
                     // pulito: mandare a correggere un valore giusto è peggio che
                     // non dire niente.
                     aria-invalid={erroreSullaData || undefined}
-                    aria-describedby={erroreSullaData ? ID_ERRORE_INVIO : undefined}
-                    className="mb-4 w-full rounded-xl border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
+                    // L'istruzione c'è SEMPRE; il messaggio d'errore si aggiunge
+                    // quando il rifiuto parla del giorno.
+                    aria-describedby={erroreSullaData ? `${ID_AIUTO_GIORNO} ${ID_ERRORE_INVIO}` : ID_AIUTO_GIORNO}
+                    className="w-full rounded-xl border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
                 />
 
-                <label htmlFor="attendance-motivo" className="mb-2 block font-maven font-medium text-kidville-green">
+                {/*
+                    IL GIORNO SCELTO È GIÀ STATO COMUNICATO.
+                    Senza questa riga il modulo si comporta come se stesse
+                    creando qualcosa, mentre sta per SOVRASCRIVERE — e con lui il
+                    motivo già archiviato. `role="status"`: chi ascolta lo sente
+                    al cambio di giorno, senza che gli venga interrotta la
+                    compilazione.
+                */}
+                {giaComunicata && (
+                    <p
+                        role="status"
+                        className="mt-2 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn"
+                    >
+                        {ta('giaComunicataAvviso')}
+                    </p>
+                )}
+
+                <label htmlFor="attendance-motivo" className="mb-2 mt-4 block font-maven font-medium text-kidville-green">
                     {t('attendanceMotivo')}
                 </label>
                 {/* `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
@@ -602,9 +725,35 @@ function AttendanceInner() {
                     id="attendance-motivo"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
+                    aria-describedby={ID_NOTA_MOTIVO}
                     className="h-28 w-full resize-none rounded-xl border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
                     placeholder={t('attendanceMotivoPlaceholder')}
                 />
+                {/*
+                    L'INFORMAZIONE NEL MOMENTO IN CUI IL DATO SI SCRIVE.
+                    Il segnaposto qui sopra sollecita esplicitamente un dato di
+                    salute («Es. febbre, visita medica…») di un MINORE: è una
+                    categoria particolare (art. 9 GDPR), e finora la schermata
+                    non diceva né chi lo legge, né per quanto resta, né dove sta
+                    l'informativa. Delegarlo all'informativa generale non basta:
+                    il genitore non la sta leggendo nell'istante in cui scrive
+                    «febbre». Legata al campo con `aria-describedby`, così chi
+                    ascolta la sente PRIMA di digitare e non dopo.
+                    I dodici mesi non sono un numero scelto qui: sono quelli che
+                    il lavoro `presenze-giustificazioni-retention` applica
+                    davvero, e un lock li confronta con `v_mesi` della migrazione.
+                */}
+                <p id={ID_NOTA_MOTIVO} className="mt-2 font-maven text-xs text-kidville-sub">
+                    {ta('motivoPrivacy')}{' '}
+                    <a
+                        href="/privacy"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold underline"
+                    >
+                        {ta('motivoPrivacyLink')}
+                    </a>
+                </p>
 
                 {error && (
                     <div
@@ -614,21 +763,47 @@ function AttendanceInner() {
                         // Raggiungibile dal codice ma NON dal Tab: stessa forma
                         // della conferma e dell'esito dell'annullamento.
                         tabIndex={-1}
-                        className="mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong outline-none focus:ring-2 focus:ring-kidville-green"
+                        className={`mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong ${FUOCO_ESITO}`}
                     >
                         <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {error}
                     </div>
                 )}
 
-                <Btn
-                    type="submit"
-                    variant="primary"
-                    size="lg"
-                    disabled={!ready || submitting}
-                    className="mt-4 w-full"
-                >
-                    {submitting ? t('attendanceInvio') : t('attendanceComunicaAssenza')}
-                </Btn>
+                {/*
+                    IL PULSANTE NON DEVE FINIRE DIETRO LA BARRA DI NAVIGAZIONE.
+
+                    Misurato sull'emulatore Android il 2026-08-07: al primo
+                    ingresso, senza scorrere, il pulsante era coperto per 137px
+                    su 145 dalla bottom-nav (`fixed`, `z-50`) e se ne vedeva un
+                    bordo di 8px. Un tocco al suo centro — dove il pulsante SI
+                    INTUISCE — apriva /parent/avvisi: il gesto principale della
+                    schermata portava altrove, senza un messaggio.
+                    Il `pb-24` della pagina non c'entra e non poteva bastare:
+                    riserva spazio in FONDO al documento, mentre qui il pulsante
+                    sta a metà e la pagina è più alta della viewport.
+                    `sticky` + `--kv-bottomnav-h` (l'altezza DICHIARATA della
+                    barra, safe-area compresa) lo tengono appoggiato sopra di
+                    essa finché il modulo è a schermo, e lo rimettono nel flusso
+                    appena la sua posizione naturale sale sopra quella linea.
+                    `z-40` e non di più: sotto la barra, mai sopra — coprire la
+                    navigazione sarebbe lo stesso difetto al contrario.
+                */}
+                <div className="sticky bottom-[var(--kv-bottomnav-h)] z-40 mt-4">
+                    <Btn
+                        type="submit"
+                        variant="primary"
+                        size="lg"
+                        // `!data`: il selettore nativo di Android offre CLEAR, e
+                        // con il campo vuoto la richiesta partiva per farsi
+                        // rifiutare — con un messaggio che parlava «di questo
+                        // momento» invece che del giorno mancante. La card
+                        // gemella lo faceva già bene.
+                        disabled={!ready || submitting || !data}
+                        className="w-full"
+                    >
+                        {submitting ? t('attendanceInvio') : t('attendanceComunicaAssenza')}
+                    </Btn>
+                </div>
             </form>
 
             {/* Senza un figlio risolto non esiste un elenco di cui parlare: si

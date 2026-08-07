@@ -13,6 +13,7 @@ import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
+import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -51,6 +52,45 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
     // OTP: un account sospeso non deve neppure innescare la firma. Solo SCRITTURA.
     const sospesoErr = await assertGenitoreNonSospeso(supabase, userId)
     if (sospesoErr) return sospesoErr
+
+    // IL MOTIVO HA UNA LUNGHEZZA MASSIMA, QUI COME SUL GEMELLO.
+    //
+    // Le route che scrivono `presenze.giustificazione_testo` sono due, e il tetto del
+    // collaudo del 2026-08-07 era stato messo solo su `comunica-assenza`: da questa porta i
+    // 200.000 caratteri passavano ancora, con in più una firma elettronica appesa. Il numero
+    // sta in `@/lib/presenze/limiti-testo` e non in due costanti gemelle: due copie della
+    // stessa misura divergono al primo ritocco.
+    //
+    // ─── DOVE STA, E PERCHÉ NON ALTROVE ─────────────────────────────────────
+    //
+    //  · NON in zod: lo schema decide PRIMA di `requireParentOfStudent`, e un 400 emesso lì
+    //    scavalcherebbe il 403 sul figlio altrui che la prova adversarial pretende;
+    //  · PRIMA di `limitaVerificaOtp` e della verifica del codice: un errore di forma non
+    //    deve consumare un tentativo del budget OTP, che è un presidio contro chi INDOVINA
+    //    — bruciarlo con un incollaggio sbagliato farebbe pagare a un genitore distratto una
+    //    protezione pensata per un altro.
+    //
+    // Si misura il testo NORMALIZZATO, che è quello che finirebbe in tabella.
+    const motivoTesto = motivoNormalizzato(motivo) ?? ''
+    if (motivoTesto.length > MOTIVO_MAX_CARATTERI) {
+      // La LUNGHEZZA, mai il testo: è un dato sanitario di un minore. Il numero dice se è un
+      // incollaggio sbagliato o un collaudo con 200.000 caratteri; `error_code` è in lista
+      // bianca di `redact`, `codice` non lo sarebbe.
+      logEvento('registro', 'warn', {
+        operazione: 'parent/presenze/giustifica:POST',
+        error_code: 'ASSENZA_MOTIVO_TROPPO_LUNGO',
+        alunno_id: studentId,
+        stato: 400,
+        n: motivoTesto.length,
+      })
+      return NextResponse.json(
+        {
+          error: `Il motivo non può superare ${MOTIVO_MAX_CARATTERI} caratteri`,
+          codice: 'ASSENZA_MOTIVO_TROPPO_LUNGO',
+        },
+        { status: 400 },
+      )
+    }
 
     // Gating primaria: la giustifica genitore è ammessa solo per la scuola primaria.
     const { data: alunno } = await supabase
@@ -121,24 +161,55 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
       : buildSignatureLog({ method: 'CONFERMA_APP', email, ip, userAgent })
 
     // Aggiorna la riga presenza del giorno (deve esistere: appello registrato dal docente).
+    //
+    // ═══ LE TRE COSE CHE LA PORTA GEMELLA AVEVA GIÀ IMPARATO ═════════════════
+    //
+    // `comunica-assenza` scrive LA STESSA COLONNA della stessa tabella, e nel
+    // ciclo del 2026-08-07 vi sono state chiuse tre cose che qui erano ancora
+    // aperte — con in più una firma elettronica appesa:
+    //
+    //  1. IL MOTIVO VUOTO NON CANCELLA. `giustificazione_testo: motivoTesto ||
+    //     null` su un UPDATE azzera il testo già archiviato — dato sanitario di
+    //     un minore — senza che nessuno l'abbia chiesto. Con il motivo vuoto la
+    //     colonna non si nomina affatto: nominarla a `null` la azzererebbe
+    //     esattamente come prima.
+    //  2. SI CHIEDE UNA COLONNA, NON VENTICINQUE. `.select()` nudo è `select *`,
+    //     e ciò che torna da un UPDATE non è quello che hai scritto: è quello
+    //     che C'ERA — `note_appello` (la nota del docente sul bambino),
+    //     `registrato_da`/`utente_id` (identificativi di personale) e
+    //     `giustificazione_firma`, che porta email, indirizzo IP e user agent.
+    //     Di tutto questo al client serve `id`.
+    //  3. LA PROSA DI POSTGREST NON ESCE. Il `message` è inglese con dentro nomi
+    //     di colonne e vincoli, e finiva davanti a un genitore. Resta nel log,
+    //     intero, che è dove dice PERCHÉ.
+    const aggiornamento: Record<string, unknown> = {
+      giustificata: true,
+      giustificata_da: userId,
+      giustificata_il: new Date().toISOString(),
+      giustificazione_firma: firma,
+      // Una nuova giustifica azzera l'eventuale presa visione precedente.
+      giust_vista_il: null,
+      giust_vista_da: null,
+    }
+    // Lo stesso valore appena misurato, normalizzato una volta sola e nello stesso modo
+    // del gemello: il tetto deve valere sul testo che arriva davvero in tabella.
+    if (motivoTesto) aggiornamento.giustificazione_testo = motivoTesto
+
     const { data: updated, error } = await supabase
       .from('presenze')
-      .update({
-        giustificata: true,
-        giustificazione_testo: typeof motivo === 'string' ? motivo.trim() || null : null,
-        giustificata_da: userId,
-        giustificata_il: new Date().toISOString(),
-        giustificazione_firma: firma,
-        // Una nuova giustifica azzera l'eventuale presa visione precedente.
-        giust_vista_il: null,
-        giust_vista_da: null,
-      })
+      .update(aggiornamento)
       .eq('alunno_id', studentId)
       .eq('data', data)
-      .select()
+      .select('id')
       .maybeSingle()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      logErrore({ operazione: 'parent/presenze/giustifica:POST', stato: 500, evento: 'db' }, error)
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'GIUSTIFICA_NON_SALVATA' },
+        { status: 500 },
+      )
+    }
     if (!updated) return NextResponse.json({ error: 'Nessuna assenza registrata per quella data' }, { status: 404 })
 
     // Ledger slot firmatari (additivo, best-effort).
@@ -189,10 +260,15 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
       }, e)
     }
 
-    return NextResponse.json({ success: true, data: updated })
+    return NextResponse.json({ success: true, data: { id: updated?.id ?? null } })
   } catch (err) {
     logErrore({ operazione: 'parent/presenze/giustifica:POST', stato: 500 }, err)
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    // Il messaggio dell'eccezione NON esce: può portare dettagli interni
+    // (percorsi, nomi di colonne, testo di un vincolo) davanti a un genitore.
+    // È già andato nel log una riga sopra, che è dove serve.
+    return NextResponse.json(
+      { error: 'Errore interno', codice: 'GIUSTIFICA_NON_SALVATA' },
+      { status: 500 },
+    )
   }
 })

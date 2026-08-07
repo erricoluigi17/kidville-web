@@ -44,11 +44,11 @@ const postBodySchema = z.object({
  * Il 500 «non è colpa tua» della POST, in un posto solo.
  *
  * Esiste per due ragioni, e la seconda non è cosmetica: (1) il guasto di lettura
- * dell'anagrafica e l'eccezione generica raccontano al docente la stessa cosa e
- * devono dirla con le stesse parole; (2) il debito misurato da
- * `errori-con-codice.test.ts` è congelato e può solo essere PAGATO — una quarta
- * copia letterale della stessa risposta lo farebbe crescere dentro il lock che
- * esiste per impedirlo.
+ * dell'anagrafica, il guasto di SCRITTURA e l'eccezione generica raccontano al
+ * docente la stessa cosa e devono dirla con le stesse parole; (2) il debito
+ * misurato da `errori-con-codice.test.ts` è congelato e può solo essere PAGATO —
+ * una quarta copia letterale della stessa risposta lo farebbe crescere dentro il
+ * lock che esiste per impedirlo.
  *
  * Il `message` di PostgREST non compare qui: è prosa inglese con dentro nomi di
  * colonne, e resta nel log — che è dove dice *perché*.
@@ -250,11 +250,22 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             .single();
 
         if (error) {
+            // IL `message` DI POSTGREST NON ESCE DA QUI, e fino al 2026-08-08 usciva:
+            // la risposta era `{ error: 'Errore salvataggio presenza.', details:
+            // error.message }`. Quel messaggio porta nomi di colonna, nomi di VINCOLO
+            // (`unique_presenza_giornaliera`), `details` e `hint`: una mappa dello schema
+            // consegnata a chiunque superi `requireDocente` — che include la segreteria.
+            //
+            // Ed è esattamente ciò che la rotta gemella dello stesso lavoro dichiarava di
+            // aver tolto («prosa inglese con dentro nomi di colonne, mostrata a un
+            // genitore», `parent/presenze/comunica-assenza`): la correzione era stata
+            // applicata al genitore e non al docente, in un file che quel commit aveva
+            // toccato. Divulgazione per omissione, non per scelta.
+            //
+            // Il messaggio non si perde: sta tutto intero nel `logErrore` qui sopra, che è
+            // dove dice PERCHÉ.
             logErrore({ operazione: 'attendance/daily:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json(
-                { error: 'Errore salvataggio presenza.', details: error.message },
-                { status: 500 }
-            );
+            return erroreInterno();
         }
 
         // Notifica di assenza ai genitori (best-effort). Allo 0-6 il genitore

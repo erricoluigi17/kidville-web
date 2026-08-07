@@ -60,9 +60,13 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * impedirlo. Non era una scelta: è ciò che succede quando si paga il debito e ci si dimentica
  * di stringere il tetto. Oggi i due numeri coincidono con `totale_occorrenze` e con la
  * lunghezza dell'elenco, e chi convertirà la prossima risposta dovrà toccarli per forza.
+ *
+ * 2026-08-08 · −1 (1465 → 1464). `attendance/daily:POST` restituiva il `message` grezzo di
+ * PostgREST dentro `details` (rilievo M10): la risposta ora passa da `erroreInterno()`, che
+ * nel file c'era già. Una risposta in meno scritta a mano, e il messaggio resta nel log.
  */
 const MAX_FILE = 280;
-const MAX_OCCORRENZE = 1465;
+const MAX_OCCORRENZE = 1464;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

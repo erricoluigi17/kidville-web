@@ -137,14 +137,81 @@ const FORMA_PATH = /^(\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/;
  * NB: `codice` NON è qui. Sembra innocuo, ma la valutazione di competenza viaggia
  * anche come `Livello.codice: 'A'|'B'|'C'|'D'` (src/lib/competenze/modello.ts): stessa
  * informazione di `livello`, altro nome. I codici d'errore hanno il loro campo dedicato.
+ *
+ * ESPORTATO perché il lock `logging-redact-canale-testo-libero.test.ts` gira sull'ELENCO e
+ * non su un campione: una chiave aggiunta domani è coperta il giorno in cui viene aggiunta,
+ * che è il solo momento in cui nessuno la sta guardando.
  */
-const IN_CHIARO = insieme(
+export const CHIAVI_IN_CHIARO = [
     'tipo', 'tipo_evento', 'stato', 'esito', 'azione', 'operazione', 'metodo',
     'ordine', 'periodo', 'anno', 'anno_scolastico', 'mese', 'cadenza',
     'ruolo', 'grado', 'classe_sezione', 'sezione', 'bucket', 'mime', 'content_type',
     'estensione', 'formato', 'canale', 'piattaforma', 'ambiente', 'provider',
     'error_code', 'evento', 'entita_tipo',
-);
+] as const;
+
+const IN_CHIARO = insieme(...CHIAVI_IN_CHIARO);
+
+/**
+ * LA FORMA DI UN ENUMERATO — la stessa deroga di `digest` e di `url`, estesa alle venti
+ * chiavi che erano rimaste indietro.
+ *
+ * IL PROBLEMA (collaudo del 2026-08-07, rilievo M11). `redact()` non gira solo sui campi che
+ * scriviamo noi: gira sul BODY GREZZO di ogni richiesta, perché `parseBody` fa
+ * `impostaPayload('body', raw)` PRIMA di zod. Finché bastava la CHIAVE, `{"stato": "<quello
+ * che ti pare>"}` era un canale di TESTO LIBERO verso `app_log` — 30 giorni, interrogabile in
+ * SQL — e con `stato` uscivano `tipo`, `esito`, `operazione`, `sezione`, `grado`, `error_code`,
+ * `entita_tipo`… Il canale non è anonimo (serve una sessione perché `withRoute` persista il
+ * 400), ma su `parent/presenze/comunica-assenza` basta un account genitore, e il testo libero
+ * di quella rotta è il MOTIVO dell'assenza: dato sanitario di un minore.
+ *
+ * Il modulo aveva già scritto la risposta due volte — `CHIAVI_DIGEST`, `CHIAVI_PATH`: **la
+ * chiave apre, il valore conferma** — e non l'aveva generalizzata. Qui la forma è quella di un
+ * ENUMERATO tecnico: comincia con una lettera o una cifra, niente spazi, niente a capo, e non
+ * più lunga di 64 caratteri.
+ *
+ * PERCHÉ PROPRIO QUESTA FORMA, e perché non stringe i log veri. Misurati i 1.261 valori
+ * letterali che `src/` scrive sotto queste chiavi: nessuno supera i **45** caratteri e nessuno
+ * esce da questo alfabeto — ci stanno i nomi di rotta con segmento dinamico
+ * (`admin/sections/[id]/teachers:DELETE`), i mime (`application/vnd.api+json`), i periodi
+ * (`2026-07`), gli slug (`body-json-malformato`). 64 è il tetto che `/api/logs` usa già per
+ * `evento`: non è un numero nuovo.
+ *
+ * NIENTE SPAZI è la riga che fa il lavoro: la prosa ne ha, un enumerato no. E un `\n` è nella
+ * stessa classe per una ragione in più della privacy — spezzerebbe la riga di log in due voci,
+ * e la seconda la scriverebbe il client.
+ *
+ * LO SLASH INIZIALE È AMMESSO, e non è una concessione: sotto `operazione` questo repo scrive
+ * anche un PATTERN DI PATH — `instrumentation.ts` passa la rotta di render (`/dashboard`),
+ * `external.ts` passa `redigiPath(new URL(url).pathname)` del provider. Quei valori sono già
+ * ridotti a pattern da `redigiPath` prima di arrivare qui, e senza lo slash uscivano
+ * `[redatto:str/10]`: si perdeva la sola colonna che dice DOVE è successo. Un path resta senza
+ * spazi e sotto i 64 caratteri, quindi la difesa non cambia natura.
+ *
+ * ⚠️ LIMITE DICHIARATO, perché nessuno lo scopra da solo fra sei mesi: un token SENZA spazi e
+ * più corto di 64 caratteri passa ancora — un codice fiscale (`RSSMRA80A01H501U`) ha questa
+ * forma. Questa difesa chiude il testo libero, non ogni dato possibile. Il presidio contro i
+ * dati personali resta quello di sempre: la chiave (`DA_HASHARE`, `RADICI_SEGRETE`,
+ * `RADICI_NASCITA`) e la lista bianca chiusa per default.
+ */
+const FORMA_ENUMERATO = /^[A-Za-z0-9/][A-Za-z0-9._:/+[\]-]{0,63}$/;
+
+/**
+ * L'alfabeto di una CHIAVE, e perché le chiavi vanno guardate come i valori (rilievo M15).
+ *
+ * `redactValore` riusava il nome della chiave intatto: `out[kk] = redactValore(kk, …)`. Quindi
+ * bastava spostare il testo dal valore al NOME per non passare da nessuna riduzione —
+ * `{"motivo": {"HA LA VARICELLA": 1}}` usciva intero, mentre `{"motivo": "HA LA VARICELLA"}`
+ * usciva `[redatto:str/15]`. Lo stesso dato, due trattamenti, decisi dalla forma che gli dà
+ * il client. E il client la forma la sceglie: `motivo` è dichiarato `z.unknown()`, e le chiavi
+ * dello slot `query` sono i nomi dei query param, cioè testo che arriva dall'esterno.
+ *
+ * Alfabeto conservativo — quello di un identificatore, più `.` e `-` per gli header e i nomi
+ * composti — e tetto a 64 come per i valori. Una chiave fuori forma esce come
+ * `[chiave-redatta:N]`: si perde il nome, si tiene il fatto che il campo c'era e quanto era
+ * lungo, che è metà della diagnosi.
+ */
+const FORMA_CHIAVE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 
 /**
  * IL `digest` DI NEXT — l'unica deroga alla lista bianca, e vale la pena scrivere perché.
@@ -297,6 +364,28 @@ function redigiErrore(v: Error): Record<string, unknown> {
     return out;
 }
 
+/**
+ * Il nome con cui una chiave arriva in tabella.
+ *
+ * Fuori dalla `FORMA_CHIAVE` diventa `[chiave-redatta:N]` — e il progressivo `#2`, `#3` non è
+ * un vezzo: senza, due chiavi ostili della stessa lunghezza (`{'a b':1,'c d':2}`) collasserebbero
+ * nello stesso nome e la seconda sovrascriverebbe la prima. Il log direbbe che il campo era uno
+ * solo, cioè mentirebbe sul numero — che in una riga di diagnosi è metà dell'informazione.
+ *
+ * NB: la sensibilità del VALORE si continua a decidere sulla chiave VERA (`redactValore(kk, …)`
+ * riceve `kk`, non il nome in uscita): `{'password!': 'hunter2'}` perde il nome per la forma e
+ * il valore per la radice segreta. Se si passasse il nome redatto, redigere una chiave
+ * significherebbe ASSOLVERE il suo valore — l'esatto contrario di ciò che serve.
+ */
+function nomeInUscita(chiave: string, gia: Record<string, unknown>): string {
+    if (FORMA_CHIAVE.test(chiave)) return chiave;
+    const base = `[chiave-redatta:${chiave.length}]`;
+    if (!(base in gia)) return base;
+    let i = 2;
+    while (`${base}#${i}` in gia) i++;
+    return `${base}#${i}`;
+}
+
 function redactValore(chiave: string | null, v: unknown, prof: number, visti: Set<object>): unknown {
     const k = chiave === null ? null : normalizzaChiave(chiave);
 
@@ -323,7 +412,11 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
             // come qualunque altra stringa — così `url` e `fileUrl` dicono la stessa cosa
             // dello stesso valore.
             if (CHIAVI_PATH.has(k)) return FORMA_PATH.test(v) ? tronca(redigiPath(v)) : redigiStringa(v);
-            if (IN_CHIARO.has(k)) return tronca(v);
+            // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `FORMA_ENUMERATO`). Niente `tronca`:
+            // la forma impone già 64 caratteri, e un troncamento a 120 non scatterebbe mai —
+            // ma soprattutto un enumerato tagliato a metà non è un enumerato, è un'altra
+            // cosa che si legge come se fosse quella giusta.
+            if (IN_CHIARO.has(k)) return FORMA_ENUMERATO.test(v) ? v : redigiStringa(v);
             // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`): niente `tronca`, perché
             // un digest o ci sta intero — e allora si può cercare — o non serve a niente. Se la
             // forma non torna si cade sotto, e la stringa esce redatta come qualunque altra:
@@ -361,10 +454,13 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
                 out['[…]'] = `[+${chiavi.length - CHIAVI_MAX} chiavi]`;
                 break;
             }
+            // Il nome si decide PRIMA del try: calcolarlo anche nel `catch` significherebbe
+            // chiamare due volte il progressivo delle collisioni su uno stato diverso.
+            const nome = nomeInUscita(kk, out);
             try {
-                out[kk] = redactValore(kk, (v as Record<string, unknown>)[kk], prof + 1, visti);
+                out[nome] = redactValore(kk, (v as Record<string, unknown>)[kk], prof + 1, visti);
             } catch {
-                out[kk] = '[campo-illeggibile]';
+                out[nome] = '[campo-illeggibile]';
             }
         }
         return out;

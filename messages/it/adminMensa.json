@@ -88,7 +88,7 @@
   "alternativaManualeDettaglio": "per {nome} ({classe}): {richiesta}",
   "richiestaDalGenitore": "(richiesta dal genitore)",
   "eliminaAlternativa": "Elimina alternativa",
-  "formNotaAlternativa": "Registra un'alternativa per il {data}. Sovrascrive un'eventuale nota già presente per lo stesso bambino e giorno.",
+  "formNotaAlternativa": "Registra un’alternativa per il {data}. Sovrascrive un’eventuale nota già presente per lo stesso bambino e giorno.",
   "bambinoLabel": "Bambino",
   "scegliBambino": "Scegli il bambino…",
   "notaAlternativaLabel": "Nota alternativa",
@@ -100,8 +100,8 @@
   "nelMenu": "Nel menu: {dettaglio}",
   "erroreSalvataggioAlt": "Errore nel salvataggio",
   "erroreReteSalvataggio": "Errore di rete nel salvataggio",
-  "erroreEliminazione": "Errore nell'eliminazione",
-  "erroreReteEliminazione": "Errore di rete nell'eliminazione",
+  "erroreEliminazione": "Errore nell’eliminazione",
+  "erroreReteEliminazione": "Errore di rete nell’eliminazione",
 
   "selezionaAlunno": "Seleziona alunno",
   "cerca": "Cerca…",
@@ -110,7 +110,7 @@
   "saldoLabel": "Saldo:",
   "dataDelPasto": "Data del pasto",
   "inserisciTicketScala": "Inserisci ticket (scala 1)",
-  "notaForzaInserimento": "La segreteria può forzare l'inserimento anche con saldo a zero: il saldo andrà in negativo (debito).",
+  "notaForzaInserimento": "La segreteria può forzare l’inserimento anche con saldo a zero: il saldo andrà in negativo (debito).",
   "operazioneNonRiuscita": "Operazione non riuscita",
   "ticketInserito": "Ticket inserito per il {data}. Nuovo saldo: {saldo}.",
   "mbRimuoviEccezione": "Rimuovi eccezione"

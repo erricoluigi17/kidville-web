@@ -224,8 +224,16 @@ describe('ComunicaAssenzaCard — la data nasce nel fuso italiano', () => {
     it('alle 00:30 italiane il campo dice OGGI (11), non ieri (10) come farebbe l’UTC', async () => {
         monta()
         apriModulo()
-        // `DateField` mostra il formato italiano gg/mm/aaaa.
-        expect(screen.getByLabelText(itPrimaria.comunicaDataLabel)).toHaveValue('11/08/2026')
+        // Dal 2026-08-08 il campo è l'`<input type="date">` NATIVO, lo stesso
+        // della schermata gemella (il collaudo le aveva trovate divergenti: un
+        // campo mascherato di qua, uno nativo di là). Un campo nativo espone
+        // sempre l'ISO, mentre a schermo il formato lo disegna il sistema —
+        // quindi qui si misura l'ISO, che è anche ciò che parte nel corpo.
+        const campo = screen.getByLabelText(itPrimaria.comunicaDataLabel)
+        expect(campo).toHaveValue('2026-08-11')
+        // …e il PAVIMENTO, che questa card non aveva: si poteva digitare una
+        // data passata e scoprirlo solo dal rifiuto del server.
+        expect(campo).toHaveAttribute('min', '2026-08-11')
 
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.comunicaInvia }))
         await waitFor(() => expect(chiamate('POST')).toHaveLength(1))
@@ -236,7 +244,7 @@ describe('ComunicaAssenzaCard — la data nasce nel fuso italiano', () => {
     it('la data si può cambiare, e parte quella scelta', async () => {
         monta()
         apriModulo()
-        fireEvent.change(screen.getByLabelText(itPrimaria.comunicaDataLabel), { target: { value: '15/09/2026' } })
+        fireEvent.change(screen.getByLabelText(itPrimaria.comunicaDataLabel), { target: { value: '2026-09-15' } })
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.comunicaInvia }))
 
         await waitFor(() => expect(chiamate('POST')).toHaveLength(1))
@@ -286,7 +294,7 @@ describe('ComunicaAssenzaCard — annullamento', () => {
 
     it('elenca le assenze comunicate e dà a ciascuna un comando che dice DI QUALE giorno', async () => {
         monta()
-        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })
         expect(annulla).toHaveLength(2)
         // Nomi accessibili DIVERSI: due comandi identici nell'annuncio e diversi
         // nell'effetto sono il difetto WCAG 4.1.2 già trovato in questo repo.
@@ -299,7 +307,7 @@ describe('ComunicaAssenzaCard — annullamento', () => {
     it('annullamento riuscito: DELETE con alunno e data, elenco ricaricato, ospite avvisato', async () => {
         const onAggiornato = vi.fn()
         monta({ onAggiornato })
-        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })
 
         fireEvent.click(annulla[1])
         await waitFor(() => expect(chiamate('DELETE')).toHaveLength(1))
@@ -317,13 +325,13 @@ describe('ComunicaAssenzaCard — annullamento', () => {
         esitoDelete = { ok: false, status: 409, body: { error: 'Appello già registrato', codice: 'ASSENZA_GIA_REGISTRATA' } }
         const onAggiornato = vi.fn()
         monta({ onAggiornato })
-        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })
 
         fireEvent.click(annulla[0])
         await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(itShared.erroreAssenzaGiaRegistrata))
         expect(screen.queryByText(itPrimaria.comunicaAnnullata)).not.toBeInTheDocument()
         expect(onAggiornato).not.toHaveBeenCalled()
-        expect(await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })).toHaveLength(2)
+        expect(await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })).toHaveLength(2)
         expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', evento: 'fetch', stato: 409 }))
     })
 
@@ -366,7 +374,7 @@ describe('ComunicaAssenzaCard — annullamento', () => {
         esitoGet = { ok: true, status: 200, body: { success: true, data: { comunicate } } }
         monta()
 
-        await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+        await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })
         expect(screen.queryByText(itPrimaria.comunicaElencoNonLetto)).not.toBeInTheDocument()
         expect(h.logClient).not.toHaveBeenCalled()
     })
@@ -442,7 +450,7 @@ describe('ComunicaAssenzaCard — il fuoco non si perde (WCAG 2.4.3)', () => {
     it('annullamento riuscito: il fuoco va sulla conferma (la riga con il bottone è sparita)', async () => {
         comunicate = [{ id: 'p-11', data: '2026-08-11', giustificazione_testo: null, stato: 'assente' }]
         monta()
-        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })
 
         annulla[0].focus()
         expect(document.activeElement).toBe(annulla[0])
@@ -459,7 +467,7 @@ describe('ComunicaAssenzaCard — il fuoco non si perde (WCAG 2.4.3)', () => {
         comunicate = [{ id: 'p-11', data: '2026-08-11', giustificazione_testo: null, stato: 'assente' }]
         esitoDelete = { ok: false, status: 409, body: { error: 'appello fatto', codice: 'ASSENZA_GIA_REGISTRATA' } }
         monta()
-        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l[''’]assenza comunicata per / })
 
         annulla[0].focus()
         fireEvent.click(annulla[0])
@@ -518,7 +526,13 @@ describe('ComunicaAssenzaCard — accessibilità e testi', () => {
         const en = (await import('../../messages/en/parentPrimaria.json')).default as Record<string, string>
         for (const k of [
             'comunicaTitolo', 'comunicaHint', 'comunicaApri', 'comunicaChiudi',
-            'comunicaDataLabel', 'comunicaDataAiuto', 'comunicaMotivoLabel', 'comunicaMotivoPlaceholder',
+            // `comunicaDataAiuto` («Formato: gg/mm/aaaa») NON è più in elenco: il
+            // campo è diventato nativo e il formato lo disegna il sistema, quindi
+            // quella frase non è più vera. L'aiuto sotto il campo è `comunicaHint`.
+            // La chiave resta nel catalogo finché chi lo cura non la toglie: qui
+            // si smette di pretenderla, così toglierla non tinge di rosso un test
+            // che parla d'altro.
+            'comunicaDataLabel', 'comunicaMotivoLabel', 'comunicaMotivoPlaceholder',
             'comunicaInvia', 'comunicaInvio', 'comunicaFatta', 'comunicaNonRiuscita',
             'comunicaElencoTitolo', 'comunicaElencoVuoto', 'comunicaElencoNonLetto',
             'comunicaAnnulla', 'comunicaAnnullamento', 'comunicaAnnullaAria', 'comunicaAnnullata',

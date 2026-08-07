@@ -25,7 +25,7 @@
   "avvisiColAdesioni": "Adesioni",
   "avvisiTipoAdesione": "Adesione",
   "avvisiTipoPresaVisione": "Presa visione",
-  "avvisiTuttoIstituto": "Tutto l'istituto",
+  "avvisiTuttoIstituto": "Tutto l’istituto",
   "avvisiClasseSconosciuta": "Classe non più disponibile",
   "avvisiAdesioniSiNo": "{si} sì · {no} no",
   "avvisiAzioneApri": "Apri dettaglio",
@@ -137,7 +137,7 @@
   "digestBadgeBozza": "Bozza",
   "digestModalTitolo": "Conferma invio del digest",
   "digestModalDomanda": "Inviare il digest?",
-  "digestModalTesto": "L'email del digest verrà inviata a tutte le famiglie della sede. L'operazione non è annullabile.",
+  "digestModalTesto": "L’email del digest verrà inviata a tutte le famiglie della sede. L’operazione non è annullabile.",
 
   "proposteVuoto": "Nessuna proposta in attesa.",
   "proposteMotivoRifiuto": "Motivo del rifiuto",
@@ -217,7 +217,7 @@
   "uploaderNonDisponibile": "Caricamento non ancora disponibile su questo ambiente.",
   "uploaderImpossibileCaricare": "Impossibile caricare il file. Riprova.",
   "uploaderConsensoTitolo": "Consenso foto",
-  "uploaderConsensoTesto": "Stai pubblicando una foto in cui potrebbero comparire bambini riconoscibili. La responsabilità di avere il consenso è dell'operatore che pubblica.",
+  "uploaderConsensoTesto": "Stai pubblicando una foto in cui potrebbero comparire bambini riconoscibili. La responsabilità di avere il consenso è dell’operatore che pubblica.",
   "uploaderConsensoCheckbox": "Confermo di avere il consenso foto per i bambini riconoscibili in questa immagine.",
   "uploaderConfermaCarica": "Conferma e carica",
 
@@ -234,6 +234,6 @@
   "rteLink": "Link",
   "rtePromptLink": "Indirizzo del link (https://…, http://… o mailto:)",
   "rteInserisciImmagine": "Inserisci immagine nel testo",
-  "rteNotaImmagini": "le immagini finiscono nel corpo dell'articolo",
+  "rteNotaImmagini": "le immagini finiscono nel corpo dell’articolo",
   "messaggiInviaAria": "Invia messaggio"
 }

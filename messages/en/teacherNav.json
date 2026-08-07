@@ -20,7 +20,7 @@
   "allergieCtaRegistro": "Go to the register",
   "allergieCtaDiario": "See in the diary",
 
-  "appelloTitolo": "Today's attendance",
+  "appelloTitolo": "Today’s attendance",
   "appelloPresentiAssenti": "{presenti, plural, one {# present} other {# present}} · {assenti, plural, one {# absent} other {# absent}}",
   "appelloNonRegistratoClasse": "Not recorded yet · {count, plural, one {# pupil} other {# pupils}}",
   "appelloNonRegistratoSezione": "Not recorded yet · {count, plural, one {# child} other {# children}}",
@@ -43,7 +43,7 @@
   "shortcut_registro_detail": "Assessments and notes",
   "shortcut_gallery_eyebrow": "Gallery",
   "shortcut_gallery_title": "Photo of the day",
-  "shortcut_gallery_detail": "Upload the day's moments",
+  "shortcut_gallery_detail": "Upload the day’s moments",
   "shortcut_comunica_eyebrow": "Families",
   "shortcut_comunica_title": "Communicate",
   "shortcut_comunica_detail": "Send a notice to parents",
@@ -65,7 +65,7 @@
   "gruppoStrumenti": "Tools",
 
   "voceAppelloLabel": "Attendance",
-  "voceAppelloSub": "Today's roll call",
+  "voceAppelloSub": "Today’s roll call",
   "voceDiarioLabel": "Diary",
   "voceDiarioSub": "Daily notes",
   "voceRegistroLabel": "Register",

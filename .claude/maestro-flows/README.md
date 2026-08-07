@@ -147,7 +147,7 @@ quello buono, il tuo `tapOn` per testo sta toccando lui.
 | Home genitore | `Diario` · `Avvisi` · `Chat` | scorciatoie della home (es. «DIARIO DI OGGI») |
 | Home genitore | `Avvisi` | **misurato 2026-08-07**: due nodi, il tab a `[506,1803][572,1834]` e uno a `[0,0][0,0]` |
 | Home genitore | `Comunicazioni` | **misurato 2026-08-07**: due nodi, **entrambi** `[0,0][0,0]` |
-| Home genitore | `Segnala assenza` | l'azione rapida della home (`home.json → azioneAssenza`, «Segnala\nassenza», che l'accname appiattisce): stesso testo del titolo di `/parent/attendance` |
+| Home genitore | `Comunica un’assenza` | l'azione rapida della home (`home.json → azioneAssenza`, «Comunica\nun’assenza», che l'accname appiattisce): stesso testo del titolo di `/parent/attendance`. Fino al 2026-08-08 erano entrambe «Segnala assenza»: il nome è cambiato, la trappola no — sono state cambiate INSIEME apposta |
 
 **Il 2026-08-07 questa trappola ha prodotto la sua faccia peggiore su un flow committato.**
 `android-percorso-genitore.yaml` dichiarava `COMPLETED` la tappa «Comunicazioni» **senza mai

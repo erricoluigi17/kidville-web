@@ -150,7 +150,7 @@ test('un avviso pubblicato nella sede 1 non compare nella sede 2', async ({ page
   await expect(page.getByText('📢 Nuovo Avviso').first()).toBeVisible({ timeout: AZIONE });
   await page.getByPlaceholder('Es. Gita al parco').fill(TITOLO_SEDE_1);
   await page
-    .getByPlaceholder("Scrivi il testo dell'avviso")
+    .getByPlaceholder('Scrivi il testo dell’avviso')
     .fill('Contenuto della sede 1: non deve uscire dal plesso.');
   await page.getByRole('button', { name: 'Pubblica Avviso' }).click();
 

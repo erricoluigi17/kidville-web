@@ -288,24 +288,45 @@ describe('contesto — il payload è redatto e limitato', () => {
         });
     });
 
+    /**
+     * IL RIEMPITIVO È CAMBIATO IL 2026-08-08, e vale la pena dire perché.
+     *
+     * Era `{ tipo: 'x'.repeat(100) }`: cento caratteri qualunque sotto una chiave in lista
+     * bianca, che uscivano in chiaro e da soli portavano il payload oltre il tetto. Quella
+     * strada non esiste più — `redact` chiede ora anche la FORMA del valore (rilievo M11) e
+     * una stringa di cento caratteri non è un enumerato: esce `[redatto:str/100]`, sedici
+     * caratteri. Il payload si comprimeva e il tetto non scattava più: i test erano rossi non
+     * perché il tetto fosse rotto, ma perché il loro riempitivo era il canale appena chiuso.
+     *
+     * Cosa resta grande dopo la redazione, e quindi cosa sfonda ancora il tetto: uuid e date
+     * (in chiaro per FORMA, sotto qualunque chiave), numeri, e gli enumerati fino a 64
+     * caratteri. È anche il payload realistico che il tetto esiste per fermare — un import di
+     * anagrafiche è esattamente un array di righe con dentro degli uuid.
+     */
+    const RIGA_PESANTE = {
+        id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+        alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3302',
+        creato_il: '2026-07-31T13:24:07Z',
+        tipo: 'anagrafica-import',
+        anno: 2026,
+    };
+
     it('SOSTITUISCE lo slot che sfora il tetto (non lo tiene in RAM)', async () => {
         await conContesto({ requestId: 'r11', path: '/api/x' }, async () => {
-            // 5.000 record: `redact` da solo ne terrebbe comunque 20 (≈2.500 caratteri), che è
+            // 5.000 record: `redact` da solo ne terrebbe comunque 20 (≈3.000 caratteri), che è
             // già più di quanto serva a capire cosa si stava tentando. Il tetto li butta.
-            const record = { tipo: 'x'.repeat(100), anno: 2026 };
-            impostaPayload('body', { righe: Array.from({ length: 5_000 }, () => record) });
+            impostaPayload('body', { righe: Array.from({ length: 5_000 }, () => RIGA_PESANTE) });
             expect(contesto()!.payload!.body).toBe('[payload-troppo-grande]');
         });
     });
 
     it('CONSERVA lo slot che sta sotto il tetto (il cap non è incondizionato)', async () => {
         await conContesto({ requestId: 'r11b', path: '/api/x' }, async () => {
-            const record = { tipo: 'x'.repeat(100), anno: 2026 };
-            impostaPayload('body', { righe: Array.from({ length: 10 }, () => record) });
+            impostaPayload('body', { righe: Array.from({ length: 10 }, () => RIGA_PESANTE) });
             const body = contesto()!.payload!.body as { righe: unknown[] };
             expect(Array.isArray(body.righe)).toBe(true);
             expect(body.righe).toHaveLength(10);
-            expect(body.righe[0]).toEqual({ tipo: 'x'.repeat(100), anno: 2026 });
+            expect(body.righe[0]).toEqual(RIGA_PESANTE);
         });
     });
 

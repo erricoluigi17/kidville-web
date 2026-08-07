@@ -356,6 +356,23 @@ export const CODICI_ERRORE = {
      */
     ASSENZA_NON_SALVATA: 'erroreAssenzaNonSalvata',
     /**
+     * 500 — la GIUSTIFICA non si è potuta scrivere
+     * (`POST /api/parent/presenze/giustifica`: il guasto PostgREST sull'UPDATE, e
+     * l'eccezione del `catch` esterno).
+     *
+     * NON riusa `ASSENZA_NON_SALVATA`: quella parla di un'assenza COMUNICATA in
+     * anticipo, questa di una giustifica FIRMATA a posteriori. La differenza che
+     * il genitore deve poter leggere è cosa è rimasto valido: qui l'assenza è già
+     * in registro e ciò che manca è la firma, quindi la frase non deve fargli
+     * temere di aver perso anche l'assenza.
+     *
+     * Fino al 2026-08-08 questa rotta mandava al client il `message` grezzo di
+     * PostgREST — prosa inglese con dentro il nome di un vincolo — e nel ramo
+     * dell'eccezione non lo LOGGAVA nemmeno: il genitore leggeva il dettaglio
+     * tecnico e nessun altro lo vedeva.
+     */
+    GIUSTIFICA_NON_SALVATA: 'erroreGiustificaNonSalvata',
+    /**
      * 500 — le presenze del bambino non si sono POTUTE LEGGERE
      * (`GET /api/parent/presenze`: anagrafica, appello di oggi, riepilogo).
      *

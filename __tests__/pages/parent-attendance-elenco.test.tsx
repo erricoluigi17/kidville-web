@@ -507,10 +507,207 @@ describe('parent/attendance — la conferma d\'invio si SENTE e non perde il fuo
         // torna su `<body>`, e chi usa la tastiera deve ri-tabulare tutta la pagina
         // per arrivare al campo che è appena stato riaperto per lui.
         const giorno = await screen.findByLabelText(/^Giorno$/i);
+        const modulo = giorno.closest('form')!;
         await waitFor(() => {
             expect(document.activeElement).not.toBe(document.body);
-            expect(document.activeElement).toBe(giorno);
+            expect(modulo.contains(document.activeElement)).toBe(true);
         });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LA REGRESSIONE iOS. Il ricovero del ciclo 2 mandava il fuoco SUL CAMPO
+    // DATA. Su WebKit/iOS dare il fuoco a un `<input type="date">` APRE il
+    // selettore nativo: un modale a tutto schermo che il genitore non ha
+    // chiesto e da cui deve uscire con «Fine». Misurato dal collaudo mobile del
+    // 2026-08-07: 2.759 righe `_UICalendarDateViewCell` nel log di sistema, e
+    // l'elenco «Assenze già comunicate» non più raggiungibile perché coperto.
+    //
+    // Nessun test distingueva «fuoco sul campo data» da «fuoco su un
+    // contenitore»: è per questo che la regressione è passata. Questo lo fa —
+    // e non basta un `not.toBe(document.body)`, che era verde anche col difetto.
+    // ─────────────────────────────────────────────────────────────────────────
+    it('tornando al modulo il fuoco NON va sul campo data (su iOS aprirebbe il calendario nativo)', async () => {
+        await inviaConSuccesso();
+
+        const indietro = screen.getByRole('button', { name: /Comunica un.altra assenza/i });
+        indietro.focus();
+        fireEvent.click(indietro);
+
+        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+
+        const attivo = document.activeElement as HTMLElement;
+        // I tipi di campo che su WebKit aprono un selettore nativo al solo fuoco.
+        const APRONO_UN_PICKER = ['date', 'time', 'datetime-local', 'month', 'week'];
+        expect(
+            attivo.tagName === 'INPUT' && APRONO_UN_PICKER.includes(attivo.getAttribute('type') ?? ''),
+            `il fuoco è finito su <input type="${attivo.getAttribute('type')}">: su iOS questo APRE ` +
+            'il selettore nativo a tutto schermo, che il genitore non ha chiesto',
+        ).toBe(false);
+
+        // Deve però restare un ricovero UTILE: dentro il modulo, fuori
+        // dall'ordine di tabulazione (ci si arriva solo da codice), e PRIMA del
+        // campo data — così il primo Tab porta esattamente dove si deve scrivere.
+        expect(giorno.closest('form')!.contains(attivo)).toBe(true);
+        expect(attivo.tabIndex, 'il ricovero non deve entrare nell\'ordine di tabulazione').toBe(-1);
+        expect(
+            attivo.compareDocumentPosition(giorno) & Node.DOCUMENT_POSITION_FOLLOWING,
+            'il ricovero sta DOPO il campo data: il primo Tab non porterebbe al campo',
+        ).toBeTruthy();
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4-quater. IL RIFIUTO DEL SERVER — il ramo rimasto indietro un'altra volta.
+//
+// Il ciclo 1 ha dato un ricovero al fuoco per gli esiti POSITIVI (invio riuscito,
+// annullamento riuscito). Il ramo RIFIUTATO no — cioè proprio il caso in cui
+// l'utente ha bisogno di sapere cos'è successo. Misurato dal collaudo del
+// 2026-08-07: dopo una POST che risponde 400 ASSENZA_DATA_PASSATA,
+// `document.activeElement.tagName === 'BODY'`; idem dopo una DELETE che risponde
+// 409. Chi naviga a Tab riparte dall'inizio della pagina (9 tabulazioni) e chi
+// usa uno screen reader non arriva mai sul messaggio.
+//
+// Causa radice: quando React marca `disabled` l'elemento che ha il fuoco, il
+// browser lo sfoca e il fuoco cade su `<body>`. I due effetti di ricovero
+// esistenti guardano `isSubmitted` e `esitoAnnullamento`; `error` ed
+// `erroreAnnullamento` non avevano né ref né effetto.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('parent/attendance — il RIFIUTO del server non lascia il fuoco su <body>', () => {
+    it('invio rifiutato (400): il fuoco va sul messaggio d\'errore, non su <body>', async () => {
+        fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+            if (init?.method === 'POST') {
+                return Promise.resolve(rispostaErrore(400, {
+                    error: 'La data indicata è già passata',
+                    codice: 'ASSENZA_DATA_PASSATA',
+                }));
+            }
+            return Promise.resolve(presenzeCon([]));
+        });
+
+        render(<ParentAttendancePage />);
+        await screen.findByLabelText(/^Giorno$/i);
+
+        const bottone = screen.getByRole('button', { name: /^Comunica assenza$/i });
+        bottone.focus();
+        expect(document.activeElement).toBe(bottone);
+
+        fireEvent.click(bottone);
+        await screen.findByText(/Puoi comunicare un'assenza solo da oggi in avanti/i);
+
+        await waitFor(() => {
+            expect(
+                document.activeElement,
+                'fuoco su <body>: chi usa la tastiera riparte dall\'inizio della pagina e non sente l\'errore',
+            ).not.toBe(document.body);
+            expect(document.activeElement?.textContent ?? '').toMatch(/solo da oggi in avanti/i);
+        });
+        expect((document.activeElement as HTMLElement).tabIndex).toBe(-1);
+    });
+
+    it('il campo data si dichiara NON VALIDO e rimanda al messaggio (aria-invalid + aria-describedby)', async () => {
+        fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+            if (init?.method === 'POST') {
+                return Promise.resolve(rispostaErrore(400, {
+                    error: 'La data indicata è già passata',
+                    codice: 'ASSENZA_DATA_PASSATA',
+                }));
+            }
+            return Promise.resolve(presenzeCon([]));
+        });
+
+        render(<ParentAttendancePage />);
+        const giorno = await screen.findByLabelText(/^Giorno$/i);
+        // Prima del rifiuto il campo NON è marcato: un campo perennemente
+        // «non valido» è rumore, e uno screen reader lo annuncerebbe sempre.
+        expect(giorno).not.toHaveAttribute('aria-invalid', 'true');
+
+        fireEvent.click(screen.getByRole('button', { name: /^Comunica assenza$/i }));
+        await screen.findByText(/solo da oggi in avanti/i);
+
+        await waitFor(() => expect(giorno).toHaveAttribute('aria-invalid', 'true'));
+        const descritto = giorno.getAttribute('aria-describedby');
+        expect(descritto, 'il campo non rimanda a nessun testo che spieghi il rifiuto').toBeTruthy();
+        expect(document.getElementById(descritto!)?.textContent ?? '').toMatch(/solo da oggi in avanti/i);
+    });
+
+    it('un errore che NON riguarda la data non marca il campo come non valido', async () => {
+        // `aria-invalid` su un campo corretto manda l'utente a correggere ciò che
+        // non è sbagliato: il guasto era del server (500), non del giorno scelto.
+        fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+            if (init?.method === 'POST') {
+                return Promise.resolve(rispostaErrore(500, { error: 'Errore interno', codice: 'ASSENZA_NON_SALVATA' }));
+            }
+            return Promise.resolve(presenzeCon([]));
+        });
+
+        render(<ParentAttendancePage />);
+        const giorno = await screen.findByLabelText(/^Giorno$/i);
+
+        fireEvent.click(screen.getByRole('button', { name: /^Comunica assenza$/i }));
+        await screen.findByText(/Non siamo riusciti a registrare l'assenza/i);
+
+        expect(giorno).not.toHaveAttribute('aria-invalid', 'true');
+    });
+
+    it('annullamento rifiutato (409): il fuoco va sul messaggio d\'errore, non su <body>', async () => {
+        fetchMock.mockResolvedValue(presenzeCon(VOCI));
+
+        render(<ParentAttendancePage />);
+        await screen.findByText('12/08/2026');
+
+        fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+            if (init?.method === 'DELETE') {
+                return Promise.resolve(rispostaErrore(409, {
+                    error: 'Assenza già registrata dal docente',
+                    codice: 'ASSENZA_GIA_REGISTRATA',
+                }));
+            }
+            return Promise.resolve(presenzeCon(VOCI));
+        });
+
+        const bottone = screen.getByRole('button', { name: /annulla.*12\/08\/2026/i });
+        bottone.focus();
+        expect(document.activeElement).toBe(bottone);
+
+        fireEvent.click(bottone);
+        await screen.findByText(/L'insegnante ha già registrato la presenza/i);
+
+        await waitFor(() => {
+            expect(document.activeElement).not.toBe(document.body);
+            expect(document.activeElement?.textContent ?? '').toMatch(/ha già registrato la presenza/i);
+        });
+        expect((document.activeElement as HTMLElement).tabIndex).toBe(-1);
+    });
+
+    it('anche un SECONDO rifiuto identico riporta il fuoco sul messaggio', async () => {
+        // Il caso che un effetto legato al solo TESTO dell'errore non coglie:
+        // `setError('stessa frase')` non cambia lo stato, e il fuoco resterebbe
+        // su <body> proprio a chi sta riprovando.
+        fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+            if (init?.method === 'POST') {
+                return Promise.resolve(rispostaErrore(400, {
+                    error: 'La data indicata è già passata',
+                    codice: 'ASSENZA_DATA_PASSATA',
+                }));
+            }
+            return Promise.resolve(presenzeCon([]));
+        });
+
+        render(<ParentAttendancePage />);
+        await screen.findByLabelText(/^Giorno$/i);
+
+        for (const tentativo of [1, 2]) {
+            const bottone = screen.getByRole('button', { name: /^Comunica assenza$/i });
+            bottone.focus();
+            fireEvent.click(bottone);
+            await waitFor(() => {
+                expect(document.activeElement, `tentativo ${tentativo}: fuoco su <body>`).not.toBe(document.body);
+                expect(document.activeElement?.textContent ?? '').toMatch(/solo da oggi in avanti/i);
+            });
+            // Si sposta via, come farebbe l'utente che torna sul bottone col Tab.
+            (document.activeElement as HTMLElement).blur();
+        }
     });
 });
 

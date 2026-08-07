@@ -134,6 +134,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { POST, DELETE } from '@/app/api/parent/presenze/comunica-assenza/route'
 import { invalidateNotificheConfigCache } from '@/lib/notifiche/config'
+import { resetRateLimit } from '@/lib/security/rate-limit'
 
 function dbBase(): DBFinto {
   return {
@@ -200,6 +201,11 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(ADESSO))
   invalidateNotificheConfigCache()
+  // Il tetto di frequenza della rotta (20 scritture in 10 minuti per utente)
+  // vive nel MODULO, e qui l'orologio è fermo: senza questo azzeramento i colpi
+  // dei casi precedenti stanno tutti nella stessa finestra e il 429 scatta a
+  // metà file, su un test che parla d'altro. Ogni caso è una raffica sua.
+  resetRateLimit()
   db = dbBase()
   scritture = []
   errori = {}

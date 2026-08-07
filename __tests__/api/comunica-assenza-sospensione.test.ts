@@ -65,6 +65,7 @@ const adminClient = {
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => adminClient }))
 
 import { POST } from '@/app/api/parent/presenze/comunica-assenza/route'
+import { resetRateLimit } from '@/lib/security/rate-limit'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 const postReq = (body: unknown) =>
@@ -76,6 +77,10 @@ const postReq = (body: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Il tetto di frequenza della rotta vive nel MODULO, non nel test: senza
+  // questo, i colpi di un caso finiscono nella finestra del successivo e il 429
+  // scatta dove non c'entra niente. Ogni test è una raffica indipendente.
+  resetRateLimit()
   h.requireParent.mockResolvedValue({ user: { id: PARENT, role: 'genitore' }, response: null })
   h.notificaEvento.mockResolvedValue(undefined)
   h.docentiDiSezione.mockResolvedValue([])

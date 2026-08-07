@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { CalendarPlus, X } from 'lucide-react';
-import { intlDateTime } from '@/i18n/config';
+import { CalendarPlus } from 'lucide-react';
 import { useDateFormat } from '@/lib/i18n/date';
 import { DateField } from '@/components/ui/DateField';
 import { Btn } from '@/components/ui/Btn';
+import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { logClient } from '@/lib/logging/client';
@@ -102,6 +102,40 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
    * mette la lingua.
    */
   const [elencoRotto, setElencoRotto] = useState(false);
+
+  /**
+   * DOVE VA IL FUOCO quando l'azione finisce — riuscita o rifiutata.
+   *
+   * Ogni scrittura di questa card SMONTA il comando che l'ha lanciata: l'invio
+   * chiude il modulo (`setAperto(false)`) portandosi via il bottone «Invia la
+   * comunicazione», l'annullamento fa sparire la riga con il suo «Annulla». Chi
+   * ha premuto da tastiera si ritrova il fuoco su `<body>` — cioè riparte
+   * dall'inizio della pagina — e chi usa uno screen reader perde il punto in cui
+   * stava: il `role="status"` c'è, quindi la frase viene annunciata, ma il
+   * CURSORE resta indietro (WCAG 2.4.3, la stessa ragione per cui `ui/Modal.tsx`
+   * ripristina il fuoco alla chiusura).
+   *
+   * Non è ignoranza del pattern: `parent/attendance/page.tsx` lo applica dal
+   * ciclo 1, con tanto di commento. Questo componente è nato nello stesso commit
+   * e non l'ha ereditato — la correzione era stata scritta dov'era stato
+   * segnalato il sintomo invece che sulla regola. Qui c'è per entrambi gli
+   * esiti, compreso il RIFIUTO, che su tutte e due le schermate era rimasto
+   * indietro: è proprio quando il server dice di no che serve arrivare al testo.
+   *
+   * Gli effetti dipendono dal testo di `msg`/`err` e funzionano anche al secondo
+   * esito identico, perché i due gestori azzerano ENTRAMBI prima di chiamare il
+   * server: lo stato fa comunque '' → frase, e l'effetto riparte.
+   */
+  const refMsg = useRef<HTMLParagraphElement | null>(null);
+  const refErr = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    if (msg) refMsg.current?.focus();
+  }, [msg]);
+
+  useEffect(() => {
+    if (err) refErr.current?.focus();
+  }, [err]);
 
   /**
    * Una riga di log per ogni chiamata che non è andata a buon fine. `stato` è un
@@ -259,9 +293,19 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
     }
   };
 
-  /** Giorno per esteso, nel fuso italiano: «mercoledì 12 agosto». */
-  const giorno = (iso: string) =>
-    intlDateTime(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(iso));
+  /**
+   * Il giorno, nel formato della schermata gemella: «12/08/2026».
+   *
+   * Era «mercoledì 12 agosto» — più discorsivo, e senza L'ANNO. Sembra un
+   * dettaglio e non lo è: l'anno è il dato per cui la riga esiste. Un genitore
+   * che sceglie il giorno a mano e sbaglia l'anno (il campo è mascherato e
+   * accetta `gg/mm/aaaa`) non ha, in tutta la schermata, nessun modo di
+   * accorgersene. E soprattutto è il formato che l'altra schermata usa già: con
+   * due figli di grado diverso lo stesso elenco si leggeva in due modi.
+   * `T12:00:00` e non `T00:00:00`: a mezzanotte UTC il giorno italiano è ancora
+   * quello prima per una parte dell'anno.
+   */
+  const giorno = (iso: string) => f.dataBreve(`${iso}T12:00:00`) || iso;
 
   const senzaIdentita = !studentId || !parentId;
 
@@ -343,12 +387,27 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
       )}
 
       {msg && (
-        <p role="status" className="mt-3 rounded-2xl bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success-strong">
+        <p
+          ref={refMsg}
+          role="status"
+          // Raggiungibile dal codice ma NON dal Tab: non aggiunge una tappa
+          // all'ordine di navigazione, ci arriva solo chi viene dal comando
+          // appena smontato. `outline-none` non toglie l'indicatore, lo
+          // SOSTITUISCE con l'anello verde della casa (`focus:`, non
+          // `focus-visible:`: il fuoco arriva da codice).
+          tabIndex={-1}
+          className="mt-3 rounded-2xl bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success-strong outline-none focus:ring-2 focus:ring-kidville-green"
+        >
           {msg}
         </p>
       )}
       {err && (
-        <p role="alert" className="mt-3 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+        <p
+          ref={refErr}
+          role="alert"
+          tabIndex={-1}
+          className="mt-3 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong outline-none focus:ring-2 focus:ring-kidville-green"
+        >
           {err}
         </p>
       )}
@@ -367,29 +426,24 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
       {comunicate.length === 0 ? (
         !elencoRotto && <p className="font-maven text-xs text-kidville-sub mt-1">{t('comunicaElencoVuoto')}</p>
       ) : (
+        // La riga è la STESSA della schermata dedicata (`/parent/attendance`):
+        // un solo componente, non due copie. Vedi `RigaAssenzaComunicata`.
         <ul className="mt-2 space-y-2">
           {comunicate.map((a) => (
-            <li key={a.id} className="flex items-center justify-between gap-3 rounded-2xl bg-kidville-cream px-3 py-2">
-              <div className="min-w-0">
-                <p className="font-maven text-sm font-semibold text-kidville-ink truncate">{giorno(a.data)}</p>
-                {a.giustificazione_testo && (
-                  <p className="font-maven text-xs text-kidville-sub truncate">{a.giustificazione_testo}</p>
-                )}
-              </div>
-              <Btn
-                variant="ghost"
-                size="sm"
-                onClick={() => annullaComunicata(a)}
-                disabled={annullando !== null}
-                // Il nome accessibile dice DI QUALE giorno: due comandi identici
-                // nell'annuncio e diversi nell'effetto sono WCAG 4.1.2, ed è un
-                // difetto che questo repo ha già trovato e corretto altrove.
-                aria-label={t('comunicaAnnullaAria', { giorno: giorno(a.data) })}
-                className="shrink-0"
-              >
-                <X size={13} /> {t('comunicaAnnulla')}
-              </Btn>
-            </li>
+            <RigaAssenzaComunicata
+              key={a.id}
+              giorno={giorno(a.data)}
+              motivo={a.giustificazione_testo}
+              // Il nome accessibile dice DI QUALE giorno: due comandi identici
+              // nell'annuncio e diversi nell'effetto sono WCAG 4.1.2, ed è un
+              // difetto che questo repo ha già trovato e corretto altrove.
+              etichettaAnnulla={t('comunicaAnnullaAria', { giorno: giorno(a.data) })}
+              testoAnnulla={t('comunicaAnnulla')}
+              testoAnnullamento={t('comunicaAnnullamento')}
+              inCorso={annullando === a.id}
+              bloccato={annullando !== null}
+              onAnnulla={() => annullaComunicata(a)}
+            />
           ))}
         </ul>
       )}

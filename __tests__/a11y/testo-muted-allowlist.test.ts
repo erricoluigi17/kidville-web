@@ -41,12 +41,19 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/testo-muted-allowlist.json
 const TOKEN = 'text-kidville-muted';
 
 /**
- * TETTI MONOTONI DECRESCENTI — la misura del 2026-08-02, dopo la bonifica dell'anagrafica.
- * Si abbassano quando si bonifica, non si alzano mai. Chi si trova a doverli ALZARE sta
- * scrivendo testo a 2,51:1 su dati di famiglie e bambini, ed è quello il momento di fermarsi.
+ * TETTI MONOTONI DECRESCENTI — si abbassano quando si bonifica, non si alzano mai. Chi si
+ * trova a doverli ALZARE sta scrivendo testo a 2,51:1 su dati di famiglie e bambini, ed è
+ * quello il momento di fermarsi.
+ *
+ * 2026-08-02: 179 file / 1184 occorrenze (dopo la bonifica dell'anagrafica).
+ * 2026-08-07: 177 / 1171, dopo la bonifica delle DIECI occorrenze di
+ *             `parent/primaria/assenze` — l'ultima delle due schermate «assenze» del
+ *             genitore rimasta indietro. Misura reale su disco a quella data: 172 file /
+ *             1150 occorrenze; i tetti restano allineati ai totali DICHIARATI
+ *             nell'allowlist, che il test confronta a sua volta con la propria lunghezza.
  */
-const TETTO_FILE = 179;
-const TETTO_OCCORRENZE = 1184;
+const TETTO_FILE = 177;
+const TETTO_OCCORRENZE = 1171;
 
 /**
  * Bonificati, e non possono rientrare.
@@ -61,11 +68,20 @@ const TETTO_OCCORRENZE = 1184;
  *   non riesce a leggere la data — cioè non può accorgersi di aver avvisato la maestra per
  *   il giorno sbagliato. L'allowlist dichiarava 3 occorrenze per quel file, quindi il lock
  *   restava verde: è il caso di scuola del perché questa lista può SOLO accorciarsi.
+ * · La schermata «Presenze» del genitore di PRIMARIA (2026-08-07). È la gemella della
+ *   precedente e portava DIECI occorrenze dichiarate: il motivo dell'assenza scritto dal
+ *   genitore, la nota del docente, l'orario d'entrata di un ritardo — e un COMANDO, il
+ *   bottone che annulla la firma OTP, che non aveva né fondo né bordo e il cui unico
+ *   segnale era quel grigio. Il ciclo precedente aveva bonificato la schermata gemella e
+ *   toccato QUESTA solo per montarci dentro la card nuova, lasciando il debito com'era:
+ *   il lock resta verde finché il debito è dichiarato, ed è per questo che la lista si
+ *   accorcia a mano.
  */
 const MAI_PIU_IN_ALLOWLIST = [
   'src/components/features/admin/StudentTable.tsx',
   'src/components/features/admin/StudentRowCard.tsx',
   'src/app/(dashboard)/parent/attendance/page.tsx',
+  'src/app/(dashboard)/parent/primaria/assenze/page.tsx',
 ];
 
 // ── WCAG 2.x §1.4.3 — il rapporto di contrasto, ricalcolato qui ──────────────

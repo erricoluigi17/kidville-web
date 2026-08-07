@@ -21,12 +21,36 @@ const SIZES: Record<BtnSize, string> = {
  * globals.css) si passa a 4,78:1 e 6,35:1, hover compresi.
  * `danger` usa `error-strong`: `error` su `error-soft` è 3,70:1 — stessa storia.
  * Misure e lock: `__tests__/a11y/contrasto-cascata.test.tsx` (§2).
+ *
+ * ─── IL CONTORNO DELLE DUE VARIANTI «SOFT» (2026-08-07, WCAG 1.4.11) ────────
+ * `ghost` e `danger` erano definite come sola coppia testo/fondo. L'inchiostro
+ * era a norma; la SUPERFICIE no. Misurata in pagina, la pillola di `danger`
+ * posata sulla riga crema dell'elenco «Assenze già comunicate» vale
+ *   error-soft #FDECEC su cream #FEF1E4 = 1,03:1
+ * (su bianco 1,14:1; `ghost` su crema 1,07:1). Senza bordo né ombra, di quello
+ * che è l'UNICO comando distruttivo della schermata restava la sola scritta
+ * rossa: nessun segnale che fosse un bottone. WCAG 1.4.11 chiede 3:1 al confine
+ * di un controllo privo di altri indicatori visivi.
+ *
+ * Il rimedio sta QUI e non nella pagina: `variant="danger"` non era mai stato
+ * usato in tutto il repo prima del ciclo 1, e lo si è inaugurato sul fondo
+ * peggiore — cioè il difetto era della famiglia, non della riga.
+ *
+ * ⚠️ Il `border-kidville-error/40` proposto dal rapporto di collaudo («≈3:1») è
+ * stato MISURATO e scartato: composto sulla crema vale **1,74:1**. Un'alfa su un
+ * rosso chiaro consuma quasi tutto il contorno. I bordi qui sotto sono i token
+ * PIENI, misurati sulle due superfici su cui questi bottoni vivono davvero:
+ *   · `error` #E53935 → 4,23:1 su bianco · 3,81:1 su crema · 3,70:1 sul proprio fondo
+ *   · `green` #006A5F → 6,51:1 su bianco · 5,86:1 su crema · 5,48:1 sul proprio fondo
+ * Il RIEMPIMENTO e l'INCHIOSTRO non cambiano: cambia solo il fatto che adesso si
+ * vede dove comincia il bottone. Lock:
+ * `__tests__/a11y/contrasto-schermate-assenza.test.tsx` (§2).
  */
 const VARIANTS: Record<BtnVariant, string> = {
   primary: 'bg-kidville-green text-kidville-yellow-ink hover:bg-kidville-green-dark',
   secondary: 'bg-kidville-yellow text-kidville-green-ink hover:bg-kidville-yellow-dark',
-  ghost: 'bg-kidville-green-soft text-kidville-green',
-  danger: 'bg-kidville-error-soft text-kidville-error-strong',
+  ghost: 'border border-kidville-green bg-kidville-green-soft text-kidville-green',
+  danger: 'border border-kidville-error bg-kidville-error-soft text-kidville-error-strong',
 }
 
 /**

@@ -18,10 +18,18 @@ interface Presenza {
   giustificata_il: string | null; note_appello: string | null;
 }
 
+// Le pillole di stato usano gli inchiostri FORTI, non le tinte di riempimento.
+// Misurate a 11px (testo normale: la soglia è 4,5:1, non 3:1):
+//   · `error` #E53935 su `error-soft` = 3,70:1 → `error-strong` #C62828 = 4,92:1
+//   · `info`  #2A6FDB su `info-soft`  = 4,20:1 → `info-strong`  #1D4FA8 = 6,70:1
+// `warn` resta scritto così perché `globals.css` lo RIMAPPA per intero a
+// `warn-strong` (rete del 2026-08-02): a schermo è già 4,95:1. Sono gli stessi
+// token che RIEPILOGO_TILES usa dieci righe più giù — la coerenza fra la pillola
+// e il riquadro che la conta non era mai stata fatta.
 const STATO_LABEL: Record<string, { labelKey: string; cls: string }> = {
-  assente: { labelKey: 'assenzeStato_assente', cls: 'bg-kidville-error-soft text-kidville-error' },
+  assente: { labelKey: 'assenzeStato_assente', cls: 'bg-kidville-error-soft text-kidville-error-strong' },
   ritardo: { labelKey: 'assenzeStato_ritardo', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-  uscita_anticipata: { labelKey: 'assenzeStato_uscita_anticipata', cls: 'bg-kidville-info-soft text-kidville-info' },
+  uscita_anticipata: { labelKey: 'assenzeStato_uscita_anticipata', cls: 'bg-kidville-info-soft text-kidville-info-strong' },
 };
 
 interface Riepilogo {
@@ -114,7 +122,7 @@ function AssenzeGenitore() {
       />
 
       {loading ? (
-        <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('caricamento')}</p>
       ) : (
         <div className="space-y-4">
           {/* Riepilogo: un contatore per stato (presenti inclusi). */}
@@ -127,8 +135,11 @@ function AssenzeGenitore() {
             ))}
           </div>
 
+          {/* Inchiostri FORTI anche qui: `success` su `success-soft` vale 2,89:1
+              e `error` su `error-soft` 3,70:1 — cioè la fascia che dice com'è
+              andata la firma era la meno leggibile della schermata. */}
           {msg && (
-            <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>
+            <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success-strong' : 'bg-kidville-error-soft text-kidville-error-strong'}`}>{msg}</p>
           )}
           {nonGiustificate.length > 0 && (
             <div className="rounded-2xl bg-kidville-warn-soft border border-kidville-warn/30 px-4 py-3 flex items-center gap-2">
@@ -154,13 +165,13 @@ function AssenzeGenitore() {
           </h2>
 
           {presenze.length === 0 ? (
-            <p className="font-maven text-sm text-kidville-muted">{t('assenzeVuoto')}</p>
+            <p className="font-maven text-sm text-kidville-sub">{t('assenzeVuoto')}</p>
           ) : (
           <div className="space-y-3">
           {presenze.map((p) => {
             const meta = STATO_LABEL[p.stato];
             const statoLabel = meta ? t(meta.labelKey) : p.stato;
-            const statoCls = meta ? meta.cls : 'bg-kidville-neutral-soft text-kidville-muted';
+            const statoCls = meta ? meta.cls : 'bg-kidville-neutral-soft text-kidville-sub';
             return (
               <div key={p.id} className="rounded-2xl bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2 mb-1">
@@ -170,22 +181,25 @@ function AssenzeGenitore() {
                       {intlDateTime(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(p.data))}
                     </span>
                   </div>
-                  <span className={`font-maven text-xs ${p.giustificata ? 'text-kidville-success' : 'text-kidville-warn'}`}>
+                  {/* `success-strong` (7,87:1 su bianco) e non `success`
+                      (3,30:1): è il verde del RIEMPIMENTO, non un inchiostro.
+                      `warn` è già rimappato a `warn-strong` da globals.css. */}
+                  <span className={`font-maven text-xs ${p.giustificata ? 'text-kidville-success-strong' : 'text-kidville-warn'}`}>
                     {p.giustificata ? t('assenzeGiustificata') : t('assenzeDaGiustificare')}
                   </span>
                 </div>
 
                 {(p.stato === 'ritardo' && p.orario_entrata) && (
-                  <p className="font-maven text-xs text-kidville-muted">{t('assenzeEntrata', { ora: oraDaTs(p.orario_entrata) })}</p>
+                  <p className="font-maven text-xs text-kidville-sub">{t('assenzeEntrata', { ora: oraDaTs(p.orario_entrata) })}</p>
                 )}
                 {(p.stato === 'uscita_anticipata' && p.orario_uscita) && (
-                  <p className="font-maven text-xs text-kidville-muted">{t('assenzeUscita', { ora: oraDaTs(p.orario_uscita) })}</p>
+                  <p className="font-maven text-xs text-kidville-sub">{t('assenzeUscita', { ora: oraDaTs(p.orario_uscita) })}</p>
                 )}
                 {p.giustificazione_testo && (
-                  <p className="font-maven text-xs text-kidville-muted mt-1 italic">&ldquo;{p.giustificazione_testo}&rdquo;</p>
+                  <p className="font-maven text-xs text-kidville-sub mt-1 italic">&ldquo;{p.giustificazione_testo}&rdquo;</p>
                 )}
                 {p.note_appello && (
-                  <p className="font-maven text-xs text-kidville-muted mt-0.5">{t('assenzeNotaDocente', { value: p.note_appello })}</p>
+                  <p className="font-maven text-xs text-kidville-sub mt-0.5">{t('assenzeNotaDocente', { value: p.note_appello })}</p>
                 )}
 
                 {/* Azione giustifica (backend esistente con OTP) */}
@@ -208,7 +222,7 @@ function AssenzeGenitore() {
                       placeholder={t('assenzeMotivoPlaceholder')}
                       className="w-full h-16 resize-none rounded-xl border border-kidville-line p-2 font-maven text-sm focus:border-kidville-green focus:outline-none"
                     />
-                    <p className="font-maven text-sm text-kidville-muted">{t('otpIstruzione')}</p>
+                    <p className="font-maven text-sm text-kidville-sub">{t('otpIstruzione')}</p>
                     {otpState.devCode && (
                       <p className="font-maven text-xs text-kidville-warn">{t('devLabel')} <b>{otpState.devCode}</b></p>
                     )}
@@ -226,7 +240,13 @@ function AssenzeGenitore() {
                       >
                         {firmando ? t('assenzeInvio') : t('conferma')}
                       </Btn>
-                      <button onClick={annulla} className="font-maven text-xs text-kidville-muted">{t('annulla')}</button>
+                      {/* Era un `<button>` nudo dipinto di grigio: nessun fondo,
+                          nessun bordo, e il suo unico segnale era un inchiostro a
+                          2,51:1 — un COMANDO che non si vedeva essere un comando
+                          (WCAG 1.4.11 oltre a 1.4.3). Ora è la stessa pillola
+                          `ghost` usata per le azioni secondarie altrove: contorno
+                          verde a 6,51:1 sul bianco della card. */}
+                      <Btn variant="ghost" size="sm" onClick={annulla}>{t('annulla')}</Btn>
                     </div>
                   </div>
                 )}
@@ -244,7 +264,7 @@ function AssenzeGenitore() {
 export default function AssenzeGenitorePage() {
   const t = useTranslations('parentPrimaria');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-sub">{t('caricamento')}</div>}>
       <AssenzeGenitore />
     </Suspense>
   );

@@ -41,6 +41,21 @@
 # natura sanitaria di un minore, e Maestro scrive nel proprio log tutto ciò che
 # digita (`Inputting text: …`). Non si digita ciò che non si vuole su disco.
 #
+# ⚠️ SU ANDROID I NODI FUORI SCHERMO CI SONO, MA A DIMENSIONE ZERO — ed è la
+# ragione degli `scrollUntilVisible` di questo file. MISURATO il 2026-08-07 con
+# `adb shell uiautomator dump`:
+#     text="PROSSIMI APPUNTAMENTI"  bounds="[0,0][0,0]"   (home, sezione finale)
+#     text="ASSENZE GIÀ COMUNICATE" bounds="[0,0][0,0]"   (/parent/attendance)
+#     …e la stessa, dopo uno swipe:  bounds="[105,1257][976,1336]"
+# Maestro 2.6.1 non considera visibile un nodo di dimensione zero, quindi su quei
+# testi un `assertVisible` fallisce SEMPRE e un `assertNotVisible` passa SEMPRE.
+# Le due facce si tengono insieme e sono la stessa causa.
+# ⚠️ E NON È COME SU iOS: là quei nodi non esistono affatto, perché l'albero della
+# WKWebView espone solo il viewport. Stesso rosso, causa diversa — chi scrive un
+# flow iOS col modello Android sbaglia, e il collaudo del 2026-08-07 lo ha
+# dimostrato su entrambe. Vedi il README, sezione «Le due piattaforme tagliano la
+# pagina in due modi diversi».
+#
 # NB: l'app è una WebView Capacitor che carica l'app web da server.url. I tempi
 # di attesa sono generosi di proposito: la prima pagina passa dalla rete.
 # Selettori RI-MISURATI sull'albero di accessibilità il 2026-07-31/08-01
@@ -158,14 +173,23 @@ env:
 # foglio CHIUSO, dove il nodo «MENU» è uno solo.
 # La fonte dell'aria-label è messages/it/nav.json → `ariaMenu` (se cambia lì, R5
 # diventa rosso).
-# Il gate di prontezza NON è più «Avvisi». MISURATO il 2026-08-07 (`uiautomator
-# dump`, home genitore, foglio Menu CHIUSO): «AVVISI» sulla home è DUE nodi, uno
-# a [506,1803][572,1834] (il tab vero) e uno a [0,0][0,0]. «Prossimi
-# appuntamenti» è invece reso una volta sola e solo qui (home.json →
-# titoloProssimiAppuntamenti, `parent/page.tsx` fuori da ogni condizione):
-# regge il gate e serve più avanti come prova di aver LASCIATO la home.
+#
+# ⚠️ IL GATE DI PRONTEZZA NON È PIÙ «Prossimi appuntamenti», ed è il difetto
+# BLOCCANTE del collaudo del 2026-08-07: la sezione CALENDARIO è l'ULTIMA della
+# home, quindi al primo paint sta fuori dalla viewport e Chromium la passa ad
+# `AccessibilityNodeInfo` con `bounds="[0,0][0,0]"`. `extendedWaitUntil` scadeva
+# sempre, 60 s, e il collaudo mobile Android del ciclo di fatto non è esistito:
+#     Assertion is false: "Prossimi appuntamenti" is visible
+# Controprova sullo stesso blocco: «NESSUN APPUNTAMENTO IN PROGRAMMA» (identico
+# 0×0) FALLISCE, mentre «OGGI A SCUOLA» ([49,1241][328,1291]) passa. La
+# correzione precedente aveva sostituito un gate funzionante con uno che non
+# poteva passare.
+# Il gate è ora il sottotitolo dell'hero, in cima alla pagina. Si scrive
+# `.*Ecco le novit.*` perché il nodo porta l'accento e l'emoji finale e i
+# selettori Maestro sono FULL-match (dimostrato: «Ecco le novità di oggi»
+# FALLISCE, «Ecco le novità di oggi.*» passa).
 - extendedWaitUntil:
-    visible: "Prossimi appuntamenti"
+    visible: ".*Ecco le novit.*"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
@@ -182,8 +206,16 @@ env:
 # se il tap sul foglio non atterra si resta sulla home, dove quel testo c'è già,
 # e la tappa risulterebbe superata senza essersi mossi. «Comunica un'assenza
 # alla scuola» è il sottotitolo dell'header e vive solo su /parent/attendance.
-# La prova NEGATIVA è l'occhiello del foglio: se è ancora a schermo, il foglio
-# non si è chiuso e quindi non si è navigato.
+# La prova NEGATIVA è l'occhiello del foglio, ANCORATO: se è ancora a schermo, il
+# foglio non si è chiuso e quindi non si è navigato. Ancorato perché la forma non
+# ancorata (`.*Tutte le sezioni.*`) combacerebbe con l'aria-label del quinto tab,
+# «Menu · tutte le sezioni», che sta su OGNI pagina — è il difetto bloccante
+# trovato sul gemello iOS il 2026-08-07, e qui non c'è solo perché il selettore è
+# scritto esatto. Lock: R21.
+# Che non sia vacua lo dice l'uso che ne fa già `android-biometria-loop.yaml`
+# (18/18 il 2026-08-01), dove l'occhiello del foglio è la prova di partenza dei
+# tap sulle voci di quel foglio: sta in CIMA al foglio, quindi dentro il viewport
+# ogni volta che il foglio è aperto.
 - tapOn:
     text: "Menu · tutte le sezioni|^MENU$"
 - extendedWaitUntil:
@@ -203,16 +235,39 @@ env:
 # mesi senza che nessun collaudo lo dicesse.
 #
 # La forma è `vuoto → pieno → vuoto`, e non è una comodità: è l'unica sequenza
-# che non si può soddisfare stando fermi. L'asserzione di mezzo («l'elenco NON è
-# più vuoto») è FALSA finché non è successo davvero niente.
+# che non si può soddisfare stando fermi. Ma vale a UNA condizione, che il primo
+# giro aveva mancato: che si guardi DOVE l'elenco si vede.
+#
+# ⚠️ MISURATO il 2026-08-07: senza scroll, `assertVisible "Assenze già
+# comunicate"` FALLISCE sempre (nodo a [0,0][0,0]) e `assertNotVisible "Non hai
+# comunicato nessuna assenza…"` PASSA sempre, anche a elenco vuoto e senza aver
+# comunicato niente — 17/17 COMPLETED di un flow che non aveva fatto nulla. Le
+# due facce della stessa causa: un nodo di dimensione zero non è mai «visibile».
+# Perciò l'elenco si porta nel viewport PRIMA di guardarlo, in positivo e in
+# negativo. `centerElement: true` perché fermarsi appena il nodo entra lo lascia
+# sotto la bottom-nav flottante (vedi README, «il nodo coperto»).
 #
 # Gli apostrofi dei selettori sono scritti come `.` (metacarattere regex): i
 # cataloghi usano quello TIPOGRAFICO (U+2019) e un `'` dritto digitato per
 # distrazione — o una normalizzazione della WebView — farebbe fallire il flow
 # per una ragione che non ha niente a che vedere con l'app.
 - assertVisible: "Giorno"
+- scrollUntilVisible:
+    element:
+      text: "Non hai comunicato nessuna assenza per i prossimi giorni."
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
 - assertVisible: "Assenze già comunicate"
 - assertVisible: "Non hai comunicato nessuna assenza per i prossimi giorni."
+# Il modulo sta SOPRA l'elenco: dopo lo scroll la CTA è fuori dal viewport, cioè
+# di nuovo a [0,0][0,0]. Si risale prima di toccarla.
+- scrollUntilVisible:
+    element:
+      text: "Comunica assenza"
+    direction: UP
+    centerElement: true
+    timeout: 20000
 # `enabled: true` non è prudenza generica: il bottone nasce `disabled` finché
 # l'identità del genitore non è risolta (`disabled={!ready || submitting}`).
 # Senza, il tap su un bottone disabilitato risulta COMPLETED e non succede
@@ -220,22 +275,37 @@ env:
 - tapOn:
     text: "Comunica assenza"
     enabled: true
-# La conferma sostituisce l'intera pagina: il modulo si smonta. Le due
-# asserzioni insieme dicono «sono sulla conferma» E «non sono più sul modulo».
+# La conferma sostituisce l'intera pagina: il modulo si smonta.
+# ⚠️ L'ancora NON è più «Assenza comunicata»: quel titolo è interamente contenuto
+# nell'aria-label del bottone ANNULLA di una riga già in elenco («Annulla
+# l'assenza comunicata per il {data}»), e con il full-match case-insensitive i
+# due nodi sono indistinguibili — sul gemello iOS ha fatto dichiarare COMPLETED
+# un invio ancora in volo, 174 ms dopo il tap. Si usa la CTA della conferma, che
+# vive solo su quella schermata. Lock: R23.
+# Le due asserzioni insieme dicono «sono sulla conferma» E «non sono più sul
+# modulo»: la seconda non è vacua, perché quella CTA era visibile un istante fa.
 - extendedWaitUntil:
-    visible: "Assenza comunicata"
+    visible: "Comunica un.altra assenza"
     timeout: 30000
 - assertNotVisible: "Comunica assenza"
 - takeScreenshot: /tmp/kv-android-genitore-3-assenza-inviata
 
 # ── 5. L'ASSENZA COMPARE NELL'ELENCO, E L'ANNULLAMENTO LA FA SPARIRE ─────────
 # «Comunica un'altra assenza» riporta al modulo con l'elenco sotto, già riletto
-# dal server dopo l'invio.
+# dal server dopo l'invio. E l'elenco, di nuovo, sta sotto la piega.
 - tapOn:
     text: "Comunica un.altra assenza"
+- scrollUntilVisible:
+    element:
+      text: "Assenze già comunicate"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
 - extendedWaitUntil:
     visible: "Assenze già comunicate"
     timeout: 20000
+# Questa è la prova che l'invio è servito a qualcosa, ed è vera SOLO perché
+# l'elenco è nel viewport: a scroll zero passerebbe comunque. Lock: R22.
 - assertNotVisible: "Non hai comunicato nessuna assenza per i prossimi giorni."
 - takeScreenshot: /tmp/kv-android-genitore-4-assenza-in-elenco
 # Il bottone della riga porta un `aria-label` PARLANTE (parentServizi.json →
@@ -254,9 +324,16 @@ env:
 - extendedWaitUntil:
     visible: "Assenza annullata."
     timeout: 20000
-- extendedWaitUntil:
-    visible: "Non hai comunicato nessuna assenza per i prossimi giorni."
+# L'elenco torna vuoto: è la PROVA che la riga scritta su `presenze` è stata
+# disfatta. Lo scroll ci riporta sulla zona dell'elenco, che nel frattempo si è
+# accorciata di una riga.
+- scrollUntilVisible:
+    element:
+      text: "Non hai comunicato nessuna assenza per i prossimi giorni."
+    direction: DOWN
+    centerElement: true
     timeout: 20000
+- assertVisible: "Non hai comunicato nessuna assenza per i prossimi giorni."
 - takeScreenshot: /tmp/kv-android-genitore-5-assenza-annullata
 
 # ── 6. COMUNICAZIONI ─────────────────────────────────────────────────────────
@@ -281,22 +358,35 @@ env:
 #     I numeri vengono dal dump di sopra (66×31 su KV-play-phone): sono
 #     MISURATI, non stimati, e valgono per quel dispositivo. Se cambia densità o
 #     scala del testo il tap fallisce RUMOROSAMENTE, che è il punto.
-#  2. prova POSITIVA su un testo che esiste SOLO su /parent/avvisi
-#     (avvisi.json → footerRiga2, reso fuori da ogni condizione). «Comunicazioni»
-#     non va bene: è anche l'occhiello delle due sezioni della home.
-#  3. prova NEGATIVA sulla home. È la difesa che conta: se il tap non atterra, il
-#     nodo fantasma di «Prossimi appuntamenti» è ancora lì e questa asserzione
-#     FALLISCE. Lo stesso fantasma che prima rendeva la tappa verde a torto ora
-#     la rende rossa a ragione.
+#  2. prova POSITIVA su un testo che esiste SOLO su /parent/avvisi.
+#     ⚠️ NON è più il footer «Le prese visione vengono registrate
+#     automaticamente.»: quella prova NON POTEVA passare, per due ragioni
+#     indipendenti misurate il 2026-08-07. (a) È in fondo alla pagina →
+#     `bounds="[0,0][0,0]"`. (b) `footerRiga1` e `footerRiga2` sono rese nello
+#     STESSO paragrafo separate da <br/>, quindi il nodo porta il testo UNITO
+#     («📋 Gli avvisi restano visibili fino alla loro scadenza.\nLe prese visione
+#     vengono registrate automaticamente.») e il full-match sulla sola seconda
+#     riga fallirebbe anche in viewport. Il tap atterrava davvero e l'asserzione
+#     accusava l'app.
+#     Ora è il SOTTOTITOLO dell'intestazione, in cima alla pagina. Ha tre facce a
+#     seconda dei dati (avvisi.json → sottotitoloDaGestire · sottotitoloOk ·
+#     sottotitoloCaricamento) e vanno coperte tutte, altrimenti il flow è rosso
+#     nei giorni in cui non c'è niente da gestire. «Comunicazioni» e «Avvisi»
+#     restano inutilizzabili: sono ambigui con la home (lock R16).
+#  3. prova NEGATIVA sulla home. È la difesa che conta — ma quella di ieri era
+#     VACUA: «Prossimi appuntamenti» sulla home non è mai «visibile» (0×0),
+#     quindi l'`assertNotVisible` passava STANDO sulla home (misurato: 17/17
+#     COMPLETED). Ora è l'hero, che sta in cima e nel viewport c'è davvero: se il
+#     tap non atterra, questa asserzione FALLISCE. Lock: R17, R22.
 - tapOn:
     text: "^AVVISI$"
     width: 66
     height: 31
     tolerance: 25
 - extendedWaitUntil:
-    visible: "Le prese visione vengono registrate automaticamente."
+    visible: ".*avvis[oi] da gestire|Tutto in regola.*|Comunicazioni dalla scuola"
     timeout: 45000
-- assertNotVisible: "Prossimi appuntamenti"
+- assertNotVisible: ".*Ecco le novit.*"
 - takeScreenshot: /tmp/kv-android-genitore-6-avvisi
 
 # ── 7. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────
@@ -311,7 +401,7 @@ env:
 - extendedWaitUntil:
     visible: "Comunica un.assenza alla scuola"
     timeout: 20000
-- assertNotVisible: "Le prese visione vengono registrate automaticamente."
+- assertNotVisible: ".*avvis[oi] da gestire|Tutto in regola.*|Comunicazioni dalla scuola"
 - assertVisible:
     text: "Menu · tutte le sezioni|^MENU$"
 - takeScreenshot: /tmp/kv-android-genitore-7-back

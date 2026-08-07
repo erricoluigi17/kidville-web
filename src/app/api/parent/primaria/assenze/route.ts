@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi produce lista vuota
@@ -39,14 +40,57 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
 
     const supabase = await createAdminClient()
 
-    // Lista dettagliata dei soli stati negativi (comportamento invariato).
-    const { data: presenze } = await supabase
+    // ═══ SI CONTA CIÒ CHE È GIÀ ACCADUTO ═════════════════════════════════════
+    //
+    // Il contatore «Assenze» della pagina genitore passava da 1 a 2 nel momento
+    // in cui si comunicava un'assenza per il 31/12/2099, e la riga compariva
+    // nella cronologia: il bambino risultava assente per un giorno che non è
+    // ancora arrivato.
+    //
+    // NON È UN ERRORE DI CALCOLO, è un'assunzione infranta. Fino al 2026-08-07
+    // `presenze` aveva UNA sola sorgente di scrittura — il docente, sul giorno
+    // corrente — quindi «una riga di presenze è un giorno già trascorso» era vero
+    // per costruzione, e tutti i consumatori sono stati scritti su quel
+    // presupposto. «Comunica un'assenza» ne introduce una seconda che scrive
+    // `data >= oggi`. Un solo consumatore era stato adeguato
+    // (`parent/presenze:GET`, che usa `.lte('data', oggi)` sul riepilogo): questo
+    // no, ed è quello che alimenta il contatore che il genitore vede.
+    //
+    // ─── PERCHÉ `.lte` E NON `.lt`: OGGI CONTA ──────────────────────────────
+    //
+    // Due ragioni che tirano dalla stessa parte. (1) È la definizione già scelta
+    // dalla route sorella per il riepilogo dei 30 giorni: due idee diverse di
+    // «trascorso» dentro la stessa app si contraddirebbero proprio nelle due
+    // schermate che le mostrano vicine. (2) Con `.lt`, l'appello che la maestra
+    // fa stamattina resterebbe invisibile al genitore fino a domani — si
+    // toglierebbe un dato VERO per nascondere un dato futuro.
+    //
+    // «Oggi» è quello ITALIANO (`oggiFiscaleISO`, `Europe/Rome`): il runtime gira
+    // in UTC, e fra mezzanotte e le due del mattino `new Date().toISOString()`
+    // restituisce ancora ieri.
+    const oggi = oggiFiscaleISO()
+
+    // Lista dettagliata dei soli stati negativi.
+    const { data: presenze, error: presenzeErr } = await supabase
       .from('presenze')
       .select('id, data, stato, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giustificata_il, note_appello')
       .eq('alunno_id', studentId)
       .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
+      .lte('data', oggi)
       .order('data', { ascending: false })
       .limit(limit)
+
+    if (presenzeErr) {
+      // PostgREST non lancia: senza questo controllo una lettura fallita usciva
+      // come `data: []` dentro un 200 valido — «non hai assenze» detto a chi ne
+      // ha, e il ramo d'errore della schermata non veniva MAI raggiunto perché
+      // la risposta era formalmente buona.
+      logEvento('registro', 'error', {
+        operazione: 'parent/primaria/assenze:GET',
+        esito: 'assenze-non-lette',
+        alunno_id: studentId,
+      }, presenzeErr)
+    }
 
     // Riepilogo: una query di conteggio per stato (`head: true` → nessuna riga
     // scaricata, solo il COUNT). PostgREST non lancia: su tabella/colonna assente
@@ -58,7 +102,8 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
           .from('presenze')
           .select('id', { count: 'exact', head: true })
           .eq('alunno_id', studentId)
-          .eq('stato', stato),
+          .eq('stato', stato)
+          .lte('data', oggi),
       ),
     )
     const riepilogo = STATI_RIEPILOGO.reduce((acc, stato, i) => {

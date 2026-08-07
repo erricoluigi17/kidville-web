@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { formattaIstante } from '@/i18n/config'
+import { rateLimit } from '@/lib/security/rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -63,6 +64,86 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  */
 const TIPO_NOTIFICA = 'assenza_comunicata'
 
+// ═════════════════════════════════════════════════════════════════════════════
+// I TRE CONFINI CHE QUESTA ROTTA NON AVEVA (collaudo del 2026-08-07)
+//
+// Misurati, non dedotti: `data: '2099-12-31'` → **201**; un `motivo` di
+// **200.000 caratteri** → **201**, e la GET successiva restituiva 200 KB; dodici
+// chiamate di fila non costavano niente. Ogni colpo accodava una notifica ai
+// docenti della sezione, e la rotta è aperta da questo ciclo a tutte e 32 le
+// famiglie di tutti e tre i gradi.
+//
+// I tre numeri stanno QUI, uno per volta e con il loro perché: sono decisioni di
+// prodotto, non dettagli d'implementazione, e sparpagliarli fra schema e handler
+// è il modo in cui poi divergono.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Quanti giorni in avanti si può comunicare un'assenza.
+ *
+ * ─── PERCHÉ SESSANTA, E NON «UN ANNO SCOLASTICO» ────────────────────────────
+ *
+ * Sessanta giorni coprono con abbondanza ogni comunicazione che una famiglia fa
+ * davvero: l'indomani, la settimana di viaggio, l'intervento già in calendario.
+ * Un anno scolastico intero (il candidato ovvio, e quello che il rilievo
+ * suggeriva) sarebbe dieci volte tanto e non servirebbe a nessuno — mentre
+ * lascerebbe creare centinaia di righe per bambino e, soprattutto, NON
+ * fermerebbe l'errore di battitura che questo tetto esiste anche per prendere:
+ * «2027» al posto di «2026» resta dentro l'anno scolastico per metà dell'anno.
+ *
+ * E non è un limite di calendario: è un numero di GIORNI, quindi non ha né il
+ * caso di bordo del 31 luglio (dove «fine dell'anno scolastico» collassa su
+ * «oggi») né un fuso da sbagliare. Oltre il tetto la strada esiste e ha un nome:
+ * la segreteria.
+ *
+ * Il tetto sul VOLUME è un'altra cosa e sta più sotto (`TETTO_SCRITTURE_FINESTRA`):
+ * questo confine dice *fin dove*, quello dice *quanto in fretta*.
+ */
+export const GIORNI_MASSIMI_IN_ANTICIPO = 60
+
+/**
+ * Caratteri ammessi nel motivo dell'assenza.
+ *
+ * 500 è la misura che questo repo usa già per il testo libero scritto da un
+ * genitore — `mensa/alternative` (`richiesta`), `merch/ordini` (`note`),
+ * `merch/articoli` (`descrizione`) — ed è il posto giusto in cui stare: «febbre»
+ * e «visita medica dal dentista, rientra dopo pranzo» ci stanno dentro dieci
+ * volte.
+ *
+ * Non è una comodità di validazione: `giustificazione_testo` è testo libero di
+ * natura sanitaria su un MINORE (art. 9), e la minimizzazione (art. 5.1.c) si
+ * impone alla fonte. In produzione è già stata scritta una riga da 200.000
+ * caratteri, restituita per intero al client del genitore e alle viste dei
+ * docenti.
+ */
+export const MOTIVO_MAX_CARATTERI = 500
+
+/** L'ampiezza della finestra del tetto di frequenza. */
+export const TETTO_FINESTRA_MS = 10 * 60 * 1000
+
+/**
+ * Scritture (POST o DELETE) ammesse a un genitore in dieci minuti.
+ *
+ * ─── IL CONTO ───────────────────────────────────────────────────────────────
+ *
+ * Il gesto più intenso che una famiglia vera compie è comunicare una settimana
+ * di assenze per più figli: tre bambini × cinque giorni = quindici colpi. Venti
+ * lascia margine a quel caso e a un ripensamento, e chiude la porta alla raffica
+ * — che qui non è un fastidio, perché **ogni POST accoda una notifica push ai
+ * docenti della sezione**.
+ *
+ * I due verbi hanno budget SEPARATI (`assenza-comunica:` / `assenza-annulla:`):
+ * una raffica di annullamenti e una di comunicazioni sono due guasti diversi e
+ * si diagnosticano separatamente. La chiave è l'UTENTE e non l'IP, per la stessa
+ * ragione delle rotte OTP: è l'unica cosa che l'attore non può cambiare senza
+ * rifare il login, e dietro un NAT ci sta un plesso intero.
+ *
+ * ⚠️ Il contatore è condiviso via `public.tetto_frequenza`; se il database non
+ * risponde degrada al conteggio per istanza — vedi la testata di
+ * `src/lib/security/rate-limit.ts`. Un guasto costa PRECISIONE, non PROTEZIONE.
+ */
+export const TETTO_SCRITTURE_FINESTRA = 20
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` NON è più `z.string().min(1)`: quello schema accettava qualunque
 // stringa, comprese le date del passato.
@@ -73,8 +154,20 @@ const TIPO_NOTIFICA = 'assenza_comunicata'
 // modulo. Un bambino segnato «presente» alle 08:45 diventava «assente
 // giustificato» con un 201. Quell'invariante ora vive dove deve vivere — nella
 // WHERE della scrittura, più sotto — e non in questo commento.
-// `motivo` resta permissivo: oggi qualunque tipo è accettato (i non-string
+// `motivo` resta permissivo SUL TIPO: qualunque tipo è accettato (i non-string
 // diventano null). È testo libero di natura sanitaria, e NON entra in nessun log.
+//
+// ⚠️ IL TETTO DI LUNGHEZZA NON STA QUI, ED È UNA SCELTA. Due ragioni, e la
+// seconda da sola basterebbe:
+//  1. lo schema decide PRIMA di `requireParentOfStudent`. Un 400 emesso qui
+//     scavalcherebbe il 403 del gate, e la prova adversarial dell'E2E pretende
+//     **403** su un figlio altrui — è la stessa trappola già pagata con la data;
+//  2. `validationError` risponde `{ error: 'Dati non validi', details }` senza
+//     `codice`, e la regola di questo file è che **ogni rifiuto porta un codice
+//     tradotto e lascia una riga `warn`**. Un tetto in zod sarebbe l'unico
+//     diniego muto della rotta, in prosa italiana dentro un'interfaccia inglese.
+// Il confine vive quindi nell'handler, subito dopo il gate, accanto a quello
+// della data — e il numero è dichiarato una volta sola in `MOTIVO_MAX_CARATTERI`.
 const postBodySchema = z.object({
   studentId: zUuid,
   data: zDataYMD,
@@ -168,6 +261,61 @@ function giornoIt(data: string): string {
   })
 }
 
+/**
+ * L'ultimo giorno comunicabile, a partire da «oggi» in `YYYY-MM-DD`.
+ *
+ * Aritmetica di calendario in UTC e basta: `Date.UTC` somma i giorni senza mai
+ * consultare il fuso del processo, e il risultato torna in `YYYY-MM-DD`. Il fuso
+ * lo ha già deciso `oggiFiscaleISO()` una volta sola, a monte — sommare giorni a
+ * una data locale sarebbe il modo di sbagliarlo una seconda volta.
+ */
+function ultimoGiornoComunicabile(oggi: string): string {
+  const [anno, mese, giorno] = oggi.split('-').map(Number)
+  return new Date(Date.UTC(anno, mese - 1, giorno + GIORNI_MASSIMI_IN_ANTICIPO))
+    .toISOString()
+    .slice(0, 10)
+}
+
+/**
+ * Il 429 del tetto di frequenza.
+ *
+ * `TROPPE_RICHIESTE` è già dichiarato in `CODICI_ERRORE` e tradotto in entrambe
+ * le lingue: qui non nasce un codice nuovo, si riusa quello che le rotte OTP del
+ * genitore usano da sempre. `Retry-After` in secondi, come vuole l'HTTP: senza,
+ * il client non sa se riprovare fra un minuto o fra dieci.
+ *
+ * Nessun `logEvento` qui dentro, ed è deliberato: `withRoute` classifica i 429
+ * come ANOMALIE e li persiste già a livello `warn`. Una riga a mano sarebbe un
+ * doppione che sposta soltanto il punto in cui si cerca.
+ */
+function troppeRichieste(retryAfterMs: number): NextResponse {
+  return NextResponse.json(
+    {
+      error: 'Troppe richieste in poco tempo. Riprova fra qualche minuto.',
+      codice: 'TROPPE_RICHIESTE',
+    },
+    {
+      status: 429,
+      headers: { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) },
+    },
+  )
+}
+
+/**
+ * Consuma una unità del budget di scrittura dell'utente.
+ *
+ * Va chiamata **dopo** `requireParentOfStudent` — la chiave è l'id di sessione,
+ * e chi non ha titolo su quel bambino deve leggere 403, non 429: un 429 gli
+ * direbbe «riprova più tardi» su una porta che non si aprirà mai.
+ */
+async function tettoScritture(gruppo: string, userId: string): Promise<NextResponse | null> {
+  const rl = await rateLimit(`${gruppo}:${userId}`, {
+    limit: TETTO_SCRITTURE_FINESTRA,
+    windowMs: TETTO_FINESTRA_MS,
+  })
+  return rl.ok ? null : troppeRichieste(rl.retryAfterMs)
+}
+
 // POST /api/parent/presenze/comunica-assenza?userId=
 // body: { studentId, data, motivo? }
 // Il genitore comunica IN ANTICIPO un'assenza (oggi o un giorno futuro). Crea o
@@ -181,6 +329,15 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     const auth = await requireParentOfStudent(request, studentId)
     if (auth.response) return auth.response
     const userId = auth.user.id
+
+    // IL TETTO DI FREQUENZA, SUBITO DOPO IL GATE E PRIMA DI OGNI LETTURA.
+    //
+    // Dopo il gate perché la chiave è l'utente e perché chi non ha titolo su
+    // quel bambino deve leggere 403. Prima di tutto il resto perché una raffica
+    // non deve nemmeno costare le query che seguono: il senso di un tetto è che
+    // il colpo respinto sia il più economico dei colpi.
+    const tettoErr = await tettoScritture('assenza-comunica', userId)
+    if (tettoErr) return tettoErr
 
     const supabase = await createAdminClient()
 
@@ -203,10 +360,65 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // a lunghezza fissa (zero-padded): su questo formato l'ordine dei caratteri
     // E l'ordine cronologico coincidono, e non c'è nessun `Date` da costruire —
     // cioè nessun fuso da sbagliare una seconda volta.
-    if (data < oggiFiscaleISO()) {
+    const oggi = oggiFiscaleISO()
+    if (data < oggi) {
       logRifiuto('parent/presenze/comunica-assenza:POST', 'ASSENZA_DATA_PASSATA', { alunno_id: studentId, stato: 400 })
       return NextResponse.json(
         { error: 'La data indicata è già passata', codice: 'ASSENZA_DATA_PASSATA' },
+        { status: 400 },
+      )
+    }
+
+    // …E ORA ANCHE IL TETTO SUPERIORE, che non c'è mai stato.
+    //
+    // Il confronto qui sopra è un limite INFERIORE, e per un mese è stato
+    // l'UNICO vincolo temporale della rotta: `data: '2099-12-31'` rispondeva 201,
+    // scriveva una riga di `presenze` e accodava una push ai docenti. Il
+    // confronto resta lessicografico per la stessa ragione dell'altro — due
+    // stringhe `YYYY-MM-DD` a lunghezza fissa ordinano come le date che
+    // rappresentano, e non c'è nessun `Date` da costruire nel fuso sbagliato.
+    if (data > ultimoGiornoComunicabile(oggi)) {
+      logRifiuto('parent/presenze/comunica-assenza:POST', 'ASSENZA_DATA_TROPPO_LONTANA', {
+        alunno_id: studentId,
+        stato: 400,
+        // I giorni, non la data: dice se è un errore di battitura (migliaia) o
+        // una comunicazione un po' troppo in anticipo (settanta).
+        n: GIORNI_MASSIMI_IN_ANTICIPO,
+      })
+      return NextResponse.json(
+        {
+          error: `Puoi comunicare un'assenza fino a ${GIORNI_MASSIMI_IN_ANTICIPO} giorni in anticipo`,
+          codice: 'ASSENZA_DATA_TROPPO_LONTANA',
+        },
+        { status: 400 },
+      )
+    }
+
+    // IL MOTIVO HA UNA LUNGHEZZA MASSIMA, e si normalizza UNA VOLTA SOLA.
+    //
+    // Era `z.unknown().optional()` e basta: permissivo sul tipo, e letto come
+    // permissivo sulla dimensione. In produzione è già stata scritta una riga da
+    // 200.000 caratteri — testo libero di natura sanitaria su un minore, che
+    // torna per intero al client del genitore e alle viste dei docenti.
+    //
+    // Si misura il testo NORMALIZZATO (`trim`), che è quello che finisce in
+    // tabella: rifiutare per gli spazi in coda sarebbe un rifiuto che il
+    // genitore non può capire guardando ciò che ha scritto.
+    const motivoTesto = typeof motivo === 'string' ? motivo.trim() : ''
+    if (motivoTesto.length > MOTIVO_MAX_CARATTERI) {
+      logRifiuto('parent/presenze/comunica-assenza:POST', 'ASSENZA_MOTIVO_TROPPO_LUNGO', {
+        alunno_id: studentId,
+        stato: 400,
+        // La LUNGHEZZA, mai il testo: il motivo è un dato sanitario di un minore
+        // e non entra in nessun log. Il numero dice se è un incollaggio
+        // sbagliato o un collaudo con 200.000 caratteri.
+        n: motivoTesto.length,
+      })
+      return NextResponse.json(
+        {
+          error: `Il motivo non può superare ${MOTIVO_MAX_CARATTERI} caratteri`,
+          codice: 'ASSENZA_MOTIVO_TROPPO_LUNGO',
+        },
         { status: 400 },
       )
     }
@@ -292,7 +504,7 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
       data,
       stato: 'assente',
       giustificata: true,
-      giustificazione_testo: typeof motivo === 'string' ? motivo.trim() || null : null,
+      giustificazione_testo: motivoTesto || null,
       giustificata_da: userId,
       giustificata_il: new Date().toISOString(),
     }
@@ -324,6 +536,23 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
       )
     }
 
+    // ═══ SI CHIEDONO DUE COLONNE, NON VENTICINQUE ════════════════════════════
+    //
+    // `.select()` nudo su PostgREST è `select *`, ed era stato scritto per
+    // ottenere l'`id` della riga (serve come `entitaId` della notifica). Si
+    // portava dietro tutto il resto — e nel caso di UPDATE ciò che torna non è
+    // quello che il chiamante ha scritto, ma quello che C'ERA: `note_appello`
+    // (nota del docente), `registrato_da`/`utente_id` (identificativi di
+    // personale scolastico) e soprattutto `giustificazione_firma`, che è il log
+    // della firma elettronica e contiene **email, indirizzo IP e user agent** di
+    // chi ha firmato.
+    //
+    // Il caso concreto misurato: riga futura già giustificata con firma dal
+    // genitore A, il genitore B della stessa famiglia rifà la comunicazione
+    // (consentito: `registrato_da` è nullo) e riceve nella risposta email, IP e
+    // user agent di A. Al modulo servono `id` e `data`.
+    const COLONNE_ESITO = 'id, data'
+
     /** UPDATE con la condizione nella WHERE: ritorna le righe DAVVERO colpite. */
     const aggiornaSeNonRegistrata = async () =>
       await supabase
@@ -332,7 +561,7 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
         .eq('alunno_id', studentId)
         .eq('data', data)
         .is('registrato_da', null)
-        .select()
+        .select(COLONNE_ESITO)
 
     const { data: esistente, error: letturaErr } = await supabase
       .from('presenze')
@@ -350,24 +579,25 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // `| null` DICHIARATO: senza `noUncheckedIndexedAccess`, TypeScript tipa
     // `array[0]` come non-nullo anche quando l'array è vuoto — cioè proprio il
     // caso che qui decide se si passa all'INSERT.
-    let row: { id?: string } | null = ((aggiornate ?? []) as { id?: string }[])[0] ?? null
+    type RigaEsito = { id?: string; data?: string }
+    let row: RigaEsito | null = ((aggiornate ?? []) as RigaEsito[])[0] ?? null
     let creata = false
 
     if (!row) {
       const { data: inserita, error: inserisciErr } = await supabase
         .from('presenze')
         .insert(riga)
-        .select()
+        .select(COLONNE_ESITO)
         .single()
       if (!inserisciErr) {
-        row = inserita as { id?: string } | null
+        row = inserita as RigaEsito | null
         creata = true
       } else if ((inserisciErr as { code?: string }).code === '23505') {
         // Corsa persa: la riga di quel giorno è comparsa fra il passo 2 e il 3.
         // Chi l'ha scritta lo dice la stessa condizione di prima.
         const { data: riprovate, error: riprovaErr } = await aggiornaSeNonRegistrata()
         if (riprovaErr) return errore500(riprovaErr)
-        row = ((riprovate ?? []) as { id?: string }[])[0] ?? null
+        row = ((riprovate ?? []) as RigaEsito[])[0] ?? null
         if (!row) return rifiuto409(null, 'appello-in-corsa')
       } else {
         return errore500(inserisciErr)
@@ -424,6 +654,17 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
         // già così nel gemello `parent/presenze/giustifica/route.ts`.
         entitaId: presenzaId,
         bufferMin: 0,
+        // LA RAFFICA SULLO STESSO GIORNO COLLASSA IN UNA NOTIFICA SOLA.
+        //
+        // Senza `debounce`, ogni POST produceva una riga `notifiche` per docente
+        // e una push immediata: un genitore che corregge tre volte il motivo
+        // della stessa assenza svegliava la maestra tre volte, e una raffica
+        // svegliava un plesso. Il gemello `attendance/daily:POST` lo fa già.
+        //
+        // Non confonde due giorni diversi: `entitaId` è la RIGA di presenza —
+        // una per (alunno, data) — non l'alunno. È la stessa proprietà per cui
+        // l'`entitaId` è stato cambiato in questo ciclo.
+        debounce: true,
       })
     } catch (e) {
       logEvento('notifica', 'error', {
@@ -453,11 +694,17 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // dell'assenza non compare qui e non deve comparirci mai: è un dato sanitario
     // di un minore.
     //
-    // ⚠️ LIMITE DICHIARATO: `registro` non è fra gli `EVENTI_PERSISTITI`
-    // (`src/lib/logging/logger.ts`), quindi questa riga vive nei log di
-    // piattaforma e NON in `app_log` — come già l'`info` di successo del DELETE.
-    // Finché quel canale non entra in allowlist, la domanda si risponde su Vercel
-    // e non in SQL.
+    // ⚠️ QUI C'ERA SCRITTO CHE QUESTA RIGA NON FINISCE IN TABELLA. Non è vero, e
+    // non lo era nemmeno il giorno in cui è stato scritto: `registro` **è** fra
+    // gli `EVENTI_PERSISTITI` (`src/lib/logging/logger.ts`), aggiunto dallo
+    // stesso commit che ha scritto questo commento. `vaPersistito` manda in
+    // `app_log` tutto ciò che ha un evento persistito, `info` compreso — quindi
+    // «sta funzionando? qualcuno sta comunicando assenze?» si risponde in SQL, ed
+    // è esattamente la domanda che ha aperto questo ciclo.
+    //
+    // Un commento che dichiara un limite inesistente costa quanto uno che
+    // dichiara una protezione inesistente: convince il lettore successivo a
+    // cercare la risposta dove non è.
     logEvento('registro', 'info', {
       operazione: 'parent/presenze/comunica-assenza:POST',
       esito: 'assenza-comunicata',
@@ -472,7 +719,20 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
       riga_creata: creata,
     })
 
-    return NextResponse.json({ success: true, data: row }, { status: 201 })
+    // LA RISPOSTA SI COMPONE, NON SI INOLTRA.
+    //
+    // `data: row` restituiva ciò che PostgREST aveva in mano; qui si dichiara
+    // campo per campo ciò che il modulo usa. È difesa in profondità e non
+    // ridondanza: il `.select('id, data')` più sopra decide cosa viaggia sul
+    // filo, questa riga decide cosa esce dall'API — e il giorno in cui qualcuno
+    // riallarga la `select` per un motivo suo, la risposta non cambia.
+    //
+    // Nessun `giustificazione_testo`: è il dato sanitario del minore, il client
+    // l'ha appena mandato e non ha bisogno di riaverlo indietro.
+    return NextResponse.json(
+      { success: true, data: { id: row?.id ?? null, data: row?.data ?? data } },
+      { status: 201 },
+    )
   } catch (err) {
     logErrore({ operazione: 'parent/presenze/comunica-assenza:POST', stato: 500 }, err)
     return NextResponse.json(
@@ -494,6 +754,13 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
     const auth = await requireParentOfStudent(request, studentId)
     if (auth.response) return auth.response
     const userId = auth.user.id
+
+    // Il tetto vale in ENTRAMBI i versi del gesto, e su un budget suo: la DELETE
+    // cancella righe di registro e può accodare una notifica «assenza annullata»
+    // ai docenti. Una raffica di annullamenti è un guasto diverso da una di
+    // comunicazioni, e con due chiavi separate si legge separatamente.
+    const tettoErr = await tettoScritture('assenza-annulla', userId)
+    if (tettoErr) return tettoErr
 
     const supabase = await createAdminClient()
 
@@ -520,6 +787,14 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
     // GIORNO (`count(giustificata_da) = 0` su 49 presenze), cioè un fatto
     // destinato a smettere di essere vero appena un genitore usa la giustifica.
     // Questo confronto invece non scade.
+    //
+    // ⚠️ QUI NON C'È IL TETTO SUPERIORE CHE IL POST HA APPENA PRESO, ed è
+    // deliberato: le righe con una data assurda **esistono già** — il collaudo
+    // del 2026-08-07 ne ha scritta una al 2099 su un alunno di prova prima che
+    // il tetto ci fosse. Chiudere anche questa porta significherebbe renderle
+    // non annullabili dall'interfaccia, cioè trasformare un difetto già chiuso
+    // alla fonte in un dato che nessun genitore può più togliersi di dosso.
+    // L'annullamento è l'unica via d'uscita: resta aperta.
     if (data < oggiFiscaleISO()) {
       logRifiuto('parent/presenze/comunica-assenza:DELETE', 'ASSENZA_DATA_PASSATA', {
         alunno_id: studentId,
@@ -722,8 +997,9 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
     // Il SUCCESSO si logga: è una cancellazione di dato, e «nessun log» non deve
     // poter significare insieme «tutto a posto» e «non è mai partito niente» —
     // che è esattamente l'ambiguità in cui questa funzione è vissuta un mese.
-    // `info` e non `warn`: il canale `registro` non è fra gli `EVENTI_PERSISTITI`,
-    // quindi la riga vive nei log di piattaforma, non in tabella.
+    // `info` e non `warn` perché una cancellazione riuscita non è un'anomalia; e
+    // in tabella ci finisce lo stesso, perché `registro` è fra gli
+    // `EVENTI_PERSISTITI` — la riga qui sopra diceva il contrario e sbagliava.
     //
     // `attore_id` NON è un ornamento, ed è nato insieme all'ambito famiglia qui
     // sopra: finché si annullava solo il proprio, «chi l'ha tolta» si deduceva

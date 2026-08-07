@@ -159,13 +159,29 @@ conseguenza anche la tappa del tasto Indietro collaudava un `back` dalla home al
 La correzione, e la regola che ne è nata (R16-R17 del lock):
 
 - **un'asserzione di arrivo non può essere un'etichetta che esiste anche dove si partiva.** Si usa
-  un testo della sola pagina di destinazione — per `/parent/avvisi` è
-  «Le prese visione vengono registrate automaticamente.» (`avvisi.json → footerRiga2`, reso fuori
-  da ogni condizione);
-- **e serve la prova NEGATIVA**, un testo che esiste solo sulla pagina di partenza
-  («Prossimi appuntamenti» per la home). È la difesa che conta davvero: se il tap non è atterrato,
-  il nodo fantasma è ancora lì e l'`assertNotVisible` **fallisce**. Lo stesso nodo che prima
-  rendeva la tappa verde a torto ora la rende rossa a ragione;
+  un testo della sola pagina di destinazione — per `/parent/avvisi` è il **sottotitolo
+  dell'intestazione**, che sta sopra la piega e ha tre facce a seconda dei dati
+  (`avvisi.json → sottotitoloDaGestire · sottotitoloOk · sottotitoloCaricamento`): vanno coperte
+  **tutte e tre** in un'unica ancora alternata, altrimenti il flow è rosso nei giorni in cui non
+  c'è niente da gestire;
+  > ⚠️ **Correzione del 2026-08-08.** Fino a ieri qui era scritto di usare
+  > «Le prese visione vengono registrate automaticamente.» (`footerRiga2`). Era una prova che
+  > **non poteva passare**, per due ragioni indipendenti: sta in fondo alla pagina (`[0,0][0,0]`
+  > su Android, assente dall'albero su iOS) **e** `footerRiga1`/`footerRiga2` sono rese nello
+  > stesso paragrafo separate da `<br/>`, quindi il nodo porta il testo **unito** e il full-match
+  > sulla sola seconda riga fallisce anche in viewport. Il tap atterrava davvero: era
+  > l'asserzione ad accusare l'app.
+- **e serve la prova NEGATIVA**, un testo che esiste solo sulla pagina di partenza — e che **sulla
+  pagina di partenza si vede davvero**: per la home è l'hero «Ecco le novità di oggi 🌈», non
+  «Prossimi appuntamenti».
+  > ⚠️ **Correzione del 2026-08-08, e va letta perché smentisce il ragionamento scritto qui
+  > sotto.** La vecchia versione diceva: «se il tap non è atterrato, il nodo fantasma è ancora lì
+  > e l'`assertNotVisible` fallisce; lo stesso nodo che prima rendeva la tappa verde a torto ora
+  > la rende rossa a ragione». **Falso, misurato:** un nodo fantasma è fantasma proprio perché è
+  > `[0,0][0,0]`, e Maestro non lo considera visibile — `assertNotVisible` su di lui passa
+  > **sempre**, anche restando fermi sulla home (`/tmp/kv-and-vacuita.yaml`, 17/17 COMPLETED). La
+  > proprietà che doveva far fallire l'asserzione è esattamente quella che la rende vacua. La
+  > coppia positiva+negativa resta giusta; il testo scelto no;
 - sul **tap**, dove i bounds sono misurati (Android), si aggiunge la guardia dimensionale
   `width`/`height`/`tolerance`: un nodo `0×0` non corrisponde più. Su iOS **non** si mette, perché
   lì i bounds dei nodi fuori schermo non sono mai stati misurati e un numero inventato sarebbe una
@@ -249,6 +265,103 @@ uguale** (`flex-1`) → centri a **10 / 30 / 50 / 70 / 90 %** della larghezza; l
 sia su iPhone. Vale **solo sul telefono**: sopra i 1024 px la bottom-nav è `lg:hidden` e c'è la
 sidebar.
 
+## Le due piattaforme tagliano la pagina in due modi diversi
+
+**Questa sezione è la conoscenza che è costata due cicli di collaudo.** Fino al 2026-08-07 questo
+file descriveva il comportamento **Android** e **taceva su iOS**, e i flow iOS sono stati scritti
+col modello Android. Il risultato: due bloccanti, su due piattaforme, per **due cause diverse**
+che producono lo **stesso rosso su un'app sana**.
+
+Il fatto, misurato lo stesso giorno su entrambe:
+
+| | Android (WebView Chromium) | iOS (WKWebView) |
+|---|---|---|
+| Un nodo **fuori dal viewport** | **c'è**, proiettato a `bounds="[0,0][0,0]"` | **non c'è**: l'albero XCUITest espone **solo il viewport** |
+| `assertVisible` su quel nodo | fallisce (Maestro non considera visibile un nodo 0×0) | fallisce (l'elemento non esiste) |
+| `assertNotVisible` su quel nodo | **passa sempre** → asserzione **vacua** | **passa sempre** → asserzione **vacua** |
+| Come lo si vede | `adb shell uiautomator dump` e si leggono i `bounds` | `maestro hierarchy`: il nodo **manca**, e ricompare dopo `- scroll` |
+
+Le misure, per esteso, perché senza numeri questa tabella è un'opinione:
+
+- **Android, home genitore:** `text="PROSSIMI APPUNTAMENTI" bounds="[0,0][0,0]"`. Controprova
+  sullo stesso blocco: «NESSUN APPUNTAMENTO IN PROGRAMMA» (identico 0×0) **fallisce**, mentre
+  «OGGI A SCUOLA» (`[49,1241][328,1291]`) **passa**.
+- **Android, `/parent/attendance`:** `text="ASSENZE GIÀ COMUNICATE" bounds="[0,0][0,0]"` senza
+  scroll, `[105,1257][976,1336]` dopo uno swipe.
+- **iOS, home genitore:** a scroll zero l'albero contiene **43 nodi di testo**, l'ultimo dei quali
+  è «LA GIORNATA DI ALUNNO2» a `[20,860][200,882]` su uno schermo alto **874**. «PROSSIMI
+  APPUNTAMENTI»: **0 occorrenze in 3 dump consecutivi**; dopo lo scroll, `[20,630][199,652]`.
+- **iOS, `/parent/attendance`:** la *zona* c'è («ASSENZE GIÀ COMUNICATE, zona» `[16,786][386,964]`)
+  ma la frase dell'elenco vuoto **non è nell'albero**; dopo `- scroll` compare a
+  `[40,715][311,752]`.
+
+**Riprodotto di prima mano il 2026-08-08** (iPhone 17 Pro / iOS 26.2, Maestro 2.6.1), stando
+**sulla home**, cioè sulla pagina che quel titolo lo contiene:
+
+```
+assertVisible    ".*Prossimi appuntamenti.*"  → FAILED      ← il gate del flow, su un'app sana
+assertNotVisible ".*Prossimi appuntamenti.*"  → COMPLETED   ← la prova di "ho lasciato la home"
+scrollUntilVisible + centerElement, poi assertVisible → COMPLETED   ← il rimedio
+```
+
+La stessa ancora è **falsa in un verso e vacuamente vera nell'altro**: è la firma di questa
+classe di difetto, e il modo più rapido per riconoscerla senza leggere un dump.
+
+Il caso peggiore non è il rosso: è il **verde per caso**. Il gate della dashboard iOS
+(«Prossimi appuntamenti») è passato **1 volta su 3** — e la volta buona perché, subito dopo il
+login, le card asincrone non avevano ancora allungato la pagina e per qualche centinaio di
+millisecondi quel titolo era davvero nel viewport. Una finestra che si chiude quando i dati
+arrivano: il flow non collaudava l'app, collaudava chi arrivava primo.
+
+> **Le tre regole che ne seguono, e valgono su tutte e due le piattaforme:**
+>
+> 1. **Un'ancora si sceglie sopra la piega.** Per la home del genitore è l'hero
+>    «Ecco le novità di oggi 🌈» (`home.json → heroSottotitolo`, misurato su iOS a
+>    `[36,304][183,320]`, 3 dump su 3), non l'ultima sezione della pagina.
+> 2. **Se l'ancora sta sotto la piega, prima la si porta nel viewport** con `scrollUntilVisible`
+>    (+ `centerElement: true`), e questo vale anche — soprattutto — per le asserzioni
+>    **negative**: una prova negativa fatta dove il nodo non si vedrebbe comunque è vera in ogni
+>    caso, cioè non è una prova.
+> 3. **Dopo aver scrollato per guardare l'elenco, per toccare la CTA che sta sopra bisogna
+>    risalire** (`direction: UP`): sotto lo scroll, la CTA è a sua volta fuori viewport.
+
+Lock: **R22** conosce le ancore già misurate fuori dal viewport, vieta di ancorarci
+un'asserzione negativa (vacuità) e pretende lo scroll davanti a quella positiva.
+
+### E una regola che nasce dalla stessa giornata: l'ancora che non può essere vera
+
+Il gemello del difetto vacuo è l'asserzione che **non può essere vera su nessuna pagina**:
+`assertNotVisible: ".*Tutte le sezioni.*"` combacia sempre con l'`aria-label` del quinto tab,
+«Menu · tutte le sezioni», perché il match di Maestro è **full-match ma case-insensitive** e la
+bottom-nav sta su **ogni** schermata. Il flow dichiarava `FAILED` con l'app perfettamente sana.
+
+Riprodotto il 2026-08-08 sulla home, foglio Menu **chiuso**, nello stesso istante:
+
+```
+assertNotVisible ".*Tutte le sezioni.*"     → FAILED       ← l'ancora di ieri
+assertNotVisible ".*Scrivi alle maestre.*"  → COMPLETED    ← la sostituta
+```
+
+e col foglio **aperto** la sostituta → `FAILED`. Un'ancora negativa si sceglie così: si guarda
+che **morda** quando deve e che **taccia** quando deve. Una sola delle due prove non basta —
+è come si è arrivati a scriverne una che non poteva essere vera da nessuna parte. Nell'albero
+i due nodi sono `'Menu · tutte le sezioni' [311,779][386,839]` (il tab, sempre) e
+`'TUTTE LE SEZIONI' [37,162][123,175]` (l'occhiello, solo a foglio aperto).
+
+E il terzo della famiglia: l'ancora **ingoiata da una voce più lunga dello stesso catalogo**.
+`.*Assenza comunicata.*` (`parentServizi.json → attendanceInviataTitolo`) è interamente contenuta
+in «Annulla l'assenza comunicata per il {data}» (`attendanceAnnullaAria`), cioè
+nell'`aria-label` del bottone ANNULLA di una riga **già in elenco**. Misurato: `COMPLETED` **174 ms
+dopo il tap**, con lo screenshot di 76 ms più tardi che mostrava il bottone ancora in «INVIO…» —
+il flow dichiarava riuscito un POST ancora in volo.
+
+> **Regola:** un'ancora non può essere una **sottostringa** di un altro testo che può stare a
+> schermo nello stesso momento — né di un `aria-label` persistente, né di un'altra voce dello
+> stesso catalogo i18n. In dubbio, si ancora la regex (`"Assenze già comunicate"` senza `.*`)
+> oppure si sceglie un testo che solo quella schermata produce.
+
+Lock: **R21** (aria-label persistenti) e **R23** (voci omonime dello stesso catalogo).
+
 ## Il lock — cosa può fermare, e cosa no
 
 **`__tests__/architecture/maestro-flows-selettori.test.ts`** gira in ogni `vitest run`, **senza
@@ -267,6 +380,9 @@ controllo che gira solo «quando qualcuno accende un emulatore» non protegge ni
 | **R8** | cercare un testo che un `aria-label` **copre** — legge i `BottomNav` in `src/` |
 | **R9** | che un flow dipenda da un selettore **mai misurato** senza dichiararlo |
 | **R10** | che un commento ripeta una **teoria già smentita** da una misura |
+| **R21** | un'asserzione **negativa** che cade su un `aria-label` presente su ogni pagina: non può essere vera da nessuna parte |
+| **R22** | un'asserzione **negativa** su un nodo misurato **fuori viewport** (è vacua: vera anche stando fermi) e una **positiva** senza lo scroll che ce lo porta |
+| **R23** | un'ancora **ingoiata** da una voce più lunga dello stesso catalogo i18n (la conferma dell'invio contro l'`aria-label` del bottone ANNULLA) |
 
 **Cosa NON può fare**, e va detto: non sa se una misura di ieri vale ancora oggi, non vede un
 cambio di comportamento della WebView con una nuova versione di Android, non esegue nulla su un

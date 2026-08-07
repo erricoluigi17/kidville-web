@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { CheckCircle, CalendarX2, AlertTriangle, RotateCcw } from 'lucide-react';
+import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
@@ -25,6 +26,15 @@ export interface AssenzaComunicata {
 
 /** La rotta della PAGINA, per i log del client (mai la rotta della fetch). */
 const ROTTA = '/parent/attendance';
+
+/**
+ * L'id del riquadro d'errore dell'invio. È una costante e non un `useId` perché
+ * ci punta l'`aria-describedby` del campo del giorno: due nodi che devono
+ * combaciare, e un id inventato in due punti diversi è il modo in cui
+ * `aria-describedby` smette di descrivere qualcosa. La pagina è una sola per
+ * schermata, quindi l'unicità è garantita.
+ */
+const ID_ERRORE_INVIO = 'attendance-errore-invio';
 
 /**
  * Le due chiamate al backend vivono FUORI dal componente e non lanciano mai:
@@ -132,6 +142,23 @@ function AttendanceInner() {
     const [submitting, setSubmitting] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    /**
+     * Il CODICE del rifiuto, accanto alla frase già tradotta.
+     *
+     * Serve a una cosa sola: sapere se il rifiuto riguarda IL GIORNO SCELTO, e
+     * quindi se marcare il campo con `aria-invalid`. Marcarlo sempre manderebbe
+     * il genitore a correggere un valore giusto quando il guasto è del server
+     * (`ASSENZA_NON_SALVATA`), e uno screen reader annuncerebbe «non valido» su
+     * un campo che non ha nessuna colpa.
+     */
+    const [codiceErrore, setCodiceErrore] = useState<string | null>(null);
+    /**
+     * Tutti i rifiuti che parlano della data cominciano con `ASSENZA_DATA_`
+     * (`ASSENZA_DATA_PASSATA` oggi; un eventuale tetto superiore domani). Il
+     * prefisso, e non l'elenco dei codici, perché un codice nuovo scritto nella
+     * route non deve dipendere da qualcuno che si ricordi di aggiornarlo qui.
+     */
+    const erroreSullaData = codiceErrore?.startsWith('ASSENZA_DATA_') ?? false;
 
     // ── Elenco delle assenze già comunicate ──────────────────────────────────
     const [comunicate, setComunicate] = useState<AssenzaComunicata[]>([]);
@@ -173,11 +200,51 @@ function AttendanceInner() {
      * dell'invio era rimasto indietro.
      *
      * Il ritorno («Comunica un'altra assenza») ha lo stesso problema al contrario:
-     * il bottone si smonta insieme alla conferma, e il fuoco va rimesso dove il
-     * genitore deve scrivere — il campo del giorno.
+     * il bottone si smonta insieme alla conferma, e il fuoco va rimesso dentro
+     * il modulo.
      */
     const refConferma = useRef<HTMLHeadingElement | null>(null);
-    const refGiorno = useRef<HTMLInputElement | null>(null);
+    /**
+     * Dove RIENTRA il fuoco tornando al modulo: il paragrafo che spiega cosa
+     * fare, NON il campo del giorno.
+     *
+     * ⚠️ REGRESSIONE iOS, misurata il 2026-08-07. Il ricovero precedente puntava
+     * a `<input type="date">`. Su WebKit/iOS il solo FUOCO su quel campo apre il
+     * selettore nativo: un modale a tutto schermo che il genitore non ha
+     * chiesto, che copre l'elenco delle assenze già comunicate e da cui deve
+     * uscire con «Fine». Nel log di sistema del collaudo: 2.759 righe
+     * `_UICalendarDateViewCell`. È comportamento della piattaforma, non un bug
+     * del campo — quindi si cambia la DESTINAZIONE, non il campo.
+     *
+     * PERCHÉ NON SI PASSA A `DateField` (il `type="text"` mascherato che usa la
+     * card della primaria, e che il problema non ce l'ha): su un telefono il
+     * selettore nativo è il modo MIGLIORE di scegliere un giorno — si tocca, non
+     * si digita — e `min={today}` dà un pavimento che un campo mascherato non
+     * può imporre. Toglierlo per curare un fuoco mal indirizzato peggiorerebbe
+     * il gesto principale della schermata per curare un effetto collaterale.
+     *
+     * Il requisito di accessibilità resta soddisfatto: il fuoco non finisce su
+     * `<body>`, sta dentro il modulo, non entra nell'ordine di tabulazione
+     * (`tabIndex={-1}`) e STA PRIMA del campo — così il primo Tab porta
+     * esattamente dove si deve scrivere. Lock:
+     * `__tests__/pages/parent-attendance-elenco.test.tsx`, «il fuoco NON va sul
+     * campo data».
+     */
+    const refIntro = useRef<HTMLParagraphElement | null>(null);
+    /**
+     * Dove va il FUOCO quando il server RIFIUTA — l'invio o l'annullamento.
+     *
+     * Il ciclo 1 ha dato un ricovero ai soli esiti POSITIVI. Sul rifiuto il
+     * fuoco cadeva su `<body>` (Chrome sfoca l'elemento che React marca
+     * `disabled`), cioè proprio quando l'utente ha bisogno di sapere cos'è
+     * successo: chi naviga a Tab riparte dall'inizio della pagina e chi ascolta
+     * non arriva mai sul messaggio. Gli effetti qui sotto dipendono dal TESTO
+     * dell'errore e funzionano anche al secondo rifiuto identico, perché i due
+     * gestori azzerano l'errore PRIMA di richiamare il server: lo stato fa
+     * comunque null → frase, e l'effetto riparte.
+     */
+    const refErrore = useRef<HTMLDivElement | null>(null);
+    const refErroreAnnullamento = useRef<HTMLDivElement | null>(null);
     /**
      * Il valore PRECEDENTE di `isSubmitted`, non un flag «primo render».
      *
@@ -233,8 +300,19 @@ function AttendanceInner() {
         if (inviatoPrima.current === isSubmitted) return;
         inviatoPrima.current = isSubmitted;
         if (isSubmitted) refConferma.current?.focus();
-        else refGiorno.current?.focus();
+        else refIntro.current?.focus();
     }, [isSubmitted]);
+
+    // Il ricovero del fuoco sui due RIFIUTI. Stessa forma dei due qui sopra, e
+    // stessa ragione per cui sta in un effetto: il contenitore `role="alert"`
+    // nasce con il render CHE SEGUE `setError`/`setErroreAnnullamento`.
+    useEffect(() => {
+        if (error) refErrore.current?.focus();
+    }, [error]);
+
+    useEffect(() => {
+        if (erroreAnnullamento) refErroreAnnullamento.current?.focus();
+    }, [erroreAnnullamento]);
 
     /** Ricarico ESPLICITO (bottone «Riprova»): qui lo stato di attesa si rimostra. */
     const ricaricaComunicate = useCallback(async () => {
@@ -249,6 +327,7 @@ function AttendanceInner() {
         if (!parentId || !studentId || submitting) return;
         setSubmitting(true);
         setError(null);
+        setCodiceErrore(null);
         // L'esito dell'annullamento precedente SCADE qui. Se l'invio viene
         // rifiutato il genitore resta sul modulo con l'elenco sotto: un «Assenza
         // annullata.» rimasto lì accanto all'errore appena comparso parla di
@@ -273,9 +352,15 @@ function AttendanceInner() {
                 // esiste ed è italiana per costruzione (T10-F1). O il codice
                 // dichiarato, tradotto, o la frase di questo componente.
                 setError(soloCatalogoDaCorpo(j, t('attendanceErrGenerico')));
+                // Il codice si conserva a parte: la frase serve a chi legge, il
+                // codice a decidere se il campo del giorno va marcato non valido.
+                const c = (j as { codice?: unknown } | null)?.codice;
+                setCodiceErrore(typeof c === 'string' ? c : null);
             }
         } catch {
             setError(t('attendanceErrRete'));
+            // La rete caduta non dice niente sul giorno scelto: nessun codice.
+            setCodiceErrore(null);
         } finally {
             setSubmitting(false);
         }
@@ -341,81 +426,41 @@ function AttendanceInner() {
             )}
 
             {/*
-                    A 320px (iPhone SE, la larghezza minima supportata) la riga di
-                    questo elenco non ci sta. Il conto, con i padding veri:
-                      320 − 32 (px-4 della pagina) − 48 (p-6 della card)
-                          − 26 (p-3 + bordo del `li`) = 214px di contenuto,
-                      meno l'icona (36), i due `gap-3` (24) e la pillola «Annulla»
-                      (≈85, e `Btn` porta `whitespace-nowrap`: non si restringe MAI)
-                      → restano 69px per una data che ne misura 91. Senza `truncate`
-                      quei 22px finivano FISICAMENTE sotto il bottone: «12/08/2026»
-                      si leggeva «12/08/202», in silenzio.
-                    Il `truncate` da solo però mangerebbe l'anno, che è il dato per
-                    cui la riga esiste. Quindi la riga ora VA A CAPO: `flex-wrap` sul
-                    `li` e `basis-24` (96px) sulla colonna centrale portano la somma
-                    delle larghezze ipotetiche a 36+12+96+12+85 = 241px, che a 320px
-                    non ci stanno → la pillola scende sulla seconda riga e alla data
-                    restano 214−36−12 = 166px, cioè tutta intera. Da ~347px in su la
-                    somma ci sta e la riga resta una sola, come prima. `truncate`
-                    resta la rete: un giorno più lungo o una larghezza ancora minore
-                    degradano con l'ellissi, mai nascondendo testo sotto un
-                    controllo opaco.
+                    La riga e il suo comando vivono in UN SOLO posto
+                    (`RigaAssenzaComunicata`), condiviso con la card della
+                    primaria: la stessa funzione era stata scritta due volte, con
+                    due raggi, due varianti di bottone e due formati di data. Lì
+                    dentro sta anche il conto in pixel del telefono a 320px.
             */}
             {!caricandoElenco && !erroreElenco && comunicate.length > 0 && (
                 <ul className="mt-4 space-y-2">
                     {comunicate.map((v) => (
-                        <li
+                        <RigaAssenzaComunicata
                             key={v.id}
-                            className="flex flex-wrap items-start gap-3 rounded-xl border border-kidville-line bg-kidville-cream p-3"
-                        >
-                            <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[12px] bg-kidville-error-soft text-kidville-error-strong">
-                                <CalendarX2 size={16} />
-                            </span>
-                            {/* `grow basis-24` e NON `flex-1`: `flex-1` è
-                                `flex: 1 1 0%`, cioè larghezza ipotetica ZERO — con
-                                quella la riga non va a capo mai, si limita a
-                                schiacciare la colonna. Le tre proprietà sono scritte
-                                per esteso apposta: nessuna scorciatoia che le
-                                sovrascriva a vicenda. */}
-                            <div className="min-w-0 grow basis-24">
-                                <p className="truncate font-maven font-semibold text-kidville-green">
-                                    {f.dataBreve(`${v.data}T12:00:00`) || v.data}
-                                </p>
-                                {v.giustificazione_testo && (
-                                    <p className="mt-0.5 break-words font-maven text-xs text-kidville-sub">
-                                        {v.giustificazione_testo}
-                                    </p>
-                                )}
-                            </div>
-                            <Btn
-                                variant="danger"
-                                size="sm"
-                                // Un «Annulla» nudo, ripetuto per ogni riga, per chi usa uno
-                                // screen reader è la stessa voce N volte: l'etichetta dice
-                                // QUALE assenza si sta per ritirare.
-                                aria-label={t('attendanceAnnullaAria', { data: f.dataBreve(`${v.data}T12:00:00`) || v.data })}
-                                disabled={annullando !== null}
-                                onClick={() => { void handleAnnulla(v); }}
-                                // `Btn` porta `whitespace-nowrap` nella sua BASE: non si
-                                // restringe mai. `shrink-0` lo dichiara al flex, così la
-                                // riga si compone allo stesso modo a ogni larghezza e la
-                                // contrazione ricade tutta sulla colonna che sa troncare.
-                                // `ml-auto` serve alla riga ANDATA A CAPO: lì la pillola
-                                // è sola sulla sua linea, e senza resterebbe a sinistra
-                                // sotto l'icona, come se fosse finita lì per sbaglio.
-                                className="ml-auto shrink-0"
-                            >
-                                {annullando === v.data ? t('attendanceAnnullamento') : t('attendanceAnnulla')}
-                            </Btn>
-                        </li>
+                            giorno={f.dataBreve(`${v.data}T12:00:00`) || v.data}
+                            motivo={v.giustificazione_testo}
+                            etichettaAnnulla={t('attendanceAnnullaAria', {
+                                data: f.dataBreve(`${v.data}T12:00:00`) || v.data,
+                            })}
+                            testoAnnulla={t('attendanceAnnulla')}
+                            testoAnnullamento={t('attendanceAnnullamento')}
+                            inCorso={annullando === v.data}
+                            bloccato={annullando !== null}
+                            onAnnulla={() => { void handleAnnulla(v); }}
+                        />
                     ))}
                 </ul>
             )}
 
             {erroreAnnullamento && (
                 <div
+                    ref={refErroreAnnullamento}
                     role="alert"
-                    className="mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong"
+                    // `tabIndex={-1}`: raggiungibile dal codice, mai dal Tab.
+                    // Il fuoco ci arriva solo da chi ha appena premuto un
+                    // «Annulla» che il server ha rifiutato.
+                    tabIndex={-1}
+                    className="mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong outline-none focus:ring-2 focus:ring-kidville-green"
                 >
                     <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {erroreAnnullamento}
                 </div>
@@ -494,8 +539,16 @@ function AttendanceInner() {
                     </span>
                     {/* `sub` (6,46:1) e non `muted` (2,51:1): è la riga che spiega
                         a cosa serve il modulo, e stava nel grigio meno leggibile
-                        della palette. */}
-                    <p className="font-maven text-sm text-kidville-sub">{t('attendanceIndicaGiorno')}</p>
+                        della palette.
+                        È anche il RICOVERO del fuoco al ritorno dalla conferma:
+                        vedi `refIntro` per il perché non è il campo data. */}
+                    <p
+                        ref={refIntro}
+                        tabIndex={-1}
+                        className="font-maven text-sm text-kidville-sub outline-none focus:ring-2 focus:ring-kidville-green"
+                    >
+                        {t('attendanceIndicaGiorno')}
+                    </p>
                 </div>
 
                 {/* `htmlFor`/`id`: senza, l'etichetta è solo testo VICINO al campo — uno
@@ -522,11 +575,17 @@ function AttendanceInner() {
                 */}
                 <input
                     id="attendance-giorno"
-                    ref={refGiorno}
                     type="date"
                     value={data}
                     min={today}
                     onChange={(e) => setData(e.target.value)}
+                    // Il campo dichiara di essere lui il problema SOLO quando il
+                    // rifiuto parla della data (`ASSENZA_DATA_*`), e rimanda al
+                    // messaggio che dice perché. Su un rifiuto generico resta
+                    // pulito: mandare a correggere un valore giusto è peggio che
+                    // non dire niente.
+                    aria-invalid={erroreSullaData || undefined}
+                    aria-describedby={erroreSullaData ? ID_ERRORE_INVIO : undefined}
                     className="mb-4 w-full rounded-xl border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
                 />
 
@@ -549,8 +608,13 @@ function AttendanceInner() {
 
                 {error && (
                     <div
+                        id={ID_ERRORE_INVIO}
+                        ref={refErrore}
                         role="alert"
-                        className="mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong"
+                        // Raggiungibile dal codice ma NON dal Tab: stessa forma
+                        // della conferma e dell'esito dell'annullamento.
+                        tabIndex={-1}
+                        className="mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong outline-none focus:ring-2 focus:ring-kidville-green"
                     >
                         <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {error}
                     </div>

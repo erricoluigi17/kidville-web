@@ -105,6 +105,7 @@
   "comunicaElencoVuoto": "Non hai comunicato assenze per i prossimi giorni.",
   "comunicaElencoNonLetto": "Non è stato possibile leggere le assenze già comunicate.",
   "comunicaAnnulla": "Annulla",
+  "comunicaAnnullamento": "Annullamento…",
   "comunicaAnnullaAria": "Annulla l'assenza comunicata per {giorno}",
   "comunicaAnnullata": "Assenza annullata ✓",
   "comunicaAnnullaNonRiuscito": "Annullamento non riuscito. Riprova.",

@@ -152,22 +152,49 @@ async function soloDocentiAttivi(
   return tenuti
 }
 
+/**
+ * LA STESSA LEZIONE, PER LE ALTRE QUATTRO FUNZIONI DI QUESTO FILE.
+ *
+ * `docentiDiSezione` è stata corretta il 2026-08-07; le quattro qui sotto no, e
+ * il collaudo le ha ritrovate identiche: `const { data } = await supabase…`,
+ * `{ error }` buttato via. **PostgREST non lancia** (AGENTS.md, regola 7): una
+ * lettura negata dalla RLS, una tabella che il DB E2E non ha, un pool esaurito
+ * escono da qui come `[]` — cioè come «questo docente non ha nessuna sezione».
+ *
+ * E qui pesa più che altrove, perché `sezioniDiUtente` alimenta
+ * `assertAlunnoInScope`, cioè il GATE che decide se un educator può leggere il
+ * fascicolo di un minore: un guasto travestito da «nessuna sezione» chiude la
+ * porta in faccia al docente giusto senza lasciare una riga per dirlo.
+ *
+ * `error` e non `warn`, con lo stesso criterio della funzione gemella: nessuno a
+ * valle rimedia. La lista vuota diventa un permesso negato o un elenco vuoto, e
+ * la route risponde comunque 2xx.
+ */
+function segnalaLetturaFallita(esito: string, campi: Record<string, string | number>, errore: unknown): void {
+  logEvento('notifica', 'error', { operazione: OPERAZIONE_DOCENTI, esito, ...campi }, errore)
+}
+
 // Id delle sezioni assegnate a un utente (docente).
 export async function sezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('utenti_sezioni')
     .select('section_id')
     .eq('utente_id', utenteId)
+  // L'errore va INTERO come 4° argomento: `code`, `details` e `hint` di
+  // PostgREST sono ciò che dice *perché* (`42501` la RLS, `42P01`/`42703` lo
+  // schema non migrato, `PGRST301` il token).
+  if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
   return (data ?? []).map(r => r.section_id as string)
 }
 
 // Nomi (sections.name) delle sezioni assegnate a un utente — fonte canonica
 // utenti_sezioni → sections. Nessun fallback euristico: senza legami → [].
 export async function nomiSezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('utenti_sezioni')
     .select('sections(name)')
     .eq('utente_id', utenteId)
+  if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
   type Row = { sections: { name?: string | null }[] | { name?: string | null } | null }
   return [...new Set(
     ((data ?? []) as Row[]).flatMap((r) => {
@@ -194,11 +221,16 @@ export async function sezioniDiUtentePerGrado(
 ): Promise<SezioneInfo[]> {
   const ids = await sezioniDiUtente(supabase, utenteId)
   if (ids.length === 0) return []
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('sections')
     .select('id, name, school_type')
     .in('id', ids)
     .eq('school_type', schoolType)
+  // La prima lettura ha già la sua riga (dentro `sezioniDiUtente`): questa è la
+  // seconda, e senza il controllo un docente con le sue sezioni in tabella
+  // uscirebbe da qui come «nessuna sezione di quel grado» — che a schermo è un
+  // registro vuoto, non un errore.
+  if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId, grado: schoolType }, error)
   return (data ?? []) as SezioneInfo[]
 }
 
@@ -209,10 +241,16 @@ export async function materieDiDocenteInSezione(
   utenteId: string,
   sectionId: string
 ): Promise<string[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('utenti_sezioni_materie')
     .select('materia_id')
     .eq('utente_id', utenteId)
     .eq('section_id', sectionId)
+  // Qui la lista vuota significa «non insegna nessuna materia in questa
+  // sezione», che è l'isolamento per disciplina: un guasto letto come tale
+  // toglie a un docente le sue materie senza dire niente a nessuno.
+  if (error) {
+    segnalaLetturaFallita('materie-non-lette', { utente_id: utenteId, sezione_id: sectionId }, error)
+  }
   return (data ?? []).map(r => r.materia_id as string)
 }

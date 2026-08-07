@@ -40,6 +40,22 @@ const postBodySchema = z.object({
     orario_uscita: z.string().nullable().optional(),
 });
 
+/**
+ * Il 500 «non è colpa tua» della POST, in un posto solo.
+ *
+ * Esiste per due ragioni, e la seconda non è cosmetica: (1) il guasto di lettura
+ * dell'anagrafica e l'eccezione generica raccontano al docente la stessa cosa e
+ * devono dirla con le stesse parole; (2) il debito misurato da
+ * `errori-con-codice.test.ts` è congelato e può solo essere PAGATO — una quarta
+ * copia letterale della stessa risposta lo farebbe crescere dentro il lock che
+ * esiste per impedirlo.
+ *
+ * Il `message` di PostgREST non compare qui: è prosa inglese con dentro nomi di
+ * colonne, e resta nel log — che è dove dice *perché*.
+ */
+const erroreInterno = () =>
+    NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
+
 export const GET = withRoute('attendance/daily:GET', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
@@ -148,23 +164,52 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
 
         // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
         // le policy scolastiche su presenze e l'aggregato realtime li richiedono.
-        const { data: alunno } = await supabase
+        //
+        // «NON C'È» E «NON L'HO POTUTO LEGGERE» NON SONO LA STESSA COSA.
+        // PostgREST non lancia: l'errore torna nel valore (AGENTS.md, regola 7),
+        // e il `try/catch` che avvolge questo handler su quel ramo non scatta
+        // mai. Senza il controllo, un guasto di lettura usciva dalla porta del
+        // 404 qui sotto: al DOCENTE si diceva che il bambino non esiste. E la
+        // riga non veniva scritta affatto — cioè veniva a mancare in silenzio
+        // proprio `registrato_da`, che è il presidio a cui è appeso
+        // l'annullamento dell'assenza comunicata dal genitore.
+        const { data: alunno, error: alunnoErr } = await supabase
             .from('alunni')
             .select('nome, scuola_id, section_id')
             .eq('id', alunno_id)
             .maybeSingle();
+        if (alunnoErr) {
+            logErrore({ operazione: 'attendance/daily:POST', stato: 500, evento: 'db' }, alunnoErr);
+            return erroreInterno();
+        }
         if (!alunno) {
             return NextResponse.json({ error: 'Alunno non trovato.' }, { status: 404 });
         }
 
         // Stato precedente del giorno: la notifica di assenza allo 0-6 scatta
         // solo alla PRIMA marcatura 'assente' (i ri-salvataggi non duplicano).
-        const { data: prima } = await supabase
+        //
+        // Anche qui `{ error }` va guardato, e la conseguenza è DIVERSA da quella
+        // sopra: su errore `prima` resta `null`, la condizione
+        // `prima?.stato !== 'assente'` diventa vera e la notifica «tuo figlio è
+        // stato segnato assente» riparte a OGNI ri-salvataggio dell'appello. Non
+        // una notifica mancata: una notifica DUPLICATA su un dato di un minore.
+        const { data: prima, error: primaErr } = await supabase
             .from('presenze')
             .select('stato')
             .eq('alunno_id', alunno_id)
             .eq('data', data)
             .maybeSingle();
+        if (primaErr) {
+            // `warn` e non `error`: il salvataggio prosegue e riesce — degrada la
+            // sola notifica. Muto no: senza questa riga «la maestra ha salvato e
+            // il genitore non ha ricevuto niente» non ha nessuna spiegazione.
+            logEvento('registro', 'warn', {
+                operazione: 'attendance/daily:POST',
+                esito: 'stato-precedente-non-letto',
+                alunno_id,
+            }, primaErr);
+        }
 
         const record = {
             alunno_id,
@@ -216,8 +261,24 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         // non può comunicare assenze in anticipo → si notifica SEMPRE la prima
         // marcatura assente (testo neutro); la correzione entro il buffer 10'
         // (assente → presente/ritardo) revoca la notifica pending.
+        //
+        // ─── IN DUBBIO NON SI SPEDISCE, IN DUBBIO SI REVOCA ─────────────────
+        //
+        // Quando lo stato precedente non si è potuto leggere (`primaErr`) le due
+        // direzioni NON si trattano allo stesso modo, ed è una decisione, non
+        // una svista:
+        //  · non si SPEDISCE — una seconda «tuo figlio è stato segnato assente»
+        //    per lo stesso giorno è peggio di nessuna: il genitore non ha modo di
+        //    capire quale delle due sia vera, e la riga di `warn` qui sopra dice
+        //    perché non è partita;
+        //  · si REVOCA lo stesso — togliere dalla coda una notifica che sarebbe
+        //    FALSA (l'appello è stato corretto) non costa niente su una coda
+        //    vuota, e su una coda piena salva un genitore da un allarme già
+        //    rientrato.
+        // L'asimmetria è tutta qui: sbagliare per eccesso di silenzio costa una
+        // notifica, sbagliare per eccesso di zelo costa la fiducia in tutte.
         try {
-            if (stato === 'assente' && prima?.stato !== 'assente') {
+            if (stato === 'assente' && !primaErr && prima?.stato !== 'assente') {
                 await notificaEvento(supabase, {
                     tipo: 'assenza_non_comunicata',
                     scuolaId: (alunno.scuola_id as string | undefined) ?? null,
@@ -230,7 +291,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                     bufferMin: 10,
                     debounce: true,
                 });
-            } else if (stato !== 'assente' && prima?.stato === 'assente') {
+            } else if (stato !== 'assente' && (primaErr || prima?.stato === 'assente')) {
                 // REVOCA: l'appello è stato corretto entro il buffer di 10' e la notifica
                 // pending va tolta dalla coda prima che il cron la spedisca.
                 //
@@ -274,6 +335,6 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         return NextResponse.json(result, { status: 200 });
     } catch (err) {
         logErrore({ operazione: 'attendance/daily:POST', stato: 500 }, err);
-        return NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
+        return erroreInterno();
     }
 });

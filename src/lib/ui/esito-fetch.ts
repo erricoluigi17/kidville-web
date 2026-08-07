@@ -285,6 +285,41 @@ export const CODICI_ERRORE = {
      */
     ASSENZA_DATA_PASSATA: 'erroreAssenzaDataPassata',
     /**
+     * 400 — l'assenza si comunica in anticipo, ma non a QUALUNQUE distanza
+     * (`POST /api/parent/presenze/comunica-assenza`, tetto in
+     * `GIORNI_MASSIMI_IN_ANTICIPO`).
+     *
+     * NON riusa `ASSENZA_DATA_PASSATA`, che dice l'esatto contrario («è già
+     * passata») e manderebbe il genitore verso la giustifica per un giorno che
+     * deve ancora arrivare. Fino al 2026-08-07 questo rifiuto non esisteva
+     * affatto: `2099-12-31` rispondeva 201.
+     */
+    ASSENZA_DATA_TROPPO_LONTANA: 'erroreAssenzaDataTroppoLontana',
+    /**
+     * 400 — il motivo dell'assenza supera la lunghezza massima
+     * (`POST /api/parent/presenze/comunica-assenza`, `MOTIVO_MAX_CARATTERI`).
+     *
+     * Ha un codice suo perché il rimedio è diverso da ogni altro rifiuto di
+     * questa rotta: qui non si cambia il giorno né si chiama la scuola, si
+     * accorcia il testo. La frase dice il numero, altrimenti «troppo lungo» non
+     * è un'istruzione. In produzione è stata scritta una riga da 200.000
+     * caratteri prima che questo confine esistesse.
+     */
+    ASSENZA_MOTIVO_TROPPO_LUNGO: 'erroreAssenzaMotivoTroppoLungo',
+    /**
+     * 500 — l'oblio (art. 17) non è stato eseguito: una delle due letture che lo
+     * decidono — l'anagrafica dell'alunno, i suoi genitori — non è riuscita
+     * (`POST /api/admin/gdpr/erase`).
+     *
+     * NON riusa il 404 «Alunno non trovato», ed è tutto il punto: fino al
+     * 2026-08-07 una lettura fallita usciva proprio da quella porta, e a una
+     * richiesta di cancellazione di una famiglia si rispondeva che il bambino
+     * non esiste. «Non c'è» chiude la pratica; «non l'ho potuto leggere» chiede
+     * di riprovare. La frase lo dice, perché chi la legge è la Direzione e
+     * l'operazione non ha un annulla.
+     */
+    GDPR_ERASE_NON_RIUSCITO: 'erroreGdprEraseNonRiuscito',
+    /**
      * 409 — l'insegnante ha GIÀ fatto l'appello di quel giorno: la comunicazione
      * del genitore (e il suo annullamento) non sovrascrive il registro.
      *

@@ -74,6 +74,36 @@ export async function requireParentOfStudent(
   if (auth.user.role === 'genitore') {
     const ok = await genitoreHasFiglio(supabase, auth.user.id, studentId)
     if (!ok) {
+      // ─── IL TENTATIVO CHE PIÙ DI OGNI ALTRO SI VUOLE POTER CONTARE ───────
+      //
+      // Fino al 2026-08-07 questo `return` era nudo, e il rifiuto non lasciava
+      // NIENTE: `withRoute` classifica i 403 a livello `info`, e `vaPersistito`
+      // manda in tabella solo `warn` ed `error`. Il collaudo ha provato dodici
+      // volte di fila a scrivere sul registro di un bambino altrui — dodici 403
+      // corretti — e in `app_log` non c'era una sola riga a dirlo. È la stessa
+      // forma del difetto che ha aperto questo ciclo: una funzione vissuta un
+      // mese in silenzio perfetto perché i suoi 403 erano `info`.
+      //
+      // ─── PERCHÉ QUI E NON NELLE ROUTE ────────────────────────────────────
+      //
+      // Perché il rifiuto lo decide QUESTA funzione, e le route che ci passano
+      // sono venti: scriverlo in una coprirebbe una su venti, e le altre
+      // diciannove resterebbero mute esattamente come oggi — è la stessa
+      // divergenza che il ramo qui sotto ha già pagato (il `warn` c'era, ma solo
+      // per metà dei rami). E il gemello per i NON-genitori sta 27 righe più
+      // sotto, nello stesso file: una difesa sola, un posto solo.
+      //
+      // SOLO UUID ED ENUMERATI. `tipo`, `azione` e `ruolo` sono in lista bianca
+      // di `redact`; `utente` e `alunno_id` passano per FORMA (uuid). Nessun
+      // nome, nessuna email, nessun testo libero: sono dati di minori, e un
+      // contatore di tentativi non ha bisogno di sapere di chi.
+      logEvento('auth', 'warn', {
+        tipo: 'alunno-non-della-famiglia',
+        azione: 'requireParentOfStudent',
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+        alunno_id: studentId,
+      })
       return { response: NextResponse.json({ error: 'Accesso negato' }, { status: 403 }) }
     }
     return { user: auth.user }

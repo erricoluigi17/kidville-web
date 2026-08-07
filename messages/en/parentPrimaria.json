@@ -105,6 +105,7 @@
   "comunicaElencoVuoto": "You have not reported any absence for the coming days.",
   "comunicaElencoNonLetto": "We could not load the absences you have already reported.",
   "comunicaAnnulla": "Cancel",
+  "comunicaAnnullamento": "Cancelling…",
   "comunicaAnnullaAria": "Cancel the absence reported for {giorno}",
   "comunicaAnnullata": "Absence cancelled ✓",
   "comunicaAnnullaNonRiuscito": "The cancellation failed. Please try again.",

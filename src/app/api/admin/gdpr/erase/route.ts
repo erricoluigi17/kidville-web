@@ -67,11 +67,21 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
 
   try {
     const supabase = await createAdminClient()
-    const { data: alunno } = await supabase
+    // «NON C'È» E «NON L'HO POTUTO LEGGERE» NON SONO LA STESSA COSA — e qui la
+    // differenza è la più cara dell'applicazione. PostgREST non lancia: senza il
+    // controllo del valore di ritorno, una lettura fallita usciva dalla porta del
+    // 404 qui sotto, cioè a una richiesta di cancellazione ex art. 17 si
+    // rispondeva **che il bambino non esiste**. È l'unica risposta che nessuno
+    // pensa di riprovare: la richiesta della famiglia si chiude lì.
+    const { data: alunno, error: alunnoErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome, stato, anonimizzato_il, documento_path, codice_fiscale, fiscal_code')
       .eq('id', alunno_id)
       .maybeSingle()
+    if (alunnoErr) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, alunnoErr)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Isolamento per sede, PRIMA di qualunque effetto. È l'operazione più grave
@@ -91,10 +101,23 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     }
 
     // Genitori collegati (anagrafica reale `parents` via `student_parents`).
-    const { data: links } = await supabase
+    //
+    // ⚠️ QUI L'ERRORE SI FERMA, NON SI DEGRADA. Senza il controllo, una lettura
+    // fallita lasciava `parentIds` a `[]`: l'oblio proseguiva, anonimizzava il
+    // bambino e **non toccava nessun adulto**, rispondendo 200 con «0 genitori».
+    // Un oblio eseguito a metà è peggio di un oblio fallito — il secondo si
+    // ripete, il primo risulta concluso e lascia in chiaro nomi, codici fiscali e
+    // documenti d'identità di due adulti, senza che nessuno lo sappia mai.
+    // È l'unico punto di questa route in cui una lista vuota è indistinguibile da
+    // un guasto e ha conseguenze irreversibili: si esce, e si riprova.
+    const { data: links, error: linksErr } = await supabase
       .from('student_parents')
       .select('parent_id')
       .eq('student_id', alunno_id)
+    if (linksErr) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, linksErr)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
     const parentIds = (links ?? []).map((l: { parent_id: string }) => l.parent_id)
 
     // Genitori "orfani" (nessun altro figlio iscritto) → anonimizzabili.

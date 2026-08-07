@@ -372,6 +372,114 @@ describe('ComunicaAssenzaCard — annullamento', () => {
     })
 })
 
+// =============================================================================
+// IL FUOCO — il difetto del ciclo 1 riprodotto identico nel file gemello.
+//
+// `parent/attendance/page.tsx` ha ricevuto nel ciclo 1 il ricovero del fuoco:
+// quando l'azione riesce, il bottone che l'ha lanciata si smonta e il fuoco
+// cadrebbe su `<body>` — chi usa la tastiera riparte dall'inizio della pagina,
+// chi usa uno screen reader perde il posto e non sente mai com'è finita
+// (WCAG 2.4.3, la stessa ragione per cui `ui/Modal.tsx` ripristina il fuoco).
+//
+// Questo componente è nato NELLO STESSO commit e non ha ereditato né i ref né
+// gli effetti: la correzione era stata applicata dov'era stato segnalato il
+// sintomo invece che alla regola. Misurato dal collaudo del 2026-08-07:
+// `attivoDopoInvio: BODY`, `attivoDopoAnnulla: BODY`.
+//
+// Qui si misura anche il ramo RIFIUTATO, che su ENTRAMBE le schermate era
+// rimasto indietro — cioè proprio il caso in cui l'utente deve sapere cos'è
+// successo.
+//
+// NOTA sul finto: jsdom non sfoca da solo un elemento che diventa `disabled`
+// (Chrome sì, ed è così che il fuoco finiva su `<body>`). Qui il difetto si
+// manifesta come «il fuoco è rimasto sul bottone / sulla riga smontata»: in
+// entrambi i mondi la correzione è la stessa — spostarlo sull'esito.
+// =============================================================================
+describe('ComunicaAssenzaCard — il fuoco non si perde (WCAG 2.4.3)', () => {
+    it('invio riuscito: il fuoco va sulla conferma, non su <body>', async () => {
+        monta()
+        await waitFor(() => expect(chiamate('GET')).toHaveLength(1))
+        apriModulo()
+
+        const invia = screen.getByRole('button', { name: itPrimaria.comunicaInvia })
+        invia.focus()
+        expect(document.activeElement).toBe(invia)
+
+        fireEvent.click(invia)
+
+        await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(itPrimaria.comunicaFatta))
+        await waitFor(() => {
+            expect(document.activeElement).not.toBe(document.body)
+            expect(document.activeElement?.textContent ?? '').toContain(itPrimaria.comunicaFatta)
+        })
+        // Raggiungibile da codice ma NON dal Tab: il ricovero non deve aggiungere
+        // una tappa all'ordine di navigazione di chi non ha sbagliato niente.
+        expect((document.activeElement as HTMLElement).tabIndex).toBe(-1)
+    })
+
+    it('invio rifiutato dal server: il fuoco va sul messaggio d\'errore', async () => {
+        esitoPost = {
+            ok: false,
+            status: 400,
+            body: { error: 'data passata', codice: 'ASSENZA_DATA_PASSATA' },
+        }
+        monta()
+        await waitFor(() => expect(chiamate('GET')).toHaveLength(1))
+        apriModulo()
+
+        const invia = screen.getByRole('button', { name: itPrimaria.comunicaInvia })
+        invia.focus()
+        fireEvent.click(invia)
+
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(itShared.erroreAssenzaDataPassata))
+        await waitFor(() => {
+            expect(document.activeElement).not.toBe(document.body)
+            expect(document.activeElement?.textContent ?? '').toContain(itShared.erroreAssenzaDataPassata)
+        })
+        expect((document.activeElement as HTMLElement).tabIndex).toBe(-1)
+    })
+
+    it('annullamento riuscito: il fuoco va sulla conferma (la riga con il bottone è sparita)', async () => {
+        comunicate = [{ id: 'p-11', data: '2026-08-11', giustificazione_testo: null, stato: 'assente' }]
+        monta()
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+
+        annulla[0].focus()
+        expect(document.activeElement).toBe(annulla[0])
+        fireEvent.click(annulla[0])
+
+        await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(itPrimaria.comunicaAnnullata))
+        await waitFor(() => {
+            expect(document.activeElement).not.toBe(document.body)
+            expect(document.activeElement?.textContent ?? '').toContain(itPrimaria.comunicaAnnullata)
+        })
+    })
+
+    it('annullamento rifiutato: il fuoco va sul messaggio d\'errore', async () => {
+        comunicate = [{ id: 'p-11', data: '2026-08-11', giustificazione_testo: null, stato: 'assente' }]
+        esitoDelete = { ok: false, status: 409, body: { error: 'appello fatto', codice: 'ASSENZA_GIA_REGISTRATA' } }
+        monta()
+        const annulla = await screen.findAllByRole('button', { name: /^Annulla l'assenza comunicata per / })
+
+        annulla[0].focus()
+        fireEvent.click(annulla[0])
+
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(itShared.erroreAssenzaGiaRegistrata))
+        await waitFor(() => {
+            expect(document.activeElement).not.toBe(document.body)
+            expect(document.activeElement?.textContent ?? '').toContain(itShared.erroreAssenzaGiaRegistrata)
+        })
+    })
+
+    it('al montaggio il fuoco NON viene rubato a chi apre la pagina', async () => {
+        // Il ricovero deve scattare solo quando un ESITO compare. Uno che scattasse
+        // al primo render farebbe saltare titolo e intestazione a chi ascolta.
+        monta()
+        await waitFor(() => expect(chiamate('GET')).toHaveLength(1))
+        expect(document.activeElement).toBe(document.body)
+    })
+})
+
 describe('ComunicaAssenzaCard — accessibilità e testi', () => {
     it('i due campi hanno un nome accessibile dato da una <label> associata', async () => {
         monta()
@@ -413,7 +521,8 @@ describe('ComunicaAssenzaCard — accessibilità e testi', () => {
             'comunicaDataLabel', 'comunicaDataAiuto', 'comunicaMotivoLabel', 'comunicaMotivoPlaceholder',
             'comunicaInvia', 'comunicaInvio', 'comunicaFatta', 'comunicaNonRiuscita',
             'comunicaElencoTitolo', 'comunicaElencoVuoto', 'comunicaElencoNonLetto',
-            'comunicaAnnulla', 'comunicaAnnullaAria', 'comunicaAnnullata', 'comunicaAnnullaNonRiuscito',
+            'comunicaAnnulla', 'comunicaAnnullamento', 'comunicaAnnullaAria', 'comunicaAnnullata',
+            'comunicaAnnullaNonRiuscito',
         ]) {
             expect(itPrimaria, `manca in it: ${k}`).toHaveProperty(k)
             expect(en, `manca in en: ${k}`).toHaveProperty(k)

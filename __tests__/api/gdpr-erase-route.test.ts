@@ -24,6 +24,9 @@ const h = vi.hoisted(() => ({
   deletedTables: [] as string[],
   // W5 — prove di consenso dei genitori orfani (ip/user_agent da azzerare).
   consensi: [] as { id: string }[],
+  // Errori PostgREST iniettati sulle due letture che decidono l'oblio.
+  alunnoError: null as { code: string; message: string } | null,
+  linksError: null as { code: string; message: string } | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -68,11 +71,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // `maybeSingle` prima di essere azzerato. Un doppio che qui risponde
       // `null` renderebbe il genitore irraggiungibile in spazio-id `utenti` —
       // cioè farebbe sembrare corretto un oblio che non tocca news e UGC.
-      b.maybeSingle = async () => ({
-        data: table === 'alunni' ? h.alunno : table === 'parents' ? (h.parentsAuth[0] ?? null) : null,
-        error: null,
-      })
+      b.maybeSingle = async () => {
+        if (table === 'alunni' && h.alunnoError) return { data: null, error: h.alunnoError }
+        return {
+          data: table === 'alunni' ? h.alunno : table === 'parents' ? (h.parentsAuth[0] ?? null) : null,
+          error: null,
+        }
+      }
       b.then = (res: (v: unknown) => unknown) => {
+        if (table === 'student_parents' && h.linksError) {
+          return Promise.resolve({ data: null, error: h.linksError }).then(res)
+        }
         if (table === 'news_visualizzazioni' && h.newsVisError) {
           return Promise.resolve({ data: null, error: h.newsVisError }).then(res)
         }
@@ -123,6 +132,7 @@ beforeEach(() => {
   h.parentsAuth = []; h.newsVisDeleted = []; h.newsVisError = null
   h.newsVisDeleteFilter = null; h.deletedTables = []
   h.consensi = []
+  h.alunnoError = null; h.linksError = null
 })
 
 describe('POST /api/admin/gdpr/erase', () => {
@@ -329,5 +339,44 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect(h.deletedTables).not.toContain('news_visualizzazioni')
     const json = await res.json()
     expect(json.news_visualizzazioni_rimosse).toBe(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LE DUE LETTURE CHE DECIDONO L'OBLIO, E CHE BUTTAVANO VIA `{ error }`.
+//
+// **PostgREST non lancia** (AGENTS.md, regola 7): l'errore torna nel valore, e
+// il `try/catch` di questo handler su quel ramo non scatta mai. Qui le due
+// conseguenze sono le peggiori dell'applicazione, perché questa è la rotta che
+// risponde alle richieste di cancellazione delle FAMIGLIE:
+//
+//  (a) `alunni`: una lettura fallita usciva dalla porta del 404 «Alunno non
+//      trovato» — cioè a una richiesta ex art. 17 si rispondeva che il bambino
+//      non esiste, ed è l'unica risposta che nessuno pensa di riprovare;
+//  (b) `student_parents`: una lettura fallita lasciava `parentIds` a `[]`, e
+//      **i genitori non venivano anonimizzati affatto**. L'operazione riusciva,
+//      rispondeva 200, contava zero adulti e nessuno poteva accorgersene. Un
+//      oblio eseguito a metà è peggio di un oblio fallito: il secondo si ripete.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/admin/gdpr/erase — «non c’è» e «non l’ho potuto leggere»', () => {
+  it('lettura dell’anagrafica fallita → 500, mai il 404 che dice «non esiste»', async () => {
+    h.alunnoError = { code: '42501', message: 'permission denied for table alunni' }
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    expect(res.status).toBe(500)
+    expect(JSON.stringify(await res.json())).not.toContain('Alunno non trovato')
+  })
+
+  it('lettura dei genitori fallita → 500, e NESSUNA anonimizzazione parziale', async () => {
+    h.linksError = { code: '42501', message: 'permission denied for table student_parents' }
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'Rossi Marco' }))
+    expect(res.status).toBe(500)
+    // Il punto non è lo status: è che il bambino NON è stato anonimizzato da
+    // solo, lasciando i suoi genitori in chiaro e la richiesta chiusa.
+    expect(h.updates.some((u) => u.table === 'alunni')).toBe(false)
+  })
+
+  it('nessun errore: il 404 di sempre resta al suo posto', async () => {
+    h.alunno = null
+    expect((await POST(req({ alunno_id: 'nope', mode: 'dryrun' }))).status).toBe(404)
   })
 })

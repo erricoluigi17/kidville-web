@@ -413,24 +413,26 @@ export default function PrivacyPage() {
                 dell&rsquo;alunno soggetti agli obblighi archivistici di cui sopra;
               </li>
               {/*
-                LA PAROLA CHE NON C'È, E PERCHÉ.
-                Questa voce diceva «dopodiché il testo è cancellato AUTOMATICAMENTE».
-                Il lavoro notturno che lo farebbe è scritto — migrazione
-                20260807184100_presenze_retention_motivo_assenza.sql — ma NON è applicato:
-                misurato in produzione il 2026-08-07, `presenze-giustificazioni-retention` non
-                è in `cron.job` e `presenze_giustificazioni_retention_tick` non è in `pg_proc`.
-                L'IMPEGNO DEI DODICI MESI RESTA (è la scelta di conservazione della scuola, e
-                il lock __tests__/architecture/informativa-conservazione-dichiarata.test.ts lo
-                confronta con il numero scritto nella migrazione): quello che è stato tolto è
-                l'affermazione che a rispettarlo sia una macchina che oggi non gira.
-                Applicata la migrazione e attestata nella sua testata («APPLICATA il …»), qui
-                si RIMETTE la parola — una parola, non un paragrafo. Il lock lo pretende.
+                LA PAROLA È TORNATA, E IL GIORNO IN CUI SE L'È GUADAGNATA.
+                Questa voce è nata dicendo «cancellato AUTOMATICAMENTE» quando la macchina che
+                lo fa non esisteva ancora in produzione: la parola è stata TOLTA il 2026-08-07
+                (commit 9e36055) e RIMESSA lo stesso giorno, poche ore dopo, quando la
+                migrazione 20260807211157_presenze_retention_motivo_assenza.sql è stata
+                applicata davvero.
+                La prova non è il «success» dello strumento: `presenze_giustificazioni_retention_tick`
+                è in `pg_proc`, `presenze-giustificazioni-retention` è in `cron.job` («59 4 * * *»,
+                attivo) e la corsa una tantum ha lasciato in `app_log` la sua riga con n_righe = 0.
+                Il lock __tests__/architecture/informativa-conservazione-dichiarata.test.ts tiene
+                insieme le tre cose: i dodici mesi qui e nella migrazione devono essere lo stesso
+                numero, il job dev'essere installato da un `cron.schedule`, e quella migrazione
+                non dev'essere marcata «NON APPLICATA». Se un giorno il job sparisse, questa
+                riga diventerebbe rossa prima di diventare una bugia.
               */}
               <li>
                 <strong>motivo dell&rsquo;assenza</strong> comunicato o scritto dalla famiglia, e
                 note dell&rsquo;appello del personale docente: <strong>dodici mesi</strong> dal
                 giorno dell&rsquo;assenza e comunque non oltre la fine dell&rsquo;iscrizione,
-                dopodiché il testo è cancellato. Resta la registrazione della presenza o
+                dopodiché il testo è cancellato automaticamente. Resta la registrazione della presenza o
                 dell&rsquo;assenza, che è un dato sulla frequenza e segue i tempi indicati al
                 primo punto;
               </li>

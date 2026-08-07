@@ -2,8 +2,22 @@
 -- IL MOTIVO DELL'ASSENZA È UN DATO SANITARIO DI UN MINORE, E NON SCADEVA MAI
 -- (rilievo privacy del collaudo, 2026-08-07)
 --
--- ⚠️ NON APPLICATA dall'agente che l'ha scritta: la applica il coordinatore dopo
---    averne mostrato il testo. In produzione ci sono dati reali di famiglie.
+-- ✅ APPLICATA in produzione il 2026-08-07, dal coordinatore, dopo averne mostrato
+--    il testo per intero. Verificato SUBITO DOPO, e non dedotto dal «success» dello
+--    strumento:
+--      · `presenze_giustificazioni_retention_tick` è in `pg_proc`;
+--      · `presenze-giustificazioni-retention` è in `cron.job`, `59 4 * * *`, attivo;
+--      · la corsa una tantum qui sotto ha lasciato la sua riga in `app_log` con
+--        `n_righe: 0` — cioè esattamente la misura fatta PRIMA di applicarla;
+--      · `get_advisors` (security): 0 ERROR, nessun WARN nuovo.
+--
+--    ⚠️ IL NOME DI QUESTO FILE È CAMBIATO, e la ragione va letta una volta sola:
+--    l'agente l'aveva chiamato `20260807184100_…`, ma la `version` non la sceglie
+--    chi scrive il file — la assegna il database quando la migrazione entra, e ha
+--    assegnato `20260807211157`. Il lock `migrazioni-complete.test.ts` confronta i
+--    nomi dei file con la fotografia di `supabase_migrations.schema_migrations`:
+--    con il nome vecchio sarebbe diventato rosso, ed è precisamente il difetto per
+--    cui quel lock esiste (sei migrazioni che vivevano solo dentro il database).
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
 -- ─── IL FATTO ─────────────────────────────────────────────────────────────────

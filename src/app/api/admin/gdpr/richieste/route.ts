@@ -241,6 +241,12 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     let fileNonRimossi = rParent.fileNonRimossi ?? 0
     let fotoRimosse = 0
     let fotoSganciate = 0
+    // Il motivo dell'assenza (`presenze.giustificazione_testo`) e le note
+    // d'appello: testo libero di natura sanitaria di un minore, che fino al
+    // 2026-08-07 nessun canale di oblio toccava. Il conteggio arriva fin qui —
+    // e da qui sulla riga della richiesta — perché è la prova che quel testo è
+    // stato tolto davvero.
+    let presenzeBonificate = 0
 
     // 2. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
     let ricon = 0
@@ -258,6 +264,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       fotoSganciate += r.fotoSganciate ?? 0
       segnalazioni += r.segnalazioniBonificate
       sospensioni += r.sospensioniBonificate
+      presenzeBonificate += r.presenzeBonificate ?? 0
     }
 
     // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
@@ -290,6 +297,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       foto_sganciate: fotoSganciate,
       segnalazioni_bonificate: segnalazioni,
       sospensioni_bonificate: sospensioni,
+      presenze_bonificate: presenzeBonificate,
     }
 
     // 3. Marca la richiesta come evasa.

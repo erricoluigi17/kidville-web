@@ -1053,6 +1053,24 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hov
    `opacity: 1` perché Firefox applica di suo un'opacità al segnaposto.
    In Alto Contrasto la carta pubblica resta BIANCA (blocco «1 · La carta»):
    l'inchiostro va a nero pieno, 21:1. Lock: contrasto-cascata §10. */
+/* Il segnaposto non si sbiadisce OLTRE il colore che gli è stato dato (2026-08-07).
+   La regola qui sopra vale solo dentro `.kv-public`, ma il problema non è delle sole
+   superfici pubbliche: Firefox applica di suo `::placeholder { opacity: .54 }` — quirk
+   storico, documentato da MDN — e un segnaposto portato in regola con
+   `placeholder-kidville-sub` (#55615C, 6,46:1 su bianco) tornerebbe lì intorno a 2,3:1,
+   cioè al difetto appena chiuso, riaperto da un browser. Il caso che pesa è il campo
+   data di «Comunica un'assenza»: è MASCHERATO, accetta solo `gg/mm/aaaa`, e quel formato
+   il segnaposto lo dice.
+   Qui si toglie SOLO l'opacità, mai il colore: se questa regola dichiarasse anche un
+   `color:` scavalcherebbe in blocco ogni `placeholder-*` scritto nei componenti (le
+   utility Tailwind sono in `@layer utilities` e perdono contro qualunque regola
+   non-layered), e nessuno se ne accorgerebbe finché non fosse sbagliato. Togliere
+   un'alfa può solo ALLONTANARE il testo dal fondo, mai avvicinarlo: è un rimedio che
+   non ha un verso in cui peggiora. Lock: `__tests__/a11y/contrasto-campi-assenza.test.tsx`. */
+::placeholder {
+  opacity: 1;
+}
+
 .kv-public ::placeholder {
   color: var(--color-kidville-sub);
   opacity: 1;

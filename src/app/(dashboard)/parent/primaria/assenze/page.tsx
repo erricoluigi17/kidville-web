@@ -9,6 +9,7 @@ import { AlertCircle, Check } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { ComunicaAssenzaCard } from '@/components/features/parent/ComunicaAssenzaCard';
 
 interface Presenza {
   id: string; data: string; stato: string;
@@ -137,6 +138,16 @@ function AssenzeGenitore() {
               </p>
             </div>
           )}
+
+          {/*
+            Comunicare un'assenza IN ANTICIPO. Sta sopra la cronologia perché è
+            l'azione; l'elenco sotto è consultazione e giustifica a posteriori.
+            La card si legge da sé le assenze già comunicate (route
+            `parent/presenze`, campo `comunicate`) e qui chiede solo di rileggere
+            la cronologia: la riga appena creata è una `presenze` a tutti gli
+            effetti e comparirebbe altrimenti solo dopo un ricaricamento a mano.
+          */}
+          <ComunicaAssenzaCard studentId={studentId} parentId={parentId} onAggiornato={carica} />
 
           <h2 className="font-maven text-sm font-semibold text-kidville-ink pt-1">
             {t('assenzeSezioneTitolo')}

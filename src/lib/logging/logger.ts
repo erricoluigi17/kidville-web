@@ -136,6 +136,20 @@ export const EVENTI_NOTI = new Set([
  * esplicita e vive lì: `supabase-fetch` non persiste MAI i propri `info`, qualunque cosa dica
  * l'allowlist. Chi aggiunge qui `db`, `rpc`, `auth` o `altro` legga prima quel modulo.
  *
+ * `registro` entra il 2026-08-07, e la sua deroga cade con la ragione che la reggeva. Diceva
+ * «degradi di colonna sulle lezioni: il registro ha il suo dato in tabella, il log è
+ * diagnostica» — vero finché su quel canale non passava nessun successo di dominio. Ora ci passa
+ * l'assenza comunicata dal genitore, che è **una consegna**: la famiglia avvisa la scuola e i
+ * docenti della sezione ricevono la notifica.
+ *
+ * Il punto non è la simmetria dell'elenco. La domanda che ha aperto quel lavoro era «il pulsante
+ * dà errore e all'insegnante non arriva niente», e la risposta è stata trovata con una query:
+ * *zero* notifiche `assenza_comunicata` emesse da sempre, su un difetto vissuto un mese senza
+ * lasciare una riga. Senza questa voce, «sta funzionando adesso?» tornerebbe a essere
+ * un'opinione: nei log di piattaforma la riga c'è, ma in `app_log` — l'unico posto
+ * interrogabile — no. Gli `info` di questo canale sono **quattro** in tutto il repo: il volume
+ * non è un argomento.
+ *
  * Il lock è `__tests__/architecture/eventi-log.test.ts`: ogni `logEvento(evento,'info')` del
  * repo o è in questa lista, o sta fra le deroghe motivate. È l'unica cosa che impedisce al
  * difetto di tornare — perché quando torna, non si vede.
@@ -143,6 +157,7 @@ export const EVENTI_NOTI = new Set([
 export const EVENTI_PERSISTITI = new Set([
     'email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa', 'news', 'chat',
     'gdpr', 'segnalazione', 'galleria', 'modulistica', 'multi_sede', 'avvisi', 'storage',
+    'registro',
 ]);
 
 /**

@@ -199,6 +199,12 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       riconciliazione_bonificati: esitoAlunno.riconciliazione,
       incassi_bonificati: esitoAlunno.incassi,
       cassa_bonificati: esitoAlunno.cassa,
+      // Il motivo dell'assenza scritto dalla famiglia e le note d'appello del
+      // docente (`presenze.giustificazione_testo` / `note_appello`): testo libero
+      // di natura sanitaria, che fino al 2026-08-07 nessun canale di oblio
+      // toccava. Sta nella risposta perché è la parte che si racconta alla
+      // famiglia: «quante righe del registro portavano ancora un suo testo».
+      presenze_bonificate: esitoAlunno.presenzeBonificate,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
       consensi_prova_bonificati: consensiProvaBonificati,
       // I dispositivi che smettono di ricevere le notifiche della scuola. Sta
@@ -229,6 +235,11 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         entita_tipo: 'alunni',
         entita_id: alunno_id,
         n_file: esito.file_rimossi,
+        // Quante righe del registro portavano ancora un testo scritto dalla
+        // famiglia o dal docente. È un CONTEGGIO — nessun testo, nessun nome —
+        // e sta qui perché `gdpr` è persistito: senza, fra sei mesi la domanda
+        // «il motivo dell'assenza è stato tolto davvero?» non ha una query.
+        n_presenze: esito.presenze_bonificate,
       })
     }
 

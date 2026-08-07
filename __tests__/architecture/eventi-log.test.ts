@@ -227,8 +227,13 @@ const DEROGHE_INFO_NON_PERSISTITI = new Map<string, string>([
     ['notifica', 'gli `info` sono degradi di schema in `destinatari.ts`, non consegne. La consegna vera si logga su `push` ed `email`, entrambi persistiti.'],
     ['mensa', 'prenotazioni e alternative: una riga per alunno per giorno. L\'audit delle scritture passa da `logScrittura` (tabella `audit_scritture`), non da `app_log`.'],
     ['anagrafica', 'note di `ensureParentIdentity` su percorsi già coperti da `warn`/`error` quando falliscono davvero.'],
-    ['registro', 'degradi di colonna sulle lezioni: il registro ha il suo dato in tabella, il log è diagnostica.'],
-    ['diary', 'degrado di colonna sulle voci di diario: stessa ragione del registro.'],
+    // `registro` ERA qui, con la ragione «degradi di colonna sulle lezioni: il registro ha il suo
+    // dato in tabella, il log è diagnostica». Tolto il 2026-08-07: su quel canale è arrivato un
+    // successo di dominio — l'assenza che il genitore comunica e che i docenti ricevono — e la
+    // deroga qui sopra dice testualmente che in quel caso «va tolto di qui e messo in
+    // EVENTI_PERSISTITI». È il difetto che quel lavoro ha chiuso: un mese di 403 sistematici senza
+    // una riga interrogabile in `app_log`.
+    ['diary', 'degrado di colonna sulle voci di diario: il dato sta in tabella, il log è diagnostica.'],
     ['protocolli', 'note sulle categorie di protocollo (schema assente): nessun successo di dominio.'],
     ['sidi', 'note di sincronizzazione dello store SIDI: l\'esito dell\'import è `warn`/`error`.'],
 ]);

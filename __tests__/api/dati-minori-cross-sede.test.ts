@@ -306,7 +306,19 @@ describe('SCRITTURA 2/5 — POST /api/parent/primaria/pagella/firma (presa visio
 })
 
 describe('SCRITTURA 3/5 — POST /api/parent/presenze/comunica-assenza', () => {
-  const corpo = { studentId: MINORE, data: '2026-12-01', motivo: 'INVENTATO' }
+  // La data era `'2026-12-01'`, cioè un futuro CHE SCADE: dal 2026-12-02 la
+  // route l'avrebbe rifiutata con 400 `ASSENZA_DATA_PASSATA` (dal 2026-08-07 la
+  // comunicazione d'assenza si accetta solo da oggi in avanti, fuso
+  // Europe/Rome) e il CONTROLLO POSITIVO qui sotto sarebbe diventato rosso senza
+  // che nessuno avesse toccato niente — il modo peggiore di rompersi, perché la
+  // causa non è in nessun diff.
+  //
+  // Un mese avanti, calcolato: sempre futuro, e sempre DIVERSO dal giorno della
+  // riga `pr-1` del fixture — che è `OGGI`, e con `onConflict: 'alunno_id,data'`
+  // verrebbe aggiornata invece di aggiungerne una seconda (misurato: il test
+  // chiede due righe e ne troverebbe una).
+  const FRA_UN_MESE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)
+  const corpo = { studentId: MINORE, data: FRA_UN_MESE, motivo: 'INVENTATO' }
 
   it('cuoca: 403 e nessuna presenza creata', async () => {
     CUOCA()

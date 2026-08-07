@@ -274,6 +274,80 @@ export const CODICI_ERRORE = {
      * un'informazione per chi lavora in segreteria.
      */
     DOMANDA_NON_LETTA: 'erroreDomandaNonLetta',
+    /**
+     * 400 — l'assenza si comunica in ANTICIPO, e la data indicata è già passata
+     * (`POST /api/parent/presenze/comunica-assenza`, fuso Europe/Rome).
+     *
+     * La frase dice anche dove andare — la giustifica — perché il rifiuto arriva
+     * a chi ha appena provato a fare la cosa giusta con lo strumento sbagliato:
+     * senza quel rimando l'unico messaggio possibile sarebbe «no», e il genitore
+     * riproverebbe con la stessa data.
+     */
+    ASSENZA_DATA_PASSATA: 'erroreAssenzaDataPassata',
+    /**
+     * 409 — l'insegnante ha GIÀ fatto l'appello di quel giorno: la comunicazione
+     * del genitore (e il suo annullamento) non sovrascrive il registro.
+     *
+     * È un rifiuto che protegge un dato altrui, non un guasto, e va detto come
+     * tale: un 500 generico farebbe riprovare all'infinito una cosa che non può
+     * riuscire. La via d'uscita è una persona, non un altro tentativo.
+     */
+    ASSENZA_GIA_REGISTRATA: 'erroreAssenzaGiaRegistrata',
+    /**
+     * 404 — l'alunno indicato non esiste, oppure non è fra i figli di chi chiede.
+     *
+     * Un solo codice per i due casi, come per `DOMANDA_NON_APRIBILE` e per la
+     * stessa ragione: distinguerli direbbe a chi prova un id a caso quando ha
+     * imbroccato un bambino vero. Qui la posta è più alta che altrove — la
+     * risposta confermerebbe l'esistenza di un minore a chi non ha titolo di
+     * conoscerlo. La differenza vive nel log, non a schermo.
+     *
+     * NON riusa `MODULO_NON_TROVATO`: quello è il 404 del link pubblico di un
+     * modulo, e la sua frase parla di collegamenti scaduti. A un genitore che ha
+     * appena toccato il nome di suo figlio in un elenco direbbe una cosa falsa.
+     */
+    ALUNNO_NON_TROVATO: 'erroreAlunnoNonTrovato',
+    /**
+     * 500 — la riga di presenza non è stata scritta (errore PostgREST).
+     *
+     * Il `message` grezzo di PostgREST NON esce di qui: è prosa inglese con dentro
+     * nomi di colonne, e fino a questo ciclo era proprio ciò che il server rimandava
+     * al client (`{ error: error.message }`). Il motivo tecnico resta nel log.
+     *
+     * La frase invita a RIPROVARE perché è l'unico caso dei quattro in cui il
+     * secondo tentativo può andare bene: gli altri tre chiedono di cambiare
+     * qualcosa. Dirlo sbagliato manda il genitore contro un muro o, peggio, gli
+     * fa credere che l'assenza sia registrata quando non lo è.
+     */
+    ASSENZA_NON_SALVATA: 'erroreAssenzaNonSalvata',
+    /**
+     * 500 — le presenze del bambino non si sono POTUTE LEGGERE
+     * (`GET /api/parent/presenze`: anagrafica, appello di oggi, riepilogo).
+     *
+     * NON riusa `ALUNNO_NON_TROVATO`, ed è tutto il punto: fino al 2026-08-07 una
+     * lettura fallita usciva proprio da quella porta, perché PostgREST non lancia e
+     * `alunno` restava `null`. Al genitore si diceva che suo figlio non esiste — per
+     * un guasto del database. «Non c'è» e «non l'ho potuto leggere» hanno rimedi
+     * opposti: il primo si risolve in segreteria, il secondo riprovando.
+     *
+     * NON riusa nemmeno `ASSENZA_NON_SALVATA`: quella frase parla di una scrittura
+     * («non siamo riusciti a registrare l'assenza») e qui non si stava scrivendo
+     * niente — racconterebbe a chi ha solo aperto la home un fallimento che non è
+     * avvenuto.
+     */
+    PRESENZE_NON_LETTE: 'errorePresenzeNonLette',
+    /**
+     * 500 — l'ANNULLAMENTO della comunicazione non è riuscito
+     * (`DELETE /api/parent/presenze/comunica-assenza`).
+     *
+     * NON riusa `ASSENZA_NON_SALVATA`, ed è l'unica ragione per cui esiste: quella
+     * frase dice «non siamo riusciti a registrare l'assenza», che a chi ha appena
+     * premuto «annulla» racconta il contrario di quello che è successo — e nel
+     * verso peggiore, perché lascia credere che l'assenza non ci sia più mentre è
+     * ancora lì. I due guasti hanno lo stesso status e rimedi identici (riprova),
+     * ma direzioni opposte: un codice solo per entrambi mentirebbe metà delle volte.
+     */
+    ASSENZA_NON_ANNULLATA: 'erroreAssenzaNonAnnullata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

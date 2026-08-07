@@ -78,8 +78,36 @@ fi
 
 export MAESTRO_KV_PASSWORD="$PW"
 export MAESTRO_KV_EMAIL_SEGRETERIA="${MAESTRO_KV_EMAIL_SEGRETERIA:-test.segreteria@kidville.test}"
-export MAESTRO_KV_EMAIL_GENITORE="${MAESTRO_KV_EMAIL_GENITORE:-test.inf.genitore1@kidville.test}"
+# ⚠️ NON `test.inf.genitore1`. Misurato il 2026-08-07 (collaudo mobile-ios): quello è
+# l'account DEMO consegnato alla review Apple e dal 2026-07-28 ha una password
+# DEDICATA, diversa dal segreto comune del repo. Con `KV_TEST_PASSWORD` risponde
+#   HTTP 400 {"error_code":"invalid_credentials"}
+# mentre `test.inf.docente1@kidville.test`, con la STESSA password, risponde 200.
+# A schermo compare «Credenziali non valide. L'accesso è solo su invito della
+# Segreteria.» — lo stesso testo che la login mostra per un errore di rete: il
+# collaudo scrive «l'app non fa entrare» e la colpa cade sull'app.
+# `test.inf.genitore2` è stato verificato quel giorno con HTTP 200.
+export MAESTRO_KV_EMAIL_GENITORE="${MAESTRO_KV_EMAIL_GENITORE:-test.inf.genitore2@kidville.test}"
 export MAESTRO_KV_EMAIL_DOCENTE="${MAESTRO_KV_EMAIL_DOCENTE:-test.inf.docente1@kidville.test}"
+
+# ── Guardia sugli account con password DEDICATA ──────────────────────────────
+# Cambiare il default non basta: chi passa a mano `MAESTRO_KV_EMAIL_GENITORE`
+# ricade nello stesso silenzio, perché il messaggio della login è identico per
+# «password sbagliata» e per «server giù». Qui il lanciatore lo dice a voce alta
+# PRIMA di partire, così il tester sa cosa sta guardando. Non blocca: chi ha
+# davvero la password del revisore (fuori dal repo) deve poter procedere.
+ACCOUNT_PASSWORD_DEDICATA=(
+  "test.inf.genitore1@kidville.test"
+  "test.pri.genitore1@kidville.test"
+)
+for _acc in "${ACCOUNT_PASSWORD_DEDICATA[@]}"; do
+  if [[ "$MAESTRO_KV_EMAIL_GENITORE" == "$_acc" ]]; then
+    echo "ATTENZIONE: $_acc è l'account DEMO della review Apple e ha una password" >&2
+    echo "            dedicata: con KV_TEST_PASSWORD la login risponde «Credenziali non" >&2
+    echo "            valide» — NON è un difetto dell'app. Usa MAESTRO_KV_EMAIL_GENITORE" >&2
+    echo "            con un altro genitore TEST (es. test.inf.genitore2@kidville.test)." >&2
+  fi
+done
 
 # ── Bonifica del log ─────────────────────────────────────────────────────────
 # Gira SEMPRE — flow fallito, run interrotto a metà, timeout dell'orchestratore.

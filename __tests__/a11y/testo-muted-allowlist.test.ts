@@ -49,13 +49,23 @@ const TETTO_FILE = 179;
 const TETTO_OCCORRENZE = 1184;
 
 /**
- * Bonificati in questo ciclo, e non possono rientrare: sono le due viste dell'anagrafica —
- * la tabella e la sua gemella mobile — dove il token dipingeva il nome della SEDE, cioè
- * l'unica cosa che distingue due bambini omonimi di due plessi diversi.
+ * Bonificati, e non possono rientrare.
+ *
+ * · Le due viste dell'ANAGRAFICA — la tabella e la sua gemella mobile — dove il token
+ *   dipingeva il nome della SEDE, cioè l'unica cosa che distingue due bambini omonimi di
+ *   due plessi diversi.
+ * · La schermata «Segnala assenza» del genitore (2026-08-07). Lì il grigio dipingeva DUE
+ *   frasi, e la seconda è l'unica riga che dice PER QUALE GIORNO l'assenza è stata
+ *   comunicata: «La scuola è stata notificata dell'assenza del 12/08/2026». Chi ha una
+ *   vista imperfetta, o guarda il telefono al sole, legge il titolo «Assenza comunicata» e
+ *   non riesce a leggere la data — cioè non può accorgersi di aver avvisato la maestra per
+ *   il giorno sbagliato. L'allowlist dichiarava 3 occorrenze per quel file, quindi il lock
+ *   restava verde: è il caso di scuola del perché questa lista può SOLO accorciarsi.
  */
 const MAI_PIU_IN_ALLOWLIST = [
   'src/components/features/admin/StudentTable.tsx',
   'src/components/features/admin/StudentRowCard.tsx',
+  'src/app/(dashboard)/parent/attendance/page.tsx',
 ];
 
 // ── WCAG 2.x §1.4.3 — il rapporto di contrasto, ricalcolato qui ──────────────

@@ -413,6 +413,14 @@ export default function PrivacyPage() {
                 dell&rsquo;alunno soggetti agli obblighi archivistici di cui sopra;
               </li>
               <li>
+                <strong>motivo dell&rsquo;assenza</strong> comunicato o scritto dalla famiglia, e
+                note dell&rsquo;appello del personale docente: <strong>dodici mesi</strong> dal
+                giorno dell&rsquo;assenza e comunque non oltre la fine dell&rsquo;iscrizione,
+                dopodiché il testo è cancellato automaticamente. Resta la registrazione della
+                presenza o dell&rsquo;assenza, che è un dato sulla frequenza e segue i tempi
+                indicati al primo punto;
+              </li>
+              <li>
                 <strong>fotografie e video</strong>: fino alla revoca del consenso e comunque non
                 oltre la durata dell&rsquo;iscrizione;
               </li>

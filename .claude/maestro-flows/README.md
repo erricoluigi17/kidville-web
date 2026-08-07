@@ -6,17 +6,29 @@ dentro la pipeline `/ship-cycle`.
 
 | Flow | Percorso |
 |---|---|
-| `android-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunicazioni** → tasto Indietro |
+| `android-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunica un'assenza** → verifica in elenco → **annulla** → verifica sparita → **comunicazioni** → tasto Indietro |
 | `android-percorso-docente.yaml` | login → dashboard → **appello** → **bacheca** |
 | `android-percorso-segreteria.yaml` | login → dashboard (cockpit) → tab **Avvisi** → Indietro → tab **Mensa** → Indietro → **Menu** (bottom-sheet) → **Anagrafica** → Indietro |
-| `ios-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunicazioni** → ritorno home |
+| `ios-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunica un'assenza** → verifica in elenco → **annulla** → verifica sparita → **comunicazioni** → ritorno home |
 | `ios-percorso-docente.yaml` | login → dashboard → **appello** → **bacheca** |
 | `ios-percorso-segreteria.yaml` | login → dashboard (cockpit) → tab **Avvisi** → tab **Mensa** → **Menu** (bottom-sheet) → **Anagrafica** → tab **Home** |
+
+> 🔴 **I due percorsi genitore SCRIVONO su dati veri.** Fanno un POST e poi la DELETE su
+> `/api/parent/presenze/comunica-assenza`: una riga in `presenze` per l'alunno dell'account
+> TEST, sul database di **produzione**. L'annullamento è parte del percorso, non un extra, e
+> l'ultima asserzione — l'elenco che torna vuoto — è la **prova** che la riga è stata disfatta.
+> Se un flow muore in mezzo, la comunicazione resta: si annulla a mano da
+> *Menu → Assenze e giustifiche → ANNULLA*. Due precondizioni d'ambiente, dichiarate in testa
+> ai flow: l'elenco dev'essere vuoto alla partenza, e l'appello di oggi non dev'essere ancora
+> registrato per quell'alunno (altrimenti il server risponde 409 e il rosso è corretto).
 
 > **Quale di questi flow è stato davvero eseguito, e quando**, sta nel registro `ESECUZIONI_VERDI`
 > del lock (`__tests__/architecture/maestro-flows-selettori.test.ts`) — con data, dispositivo ed
 > esito. I flow senza un'esecuzione verde da esibire sono elencati lì accanto, con il motivo: al
-> 2026-08-01 sono i **tre flow iOS** e `android-screenshot-playstore.yaml`.
+> **2026-08-07** sono `android-screenshot-playstore.yaml` e i **due percorsi genitore**, riscritti
+> quel giorno e non rieseguiti perché il server di collaudo `:3100` non aveva accesso al database
+> (chiave Supabase non registrata, `/api/health` → 503, nessun account supera il login).
+> Il tetto del debito è salito da 1 a 3 per questo: torna a 1 quando i due girano su device.
 
 > **Segreteria/Direzione (cockpit `/admin`).** Da questo ciclo il cockpit naviga come genitore e
 > docente: una **bottom-nav a pillola** su mobile (Home · Avvisi · Contabilità · Mensa + un
@@ -133,6 +145,31 @@ quello buono, il tuo `tapOn` per testo sta toccando lui.
 | `/admin` (cockpit) | `Mensa` | tile della griglia «Tutti i moduli» |
 | `/admin` (cockpit) | `Anagrafica` | tile della griglia «Tutti i moduli», dietro il foglio Menu |
 | Home genitore | `Diario` · `Avvisi` · `Chat` | scorciatoie della home (es. «DIARIO DI OGGI») |
+| Home genitore | `Avvisi` | **misurato 2026-08-07**: due nodi, il tab a `[506,1803][572,1834]` e uno a `[0,0][0,0]` |
+| Home genitore | `Comunicazioni` | **misurato 2026-08-07**: due nodi, **entrambi** `[0,0][0,0]` |
+| Home genitore | `Segnala assenza` | l'azione rapida della home (`home.json → azioneAssenza`, «Segnala\nassenza», che l'accname appiattisce): stesso testo del titolo di `/parent/attendance` |
+
+**Il 2026-08-07 questa trappola ha prodotto la sua faccia peggiore su un flow committato.**
+`android-percorso-genitore.yaml` dichiarava `COMPLETED` la tappa «Comunicazioni» **senza mai
+aprirla**: il `tapOn: "Avvisi"` finiva sul nodo a dimensione zero, cioè nell'angolo `(0,0)`, e
+`assertVisible: "Comunicazioni"` era soddisfatto da un secondo nodo fantasma della home. Nessun
+errore, nessun timeout: solo tre righe `COMPLETED` e uno screenshot che mostrava la home. Di
+conseguenza anche la tappa del tasto Indietro collaudava un `back` dalla home alla home.
+
+La correzione, e la regola che ne è nata (R16-R17 del lock):
+
+- **un'asserzione di arrivo non può essere un'etichetta che esiste anche dove si partiva.** Si usa
+  un testo della sola pagina di destinazione — per `/parent/avvisi` è
+  «Le prese visione vengono registrate automaticamente.» (`avvisi.json → footerRiga2`, reso fuori
+  da ogni condizione);
+- **e serve la prova NEGATIVA**, un testo che esiste solo sulla pagina di partenza
+  («Prossimi appuntamenti» per la home). È la difesa che conta davvero: se il tap non è atterrato,
+  il nodo fantasma è ancora lì e l'`assertNotVisible` **fallisce**. Lo stesso nodo che prima
+  rendeva la tappa verde a torto ora la rende rossa a ragione;
+- sul **tap**, dove i bounds sono misurati (Android), si aggiunge la guardia dimensionale
+  `width`/`height`/`tolerance`: un nodo `0×0` non corrisponde più. Su iOS **non** si mette, perché
+  lì i bounds dei nodi fuori schermo non sono mai stati misurati e un numero inventato sarebbe una
+  difesa finta.
 
 ### La stessa trappola, altra faccia: le CTA sotto la piega
 

@@ -3,7 +3,16 @@ import { NextRequest, NextResponse } from 'next/server'
 
 // M4 — Morosità residua: il genitore SOSPESO non può comunicare un'assenza.
 // La guardia va DOPO requireParentOfStudent (identità di sessione + legame
-// genitore↔alunno) e blocca la SCRITTURA (upsert). Le letture restano libere.
+// genitore↔alunno) e blocca la SCRITTURA. Le letture restano libere.
+//
+// ⚠️ Il finto client di questo file è PIATTO, e il 2026-08-07 ha presentato il
+// conto: conosceva solo `.upsert()`, e quando la route è passata alla scrittura
+// condizionata (UPDATE con `registrato_da IS NULL` nella WHERE, poi INSERT) la
+// catena è esplosa in un TypeError che il `catch` della route ha travestito da
+// 500 — cioè un test rosso che accusava il gate della sospensione per una cosa
+// che il gate non aveva fatto. La prova sui DATI vive in
+// `comunica-assenza-tutti-i-gradi.test.ts`, sul fixture che le scritture le
+// esegue davvero; qui si prova SOLO che il gate blocchi prima di scrivere.
 
 const STUDENT = 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1'
 const PARENT = 'u1u1u1u1-0000-4000-8000-000000000001'
@@ -13,7 +22,7 @@ const h = vi.hoisted(() => ({
   assertGenitore: vi.fn(),
   notificaEvento: vi.fn(),
   docentiDiSezione: vi.fn(),
-  upsertCalled: 0,
+  righeScritte: 0,
   alunno: null as Record<string, unknown> | null,
   section: null as Record<string, unknown> | null,
 }))
@@ -28,13 +37,26 @@ const adminClient = {
     const b: Record<string, unknown> = {}
     b.select = () => b
     b.eq = () => b
+    b.is = () => b
     b.maybeSingle = async () => {
       if (table === 'alunni') return { data: h.alunno, error: null }
       if (table === 'sections') return { data: h.section, error: null }
+      // `presenze`: nessuna riga per quel giorno, quindi l'UPDATE condizionato
+      // non colpisce niente e la riga la crea l'INSERT.
       return { data: null, error: null }
     }
-    b.upsert = () => {
-      h.upsertCalled++
+    // UPDATE … WHERE registrato_da IS NULL → zero righe colpite (non c'è niente).
+    b.update = () => {
+      const catena: Record<string, unknown> = {}
+      catena.eq = () => catena
+      catena.is = () => catena
+      catena.select = () => catena
+      catena.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) =>
+        Promise.resolve({ data: [], error: null }).then(ok, ko)
+      return catena
+    }
+    b.insert = () => {
+      h.righeScritte++
       return { select: () => ({ single: async () => ({ data: { id: 'p-1' }, error: null }) }) }
     }
     return b
@@ -57,19 +79,19 @@ beforeEach(() => {
   h.requireParent.mockResolvedValue({ user: { id: PARENT, role: 'genitore' }, response: null })
   h.notificaEvento.mockResolvedValue(undefined)
   h.docentiDiSezione.mockResolvedValue([])
-  h.upsertCalled = 0
+  h.righeScritte = 0
   h.alunno = { id: STUDENT, section_id: 'sec-1', scuola_id: 'sc-1' }
   h.section = { school_type: 'primaria' }
 })
 
 describe('POST /api/parent/presenze/comunica-assenza — gate sospensione morosità (M4)', () => {
-  it('genitore sospeso → 403 e NESSUN upsert', async () => {
+  it('genitore sospeso → 403 e NESSUNA riga scritta', async () => {
     h.assertGenitore.mockResolvedValue(
       NextResponse.json({ motivo: 'account_sospeso' }, { status: 403 }),
     )
     const res = await POST(postReq({ studentId: STUDENT, data: TODAY }))
     expect(res.status).toBe(403)
-    expect(h.upsertCalled).toBe(0)
+    expect(h.righeScritte).toBe(0)
     expect(h.assertGenitore).toHaveBeenCalledWith(expect.anything(), PARENT)
   })
 
@@ -77,7 +99,7 @@ describe('POST /api/parent/presenze/comunica-assenza — gate sospensione morosi
     h.assertGenitore.mockResolvedValue(null)
     const res = await POST(postReq({ studentId: STUDENT, data: TODAY, motivo: 'febbre' }))
     expect(res.status).toBe(201)
-    expect(h.upsertCalled).toBe(1)
+    expect(h.righeScritte).toBe(1)
     expect(h.assertGenitore).toHaveBeenCalled()
   })
 })

@@ -175,6 +175,26 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             scuola_id: alunno.scuola_id,
             section_id: alunno.section_id,
             aggiornato_il: new Date().toISOString(),
+            // CHI ha fatto l'appello. Provenienza operativa, non una firma —
+            // come nella primaria (`primaria/appello/route.ts`, `registrato_da: userId`).
+            //
+            // Perché serve, e perché proprio qui: la riga che il genitore scrive
+            // comunicando un'assenza porta `giustificata_da`, MAI `registrato_da`.
+            // Con questa riga `registrato_da IS NULL` diventa il criterio uniforme
+            // su tutti i gradi per «l'insegnante non ha ancora lavorato questa
+            // presenza» — la condizione a cui è appeso l'annullamento della
+            // comunicazione da parte del genitore. Fino a oggi lo 0-6 non lo
+            // scriveva: misurato in produzione il 2026-08-07, 13 righe su 49
+            // avevano `registrato_da`, ed erano tutte e sole quelle della primaria.
+            //
+            // `aggiornato_il` non poteva servire allo scopo: ha `DEFAULT now()` e
+            // si valorizza anche sull'INSERT del genitore, quindi non separa i due casi.
+            //
+            // L'id viene dal GATE, mai dalla richiesta: `presenze.registrato_da` ha
+            // una FK verso `utenti(id)`, e `requireDocente` → `loadAppUser` restituisce
+            // l'`id` letto DALLA riga di `utenti`. Se il gate è passato, la chiave
+            // esterna è per costruzione soddisfatta.
+            registrato_da: auth.user.id,
         };
 
         // Upsert su (alunno_id, data) — un solo record per bambino per giorno

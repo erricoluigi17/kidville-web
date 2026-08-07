@@ -1138,10 +1138,49 @@ export async function anonimizzaAlunno(
   iscrizioniScrubbate: number
   fotoRimosse: number
   fotoSganciate: number
+  presenzeBonificate: number
 }> {
   // 1. Anonimizza l'anagrafica dell'alunno.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
   if (e1) logErrore({ operazione: op, evento: 'patch_alunno' }, e1)
+
+  // 2. IL REGISTRO DELLE PRESENZE — il motivo dell'assenza e le note d'appello.
+  //
+  //    È il gemello esatto di ciò che `patchAlunno` fa con `note_mediche`, e fino
+  //    al 2026-08-07 non esisteva: `presenze` non era fra le tabelle trattate da
+  //    questo file, quindi dopo un oblio il nome del bambino diventava un
+  //    segnaposto e IL MOTIVO DELLA SUA ASSENZA restava leggibile per sempre,
+  //    accanto a un `alunno_id` invariato.
+  //
+  //    Le due colonne sono testo libero, e il segnaposto del modulo genitore
+  //    chiede testualmente un sintomo («Es. febbre, visita medica, motivi
+  //    familiari…»): sono dati relativi alla salute di un minore (art. 9 GDPR).
+  //
+  //    Si toglie il TESTO, non la riga: `stato`, `data` e `giustificata` sono
+  //    dati sulla frequenza, che l'informativa dichiara soggetti agli obblighi
+  //    di conservazione documentale. Cancellare la riga cancellerebbe un fatto
+  //    del registro; questo è un altro dato e un'altra regola.
+  //
+  //    Il filtro `.or(…not.is.null)` non è un ottimizzatore: senza, ogni oblio
+  //    riscriverebbe tutte le presenze del bambino (fino a un migliaio di righe)
+  //    per non togliere niente, e il conteggio che finisce nel log direbbe un
+  //    numero che non è quello dei dati davvero rimossi.
+  let presenzeBonificate = 0
+  const { data: presBonificate, error: errPresenze } = await supabase
+    .from('presenze')
+    .update({ giustificazione_testo: null, note_appello: null })
+    .eq('alunno_id', alunno.id)
+    .or('giustificazione_testo.not.is.null,note_appello.not.is.null')
+    .select('id')
+  if (errPresenze) {
+    // PostgREST non lancia: senza questo controllo un guasto diventerebbe
+    // «nessuna riga da bonificare», cioè un oblio dichiarato e non fatto.
+    if (!schemaAssente(errPresenze)) {
+      logErrore({ operazione: op, evento: 'oblio_presenze_giustificazioni' }, errPresenze)
+    }
+  } else {
+    presenzeBonificate = (presBonificate ?? []).length
+  }
 
   const cf = [alunno.codice_fiscale, alunno.fiscal_code]
     .map((v) => (typeof v === 'string' ? v.trim() : ''))
@@ -1407,5 +1446,6 @@ export async function anonimizzaAlunno(
     iscrizioniScrubbate: iscr.domandeScrubbate,
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
+    presenzeBonificate,
   }
 }

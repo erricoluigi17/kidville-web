@@ -96,6 +96,10 @@ beforeEach(() => {
   h.anonimizzaAlunno.mockResolvedValue({
     riconciliazione: 0, incassi: 0, cassa: 0, file: 0,
     segnalazioniBonificate: 0, sospensioniBonificate: 0,
+    // Dal 2026-08-07 l'oblio azzera anche il motivo dell'assenza e le note
+    // d'appello del minore: due valori diversi da zero, così l'asserzione sulla
+    // SOMMA non può passare per caso su uno zero.
+    presenzeBonificate: 3,
   })
 })
 
@@ -132,6 +136,26 @@ describe('POST /api/admin/gdpr/richieste — evasione', () => {
     expect(j.alunni).toBe(1)
     expect(h.anonimizzaAlunno).toHaveBeenCalledTimes(1)
     expect((h.anonimizzaAlunno.mock.calls[0][1] as { id: string }).id).toBe('al-1')
+  })
+
+  it('execute: l’esito riporta le presenze bonificate, sommate su tutti i figli', async () => {
+    // L'`esito` di questa route non è solo una risposta HTTP: viene SCRITTO sulla
+    // riga `richieste_cancellazione` e nell'audit immutabile. È il posto in cui,
+    // fra un anno, si potrà dimostrare che il motivo dell'assenza di quel
+    // bambino — testo libero di natura sanitaria — è stato tolto davvero.
+    h.state.links = [{ student_id: 'al-1' }, { student_id: 'al-2' }]
+    h.state.alunni = [
+      { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, scuola_id: SCUOLA_ID, documento_path: null, codice_fiscale: null, fiscal_code: null },
+      { id: 'al-2', stato: 'non_iscritto', anonimizzato_il: null, scuola_id: SCUOLA_ID, documento_path: null, codice_fiscale: null, fiscal_code: null },
+    ]
+    const res = await POST(req({ id: 'req-1', mode: 'execute', confirm: 'ANONIMIZZA' }))
+    const j = await res.json()
+    expect(
+      j.presenze_bonificate,
+      'l’esito non somma le presenze bonificate dei figli: un oblio che non si conta non si verifica',
+    ).toBe(6)
+    const upd = h.state.updates.find((u) => u.table === 'richieste_cancellazione')
+    expect((upd!.patch.esito as Record<string, unknown>).presenze_bonificate).toBe(6)
   })
 
   it('dryrun: conta senza anonimizzare nulla', async () => {

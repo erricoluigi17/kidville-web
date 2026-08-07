@@ -1,6 +1,7 @@
 # =============================================================================
 # Kidville · ANDROID — percorso utente reale del GENITORE
-#   login → dashboard → presenze → comunicazioni → tasto Indietro
+#   login → dashboard → presenze → COMUNICA UN'ASSENZA e la ANNULLA →
+#   comunicazioni → tasto Indietro
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - emulatore Android avviato
@@ -13,9 +14,32 @@
 #     blocco env: sottostante, e un ${...} non risolto viene digitato come
 #     la stringa letterale "undefined".
 #
-# Esecuzione:
-#   export MAESTRO_KV_EMAIL_GENITORE=... MAESTRO_KV_PASSWORD=...
-#   maestro test .claude/maestro-flows/android-percorso-genitore.yaml
+# Esecuzione — SEMPRE dallo script, mai `maestro test` a mano (bonifica del log):
+#   .claude/maestro-flows/esegui.sh android-percorso-genitore.yaml
+#
+# ⚠️ QUESTO FLOW SCRIVE SU DATI VERI, e per questo il percorso ANNULLA ciò che
+# comunica. Le tappe 4 e 5 fanno un POST e poi la DELETE su
+# `/api/parent/presenze/comunica-assenza`: una riga in `presenze` per l'alunno
+# dell'account TEST, sul database di PRODUZIONE (`.env.local` punta lì anche
+# quando il server è :3100). L'ultima asserzione della tappa 5 — l'elenco che
+# torna vuoto — è la PROVA che la riga è stata disfatta, non un abbellimento.
+# Se il flow muore fra la tappa 4 e la 5, la comunicazione resta: si annulla a
+# mano dalla stessa schermata (Menu → Assenze e giustifiche → «ANNULLA»).
+#
+# ⚠️ DUE PRECONDIZIONI DELLA TAPPA 4, che sono dell'AMBIENTE e non dell'app:
+#   a) l'elenco «Assenze già comunicate» dev'essere VUOTO all'inizio (il flow lo
+#      asserisce). Se è rosso lì, l'account ha una comunicazione residua da un
+#      giro precedente: annullala e rilancia.
+#   b) l'appello di OGGI non dev'essere ancora registrato per quell'alunno. Il
+#      modulo propone il giorno corrente e il server rifiuta con 409
+#      ASSENZA_GIA_REGISTRATA quando la maestra ha già fatto l'appello: in quel
+#      caso il rosso è CORRETTO e non è un difetto.
+# Il campo del giorno NON si tocca: è un `<input type="date">` precompilato a
+# oggi, e su Android il tap ci apre sopra il selettore nativo di Chrome — come
+# Maestro lo guidi non è mai stato misurato, quindi il flow non ci prova.
+# Il campo «Motivo» resta VUOTO di proposito: è facoltativo, è testo libero di
+# natura sanitaria di un minore, e Maestro scrive nel proprio log tutto ciò che
+# digita (`Inputting text: …`). Non si digita ciò che non si vuole su disco.
 #
 # NB: l'app è una WebView Capacitor che carica l'app web da server.url. I tempi
 # di attesa sono generosi di proposito: la prima pagina passa dalla rete.
@@ -60,6 +84,33 @@ env:
       visible: "Non consentire"
     commands:
       - tapOn: "Non consentire"
+
+# ── 1b. L'OFFERTA DEL GESTORE PASSWORD DI GOOGLE ─────────────────────────────
+# MISURATO il 2026-08-07 su KV-play-phone — che è proprio l'immagine col Play
+# Store, cioè quella dei telefoni veri delle famiglie: subito dopo «Accedi»
+# compare `text="Save password to Google Password Manager?"` con
+# `text="Not now" bounds="[63,1720][264,1825]"`, ruba il fuoco e fa fallire
+# l'asserzione successiva:
+#     Tap on "Accedi"... COMPLETED
+#     Run flow when "Non consentire" is visible... SKIPPED
+#     Assert that "Avvisi" is visible... FAILED
+# Il ramo qui sopra copre un solo dialog di sistema (il permesso notifiche) e
+# questo passava per un difetto dell'app.
+# L'attesa esplicita davanti serve per la stessa ragione di R14 su iOS:
+# `runFlow when:` guarda la condizione UNA VOLTA e non aspetta, e fra il tap e
+# il dialog passano centinaia di ms. `optional: true` perché il dialog NON
+# compare sempre (dipende dall'autofill dell'AVD).
+# L'alternativa copre l'AVD in inglese e uno in italiano: l'etichetta è del
+# sistema, non nostra, e non la governiamo.
+- extendedWaitUntil:
+    visible: "Not now|Non ora"
+    timeout: 10000
+    optional: true
+- runFlow:
+    when:
+      visible: "Not now|Non ora"
+    commands:
+      - tapOn: "Not now|Non ora"
 
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
 # Bottom nav del genitore: HOME · DIARIO · AVVISI · CHAT e il quinto tab, quello
@@ -107,8 +158,14 @@ env:
 # foglio CHIUSO, dove il nodo «MENU» è uno solo.
 # La fonte dell'aria-label è messages/it/nav.json → `ariaMenu` (se cambia lì, R5
 # diventa rosso).
+# Il gate di prontezza NON è più «Avvisi». MISURATO il 2026-08-07 (`uiautomator
+# dump`, home genitore, foglio Menu CHIUSO): «AVVISI» sulla home è DUE nodi, uno
+# a [506,1803][572,1834] (il tab vero) e uno a [0,0][0,0]. «Prossimi
+# appuntamenti» è invece reso una volta sola e solo qui (home.json →
+# titoloProssimiAppuntamenti, `parent/page.tsx` fuori da ogni condizione):
+# regge il gate e serve più avanti come prova di aver LASCIATO la home.
 - extendedWaitUntil:
-    visible: "Avvisi"
+    visible: "Prossimi appuntamenti"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
@@ -118,6 +175,15 @@ env:
 # ── 3. PRESENZE ──────────────────────────────────────────────────────────────
 # "Presenze" vive nel foglio Menu; la voce è resa con il sottotitolo univoco
 # "Assenze e giustifiche" (selettore robusto rispetto alle voci vicine).
+#
+# L'arrivo NON si prova più con «Segnala assenza». È il titolo della pagina, ma
+# è ANCHE l'azione rapida della home (home.json → azioneAssenza vale
+# «Segnala\nassenza», e il nome accessibile appiattisce gli spazi interni):
+# se il tap sul foglio non atterra si resta sulla home, dove quel testo c'è già,
+# e la tappa risulterebbe superata senza essersi mossi. «Comunica un'assenza
+# alla scuola» è il sottotitolo dell'header e vive solo su /parent/attendance.
+# La prova NEGATIVA è l'occhiello del foglio: se è ancora a schermo, il foglio
+# non si è chiuso e quindi non si è navigato.
 - tapOn:
     text: "Menu · tutte le sezioni|^MENU$"
 - extendedWaitUntil:
@@ -125,24 +191,127 @@ env:
     timeout: 20000
 - tapOn: "Assenze e giustifiche"
 - extendedWaitUntil:
-    visible: "Segnala assenza"
+    visible: "Comunica un.assenza alla scuola"
     timeout: 45000
+- assertNotVisible: "Tutte le sezioni"
 - takeScreenshot: /tmp/kv-android-genitore-2-presenze
 
-# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
-# Tab "Avvisi" della bottom nav → pagina "Comunicazioni".
-- tapOn: "Avvisi"
+# ── 4. COMUNICA UN'ASSENZA ───────────────────────────────────────────────────
+# La funzione riaperta dal ciclo del 2026-08-07. Fino a ieri i flow si fermavano
+# al titolo della pagina: collaudavano che una schermata esiste, non che una
+# funzione funziona — ed è così che la funzione è rimasta inutilizzabile per
+# mesi senza che nessun collaudo lo dicesse.
+#
+# La forma è `vuoto → pieno → vuoto`, e non è una comodità: è l'unica sequenza
+# che non si può soddisfare stando fermi. L'asserzione di mezzo («l'elenco NON è
+# più vuoto») è FALSA finché non è successo davvero niente.
+#
+# Gli apostrofi dei selettori sono scritti come `.` (metacarattere regex): i
+# cataloghi usano quello TIPOGRAFICO (U+2019) e un `'` dritto digitato per
+# distrazione — o una normalizzazione della WebView — farebbe fallire il flow
+# per una ragione che non ha niente a che vedere con l'app.
+- assertVisible: "Giorno"
+- assertVisible: "Assenze già comunicate"
+- assertVisible: "Non hai comunicato nessuna assenza per i prossimi giorni."
+# `enabled: true` non è prudenza generica: il bottone nasce `disabled` finché
+# l'identità del genitore non è risolta (`disabled={!ready || submitting}`).
+# Senza, il tap su un bottone disabilitato risulta COMPLETED e non succede
+# niente — la stessa forma di bugia che questa revisione sta chiudendo.
+- tapOn:
+    text: "Comunica assenza"
+    enabled: true
+# La conferma sostituisce l'intera pagina: il modulo si smonta. Le due
+# asserzioni insieme dicono «sono sulla conferma» E «non sono più sul modulo».
 - extendedWaitUntil:
-    visible: "Comunicazioni"
-    timeout: 45000
-- takeScreenshot: /tmp/kv-android-genitore-3-avvisi
+    visible: "Assenza comunicata"
+    timeout: 30000
+- assertNotVisible: "Comunica assenza"
+- takeScreenshot: /tmp/kv-android-genitore-3-assenza-inviata
 
-# ── 5. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────
+# ── 5. L'ASSENZA COMPARE NELL'ELENCO, E L'ANNULLAMENTO LA FA SPARIRE ─────────
+# «Comunica un'altra assenza» riporta al modulo con l'elenco sotto, già riletto
+# dal server dopo l'invio.
+- tapOn:
+    text: "Comunica un.altra assenza"
+- extendedWaitUntil:
+    visible: "Assenze già comunicate"
+    timeout: 20000
+- assertNotVisible: "Non hai comunicato nessuna assenza per i prossimi giorni."
+- takeScreenshot: /tmp/kv-android-genitore-4-assenza-in-elenco
+# Il bottone della riga porta un `aria-label` PARLANTE (parentServizi.json →
+# attendanceAnnullaAria, «Annulla l'assenza comunicata per il …»): per l'accname
+# l'aria-label SOSTITUISCE il testo interno, esattamente come sul quinto tab
+# della bottom-nav. Ma dal 2026-08-02 la WebView 150 passa ad Android anche il
+# testo interno come `text` lasciando vuota la content-desc, quindi qui vale la
+# stessa alternativa del tab «Menu»: regge entrambe le esposizioni.
+# `enabled: true` per la stessa ragione del submit: i bottoni «Annulla» di TUTTE
+# le righe sono disabilitati finché una DELETE è in volo (`disabled={annullando
+# !== null}`), e un tap su un nodo disabilitato risulta COMPLETED senza fare
+# niente.
+- tapOn:
+    text: "Annulla l.assenza comunicata per il .*|^ANNULLA$"
+    enabled: true
+- extendedWaitUntil:
+    visible: "Assenza annullata."
+    timeout: 20000
+- extendedWaitUntil:
+    visible: "Non hai comunicato nessuna assenza per i prossimi giorni."
+    timeout: 20000
+- takeScreenshot: /tmp/kv-android-genitore-5-assenza-annullata
+
+# ── 6. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# Tab "Avvisi" della bottom nav → pagina Comunicazioni (/parent/avvisi).
+#
+# ⚠️ QUI IL FLOW HA MENTITO. Fino al 2026-08-07 questa tappa era
+#     - tapOn: "Avvisi"
+#     - extendedWaitUntil: visible: "Comunicazioni"
+# e risultava COMPLETED restando sulla HOME. Le due misure che lo spiegano
+# (`uiautomator dump`, foglio Menu CHIUSO):
+#     text="COMUNICAZIONI" bounds="[0,0][0,0]"
+#     text="AVVISI"        bounds="[0,0][0,0]"
+#     text="COMUNICAZIONI" bounds="[0,0][0,0]"
+#     text="AVVISI"        bounds="[506,1803][572,1834]"
+# Maestro prende la PRIMA corrispondenza per testo: il tap finiva sul nodo a
+# dimensione zero, cioè nell'angolo (0,0), e l'assert successivo trovava
+# «Comunicazioni» su un altro nodo fantasma della home. Controprova che il tab è
+# sano: `adb shell input tap 539 1818` apre la pagina.
+#
+# Tre difese, e servono tutte e tre:
+#  1. `width/height/tolerance` sul tap — un nodo 0×0 non può più corrispondere.
+#     I numeri vengono dal dump di sopra (66×31 su KV-play-phone): sono
+#     MISURATI, non stimati, e valgono per quel dispositivo. Se cambia densità o
+#     scala del testo il tap fallisce RUMOROSAMENTE, che è il punto.
+#  2. prova POSITIVA su un testo che esiste SOLO su /parent/avvisi
+#     (avvisi.json → footerRiga2, reso fuori da ogni condizione). «Comunicazioni»
+#     non va bene: è anche l'occhiello delle due sezioni della home.
+#  3. prova NEGATIVA sulla home. È la difesa che conta: se il tap non atterra, il
+#     nodo fantasma di «Prossimi appuntamenti» è ancora lì e questa asserzione
+#     FALLISCE. Lo stesso fantasma che prima rendeva la tappa verde a torto ora
+#     la rende rossa a ragione.
+- tapOn:
+    text: "^AVVISI$"
+    width: 66
+    height: 31
+    tolerance: 25
+- extendedWaitUntil:
+    visible: "Le prese visione vengono registrate automaticamente."
+    timeout: 45000
+- assertNotVisible: "Prossimi appuntamenti"
+- takeScreenshot: /tmp/kv-android-genitore-6-avvisi
+
+# ── 7. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────
 # Deve tornare indietro DENTRO l'app, non chiuderla al primo tap.
+#
+# Anche questa tappa mentiva: asseriva `visible: "Home"`, che è l'etichetta del
+# PRIMO TAB della bottom-nav ed è quindi a schermo su qualunque pagina. Con il
+# `back` che non muoveva niente (vedi tappa 6) collaudava un ritorno dalla home
+# alla home. Ora si torna da /parent/avvisi a /parent/attendance, e lo si prova
+# con i testi delle due pagine: quello che deve esserci e quello che non deve.
 - back
 - extendedWaitUntil:
-    visible: "Home"
+    visible: "Comunica un.assenza alla scuola"
     timeout: 20000
+- assertNotVisible: "Le prese visione vengono registrate automaticamente."
 - assertVisible:
     text: "Menu · tutte le sezioni|^MENU$"
-- takeScreenshot: /tmp/kv-android-genitore-4-back
+- takeScreenshot: /tmp/kv-android-genitore-7-back

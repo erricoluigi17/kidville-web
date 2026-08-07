@@ -1,6 +1,27 @@
 # =============================================================================
 # Kidville · iOS — percorso utente reale del GENITORE
-#   login → dashboard → presenze → comunicazioni → ritorno home
+#   login → dashboard → presenze → COMUNICA UN'ASSENZA e la ANNULLA →
+#   comunicazioni → ritorno home
+#
+# ⚠️ QUESTO FLOW SCRIVE SU DATI VERI, e per questo il percorso ANNULLA ciò che
+# comunica. Le tappe 4 e 5 fanno un POST e poi la DELETE su
+# `/api/parent/presenze/comunica-assenza`: una riga in `presenze` per l'alunno
+# dell'account TEST, sul database di PRODUZIONE. L'ultima asserzione della
+# tappa 5 — l'elenco che torna vuoto — è la PROVA che la riga è stata disfatta.
+# Se il flow muore fra la tappa 4 e la 5 la comunicazione resta: si annulla a
+# mano dalla stessa schermata (Menu → Assenze e giustifiche → «ANNULLA»).
+#
+# ⚠️ DUE PRECONDIZIONI DELLA TAPPA 4, che sono dell'AMBIENTE e non dell'app:
+#   a) l'elenco «Assenze già comunicate» dev'essere VUOTO all'inizio (il flow lo
+#      asserisce): se è rosso lì, l'account ha una comunicazione residua.
+#   b) l'appello di OGGI non dev'essere ancora registrato per quell'alunno — il
+#      modulo propone il giorno corrente e il server risponde 409
+#      ASSENZA_GIA_REGISTRATA quando la maestra l'ha già fatto. Lì il rosso è
+#      corretto e non è un difetto.
+# Il campo del giorno NON si tocca: `<input type="date">` precompilato a oggi.
+# Il campo «Motivo» resta VUOTO: è facoltativo, è testo libero di natura
+# sanitaria di un minore, e Maestro scrive nel proprio log tutto ciò che digita
+# (`Inputting text: …`).
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
@@ -95,8 +116,17 @@ env:
 
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
 # La tab Menu ha aria-label "Menu · tutte le sezioni".
+#
+# Il gate di prontezza NON è più «Avvisi». Sulla home del genitore quel testo
+# esiste due volte — è l'etichetta del tab (nav.json → tabAvvisi) ED è il titolo
+# della sezione comunicazioni (home.json → titoloAvvisi) — e su Android è stato
+# MISURATO come nodo doppio, uno dei due a `bounds="[0,0][0,0]"` (2026-08-07).
+# Su iOS la proiezione dei nodi fuori schermo NON è stata misurata e potrebbe
+# comportarsi diversamente; il testo univoco costa zero e si usa quello.
+# «Prossimi appuntamenti» è reso una volta sola e solo sulla home.
 - extendedWaitUntil:
-    visible: "Avvisi"
+    visible:
+      text: ".*Prossimi appuntamenti.*"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
@@ -108,6 +138,12 @@ env:
 # ogni voce del Menu-sheet è UN SOLO nodo con accessibilityText concatenato
 # ("PRESENZE Assenze e giustifiche", "NEWS Novità e comunicati", ...) e Maestro fa
 # full-match → i selettori delle voci Menu-sheet vanno in regex NON ancorata ".*…​.*".
+# Per la stessa ragione tutte le asserzioni delle tappe 3-6 sono in quella forma.
+#
+# L'arrivo NON si prova più con «Segnala assenza»: è il titolo della pagina, ma è
+# anche l'azione rapida della home (home.json → azioneAssenza, «Segnala\nassenza»,
+# che l'accname appiattisce a «Segnala assenza»). Se il tap sul foglio non
+# atterra si resta sulla home, dove quel testo c'è già.
 - tapOn:
     text: "Menu · tutte le sezioni"
 - extendedWaitUntil:
@@ -117,23 +153,93 @@ env:
 - tapOn:
     text: ".*Assenze e giustifiche.*"
 - extendedWaitUntil:
-    visible: "Segnala assenza"
+    visible:
+      text: ".*Comunica un.assenza alla scuola.*"
     timeout: 45000
+- assertNotVisible:
+    text: ".*Tutte le sezioni.*"
 - takeScreenshot: /tmp/kv-ios-genitore-2-presenze
 
-# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# ── 4. COMUNICA UN'ASSENZA ───────────────────────────────────────────────────
+# La funzione riaperta dal ciclo del 2026-08-07. Fino a ieri i flow si fermavano
+# al titolo della pagina: collaudavano che una schermata esiste, non che una
+# funzione funziona. La forma è `vuoto → pieno → vuoto`, l'unica che non si può
+# soddisfare stando fermi.
+- assertVisible:
+    text: ".*Assenze già comunicate.*"
+- assertVisible:
+    text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+# `enabled: true` non è prudenza generica: il bottone nasce `disabled` finché
+# l'identità del genitore non è risolta (`disabled={!ready || submitting}`), e
+# un tap su un nodo disabilitato risulta COMPLETED senza fare niente.
+- tapOn:
+    text: ".*Comunica assenza.*"
+    enabled: true
+- extendedWaitUntil:
+    visible:
+      text: ".*Assenza comunicata.*"
+    timeout: 30000
+- assertNotVisible:
+    text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+- takeScreenshot: /tmp/kv-ios-genitore-3-assenza-inviata
+
+# ── 5. L'ASSENZA COMPARE NELL'ELENCO, E L'ANNULLAMENTO LA FA SPARIRE ─────────
+# «Comunica un'altra assenza» riporta al modulo con l'elenco sotto, già riletto
+# dal server dopo l'invio.
+- tapOn:
+    text: ".*Comunica un.altra assenza.*"
+- extendedWaitUntil:
+    visible:
+      text: ".*Assenze già comunicate.*"
+    timeout: 20000
+# Il bottone della riga porta un `aria-label` parlante (parentServizi.json →
+# attendanceAnnullaAria): per l'accname l'aria-label SOSTITUISCE il testo
+# interno, quindi il nome è «Annulla l'assenza comunicata per il <data>».
+- tapOn:
+    text: ".*Annulla l.assenza comunicata per il .*"
+    enabled: true
+- extendedWaitUntil:
+    visible:
+      text: ".*Assenza annullata.*"
+    timeout: 20000
+- extendedWaitUntil:
+    visible:
+      text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+    timeout: 20000
+- takeScreenshot: /tmp/kv-ios-genitore-4-assenza-annullata
+
+# ── 6. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# ⚠️ SU ANDROID QUESTA TAPPA MENTIVA (misurato il 2026-08-07): `tapOn: "Avvisi"`
+# colpiva un nodo `bounds="[0,0][0,0]"` e `assertVisible: "Comunicazioni"` era
+# soddisfatto da un secondo nodo fantasma della home — COMPLETED senza essersi
+# mossi. Il flow iOS aveva gli stessi due selettori.
+# Qui il tap resta per testo: su iOS i bounds dei nodi fuori schermo NON sono
+# stati misurati e una guardia `width/height` inventata sarebbe una difesa
+# finta. La difesa vera sono le due asserzioni: una POSITIVA su un testo che
+# esiste solo su /parent/avvisi, e una NEGATIVA su un testo che esiste solo
+# sulla home. Se il tap non atterra, la seconda FALLISCE — cioè lo stesso nodo
+# che prima rendeva la tappa verde a torto ora la rende rossa a ragione.
 - tapOn: "Avvisi"
 - extendedWaitUntil:
-    visible: "Comunicazioni"
+    visible:
+      text: ".*Le prese visione vengono registrate automaticamente.*"
     timeout: 45000
-- takeScreenshot: /tmp/kv-ios-genitore-3-avvisi
+- assertNotVisible:
+    text: ".*Prossimi appuntamenti.*"
+- takeScreenshot: /tmp/kv-ios-genitore-5-avvisi
 
-# ── 5. RITORNO ALLA HOME ─────────────────────────────────────────────────────
+# ── 7. RITORNO ALLA HOME ─────────────────────────────────────────────────────
 # Su iOS non c'è back hardware: si torna con la bottom nav. Serve anche a
 # verificare che la nav resti agganciata sopra l'home indicator (safe-area).
+# Anche qui la coppia: la home c'è (il suo testo univoco) e la pagina di prima
+# non c'è più.
 - tapOn: "Home"
 - extendedWaitUntil:
     visible:
-      text: "Menu · tutte le sezioni"
+      text: ".*Prossimi appuntamenti.*"
     timeout: 20000
-- takeScreenshot: /tmp/kv-ios-genitore-4-home
+- assertNotVisible:
+    text: ".*Le prese visione vengono registrate automaticamente.*"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-ios-genitore-6-home

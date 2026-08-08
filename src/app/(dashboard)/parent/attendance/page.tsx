@@ -811,7 +811,12 @@ function AttendanceInner() {
                 */
                 noValidate
                 aria-busy={submitting || undefined}
-                className="mt-5 rounded-card bg-kidville-white p-6 shadow-sm"
+                /* `kv-ospita-piede` (globals.css): chi ospita `PiedeAzioneAssenza`
+                   deve contenerne la riserva di sollevamento, altrimenti lo
+                   spaziatore da 200vh sborda e allunga la PAGINA di un'altra
+                   schermata e mezza di vuoto. Misurato sul prodotto compilato:
+                   documento 2147 px con la riserva, 1060 senza. */
+                className="kv-ospita-piede mt-5 rounded-card bg-kidville-white p-6 shadow-sm"
             >
                 {/* Icona DR */}
                 <div className="mb-4 flex items-center gap-3">

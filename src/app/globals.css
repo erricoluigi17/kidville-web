@@ -228,6 +228,46 @@ body {
 }
 
 /* =============================================================================
+   CHI OSPITA IL PIEDE DELL'AZIONE — e la coda di pagina vuota che si portava.
+
+   `PiedeAzioneAssenza` toglie il tetto al proprio sollevamento con uno spaziatore
+   alto due schermate e un margine negativo identico sul piede (vedi il componente:
+   è ciò che ha chiuso il bloccante R21, il pulsante coperto dalla barra a ogni
+   altezza di telefono). La somma è zero per l'ALTEZZA del contenitore — misurato,
+   i pannelli con e senza restano alti uguali al pixel — ma NON per l'area
+   SCORRIBILE: lo spaziatore è un box alto 200vh che sborda oltre il fondo della
+   card, e `scrollHeight` del documento lo conta.
+
+   Misurato il 2026-08-08 sulla pagina vera (server compilato, sessione vera,
+   390×731): documento 2147 px con la riserva, **1060 senza**. Cioè il genitore
+   che scorre trova, dopo l'elenco, un'altra schermata e mezza di NULLA. È anche
+   ciò che ha fatto fallire l'ultimo passo del percorso Maestro su iPhone: dopo
+   l'annullamento lo scroll finiva in quella coda e non ritrovava più l'elenco.
+
+   `contain: paint` dice al browser che niente di questa card va disegnato fuori
+   dai suoi confini: lo spaziatore smette di sbordare e l'area scrollabile torna
+   quella vera. La meccanica della riserva NON cambia — è il vincolo dello sticky
+   a contare, e quello vive nei margini. Misurato a 390×568/640/731:
+
+     senza riserva      cta coperta 17 px a 568 · documento 980
+     riserva (oggi)     cta scoperta          · documento 1713…2039  ← la coda
+     riserva + contain  cta scoperta          · documento 996        ← qui
+
+   e la geometria del piede è IDENTICA nei due casi (x 16→374, y 489→568): non
+   viene ritagliato niente, perché i margini negativi lo portano esattamente ai
+   bordi della card, non oltre.
+
+   ⚠️ `contain: paint` rende la card il contenitore di riferimento per i
+   discendenti `position: fixed`. Verificato prima di adottarlo: nelle due
+   schermate che ospitano il piede non ce n'è nessuno. Chi ne aggiungerà uno qui
+   dentro deve saperlo — ed è il motivo per cui questa regola ha un nome parlante
+   invece di essere una utility sparsa nel markup.
+   ============================================================================= */
+.kv-ospita-piede {
+  contain: paint;
+}
+
+/* =============================================================================
    LA FASCIA DELLA DYNAMIC ISLAND — dipinta dal CONTENITORE, non dall'intestazione.
 
    Rilievo R26 del quinto collaudo (2026-08-08), simulatore iOS: con la tastiera

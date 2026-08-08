@@ -118,6 +118,27 @@ import type { ReactNode } from 'react';
  * `__tests__/pages/assenze-rifiniture-secondo-collaudo.test.tsx`, che riproduce
  * quelle misure e poi verifica l'invariante su ogni altezza da 320 a 1200px.
  */
+/**
+ * ⚠️ E LA RISERVA HA UN COSTO, CHE CHI OSPITA IL PIEDE DEVE PAGARE (2026-08-08).
+ *
+ * «La somma è zero» è vero per l'ALTEZZA del contenitore — i pannelli con e senza
+ * restano alti uguali al pixel, ed è misurato — ma NON per l'area SCORRIBILE: lo
+ * spaziatore è un box alto 200vh che sborda oltre il fondo della card, e
+ * `scrollHeight` del documento lo conta.
+ *
+ * Misurato sulla pagina vera (server compilato, sessione vera, 390×731):
+ * documento **2147 px** con la riserva, **1060 senza**. Cioè dopo l'elenco il
+ * genitore scorre per un'altra schermata e mezza di NULLA. Ed è ciò che ha fatto
+ * fallire l'ultimo passo del percorso Maestro su iPhone: dopo l'annullamento lo
+ * scroll finiva in quella coda e non ritrovava più l'elenco.
+ *
+ * Il rimedio non è togliere la riserva (tornerebbe R21: a 568 px il pulsante è
+ * coperto di 17 px), ma **contenerla**: chi ospita il piede dichiara
+ * `kv-ospita-piede` (`contain: paint`, globals.css), e lo spaziatore smette di
+ * sbordare. Misurato: documento 996 invece di 1857, geometria del piede identica
+ * al pixel. Il lock `__tests__/pages/assenze-piede-contenuto.test.tsx` pretende
+ * che ogni schermata che monta questo componente lo faccia.
+ */
 const RISERVA_SOLLEVAMENTO = {
   /** Alto due schermate: il piede se lo riprende tutto, la somma è zero. */
   spaziatore: 'h-[200vh]',

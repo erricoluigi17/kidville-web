@@ -572,8 +572,11 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
         </Btn>
       </div>
 
+      {/* `kv-ospita-piede` sul pannello qui sotto: contiene la riserva di
+          sollevamento del piede, che altrimenti sborda e allunga la pagina di due
+          schermate vuote — vedi globals.css e il commento di `PiedeAzioneAssenza`. */}
       {aperto && (
-        <div id={idModulo} className="mt-3 rounded-2xl bg-kidville-cream p-3">
+        <div id={idModulo} className="kv-ospita-piede mt-3 rounded-2xl bg-kidville-cream p-3">
           {/* I CAMPI stanno in un contenitore loro, e il piede fuori: la
               spaziatura del modulo non deve valere anche fra l'ultimo campo e il
               piede appiccicato, che ha il proprio ritaglio a filo del pannello.

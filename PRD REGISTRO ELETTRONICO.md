@@ -89,6 +89,63 @@
 
 ---
 
+## ✅ Changelog — «Comunica un'assenza» chiusa e provata sui due telefoni, dopo cinque collaudi 2026-08-08 (branch `chore/piani-pro-supabase-vercel`)
+
+Il ciclo aperto il 07/08 ha girato tre giorni e cinque collaudi. Qui si chiudono i sei difetti
+rimasti dall'ultimo, e per la prima volta il percorso completo passa **sul dispositivo**, non solo
+nei test.
+
+### La prova che conta, e che prima non esisteva
+
+Percorso Maestro completo — *comunico → compare nell'elenco → annullo → sparisce* — verde su
+**iPhone 17 Pro (iOS 26.2)** e su **emulatore Android**, contro il prodotto compilato
+(`next start`). E una POST/DELETE reale con una sessione vera:
+
+| Prova sul prodotto compilato | Esito |
+|---|---|
+| POST `comunica-assenza` | **201**, corpo `{id, data}` — due colonne, non venticinque |
+| L'assenza compare fra le annullabili | sì |
+| DELETE | **200**, e la riga sparisce |
+| Tetti (data passata · 60 giorni · 500 caratteri) | 400 con i tre codici distinti |
+
+### I sei difetti, e cosa si è imparato da due di loro
+
+1. **Il link all'informativa faceva partire l'assenza.** Su WebView a 390×731 il link cade a
+   y 592→607 e il piede appiccicato, sollevato, occupa 568→659: `elementFromPoint` sul suo centro
+   restituiva il **pulsante**, e un tocco reale scriveva l'assenza invece di aprire l'informativa.
+   La nota era già stata spostata «sopra il campo» sei ore prima, per lo stesso motivo, e non era
+   bastato: **il piede si solleva sopra ciò che lo precede, e quanto copre dipende dallo
+   scorrimento, non dall'ordine dei nodi.** Ora la nota vive *dentro* il piede — dove è anche
+   sempre visibile, che per un'informativa su un dato sanitario è meglio di «sotto la piega».
+2. **La riserva che ha chiuso R21 allungava la pagina di due schermate vuote.** «La somma è zero»
+   valeva per l'altezza del contenitore ma non per l'area scorribile: lo spaziatore da 200vh
+   sborda, e `scrollHeight` lo conta. Misurato sul prodotto: **documento 2147 px, contenuto 754**.
+   Il rimedio non è togliere la riserva (tornerebbe il pulsante coperto) ma contenerla
+   (`contain: paint`): documento 1076, geometria del piede identica al pixel.
+3. **Le difese dopo il guasto dei 500.** La guardia sta ora in `withRoute` — un posto solo, tutte
+   e 239 le rotte: un handler che non restituisce una Response produce un 500 **con un corpo e un
+   request-id**, non i zero byte muti di Next. Più un test che smette di mockare il modulo
+   `sospensione` (venti file lo facevano, ed erano verdi mentre nessun genitore poteva comunicare
+   un'assenza) e uno smoke che gira contro `next start` — l'unica configurazione in cui quel
+   difetto esisteva.
+4. **La fascia della Dynamic Island** ha un fondale suo, `fixed`, invece di dipendere
+   dall'intestazione `sticky` che la tastiera porta via.
+5. **La regola dei bordi campo** non si tocca (dipinge più scuro: i campi si vedono meglio), ma il
+   controllo che la copriva montava i componenti *senza* la shell — cioè misurava un DOM che in
+   produzione non esiste. Ora è rappresentativo e dimostra da sé di misurare qualcosa.
+6. **L'annullabilità viveva in due posti**, e coincidevano: ora il verso positivo della finestra
+   sta accanto agli altri e un lock tiene d'accordo le due facce.
+
+### Cosa resta aperto, dichiarato
+
+Su telefono il campo **«Motivo» resta parzialmente sotto il piede** quando la pagina si apre: si
+raggiunge scorrendo, ma un tocco dove l'utente lo vede può non entrare nel campo (osservato sul
+simulatore). Il motivo è facoltativo e la funzione principale non ne dipende — l'invio e
+l'annullamento passano su entrambi i telefoni. Chiuderlo del tutto richiede una scelta di prodotto
+(barra più bassa, modulo più corto, o due zone affiancate invece che sovrapposte).
+
+---
+
 ## 🐞 Changelog — «Comunica un'assenza»: la pagina e la porta si escludevano a vicenda, e nessuno poteva usarla 2026-08-07 (branch `chore/piani-pro-supabase-vercel`)
 
 Segnalazione del titolare: *«il pulsante segnala errore, e all'insegnante di riferimento non

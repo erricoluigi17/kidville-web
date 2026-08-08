@@ -88,13 +88,25 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
       name: 'chromium',
-      // Lo smoke dell'artefatto NON gira qui: questo progetto parla col server di
-      // SVILUPPO, cioè l'unica configurazione in cui il difetto che lo smoke cerca
-      // non esiste. Eseguirlo anche qui non aggiunge una prova — aggiunge tre
-      // righe verdi che non provano niente, e che al primo sguardo sembrano la
-      // prova stessa. (Misurato nel run del 2026-08-08: 47, 48, 49 su `chromium`
-      // e 65, 66, 67 su `smoke-artefatto`, gli stessi tre test due volte.)
-      testIgnore: /smoke-artefatto\.spec\.ts$/,
+      /**
+       * DUE esclusioni, e la seconda ripete quella globale — non è una svista.
+       *
+       * `testIgnore` di PROGETTO **sostituisce** quello di config, non ci si
+       * somma. Scrivendo qui il solo smoke, la suite `primaria-360` (esclusa in
+       * cima, riga `testIgnore`) è RIENTRATA: è un harness one-off con la sua
+       * config e i suoi account, e pretende `KV_TEST_PASSWORD` al caricamento —
+       * in CI la suite intera è morta prima di eseguire un test.
+       * Misurato il 2026-08-08, run 31277207529: «Manca la variabile d'ambiente
+       * KV_TEST_PASSWORD … at primaria-360/config/accounts.ts:13», ripetuto per
+       * ogni spec.
+       *
+       * Lo smoke dell'artefatto non gira qui perché questo progetto parla col
+       * server di SVILUPPO, cioè l'unica configurazione in cui il difetto che lo
+       * smoke cerca non esiste: sarebbero tre righe verdi che al primo sguardo
+       * sembrano la prova e non lo sono (run 31276444497: 47·48·49 qui e
+       * 65·66·67 su `smoke-artefatto`, gli stessi tre test due volte).
+       */
+      testIgnore: ['**/primaria-360/**', /smoke-artefatto\.spec\.ts$/],
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },

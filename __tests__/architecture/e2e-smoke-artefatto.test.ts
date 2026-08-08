@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
+import config from '../../playwright.config'
 
 /**
  * LOCK — esiste una prova che gira sul PRODOTTO COMPILATO, e gira in CI.
@@ -92,6 +93,41 @@ describe('LOCK · una prova gira sull’artefatto, non sul sorgente', () => {
                 'una prova che non esiste',
         ).toMatch(/SMOKE_ARTEFATTO\s*=\s*!!process\.env\.CI/)
         expect(CI, 'il job E2E non esiste più: nessuno eseguirebbe lo smoke').toContain('E2E (Playwright)')
+    })
+
+    /**
+     * ⚠️ `testIgnore` di PROGETTO **sostituisce** quello di config, non ci si somma.
+     *
+     * Aggiungendo la sola esclusione dello smoke al progetto `chromium`, la suite
+     * `primaria-360` — esclusa globalmente perché è un harness one-off con la sua
+     * config e i suoi account — è rientrata, e pretende `KV_TEST_PASSWORD` al
+     * caricamento: in CI la suite intera è morta prima di eseguire un test
+     * (run 31277207529, «at primaria-360/config/accounts.ts:13» per ogni spec).
+     *
+     * Il controllo legge i PROGETTI, non il testo del file: un domani il pattern
+     * potrà essere scritto in un altro modo, ma la proprietà deve restare.
+     */
+    it('nessun progetto perde l’esclusione globale di `primaria-360`', () => {
+        const globale = config.testIgnore
+        expect(globale, 'la config non esclude più `primaria-360`').toBeTruthy()
+
+        const scoperti = (config.projects ?? [])
+            .filter((p) => p.testIgnore !== undefined)
+            .filter((p) => {
+                const suo = Array.isArray(p.testIgnore) ? p.testIgnore : [p.testIgnore]
+                // Un `testMatch` stretto è l'altra difesa valida: se il progetto
+                // seleziona solo i propri spec, `primaria-360` non lo raggiunge.
+                const selezioneStretta = p.testMatch !== undefined
+                return !selezioneStretta && !suo.some((v) => String(v).includes('primaria-360'))
+            })
+            .map((p) => p.name)
+
+        expect(
+            scoperti,
+            'questi progetti dichiarano un `testIgnore` proprio SENZA ripetere `primaria-360`: ' +
+                'quello di progetto sostituisce il globale, quindi la suite one-off rientra e ' +
+                'uccide la CI su `KV_TEST_PASSWORD` prima ancora di eseguire un test',
+        ).toEqual([])
     })
 
     it('il cancello statico sull’artefatto è ancora agganciato al build', () => {

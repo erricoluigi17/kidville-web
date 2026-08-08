@@ -657,7 +657,28 @@ const FLOW_SENZA_ESECUZIONE_VERDE: { flow: string; motivo: string }[] = [
   {
     flow: 'android-percorso-genitore.yaml',
     motivo:
-      // ─── 2026-08-08 · SECONDA RISCRITTURA, SECONDA VOLTA SENZA ESECUZIONE ───
+      // ─── 2026-08-08, SECONDA SERATA · TERZO TENTATIVO, TERZA CAUSA D'AMBIENTE ───
+      'TENTATO SUL DEVICE il 2026-08-08 alle 02:1x-02:3x, TRE volte, e NON arrivato in fondo. ' +
+      'Le tre correzioni di oggi (l\'etichetta «Giorno dell\'assenza», il sottotitolo della ' +
+      'conferma, l\'ancora dopo il `back`) restano quindi NON provate su emulatore, e questa ' +
+      'riga non si sposta finché non lo saranno. Cosa è successo, misurato: al terzo lancio il ' +
+      'flow ha superato login, dashboard e i primi 12 comandi, poi è morto sul gate della home ' +
+      '(«Ecco le novità»). La causa NON è il flow: mentre girava, un altro lavoro in parallelo ' +
+      'ha ricostruito l\'applicazione sotto al server di collaudo — `.next/BUILD_ID` riscritto ' +
+      'alle 02:29:36 e di nuovo alle 02:40:49 — e da quel momento :3100 serve HTML che punta a ' +
+      'file che su disco non ci sono più. Prova diretta: `/auth/login` cita tre fogli di stile, ' +
+      'due rispondono 200 e `/_next/static/chunks/3zhxck7dz54r9.css` risponde **HTTP 500** ' +
+      '(`ls` su disco: No such file). Effetto a schermo: la login si vede in Times New Roman, ' +
+      'senza CSS; React non idrata; `inputText` risulta COMPLETED e il campo resta col ' +
+      'segnaposto (verificato con un flow di sonda: dopo aver digitato l\'email, ' +
+      '`assertVisible ".*genitore.*"` FALLISCE). È la stessa trappola già descritta più in ' +
+      'basso in questa riga, alla data del 2026-08-02, ripetuta identica. Il rimedio è il ' +
+      'RIAVVIO di `next start`, che non è nel perimetro di chi ha scritto queste correzioni ' +
+      '(il mandato dice esplicitamente di non riavviare il server, che altri stanno usando). ' +
+      'Per farlo scendere di qui: riavviare :3100 sulla build corrente, verificare che i CSS ' +
+      'citati da /auth/login rispondano tutti 200, poi `export KV_TEST_PASSWORD=…; ' +
+      'KV_DEVICE=emulator-5554 .claude/maestro-flows/esegui.sh android-percorso-genitore.yaml`. ' +
+      '─── Storia precedente ─── ' +
       'RISCRITTO UNA SECONDA VOLTA il 2026-08-08 e di nuovo NON eseguito. Questa volta però ' +
       'la riscrittura NON è una teoria: parte dai fallimenti MISURATI del collaudo del ' +
       '2026-08-07 su questo stesso file — il gate «Prossimi appuntamenti» che scade sempre ' +
@@ -700,7 +721,23 @@ const FLOW_SENZA_ESECUZIONE_VERDE: { flow: string; motivo: string }[] = [
   {
     flow: 'ios-percorso-genitore.yaml',
     motivo:
-      // ─── 2026-08-08 · SECONDA RISCRITTURA, SECONDA VOLTA SENZA ESECUZIONE ───
+      // ─── 2026-08-08, SECONDA SERATA · TENTATO DUE VOLTE, STESSA CAUSA DEL GEMELLO ───
+      'TENTATO SUL SIMULATORE il 2026-08-08 alle 02:3x, DUE volte, morto entrambe le volte sul ' +
+      'gate della home dopo il login. La correzione di oggi (l\'ancora della conferma, che ' +
+      'citava una frase che l\'app non pronuncia più — «La scuola è stata notificata ' +
+      'dell\'assenza…») resta NON provata sul device. Causa misurata, identica a quella del ' +
+      'gemello Android e indipendente dal flow: il server di collaudo :3100 serve una build ' +
+      'sostituita sotto di lui (`/_next/static/chunks/3zhxck7dz54r9.css` → HTTP 500, il file su ' +
+      'disco non esiste), quindi niente CSS e niente idratazione. Lo screenshot della login lo ' +
+      'mostra senza stili, in carattere con grazie; una sonda che digita l\'email e poi la ' +
+      'cerca nell\'albero fallisce, cioè il testo non arriva nel campo. Le credenziali NON ' +
+      'c\'entrano: provate contro `auth/v1/token` rispondono 200 per tutti e tre gli account ' +
+      'genitore TEST. Nessuna scrittura è arrivata su `presenze` (verificato: 0 righe create ' +
+      'nelle ultime 3 ore, 0 notifiche `assenza_comunicata`). ' +
+      'Per farlo scendere di qui: riavviare :3100 sulla build corrente, poi ' +
+      '`export KV_TEST_PASSWORD=…; KV_DEVICE=<udid> .claude/maestro-flows/esegui.sh ' +
+      'ios-percorso-genitore.yaml`. ' +
+      '─── Storia precedente ─── ' +
       'RISCRITTO UNA SECONDA VOLTA il 2026-08-08 e di nuovo NON eseguito, per le stesse due ' +
       'ragioni d\'ambiente del gemello Android (server :3100 appeso al 100% di CPU in un ciclo ' +
       'di eccezioni non catturate, HTTP 000 per 34 minuti; `KV_TEST_PASSWORD` fuori ' +
@@ -1942,25 +1979,87 @@ describe('lock: flow Maestro (le etichette doppie della home genitore)', () => {
  * Il marcatore è ora la CTA della schermata di conferma, «Comunica un'altra
  * assenza», che esiste SOLO lì — ed è anche il passo successivo del percorso.
  * La regola generale che lo impedisce da qui in avanti è R23.
+ *
+ * ⚠️ RISCRITTURA DEL 2026-08-08 — DA COPIA A CHIAVE, ed è il punto di tutto.
+ * Fino a ieri questo registro conteneva i TESTI. Un testo copiato è una fotografia:
+ * il giorno in cui il catalogo cambia, la fotografia resta e il flow cerca una
+ * frase che l'app non pronuncia più. È successo due volte nello stesso ciclo, a
+ * ventott'ore di distanza, su due piattaforme diverse:
+ *   · iOS  (2026-08-07) — `attendanceInviataTesto` riscritto: il flow cercava
+ *     «La scuola è stata notificata dell'assenza…», l'app diceva «Abbiamo
+ *     registrato l'assenza del …». Collaudo ROSSO su un invio RIUSCITO;
+ *   · Android (2026-08-08, commit 2090cbf) — `attendanceGiorno` da «Giorno» a
+ *     «Giorno dell'assenza». Il flow moriva alla tappa 4 di un'app sana.
+ * In entrambi i casi il gate era VERDE: nessuna regola legava il flow al catalogo.
+ *
+ * Ora il registro porta la CHIAVE, e il valore atteso lo legge il lock dal
+ * catalogo al momento in cui gira. Il testo nel flow resta scritto per esteso —
+ * si deve poter leggere un flow e capire cosa asserisce, e Maestro non sa leggere
+ * i JSON del progetto — ma non è più libero di scollarsi: se qualcuno rinomina la
+ * chiave, il valore atteso cambia con lui, il flow non lo contiene più e il gate
+ * diventa rosso PRIMA che qualcuno accenda un emulatore.
+ *
+ * PERCHÉ NON SI INIETTANO LE ANCORE NEI FLOW (via `env:` da `esegui.sh`), che
+ * sarebbe la versione «senza copia» di questa idea, ed è stata valutata e scartata:
+ *   1. i selettori di Maestro sono REGEX. `attendanceInviataTesto` vale «Abbiamo
+ *      registrato l'assenza del {data}. Grazie…»: iniettato grezzo porta dentro un
+ *      segnaposto ICU e due punti che sono metacaratteri. Servirebbe un livello di
+ *      escape+troncamento nel lanciatore, e un suo difetto somiglierebbe a un
+ *      difetto dell'app — la malattia che stiamo curando, spostata di un piano;
+ *   2. una variabile che non arriva diventa stringa vuota: `assertVisible: ""`
+ *      combacia con tutto, e il flow tornerebbe verde senza aver guardato niente.
+ *      È il difetto «asserzione vacua» di R22, con una faccia nuova;
+ *   3. un flow che asserisce `${ANCORA_7}` non è più leggibile, e chi lo debugga
+ *      alle due di notte non sa cosa stia cercando.
+ * Il lock legge il catalogo; il flow resta leggibile. La copia c'è ancora, ma non
+ * può più mentire più a lungo di un `npm run gate`.
  */
+const CATALOGO_ASSENZE = 'messages/it/parentServizi.json';
+
 const TAPPE_COMUNICA_ASSENZA = [
-  { marcatore: 'Non hai comunicato nessuna assenza per i prossimi giorni.', cosa: 'elenco VUOTO di partenza' },
-  { marcatore: 'Comunica assenza', cosa: 'la CTA che invia la comunicazione' },
-  { marcatore: 'Comunica un’altra assenza', cosa: 'la schermata di conferma' },
-  { marcatore: 'Assenze già comunicate', cosa: 'il ritorno all\'elenco' },
-  { marcatore: 'Assenza annullata.', cosa: 'l\'esito dell\'annullamento' },
+  { chiave: 'attendanceElencoVuoto', cosa: 'elenco VUOTO di partenza' },
+  { chiave: 'attendanceComunicaAssenza', cosa: 'la CTA che invia la comunicazione' },
+  { chiave: 'attendanceComunicaAltra', cosa: 'la schermata di conferma' },
+  { chiave: 'attendanceElencoTitolo', cosa: 'il ritorno all\'elenco' },
+  { chiave: 'attendanceAnnullata', cosa: 'l\'esito dell\'annullamento' },
 ];
 
+/**
+ * Le ancore che NON scandiscono il percorso ma provano di essere sulla schermata
+ * giusta e sul GIORNO giusto. Stanno qui, e non fra le tappe, perché non hanno un
+ * posto nell'ordine: la prima sta nel modulo, la seconda nella conferma.
+ *
+ * Sono le due che il ciclo ha visto rompersi, ed entrambe erano presenti su UN
+ * SOLO flow dei due — la divergenza fra gemelli è il modo in cui questi difetti
+ * sopravvivono, perché il flow sano fa credere che la tappa sia coperta.
+ */
+const ANCORE_DI_SCHERMATA = [
+  {
+    chiave: 'attendanceGiorno',
+    cosa: 'l\'etichetta del campo data: prova che il MODULO è a schermo, non solo la pagina',
+  },
+  {
+    chiave: 'attendanceInviataTesto',
+    cosa: 'il sottotitolo della conferma: è l\'unico testo che nomina il GIORNO comunicato',
+  },
+];
+
+/** Il valore di una chiave del catalogo delle assenze, istanziato come a runtime. */
+function testoDaCatalogo(chiave: string): string {
+  const v = leggiCatalogo(CATALOGO_ASSENZE)[chiave];
+  return typeof v === 'string' ? comeARuntime(v) : '';
+}
+
 describe('lock: flow Maestro (il percorso «Comunica un\'assenza»)', () => {
-  it('R18a · i marcatori del percorso esistono ancora, con quel testo, nel catalogo', () => {
-    const catalogo = leggiCatalogo('messages/it/parentServizi.json');
-    const valori = new Set(Object.values(catalogo).filter((v): v is string => typeof v === 'string'));
-    const scaduti = TAPPE_COMUNICA_ASSENZA.filter((t) => !valori.has(t.marcatore)).map(
-      (t) => `«${t.marcatore}» (${t.cosa}) non è più in messages/it/parentServizi.json`,
-    );
+  it('R18a · ogni tappa del percorso ha una chiave viva nel catalogo', () => {
+    const catalogo = leggiCatalogo(CATALOGO_ASSENZE);
+    const scaduti = [...TAPPE_COMUNICA_ASSENZA, ...ANCORE_DI_SCHERMATA]
+      .filter((t) => typeof catalogo[t.chiave] !== 'string' || (catalogo[t.chiave] as string) === '')
+      .map((t) => `${CATALOGO_ASSENZE} → ${t.chiave} (${t.cosa}) non esiste più`);
     expect(
       scaduti,
-      'Registro R18 scaduto: i flow cercherebbero testi che l\'app non produce più.',
+      'Registro R18 scaduto: la chiave da cui il lock legge l\'ancora non c\'è più. Se la ' +
+        'schermata è stata rifatta, si aggiorna la chiave QUI e il flow nello stesso lavoro.',
     ).toEqual([]);
   });
 
@@ -1969,25 +2068,55 @@ describe('lock: flow Maestro (il percorso «Comunica un\'assenza»)', () => {
       const sel = tuttiISelettori(leggiFlow(f));
       let da = -1;
       for (const t of TAPPE_COMUNICA_ASSENZA) {
-        const i = sel.findIndex((s, k) => k > da && contieneTesto(s, t.marcatore));
+        const atteso = testoDaCatalogo(t.chiave);
+        const i = sel.findIndex((s, k) => k > da && combaciaComeMaestro(s, atteso));
         expect(
           i,
-          `${f}: manca (o è fuori ordine) la tappa «${t.cosa}» → cerca «${t.marcatore}». ` +
-            'Il percorso deve INVIARE la comunicazione e poi ANNULLARLA: il flow scrive su ' +
-            'dati veri, e la prova di aver disfatto la scrittura è l\'ultimo marcatore.',
+          `${f}: manca (o è fuori ordine) la tappa «${t.cosa}». Il testo che l'app produce ` +
+            `OGGI è ${JSON.stringify(atteso)} (${CATALOGO_ASSENZE} → ${t.chiave}) e nessun ` +
+            'selettore del flow lo combacia. Il percorso deve INVIARE la comunicazione e poi ' +
+            'ANNULLARLA: il flow scrive su dati veri, e la prova di aver disfatto la scrittura ' +
+            'è l\'ultima tappa.',
         ).toBeGreaterThan(da);
         da = i;
       }
       // L'elenco deve tornare VUOTO alla fine: il marcatore del vuoto compare due volte,
       // prima dell'invio e dopo l'annullamento. Senza il secondo, il flow lascerebbe una
       // riga in `presenze` e nessuno se ne accorgerebbe.
-      const vuoto = TAPPE_COMUNICA_ASSENZA[0].marcatore;
+      const vuoto = testoDaCatalogo(TAPPE_COMUNICA_ASSENZA[0].chiave);
       expect(
-        sel.filter((s) => contieneTesto(s, vuoto)).length,
-        `${f}: «${vuoto}» compare una volta sola. Serve due volte — prima dell'invio e ` +
-          'DOPO l\'annullamento — altrimenti nessuno prova che la riga scritta è sparita.',
+        sel.filter((s) => combaciaComeMaestro(s, vuoto)).length,
+        `${f}: ${JSON.stringify(vuoto)} compare una volta sola. Serve due volte — prima ` +
+          'dell\'invio e DOPO l\'annullamento — altrimenti nessuno prova che la riga scritta ' +
+          'è sparita.',
       ).toBeGreaterThanOrEqual(2);
     }
+  });
+
+  it('R18c · entrambi i flow provano di essere sul modulo e su QUALE giorno', () => {
+    // La regola è scritta al plurale su ENTRAMBI i flow di proposito: le due ancore
+    // esistevano, ma una per parte — «Giorno dell'assenza» solo su Android, il
+    // sottotitolo della conferma solo su iOS. Ognuno dei due copriva ciò che
+    // all'altro mancava, e nessuno dei due lo diceva.
+    const colpevoli: string[] = [];
+    for (const f of FLOWS_GENITORE) {
+      const sel = tuttiISelettori(leggiFlow(f));
+      for (const a of ANCORE_DI_SCHERMATA) {
+        const atteso = testoDaCatalogo(a.chiave);
+        if (!sel.some((s) => combaciaComeMaestro(s, atteso))) {
+          colpevoli.push(
+            `${f}: nessuna ancora combacia con ${JSON.stringify(atteso)} ` +
+              `(${CATALOGO_ASSENZE} → ${a.chiave}) — ${a.cosa}`,
+          );
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Il flow arriva sulla pagina e non guarda il modulo, oppure dichiara riuscito l\'invio ' +
+        'senza leggere PER QUALE GIORNO. Sono le due ancore che questo ciclo ha visto ' +
+        'scollarsi dal catalogo (iOS 07/08, Android 08/08): valgono per tutti e due i flow.',
+    ).toEqual([]);
   });
 });
 
@@ -2622,6 +2751,275 @@ describe('lock: flow Maestro (le ancore omonime dello stesso catalogo)', () => {
         'due voci dello stesso catalogo possono soddisfare non distingue la conferma di un ' +
         'invio dal bottone ANNULLA di una riga già in elenco (mobile-ios, 2026-08-07: ' +
         'COMPLETED a 174 ms con lo schermo che mostrava ancora «INVIO…»).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R24 · NESSUNA ANCORA ORFANA: SE L'APP NON LA DICE, NON ESISTE ─────────
+ *
+ * R18 lega al catalogo le ancore del percorso genitore, una per una. Ma una
+ * regola POSITIVA («questa frase dev'esserci») non toglie dal file la frase
+ * VECCHIA: dopo la rinomina di `attendanceInviataTesto` il flow iOS conteneva
+ * ancora `.*La scuola . stata notificata dell.assenza.*`, un'ancora che nessuna
+ * schermata dell'app può soddisfare, e che il collaudo del 2026-08-07 ha pagato
+ * con un ROSSO su un invio riuscito.
+ *
+ * Questa è la regola NEGATIVA che la toglie: ogni testo che un flow cerca
+ * nell'albero deve combaciare — come combacia Maestro, full-match e
+ * case-insensitive — con almeno una voce dei cataloghi `messages/it/*.json`,
+ * oppure essere DICHIARATO qui sotto come testo che dall'app non nasce.
+ *
+ * ⚠️ IL LIMITE CHE VA DETTO SUBITO, PERCHÉ È QUELLO CHE FA MALE. Il catalogo è
+ * uno solo per tutta l'app: «Giorno» — l'ancora morta del flow Android — esiste
+ * eccome, ma è `teacherServizi.json → mensaGiorno`, l'intestazione della tabella
+ * della MENSA del docente. Una regola che chiedesse soltanto «esiste da qualche
+ * parte?» l'avrebbe lasciata passare, e il collaudo sarebbe morto lo stesso.
+ * Per questo R24 non basta da sola e non pretende di bastare: le ancore che
+ * contano davvero — quelle del percorso «Comunica un'assenza» — sono legate alla
+ * loro CHIAVE, cioè alla loro schermata, da R18. R24 è la rete sotto: prende ciò
+ * che l'app non dice più in nessun punto.
+ *
+ * COSA NON COPRE, dichiarato: (a) l'ancora viva sulla schermata sbagliata (vedi
+ * sopra: serve R18, che è per chiave); (b) i testi che nascono dai DATI (nomi,
+ * date, importi) — sono nella lista qui sotto per costruzione; (c) i cataloghi
+ * inglesi: si guarda solo `it/`, perché i flow girano in italiano.
+ */
+type AncoraNonDiCatalogo = {
+  /** Il selettore così com'è scritto nei flow. */
+  selettore: string;
+  /** Chi produce quel testo, se non l'app. */
+  origine: string;
+  /** Perché non può stare in un catalogo. */
+  nota: string;
+};
+
+const ANCORE_NON_DI_CATALOGO: AncoraNonDiCatalogo[] = [
+  {
+    selettore: 'Non consentire',
+    origine: 'dialogo di sistema Android/iOS per il permesso delle notifiche',
+    nota:
+      'Lo scrive il sistema operativo nella lingua del dispositivo, non l\'app: non è in ' +
+      'nessun catalogo e non può esserci. I flow lo cercano dentro un ramo `runFlow when:` ' +
+      'proprio perché può non comparire affatto.',
+  },
+  {
+    selettore: 'Not now|Non ora',
+    origine: 'dialogo di sistema Android (Play Services / backup), nelle due lingue',
+    nota:
+      'Stessa natura del precedente. L\'alternativa a due rami esiste perché l\'emulatore ' +
+      'può essere in inglese anche con l\'app in italiano.',
+  },
+];
+
+/** Tutti i valori dei cataloghi italiani, istanziati come li vede l'albero. */
+function valoriDiTuttiICataloghi(): { file: string; chiave: string; valore: string }[] {
+  const dir = path.join(process.cwd(), 'messages', 'it');
+  const fuori: { file: string; chiave: string; valore: string }[] = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json'))) {
+    const catalogo = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Record<string, unknown>;
+    for (const [chiave, valore] of Object.entries(catalogo)) {
+      if (typeof valore === 'string') {
+        fuori.push({ file: `messages/it/${f}`, chiave, valore: comeARuntime(valore) });
+      }
+    }
+  }
+  return fuori;
+}
+
+describe('lock: flow Maestro (ancore che l\'app non pronuncia più)', () => {
+  it('R24a · il registro delle ancore non-di-catalogo è ancora usato', () => {
+    // Controllo di SCADENZA, sullo stampo di R8a/R22a: un'eccezione che nessun flow usa
+    // più è un permesso lasciato aperto, e il prossimo che ci passa non se ne accorge.
+    const usati = new Set(tuttiIFlow().flatMap((f) => tuttiISelettori(leggiFlow(f))));
+    const inutili = ANCORE_NON_DI_CATALOGO.filter((a) => !usati.has(a.selettore)).map(
+      (a) => `«${a.selettore}» non è più cercata da nessun flow: toglila dal registro`,
+    );
+    expect(inutili, 'Eccezione senza più un caso d\'uso.').toEqual([]);
+  });
+
+  it('R24b · ogni ancora dei flow combacia con un testo che l\'app produce', () => {
+    const voci = valoriDiTuttiICataloghi();
+    const dichiarate = new Set(ANCORE_NON_DI_CATALOGO.map((a) => a.selettore));
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      for (const sel of new Set(tuttiISelettori(leggiFlow(f)))) {
+        if (dichiarate.has(sel)) continue;
+        if (voci.some((v) => combaciaComeMaestro(sel, v.valore))) continue;
+        // Ci sarà pure una voce che lo CONTIENE: dirlo aiuta chi legge il rosso, perché
+        // nove volte su dieci il testo è stato allungato e l'ancora è rimasta corta.
+        const vicine = voci
+          .filter((v) => {
+            try {
+              return new RegExp(sel, 'i').test(v.valore);
+            } catch {
+              return false;
+            }
+          })
+          .slice(0, 2)
+          .map((v) => `${v.file}:${v.chiave} = ${JSON.stringify(v.valore.slice(0, 70))}`);
+        colpevoli.push(
+          `${f} · «${sel}» non combacia con nessuna voce di messages/it/. ` +
+            (vicine.length
+              ? `Forse è stato allungato: ${vicine.join(' | ')}`
+              : 'Nessuna voce lo contiene nemmeno in parte: o l\'app non lo dice più, o è ' +
+                'un testo di sistema e va dichiarato in ANCORE_NON_DI_CATALOGO con la ragione.'),
+        );
+      }
+    }
+    expect(
+      colpevoli,
+      'Ancora ORFANA: il flow cerca una frase che l\'app non pronuncia in nessun punto. Non ' +
+        'può fallire «a volte» — fallisce SEMPRE, e il collaudo accusa un prodotto sano ' +
+        '(mobile-ios 2026-08-07: rosso sul sottotitolo della conferma mentre l\'assenza era ' +
+        'stata scritta davvero su `presenze`).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R25 · IL TASTO INDIETRO NON RIPORTA LA PAGINA IN CIMA ─────────────────
+ *
+ * Collaudo mobile-android del 2026-08-07, ultima tappa di
+ * `android-percorso-genitore.yaml`: dopo `- back` l'app torna su
+ * /parent/attendance — la `topResumedActivity` resta `it.kidville.app/.MainActivity`,
+ * la pagina è quella giusta — e l'asserzione successiva fallisce lo stesso.
+ * Il motivo non è la navigazione: è che il browser RIPRISTINA la posizione di
+ * scorrimento che la pagina aveva quando la si è lasciata. Le tappe precedenti
+ * l'avevano portata in fondo, quindi l'intestazione è finita SOPRA il viewport e
+ * Chromium l'ha passata ad AccessibilityNodeInfo con `bounds="[0,0][0,0]"`.
+ * Misura di quel momento:
+ *   'Avvisa gli insegnanti in anticipo: …'  bounds="[0,0][0,0]"     ← l'ancora usata
+ *   'Giorno dell’assenza'                   bounds="[105,275][976,341]"
+ *   'COMUNICA ASSENZA'  Button              bounds="[105,1065][976,1210]"
+ * Uno swipe verso il basso restituiva al primo nodo bounds reali: c'era, non era
+ * in viewport.
+ *
+ * È la terza faccia della stessa malattia (R7 il nodo alto 0, R22 il nodo sotto
+ * la piega, qui il nodo SOPRA la piega dopo un ripristino), e ha una regola sua
+ * perché il segnale che la distingue è il comando `back`: l'ancora della tappa 3
+ * — la stessa, sulla stessa pagina — funzionava benissimo, perché ci si arrivava
+ * con la pagina appena montata.
+ *
+ * LA REGOLA, per come è scritta, è a INVERSIONE DELL'ONERE: dopo un `back` non si
+ * asserisce niente che non sia stato MISURATO visibile in quel punto, oppure si
+ * usa uno `scrollUntilVisible`, che cerca il nodo dovunque sia. La strada in
+ * discesa — «tanto ci passavo prima» — è quella che ha prodotto il difetto.
+ *
+ * NON COPRE: il `back` che cambia pagina (torna a una schermata diversa da quella
+ * da cui si era partiti), dove lo scroll ripristinato è quello di UN'ALTRA pagina
+ * e il registro non dice niente di utile.
+ */
+type AncoraDopoBack = {
+  flow: string;
+  /** Il testo asserito subito dopo il `back`. */
+  ancora: string;
+  /** Dove nasce quel testo: se il catalogo cambia, R25a lo dice. */
+  fonte: { file: string; chiave: string };
+  /** Come si sa che DOPO il back quel nodo è in viewport. */
+  prova: string;
+};
+
+const ANCORE_DOPO_BACK: AncoraDopoBack[] = [
+  {
+    flow: 'android-percorso-genitore.yaml',
+    ancora: 'Giorno dell’assenza',
+    fonte: { file: 'messages/it/parentServizi.json', chiave: 'attendanceGiorno' },
+    prova:
+      'uiautomator dump del 2026-08-07 subito dopo il `back` da /parent/avvisi: ' +
+      'bounds="[105,275][976,341]", cioè sotto l\'AppBar (alta 82 px) e dentro lo schermo. ' +
+      'Nello stesso dump il sottotitolo dell\'hero — l\'ancora che il flow usava — era a ' +
+      '[0,0][0,0]. Il campo data resta visibile perché il ripristino riporta lo scroll a ' +
+      'circa 267 px, dove il MODULO è la parte di pagina in viewport.',
+  },
+  {
+    flow: 'android-percorso-docente.yaml',
+    ancora: 'Dashboard',
+    fonte: { file: 'messages/it/teacherNav.json', chiave: 'tabDashboard' },
+    prova:
+      'È l\'etichetta di un tab della bottom-nav, che sta a schermo qualunque sia lo ' +
+      'scorrimento della pagina. Provata dall\'esecuzione verde del 2026-08-02 su ' +
+      'KV-play-phone (31 COMPLETED, due esecuzioni su due), che contiene questo stesso ' +
+      '`back` seguito da questa stessa asserzione.',
+  },
+  {
+    flow: 'android-percorso-segreteria.yaml',
+    ancora: 'Dashboard Direzione',
+    fonte: { file: 'messages/it/adminNav.json', chiave: 'dashboardTitolo' },
+    prova:
+      'Titolo dell\'header del cockpit, che è `sticky` in cima e non scorre via con il ' +
+      'contenuto. Provato dall\'esecuzione verde del 2026-07-31 (39/39), che esegue TRE ' +
+      'volte la sequenza `back` + questa asserzione.',
+  },
+];
+
+/** I comandi che chiudono la finestra di osservazione dopo un `back`. */
+const CHIUDONO_LA_FINESTRA = ['tapOn', 'back', 'launchApp', 'stopApp', 'scrollUntilVisible', 'scroll'];
+
+describe('lock: flow Maestro (le ancore dopo il tasto Indietro)', () => {
+  it('R25a · il registro delle ancore dopo il back è ancora vero nei cataloghi', () => {
+    const scaduti: string[] = [];
+    for (const a of ANCORE_DOPO_BACK) {
+      const valore = leggiCatalogo(a.fonte.file)[a.fonte.chiave];
+      if (typeof valore !== 'string') {
+        scaduti.push(`${a.fonte.file}: la chiave ${a.fonte.chiave} non esiste più`);
+        continue;
+      }
+      if (comeARuntime(valore) !== a.ancora) {
+        scaduti.push(
+          `${a.fonte.file}:${a.fonte.chiave} = ${JSON.stringify(valore)}, ma il registro ` +
+            `dichiara misurata «${a.ancora}». La misura riguardava un altro testo: ` +
+            'RIMISURARE prima di fidarsi di R25b.',
+        );
+      }
+    }
+    expect(scaduti, 'Registro R25 scaduto: non descrive più i cataloghi.').toEqual([]);
+  });
+
+  it('R25b · dopo un `back` si asserisce solo ciò che è stato misurato visibile lì', () => {
+    // Le etichette della bottom-nav sono ASSOLTE senza bisogno di una riga nel registro:
+    // ARIA_PERSISTENTI le dichiara presenti su OGNI pagina (R21a ne verifica la scadenza
+    // sul codice), e una barra fissa non si sposta con lo scorrimento del documento.
+    // Riusare quella misura invece di ricopiarla è la stessa scelta di R18: una regola
+    // valida per due strade deve vivere in un posto solo.
+    const persistenti = ARIA_PERSISTENTI.map((a) => leggiCatalogo(a.catalogo)[a.chiave]).filter(
+      (v): v is string => typeof v === 'string',
+    );
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      const p = passi(leggiFlow(f), { annidati: true });
+      const ammesse = [...ANCORE_DOPO_BACK.filter((a) => a.flow === f).map((a) => a.ancora), ...persistenti];
+      p.forEach((passo, i) => {
+        if (passo.nome !== 'back') return;
+        for (let j = i + 1; j < p.length; j++) {
+          if (CHIUDONO_LA_FINESTRA.includes(p[j].nome)) break;
+          // Solo le asserzioni POSITIVE. Una negativa dopo un `back` ha un difetto suo —
+          // è VACUA quando il nodo non è in viewport — e ha già la sua regola (R22b):
+          // trattarla qui vorrebbe dire chiedere due volte la stessa cosa in due modi
+          // diversi, e il secondo modo è quello sbagliato.
+          const positiva =
+            p[j].nome === 'assertVisible' ||
+            (p[j].nome === 'extendedWaitUntil' && /\bvisible:/.test(p[j].corpo));
+          if (!positiva) continue;
+          const sel = tuttiISelettori(`---\n${p[j].corpo}`);
+          for (const s of sel) {
+            if (ammesse.some((a) => combaciaComeMaestro(s, a))) continue;
+            colpevoli.push(
+              `${f} · ${p[j].nome} «${s}» subito dopo un \`back\`: nessuna misura dice che ` +
+                'quel nodo sia in viewport DOPO il ripristino dello scorrimento. Il `back` ' +
+                'riporta la pagina dov\'era, non in cima: un\'intestazione arriva ad Android ' +
+                'con bounds [0,0][0,0] e su iOS non è proprio nell\'albero. O si usa ' +
+                '`scrollUntilVisible`, che il nodo lo cerca, o si misura e si scrive la riga ' +
+                'in ANCORE_DOPO_BACK.',
+            );
+          }
+        }
+      });
+    }
+    expect(
+      colpevoli,
+      'Asserzione dopo `back` non misurata: fallisce SEMPRE su un\'app che si è comportata ' +
+        'bene, e l\'ultima tappa del percorso risulta rossa (mobile-android, 2026-08-07).',
     ).toEqual([]);
   });
 });

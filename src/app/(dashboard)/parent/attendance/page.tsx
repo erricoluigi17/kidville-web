@@ -2,8 +2,9 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { CheckCircle, CalendarX2, AlertTriangle, RotateCcw } from 'lucide-react';
+import { CheckCircle, CalendarX2, RotateCcw } from 'lucide-react';
 import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
+import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
@@ -11,6 +12,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
 /**
@@ -45,6 +47,13 @@ const ID_ERRORE_INVIO = 'attendance-errore-invio';
  */
 const ID_AIUTO_GIORNO = 'attendance-aiuto-giorno';
 const ID_NOTA_MOTIVO = 'attendance-nota-motivo';
+
+/**
+ * L'id della riga che dice PERCHÉ il comando non risponde (o che è partito).
+ * Ci punta l'`aria-describedby` del pulsante: stessa ragione delle costanti qui
+ * sopra — un id inventato in due punti diversi non descrive più niente.
+ */
+const ID_STATO_COMANDO = 'attendance-stato-comando';
 
 
 /**
@@ -220,10 +229,52 @@ function AttendanceInner() {
      *
      * LA REGOLA, e il perché: **il campo «Motivo» non è un foglio bianco, è lo
      * specchio di ciò che risulta archiviato per il giorno scelto.** Lasciarlo
-     * com'è significa RICONFERMARE, non cancellare; cancellare resta possibile,
-     * ma si fa svuotando il campo — che è un gesto, non una dimenticanza.
+     * com'è significa RICONFERMARE, non cancellare.
+     *
+     * ⚠️ E CANCELLARE NON SI FA PIÙ DA QUI (2026-08-08). Questo commento diceva
+     * «cancellare resta possibile, ma si fa svuotando il campo — che è un gesto,
+     * non una dimenticanza», e da `route.ts:518-522` in poi era FALSO: il server
+     * ha scelto, deliberatamente, di non azzerare mai `giustificazione_testo` su
+     * un campo vuoto, perché una copia vecchia dell'app dallo store cancellava un
+     * dato sanitario di un minore senza che nessuno l'avesse chiesto. Il prezzo è
+     * dichiarato lì. Qui il difetto era che l'interfaccia MENTIVA: mandava `''`,
+     * il server lo ignorava, e lo schermo diceva comunque «Assenza aggiornata».
+     * Ora lo dice PRIMA (`motivoNonCancellabile`) e indica la via che funziona —
+     * annulla e ricomunica. Un commento che descrive una capacità che non c'è è
+     * la trappola che questo repo ha già pagato tre volte.
      */
     const giaComunicata = comunicate.find((v) => v.data === data) ?? null;
+    /**
+     * Il genitore ha SVUOTATO un motivo che risulta archiviato per il giorno
+     * scelto. Non è un errore — è solo un gesto che questa schermata non può
+     * eseguire, e che senza un avviso verrebbe scambiato per una cancellazione
+     * riuscita.
+     */
+    const motivoSvuotato = Boolean(giaComunicata?.giustificazione_testo) && reason.trim() === '';
+    /**
+     * L'identità è risolta e NON c'è nessun alunno. `ready` diventa `true` anche
+     * in questo caso (`decidiFiglioRivalidato` con `figliIds = []` restituisce
+     * `studentId: null`), e finora il pulsante guardava solo `ready` mentre il
+     * gestore usciva su `!studentId`: nel mezzo restava uno stato in cui il
+     * comando SEMBRA pronto e non fa assolutamente niente.
+     */
+    const senzaAlunno = ready && !studentId;
+    /**
+     * Perché il comando non risponde — oppure che è appena partito. Una riga
+     * sola, in `role="status"`, che serve a due cose insieme: la DESCRIZIONE del
+     * pulsante (`aria-describedby`) e l'ANNUNCIO dell'attesa (WCAG 4.1.3). Prima
+     * l'unico segnale che il gesto fosse partito era l'etichetta «Invio…» su un
+     * pulsante sbiadito a 1,20:1, e per chi ascolta non c'era nulla del tutto.
+     */
+    const statoComando = submitting
+        ? ta('invioInCorso')
+        : senzaAlunno
+            ? ta('nessunAlunno')
+            : !ready
+                ? ta('identitaInCorso')
+                : !data
+                    ? ta('giornoMancante')
+                    : '';
     /**
      * Il giorno mostrato dal modulo, leggibile da `caricaComunicate` SENZA
      * entrare fra le sue dipendenze. Se ci entrasse, l'effetto che legge
@@ -503,12 +554,7 @@ function AttendanceInner() {
 
             {!caricandoElenco && erroreElenco && (
                 <div className="mt-4">
-                    <div
-                        role="alert"
-                        className="flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong"
-                    >
-                        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {erroreElenco}
-                    </div>
+                    <FasciaStatoAssenza tipo="errore" ruolo="alert">{erroreElenco}</FasciaStatoAssenza>
                     <Btn variant="ghost" size="sm" className="mt-3" onClick={() => { void ricaricaComunicate(); }}>
                         <RotateCcw size={14} /> {t('attendanceRiprova')}
                     </Btn>
@@ -546,18 +592,28 @@ function AttendanceInner() {
                 </ul>
             )}
 
+            {/* L'ATTESA dell'annullamento, annunciata. Vale qui la stessa
+                ragione dell'invio: `disabled` sfoga il fuoco su `<body>` e per
+                chi ascolta l'intervallo era silenzio puro. */}
+            {annullando && (
+                <p role="status" className="mt-3 font-maven text-xs text-kidville-sub">
+                    {ta('annullamentoInCorso')}
+                </p>
+            )}
+
             {erroreAnnullamento && (
-                <div
-                    ref={refErroreAnnullamento}
-                    role="alert"
+                <FasciaStatoAssenza
+                    tipo="errore"
+                    ruolo="alert"
+                    ricovero={refErroreAnnullamento}
                     // `tabIndex={-1}`: raggiungibile dal codice, mai dal Tab.
                     // Il fuoco ci arriva solo da chi ha appena premuto un
                     // «Annulla» che il server ha rifiutato.
                     tabIndex={-1}
-                    className={`mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong ${FUOCO_ESITO}`}
+                    className="mt-3"
                 >
-                    <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {erroreAnnullamento}
-                </div>
+                    {erroreAnnullamento}
+                </FasciaStatoAssenza>
             )}
             {esitoAnnullamento && !erroreAnnullamento && (
                 <p
@@ -627,7 +683,15 @@ function AttendanceInner() {
 
     const modulo = (
         <>
-            <form onSubmit={handleSubmit} className="mt-5 rounded-card bg-kidville-white p-6 shadow-sm">
+            {/* `aria-busy`: il modulo dichiara di stare lavorando. Senza, dalla
+                pressione fino alla risposta del server non c'era NIENTE — né un
+                ruolo, né una proprietà, né una live region attiva (l'unica in
+                pagina, il `PageLoader`, porta `aria-hidden`). */}
+            <form
+                onSubmit={handleSubmit}
+                aria-busy={submitting || undefined}
+                className="mt-5 rounded-card bg-kidville-white p-6 shadow-sm"
+            >
                 {/* Icona DR */}
                 <div className="mb-4 flex items-center gap-3">
                     <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-kidville-error-soft text-kidville-error">
@@ -692,7 +756,7 @@ function AttendanceInner() {
                     // L'istruzione c'è SEMPRE; il messaggio d'errore si aggiunge
                     // quando il rifiuto parla del giorno.
                     aria-describedby={erroreSullaData ? `${ID_AIUTO_GIORNO} ${ID_ERRORE_INVIO}` : ID_AIUTO_GIORNO}
-                    className="w-full rounded-xl border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
+                    className="w-full rounded-input border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
                 />
 
                 {/*
@@ -704,34 +768,18 @@ function AttendanceInner() {
                     compilazione.
                 */}
                 {giaComunicata && (
-                    <p
-                        role="status"
-                        className="mt-2 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn"
-                    >
+                    <FasciaStatoAssenza tipo="avviso" ruolo="status" className="mt-2">
                         {ta('giaComunicataAvviso')}
-                    </p>
+                    </FasciaStatoAssenza>
                 )}
 
                 <label htmlFor="attendance-motivo" className="mb-2 mt-4 block font-maven font-medium text-kidville-green">
                     {t('attendanceMotivo')}
                 </label>
-                {/* `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
-                    l'agente utente con `currentColor` al 50% di alfa — misurato in
-                    Chrome `rgb(128,180,175)`, 2,32:1. Un segnaposto è TESTO, e
-                    1.4.3 si applica. Il repo aveva già chiuso lo stesso difetto
-                    sulle superfici pubbliche (`.kv-public ::placeholder`); questa
-                    è una schermata di dashboard, e quella regola non la raggiunge. */}
-                <textarea
-                    id="attendance-motivo"
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    aria-describedby={ID_NOTA_MOTIVO}
-                    className="h-28 w-full resize-none rounded-xl border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
-                    placeholder={t('attendanceMotivoPlaceholder')}
-                />
                 {/*
-                    L'INFORMAZIONE NEL MOMENTO IN CUI IL DATO SI SCRIVE.
-                    Il segnaposto qui sopra sollecita esplicitamente un dato di
+                    L'INFORMAZIONE NEL MOMENTO IN CUI IL DATO SI SCRIVE — e sta
+                    PRIMA del campo, non dopo.
+                    Il segnaposto del campo sollecita esplicitamente un dato di
                     salute («Es. febbre, visita medica…») di un MINORE: è una
                     categoria particolare (art. 9 GDPR), e finora la schermata
                     non diceva né chi lo legge, né per quanto resta, né dove sta
@@ -739,11 +787,21 @@ function AttendanceInner() {
                     il genitore non la sta leggendo nell'istante in cui scrive
                     «febbre». Legata al campo con `aria-describedby`, così chi
                     ascolta la sente PRIMA di digitare e non dopo.
+
+                    ⚠️ PERCHÉ SI È SPOSTATA SOPRA IL CAMPO (2026-08-08). Stava
+                    sotto, cioè esattamente nella fascia che il comando incollato
+                    in fondo copre: misurato in Chrome a 390×844, il pulsante
+                    (y 718→772, riempimento verde OPACO) copriva questa riga
+                    (y 725→757) per 32px su 32 — il 100%. A 320px la frase si
+                    leggeva «Il motivo lo leggono le insegnanti della se…». Una
+                    nota di trasparenza che si vede solo scorrendo è una nota che
+                    metà dei genitori non legge; sopra il campo la incontrano
+                    prima di digitare, che è anche il momento giusto.
                     I dodici mesi non sono un numero scelto qui: sono quelli che
                     il lavoro `presenze-giustificazioni-retention` applica
                     davvero, e un lock li confronta con `v_mesi` della migrazione.
                 */}
-                <p id={ID_NOTA_MOTIVO} className="mt-2 font-maven text-xs text-kidville-sub">
+                <p id={ID_NOTA_MOTIVO} className="mb-2 font-maven text-xs text-kidville-sub">
                     {ta('motivoPrivacy')}{' '}
                     <a
                         href="/privacy"
@@ -754,19 +812,55 @@ function AttendanceInner() {
                         {ta('motivoPrivacyLink')}
                     </a>
                 </p>
+                {/* `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
+                    l'agente utente con `currentColor` al 50% di alfa — misurato in
+                    Chrome `rgb(128,180,175)`, 2,32:1. Un segnaposto è TESTO, e
+                    1.4.3 si applica. Il repo aveva già chiuso lo stesso difetto
+                    sulle superfici pubbliche (`.kv-public ::placeholder`); questa
+                    è una schermata di dashboard, e quella regola non la raggiunge. */}
+                <textarea
+                    id="attendance-motivo"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    // Il tetto è quello del SERVER, letto dalla stessa costante
+                    // che lo impone (`MOTIVO_MAX_CARATTERI`), non un numero
+                    // ricopiato: senza, si scriveva una nota medica di 1200
+                    // caratteri e lo si scopriva solo dal 400 dopo l'invio.
+                    maxLength={MOTIVO_MAX_CARATTERI}
+                    aria-describedby={ID_NOTA_MOTIVO}
+                    className="h-28 w-full resize-none rounded-input border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
+                    placeholder={t('attendanceMotivoPlaceholder')}
+                />
+
+                {/*
+                    IL GESTO CHE QUESTA SCHERMATA NON PUÒ ESEGUIRE, DETTO PRIMA.
+                    Svuotare il campo non cancella il motivo archiviato: il
+                    server, dal 2026-08-08, non azzera mai `giustificazione_testo`
+                    su un campo vuoto (una copia vecchia dell'app cancellava un
+                    dato sanitario di un minore senza che nessuno l'avesse
+                    chiesto). Finora l'app mandava `''`, il server lo ignorava e
+                    lo schermo diceva comunque «Assenza aggiornata»: un successo
+                    dichiarato senza verifica. La via che funziona — annullare e
+                    ricomunicare — è scritta nel messaggio.
+                */}
+                {motivoSvuotato && (
+                    <FasciaStatoAssenza tipo="avviso" ruolo="status" className="mt-2">
+                        {ta('motivoNonCancellabile')}
+                    </FasciaStatoAssenza>
+                )}
 
                 {error && (
-                    <div
-                        id={ID_ERRORE_INVIO}
-                        ref={refErrore}
-                        role="alert"
+                    <FasciaStatoAssenza
+                        tipo="errore"
+                        ruolo="alert"
+                        ricovero={refErrore}
                         // Raggiungibile dal codice ma NON dal Tab: stessa forma
                         // della conferma e dell'esito dell'annullamento.
                         tabIndex={-1}
-                        className={`mt-3 flex items-start gap-2 rounded-xl border border-kidville-error/20 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong ${FUOCO_ESITO}`}
+                        className="mt-3"
                     >
-                        <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> {error}
-                    </div>
+                        <span id={ID_ERRORE_INVIO}>{error}</span>
+                    </FasciaStatoAssenza>
                 )}
 
                 {/*
@@ -788,17 +882,79 @@ function AttendanceInner() {
                     `z-40` e non di più: sotto la barra, mai sopra — coprire la
                     navigazione sarebbe lo stesso difetto al contrario.
                 */}
-                <div className="sticky bottom-[var(--kv-bottomnav-h)] z-40 mt-4">
+                {/*
+                    PERCHÉ IL COMANDO NON RISPONDE — o che è appena partito.
+                    Sta SOPRA il ricovero incollato in fondo, altrimenti sarebbe
+                    la prossima riga a finirci sotto. `role="status"` per due
+                    ragioni insieme: è la descrizione del pulsante
+                    (`aria-describedby`) e l'annuncio dell'attesa (WCAG 4.1.3).
+                */}
+                {statoComando && (
+                    <p id={ID_STATO_COMANDO} role="status" className="mt-3 font-maven text-xs text-kidville-sub">
+                        {statoComando}
+                    </p>
+                )}
+
+                {/*
+                    IL PULSANTE NON DEVE FINIRE DIETRO LA BARRA DI NAVIGAZIONE.
+
+                    Misurato sull'emulatore Android il 2026-08-07: al primo
+                    ingresso, senza scorrere, il pulsante era coperto per 137px
+                    su 145 dalla bottom-nav (`fixed`, `z-50`) e se ne vedeva un
+                    bordo di 8px. Un tocco al suo centro — dove il pulsante SI
+                    INTUISCE — apriva /parent/avvisi: il gesto principale della
+                    schermata portava altrove, senza un messaggio.
+                    Il `pb-24` della pagina non c'entra e non poteva bastare:
+                    riserva spazio in FONDO al documento, mentre qui il pulsante
+                    sta a metà e la pagina è più alta della viewport.
+                    `sticky` + `--kv-bottomnav-h` (l'altezza DICHIARATA della
+                    barra, safe-area compresa) lo tengono appoggiato sopra di
+                    essa finché il modulo è a schermo, e lo rimettono nel flusso
+                    appena la sua posizione naturale sale sopra quella linea.
+                    `z-40` e non di più: sotto la barra, mai sopra — coprire la
+                    navigazione sarebbe lo stesso difetto al contrario.
+                    Misura del 2026-08-08 sull'emulatore: 49/49 tocchi a segno,
+                    6px di sovrapposizione su 145. Il difetto è chiuso.
+
+                    ⚠️ LA SUPERFICIE (2026-08-08). La correzione qui sopra ne
+                    aveva aperto un altro: un pulsante incollato in fondo si porta
+                    SOPRA la propria posizione naturale, e con il solo riempimento
+                    del bottone copriva il testo sottostante a metà parola. Ora è
+                    il PIEDE DELLA CARD — fondo bianco a piena larghezza
+                    (`-mx-6`, che annulla il `p-6` del modulo), filo di
+                    separazione e ombra verso l'alto, come `BulkSelectionBar` e
+                    `BulkAssignBar` fanno da sempre per le loro barre galleggianti.
+                    Ciò che passa sotto è coperto in modo DICHIARATO; e la nota
+                    sul trattamento del motivo — che era la riga coperta al 100%
+                    a 390×844 — non è più là sotto: sta sopra il campo.
+                */}
+                <div className="sticky bottom-[var(--kv-bottomnav-h)] z-40 -mx-6 -mb-6 mt-4 rounded-b-card border-t border-kidville-line bg-kidville-white px-6 py-3 shadow-[0_-8px_20px_-12px_rgba(0,0,0,0.28)]">
                     <Btn
                         type="submit"
                         variant="primary"
                         size="lg"
-                        // `!data`: il selettore nativo di Android offre CLEAR, e
-                        // con il campo vuoto la richiesta partiva per farsi
-                        // rifiutare — con un messaggio che parlava «di questo
-                        // momento» invece che del giorno mancante. La card
-                        // gemella lo faceva già bene.
-                        disabled={!ready || submitting || !data}
+                        // I DUE SIGNIFICATI DI «non si può premere», separati.
+                        //
+                        // `disabled` = NON PUOI ANCORA, ed è vero: manca il
+                        // giorno (il selettore nativo di Android offre CLEAR e la
+                        // richiesta partiva per farsi rifiutare), manca l'alunno,
+                        // o l'identità non è ancora risolta. `!studentId` era
+                        // l'assente: `ready` diventa `true` anche per un genitore
+                        // senza figli collegati, e il pulsante restava acceso su
+                        // un gesto che non faceva NIENTE — nessuna richiesta,
+                        // nessun messaggio, nessun cambiamento a schermo.
+                        //
+                        // `aria-disabled` = STO LAVORANDO. Marcarlo `disabled`
+                        // faceva sfogare il fuoco a Chrome — che torna su
+                        // `<body>`, cioè all'inizio della pagina — proprio
+                        // durante l'attesa, e lo sbiadiva a 1,20:1 portandosi via
+                        // l'unico segnale che il gesto fosse partito. Un pulsante
+                        // che lavora è un MESSAGGIO, non un controllo spento:
+                        // resta leggibile, conserva il fuoco, e il doppio invio lo
+                        // impedisce la guardia di `handleSubmit`.
+                        disabled={!ready || !studentId || !data}
+                        aria-disabled={submitting || undefined}
+                        aria-describedby={statoComando ? ID_STATO_COMANDO : undefined}
                         className="w-full"
                     >
                         {submitting ? t('attendanceInvio') : t('attendanceComunicaAssenza')}

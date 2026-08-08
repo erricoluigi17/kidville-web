@@ -35,15 +35,16 @@ import { join } from 'node:path'
  *     con la voce AVVISI si legge come «Avvisi → gli insegnanti»);
  *  4. la conferma d'invio non afferma che qualcuno è stato avvisato: la pagina
  *     NON conosce il numero dei destinatari, che per una sezione senza docenti
- *     collegati è zero.
+ *     collegati è zero;
+ *  5. nessuna frase dichiara un formato di data. Il campo giorno è nativo su
+ *     entrambe le schermate e il formato lo disegna il sistema: `Formato:
+ *     gg/mm/aaaa` era il residuo del campo mascherato, non più citato da alcun
+ *     file di `src/` e tolto dai cataloghi il 2026-08-08.
  *
  * ─── COSA NON CONTROLLA (di proposito) ───────────────────────────────────────
  *  · i due segnaposto del campo «Motivo», che divergono ancora: toccarli è il
  *    rilievo di privacy sul dato sanitario (il segnaposto lo SOLLECITA), e va
- *    fatto insieme all'informazione sul trattamento, non qui;
- *  · l'aiuto sul formato della data (`comunicaDataAiuto`), che esiste solo dove
- *    c'è il campo mascherato: finché la pagina usa l'`<input type="date">`
- *    nativo, una gemella non ce l'ha.
+ *    fatto insieme all'informazione sul trattamento, non qui.
  */
 
 const RADICE = process.cwd()
@@ -90,6 +91,15 @@ const GEMELLE: Array<{ ruolo: string; servizi: string; primaria: string }> = [
     { ruolo: 'la conferma d’invio', servizi: 'attendanceInviataTitolo', primaria: 'comunicaFatta' },
     { ruolo: 'l’errore d’invio', servizi: 'attendanceErrGenerico', primaria: 'comunicaNonRiuscita' },
     { ruolo: 'il titolo dell’elenco', servizi: 'attendanceElencoTitolo', primaria: 'comunicaElencoTitolo' },
+    /**
+     * Il collaudo del 2026-08-08 (localizzazione F5) ha misurato che sotto lo
+     * STESSO titolo — «Assenze già comunicate» — una schermata dice fino a quando
+     * si fa in tempo a ritirare la comunicazione e l'altra tace, pur mostrando lo
+     * stesso elenco e lo stesso comando «Annulla», che smette di funzionare per la
+     * stessa ragione. Le 16 coppie qui sopra tenevano allineato il testo della
+     * riga; il CONTORNO della riga era scritto due volte e in una copia mancava.
+     */
+    { ruolo: 'il limite entro cui si annulla', servizi: 'attendanceElencoNota', primaria: 'comunicaElencoNota' },
     { ruolo: 'l’elenco vuoto', servizi: 'attendanceElencoVuoto', primaria: 'comunicaElencoVuoto' },
     { ruolo: 'l’elenco non letto', servizi: 'attendanceElencoErrore', primaria: 'comunicaElencoNonLetto' },
     { ruolo: 'il comando che annulla', servizi: 'attendanceAnnulla', primaria: 'comunicaAnnulla' },
@@ -225,6 +235,36 @@ describe('lock localizzazione · una sola azione, un solo nome, le stesse parole
         expect(occupate.has('avvisi')).toBe(true)
         expect(occupate.has('diario')).toBe(true)
         expect(occupate.has('avvisa')).toBe(false)
+    })
+
+    it('nessuna frase di questa funzione dichiara un formato di data', () => {
+        // Il campo giorno è un `<input type="date">` NATIVO su tutte e due le
+        // schermate: il formato lo disegna il sistema operativo, e in un browser
+        // inglese non è «gg/mm/aaaa». `parentPrimaria.comunicaDataAiuto` («Formato:
+        // gg/mm/aaaa» / «Format: dd/mm/yyyy») era il residuo del campo mascherato
+        // sostituito in questo ciclo: non la citava più nessun file di `src/`, e una
+        // frase orfana in catalogo è una frase che qualcuno ripesca. Toglierla non
+        // basta — senza questa regola tornerebbe alla prima schermata che sembra
+        // averne bisogno.
+        //
+        // La regola vale SOLO per le stringhe di questa funzione: `shared.formatoData`
+        // e i due segnaposto del registro protocolli stanno su campi di testo veri,
+        // dove dire il formato è l'unico modo di farsi capire.
+        const formati: string[] = []
+        for (const lingua of ['it', 'en'] as const) {
+            for (const { dove, testo } of stringheDellaFunzione(lingua)) {
+                if (/\b(gg\/mm\/aaaa|dd\/mm\/yyyy|mm\/dd\/yyyy|aaaa-mm-gg|yyyy-mm-dd)\b/i.test(testo)) {
+                    formati.push(`${dove} = «${testo}»`)
+                }
+            }
+        }
+        expect(
+            formati,
+            `Queste voci dichiarano un formato di data su un campo che il sistema disegna da sé:\n  ` +
+            `${formati.join('\n  ')}\n` +
+            `Su un \`<input type="date">\` la frase è falsa appena il browser è in inglese. Se il campo ` +
+            `tornerà mascherato, la frase tornerà con lui — e con una prova che lo dice.`,
+        ).toEqual([])
     })
 
     it('la conferma d’invio non afferma che qualcuno è stato avvisato', () => {

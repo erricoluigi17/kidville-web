@@ -38,12 +38,19 @@ export const POST = withRoute('primaria/presenze/giust-vista:POST', async (reque
     const scopeErr = await assertSezioneInScope(supabase, auth.user, presenza.section_id as string)
     if (scopeErr) return scopeErr
 
+    // SI CHIEDONO SEI COLONNE, NON VENTICINQUE. `.select()` nudo è `select *`, e
+    // su un UPDATE PostgREST restituisce la riga INTERA: `giustificazione_firma`
+    // (email, indirizzo IP e user-agent del genitore firmatario) e
+    // `giustificazione_testo` (dato sanitario del minore) tornavano al browser
+    // del docente senza che nessuna schermata li usasse — la pagina della presa
+    // visione controlla `res.ok` e ricarica. `giustificata_da` e `alunno_id`
+    // restano: servono qui sotto per avvisare il genitore che ha giustificato.
     const { data: updated, error } = await supabase
       .from('presenze')
       .update({ giust_vista_il: new Date().toISOString(), giust_vista_da: userId })
       .eq('id', presenzaId)
       .eq('giustificata', true)
-      .select()
+      .select('id, alunno_id, data, giustificata, giustificata_da, giust_vista_il')
       .maybeSingle()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

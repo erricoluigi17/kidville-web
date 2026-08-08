@@ -229,6 +229,16 @@ env:
     direction: UP
     centerElement: true
     timeout: 20000
+# Il campo data, che con la CTA centrata è a schermo: prova che è tornato il
+# MODULO, non solo la pagina. Il gemello Android ce l'aveva e questo no — ed è la
+# stessa asimmetria per cui il sottotitolo della conferma stava qui e non di là.
+# Lock: R18c, che le pretende su tutti e due.
+# ANCORATO, senza `.*`: la forma non ancorata combacia anche con il testo d'aiuto
+# della stessa schermata, «Indica il giorno dell'assenza e, se vuoi, il motivo.»
+# (parentServizi.json → attendanceIndicaGiorno), che è SEMPRE lì — anche quando il
+# campo non c'è. L'ha detto R23 al primo giro, prima che questa riga toccasse un
+# simulatore.
+- assertVisible: "Giorno dell.assenza"
 # `enabled: true` non è prudenza generica: il bottone nasce `disabled` finché
 # l'identità del genitore non è risolta (`disabled={!ready || submitting}`), e
 # un tap su un nodo disabilitato risulta COMPLETED senza fare niente.
@@ -251,13 +261,24 @@ env:
 # (parentServizi.json → attendanceInviataTesto) è l'unico testo che nomina la
 # data, quindi prova che il server ha risposto con la riga giusta e non solo che
 # una schermata è cambiata.
-# ⚠️ DEDOTTA, non misurata: sta nella stessa card, SOPRA la CTA appena attesa, e
-# la conferma è più corta del modulo che sostituisce — quindi se la CTA è
-# nell'albero lo è anche lei. Se un giorno questa riga diventa rossa mentre
-# l'invio riesce davvero, è QUESTA da togliere (o da far precedere da uno
-# scroll), non l'app da accusare.
+#
+# ⚠️ QUESTA RIGA È DIVENTATA ROSSA MENTRE L'INVIO RIUSCIVA, il 2026-08-07, ed è
+# andata esattamente come il commento di ieri prevedeva — salvo che la causa non
+# era il viewport. Il testo cercato era «La scuola è stata notificata
+# dell'assenza…», cioè la formulazione PRECEDENTE di `attendanceInviataTesto`:
+# il catalogo era stato riscritto e il flow no. L'app diceva
+#     ASSENZA COMUNICATA
+#     «Abbiamo registrato l’assenza del 08/08/2026. Grazie per la collaborazione.»
+#     COMUNICA UN’ALTRA ASSENZA
+# e il flow moriva sul 29° comando dopo aver scritto davvero la riga su `presenze`
+# — lasciandola lì, perché la morte cadeva prima della tappa che annulla.
+# La lezione non è «tre ancore da aggiornare»: è che un'ancora scritta a mano si
+# scolla da un catalogo che cambia, e nessun gate se ne accorge. Ora l'ancora è
+# legata alla sua CHIAVE (lock R18c, che legge il valore atteso da
+# parentServizi.json) e una frase che l'app non pronuncia più non può restare nel
+# file (lock R24b).
 - assertVisible:
-    text: ".*La scuola . stata notificata dell.assenza.*"
+    text: ".*Abbiamo registrato l.assenza del .*"
 - takeScreenshot: /tmp/kv-ios-genitore-3-assenza-inviata
 
 # ── 5. L'ASSENZA COMPARE NELL'ELENCO, E L'ANNULLAMENTO LA FA SPARIRE ─────────

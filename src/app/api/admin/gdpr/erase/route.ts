@@ -199,6 +199,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     let iscrizioniAdulti = 0
     let fileAdultiRimossi = 0
     let fileAdultiNonRimossi = 0
+    let notificheRimosse = esitoAlunno.notificheRimosse
     for (const pid of parentiOrfani) {
       const e = await anonimizzaParent(supabase, pid, at, OP)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
@@ -207,6 +208,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       iscrizioniAdulti += e.iscrizioniScrubbate
       fileAdultiRimossi += e.fileRimossi
       fileAdultiNonRimossi += e.fileNonRimossi
+      notificheRimosse += e.notificheRimosse
     }
 
     const nFileNonRimossi = esitoAlunno.fileNonRimossi + fileAdultiNonRimossi
@@ -234,6 +236,11 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       // nell'esito e non solo nei log perché è la parte dell'oblio che la famiglia
       // VEDE: se il telefono continua a suonare, «fatto» è una parola vuota.
       push_subscriptions_rimosse: pushRimosse,
+      // Le notifiche già recapitate che nominavano il minore (la campanella dei
+      // docenti e quella del genitore). La scadenza automatica a dodici mesi
+      // chiude il «per sempre»; l'art. 17 chiede «senza ingiustificato ritardo»,
+      // e questo è il numero che lo dimostra.
+      notifiche_rimosse: notificheRimosse,
     }
 
     // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è

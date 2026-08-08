@@ -40,7 +40,11 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
-vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFiglio }))
+vi.mock('@/lib/anagrafiche/legami', () => ({
+  genitoreHasFiglio: h.genitoreHasFiglio,
+  // Esito a tre valori del gate: qui si deriva dal mock booleano storico.
+  verificaLegameGenitore: async (...a: unknown[]) => ((await h.genitoreHasFiglio(...a)) ? 'si' : 'no'),
+}))
 vi.mock('@/lib/logging/logger', async (originale) => {
   const reale = await originale<typeof import('@/lib/logging/logger')>()
   return { ...reale, logEvento: h.logEvento }

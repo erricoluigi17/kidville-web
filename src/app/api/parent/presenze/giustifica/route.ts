@@ -93,11 +93,28 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
     }
 
     // Gating primaria: la giustifica genitore è ammessa solo per la scuola primaria.
-    const { data: alunno } = await supabase
+    //
+    // ═══ LA QUARTA COSA CHE LA PORTA GEMELLA AVEVA GIÀ IMPARATO ══════════════
+    //
+    // PostgREST NON LANCIA: ritorna `{ error }` (AGENTS.md, regola 7), e il
+    // `try/catch` che avvolge questo handler su quel ramo non scatta mai. Senza
+    // il controllo, un guasto di lettura usciva dalla porta del 404: al genitore
+    // di primaria — con l'OTP appena verificato — si diceva che suo figlio NON
+    // ESISTE, e la firma non veniva registrata senza che una riga lo spiegasse.
+    // Il gemello `comunica-assenza` l'aveva chiusa; questa porta no, ed è quella
+    // con la firma elettronica appesa.
+    const { data: alunno, error: alunnoErr } = await supabase
       .from('alunni')
       .select('id, section_id, scuola_id')
       .eq('id', studentId)
       .maybeSingle()
+    if (alunnoErr) {
+      logErrore({ operazione: 'parent/presenze/giustifica:POST', stato: 500, evento: 'db' }, alunnoErr)
+      return NextResponse.json(
+        { error: 'Errore interno', codice: 'GIUSTIFICA_NON_SALVATA' },
+        { status: 500 },
+      )
+    }
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     const presenzeCfg = await getModuleConfig<{
@@ -141,9 +158,27 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
       }
     }
 
+    // IL GRADO NON LETTO NON È «NON SEI DELLA PRIMARIA». Stessa regola 7, e qui
+    // il degrado era ancora più insidioso: `sez` restava `null`, `schoolType`
+    // diventava `null`, e il confronto `!== 'primaria'` era vero per COSTRUZIONE
+    // — cioè un guasto del database usciva come un rifiuto di merito, 403, su una
+    // famiglia che ha diritto a giustificare. Il gemello (`parent/presenze:GET`)
+    // sullo stesso `sections` degrada a `warn` perché lì il grado decide solo
+    // un'etichetta; qui decide un ACCESSO, e un accesso non si nega al buio.
     let schoolType: string | null = null
     if (alunno.section_id) {
-      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
+      const { data: sez, error: sezErr } = await supabase
+        .from('sections')
+        .select('school_type')
+        .eq('id', alunno.section_id)
+        .maybeSingle()
+      if (sezErr) {
+        logErrore({ operazione: 'parent/presenze/giustifica:POST', stato: 500, evento: 'db' }, sezErr)
+        return NextResponse.json(
+          { error: 'Errore interno', codice: 'GIUSTIFICA_NON_SALVATA' },
+          { status: 500 },
+        )
+      }
       schoolType = sez?.school_type ?? null
     }
     if (schoolType !== 'primaria') {
@@ -234,11 +269,21 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
 
     // Notifica ai docenti della sezione (best-effort): giustifica ricevuta.
     try {
-      const { data: anagrafica } = await supabase
+      // Qui il degrado è ACCETTABILE — la notifica parte con «un alunno» al posto
+      // del nome — ma non deve essere MUTO: `warn`, come già fa il gemello. Senza,
+      // «perché la maestra ha ricevuto un avviso senza nome?» non ha risposta.
+      const { data: anagrafica, error: anagraficaErr } = await supabase
         .from('alunni')
         .select('nome, cognome')
         .eq('id', studentId)
         .maybeSingle()
+      if (anagraficaErr) {
+        logEvento('registro', 'warn', {
+          operazione: 'parent/presenze/giustifica:POST',
+          esito: 'anagrafica-non-letta',
+          alunno_id: studentId,
+        }, anagraficaErr)
+      }
       const docenti = (await docentiDiSezione(supabase, alunno.section_id as string)).filter((id) => id !== userId)
       const nomeAlunno = [anagrafica?.nome, anagrafica?.cognome].filter(Boolean).join(' ') || 'un alunno'
       await notificaEvento(supabase, {

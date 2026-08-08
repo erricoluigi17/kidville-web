@@ -99,7 +99,22 @@ export function RigaAssenzaComunicata({
         variant="danger"
         size="sm"
         aria-label={etichettaAnnulla}
-        disabled={bloccato}
+        // I DUE SIGNIFICATI, separati (2026-08-08).
+        //
+        // La riga CHE STA PARTENDO (`inCorso`) non si marca `disabled`: Chrome
+        // sfoca l'elemento che React marca `disabled`, quindi chi ha premuto da
+        // tastiera si ritrova il fuoco su `<body>` — all'inizio della pagina —
+        // proprio durante l'attesa, e l'etichetta «Annullamento…» — l'unico
+        // segnale visivo che il gesto è partito — si sbiadiva con lui.
+        // `aria-disabled` lo dichiara inoperante senza toglierlo dal fuoco; il
+        // doppio invio lo impedisce la guardia del gestore (`if (annullando)
+        // return`), che c'è ed è la difesa vera.
+        //
+        // Le ALTRE righe restano `disabled`: quelle sì che sono inoperanti nel
+        // senso dell'eccezione WCAG, e da quando `Btn` dipinge lo stato spento
+        // invece di sbiadirlo (5,75:1) restano comunque leggibili.
+        disabled={bloccato && !inCorso}
+        aria-disabled={inCorso || undefined}
         onClick={onAnnulla}
         // `ml-auto` serve alla riga ANDATA A CAPO: lì la pillola è sola sulla sua
         // linea, e senza resterebbe a sinistra sotto l'icona, come se ci fosse

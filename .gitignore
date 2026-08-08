@@ -86,3 +86,29 @@ PER-AVVOCATO/
 docs/collaudo/risultati/*
 !docs/collaudo/risultati/.gitkeep
 docs/collaudo/risultati-*/
+
+# LA STESSA REGOLA, PER L'ALTRA STRADA — aggiunta il 2026-08-08, e il motivo va
+# scritto perché è costato caro. La regola qui sopra esisteva dal 2026-08-03 e
+# copriva UNA sola delle strade da cui escono gli esiti di un collaudo. L'altra è
+# `e2e/collaudo-giornata/`, che gira su app.kidville.it con gli account TEST e
+# incolla nei findings ciò che legge in produzione: il suo `.gitignore` locale
+# nasconde gli artefatti dell'esecuzione (`run/`, `.auth/`, le credenziali) e
+# lasciava passare il REPORT. Risultato: `FINDINGS-CORREZIONE.md` è stato
+# committato con dentro il nome e il cognome di una bambina che in produzione
+# risulta alunna iscritta, insieme al valore della sua colonna `allergies` —
+# dato sulla salute, art. 9 GDPR — e ci è rimasto per mesi, in un repository
+# pubblico. Nessun controllo del gate lo guardava.
+# Le due strade ora hanno la stessa regola. Il lock che la tiene in piedi è
+# `__tests__/architecture/pii-nei-file-tracciati.test.ts` (P1), che verifica con
+# `git check-ignore` che ogni strada dichiarata sia davvero chiusa.
+# I pattern sono senza `/`: valgono a QUALUNQUE profondità, così la prossima
+# campagna di collaudo — che avrà un'altra cartella — nasce già coperta.
+FINDINGS*.md
+FINDINGS*.txt
+FINDINGS*.json
+FINDINGS*.html
+RISULTATI*.md
+RISULTATI*.txt
+report-tester-*
+e2e/collaudo-giornata/report/*.md
+e2e/collaudo-giornata/report/*.html

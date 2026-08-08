@@ -22,7 +22,18 @@ Legenda gravità: 🔴 bloccante · 🟠 grave · 🟡 medio · 🔵 minore · �
   l'intera classe: `nome`, `cognome`, **`codice_fiscale`**, `answers`, `signature_log`, `is_signed`,
   `pdf_path`. `createAdminClient()` bypassa la RLS; nessun `requireStaff`.
 - **Riprodotto LIVE (Parte B)**: `curl` anonimo su un template valido → `HTTP 200` con
-  `results:[{student_id, nome_alunno:"Aurora", cognome_alunno:…}]`. Nomi di bambini esposti a chiunque.
+  `results:[{student_id, nome_alunno:<nome proprio di una bambina>, cognome_alunno:<cognome>}]`.
+  Nomi di bambini esposti a chiunque.
+  <!-- Bonificato il 2026-08-08. Qui c'era, in chiaro, il nome proprio che quella GET anonima
+       aveva restituito. Misurato prima di toglierlo: `select count(*) from public.alunni where
+       nome ilike '<quel nome>'` → 1 riga, `stato='iscritto'`; lo stesso nome compare in 8 righe
+       di `enrollment_submissions`. Non era un nome di fantasia, e il repository è pubblico.
+       È il secondo dato personale trovato in questo file nello stesso giorno: il primo (nome,
+       cognome e valore di `allergies` di un'alunna iscritta, riga 202) era stato bonificato
+       poche ore prima. Il lock che ha visto questo è
+       `__tests__/architecture/pii-nei-file-tracciati.test.ts` (P3). -->
+
+  Per riprodurlo oggi non serve nessun dato vero: basta contare le chiavi della risposta.
 - **Fix**: `const auth = await requireStaff(request); if (auth.response) return auth.response` in testa alla GET.
 
 ---
@@ -199,7 +210,24 @@ ovunque (tranne l'header di G2). Endpoint distruttivi/seed/debug **404 in prod**
 - **Presenze primaria**: la vista genitore espone **solo le assenze**; un bambino presente non ha alcun indicatore
   positivo (indistinguibile da «appello non ancora fatto»).
 - **Registro primaria**: **date in formato US** (MM/DD/YYYY) invece di DD/MM/YYYY.
-- **Anagrafica**: **roster TEST 1A duplicato** («Gaia Esposito» / «gaia  esposito», una con `allergies='celiaca'`)
+- **Anagrafica**: **roster TEST 1A duplicato** — la stessa bambina due volte, una riga con il nome
+  normalizzato e una in minuscolo con doppio spazio, e su una delle due un valore in `allergies`
   → 12 alunni invece di 10. Dato sporco preesistente, da bonificare.
+  <!--
+    ⚠️ QUI C'ERANO IL NOME E IL COGNOME DI UNA BAMBINA VERA E IL SUO DATO SANITARIO.
+    Redatti il 2026-08-08, trovati dal tester privacy del terzo collaudo.
+    Questa riga era stata scritta incollando l'output di una query sul database di
+    PRODUZIONE, e committata in un repository PUBBLICO: nome, cognome e il valore di
+    `allergies` — categoria particolare ex art. 9 GDPR — di una persona che in
+    produzione risulta ALUNNA ISCRITTA, con codice fiscale e note mediche.
+    Verificato prima di redigere: `select` su `public.alunni` → 2 righe, entrambe
+    `stato='iscritto'`, entrambe con codice fiscale, una con esattamente quel valore.
+    Il difetto non è il duplicato nel roster: è che per descriverlo si è ricopiato un
+    dato reale invece di contarlo. Un conteggio dice la stessa cosa e non pubblica
+    nessuno. La stessa anagrafica era finita anche nelle fixture dei test e in un
+    commento di `src/`: anche quelle sostituite.
+    ⚠️ Il testo resta nella STORIA di git: toglierlo da qui non lo toglie da lì.
+  -->
+
 
 Report visivo con screenshot: `e2e/collaudo-giornata/run/report-giornata.html`.

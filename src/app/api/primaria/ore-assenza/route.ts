@@ -10,10 +10,11 @@ import {
   type PresenzaInput,
   type PresenzaConData,
 } from '@/lib/primaria/oreAssenza'
+import { limitaAOggi } from '@/lib/presenze/finestra-trascorsa'
 import { parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -46,19 +47,49 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
       if (alunnoErr) return alunnoErr
     }
 
+    // PostgREST NON LANCIA: ritorna `{ error }` (AGENTS.md, regola 7), e il
+    // `try/catch` di questo handler su quel ramo non scatta mai. Le tre letture
+    // qui sotto scartavano l'errore: una lettura fallita usciva come «monte ore
+    // 0» dentro un 200 formalmente valido — «questo bambino non ha perso ore»
+    // detto quando la query non ha funzionato, sul numero con cui si valuta la
+    // validità dell'anno scolastico. Il degrado resta (la schermata mostra ciò
+    // che ha), ma smette di essere MUTO.
+    const degrado = (esito: string, err: unknown) => {
+      logEvento('registro', 'error', {
+        operazione: 'primaria/ore-assenza:GET',
+        esito,
+        sezione_id: sectionId,
+      }, err)
+    }
+
     // Campanelle della sezione (con id per il calcolo per materia).
-    const { data: campanelle } = await supabase
+    const { data: campanelle, error: campErr } = await supabase
       .from('campanelle')
       .select('id, giorno_settimana, ordine, ora_inizio, ora_fine, tipo')
       .eq('section_id', sectionId)
+    if (campErr) degrado('campanelle-non-lette', campErr)
     const giornata = giornataDaCampanelle(campanelle ?? [])
 
     // Alunni della sezione.
     let alunniQuery = supabase.from('alunni').select('id, nome, cognome').eq('section_id', sectionId).order('cognome')
     if (alunnoId) alunniQuery = alunniQuery.eq('id', alunnoId)
-    const { data: alunni } = await alunniQuery
+    const { data: alunni, error: alunniErr } = await alunniQuery
+    if (alunniErr) degrado('alunni-non-letti', alunniErr)
 
     // Presenze nel periodo.
+    //
+    // ─── SI CONTA CIÒ CHE È GIÀ ACCADUTO (rilievo T26) ─────────────────────
+    //
+    // Il tetto a OGGI non è ridondante rispetto al `to`: il `to` lo sceglie chi
+    // guarda — la UI dell'appello lascia impostare «Dal/Al» a mano e il default
+    // `annoScolasticoDefault()` arriva al 30/06 dell'anno successivo. Con
+    // «Comunica un'assenza» il genitore può scrivere righe fino a sessanta
+    // giorni nel futuro, e senza questa riga finivano nel monte ore: misurate
+    // 5,25 ore perse per un giorno che non è ancora arrivato.
+    //
+    // La regola sta in `@/lib/presenze/finestra-trascorsa`, non qui: è la stessa
+    // per tutti i lettori che AGGREGANO, e finora era stata scritta a mano su
+    // due rotte su cinque.
     let presQuery = supabase
       .from('presenze')
       .select('alunno_id, data, stato, orario_entrata, orario_uscita')
@@ -66,8 +97,10 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
       .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
     if (from) presQuery = presQuery.gte('data', from)
     if (to) presQuery = presQuery.lte('data', to)
+    presQuery = limitaAOggi(presQuery)
     if (alunnoId) presQuery = presQuery.eq('alunno_id', alunnoId)
-    const { data: presenze } = await presQuery
+    const { data: presenze, error: presErr } = await presQuery
+    if (presErr) degrado('presenze-non-lette', presErr)
 
     const perAlunnoBase = new Map<string, PresenzaInput[]>()
     const perAlunnoConData = new Map<string, PresenzaConData[]>()
@@ -96,6 +129,8 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
           .eq('section_id', sectionId)
           .eq('attiva', true),
       ])
+      if (orarioRes.error) degrado('orario-non-letto', orarioRes.error)
+      if (materieRes.error) degrado('materie-non-lette', materieRes.error)
       orario = orarioRes.data ?? []
       materie = materieRes.data ?? []
     }

@@ -16,9 +16,13 @@ export default async function TeacherLayout({ children }: { children: React.Reac
     // --kv-appbar-h (definita in globals.css su [data-kv-shell]): offset per gli
     // sticky sotto la barra (ClasseShell); fallback 0px → /admin invariato.
     <div className="min-h-screen bg-kidville-cream" data-kv-shell>
+      {/* `focus:text-kidville-yellow-ink`: giallo su verde vale 4,05:1, la
+          soglia per un testo 16px/400 è 4,5:1, e la rete di `globals.css` non
+          aggancia le classi generate dalle varianti. Gemello dello skip link
+          dell'area genitore — il rilievo dichiara «vale per entrambi i layout». */}
       <a
         href="#content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
       >
         Salta al contenuto
       </a>
@@ -30,7 +34,7 @@ export default async function TeacherLayout({ children }: { children: React.Reac
       <Suspense fallback={null}>
         <NativePushAutoRegister />
       </Suspense>
-      <main id="content" className="pb-28">
+      <main id="content" tabIndex={-1} className="pb-28 outline-none">
         {children}
       </main>
       {/* TeacherBottomNav usa useSearchParams (?userId=) → Suspense per il prerender. */}

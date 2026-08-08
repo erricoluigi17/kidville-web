@@ -6,9 +6,10 @@ import { CalendarPlus } from 'lucide-react';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Btn } from '@/components/ui/Btn';
 import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
+import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
-import { FUOCO_ESITO } from '@/lib/ui/fuoco';
 import { logClient } from '@/lib/logging/client';
 
 /**
@@ -145,8 +146,8 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
    * esito identico, perché i due gestori azzerano ENTRAMBI prima di chiamare il
    * server: lo stato fa comunque '' → frase, e l'effetto riparte.
    */
-  const refMsg = useRef<HTMLParagraphElement | null>(null);
-  const refErr = useRef<HTMLParagraphElement | null>(null);
+  const refMsg = useRef<HTMLDivElement | null>(null);
+  const refErr = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (msg) refMsg.current?.focus();
@@ -249,8 +250,16 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
    * facoltativo, il client lo mandava comunque vuoto e la route lo normalizzava
    * a NULL sull'UPDATE — cancellando un dato sanitario di un minore per il solo
    * fatto che non era stato riscritto.
+   *
+   * ⚠️ E DAL 2026-08-08 svuotare il campo NON cancella più niente: il server ha
+   * scelto, deliberatamente, di non azzerare mai `giustificazione_testo` su un
+   * campo vuoto. Il commento dell'invio qui sotto diceva l'opposto («il server lo
+   * normalizza a null») ed era stale: corretto insieme all'avviso che ora lo dice
+   * al genitore PRIMA, invece di dichiarargli «Assenza aggiornata» dopo.
    */
   const giaComunicata = comunicate.find((a) => a.data === data) ?? null;
+  /** Il genitore ha svuotato un motivo ARCHIVIATO: gesto che qui non si esegue. */
+  const motivoSvuotato = Boolean(giaComunicata?.giustificazione_testo) && motivo.trim() === '';
 
   /**
    * Cambia il giorno e riallinea il motivo a QUEL giorno. Non azzera ciò che il
@@ -274,7 +283,11 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
         // Il motivo resta FACOLTATIVO (decisione del titolare): si manda com'è,
-        // vuoto compreso, e il server lo normalizza a null.
+        // vuoto compreso. ⚠️ Il server NON lo normalizza più a null su una riga
+        // che esiste già (route.ts:518-522, dal 2026-08-08): un campo vuoto
+        // riconferma, non cancella. Il genitore lo legge PRIMA di premere —
+        // vedi `motivoSvuotato` — invece di sentirsi dire «Assenza aggiornata»
+        // per una cancellazione che non è avvenuta.
         body: JSON.stringify({ studentId, data, motivo }),
       });
       if (!r.ok) {
@@ -360,7 +373,7 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
   const senzaIdentita = !studentId || !parentId;
 
   return (
-    <section className={`rounded-2xl bg-white p-4 shadow-sm ${className ?? ''}`}>
+    <section className={`rounded-2xl bg-kidville-white p-4 shadow-sm ${className ?? ''}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-maven text-sm font-semibold text-kidville-ink flex items-center gap-2">
@@ -435,6 +448,16 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
               — bensì l'intervallo ammesso, che è esattamente ciò che `min`
               impone.
             */}
+            {/*
+              LA FORMA DEI CAMPI È QUELLA DELLA SCHERMATA GEMELLA (2026-08-08).
+              Erano pillole (`rounded-full`) alte 34px con testo a 14px, contro
+              i 12px di raggio, i 16px di testo e i 50px d'altezza di
+              `/parent/attendance`: la stessa funzione con due linguaggi visivi.
+              La pillola sui campi contraddice anche `design.md`, dove la forma
+              a pillola è quella dei PULSANTI e gli input sono dichiarati a 8 o
+              12px — cioè `rounded-input`, il token che esiste apposta. In più i
+              34px erano il bersaglio di tocco più piccolo della schermata.
+            */}
             <input
               id={idData}
               type="date"
@@ -442,75 +465,98 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
               min={oggi}
               onChange={(e) => cambiaGiorno(e.target.value)}
               aria-describedby={idDataAiuto}
-              className="font-maven w-full rounded-full border border-kidville-line bg-white px-3 py-1.5 text-sm text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none"
+              className="font-maven w-full rounded-input border border-kidville-line bg-kidville-white p-3 text-base text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
             />
           </div>
           {/* Il giorno scelto è GIÀ stato comunicato: inviando si sovrascrive,
               motivo compreso. Senza questa riga il modulo si comporta come se
-              stesse creando qualcosa. */}
+              stesse creando qualcosa. Anatomia (raggio, bordo, icona) in un
+              posto solo: `FasciaStatoAssenza`, condivisa con la gemella. */}
           {giaComunicata && (
-            <p role="status" className="rounded-2xl border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn">
+            <FasciaStatoAssenza tipo="avviso" ruolo="status">
               {ta('giaComunicataAvviso')}
-            </p>
+            </FasciaStatoAssenza>
           )}
           <div className="flex flex-col gap-1">
             <label htmlFor={idMotivo} className="font-maven text-xs font-semibold text-kidville-ink">
               {t('comunicaMotivoLabel')}
             </label>
-            <input
-              id={idMotivo}
-              type="text"
-              value={motivo}
-              onChange={(e) => setMotivo(e.target.value)}
-              placeholder={t('comunicaMotivoPlaceholder')}
-              aria-describedby={idMotivoNota}
-              // `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
-              // l'agente utente con `currentColor` al 50% di alfa — 2,79:1 su
-              // bianco. Un segnaposto è testo, e 1.4.3 si applica.
-              className="font-maven w-full rounded-full border border-kidville-line bg-white px-3 py-1.5 text-sm text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none"
-            />
             {/* Il campo sollecita un dato di salute di un MINORE (art. 9 GDPR):
                 chi lo legge, per quanto resta e dove sta l'informativa vanno
                 detti QUI, nell'istante in cui il dato si scrive — non solo
                 nell'informativa generale, che nessuno sta leggendo mentre
-                digita «febbre». Stesse parole della schermata gemella. */}
+                digita «febbre». Stesse parole e stessa POSIZIONE della schermata
+                gemella: sopra il campo, dove non finisce sotto il comando. */}
             <p id={idMotivoNota} className="font-maven text-xs text-kidville-sub">
               {ta('motivoPrivacy')}{' '}
               <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-semibold underline">
                 {ta('motivoPrivacyLink')}
               </a>
             </p>
+            {/* `<textarea>` e non `<input type="text">`: il motivo è testo
+                libero — una nota medica, non una parola — e nella schermata
+                gemella ha quattro righe. Su una riga sola il genitore non
+                rilegge quello che ha scritto. */}
+            <textarea
+              id={idMotivo}
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder={t('comunicaMotivoPlaceholder')}
+              // Stesso tetto del server, dalla stessa costante che lo impone.
+              maxLength={MOTIVO_MAX_CARATTERI}
+              aria-describedby={idMotivoNota}
+              // `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
+              // l'agente utente con `currentColor` al 50% di alfa — 2,79:1 su
+              // bianco. Un segnaposto è testo, e 1.4.3 si applica.
+              className="font-maven h-28 w-full resize-none rounded-input border border-kidville-line bg-kidville-white p-3 text-base text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
+            />
           </div>
-          <Btn variant="primary" size="sm" onClick={invia} disabled={inviando || !data || senzaIdentita}>
+          {/* Svuotare il campo NON cancella il motivo archiviato: lo si dice
+              prima, non dopo aver dichiarato «Assenza aggiornata». */}
+          {motivoSvuotato && (
+            <FasciaStatoAssenza tipo="avviso" ruolo="status">
+              {ta('motivoNonCancellabile')}
+            </FasciaStatoAssenza>
+          )}
+          {/* L'ATTESA, annunciata. `aria-disabled` e non `disabled` mentre la
+              richiesta è in volo: il comando resta leggibile e non perde il
+              fuoco (Chrome sfoca ciò che React marca `disabled`). Il doppio
+              invio lo impedisce la guardia di `invia`. */}
+          {inviando && (
+            <p role="status" className="font-maven text-xs text-kidville-sub">{ta('invioInCorso')}</p>
+          )}
+          <Btn
+            variant="primary"
+            size="sm"
+            onClick={invia}
+            disabled={!data || senzaIdentita}
+            aria-disabled={inviando || undefined}
+          >
             {inviando ? t('comunicaInvio') : t('comunicaInvia')}
           </Btn>
         </div>
       )}
 
       {msg && (
-        <p
-          ref={refMsg}
-          role="status"
+        <FasciaStatoAssenza
+          tipo="conferma"
+          ruolo="status"
+          ricovero={refMsg}
           // Raggiungibile dal codice ma NON dal Tab: non aggiunge una tappa
           // all'ordine di navigazione, ci arriva solo chi viene dal comando
           // appena smontato. `outline-none` non toglie l'indicatore, lo
           // SOSTITUISCE con l'anello verde della casa (`focus:`, non
           // `focus-visible:`: il fuoco arriva da codice).
           tabIndex={-1}
-          className={`mt-3 rounded-2xl bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success-strong ${FUOCO_ESITO}`}
+          className="mt-3"
         >
           {msg}
-        </p>
+        </FasciaStatoAssenza>
       )}
       {err && (
-        <p
-          ref={refErr}
-          role="alert"
-          tabIndex={-1}
-          className={`mt-3 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong ${FUOCO_ESITO}`}
-        >
+        <FasciaStatoAssenza tipo="errore" ruolo="alert" ricovero={refErr} tabIndex={-1} className="mt-3">
           {err}
-        </p>
+        </FasciaStatoAssenza>
       )}
 
       <h3 className="font-maven text-xs font-semibold text-kidville-ink mt-4">{t('comunicaElencoTitolo')}</h3>
@@ -526,12 +572,16 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
         <p role="status" className="font-maven text-xs text-kidville-sub mt-1">{t('caricamento')}</p>
       )}
       {!caricando && elencoRotto && (
-        <p role="alert" className="mt-1 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">
+        <FasciaStatoAssenza tipo="errore" ruolo="alert" className="mt-1">
           {t('comunicaElencoNonLetto')}
-        </p>
+        </FasciaStatoAssenza>
       )}
       {!caricando && !elencoRotto && comunicate.length === 0 && (
         <p className="font-maven text-xs text-kidville-sub mt-1">{t('comunicaElencoVuoto')}</p>
+      )}
+      {/* L'ATTESA dell'annullamento, annunciata (WCAG 4.1.3). */}
+      {annullando && (
+        <p role="status" className="mt-1 font-maven text-xs text-kidville-sub">{ta('annullamentoInCorso')}</p>
       )}
       {!caricando && comunicate.length > 0 && (
         // La riga è la STESSA della schermata dedicata (`/parent/attendance`):

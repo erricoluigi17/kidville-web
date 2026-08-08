@@ -8,6 +8,7 @@ import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -43,7 +44,10 @@ export const POST = withRoute('panic-alert:POST', async (request: Request) => {
         const fuoriScope = await assertAlunnoInScope(admin, gate.user, alunnoId);
         if (fuoriScope) return fuoriScope;
 
-        const today = new Date().toISOString().split('T')[0];
+        // Giorno civile ITALIANO, non UTC (rilievo T27). Qui il fuso non
+        // sposta un conteggio: sposta un ALLARME di ritiro non autorizzato
+        // sulla presenza del giorno sbagliato.
+        const today = oggiFiscaleISO();
 
         // LA SEDE È UNA PROPRIETÀ DEL DATO, non del contesto: la presenza di un
         // bambino appartiene al plesso del bambino. Si legge PRIMA della scrittura

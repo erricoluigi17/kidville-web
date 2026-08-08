@@ -30,32 +30,32 @@ function makeSupabase(rowsByTable: Record<string, Record<string, unknown>[]>): S
 describe('getFigliDiGenitore', () => {
   it('runtime: restituisce i figli da legame_genitori_alunni', async () => {
     const sb = makeSupabase({
-      legame_genitori_alunni: [{ alunno_id: 'a1' }, { alunno_id: 'a2' }],
+      legame_genitori_alunni: [{ alunno_id: 'a1111111-1111-4111-8111-111111111111' }, { alunno_id: 'a2222222-2222-4222-8222-222222222222' }],
       parents: [],
       student_parents: [],
     });
     const figli = await getFigliDiGenitore(sb, 'acc1');
-    expect(figli.sort()).toEqual(['a1', 'a2']);
+    expect(figli.sort()).toEqual(['a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222']);
   });
 
   it('fallback: risolve dall\'anagrafica quando il runtime è vuoto', async () => {
     const sb = makeSupabase({
       legame_genitori_alunni: [],
       parents: [{ id: 'p1' }],
-      student_parents: [{ student_id: 'a3' }],
+      student_parents: [{ student_id: 'a3333333-3333-4333-8333-333333333333' }],
     });
     const figli = await getFigliDiGenitore(sb, 'acc1');
-    expect(figli).toEqual(['a3']);
+    expect(figli).toEqual(['a3333333-3333-4333-8333-333333333333']);
   });
 
   it('union: dedup tra runtime e anagrafica', async () => {
     const sb = makeSupabase({
-      legame_genitori_alunni: [{ alunno_id: 'a1' }],
+      legame_genitori_alunni: [{ alunno_id: 'a1111111-1111-4111-8111-111111111111' }],
       parents: [{ id: 'p1' }],
-      student_parents: [{ student_id: 'a1' }, { student_id: 'a2' }],
+      student_parents: [{ student_id: 'a1111111-1111-4111-8111-111111111111' }, { student_id: 'a2222222-2222-4222-8222-222222222222' }],
     });
     const figli = await getFigliDiGenitore(sb, 'acc1');
-    expect(figli.sort()).toEqual(['a1', 'a2']);
+    expect(figli.sort()).toEqual(['a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222']);
   });
 
   it('nessun legame: array vuoto', async () => {
@@ -66,17 +66,17 @@ describe('getFigliDiGenitore', () => {
 
 describe('genitoreHasFiglio', () => {
   it('true via fast-path runtime', async () => {
-    const sb = makeSupabase({ legame_genitori_alunni: [{ alunno_id: 'a1' }], parents: [], student_parents: [] });
-    expect(await genitoreHasFiglio(sb, 'acc1', 'a1')).toBe(true);
+    const sb = makeSupabase({ legame_genitori_alunni: [{ alunno_id: 'a1111111-1111-4111-8111-111111111111' }], parents: [], student_parents: [] });
+    expect(await genitoreHasFiglio(sb, 'acc1', 'a1111111-1111-4111-8111-111111111111')).toBe(true);
   });
 
   it('true via fallback anagrafico', async () => {
-    const sb = makeSupabase({ legame_genitori_alunni: [], parents: [{ id: 'p1' }], student_parents: [{ student_id: 'a3' }] });
-    expect(await genitoreHasFiglio(sb, 'acc1', 'a3')).toBe(true);
+    const sb = makeSupabase({ legame_genitori_alunni: [], parents: [{ id: 'p1' }], student_parents: [{ student_id: 'a3333333-3333-4333-8333-333333333333' }] });
+    expect(await genitoreHasFiglio(sb, 'acc1', 'a3333333-3333-4333-8333-333333333333')).toBe(true);
   });
 
   it('false se non collegato in nessuna delle due', async () => {
-    const sb = makeSupabase({ legame_genitori_alunni: [], parents: [{ id: 'p1' }], student_parents: [{ student_id: 'a3' }] });
+    const sb = makeSupabase({ legame_genitori_alunni: [], parents: [{ id: 'p1' }], student_parents: [{ student_id: 'a3333333-3333-4333-8333-333333333333' }] });
     expect(await genitoreHasFiglio(sb, 'acc1', 'aX')).toBe(false);
   });
 });
@@ -85,44 +85,44 @@ describe('getGenitoriDiAlunni (verso inverso: alunno → account genitore)', () 
   it('runtime: mappa alunno → genitori da legame_genitori_alunni', async () => {
     const sb = makeSupabase({
       legame_genitori_alunni: [
-        { alunno_id: 'a1', genitore_id: 'acc1' },
-        { alunno_id: 'a1', genitore_id: 'acc2' },
+        { alunno_id: 'a1111111-1111-4111-8111-111111111111', genitore_id: 'acc1' },
+        { alunno_id: 'a1111111-1111-4111-8111-111111111111', genitore_id: 'acc2' },
       ],
       student_parents: [],
       parents: [],
     });
-    const mappa = await getGenitoriDiAlunni(sb, ['a1']);
-    expect((mappa.get('a1') ?? []).sort()).toEqual(['acc1', 'acc2']);
+    const mappa = await getGenitoriDiAlunni(sb, ['a1111111-1111-4111-8111-111111111111']);
+    expect((mappa.get('a1111111-1111-4111-8111-111111111111') ?? []).sort()).toEqual(['acc1', 'acc2']);
   });
 
   it('fallback: risolve dall\'anagrafica via ponte parents.auth_user_id', async () => {
     const sb = makeSupabase({
       legame_genitori_alunni: [],
-      student_parents: [{ student_id: 'a1', parent_id: 'p1' }],
+      student_parents: [{ student_id: 'a1111111-1111-4111-8111-111111111111', parent_id: 'p1' }],
       parents: [{ id: 'p1', auth_user_id: 'acc9' }],
     });
-    const mappa = await getGenitoriDiAlunni(sb, ['a1']);
-    expect(mappa.get('a1')).toEqual(['acc9']);
+    const mappa = await getGenitoriDiAlunni(sb, ['a1111111-1111-4111-8111-111111111111']);
+    expect(mappa.get('a1111111-1111-4111-8111-111111111111')).toEqual(['acc9']);
   });
 
   it('parents senza account (auth_user_id null) non produce destinatari', async () => {
     const sb = makeSupabase({
       legame_genitori_alunni: [],
-      student_parents: [{ student_id: 'a1', parent_id: 'p1' }],
+      student_parents: [{ student_id: 'a1111111-1111-4111-8111-111111111111', parent_id: 'p1' }],
       parents: [{ id: 'p1', auth_user_id: null }],
     });
-    const mappa = await getGenitoriDiAlunni(sb, ['a1']);
-    expect(mappa.get('a1') ?? []).toEqual([]);
+    const mappa = await getGenitoriDiAlunni(sb, ['a1111111-1111-4111-8111-111111111111']);
+    expect(mappa.get('a1111111-1111-4111-8111-111111111111') ?? []).toEqual([]);
   });
 
   it('union: dedup fra runtime e anagrafica', async () => {
     const sb = makeSupabase({
-      legame_genitori_alunni: [{ alunno_id: 'a1', genitore_id: 'acc1' }],
-      student_parents: [{ student_id: 'a1', parent_id: 'p1' }],
+      legame_genitori_alunni: [{ alunno_id: 'a1111111-1111-4111-8111-111111111111', genitore_id: 'acc1' }],
+      student_parents: [{ student_id: 'a1111111-1111-4111-8111-111111111111', parent_id: 'p1' }],
       parents: [{ id: 'p1', auth_user_id: 'acc1' }],
     });
-    const mappa = await getGenitoriDiAlunni(sb, ['a1']);
-    expect(mappa.get('a1')).toEqual(['acc1']);
+    const mappa = await getGenitoriDiAlunni(sb, ['a1111111-1111-4111-8111-111111111111']);
+    expect(mappa.get('a1111111-1111-4111-8111-111111111111')).toEqual(['acc1']);
   });
 
   it('lista vuota: nessuna query, mappa vuota', async () => {
@@ -135,14 +135,14 @@ describe('getGenitoriDiAlunno', () => {
   it('restituisce i genitori anche quando il legame è solo in student_parents', async () => {
     const sb = makeSupabase({
       legame_genitori_alunni: [],
-      student_parents: [{ student_id: 'a1', parent_id: 'p1' }],
+      student_parents: [{ student_id: 'a1111111-1111-4111-8111-111111111111', parent_id: 'p1' }],
       parents: [{ id: 'p1', auth_user_id: 'acc9' }],
     });
-    expect(await getGenitoriDiAlunno(sb, 'a1')).toEqual(['acc9']);
+    expect(await getGenitoriDiAlunno(sb, 'a1111111-1111-4111-8111-111111111111')).toEqual(['acc9']);
   });
 
   it('array vuoto quando non c\'è alcun legame', async () => {
     const sb = makeSupabase({ legame_genitori_alunni: [], student_parents: [], parents: [] });
-    expect(await getGenitoriDiAlunno(sb, 'a1')).toEqual([]);
+    expect(await getGenitoriDiAlunno(sb, 'a1111111-1111-4111-8111-111111111111')).toEqual([]);
   });
 });

@@ -7,6 +7,7 @@ import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -56,6 +57,32 @@ const postBodySchema = z.object({
 const erroreInterno = () =>
     NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
 
+/**
+ * LE SEI COLONNE CHE LA SCHERMATA DELL'APPELLO USA DAVVERO.
+ *
+ * `.select()` NUDO È `select *`, e su un UPDATE PostgREST non restituisce ciò che
+ * hai scritto: restituisce ciò che C'ERA. La riga di `presenze` ne ha
+ * venticinque, e tre non devono uscire da qui:
+ *  · `giustificazione_testo` — il motivo che il genitore ha scritto: testo
+ *    libero di natura sanitaria di un MINORE (art. 9 GDPR);
+ *  · `giustificazione_firma` — il log della firma elettronica del genitore, che
+ *    porta la sua email, il suo indirizzo IP e il suo user-agent;
+ *  · `note_appello` — la nota interna del docente sul bambino.
+ * Nessuno dei tre è mostrato dalla schermata: viaggiavano sul filo e si
+ * fermavano nello stato React di chiunque superi `requireDocente` con l'alunno
+ * nel proprio scope — quindi anche segreteria e Direzione del plesso.
+ *
+ * È la TERZA volta che questo ciclo scrive la stessa correzione: `COLONNE_ESITO`
+ * in `comunica-assenza`, `.select('id')` in `giustifica`, e ora qui — nel file
+ * in cui era già scritto «la correzione era stata applicata al genitore e non al
+ * docente… Divulgazione per omissione».
+ *
+ * Il motivo dell'assenza NON sparisce dal prodotto: arriva alla GET, che è la
+ * schermata dove il docente della sezione lo LEGGE (vedi la `select` della GET).
+ * Esce dall'eco di un salvataggio, dove nessuno lo guardava.
+ */
+const COLONNE_ESITO = 'id, alunno_id, data, stato, orario_entrata, orario_uscita';
+
 export const GET = withRoute('attendance/daily:GET', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
@@ -63,7 +90,11 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
 
-    const data = q.data.data ?? new Date().toISOString().split('T')[0];
+    // «Oggi» è quello ITALIANO: il runtime gira in UTC e fra mezzanotte e le
+    // due del mattino `toISOString()` restituisce ancora ieri — la maestra
+    // aprirebbe l'appello sul giorno precedente e, salvando, ci scriverebbe
+    // sopra. Stesso difetto (e stesso rimedio) del cockpit, rilievo T27.
+    const data = q.data.data ?? oggiFiscaleISO();
     const sezione = q.data.sezione;
 
     try {
@@ -98,6 +129,26 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         if (sede.response) return sede.response;
         const plessi = sede.plessi ?? [];
 
+        // ─── IL MOTIVO DELL'ASSENZA ARRIVA A CHI LA FAMIGLIA CREDE LO LEGGA ──
+        //
+        // Sotto il campo «Motivo» il modulo del genitore dichiara: «Il motivo lo
+        // leggono le insegnanti della sezione e viene cancellato dopo dodici
+        // mesi». Per la PRIMARIA era vero (l'appello lo mostra da sempre); per
+        // NIDO e INFANZIA — i due gradi che questo ciclo ha aperto per la prima
+        // volta — no: questa `select` non lo restituiva affatto, e nessuna
+        // schermata del personale lo mostrava. Si raccoglieva un dato particolare
+        // di un minore (art. 9) per una finalità che su due gradi su tre non era
+        // realizzabile, e la si dichiarava al momento della raccolta.
+        //
+        // Delle due strade possibili — mostrarlo, oppure non raccoglierlo dove
+        // nessuno lo legge — si è scelta la prima: il motivo SERVE a chi accoglie
+        // il bambino la mattina dopo. Arriva quindi qui, dove la riga dell'alunno
+        // lo mostra (`StudentAttendanceRow`), e NON nell'eco della POST, dove
+        // nessuno lo guardava (vedi `COLONNE_ESITO`).
+        //
+        // Restano fuori `giustificazione_firma` (email, IP e user-agent del
+        // genitore) e `note_appello` (nota interna): non servono a questa
+        // schermata, e ciò che non serve non viaggia.
         const { data: rows, error } = await supabase
             .from('presenze')
             .select(`
@@ -108,6 +159,7 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
                 orario_entrata,
                 orario_uscita,
                 panic_alert,
+                giustificazione_testo,
                 alunni!inner ( id, nome, cognome, classe_sezione )
             `)
             .eq('data', data)
@@ -246,7 +298,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         const { data: result, error } = await supabase
             .from('presenze')
             .upsert(record, { onConflict: 'alunno_id,data' })
-            .select()
+            .select(COLONNE_ESITO)
             .single();
 
         if (error) {
@@ -343,7 +395,47 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             }, e);
         }
 
-        return NextResponse.json(result, { status: 200 });
+        // IL SUCCESSO SI LOGGA — anche dal lato del DOCENTE.
+        //
+        // Il genitore che comunica un'assenza lascia una riga `info` in
+        // `app_log`; il docente che registra l'appello no, e questa è la
+        // controparte esatta di quel gesto (AGENTS.md, regola 5: gli eventi
+        // critici loggano anche il successo). È la riga che serve quando la POST
+        // del genitore risponde 409 «l'appello è già stato fatto»: senza, di
+        // quella corsa si vede solo la metà che ha perso.
+        //
+        // Solo uuid, enumerati e conteggi: `stato` è un enumerato in lista bianca
+        // di `redact`, gli uuid passano per forma. Il MOTIVO dell'assenza non
+        // compare qui e non deve comparirci mai.
+        //
+        // `distingui`: `app_log` deduplica per impronta, e l'impronta non
+        // contiene il contesto. Senza, l'appello di una classe intera lascerebbe
+        // UNA riga a nome del primo bambino segnato — che è esattamente il
+        // difetto appena chiuso sulla rotta del genitore. Il volume è quello
+        // dell'appello: una riga per (docente, alunno, giorno).
+        logEvento('registro', 'info', {
+            operazione: 'attendance/daily:POST',
+            esito: 'appello-registrato',
+            alunno_id,
+            presenza_id: (result as { id?: string } | null)?.id ?? null,
+            attore_id: auth.user.id,
+            stato,
+        }, undefined, { distingui: ['alunno_id'] });
+
+        // LA RISPOSTA SI COMPONE, NON SI INOLTRA. Difesa in profondità, non
+        // ridondanza: `COLONNE_ESITO` decide cosa viaggia sul filo, questa riga
+        // decide cosa esce dall'API — e il giorno in cui qualcuno riallarga la
+        // `select` per un motivo suo, la risposta non cambia. La forma è quella
+        // che `AttendanceRecord` (StudentAttendanceRow) dichiara.
+        const riga = (result ?? {}) as Record<string, unknown>;
+        return NextResponse.json({
+            id: riga.id ?? null,
+            alunno_id: riga.alunno_id ?? alunno_id,
+            data: riga.data ?? data,
+            stato: riga.stato ?? stato,
+            orario_entrata: riga.orario_entrata ?? null,
+            orario_uscita: riga.orario_uscita ?? null,
+        }, { status: 200 });
     } catch (err) {
         logErrore({ operazione: 'attendance/daily:POST', stato: 500 }, err);
         return erroreInterno();

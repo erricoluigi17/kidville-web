@@ -13,6 +13,27 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
 
+/**
+ * LE COLONNE DELL'APPELLO — quelle che questa rotta scrive, e le sole che
+ * possono uscirne o finire in archivio.
+ *
+ * Restano fuori, e non per risparmiare banda:
+ *  · `giustificazione_testo` — il motivo scritto dalla famiglia: testo libero di
+ *    natura sanitaria di un MINORE (art. 9 GDPR);
+ *  · `giustificazione_firma` — il log della firma elettronica del genitore, con
+ *    la sua email, il suo indirizzo IP e il suo user-agent;
+ *  · `giustificata_da` / `giustificata_il` / `giust_vista_da` — chi ha
+ *    giustificato e quando: dati di un'altra operazione, di un altro attore.
+ *
+ * Il motivo NON sparisce dal prodotto: l'appello della primaria lo LEGGE dalla
+ * sua GET, che è la superficie dichiarata alla famiglia. Qui si tratta di ciò
+ * che torna dall'ECO di una scrittura e di ciò che finisce in
+ * `audit_scritture_docente`, dove sarebbe conservato per anni senza che nessuno
+ * l'abbia chiesto.
+ */
+const COLONNE_APPELLO =
+  'id, alunno_id, section_id, scuola_id, data, stato, orario_entrata, orario_uscita, note_appello, registrato_da, giustificata, giust_vista_il'
+
 const getQuerySchema = z.object({
   sectionId: zUuid,
   data: zDataYMD,
@@ -139,13 +160,37 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     }
 
     // Stato PRIMA (per audit diff).
+    //
+    // ─── SI CHIEDONO LE COLONNE DELL'APPELLO, NON VENTICINQUE ───────────────
+    //
+    // `select('*')` qui costa più che altrove, e non per la banda: queste righe
+    // finiscono in `audit_scritture_docente` come `valorePrima`/`valoreDopo`,
+    // cioè in un ARCHIVIO che dura anni. Ci finivano perciò
+    // `giustificazione_testo` — testo libero di natura sanitaria di un minore,
+    // art. 9 — e `giustificazione_firma`, con EMAIL, INDIRIZZO IP e USER-AGENT
+    // del genitore che ha firmato: dati che questa rotta non scrive, non mostra
+    // e non deve conservare. `bonificaAuditScritture` esiste proprio per andarli
+    // a ripulire dopo; è meglio non scriverceli.
+    //
+    // L'elenco è quello delle colonne che l'appello SCRIVE (più le due che
+    // raccontano lo stato della giustifica come booleano/data): un diff su
+    // colonne che la rotta non tocca non ha mai detto niente a nessuno.
     const alunnoIds = records.map((r) => r.alunnoId)
-    const { data: prima } = await supabase
+    const { data: prima, error: primaErr } = await supabase
       .from('presenze')
-      .select('*')
+      .select(COLONNE_APPELLO)
       .eq('section_id', sectionId)
       .eq('data', data)
       .in('alunno_id', alunnoIds)
+    if (primaErr) {
+      // PostgREST non lancia (AGENTS.md, regola 7). Il salvataggio prosegue — il
+      // diff «prima» è un di più — ma un audit a metà non deve essere muto.
+      logEvento('db', 'warn', {
+        operazione: 'primaria/appello:POST',
+        esito: 'stato-precedente-non-letto',
+        sezione: sectionId,
+      }, primaErr)
+    }
 
     const rows = records.map((r) => ({
       alunno_id: r.alunnoId,
@@ -164,7 +209,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     const { data: saved, error } = await supabase
       .from('presenze')
       .upsert(rows, { onConflict: 'alunno_id,data' })
-      .select()
+      .select(COLONNE_APPELLO)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     // Audit (diff prima/dopo) + notifica al docente titolare (se segreteria/direzione).

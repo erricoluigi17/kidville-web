@@ -8,6 +8,7 @@ import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { getGenitoriDiAlunni, getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
 
@@ -108,7 +109,9 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     const sezione = q.data.sezione ?? q.data.classeSezione ?? '';
     if (!sezione) return NextResponse.json([]);
     const onlyPresent = q.data.onlyPresent === 'true';
-    const date = q.data.date ?? new Date().toISOString().split('T')[0];
+    // Giorno civile ITALIANO, non UTC (rilievo T27): con `onlyPresent` un
+    // giorno sbagliato mostra alla maestra la classe di ieri.
+    const date = q.data.date ?? oggiFiscaleISO();
 
     // GATE prima di qualunque lettura. `requireDocente` verifica il RUOLO, non
     // la classe: senza `soloSezioniAssegnate` un educator poteva chiedere

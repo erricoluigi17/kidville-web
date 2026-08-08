@@ -1,6 +1,6 @@
 // Formattazione display dei nomi (solo presentazione, NON altera i dati nel DB).
 //
-// I nomi anagrafici possono arrivare in minuscolo ("esposito gaia") o in
+// I nomi anagrafici possono arrivare in minuscolo ("nuvola bianca") o in
 // MAIUSCOLO: per la UI li normalizziamo con iniziale maiuscola per ogni parola,
 // gestendo spazi, trattini e apostrofi (es. "d'angelo" → "D'Angelo",
 // "anna-maria" → "Anna-Maria").

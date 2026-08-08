@@ -64,23 +64,37 @@ export function ChildSwitcher() {
       {figli.map((f) => {
         const on = f.id === studentId;
         return (
+          /*
+            ⚠️ I COLORI NON STANNO PIÙ NELLO `style` INLINE (2026-08-08).
+            Erano scritti a mano — `background:'#006A5F'`, `color:'#FDC400'` —
+            e uno stile inline batte qualunque foglio di stile senza
+            `!important`: né la rete di `globals.css` sulla coppia di brand né
+            il rimappaggio dell'Alto Contrasto potevano raggiungerli. Misurato
+            dal collaudo (axe-core, impact «serious», 8 nodi): 4,05:1 su testo
+            14px/bold e 10,5px/normal, e in Alto Contrasto lo stesso identico
+            valore — l'unico elemento della schermata che non partecipava
+            affatto al ribaltamento. Ed è l'unico posto che dice DI QUALE
+            bambino si sta comunicando l'assenza.
+            Coi token: `bg-kidville-green` + `text-kidville-yellow-ink`
+            (#FFDA5C su #006A5F = 4,78:1). Padding e ombra restano inline —
+            non sono colori e nessuna rete li deve raggiungere.
+            Lock: `__tests__/a11y/contrasto-skip-link-e-selettore-figlio.test.tsx`.
+          */
           <button
             key={f.id}
             type="button"
             onClick={() => onSelect(f.id)}
             role="tab"
             aria-selected={on}
-            className="flex flex-shrink-0 items-center gap-2.5 rounded-pill transition-all"
+            className={`flex flex-shrink-0 items-center gap-2.5 rounded-pill transition-all ${
+              on ? 'bg-kidville-green' : 'bg-kidville-white'
+            }`}
             style={{
               padding: on ? '6px 16px 6px 6px' : '6px',
-              background: on ? '#006A5F' : '#FFFFFF',
               boxShadow: on ? '0 6px 16px -8px rgba(0,90,80,.5)' : '0 2px 8px -5px rgba(0,0,0,.18)',
             }}
           >
-            <span
-              className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-full font-barlow text-[14px] font-black"
-              style={{ background: '#006A5F', color: '#FDC400' }}
-            >
+            <span className="flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-full bg-kidville-green font-barlow text-[14px] font-black text-kidville-yellow-ink">
               {initials(f.nome, f.cognome)}
             </span>
             {on && (
@@ -89,7 +103,7 @@ export function ChildSwitcher() {
                   {f.nome}
                 </span>
                 {f.classe_sezione && (
-                  <span className="block font-maven text-[10.5px] font-semibold text-kidville-yellow">
+                  <span className="block font-maven text-[10.5px] font-semibold text-kidville-yellow-ink">
                     {f.classe_sezione}
                   </span>
                 )}

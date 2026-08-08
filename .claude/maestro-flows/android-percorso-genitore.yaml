@@ -252,7 +252,19 @@ env:
 # cataloghi usano quello TIPOGRAFICO (U+2019) e un `'` dritto digitato per
 # distrazione — o una normalizzazione della WebView — farebbe fallire il flow
 # per una ragione che non ha niente a che vedere con l'app.
-- assertVisible: "Giorno"
+#
+# ⚠️ ERA `"Giorno"`, e il 2026-08-08 ha ucciso questa tappa su un'app sana. Il
+# commit 2090cbf aveva rinominato `parentServizi.json → attendanceGiorno` da
+# «Giorno» a «Giorno dell'assenza» senza toccare i flow, e i selettori di Maestro
+# sono FULL-MATCH: sull'albero c'era `text="Giorno dell’assenza"
+# bounds="[105,1139][976,1204]"` e nessun nodo di solo testo «Giorno».
+# Il tranello che ha fatto sopravvivere l'errore: «Giorno» ESISTE ancora nei
+# cataloghi — è `teacherServizi.json → mensaGiorno`, l'intestazione della tabella
+# della mensa del docente — quindi qualunque controllo del tipo «questa stringa
+# c'è da qualche parte?» sarebbe rimasto verde. L'ancora ora è legata alla sua
+# CHIAVE, non al suo testo: lock R18c (e R24b per le ancore che l'app non dice
+# più in nessun punto).
+- assertVisible: "Giorno dell.assenza"
 - scrollUntilVisible:
     element:
       text: "Non hai comunicato nessuna assenza per i prossimi giorni."
@@ -289,6 +301,16 @@ env:
     visible: "Comunica un.altra assenza"
     timeout: 30000
 - assertNotVisible: "Comunica assenza"
+# La seconda asserzione dice PER QUALE GIORNO. È il sottotitolo della conferma
+# (parentServizi.json → attendanceInviataTesto), l'unico testo della schermata che
+# nomina la data: senza, il flow prova che «una schermata è cambiata», non che il
+# server ha scritto la riga giusta.
+# ⚠️ NON ERA QUI, e c'era invece sul gemello iOS: è la divergenza fra flow gemelli
+# che tiene in vita questi difetti — il flow che ce l'ha fa credere che la tappa
+# sia coperta anche dove non lo è. Il 2026-08-07 l'ancora iOS si era scollata dal
+# catalogo e il collaudo era rosso su un invio riuscito; qui l'ancora non c'era
+# proprio. Lock: R18c, che la pretende su tutti e due.
+- assertVisible: ".*Abbiamo registrato l.assenza del .*"
 - takeScreenshot: /tmp/kv-android-genitore-3-assenza-inviata
 
 # ── 5. L'ASSENZA COMPARE NELL'ELENCO, E L'ANNULLAMENTO LA FA SPARIRE ─────────
@@ -398,9 +420,25 @@ env:
 # `back` che non muoveva niente (vedi tappa 6) collaudava un ritorno dalla home
 # alla home. Ora si torna da /parent/avvisi a /parent/attendance, e lo si prova
 # con i testi delle due pagine: quello che deve esserci e quello che non deve.
+#
+# ⚠️ IL `back` NON RIPORTA LA PAGINA IN CIMA, e questa riga lo ha imparato a
+# proprie spese il 2026-08-07. L'ancora era il SOTTOTITOLO dell'hero — lo stesso
+# della tappa 3, dove funziona benissimo perché ci si arriva con la pagina appena
+# montata. Qui no: le tappe 4-5 avevano portato /parent/attendance in fondo, e il
+# browser al ritorno RIPRISTINA quello scorrimento. Misura di quel momento
+# (uiautomator dump subito dopo il `back`, con l'app dove doveva essere —
+# topResumedActivity ancora it.kidville.app/.MainActivity):
+#     'Avvisa gli insegnanti in anticipo: …'   bounds="[0,0][0,0]"   ← l'ancora
+#     'Giorno dell’assenza'                    bounds="[105,275][976,341]"
+#     'COMUNICA ASSENZA'  Button               bounds="[105,1065][976,1210]"
+# Uno swipe verso il basso restituiva al sottotitolo bounds veri: c'era, non era
+# in viewport — e per Chromium un nodo fuori viewport è alto zero, quindi non è
+# «visibile» in nessun caso. L'ancora è ora il campo del modulo, che dopo il
+# ripristino è a schermo. Lock: R25b, che dopo un `back` accetta solo ciò che è
+# stato MISURATO lì (o uno `scrollUntilVisible`, che il nodo lo va a cercare).
 - back
 - extendedWaitUntil:
-    visible: "Avvisa gli insegnanti in anticipo: puoi indicare oggi o un giorno futuro."
+    visible: "Giorno dell.assenza"
     timeout: 20000
 - assertNotVisible: ".*avvis[oi] da gestire|Tutto in regola.*|Comunicazioni dalla scuola"
 - assertVisible:

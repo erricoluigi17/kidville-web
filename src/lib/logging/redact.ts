@@ -470,6 +470,44 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
 }
 
 /**
+ * IL VALORE PUÒ DISTINGUERE UNA RIGA DI LOG? — «uuid sì, nomi mai», come CODICE.
+ *
+ * Serve a `logEvento({ distingui: [...] })`, che fa entrare nell'IMPRONTA di
+ * `app_log` l'identità del bersaglio di una riga: senza, tutti i rifiuti di un
+ * genitore su venti bambini diversi cadono in una riga sola e la colonna
+ * `contesto.campi.alunno_id` dichiara UN bambino — quello della prima
+ * occorrenza del giorno (rilievi T9, T10, T29).
+ *
+ * L'AMMISSIONE PASSA DALLA FORMA, non dalla buona volontà del chiamante: si
+ * accetta esattamente ciò che questo modulo lascia già uscire IN CHIARO senza
+ * bisogno di una chiave in lista bianca — uuid, numeri, booleani, date ISO,
+ * enumerati tecnici. Tutto il resto (un nome, un'email, il motivo di
+ * un'assenza) restituisce `null` e NON distingue: due nomi diversi producono
+ * la stessa impronta, che è il comportamento che si vuole.
+ *
+ * PERCHÉ CONTA anche se l'impronta è un hash e non si legge: un'impronta
+ * calcolata su un nome è comunque una chiave stabile e correlabile per
+ * PERSONA. Su dati di minori, «non si vede» non è «non c'è».
+ *
+ * ⚠️ LIMITE DICHIARATO, lo stesso di `FORMA_ENUMERATO`: un token senza spazi e
+ * più corto di 64 caratteri passa (un codice fiscale ha questa forma). Il
+ * presidio resta che il chiamante DICHIARA il campo, e i campi dichiarati sono
+ * id ed enumerati scelti dal codice, non input dell'utente.
+ */
+export function valoreDistintivo(v: unknown): string | null {
+    try {
+        if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+        if (typeof v === 'boolean') return String(v);
+        if (typeof v !== 'string' || v === '') return null;
+        if (UUID.test(v)) return v;
+        if (DATA_ISO.test(v)) return v;
+        return FORMA_ENUMERATO.test(v) ? v : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Redige un valore qualunque. NON lancia mai: è chiamata dentro un logger, e un
  * logger che lancia trasforma una 200 in 500 su tutte le route.
  */

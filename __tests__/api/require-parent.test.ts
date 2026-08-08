@@ -25,7 +25,13 @@ const m = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: m.requireUser }))
-vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: m.genitoreHasFiglio }))
+// `verificaLegameGenitore` è l'esito a TRE valori che il gate usa dal 2026-08-08
+// (una lettura fallita non è «non è tuo figlio»): qui si deriva dal mock storico,
+// così i casi già scritti continuano a dire quello che dicevano.
+vi.mock('@/lib/anagrafiche/legami', () => ({
+  genitoreHasFiglio: m.genitoreHasFiglio,
+  verificaLegameGenitore: async (...a: unknown[]) => ((await m.genitoreHasFiglio(...a)) ? 'si' : 'no'),
+}))
 vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: m.assertAlunnoInScope }))
 
 import { requireParentOfStudent } from '@/lib/auth/require-parent'

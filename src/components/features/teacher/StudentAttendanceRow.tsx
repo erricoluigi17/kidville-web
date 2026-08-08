@@ -15,6 +15,18 @@ export interface AttendanceRecord {
     stato: AttendanceStato;
     orario_entrata: string | null;
     orario_uscita: string | null;
+    /**
+     * Il motivo scritto dal GENITORE comunicando l'assenza (`presenze.
+     * giustificazione_testo`). Facoltativo: c'è solo se la famiglia l'ha scritto.
+     *
+     * Sotto quel campo il modulo del genitore dichiara «Il motivo lo leggono le
+     * insegnanti della sezione»: fino al terzo collaudo, per NIDO e INFANZIA,
+     * non lo leggeva nessuno — il dato veniva raccolto, conservato dodici mesi e
+     * non mostrato su nessuna schermata del personale. È un dato di natura
+     * sanitaria di un minore (art. 9 GDPR): non si logga MAI, e resta su questa
+     * riga e nell'appello della primaria, che sono le due superfici dichiarate.
+     */
+    giustificazione_testo?: string | null;
 }
 
 interface Student {
@@ -104,7 +116,13 @@ function formatTime(isoString: string | null, locale: string): string | null {
 
 export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading }: Props) {
     const t = useTranslations('teacherPresenze');
+    // L'etichetta della giustifica del genitore è GIÀ tradotta (it/en) per
+    // l'appello della primaria: si riusa quella invece di scriverne una gemella.
+    // Due copie della stessa frase divergono al primo ritocco — è la lezione che
+    // questo ciclo ha già pagato quattro volte.
+    const tp = useTranslations('teacherPrimaria');
     const locale = useLocale();
+    const motivoGenitore = (record?.giustificazione_testo ?? '').trim();
     const stato = record?.stato ?? null;
     const isPresente = stato === 'presente';
     const isRitardo = stato === 'ritardo';
@@ -172,6 +190,22 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                             </span>
                         )}
                     </div>
+                    {/* IL MOTIVO COMUNICATO DAL GENITORE — la finalità dichiarata
+                        alla famiglia («il motivo lo leggono le insegnanti della
+                        sezione») resa vera anche per nido e infanzia. Visibile e
+                        non solo in tooltip: l'appello si fa da tablet, dove il
+                        `title` non si apre. Troncato a una riga, con il testo
+                        intero nel `title` per chi ha un puntatore.
+                        Token misurati su bianco: warn-strong su warn-soft = 5,0:1. */}
+                    {motivoGenitore && (
+                        <p
+                            title={motivoGenitore}
+                            className="mt-1 font-maven text-xs text-kidville-warn-strong bg-kidville-warn-soft rounded-xl px-2 py-1 truncate"
+                        >
+                            <span className="font-semibold">{tp('appelloGiustificataDalGenitore')}:</span>{' '}
+                            {motivoGenitore}
+                        </p>
+                    )}
                 </div>
             </div>
 

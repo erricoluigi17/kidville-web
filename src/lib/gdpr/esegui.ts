@@ -40,6 +40,62 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // =============================================================================
 
 /**
+ * LE NOTIFICHE — la campanella è un archivio, non un rivolo.
+ *
+ * PERCHÉ ESISTE (terzo collaudo, rilievo T23). Questo file trattava sedici
+ * tabelle e `notifiche` non era fra queste: dopo un'anonimizzazione il nome e il
+ * cognome del minore restavano leggibili nella campanella dei docenti — il corpo
+ * è letteralmente «<Nome Cognome> sarà assente il <data>» — fino alla scadenza
+ * automatica a dodici mesi. Ed è il canale che il ciclo di «Comunica
+ * un'assenza» ha RIACCESO: le notifiche `assenza_comunicata` erano zero da
+ * sempre, e in un giorno sono diventate novantaquattro.
+ *
+ * ⚠️ LA RETENTION NON È L'ART. 17, e la migrazione che l'ha introdotta lo dice:
+ * «questa migrazione chiude il "per sempre", non il "subito, su richiesta"».
+ * L'art. 17 chiede la cancellazione «senza ingiustificato ritardo».
+ *
+ * SI CANCELLA LA RIGA, non si svuotano titolo e corpo: al contrario di
+ * `presenze` — dove la riga è il dato di frequenza e ciò che scade è il motivo —
+ * qui la riga È il messaggio. Una notifica senza testo non è un dato conservato:
+ * è una riga vuota che occupa la campanella. Il FATTO (l'assenza, il pagamento,
+ * l'avviso) vive nella sua tabella e non si tocca.
+ *
+ * DUE AGGANCI, perché nella stessa colonna convivono due spazi-id:
+ *  · `entita_id` = la PRESENZA (`assenza_comunicata`, `giustifica_ricevuta`)
+ *    oppure l'ALUNNO (`assenza_non_comunicata`, `mensa_saldo_basso`);
+ *  · `utente_id` = il destinatario, cioè l'account (`utenti.id`) del genitore —
+ *    non `parents.id`: è la stessa trappola già pagata su
+ *    `news_visualizzazioni` e `push_subscriptions`.
+ */
+async function obliaNotifiche(
+  supabase: SupabaseClient,
+  bersagli: { entitaIds?: string[]; utenteIds?: string[] },
+  op: string,
+): Promise<number> {
+  const entitaIds = [...new Set((bersagli.entitaIds ?? []).filter(Boolean))]
+  const utenteIds = [...new Set((bersagli.utenteIds ?? []).filter(Boolean))]
+  let rimosse = 0
+
+  const cancella = async (colonna: 'entita_id' | 'utente_id', ids: string[]) => {
+    if (ids.length === 0) return
+    const { data, error } = await supabase.from('notifiche').delete().in(colonna, ids).select('id')
+    if (error) {
+      // PostgREST non lancia: senza questo controllo un guasto diventerebbe
+      // «nessuna notifica da togliere», cioè un oblio dichiarato e non fatto.
+      if (!schemaAssente(error)) {
+        logErrore({ operazione: op, evento: 'oblio_notifiche' }, error)
+      }
+      return
+    }
+    rimosse += (data ?? []).length
+  }
+
+  await cancella('entita_id', entitaIds)
+  await cancella('utente_id', utenteIds)
+  return rimosse
+}
+
+/**
  * Svuota il CONTENUTO delle righe di `audit_scritture_docente` che riguardano
  * gli interessati indicati, lasciando in piedi la riga.
  *
@@ -909,6 +965,8 @@ export async function anonimizzaParent(
   iscrizioniScrubbate: number
   fileRimossi: number
   fileNonRimossi: number
+  /** Notifiche ricevute da questo account, rimosse: portano il nome del figlio. */
+  notificheRimosse: number
 }> {
   // 1. Raccogli PRIMA dell'azzeramento: l'`auth_user_id` (ponte verso lo
   //    spazio-id `utenti`), il codice fiscale e il percorso del documento
@@ -984,6 +1042,16 @@ export async function anonimizzaParent(
   // (= `utenti.id`), non con `parents.id` — come `news_visualizzazioni` qui sopra.
   // Senza il ponte non si cancella niente: cancellare «a naso» toglierebbe il
   // telefono a un'altra famiglia.
+  // 3-ter. LA CAMPANELLA DI QUESTO ACCOUNT (art. 17). Le notifiche indirizzate
+  // al genitore parlano di suo figlio e ne portano il nome nel corpo («Tuo figlio
+  // è stato segnato assente», «Assenza comunicata»). Stessa cancellazione, stesso
+  // ponte di spazio-id delle due qui sopra: `notifiche.utente_id` è un
+  // `utenti.id`, non un `parents.id`.
+  let notificheRimosse = 0
+  if (authUserId) {
+    notificheRimosse = await obliaNotifiche(supabase, { utenteIds: [authUserId] }, op)
+  }
+
   let pushSubscriptionsRimosse = 0
   if (authUserId) {
     const { data: pushDel, error: errPush } = await supabase
@@ -1104,6 +1172,7 @@ export async function anonimizzaParent(
   return {
     newsVisualizzazioniRimosse,
     pushSubscriptionsRimosse,
+    notificheRimosse,
     segnalazioniBonificate,
     sospensioniBonificate,
     provaConsensiScrubbate,
@@ -1139,6 +1208,8 @@ export async function anonimizzaAlunno(
   fotoRimosse: number
   fotoSganciate: number
   presenzeBonificate: number
+  /** Righe di `notifiche` che nominavano il bambino, rimosse (art. 17). */
+  notificheRimosse: number
 }> {
   // 1. Anonimizza l'anagrafica dell'alunno.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
@@ -1181,6 +1252,30 @@ export async function anonimizzaAlunno(
   } else {
     presenzeBonificate = (presBonificate ?? []).length
   }
+
+  // 2-bis. LE NOTIFICHE CHE NOMINANO IL BAMBINO (art. 17).
+  //
+  //    Le notifiche del registro puntano alla riga di `presenze` (`entita_id`),
+  //    non all'alunno: per ritrovarle servono gli id delle sue presenze — TUTTE,
+  //    non solo quelle appena bonificate, perché il nome sta nel corpo della
+  //    notifica anche quando la presenza non aveva alcun motivo scritto.
+  //    All'elenco si aggiunge l'id dell'alunno stesso, che è ciò a cui puntano
+  //    `assenza_non_comunicata` e `mensa_saldo_basso`.
+  const { data: righePresenze, error: errIdPresenze } = await supabase
+    .from('presenze')
+    .select('id')
+    .eq('alunno_id', alunno.id)
+  if (errIdPresenze && !schemaAssente(errIdPresenze)) {
+    logErrore({ operazione: op, evento: 'oblio_notifiche_presenze_non_lette' }, errIdPresenze)
+  }
+  const idPresenze = ((righePresenze ?? []) as { id?: unknown }[])
+    .map((r) => r.id)
+    .filter((v): v is string => typeof v === 'string')
+  const notificheRimosse = await obliaNotifiche(
+    supabase,
+    { entitaIds: [alunno.id, ...idPresenze] },
+    op,
+  )
 
   const cf = [alunno.codice_fiscale, alunno.fiscal_code]
     .map((v) => (typeof v === 'string' ? v.trim() : ''))
@@ -1447,5 +1542,6 @@ export async function anonimizzaAlunno(
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
+    notificheRimosse,
   }
 }

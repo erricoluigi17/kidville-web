@@ -3,8 +3,36 @@ import { cx } from '@/lib/ui/cx'
 export type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type BtnSize = 'sm' | 'md' | 'lg'
 
+/**
+ * ─── LO STATO SPENTO SI DIPINGE, NON SI SBIADISCE (2026-08-08) ──────────────
+ * Qui c'era `disabled:opacity-45`, dal 2026-06-29 e quindi su TUTTA l'app.
+ * Un'alfa abbassa in blocco il riempimento E l'inchiostro: sul verde saturo del
+ * pulsante primario il risultato misurato in Chrome è **1,20:1** — testo quasi
+ * invisibile su un fondo lattiginoso, con il contenuto sottostante che TRASPARE
+ * attraverso il bottone. Il progetto aveva già pagato lo stesso vizio (CTA
+ * disabled a 2,8:1) e il rimedio era stato applicato al punto d'uso invece che
+ * alla famiglia: ecco perché è tornato.
+ *
+ * La coppia dichiarata qui sotto vale **5,75:1** (`sub` #55615C su
+ * `neutral-soft` #F0F2F1) ed è neutra di proposito: «spento» è UNO stato, e
+ * dipingerlo con la tinta della variante lo renderebbe indistinguibile dal
+ * pulsante attivo. Il contorno `neutral` (3,10:1 su bianco, 2,79:1 su crema)
+ * serve a che si veda ancora dove comincia il comando.
+ * ⚠️ Nessuna alfa nei quattro token: un fondo semitrasparente cambia con la
+ * superficie sotto, ed è esattamente il difetto che si sta chiudendo.
+ * In Alto Contrasto la coppia non si ribalta e non ne ha bisogno: `@theme
+ * inline` inlina i due hex nelle utility, quindi il rapporto resta 5,75:1.
+ * Lock: `__tests__/a11y/btn-disabilitato-leggibile.test.tsx`.
+ *
+ * ⚠️ `disabled` NON è il modo di dire «sto lavorando». Mentre una richiesta è in
+ * volo il pulsante è un MESSAGGIO («Invio…»), non un controllo spento: marcarlo
+ * `disabled` fa sfogare il fuoco a Chrome — che torna su `<body>`, cioè
+ * all'inizio della pagina — e sbiadisce l'unico segnale che il gesto sia
+ * partito. Per quel caso si usa `aria-disabled` più una guardia nel gestore
+ * (vedi `/parent/attendance` e `ComunicaAssenzaCard`).
+ */
 const BASE =
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-pill font-barlow font-extrabold uppercase tracking-[0.05em] transition-transform active:scale-95 disabled:opacity-45 disabled:pointer-events-none'
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-pill font-barlow font-extrabold uppercase tracking-[0.05em] transition-transform active:scale-95 disabled:pointer-events-none disabled:border disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub'
 
 const SIZES: Record<BtnSize, string> = {
   sm: 'h-9 px-4 text-[13px]',

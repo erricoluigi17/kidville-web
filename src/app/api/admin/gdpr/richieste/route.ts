@@ -54,26 +54,46 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
 
     const rows = (richieste ?? []) as { id: string; parent_id: string; creata_il: string }[]
     const out: Array<Record<string, unknown>> = []
+    // Le tre letture dell'elenco degradano a «—» e a «0 figli», e fino al terzo
+    // collaudo lo facevano IN SILENZIO: la Direzione leggeva «0 figli» su una
+    // richiesta che ne aveva, senza nessun segnale. Qui non si può rispondere
+    // 500 (una richiesta illeggibile non deve nascondere le altre nove), ma il
+    // degrado si CONTA: `warn`, con solo uuid e conteggi. Il numero su cui si
+    // agisce davvero resta quello del `dryrun`, che ora si ferma sul guasto.
+    const conteggiIncerti = (esito: string, richiestaId: string, err: unknown) => {
+      logEvento('gdpr', 'warn', {
+        operazione: 'admin/gdpr/richieste:GET',
+        esito,
+        richiesta: richiestaId,
+      }, err)
+    }
+
     for (const r of rows) {
-      const { data: parent } = await admin
+      const { data: parent, error: parentErr } = await admin
         .from('parents')
         .select('first_name, last_name')
         .eq('id', r.parent_id)
         .maybeSingle()
+      if (parentErr) conteggiIncerti('nome-genitore-non-letto', r.id, parentErr)
       const nome = parent
         ? `${(parent.first_name ?? '').toString().trim()} ${(parent.last_name ?? '').toString().trim()}`.trim()
         : ''
 
-      const { data: links } = await admin.from('student_parents').select('student_id').eq('parent_id', r.parent_id)
+      const { data: links, error: linksErr } = await admin
+        .from('student_parents')
+        .select('student_id')
+        .eq('parent_id', r.parent_id)
+      if (linksErr) conteggiIncerti('legami-non-letti', r.id, linksErr)
       const childIds = ((links ?? []) as { student_id: string }[]).map((l) => l.student_id)
       let iscritti = 0
       let nonIscritti = 0
       let fuoriScope = 0
       if (childIds.length > 0) {
-        const { data: figli } = await admin
+        const { data: figli, error: figliErr } = await admin
           .from('alunni')
           .select('id, stato, anonimizzato_il, scuola_id')
           .in('id', childIds)
+        if (figliErr) conteggiIncerti('figli-non-letti', r.id, figliErr)
         for (const f of (figli ?? []) as {
           stato: string | null
           anonimizzato_il: string | null
@@ -146,8 +166,31 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
 
     const parentId = richiesta.parent_id as string
 
-    // Figli collegati + stato di iscrizione.
-    const { data: links } = await admin.from('student_parents').select('student_id').eq('parent_id', parentId)
+    // ─── SE NON SI SA CHI, NON SI TOCCA NIENTE (rilievo T15) ────────────────
+    //
+    // PostgREST non lancia: ritorna `{ error }` (AGENTS.md, regola 7). Queste due
+    // letture non stabiliscono un dettaglio, stabiliscono l'INSIEME su cui l'oblio
+    // agisce: con `links` a `[]` il flusso proseguiva fino in fondo —
+    // `childIds=[]` → `figli=[]` → nessun `anonimizzaAlunno` → `esito.alunni = 0`
+    // → richiesta marcata `evasa`. Il genitore anonimizzato, i BAMBINI no, e la
+    // pratica chiusa: un oblio eseguito a metà che risulta concluso non lo ripete
+    // più nessuno.
+    //
+    // Il controllo sta PRIMA di `anonimizzaParent`, e non è un dettaglio d'ordine:
+    // fermarsi dopo lascerebbe comunque l'oblio a metà, solo dall'altro lato.
+    // La richiesta resta `pending`, cioè ripetibile — che è la sola forma di
+    // riparazione possibile per un'operazione senza annulla.
+    //
+    // La rotta sorella `admin/gdpr/erase` ha questo identico controllo sulla
+    // stessa identica query dal 2026-08-07: qui non era arrivato.
+    const { data: links, error: linksErr } = await admin
+      .from('student_parents')
+      .select('student_id')
+      .eq('parent_id', parentId)
+    if (linksErr && !schemaAssente(linksErr)) {
+      logErrore({ operazione: 'admin/gdpr/richieste:POST', stato: 500, evento: 'db' }, linksErr)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
     const childIds = ((links ?? []) as { student_id: string }[]).map((l) => l.student_id)
     type Figlio = {
       id: string
@@ -160,10 +203,18 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     }
     let figli: Figlio[] = []
     if (childIds.length > 0) {
-      const { data } = await admin
+      // Stessa regola della lettura qui sopra: senza l'anagrafica non si sa
+      // quali figli sono iscritti (si mantengono) e quali no (si anonimizzano).
+      // Un elenco vuoto per guasto anonimizzerebbe zero minori dichiarando di
+      // averli trattati tutti.
+      const { data, error: figliErr } = await admin
         .from('alunni')
         .select('id, stato, anonimizzato_il, scuola_id, documento_path, codice_fiscale, fiscal_code')
         .in('id', childIds)
+      if (figliErr && !schemaAssente(figliErr)) {
+        logErrore({ operazione: 'admin/gdpr/richieste:POST', stato: 500, evento: 'db' }, figliErr)
+        return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+      }
       figli = (data ?? []) as Figlio[]
     }
 
@@ -247,6 +298,10 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // e da qui sulla riga della richiesta — perché è la prova che quel testo è
     // stato tolto davvero.
     let presenzeBonificate = 0
+    // Le notifiche già recapitate che nominavano il minore: la campanella è un
+    // archivio, non un rivolo. Arriva fin qui per la stessa ragione delle altre
+    // — un oblio si racconta con dei numeri, non con un «fatto».
+    let notificheRimosse = rParent.notificheRimosse ?? 0
 
     // 2. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
     let ricon = 0
@@ -265,6 +320,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       segnalazioni += r.segnalazioniBonificate
       sospensioni += r.sospensioniBonificate
       presenzeBonificate += r.presenzeBonificate ?? 0
+      notificheRimosse += r.notificheRimosse ?? 0
     }
 
     // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
@@ -298,6 +354,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       segnalazioni_bonificate: segnalazioni,
       sospensioni_bonificate: sospensioni,
       presenze_bonificate: presenzeBonificate,
+      notifiche_rimosse: notificheRimosse,
     }
 
     // 3. Marca la richiesta come evasa.

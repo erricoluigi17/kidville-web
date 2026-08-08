@@ -729,19 +729,39 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // Un commento che dichiara un limite inesistente costa quanto uno che
     // dichiara una protezione inesistente: convince il lettore successivo a
     // cercare la risposta dove non è.
+    //
+    // ─── E COME SI FA A CONTARLE DAVVERO (rilievi T10 e T29) ────────────────
+    //
+    // `app_log` deduplica per `(fingerprint, giorno)` e l'`ON CONFLICT` NON
+    // aggiorna il contesto: la riga superstite conserva quello della PRIMA
+    // occorrenza. Con un `esito` costante, tutte le comunicazioni riuscite di uno
+    // stesso genitore in un giorno cadevano nella stessa impronta — misurato:
+    // nove POST su tre date diverse, UNA riga con `occorrenze: 9` e
+    // `alunno_id`/`presenza_id`/`n_docenti` della sola prima. Un genitore con due
+    // figli lasciava una riga sola, con il nome del primo.
+    //
+    // Due correzioni, e servono entrambe:
+    //  1. `distingui` porta alunno e riga di presenza DENTRO l'impronta: una riga
+    //     per (genitore, alunno, presenza, giorno). Il costo in volume è
+    //     limitato dal tetto di frequenza (20 scritture / 10 minuti per utente):
+    //     qui non esiste la tempesta che la deduplica serve a schiacciare;
+    //  2. due `esito` distinti: `riga_creata: false` non poteva MAI comparire —
+    //     una volta che la prima del giorno era una creazione, il messaggio della
+    //     riga era deciso per tutte. Una correzione ora ha il suo nome anche
+    //     nella colonna `messaggio`, che è quella che si legge per prima.
     logEvento('registro', 'info', {
       operazione: 'parent/presenze/comunica-assenza:POST',
-      esito: 'assenza-comunicata',
+      esito: creata ? 'assenza-comunicata' : 'assenza-aggiornata',
       alunno_id: studentId,
       presenza_id: presenzaId,
       attore_id: userId,
       sezione_id: sezione,
       grado: schoolType,
       n_docenti: nDocenti,
-      // Una comunicazione NUOVA o la correzione di una già inviata: sono due
-      // gesti diversi, e in tabella si contano insieme.
+      // Ridondante con `esito` per costruzione, e si tiene: è la chiave su cui
+      // sono scritte le query esistenti, e toglierla le romperebbe in silenzio.
       riga_creata: creata,
-    })
+    }, undefined, { distingui: ['alunno_id', 'presenza_id'] })
 
     // LA RISPOSTA SI COMPONE, NON SI INOLTRA.
     //
@@ -851,7 +871,20 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
     // vuole — nessuna assenza comunicata per quel giorno — è già quello. Succede
     // col doppio tocco, con una schermata ricaricata, con due dispositivi aperti.
     // Un 404 qui manderebbe un messaggio d'errore per un'operazione riuscita.
+    //
+    // MA NON RESTA MUTO: senza questa riga «nessun log» tornava a voler dire
+    // insieme «tutto a posto» e «non c'era niente da togliere» — cioè la stessa
+    // ambiguità in cui questa funzione è vissuta un mese. È anche il caso del
+    // genitore convinto di aver annullato qualcosa che non esisteva più: la
+    // risposta è la stessa, la riga distingue.
     if (!riga) {
+      logEvento('registro', 'info', {
+        operazione: 'parent/presenze/comunica-assenza:DELETE',
+        esito: 'assenza-gia-assente',
+        alunno_id: studentId,
+        attore_id: userId,
+        annullata: false,
+      }, undefined, { distingui: ['alunno_id'] })
       return NextResponse.json({ success: true, annullata: false })
     }
 
@@ -1032,6 +1065,10 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
     // scrive il log non la sa più nessuno. È un uuid — passa la lista bianca di
     // `redact` per la forma, non per la chiave — e non dice altro che «quale
     // account»: nessun nome, nessuna email, e mai il motivo dell'assenza.
+    // `distingui`: come sulla POST, l'annullamento parla di UNA riga di presenza
+    // e la riga di log deve poterlo dire. Senza, due annullamenti dello stesso
+    // genitore nello stesso giorno lasciavano un contatore e un solo
+    // `presenza_id` — quello del primo.
     logEvento('registro', 'info', {
       operazione: 'parent/presenze/comunica-assenza:DELETE',
       esito: 'assenza-annullata',
@@ -1039,7 +1076,7 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
       presenza_id: riga.id as string,
       attore_id: userId,
       notifica_gia_partita: daAvvisare,
-    })
+    }, undefined, { distingui: ['alunno_id', 'presenza_id'] })
 
     return NextResponse.json({ success: true, annullata: true })
   } catch (err) {

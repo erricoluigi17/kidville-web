@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+
+import itServizi from '../../messages/it/parentServizi.json'
+import itPrimaria from '../../messages/it/parentPrimaria.json'
+import itAssenze from '../../messages/it/parentAssenze.json'
+import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo'
 
 // =============================================================================
 // LA STESSA FUNZIONE, DISEGNATA DUE VOLTE.
@@ -46,6 +51,7 @@ vi.mock('next-intl', async () => {
     const cataloghi: Record<string, Record<string, string>> = {
         parentServizi: (await import('../../messages/it/parentServizi.json')).default,
         parentPrimaria: (await import('../../messages/it/parentPrimaria.json')).default,
+        parentAssenze: (await import('../../messages/it/parentAssenze.json')).default,
         shared: (await import('../../messages/it/shared.json')).default,
     }
     const risolvi = (ns: string | undefined, key: string): string =>
@@ -172,6 +178,114 @@ describe('le due schermate «assenze comunicate» parlano la stessa lingua', () 
         // ascolta e chi guarda devono poter parlare della stessa riga.
         expect(ariaA).toContain(testoA)
         expect(ariaP).toContain(testoP)
+    })
+
+    // =========================================================================
+    // IL MODULO, non solo la riga d'elenco (collaudo del 2026-08-08, design F2).
+    //
+    // Il lock si fermava al `<li>` e al suo comando, e nel frattempo il MODULO
+    // delle due schermate era divergente in tutto ciò che il genitore tocca per
+    // primo. Misurato con `getComputedStyle` a 390px, stesso giorno, stesso
+    // contenuto:
+    //
+    //   campo giorno  · raggio 9999px (pillola), 14px, alto 34px   ← card
+    //                 · raggio 12px, 16px, alto 50px               ← pagina
+    //   campo motivo  · `<input type="text">`, pillola, 34px       ← card
+    //                 · `<textarea>` a quattro righe, 112px        ← pagina
+    //
+    // La pillola sui campi contraddice anche `design.md`: là la forma a pillola
+    // è quella dei PULSANTI, e gli input sono dichiarati a 8 o 12px. E i 34px
+    // erano il bersaglio di tocco più piccolo della schermata.
+    // =========================================================================
+
+    /** I due campi del modulo, in una delle due schermate. */
+    async function modulo(quale: 'attendance' | 'primaria') {
+        let giorno: HTMLElement
+        let motivo: HTMLElement
+        if (quale === 'attendance') {
+            render(<ParentAttendancePage />)
+            giorno = await screen.findByLabelText(itServizi.attendanceGiorno)
+            motivo = screen.getByLabelText(itServizi.attendanceMotivo)
+        } else {
+            render(<ComunicaAssenzaCard studentId="s-1" parentId="p-1" />)
+            fireEvent.click(await screen.findByRole('button', { name: itPrimaria.comunicaApri }))
+            giorno = screen.getByLabelText(itPrimaria.comunicaDataLabel)
+            motivo = screen.getByLabelText(itPrimaria.comunicaMotivoLabel)
+        }
+        // Lo STESSO giorno in entrambe — ed è un giorno già comunicato, così
+        // compare anche l'avviso di sovrascrittura, che è la terza cosa da
+        // confrontare.
+        fireEvent.change(giorno, { target: { value: GIORNO } })
+        return { giorno, motivo }
+    }
+
+    /** Il raggio dichiarato da una classe `rounded-*`. */
+    const raggio = (el: Element) => el.className.split(/\s+/).find((c) => c.startsWith('rounded-')) ?? '(nessuno)'
+
+    it('i due campi del modulo hanno la STESSA forma nelle due schermate', async () => {
+        const a = await modulo('attendance')
+        const formaA = { giorno: raggio(a.giorno), motivo: raggio(a.motivo) }
+        cleanup()
+        const p = await modulo('primaria')
+
+        expect(
+            raggio(p.giorno),
+            'Il campo principale della funzione è una pillola di qua e un rettangolo di là. La ' +
+                'pillola è la forma dei PULSANTI (design.md): su un campo dati dice «premimi».',
+        ).toBe(formaA.giorno)
+        expect(raggio(p.motivo), 'stessa cosa per il campo del motivo').toBe(formaA.motivo)
+        // …e la forma scelta è quella DICHIARATA per gli input, non una pillola.
+        expect(formaA.giorno, 'il raggio dei campi non è il token `rounded-input`').toBe('rounded-input')
+    })
+
+    it('il MOTIVO è un\'area di testo in entrambe: è una nota medica, non una parola', async () => {
+        for (const quale of ['attendance', 'primaria'] as const) {
+            const { motivo } = await modulo(quale)
+            expect(
+                motivo.tagName,
+                `${quale}: il motivo è un campo a riga singola. Su una riga sola il genitore non ` +
+                    'rilegge quello che ha scritto — ed è il campo che porta il dato sanitario.',
+            ).toBe('TEXTAREA')
+            cleanup()
+        }
+    })
+
+    it('il tetto del motivo è DICHIARATO nel campo, non solo nel rifiuto del server', async () => {
+        // Il server taglia a 500 (`MOTIVO_MAX_CARATTERI`). Senza `maxlength` si
+        // digitavano 1200 caratteri — misurati — e lo si scopriva solo dal 400
+        // dopo aver premuto invia. Chi scrive una nota medica lunga la riscrive.
+        for (const quale of ['attendance', 'primaria'] as const) {
+            const { motivo } = await modulo(quale)
+            expect(
+                motivo.getAttribute('maxlength'),
+                `${quale}: il campo del motivo non dichiara nessun tetto`,
+            ).toBe(String(MOTIVO_MAX_CARATTERI))
+            cleanup()
+        }
+    })
+
+    it('le fasce di STATO hanno la stessa anatomia: raggio, contorno, icona', async () => {
+        // L'avviso «per questo giorno hai già comunicato»: stesse parole, stessi
+        // colori, e fino al 2026-08-08 due raggi diversi (12px contro 16px).
+        const avviso = (): HTMLElement => {
+            const nodo = screen.getByText(itAssenze.giaComunicataAvviso)
+            return (nodo.closest('[role="status"]') ?? nodo) as HTMLElement
+        }
+        await modulo('attendance')
+        const a = avviso()
+        const formaA = forma(a)
+        const iconeA = a.querySelectorAll('svg').length
+        cleanup()
+        await modulo('primaria')
+        const p = avviso()
+
+        expect(
+            forma(p),
+            'Lo stesso avviso, con le stesse parole e gli stessi colori, ha due raggi nelle due ' +
+                'schermate: cambia solo la forma, e cambia perché è stata scelta a occhio due volte.',
+        ).toEqual(formaA)
+        expect(p.querySelectorAll('svg').length, 'una delle due fasce ha l\'icona e l\'altra no').toBe(iconeA)
+        expect(iconeA, 'la fascia di stato non porta nessuna icona').toBeGreaterThan(0)
     })
 
     it('la riga regge il telefono piccolo in ENTRAMBE (320px: va a capo, non tronca l\'anno)', async () => {

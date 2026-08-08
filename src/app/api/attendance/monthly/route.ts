@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
+import { eGiornoTrascorso } from '@/lib/presenze/finestra-trascorsa';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 import { meseCivile } from '@/i18n/config';
@@ -17,6 +19,20 @@ export interface MonthlyAttendanceRecord {
     stato: 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
     orario_entrata: string | null;
     orario_uscita: string | null;
+    /**
+     * Il giorno NON è ancora arrivato: è un'assenza che il genitore ha
+     * comunicato in anticipo, non un fatto del registro.
+     *
+     * Il calendario continua a mostrarla — è il motivo per cui il genitore la
+     * comunica — ma i CONTEGGI (presenze/assenze/ritardi/uscite, monte ore, PDF)
+     * devono escluderla: prima del rilievo T26 il prospetto del docente diceva
+     * «2 A» e «10 ORE» per un alunno con una sola assenza avvenuta.
+     *
+     * La marca la mette il SERVER e non il browser: l'orologio di un tablet può
+     * essere sbagliato o su un altro fuso, e due dispositivi conterebbero
+     * diversamente lo stesso registro.
+     */
+    futura: boolean;
 }
 
 /**
@@ -92,11 +108,15 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
         if (alunniError) {
             // L'oggetto errore si PASSA, non si riassume: `JSON.stringify` su un Error nativo
             // restituisce `{}` — è il bug che questo modulo esiste per togliere di mezzo.
+            // IL `message` DI POSTGREST NON ESCE DA QUI. È prosa inglese con
+            // dentro nomi di colonne e di vincoli: una mappa dello schema
+            // consegnata a chiunque superi `requireDocente`. La regola è già
+            // dichiarata dalla rotta gemella («il `message` di PostgREST NON esce
+            // verso il client», `comunica-assenza`) e valeva per una sola delle
+            // due. Il messaggio non si perde: sta intero nel `logErrore` qui
+            // sopra, che è dove dice PERCHÉ.
             logErrore({ operazione: 'attendance/monthly:GET', stato: 500, evento: 'db' }, alunniError);
-            return NextResponse.json(
-                { error: 'Errore recupero alunni.', details: alunniError.message },
-                { status: 500 }
-            );
+            return NextResponse.json({ error: 'Errore recupero alunni.' }, { status: 500 });
         }
 
         if (!alunniData || alunniData.length === 0) {
@@ -118,13 +138,14 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
 
         if (presenzeError) {
             logErrore({ operazione: 'attendance/monthly:GET', stato: 500, evento: 'db' }, presenzeError);
-            return NextResponse.json(
-                { error: 'Errore recupero presenze.', details: presenzeError.message },
-                { status: 500 }
-            );
+            return NextResponse.json({ error: 'Errore recupero presenze.' }, { status: 500 });
         }
 
         // ── Join manuale ───────────────────────────────────────────────────────
+        // `oggi` si calcola UNA volta per tutta la risposta: due righe della
+        // stessa lettura non possono cadere in due giorni diversi perché la
+        // mezzanotte è passata a metà `map`.
+        const oggi = oggiFiscaleISO();
         const records: MonthlyAttendanceRecord[] = (presenzeData ?? []).map(row => {
             const alunno = alunniMap[row.alunno_id];
             return {
@@ -136,6 +157,7 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
                 stato:            row.stato as MonthlyAttendanceRecord['stato'],
                 orario_entrata:   row.orario_entrata,
                 orario_uscita:    row.orario_uscita,
+                futura:           !eGiornoTrascorso(row.data, oggi),
             };
         });
 

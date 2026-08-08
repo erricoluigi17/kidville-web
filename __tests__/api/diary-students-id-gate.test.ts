@@ -41,6 +41,8 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/anagrafiche/legami', () => ({
   genitoreHasFiglio: h.genitoreHasFiglio,
+  // Esito a tre valori del gate: derivato dal mock booleano storico.
+  verificaLegameGenitore: async (...a: unknown[]) => ((await h.genitoreHasFiglio(...a)) ? 'si' : 'no'),
   getGenitoriDiAlunno: h.getGenitoriDiAlunno,
   getGenitoriDiAlunni: h.getGenitoriDiAlunni,
 }))

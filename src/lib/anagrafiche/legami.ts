@@ -33,18 +33,48 @@ function segnalaLetturaLegami(esito: string, tabella: string, n: number, err: un
   }, err);
 }
 
-/** Alunni (id) collegati a un ACCOUNT genitore (utenti.id), unione runtime+anagrafica. */
-export async function getFigliDiGenitore(
+/**
+ * Alunni (id) collegati a un ACCOUNT genitore, CON il verdetto sulla completezza.
+ *
+ * ─── PERCHÉ L'ELENCO DA SOLO NON BASTA (rilievo T13) ────────────────────────
+ *
+ * Le tre letture qui sotto possono fallire, e PostgREST non lancia: ritorna
+ * `{ error }`. Restituendo il solo elenco, una lettura fallita usciva come
+ * «questo genitore non ha quel figlio» — cioè un guasto del database travestito
+ * da risposta di merito. Su `genitoreHasFiglio` quel `false` diventava un 403
+ * «Accesso negato» addosso al genitore TITOLARE, e per giunta accendeva il
+ * contatore di sicurezza `alunno-non-della-famiglia`: un rilevatore di IDOR che
+ * si riempie di blip del DB smette di essere un rilevatore.
+ *
+ * `completo: false` significa esattamente «l'elenco può essere corto: non
+ * trarne conclusioni negative». Chi decide un ACCESSO deve guardarlo; chi
+ * ELENCA può ignorarlo (mostrerà meno figli, non i figli di un altro).
+ *
+ * ─── «SCHEMA ASSENTE» NON È UN GUASTO ───────────────────────────────────────
+ *
+ * Sul DB E2E della CI (mai migrato) una delle due sorgenti può non esistere
+ * affatto. Lì il codice PostgREST è `42P01`/`42703`/`PGRST20x`: non è una
+ * lettura fallita, è un ambiente in cui quella sorgente non ha legami da dare.
+ * Trattarlo da guasto renderebbe `non-deciso` OGNI verifica in CI, cioè un 500
+ * su ogni rotta del genitore. Vedi `SCHEMA_ASSENTE` più sotto.
+ */
+export async function getFigliDiGenitoreEsito(
   supabase: SupabaseClient,
   accountId: string,
-): Promise<string[]> {
+): Promise<{ figli: string[]; completo: boolean }> {
   const ids = new Set<string>();
+  let completo = true;
+  /** Un errore che NON è «schema assente» rende l'elenco inaffidabile. */
+  const registra = (esito: string, tabella: string, n: number, err: unknown) => {
+    segnalaLetturaLegami(esito, tabella, n, err);
+    if (livelloPerErrore(err) !== 'info') completo = false;
+  };
 
   const { data: runtime, error: errRuntime } = await supabase
     .from('legame_genitori_alunni')
     .select('alunno_id')
     .eq('genitore_id', accountId);
-  if (errRuntime) segnalaLetturaLegami('figli-runtime-non-letti', 'legame_genitori_alunni', 1, errRuntime);
+  if (errRuntime) registra('figli-runtime-non-letti', 'legame_genitori_alunni', 1, errRuntime);
   for (const r of runtime ?? []) if (r.alunno_id) ids.add(r.alunno_id as string);
 
   // Ponte anagrafico: parents di questo account → student_parents.
@@ -52,18 +82,26 @@ export async function getFigliDiGenitore(
     .from('parents')
     .select('id')
     .eq('auth_user_id', accountId);
-  if (errParents) segnalaLetturaLegami('figli-ponte-non-letto', 'parents', 1, errParents);
+  if (errParents) registra('figli-ponte-non-letto', 'parents', 1, errParents);
   const parentIds = (parentRows ?? []).map((p) => p.id as string);
   if (parentIds.length > 0) {
     const { data: sp, error: errSp } = await supabase
       .from('student_parents')
       .select('student_id')
       .in('parent_id', parentIds);
-    if (errSp) segnalaLetturaLegami('figli-anagrafica-non-letti', 'student_parents', parentIds.length, errSp);
+    if (errSp) registra('figli-anagrafica-non-letti', 'student_parents', parentIds.length, errSp);
     for (const r of sp ?? []) if (r.student_id) ids.add(r.student_id as string);
   }
 
-  return [...ids];
+  return { figli: [...ids], completo };
+}
+
+/** Alunni (id) collegati a un ACCOUNT genitore (utenti.id), unione runtime+anagrafica. */
+export async function getFigliDiGenitore(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<string[]> {
+  return (await getFigliDiGenitoreEsito(supabase, accountId)).figli;
 }
 
 /**
@@ -139,23 +177,75 @@ export async function getGenitoriDiAlunno(
   return mappa.get(alunnoId) ?? [];
 }
 
-/** True se l'account genitore è collegato all'alunno (runtime O anagrafica). */
-export async function genitoreHasFiglio(
+/**
+ * Il legame account-genitore ↔ alunno, con TRE esiti e non due.
+ *
+ *  · `si`          — il legame c'è (runtime o anagrafica);
+ *  · `no`          — il legame non c'è, e le letture che potevano dirlo hanno
+ *                    risposto: è una risposta di merito, si può negare;
+ *  · `non-deciso`  — una lettura è fallita davvero. NON si può concludere
+ *                    niente: chi decide un accesso risponda 500, mai 403.
+ *
+ * È il rimedio al rilievo T13, e la ragione per cui i tre stati non possono
+ * stare su un `boolean`: `false` significava insieme «non è tuo figlio» e «non
+ * ho potuto leggere», e la seconda arrivava al genitore titolare come
+ * «Accesso negato» — con in più una riga nel contatore degli IDOR a suo nome.
+ *
+ * DIFESA IN PROFONDITÀ SULL'UUID (rilievo T16): un `alunnoId` che non è un uuid
+ * non è un alunno, ed è un errore del CLIENT. Mandarlo a PostgREST produce
+ * `22P02` — una riga `error` in `app_log`, cioè un errore di battitura contato
+ * come guasto del SERVER dentro la soglia `tasso-errore` di /api/health. La
+ * guardia sta anche nel gate (`requireParentOfStudent`), che copre venti rotte;
+ * qui copre gli altri sette chiamanti diretti.
+ */
+export type EsitoLegame = 'si' | 'no' | 'non-deciso';
+
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function verificaLegameGenitore(
   supabase: SupabaseClient,
   accountId: string,
   alunnoId: string,
-): Promise<boolean> {
-  // Fast-path runtime (una sola query nel caso comune).
-  const { data: r } = await supabase
+): Promise<EsitoLegame> {
+  if (!FORMA_UUID.test(alunnoId ?? '')) return 'no';
+
+  // Fast-path runtime (una sola query nel caso comune). `error` si destruttura:
+  // era proprio questa la riga che non lo faceva.
+  const { data: r, error } = await supabase
     .from('legame_genitori_alunni')
     .select('alunno_id')
     .eq('genitore_id', accountId)
     .eq('alunno_id', alunnoId)
     .maybeSingle();
-  if (r) return true;
-  // Fallback anagrafico.
-  const figli = await getFigliDiGenitore(supabase, accountId);
-  return figli.includes(alunnoId);
+  if (!error && r) return 'si';
+  if (error) segnalaLetturaLegami('legame-runtime-non-letto', 'legame_genitori_alunni', 1, error);
+  // Un guasto sul fast-path non basta a dire `non-deciso`: l'unione qui sotto
+  // rilegge la stessa tabella e le altre due, e può ancora rispondere `si`.
+
+  // Fallback anagrafico (unione delle due sorgenti).
+  const { figli, completo } = await getFigliDiGenitoreEsito(supabase, accountId);
+  if (figli.includes(alunnoId)) return 'si';
+  // Il fast-path fallito conta come lettura incompleta tanto quanto le altre.
+  if (!completo || (error && livelloPerErrore(error) !== 'info')) return 'non-deciso';
+  return 'no';
+}
+
+/**
+ * True se l'account genitore è collegato all'alunno (runtime O anagrafica).
+ *
+ * ⚠️ APPIATTISCE `non-deciso` SU `false`, e va detto: per i chiamanti che
+ * decidono un accesso è il degrado sbagliato (nega a un genitore legittimo).
+ * Resta per i sette call site storici — mensa, chat, gallery, avvisi, note,
+ * forms — dove chiudere in caso di dubbio è comunque la scelta prudente e dove
+ * il guasto ora LASCIA UNA RIGA (`segnalaLetturaLegami`), che è ciò che prima
+ * mancava. Chi scrive codice nuovo usi `verificaLegameGenitore` e distingua.
+ */
+export async function genitoreHasFiglio(
+  supabase: SupabaseClient,
+  accountId: string,
+  alunnoId: string,
+): Promise<boolean> {
+  return (await verificaLegameGenitore(supabase, accountId, alunnoId)) === 'si';
 }
 
 // =============================================================================

@@ -80,6 +80,16 @@ export interface RigaLog {
      *     con cui si correla fra RICHIESTE — restano indisponibili al chiamante.
      */
     route?: string;
+    /**
+     * L'IDENTITÀ DELL'ENTITÀ DI CUI LA RIGA PARLA — dichiarata dal chiamante e
+     * l'unica parte del dominio che entra nell'IMPRONTA (vedi `impronta`).
+     *
+     * Non è un campo da riempire per abitudine: si passa SOLO quando la riga
+     * descrive un'entità e non un fatto aggregato. La compone `logEvento` con
+     * l'opzione `distingui`, e i valori passano da `valoreDistintivo` — uuid,
+     * numeri, booleani, date, enumerati. Mai nomi, mai testo libero.
+     */
+    bersaglio?: string;
     contestoExtra?: Record<string, unknown>;
 }
 
@@ -389,12 +399,13 @@ function componi(riga: RigaLog): Record<string, unknown> {
         ambiente: ambienteCorrente(),
         fingerprint: impronta({
             sorgente, livello, evento, route, codice, statoHttp, utenteId, messaggio, stack,
+            bersaglio: testo(riga.bersaglio),
         }),
         contesto: contestoJson(riga.contestoExtra),
     };
 }
 
-interface Identita {
+export interface Identita {
     sorgente: string;
     livello: string;
     evento: string;
@@ -404,6 +415,7 @@ interface Identita {
     utenteId?: string;
     messaggio: string;
     stack?: string;
+    bersaglio?: string;
 }
 
 /**
@@ -430,10 +442,23 @@ interface Identita {
  *    pessimo, contro le decine di migliaia che il dedup evita. La tempesta del client resta
  *    schiacciata: mille errori dello stesso utente restano UNA riga con `occorrenze = 1000`.
  *
- * COSA NON C'È: `request_id`, `scuola_id`, `contesto`, e lo `stack` completo. Su una riga
- * deduplicata quei campi sono il CAMPIONE della prima occorrenza, non l'insieme — ed è scritto
- * anche nel commento della migrazione, perché è l'unica cosa che chi legge in SQL deve sapere
- * per non trarre conclusioni sbagliate. La traccia per-richiesta resta su Vercel (un giorno);
+ *  - `bersaglio` → l'UNICO pezzo di dominio, ed è OPT-IN. Aggiunto il 2026-08-08 dopo il terzo
+ *    collaudo: senza, venti tentativi su venti bambini altrui producevano UNA riga, e la sua
+ *    colonna `contesto.campi.alunno_id` nominava il bambino della PRIMA occorrenza del giorno —
+ *    cioè mentiva su diciannove casi su venti. Lo dichiara il chiamante con
+ *    `logEvento(..., { distingui: ['alunno_id'] })`, perché è lui a sapere se la riga descrive
+ *    un'ENTITÀ o un fatto aggregato; e i valori passano da `valoreDistintivo`, che ammette solo
+ *    uuid, numeri, booleani, date ed enumerati. Un nome non distingue: due nomi diversi cadono
+ *    nella stessa riga, ed è voluto.
+ *
+ * COSA NON C'È: `request_id`, `scuola_id`, il `contesto` INTERO, e lo `stack` completo. Su una
+ * riga deduplicata quei campi sono il CAMPIONE della prima occorrenza, non l'insieme — ed è
+ * scritto anche nel commento della migrazione, perché è l'unica cosa che chi legge in SQL deve
+ * sapere per non trarre conclusioni sbagliate. Il contesto NON entra e non deve entrare: i suoi
+ * campi portano contatori che cambiano a ogni richiesta (`ms`, `n`, `accessibili`), e ogni
+ * occorrenza produrrebbe una riga nuova — cioè la fine della deduplica, che esiste proprio per
+ * non farsi sommergere. Il `bersaglio` è la deroga MINIMA e dichiarata a questa regola.
+ * La traccia per-richiesta resta su Vercel (un giorno);
  * `app_log` è la memoria di COSA si è rotto e QUANTO, non di ogni singola richiesta.
  *
  * LA FINESTRA: il GIORNO non è qui dentro, è la colonna `giorno` — vedi la migrazione. Con
@@ -444,13 +469,25 @@ interface Identita {
  * tempo e mettendo il giorno nella chiave unica `(fingerprint, giorno)` si ottengono entrambe
  * le cose: `occorrenze` è il conteggio del giorno, e `group by fingerprint` aggrega la storia.
  */
-function impronta(id: Identita): string {
+export function impronta(id: Identita): string {
     try {
         const parti = [
             id.sorgente, id.livello, id.evento, id.route ?? '', id.codice ?? '',
             id.statoHttp === undefined ? '' : String(id.statoHttp), id.utenteId ?? '',
             id.messaggio, frameDi(id.stack),
         ];
+        // ─── IL BERSAGLIO, E PERCHÉ SI APPENDE INVECE DI STARE IN POSIZIONE ──
+        //
+        // In posizione fissa (anche vuoto) cambierebbe TUTTE le impronte già
+        // scritte: `group by fingerprint`, che è la query con cui si legge la
+        // storia di trenta giorni, si spezzerebbe in due il giorno del deploy.
+        // Appeso solo quando c'è, le righe senza bersaglio — la stragrande
+        // maggioranza — mantengono l'impronta di sempre.
+        //
+        // Il separatore qui sotto è un NUL (`\0`, invisibile nel sorgente): nessun
+        // campo può contenerlo, quindi appendere una parte in più non crea
+        // ambiguità con nessuna composizione esistente.
+        if (id.bersaglio) parti.push(id.bersaglio);
         // ` ` come separatore: nessuno dei campi può contenerlo (passano tutti da
         // `sanificaMessaggio`/`redigiPath`), quindi due composizioni diverse non possono
         // produrre la stessa concatenazione.

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { logClient, flush } from '@/lib/logging/client';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 
 /**
  * L'ULTIMA rete: copre l'unico guasto che `error.tsx` non può coprire, cioè il crash del ROOT
@@ -41,6 +42,27 @@ import { logClient, flush } from '@/lib/logging/client';
  * Perciò: stili INLINE, zero dipendenze di build, colori del brand copiati a mano. Sono sei
  * dichiarazioni; il duplicato è deliberato e questa è la sua motivazione.
  * ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * PERCHÉ LE DUE LINGUE SONO QUI DENTRO E NON NEI CATALOGHI (2026-08-08, Q15).
+ *
+ * Stessa radice del paragrafo precedente, applicata al testo invece che al CSS: questo componente
+ * SOSTITUISCE il root layout, cioè l'unico posto in cui vive il `NextIntlClientProvider`. Quando
+ * viene reso, `useTranslations` non ha più nessun contesto da cui leggere — non è una scelta di
+ * comodità, è che il provider non esiste più. `src/app/error.tsx`, che il layout ce l'ha ancora
+ * sopra, legge invece il catalogo come ogni altra schermata.
+ *
+ * La forma adottata è quella già in uso nelle altre due superfici che devono reggere quando non
+ * regge il resto — `ChunkErrorBoundary` e la pagina `/offline`: entrambe le lingue nel documento,
+ * e la scelta fatta leggendo il cookie `KV_LOCALE`, lo stesso che usa next-intl. La lettura sta in
+ * un `useEffect` e non nel corpo del render perché durante l'SSR di questa pagina `document` non
+ * esiste: partire dall'italiano e correggere subito dopo evita un disallineamento d'idratazione
+ * dentro la schermata che dovrebbe segnalarli.
+ *
+ * `lang` segue la stessa variabile: fino a oggi era cablato a `it`, quindi uno screen reader
+ * leggeva un testo italiano con fonetica italiana (giusto per caso) e avrebbe letto un testo
+ * inglese con la stessa fonetica (sbagliato) appena il testo fosse diventato bilingue.
+ * ─────────────────────────────────────────────────────────────────────────────────
  */
 
 /* I colori del brand, cablati: qui non c'è nessun `@theme` a risolverli (vedi sopra). */
@@ -49,6 +71,34 @@ const GIALLO = '#FDC400';
 const CREMA = '#FEF1E4';
 const INCHIOSTRO = '#1F3D38';
 const SECONDARIO = '#55615C';
+
+/** Le tre frasi, nelle due lingue. Non hanno una chiave di catalogo perché qui il catalogo non c'è. */
+const TESTI = {
+    it: {
+        titolo: 'Kidville non è riuscita ad avviarsi',
+        corpo:
+            'Si è verificato un errore imprevisto. Riprova: se il problema si ripete, ' +
+            'segnalalo alla segreteria indicando il codice qui sotto.',
+        bottone: 'Riprova',
+    },
+    en: {
+        titolo: 'Kidville could not start',
+        corpo:
+            'An unexpected error occurred. Try again: if it keeps happening, report it ' +
+            'to the school office quoting the code below.',
+        bottone: 'Try again',
+    },
+} as const;
+
+/** `it` salvo cookie `KV_LOCALE=en`. Non lancia: gira dentro un gestore d'errore. */
+function linguaCorrente(): 'it' | 'en' {
+    try {
+        const m = document.cookie.match(/(?:^|; )KV_LOCALE=([^;]*)/);
+        return m && decodeURIComponent(m[1]) === 'en' ? 'en' : 'it';
+    } catch {
+        return 'it';
+    }
+}
 
 export default function ErroreGlobale({
     error,
@@ -59,6 +109,17 @@ export default function ErroreGlobale({
 }) {
     /** Stessa guardia di `error.tsx`: StrictMode monta due volte, il ref sopravvive al rimontaggio. */
     const inviato = useRef<string | null>(null);
+    /**
+     * La lingua si legge SOLO lato client: durante l'SSR di questa pagina `document`
+     * non esiste, e il ripiego è l'italiano (la lingua di default dell'app).
+     *
+     * `useClientValue` e non `useState` + `useEffect`: scrivere lo stato dentro un
+     * effect è vietato dal lock `react-hooks/set-state-in-effect` — ed è vietato per
+     * una ragione, non per gusto. Il hook è tre righe su `useSyncExternalStore` e non
+     * porta con sé nessuna dipendenza oltre a React: non contraddice la regola delle
+     * dipendenze al minimo che governa questo file.
+     */
+    const lingua = useClientValue<'it' | 'en'>(linguaCorrente, 'it');
 
     useEffect(() => {
         const chiave = error.digest ?? `${error.name}:${error.message}`;
@@ -82,10 +143,13 @@ export default function ErroreGlobale({
         flush();
     }, [error]);
 
+    const t = TESTI[lingua];
+
     return (
-        // `lang="it"`: senza il root layout non lo dichiara più nessuno, e uno screen reader
-        // leggerebbe un testo italiano con la pronuncia della lingua di sistema.
-        <html lang="it">
+        // `lang`: senza il root layout non lo dichiara più nessuno, e uno screen reader leggerebbe
+        // il testo con la pronuncia della lingua di sistema. Segue la lingua scelta, non un valore
+        // cablato: un testo inglese dentro un documento `lang="it"` è il difetto, non il rimedio.
+        <html lang={lingua}>
             <body style={{ margin: 0, backgroundColor: CREMA, color: INCHIOSTRO, fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' }}>
                 <div
                     role="alert"
@@ -101,12 +165,11 @@ export default function ErroreGlobale({
                     }}
                 >
                     <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: VERDE, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-                        Kidville non è riuscita ad avviarsi
+                        {t.titolo}
                     </h1>
 
                     <p style={{ margin: 0, maxWidth: 420, fontSize: 14, lineHeight: 1.6, color: SECONDARIO }}>
-                        Si è verificato un errore imprevisto. Riprova: se il problema si ripete,
-                        segnalalo alla segreteria indicando il codice qui sotto.
+                        {t.corpo}
                     </p>
 
                     {/* Il digest è il codice da dare alla segreteria: l'unica chiave che lega questa
@@ -146,7 +209,7 @@ export default function ErroreGlobale({
                             cursor: 'pointer',
                         }}
                     >
-                        Riprova
+                        {t.bottone}
                     </button>
                 </div>
             </body>

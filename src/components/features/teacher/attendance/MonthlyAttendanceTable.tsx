@@ -133,10 +133,17 @@ export function calcSummary(s: StudentMonthData): StudentSummary {
     // per un alunno con UNA sola assenza avvenuta e una comunicata per dodici
     // giorni nel futuro, e gli stessi numeri finivano nel PDF esportabile.
     //
-    // La marca `futura` la mette il SERVER (`attendance/monthly:GET`): l'orologio
-    // di un tablet può essere sbagliato o su un altro fuso, e due dispositivi
+    // La marca la mette il SERVER (`attendance/monthly:GET`): l'orologio di un
+    // tablet può essere sbagliato o su un altro fuso, e due dispositivi
     // conterebbero diversamente lo stesso registro.
-    const avvenute = Object.values(s.byDate).filter((r) => !r.futura);
+    //
+    // ⚠️ SI CHIAMAVA `futura`, E IL NOME NASCONDEVA IL CASO PEGGIORE (Q4).
+    // «Futura» è vero solo per i giorni non ancora arrivati, ma l'assenza che il
+    // genitore comunica per OGGI — il valore preimpostato del modulo — ha
+    // `data = oggi`: era `futura: false`, e finiva nelle «A», nelle ORE e nel
+    // PDF prima che il docente avesse fatto l'appello. Ora la marca dice ciò che
+    // deve decidere: «questa riga è un fatto del registro».
+    const avvenute = Object.values(s.byDate).filter((r) => r.fattoDelRegistro);
     let presenze = 0, assenze = 0, ritardi = 0, uscite = 0;
     for (const r of avvenute) {
         if (r.stato === 'presente') presenze++;

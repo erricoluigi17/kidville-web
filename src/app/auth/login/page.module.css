@@ -16,9 +16,30 @@
      `dvh` segue la barra degli indirizzi mobile che si apre/chiude. La deroga
      per schermi molto bassi (landscape) è in fondo al file. */
   height: 100dvh;
-  overflow: hidden;
+  /* ═══ IL CONTENUTO CENTRATO NON SCAVALCA LA SAFE-AREA (rilievo Q32) ═══════
+     Misura CDP sulla WebView viva (emulatore, 2026-08-08): `env(safe-area-inset-top)`
+     vale 24 px, `.page` ha `padding-top: 40px` (16 + 24) e i conti tornano — ma
+     il contenuto centrato è alto 707 px contro i 651 disponibili, e con un
+     centramento normale l'eccedenza si distribuisce ANCHE VERSO L'ALTO: logo a
+     `top: 12`, cioè dentro la fascia dell'orologio e delle icone di sistema.
+     È il classico overflow di un contenitore centrato, che ignora il padding di
+     testa.
+
+     `safe center` dice al browser «centra, ma mai oltre il bordo iniziale»:
+     misurato, il logo passa da 12 a 40 — esattamente il padding dichiarato.
+     Le due righe sono volute: dove `safe` non è supportato la seconda è
+     invalida, viene scartata e resta il centramento di sempre.
+
+     E l'eccedenza che ora va tutta in basso NON si taglia: `overflow-y: auto`
+     la rende raggiungibile (misurati 56 px di scorrimento, con la card intera
+     leggibile). Con `hidden` secco restavano fuori 16 px di card. L'asse
+     orizzontale resta `hidden` com'era: `overflow-y` da solo trascinerebbe
+     anche `overflow-x` ad `auto`, e i blob decorativi tornerebbero a produrre
+     una barra laterale. */
+  overflow: hidden auto;
   display: flex;
   align-items: center;
+  align-items: safe center;
   justify-content: center;
   /* niente lampo grigio al tap su iOS/Android (come nel design) */
   -webkit-tap-highlight-color: transparent;

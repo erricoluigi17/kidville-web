@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { JOB_CRON, JOB_CRON_NON_SORVEGLIATI } from '@/lib/health/controlli'
 
 const RADICE = process.cwd()
 const INFORMATIVA = join(RADICE, 'src/app/privacy/page.tsx')
@@ -300,6 +301,118 @@ describe('lock · il motivo dell’assenza scade e si dimentica', () => {
 //    WHERE fingerprint = 'cron:presenze-giustificazioni-retention'
 //    ORDER BY creato_il DESC LIMIT 3;   -- la notte dopo
 // =============================================================================
+
+// =============================================================================
+// E CHI GUARDA CHE IL LAVORO GIRI? (rilievo Q3, quarto collaudo)
+//
+// ─── IL FATTO ───────────────────────────────────────────────────────────────
+//
+// La migrazione del job gemello scriveva, per iscritto, che il battito era stato
+// messo su `evento='cron'` apposta perché «`controlloBattitoCron` cerca i battiti
+// con `.eq('evento','cron')` … un lavoro che smette di girare non se ne accorge
+// nessuno». La correzione era giusta a metà e non funzionava, per due ragioni
+// indipendenti, entrambe misurate in produzione in sola lettura:
+//
+//   select fingerprint, evento, contesto ? 'campi' as ha_campi from app_log
+//    where fingerprint like 'cron:%retention';
+//     → cron:notifiche-retention                | cron | ha_campi = FALSE
+//     → cron:presenze-giustificazioni-retention | gdpr | ha_campi = FALSE
+//
+//  1. `controlloBattitoCron` scarta le righe senza `contesto.campi.esito === 'ok'`
+//     (controlli.ts): le due funzioni SQL scrivono un `contesto` PIATTO, perché
+//     nascono da un `jsonb_build_object` nella migrazione, mentre `logEvento`
+//     annida tutto sotto `campi`. Due produttori dello stesso formato, e solo uno
+//     è quello che il consumatore sa leggere.
+//  2. Nessuno dei due nomi era in `JOB_CRON`, quindi anche un battito perfetto non
+//     sarebbe stato cercato da nessuno. Conferma dal vivo, GET /api/health:
+//     «job senza battito: push-dispatch,news-cron,fattura-sync,…» — i due job di
+//     retention non comparivano né fra i vivi né fra i muti: invisibili.
+//
+// ─── LA REGOLA CHE QUESTO BLOCCO SORVEGLIA ──────────────────────────────────
+//
+// Una sola: **un battito o è leggibile da chi lo cerca, o non è un battito.** Da
+// qui due prove — la forma del contesto che le funzioni SQL scrivono, e il fatto
+// che il nome del job sia in `JOB_CRON` oppure DICHIARATO fuori con la sua
+// ragione (`JOB_CRON_NON_SORVEGLIATI`, che è una costante e non un commento
+// proprio perché un lock possa leggerla).
+//
+// ⚠️ PERIMETRO DICHIARATO: le prove qui sotto guardano i due job di retention di
+// questo dominio. In `supabase/migrations/` ce ne sono altri undici che scrivono
+// un `fingerprint` `cron:*` con la stessa forma piatta (iscrizioni, audit-docente,
+// bonifica-pii): è un debito misurato, non un'omissione — e nessuno di quelli è
+// citato dall'informativa come automa.
+// =============================================================================
+
+const BATTITI_DA_LEGGERE: { job: string; funzione: string }[] = [
+  { job: 'presenze-giustificazioni-retention', funzione: 'presenze_giustificazioni_retention_tick' },
+  { job: 'notifiche-retention', funzione: 'notifiche_retention_tick' },
+]
+
+/** L'ULTIMA migrazione che (ri)definisce una funzione: è quella che vale. */
+function ultimaDefinizione(funzione: string) {
+  return [...SQL_MIGRAZIONI]
+    .reverse()
+    .find(({ sql }) =>
+      new RegExp(`CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+public\\.${funzione}\\s*\\(`, 'i').test(sql),
+    )
+}
+
+describe('lock · i lavori di scadenza lasciano un battito che qualcuno sa leggere', () => {
+  it.each(BATTITI_DA_LEGGERE)(
+    '$job scrive un contesto della forma che `controlloBattitoCron` legge',
+    ({ job, funzione }) => {
+      const def = ultimaDefinizione(funzione)
+      expect(def, `nessuna migrazione definisce public.${funzione}()`).toBeTruthy()
+      const sql = def!.sql
+
+      expect(
+        /jsonb_build_object\(\s*'campi'/i.test(sql),
+        `\`${funzione}\` scrive un \`contesto\` PIATTO. \`controlloBattitoCron\` legge ` +
+          `\`riga.contesto?.campi\` e con \`continue\` scarta tutto il resto: quel battito non ` +
+          `viene contato da nessuno, e il lavoro può smettere di girare senza che nulla lo dica. ` +
+          `Il formato è quello di \`logEvento\`: tutto annidato sotto \`campi\`.`,
+      ).toBe(true)
+
+      expect(
+        /'esito'\s*,\s*'ok'/i.test(sql),
+        `\`${funzione}\` non scrive \`esito: 'ok'\` nel battito: \`controlloBattitoCron\` scarta ` +
+          `le righe con qualunque altro esito. Il DOMINIO del lavoro va in un campo suo — ` +
+          `l'\`esito\` risponde a «è andata bene?», non a «di che cosa si occupa».`,
+      ).toBe(true)
+
+      expect(
+        new RegExp(`'operazione'\\s*,\\s*'${job}'`, 'i').test(sql),
+        `\`${funzione}\` non scrive \`operazione: '${job}'\`: è la chiave con cui ` +
+          `\`controlloBattitoCron\` associa il battito al job, e senza combacia con niente.`,
+      ).toBe(true)
+
+      expect(
+        /'info'\s*,\s*'cron'/i.test(sql),
+        `\`${funzione}\` non scrive il battito come \`(livello, evento) = ('info', 'cron')\`. ` +
+          `Un battito scritto guardando alla NATURA DEL DATO trattato (\`gdpr\`) invece che alla ` +
+          `NATURA DEL SEGNALE non lo trova nessun controllo: il filtro è \`.eq('evento','cron')\`.`,
+      ).toBe(true)
+    },
+  )
+
+  it.each(BATTITI_DA_LEGGERE)('$job è sorvegliato, oppure dichiarato fuori con la sua ragione', ({ job }) => {
+    const sorvegliato = JOB_CRON.some((j) => j.nome === job)
+    const fuori = JOB_CRON_NON_SORVEGLIATI.find((j) => j.nome === job)
+    expect(
+      sorvegliato || fuori !== undefined,
+      `\`${job}\` non è in \`JOB_CRON\` e non è dichiarato in \`JOB_CRON_NON_SORVEGLIATI\`: ` +
+        `non compare né fra i job vivi né fra quelli muti di /api/health, cioè è invisibile. ` +
+        `Se sorvegliarlo non ha senso (cadenza mensile), va detto lì con la ragione — una ` +
+        `decisione in una costante, non in un commento.`,
+    ).toBe(true)
+    if (!sorvegliato) {
+      expect(
+        fuori!.perche.length,
+        `\`${job}\` è dichiarato fuori dalla sorveglianza senza dire perché.`,
+      ).toBeGreaterThan(30)
+    }
+  })
+})
 
 /** La sezione «Conservazione dei dati» DELIMITATA: dal titolo al suo `</section>`. */
 const SEZIONE_CONSERVAZIONE = (() => {

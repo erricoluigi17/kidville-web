@@ -485,6 +485,56 @@ describe('withRoute — la riga che finisce in app_log (guardia SILENZIOSO disat
         expect(appLog.mock.calls[0][0]).toMatchObject({ livello: 'warn', statoHttp: 400 });
     });
 
+    /**
+     * Q8 — IL 400 CHE NESSUNO VEDE, e perché il contesto non basta a riconoscere una sessione.
+     *
+     * `livello4xx` usava `contesto()?.userId` come sinonimo di «utente autenticato». Su cinque
+     * rotte del repo il corpo si valida PRIMA del gate (allowlist dichiarata in
+     * `corpo-letto-dopo-il-gate.test.ts`: l'`studentId` sta nel body, e il gate ha bisogno di
+     * quello) — quindi al momento del 400 l'utente c'è ma il contesto è ancora vuoto, e il
+     * rifiuto veniva declassato a `info`, cioè fuori dalla tabella.
+     *
+     * Misurato nel quarto collaudo su `parent/presenze/comunica-assenza:POST`: tre POST di fila
+     * con sessione valida e `{"data":""}` → tre volte 400, e in `app_log` ZERO righe. È il caso
+     * che la politica dei livelli dichiara di voler conservare («un 400 da un utente loggato è
+     * un bug del NOSTRO client, ed è il segnale più utile che abbiamo») e che nei fatti buttava
+     * via — proprio sulla rotta più frequente per un genitore.
+     *
+     * Il discriminante corretto non è «il gate ha già parlato»: è «questa richiesta porta una
+     * sessione». Il nome del cookie non si ricopia qui: vive in `src/lib/auth/session-cookie.ts`,
+     * che è già l'unico posto in cui questo repo lo scrive.
+     */
+    it('400: warn anche se il gate non ha ancora depositato l\'identità (corpo validato prima)', async () => {
+        const { wr, appLog } = await caricaRumoroso();
+
+        const conSessione = req('http://localhost/api/parent/presenze/comunica-assenza', {
+            headers: { cookie: 'sb-uimulkjyekgemjakmepp-auth-token.0=base64-qualunque; altro=1' },
+        });
+        await wr('parent/presenze/comunica-assenza:POST', async () =>
+            NextResponse.json({ error: 'Dati non validi' }, { status: 400 })
+        )(conSessione);
+
+        expect(
+            appLog,
+            'un 400 su una richiesta che porta un cookie di sessione non è finito in tabella: ' +
+                'è il rifiuto più frequente della rotta, e resta invisibile',
+        ).toHaveBeenCalledTimes(1);
+        expect(appLog.mock.calls[0][0]).toMatchObject({ livello: 'warn', statoHttp: 400 });
+    });
+
+    it('400: resta `info` per un anonimo vero (nessun cookie di sessione)', async () => {
+        // La direzione opposta, e conta quanto l'altra: se bastasse un cookie qualunque, ogni
+        // bot che sonda il modulo pubblico scriverebbe in tabella.
+        const { wr, appLog } = await caricaRumoroso();
+        const senzaSessione = req('http://localhost/api/public/forms/x/submit', {
+            headers: { cookie: 'consenso_cookie=1; _ga=GA1.2.3' },
+        });
+        await wr('public/forms/[token]/submit:POST', async () =>
+            NextResponse.json({ error: 'Dati non validi' }, { status: 400 })
+        )(senzaSessione);
+        expect(appLog).not.toHaveBeenCalled();
+    });
+
     it('2xx: nessuna riga in tabella, una sola riga KV_OK su Vercel', async () => {
         const { wr, appLog } = await caricaRumoroso();
         await wr('x:GET', async () => NextResponse.json({ ok: true }))(req());

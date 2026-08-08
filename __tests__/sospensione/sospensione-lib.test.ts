@@ -100,6 +100,74 @@ describe('assertGenitoreNonSospeso — unione canonica dei legami (fix finding #
   })
 })
 
+/**
+ * Q6 — UN RIFIUTO CHE RIGUARDA I SOLDI E LE FAMIGLIE, E CHE NON SI POTEVA CONTARE.
+ *
+ * `negato()` costruiva la 403 e tornava, senza una riga. `withRoute` classifica i 403 a `info`
+ * e gli `info` dell'evento `route` non si persistono: in `app_log` restava ZERO. Dal punto di
+ * vista di chi legge la tabella, quel genitore non aveva mai premuto il pulsante — e la domanda
+ * operativa vera («a quante famiglie stiamo negando il servizio, e da quanto?») non aveva
+ * risposta.
+ *
+ * La rotta che lo chiama dichiara nel proprio commento che «ogni rifiuto porta un CODICE
+ * tradotto e lascia una riga `warn`», e ha `logRifiuto()` apposta — ma la chiama solo sui
+ * rifiuti che nascono nel proprio file. Il log va quindi dentro l'HELPER, che è l'unico posto
+ * da cui passano tutti e cinque i punti di blocco.
+ */
+describe('Q6 — il rifiuto per morosità lascia una riga, e porta un codice', () => {
+  it('logga `warn` con il codice, l’operazione e l’alunno (mai un nome)', async () => {
+    const sb = fake({
+      legame_genitori_alunni: [{ genitore_id: 'g1', alunno_id: 'a1' }],
+      alunni: [{ id: 'a1', sospeso: true }],
+    }, cap())
+
+    const res = await assertGenitoreNonSospeso(sb, 'g1')
+    expect(res!.status).toBe(403)
+
+    const riga = h.logEvento.mock.calls.find((c) => c[0] === 'pagamento' && c[1] === 'warn')
+    expect(riga, 'nessuna riga `pagamento warn` per il rifiuto da morosità').toBeTruthy()
+    expect(riga![2]).toMatchObject({ error_code: 'ACCOUNT_SOSPESO', stato: 403 })
+    // Solo uuid e conteggi: il nome della famiglia non entra nel log (AGENTS.md, regola 8).
+    expect(JSON.stringify(riga![2])).not.toMatch(/nome|cognome|email/i)
+  })
+
+  it('la risposta porta `codice`, non solo `motivo`: altrimenti il genitore legge una frase generica', async () => {
+    // `soloCatalogoDaCorpo` legge `codice`. Con il solo `motivo` la card mostrava
+    // «attendanceErrGenerico» — cioè non diceva che l'account è sospeso, che è l'unica
+    // informazione che permette di risolvere (chiamare la segreteria).
+    const sb = fake({
+      legame_genitori_alunni: [{ genitore_id: 'g1', alunno_id: 'a1' }],
+      alunni: [{ id: 'a1', sospeso: true }],
+    }, cap())
+    const res = await assertGenitoreNonSospeso(sb, 'g1')
+    const corpo = await res!.json()
+    expect(corpo.codice).toBe('ACCOUNT_SOSPESO')
+    // `motivo` resta per i client già in circolazione: toglierlo romperebbe chi lo legge.
+    expect(corpo.motivo).toBe('account_sospeso')
+  })
+
+  it('una lettura FALLITA di `alunni.sospeso` non passa per «non sospeso» in silenzio', async () => {
+    // PostgREST non lancia: `const { data } = await …` scartava `{ error }`, e una lettura
+    // fallita si presentava come «nessun figlio sospeso» — fail-open, senza una riga.
+    const sb = fake(
+      {
+        legame_genitori_alunni: [{ genitore_id: 'g1', alunno_id: 'a1' }],
+        alunni: [{ id: 'a1', sospeso: true }],
+      },
+      cap(),
+      { 'sospeso': { code: '08006' } },
+    )
+    const res = await assertGenitoreNonSospeso(sb, 'g1')
+    // La decisione resta la stessa di oggi (non si blocca una famiglia su un guasto nostro),
+    // ma smette di essere muta: senza riga, «nessun sospeso» e «non l'ho potuto sapere» si
+    // leggono uguali.
+    expect(res).toBeNull()
+    const riga = h.logEvento.mock.calls.find((c) => c[0] === 'db' && c[1] === 'error')
+    expect(riga, 'una lettura fallita di `alunni.sospeso` non lascia nessuna riga').toBeTruthy()
+    expect(riga![2]).toMatchObject({ esito: 'sospensione-non-determinabile' })
+  })
+})
+
 describe('assertGenitoreNonSospesoSalvoEssenziale — eccezione moduli essenziali', () => {
   const rowsSospeso: Rows = {
     legame_genitori_alunni: [{ genitore_id: 'g1', alunno_id: 'a1' }],

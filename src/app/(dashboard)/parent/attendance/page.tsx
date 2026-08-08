@@ -5,14 +5,21 @@ import { useTranslations } from 'next-intl';
 import { CheckCircle, CalendarX2, RotateCcw } from 'lucide-react';
 import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
 import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
+import { PiedeAzioneAssenza } from '@/components/features/parent/PiedeAzioneAssenza';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
-import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { CODICI_ERRORE, soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
+import { CAMPO_ASSENZA, ETICHETTA_CAMPO_ASSENZA } from '@/lib/ui/campo-assenza';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
+import {
+    GIORNI_MASSIMI_IN_ANTICIPO,
+    rifiutoDelGiorno,
+    ultimoGiornoComunicabile,
+} from '@/lib/presenze/finestra-comunicazione';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
 /**
@@ -305,6 +312,19 @@ function AttendanceInner() {
         dataScelta.current = giorno;
         setData(giorno);
         if (arrivo || partenza) setReason(arrivo?.giustificazione_testo ?? '');
+        /**
+         * ⚠️ CORREGGERE IL VALORE INVALIDA LA DIAGNOSI PRECEDENTE (2026-08-08).
+         *
+         * `error` e `codiceErrore` venivano azzerati soltanto dentro
+         * `handleSubmit`. Misurato: dopo un rifiuto su `2026-08-01` il campo
+         * restava `aria-invalid="true"` e continuava a rimandare al messaggio
+         * anche una volta portato a `2026-08-20`, cioè a un valore giusto. Chi
+         * usa uno screen reader torna sul campo e sente «non valido» con la
+         * descrizione di un errore che ha già risolto (WCAG 4.1.2 e 3.3.1).
+         * Un errore che sopravvive alla propria causa è un errore che mente.
+         */
+        setError(null);
+        setCodiceErrore(null);
     }, [comunicate]);
     /**
      * Dove va il FUOCO quando la riga annullata sparisce.
@@ -486,9 +506,19 @@ function AttendanceInner() {
         // `oggiFiscaleISO()` e non `new Date()`: «oggi» è quello di Europe/Rome,
         // com'è per il server che riceverà questa richiesta. Fra mezzanotte e le
         // due, in UTC, sarebbe ancora ieri.
-        if (data < today) {
-            setError(tShared('erroreAssenzaDataPassata'));
-            setCodiceErrore('ASSENZA_DATA_PASSATA');
+        //
+        // ⚠️ E IL CONFRONTO NON È PIÙ SCRITTO QUI (2026-08-08). Era
+        // `if (data < today)`: solo il PAVIMENTO, mentre il server impone anche
+        // un tetto (`GIORNI_MASSIMI_IN_ANTICIPO`) che nessuna delle due
+        // schermate conosceva — un giorno a +97 partiva e tornava 400. E la card
+        // gemella della primaria di guardia non ne aveva nessuna. La regola vale
+        // per due schermate e una route: vive in `finestra-comunicazione`, e
+        // dice anche QUALE dei due confini è stato rotto, perché i due rifiuti
+        // mandano il genitore in due posti diversi.
+        const rifiuto = rifiutoDelGiorno(data, today);
+        if (rifiuto) {
+            setError(tShared(CODICI_ERRORE[rifiuto]));
+            setCodiceErrore(rifiuto);
             return;
         }
         // Il fatto che questo invio SOVRASCRIVA si decide adesso, con l'elenco
@@ -762,14 +792,29 @@ function AttendanceInner() {
                         tabIndex={-1}
                         className={`rounded-xl px-1 font-maven text-sm text-kidville-sub ${FUOCO_ESITO}`}
                     >
-                        {t('attendanceIndicaGiorno')}
+                        {/* L'INTERVALLO AMMESSO, TUTTO INTERO (2026-08-08). Il
+                            campo dichiarava il pavimento (`min`) e non il
+                            soffitto, e l'aiuto diceva «puoi indicare oggi o un
+                            giorno futuro» — frase falsa oltre il sessantesimo
+                            giorno, che è il tetto che il server impone. Il
+                            numero è INTERPOLATO dalla costante condivisa, non
+                            ricopiato: un 60 scritto a mano in catalogo diventa
+                            una bugia il giorno in cui il tetto cambia. La frase
+                            vive in `parentAssenze` perché è la stessa, parola per
+                            parola, sulle due schermate. */}
+                        {t('attendanceIndicaGiorno')}{' '}
+                        {ta('finestraGiorni', { giorni: GIORNI_MASSIMI_IN_ANTICIPO })}
                     </p>
                 </div>
 
                 {/* `htmlFor`/`id`: senza, l'etichetta è solo testo VICINO al campo — uno
                     screen reader annuncia «campo data» e basta, e il tocco sull'etichetta
                     non porta il fuoco sul campo. */}
-                <label htmlFor="attendance-giorno" className="mb-2 block font-maven font-medium text-kidville-green">
+                {/* La tipografia dell'etichetta viene da `campo-assenza`, non da
+                    qui: era divergente fra le due schermate (16px/500/verde
+                    contro 12px/600/ink) sopra due campi identici. Lo SPAZIO
+                    resta al punto d'uso — è layout della schermata. */}
+                <label htmlFor="attendance-giorno" className={`mb-2 ${ETICHETTA_CAMPO_ASSENZA}`}>
                     {t('attendanceGiorno')}
                 </label>
                 {/*
@@ -787,12 +832,21 @@ function AttendanceInner() {
                     in entrambe le modalità). Il fondo è dichiarato per la stessa
                     ragione — un campo che eredita la superficie eredita anche i suoi
                     ribaltamenti. Lock: `__tests__/a11y/contrasto-campi-assenza.test.tsx`.
+                    Dal 2026-08-08 quelle classi stanno in `campo-assenza`, condivise
+                    con la card gemella: la decisione era già stata presa due volte.
                 */}
                 <input
                     id="attendance-giorno"
                     type="date"
                     value={data}
                     min={today}
+                    // IL SOFFITTO, che non c'era. Il calendario nativo offriva
+                    // qualunque giorno futuro mentre il server ne accetta 60:
+                    // il vincolo non era conoscibile prima di premere.
+                    // ⚠️ `max` da solo non basta — su iOS il selettore nativo non
+                    // rispetta nemmeno `min` (misurato) — e infatti la guardia
+                    // vera è in `handleSubmit`, con la stessa regola condivisa.
+                    max={ultimoGiornoComunicabile(today)}
                     onChange={(e) => cambiaGiorno(e.target.value)}
                     // Il campo dichiara di essere lui il problema SOLO quando il
                     // rifiuto parla della data (`ASSENZA_DATA_*`), e rimanda al
@@ -803,7 +857,7 @@ function AttendanceInner() {
                     // L'istruzione c'è SEMPRE; il messaggio d'errore si aggiunge
                     // quando il rifiuto parla del giorno.
                     aria-describedby={erroreSullaData ? `${ID_AIUTO_GIORNO} ${ID_ERRORE_INVIO}` : ID_AIUTO_GIORNO}
-                    className="w-full rounded-input border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
+                    className={CAMPO_ASSENZA}
                 />
 
                 {/*
@@ -820,7 +874,7 @@ function AttendanceInner() {
                     </FasciaStatoAssenza>
                 )}
 
-                <label htmlFor="attendance-motivo" className="mb-2 mt-4 block font-maven font-medium text-kidville-green">
+                <label htmlFor="attendance-motivo" className={`mb-2 mt-4 ${ETICHETTA_CAMPO_ASSENZA}`}>
                     {t('attendanceMotivo')}
                 </label>
                 {/*
@@ -864,7 +918,42 @@ function AttendanceInner() {
                     Chrome `rgb(128,180,175)`, 2,32:1. Un segnaposto è TESTO, e
                     1.4.3 si applica. Il repo aveva già chiuso lo stesso difetto
                     sulle superfici pubbliche (`.kv-public ::placeholder`); questa
-                    è una schermata di dashboard, e quella regola non la raggiunge. */}
+                    è una schermata di dashboard, e quella regola non la raggiunge.
+                    Dal 2026-08-08 le classi vengono da `campo-assenza`, e il
+                    segnaposto dal catalogo CONDIVISO: la card gemella diceva
+                    «Es. visita medica» e questa «Es. febbre, visita medica,
+                    motivi familiari…» — due suggerimenti diversi su come si
+                    scrive lo stesso dato sanitario. */}
+
+                {/*
+                    IL GESTO CHE QUESTA SCHERMATA NON PUÒ ESEGUIRE, DETTO PRIMA —
+                    e ORA anche in un punto in cui si vede.
+                    Svuotare il campo non cancella il motivo archiviato: il
+                    server, dal 2026-08-08, non azzera mai `giustificazione_testo`
+                    su un campo vuoto (una copia vecchia dell'app cancellava un
+                    dato sanitario di un minore senza che nessuno l'avesse
+                    chiesto). Finora l'app mandava `''`, il server lo ignorava e
+                    lo schermo diceva comunque «Assenza aggiornata»: un successo
+                    dichiarato senza verifica. La via che funziona — annullare e
+                    ricomunicare — è scritta nel messaggio.
+
+                    ⚠️ PERCHÉ ORA STA SOPRA LA TEXTAREA (2026-08-08, seconda
+                    misura). Era stato aggiunto SOTTO il campo, cioè nella stessa
+                    fascia da cui la nota sul trattamento era appena stata tolta:
+                    a 390×844 nasceva a y 781→863 con la bottom-nav a 770→844 —
+                    dei suoi 82px, 63 dietro la barra e 19 sotto la piega, parte
+                    visibile e non ostruita **0px**. La correzione precedente era
+                    stata applicata alla RIGA segnalata invece che alla ZONA: tutto
+                    ciò che nasce fra il campo motivo e il piede finisce coperto.
+                    E questo avviso compare in reazione a un gesto che si fa
+                    GUARDANDO il campo: nessuno ha motivo di scorrere per cercarlo.
+                */}
+                {motivoSvuotato && (
+                    <FasciaStatoAssenza tipo="avviso" ruolo="status" className="mb-2">
+                        {ta('motivoNonCancellabile')}
+                    </FasciaStatoAssenza>
+                )}
+
                 <textarea
                     id="attendance-motivo"
                     value={reason}
@@ -875,72 +964,9 @@ function AttendanceInner() {
                     // caratteri e lo si scopriva solo dal 400 dopo l'invio.
                     maxLength={MOTIVO_MAX_CARATTERI}
                     aria-describedby={ID_NOTA_MOTIVO}
-                    className="h-28 w-full resize-none rounded-input border border-kidville-line bg-kidville-white p-3 font-maven text-kidville-ink placeholder-kidville-sub focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
-                    placeholder={t('attendanceMotivoPlaceholder')}
+                    className={`h-28 resize-none ${CAMPO_ASSENZA}`}
+                    placeholder={ta('motivoPlaceholder')}
                 />
-
-                {/*
-                    IL GESTO CHE QUESTA SCHERMATA NON PUÒ ESEGUIRE, DETTO PRIMA.
-                    Svuotare il campo non cancella il motivo archiviato: il
-                    server, dal 2026-08-08, non azzera mai `giustificazione_testo`
-                    su un campo vuoto (una copia vecchia dell'app cancellava un
-                    dato sanitario di un minore senza che nessuno l'avesse
-                    chiesto). Finora l'app mandava `''`, il server lo ignorava e
-                    lo schermo diceva comunque «Assenza aggiornata»: un successo
-                    dichiarato senza verifica. La via che funziona — annullare e
-                    ricomunicare — è scritta nel messaggio.
-                */}
-                {motivoSvuotato && (
-                    <FasciaStatoAssenza tipo="avviso" ruolo="status" className="mt-2">
-                        {ta('motivoNonCancellabile')}
-                    </FasciaStatoAssenza>
-                )}
-
-                {error && (
-                    <FasciaStatoAssenza
-                        tipo="errore"
-                        ruolo="alert"
-                        ricovero={refErrore}
-                        // Raggiungibile dal codice ma NON dal Tab: stessa forma
-                        // della conferma e dell'esito dell'annullamento.
-                        tabIndex={-1}
-                        className="mt-3"
-                    >
-                        <span id={ID_ERRORE_INVIO}>{error}</span>
-                    </FasciaStatoAssenza>
-                )}
-
-                {/*
-                    IL PULSANTE NON DEVE FINIRE DIETRO LA BARRA DI NAVIGAZIONE.
-
-                    Misurato sull'emulatore Android il 2026-08-07: al primo
-                    ingresso, senza scorrere, il pulsante era coperto per 137px
-                    su 145 dalla bottom-nav (`fixed`, `z-50`) e se ne vedeva un
-                    bordo di 8px. Un tocco al suo centro — dove il pulsante SI
-                    INTUISCE — apriva /parent/avvisi: il gesto principale della
-                    schermata portava altrove, senza un messaggio.
-                    Il `pb-24` della pagina non c'entra e non poteva bastare:
-                    riserva spazio in FONDO al documento, mentre qui il pulsante
-                    sta a metà e la pagina è più alta della viewport.
-                    `sticky` + `--kv-bottomnav-h` (l'altezza DICHIARATA della
-                    barra, safe-area compresa) lo tengono appoggiato sopra di
-                    essa finché il modulo è a schermo, e lo rimettono nel flusso
-                    appena la sua posizione naturale sale sopra quella linea.
-                    `z-40` e non di più: sotto la barra, mai sopra — coprire la
-                    navigazione sarebbe lo stesso difetto al contrario.
-                */}
-                {/*
-                    PERCHÉ IL COMANDO NON RISPONDE — o che è appena partito.
-                    Sta SOPRA il ricovero incollato in fondo, altrimenti sarebbe
-                    la prossima riga a finirci sotto. `role="status"` per due
-                    ragioni insieme: è la descrizione del pulsante
-                    (`aria-describedby`) e l'annuncio dell'attesa (WCAG 4.1.3).
-                */}
-                {statoComando && (
-                    <p id={ID_STATO_COMANDO} role="status" className="mt-3 font-maven text-xs text-kidville-sub">
-                        {statoComando}
-                    </p>
-                )}
 
                 {/*
                     IL PULSANTE NON DEVE FINIRE DIETRO LA BARRA DI NAVIGAZIONE.
@@ -974,8 +1000,52 @@ function AttendanceInner() {
                     Ciò che passa sotto è coperto in modo DICHIARATO; e la nota
                     sul trattamento del motivo — che era la riga coperta al 100%
                     a 390×844 — non è più là sotto: sta sopra il campo.
+
+                    ⚠️ E I MESSAGGI DELL'AZIONE ORA STANNO DENTRO (2026-08-08,
+                    terza misura). Il piede aveva cominciato a coprire proprio ciò
+                    che il piede stesso genera: il riquadro di RIFIUTO nasceva a
+                    y 711→745 con il piede a 693→772 — 34px su 34, il **100%** su
+                    iPhone 14/15/15 Pro, e la riga di stato del comando pure. Il
+                    genitore vedente premeva, lo schermo non cambiava di un pixel,
+                    e l'unica conclusione ragionevole era ripremere; chi usa uno
+                    screen reader lo sentiva (role=alert), chi guarda no.
+                    Il ricovero del fuoco funziona ed è innocente: `focus()`
+                    scrolla un elemento in vista solo se è GEOMETRICAMENTE fuori
+                    dal viewport, e non sa nulla degli strati appiccicati.
+                    `scroll-margin-bottom` avrebbe curato il solo riquadro
+                    d'errore, perché è l'unico che il fuoco lo riceve: la riga di
+                    stato non lo riceve mai e sarebbe rimasta coperta. Qui i
+                    messaggi entrano nel piede, sopra il pulsante, e non c'è più
+                    nessuno stato in cui possano finire sotto qualcosa.
+                    Il componente è condiviso con la card della primaria
+                    (`PiedeAzioneAssenza`): la lezione del 07/08 era stata scritta
+                    in questo commento e non era mai arrivata alla porta accanto.
                 */}
-                <div className="sticky bottom-[var(--kv-bottomnav-h)] z-40 -mx-6 -mb-6 mt-4 rounded-b-card border-t border-kidville-line bg-kidville-white px-6 py-3 shadow-[0_-8px_20px_-12px_rgba(0,0,0,0.28)]">
+                <PiedeAzioneAssenza className="-mx-6 -mb-6 mt-4 rounded-b-card bg-kidville-white px-6 py-3">
+                    {error && (
+                        <FasciaStatoAssenza
+                            tipo="errore"
+                            ruolo="alert"
+                            ricovero={refErrore}
+                            // Raggiungibile dal codice ma NON dal Tab: stessa forma
+                            // della conferma e dell'esito dell'annullamento.
+                            tabIndex={-1}
+                        >
+                            <span id={ID_ERRORE_INVIO}>{error}</span>
+                        </FasciaStatoAssenza>
+                    )}
+                    {/*
+                        PERCHÉ IL COMANDO NON RISPONDE — o che è appena partito.
+                        `role="status"` per due ragioni insieme: è la descrizione
+                        del pulsante (`aria-describedby`) e l'annuncio dell'attesa
+                        (WCAG 4.1.3). Sta accanto al comando di cui parla, che è
+                        anche l'unico posto in cui non può finire coperta.
+                    */}
+                    {statoComando && (
+                        <p id={ID_STATO_COMANDO} role="status" className="font-maven text-xs text-kidville-sub">
+                            {statoComando}
+                        </p>
+                    )}
                     <Btn
                         type="submit"
                         variant="primary"
@@ -1006,7 +1076,7 @@ function AttendanceInner() {
                     >
                         {submitting ? t('attendanceInvio') : t('attendanceComunicaAssenza')}
                     </Btn>
-                </div>
+                </PiedeAzioneAssenza>
             </form>
 
             {/* Senza un figlio risolto non esiste un elenco di cui parlare: si

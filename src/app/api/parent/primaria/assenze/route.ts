@@ -3,18 +3,24 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
+import { zLimite } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
+import { limitaAiFatti } from '@/lib/presenze/finestra-trascorsa'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi produce lista vuota
 // dalla query su `presenze` — stesso criterio di parent/competenze.
-// `limit`: parseInt storico preservato nell'handler (default 60, nessun clamp):
-// NON zPaginazione, che cambierebbe default e limiti.
+// `limit`: default storico 60, ma VALIDATO — vedi `zLimite`. Fino al 2026-08-08 era
+// `z.string().optional()` + `parseInt` senza clamp, e il valore arrivava tale e quale a
+// PostgREST: `?limit=-1` rispondeva 200 con `letto:false` («non ho potuto leggere», detto
+// per un errore del client) e lasciava DUE righe `error` in `app_log` per richiesta —
+// cinque richieste bastavano a far dichiarare `degradato` /api/health. Non è zPaginazione:
+// quella cambierebbe il default e imporrebbe un `offset` che questa rotta non ha.
 const getQuerySchema = z.object({
   studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
-  limit: z.string().optional(),
+  limit: zLimite({ predefinito: 60, max: 200 }),
 })
 
 // Stati contati nel riepilogo. `presente` INCLUSO di proposito: senza, un bambino
@@ -32,8 +38,7 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const { studentId } = q.data
-    const limit = parseInt(q.data.limit ?? '60', 10)
+    const { studentId, limit } = q.data
 
     const auth = await requireParentOfStudent(request, studentId)
     if (auth.response) return auth.response
@@ -70,13 +75,28 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
     // restituisce ancora ieri.
     const oggi = oggiFiscaleISO()
 
-    // Lista dettagliata dei soli stati negativi.
-    const { data: presenze, error: presenzeErr } = await supabase
-      .from('presenze')
-      .select('id, data, stato, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giustificata_il, note_appello')
-      .eq('alunno_id', studentId)
-      .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
-      .lte('data', oggi)
+    // ─── E IL TEMPO DA SOLO NON BASTA (Q4) ──────────────────────────────────
+    //
+    // `.lte('data', oggi)` non può, per costruzione, escludere una riga che cade
+    // su OGGI: `oggi <= oggi` è vero sempre. E «oggi» è il giorno PREIMPOSTATO
+    // dal modulo «Comunica un'assenza», cioè il caso più frequente, non un
+    // bordo. Il secondo asse — la SORGENTE — sta in `limitaAiFatti`, con la
+    // misura che spiega perché la polarità è «si nomina l'annuncio», e non
+    // «è un fatto solo se `registrato_da IS NOT NULL`».
+    //
+    // Vale anche per la CRONOLOGIA e non solo per i conteggi: qui il genitore
+    // giustifica, e non si giustifica un'assenza che non è ancora avvenuta.
+    // Ciò che ha comunicato lo rivede — e può annullarlo — in `comunicate`
+    // (`parent/presenze:GET`).
+    const { data: presenze, error: presenzeErr } = await limitaAiFatti(
+      supabase
+        .from('presenze')
+        .select('id, data, stato, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giustificata_il, note_appello')
+        .eq('alunno_id', studentId)
+        .in('stato', ['assente', 'ritardo', 'uscita_anticipata']),
+      'data',
+      oggi,
+    )
       .order('data', { ascending: false })
       .limit(limit)
 
@@ -98,12 +118,15 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
     // degrada pulito a 0, e la risposta resta 200.
     const conteggi = await Promise.all(
       STATI_RIEPILOGO.map((stato) =>
-        supabase
-          .from('presenze')
-          .select('id', { count: 'exact', head: true })
-          .eq('alunno_id', studentId)
-          .eq('stato', stato)
-          .lte('data', oggi),
+        limitaAiFatti(
+          supabase
+            .from('presenze')
+            .select('id', { count: 'exact', head: true })
+            .eq('alunno_id', studentId)
+            .eq('stato', stato),
+          'data',
+          oggi,
+        ),
       ),
     )
     const riepilogo = STATI_RIEPILOGO.reduce((acc, stato, i) => {

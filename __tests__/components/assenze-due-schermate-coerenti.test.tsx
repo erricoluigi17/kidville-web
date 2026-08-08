@@ -5,6 +5,7 @@ import itServizi from '../../messages/it/parentServizi.json'
 import itPrimaria from '../../messages/it/parentPrimaria.json'
 import itAssenze from '../../messages/it/parentAssenze.json'
 import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo'
+import { ETICHETTA_CAMPO_ASSENZA } from '@/lib/ui/campo-assenza'
 
 // =============================================================================
 // LA STESSA FUNZIONE, DISEGNATA DUE VOLTE.
@@ -286,6 +287,95 @@ describe('le due schermate «assenze comunicate» parlano la stessa lingua', () 
         ).toEqual(formaA)
         expect(p.querySelectorAll('svg').length, 'una delle due fasce ha l\'icona e l\'altra no').toBe(iconeA)
         expect(iconeA, 'la fascia di stato non porta nessuna icona').toBeGreaterThan(0)
+    })
+
+    // =========================================================================
+    // LA TIPOGRAFIA, non solo la forma (collaudo del 2026-08-08, design Q11+Q12).
+    //
+    // Il lock arrivava fino al raggio dei campi. Nel frattempo, misurati con
+    // `getComputedStyle` sulla STESSA stringa:
+    //
+    //   «Assenze già comunicate» · Barlow Condensed 18px/900 MAIUSCOLO verde  ← pagina
+    //                            · Maven Pro        12px/600 minuscolo ink    ← card
+    //   «Giorno dell'assenza»    · Maven Pro 16px/500 verde  #006A5F          ← pagina
+    //                            · Maven Pro 12px/600 ink    #1F3D38          ← card
+    //
+    // Censimento dell'area genitore: `<h2>`/`<h3>` con `font-barlow` = 37, con
+    // `font-maven` = 3 — e due dei tre erano i titoli di questa card. `design.md`
+    // §Tipografia: «Titoli — Barlow Condensed … H1, H2, H3, titoli delle card».
+    //
+    // Le etichette divergevano SOPRA DUE CAMPI RESI IDENTICI dal ciclo
+    // precedente: si era allineato il controllo e non il BLOCCO di campo.
+    // =========================================================================
+
+    /**
+     * Le classi che decidono la TIPOGRAFIA: famiglia, peso, trasformazione,
+     * inchiostro. La TAGLIA no, ed è deliberato — un titolo dentro una card
+     * annidata può essere più piccolo del suo gemello a tutta pagina senza che
+     * il genitore veda due prodotti; una famiglia diversa sì.
+     */
+    const TAGLIA = /^text-(xs|sm|base|lg|\d?xl|\[.*\])$/
+    const tipografia = (el: Element) =>
+        Array.from(el.classList)
+            .filter((c) => /^(font-|text-|uppercase|lowercase|capitalize|normal-case)/.test(c) && !TAGLIA.test(c))
+            .sort()
+
+    it('i TITOLI omonimi delle due schermate hanno la stessa tipografia', async () => {
+        const titolo = (): HTMLElement =>
+            Array.from(document.querySelectorAll('h1,h2,h3')).find((n) =>
+                (n.textContent ?? '').includes(itServizi.attendanceElencoTitolo),
+            ) as HTMLElement
+
+        render(<ParentAttendancePage />)
+        await screen.findByLabelText(itServizi.attendanceGiorno)
+        const a = titolo()
+        expect(a, 'il titolo dell\'elenco è sparito da /parent/attendance').toBeTruthy()
+        const tipoA = tipografia(a)
+        cleanup()
+
+        render(<ComunicaAssenzaCard studentId="s-1" parentId="p-1" />)
+        const p = await screen.findByText(itPrimaria.comunicaElencoTitolo)
+
+        expect(
+            tipografia(p),
+            'La stessa identica stringa è resa in due tipografie diverse nelle due schermate della ' +
+                'stessa funzione: Barlow Condensed maiuscolo verde di qua, Maven Pro minuscolo scuro ' +
+                'di là. Un genitore con un figlio al nido e uno alla primaria le vede nella stessa ' +
+                'giornata.',
+        ).toEqual(tipoA)
+        // …e la famiglia scelta è quella DICHIARATA per i titoli in design.md.
+        expect(tipoA, 'i titoli di card non sono in Barlow Condensed').toContain('font-barlow')
+    })
+
+    it('le ETICHETTE dei due campi portano la stessa decisione, presa in un posto solo', async () => {
+        const attese = ETICHETTA_CAMPO_ASSENZA.split(/\s+/).filter(Boolean)
+
+        const a = await modulo('attendance')
+        const etA = {
+            giorno: document.querySelector(`label[for="${a.giorno.id}"]`)!,
+            motivo: document.querySelector(`label[for="${a.motivo.id}"]`)!,
+        }
+        const tipoA = { giorno: tipografia(etA.giorno), motivo: tipografia(etA.motivo) }
+        cleanup()
+
+        const p = await modulo('primaria')
+        const etP = {
+            giorno: document.querySelector(`label[for="${p.giorno.id}"]`)!,
+            motivo: document.querySelector(`label[for="${p.motivo.id}"]`)!,
+        }
+
+        for (const quale of ['giorno', 'motivo'] as const) {
+            expect(
+                tipografia(etP[quale]),
+                `l'etichetta «${quale}» è −25% di corpo e un inchiostro diverso rispetto alla ` +
+                    'gemella, sopra un campo identico: si era allineato il controllo e non il blocco',
+            ).toEqual(tipoA[quale])
+        }
+        // …e la decisione arriva dal modulo condiviso, non da due elenchi di
+        // classi ricopiati a mano: è l'unica forma che regge la prossima modifica.
+        for (const el of [etA.giorno, etA.motivo, etP.giorno, etP.motivo]) {
+            expect(Array.from(el.classList)).toEqual(expect.arrayContaining(attese))
+        }
     })
 
     it('la riga regge il telefono piccolo in ENTRAMBE (320px: va a capo, non tronca l\'anno)', async () => {

@@ -285,6 +285,18 @@ export const CODICI_ERRORE = {
      */
     ASSENZA_DATA_PASSATA: 'erroreAssenzaDataPassata',
     /**
+     * 403 — l'account della famiglia è sospeso per morosità
+     * (`src/lib/pagamenti/sospensione.ts`, `negato()`): le azioni di servizio sono
+     * inibite finché la posizione non è regolarizzata.
+     *
+     * Fino al 2026-08-08 quella risposta portava solo `motivo: 'account_sospeso'`,
+     * che `soloCatalogoDaCorpo` non guarda: il genitore leggeva la frase generica
+     * della schermata e non sapeva né perché era stato respinto né cosa fare. La
+     * frase nomina la segreteria perché è l'unico modo che ha di risolvere: non è
+     * un errore che si corregge riprovando.
+     */
+    ACCOUNT_SOSPESO: 'erroreAccountSospeso',
+    /**
      * 400 — l'assenza si comunica in anticipo, ma non a QUALUNQUE distanza
      * (`POST /api/parent/presenze/comunica-assenza`, tetto in
      * `GIORNI_MASSIMI_IN_ANTICIPO`).

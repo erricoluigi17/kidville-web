@@ -103,7 +103,16 @@ const req = (body: unknown): NextRequest =>
 const codaBuona = () => ({
     alunni: [{ data: { id: STUDENT, section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
     sections: [{ data: { school_type: 'primaria' }, error: null }],
-    presenze: [{ data: { id: 'p-1', giustificata: true }, error: null }],
+    // DUE letture su `presenze`, in quest'ordine:
+    //  1. il testo ARCHIVIATO, che la rotta ora legge prima di scrivere — serve
+    //     a decidere se la presa visione del docente decade (rilievo Q5);
+    //  2. l'esito dell'UPDATE.
+    // Senza la prima voce la coda si sfasa e ogni caso «buono» esce 404: un
+    // rosso che non parla del merito.
+    presenze: [
+        { data: { giustificazione_testo: null }, error: null },
+        { data: { id: 'p-1', giustificata: true }, error: null },
+    ],
 })
 
 beforeEach(() => {
@@ -247,6 +256,9 @@ describe('POST /api/parent/presenze/giustifica — ciò che la porta gemella ave
 
     it('un guasto di scrittura non manda al genitore la prosa di PostgREST, e non resta muto nel log', async () => {
         h.state.queues.presenze = [
+            // 1ª lettura: il testo archiviato (rilievo Q5), qui va a buon fine.
+            { data: { giustificazione_testo: null }, error: null },
+            // 2ª: l'UPDATE, che è quello che deve fallire in questo caso.
             {
                 data: null,
                 error: {

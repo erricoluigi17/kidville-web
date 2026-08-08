@@ -13,6 +13,7 @@ import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formattaIstante } from '@/i18n/config';
+import { conIniziale } from '@/lib/i18n/date';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -74,9 +75,14 @@ function addDays(iso: string, n: number): string {
     return toISO(d);
 }
 
+// La maiuscola iniziale sta QUI, dove il `locale` è noto, e non nella classe CSS
+// `capitalize`: quella alzava anche l'iniziale del mese («Sabato 8 Agosto 2026»),
+// che è la regola inglese applicata all'italiano. Vedi src/lib/i18n/date.ts.
 function formatDataLunga(iso: string, locale: string): string {
     const d = new Date(iso + 'T12:00:00');
-    return formattaIstante(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return conIniziale(
+        formattaIstante(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+    );
 }
 
 // ─── Navigatore Data ─────────────────────────────────────────────────────────
@@ -478,7 +484,7 @@ function TodayView({ sezione }: { sezione: string }) {
             {/* Navigatore data + intestazione */}
             <div className="flex flex-col gap-3 rounded-2xl border border-kidville-line bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-maven text-sm capitalize text-kidville-muted">{formatDataLunga(selectedDate, locale)}</p>
+                    <p className="font-maven text-sm text-kidville-muted">{formatDataLunga(selectedDate, locale)}</p>
                     <div className="flex items-center gap-2">
                         {isOffline && (
                             <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">

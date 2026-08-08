@@ -265,7 +265,9 @@ describe('la catena logger → sink (cosa ci finisce DAVVERO)', () => {
             await vi.waitFor(() => expect(rpc).toHaveBeenCalled());
         });
         const payload = (rigaSpedita().contesto as { payload: { body: Record<string, unknown> } }).payload;
-        expect(payload.body.tipo).toBe('nota');
+        // `tipo` è in lista bianca, ma questo è un PAYLOAD di richiesta: il valore lo sceglie
+        // il client, quindi esce redatto (rilievo Q2). Il campo resta, con la sua lunghezza.
+        expect(payload.body.tipo).toBe('[redatto:str/4]');
         // Il dato sensibile è redatto UNA volta sola: il marcatore `str/18` sopravvive intatto
         // (una seconda passata di `redact` lo riscriverebbe come `[redatto:str/19]`).
         expect(payload.body.descrizione).toBe('[redatto:str/18]');

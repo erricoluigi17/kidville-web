@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
-import { eGiornoTrascorso } from '@/lib/presenze/finestra-trascorsa';
+import { COLONNE_SORGENTE, eFattoDelRegistro } from '@/lib/presenze/finestra-trascorsa';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -20,19 +20,28 @@ export interface MonthlyAttendanceRecord {
     orario_entrata: string | null;
     orario_uscita: string | null;
     /**
-     * Il giorno NON è ancora arrivato: è un'assenza che il genitore ha
-     * comunicato in anticipo, non un fatto del registro.
+     * La riga afferma un FATTO del registro, e quindi si conta.
      *
-     * Il calendario continua a mostrarla — è il motivo per cui il genitore la
-     * comunica — ma i CONTEGGI (presenze/assenze/ritardi/uscite, monte ore, PDF)
-     * devono escluderla: prima del rilievo T26 il prospetto del docente diceva
-     * «2 A» e «10 ORE» per un alunno con una sola assenza avvenuta.
+     * ─── PERCHÉ NON SI CHIAMA PIÙ `futura` (Q4) ──────────────────────────────
+     *
+     * Si chiamava così, e il nome nascondeva metà del problema. `futura` è vero
+     * solo per i giorni non ancora arrivati, ma il caso che fa danno è OGGI:
+     * un'assenza che il genitore ha comunicato per il giorno corrente ha
+     * `data = oggi`, quindi `futura` era `false`, quindi il prospetto — e il PDF
+     * esportabile — la sommavano alle «A» e alle ORE prima che il docente avesse
+     * fatto l'appello. Un nome che descrive il rimedio invece della regola porta
+     * il lettore successivo a non ricontrollare.
+     *
+     * Il calendario continua a MOSTRARE tutte le righe — è il motivo per cui il
+     * genitore le comunica — ma i CONTEGGI (presenze/assenze/ritardi/uscite,
+     * monte ore, PDF) contano solo quelle marcate `true`.
      *
      * La marca la mette il SERVER e non il browser: l'orologio di un tablet può
      * essere sbagliato o su un altro fuso, e due dispositivi conterebbero
-     * diversamente lo stesso registro.
+     * diversamente lo stesso registro. La regola sta in
+     * `@/lib/presenze/finestra-trascorsa`, in un posto solo.
      */
-    futura: boolean;
+    fattoDelRegistro: boolean;
 }
 
 /**
@@ -130,7 +139,10 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
         // ── Query 2: presenze del mese per questi alunni ───────────────────────
         const { data: presenzeData, error: presenzeError } = await supabase
             .from('presenze')
-            .select('id, alunno_id, data, stato, orario_entrata, orario_uscita')
+            // Le colonne della PROVENIENZA servono alla marca `fattoDelRegistro`:
+            // sul giorno corrente la data non discrimina l'assenza annunciata dal
+            // genitore dall'appello del docente.
+            .select(`id, alunno_id, data, orario_entrata, orario_uscita, ${COLONNE_SORGENTE}`)
             .in('alunno_id', alunniIds)
             .gte('data', startDate)
             .lte('data', endDate)
@@ -157,7 +169,7 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
                 stato:            row.stato as MonthlyAttendanceRecord['stato'],
                 orario_entrata:   row.orario_entrata,
                 orario_uscita:    row.orario_uscita,
-                futura:           !eGiornoTrascorso(row.data, oggi),
+                fattoDelRegistro: eFattoDelRegistro(row, oggi),
             };
         });
 

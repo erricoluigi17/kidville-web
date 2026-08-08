@@ -36,6 +36,17 @@ const h = vi.hoisted(() => {
   const logErrore = vi.fn()
   const logEvento = vi.fn()
 
+  /** Un ramo `colonna.op.valore` del filtro `or` di PostgREST. */
+  function ramoOr(riga: Riga, ramo: string): boolean {
+    const [col, ...resto] = ramo.split('.')
+    const coda = resto.join('.')
+    const v = riga[col]
+    if (coda === 'is.null') return v === null || v === undefined
+    if (coda === 'not.is.null') return v !== null && v !== undefined
+    if (coda.startsWith('neq.')) return String(v ?? '') !== coda.slice(4)
+    throw new Error(`ramo or non gestito dal doppio: ${ramo}`)
+  }
+
   function applica(riga: Riga, f: Filtro): boolean {
     const v = riga[f.col]
     switch (f.op) {
@@ -51,6 +62,11 @@ const h = vi.hoisted(() => {
       case 'not.is':
         // `.not(col, 'is', null)` → la colonna NON deve essere NULL.
         return f.val === null ? v !== null && v !== undefined : v !== f.val
+      case 'or':
+        // `.or('a,b,c')` → DISGIUNZIONE. È il filtro sulla SORGENTE aggiunto da
+        // Q4: il tetto `data <= oggi` non può escludere una riga che cade su
+        // OGGI, e «oggi» è il giorno preimpostato dal modulo del genitore.
+        return String(f.val).split(',').some((ramo) => ramoOr(riga, ramo))
       default:
         return true
     }
@@ -86,6 +102,10 @@ const h = vi.hoisted(() => {
         }
         qb.not = (col: string, op: string, val: unknown) => {
           filtri.push({ op: `not.${op}`, col, val })
+          return qb
+        }
+        qb.or = (val: string) => {
+          filtri.push({ op: 'or', col: '', val })
           return qb
         }
         qb.order = (col: string, opts?: { ascending?: boolean }) => {
@@ -226,8 +246,16 @@ describe('GET /api/parent/presenze — assenze comunicate ancora annullabili', (
 
     const ids = body.data.comunicate.map((c: { id: string }) => c.id)
     expect(ids).not.toContain('p-ieri')
-    // ...e "oggi" è l'11, non il 10: se il fuso fosse sbagliato leggeremmo 'ritardo'.
-    expect(body.data.oggi.stato).toBe('assente')
+    // ...e "oggi" è l'11, non il 10, E la riga dell'11 è un ANNUNCIO (Q4).
+    //
+    // Questa asserzione diceva `'assente'` e stava misurando il difetto: la riga
+    // `p-oggi` è scritta dal genitore (`giustificata_da` valorizzato,
+    // `registrato_da` nullo) e nessun docente ha fatto l'appello, quindi il
+    // contratto della rotta impone `stato: null`.
+    // Il discriminante sul FUSO non si perde, si inverte: con «oggi» calcolato
+    // in UTC la rotta leggerebbe `p-ieri`, che è un 'ritardo' — cioè NON un
+    // annuncio — e qui vedremmo `'ritardo'` al posto di `null`.
+    expect(body.data.oggi.stato).toBeNull()
     expect(body.data.riepilogo.to).toBe(OGGI_ROMA)
     expect(body.data.riepilogo.from).toBe('2026-07-12')
   })
@@ -237,10 +265,12 @@ describe('GET /api/parent/presenze — assenze comunicate ancora annullabili', (
     const body = await res.json()
 
     expect(body.data.schoolType).toBe('infanzia')
-    expect(body.data.oggi).toEqual({ stato: 'assente', orario_entrata: null, orario_uscita: null })
-    // Nei 30 giorni cadono solo 'p-ieri' (ritardo) e 'p-oggi' (assente): le
-    // assenze FUTURE non devono gonfiare i conteggi della home.
-    expect(body.data.riepilogo).toMatchObject({ presenze: 0, assenze: 1, ritardi: 1, uscite: 0 })
+    expect(body.data.oggi).toEqual({ stato: null, orario_entrata: null, orario_uscita: null })
+    // Nei 30 giorni cadono 'p-ieri' (ritardo, un fatto) e 'p-oggi' (assenza solo
+    // ANNUNCIATA per il giorno corrente, che dal rilievo Q4 non si conta: era
+    // `assenze: 1` con zero appelli fatti). Le assenze FUTURE non gonfiavano già
+    // più i conteggi; quella di OGGI sì, perché `oggi <= oggi`.
+    expect(body.data.riepilogo).toMatchObject({ presenze: 0, assenze: 0, ritardi: 1, uscite: 0 })
   })
 
   it('chiede a PostgREST i filtri giusti (giustificata_da NOT NULL · registrato_da NULL)', async () => {
@@ -271,9 +301,10 @@ describe('GET /api/parent/presenze — assenze comunicate ancora annullabili', (
 
     expect(res.status).toBe(200)
     expect(body.data.comunicate).toEqual([])
-    // Il resto della home arriva comunque.
-    expect(body.data.oggi.stato).toBe('assente')
-    expect(body.data.riepilogo).toMatchObject({ assenze: 1, ritardi: 1 })
+    // Il resto della home arriva comunque. `oggi.stato` è `null` perché la riga
+    // dell'11 è un annuncio del genitore, non un appello (Q4).
+    expect(body.data.oggi.stato).toBeNull()
+    expect(body.data.riepilogo).toMatchObject({ assenze: 0, ritardi: 1 })
     // ...e il silenzio è vietato.
     const loggato = h.logErrore.mock.calls.length + h.logEvento.mock.calls.length
     expect(loggato, 'una query fallita non può passare in silenzio').toBeGreaterThan(0)
@@ -314,8 +345,10 @@ describe('GET /api/parent/presenze — assenze comunicate ancora annullabili', (
     expect(body.data.comunicateLette).toBe(false)
     expect(body.data.comunicate).toEqual([])
     // La modifica è additiva: la home continua a ricevere ciò che le serve.
-    expect(body.data.oggi).toEqual({ stato: 'assente', orario_entrata: null, orario_uscita: null })
-    expect(body.data.riepilogo).toMatchObject({ assenze: 1, ritardi: 1 })
+    // `stato: null` è il contratto della rotta quando l'appello non c'è, e la
+    // riga dell'11 è un annuncio del genitore (Q4).
+    expect(body.data.oggi).toEqual({ stato: null, orario_entrata: null, orario_uscita: null })
+    expect(body.data.riepilogo).toMatchObject({ assenze: 0, ritardi: 1 })
   })
 
   it('alunno senza sezione: nessuna sezione, ma le comunicate si leggono lo stesso', async () => {

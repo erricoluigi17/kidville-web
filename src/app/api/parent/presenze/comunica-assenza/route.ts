@@ -11,6 +11,26 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { formattaIstante } from '@/i18n/config'
 import { rateLimit } from '@/lib/security/rate-limit'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
+// ═══ IL TETTO SUI GIORNI HA UN POSTO SOLO, E NON È PIÙ QUESTO ════════════════
+//
+// Fino al 2026-08-08 il numero e la funzione che lo applica vivevano QUI e, in
+// copia riga per riga, in `@/lib/presenze/finestra-comunicazione` — che serve
+// alle due schermate per non proporre al genitore un calendario più largo di
+// quello che la route accetta. A tenerle uguali c'era un lock che LEGGEVA questo
+// sorgente e confrontava il numero: una difesa vera, ma che ammette l'esistenza
+// di due copie invece di toglierla.
+//
+// È la forma di difetto che questo intero ciclo ha inseguito per tre giri — una
+// regola valida per più strade applicata alla strada in cui è stata misurata. Con
+// il tetto sarebbe successo lo stesso: qualcuno avrebbe cambiato 60 di là, il
+// lock sarebbe diventato rosso, e la tentazione sarebbe stata aggiornare il lock.
+// La costante si RI-ESPORTA (i test di questa rotta la importano da qui, ed è
+// giusto che la leggano dalla rotta che la applica), ma il valore è uno.
+import {
+  GIORNI_MASSIMI_IN_ANTICIPO,
+  ultimoGiornoComunicabile,
+} from '@/lib/presenze/finestra-comunicazione'
+import { azzeramentoPresaVisione, presaVisioneRevocata } from '@/lib/presenze/presa-visione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -100,7 +120,7 @@ const TIPO_NOTIFICA = 'assenza_comunicata'
  * Il tetto sul VOLUME è un'altra cosa e sta più sotto (`TETTO_SCRITTURE_FINESTRA`):
  * questo confine dice *fin dove*, quello dice *quanto in fretta*.
  */
-export const GIORNI_MASSIMI_IN_ANTICIPO = 60
+export { GIORNI_MASSIMI_IN_ANTICIPO } from '@/lib/presenze/finestra-comunicazione'
 
 /**
  * Caratteri ammessi nel motivo dell'assenza — la misura vive in
@@ -259,21 +279,6 @@ function giornoIt(data: string): string {
     month: '2-digit',
     year: 'numeric',
   })
-}
-
-/**
- * L'ultimo giorno comunicabile, a partire da «oggi» in `YYYY-MM-DD`.
- *
- * Aritmetica di calendario in UTC e basta: `Date.UTC` somma i giorni senza mai
- * consultare il fuso del processo, e il risultato torna in `YYYY-MM-DD`. Il fuso
- * lo ha già deciso `oggiFiscaleISO()` una volta sola, a monte — sommare giorni a
- * una data locale sarebbe il modo di sbagliarlo una seconda volta.
- */
-function ultimoGiornoComunicabile(oggi: string): string {
-  const [anno, mese, giorno] = oggi.split('-').map(Number)
-  return new Date(Date.UTC(anno, mese - 1, giorno + GIORNI_MASSIMI_IN_ANTICIPO))
-    .toISOString()
-    .slice(0, 10)
 }
 
 /**
@@ -531,7 +536,16 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
       giustificata_il: new Date().toISOString(),
     }
     const riga = { ...rigaComune, giustificazione_testo: motivoTesto || null }
-    const rigaAggiornamento = motivoTesto ? riga : rigaComune
+    /**
+     * Il testo che l'UPDATE scriverà DAVVERO, o `undefined` se la colonna non
+     * viene nominata affatto (motivo vuoto). È il valore su cui si decide se la
+     * presa visione del docente decade: se non si scrive niente, non si
+     * invalida niente.
+     */
+    const testoDaScrivere = motivoTesto || undefined
+    // `let` e non `const`: l'azzeramento della presa visione si può decidere
+    // solo DOPO aver letto il testo archiviato, qualche riga più sotto.
+    let rigaAggiornamento: Record<string, unknown> = motivoTesto ? riga : rigaComune
 
     const errore500 = (e: unknown) => {
       // Il `message` di PostgREST NON esce verso il client (era `{ error:
@@ -587,9 +601,15 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
         .is('registrato_da', null)
         .select(COLONNE_ESITO)
 
+    // ⚠️ QUATTRO COLONNE, E LE DUE NUOVE NON ESCONO DA QUI. `giustificazione_testo`
+    // è il dato sanitario del minore e serve SOLO al confronto qui sotto: non
+    // entra nella risposta (`COLONNE_ESITO` resta `id, data`) e non entra in
+    // nessun log. `giust_vista_il` dice se una lettura del docente esiste
+    // davvero, che è la differenza fra «azzero una colonna già nulla» e «tolgo a
+    // un docente una cosa che aveva fatto».
     const { data: esistente, error: letturaErr } = await supabase
       .from('presenze')
-      .select('id, registrato_da')
+      .select('id, registrato_da, giustificazione_testo, giust_vista_il')
       .eq('alunno_id', studentId)
       .eq('data', data)
       .maybeSingle()
@@ -597,6 +617,31 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     if (esistente?.registrato_da) {
       return rifiuto409((esistente.id as string | null) ?? null, 'appello-gia-fatto')
     }
+
+    // ═══ SCRIVERE IL MOTIVO AZZERA LA PRESA VISIONE (rilievo Q5) ═════════════
+    //
+    // La regola sta in `@/lib/presenze/presa-visione`, non qui: le porte che
+    // scrivono `presenze.giustificazione_testo` sono DUE, e finora solo il
+    // gemello (`giustifica`) sapeva che cambiare il testo invalida la lettura
+    // che il docente ne ha fatto — scritto a mano dentro il suo payload. Questa
+    // rotta non nominava le due colonne in nessuno dei suoi due payload, e
+    // PostgREST aggiorna SOLO le colonne nominate: la marca «già letta»
+    // sopravviveva a ogni ricomunicazione, mentre il testo cambiava sotto.
+    //
+    // Non è un `giust_vista_il: null` da incollare nel payload: sarebbe la terza
+    // copia di una regola che è già stata copiata una volta di troppo.
+    const testoArchiviato = (esistente?.giustificazione_testo as string | null | undefined) ?? null
+    rigaAggiornamento = {
+      ...rigaAggiornamento,
+      ...azzeramentoPresaVisione(testoArchiviato, testoDaScrivere),
+    }
+    /**
+     * Una lettura del docente ESISTEVA e la stiamo togliendo. Serve più avanti
+     * per non far collassare la notifica nel `debounce`: azzerare in silenzio
+     * sposterebbe soltanto il difetto — il docente aveva letto, e non lo
+     * saprebbe più nessuno.
+     */
+    const revocaPresaVisione = presaVisioneRevocata(esistente, testoDaScrivere)
 
     const { data: aggiornate, error: aggiornaErr } = await aggiornaSeNonRegistrata()
     if (aggiornaErr) return errore500(aggiornaErr)
@@ -668,8 +713,16 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
         tipo: TIPO_NOTIFICA,
         scuolaId: (alunno.scuola_id as string | undefined) ?? null,
         utenteIds: docenti,
-        titolo: 'Assenza comunicata',
-        corpo: `${nomeAlunno} sarà assente il ${giornoIt(data)}.`,
+        // QUANDO SI TOGLIE UNA LETTURA, LO SI DICE (Q5). Il titolo generico
+        // «Assenza comunicata» arriverebbe identico al precedente e non
+        // spiegherebbe perché la riga è tornata «da leggere».
+        titolo: revocaPresaVisione ? 'Motivo dell’assenza aggiornato' : 'Assenza comunicata',
+        // Il MOTIVO non entra nel corpo — è testo libero di natura sanitaria su
+        // un minore, e una notifica finisce anche nella lockscreen del telefono.
+        // Si dice che è cambiato, non che cosa dice.
+        corpo: revocaPresaVisione
+          ? `Il motivo dell’assenza di ${nomeAlunno} del ${giornoIt(data)} è cambiato: la presa visione è stata annullata.`
+          : `${nomeAlunno} sarà assente il ${giornoIt(data)}.`,
         link: linkAppello(schoolType, sezione),
         entitaTipo: 'presenza',
         // L'ENTITÀ È LA RIGA DI PRESENZA, non l'alunno. Con `studentId` due
@@ -688,7 +741,15 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
         // Non confonde due giorni diversi: `entitaId` è la RIGA di presenza —
         // una per (alunno, data) — non l'alunno. È la stessa proprietà per cui
         // l'`entitaId` è stato cambiato in questo ciclo.
-        debounce: true,
+        //
+        // ⚠️ L'UNICA ECCEZIONE È LA REVOCA DI UNA PRESA VISIONE (Q5). Il
+        // `debounce` è giusto per la raffica di correzioni — svegliare tre volte
+        // la maestra per lo stesso giorno — ma qui il docente aveva DICHIARATO
+        // di aver letto e quella dichiarazione è appena stata annullata: se la
+        // notifica collassa, la riga torna «da leggere» e nessuno glielo dice.
+        // Non è una raffica: succede solo quando c'era una lettura e il testo è
+        // davvero cambiato.
+        debounce: !revocaPresaVisione,
       })
     } catch (e) {
       logEvento('notifica', 'error', {

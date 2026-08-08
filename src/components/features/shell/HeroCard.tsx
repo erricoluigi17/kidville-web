@@ -5,6 +5,7 @@ import { useLocale } from 'next-intl';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { HeroMascot } from './HeroMascot';
 import { formattaIstante } from '@/i18n/config';
+import { conIniziale } from '@/lib/i18n/date';
 
 interface HeroCardProps {
   /** Contenuto dell'`<h1>` (saluto): lo fornisce la pagina perché gli e2e
@@ -34,9 +35,12 @@ export function HeroCard({
   animate = true,
 }: HeroCardProps) {
   // Data locale calcolata SOLO client-side (hydration-safe, come il saluto).
+  // La maiuscola iniziale la mette `conIniziale` e non la classe CSS
+  // `capitalize`, che alzava anche l'iniziale del mese: «Sabato 8 Agosto»
+  // invece di «Sabato 8 agosto» (vedi src/lib/i18n/date.ts).
   const locale = useLocale();
   const oggi = useClientValue(
-    () => formattaIstante(new Date(), locale, { weekday: 'long', day: 'numeric', month: 'long' }),
+    () => conIniziale(formattaIstante(new Date(), locale, { weekday: 'long', day: 'numeric', month: 'long' })),
     '',
   );
 
@@ -44,7 +48,7 @@ export function HeroCard({
     <>
       <div className="relative z-[2] px-5 pb-6 pt-5" style={{ maxWidth: '60%' }}>
         {showDate && (
-          <p className="mb-0.5 font-maven text-xs font-semibold capitalize text-kidville-green">
+          <p className="mb-0.5 font-maven text-xs font-semibold text-kidville-green">
             {oggi || ' '}
           </p>
         )}

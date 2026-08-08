@@ -95,7 +95,6 @@
   "comunicaChiudi": "Close",
   "comunicaDataLabel": "Day of the absence",
   "comunicaMotivoLabel": "Reason (optional)",
-  "comunicaMotivoPlaceholder": "E.g. medical appointment",
   "comunicaInvia": "Report absence",
   "comunicaInvio": "Sending…",
   "comunicaFatta": "Absence reported",

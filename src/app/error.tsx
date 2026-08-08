@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { logClient, flush } from '@/lib/logging/client';
 import { Btn } from '@/components/ui/Btn';
 
@@ -38,11 +39,25 @@ import { Btn } from '@/components/ui/Btn';
  * NON un confine Suspense — non sospende nulla e non ritarda nessun effetto. Il rischio è ragionato,
  * non ignorato; resta verificato dall'E2E `teacher-attendance`, che è il canarino di quell'incidente.
  *
- * DIPENDENZE AL MINIMO, di proposito: React e il logger. Questa è l'ultima rete prima della pagina
- * bianca, e se il modulo che ha causato il crash finisse anche fra i SUOI import, la boundary
- * fallirebbe a sua volta e l'errore salirebbe a `global-error.tsx` — perdendo il digest e la UI.
- * `Btn` è una funzione pura (nessun hook, nessun contesto, nessun dato): dà coerenza col design a
- * costo di rischio nullo. Una `Card`, un provider o un hook di dati qui NON entrano.
+ * DIPENDENZE AL MINIMO, di proposito: React, il logger e il catalogo. Questa è l'ultima rete prima
+ * della pagina bianca, e se il modulo che ha causato il crash finisse anche fra i SUOI import, la
+ * boundary fallirebbe a sua volta e l'errore salirebbe a `global-error.tsx` — perdendo il digest e
+ * la UI. `Btn` è una funzione pura (nessun hook, nessun contesto, nessun dato): dà coerenza col
+ * design a costo di rischio nullo. Una `Card`, un provider o un hook di dati qui NON entrano.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * LA LINGUA (collaudo del 2026-08-08, localizzazione Q15). Fino a quel giorno le tre frasi erano
+ * LETTERALI italiani nel TSX: un utente con l'interfaccia in inglese, nel momento peggiore che
+ * l'app possa offrirgli, leggeva tre frasi in una lingua che non è la sua. Non era un limite
+ * tecnico — il `NextIntlClientProvider` è montato nel root layout (`src/app/layout.tsx`), che
+ * questa boundary NON sostituisce: quando `error.tsx` viene reso, il layout è ancora in piedi e il
+ * catalogo c'è.
+ *
+ * `useTranslations` è quindi la SOLA dipendenza aggiunta, e vale la regola del paragrafo qui sopra:
+ * è una lettura di contesto React da un provider che sta più in alto — non carica dati, non tocca
+ * la rete. Se una chiave mancasse, next-intl non lancia: rende il percorso della chiave. E se il
+ * provider davvero non ci fosse, l'errore salirebbe a `global-error.tsx`, che porta le due lingue
+ * dentro di sé proprio perché lì il provider non c'è più.
  */
 export default function ErroreDiSegmento({
     error,
@@ -51,6 +66,8 @@ export default function ErroreDiSegmento({
     error: Error & { digest?: string };
     reset: () => void;
 }) {
+    const t = useTranslations('shared');
+
     /**
      * Dedup locale. In sviluppo StrictMode monta ogni componente DUE volte (effetto → cleanup →
      * effetto): senza guardia, ogni errore verrebbe accodato due volte. Il `useRef` sopravvive al
@@ -99,12 +116,11 @@ export default function ErroreDiSegmento({
             className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 py-10 text-center"
         >
             <h2 className="font-barlow text-[26px] font-black uppercase leading-none text-kidville-green">
-                Qualcosa è andato storto
+                {t('paginaErroreTitolo')}
             </h2>
 
             <p className="max-w-md font-maven text-sm leading-relaxed text-kidville-sub">
-                Si è verificato un errore imprevisto. Puoi riprovare: se il problema si ripete,
-                segnalalo alla segreteria indicando il codice qui sotto.
+                {t('paginaErroreCorpo')}
             </p>
 
             {/*
@@ -120,7 +136,7 @@ export default function ErroreDiSegmento({
             )}
 
             <Btn onClick={reset} className="mt-2">
-                Riprova
+                {t('paginaErroreRiprova')}
             </Btn>
         </div>
     );

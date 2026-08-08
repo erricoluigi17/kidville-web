@@ -357,8 +357,16 @@ describe('lock architettura · dati personali nei file tracciati', () => {
     // Controllo di SCADENZA: se una colonna viene rinominata, P3 smette di guardarla e
     // nessuno se ne accorge. Si cerca nelle migrazioni e in `src/`, che sono le due fonti
     // in cui un nome di colonna vive per forza.
+    // `existsSync` e non `readFileSync` secco: `git ls-files` elenca l'indice,
+    // che di un file SPOSTATO ma non ancora committato porta ancora il vecchio
+    // percorso. Senza questo filtro qualunque rinomina fa esplodere il lock con
+    // un ENOENT — un rosso che non parla di dati personali e che nasconde
+    // l'esito vero fino al commit. Il controllo non si indebolisce: le colonne
+    // si cercano nei file che esistono, che sono quelli che descrivono lo
+    // schema di adesso.
     const fonti = TRACCIATI.filter(
-      (f) => f.startsWith('supabase/migrations/') || f.startsWith('src/'),
+      (f) =>
+        (f.startsWith('supabase/migrations/') || f.startsWith('src/')) && existsSync(join(ROOT, f)),
     ).map((f) => readFileSync(join(ROOT, f), 'utf8'))
     const testo = fonti.join('\n')
     const sconosciute = COLONNE_PERSONALI.filter((c) => !new RegExp(`\\b${c}\\b`).test(testo))

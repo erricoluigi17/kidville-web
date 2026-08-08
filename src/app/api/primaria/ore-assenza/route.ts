@@ -10,7 +10,7 @@ import {
   type PresenzaInput,
   type PresenzaConData,
 } from '@/lib/primaria/oreAssenza'
-import { limitaAOggi } from '@/lib/presenze/finestra-trascorsa'
+import { limitaAiFatti } from '@/lib/presenze/finestra-trascorsa'
 import { parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -90,6 +90,12 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
     // La regola sta in `@/lib/presenze/finestra-trascorsa`, non qui: è la stessa
     // per tutti i lettori che AGGREGANO, e finora era stata scritta a mano su
     // due rotte su cinque.
+    //
+    // ⚠️ E IL TETTO TEMPORALE DA SOLO NON BASTA (Q4). `data <= oggi` non può
+    // escludere una riga che cade su OGGI, che è il giorno preimpostato dal
+    // modulo del genitore: misurate di nuovo 5,25 ore perse per un appello che
+    // nessun docente aveva fatto. `limitaAiFatti` aggiunge il secondo asse — la
+    // SORGENTE — allo stesso tetto.
     let presQuery = supabase
       .from('presenze')
       .select('alunno_id, data, stato, orario_entrata, orario_uscita')
@@ -97,7 +103,7 @@ export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextReq
       .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
     if (from) presQuery = presQuery.gte('data', from)
     if (to) presQuery = presQuery.lte('data', to)
-    presQuery = limitaAOggi(presQuery)
+    presQuery = limitaAiFatti(presQuery)
     if (alunnoId) presQuery = presQuery.eq('alunno_id', alunnoId)
     const { data: presenze, error: presErr } = await presQuery
     if (presErr) degrado('presenze-non-lette', presErr)

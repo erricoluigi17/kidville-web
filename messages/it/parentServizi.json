@@ -50,7 +50,6 @@
   "attendanceIndicaGiorno": "Indica il giorno dell’assenza e, se vuoi, il motivo.",
   "attendanceGiorno": "Giorno dell’assenza",
   "attendanceMotivo": "Motivo (facoltativo)",
-  "attendanceMotivoPlaceholder": "Es. febbre, visita medica, motivi familiari…",
   "attendanceErrGenerico": "Impossibile comunicare l’assenza in questo momento.",
   "attendanceErrRete": "Errore di rete. Riprova.",
   "attendanceInvio": "Invio…",

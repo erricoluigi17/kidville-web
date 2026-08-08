@@ -20,6 +20,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
+import { FILTRO_FATTI } from '@/lib/presenze/finestra-trascorsa'
 
 const SEDE = 'e1111111-1111-4111-8111-111111111111'
 const SEZIONE = 'c1111111-1111-4111-8111-111111111111'
@@ -57,6 +58,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
           h.filtri.push({ tabella, metodo: m, colonna: String(colonna), valore })
           return qb
         }
+      }
+      // `.or()` prende UN argomento (la disgiunzione), non due: senza questo
+      // ramo il doppio non aveva il metodo, `limitaAiFatti` lanciava e la rotta
+      // rispondeva 500 — con il `.lte` già registrato, cioè con l'asserzione
+      // sul tetto ancora verde. Un'asserzione che passa su un 500 non misura
+      // niente; per questo i test qui sotto guardano anche lo `status`.
+      qb.or = (filtro: unknown) => {
+        h.filtri.push({ tabella, metodo: 'or', colonna: '', valore: filtro })
+        return qb
       }
       qb.maybeSingle = async () => ({ data: null, error: null })
       qb.then = (res: (v: unknown) => unknown) =>
@@ -97,13 +107,22 @@ const tettiSuPresenze = () =>
 // ─────────────────────────────────────────────────────────────────────────────
 describe('T26 — `primaria/ore-assenza`: il monte ore conta i giorni trascorsi', () => {
   it('la query di `presenze` porta il tetto a OGGI, anche con un `to` più lontano', async () => {
-    await OreAssenza(
+    const res = await OreAssenza(
       new NextRequest(`http://localhost/api/primaria/ore-assenza?sectionId=${SEZIONE}&from=2026-01-01&to=2099-12-31`),
     )
+    expect(res.status, 'il tetto va misurato su una risposta VALIDA, non su un 500').toBe(200)
     expect(
       tettiSuPresenze(),
       'senza tetto un genitore gonfia il monte ore con sessanta giorni di anticipo',
     ).toContain(OGGI)
+  })
+
+  it('…e il filtro sulla SORGENTE, che il tetto temporale non può sostituire (Q4)', async () => {
+    // `data <= oggi` è vero anche per l'assenza annunciata OGGI dal genitore:
+    // misurate di nuovo 5,25 ore perse per un appello che nessuno ha fatto.
+    await OreAssenza(new NextRequest(`http://localhost/api/primaria/ore-assenza?sectionId=${SEZIONE}`))
+    const or = h.filtri.filter((f) => f.tabella === 'presenze' && f.metodo === 'or').map((f) => f.valore)
+    expect(or).toContain(FILTRO_FATTI)
   })
 })
 
@@ -111,19 +130,23 @@ describe('T26 — `primaria/ore-assenza`: il monte ore conta i giorni trascorsi'
 describe('T26 — `attendance/monthly`: il calendario mostra, il conteggio no', () => {
   it('le righe future arrivano al client MARCATE, così il conteggio può escluderle', async () => {
     const res = await Mensile(new NextRequest('http://localhost/api/attendance/monthly?sezione=TEST%201A&year=2026&month=8'))
-    const righe = (await res.json()) as { date: string; futura?: boolean }[]
+    const righe = (await res.json()) as { date: string; fattoDelRegistro?: boolean }[]
     const futura = righe.find((r) => r.date === FUTURO)
     const passata = righe.find((r) => r.date === OGGI)
-    expect(futura?.futura, 'il calendario le mostra: a distinguerle deve essere una marca, non l’assenza della riga').toBe(true)
-    expect(passata?.futura).toBe(false)
+    expect(futura?.fattoDelRegistro, 'il calendario le mostra: a distinguerle deve essere una marca, non l’assenza della riga').toBe(false)
+    // Q4: la marca non si chiama più `futura`. La riga di OGGI qui non porta né
+    // `registrato_da` né `giustificata_da` — la forma delle 36 righe storiche
+    // misurate in produzione — e resta un FATTO: la correzione non toglie
+    // appelli veri per nascondere un annuncio.
+    expect(passata?.fattoDelRegistro).toBe(true)
   })
 
   it('la marca la decide il SERVER, non l’orologio del tablet', async () => {
     // Se la decidesse il client, un tablet con la data sbagliata conterebbe
     // diversamente dallo stesso registro aperto da un altro dispositivo.
     const res = await Mensile(new NextRequest('http://localhost/api/attendance/monthly?sezione=TEST%201A&year=2026&month=8'))
-    const righe = (await res.json()) as { futura?: boolean }[]
-    expect(righe.every((r) => typeof r.futura === 'boolean')).toBe(true)
+    const righe = (await res.json()) as { fattoDelRegistro?: boolean }[]
+    expect(righe.every((r) => typeof r.fattoDelRegistro === 'boolean')).toBe(true)
   })
 
   it('il `message` grezzo di PostgREST non esce verso il docente', async () => {

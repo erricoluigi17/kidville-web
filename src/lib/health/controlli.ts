@@ -144,13 +144,7 @@ export interface JobCron {
  * deve assorbire un giro saltato senza gridare, e non due. Un allarme che scatta al primo
  * ritardo viene disattivato entro una settimana, e allora non protegge più niente.
  *
- * DUE JOB SONO DELIBERATAMENTE FUORI, e vale la pena dire quali:
- *  · `iscrizioni-retention` (`41 4 1 * *`, MENSILE) non logga `esito: 'ok'` — logga
- *    `esito: 'retention-iscrizioni'`. Sorvegliarlo qui richiederebbe una finestra di 32
- *    giorni: un allarme con quella latenza non è sorveglianza, è archeologia. Va seguito
- *    con una query su `app_log`, non con un endpoint interrogato ogni minuto.
- *  · `app-log-purge`, `consensi-retention` e gli altri job di sola SQL non passano da una
- *    route HTTP e quindi non lasciano battito applicativo: qui sarebbero sempre rossi.
+ * CHI RESTA FUORI, E PERCHÉ, non è più un commento: è `JOB_CRON_NON_SORVEGLIATI`, qui sotto.
  */
 export const JOB_CRON: readonly JobCron[] = [
     { nome: 'push-dispatch', finestraMs: 20 * MIN },
@@ -159,6 +153,53 @@ export const JOB_CRON: readonly JobCron[] = [
     { nome: 'notifiche-promemoria', finestraMs: 26 * ORA },
     { nome: 'pagamenti-solleciti', finestraMs: 26 * ORA },
     { nome: 'mensa-allergie-check', finestraMs: 26 * ORA },
+    // `presenze-giustificazioni-retention` (`59 4 * * *`, OGNI NOTTE): fa scadere il motivo
+    // dell'assenza, che è un dato sanitario di un minore, e l'informativa promette alle
+    // famiglie che quella cancellazione è automatica. Una promessa mantenuta da un lavoro che
+    // nessuno guarda è una promessa a scadenza. 26 h come gli altri giornalieri.
+    { nome: 'presenze-giustificazioni-retention', finestraMs: 26 * ORA },
+]
+
+/**
+ * I JOB CHE NON SI POSSONO SORVEGLIARE DA QUI — dichiarati, con la ragione.
+ *
+ * Era un commento, ed è diventato una costante il 2026-08-08 (rilievo Q3) per una ragione
+ * pratica: un lock deve poter distinguere «questo job è stato lasciato fuori apposta» da
+ * «questo job se lo sono dimenticato». Un commento non lo consente, e i due job di retention
+ * introdotti dal ciclo erano finiti esattamente lì in mezzo — non comparivano né fra i vivi né
+ * fra i muti di `/api/health`: invisibili.
+ *
+ * ⚠️ IL MOTIVO PER CUI UN MENSILE NON SI PUÒ SORVEGLIARE QUI È MISURATO, non stilistico.
+ * `app_log` conserva **30 giorni** (`app_log_purge`, `creato_il < now() - interval '30 days'`),
+ * e un job mensile richiederebbe una finestra di ~32. In un mese di 31 giorni il battito del
+ * giorno 1 viene cancellato dalla purge il giorno 31 alle 3:30, e il successivo arriva il
+ * giorno 1 alle 4:35: per **25 ore ogni mese** `/api/health` direbbe «degradato» su un lavoro
+ * che gira perfettamente. Un allarme che suona da solo viene spento, e allora non protegge più
+ * niente — che è la frase già scritta in testa a questo modulo.
+ *
+ * Questi job si seguono con una query su `app_log` (il battito c'è e si legge), non con un
+ * endpoint interrogato ogni minuto.
+ */
+export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }[] = [
+    {
+        nome: 'notifiche-retention',
+        perche:
+            'MENSILE (`35 4 1 * *`): la finestra necessaria (~32 giorni) supera la conservazione ' +
+            'di app_log (30 giorni), quindi il battito precedente sparisce prima che arrivi il ' +
+            'successivo e l’allarme suonerebbe ogni mese su un lavoro sano.',
+    },
+    {
+        nome: 'iscrizioni-retention',
+        perche:
+            'MENSILE (`41 4 1 * *`), stessa ragione del gemello; e il suo battito non dichiara ' +
+            '`esito: ok`. Si segue con una query su app_log.',
+    },
+    {
+        nome: 'app-log-purge',
+        perche:
+            'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
+            'per consensi-retention, audit-docente-retention e app-log-bonifica-pii.',
+    },
 ]
 
 /** La finestra più larga: quanto indietro serve leggere `app_log` per coprirle tutte. */

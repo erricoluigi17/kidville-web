@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent } from '@testing-library/react'
 
-import { CampoSottoAppBar } from '@/components/features/parent/CampoSottoAppBar'
+import { CampoSottoAppBar } from '@/components/features/shell/CampoSottoAppBar'
 
 /**
  * LOCK · con la tastiera aperta il campo a fuoco non finisce sotto l'AppBar.
@@ -33,11 +33,11 @@ import { CampoSottoAppBar } from '@/components/features/parent/CampoSottoAppBar'
 /** L'AppBar sticky, alta 82 px come sull'emulatore (58 + 24 di safe-area). */
 const ALTEZZA_APPBAR = 82
 
-function shell(campo: 'textarea' | 'input' | 'fuori') {
+function shell(campo: 'textarea' | 'input' | 'fuori', classeBarra = 'kv-appbar') {
   const radice = document.createElement('div')
   radice.setAttribute('data-kv-shell', '')
   const barra = document.createElement('header')
-  barra.className = 'kv-appbar'
+  barra.className = classeBarra
   barra.getBoundingClientRect = () =>
     ({ top: 0, bottom: ALTEZZA_APPBAR, height: ALTEZZA_APPBAR, left: 0, right: 390, width: 390, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
   radice.appendChild(barra)
@@ -82,6 +82,31 @@ afterEach(() => {
 function apriTastiera(el: HTMLElement) {
   el.focus()
   fireEvent.focusIn(el)
+  for (const f of ascoltatoriResize) f()
+  vi.runAllTimers()
+}
+
+/**
+ * LA SEQUENZA VERA DEL DITO, che è un'altra cosa (rilievo Q30).
+ *
+ * `apriTastiera` comprime tutto in un istante solo: fuoco, ridimensionamento e
+ * timer. Sul telefono i tre momenti sono separati da centinaia di millisecondi,
+ * e fra il primo e il secondo il timer del componente SCADE — con la tastiera
+ * ancora chiusa e il campo ancora al suo posto. È lì che il difetto vive.
+ *
+ *  1. il dito tocca il campo → `focusin`, viewport ancora alta, campo a 223 px;
+ *  2. passano più di RITARDO_MS: il componente misura, non trova niente da
+ *     correggere;
+ *  3. SOLO ADESSO la tastiera si apre, Chromium riallinea il campo a `top: 0` e
+ *     `visualViewport` emette `resize` — l'unico momento in cui il difetto esiste;
+ *  4. si aspetta di nuovo.
+ */
+function apriTastieraComeSulTelefono(el: HTMLElement, topPrima: number, topDopo: number) {
+  posiziona(el, topPrima)
+  el.focus()
+  fireEvent.focusIn(el)
+  vi.advanceTimersByTime(400)
+  posiziona(el, topDopo)
   for (const f of ascoltatoriResize) f()
   vi.runAllTimers()
 }
@@ -154,10 +179,104 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
     expect(scrollBy).not.toHaveBeenCalled()
   })
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // Q30 — LA SEQUENZA REALE, CHE È QUELLA CHE IL COMPONENTE SBAGLIAVA.
+  //
+  // Misura CDP sull'emulatore, subito dopo il tocco (3 volte su 3, identica):
+  //   PRIMA : {"top":223,"bottom":335,"vvH":731}
+  //   DOPO  : {"attivo":"TEXTAREA","top":0,"bottom":112,"vvH":399}
+  //   stato : {"kvAppbarBottom":82,"scrollY":539,"scrollMaxY":649}
+  // cioè 82 px su 112 coperti, con la pagina che POTEVA ancora scorrere: la
+  // compensazione non è avvenuta. Il componente funzionava solo se il fuoco
+  // arrivava a tastiera GIÀ aperta — cioè mai, nel gesto reale.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('fuoco a tastiera CHIUSA, poi la tastiera si apre: la compensazione arriva lo stesso', () => {
+    render(<CampoSottoAppBar />)
+    const { el } = shell('textarea')
+    apriTastieraComeSulTelefono(el, 223, 0)
+    expect(
+      scrollBy,
+      'il ritardo scadeva con la tastiera ancora chiusa, il campo era a 223 ≥ 82 e non c’era ' +
+        'niente da correggere: uscendo, il componente dimenticava il campo. Quando poi la ' +
+        'tastiera si apriva e Chromium lo riallineava a top:0 — l’unico istante in cui il ' +
+        'difetto esiste — non restava più niente da riportare in vista.',
+    ).toHaveBeenCalledWith(0, -ALTEZZA_APPBAR)
+  })
+
+  it('e se la tastiera NON copre niente, non si scorre lo stesso', () => {
+    // Controllo positivo della sequenza vera: senza questo, un componente che
+    // scorre sempre passerebbe il test qui sopra.
+    render(<CampoSottoAppBar />)
+    const { el } = shell('textarea')
+    apriTastieraComeSulTelefono(el, 223, 200)
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
+
+  it('più aperture di seguito: ogni volta si ricomincia a misurare', () => {
+    render(<CampoSottoAppBar />)
+    const { el } = shell('textarea')
+    apriTastieraComeSulTelefono(el, 223, 0)
+    scrollBy.mockClear()
+    // La tastiera si richiude e si riapre senza che il fuoco cambi: è il caso
+    // della rotazione e del suggeritore che si apre e chiude.
+    posiziona(el, 0)
+    for (const f of ascoltatoriResize) f()
+    vi.runAllTimers()
+    expect(scrollBy).toHaveBeenCalledWith(0, -ALTEZZA_APPBAR)
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // LA STESSA FORMA SULLE ALTRE DUE STRADE.
+  //
+  // Il componente viveva sotto `features/parent` ed era montato SOLO nel layout
+  // del genitore. Il suo stesso commento diceva «quando anche i layout docente e
+  // cockpit lo adotteranno va spostato in features/shell» — cioè la lezione era
+  // scritta in un commento invece che nel codice, che è la forma che questo
+  // ciclo ha già pagato tre volte. Le tre shell hanno `[data-kv-shell]` e una
+  // barra sticky in cima: docente e genitore la stessa (`.kv-appbar`,
+  // `features/shell/AppBar`), il cockpit la sua (`.kv-appbar-admin`).
+  // ───────────────────────────────────────────────────────────────────────────
+  it('vale anche per la barra del cockpit, che ha una classe sua', () => {
+    render(<CampoSottoAppBar />)
+    const { el } = shell('textarea', 'kv-admin-topbar kv-appbar-admin')
+    apriTastieraComeSulTelefono(el, 223, 0)
+    expect(scrollBy).toHaveBeenCalledWith(0, -ALTEZZA_APPBAR)
+  })
+
+  it('con due barre in pagina vince la più BASSA: è quella che copre davvero', () => {
+    render(<CampoSottoAppBar />)
+    const { radice, el } = shell('textarea')
+    const seconda = document.createElement('header')
+    seconda.className = 'kv-appbar-admin'
+    seconda.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 120, height: 120, left: 0, right: 390, width: 390, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    radice.insertBefore(seconda, radice.firstChild)
+    apriTastieraComeSulTelefono(el, 223, 0)
+    expect(scrollBy).toHaveBeenCalledWith(0, -120)
+  })
+
   it('smontandosi non lascia ascoltatori appesi', () => {
     const { unmount } = render(<CampoSottoAppBar />)
     expect(ascoltatoriResize.length).toBeGreaterThan(0)
     unmount()
     expect(ascoltatoriResize.length).toBe(0)
+  })
+})
+
+describe('LOCK · le shell che hanno la barra sticky lo montano tutte', () => {
+  it('genitore, docente e cockpit: nessuna resta indietro', async () => {
+    // Il difetto è stato misurato sul genitore e per un giorno il rimedio è
+    // vissuto solo lì, con «quando anche i layout docente e cockpit lo
+    // adotteranno» scritto in un commento. Un commento non monta un componente.
+    const { readFileSync } = await import('node:fs')
+    const shell = ['parent', 'teacher', 'admin']
+    const senza = shell.filter(
+      (area) => !readFileSync(`src/app/(dashboard)/${area}/layout.tsx`, 'utf8').includes('<CampoSottoAppBar />'),
+    )
+    expect(
+      senza,
+      'ogni shell con [data-kv-shell] ha una barra sticky in cima e i suoi moduli: ' +
+        'la compensazione della tastiera vale per tutte e tre o per nessuna',
+    ).toEqual([])
   })
 })

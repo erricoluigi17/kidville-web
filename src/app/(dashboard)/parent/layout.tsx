@@ -3,7 +3,7 @@ import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
-import { CampoSottoAppBar } from '@/components/features/parent/CampoSottoAppBar';
+import { CampoSottoAppBar } from '@/components/features/shell/CampoSottoAppBar';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { requireArea } from '@/lib/auth/area-guard';
 

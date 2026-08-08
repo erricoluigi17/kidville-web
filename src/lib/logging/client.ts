@@ -157,6 +157,52 @@ function livelloFetch(stato: number): 'warn' | 'error' | null {
 }
 
 /**
+ * IL LIVELLO CON CUI UN EVENTO LASCIA IL DISPOSITIVO — e perché non lo decide chi chiama.
+ *
+ * ─── IL FATTO (rilievo Q7, quarto collaudo) ─────────────────────────────────
+ *
+ * `livelloFetch` governava il solo patch di `fetch`. Ma `logClient` è ESPORTATA, e i
+ * componenti che la chiamano direttamente per dire «l'invio è stato respinto» cablavano
+ * `livello: 'error'` per qualunque `!res.ok`. Risultato misurato dalla UI vera: lo stesso
+ * rifiuto — un genitore che sceglie un giorno passato — usciva `warn` dal server e rientrava
+ * `error` dal browser. Due livelli per lo stesso evento, visto dai due lati.
+ *
+ * Non è un dettaglio di etichetta: `/api/logs` persiste tutto ciò che riceve, l'impronta di
+ * `app_log` include l'utente, e `controlloTassoErrore` dichiara `/api/health` degradato a 5
+ * impronte `error` distinte in 15 minuti. Sei famiglie che sbagliano giorno nella stessa
+ * finestra bastavano a far dire «degradato» a un'applicazione sana.
+ *
+ * ─── PERCHÉ LA REGOLA STA QUI E NON NEI COMPONENTI ──────────────────────────
+ *
+ * Perché era già scritta due volte (qui e in `with-route.ts`) e una terza copia in un
+ * componente è il modo in cui le tre divergono. `logClient` è il collo di bottiglia da cui
+ * passa OGNI evento — è la stessa ragione per cui ci sta dentro `redigiPathNelTesto`: quello
+ * che vale per la funzione non può dipendere dalla disciplina di chi scriverà il prossimo
+ * chiamante.
+ *
+ * ─── IL CONFINE, che è la parte da non sbagliare ────────────────────────────
+ *
+ * La politica si applica SOLO a uno status di RISPOSTA (400–599). `stato: 0` non è una
+ * risposta: è la fetch che non è mai partita, e il suo livello (`warn`) è una decisione
+ * separata e misurata — vedi la testata di `eAnnullata`. Applicargli `livelloFetch`
+ * significherebbe sopprimere l'unica traccia possibile di un'interruzione di rete, che il
+ * server per definizione non vede. Gli eventi senza `stato` (`js`, `react`, `offline`) non
+ * hanno niente da giudicare: il livello resta di chi li emette.
+ */
+function livelloEvento(e: EventoClient): 'warn' | 'error' | null {
+    const dichiarato: 'warn' | 'error' = e.livello === 'warn' ? 'warn' : 'error';
+    try {
+        const stato = e.stato;
+        if (typeof stato !== 'number' || !Number.isInteger(stato)) return dichiarato;
+        if (stato < 400 || stato >= 600) return dichiarato;
+        return livelloFetch(stato);
+    } catch {
+        // Getter ostile su un oggetto evento: si tiene ciò che il chiamante ha dichiarato.
+        return dichiarato;
+    }
+}
+
+/**
  * LA FETCH CHE NON È MAI PARTITA — e perché non è più un `error`.
  *
  * ─────────────────────────────────────────────────────────────────────────────────
@@ -283,7 +329,35 @@ export function nomeErrore(e: unknown): string {
  * di sollevare una seconda eccezione.
  */
 export function logClient(e: EventoClient): void {
+    accoda(e, true);
+}
+
+/**
+ * L'evento che il logger scrive SU SÉ STESSO, e che non passa dalla politica dei livelli.
+ *
+ * Esiste per un caso solo, ed è quello in cui la politica sarebbe esattamente sbagliata:
+ * `/api/logs` che risponde 400 e scarta un batch. Lì lo `stato` non è «una risposta che l'app
+ * ha ricevuto e che il server ha già registrato per conto suo»: è il canale dei log che si è
+ * rotto, e quella riga è l'unica che possa dirlo. Sopprimerla perché «400 è un rifiuto
+ * ordinario» significherebbe perdere in silenzio proprio la notizia che i log si stanno
+ * perdendo in silenzio.
+ *
+ * NON è esportata, e non deve diventarlo: la deroga vale per il modulo che parla di sé, non
+ * per i componenti — che è tutto il punto di Q7.
+ */
+function logClientInterno(e: EventoClient): void {
+    accoda(e, false);
+}
+
+function accoda(e: EventoClient, applicaPolitica: boolean): void {
     try {
+        // LA POLITICA DEI LIVELLI, PRIMA DI TUTTO IL RESTO (vedi `livelloEvento`): un rifiuto
+        // ordinario del server non si spedisce affatto — quei 4xx il server li vede e li logga
+        // già, con il codice in colonna. Prima del throttle, così un evento che non parte non
+        // occupa nemmeno una chiave di `visti`.
+        const livello = applicaPolitica ? livelloEvento(e) : (e.livello === 'warn' ? 'warn' : 'error');
+        if (livello === null) return;
+
         // `redigiPathNelTesto` QUI e non nei chiamanti, per lo stesso motivo per cui
         // `impostaPayload` redige da sé invece di fidarsi delle 239 route: questo è l'UNICO
         // punto da cui passa ogni evento, e un evento può nascere ovunque — dal patch di
@@ -317,7 +391,7 @@ export function logClient(e: EventoClient): void {
         if (coda.length >= CODA_MAX) coda.shift();
 
         coda.push({
-            livello: e.livello === 'warn' ? 'warn' : 'error',
+            livello,
             evento: e.evento,
             messaggio,
             stack: e.stack === undefined ? undefined : tronca(String(e.stack), STACK_MAX),
@@ -537,7 +611,11 @@ export function flush(): void {
             // righe si perdono — ma non in silenzio: si accoda un evento che lo DICE, ed è
             // l'unico modo per accorgersi che il canale dei log è rotto. Non innesca un ciclo:
             // l'evento nuovo è valido, e il throttle lo tiene a uno al minuto.
-            logClient({
+            //
+            // `logClientInterno` e non `logClient`: qui lo `stato` è quello del SINK, e la
+            // politica dei livelli — che per un 400 dice «non spedire, il server l'ha già
+            // registrato» — sopprimerebbe l'unica riga che dice che i log si stanno perdendo.
+            logClientInterno({
                 livello: 'warn',
                 evento: 'fetch',
                 messaggio: `POST ${SINK} → ${res.status}: batch di ${inviati.length} eventi scartato`,

@@ -64,13 +64,22 @@ const RIGA_INTERA = {
 const h = vi.hoisted(() => ({
   /** Le stringhe passate a `.select(...)` per tabella. */
   select: [] as { tabella: string; colonne: string | undefined }[],
+  /** Il ruolo di chi apre l'appello: decide se il motivo dell'assenza viaggia (Q1). */
+  ruolo: 'educator' as string,
 }))
 
-vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: vi.fn(async () => ({ user: { id: DOCENTE, role: 'educator' }, response: null })) }))
+vi.mock('@/lib/auth/require-staff', () => ({
+  requireDocente: vi.fn(async () => ({ user: { id: DOCENTE, role: h.ruolo }, response: null })),
+}))
 vi.mock('@/lib/auth/scope', () => ({
   assertAlunnoInScope: vi.fn(async () => null),
   assertClasseNomeInScope: vi.fn(async () => null),
   resolveScuoleAttive: vi.fn(async () => [SEDE]),
+  // Il vero `vedeTutteLeClassi`, non uno finto: è la funzione che decide se il motivo
+  // dell'assenza esce da questa rotta (Q1), e riscriverla qui vorrebbe dire provare la
+  // nostra copia invece della regola.
+  vedeTutteLeClassi: (u: { role?: string }) =>
+    u?.role === 'admin' || u?.role === 'coordinator' || u?.role === 'segreteria',
 }))
 vi.mock('@/lib/auth/sede-richiesta', () => ({ restringiASedeRichiesta: vi.fn(() => ({ plessi: [SEDE] })) }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn(async () => undefined), nomeUtente: vi.fn() }))
@@ -162,7 +171,8 @@ describe('T22 — la POST dell’appello non rimanda indietro l’intera riga', 
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('T24 — il motivo arriva all’appello 0-6, che è chi la famiglia crede lo legga', () => {
-  it('la `select` della GET chiede `giustificazione_testo`', async () => {
+  it('la `select` della GET chiede `giustificazione_testo` per l’insegnante della sezione', async () => {
+    h.ruolo = 'educator'
     await GET(get())
     const sel = h.select.find((s) => s.tabella === 'presenze')?.colonne ?? ''
     expect(
@@ -171,7 +181,34 @@ describe('T24 — il motivo arriva all’appello 0-6, che è chi la famiglia cre
     ).toContain('giustificazione_testo')
   })
 
+  /**
+   * Q1 — «LE INSEGNANTI DELLA SEZIONE» È UN INSIEME, e va rispettato.
+   *
+   * Misurato nel quarto collaudo: con la sessione di un `coordinator` NON assegnato alla
+   * sezione, questa GET rispondeva 200 con il motivo per intero. `requireDocente` ammette
+   * anche admin, coordinator e segreteria, e per loro `soloSezioniAssegnate` non restringe
+   * niente. La frase mostrata al genitore mentre scrive il sintomo del figlio dichiarava
+   * un'altra platea.
+   */
+  it.each(['admin', 'coordinator', 'segreteria'])(
+    'e NON lo chiede per «%s», che vede tutte le classi del plesso',
+    async (ruolo) => {
+      h.ruolo = ruolo
+      await GET(get())
+      const sel = h.select.find((s) => s.tabella === 'presenze')?.colonne ?? ''
+      expect(
+        sel,
+        `il motivo dell'assenza — dato sanitario di un minore — arriva a "${ruolo}" per ogni ` +
+          `classe del plesso, mentre il modulo del genitore dice «le insegnanti della sezione»`,
+      ).not.toContain('giustificazione_testo')
+      // La schermata continua a funzionare: tutto il resto dell'appello c'è.
+      expect(sel).toContain('stato')
+      expect(sel).toContain('alunni!inner')
+    },
+  )
+
   it('la GET NON porta comunque la firma del genitore né la nota interna', async () => {
+    h.ruolo = 'educator'
     await GET(get())
     const sel = h.select.find((s) => s.tabella === 'presenze')?.colonne ?? ''
     expect(sel).not.toContain('giustificazione_firma')

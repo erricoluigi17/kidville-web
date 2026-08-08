@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { redact, redigiPath } from './redact';
+import { redact, redactInput, redigiPath } from './redact';
 import { serializza } from './serialize';
 
 /**
@@ -213,15 +213,43 @@ const CONTEGGIO_SCARTATI = /^\[\+(\d+) /;
  *
  * Il valore è REDATTO QUI, non dal chiamante — stesso principio del `path`: l'unico modo
  * per garantire che nel contesto non finisca mai un dato personale grezzo è non lasciare
- * la scelta a 239 route. `redact()` è a lista bianca e non lancia mai.
+ * la scelta a 239 route.
  *
- * Redigere al deposito è anche ciò che tiene a bada la RAM: `redact` tronca gli array a 20
+ * ⚠️ `redactInput` e non `redact`: quello che arriva qui viene DALLA RETE, e la lista bianca
+ * di `redact` presuppone che il nome del campo l'abbia scelto il nostro codice. Sotto
+ * `payload` lo sceglie chi fa la richiesta — vedi la testata di `redactInput`. Un valore
+ * nostro da depositare qui passa da `impostaPayloadEsito`.
+ *
+ * Redigere al deposito è anche ciò che tiene a bada la RAM: la redazione tronca gli array a 20
  * elementi, gli oggetti a 40 chiavi e la profondità a 5, quindi di un import da 5.000 record
  * non resta il body intero appeso al contesto fino a fine richiesta. Sopra
  * `PAYLOAD_CARATTERI_MAX` anche il residuo redatto viene buttato: per sapere *cosa* si stava
  * tentando, 2.000 caratteri bastano.
  */
 export function impostaPayload(dove: string, valore: unknown): void {
+    // Uscita rapida fuori da una richiesta: senza store non c'è niente da depositare, e
+    // redigere per buttare via costerebbe una passata su ogni body in un cron o in un test.
+    if (!als.getStore()) return;
+    deposita(dove, redactInput(valore));
+}
+
+/**
+ * Deposita una DIAGNOSI NOSTRA nello slot di un payload — non un valore del client.
+ *
+ * Serve ai due casi in cui un payload da depositare non c'è (`body-json-malformato`,
+ * `richiesta-non-multipart`): lì la stringa la scrive il nostro codice, ed è l'unica cosa che
+ * distingue «questa richiesta non ha loggato il corpo» da «un corpo non ce l'aveva». Passa
+ * quindi da `redact`, che la lascia in chiaro sotto `esito`, mentre `impostaPayload` — che
+ * tratta input di rete — la ridurrebbe a `[redatto:str/21]`, cioè a un log che non dice nulla.
+ *
+ * L'`esito` è un enumerato scritto a mano nel sorgente: non è mai un valore di richiesta.
+ */
+export function impostaPayloadEsito(dove: string, esito: string): void {
+    if (!als.getStore()) return;
+    deposita(dove, redact({ esito }));
+}
+
+function deposita(dove: string, redatto: unknown): void {
     const s = als.getStore();
     if (!s) return;
     try {
@@ -236,7 +264,6 @@ export function impostaPayload(dove: string, valore: unknown): void {
             return;
         }
 
-        const redatto = redact(valore);
         // `serializza` non lancia e tronca da sé: qui serve solo a PESARE il residuo.
         const troppoGrande =
             serializza(redatto, PAYLOAD_CARATTERI_MAX + 1).length > PAYLOAD_CARATTERI_MAX;

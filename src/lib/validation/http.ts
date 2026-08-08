@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { impostaPayload } from '@/lib/logging/context';
+import { impostaPayload, impostaPayloadEsito } from '@/lib/logging/context';
 
 /**
  * Helper condivisi per la validazione zod delle route API (M3).
@@ -109,7 +109,7 @@ export async function parseBody<S extends z.ZodType>(
     try {
         raw = await request.json();
     } catch {
-        impostaPayload('body', { esito: 'body-json-malformato' });
+        impostaPayloadEsito('body', 'body-json-malformato');
         return {
             response: validationError([
                 { path: [], message: 'Body JSON mancante o malformato' },
@@ -164,7 +164,7 @@ export async function parseMultipart(request: Request): Promise<ParseResult<Form
         return { data: await request.formData() };
     } catch (err) {
         if (TIPI_CON_FORM.test(request.headers.get('content-type') ?? '')) throw err;
-        impostaPayload('body', { esito: 'richiesta-non-multipart' });
+        impostaPayloadEsito('body', 'richiesta-non-multipart');
         return {
             response: validationError([
                 {

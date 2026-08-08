@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { colonneConMotivo } from '@/lib/presenze/motivo-visibile'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { notificaEvento } from '@/lib/notifiche/triggers'
@@ -58,6 +59,40 @@ const recordsSchema = z.array(recordSchema)
 
 // GET /api/primaria/appello?sectionId=&data=&userId=
 // Alunni della classe + stato presenza del giorno.
+/**
+ * La riga d'appello come torna dal database.
+ *
+ * `giustificazione_testo` è OPZIONALE nel tipo, ed è la parte che conta: la colonna non
+ * viene chiesta quando chi guarda vede tutte le classi del plesso (`colonneConMotivo`),
+ * quindi «assente» è un esito legittimo e non un errore. Con una stringa di select
+ * dinamica l'inferenza di postgrest-js non può più dedurre la forma: si dichiara qui, una
+ * volta, invece di castare a `any` nel punto d'uso.
+ */
+interface RigaAppello {
+  id: string
+  alunno_id: string
+  stato: string | null
+  note_appello: string | null
+  orario_entrata: string | null
+  orario_uscita: string | null
+  giustificata: boolean | null
+  giustificazione_testo?: string | null
+  giust_vista_il: string | null
+}
+
+/** Le colonne della riga d'appello. Il motivo esce solo per chi la frase del genitore nomina. */
+const COLONNE_RIGA_APPELLO = [
+  'id',
+  'alunno_id',
+  'stato',
+  'note_appello',
+  'orario_entrata',
+  'orario_uscita',
+  'giustificata',
+  'giustificazione_testo',
+  'giust_vista_il',
+] as const
+
 export const GET = withRoute('primaria/appello:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
@@ -74,12 +109,21 @@ export const GET = withRoute('primaria/appello:GET', async (request: NextRequest
       supabase.from('alunni').select('id, nome, cognome').eq('section_id', sectionId).order('cognome'),
       supabase
         .from('presenze')
-        .select('id, alunno_id, stato, note_appello, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giust_vista_il')
+        // `colonneConMotivo`: la stessa regola della rotta gemella
+        // `attendance/daily:GET` — `requireDocente` + `assertSezioneInScope`
+        // restringono alla sezione SOLO chi non passa da `vedeTutteLeClassi`,
+        // quindi senza questo filtro il motivo dell'assenza arriva ad admin,
+        // coordinator e segreteria per OGNI classe del plesso, mentre la frase
+        // mostrata al genitore dice «le insegnanti della sezione» (rilievo Q1).
+        // Il rilievo nominava l'altra rotta: la regola vale per tutte e due, e
+        // vive in `src/lib/presenze/motivo-visibile.ts`.
+        .select(colonneConMotivo(COLONNE_RIGA_APPELLO, auth.user))
         .eq('section_id', sectionId)
         .eq('data', data),
     ])
 
-    const statoByAlunno = new Map((presenze ?? []).map((p) => [p.alunno_id, p]))
+    const righe = (presenze ?? []) as unknown as RigaAppello[]
+    const statoByAlunno = new Map(righe.map((p) => [p.alunno_id, p]))
     const data_ = (alunni ?? []).map((a) => {
       const p = statoByAlunno.get(a.id)
       return {

@@ -186,6 +186,12 @@ function utilityTailwind(): Regola[] {
     for (const [nome, hex] of Object.entries(T)) {
         out.push({ sel: `.text-kidville-${nome}`, dich: [{ prop: 'color', val: hex }], contesto: [], ordine: o++, layer: true });
         out.push({ sel: `.bg-kidville-${nome}`, dich: [{ prop: 'background-color', val: hex }], contesto: [], ordine: o++, layer: true });
+        // Il CONTORNO: stessa storia dell'inchiostro e del fondo — l'hex è
+        // INLINATO nella utility, quindi nessuna rimappatura centrale del token
+        // lo raggiunge, ed è il motivo per cui la correzione dei bordi deboli
+        // vive in una regola non-layered di globals.css invece che nei 783
+        // punti in cui `border-kidville-line` è scritta.
+        out.push({ sel: `.border-kidville-${nome}`, dich: [{ prop: 'border-color', val: hex }], contesto: [], ordine: o++, layer: true });
     }
     out.push({ sel: '.text-white', dich: [{ prop: 'color', val: '#FFFFFF' }], contesto: [], ordine: o++, layer: true });
     out.push({ sel: '.bg-white', dich: [{ prop: 'background-color', val: '#FFFFFF' }], contesto: [], ordine: o++, layer: true });
@@ -194,7 +200,7 @@ function utilityTailwind(): Regola[] {
 
 const REGOLE = [...utilityTailwind(), ...REGOLE_CSS];
 
-type Prop = 'color' | 'background-color';
+type Prop = 'color' | 'background-color' | 'border-color';
 
 function valoreProp(r: Regola, prop: Prop): string | null {
     let v: string | null = null;
@@ -271,6 +277,15 @@ function sfondo(el: Element, hc: boolean, regole = REGOLE): string {
         }
     }
     return hc ? '#000000' : T.cream;
+}
+
+/**
+ * Il CONTORNO effettivo di un controllo. Non si eredita, quindi si risolve sul
+ * solo elemento — a differenza di inchiostro e fondo, che risalgono l'albero.
+ */
+function bordo(el: Element, hc: boolean, regole = REGOLE): string | null {
+    const v = vince(el, 'border-color', regole);
+    return v ? risolviVar(v, hc) : null;
 }
 
 function misuraEl(el: Element, hc: boolean) {
@@ -602,5 +617,81 @@ describe('a11y §3 · le frasi di /parent/attendance si leggono (WCAG 1.4.3)', (
             m.rapporto,
             `${m.fg} su ${m.bg}: è la sola riga che dice PER QUALE GIORNO l'assenza è partita`,
         ).toBeGreaterThanOrEqual(4.5);
+    });
+});
+
+// =============================================================================
+// §4 — DOVE COMINCIA IL CAMPO, su una superficie CREMA (collaudo 2026-08-08).
+//
+// WCAG 2.2 AA 1.4.11 «Non-text Contrast» chiede 3:1 al confine di un componente
+// d'interfaccia. Il modulo della primaria posa i suoi due campi su
+// `bg-kidville-cream`, e lì il contorno che globals.css assegna ai bordi deboli
+// — `neutral` #8A958F, tarato sulla superficie BIANCA delle card — vale **2,79:1**.
+// Il riempimento non aiuta: bianco su crema è 1,11:1, quindi il bordo è l'unico
+// indizio di dove comincia il campo. Gli stessi due campi, sulla schermata
+// gemella, stanno su bianco e passano (3,10:1). Il repo conosceva già i due
+// numeri — `Btn.tsx:19` li scrive entrambi — senza collegarli a questo caso.
+//
+// ⚠️ IL RIMEDIO STA NELLA FAMIGLIA, NON NEL FILE. Cambiare il colore dentro
+// `ComunicaAssenzaCard` avrebbe chiuso il sintomo e lasciato aperta la regola:
+// la prossima superficie crema con un campo dentro avrebbe ripetuto il difetto,
+// che è esattamente la forma che questo ciclo ha già pagato tre volte. La
+// correzione è una regola in globals.css agganciata alla SUPERFICIE.
+// =============================================================================
+describe('a11y §4 · su fondo crema si vede dove comincia il campo (WCAG 1.4.11)', () => {
+    it('CONTROLLO POSITIVO: la sonda riproduce i due numeri che il repo ha già misurato', () => {
+        // `Btn.tsx` li scrive testualmente: «3,10:1 su bianco, 2,79:1 su crema».
+        expect(contrasto(T.neutral, T.white)).toBe(3.1);
+        expect(contrasto(T.neutral, T.cream)).toBe(2.79);
+        // …e il riempimento del campo non è un indizio: bianco su crema.
+        expect(contrasto(T.white, T.cream)).toBeLessThan(1.2);
+    });
+
+    it('i due campi della primaria hanno un contorno da almeno 3:1 sulla loro superficie', async () => {
+        const { data, motivo } = await campiPrimaria(false);
+        for (const campo of [data, motivo]) {
+            const b = bordo(campo, false);
+            // La superficie ATTORNO al campo, non il suo riempimento: il contorno
+            // separa il bianco di dentro dalla crema di fuori, e il rapporto che
+            // il collaudo ha misurato rotto è quello verso l'esterno.
+            const superficie = sfondo(campo.parentElement!, false);
+            expect(b, `${campo.id}: nessuna regola dichiara il contorno del campo`).not.toBeNull();
+            expect(
+                superficie,
+                'il modulo non è più su crema: se la superficie è cambiata, questa misura va rifatta',
+            ).toBe(T.cream);
+            expect(
+                contrasto(b!, superficie),
+                `contorno ${b} su ${superficie}: chi ha una vista ridotta non capisce dove comincia ` +
+                    'il campo, e il riempimento bianco su crema (1,11:1) non aiuta',
+            ).toBeGreaterThanOrEqual(3);
+            // …e resta visibile anche verso l'INTERNO, cioè sul proprio riempimento.
+            expect(contrasto(b!, sfondo(campo, false))).toBeGreaterThanOrEqual(3);
+        }
+    });
+
+    it('e la gemella su bianco non peggiora (la regola è aggiuntiva, non un ribaltamento)', async () => {
+        const { giorno, motivo } = await campiZeroSei(false);
+        for (const campo of [giorno, motivo]) {
+            const b = bordo(campo, false);
+            expect(b).not.toBeNull();
+            expect(sfondo(campo.parentElement!, false)).toBe(T.white);
+            expect(
+                contrasto(b!, T.white),
+                `contorno ${b} su bianco: la correzione della crema non deve toccare il caso già a norma`,
+            ).toBeGreaterThanOrEqual(3);
+        }
+    });
+
+    it('in Alto Contrasto vince ancora il NERO, su entrambe le superfici', async () => {
+        // Il blocco `[data-contrast="high"]` ha la stessa specificità della regola
+        // della crema: se finisse PRIMA, perderebbe, e il campo in Alto Contrasto
+        // avrebbe un contorno grigio invece che nero.
+        const { data } = await campiPrimaria(true);
+        expect(
+            bordo(data, true),
+            'in Alto Contrasto il contorno del campo non è più nero: la regola della crema è stata ' +
+                'scritta DOPO il blocco HC e lo scavalca',
+        ).toBe('#000000');
     });
 });

@@ -28,7 +28,11 @@ const h = vi.hoisted(() => {
           if (col === 'stato') ctx.stato = val
           return qb
         }
-        for (const m of ['in', 'order', 'limit', 'gte', 'lte']) qb[m] = () => qb
+        // `or` è il filtro sulla SORGENTE aggiunto da Q4 (`limitaAiFatti`): il
+        // tetto `data <= oggi` non può escludere una riga che cade su OGGI.
+        // Senza il metodo la catena esplode e la rotta risponde 500 — cioè un
+        // rosso che non parla del merito.
+        for (const m of ['in', 'order', 'limit', 'gte', 'lte', 'or']) qb[m] = () => qb
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
           if (table !== 'presenze') return Promise.resolve({ data: null, count: null, error: null }).then(res, rej)
           const out = ctx.head

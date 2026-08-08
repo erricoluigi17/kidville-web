@@ -23,19 +23,104 @@ import { residuoEffettivo, statoEffettivo, type AgingPagamento } from '@/lib/pag
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { logEvento } from '@/lib/logging/logger'
 
-function negato(): NextResponse {
+/**
+ * IL RIFIUTO PER MOROSITÀ — e perché il log sta QUI e non nelle rotte (rilievo Q6).
+ *
+ * ─── COSA MANCAVA ───────────────────────────────────────────────────────────
+ *
+ * Questa funzione costruiva la 403 e tornava, senza lasciare niente. `withRoute` classifica i
+ * 403 a `info`, e gli `info` dell'evento `route` non si persistono: in `app_log` restava ZERO.
+ * Dal punto di vista di chi legge la tabella, un genitore sospeso non aveva mai premuto il
+ * pulsante — e «a quante famiglie stiamo negando il servizio, e da quanto» non aveva risposta.
+ * È un rifiuto che riguarda i soldi e le famiglie: non poterlo contare È il difetto.
+ *
+ * ─── PERCHÉ NELL'HELPER ─────────────────────────────────────────────────────
+ *
+ * `parent/presenze/comunica-assenza` dichiara nel proprio commento che «ogni rifiuto porta un
+ * CODICE tradotto e lascia una riga `warn`» e ha `logRifiuto()` apposta — ma la chiama solo sui
+ * rifiuti che nascono nel suo file. I rifiuti che arrivano da un helper condiviso scavalcavano
+ * l'invariante senza che niente diventasse rosso. Qui ci passano tutti e cinque i punti di
+ * blocco: un posto solo, come per il gate in `require-parent.ts`.
+ *
+ * ─── IL CODICE NELLA RISPOSTA ───────────────────────────────────────────────
+ *
+ * `codice: 'ACCOUNT_SOSPESO'` accanto al `motivo` storico: `soloCatalogoDaCorpo` legge
+ * `codice`, e senza quello il genitore leggeva la frase generica «non è stato possibile
+ * comunicare l'assenza» invece di «l'account è sospeso, chiama la segreteria» — cioè l'unica
+ * informazione con cui può risolvere. `motivo` resta per i client già installati.
+ */
+function negato(operazione: string, alunnoId?: string): NextResponse {
+  logEvento(
+    'pagamento',
+    'warn',
+    {
+      operazione,
+      error_code: 'ACCOUNT_SOSPESO',
+      esito: 'rifiuto-account-sospeso',
+      stato: 403,
+      ...(alunnoId === undefined ? {} : { alunno_id: alunnoId }),
+    },
+    undefined,
+    // Senza `distingui`, venti rifiuti su venti bambini diversi cadono in una riga sola e la
+    // colonna `alunno_id` dichiara UN bambino — quello della prima occorrenza del giorno.
+    { distingui: ['alunno_id'] },
+  )
   return NextResponse.json(
     {
       error: 'Account sospeso per morosità: contatta la Segreteria per regolarizzare.',
       motivo: 'account_sospeso',
+      codice: 'ACCOUNT_SOSPESO',
     },
     { status: 403 }
   )
 }
 
-/** True se l'alunno risulta sospeso. */
+/**
+ * «Almeno uno di questi alunni è sospeso?» — con l'errore CONTROLLATO, in un posto solo.
+ *
+ * PostgREST non lancia: ritorna `{ error }`. Le tre letture di `alunni.sospeso` scrivevano
+ * `const { data } = await …` e scartavano l'errore, quindi una lettura fallita si presentava
+ * come «nessun figlio sospeso» — fail-open, e per giunta muto.
+ *
+ * IL FAIL-OPEN RESTA, ed è una decisione, non un'omissione: la sospensione inibisce le azioni
+ * di servizio, non le letture né il login («sicurezza del minore preservata», in testa a questo
+ * modulo). Bloccare per un guasto NOSTRO impedirebbe a un genitore in regola di comunicare
+ * l'assenza del figlio — cioè di dire alla scuola che quel bambino oggi non arriva. Il danno
+ * opposto (un moroso che passa finché dura il guasto) è economico e recuperabile.
+ * Ciò che cambia è che adesso si vede: `error`, con l'operazione e il codice del guasto.
+ */
+function sospensioneNonDeterminabile(operazione: string, err: unknown, quantiAlunni: number): false {
+  logEvento('db', 'error', {
+    operazione,
+    esito: 'sospensione-non-determinabile',
+    alunni: quantiAlunni,
+  }, err)
+  return false
+}
+
+async function qualcunoSospeso(
+  supabase: SupabaseClient,
+  alunnoIds: string[],
+  operazione: string,
+): Promise<boolean> {
+  if (alunnoIds.length === 0) return false
+  const { data, error } = await supabase.from('alunni').select('id, sospeso').in('id', alunnoIds)
+  if (error) return sospensioneNonDeterminabile(operazione, error, alunnoIds.length)
+  return (data ?? []).some((a) => (a as { sospeso?: boolean }).sospeso === true)
+}
+
+/**
+ * True se l'alunno risulta sospeso.
+ *
+ * Resta su `.eq(...).maybeSingle()` — la forma storica per un id singolo — e condivide con
+ * l'altra lettura SOLO la regola: controllare `{ error }` e dirlo. Unificare anche la QUERY
+ * sarebbe stato un cambiamento più largo del difetto: cinque suite di altri domini (mensa,
+ * merch, fea) descrivono questa lettura nei loro fake, e riscriverle per un log sarebbe
+ * riscrivere prove che parlano d'altro.
+ */
 export async function alunnoSospeso(supabase: SupabaseClient, alunnoId: string): Promise<boolean> {
-  const { data } = await supabase.from('alunni').select('sospeso').eq('id', alunnoId).maybeSingle()
+  const { data, error } = await supabase.from('alunni').select('sospeso').eq('id', alunnoId).maybeSingle()
+  if (error) return sospensioneNonDeterminabile('alunnoSospeso', error, 1)
   return data?.sospeso === true
 }
 
@@ -44,15 +129,13 @@ export async function assertAlunnoNonSospeso(
   supabase: SupabaseClient,
   alunnoId: string
 ): Promise<NextResponse | null> {
-  return (await alunnoSospeso(supabase, alunnoId)) ? negato() : null
+  return (await alunnoSospeso(supabase, alunnoId)) ? negato('assertAlunnoNonSospeso', alunnoId) : null
 }
 
 /** True se ALMENO un figlio dell'account genitore (unione legami) è sospeso. */
 async function qualcheFiglioSospeso(supabase: SupabaseClient, genitoreId: string): Promise<boolean> {
   const figli = await getFigliDiGenitore(supabase, genitoreId)
-  if (figli.length === 0) return false
-  const { data } = await supabase.from('alunni').select('id, sospeso').in('id', figli)
-  return (data ?? []).some((a) => (a as { sospeso?: boolean }).sospeso === true)
+  return qualcunoSospeso(supabase, figli, 'assertGenitoreNonSospeso')
 }
 
 /**
@@ -63,7 +146,7 @@ export async function assertGenitoreNonSospeso(
   supabase: SupabaseClient,
   genitoreId: string
 ): Promise<NextResponse | null> {
-  return (await qualcheFiglioSospeso(supabase, genitoreId)) ? negato() : null
+  return (await qualcheFiglioSospeso(supabase, genitoreId)) ? negato('assertGenitoreNonSospeso') : null
 }
 
 /**
@@ -133,8 +216,7 @@ export async function infoSospensioneFamiglia(
 ): Promise<{ sospeso: boolean; totaleScaduto: number }> {
   const figli = await getFigliDiGenitore(supabase, accountId)
   if (figli.length === 0) return { sospeso: false, totaleScaduto: 0 }
-  const { data } = await supabase.from('alunni').select('id, sospeso').in('id', figli)
-  const sospeso = (data ?? []).some((a) => (a as { sospeso?: boolean }).sospeso === true)
+  const sospeso = await qualcunoSospeso(supabase, figli, 'infoSospensioneFamiglia')
   // Solo display nel banner: se non determinabile mostriamo 0 (lo stato `sospeso`,
   // autoritativo, resta corretto). La DECISIONE di revoca è altrove (fail-closed).
   const totaleScaduto = await totaleScadutoAlunni(supabase, figli)

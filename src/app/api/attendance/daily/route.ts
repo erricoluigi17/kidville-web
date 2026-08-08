@@ -10,6 +10,7 @@ import { zDataYMD, zUuid } from '@/lib/validation/common';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { colonneConMotivo } from '@/lib/presenze/motivo-visibile';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
@@ -19,6 +20,23 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
  * Body: { alunno_id, data, stato, orario_entrata?, orario_uscita? }
  * Upsert diretto su Supabase — bypassa Dexie per dati live nel registro mensile.
  */
+
+/**
+ * Le colonne dell'appello del giorno. `giustificazione_testo` è l'unica che non arriva a
+ * tutti: la toglie `colonneConMotivo` per chi vede tutte le classi del plesso (vedi
+ * `src/lib/presenze/motivo-visibile.ts`).
+ */
+const COLONNE_APPELLO = [
+    'id',
+    'alunno_id',
+    'data',
+    'stato',
+    'orario_entrata',
+    'orario_uscita',
+    'panic_alert',
+    'giustificazione_testo',
+    'alunni!inner ( id, nome, cognome, classe_sezione )',
+] as const;
 
 const getQuerySchema = z.object({
     // default dinamico (oggi) calcolato nell'handler
@@ -149,19 +167,20 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         // Restano fuori `giustificazione_firma` (email, IP e user-agent del
         // genitore) e `note_appello` (nota interna): non servono a questa
         // schermata, e ciò che non serve non viaggia.
+        //
+        // ─── E NON ARRIVA A CHIUNQUE (rilievo Q1) ───────────────────────────
+        //
+        // La frase dice «le insegnanti DELLA SEZIONE», ma `requireDocente`
+        // ammette anche admin, coordinator e segreteria, e per loro
+        // `soloSezioniAssegnate` non restringe niente: `vedeTutteLeClassi` li
+        // fa passare su OGNI classe del plesso. Misurato con un `coordinator`
+        // non assegnato: 200, motivo per intero. La colonna si chiede quindi
+        // solo per chi la frase nomina — la regola sta in
+        // `src/lib/presenze/motivo-visibile.ts`, perché vale identica sulla
+        // rotta gemella `primaria/appello:GET`.
         const { data: rows, error } = await supabase
             .from('presenze')
-            .select(`
-                id,
-                alunno_id,
-                data,
-                stato,
-                orario_entrata,
-                orario_uscita,
-                panic_alert,
-                giustificazione_testo,
-                alunni!inner ( id, nome, cognome, classe_sezione )
-            `)
+            .select(colonneConMotivo(COLONNE_APPELLO, auth.user))
             .eq('data', data)
             .eq('alunni.classe_sezione', sezione)
             // Difesa in profondità sul join: il gate impedisce di NOMINARE una

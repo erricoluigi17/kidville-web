@@ -54,11 +54,34 @@ import { join } from 'node:path'
 
 const RADICE = process.cwd()
 
-/** I layout dell'area riservata: la cornice che sta su OGNI schermata. */
-const LAYOUT = [
+/**
+ * I file che non fanno nascere testo d'interfaccia a mano.
+ *
+ * ─── PERCHÉ NON SONO PIÙ SOLO I LAYOUT (2026-08-08, Q14 e Q15) ──────────────
+ * Il nome di questo file dice «skip link» perché da lì è nato. Il perimetro è
+ * cresciuto lo stesso giorno, perché il collaudo ha trovato la STESSA firma in
+ * due schermate diverse: `src/app/error.tsx` teneva le sue tre frasi come
+ * letterali italiani nel TSX, e `src/app/not-found.tsx` non esisteva affatto —
+ * quindi Next serviva il proprio «404 This page could not be found.», inglese
+ * per costruzione, dentro un documento `lang="it"`.
+ *
+ * È la stessa causa dello skip link: sono file che «non sembravano contenere
+ * testo», e la campagna di estrazione i18n non ci è passata. Aggiungerli QUI, e
+ * non in un lock nuovo, è il punto: una regola valida per più strade deve vivere
+ * in un posto solo, altrimenti la prossima schermata di servizio nascerà fuori
+ * da entrambe.
+ *
+ * `src/app/global-error.tsx` è deliberatamente FUORI e ha una regola sua, in
+ * fondo a questo file: sostituisce il root layout, cioè il componente che monta
+ * il `NextIntlClientProvider` — lì il catalogo non esiste più e il testo deve
+ * viaggiare dentro il documento.
+ */
+const PERIMETRO = [
     'src/app/(dashboard)/parent/layout.tsx',
     'src/app/(dashboard)/teacher/layout.tsx',
     'src/app/(dashboard)/admin/layout.tsx',
+    'src/app/error.tsx',
+    'src/app/not-found.tsx',
 ] as const
 
 /**
@@ -148,9 +171,9 @@ describe('lock localizzazione · lo skip link ha una chiave, e i layout non scri
         ).not.toBe(it)
     })
 
-    it('i layout dell’area riservata non fanno nascere testo d’interfaccia a mano', () => {
+    it('layout e schermate di servizio non fanno nascere testo d’interfaccia a mano', () => {
         const guasti: string[] = []
-        for (const file of LAYOUT) {
+        for (const file of PERIMETRO) {
             expect(existsSync(join(RADICE, file)), `sparito: ${file}`).toBe(true)
             const ammesso = TESTO_A_MANO_AMMESSO.get(file)?.testo
             for (const testo of nodiDiTesto(leggi(file))) {
@@ -159,11 +182,43 @@ describe('lock localizzazione · lo skip link ha una chiave, e i layout non scri
         }
         expect(
             guasti,
-            `Questi testi sono scritti dentro un layout invece che nel catalogo:\n  ${guasti.join('\n  ')}\n` +
-            'Un layout sta su OGNI schermata della sua area: una parola scritta qui resta italiana ' +
-            'anche in un documento `lang="en"`. Va spostata in `messages/it|en/nav.json` e letta con ' +
-            '`getTranslations(\'nav\')` — i tre layout sono già Server Component `async`.',
+            `Questi testi sono scritti dentro il file invece che nel catalogo:\n  ${guasti.join('\n  ')}\n` +
+            'Un layout sta su OGNI schermata della sua area, e le schermate di servizio (404, errore ' +
+            'di segmento) sono quelle che l’utente vede quando qualcosa è già andato storto: una ' +
+            'parola scritta qui resta italiana anche in un documento `lang="en"`. Va spostata nei ' +
+            'cataloghi (`messages/it|en/…`) e letta con `useTranslations` / `getTranslations`.',
         ).toEqual([])
+    })
+
+    it('le schermate di servizio leggono davvero il catalogo (non è un elenco vuoto)', () => {
+        // Il divieto qui sopra è verde anche su un file che non contiene NESSUN
+        // testo — per esempio perché qualcuno ha svuotato la pagina. Questa prova
+        // pretende il contrario: che le due schermate di servizio chiamino il
+        // catalogo, e che le chiavi che chiamano esistano da entrambe le parti.
+        const CHIAVI_ATTESE: Record<string, string[]> = {
+            'src/app/error.tsx': ['paginaErroreTitolo', 'paginaErroreCorpo', 'paginaErroreRiprova'],
+            'src/app/not-found.tsx': [
+                'paginaNonTrovataTitolo',
+                'paginaNonTrovataCorpo',
+                'paginaNonTrovataTornaHome',
+            ],
+        }
+        const shared = { it: catalogo('it', 'shared'), en: catalogo('en', 'shared') }
+        for (const [file, chiavi] of Object.entries(CHIAVI_ATTESE)) {
+            const sorgente = leggi(file)
+            expect(sorgente, `${file} non usa useTranslations: le stringhe sono tornate letterali`)
+                .toContain('useTranslations')
+            for (const chiave of chiavi) {
+                expect(sorgente, `${file} non legge più shared.${chiave}`).toContain(`'${chiave}'`)
+                expect(typeof shared.it[chiave], `manca messages/it/shared.json → ${chiave}`).toBe('string')
+                expect(typeof shared.en[chiave], `manca messages/en/shared.json → ${chiave}`).toBe('string')
+                expect(
+                    shared.en[chiave],
+                    `messages/en/shared.json → ${chiave} è identica all’italiano: una traduzione ` +
+                    'copiata supera la parità dei cataloghi e lascia a schermo la lingua sbagliata.',
+                ).not.toBe(shared.it[chiave])
+            }
+        }
     })
 
     it('le eccezioni dichiarate sono ancora vere, e possono solo diminuire', () => {
@@ -204,5 +259,56 @@ describe('lock localizzazione · lo skip link ha una chiave, e i layout non scri
         expect(trovati, 'un commento JSX non è prosa').not.toContain('Salta questo commento')
         expect(trovati, 'un separatore senza lettere non è prosa').not.toContain('·')
         expect(trovati).toHaveLength(1)
+    })
+})
+
+/**
+ * L'ECCEZIONE CHE HA UNA RAGIONE STRUTTURALE, E QUINDI NON SPARIRÀ.
+ *
+ * `src/app/global-error.tsx` è l'unico componente del repo che disegna il
+ * documento intero: SOSTITUISCE il root layout, cioè il file che monta il
+ * `NextIntlClientProvider`. Quando viene reso, il catalogo non c'è più — non per
+ * una svista, ma perché il componente che lo forniva è quello appena saltato.
+ * Il testo deve quindi viaggiare DENTRO di lui, ed è la stessa forma già adottata
+ * da `ChunkErrorBoundary` (un chunk mancante è il momento in cui il runtime di
+ * traduzione può non esserci) e dalla pagina `/offline` (`force-static`: a build
+ * time il cookie `KV_LOCALE` non esiste ancora).
+ *
+ * Il rischio di questa forma è che «tanto è un'eccezione» diventi «tanto è
+ * italiano»: fino al 2026-08-08 quel file aveva tre frasi italiane e basta, e un
+ * `lang="it"` cablato che le avrebbe dichiarate italiane anche dopo. Da qui le
+ * tre regole.
+ */
+describe('lock localizzazione · l’errore globale porta le due lingue con sé', () => {
+    const FILE = 'src/app/global-error.tsx'
+
+    it('contiene entrambe le lingue, non solo l’italiano', () => {
+        const sorgente = leggi(FILE)
+        expect(
+            /\bit\s*:\s*\{/.test(sorgente) && /\ben\s*:\s*\{/.test(sorgente),
+            `${FILE} deve dichiarare i suoi testi in italiano E in inglese: qui il catalogo non ` +
+            'esiste (questo componente sostituisce il root layout, cioè il provider), quindi le due ' +
+            'lingue viaggiano dentro il documento — come in ChunkErrorBoundary e in /offline.',
+        ).toBe(true)
+    })
+
+    it('sceglie la lingua dal cookie KV_LOCALE, come il resto dell’app', () => {
+        const sorgente = leggi(FILE)
+        expect(
+            sorgente,
+            `${FILE} non legge il cookie KV_LOCALE: le due lingue nel file senza il criterio di ` +
+            'scelta sono un testo bilingue che nessuno vedrà mai in inglese.',
+        ).toContain('KV_LOCALE')
+    })
+
+    it('l’attributo `lang` segue la lingua scelta e non è cablato', () => {
+        const sorgente = leggi(FILE)
+        expect(
+            sorgente,
+            `${FILE} dichiara ancora <html lang="it"> con un valore fisso: un testo inglese dentro ` +
+            'un documento dichiarato italiano viene letto da uno screen reader con la fonetica ' +
+            'sbagliata — che è metà del difetto Q14, non il suo rimedio.',
+        ).not.toMatch(/<html\s+lang\s*=\s*["']it["']/)
+        expect(sorgente, `${FILE} non lega più \`lang\` alla lingua scelta`).toMatch(/<html\s+lang=\{/)
     })
 })

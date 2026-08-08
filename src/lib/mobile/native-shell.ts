@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { chiudiOverlayInCima } from '@/lib/mobile/overlay-indietro'
 import { nascondiSplashNativo } from '@/lib/mobile/splash'
+import { applicaStiloStatusBar } from '@/lib/mobile/status-bar'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 
 // Setup della shell nativa Capacitor (M10.5). Chiamato UNA sola volta e SOLO su
@@ -57,7 +58,7 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
     vp.setAttribute('content', content)
   }
 
-  // 2. Status bar: testo chiaro su sfondo verde brand.
+  // 2. Status bar: lo stile lo decide la SCHERMATA (`@/lib/mobile/status-bar`).
   //    ⚠️ Il commento che stava qui diceva: «Su Android la barra è solida
   //    (overlay off) e la WebView parte sotto → nessun inset-top serve». La
   //    misura del 2026-08-08 sull'emulatore dice il contrario: con targetSdk 36
@@ -69,9 +70,23 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
   //    meccanismo che lavora non era quello descritto — ed è la stessa forma di
   //    rischio che questo repo ha già pagato: un commento che descrive una
   //    protezione che non c'è.
+  //
+  //    ⚠️ E LA CONSEGUENZA SUL COLORE, CHE NON ERA STATA TIRATA (rilievo Q31).
+  //    Se `setBackgroundColor` non ha effetto, dietro la barra si vede il fondo
+  //    della PAGINA: sulle schermate interne è il verde dell'AppBar e il caso va
+  //    bene per coincidenza, sulla LOGIN è il crema — e le icone bianche
+  //    chieste da `Style.Dark` sparivano. Campionati sull'emulatore: contrasto
+  //    1,11:1 sulla login contro 6,51:1 su una pagina interna.
+  //    Lo stile ora si decide a ogni schermata, misurando se una barra di brand
+  //    c'è davvero (`applicaStiloStatusBar`, richiamata anche da `NativeInit` a
+  //    ogni cambio di percorso). Qui resta solo la prima applicazione.
+  //
+  //    `setBackgroundColor` e `setOverlaysWebView` RESTANO, dichiarati
+  //    inefficaci: toglierli non cambierebbe niente su targetSdk 36 e li
+  //    rimetterebbe in gioco il giorno in cui Android tornasse a onorarli — ma
+  //    nessuna decisione di questo file può poggiarci sopra.
   try {
-    const { StatusBar, Style } = await import('@capacitor/status-bar')
-    await StatusBar.setStyle({ style: Style.Dark })
+    const { StatusBar } = await import('@capacitor/status-bar')
     if (Capacitor.getPlatform() === 'android') {
       await StatusBar.setOverlaysWebView({ overlay: false })
       await StatusBar.setBackgroundColor({ color: '#006A5F' })
@@ -79,6 +94,7 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
   } catch (e) {
     plugineMancante('StatusBar', 'la barra di stato resta al default di sistema', e)
   }
+  await applicaStiloStatusBar()
 
   // 3. Back button Android (chiude l'overlay in cima, altrimenti naviga indietro o esce
   //    alla radice) + deep link schema kidville:// (es. kidville://parent/agenda →

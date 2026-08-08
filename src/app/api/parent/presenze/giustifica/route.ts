@@ -14,6 +14,7 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
+import { azzeramentoPresaVisione, PRESA_VISIONE_AZZERATA } from '@/lib/presenze/presa-visione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -217,14 +218,52 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
     //  3. LA PROSA DI POSTGREST NON ESCE. Il `message` è inglese con dentro nomi
     //     di colonne e vincoli, e finiva davanti a un genitore. Resta nel log,
     //     intero, che è dove dice PERCHÉ.
+    // ═══ 4. LA PRESA VISIONE DECADE COL TESTO, NON A OGNI FIRMA (Q5) ═════════
+    //
+    // Qui c'era `giust_vista_il: null` incollato nel payload, con il commento
+    // «una nuova giustifica azzera l'eventuale presa visione precedente». Verso
+    // giusto, regola sbagliata per difetto opposto a quello del gemello: firmare
+    // di nuovo lo STESSO testo faceva perdere al docente una lettura che aveva
+    // davvero fatto. E il gemello (`comunica-assenza`) non azzerava affatto.
+    //
+    // Una regola valida per due strade vive in un posto solo:
+    // `@/lib/presenze/presa-visione`.
+    //
+    // Serve il testo ARCHIVIATO, che questa rotta non leggeva mai: l'UPDATE era
+    // cieco. Si chiede la sola colonna che serve — è un dato sanitario di un
+    // minore, non esce da qui e non entra in nessun log.
+    const { data: prima, error: primaErr } = await supabase
+      .from('presenze')
+      .select('giustificazione_testo')
+      .eq('alunno_id', studentId)
+      .eq('data', data)
+      .maybeSingle()
+    if (primaErr) {
+      // PostgREST non lancia: senza questa riga il guasto uscirebbe come
+      // «nessun testo precedente», cioè come «il testo è cambiato». Il degrado
+      // è quello PRUDENTE — si azzera, il docente rilegge — perché una presa
+      // visione tenuta in piedi per errore è un'affermazione falsa su chi ha
+      // letto che cosa; una tolta per errore costa una rilettura.
+      logEvento('registro', 'warn', {
+        operazione: 'parent/presenze/giustifica:POST',
+        esito: 'testo-precedente-non-letto',
+        alunno_id: studentId,
+      }, primaErr)
+    }
+    /** Ciò che l'UPDATE scriverà davvero: `undefined` = la colonna non si nomina. */
+    const testoDaScrivere = motivoTesto || undefined
+    const azzeraVisione = primaErr
+      ? PRESA_VISIONE_AZZERATA
+      : azzeramentoPresaVisione(
+          (prima?.giustificazione_testo as string | null | undefined) ?? null,
+          testoDaScrivere,
+        )
     const aggiornamento: Record<string, unknown> = {
       giustificata: true,
       giustificata_da: userId,
       giustificata_il: new Date().toISOString(),
       giustificazione_firma: firma,
-      // Una nuova giustifica azzera l'eventuale presa visione precedente.
-      giust_vista_il: null,
-      giust_vista_da: null,
+      ...azzeraVisione,
     }
     // Lo stesso valore appena misurato, normalizzato una volta sola e nello stesso modo
     // del gemello: il tetto deve valere sul testo che arriva davvero in tabella.

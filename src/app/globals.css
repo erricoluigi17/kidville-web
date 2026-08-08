@@ -670,6 +670,47 @@ select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:
 textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
   border-color: var(--color-kidville-neutral);
 }
+/* =============================================================================
+   …E LO STESSO CONTORNO SU UNA SUPERFICIE CREMA NON BASTA (collaudo 2026-08-08).
+
+   `neutral` #8A958F è tarato sul BIANCO delle card: 3,10:1, appena sopra i 3:1
+   che WCAG 2.2 AA 1.4.11 chiede al confine di un componente d'interfaccia. Sulla
+   crema #FEF1E4 lo stesso colore vale **2,79:1**, e sotto la soglia ci finisce
+   ogni campo posato su quella superficie. Misurato sul modulo «Nuova assenza»
+   della primaria, dove i due campi stanno dentro un pannello `bg-kidville-cream`:
+   il riempimento non aiuta — bianco su crema è 1,11:1 — quindi il contorno è
+   l'UNICO indizio di dove comincia il campo. Gli stessi due campi, sulla
+   schermata gemella, stanno su bianco e passano.
+
+   I due numeri il repo li conosceva già: `src/components/ui/Btn.tsx:19` li
+   scrive entrambi («3,10:1 su bianco, 2,79:1 su crema») senza collegarli a
+   questo caso.
+
+   Il rimedio è agganciato alla SUPERFICIE e non al file: correggere il colore
+   dentro `ComunicaAssenzaCard` avrebbe chiuso il sintomo lasciando aperta la
+   regola, e la prossima superficie crema con un campo dentro avrebbe ripetuto il
+   difetto — che è la forma di errore che questo ciclo ha già pagato tre volte.
+   `sub` #55615C su crema vale 5,33:1, e sul riempimento bianco del campo 6,46:1:
+   il confine si vede da entrambi i lati.
+
+   Specificità (0,3,1) — un pesetto in più della regola qui sopra, quindi vince
+   sulla crema e la lascia intatta ovunque. Resta SOTTO al blocco dell'hover e a
+   quello dell'Alto Contrasto, che vengono dopo e hanno lo stesso peso: al
+   passaggio del mouse il contorno va al verde pieno (5,86:1 su crema) e in Alto
+   Contrasto resta nero. Lock: `__tests__/a11y/contrasto-campi-assenza.test.tsx` §4,
+   che risolve la cascata e misura il rapporto invece di guardare le classi.
+   ============================================================================= */
+.bg-kidville-cream input[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream select[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream textarea[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream input[class*="border-kidville-muted"]:not(:focus),
+.bg-kidville-cream select[class*="border-kidville-muted"]:not(:focus),
+.bg-kidville-cream textarea[class*="border-kidville-muted"]:not(:focus),
+.bg-kidville-cream input[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+.bg-kidville-cream select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+.bg-kidville-cream textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
+  border-color: var(--color-kidville-sub);
+}
 /* 🟠 design #2 del collaudo 2026-08-02, chiuso qui.
    La regola qui sopra si sfila solo con `:not(:focus)`: l'HOVER non era escluso,
    quindi vinceva anche sulle utility `hover:border-*` e i 19 select del cockpit

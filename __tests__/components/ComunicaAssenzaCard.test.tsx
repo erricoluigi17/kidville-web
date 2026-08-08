@@ -532,7 +532,13 @@ describe('ComunicaAssenzaCard — accessibilità e testi', () => {
             // La chiave resta nel catalogo finché chi lo cura non la toglie: qui
             // si smette di pretenderla, così toglierla non tinge di rosso un test
             // che parla d'altro.
-            'comunicaDataLabel', 'comunicaMotivoLabel', 'comunicaMotivoPlaceholder',
+            // `comunicaMotivoPlaceholder` è stata sostituita da
+            // `parentAssenze.motivoPlaceholder`: le due schermate gemelle
+            // sollecitano lo STESSO dato sanitario e devono chiederlo con le
+            // stesse parole. Tolta di qui e dai due cataloghi nello stesso gesto:
+            // una chiave che nessuno legge è un residuo che il prossimo lettore
+            // scambia per un requisito.
+            'comunicaDataLabel', 'comunicaMotivoLabel',
             'comunicaInvia', 'comunicaInvio', 'comunicaFatta', 'comunicaNonRiuscita',
             'comunicaElencoTitolo', 'comunicaElencoVuoto', 'comunicaElencoNonLetto',
             'comunicaAnnulla', 'comunicaAnnullamento', 'comunicaAnnullaAria', 'comunicaAnnullata',

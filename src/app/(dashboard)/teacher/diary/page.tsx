@@ -120,14 +120,15 @@ function TeacherDiaryInner() {
             <PageHeaderCard
                 eyebrow={t('inSezione')}
                 title={t('diarioDelGiorno')}
-                subtitle={
-                    <span className="capitalize">
-                        {t('sottotitoloSezione', {
-                            sezione: sezione ?? '',
-                            data: oggiEsteso,
-                        })}
-                    </span>
-                }
+                // Niente `capitalize`: la data qui sta in MEZZO alla frase
+                // («Sezione Girasoli • sabato 8 agosto»), dove l'italiano vuole
+                // il giorno e il mese minuscoli. La classe CSS alzava l'iniziale
+                // di ogni parola — regola inglese — e deformava sia la data sia
+                // il nome della sezione. Vedi src/lib/i18n/date.ts (`conIniziale`).
+                subtitle={t('sottotitoloSezione', {
+                    sezione: sezione ?? '',
+                    data: oggiEsteso,
+                })}
             />
 
             {/* Selettore sezione (solo con più sezioni assegnate) */}

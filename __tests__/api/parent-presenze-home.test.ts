@@ -21,7 +21,11 @@ const h = vi.hoisted(() => {
         // `not` e `is` servono alla query delle assenze comunicate ancora
         // annullabili (`.not('giustificata_da','is',null).is('registrato_da',null)`):
         // senza, la catena esplode e la route risponde 500.
-        for (const m of ['select', 'eq', 'gte', 'lte', 'order', 'limit', 'in', 'not', 'is'])
+        // `or` serve al filtro sulla SORGENTE del riepilogo (Q4,
+        // `limitaAiFatti`): un metodo mancante qui non produce un'asserzione
+        // rossa sul merito, produce un 500 — ed è il motivo per cui questi test
+        // guardano lo `status` prima del corpo.
+        for (const m of ['select', 'eq', 'gte', 'lte', 'order', 'limit', 'in', 'not', 'is', 'or'])
           qb[m] = () => qb
         qb.single = () => Promise.resolve(take(table))
         qb.maybeSingle = () => Promise.resolve(take(table))

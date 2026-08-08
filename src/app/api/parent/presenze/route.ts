@@ -12,6 +12,11 @@ import {
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
+import {
+  COLONNE_SORGENTE,
+  eAssenzaSoloAnnunciata,
+  limitaAiFatti,
+} from '@/lib/presenze/finestra-trascorsa'
 
 // ── Vista genitore (read-only) delle presenze del figlio. ────────────────────
 // A differenza di `parent/primaria/assenze` (cronologia delle sole assenze),
@@ -106,19 +111,31 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
 
     const [oggiRes, periodoRes, comunicateRes] = await Promise.all([
       // Presenza di oggi (può non esistere se l'appello non è ancora stato fatto).
+      //
+      // Le colonne della PROVENIENZA si chiedono anche qui, e non per esibirle:
+      // sul giorno corrente la data non discrimina, e senza di esse un'assenza
+      // soltanto ANNUNCIATA dal genitore usciva come `stato: 'assente'` —
+      // contraddicendo il contratto dichiarato in cima a questa rotta e il
+      // messaggio neutro di `PresenzeTodayCard`.
       supabase
         .from('presenze')
-        .select('stato, orario_entrata, orario_uscita')
+        .select(`stato, orario_entrata, orario_uscita, ${COLONNE_SORGENTE}`)
         .eq('alunno_id', studentId)
         .eq('data', oggiData)
         .maybeSingle(),
-      // Presenze degli ultimi 30 giorni per il riepilogo.
-      supabase
-        .from('presenze')
-        .select('stato, orario_entrata, orario_uscita, data')
-        .eq('alunno_id', studentId)
-        .gte('data', from)
-        .lte('data', oggiData),
+      // Presenze degli ultimi 30 giorni per il riepilogo — i soli FATTI.
+      // `limitaAiFatti` aggiunge al tetto temporale il filtro sulla sorgente:
+      // il `.lte` da solo non può escludere una riga che cade su OGGI, che è
+      // esattamente il giorno preimpostato dal modulo del genitore.
+      limitaAiFatti(
+        supabase
+          .from('presenze')
+          .select('stato, orario_entrata, orario_uscita, data')
+          .eq('alunno_id', studentId)
+          .gte('data', from),
+        'data',
+        oggiData,
+      ),
       // Assenze COMUNICATE dal genitore e ancora annullabili. Le due condizioni
       // che le distinguono sono entrambe necessarie:
       //  - `giustificata_da` non nullo → la riga l'ha scritta un genitore, non
@@ -244,7 +261,18 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
       data: {
         schoolType,
         oggi: {
-          stato: (oggiRow?.stato ?? null) as StatoPresenza | null,
+          // ANNUNCIATO NON È ACCADUTO (Q4). Una riga scritta dal genitore e non
+          // ancora lavorata dall'appello NON è lo stato del bambino a scuola: è
+          // un avviso che riguarda il resto della giornata. Restituirla come
+          // `stato: 'assente'` faceva dire alla home «ASSENTE» prima che
+          // qualcuno l'avesse visto — o non visto — entrare.
+          //
+          // `null` è il valore che il contratto di questa rotta dichiara da
+          // sempre («appello non ancora registrato dal docente») e che
+          // `PresenzeTodayCard` rende con un messaggio neutro. Ciò che il
+          // genitore ha comunicato lo rivede in `comunicate`, dove può anche
+          // annullarlo: si toglie dal CONTEGGIO, non dalla vista.
+          stato: (eAssenzaSoloAnnunciata(oggiRow) ? null : oggiRow?.stato ?? null) as StatoPresenza | null,
           orario_entrata: oggiRow?.orario_entrata ?? null,
           orario_uscita: oggiRow?.orario_uscita ?? null,
         },

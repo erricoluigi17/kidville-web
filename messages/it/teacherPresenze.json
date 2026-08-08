@@ -54,7 +54,7 @@
   "abbrevOre": "ORE",
   "pdfTitolo": "REGISTRO PRESENZE — {mese} {anno}",
   "pdfMeta": "Sezione: {sezione}   |   Esportato il {data}",
-  "pdfPiePagina": "Pagina {n} di {tot}  —  Kidville Electronic Register",
+  "pdfPiePagina": "Pagina {n} di {tot}  —  Registro Elettronico Kidville",
   "pdfPrefissoFile": "presenze",
   "delegatiAutorizzati": "Delegati Autorizzati",
   "nessunDelegato": "Nessun delegato registrato.",

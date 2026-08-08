@@ -50,7 +50,6 @@
   "attendanceIndicaGiorno": "Choose the day of the absence and, if you like, the reason.",
   "attendanceGiorno": "Day of the absence",
   "attendanceMotivo": "Reason (optional)",
-  "attendanceMotivoPlaceholder": "E.g. fever, medical appointment, family reasons…",
   "attendanceErrGenerico": "Unable to report the absence right now.",
   "attendanceErrRete": "Network error. Please try again.",
   "attendanceInvio": "Sending…",

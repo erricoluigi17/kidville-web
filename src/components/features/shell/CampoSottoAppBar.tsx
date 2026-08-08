@@ -40,10 +40,19 @@ import { useEffect } from 'react';
  * Lock: `__tests__/components/campo-sotto-appbar.test.tsx`, che misura
  * `getBoundingClientRect().top` del campo attivo, non la regola CSS.
  *
- * ⚠️ Vive sotto `features/parent` perché è lì che il difetto è stato misurato e
- * lì che è montato (il layout genitore). Il comportamento però è della SHELL:
- * quando anche i layout docente e cockpit lo adotteranno, va spostato in
- * `features/shell` e montato una volta sola.
+ * ─── PERCHÉ STA IN `features/shell` E NON IN `features/parent` ───────────────
+ *
+ * Ci ha vissuto fino al 2026-08-08, perché è lì che il difetto era stato
+ * misurato, e il commento che stava qui diceva: «quando anche i layout docente e
+ * cockpit lo adotteranno, va spostato in features/shell e montato una volta
+ * sola». Cioè la regola stava nel commento invece che nel codice — la stessa
+ * forma che questo ciclo ha già pagato tre volte.
+ *
+ * Le shell con `[data-kv-shell]` sono TRE (genitore, docente, cockpit) e tutte
+ * e tre hanno una barra sticky in cima che copre il campo a fuoco allo stesso
+ * modo: genitore e docente la stessa (`.kv-appbar`, `features/shell/AppBar`),
+ * il cockpit la sua (`.kv-appbar-admin`, `AdminTopBarMobile`). Il componente sta
+ * dove sta il comportamento, ed è montato una volta per shell.
  */
 
 /**
@@ -59,17 +68,54 @@ const CAMPI = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 
 export function CampoSottoAppBar() {
   useEffect(() => {
-    let pendente: HTMLElement | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
+    /**
+     * Il campo che va tenuto in vista è quello A FUOCO ADESSO, non quello che
+     * era a fuoco quando abbiamo programmato la misura.
+     *
+     * ─── PERCHÉ NON È PIÙ UNO STATO (rilievo Q30) ────────────────────────────
+     * Qui c'era una variabile `pendente`, e `riporta()` la azzerava PRIMA di
+     * controllare se serviva correggere. Nella sequenza reale del dito i tre
+     * momenti sono separati:
+     *   1. tocco → `focusin`, tastiera ancora chiusa, campo a 223 px;
+     *   2. scadono i 120 ms → si misura, 223 ≥ 82, non c'è niente da fare —
+     *      e uscendo il componente aveva già dimenticato il campo;
+     *   3. la tastiera si apre, Chromium riallinea il campo a `top: 0` e
+     *      `visualViewport` emette `resize`: l'unico istante in cui il difetto
+     *      esiste, e `programma()` non trovava più niente da correggere.
+     * Il componente funzionava solo se il fuoco arrivava a tastiera GIÀ aperta,
+     * cioè mai. Misurato sull'emulatore: 82 px su 112 coperti, tre volte su tre.
+     *
+     * `document.activeElement` non ha stato da tenere allineato: è vero al
+     * momento in cui lo si legge, che è esattamente ciò che serve.
+     */
+    const campoAFuoco = (): HTMLElement | null => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || !el.isConnected || !CAMPI.has(el.tagName)) return null;
+      // Solo i campi della shell: fuori di lì non c'è nessuna AppBar sticky da
+      // compensare, e muovere lo scorrimento sarebbe un effetto a sorpresa.
+      if (!el.closest('[data-kv-shell]')) return null;
+      return el;
+    };
+
     const riporta = () => {
-      const el = pendente;
-      pendente = null;
-      // Il fuoco può essere già andato altrove (tastiera chiusa, tocco su un
-      // altro comando): scorrere adesso sarebbe un salto che nessuno ha chiesto.
-      if (!el || !el.isConnected || document.activeElement !== el) return;
-      const barra = document.querySelector('.kv-appbar');
-      const soglia = barra ? barra.getBoundingClientRect().bottom : 0;
+      // Il fuoco può essere andato altrove (tastiera chiusa, tocco su un altro
+      // comando): scorrere adesso sarebbe un salto che nessuno ha chiesto.
+      const el = campoAFuoco();
+      if (!el) return;
+      // ENTRAMBE le barre sticky del progetto, e vince la più BASSA: è quella
+      // che copre davvero. `.kv-appbar` è la barra di genitore e docente,
+      // `.kv-appbar-admin` quella del cockpit — due classi perché il padding di
+      // safe-area si applica in due modi diversi (vedi globals.css), non perché
+      // siano due comportamenti diversi. Senza AppBar in pagina la soglia è 0 e
+      // non si tocca niente.
+      const soglia = Math.max(
+        0,
+        ...Array.from(document.querySelectorAll('.kv-appbar, .kv-appbar-admin')).map(
+          (b) => b.getBoundingClientRect().bottom,
+        ),
+      );
       if (soglia <= 0) return;
       const top = el.getBoundingClientRect().top;
       if (top >= soglia) return;
@@ -79,7 +125,6 @@ export function CampoSottoAppBar() {
     };
 
     const programma = () => {
-      if (!pendente) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(riporta, RITARDO_MS);
     };
@@ -87,10 +132,7 @@ export function CampoSottoAppBar() {
     const alFuoco = (e: FocusEvent) => {
       const el = e.target as HTMLElement | null;
       if (!el || !CAMPI.has(el.tagName)) return;
-      // Solo i campi della shell: fuori di lì non c'è nessuna AppBar sticky da
-      // compensare, e muovere lo scorrimento sarebbe un effetto a sorpresa.
       if (!el.closest('[data-kv-shell]')) return;
-      pendente = el;
       programma();
     };
 

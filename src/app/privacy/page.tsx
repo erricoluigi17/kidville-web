@@ -466,8 +466,11 @@ export default function PrivacyPage() {
               i dati di propria competenza; l&rsquo;accesso alla banca dati è regolato da politiche
               di sicurezza applicate a livello di singola riga; gli accessi e le operazioni sono{' '}
               <strong>registrati</strong> per finalità di sicurezza; i dati personali sono{' '}
-              <strong>oscurati nei registri tecnici</strong>, che non contengono nomi, recapiti,
-              contenuti dei messaggi né informazioni sulla salute.
+              <strong>oscurati automaticamente nei registri tecnici</strong> prima che la riga
+              sia scritta: nomi, recapiti e codici fiscali vengono sostituiti da un codice non
+              reversibile, e i testi liberi — comprese le informazioni sulla salute — vengono
+              rimossi. Nei registri tecnici restano leggibili soltanto identificativi tecnici,
+              date e conteggi.
             </p>
           </section>
 

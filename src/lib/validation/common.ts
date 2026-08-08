@@ -46,6 +46,44 @@ export const zPaginazione = z.object({
     offset: z.coerce.number().int().min(0).default(0),
 });
 
+/**
+ * IL TETTO DI UN ELENCO — un intero, un minimo, un massimo, e un 400 se non torna.
+ *
+ * ─── PERCHÉ ESISTE (rilievi Q18 e Q20, quarto collaudo) ─────────────────────
+ *
+ * `parent/primaria/assenze` faceva `parseInt(q.data.limit ?? '60', 10)` senza clamp, e il
+ * valore finiva tale e quale in `.limit()` di postgrest-js, che lo scrive nella query string.
+ * Misurato: `?limit=-1` → Range non soddisfacibile (**416**), risposta **200 con
+ * `letto:false`** (cioè «non ho potuto leggere» detto per un errore del client) e **due righe
+ * `error` in `app_log` per ogni richiesta**. Cinque richieste bastavano a far dichiarare
+ * `degradato` `/api/health` — `SOGLIA_IMPRONTE_ERRORE` è 5 impronte distinte in 15 minuti, e
+ * l'impronta include l'utente. Un errore del CLIENT diventava un guasto del SERVER.
+ *
+ * La stessa forma, cercata e trovata, in `admin/primaria/fascicolo-audit`:
+ * `Math.min(limit ?? 100, 500)` è un tetto senza pavimento, e lì il ramo d'errore risponde
+ * 500 rimandando al chiamante il `message` di PostgREST.
+ *
+ * ─── PERCHÉ UNA FUNZIONE E NON DUE RIGHE COPIATE ────────────────────────────
+ *
+ * Perché la regola era già scritta quattro volte nel repo, con quattro sfumature diverse
+ * (`gallery`, `admin/students`, `admin/audit`, `news/feed`), e le due rotte rimaste indietro
+ * sono rimaste indietro proprio per questo: non c'era niente da riusare, solo qualcosa da
+ * ricordare. `zPaginazione` non andava bene per nessuna delle due — cambierebbe il default
+ * storico (50 invece di 60/100) e imporrebbe un `offset` che quelle rotte non hanno.
+ *
+ * ⚠️ RIFIUTA, non clampa. Un clamp silenzioso fa credere al client di aver chiesto ciò che
+ * non ha ottenuto; il 400 «Dati non validi» dice dov'è lo sbaglio, e — cosa che il clamp non
+ * fa — lascia il ramo `letto:false`/`error` riservato ai guasti VERI del database.
+ */
+export function zLimite({ predefinito, max }: { predefinito: number; max: number }) {
+    return z.coerce
+        .number({ error: 'Limite non valido' })
+        .int('Il limite deve essere un numero intero')
+        .min(1, 'Il limite deve essere almeno 1')
+        .max(max, `Il limite non può superare ${max}`)
+        .default(predefinito);
+}
+
 /** Booleano tollerante per query param: 'true'/'1'/'si' → true, 'false'/'0'/'no' → false. */
 export const zBool = z.preprocess((v) => {
     if (typeof v === 'string') {

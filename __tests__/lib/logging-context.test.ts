@@ -39,7 +39,11 @@ describe('contesto di richiesta', () => {
     it('impostaPayload conserva l\'ultimo payload validato', async () => {
         await conContesto({ requestId: 'r3', path: '/api/z' }, async () => {
             impostaPayload('body', { tipo: 'assenza' });
-            expect(contesto()?.payload).toEqual({ body: { tipo: 'assenza' } });
+            // Il valore esce REDATTO anche sotto una chiave della lista bianca: qui dentro
+            // arriva il corpo di una richiesta, e lì il nome del campo lo sceglie il client
+            // (vedi `redactInput`). Ciò che il payload deve conservare è che lo slot c'è, con
+            // il nome del campo e la sua lunghezza — non il valore che il client ha scritto.
+            expect(contesto()?.payload).toEqual({ body: { tipo: '[redatto:str/7]' } });
         });
     });
 
@@ -172,7 +176,11 @@ describe('contesto — isolamento sotto scrittura concorrente', () => {
                 await cedi(ritardo);
                 impostaUtente({ userId: `utente-${id}`, ruolo: id, scuolaId: `scuola-${id}` });
                 await cedi(ritardo);
-                impostaPayload('body', { tipo: id });
+                // `ordine` NUMERICO oltre a `tipo`: dal 2026-08-08 il valore di un campo di
+                // richiesta esce redatto (`[redatto:str/1]` per tutte e tre), e senza un campo
+                // che resti distinguibile questa prova non vedrebbe più una contaminazione del
+                // payload — direbbe «verde» confrontando tre volte lo stesso marcatore.
+                impostaPayload('body', { tipo: id, ordine: id.charCodeAt(0) });
                 await cedi(ritardo);
                 const c = contesto()!;
                 esito[id] = {
@@ -194,7 +202,7 @@ describe('contesto — isolamento sotto scrittura concorrente', () => {
                 userId: `utente-${id}`,
                 ruolo: id,
                 scuolaId: `scuola-${id}`,
-                payload: { body: { tipo: id } },
+                payload: { body: { tipo: '[redatto:str/1]', ordine: id.charCodeAt(0) } },
             });
         }
     });
@@ -326,7 +334,7 @@ describe('contesto — il payload è redatto e limitato', () => {
             const body = contesto()!.payload!.body as { righe: unknown[] };
             expect(Array.isArray(body.righe)).toBe(true);
             expect(body.righe).toHaveLength(10);
-            expect(body.righe[0]).toEqual(RIGA_PESANTE);
+            expect(body.righe[0]).toEqual({ ...RIGA_PESANTE, tipo: '[redatto:str/17]' });
         });
     });
 
@@ -348,8 +356,10 @@ describe('contesto — il payload è redatto e limitato', () => {
     it('uno slot già presente si può sempre aggiornare (l\'ultimo vince)', async () => {
         await conContesto({ requestId: 'r10', path: '/api/x' }, async () => {
             impostaPayload('body', { tipo: 'primo' });
-            impostaPayload('body', { tipo: 'secondo' });
-            expect(contesto()?.payload).toEqual({ body: { tipo: 'secondo' } });
+            impostaPayload('body', { tipo: 'secondo-piu-lungo' });
+            // Le lunghezze diverse sono ciò che rende la prova non vacua: `[redatto:str/17]`
+            // è il SECONDO, non il primo.
+            expect(contesto()?.payload).toEqual({ body: { tipo: '[redatto:str/17]' } });
         });
     });
 

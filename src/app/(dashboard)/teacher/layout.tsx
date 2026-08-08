@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
+import { CampoSottoAppBar } from '@/components/features/shell/CampoSottoAppBar';
 import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { requireArea } from '@/lib/auth/area-guard';
@@ -40,6 +41,13 @@ export default async function TeacherLayout({ children }: { children: React.Reac
       <Suspense fallback={null}>
         <NativePushAutoRegister />
       </Suspense>
+      {/* Con la tastiera aperta Chromium allinea il campo a fuoco a `top: 0` —
+          sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` dichiarato
+          in globals.css. Misurato sul genitore (82 px su 112 coperti), ma la
+          barra è LA STESSA (`features/shell/AppBar`) e questa shell ha i suoi
+          campi: note dell'appello, diario, chat. Il rimedio viveva montato su
+          una sola delle tre shell, con la lezione scritta in un commento. */}
+      <CampoSottoAppBar />
       <main id="content" tabIndex={-1} className="pb-28 outline-none">
         {children}
       </main>

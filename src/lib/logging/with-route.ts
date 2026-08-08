@@ -1,3 +1,4 @@
+import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie';
 import { conContesto, contesto, erroreGiaLoggato } from './context';
 import { logErrore, logEvento, logOk } from './logger';
 
@@ -122,7 +123,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
                 throw err;
             }
 
-            senzaLanciare(() => registraEsito(nome, res, Date.now() - t0));
+            senzaLanciare(() => registraEsito(nome, res, Date.now() - t0, conSessione(args[0])));
             senzaLanciare(() => rifletti(res, rid));
             return res;
         };
@@ -159,7 +160,7 @@ function senzaLanciare(fn: () => void): void {
  * `[redatto:str/24]` e la riga non direbbe più QUALE route ha fallito. Sulla riga di Vercel
  * lo rinomina `logEvento` in `rt=`, che è la chiave unica dei tre marker.
  */
-function registraEsito(nome: string, res: unknown, ms: number): void {
+function registraEsito(nome: string, res: unknown, ms: number, sessione: boolean): void {
     const stato = statoDi(res);
 
     // Status illeggibile (handler che non restituisce una Response): non è un guasto
@@ -170,7 +171,7 @@ function registraEsito(nome: string, res: unknown, ms: number): void {
     }
 
     if (stato < 500) {
-        logEvento('route', livello4xx(stato), { operazione: nome, stato, ms });
+        logEvento('route', livello4xx(stato, sessione), { operazione: nome, stato, ms });
         return;
     }
 
@@ -180,12 +181,31 @@ function registraEsito(nome: string, res: unknown, ms: number): void {
     logEvento('route', 'error', { operazione: nome, stato, ms });
 }
 
-function livello4xx(stato: number): 'info' | 'warn' {
+function livello4xx(stato: number, sessione: boolean): 'info' | 'warn' {
     if (ANOMALIE_4XX.has(stato)) return 'warn';
     // Un 400 con una sessione aperta: il payload che zod ha rifiutato l'ha spedito il NOSTRO
     // client. È un bug nostro, e va in tabella.
-    if (stato === 400 && !!contesto()?.userId) return 'warn';
+    //
+    // ⚠️ IL CONTESTO NON BASTA A SAPERLO, e per due settimane ha deciso lui (rilievo Q8).
+    // `contesto()?.userId` lo deposita il GATE: su cinque rotte del repo il corpo si valida
+    // PRIMA del gate, per una ragione buona e dichiarata (l'`studentId` che il gate deve
+    // controllare sta nel body — allowlist `CORPO_PRIMA_DEL_GATE_AMMESSO`). Su quelle rotte,
+    // al momento del 400, l'utente c'è e il contesto è vuoto: il rifiuto più frequente che una
+    // famiglia possa produrre finiva a `info`, cioè fuori dalla tabella. Misurato: tre POST
+    // consecutive con sessione valida, tre 400, zero righe.
+    // Il discriminante vero è «questa richiesta porta una sessione», e si legge dai cookie
+    // senza validarli — per scegliere un LIVELLO DI LOG basta che sia stata presentata.
+    if (stato === 400 && (!!contesto()?.userId || sessione)) return 'warn';
     return 'info';
+}
+
+/**
+ * `true` se la richiesta porta un cookie di sessione Supabase. Difensiva come tutto il resto
+ * del wrapper: `args[0]` è una `Request` solo per contratto (i test la passano `as never`), e
+ * il nome del cookie sta in un posto solo — vedi `haCookieSessioneNellIntestazione`.
+ */
+function conSessione(req: unknown): boolean {
+    return haCookieSessioneNellIntestazione(intestazione(req, 'cookie'));
 }
 
 /**

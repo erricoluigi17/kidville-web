@@ -50,7 +50,20 @@ const catEn = enShared as Record<string, string>
 const CODICI = CODICI_ERRORE as Record<string, string>
 
 const RADICE = process.cwd()
-const SORGENTE_ROTTA = 'src/app/api/parent/presenze/comunica-assenza/route.ts'
+/**
+ * IL TETTO SUI GIORNI NON VIVE PIÙ NELLA ROTTA.
+ *
+ * Fino al 2026-08-08 `GIORNI_MASSIMI_IN_ANTICIPO` era dichiarato in due posti —
+ * la rotta e il modulo che serve alle due schermate — e un lock teneva allineati
+ * i due numeri. Le copie sono state fuse: la rotta ora RI-ESPORTA il valore da
+ * qui, e questa prova legge la fonte, non l'eco.
+ *
+ * Il motivo per cui questo file se n'è accorto invece di diventare verde su
+ * qualunque cosa è la prova gemella qui sotto — «il lettore della costante
+ * FUNZIONA»: senza di lei, un lettore che non trova più niente avrebbe fatto
+ * passare qualsiasi numero scritto nella frase. Vale la pena di copiarne la forma.
+ */
+const SORGENTE_TETTO_GIORNI = 'src/lib/presenze/finestra-comunicazione.ts'
 
 /**
  * Il valore di una costante numerica letta dal SORGENTE.
@@ -86,8 +99,8 @@ const TETTI = [
     {
         nome: 'i 60 giorni di anticipo massimo',
         codice: 'ASSENZA_DATA_TROPPO_LONTANA',
-        quanto: () => costanteNumerica(readFileSync(join(RADICE, SORGENTE_ROTTA), 'utf8'), 'GIORNI_MASSIMI_IN_ANTICIPO'),
-        dove: `${SORGENTE_ROTTA} → GIORNI_MASSIMI_IN_ANTICIPO`,
+        quanto: () => costanteNumerica(readFileSync(join(RADICE, SORGENTE_TETTO_GIORNI), 'utf8'), 'GIORNI_MASSIMI_IN_ANTICIPO'),
+        dove: `${SORGENTE_TETTO_GIORNI} → GIORNI_MASSIMI_IN_ANTICIPO`,
     },
     {
         nome: 'i 500 caratteri del motivo',

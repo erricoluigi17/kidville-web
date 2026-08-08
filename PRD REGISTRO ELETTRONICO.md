@@ -89,6 +89,56 @@
 
 ---
 
+## 🔧 Changelog — Il campo «Motivo» si tocca dove lo si vede: la testata cede 250 px 2026-08-08 (branch `fix/campo-motivo-hero`)
+
+Il residuo dichiarato nel rilascio di poche ore prima. Su un telefono da 640-731 px il campo
+«Motivo» finiva sotto il piede appiccicato del comando: **un tocco dove l'utente vede il campo
+atterrava sul pulsante che invia**.
+
+### La leva non era quella che sembrava
+
+Misurato in Chromium a 390×640/731/844 **prima** di scrivere una riga:
+
+| strada | esito |
+|---|---|
+| campo più basso (72 px, poi 48) | ❌ non basta sotto gli 844 |
+| sottotitolo su una riga sola | ❌ non basta |
+| **testata più bassa** | ✅ |
+
+Cioè non contava l'altezza del campo né quella del piede: contava **quanto è alta la testata**.
+La card-header di questa schermata occupava ~360 px — mascotte, titolo a 30 px su due righe,
+spaziature da pagina-vetrina — su un modulo che chiede due campi.
+
+### Cosa è cambiato, e cosa NON è cambiato
+
+`PageHeaderCard` ha una variante `compatta`: niente mascotte, titolo a 24 px (su una riga sola a
+390 px), spaziature strette. **Da 360 a 109 px.** Più `mt-2` invece di `mt-5` fra testata e modulo:
+mancavano **undici pixel** misurati perché il centro del campo uscisse da sotto il piede.
+
+Non si è tolto niente di leggibile: occhiello, `<h1>` e sottotitolo restano tutti e tre. In
+particolare il **sottotitolo non si tocca** — è l'ancora con cui i flow Maestro provano di essere
+arrivati su questa pagina, perché il solo titolo coincide con l'azione rapida della Home. La
+variante è usata **solo qui**: le altre 35 pagine che montano la card non cambiano di un pixel.
+
+### Misurato dopo, sul prodotto compilato
+
+| viewport | campo «Motivo» | link informativa |
+|---|---|---|
+| 390×844 | ✅ riceve il proprio tocco | ✅ |
+| 390×731 | ✅ | ✅ |
+| 390×640 | coperto al **100%** (zero px visibili) | ✅ |
+
+A 640 px il campo non è visibile affatto, e lì non c'è inganno: si scorre, come in qualunque
+modulo più lungo dello schermo. La forma dannosa — *vedo una cosa, la tocco, ne succede un'altra* —
+è chiusa a tutte le altezze.
+
+Percorso Maestro completo rieseguito **verde su iPhone 17 Pro e su emulatore Android**. E c'è ora
+uno spec E2E (`parent-attendance-tocco.spec.ts`) che chiede a un browser vero *chi riceve il tocco
+al centro di ciò che l'utente vede*: è la domanda che jsdom non può porre, ed è la ragione per cui
+questa classe di difetto è passata due collaudi.
+
+---
+
 ## ✅ Changelog — «Comunica un'assenza» chiusa e provata sui due telefoni, dopo cinque collaudi 2026-08-08 (branch `chore/piani-pro-supabase-vercel`)
 
 Il ciclo aperto il 07/08 ha girato tre giorni e cinque collaudi. Qui si chiudono i sei difetti

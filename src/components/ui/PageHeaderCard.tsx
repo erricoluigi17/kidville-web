@@ -15,6 +15,29 @@ interface PageHeaderCardProps {
   subtitle?: React.ReactNode;
   /** Colonna destra: pill gialla azione, icon button `bg-white/15`, chip alunno… */
   action?: React.ReactNode;
+  /**
+   * L'intestazione occupa il meno possibile: niente mascotte, titolo più piccolo,
+   * spaziature strette. **Non toglie niente di leggibile** — occhiello, `<h1>` e
+   * sottotitolo restano tutti e tre.
+   *
+   * ─── PERCHÉ ESISTE, E PERCHÉ NON È UNA PREFERENZA ESTETICA ──────────────────
+   * Su `/parent/attendance` questa card è alta ~360 px su uno schermo da 640-731,
+   * e spinge il campo «Motivo» sotto il piede appiccicato del comando: a pagina
+   * appena aperta `document.elementFromPoint` sul centro del campo restituisce il
+   * PULSANTE, e un tocco dove l'utente vede il campo non ci entra.
+   *
+   * Misurato in Chromium a 390×640/731/844 prima di scrivere una riga, perché la
+   * strada ovvia non era quella giusta:
+   *
+   *   campo più basso (72 px, poi 48)     ❌ non basta sotto gli 844
+   *   sottotitolo su una riga sola        ❌ non basta
+   *   intestazione 390 → 250 px           ✅ campo raggiungibile da 731 in su
+   *   intestazione 390 → 120 px           ✅ raggiungibile a TUTTE le altezze
+   *
+   * cioè la leva non è l'altezza del campo né quella del piede: è **quanto è alta
+   * la testata sopra**. Da qui questa variante, e solo dove serve.
+   */
+  compatta?: boolean;
   className?: string;
   children?: React.ReactNode;
 }
@@ -36,16 +59,20 @@ export function PageHeaderCard({
   icon: Icon,
   subtitle,
   action,
+  compatta,
   className,
   children,
 }: PageHeaderCardProps) {
   const giallo = TAB_GIALLO_OVUNQUE;
-  const mascotte = giallo && !action;
+  // La mascotte è il pezzo più alto della card (112 px) e da sola imporrebbe
+  // l'altezza che la variante compatta esiste per togliere.
+  const mascotte = giallo && !action && !compatta;
 
   return (
     <header
       className={cx(
-        'kv-header-card rounded-3xl px-5 py-5',
+        'kv-header-card rounded-3xl px-5',
+        compatta ? 'py-3' : 'py-5',
         giallo ? 'kv-tab-giallo relative bg-kidville-yellow' : 'bg-kidville-green',
         className,
       )}
@@ -78,7 +105,11 @@ export function PageHeaderCard({
             )}
             <h1
               className={cx(
-                'font-barlow text-3xl font-black uppercase tracking-wide',
+                'font-barlow font-black uppercase tracking-wide',
+                // `text-2xl` e non `text-3xl`: «Comunica un'assenza» a 30 px va a
+                // capo su 390 px e la card cresce di una riga intera. A 24 px sta
+                // su una riga sola, e resta il testo più grande della schermata.
+                compatta ? 'text-2xl' : 'text-3xl',
                 giallo ? 'text-kidville-green' : 'text-white',
               )}
             >
@@ -89,7 +120,8 @@ export function PageHeaderCard({
           {subtitle && (
             <div
               className={cx(
-                'mt-1.5 font-maven text-xs',
+                'font-maven text-xs',
+                compatta ? 'mt-1' : 'mt-1.5',
                 // ⚠️ NIENTE ALFA SUL RAMO GIALLO (2026-08-07, WCAG 1.4.3).
                 // `green-dark/80` composto sul giallo di marchio dà rgb(51,106,60)
                 // su rgb(253,196,0) = 4,00:1 a 12px, sotto i 4,5:1 richiesti al

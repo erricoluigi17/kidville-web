@@ -683,6 +683,74 @@ describe('a11y §4 · su fondo crema si vede dove comincia il campo (WCAG 1.4.11
         }
     });
 
+    /**
+     * ⚠️ R4 — LA MISURA CHE MANCAVA: la regola non si ferma al pannello crema.
+     *
+     * Il quinto collaudo l'ha rilevato: la regola nata per i campi su superficie
+     * crema è scritta col DISCENDENTE (`.bg-kidville-cream input[…]`), e la shell
+     * dell'area autenticata È `bg-kidville-cream` — parent, teacher e admin, tutte
+     * e tre. Quindi ridipinge il contorno a riposo di TUTTI i campi dell'area
+     * autenticata, comprese le 294 righe che stanno su card bianca.
+     *
+     * Le due prove qui sopra non potevano vederlo, e non perché siano scritte
+     * male: montano i componenti NUDI, senza la shell. Su quel DOM il selettore
+     * discendente non combacia, e ciò che misurano è il bordo che il campo
+     * avrebbe **senza la regola** — cioè una situazione che in produzione non
+     * esiste. Una prova che misura un DOM diverso da quello vero è verde per
+     * costruzione, ed è il modo più silenzioso di non avere un controllo.
+     *
+     * Qui la pagina si monta DENTRO la shell, come sta in produzione. La grafica
+     * non si tocca — l'effetto è un contorno più SCURO, cioè un campo che si vede
+     * meglio, e nessun utente è danneggiato — ma da oggi è misurato: il giorno in
+     * cui quel token cambiasse e su bianco scendesse sotto 3:1, questo diventa
+     * rosso. Prima non l'avrebbe visto nessuno.
+     */
+    it('R4 · dentro la shell la regola raggiunge anche i campi su BIANCO, e lì regge lo stesso', async () => {
+        document.documentElement.setAttribute('data-contrast', 'normal');
+
+        // (a) Il montaggio NUDO — quello delle due prove qui sopra.
+        const { giorno: nudo } = await campiZeroSei(false);
+        const bordoNudo = bordo(nudo, false);
+        cleanup();
+
+        // (b) La shell vera: `src/app/(dashboard)/parent/layout.tsx` monta
+        //     `<div className="min-h-screen bg-kidville-cream" data-kv-shell>`.
+        render(<ParentAttendancePage />, {
+            wrapper: ({ children }) => (
+                <div className="min-h-screen bg-kidville-cream" data-kv-shell>
+                    {children}
+                </div>
+            ),
+        });
+        const giorno = await screen.findByLabelText(itServizi.attendanceGiorno);
+        const motivo = screen.getByLabelText(itServizi.attendanceMotivo);
+
+        // LA PROVA CHE QUESTA PROVA MISURA QUALCOSA: i due contorni DEVONO
+        // essere diversi. Se fossero uguali, vorrebbe dire che la regola non
+        // arriva fin qui — e allora questo test sarebbe un doppione di quello
+        // sopra, cioè un altro controllo che non vede niente.
+        expect(
+            bordo(giorno, false),
+            'dentro la shell il contorno è identico a quello nudo: la regola della crema non ' +
+                'raggiunge più i campi su bianco — o questa prova non sta montando la shell vera',
+        ).not.toBe(bordoNudo);
+
+        for (const campo of [giorno, motivo]) {
+            const b = bordo(campo, false);
+            const superficie = sfondo(campo.parentElement!, false);
+
+            // CONTROLLO POSITIVO della misura: il campo sta davvero su BIANCO —
+            // se un domani finisse su crema, questa prova parlerebbe d'altro.
+            expect(superficie, 'il campo non è più su card bianca: la misura va rifatta').toBe(T.white);
+            expect(b, 'nessuna regola dichiara il contorno del campo dentro la shell').not.toBeNull();
+            expect(
+                contrasto(b!, superficie),
+                `contorno ${b} su ${superficie}: la regola della crema arriva fin qui (è scritta col ` +
+                    'discendente, e la shell dell’area autenticata è crema) e deve reggere anche qui',
+            ).toBeGreaterThanOrEqual(3);
+        }
+    });
+
     it('in Alto Contrasto vince ancora il NERO, su entrambe le superfici', async () => {
         // Il blocco `[data-contrast="high"]` ha la stessa specificità della regola
         // della crema: se finisse PRIMA, perderebbe, e il campo in Alto Contrasto

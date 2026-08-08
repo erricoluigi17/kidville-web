@@ -27,6 +27,7 @@ import {
   FILTRO_NON_ANNUNCIO,
   filtroFatti,
   finestraAnnuncioAperta,
+  limitaAgliAnnunciAperti,
   limitaAiFatti,
   limitaAOggi,
   soloFatti,
@@ -403,5 +404,73 @@ describe('la regola in memoria e la regola in PostgREST danno lo stesso verdetto
     // riprodotto qui sopra la riga che lo chiude.
     expect(FILTRO_NON_ANNUNCIO.split(',').some((c) => clausolaVera(c, riga))).toBe(false)
     expect(filtroFatti('2026-08-08').split(',').some((c) => clausolaVera(c, riga))).toBe(true)
+  })
+})
+
+// =============================================================================
+// `limitaAgliAnnunciAperti` — il verso POSITIVO della stessa finestra.
+//
+// L'elenco «assenze già comunicate» della home genitore (quello col bottone
+// «Annulla») componeva a mano i tre termini che lo definiscono. Coincidevano con
+// `eAssenzaSoloAnnunciata` e con ciò che `comunica-assenza:DELETE` accetta di
+// annullare — finché qualcuno non avesse toccato uno solo dei due posti: il
+// genitore avrebbe visto «Annulla» su una riga che il server rifiuta, o non
+// l'avrebbe visto su una che poteva ancora ritirare.
+//
+// Questo blocco non prova che la funzione «funziona»: prova che le DUE FACCE
+// della stessa regola restano d'accordo. È l'unica cosa che il ricopiare non
+// garantiva.
+// =============================================================================
+describe('l’elenco annullabile e il predicato dicono la stessa cosa', () => {
+  const OGGI = '2026-08-08'
+
+  /** Registra i termini che la query riceve, invece di eseguirli. */
+  function queryFinta() {
+    const termini: string[] = []
+    const q = {
+      gte: (c: string, v: string) => { termini.push(`${c}>=${v}`); return q },
+      not: (c: string, op: string, v: null) => { termini.push(`${c} not ${op} ${v}`); return q },
+      is: (c: string, v: null) => { termini.push(`${c} is ${v}`); return q },
+    }
+    return { q, termini }
+  }
+
+  /** La riga passerebbe i termini raccolti? */
+  function tenutaDallaQuery(riga: RigaFinta, oggi: string): boolean {
+    const { q, termini } = queryFinta()
+    limitaAgliAnnunciAperti(q, 'data', oggi)
+    return termini.every((t) => {
+      if (t.startsWith('data>=')) return (riga.data ?? '') >= t.slice('data>='.length)
+      if (t === 'giustificata_da not is null') return riga.giustificata_da != null
+      if (t === 'registrato_da is null') return riga.registrato_da == null
+      throw new Error(`termine non modellato: ${t}`)
+    })
+  }
+
+  const CASI: Array<{ nome: string; riga: RigaFinta }> = [
+    { nome: 'annuncio per domani', riga: { data: '2026-08-09', stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'annuncio per oggi', riga: { data: OGGI, stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'annuncio di IERI (il giorno è concluso)', riga: { data: '2026-08-07', stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'appello già fatto sullo stesso giorno', riga: { data: OGGI, stato: 'assente', giustificata_da: 'g', registrato_da: 'd' } },
+    { nome: 'assenza del docente, mai comunicata dal genitore', riga: { data: OGGI, stato: 'assente', giustificata_da: null, registrato_da: 'd' } },
+  ]
+
+  for (const { nome, riga } of CASI) {
+    it(`${nome}: l'elenco e il predicato concordano`, () => {
+      expect(tenutaDallaQuery(riga, OGGI)).toBe(eAssenzaSoloAnnunciata(riga, OGGI))
+    })
+  }
+
+  it('i termini sono TRE, e la data non è mai una stringa arbitraria', () => {
+    const { q, termini } = queryFinta()
+    limitaAgliAnnunciAperti(q, 'data', 'non-una-data')
+    expect(termini).toHaveLength(3)
+    // Ricade sul giorno del server invece di interpolare spazzatura.
+    expect(termini[0]).toMatch(/^data>=\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('il valutatore non è vacuo: una riga che NON è un annuncio viene esclusa', () => {
+    expect(tenutaDallaQuery({ data: OGGI, stato: 'assente', giustificata_da: null, registrato_da: 'd' }, OGGI)).toBe(false)
+    expect(tenutaDallaQuery({ data: OGGI, stato: 'assente', giustificata_da: 'g', registrato_da: null }, OGGI)).toBe(true)
   })
 })

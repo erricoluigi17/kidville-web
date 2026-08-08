@@ -228,6 +228,64 @@ body {
 }
 
 /* =============================================================================
+   LA FASCIA DELLA DYNAMIC ISLAND — dipinta dal CONTENITORE, non dall'intestazione.
+
+   Rilievo R26 del quinto collaudo (2026-08-08), simulatore iOS: con la tastiera
+   aperta sul campo «Motivo» l'intestazione verde sparisce e il contenuto della
+   pagina risale nella fascia riservata all'isola — l'etichetta «Giorno
+   dell'assenza» e il valore della data finiscono lassù, senza barra di stato
+   visibile.
+
+   La causa è che quella fascia, oggi, la dipinge SOLO `.kv-appbar` col suo
+   `padding-top` (regola qui sopra): è l'intestazione a fare da fondale. Ma
+   l'intestazione è `sticky top-0`, cioè ancorata al viewport di LAYOUT, e quando
+   la tastiera accorcia il viewport VISUALE la WKWebView la porta fuori dalla
+   vista. Sparita lei, sparisce il fondale, e in quella fascia si vede quello che
+   passa.
+
+   Qui il fondale diventa una cosa a sé, `fixed`, che non dipende da nessuno
+   scorrimento e da nessun elemento del contenuto. È OPACO e sta SOPRA il
+   contenuto (`z-index: 60`): quando qualcosa risale lassù, ci finisce sotto
+   invece che sopra, che è la sola differenza che l'occhio nota.
+
+   Perché `z-index: 60` e non di più: sopra l'AppBar (30), il piede dell'azione
+   (40) e la barra di navigazione (50) — cioè sopra tutto il chrome di pagina — e
+   SOTTO i fogli e i modali (80…120), che coprono lo schermo per loro conto e si
+   portano il proprio fondo. `pointer-events: none` perché è un fondale, non un
+   comando: non deve rubare un tocco a niente.
+
+   Fuori dall'app nativa non esiste: la regola è dentro `.cap-native`, e comunque
+   `env(safe-area-inset-top)` vale 0 nel browser e su Android (status bar solida),
+   quindi l'altezza è zero e non si dipinge niente.
+
+   ⚠️ Questa è METÀ del rimedio, ed è la metà senza rischi. Non impedisce al
+   contenuto di risalire: lo nasconde. L'altra metà — impedire alla pagina di
+   scorrere oltre il proprio limite quando la tastiera è aperta — cambia il
+   comportamento di ogni campo di ogni schermata dell'app nativa, e si decide
+   dopo averla misurata sul simulatore, non prima.
+   ============================================================================= */
+.cap-native [data-kv-shell]::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: var(--color-kidville-green);
+  z-index: 60;
+  pointer-events: none;
+}
+/* In Alto Contrasto l'intestazione è nera (`[data-contrast="high"] .kv-appbar`):
+   il fondale la segue, altrimenti sopra la barra nera comparirebbe una striscia
+   verde che in quella modalità non esiste da nessun'altra parte.
+   I due selettori sono sullo STESSO elemento — `<html>` porta sia `data-contrast`
+   (`app/layout.tsx`) sia `cap-native` (`lib/mobile/native-shell.ts`): scriverli
+   come discendenti darebbe una regola che non combacia mai. */
+[data-contrast='high'].cap-native [data-kv-shell]::before {
+  background: #000000;
+}
+
+/* =============================================================================
    Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI
    essere coperta da un overlay/modal a tutto schermo. Su desktop (>=1024px) gli
    overlay `fixed inset-0` dentro l'area contenuto partono DOPO la sidebar (16rem),

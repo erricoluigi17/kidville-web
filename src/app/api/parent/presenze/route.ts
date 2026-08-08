@@ -15,6 +15,7 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import {
   COLONNE_SORGENTE,
   eAssenzaSoloAnnunciata,
+  limitaAgliAnnunciAperti,
   limitaAiFatti,
 } from '@/lib/presenze/finestra-trascorsa'
 
@@ -136,22 +137,25 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
         'data',
         oggiData,
       ),
-      // Assenze COMUNICATE dal genitore e ancora annullabili. Le due condizioni
-      // che le distinguono sono entrambe necessarie:
-      //  - `giustificata_da` non nullo → la riga l'ha scritta un genitore, non
-      //    l'appello del docente (che non valorizza quella colonna);
-      //  - `registrato_da` nullo → su quel giorno l'appello non è ancora stato
-      //    fatto, quindi la comunicazione si può ancora ritirare.
-      // Senza questo elenco il genitore non rivede ciò che ha inviato — e non
-      // può annullarlo.
-      supabase
-        .from('presenze')
-        .select('id, data, giustificazione_testo, stato')
-        .eq('alunno_id', studentId)
-        .gte('data', oggiData)
-        .not('giustificata_da', 'is', null)
-        .is('registrato_da', null)
-        .order('data', { ascending: true }),
+      // Assenze COMUNICATE dal genitore e ancora annullabili. Senza questo
+      // elenco il genitore non rivede ciò che ha inviato — e non può annullarlo.
+      //
+      // I tre termini che le distinguono NON si scrivono più qui: sono la stessa
+      // finestra che `comunica-assenza:DELETE` applica per decidere se accettare
+      // l'annullamento, e che `eAssenzaSoloAnnunciata` applica per tenere gli
+      // annunci fuori dai conteggi. Erano ricopiati, e coincidevano — finché
+      // qualcuno non avesse toccato uno dei due: il genitore avrebbe visto il
+      // bottone «Annulla» su una riga che il server rifiuta, o non l'avrebbe
+      // visto su una che poteva ancora ritirare. Una regola valida per due
+      // strade deve vivere in un posto solo.
+      limitaAgliAnnunciAperti(
+        supabase
+          .from('presenze')
+          .select('id, data, giustificazione_testo, stato')
+          .eq('alunno_id', studentId),
+        'data',
+        oggiData,
+      ).order('data', { ascending: true }),
     ])
 
     // PostgREST NON lancia: l'errore torna nel valore, e un try/catch qui attorno

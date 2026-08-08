@@ -218,8 +218,41 @@ export const FILTRO_NON_ANNUNCIO = 'giustificata_da.is.null,registrato_da.not.is
  * continui a essere vero.
  */
 export function filtroFatti(oggi: string = oggiFiscaleISO(), colonna: string = 'data'): string {
-  const giorno = FORMA_DATA.test(oggi) ? oggi.slice(0, 10) : oggiFiscaleISO()
-  return `${FILTRO_NON_ANNUNCIO},${colonna}.lt.${giorno}`
+  return `${FILTRO_NON_ANNUNCIO},${colonna}.lt.${giornoSicuro(oggi)}`
+}
+
+/** Il giorno da interpolare in una query: mai una stringa che non sia una data. */
+function giornoSicuro(oggi: string): string {
+  return FORMA_DATA.test(oggi) ? oggi.slice(0, 10) : oggiFiscaleISO()
+}
+
+/**
+ * Il verso POSITIVO della stessa finestra: le sole righe che sono ancora un
+ * annuncio — cioè quelle che il genitore può ancora RITIRARE.
+ *
+ * ─── PERCHÉ ESISTE ──────────────────────────────────────────────────────────
+ * Il criterio era scritto a mano in `parent/presenze:GET`, che compone l'elenco
+ * «assenze già comunicate» — quello con il bottone «Annulla». Tre termini
+ * ricopiati, che oggi coincidevano riga per riga con `eAssenzaSoloAnnunciata` e
+ * con ciò che `comunica-assenza:DELETE` accetta di annullare. Il giorno in cui la
+ * finestra cambia, un punto solo non se ne accorge: il genitore vedrebbe il
+ * bottone «Annulla» su una riga che il server rifiuta di annullare — o, peggio,
+ * NON lo vedrebbe su una che potrebbe ancora ritirare.
+ *
+ * È la stessa lezione del ciclo 2, scritta in memoria dopo averla pagata: **una
+ * regola valida per due strade deve vivere in un posto solo.**
+ */
+export function limitaAgliAnnunciAperti<
+  Q extends {
+    gte(colonna: string, valore: string): Q
+    not(colonna: string, operatore: string, valore: null): Q
+    is(colonna: string, valore: null): Q
+  },
+>(query: Q, colonna: string = 'data', oggi: string = oggiFiscaleISO()): Q {
+  return query
+    .gte(colonna, giornoSicuro(oggi))
+    .not('giustificata_da', 'is', null)
+    .is('registrato_da', null)
 }
 
 /** La forma minima con cui una riga dichiara la propria provenienza. */

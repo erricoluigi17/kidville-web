@@ -220,7 +220,13 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
       const r = await fetch(`/api/parent/presenze?studentId=${studentId}&userId=${parentId}`, {
         headers: { 'x-user-id': parentId },
       });
-      const corpo = r.ok ? await r.json() : null;
+      // `.catch(() => null)` come la schermata gemella (`attendance/page.tsx`):
+      // un 200 con corpo vuoto o troncato fa lanciare `r.json()`. Non era un
+      // guasto — l'eccezione risale al `.catch` dell'effetto, che logga e mostra
+      // lo stato d'errore giusto — ma lì `stato` arriva indefinito, e nel log si
+      // perde l'unica cosa che distingue «il server ha rifiutato» da «la rete è
+      // caduta». Due porte della stessa funzione, due modi di leggere: uno.
+      const corpo = r.ok ? await r.json().catch(() => null) : null;
       /**
        * DUE GUASTI, UNA SOLA CONCLUSIONE: l'elenco non lo abbiamo.
        *

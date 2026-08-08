@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { STORAGE } from './fixtures';
+import itShared from '../messages/it/shared.json';
 
 /**
  * Il modulo dell'assenza si può TOCCARE dove lo si vede.
@@ -66,6 +67,24 @@ for (const altezza of [731, 844]) {
     // una pagina che non ha caricato.
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('textarea')).toBeVisible({ timeout: 20_000 });
+
+    /**
+     * ⚠️ E SI ASPETTA CHE IL VELO DI CARICAMENTO SE NE VADA.
+     *
+     * Prima versione di questo spec: rosso al primo tentativo e verde al retry,
+     * su entrambe le altezze — cioè un lock che regge solo perché la CI riprova,
+     * che è il modo in cui un test smette di essere creduto. Il messaggio diceva
+     * la verità: «il dito finisce su DIV: Caricamento in corso…». Non era il
+     * piede a coprire il link, era l'overlay globale.
+     *
+     * Un velo che copre tutto è il caso in cui `elementFromPoint` risponde
+     * correttamente e la domanda è sbagliata: finché c'è, NESSUN elemento riceve
+     * il proprio tocco, e la misura non parla del difetto che cerchiamo.
+     */
+    await expect(page.getByText(itShared.caricamentoInCorso).first()).toBeHidden({ timeout: 30_000 });
+    // …e un giro di assestamento del layout appiccicato, che si posiziona dopo
+    // il primo paint utile.
+    await page.waitForTimeout(400);
 
     const link = await chiRiceveIlTocco(page, 'a[href="/privacy"]');
     expect(link.esiste, 'il link all’informativa è sparito dal modulo').toBe(true);

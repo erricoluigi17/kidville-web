@@ -765,9 +765,27 @@ describe('M21 · ricomunicare lo stesso giorno non cancella il motivo già archi
         ];
     });
 
+    /**
+     * ⚠️ SI ASPETTA CHE L'ELENCO SIA ARRIVATO, prima di scegliere il giorno.
+     *
+     * Senza questa attesa il test è una CORSA: `findByLabelText` aspetta il
+     * campo, non la fetch di `GET /api/parent/presenze` che porta le assenze già
+     * comunicate. In locale la promessa si risolve prima del `change` e il test
+     * è verde; in CI, sotto carico, no — e il motivo non viene precompilato
+     * perché l'elenco è ancora vuoto. Misurato il 2026-08-09: verde in locale,
+     * rosso in CI nello stesso commit, con il messaggio che accusava il prodotto
+     * («il modulo riparte vuoto…») per un difetto della prova.
+     *
+     * L'elenco è arrivato quando esiste il comando che ne annulla una riga.
+     */
+    async function elencoArrivato() {
+        return screen.findByRole('button', { name: /annulla/i });
+    }
+
     it('scegliere un giorno GIÀ comunicato riporta nel campo il motivo che c\'è', async () => {
         render(<ParentAttendancePage />);
         const campo = await screen.findByLabelText(itServizi.attendanceGiorno);
+        await elencoArrivato();
         const motivo = screen.getByLabelText(itServizi.attendanceMotivo);
         expect(motivo).toHaveValue('');
 
@@ -783,6 +801,7 @@ describe('M21 · ricomunicare lo stesso giorno non cancella il motivo già archi
     it('e l\'invio manda quel motivo, non una stringa vuota', async () => {
         render(<ParentAttendancePage />);
         const campo = await screen.findByLabelText(itServizi.attendanceGiorno);
+        await elencoArrivato();
         fireEvent.change(campo, { target: { value: '2026-08-20' } });
         fireEvent.click(screen.getByRole('button', { name: itServizi.attendanceComunicaAssenza }));
 

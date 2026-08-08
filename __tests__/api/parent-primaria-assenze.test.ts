@@ -119,3 +119,54 @@ describe('GET /api/parent/primaria/assenze', () => {
     expect(body.riepilogo).toEqual({ presente: 0, assente: 0, ritardo: 0, uscita_anticipata: 0 })
   })
 })
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// T31 — UN 200 CHE NON DICE SE HA LETTO È UN 200 CHE MENTE
+//
+// La lettura fallita era LOGGATA — e va bene — ma la risposta restava
+// `200 {success:true, data:[]}`: dal client, «non l'ho potuto leggere» e «non ne
+// hai» sono la stessa identica risposta. La schermata mostrava «nessuna assenza»
+// e quattro zeri a un genitore il cui figlio poteva averne dieci.
+//
+// La forma è quella già scelta dalla rotta sorella (`comunicateLette`): il campo
+// dice se quel pezzo è stato letto. Il client lo tratta come guasto SOLO quando
+// vale esplicitamente `false`.
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('GET — la risposta dichiara se ha letto davvero (T31)', () => {
+  it('lettura riuscita: `letto` e `riepilogoLetto` sono veri', async () => {
+    h.state.listResult = { data: [], error: null }
+    const res = await GET(req('?studentId=a-1'))
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.letto).toBe(true)
+    expect(body.riepilogoLetto).toBe(true)
+  })
+
+  it('lettura FALLITA: 200 formalmente buono, ma `letto` è false', async () => {
+    h.state.listResult = { data: null, error: { code: '42703', message: 'column does not exist' } }
+    const res = await GET(req('?studentId=a-1'))
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.data).toEqual([])
+    // Senza questo campo il client non ha NIENTE per distinguere i due casi:
+    // `success: true` e `data: []` sono identici in entrambi.
+    expect(body.letto, 'la risposta deve dichiarare di non aver letto').toBe(false)
+  })
+
+  it('riepilogo non contato: `riepilogoLetto` è false — quattro zeri sono una frase', async () => {
+    h.state.listResult = { data: [], error: null }
+    h.state.countError = { code: '42P01', message: 'relation does not exist' }
+    const res = await GET(req('?studentId=a-1'))
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.riepilogoLetto).toBe(false)
+  })
+
+  it('il messaggio grezzo di PostgREST non esce mai verso il genitore', async () => {
+    h.state.listResult = { data: null, error: { code: '42703', message: 'column presenze.pippo does not exist' } }
+    const res = await GET(req('?studentId=a-1'))
+    const corpo = JSON.stringify(await res.json())
+    expect(corpo).not.toContain('does not exist')
+    expect(corpo).not.toContain('pippo')
+  })
+})

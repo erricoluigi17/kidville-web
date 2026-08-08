@@ -157,6 +157,8 @@ function AttendanceInner() {
      * metà di questo lavoro.
      */
     const ta = useTranslations('parentAssenze');
+    /** Le frasi d'errore condivise con il server: stesse chiavi, stessi codici. */
+    const tShared = useTranslations('shared');
     const { parentId, studentId, ready } = useParentIdentity();
     const f = useDateFormat();
     // «Oggi» nel fuso Europe/Rome, non in UTC. Il `new Date().toISOString()` che
@@ -467,6 +469,28 @@ function AttendanceInner() {
         // esiste un CLEAR, e il rifiuto che tornava dal server parlava «di questo
         // momento» invece che del campo mancante.
         if (!parentId || !studentId || submitting || !data) return;
+        // ═══ IL PAVIMENTO SUL GIORNO NON PUÒ ESSERE SOLO `min` ═══════════════
+        //
+        // T34 del terzo collaudo, misurato sulle due piattaforme e non dedotto:
+        // su Android il selettore nativo RISPETTA `min` (31 giorni, 7 disabilitati,
+        // i passati non si toccano), su **iOS no** — il calendario di WebKit lascia
+        // scegliere ieri, e l'unico rifiuto arrivava dal server, dopo il viaggio.
+        // Il commento che dichiarava il pavimento sopra al campo era vero su una
+        // piattaforma sola.
+        //
+        // Il controllo sta QUI e non in `<input required>` perché il modulo è
+        // `noValidate`: la validazione nativa parla la lingua del BROWSER, non
+        // quella dell'app — un genitore con il telefono in inglese leggeva una
+        // frase inglese dentro un'app italiana (T6).
+        //
+        // `oggiFiscaleISO()` e non `new Date()`: «oggi» è quello di Europe/Rome,
+        // com'è per il server che riceverà questa richiesta. Fra mezzanotte e le
+        // due, in UTC, sarebbe ancora ieri.
+        if (data < today) {
+            setError(tShared('erroreAssenzaDataPassata'));
+            setCodiceErrore('ASSENZA_DATA_PASSATA');
+            return;
+        }
         // Il fatto che questo invio SOVRASCRIVA si decide adesso, con l'elenco
         // ancora quello di prima: dopo la rilettura la riga c'è comunque.
         setAggiornata(giaComunicata !== null);
@@ -502,7 +526,21 @@ function AttendanceInner() {
                 const c = (j as { codice?: unknown } | null)?.codice;
                 setCodiceErrore(typeof c === 'string' ? c : null);
             }
-        } catch {
+        } catch (e) {
+            // T12 del terzo collaudo: questo `catch` non logga nulla. È il gesto
+            // centrale della funzione — l'invio — e se la POST fallisce per rete,
+            // CORS, service worker o certificato, il genitore legge «problema di
+            // rete» e NESSUNO ne sa niente: non una riga, da nessuna parte.
+            // È esattamente la forma del guasto che questo progetto ha già pagato
+            // con le email (un `403` registrato senza il corpo che diceva perché).
+            // `nomeErrore` e non il messaggio: il canale finisce in `app_log` per
+            // 30 giorni, e il motivo dell'assenza non deve poterci entrare mai.
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: `parent/attendance: comunicazione assenza non inviata — ${nomeErrore(e)}`,
+                route: ROTTA,
+            });
             setError(t('attendanceErrRete'));
             // La rete caduta non dice niente sul giorno scelto: nessun codice.
             setCodiceErrore(null);
@@ -689,6 +727,15 @@ function AttendanceInner() {
                 pagina, il `PageLoader`, porta `aria-hidden`). */}
             <form
                 onSubmit={handleSubmit}
+                /*
+                  T6 del terzo collaudo: senza `noValidate` il messaggio che
+                  impedisce di comunicare per un giorno passato lo scrive il
+                  BROWSER, nella lingua del BROWSER — «Value must be 2026-08-08 or
+                  later» dentro un'app italiana, e in una bolla che nessuno stile
+                  del prodotto può toccare. La regola resta, ma la dice l'app: la
+                  guardia è in `handleSubmit`, con la frase del catalogo.
+                */
+                noValidate
                 aria-busy={submitting || undefined}
                 className="mt-5 rounded-card bg-kidville-white p-6 shadow-sm"
             >

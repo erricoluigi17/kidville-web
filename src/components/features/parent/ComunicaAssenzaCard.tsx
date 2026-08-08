@@ -561,6 +561,15 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
 
       <h3 className="font-maven text-xs font-semibold text-kidville-ink mt-4">{t('comunicaElencoTitolo')}</h3>
       {/*
+        T8 del terzo collaudo: delle due schermate gemelle SOLO l'altra diceva al
+        genitore fino a quando può ritirare un'assenza comunicata. La stessa
+        informazione, sulla stessa funzione, presente da una parte e assente
+        dall'altra: chi ha un figlio per grado vedeva due prodotti diversi.
+        La chiave è byte-identica a `parentServizi.attendanceElencoNota`, e una
+        coppia gemella del lock del glossario lo tiene fermo.
+      */}
+      <p className="font-maven text-xs text-kidville-sub mt-1">{t('comunicaElencoNota')}</p>
+      {/*
         Elenco illeggibile: si dice, e NON si scrive «non hai comunicato assenze».
         Quella frase, con la lettura fallita, sarebbe falsa nel modo peggiore — il
         genitore crederebbe di non aver avvisato nessuno e comunicherebbe due volte.

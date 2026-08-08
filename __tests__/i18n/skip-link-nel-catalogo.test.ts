@@ -79,28 +79,24 @@ const LAYOUT = [
  * da sola appena il letterale sparisce.
  */
 const TESTO_A_MANO_AMMESSO = new Map<string, { testo: string; motivo: string }>([
-    [
-        'src/app/(dashboard)/parent/layout.tsx',
-        {
-            testo: 'Salta al contenuto',
-            motivo:
-                'Skip link nato col lavoro di accessibilità (25cc867) prima che l’app fosse bilingue. ' +
-                'La chiave `nav.saltaAlContenuto` esiste già in it e in en: resta da farla leggere al ' +
-                'layout con `getTranslations(\'nav\')`. La modifica tocca lo STESSO elemento `<a>` su cui ' +
-                'lavora il rilievo di contrasto dello skip link (accessibilità F3): va fatta in un ' +
-                'passaggio solo, non da due mani in parallelo.',
-        },
-    ],
-    [
-        'src/app/(dashboard)/teacher/layout.tsx',
-        {
-            testo: 'Salta al contenuto',
-            motivo:
-                'Stessa stringa e stessa storia del layout genitore: lo skip link dell’area docente è ' +
-                'la copia gemella, e il rilievo di contrasto dichiara esplicitamente «vale per entrambi ' +
-                'i layout». Si normalizzano insieme, con la stessa chiave di catalogo.',
-        },
-    ],
+    // ─────────────────────────────────────────────────────────────────────────
+    // VUOTA, E IL GIORNO IN CUI SI È SVUOTATA.
+    //
+    // Questa mappa conteneva i due layout dell'area riservata, che scrivevano
+    // «Salta al contenuto» a mano nel TSX: il PRIMO elemento di ogni schermata —
+    // quello che incontra chi naviga da tastiera e chi usa uno screen reader —
+    // era anche l'unico testo dell'interfaccia che in un documento `lang="en"`
+    // sarebbe rimasto italiano.
+    //
+    // L'eccezione è stata scritta il 2026-08-08 con la sua via d'uscita dentro, e
+    // la via d'uscita ha funzionato: appena i due layout hanno letto
+    // `nav.saltaAlContenuto` dal catalogo, la prova «le eccezioni dichiarate sono
+    // ancora vere» è diventata ROSSA DA SOLA, chiedendo di cancellare le righe che
+    // non proteggevano più niente. Poche ore, non mesi.
+    //
+    // Se questa mappa torna a riempirsi, ogni voce porti la stessa cosa: non solo
+    // il motivo, ma la condizione precisa alla quale sparisce.
+    // ─────────────────────────────────────────────────────────────────────────
 ])
 
 /** Toglie i commenti — di riga, di blocco e quelli in graffe del JSX. */

@@ -111,10 +111,43 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
       return acc
     }, {} as Record<StatoRiepilogo, number>)
 
-    return NextResponse.json({ success: true, data: presenze ?? [], riepilogo })
+    // ═══ IL 200 DEVE DICHIARARE SE HA LETTO ══════════════════════════════════
+    //
+    // T31 del terzo collaudo. Il guasto di lettura qui sopra era LOGGATO — e va
+    // bene — ma la risposta restava `200 {success:true, data:[]}`: dal client,
+    // «non l'ho potuto leggere» e «non ne hai» sono la stessa identica risposta.
+    // La schermata mostrava «nessuna assenza» e quattro zeri a un genitore il cui
+    // figlio poteva averne dieci.
+    //
+    // La forma è quella già scelta dalla rotta sorella (`comunicateLette` in
+    // `parent/presenze:GET`): il campo dice se quel pezzo è stato letto, e il
+    // client lo tratta come guasto SOLO quando vale esplicitamente `false` —
+    // `undefined` è «un server più vecchio non lo dichiara», che non è «dichiara
+    // di no». Una regola valida per due rotte, scritta nello stesso modo.
+    //
+    // Il riepilogo si degrada a 0 per costruzione (`head: true` + `count` nullo
+    // sul DB E2E non migrato): anche quello va dichiarato, perché quattro zeri
+    // sono una frase, non l'assenza di una frase.
+    const riepilogoLetto = conteggi.every((c) => !c.error)
+    return NextResponse.json({
+      success: true,
+      data: presenze ?? [],
+      letto: !presenzeErr,
+      riepilogo,
+      riepilogoLetto,
+    })
   } catch (err) {
     logErrore({ operazione: 'parent/primaria/assenze:GET', stato: 500 }, err)
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    // Il messaggio dell'eccezione NON esce verso il genitore: è la terza rotta di
+    // questa famiglia con la stessa forma (dopo `attendance/daily` e
+    // `giustifica`), e il `message` di PostgREST riecheggia filtri e colonne.
+    // Resta nel log, intero, che è dove dice perché.
+    return NextResponse.json(
+      // `PRESENZE_NON_LETTE` esiste già, è tradotto in entrambe le lingue e dice
+      // esattamente questo: un codice nuovo sarebbe una seconda frase per lo
+      // stesso fatto, cioè il modo in cui due messaggi divergono.
+      { error: 'Errore interno', codice: 'PRESENZE_NON_LETTE' },
+      { status: 500 },
+    )
   }
 })

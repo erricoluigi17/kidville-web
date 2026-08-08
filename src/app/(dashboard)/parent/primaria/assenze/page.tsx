@@ -2,7 +2,6 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { intlDateTime } from '@/i18n/config';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
 import { AlertCircle, Check, RotateCcw } from 'lucide-react';
@@ -108,18 +107,28 @@ function AssenzeGenitore() {
     })
       .then(async (r) => {
         const d: unknown = await r.json().catch(() => null);
-        const corpo = d as { success?: boolean; data?: Presenza[]; riepilogo?: Riepilogo } | null;
+        const corpo = d as {
+          success?: boolean; data?: Presenza[]; riepilogo?: Riepilogo;
+          letto?: boolean; riepilogoLetto?: boolean;
+        } | null;
         // «Non c'è» e «non l'ho potuto leggere» sono due cose diverse. Senza
         // questo ramo un 500 lasciava `presenze = []` e `riepilogo = null`, e il
         // render li leggeva come «nessuna assenza» + quattro zeri: un guasto
         // travestito da dato, sulla schermata che dice al genitore se il figlio
         // è stato a scuola.
-        if (!r.ok || !corpo?.success || !Array.isArray(corpo.data)) {
+        // `letto === false` è il server che DICHIARA di non aver letto: la sua
+        // risposta è formalmente buona (200, `success: true`, `data: []`) e senza
+        // questa riga il guasto continuerebbe a leggersi come «nessuna assenza».
+        // `=== false` e non `!corpo?.letto`: un server più vecchio non manda il
+        // campo, e «non lo dichiara» non è «dichiara di no».
+        if (!r.ok || !corpo?.success || !Array.isArray(corpo.data) || corpo.letto === false) {
           setErroreCronologia(true);
           return;
         }
         setPresenze(corpo.data);
-        setRiepilogo(corpo.riepilogo ?? null);
+        // Quattro zeri sono una frase, non l'assenza di una frase: se il
+        // riepilogo non è stato letto non si stampa affatto.
+        setRiepilogo(corpo.riepilogoLetto === false ? null : (corpo.riepilogo ?? null));
         setErroreCronologia(false);
       })
       .catch((e: unknown) => {
@@ -271,7 +280,17 @@ function AssenzeGenitore() {
                   <div className="flex items-center gap-2">
                     <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-maven font-semibold ${statoCls}`}>{statoLabel}</span>
                     <span className="font-maven text-sm font-semibold text-kidville-ink">
-                      {intlDateTime(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(p.data))}
+                      {/*
+                        T4 del terzo collaudo: nella stessa schermata la stessa data
+                        era scritta in due formati diversi, e questo — l'elenco
+                        storico — non portava l'anno. `f.dataBreve` è il formato che
+                        usa tutto il resto della funzione.
+                        In più `.format(new Date(x))` LANCIA `RangeError` su una data
+                        non valida, mentre `f.dataBreve` degrada a stringa vuota: qui
+                        la data arriva dal database, e una riga malformata faceva
+                        cadere l'intera schermata invece di una cella.
+                      */}
+                      {f.dataBreve(p.data)}
                     </span>
                   </div>
                   {/* `success-strong` (7,87:1 su bianco) e non `success`

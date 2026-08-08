@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
@@ -7,6 +8,11 @@ import { NativePushAutoRegister } from '@/components/providers/NativePushAutoReg
 import { requireArea } from '@/lib/auth/area-guard';
 
 export default async function ParentLayout({ children }: { children: React.ReactNode }) {
+  // Il primo elemento di ogni schermata dell'area riservata — quello che
+  // incontra chi naviga da tastiera e chi usa uno screen reader — era l'unico
+  // testo dell'interfaccia scritto a mano nel TSX: in inglese sarebbe rimasto in
+  // italiano. `skip-link-nel-catalogo.test.ts` ora lo pretende dal catalogo.
+  const tNav = await getTranslations('nav');
   // Guardia d'area (M4B.4): solo ruolo attivo `genitore`; un docente che apre
   // /parent finisce su /teacher, un doppio profilo senza scelta torna al login.
   await requireArea('parent');
@@ -24,7 +30,7 @@ export default async function ParentLayout({ children }: { children: React.React
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
       >
-        Salta al contenuto
+        {tNav('saltaAlContenuto')}
       </a>
       {/* AppBar full-bleed (fuori dal vincolo 430px); usa useSearchParams → Suspense. */}
       <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>

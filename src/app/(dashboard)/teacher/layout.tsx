@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
 import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
@@ -9,6 +10,11 @@ import { requireArea } from '@/lib/auth/area-guard';
 // Niente vincolo di larghezza globale: ogni pagina mantiene la propria colonna
 // (le pagine primaria condivise con /admin restano larghe).
 export default async function TeacherLayout({ children }: { children: React.ReactNode }) {
+  // Il primo elemento di ogni schermata dell'area riservata — quello che
+  // incontra chi naviga da tastiera e chi usa uno screen reader — era l'unico
+  // testo dell'interfaccia scritto a mano nel TSX: in inglese sarebbe rimasto in
+  // italiano. `skip-link-nel-catalogo.test.ts` ora lo pretende dal catalogo.
+  const tNav = await getTranslations('nav');
   // Guardia d'area (M4B.4): educator + staff di gestione (eccezione preservata:
   // lo staff ha già permessi di scrittura sulle funzioni docente lato API).
   await requireArea('teacher');
@@ -24,7 +30,7 @@ export default async function TeacherLayout({ children }: { children: React.Reac
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
       >
-        Salta al contenuto
+        {tNav('saltaAlContenuto')}
       </a>
       {/* AppBar usa useSearchParams (identità) → Suspense per il prerender. */}
       <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>

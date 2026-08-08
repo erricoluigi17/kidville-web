@@ -129,7 +129,12 @@ export async function assertAlunnoNonSospeso(
   supabase: SupabaseClient,
   alunnoId: string
 ): Promise<NextResponse | null> {
-  return (await alunnoSospeso(supabase, alunnoId)) ? negato('assertAlunnoNonSospeso', alunnoId) : null
+  // ⚠️ `if` esplicito e NON un ternario: vedi la nota sotto ad
+  // `assertGenitoreNonSospeso`. La forma gemella, con il ternario, è stata
+  // compilata da Turbopack in modo che il ramo `null` diventava la STRINGA
+  // «TURBOPACK unreachable».
+  if (await alunnoSospeso(supabase, alunnoId)) return negato('assertAlunnoNonSospeso', alunnoId)
+  return null
 }
 
 /** True se ALMENO un figlio dell'account genitore (unione legami) è sospeso. */
@@ -146,7 +151,34 @@ export async function assertGenitoreNonSospeso(
   supabase: SupabaseClient,
   genitoreId: string
 ): Promise<NextResponse | null> {
-  return (await qualcheFiglioSospeso(supabase, genitoreId)) ? negato('assertGenitoreNonSospeso') : null
+  // ═══ PERCHÉ UN `if` E NON UN TERNARIO — LA COSA PIÙ COSTOSA DI QUESTO CICLO ═══
+  //
+  // Questa riga era:
+  //     return (await qualcheFiglioSospeso(supabase, genitoreId)) ? negato('assertGenitoreNonSospeso') : null
+  //
+  // TypeScript la accetta, i test la eseguono verdi (girano sul SORGENTE), e nel
+  // build di produzione Turbopack la compilava così:
+  //
+  //     async function c(e,t){ return await u(e,t) ? ( …, NextResponse.json({…},{status:403}) ) : "TURBOPACK unreachable" }
+  //
+  // cioè il ramo `: null` diventava la STRINGA «TURBOPACK unreachable». Per ogni
+  // genitore NON sospeso — cioè per tutti — la funzione restituiva una stringa
+  // verissima, le rotte facevano `if (sospesoErr) return sospesoErr`, e Next
+  // rispondeva **500 con corpo vuoto**: «No response is returned from route
+  // handler … Expected a Response object but received 'string'».
+  //
+  // Otto rotte: comunica-assenza (POST e DELETE), giustifica, chat/messages,
+  // parent/submissions, avvisi/[id]/risposte, forms/submit, forms/send-otp,
+  // parent/forms/otp. Trovato dal quinto collaudo, riprodotto sull'artefatto e
+  // ricondotto alla riga esatta con la source map.
+  //
+  // ⚠️ LA LEZIONE, CHE VALE PIÙ DELLA RIGA: **eslint, tsc e 7.694 test erano tutti
+  // verdi.** Girano sul sorgente TypeScript; questo difetto esiste solo
+  // nell'artefatto compilato. `npm run build` usciva 0 perché la build RIESCE — è
+  // il codice che genera a essere sbagliato. Nessuno dei quattro cancelli del gate
+  // guarda dentro l'artefatto, ed è lì che il prodotto vive.
+  if (await qualcheFiglioSospeso(supabase, genitoreId)) return negato('assertGenitoreNonSospeso')
+  return null
 }
 
 /**

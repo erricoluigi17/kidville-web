@@ -36,6 +36,31 @@ import type { ReactNode } from 'react';
  * il lock blocca: **tutto ciò che parla dell'AZIONE vive nel piede dell'azione;
  * ciò che parla di un CAMPO sta sopra quel campo.**
  *
+ * ─── LA REGOLA HA UN'ECCEZIONE, ED È MISURATA (R19, 2026-08-08) ──────────────
+ * «Sopra il campo» toglie dalla fascia coperta ciò che sta appena sopra il piede,
+ * non ciò che cade lì per via dello SCORRIMENTO. La nota sul trattamento del
+ * motivo era già stata spostata sopra la textarea il 2026-08-08 alle 02:54 — e
+ * il quinto collaudo, misurato dopo, l'ha ritrovata coperta lo stesso: sulla
+ * WebView a 390×731, link «Leggi l'informativa» a y 592→607 con il piede
+ * sollevato a 568→659, e `document.elementFromPoint` sul suo centro che
+ * restituisce il PULSANTE. `adb shell input tap` sul link non apriva
+ * l'informativa: faceva partire la comunicazione dell'assenza (+1 POST nel log).
+ *
+ * Riprodotto in Chromium a 390×731 (link 592→607, textarea 617→729: le stesse
+ * coordinate della WebView) e misurate le due varianti:
+ *   nota sopra il campo  → link INTERCETTATO dal pulsante
+ *   nota dentro il piede → link raggiungibile ✅
+ *
+ * Quindi la regola completa è: **ciò che è INTERATTIVO non può stare nella
+ * fascia che il piede copre.** Un testo coperto è un problema di leggibilità e
+ * si risolve scorrendo; un LINK coperto è un tocco che esegue un'altra azione —
+ * qui la scrittura di un dato sanitario di un minore. La nota vive nel piede
+ * anche perché è lì che serve: accanto al gesto che conferisce il dato, e sempre
+ * a schermo invece che sotto la piega. Il legame col campo resta
+ * `aria-describedby`, che non ha bisogno di vicinanza nel DOM.
+ * L'avviso «il motivo resta anche svuotando il campo» NON si sposta: non è
+ * interattivo, e il lock Q10 lo tiene sopra il campo dove il gesto lo genera.
+ *
  * ─── ANATOMIA, E PERCHÉ NON È SOLO IL BOTTONE ───────────────────────────────
  * `sticky` e non `fixed`: appena la sua posizione naturale risale sopra la linea
  * della barra, il piede torna nel flusso e non copre più niente.
@@ -131,9 +156,16 @@ export function PiedeAzioneAssenza({ children, className }: Props) {
         deve incontrarla.
       */}
       <div aria-hidden className={`mt-4 ${RISERVA_SOLLEVAMENTO.spaziatore}`} />
+      {/*
+        `kv-piede-azione`: l'aggancio con cui `CampoNonCoperto` sa dove comincia
+        lo strato che copre. Una CLASSE e non una misura in pixel, perché
+        l'altezza del piede cambia con ciò che ci sta dentro (i messaggi, la nota
+        sul trattamento) e un numero ricopiato invecchierebbe al primo messaggio
+        nuovo — il difetto che questo file ha già pagato con `--kv-bottomnav-h`.
+      */}
       <div
         className={
-          `sticky bottom-[var(--kv-bottomnav-h)] z-40 ${RISERVA_SOLLEVAMENTO.margine} ` +
+          `kv-piede-azione sticky bottom-[var(--kv-bottomnav-h)] z-40 ${RISERVA_SOLLEVAMENTO.margine} ` +
           'space-y-3 border-t border-kidville-line ' +
           `shadow-[0_-8px_20px_-12px_rgba(0,0,0,0.28)] ${className ?? ''}`
         }

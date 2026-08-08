@@ -594,3 +594,93 @@ describe('Q28 · il campo del giorno dichiara l\'intervallo INTERO, e l\'aiuto l
         expect(ultimoGiornoComunicabile(OGGI)).toBe('2026-10-10');
     });
 });
+
+// =============================================================================
+// R19 — IL LINK ALL'INFORMATIVA SOTTO IL PIEDE (quinto collaudo, 2026-08-08).
+//
+// È del collaudo dopo, ma è la STESSA FAMIGLIA dei due bloccanti qui sopra —
+// qualcosa che il genitore deve poter toccare nasce sotto uno strato
+// appiccicato — e le utility per misurarla (`piede`, `cardAperta`) sono qui.
+//
+// Misura CDP sulla WebView a 390×731, pagina appena aperta, scrollY = 0:
+//   piede appiccicato  y 568→659
+//   link «Leggi l'informativa»  y 592→607   ← dentro la fascia del piede
+//   document.elementFromPoint(centro del link) → BUTTON «Comunica assenza»
+// e `adb shell input tap` sul link non apriva l'informativa: faceva partire la
+// comunicazione (+1 POST nel log del server). Il difetto NON era la posizione
+// nel documento: la nota era già stata spostata sopra il campo alle 02:54 dello
+// stesso giorno, e il collaudo l'ha ritrovata coperta lo stesso — perché il
+// piede si SOLLEVA sopra ciò che lo precede, e quanto ne copre dipende dallo
+// scorrimento, non dall'ordine dei nodi.
+//
+// Riprodotto in Chromium a 390×731 (link 592→607 e textarea 617→729: le stesse
+// coordinate della WebView) e misurate le due varianti:
+//   nota sopra il campo  → elementFromPoint sul link = il pulsante  ❌
+//   nota dentro il piede → elementFromPoint sul link = il link      ✅
+//
+// La regola che ne segue, e che questo lock blocca: **ciò che è INTERATTIVO non
+// può stare nella fascia che il piede copre.** Un testo coperto si scopre
+// scorrendo; un link coperto esegue un'altra azione — qui la scrittura di un
+// dato sanitario di un minore.
+// =============================================================================
+describe('R19 · il link all\'informativa vive DENTRO il piede, non sotto', () => {
+    it('/parent/attendance: il link sta nello stesso piede del pulsante che invia', async () => {
+        render(<ParentAttendancePage />);
+        await screen.findByLabelText(itServizi.attendanceGiorno);
+        const link = screen.getByRole('link', { name: itAssenze.motivoPrivacyLink });
+
+        // NON VACUO: se un giorno il piede smettesse di essere `sticky`,
+        // `piede()` tornerebbe `null` per entrambi e il confronto qui sotto
+        // sarebbe verde su due nulla. La prova che conta è che il ricovero ci sia.
+        expect(piede(inviaAttendance()), 'il pulsante non ha più un ricovero appiccicato').not.toBeNull();
+        expect(
+            piede(link),
+            'il link all\'informativa nasce fuori dal piede: a 390×731 cade nella fascia che il ' +
+                'piede sollevato copre (link 592→607, piede 568→659) e un tocco al suo centro ' +
+                'ESEGUE L\'INVIO invece di aprire l\'informativa',
+        ).toBe(piede(inviaAttendance()));
+    });
+
+    it('card primaria: stessa posizione, perché è la stessa funzione', async () => {
+        await cardAperta();
+        const link = screen.getByRole('link', { name: itAssenze.motivoPrivacyLink });
+        expect(piede(link)).toBe(piede(inviaCard()));
+    });
+
+    it('il campo resta legato alla nota: `aria-describedby` non chiede vicinanza', async () => {
+        render(<ParentAttendancePage />);
+        const motivo = await screen.findByPlaceholderText(itAssenze.motivoPlaceholder);
+        const ids = (motivo.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+        const testo = ids.map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+        expect(
+            testo,
+            'la nota è nel piede, ma resta la descrizione del campo: chi ascolta la sente quando ' +
+                'ci entra, non quando ci passa sopra',
+        ).toContain(itAssenze.motivoPrivacyLink);
+    });
+
+    it('LA REGOLA: nessun comando nasce fra il campo motivo e il piede', async () => {
+        render(<ParentAttendancePage />);
+        const motivo = await screen.findByPlaceholderText(itAssenze.motivoPlaceholder);
+        const modulo = motivo.closest('form')!;
+        const ricovero = piede(inviaAttendance())!;
+
+        const intercettabili = Array.from(
+            modulo.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea'),
+        ).filter(
+            (el) =>
+                // …viene DOPO la textarea nel documento (cioè è nella fascia che
+                // il piede copre quando si solleva)…
+                !!(motivo.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+                // …e non è al riparo dentro il piede.
+                !ricovero.contains(el),
+        );
+
+        expect(
+            intercettabili.map((el) => `${el.tagName}: ${el.textContent?.trim().slice(0, 40)}`),
+            'questi comandi nascono fra il campo e il piede: è la fascia che il piede sollevato ' +
+                'copre, e un tocco su di loro finisce sul pulsante che invia. O stanno sopra il ' +
+                'campo, o stanno dentro il piede.',
+        ).toEqual([]);
+    });
+});

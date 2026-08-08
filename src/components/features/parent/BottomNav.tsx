@@ -156,7 +156,12 @@ export default function BottomNav() {
   return (
     <>
       {/* ── BOTTOM NAV PILL ─────────────────────── */}
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3"
+      {/* `data-kv-barra-bassa`: l'aggancio con cui `CampoNonCoperto` sa dove
+          comincia lo strato fisso in fondo. Un attributo e non un numero: la
+          barra vera è ciò che conta, e `--kv-bottomnav-h` è una FORMULA che ha
+          già mentito una volta (i 2px del bordo, qui sotto). */}
+      <div data-kv-barra-bassa
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
         {/* ⚠️ IL FILO CHIARO È UN ANELLO INTERNO, NON UN BORDO (2026-08-08).
             Con `border border-white/60` la pillola occupava 62px invece di 60 —

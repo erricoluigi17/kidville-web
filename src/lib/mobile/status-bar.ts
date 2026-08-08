@@ -29,7 +29,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  * «dietro la fascia di sistema c'è una barra di brand, o c'è il fondo della
  * pagina?». Le barre sono due — `.kv-appbar` (genitore e docente,
  * `features/shell/AppBar`) e `.kv-appbar-admin` (cockpit, `AdminTopBarMobile`) —
- * ed è lo stesso paio che `CampoSottoAppBar` interroga per la sua soglia.
+ * ed è lo stesso paio che `CampoNonCoperto` interroga per la sua soglia.
  */
 
 /** C'è una barra di brand incollata in cima, cioè dietro la fascia di sistema? */

@@ -347,19 +347,34 @@ describe('T1 · il comando che galleggia ha una superficie propria', () => {
         ).toMatch(/(^|\s)bg-kidville-\S+/)
     })
 
-    it('la nota sul trattamento del motivo non è più l’ultima cosa prima del comando', async () => {
+    /**
+     * ⚠️ QUESTA PROVA È STATA RISCRITTA IL 2026-08-08, E LA VERSIONE PRIMA
+     * PRETENDEVA IL CONTRARIO. Vale la pena dire perché, perché è la stessa
+     * lezione tre volte.
+     *
+     * Chiedeva: «la nota sta SOPRA il campo, non nella fascia che il comando
+     * copre». Era la correzione di T1, misurata a 390×844 (nota coperta 32px su
+     * 32) e applicata alle 02:54. Il QUINTO collaudo, misurato alle 05:30 sulla
+     * WebView a 390×731, l'ha ritrovata coperta lo stesso: link «Leggi
+     * l'informativa» a y 592→607, piede sollevato a 568→659,
+     * `elementFromPoint` sul suo centro = il pulsante, e un tocco reale che fa
+     * partire la comunicazione invece di aprire l'informativa (R19).
+     *
+     * «Sopra il campo» non è un riparo: il piede appiccicato si SOLLEVA sopra
+     * ciò che lo precede, e quanto copre dipende dallo scorrimento, non
+     * dall'ordine dei nodi. Il riparo è UNO SOLO: stare dentro il piede.
+     * La prova nuova è in `assenze-quarto-collaudo.test.tsx`, sezione R19; qui
+     * resta ciò che T1 aveva ragione di pretendere e che vale ancora — che la
+     * nota esista, e che resti legata al campo.
+     */
+    it('la nota sul trattamento del motivo esiste e resta legata al campo', async () => {
         const { container } = render(<ParentAttendancePage />)
         const campo = await screen.findByLabelText(itServizi.attendanceMotivo)
-        const nota = container.querySelector('#attendance-nota-motivo')!
+        const nota = container.querySelector('#attendance-nota-motivo')
 
         expect(nota, 'la nota GDPR è sparita dalla schermata').not.toBeNull()
-        expect(
-            nota.compareDocumentPosition(campo) & Node.DOCUMENT_POSITION_FOLLOWING,
-            'la nota sta SOTTO il campo, cioè esattamente nella fascia che il comando ' +
-                'incollato in fondo copre alle due misure di telefono più comuni (390×844: 32px ' +
-                'su 32, il 100%). Chi la scrive prima di far digitare non la perde.',
-        ).toBeTruthy()
-        // …e resta LEGATA al campo: spostarla non deve romperne la descrizione.
+        // Spostarla nel piede non deve romperne la descrizione: `aria-describedby`
+        // lega a distanza, ed è ciò che la fa sentire a chi entra nel campo.
         expect((campo.getAttribute('aria-describedby') ?? '').split(/\s+/)).toContain('attendance-nota-motivo')
     })
 })

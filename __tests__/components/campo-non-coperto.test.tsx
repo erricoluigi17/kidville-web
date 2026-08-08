@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent } from '@testing-library/react'
 
-import { CampoSottoAppBar } from '@/components/features/shell/CampoSottoAppBar'
+import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto'
 
 /**
  * LOCK · con la tastiera aperta il campo a fuoco non finisce sotto l'AppBar.
@@ -113,7 +113,7 @@ function apriTastieraComeSulTelefono(el: HTMLElement, topPrima: number, topDopo:
 
 describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   it('CONTROLLO POSITIVO: un campo già sotto la barra non fa scorrere niente', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('textarea')
     posiziona(el, 232) // com'era col tap più in basso: `coperto: 0`
     apriTastiera(el)
@@ -121,7 +121,7 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   })
 
   it('il campo allineato a top:0 viene riportato SOTTO la barra', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('textarea')
     // La misura del collaudo: Chromium allinea il campo a `top: 0`, cioè 82 px
     // dentro l'AppBar — il 73% di un campo alto 112.
@@ -137,7 +137,7 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   })
 
   it('scorre solo di quanto serve, non di un’altezza fissa', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('input')
     posiziona(el, 50, 50) // metà coperto
     apriTastiera(el)
@@ -145,7 +145,7 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   })
 
   it('un campo FUORI dalla shell non viene toccato', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('fuori')
     posiziona(el, 0)
     apriTastiera(el)
@@ -153,7 +153,7 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   })
 
   it('senza AppBar in pagina non c’è niente da compensare', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const radice = document.createElement('div')
     radice.setAttribute('data-kv-shell', '')
     const el = document.createElement('textarea')
@@ -165,7 +165,7 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   })
 
   it('se nel frattempo il fuoco è andato altrove, non si scorre a sorpresa', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el, radice } = shell('textarea')
     posiziona(el, 0)
     el.focus()
@@ -191,7 +191,7 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   // arrivava a tastiera GIÀ aperta — cioè mai, nel gesto reale.
   // ───────────────────────────────────────────────────────────────────────────
   it('fuoco a tastiera CHIUSA, poi la tastiera si apre: la compensazione arriva lo stesso', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('textarea')
     apriTastieraComeSulTelefono(el, 223, 0)
     expect(
@@ -206,14 +206,14 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   it('e se la tastiera NON copre niente, non si scorre lo stesso', () => {
     // Controllo positivo della sequenza vera: senza questo, un componente che
     // scorre sempre passerebbe il test qui sopra.
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('textarea')
     apriTastieraComeSulTelefono(el, 223, 200)
     expect(scrollBy).not.toHaveBeenCalled()
   })
 
   it('più aperture di seguito: ogni volta si ricomincia a misurare', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('textarea')
     apriTastieraComeSulTelefono(el, 223, 0)
     scrollBy.mockClear()
@@ -237,14 +237,14 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
   // `features/shell/AppBar`), il cockpit la sua (`.kv-appbar-admin`).
   // ───────────────────────────────────────────────────────────────────────────
   it('vale anche per la barra del cockpit, che ha una classe sua', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { el } = shell('textarea', 'kv-admin-topbar kv-appbar-admin')
     apriTastieraComeSulTelefono(el, 223, 0)
     expect(scrollBy).toHaveBeenCalledWith(0, -ALTEZZA_APPBAR)
   })
 
   it('con due barre in pagina vince la più BASSA: è quella che copre davvero', () => {
-    render(<CampoSottoAppBar />)
+    render(<CampoNonCoperto />)
     const { radice, el } = shell('textarea')
     const seconda = document.createElement('header')
     seconda.className = 'kv-appbar-admin'
@@ -255,8 +255,68 @@ describe('la tastiera non nasconde il campo dietro l’AppBar', () => {
     expect(scrollBy).toHaveBeenCalledWith(0, -120)
   })
 
+  // ===========================================================================
+  // R19 — LA SOGLIA DAL BASSO: il piede dell'azione e la barra di navigazione.
+  //
+  // Misurato sulla WebView a 390×731: textarea del motivo a y 617→729, piede
+  // appiccicato sollevato a 568→659, barra a 647→707, e `elementFromPoint` sul
+  // centro del campo che restituisce un altro comando. Riprodotto in Chromium:
+  // dopo `focus()` con `scroll-margin-bottom` dichiarato, `scrollY` resta 0 —
+  // il browser non muove chi è coperto ma dentro la viewport. Compensa l'app.
+  // ===========================================================================
+  /** Uno strato fisso in fondo: il piede dell'azione, o la barra di navigazione. */
+  function strato(classe: 'kv-piede-azione' | 'barra', top: number) {
+    const el = document.createElement('div')
+    if (classe === 'barra') el.setAttribute('data-kv-barra-bassa', '')
+    else el.className = classe
+    el.getBoundingClientRect = () =>
+      ({ top, bottom: 731, height: 731 - top, left: 0, right: 390, width: 390, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+    document.body.appendChild(el)
+    return el
+  }
+
+  it('il campo che sborda sotto il PIEDE viene alzato di quanto serve', () => {
+    render(<CampoNonCoperto />)
+    const { el } = shell('textarea')
+    strato('kv-piede-azione', 568) // la misura della WebView
+    posiziona(el, 617) // campo 617→729: 61 px sotto il bordo del piede
+    apriTastiera(el)
+    expect(scrollBy).toHaveBeenCalledWith(0, 729 - 568)
+  })
+
+  it('CONTROLLO NEGATIVO: senza piede né barra in pagina non si scorre', () => {
+    render(<CampoNonCoperto />)
+    const { el } = shell('textarea')
+    posiziona(el, 617)
+    apriTastiera(el)
+    expect(scrollBy).not.toHaveBeenCalled()
+  })
+
+  it('fra piede e barra vince il bordo più ALTO: è lo strato che copre per primo', () => {
+    render(<CampoNonCoperto />)
+    const { el } = shell('textarea')
+    strato('barra', 647)
+    strato('kv-piede-azione', 568)
+    posiziona(el, 617)
+    apriTastiera(el)
+    expect(scrollBy).toHaveBeenCalledWith(0, 729 - 568)
+  })
+
+  it('se alzandolo finisse dietro l’AppBar, comanda l’ALTO: un campo si legge dall’inizio', () => {
+    render(<CampoNonCoperto />)
+    const { el } = shell('textarea')
+    // Piede altissimo: alzare il campo per scoprirlo lo caccerebbe sotto la
+    // barra di testa. È anche il caso del campo più alto dello spazio libero.
+    strato('kv-piede-azione', 150)
+    posiziona(el, 100) // campo 100→212
+    apriTastiera(el)
+    // Non 212-150=62 (che porterebbe il top a 38, dentro l'AppBar alta 82),
+    // ma 100-82=18: il campo si appoggia sotto la barra di testa.
+    expect(scrollBy).toHaveBeenCalledWith(0, 100 - ALTEZZA_APPBAR)
+  })
+
   it('smontandosi non lascia ascoltatori appesi', () => {
-    const { unmount } = render(<CampoSottoAppBar />)
+    const { unmount } = render(<CampoNonCoperto />)
     expect(ascoltatoriResize.length).toBeGreaterThan(0)
     unmount()
     expect(ascoltatoriResize.length).toBe(0)
@@ -271,7 +331,7 @@ describe('LOCK · le shell che hanno la barra sticky lo montano tutte', () => {
     const { readFileSync } = await import('node:fs')
     const shell = ['parent', 'teacher', 'admin']
     const senza = shell.filter(
-      (area) => !readFileSync(`src/app/(dashboard)/${area}/layout.tsx`, 'utf8').includes('<CampoSottoAppBar />'),
+      (area) => !readFileSync(`src/app/(dashboard)/${area}/layout.tsx`, 'utf8').includes('<CampoNonCoperto />'),
     )
     expect(
       senza,

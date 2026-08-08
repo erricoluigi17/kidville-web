@@ -971,18 +971,10 @@ function AttendanceInner() {
                     il lavoro `presenze-giustificazioni-retention` applica
                     davvero, e un lock li confronta con `v_mesi` della migrazione.
                 */}
-                <p id={ID_NOTA_MOTIVO} className="font-maven text-xs text-kidville-sub">
-                    {ta('motivoPrivacy')}{' '}
-                    {/* `LinkInterno`: nella WebView di Capacitor un `_blank`
-                        consegna l'indirizzo a Safari e l'utente esce dall'app
-                        (R25). Stessa scelta della schermata gemella. */}
-                    <LinkInterno
-                        href="/privacy"
-                        className="font-semibold underline"
-                    >
-                        {ta('motivoPrivacyLink')}
-                    </LinkInterno>
-                </p>
+                {/* La nota sul trattamento è nel PIEDE, non qui: vedi il commento
+                    di `PiedeAzioneAssenza` (R19). Restava coperta anche sopra il
+                    campo, e il suo link faceva partire l'invio. Il legame con la
+                    textarea resta `aria-describedby`, che non chiede vicinanza. */}
                 {/* `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
                     l'agente utente con `currentColor` al 50% di alfa — misurato in
                     Chrome `rgb(128,180,175)`, 2,32:1. Un segnaposto è TESTO, e
@@ -1096,6 +1088,31 @@ function AttendanceInner() {
                     2026-08-08 è il margine NEGATIVO che toglie il tetto al
                     sollevamento dello sticky, e non può arrivare da fuori. */}
                 <PiedeAzioneAssenza className="-mx-6 -mb-6 rounded-b-card bg-kidville-white px-6 py-3">
+                    {/*
+                        CHI LEGGE IL MOTIVO, PER QUANTO RESTA, E DOVE STA
+                        L'INFORMATIVA — accanto al gesto che conferisce il dato.
+
+                        Sta QUI e non sopra il campo: sopra il campo era coperta
+                        lo stesso (R19, misurato sulla WebView a 390×731: link a
+                        y 592→607, piede sollevato a 568→659, e un tocco sul link
+                        faceva partire la comunicazione invece di aprire
+                        l'informativa). Nel piede è SEMPRE a schermo — che per una
+                        nota di trasparenza su un dato sanitario di un minore è
+                        meglio di «sopra il campo, ma sotto la piega».
+                        `aria-describedby` della textarea continua a puntare qui.
+                    */}
+                    <p id={ID_NOTA_MOTIVO} className="font-maven text-xs text-kidville-sub">
+                        {ta('motivoPrivacy')}{' '}
+                        {/* `LinkInterno`: nella WebView di Capacitor un `_blank`
+                            consegna l'indirizzo a Safari e l'utente esce dall'app
+                            (R25). Stessa scelta della schermata gemella. */}
+                        <LinkInterno
+                            href="/privacy"
+                            className="font-semibold underline"
+                        >
+                            {ta('motivoPrivacyLink')}
+                        </LinkInterno>
+                    </p>
                     {error && (
                         <FasciaStatoAssenza
                             tipo="errore"

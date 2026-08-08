@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
-import { CampoSottoAppBar } from '@/components/features/shell/CampoSottoAppBar';
+import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { requireArea } from '@/lib/auth/area-guard';
@@ -47,7 +47,7 @@ export default async function TeacherLayout({ children }: { children: React.Reac
           barra è LA STESSA (`features/shell/AppBar`) e questa shell ha i suoi
           campi: note dell'appello, diario, chat. Il rimedio viveva montato su
           una sola delle tre shell, con la lezione scritta in un commento. */}
-      <CampoSottoAppBar />
+      <CampoNonCoperto />
       <main id="content" tabIndex={-1} className="pb-28 outline-none">
         {children}
       </main>

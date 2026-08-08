@@ -3,7 +3,25 @@
 import { useEffect } from 'react';
 
 /**
- * Con la tastiera aperta, il campo a fuoco non finisce dietro l'AppBar.
+ * Il campo a fuoco non resta coperto — né dall'alto né dal basso.
+ *
+ * ─── PERCHÉ NON SI CHIAMA PIÙ `CampoSottoAppBar` (R19, 2026-08-08) ───────────
+ * Ha trattato per un giorno solo il bordo ALTO, perché è lì che il difetto era
+ * stato misurato. Il quinto collaudo ha trovato il gemello dal basso: sulla
+ * WebView a 390×731 la textarea del motivo sta a y 617→729 con il piede
+ * appiccicato sollevato a 568→659 e la barra di navigazione a 647→707, e
+ * `document.elementFromPoint` sul suo centro restituisce un altro comando.
+ *
+ * `scroll-margin-bottom` NON lo cura, ed è misurato e non dedotto: riprodotta la
+ * geometria in Chromium, dopo `focus()` sul campo `scrollY` resta **0**. Il
+ * browser porta in vista solo chi è GEOMETRICAMENTE fuori dalla viewport, e un
+ * campo coperto è dentro la viewport — c'è solo qualcosa sopra di lui. Vale per
+ * `scroll-margin-top` (già scritto sotto) e vale, per la stessa ragione, per il
+ * suo gemello in basso: sono due modi diversi in cui la stessa proprietà non
+ * viene consultata.
+ *
+ * Un nome che dice metà del lavoro è un debito: questo repo ha già pagato per un
+ * documento che descriveva una protezione diversa da quella che c'era.
  *
  * ─── PERCHÉ ESISTE, E PERCHÉ IL CSS NON BASTAVA ─────────────────────────────
  * `globals.css` dichiara `scroll-margin-top: var(--kv-appbar-h)` su tutti i
@@ -66,7 +84,7 @@ const RITARDO_MS = 120;
 
 const CAMPI = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 
-export function CampoSottoAppBar() {
+export function CampoNonCoperto() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -116,12 +134,38 @@ export function CampoSottoAppBar() {
           (b) => b.getBoundingClientRect().bottom,
         ),
       );
-      if (soglia <= 0) return;
-      const top = el.getBoundingClientRect().top;
-      if (top >= soglia) return;
-      // Solo di quanto serve: `scrollBy` negativo alza la pagina, cioè abbassa
-      // il campo dentro la viewport.
-      window.scrollBy(0, top - soglia);
+
+      /**
+       * E LA SOGLIA DAL BASSO — il piede dell'azione e la barra di navigazione.
+       *
+       * Vince la più ALTA delle due, cioè il bordo superiore dello strato che
+       * comincia per primo: è quella la linea sotto la quale il campo non si
+       * vede più. Si interroga il DOM invece di leggere `--kv-bottomnav-h`
+       * perché il piede cambia altezza con ciò che contiene (i messaggi
+       * dell'azione, la nota sul trattamento) e perché quella variabile è una
+       * FORMULA che ha già mentito di 2px. Senza nessuno dei due strati in
+       * pagina — le schermate che non hanno il piede, il web fuori dalla shell —
+       * la soglia è 0 e non si tocca niente.
+       */
+      const bassi = Array.from(
+        document.querySelectorAll('.kv-piede-azione, [data-kv-barra-bassa]'),
+      ).map((b) => b.getBoundingClientRect().top);
+      const sogliaBassa = bassi.length ? Math.min(...bassi) : 0;
+
+      if (soglia <= 0 && sogliaBassa <= 0) return;
+
+      const r = el.getBoundingClientRect();
+      let d = 0;
+      // Sborda sotto lo strato che copre: si alza di quanto serve, non di più.
+      if (sogliaBassa > 0 && r.bottom > sogliaBassa) d = r.bottom - sogliaBassa;
+      // …ma se alzandolo finisce dietro l'AppBar, comanda l'alto: un campo si
+      // legge dall'inizio, e vederne la coda senza l'inizio non serve a niente.
+      // È anche il caso del campo più alto dello spazio fra le due barre.
+      if (soglia > 0 && r.top - d < soglia) d = r.top - soglia;
+      if (d === 0) return;
+      // `scrollBy` positivo alza il contenuto (il campo sale), negativo lo
+      // abbassa: è la stessa riga di prima, con un addendo in più.
+      window.scrollBy(0, d);
     };
 
     const programma = () => {

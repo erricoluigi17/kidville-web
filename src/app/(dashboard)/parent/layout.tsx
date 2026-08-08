@@ -3,7 +3,7 @@ import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
-import { CampoSottoAppBar } from '@/components/features/shell/CampoSottoAppBar';
+import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { requireArea } from '@/lib/auth/area-guard';
 
@@ -44,7 +44,7 @@ export default async function ParentLayout({ children }: { children: React.React
           cioè sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` che
           globals.css dichiara. Misurato sull'emulatore: 82 px su 112 (73%) del
           campo «Motivo» coperti, e il testo digitato invisibile. */}
-      <CampoSottoAppBar />
+      <CampoNonCoperto />
       <div className="relative max-w-[430px] mx-auto">
         {/* Selettore figlio (per genitori con più figli). Usa useSearchParams → Suspense. */}
         <Suspense fallback={null}>

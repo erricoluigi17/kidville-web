@@ -657,23 +657,11 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
             <label htmlFor={idMotivo} className={ETICHETTA_CAMPO_ASSENZA}>
               {t('comunicaMotivoLabel')}
             </label>
-            {/* Il campo sollecita un dato di salute di un MINORE (art. 9 GDPR):
-                chi lo legge, per quanto resta e dove sta l'informativa vanno
-                detti QUI, nell'istante in cui il dato si scrive — non solo
-                nell'informativa generale, che nessuno sta leggendo mentre
-                digita «febbre». Stesse parole e stessa POSIZIONE della schermata
-                gemella: sopra il campo, dove non finisce sotto il comando. */}
-            <p id={idMotivoNota} className="font-maven text-xs text-kidville-sub">
-              {ta('motivoPrivacy')}{' '}
-              {/* `LinkInterno` e non `<a target="_blank">`: nella WebView di
-                  Capacitor le schede non esistono e il sistema consegnava
-                  l'informativa a Safari, buttando fuori dall'app il genitore che
-                  stava cercando di capire come viene trattato un dato sanitario
-                  del proprio figlio (R25). Sul web non cambia niente. */}
-              <LinkInterno href="/privacy" className="font-semibold underline">
-                {ta('motivoPrivacyLink')}
-              </LinkInterno>
-            </p>
+            {/* La nota sul trattamento è nel PIEDE, non qui: vedi il commento di
+                `PiedeAzioneAssenza` (R19). «Sopra il campo» non la toglieva dalla
+                fascia coperta, e il suo link eseguiva l'invio invece di aprire
+                l'informativa. Stessa posizione della schermata gemella: le due
+                porte della stessa funzione non divergono. */}
             {/* Svuotare il campo NON cancella il motivo archiviato: lo si dice
                 prima, non dopo aver dichiarato «Assenza aggiornata».
                 ⚠️ E STA SOPRA IL CAMPO (2026-08-08): sotto, nasceva nella fascia
@@ -739,6 +727,22 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
               l'ennesimo 4px di divergenza fra le due porte (12px di qua, 16px
               di là). */}
           <PiedeAzioneAssenza className="-mx-3 -mb-3 rounded-b-2xl bg-kidville-cream px-3 py-3">
+            {/* Chi legge il motivo, per quanto resta, e dove sta l'informativa —
+                accanto al gesto che conferisce il dato, e sempre a schermo.
+                Vedi il commento di `PiedeAzioneAssenza` (R19): sopra il campo
+                restava coperta, e il link eseguiva l'invio. Il legame con la
+                textarea è `aria-describedby`, che non chiede vicinanza. */}
+            <p id={idMotivoNota} className="font-maven text-xs text-kidville-sub">
+              {ta('motivoPrivacy')}{' '}
+              {/* `LinkInterno` e non `<a target="_blank">`: nella WebView di
+                  Capacitor le schede non esistono e il sistema consegnava
+                  l'informativa a Safari, buttando fuori dall'app il genitore che
+                  stava cercando di capire come viene trattato un dato sanitario
+                  del proprio figlio (R25). Sul web non cambia niente. */}
+              <LinkInterno href="/privacy" className="font-semibold underline">
+                {ta('motivoPrivacyLink')}
+              </LinkInterno>
+            </p>
             {fasciaErrore}
             {/* L'ATTESA e il MOTIVO DEL BLOCCO in una riga sola, annunciata
                 (WCAG 4.1.3) e legata al comando (`aria-describedby`).

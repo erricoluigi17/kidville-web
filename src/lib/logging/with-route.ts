@@ -45,6 +45,8 @@ import { logErrore, logEvento, logOk } from './logger';
  *                                                       nessuno ha già loggato l'errore vero
  *   eccezione              → `logErrore`                KV_ERR + Error VERO (stack vero)
  *                                                       + TABELLA, poi re-throw
+ *   NON è una Response     → `logEvento(…, 'error', …)` KV_ERR + TABELLA, con `stato: 500`
+ *                                                       (è quel che Next manda al posto suo)
  *
  * Perché 401/403/404 a `info`: `vaPersistito()` persiste error E warn, e questi 4xx sono
  * frequentissimi (una sessione scaduta ne produce a raffica). A `warn` finirebbero tutti in
@@ -163,9 +165,34 @@ function senzaLanciare(fn: () => void): void {
 function registraEsito(nome: string, res: unknown, ms: number, sessione: boolean): void {
     const stato = statoDi(res);
 
-    // Status illeggibile (handler che non restituisce una Response): non è un guasto
-    // dimostrabile, e il wrapper non inventa guasti. Resta la riga di esito.
-    if (stato === undefined || stato < 400) {
+    // ⚠️ L'HANDLER NON HA RESTITUITO UNA RESPONSE. È il guasto più grave che una rotta possa
+    // avere, ed è CERTO: Next non ha niente da inviare e risponde 500 con corpo vuoto, dopo
+    // aver sollevato «No response is returned from route handler …».
+    //
+    // Fino al 2026-08-08 questo caso ricadeva nel ramo del 200 (`stato === undefined ||
+    // stato < 400` → `logOk`), motivato così: «non è un guasto dimostrabile, e il wrapper non
+    // inventa guasti». Ma emettendo `logOk` il wrapper non si asteneva: inventava un SUCCESSO —
+    // e `logOk` non persiste mai, quindi la riga interrogabile non esisteva proprio. Misurato in
+    // produzione (quinto collaudo, rilievi R3·R7·R12·R16·R24): 73 richieste finite in 500,
+    // 73 righe `KV_OK rid=… rt=parent/presenze/comunica-assenza:POST`, e in `app_log` nessuna
+    // riga del wrapper. L'unica traccia la scriveva `onRequestError`. «Non so com'è andata» e
+    // «è andata bene» sotto lo stesso marker: è l'ambiguità vietata da AGENTS.md §5, nella
+    // forma peggiore — un log che dice attivamente di sì.
+    //
+    // Lo `stato: 500` non è inventato più di quanto lo sia nel ramo ECCEZIONE (che lo scrive da
+    // sempre senza aver visto una risposta): è ciò che Next manda al client in questo esatto
+    // caso, ed è la colonna con cui il repo dichiara di cercare i guasti («dammi i 5xx di
+    // ieri», logger.ts). Senza, la riga più grave del sistema resterebbe fuori da quel filtro.
+    //
+    // La deduplica del 5xx NON si applica: «l'handler non ha restituito una Response» è un
+    // fatto diverso da qualunque cosa la route abbia loggato prima, ed è l'unico che spiega
+    // il 500 vuoto che vede l'utente.
+    if (stato === undefined) {
+        logEvento('route', 'error', { operazione: nome, esito: 'handler-senza-response', stato: 500, ms });
+        return;
+    }
+
+    if (stato < 400) {
         logOk({ ms, rt: nome });
         return;
     }

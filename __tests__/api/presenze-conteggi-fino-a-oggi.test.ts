@@ -20,7 +20,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
-import { FILTRO_FATTI } from '@/lib/presenze/finestra-trascorsa'
+import { filtroFatti } from '@/lib/presenze/finestra-trascorsa'
 
 const SEDE = 'e1111111-1111-4111-8111-111111111111'
 const SEZIONE = 'c1111111-1111-4111-8111-111111111111'
@@ -122,7 +122,11 @@ describe('T26 — `primaria/ore-assenza`: il monte ore conta i giorni trascorsi'
     // misurate di nuovo 5,25 ore perse per un appello che nessuno ha fatto.
     await OreAssenza(new NextRequest(`http://localhost/api/primaria/ore-assenza?sectionId=${SEZIONE}`))
     const or = h.filtri.filter((f) => f.tabella === 'presenze' && f.metodo === 'or').map((f) => f.valore)
-    expect(or).toContain(FILTRO_FATTI)
+    // R15: il filtro porta anche il QUARTO termine (`data.lt.<oggi>`), cioè la
+    // scadenza dell'annuncio. Senza, un'assenza comunicata e mai confermata
+    // dall'appello resta fuori dal monte ore per sempre — e un'assenza storica
+    // ne esce nell'istante in cui il genitore la giustifica.
+    expect(or).toContain(filtroFatti(OGGI))
   })
 })
 

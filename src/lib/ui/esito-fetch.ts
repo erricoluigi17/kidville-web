@@ -594,3 +594,92 @@ export function soloCatalogoDaCorpo(corpoGrezzo: unknown, fallback: string): str
     const corpo = corpoGrezzo as { codice?: unknown } | null;
     return testoDelCodice(corpo?.codice) ?? fallback;
 }
+
+/** Ciò che si sa di una risposta di ERRORE dopo averla letta senza mai lanciare. */
+export interface EsitoErrore {
+    /** Il testo da mostrare: catalogo se il codice è dichiarato, altrimenti il `fallback`. */
+    testo: string;
+    /** Il codice dichiarato dal server, se c'è ed è una stringa. Altrimenti `null`. */
+    codice: string | null;
+    /**
+     * Lo status HTTP. `undefined` solo se la risposta non ne ha uno leggibile (un oggetto
+     * costruito a mano nei test): **non** si ripiega su `0`, che in tabella somiglia a un
+     * codice HTTP vero e mentirebbe.
+     */
+    stato: number | undefined;
+    /**
+     * `false` quando il corpo non era JSON leggibile (500 senza corpo, HTML di un proxy,
+     * risposta troncata). Serve a chi LOGGA: «il server ha rifiutato dicendo perché» e «il
+     * server è morto senza dire niente» sono due fatti diversi e vanno detti in modo diverso.
+     */
+    corpoLetto: boolean;
+}
+
+/**
+ * Legge una risposta di errore SENZA MAI LANCIARE, e senza perdere lo status.
+ *
+ * ─── PERCHÉ ESISTE (R17 del quinto collaudo) ────────────────────────────────
+ *
+ * La forma ripetuta in quattro punti su due schermate era:
+ *
+ *     if (!r.ok) { const corpo = await r.json(); … segnala('invio-respinto', r.status) }
+ *
+ * e presuppone che ogni risposta d'errore porti un corpo JSON. È vero per i rifiuti che la
+ * rotta scrive di suo pugno; NON per gli errori che nascono FUORI dall'handler — il 500 di
+ * Next quando l'handler non restituisce una Response (misurato: `Transfer-Encoding: chunked`
+ * e ZERO byte), il 502/504 di un proxy, una risposta troncata. In quei casi `await r.json()`
+ * lancia dentro il `try`, l'eccezione salta al `catch` esterno — che è scritto per un'altra
+ * cosa, la RETE CADUTA — e il numero di stato, che il codice aveva in mano un istante prima,
+ * viene buttato via prima di arrivare al log.
+ *
+ * Conseguenza misurata: a schermo il messaggio del ramo sbagliato («non sappiamo se l'assenza
+ * è stata registrata», mentre il server aveva risposto eccome) e in `app_log` una riga
+ * `invio-non-riuscito` con `stato` indefinito. Chi indaga dal log non sa nemmeno che il
+ * server ha risposto.
+ *
+ * È il rovescio esatto della regola che il repo si è già dato per i provider esterni
+ * («loggare uno status senza il corpo è il bug»): qui lo status si perde perché il corpo non
+ * si è potuto leggere. Le due metà dell'informazione vanno tenute insieme.
+ *
+ * ─── PERCHÉ QUI E NON NEI COMPONENTI ────────────────────────────────────────
+ *
+ * Perché la stessa forma vive su due schermate («Comunica un'assenza» dell'infanzia e quella
+ * della primaria) e in due gesti ciascuna (invio e annullamento). Una regola valida per due
+ * strade deve vivere in un posto solo: è la lezione che questo ciclo ripete da tre giri, e
+ * l'unico modo perché la prossima schermata la erediti invece di doverla riscoprire.
+ *
+ * Il `catch` esterno del chiamante NON sparisce: resta per la rete davvero caduta (`fetch`
+ * che rigetta), che è un fatto diverso — lì il server non ha risposto affatto, e non si sa
+ * se la scrittura è avvenuta.
+ */
+export async function erroreDaRisposta(res: Response, fallback: string): Promise<EsitoErrore> {
+    const stato = statoDi(res);
+    let corpo: unknown;
+    let corpoLetto = false;
+    try {
+        corpo = await res.json();
+        corpoLetto = true;
+    } catch {
+        // Corpo assente, troncato o non JSON. Non è un caso da segnalare qui: è
+        // un'informazione da restituire (`corpoLetto: false`), perché chi chiama è l'unico
+        // che sa quale operazione stava facendo e quindi come raccontarlo.
+        corpo = null;
+    }
+    const codice = (corpo as { codice?: unknown } | null)?.codice;
+    return {
+        testo: soloCatalogoDaCorpo(corpo, fallback),
+        codice: typeof codice === 'string' ? codice : null,
+        stato,
+        corpoLetto,
+    };
+}
+
+/** Lo status, letto in modo difensivo: `res` è una `Response` solo per contratto. */
+function statoDi(res: unknown): number | undefined {
+    try {
+        const s = (res as { status?: unknown } | null | undefined)?.status;
+        return typeof s === 'number' && Number.isFinite(s) ? s : undefined;
+    } catch {
+        return undefined;
+    }
+}

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { PublicContrastButton } from '@/components/ui/PublicContrastButton';
+import { PublicPageHeader } from '@/components/ui/PublicPageHeader';
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni';
 
 // Pagina PUBBLICA (nessun login): informativa GDPR. Serve anche come
@@ -77,24 +77,21 @@ const UL = `list-disc space-y-1.5 pl-5 ${P}`;
 // l'informativa sui dati dei minori con la pronuncia sbagliata: WCAG 3.1.2
 // «Lingua delle parti». Il giorno in cui il testo verrà tradotto, questo attributo
 // va tolto — il lock `pagine-legali` lo pretende, e fallisce se resta.
-export default function PrivacyPage() {
+// `searchParams` serve al solo `?da=`: il percorso da cui si è arrivati, che la
+// riga di testa usa come ritorno. `PublicPageHeader` lo filtra (solo percorsi
+// interni), perché è un valore che scrive chiunque sappia comporre un URL.
+export default async function PrivacyPage({ searchParams }: { searchParams?: Promise<{ da?: string }> }) {
+  const { da } = (await searchParams) ?? {};
+
   return (
     <main lang="it" className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
-        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ. Il comando di Alto
-            Contrasto viveva solo nei menu account, cioè dopo il login: su una
-            pagina pubblica — che per lo store è anche il recapito legale — chi ne
-            ha bisogno non poteva raggiungerlo. Sta in un componente unico proprio
-            perché queste cinque pagine non ricomincino a divergere. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
-          >
-            <span aria-hidden="true">←</span> Torna indietro
-          </Link>
-          <PublicContrastButton />
-        </div>
+        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ, in un componente
+            unico. Il comando di Alto Contrasto era già condiviso; il link di
+            RITORNO no, ed è rimasto italiano a mano mentre l'altro si traduceva
+            (R13). Ora la riga è UNA, e il ritorno torna dove il mittente dice
+            (`?da=`), perché nel guscio nativo non ci sono schede da chiudere. */}
+        <PublicPageHeader ritorno={da} />
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">
           <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-kidville-green sm:text-4xl">

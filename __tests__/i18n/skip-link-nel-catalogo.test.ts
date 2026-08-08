@@ -263,6 +263,99 @@ describe('lock localizzazione · lo skip link ha una chiave, e i layout non scri
 })
 
 /**
+ * R13 · LA RIGA DI TESTA DELLE PAGINE PUBBLICHE, TENUTA INSIEME PER COSTRUZIONE.
+ *
+ * ─── PERCHÉ STA QUI E NON IN UN LOCK NUOVO ───────────────────────────────────
+ * È la stessa firma dello skip link — un comando di NAVIGAZIONE scritto a mano
+ * in italiano dentro un documento che può essere `lang="en"` — e la lezione di
+ * questo file è che una regola valida per più strade vive in un posto solo.
+ *
+ * ─── COSA ERA SUCCESSO ───────────────────────────────────────────────────────
+ * Le cinque superfici pubbliche condividevano la riga di testa per CONVENZIONE:
+ * il comando di alto contrasto era stato estratto in `PublicContrastButton`, il
+ * link di ritorno era rimasto COPIATO in ogni pagina. Due su cinque sono poi
+ * passate al catalogo, tre no — e con l'app in inglese la riga rendeva
+ * «← Torna indietro» accanto a «High contrast». Il commento di quelle pagine
+ * dichiarava proprio l'intento opposto («sta in un componente unico proprio
+ * perché queste cinque pagine non ricomincino a divergere»), ma copriva solo la
+ * metà destra della riga.
+ *
+ * ─── PERCHÉ NON BASTA «METTERE LA CHIAVE» ────────────────────────────────────
+ * Perché la causa non è la stringa: è che la riga NON è un componente. Finché
+ * ogni pagina la ridisegna, la prossima pagina pubblica nascerà con la propria
+ * copia — che è come sono nate queste tre. Il lock pretende quindi il
+ * COMPONENTE, non il letterale giusto.
+ *
+ * ─── E `lang` ────────────────────────────────────────────────────────────────
+ * Le tre pagine legali dichiarano `<main lang="it">`, ed è corretto: il testo
+ * legale È italiano per scelta. Ma un comando di navigazione tradotto dentro
+ * quel contenitore verrebbe letto da uno screen reader inglese con fonetica
+ * italiana — lo stesso WCAG 3.1.2 che quell'attributo serve a rispettare. Il
+ * componente porta quindi il proprio `lang`.
+ */
+describe('lock localizzazione · la riga di testa delle pagine pubbliche', () => {
+    const COMPONENTE = 'src/components/ui/PublicPageHeader.tsx'
+    const PAGINE_PUBBLICHE = [
+        'src/app/privacy/page.tsx',
+        'src/app/termini/page.tsx',
+        'src/app/assistenza/page.tsx',
+        'src/app/cancellazione-account/page.tsx',
+    ] as const
+
+    it('la chiave del comando di ritorno c’è nelle due lingue, e non è la stessa parola', () => {
+        const it = catalogo('it', 'common').tornaIndietro
+        const en = catalogo('en', 'common').tornaIndietro
+        expect(typeof it, 'manca messages/it/common.json → tornaIndietro').toBe('string')
+        expect(typeof en, 'manca messages/en/common.json → tornaIndietro').toBe('string')
+        expect(
+            en,
+            `messages/en/common.json → tornaIndietro = «${en}» è identico all’italiano: una chiave ` +
+            'copiata supera la parità dei cataloghi e a schermo resta la lingua sbagliata.',
+        ).not.toBe(it)
+    })
+
+    it('nessuna pagina pubblica scrive a mano il comando di ritorno', () => {
+        const it = catalogo('it', 'common').tornaIndietro
+        const guasti = PAGINE_PUBBLICHE.filter((f) => nodiDiTesto(leggi(f)).some((t) => t.includes(it)))
+        expect(
+            guasti,
+            `Queste pagine scrivono «${it}» dentro il TSX invece di leggerlo dal catalogo:\n  ` +
+            `${guasti.join('\n  ')}\n` +
+            'Con l’app in inglese la riga di testa esce mista — comando di sinistra in italiano, ' +
+            'comando di destra tradotto — e il ritorno è l’unica via d’uscita di quelle pagine.',
+        ).toEqual([])
+    })
+
+    it('tutte e quattro montano lo STESSO componente di testa', () => {
+        const senza = PAGINE_PUBBLICHE.filter((f) => !leggi(f).includes('PublicPageHeader'))
+        expect(
+            senza,
+            `Queste pagine ridisegnano la riga di testa per conto proprio:\n  ${senza.join('\n  ')}\n` +
+            'Finché la riga è copiata, la metà tradotta e la metà a mano possono ridivergere — è ' +
+            'esattamente come sono nate le tre pagine del rilievo. Va montato `PublicPageHeader`.',
+        ).toEqual([])
+    })
+
+    it('il componente legge il catalogo e porta il proprio `lang`', () => {
+        const sorgente = leggi(COMPONENTE)
+        expect(sorgente, `${COMPONENTE} non legge common.tornaIndietro dal catalogo`).toContain("'tornaIndietro'")
+        expect(
+            sorgente,
+            `${COMPONENTE} non dichiara \`lang\` sul comando di ritorno: dentro <main lang="it"> — che ` +
+            'è giusto per il testo legale — un comando tradotto verrebbe pronunciato in italiano da uno ' +
+            'screen reader inglese (WCAG 3.1.2).',
+        ).toMatch(/lang=\{/)
+    })
+
+    it('la riga di testa tiene insieme ENTRAMBI i comandi, non solo quello di destra', () => {
+        // Il difetto è nato perché uno dei due comandi era già condiviso e
+        // l'altro no: se il componente montasse solo il ritorno, la prossima
+        // pagina rifarebbe a mano il contrasto e la storia ricomincerebbe.
+        expect(leggi(COMPONENTE)).toContain('PublicContrastButton')
+    })
+})
+
+/**
  * L'ECCEZIONE CHE HA UNA RAGIONE STRUTTURALE, E QUINDI NON SPARIRÀ.
  *
  * `src/app/global-error.tsx` è l'unico componente del repo che disegna il

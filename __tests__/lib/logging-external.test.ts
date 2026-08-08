@@ -239,6 +239,43 @@ describe('il battito di successo', () => {
         expect((await rigaPersistita()).messaggio).toBe('/v1/projects/kidville-1/messages:send');
     });
 
+    /**
+     * LA FORMA GEMELLA DI R3/R7/R12/R16/R24, sull'altro canale.
+     *
+     * `ok(res)` era `try { return res.ok === true } catch { return true }`, col commento
+     * «risposta illeggibile: non si inventa un guasto». È lo stesso ragionamento che in
+     * `withRoute` ha prodotto 73 righe di successo su altrettante richieste morte: «non lo
+     * so» finiva nel ramo di «è andata bene», e su questo canale il ramo di «è andata bene»
+     * emette il BATTITO DI SUCCESSO di un evento critico — l'email, la push, la fattura.
+     *
+     * Astenersi dall'inventare un guasto è giusto; dichiarare un successo che non si è
+     * potuto verificare è la cosa che questo repo ha già pagato per mesi (le credenziali
+     * «inviate» mentre il provider rispondeva 403). Il valore di ritorno NON cambia — non è
+     * il logger a decidere se il chiamante debba riprovare — ma la riga smette di dire di sì.
+     */
+    it('risposta ILLEGGIBILE: non è un successo dichiarato, è un `warn` che lo dice', async () => {
+        const { externalFetch } = await carica();
+        // Un getter ostile su `ok`: la risposta c'è, ma non si può interrogare.
+        globalThis.fetch = vi.fn(async () => {
+            const res = new Response('{}', { status: 200 });
+            Object.defineProperty(res, 'ok', { get() { throw new Error('ok ostile'); } });
+            return res;
+        }) as unknown as typeof fetch;
+
+        await externalFetch('resend', 'https://api.resend.com/emails', undefined, {
+            evento: 'email',
+            campi: { operazione: 'sendEmail' },
+        });
+
+        const r = await rigaPersistita();
+        expect(
+            r.livello,
+            'una risposta che non si è potuta leggere è stata registrata come battito di successo',
+        ).toBe('warn');
+        const campi = (r.contestoExtra as { campi?: Record<string, unknown> } | undefined)?.campi;
+        expect(campi?.esito).toBe('esito-illeggibile');
+    });
+
     it('e il path passa comunque da `redigiPath`: un id nel path del provider non si logga', async () => {
         const { externalFetch } = await carica();
         globalThis.fetch = rispondi('{}', 200);

@@ -682,8 +682,28 @@ describe('S19 §3 · pagine pubbliche — l\'Alto Contrasto esiste anche prima d
   it.each(PUBBLICHE)('%s monta il comando di Alto Contrasto e il marcatore di superficie', (_rotta, file) => {
     // Si guarda il CODICE, non i commenti: vedi `codice()`. Con la prosa dentro,
     // togliere il componente lasciava il test verde.
+    //
+    // ⚠️ IL COMANDO PUÒ ARRIVARE PER DUE STRADE (R13). Dal 2026-08-08 la riga di
+    // testa delle pagine pubbliche è un componente unico — `PublicPageHeader` —
+    // che porta con sé ritorno E alto contrasto: era il difetto opposto, il
+    // ritorno copiato a mano in ogni pagina mentre il contrasto era già
+    // condiviso. Montare la riga vale quindi quanto montare il bottone, ma la
+    // catena si VERIFICA (riga sotto) invece di darla per buona: se un giorno
+    // `PublicPageHeader` smettesse di montare il comando, le quattro pagine
+    // resterebbero senza e questo test non se ne accorgerebbe.
     const src = codice(file)
-    expect(src, `${file}: nessun comando di Alto Contrasto in pagina`).toContain('<PublicContrastButton')
+    const viaRiga = src.includes('<PublicPageHeader')
+    expect(
+      viaRiga || src.includes('<PublicContrastButton'),
+      `${file}: nessun comando di Alto Contrasto in pagina (né diretto, né via <PublicPageHeader>)`,
+    ).toBe(true)
+    if (viaRiga) {
+      expect(
+        codice('src/components/ui/PublicPageHeader.tsx'),
+        'PublicPageHeader non monta più il comando di Alto Contrasto: le pagine che si affidano ' +
+        'a lui sono rimaste senza, e nessuna di loro lo saprebbe',
+      ).toContain('<PublicContrastButton')
+    }
     expect(src, `${file}: manca il marcatore \`kv-public\``).toContain('kv-public')
   })
 

@@ -1,9 +1,8 @@
 import type { Metadata } from 'next'
 import type { ReactNode } from 'react'
-import Link from 'next/link'
 import { getTranslations } from 'next-intl/server'
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher'
-import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
+import { PublicPageHeader } from '@/components/ui/PublicPageHeader'
 import { CancellazioneForm } from './CancellazioneForm'
 
 // Pagina PUBBLICA (nessun login) di cancellazione account (C5 §1 — Google Play
@@ -24,29 +23,28 @@ export async function generateMetadata(): Promise<Metadata> {
   }
 }
 
-export default async function CancellazioneAccountPage() {
+// `searchParams` serve al solo `?da=`: il percorso da cui si è arrivati, che la
+// riga di testa usa come ritorno (nel guscio nativo non ci sono schede da
+// chiudere). `PublicPageHeader` lo filtra — solo percorsi interni.
+export default async function CancellazioneAccountPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ da?: string }>
+}) {
   const t = await getTranslations('public')
-  const tc = await getTranslations('common')
   const tp = await getTranslations('profilo')
+  const { da } = (await searchParams) ?? {}
 
   return (
     <main className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
         {/* Alto Contrasto accanto al selettore di lingua: sono i due comandi che
             servono PRIMA di poter entrare nell'app, e finora c'era solo la lingua.
-            Il componente è unico per tutte le pagine pubbliche. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
-          >
-            <span aria-hidden="true">←</span> {tc('tornaIndietro')}
-          </Link>
-          <div className="flex flex-wrap items-center gap-2">
-            <PublicContrastButton />
-            <LanguageSwitcher />
-          </div>
-        </div>
+            La riga INTERA — ritorno compreso — è ora un componente unico: era il
+            pezzo che mancava, e le altre tre pagine ci erano divergute (R13). */}
+        <PublicPageHeader ritorno={da}>
+          <LanguageSwitcher />
+        </PublicPageHeader>
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">
           <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-kidville-green sm:text-4xl">

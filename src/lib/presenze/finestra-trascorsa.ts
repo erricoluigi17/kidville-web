@@ -88,6 +88,54 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 // a posteriori (6 presenze, 3 ritardi, 1 uscita, tutte senza `registrato_da`)
 // diventerebbe di colpo «un annuncio» e uscirebbe dal registro.
 //
+// ─── L'ANNUNCIO HA UNA FINE, E CHI LA DECIDE (R15) ───────────────────────────
+//
+// La congiunzione qui sopra descriveva l'annuncio SENZA il giorno di cui parla:
+// `eAssenzaSoloAnnunciata` non riceveva `riga.data`. «Annuncio» era così una
+// proprietà PERMANENTE della riga invece che una proprietà del giorno in cui la
+// si guarda — e un annuncio che non scade non diventa mai un fatto. Due
+// conseguenze, misurate entrambe:
+//
+//  (a) un'assenza comunicata dal genitore e mai confermata dall'appello restava
+//      esclusa PER SEMPRE dal registro del docente, dal monte ore della
+//      primaria — il numero con cui si valuta la validità dell'anno — dal
+//      riepilogo della home e dalla cronologia. E l'appello che non arriva non è
+//      un'ipotesi: il cruscotto conta apposta gli `appelli_mancanti`.
+//  (b) un'assenza VERA già a registro e priva di `registrato_da` (le 36 righe
+//      storiche di cui sopra) SPARIVA da tutti quei conteggi nell'istante in cui
+//      il genitore la giustificava, perché `giustifica:POST` scrive
+//      `giustificata_da` su una riga che esiste già e non tocca `registrato_da`.
+//      Cioè: il gesto che l'app chiede al genitore cancellava l'assenza del
+//      figlio dal registro. Il commento precedente enumerava i controesempi
+//      comodi — presenze, ritardi, uscita — cioè tutto TRANNE le assenze, che
+//      sono esattamente le righe che il monte ore serve a contare.
+//
+// CHI DECIDE CHE UN ANNUNCIO È DIVENTATO UN FATTO. Due giudici, in quest'ordine:
+//
+//  1. L'APPELLO, quando c'è. `attendance/daily:POST` e `primaria/appello:POST`
+//     scrivono `registrato_da`: il terzo termine cade e la riga è un fatto del
+//     docente nello stesso istante. Nessuna attesa.
+//  2. IL TEMPO, quando l'appello non arriva. A mezzanotte del giorno annunciato
+//     la comunicazione del genitore smette di essere un'affermazione sul futuro
+//     e diventa l'unica affermazione esistente su un giorno concluso — per di
+//     più FIRMATA (`giustificata_da` + firma FEA). Contarla è più fedele che
+//     ignorarla: l'alternativa è dire «tuo figlio non è mai stato assente» a chi
+//     l'assenza l'ha dichiarata lui.
+//
+// PERCHÉ NON DAL GIORNO STESSO. Finché il giorno corre, l'appello può ancora
+// smentire l'annuncio, ed è il solo che sa chi è entrato dal cancello. `oggi` è
+// anche il valore PREIMPOSTATO del modulo, cioè il caso più frequente: contarlo
+// subito rimetterebbe in piedi il difetto che questa regola è nata per chiudere
+// (badge «ASSENTE» e 5,25 ore perse alle 7:50 del mattino).
+//
+// LA FINESTRA È GIÀ SCRITTA ALTROVE, E QUESTO È IL PUNTO. `comunica-assenza:
+// DELETE` rifiuta con 400 `ASSENZA_DATA_PASSATA` esattamente `data < oggi`:
+// finché il genitore può ancora RITIRARE la comunicazione, quella comunicazione
+// è un annuncio; quando non può più, è un fatto. Le due regole coincidono, e da
+// oggi sono la stessa funzione (`finestraAnnuncioAperta`) invece di due confronti
+// gemelli in due file — «una regola valida per due strade deve vivere in un posto
+// solo», che è la lezione già annotata in `@/lib/presenze/limiti-testo`.
+//
 // ─── L'ECCEZIONE, DICHIARATA ─────────────────────────────────────────────────
 //
 // `admin/presenze/realtime:GET` conta le comunicazioni di oggi ed è GIUSTO così:
@@ -142,14 +190,37 @@ export function limitaAOggi<Q extends { lte(colonna: string, valore: string): Q 
 export const COLONNE_SORGENTE = 'stato, registrato_da, giustificata_da'
 
 /**
- * Il filtro PostgREST che tiene i soli FATTI, da passare a `.or()`.
+ * I tre termini che negano la SORGENTE dell'annuncio, da soli.
  *
  * `or=(a,b,c)` è `a OR b OR c`, cioè la NEGAZIONE della congiunzione che
  * definisce l'annuncio (De Morgan). Sta in una costante e non in tre stringhe
  * sparse perché una virgola di troppo qui non rompe niente: toglie in silenzio
  * righe vere dal registro di un bambino.
+ *
+ * ⚠️ NON si usa da sola in una query: senza il quarto termine sulla DATA un
+ * annuncio non scade mai (R15). Il filtro completo lo compone `filtroFatti()`,
+ * ed è quello che `limitaAiFatti()` manda a PostgREST.
  */
-export const FILTRO_FATTI = 'giustificata_da.is.null,registrato_da.not.is.null,stato.neq.assente'
+export const FILTRO_NON_ANNUNCIO = 'giustificata_da.is.null,registrato_da.not.is.null,stato.neq.assente'
+
+/**
+ * Il filtro PostgREST che tiene i soli FATTI, da passare a `.or()`.
+ *
+ * Quattro termini in disgiunzione: i tre della sorgente PIÙ `<colonna>.lt.<oggi>`,
+ * perché una riga che parla di un giorno già concluso è un fatto qualunque sia
+ * la sua provenienza. È la negazione di
+ * `stato='assente' AND giustificata_da IS NOT NULL AND registrato_da IS NULL AND data >= oggi`.
+ *
+ * `oggi` viene interpolato in una stringa che PostgREST interpreta come
+ * espressione: se non ha la forma `YYYY-MM-DD` si ricade sul giorno del server
+ * invece di lasciar passare termini arbitrari dentro `or=(…)`. Nessun chiamante
+ * lo sporca oggi — tutti passano `oggiFiscaleISO()` — e il presidio serve perché
+ * continui a essere vero.
+ */
+export function filtroFatti(oggi: string = oggiFiscaleISO(), colonna: string = 'data'): string {
+  const giorno = FORMA_DATA.test(oggi) ? oggi.slice(0, 10) : oggiFiscaleISO()
+  return `${FILTRO_NON_ANNUNCIO},${colonna}.lt.${giorno}`
+}
 
 /** La forma minima con cui una riga dichiara la propria provenienza. */
 export interface SorgenteRiga {
@@ -159,14 +230,44 @@ export interface SorgenteRiga {
 }
 
 /**
- * `true` se la riga è un'assenza che il genitore ha ANNUNCIATO e che l'appello
- * non ha ancora lavorato: un'affermazione sul futuro prossimo, non un fatto.
+ * `true` finché il giorno di cui una comunicazione parla non è concluso.
  *
- * I tre termini, e perché servono tutti e tre, stanno nella testata del modulo.
+ * È la finestra dell'ANNUNCIO — e la stessa dell'ANNULLAMENTO: fino a quando il
+ * genitore può ritirare ciò che ha comunicato (`comunica-assenza:DELETE`
+ * rifiuta `data < oggi`), quella comunicazione non afferma un fatto.
+ *
+ * Una data mancante o illeggibile la lascia APERTA, ed è il verso prudente: chi
+ * chiama senza data ha già fissato il giorno per conto suo (`parent/presenze:GET`
+ * legge la riga di oggi con `.eq('data', oggi)`), e promuovere a fatto una riga
+ * di cui non si sa il giorno significa scrivere «ASSENTE» sulla home di un
+ * bambino che è a scuola.
  */
-export function eAssenzaSoloAnnunciata(riga: SorgenteRiga | null | undefined): boolean {
+export function finestraAnnuncioAperta(
+  data: string | null | undefined,
+  oggi: string = oggiFiscaleISO(),
+): boolean {
+  if (typeof data !== 'string' || !FORMA_DATA.test(data)) return true
+  return data.slice(0, 10) >= oggi
+}
+
+/**
+ * `true` se la riga è un'assenza che il genitore ha ANNUNCIATO, che l'appello
+ * non ha ancora lavorato e il cui GIORNO non è ancora concluso: un'affermazione
+ * sul futuro prossimo, non un fatto.
+ *
+ * I quattro termini, e perché servono tutti e quattro, stanno nella testata del
+ * modulo. Il quarto — la data — è quello che dà all'annuncio una fine: senza,
+ * un'assenza annunciata restava esclusa dai conteggi anche a mesi di distanza, e
+ * un'assenza storica ne veniva espulsa nell'istante in cui il genitore la
+ * giustificava (R15).
+ */
+export function eAssenzaSoloAnnunciata(
+  riga: (SorgenteRiga & { data?: string | null }) | null | undefined,
+  oggi: string = oggiFiscaleISO(),
+): boolean {
   if (!riga) return false
-  return riga.stato === 'assente' && riga.giustificata_da != null && riga.registrato_da == null
+  if (riga.stato !== 'assente' || riga.giustificata_da == null || riga.registrato_da != null) return false
+  return finestraAnnuncioAperta(riga.data, oggi)
 }
 
 /**
@@ -179,7 +280,7 @@ export function eFattoDelRegistro(
   oggi: string = oggiFiscaleISO(),
 ): boolean {
   if (!riga) return false
-  return eGiornoTrascorso(riga.data, oggi) && !eAssenzaSoloAnnunciata(riga)
+  return eGiornoTrascorso(riga.data, oggi) && !eAssenzaSoloAnnunciata(riga, oggi)
 }
 
 /** Le sole righe che affermano un fatto. Il campo data lo dichiara il chiamante. */
@@ -200,5 +301,5 @@ export function soloFatti<T extends SorgenteRiga>(
 export function limitaAiFatti<
   Q extends { lte(colonna: string, valore: string): Q; or(filtro: string): Q },
 >(query: Q, colonna: string = 'data', oggi: string = oggiFiscaleISO()): Q {
-  return limitaAOggi(query, colonna, oggi).or(FILTRO_FATTI)
+  return limitaAOggi(query, colonna, oggi).or(filtroFatti(oggi, colonna))
 }

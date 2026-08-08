@@ -11,6 +11,11 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { formattaIstante } from '@/i18n/config'
 import { rateLimit } from '@/lib/security/rate-limit'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
+// La finestra dell'ANNULLAMENTO è la stessa dell'ANNUNCIO, e da R15 è la stessa
+// funzione: finché il genitore può ritirare la comunicazione, quella
+// comunicazione non afferma un fatto e i conteggi la tengono fuori. Erano due
+// confronti gemelli in due file — la forma in cui due regole divergono.
+import { finestraAnnuncioAperta } from '@/lib/presenze/finestra-trascorsa'
 // ═══ IL TETTO SUI GIORNI HA UN POSTO SOLO, E NON È PIÙ QUESTO ════════════════
 //
 // Fino al 2026-08-08 il numero e la funzione che lo applica vivevano QUI e, in
@@ -365,8 +370,13 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // a lunghezza fissa (zero-padded): su questo formato l'ordine dei caratteri
     // E l'ordine cronologico coincidono, e non c'è nessun `Date` da costruire —
     // cioè nessun fuso da sbagliare una seconda volta.
+    //
+    // Il confronto è UNO SOLO, e sta in `finestraAnnuncioAperta`: è la stessa
+    // soglia che decide se una comunicazione si può ancora ritirare (DELETE) e
+    // se conta come un fatto nei registri (R15). Erano tre confronti gemelli in
+    // tre punti, cioè tre occasioni di divergere.
     const oggi = oggiFiscaleISO()
-    if (data < oggi) {
+    if (!finestraAnnuncioAperta(data, oggi)) {
       logRifiuto('parent/presenze/comunica-assenza:POST', 'ASSENZA_DATA_PASSATA', { alunno_id: studentId, stato: 400 })
       return NextResponse.json(
         { error: 'La data indicata è già passata', codice: 'ASSENZA_DATA_PASSATA' },
@@ -900,7 +910,7 @@ export const DELETE = withRoute('parent/presenze/comunica-assenza:DELETE', async
     // non annullabili dall'interfaccia, cioè trasformare un difetto già chiuso
     // alla fonte in un dato che nessun genitore può più togliersi di dosso.
     // L'annullamento è l'unica via d'uscita: resta aperta.
-    if (data < oggiFiscaleISO()) {
+    if (!finestraAnnuncioAperta(data)) {
       logRifiuto('parent/presenze/comunica-assenza:DELETE', 'ASSENZA_DATA_PASSATA', {
         alunno_id: studentId,
         stato: 400,

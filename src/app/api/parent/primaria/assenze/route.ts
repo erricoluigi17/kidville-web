@@ -88,6 +88,22 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
     // giustifica, e non si giustifica un'assenza che non è ancora avvenuta.
     // Ciò che ha comunicato lo rivede — e può annullarlo — in `comunicate`
     // (`parent/presenze:GET`).
+    //
+    // ─── E L'ANNUNCIO SCADE (R15) ───────────────────────────────────────────
+    //
+    // Il filtro dei conteggi si può tenere sull'ELENCO solo perché da R15
+    // l'annuncio ha una fine. Prima no: `annuncio` era una proprietà permanente
+    // della riga, quindi un'assenza VERA di luglio — di quelle senza
+    // `registrato_da` — usciva da questa cronologia nell'istante in cui il
+    // genitore la giustificava. Cioè spariva per il gesto che questa stessa
+    // schermata gli chiede di fare, che è il modo più diretto per fargli credere
+    // che la giustifica non sia arrivata.
+    //
+    // Ciò che oggi resta fuori dall'elenco è una riga sola: l'assenza annunciata
+    // PER OGGI e non ancora lavorata dall'appello. Non ha niente da giustificare
+    // (nasce già giustificata, con la firma del genitore) e il genitore la vede —
+    // e la ritira — fra le «assenze comunicate» della home. Dal giorno dopo entra
+    // qui insieme a tutte le altre.
     const { data: presenze, error: presenzeErr } = await limitaAiFatti(
       supabase
         .from('presenze')

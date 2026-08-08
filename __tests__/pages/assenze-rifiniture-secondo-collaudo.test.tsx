@@ -202,6 +202,47 @@ describe('M17 · il pulsante di invio non finisce mai sotto la barra di navigazi
         ).toBe(`calc(${altezzaPillola![1]}px+max(12px,env(safe-area-inset-bottom)))`);
     });
 
+    // =========================================================================
+    // R22 del quinto collaudo — LA VARIABILE MENTE DI 2 PIXEL.
+    //
+    // Misurato in Chrome a 390×640: la barra occupa 74px
+    // (`getBoundingClientRect().height` del contenitore `fixed`), la variabile ne
+    // dichiara 72. I 2px mancanti sono il `border` del contenitore della pillola
+    // — 1px sopra e 1px sotto — che NON compare in nessuna delle due grandezze
+    // che il test qui sopra legge: né nell'altezza del `<nav>` né nel
+    // `paddingBottom`. Il commento accanto alla variabile diceva che il numero è
+    // «la MISURA della barra vera, non una stima», ma la misura la RICOMPONE dal
+    // sorgente, e una ricomposizione può dimenticare un pezzo. L'ha dimenticato.
+    //
+    // Il rimedio non è aggiungere 2px alla formula — sarebbe un'altra
+    // ricomposizione, con un altro pezzo che domani può mancare: è TOGLIERE dal
+    // flusso l'unica parte che la formula non sa vedere. Un contorno disegnato
+    // con `box-shadow: inset` occupa zero pixel e si vede identico, e da lì in
+    // poi «altezza della pillola + margine» è di nuovo l'altezza VERA.
+    // =========================================================================
+    it('nessuna parte della barra sfugge alla formula: il contorno non occupa pixel', () => {
+        const nav = fs.readFileSync(
+            path.join(RADICE, 'src', 'components', 'features', 'parent', 'BottomNav.tsx'),
+            'utf8',
+        );
+        // Il contenitore della pillola: quello che porta il raggio e l'ombra, e
+        // che sta fra il `<div class="fixed …">` e il `<nav>`.
+        const pillola = nav.match(/className="([^"]*rounded-\[26px\][^"]*)"/);
+        expect(pillola, 'il contenitore della pillola non è più riconoscibile dal suo raggio').not.toBeNull();
+        expect(
+            pillola![1],
+            'il contenitore della pillola porta un `border`: 1px sopra e 1px sotto che la formula di ' +
+                '`--kv-bottomnav-h` non conta, e che il piede appiccicato paga come 2px di ' +
+                'sovrapposizione (a 390×720 sono 11px del pulsante coperti su 54). Il contorno si ' +
+                'disegna con `shadow-[inset_…]`, che non occupa altezza.',
+        ).not.toMatch(/(^|\s)border(\s|-\S+\s|$)/);
+        expect(
+            pillola![1],
+            'tolto il `border`, il filo chiaro attorno alla pillola deve restare: si ridisegna come ' +
+                'anello INTERNO (`inset`), non si cancella',
+        ).toMatch(/inset_/);
+    });
+
     it('il pulsante «COMUNICA ASSENZA» sta APPOGGIATO sopra la barra, non sotto', async () => {
         render(<ParentAttendancePage />);
         const invia = await screen.findByRole('button', { name: /^Comunica assenza$/i });
@@ -225,6 +266,197 @@ describe('M17 · il pulsante di invio non finisce mai sotto la barra di navigazi
         // Sotto la barra (z-50), mai sopra: un pulsante che copre la navigazione
         // sarebbe lo stesso difetto al contrario.
         expect(ricovero!.className).toMatch(/(^|\s)z-40(\s|$)/);
+    });
+});
+
+// =============================================================================
+// R21 del quinto collaudo — «APPOGGIATO SOPRA LA BARRA» NON BASTA: `sticky` PUÒ
+// NON RIUSCIRCI, E SUL PANNELLO CORTO DELLA PRIMARIA NON CI RIUSCIVA.
+//
+// Il test qui sopra verifica che il piede DICHIARI `bottom: var(--kv-bottomnav-h)`.
+// Dichiararlo però non basta: `position: sticky` non può sollevare una scatola
+// oltre il bordo alto del proprio blocco contenitore. Sulla card della primaria
+// quel blocco è il pannello crema, che sopra il piede porta ~280px di contenuto e
+// si apre a metà schermata: il sollevamento richiesto su un telefono da 640px è
+// di 364px, quello disponibile ~270. Misurato a 390×640, scroll 40:
+//
+//   posizione statica del piede   853→932
+//   posizione richiesta (bottom:)  489→568
+//   posizione RESA                 571→650      ← bloccata dal bordo del pannello
+//
+// Con la barra che comincia a 566, il pulsante è coperto al 100% e
+// `page.mouse.click` al suo centro apre /parent/avvisi. Misurato di nuovo il
+// 2026-08-08 in Chrome sul server locale, matrice a 390px di larghezza:
+//   568→54/54 · 600→54/54 · 640→54/54 · 667→54/54 · 690→42/54 · 700→32/54 ·
+//   720→12/54 · 740→0 · 844→0    (la gemella /parent/attendance: 0 a tutte)
+//
+// LA DOMANDA GIUSTA non è quanto spazio riservare — è che cosa GARANTISCE che il
+// comando sia raggiungibile a qualunque altezza. La risposta sta nella
+// definizione dello sticky (CSS Position 3): il rettangolo di vincolo è il
+// padding box del blocco contenitore **rientrato dei margini della scatola
+// appiccicata, e un margine NEGATIVO lo allarga**. Un margine negativo di due
+// schermate, compensato da uno spaziatore della stessa altezza, dà al piede una
+// riserva di sollevamento che nessun pannello corto può togliergli — senza
+// spostare il flusso di un pixel e senza cambiare l'albero delle due schermate.
+//
+// Verificato su Chrome (Blink) E su WebKit (il motore della WebView iOS) con un
+// documento minimo: i due pannelli restano alti uguali, e il piede con la
+// riserva si solleva di 900px dove quello senza si ferma al bordo. I numeri di
+// quelle due prove sono il controllo positivo del modello qui sotto.
+// =============================================================================
+describe('R21 · il comando resta raggiungibile a QUALUNQUE altezza di schermo', () => {
+    /**
+     * DOVE VIENE RESO un piede `position: sticky; bottom: X`.
+     *
+     * Tre numeri e una regola sola: la scatola scende dalla sua posizione statica
+     * fino al bersaglio, ma non può salire sopra il limite del blocco contenitore.
+     *   limiteSuperiore = padding box del contenitore + margine SUPERIORE del piede
+     *                     (negativo ⇒ il limite si alza, ed è tutto il rimedio)
+     */
+    function piedeReso(m: {
+        limiteSuperiore: number;
+        staticoTop: number;
+        altezza: number;
+        viewportH: number;
+        barraH: number;
+    }) {
+        const bersaglioTop = m.viewportH - m.barraH - m.altezza;
+        const top = Math.max(m.limiteSuperiore, Math.min(m.staticoTop, bersaglioTop));
+        const lineaBarra = m.viewportH - m.barraH;
+        return { top, bottom: top + m.altezza, coperti: Math.max(0, top + m.altezza - lineaBarra) };
+    }
+
+    it('CONTROLLO POSITIVO: il modello riproduce le misure fatte nel browser', () => {
+        // ① e ② — documento minimo, Chrome e WebKit, viewport 390×640, barra 74px,
+        //          piede alto 54px, pannello con 260px di contenuto sopra il piede.
+        //          Senza riserva il piede si ferma sul bordo del pannello…
+        expect(
+            piedeReso({ limiteSuperiore: 912, staticoTop: 1172, altezza: 54, viewportH: 640, barraH: 74 }).top,
+        ).toBe(912);
+        //          …con una riserva di 100vh (640px) arriva a 1810, esattamente
+        //          dove entrambi i motori l'hanno reso.
+        expect(
+            piedeReso({ limiteSuperiore: 1810, staticoTop: 2710, altezza: 54, viewportH: 640, barraH: 74 }).top,
+        ).toBe(1810);
+        // ③ — e quando il bersaglio è più BASSO della posizione statica il piede
+        //     non si muove: `bottom` solleva, non spinge giù. (Misurato: 310.)
+        expect(
+            piedeReso({ limiteSuperiore: -590, staticoTop: 310, altezza: 54, viewportH: 640, barraH: 74 }).top,
+        ).toBe(310);
+        // ④ — la misura del collaudo sulla card della primaria: reso 571→650 con
+        //     la barra che comincia a 568.
+        const primaria = piedeReso({
+            limiteSuperiore: 571, staticoTop: 853, altezza: 79, viewportH: 640, barraH: 72,
+        });
+        expect(primaria.top).toBe(571);
+        expect(primaria.bottom).toBe(650);
+        expect(primaria.coperti).toBeGreaterThan(0);
+    });
+
+    // Le grandezze della card della primaria, come misurate: il pannello si apre
+    // a metà schermata e porta 294px di contenuto sopra il piede.
+    const CONTENUTO_SOPRA = 294;
+    const ALTEZZA_PIEDE = 79;
+    const BARRA = 74;
+
+    it('senza riserva il comando finisce sotto la barra su ogni telefono fino a 720px', () => {
+        const rotti: number[] = [];
+        for (const viewportH of [568, 600, 640, 667, 690, 700, 720]) {
+            // Il pannello appena aperto sta in fondo allo schermo: è la posizione
+            // in cui il genitore si trova dopo aver premuto «NUOVA ASSENZA».
+            const cbTop = viewportH - 100;
+            const limiteSuperiore = cbTop + 12; // margine `mt-3` del piede
+            const r = piedeReso({
+                limiteSuperiore,
+                staticoTop: cbTop + CONTENUTO_SOPRA,
+                altezza: ALTEZZA_PIEDE,
+                viewportH,
+                barraH: BARRA,
+            });
+            if (r.coperti > 0) rotti.push(viewportH);
+        }
+        expect(
+            rotti,
+            'CONTROLLO NEGATIVO: se questo elenco è vuoto il modello non riproduce più il difetto ' +
+                'misurato, e tutto ciò che viene dopo non prova niente',
+        ).toEqual([568, 600, 640, 667, 690, 700, 720]);
+    });
+
+    it('con la riserva di sollevamento resta sopra la barra da 320 a 1200px, a ogni scorrimento', () => {
+        for (let viewportH = 320; viewportH <= 1200; viewportH += 8) {
+            // La riserva vale due schermate intere: `-mt-[200vh]`.
+            const riserva = 2 * viewportH;
+            for (let cbTop = -600; cbTop <= viewportH; cbTop += 8) {
+                const r = piedeReso({
+                    limiteSuperiore: cbTop + 12 - riserva,
+                    staticoTop: cbTop + CONTENUTO_SOPRA,
+                    altezza: ALTEZZA_PIEDE,
+                    viewportH,
+                    barraH: BARRA,
+                });
+                // Il piede è a schermo? Allora è INTERAMENTE sopra la barra.
+                if (r.bottom > 0 && r.top < viewportH) {
+                    expect(
+                        r.coperti,
+                        `viewport ${viewportH}px, pannello a ${cbTop}px: ${r.coperti}px del comando ` +
+                            'stanno dietro la barra di navigazione, e un tocco lì apre un\'altra schermata',
+                    ).toBe(0);
+                }
+            }
+        }
+    });
+
+    it('la riserva sta nel COMPONENTE CONDIVISO: le due porte non possono divergere', async () => {
+        const sorgente = fs.readFileSync(
+            path.join(RADICE, 'src', 'components', 'features', 'parent', 'PiedeAzioneAssenza.tsx'),
+            'utf8',
+        );
+        const negativo = sorgente.match(/-mt-\[(\d+)vh\]/);
+        expect(
+            negativo,
+            'il piede non dichiara nessuna riserva di sollevamento: senza, `sticky` resta ' +
+                'prigioniero del pannello che lo ospita, e su un pannello corto il comando finisce ' +
+                'sotto la barra',
+        ).not.toBeNull();
+        const spaziatore = sorgente.match(/h-\[(\d+)vh\]/);
+        expect(
+            spaziatore,
+            'la riserva non è compensata: un margine negativo senza uno spaziatore della stessa ' +
+                'altezza tira il piede sopra i campi e rompe il modulo',
+        ).not.toBeNull();
+        expect(
+            spaziatore![1],
+            'spaziatore e margine negativo devono valere lo STESSO numero, altrimenti il flusso si sposta',
+        ).toBe(negativo![1]);
+        expect(Number(negativo![1]), 'la riserva è meno di due schermate: su un telefono corto non basta')
+            .toBeGreaterThanOrEqual(200);
+    });
+
+    it('…e arriva davvero a schermo su ENTRAMBE le porte della funzione', async () => {
+        for (const porta of ['attendance', 'primaria'] as const) {
+            if (porta === 'attendance') {
+                render(<ParentAttendancePage />);
+                await screen.findByRole('button', { name: /^Comunica assenza$/i });
+            } else {
+                render(<ComunicaAssenzaCard studentId="s-1" parentId="p-1" />);
+                await act(async () => {});
+                fireEvent.click(screen.getByRole('button', { name: /nuova assenza/i }));
+            }
+            const piede = document.querySelector('[class*="sticky"][class*="z-40"]') as HTMLElement | null;
+            expect(piede, `${porta}: nessun piede appiccicato a schermo`).not.toBeNull();
+            expect(
+                piede!.className,
+                `${porta}: il piede non porta la riserva di sollevamento`,
+            ).toMatch(/-mt-\[\d+vh\]/);
+            const spaziatore = piede!.previousElementSibling as HTMLElement | null;
+            expect(spaziatore, `${porta}: manca lo spaziatore che compensa il margine negativo`).not.toBeNull();
+            expect(spaziatore!.className).toMatch(/h-\[\d+vh\]/);
+            expect(
+                spaziatore!.getAttribute('aria-hidden'),
+                `${porta}: lo spaziatore è alto due schermate e vuoto: chi ascolta non deve incontrarlo`,
+            ).toBe('true');
+            cleanup();
+        }
     });
 });
 

@@ -7,12 +7,18 @@ import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaC
 import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
 import { PiedeAzioneAssenza } from '@/components/features/parent/PiedeAzioneAssenza';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { LinkInterno } from '@/components/ui/LinkInterno';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
-import { CODICI_ERRORE, soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { CODICI_ERRORE, erroreDaRisposta, soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
-import { CAMPO_ASSENZA, ETICHETTA_CAMPO_ASSENZA } from '@/lib/ui/campo-assenza';
+import {
+    BLOCCO_CAMPO_ASSENZA,
+    CAMPO_ASSENZA,
+    ETICHETTA_CAMPO_ASSENZA,
+    SPAZIO_FRA_BLOCCHI_ASSENZA,
+} from '@/lib/ui/campo-assenza';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
 import {
@@ -90,7 +96,19 @@ export async function leggiAssenzeComunicate(parentId: string, studentId: string
             { headers: { 'x-user-id': parentId } },
         );
         const corpo: unknown = await res.json().catch(() => null);
-        if (!res.ok) return { ok: false, corpo };
+        if (!res.ok) {
+            // Il rifiuto lascia una riga CON lo status (R17): senza, «l'elenco non si
+            // legge» e «la rete è caduta» arrivavano in `app_log` indistinguibili, e il
+            // solo numero che dice quale dei due è successo veniva buttato via qui.
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: 'parent/attendance: elenco assenze comunicate respinto dal server',
+                route: ROTTA,
+                stato: res.status,
+            });
+            return { ok: false, corpo };
+        }
         const dati = (corpo as { data?: { comunicate?: unknown; comunicateLette?: unknown } } | null)?.data;
         // IL 200 CHE MENTE. La GET degrada a `comunicate: []` quando la sua query
         // fallisce — la home non deve rompersi per un elenco accessorio — e
@@ -139,7 +157,18 @@ export async function annullaAssenzaComunicata(
             { method: 'DELETE', headers: { 'x-user-id': parentId } },
         );
         const corpo: unknown = await res.json().catch(() => null);
-        return res.ok ? { ok: true } : { ok: false, corpo };
+        if (res.ok) return { ok: true };
+        // Stessa regola dell'elenco e dell'invio: un annullamento RESPINTO (409 se
+        // l'appello è già stato fatto, 500 se la scrittura non riesce) lascia una riga
+        // con lo status. Prima usciva muto, e a schermo restava solo la frase generica.
+        logClient({
+            livello: 'warn',
+            evento: 'fetch',
+            messaggio: 'parent/attendance: annullamento assenza respinto dal server',
+            route: ROTTA,
+            stato: res.status,
+        });
+        return { ok: false, corpo };
     } catch (e) {
         logClient({
             livello: 'warn',
@@ -539,7 +568,6 @@ function AttendanceInner() {
                 headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
                 body: JSON.stringify({ studentId, data, motivo: reason }),
             });
-            const j = await res.json().catch(() => ({}));
             if (res.ok) {
                 setIsSubmitted(true);
                 // L'elenco si rilegge SUBITO, non al prossimo ingresso: quando il
@@ -550,11 +578,27 @@ function AttendanceInner() {
                 // La prosa del server NON si mostra: nasce dove il locale non
                 // esiste ed è italiana per costruzione (T10-F1). O il codice
                 // dichiarato, tradotto, o la frase di questo componente.
-                setError(soloCatalogoDaCorpo(j, t('attendanceErrGenerico')));
+                //
+                // La lettura passa da `erroreDaRisposta` (R17): legge il corpo senza
+                // lanciare — un 500 vuoto o l'HTML di un proxy non devono travestirsi da
+                // rete caduta — e soprattutto TIENE lo status, che è l'unica cosa che
+                // resta quando il corpo non c'è.
+                const esito = await erroreDaRisposta(res, t('attendanceErrGenerico'));
+                setError(esito.testo);
                 // Il codice si conserva a parte: la frase serve a chi legge, il
                 // codice a decidere se il campo del giorno va marcato non valido.
-                const c = (j as { codice?: unknown } | null)?.codice;
-                setCodiceErrore(typeof c === 'string' ? c : null);
+                setCodiceErrore(esito.codice);
+                // IL RIFIUTO LASCIA UNA RIGA. Prima di oggi questo ramo non ne scriveva
+                // nessuna: il `catch` qui sotto copriva la rete caduta, e un invio
+                // RESPINTO dal server (400, 403, 409, 500) spariva senza traccia — cioè
+                // il caso più frequente della funzione era anche il meno osservabile.
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: `parent/attendance: comunicazione assenza respinta${esito.corpoLetto ? '' : ' (senza corpo)'}`,
+                    route: ROTTA,
+                    stato: esito.stato,
+                });
             }
         } catch (e) {
             // T12 del terzo collaudo: questo `catch` non logga nulla. È il gesto
@@ -771,7 +815,22 @@ function AttendanceInner() {
             >
                 {/* Icona DR */}
                 <div className="mb-4 flex items-center gap-3">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-kidville-error-soft text-kidville-error">
+                    {/* ⚠️ `shrink-0` (2026-08-08). `h-11 w-11` fissa la base
+                        flessibile ma NON toglie `flex-shrink: 1`: il paragrafo
+                        fratello ha base `auto` (il max-content del suo testo,
+                        molto più largo della riga) e la contrazione che avanza
+                        ricade sul chip. Misurato in Chrome: 22,0×44 a 320, 360 e
+                        390px — metà larghezza — con il glifo del calendario, che
+                        di suo misura 22px, a sbordare dai due lati del
+                        riempimento; e il raggio di 14px su una base di 22 fa una
+                        capsula verticale, non un quadrato. Il ciclo l'aveva anche
+                        PEGGIORATO allungando il paragrafo accanto (la frase sui
+                        60 giorni): a 390px si passava da 36,5 a 22,0px.
+                        Il gemello nato in questo stesso ciclo lo fa giusto
+                        (`RigaAssenzaComunicata`, `flex h-9 w-9 flex-shrink-0`):
+                        la regola non era tornata indietro sulla schermata da cui
+                        era stata estratta. */}
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-kidville-error-soft text-kidville-error">
                         <CalendarX2 size={22} />
                     </span>
                     {/* `sub` (6,46:1) e non `muted` (2,51:1): è la riga che spiega
@@ -807,14 +866,22 @@ function AttendanceInner() {
                     </p>
                 </div>
 
+                {/* IL BLOCCO DEL CAMPO — etichetta, controllo e ciò che li
+                    riguarda, in un contenitore che dichiara la propria
+                    spaziatura una volta sola e per tutte e due le schermate.
+                    ⚠️ Prima lo spazio stava sulle singole classi (`mb-2` qui,
+                    `gap-1` sulla card gemella) «perché è layout della
+                    schermata»: risultato misurato, quattro distanze su quattro
+                    divergenti di 4px sopra controlli identici al pixel. */}
+                <div className={BLOCCO_CAMPO_ASSENZA}>
                 {/* `htmlFor`/`id`: senza, l'etichetta è solo testo VICINO al campo — uno
                     screen reader annuncia «campo data» e basta, e il tocco sull'etichetta
                     non porta il fuoco sul campo. */}
                 {/* La tipografia dell'etichetta viene da `campo-assenza`, non da
                     qui: era divergente fra le due schermate (16px/500/verde
-                    contro 12px/600/ink) sopra due campi identici. Lo SPAZIO
-                    resta al punto d'uso — è layout della schermata. */}
-                <label htmlFor="attendance-giorno" className={`mb-2 ${ETICHETTA_CAMPO_ASSENZA}`}>
+                    contro 12px/600/ink) sopra due campi identici. E dal
+                    2026-08-08 da lì viene anche lo SPAZIO. */}
+                <label htmlFor="attendance-giorno" className={ETICHETTA_CAMPO_ASSENZA}>
                     {t('attendanceGiorno')}
                 </label>
                 {/*
@@ -869,12 +936,14 @@ function AttendanceInner() {
                     compilazione.
                 */}
                 {giaComunicata && (
-                    <FasciaStatoAssenza tipo="avviso" ruolo="status" className="mt-2">
+                    <FasciaStatoAssenza tipo="avviso" ruolo="status">
                         {ta('giaComunicataAvviso')}
                     </FasciaStatoAssenza>
                 )}
+                </div>
 
-                <label htmlFor="attendance-motivo" className={`mb-2 mt-4 ${ETICHETTA_CAMPO_ASSENZA}`}>
+                <div className={`${SPAZIO_FRA_BLOCCHI_ASSENZA} ${BLOCCO_CAMPO_ASSENZA}`}>
+                <label htmlFor="attendance-motivo" className={ETICHETTA_CAMPO_ASSENZA}>
                     {t('attendanceMotivo')}
                 </label>
                 {/*
@@ -902,16 +971,17 @@ function AttendanceInner() {
                     il lavoro `presenze-giustificazioni-retention` applica
                     davvero, e un lock li confronta con `v_mesi` della migrazione.
                 */}
-                <p id={ID_NOTA_MOTIVO} className="mb-2 font-maven text-xs text-kidville-sub">
+                <p id={ID_NOTA_MOTIVO} className="font-maven text-xs text-kidville-sub">
                     {ta('motivoPrivacy')}{' '}
-                    <a
+                    {/* `LinkInterno`: nella WebView di Capacitor un `_blank`
+                        consegna l'indirizzo a Safari e l'utente esce dall'app
+                        (R25). Stessa scelta della schermata gemella. */}
+                    <LinkInterno
                         href="/privacy"
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="font-semibold underline"
                     >
                         {ta('motivoPrivacyLink')}
-                    </a>
+                    </LinkInterno>
                 </p>
                 {/* `placeholder-kidville-sub`: senza, il segnaposto lo dipinge
                     l'agente utente con `currentColor` al 50% di alfa — misurato in
@@ -949,7 +1019,7 @@ function AttendanceInner() {
                     GUARDANDO il campo: nessuno ha motivo di scorrere per cercarlo.
                 */}
                 {motivoSvuotato && (
-                    <FasciaStatoAssenza tipo="avviso" ruolo="status" className="mb-2">
+                    <FasciaStatoAssenza tipo="avviso" ruolo="status">
                         {ta('motivoNonCancellabile')}
                     </FasciaStatoAssenza>
                 )}
@@ -967,6 +1037,7 @@ function AttendanceInner() {
                     className={`h-28 resize-none ${CAMPO_ASSENZA}`}
                     placeholder={ta('motivoPlaceholder')}
                 />
+                </div>
 
                 {/*
                     IL PULSANTE NON DEVE FINIRE DIETRO LA BARRA DI NAVIGAZIONE.
@@ -1021,7 +1092,10 @@ function AttendanceInner() {
                     (`PiedeAzioneAssenza`): la lezione del 07/08 era stata scritta
                     in questo commento e non era mai arrivata alla porta accanto.
                 */}
-                <PiedeAzioneAssenza className="-mx-6 -mb-6 mt-4 rounded-b-card bg-kidville-white px-6 py-3">
+                {/* Il margine SUPERIORE lo dichiara il componente: dal
+                    2026-08-08 è il margine NEGATIVO che toglie il tetto al
+                    sollevamento dello sticky, e non può arrivare da fuori. */}
+                <PiedeAzioneAssenza className="-mx-6 -mb-6 rounded-b-card bg-kidville-white px-6 py-3">
                     {error && (
                         <FasciaStatoAssenza
                             tipo="errore"

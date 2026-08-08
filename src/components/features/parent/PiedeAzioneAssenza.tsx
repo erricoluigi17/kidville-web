@@ -53,6 +53,53 @@ import type { ReactNode } from 'react';
  * le due schermate: il bianco della card di nido·infanzia, la crema del pannello
  * della primaria.
  */
+/**
+ * ─── LA RISERVA DI SOLLEVAMENTO — il terzo bloccante dello stesso pulsante ───
+ *
+ * `sticky` è una promessa condizionata: **non può sollevare una scatola oltre il
+ * bordo alto del proprio blocco contenitore.** Sulla card della primaria quel
+ * blocco è il pannello crema, che si apre a metà schermata e porta ~280px sopra
+ * il piede; su un telefono da 640px il sollevamento richiesto è 364px e quello
+ * disponibile ~270. Misurato il 2026-08-08 a 390×640, scroll 40:
+ *
+ *   posizione statica  853→932 · richiesta 489→568 · RESA 571→650
+ *
+ * cioè il piede bloccato a 24px dal bordo interno del pannello, dentro la fascia
+ * della barra, e `page.mouse.click` al centro del pulsante che apre
+ * /parent/avvisi. Matrice a 390px: coperto 54/54 fino a 667px d'altezza, 42/54 a
+ * 690, 32/54 a 700, 12/54 a 720. La gemella `/parent/attendance` non cedeva —
+ * non per merito, ma perché il suo `<form>` porta ~450px sopra il piede: la
+ * stessa anatomia con più contenuto sopra. Un margine di manovra non è una
+ * garanzia: è un numero che il prossimo contenuto può consumare.
+ *
+ * LA GARANZIA sta nella definizione dello sticky (CSS Position 3): il rettangolo
+ * di vincolo è il padding box del blocco contenitore **rientrato dei margini
+ * della scatola appiccicata — e un margine NEGATIVO lo allarga**. Un margine
+ * negativo di due schermate sposta il limite due schermate più in su: da lì in
+ * poi il vincolo non può più mordere, qualunque sia l'altezza dello schermo,
+ * qualunque sia la posizione di scorrimento e qualunque sia il pannello che
+ * ospita il piede. Non «riservo abbastanza spazio»: **tolgo il tetto**.
+ *
+ * Perché non le due strade ovvie:
+ *   · spostare il piede nella `<section>` della card → il tetto si alza di ~90px
+ *     e basta a 640, non a 568: resta un numero che dipende da dove la card cade
+ *     nella pagina, cioè dai dati del genitore;
+ *   · `padding-bottom` sul pannello → misurato: non cambia NIENTE. Il vincolo è
+ *     sul bordo ALTO del contenitore, e il padding sta in fondo.
+ *
+ * Verificato su Blink e su WebKit (il motore della WebView iOS) con un documento
+ * minimo: pannelli alti uguali al pixel, e il piede con la riserva reso a 1810
+ * dove quello senza si ferma a 912. Lock: la sezione R21 di
+ * `__tests__/pages/assenze-rifiniture-secondo-collaudo.test.tsx`, che riproduce
+ * quelle misure e poi verifica l'invariante su ogni altezza da 320 a 1200px.
+ */
+const RISERVA_SOLLEVAMENTO = {
+  /** Alto due schermate: il piede se lo riprende tutto, la somma è zero. */
+  spaziatore: 'h-[200vh]',
+  /** …e questo è il margine che allarga il vincolo. Stesso numero, obbligatorio. */
+  margine: '-mt-[200vh]',
+} as const;
+
 interface Props {
   /**
    * In ordine: i messaggi che parlano dell'azione (il rifiuto del server, la
@@ -65,13 +112,34 @@ interface Props {
 
 export function PiedeAzioneAssenza({ children, className }: Props) {
   return (
-    <div
-      className={
-        'sticky bottom-[var(--kv-bottomnav-h)] z-40 space-y-3 border-t border-kidville-line ' +
-        `shadow-[0_-8px_20px_-12px_rgba(0,0,0,0.28)] ${className ?? ''}`
-      }
-    >
-      {children}
-    </div>
+    <>
+      {/*
+        LO SPAZIATORE CHE COMPENSA LA RISERVA — e il respiro sopra il piede.
+
+        `RISERVA_SOLLEVAMENTO` è alto due schermate e il piede se lo riprende
+        tutto con un margine negativo identico: la somma è zero, il flusso non si
+        sposta di un pixel (misurato: i due pannelli, con e senza, restano alti
+        uguali al pixel su Chrome e su WebKit). Serve solo perché il margine
+        negativo del piede abbia qualcosa da annullare.
+
+        `mt-4` sta QUI e non nel `className` di chi ospita: il margine superiore
+        del piede è ormai load-bearing — è lui che allarga il vincolo — e non può
+        essere sovrascritto da fuori. Le due schermate lo dichiaravano diverso
+        (16px sulla pagina, 12px sulla card): un altro 4px della stessa famiglia.
+
+        `aria-hidden`: è una scatola vuota alta due schermate, chi ascolta non
+        deve incontrarla.
+      */}
+      <div aria-hidden className={`mt-4 ${RISERVA_SOLLEVAMENTO.spaziatore}`} />
+      <div
+        className={
+          `sticky bottom-[var(--kv-bottomnav-h)] z-40 ${RISERVA_SOLLEVAMENTO.margine} ` +
+          'space-y-3 border-t border-kidville-line ' +
+          `shadow-[0_-8px_20px_-12px_rgba(0,0,0,0.28)] ${className ?? ''}`
+        }
+      >
+        {children}
+      </div>
+    </>
   );
 }

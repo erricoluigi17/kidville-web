@@ -5,7 +5,7 @@ import itServizi from '../../messages/it/parentServizi.json'
 import itPrimaria from '../../messages/it/parentPrimaria.json'
 import itAssenze from '../../messages/it/parentAssenze.json'
 import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo'
-import { ETICHETTA_CAMPO_ASSENZA } from '@/lib/ui/campo-assenza'
+import { BLOCCO_CAMPO_ASSENZA, ETICHETTA_CAMPO_ASSENZA } from '@/lib/ui/campo-assenza'
 
 // =============================================================================
 // LA STESSA FUNZIONE, DISEGNATA DUE VOLTE.
@@ -376,6 +376,91 @@ describe('le due schermate «assenze comunicate» parlano la stessa lingua', () 
         for (const el of [etA.giorno, etA.motivo, etP.giorno, etP.motivo]) {
             expect(Array.from(el.classList)).toEqual(expect.arrayContaining(attese))
         }
+    })
+
+    // =========================================================================
+    // R6 del quinto collaudo — LE SPAZIATURE DEL BLOCCO DI CAMPO.
+    //
+    // Misurate in Chrome a 390px, stessi campi, stesse parole:
+    //   etichetta → campo data:        /parent/attendance 8px · card 4px
+    //   campo data → etichetta motivo:                   16px ·      12px
+    //   etichetta motivo → nota:                          8px ·       4px
+    //   nota → textarea:                                  8px ·       4px
+    // Quattro distanze su quattro divergono, sempre di 4px, mentre input,
+    // textarea ed etichette sono identici al pixel perché vengono dalla costante
+    // condivisa `src/lib/ui/campo-assenza.ts`. Lo SPAZIO era l'unica parte del
+    // blocco rimasta «al punto d'uso»: ma lo spazio fra un'etichetta e il suo
+    // campo è anatomia del blocco, non layout della pagina — le due schermate
+    // ospitano lo STESSO modulo.
+    //
+    // jsdom non fa layout: qui non si misurano i pixel, si misura che la
+    // distanza sia DICHIARATA nello stesso posto e con lo stesso valore. Il
+    // contenitore che tiene insieme etichetta e controllo deve esistere in
+    // entrambe e portare le stesse classi.
+    // =========================================================================
+
+    /** Il BLOCCO di campo: il contenitore comune di un'etichetta e del suo controllo. */
+    const blocco = (campo: HTMLElement) => {
+        const etichetta = document.querySelector(`label[for="${campo.id}"]`)!
+        let n: HTMLElement | null = etichetta.parentElement
+        while (n && !n.contains(campo)) n = n.parentElement
+        return n!
+    }
+
+    it('il BLOCCO etichetta+campo ha la stessa anatomia nelle due schermate', async () => {
+        const a = await modulo('attendance')
+        const bloccoA = { giorno: blocco(a.giorno).className, motivo: blocco(a.motivo).className }
+        cleanup()
+        const p = await modulo('primaria')
+
+        for (const quale of ['giorno', 'motivo'] as const) {
+            expect(
+                blocco(p[quale]).className,
+                `blocco «${quale}»: le due porte della stessa funzione dichiarano lo spazio fra ` +
+                    'etichetta e campo in due modi diversi (misurati: 8px di qua, 4px di là). Lo ' +
+                    'spazio dentro il blocco è anatomia del campo, non layout della schermata.',
+            ).toBe(bloccoA[quale])
+        }
+        // …e il blocco è un contenitore SUO, non il modulo intero: se il ciclo
+        // risalisse fino al `<form>`, la distanza tornerebbe a essere quella
+        // della pagina e i due numeri potrebbero divergere di nuovo.
+        expect(
+            blocco(p.giorno).tagName,
+            'il blocco di campo non esiste: etichetta e controllo non hanno un contenitore comune',
+        ).toBe('DIV')
+        // …e la decisione arriva dal modulo CONDIVISO, non da due elenchi di
+        // classi ricopiati a mano: due `flex flex-col gap-2` scritti a mano
+        // divergono al primo che ne cambia uno solo — che è esattamente ciò che
+        // è successo a `gap-1`.
+        for (const campo of [p.giorno, p.motivo]) {
+            expect(Array.from(blocco(campo).classList)).toEqual(
+                expect.arrayContaining(BLOCCO_CAMPO_ASSENZA.split(/\s+/).filter(Boolean)),
+            )
+        }
+    })
+
+    // =========================================================================
+    // R5 del quinto collaudo — IL CHIP DELL'ICONA SCHIACCIATO.
+    //
+    // `h-11 w-11` fissa la base flessibile ma non toglie `flex-shrink: 1`: il
+    // `<p>` fratello ha base `auto` (max-content del testo) e il resto della
+    // contrazione ricade sullo span. Misurato in Chrome: 22,0×44 a 320, 360 e
+    // 390px — cioè metà larghezza — col glifo del calendario (22px) che sborda
+    // dai due lati del riempimento. Il gemello nato in questo ciclo lo fa giusto
+    // (`RigaAssenzaComunicata.tsx:86`, `flex h-9 w-9 flex-shrink-0`), ma la
+    // regola non è tornata indietro sulla schermata da cui era stata estratta.
+    // =========================================================================
+    it('il chip dell\'icona non si schiaccia: resta quadrato accanto al testo', async () => {
+        render(<ParentAttendancePage />)
+        await screen.findByLabelText(itServizi.attendanceGiorno)
+        const chip = document.querySelector('form span[class*="rounded-"][class*="h-11"]') as HTMLElement | null
+        expect(chip, 'il chip dell\'icona del modulo non c\'è più: la misura va rifatta').not.toBeNull()
+        expect(
+            chip!.className,
+            'il chip nasce 44×44 e rende 22×44: senza `shrink-0` la riga flex lo contrae fino alla ' +
+                'larghezza del glifo, il calendario sborda dal riempimento e il raggio di 14px ' +
+                'trasforma il quadrato in una capsula verticale',
+        ).toMatch(/(^|\s)(shrink-0|flex-shrink-0)(\s|$)/)
     })
 
     it('la riga regge il telefono piccolo in ENTRAMBE (320px: va a capo, non tronca l\'anno)', async () => {

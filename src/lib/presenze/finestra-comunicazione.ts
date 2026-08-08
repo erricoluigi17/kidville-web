@@ -34,6 +34,8 @@
  * avere un solo numero, ma è l'unico modo di non averne due che divergono.
  */
 
+import { finestraAnnuncioAperta } from '@/lib/presenze/finestra-trascorsa';
+
 /**
  * Quanti giorni in anticipo si può comunicare un'assenza.
  *
@@ -81,7 +83,11 @@ export type RifiutoGiorno = 'ASSENZA_DATA_PASSATA' | 'ASSENZA_DATA_TROPPO_LONTAN
  */
 export function rifiutoDelGiorno(giorno: string, oggi: string): RifiutoGiorno | null {
   if (!giorno) return null;
-  if (giorno < oggi) return 'ASSENZA_DATA_PASSATA';
+  // Il PAVIMENTO è la stessa soglia della scadenza dell'annuncio: un giorno
+  // concluso non si comunica più, non si ritira più (`comunica-assenza:DELETE`)
+  // e non è più un annuncio ma un fatto del registro (R15). Una soglia sola, in
+  // un posto solo: `finestraAnnuncioAperta`.
+  if (!finestraAnnuncioAperta(giorno, oggi)) return 'ASSENZA_DATA_PASSATA';
   if (giorno > ultimoGiornoComunicabile(oggi)) return 'ASSENZA_DATA_TROPPO_LONTANA';
   return null;
 }

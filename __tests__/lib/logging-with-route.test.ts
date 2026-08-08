@@ -225,6 +225,71 @@ describe('withRoute — politica dei livelli', () => {
         expect(spie.logOk).not.toHaveBeenCalled();
     });
 
+    /**
+     * IL LOG CHE MENTE (rilievi R3 · R7 · R12 · R16 · R24 del quinto collaudo).
+     *
+     * Un handler che non restituisce una `Response` è il guasto più grave che una rotta
+     * possa avere: Next risponde 500 con corpo VUOTO al posto suo. Fino al 2026-08-08
+     * `registraEsito` faceva ricadere quel caso nello stesso ramo del 200 — `stato === undefined
+     * || stato < 400` → `logOk` — e `logOk` non persiste MAI. Risultato misurato in produzione:
+     * 73 richieste morte, 73 righe `KV_OK` che dicevano «riuscita», e ZERO righe del wrapper in
+     * `app_log`. L'unica traccia interrogabile la scriveva `onRequestError`, cioè una rete tesa
+     * da qualcun altro.
+     *
+     * «Non so com'è andata» e «è andata bene» non possono condividere la stessa riga: è
+     * l'ambiguità che la regola 5 di AGENTS.md esiste per vietare, qui nella forma peggiore
+     * (un log che dice attivamente di sì).
+     */
+    it('handler che NON restituisce una Response: è un guasto, non un successo', async () => {
+        const { withRoute: wr, spie } = await conLoggerFinto();
+        // Il valore vero misurato in produzione: Turbopack aveva sostituito il ramo `: null`
+        // di `assertGenitoreNonSospeso` con il proprio marcatore, che è truthy.
+        const POST = wr('parent/presenze/comunica-assenza:POST', (async () => 'TURBOPACK unreachable') as never);
+        await POST(req());
+
+        expect(
+            spie.logOk,
+            'una richiesta che il client riceve come 500 è stata registrata come successo',
+        ).not.toHaveBeenCalled();
+        expect(spie.logEvento).toHaveBeenCalledWith(
+            'route',
+            'error',
+            expect.objectContaining({
+                operazione: 'parent/presenze/comunica-assenza:POST',
+                esito: 'handler-senza-response',
+                // Non è uno status «inventato»: quando l'handler non produce una Response,
+                // Next risponde 500. Senza questo campo la riga resta invisibile alla query
+                // primaria del repo («dammi i 5xx di oggi») — rilievo R9.
+                stato: 500,
+            }),
+        );
+    });
+
+    it('handler che restituisce undefined/null: stesso guasto, stessa riga', async () => {
+        const { withRoute: wr, spie } = await conLoggerFinto();
+        for (const valore of [undefined, null]) {
+            await wr('x:GET', (async () => valore) as never)(req());
+        }
+        expect(spie.logOk).not.toHaveBeenCalled();
+        expect(spie.logEvento).toHaveBeenCalledTimes(2);
+        for (const chiamata of spie.logEvento.mock.calls) {
+            expect(chiamata[0]).toBe('route');
+            expect(chiamata[1]).toBe('error');
+            expect(chiamata[2]).toMatchObject({ esito: 'handler-senza-response', stato: 500 });
+        }
+    });
+
+    it('una Response con status LEGGIBILE resta un successo (il confine non si sposta)', async () => {
+        // ~90 test API del repo invocano gli handler con oggetti costruiti a mano: finché lo
+        // status c'è ed è un numero, il wrapper deve comportarsi come prima. Il discriminante
+        // è «questa risposta ha uno status», non «è costruita in un certo modo».
+        const { withRoute: wr, spie } = await conLoggerFinto();
+        const GET = wr('x:GET', (async () => ({ status: 200, headers: new Headers() })) as never);
+        await GET(req());
+        expect(spie.logOk).toHaveBeenCalledTimes(1);
+        expect(spie.logEvento).not.toHaveBeenCalled();
+    });
+
     it('un logger che LANCIA non trasforma una 200 in 500 (fail-open)', async () => {
         const { withRoute: wr } = await conLoggerFinto(true);
         const GET = wr('x:GET', async () => NextResponse.json({ ok: true }, { status: 200 }));
@@ -533,6 +598,62 @@ describe('withRoute — la riga che finisce in app_log (guardia SILENZIOSO disat
             NextResponse.json({ error: 'Dati non validi' }, { status: 400 })
         )(senzaSessione);
         expect(appLog).not.toHaveBeenCalled();
+    });
+
+    /**
+     * La prova che conta per R7/R12: non basta che il wrapper CHIAMI `logEvento`, deve
+     * uscirne una riga PERSISTITA e trovabile con la query primaria del repo
+     * (`select … from app_log where stato_http >= 500`). Con `logOk` in tabella non
+     * arrivava niente: il guasto totale di una rotta era un buco, non una riga.
+     */
+    it('handler senza Response: UNA riga error in tabella, con stato_http 500 e la rotta', async () => {
+        const { wr, appLog } = await caricaRumoroso();
+        const POST = wr('parent/presenze/comunica-assenza:POST', (async () => 'TURBOPACK unreachable') as never);
+        await POST(req());
+
+        expect(
+            appLog,
+            'la richiesta più grave che esista non ha lasciato nessuna riga in app_log',
+        ).toHaveBeenCalledTimes(1);
+        const riga = appLog.mock.calls[0][0];
+        expect(riga.livello).toBe('error');
+        expect(riga.evento).toBe('route');
+        // `testoEvento` mette l'`esito` prima dell'`operazione`: la colonna che si legge per
+        // prima dice COSA è successo, e QUALE rotta resta in `route` (che fa parte
+        // dell'impronta: due rotte rotte lo stesso giorno non collassano in una riga sola) e
+        // in `campi.operazione`.
+        expect(riga.messaggio).toBe('handler-senza-response');
+        // Senza questo, «dammi i 5xx di oggi» non trova il fallimento peggiore che c'è.
+        expect(riga.statoHttp).toBe(500);
+        const campi = (riga.contestoExtra as { campi: Record<string, unknown> }).campi;
+        expect(campi.esito).toBe('handler-senza-response');
+        expect(campi.operazione).toBe('parent/presenze/comunica-assenza:POST');
+        // Su Vercel la riga esce come KV_ERR, mai come KV_OK.
+        expect(righe(log).filter((r) => r.startsWith('KV_OK'))).toHaveLength(0);
+        expect(righe(err).filter((r) => r.startsWith('KV_ERR'))).toHaveLength(1);
+    });
+
+    /**
+     * La deduplica del 5xx (`erroreGiaLoggato`) vale per la riga di ESITO di una risposta
+     * 500 esplicita: lì l'errore vero l'ha già scritto chi lo aveva in mano, con lo stack.
+     * Qui no: «l'handler non ha restituito una Response» è un fatto DIVERSO da qualunque
+     * cosa la route abbia loggato prima, ed è l'unico che spiega il 500 vuoto che vede
+     * l'utente. Stessa disciplina del ramo eccezione, che la marca non la guarda.
+     */
+    it('handler senza Response DOPO un logErrore della route: la riga si scrive lo stesso', async () => {
+        const { wr, logErrore, appLog } = await caricaRumoroso();
+        const POST = wr('x:POST', (async () => {
+            logErrore({ operazione: 'x:POST', evento: 'db' }, new Error('errore recuperato'));
+            return 'non è una Response';
+        }) as never);
+        await POST(req());
+
+        expect(appLog).toHaveBeenCalledTimes(2);
+        expect(appLog.mock.calls[1][0]).toMatchObject({
+            livello: 'error',
+            evento: 'route',
+            statoHttp: 500,
+        });
     });
 
     it('2xx: nessuna riga in tabella, una sola riga KV_OK su Vercel', async () => {

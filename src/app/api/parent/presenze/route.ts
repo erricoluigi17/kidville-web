@@ -272,7 +272,15 @@ export const GET = withRoute('parent/presenze:GET', async (request: NextRequest)
           // `PresenzeTodayCard` rende con un messaggio neutro. Ciò che il
           // genitore ha comunicato lo rivede in `comunicate`, dove può anche
           // annullarlo: si toglie dal CONTEGGIO, non dalla vista.
-          stato: (eAssenzaSoloAnnunciata(oggiRow) ? null : oggiRow?.stato ?? null) as StatoPresenza | null,
+          //
+          // Il giorno si DICHIARA (`data: oggiData`) invece di lasciarlo
+          // indovinare: la `select` qui sopra non porta la colonna `data`, e da
+          // R15 l'annuncio ha una scadenza che si valuta proprio su quella. Senza
+          // dichiararlo si ricadrebbe sul ramo prudente della funzione — stesso
+          // risultato oggi, ma per caso invece che per costruzione.
+          stato: (eAssenzaSoloAnnunciata({ ...oggiRow, data: oggiData }, oggiData)
+            ? null
+            : oggiRow?.stato ?? null) as StatoPresenza | null,
           orario_entrata: oggiRow?.orario_entrata ?? null,
           orario_uscita: oggiRow?.orario_uscita ?? null,
         },

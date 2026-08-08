@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { CalendarPlus, RotateCcw } from 'lucide-react';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Btn } from '@/components/ui/Btn';
+import { LinkInterno } from '@/components/ui/LinkInterno';
 import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
 import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
 import { PiedeAzioneAssenza } from '@/components/features/parent/PiedeAzioneAssenza';
@@ -15,8 +16,13 @@ import {
   rifiutoDelGiorno,
   ultimoGiornoComunicabile,
 } from '@/lib/presenze/finestra-comunicazione';
-import { CODICI_ERRORE, soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
-import { CAMPO_ASSENZA, ETICHETTA_CAMPO_ASSENZA } from '@/lib/ui/campo-assenza';
+import { CODICI_ERRORE, erroreDaRisposta } from '@/lib/ui/esito-fetch';
+import {
+  BLOCCO_CAMPO_ASSENZA,
+  CAMPO_ASSENZA,
+  ETICHETTA_CAMPO_ASSENZA,
+  SPAZIO_FRA_BLOCCHI_ASSENZA,
+} from '@/lib/ui/campo-assenza';
 import { logClient } from '@/lib/logging/client';
 
 /**
@@ -361,13 +367,19 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
         body: JSON.stringify({ studentId, data, motivo }),
       });
       if (!r.ok) {
-        const corpo = await r.json();
-        setErr(soloCatalogoDaCorpo(corpo, t('comunicaNonRiuscita')));
+        // ⚠️ IL CORPO SI LEGGE IN MODO DIFENSIVO, E LO STATUS NON SI PERDE MAI (R17).
+        // `await r.json()` LANCIA su una risposta senza corpo — il 500 vuoto che Next
+        // produce quando un handler non restituisce una Response, un 502 di proxy, una
+        // risposta troncata — e l'eccezione finiva nel `catch` qui sotto, che è scritto
+        // per la RETE CADUTA: a schermo compariva il messaggio sbagliato e nel log
+        // `invio-non-riuscito` con `stato` indefinito, cioè senza la sola informazione
+        // rimasta. La regola vive in `esito-fetch.ts`, una volta per tutte le schermate.
+        const esito = await erroreDaRisposta(r, t('comunicaNonRiuscita'));
+        setErr(esito.testo);
         // Il codice si conserva a parte: la frase serve a chi legge, il codice a
         // decidere se il campo del giorno va marcato non valido.
-        const c = (corpo as { codice?: unknown } | null)?.codice;
-        setCodiceErr(typeof c === 'string' ? c : null);
-        segnala('invio-respinto', r.status);
+        setCodiceErr(esito.codice);
+        segnala(esito.corpoLetto ? 'invio-respinto' : 'invio-respinto-senza-corpo', esito.stato);
         return;
       }
       setMotivo('');
@@ -415,9 +427,11 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
         { method: 'DELETE', headers: { 'x-user-id': parentId } },
       );
       if (!r.ok) {
-        const corpo = await r.json();
-        setErr(soloCatalogoDaCorpo(corpo, t('comunicaAnnullaNonRiuscito')));
-        segnala('annullamento-respinto', r.status);
+        // Stessa regola dell'invio, e per la stessa ragione: un DELETE che il server
+        // rifiuta senza corpo non deve travestirsi da rete caduta.
+        const esito = await erroreDaRisposta(r, t('comunicaAnnullaNonRiuscito'));
+        setErr(esito.testo);
+        segnala(esito.corpoLetto ? 'annullamento-respinto' : 'annullamento-respinto-senza-corpo', esito.stato);
         return;
       }
       setMsg(t('comunicaAnnullata'));
@@ -555,15 +569,18 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
       {aperto && (
         <div id={idModulo} className="mt-3 rounded-2xl bg-kidville-cream p-3">
           {/* I CAMPI stanno in un contenitore loro, e il piede fuori: la
-              spaziatura fra i campi (`space-y-3`) non deve valere anche fra
-              l'ultimo campo e il piede appiccicato, che ha il proprio ritaglio
-              a filo del pannello. */}
-          <div className="space-y-3">
-          <div className="flex flex-col gap-1">
+              spaziatura del modulo non deve valere anche fra l'ultimo campo e il
+              piede appiccicato, che ha il proprio ritaglio a filo del pannello.
+              ⚠️ Il contenitore non dichiara PIÙ una spaziatura sua (`space-y-3`,
+              12px): le distanze le porta il blocco condiviso, perché erano
+              divergenti di 4px su quattro misure su quattro. */}
+          <div>
+          <div className={BLOCCO_CAMPO_ASSENZA}>
             {/* La tipografia dell'etichetta viene da `campo-assenza`, condivisa
                 con la gemella: era 12px/600/ink contro 16px/500/verde, sopra due
                 campi resi identici dal ciclo precedente. Si era allineato il
-                campo e non il suo BLOCCO — etichetta, aiuto, controllo. */}
+                campo e non il suo BLOCCO — etichetta, aiuto, controllo. Dal
+                2026-08-08 da lì viene anche lo SPAZIO fra le tre parti. */}
             <label htmlFor={idData} className={ETICHETTA_CAMPO_ASSENZA}>
               {t('comunicaDataLabel')}
             </label>
@@ -624,17 +641,19 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
               aria-describedby={erroreSullaData ? `${idDataAiuto} ${idErrore}` : idDataAiuto}
               className={CAMPO_ASSENZA}
             />
-          </div>
           {/* Il giorno scelto è GIÀ stato comunicato: inviando si sovrascrive,
               motivo compreso. Senza questa riga il modulo si comporta come se
               stesse creando qualcosa. Anatomia (raggio, bordo, icona) in un
-              posto solo: `FasciaStatoAssenza`, condivisa con la gemella. */}
+              posto solo: `FasciaStatoAssenza`, condivisa con la gemella.
+              Sta DENTRO il blocco del giorno, come sulla gemella: parla del
+              giorno scelto, non del modulo. */}
           {giaComunicata && (
             <FasciaStatoAssenza tipo="avviso" ruolo="status">
               {ta('giaComunicataAvviso')}
             </FasciaStatoAssenza>
           )}
-          <div className="flex flex-col gap-1">
+          </div>
+          <div className={`${SPAZIO_FRA_BLOCCHI_ASSENZA} ${BLOCCO_CAMPO_ASSENZA}`}>
             <label htmlFor={idMotivo} className={ETICHETTA_CAMPO_ASSENZA}>
               {t('comunicaMotivoLabel')}
             </label>
@@ -646,9 +665,14 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
                 gemella: sopra il campo, dove non finisce sotto il comando. */}
             <p id={idMotivoNota} className="font-maven text-xs text-kidville-sub">
               {ta('motivoPrivacy')}{' '}
-              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-semibold underline">
+              {/* `LinkInterno` e non `<a target="_blank">`: nella WebView di
+                  Capacitor le schede non esistono e il sistema consegnava
+                  l'informativa a Safari, buttando fuori dall'app il genitore che
+                  stava cercando di capire come viene trattato un dato sanitario
+                  del proprio figlio (R25). Sul web non cambia niente. */}
+              <LinkInterno href="/privacy" className="font-semibold underline">
                 {ta('motivoPrivacyLink')}
-              </a>
+              </LinkInterno>
             </p>
             {/* Svuotare il campo NON cancella il motivo archiviato: lo si dice
                 prima, non dopo aver dichiarato «Assenza aggiornata».
@@ -709,7 +733,12 @@ export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, classNa
             la superficie arriva ai bordi come sulla gemella; la superficie è la
             CREMA del pannello che lo ospita, non il bianco della card.
           */}
-          <PiedeAzioneAssenza className="-mx-3 -mb-3 mt-3 rounded-b-2xl bg-kidville-cream px-3 py-3">
+          {/* Il margine SUPERIORE non si passa più da qui: dal 2026-08-08 è
+              load-bearing — è il margine negativo che toglie il tetto al
+              sollevamento dello sticky — e lo dichiara il componente. Era anche
+              l'ennesimo 4px di divergenza fra le due porte (12px di qua, 16px
+              di là). */}
+          <PiedeAzioneAssenza className="-mx-3 -mb-3 rounded-b-2xl bg-kidville-cream px-3 py-3">
             {fasciaErrore}
             {/* L'ATTESA e il MOTIVO DEL BLOCCO in una riga sola, annunciata
                 (WCAG 4.1.3) e legata al comando (`aria-describedby`).

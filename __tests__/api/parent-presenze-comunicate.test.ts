@@ -44,6 +44,11 @@ const h = vi.hoisted(() => {
     if (coda === 'is.null') return v === null || v === undefined
     if (coda === 'not.is.null') return v !== null && v !== undefined
     if (coda.startsWith('neq.')) return String(v ?? '') !== coda.slice(4)
+    // R15: il QUARTO termine. `data.lt.<oggi>` — un giorno già concluso è un
+    // fatto qualunque sia la sua provenienza, perché l'annuncio scade a
+    // mezzanotte. Su NULL il confronto in PostgREST è NULL, cioè non vero: il
+    // doppio si comporta allo stesso modo invece di far passare la riga.
+    if (coda.startsWith('lt.')) return v != null && String(v) < coda.slice(3)
     throw new Error(`ramo or non gestito dal doppio: ${ramo}`)
   }
 

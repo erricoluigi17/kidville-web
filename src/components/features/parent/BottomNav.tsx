@@ -158,7 +158,18 @@ export default function BottomNav() {
       {/* ── BOTTOM NAV PILL ─────────────────────── */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
-        <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)] border border-white/60">
+        {/* ⚠️ IL FILO CHIARO È UN ANELLO INTERNO, NON UN BORDO (2026-08-08).
+            Con `border border-white/60` la pillola occupava 62px invece di 60 —
+            1px sopra e 1px sotto — mentre `--kv-bottomnav-h` vale «altezza del
+            <nav> + margine inferiore» e quei 2px non li conta nessuno dei due
+            addendi. Misurato in Chrome a 390×640: barra alta 74px, variabile
+            72px, e il piede appiccicato che si appoggia sulla variabile finiva 2
+            pixel sotto la barra (a 390×720 diventavano 11px del pulsante coperti
+            su 54). Il rimedio non è aggiungere 2 alla formula — sarebbe un'altra
+            ricomposizione, con un altro pezzo che domani può mancare: è togliere
+            dal flusso l'unica parte che la formula non sa vedere. `inset` disegna
+            lo stesso filo e occupa zero pixel. */}
+        <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08),inset_0_0_0_1px_rgba(255,255,255,0.6)]">
           <nav aria-label={t('ariaNavigazionePrincipale')} className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;

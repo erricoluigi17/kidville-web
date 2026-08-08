@@ -44,6 +44,11 @@ const h = vi.hoisted(() => {
     if (coda === 'not.is.null') return v !== null && v !== undefined
     if (coda.startsWith('neq.')) return String(v ?? '') !== coda.slice(4)
     if (coda.startsWith('eq.')) return String(v ?? '') === coda.slice(3)
+    // R15: il QUARTO termine. `data.lt.<oggi>` — un giorno già concluso è un
+    // fatto qualunque sia la sua provenienza, perché l'annuncio scade a
+    // mezzanotte. Su NULL il confronto in PostgREST è NULL, cioè non vero: il
+    // doppio si comporta allo stesso modo invece di far passare la riga.
+    if (coda.startsWith('lt.')) return v != null && String(v) < coda.slice(3)
     throw new Error(`ramo or non gestito dal doppio: ${ramo}`)
   }
 
@@ -330,5 +335,103 @@ describe('Q4 · `attendance/monthly:GET` — la marca dice «non è un fatto», 
   it('il calendario le riceve TUTTE: si marcano, non si nascondono', async () => {
     h.state.tabelle.presenze = [annunciata(OGGI, 'p-annuncio'), annunciata(DOMANI, 'p-domani'), appello(IERI, 'p-ieri')]
     expect(Object.keys(await perData()).sort()).toEqual([IERI, OGGI, DOMANI].sort())
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// R15 · L'ANNUNCIO HA UNA FINE — le stesse cinque rotte, il giorno dopo.
+//
+// La distinzione «annunciato ≠ accaduto» era stata scritta SENZA un termine
+// sulla data: «annuncio» era una proprietà permanente della riga. Due
+// conseguenze, e sono opposte fra loro ma nascono dalla stessa riga di codice:
+//
+//  (a) l'assenza comunicata e mai confermata dall'appello restava fuori da ogni
+//      conteggio PER SEMPRE — anche a un mese di distanza, anche dal monte ore
+//      con cui si valuta la validità dell'anno scolastico;
+//  (b) l'assenza VERA di luglio (una delle 36 senza `registrato_da`) ne USCIVA
+//      nell'istante in cui il genitore la giustificava, cioè per il gesto che
+//      l'app gli chiede di fare.
+//
+// Qui si misurano sulle rotte, non sul predicato: è il livello a cui il genitore
+// e il docente leggono i numeri.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Comunicata il 5, mai passata dall'appello: il 5 è ormai un giorno concluso. */
+const ANNUNCIO_SCADUTO = '2026-08-05'
+
+describe('R15 · l’annuncio scaduto torna a essere un fatto', () => {
+  it('`parent/presenze:GET` — entra nel riepilogo dei 30 giorni', async () => {
+    h.state.tabelle.presenze = [annunciata(ANNUNCIO_SCADUTO, 'p-scaduto')]
+    const body = await (await ParentPresenze(parentReq('/api/parent/presenze'))).json()
+    expect(body.data.riepilogo.assenze, 'il 5 agosto è passato: non è più un annuncio').toBe(1)
+  })
+
+  it('`parent/primaria/assenze:GET` — compare nella cronologia e nel riepilogo', async () => {
+    h.state.tabelle.presenze = [annunciata(ANNUNCIO_SCADUTO, 'p-scaduto')]
+    const body = await (await ParentAssenze(parentReq('/api/parent/primaria/assenze'))).json()
+    expect((body.data as { id: string }[]).map((r) => r.id)).toEqual(['p-scaduto'])
+    expect(body.riepilogo.assente).toBe(1)
+  })
+
+  it('`primaria/ore-assenza:GET` — entra nel monte ore', async () => {
+    h.state.tabelle.presenze = [annunciata(ANNUNCIO_SCADUTO, 'p-scaduto')]
+    const body = await (
+      await OreAssenza(
+        new NextRequest(`http://localhost/api/primaria/ore-assenza?sectionId=${SEZIONE}&from=2026-01-01&to=2099-12-31`),
+      )
+    ).json()
+    expect(body.data[0]?.oreTotali, 'un’assenza vera che nessuno conta è un’assenza persa').toBeGreaterThan(0)
+  })
+
+  it('`attendance/monthly:GET` — il registro del docente la marca come fatto', async () => {
+    h.state.tabelle.presenze = [annunciata(ANNUNCIO_SCADUTO, 'p-scaduto')]
+    const righe = (await (
+      await Mensile(new NextRequest('http://localhost/api/attendance/monthly?sezione=TEST%201A&year=2026&month=8'))
+    ).json()) as MonthlyAttendanceRecord[]
+    expect(righe.find((r) => r.date === ANNUNCIO_SCADUTO)?.fattoDelRegistro).toBe(true)
+  })
+
+  it('…e quello di OGGI resta un annuncio: l’appello può ancora smentirlo', async () => {
+    h.state.tabelle.presenze = [annunciata(OGGI, 'p-oggi'), annunciata(ANNUNCIO_SCADUTO, 'p-scaduto')]
+    const body = await (await ParentAssenze(parentReq('/api/parent/primaria/assenze'))).json()
+    expect((body.data as { id: string }[]).map((r) => r.id)).toEqual(['p-scaduto'])
+  })
+})
+
+describe('R15 · la giustifica del genitore non cancella l’assenza del figlio', () => {
+  /** La riga storica di luglio DOPO che il genitore l'ha giustificata. */
+  const giustificataDalGenitore = (): Riga => ({
+    ...storica(LUGLIO, 'p-storica'),
+    giustificata: true,
+    giustificata_da: GENITORE,
+    giustificata_il: `${LUGLIO}T18:00:00Z`,
+  })
+
+  it('`parent/primaria/assenze:GET` — resta nella cronologia dopo la giustifica', async () => {
+    h.state.tabelle.presenze = [giustificataDalGenitore()]
+    const body = await (await ParentAssenze(parentReq('/api/parent/primaria/assenze'))).json()
+    expect(
+      (body.data as { id: string }[]).map((r) => r.id),
+      'sparire dopo il gesto che l’app chiede è il modo più diretto per far credere che la giustifica non sia arrivata',
+    ).toEqual(['p-storica'])
+    expect(body.riepilogo.assente).toBe(1)
+  })
+
+  it('`primaria/ore-assenza:GET` — resta nel monte ore dopo la giustifica', async () => {
+    h.state.tabelle.presenze = [giustificataDalGenitore()]
+    const body = await (
+      await OreAssenza(
+        new NextRequest(`http://localhost/api/primaria/ore-assenza?sectionId=${SEZIONE}&from=2026-01-01&to=2099-12-31`),
+      )
+    ).json()
+    expect(body.data[0]?.oreTotali).toBeGreaterThan(0)
+  })
+
+  it('`attendance/monthly:GET` — resta un fatto nel registro del docente', async () => {
+    h.state.tabelle.presenze = [giustificataDalGenitore()]
+    const righe = (await (
+      await Mensile(new NextRequest('http://localhost/api/attendance/monthly?sezione=TEST%201A&year=2026&month=7'))
+    ).json()) as MonthlyAttendanceRecord[]
+    expect(righe.find((r) => r.date === LUGLIO)?.fattoDelRegistro).toBe(true)
   })
 })

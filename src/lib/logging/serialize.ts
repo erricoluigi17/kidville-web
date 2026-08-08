@@ -185,8 +185,38 @@ function sicuro<T>(leggi: () => T, fallback: T): T {
     }
 }
 
-/** Un frame di stack: `    at qualcosa (file:riga:colonna)`. */
-const FRAME = /^\s*at\s/;
+/** Un frame di stack come lo scrive V8 (Chrome, Node): `    at qualcosa (file:riga:colonna)`. */
+const FRAME_V8 = /^\s*at\s/;
+
+/**
+ * Un frame come lo scrivono WEBKIT/JavaScriptCore (Safari, ogni browser su iOS, la WebView
+ * di Capacitor) e Firefox: `funzione@url:riga:colonna`, senza header e senza `at`.
+ *
+ * ⚠️ PERCHÉ NON BASTA CERCARE UNA `@` (R10 del quinto collaudo, ma il difetto è
+ * PRE-ESISTENTE). Riconoscere i frame non serve a formattare: serve a decidere CHE COSA NON
+ * viene sanificato. Tutto ciò che sta prima del primo frame è header — cioè il MESSAGGIO — e
+ * passa da `sanificaMessaggio` (email, codici fiscali, cap a 500) e da `redigiPathNelTesto`.
+ * Una regola lasca (`.*@.*`) promuoverebbe a «frame» una riga di prosa con dentro
+ * `mario.rossi@example.com`, e quell'email uscirebbe in chiaro in `app_log`: un buco di
+ * privacy aperto dal rimedio a un difetto di diagnostica.
+ *
+ * Perciò dopo la `@` si pretende la forma di un URL — uno SCHEMA (`https://`,
+ * `capacitor://`, `file://`) o uno slash iniziale — e in coda `:riga:colonna`. `example.com`
+ * non è nessuna delle due cose. L'unica eccezione è `[native code]`, che WebKit scrive al
+ * posto della posizione per le funzioni interne del motore ed è una stringa letterale.
+ *
+ * Il nome della funzione può contenere SPAZI (`global code@…`, `eval code@…`, `module
+ * code@…`): è la ragione per cui la parte prima della `@` è `[^@\n]*` e non `\S*`.
+ *
+ * Il difetto che chiude, misurato in produzione su 30 giorni: 204 stack, 6 in formato WebKit,
+ * tutti e 6 con file/riga/colonna sostituiti da `[tok]` — e sono gli stack degli iPhone, cioè
+ * di segnalazioni che non si possono riprodurre a mano.
+ */
+const FRAME_WEBKIT = /^[^@\n]*@(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/)\S*:\d+:\d+$|^[^@\n]*@\[native code\]$/;
+
+function eFrame(riga: string): boolean {
+    return FRAME_V8.test(riga) || FRAME_WEBKIT.test(riga.trim());
+}
 
 /**
  * Lo stack di V8 è `Name: message` seguito dai frame. L'HEADER NON È UN FRAME: È IL
@@ -227,11 +257,11 @@ const FRAME = /^\s*at\s/;
  */
 function preparaStack(stack: string): string {
     const righe = stack.split('\n');
-    const primoFrame = righe.findIndex((r) => FRAME.test(r));
+    const primoFrame = righe.findIndex(eFrame);
     const testa = primoFrame === -1 ? righe : righe.slice(0, primoFrame);
     const frame = primoFrame === -1
         ? []
-        : righe.slice(primoFrame).filter((r) => FRAME.test(r)).slice(0, FRAME_MAX);
+        : righe.slice(primoFrame).filter(eFrame).slice(0, FRAME_MAX);
 
     // `sanificaMessaggio` PRIMA (tronca a 500: ciò che taglia è buttato, non esposto), la
     // riduzione dei path DOPO, sul testo che sopravvive. Le due sono indipendenti — nessuna
@@ -239,7 +269,12 @@ function preparaStack(stack: string): string {
     // fail-CLOSED: se non riesce a ridurre, restituisce `[testo-illeggibile]` invece di lasciar
     // passare un header di cui non può garantire che sia privo di credenziali.
     const header = redigiPathNelTesto(sanificaMessaggio(testa.join('\n')));
-    return tronca([header, ...frame].join('\n'), STACK_MAX);
+    // Uno stack di WebKit comincia DIRETTAMENTE dal primo frame: non ha header, perché in
+    // JavaScriptCore `error.stack` non ripete il messaggio. In quel caso l'header è la stringa
+    // vuota, e anteporla lascerebbe una riga vuota in cima a ogni stack di iPhone — cioè
+    // spenderebbe una riga del budget per non dire niente.
+    const parti = header === '' ? frame : [header, ...frame];
+    return tronca(parti.join('\n'), STACK_MAX);
 }
 
 /** Testo di un campo d'errore (`details`, `hint`): sempre sanificato, mai grezzo. */

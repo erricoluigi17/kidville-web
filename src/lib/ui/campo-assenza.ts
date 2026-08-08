@@ -24,9 +24,40 @@
  * entrambe; e un lock (`assenze-due-schermate-coerenti`) verifica che le
  * etichette omonime portino le stesse classi.
  *
- * Lo spazio attorno resta al punto d'uso (`mb-2` nel form, `gap-1` nella
- * colonna della card): è layout della schermata, non tipografia del campo.
+ * ⚠️ E DAL 2026-08-08 ANCHE LO SPAZIO. Questo commento diceva l'opposto — «lo
+ * spazio attorno resta al punto d'uso (`mb-2` nel form, `gap-1` nella colonna
+ * della card): è layout della schermata, non tipografia del campo» — e il
+ * collaudo successivo ha misurato il risultato di quella frase, a 390px, sugli
+ * stessi campi e con le stesse parole:
+ *
+ *   etichetta → campo data:        pagina 8px · card 4px
+ *   campo data → etichetta motivo: pagina 16px · card 12px
+ *   etichetta motivo → nota:       pagina 8px · card 4px
+ *   nota → area di testo:          pagina 8px · card 4px
+ *
+ * Quattro distanze su quattro divergenti, sempre di 4px, sopra controlli
+ * identici al pixel. Lo spazio fra un'etichetta e il suo campo NON è layout
+ * della pagina: è anatomia del blocco, esattamente come il corpo del testo — e
+ * qui le due schermate ospitano lo STESSO modulo. Era l'ultima parte del blocco
+ * rimasta fuori da questo file, ed è puntualmente divergita.
  */
+
+/**
+ * IL BLOCCO — il contenitore che tiene insieme etichetta, aiuto e controllo.
+ *
+ * `gap-2` (8px) e non `gap-1`: è la distanza della schermata gemella, cioè
+ * quella su cui il resto del blocco è già stato allineato, e 4px fra
+ * un'etichetta e il suo campo li rendono un'unica macchia a chi legge da lontano.
+ *
+ * Il gap governa TUTTE le distanze interne al blocco — etichetta, nota sul
+ * trattamento del dato, avviso di sovrascrittura, controllo — così non esiste
+ * più un punto in cui una delle due schermate possa dichiararne una sua.
+ */
+export const BLOCCO_CAMPO_ASSENZA = 'flex flex-col gap-2';
+
+/** Lo spazio FRA due blocchi di campo: il doppio di quello interno, così il
+ *  blocco si legge come un'unità e non come quattro righe alla stessa distanza. */
+export const SPAZIO_FRA_BLOCCHI_ASSENZA = 'mt-4';
 
 /**
  * L'ETICHETTA di un campo del modulo.

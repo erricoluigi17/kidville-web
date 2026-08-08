@@ -24,7 +24,9 @@ import {
   eAssenzaSoloAnnunciata,
   eFattoDelRegistro,
   eGiornoTrascorso,
-  FILTRO_FATTI,
+  FILTRO_NON_ANNUNCIO,
+  filtroFatti,
+  finestraAnnuncioAperta,
   limitaAiFatti,
   limitaAOggi,
   soloFatti,
@@ -171,13 +173,235 @@ describe('limitaAiFatti', () => {
     }
     limitaAiFatti(finta)
     expect(lte).toEqual([{ colonna: 'data', valore: oggiFiscaleISO() }])
-    expect(or, 'senza questo filtro il `.lte` non può escludere una riga che cade su OGGI').toEqual([FILTRO_FATTI])
+    expect(or, 'senza questo filtro il `.lte` non può escludere una riga che cade su OGGI').toEqual([
+      filtroFatti(oggiFiscaleISO()),
+    ])
   })
 
   it('il filtro è una DISGIUNZIONE: nega la sola congiunzione dell’annuncio', () => {
     // `or=(a,b,c)` è «a OR b OR c», cioè NOT(annuncio) = NOT(giustificata_da NOT
     // NULL AND registrato_da IS NULL AND stato = 'assente'). Scritto in un posto
     // solo perché una virgola di troppo qui toglie righe vere dal registro.
-    expect(FILTRO_FATTI).toBe('giustificata_da.is.null,registrato_da.not.is.null,stato.neq.assente')
+    expect(FILTRO_NON_ANNUNCIO).toBe('giustificata_da.is.null,registrato_da.not.is.null,stato.neq.assente')
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// R15 — L'ANNUNCIO HA UNA FINE.
+//
+// La distinzione «annunciato ≠ accaduto» è stata introdotta senza un termine
+// sulla DATA: `eAssenzaSoloAnnunciata` non riceveva `riga.data`, quindi
+// «annuncio» era una proprietà PERMANENTE della riga invece che una proprietà
+// del giorno in cui la si guarda. Due conseguenze misurate:
+//
+//  (a) un'assenza comunicata dal genitore e mai confermata dall'appello restava
+//      invisibile PER SEMPRE — registro del docente, monte ore della primaria,
+//      riepilogo della home, cronologia;
+//  (b) un'assenza VERA già a registro e priva di `registrato_da` (le 36 righe
+//      storiche) SPARIVA da tutti quei conteggi nell'istante in cui il genitore
+//      la giustificava — cioè il gesto che l'app gli chiede di fare.
+//
+// La regola: un annuncio è tale finché parla di un giorno che il genitore può
+// ancora RITIRARE (`data >= oggi`, la stessa finestra di
+// `comunica-assenza:DELETE`). Dal giorno dopo è l'unica affermazione esistente
+// su un giorno concluso, ed è firmata: torna a essere un fatto.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('finestraAnnuncioAperta', () => {
+  const OGGI = '2026-08-08'
+
+  it('è aperta su OGGI e sul futuro — ed è la stessa finestra dell’ANNULLAMENTO', () => {
+    // `comunica-assenza:DELETE` rifiuta con 400 `ASSENZA_DATA_PASSATA` esattamente
+    // `data < oggi`: finché il genitore può ritirare la comunicazione, quella
+    // comunicazione è un annuncio. Due regole gemelle scritte a mano in due file
+    // divergono; questa vive in un posto solo.
+    expect(finestraAnnuncioAperta(OGGI, OGGI)).toBe(true)
+    expect(finestraAnnuncioAperta('2026-08-20', OGGI)).toBe(true)
+  })
+
+  it('si chiude a mezzanotte del giorno annunciato', () => {
+    expect(finestraAnnuncioAperta('2026-08-07', OGGI)).toBe(false)
+    expect(finestraAnnuncioAperta('2026-07-15', OGGI)).toBe(false)
+  })
+
+  it('senza una data leggibile resta APERTA: in dubbio non si afferma un fatto', () => {
+    // Il chiamante che non porta la data è `parent/presenze:GET` sul badge di
+    // OGGI (`.eq('data', oggiData)`): lì «annuncio» è la risposta giusta. E in
+    // generale promuovere a fatto una riga di cui non si sa il giorno è il modo
+    // per far comparire «ASSENTE» sulla home di un bambino che è a scuola.
+    expect(finestraAnnuncioAperta(undefined, OGGI)).toBe(true)
+    expect(finestraAnnuncioAperta(null, OGGI)).toBe(true)
+    expect(finestraAnnuncioAperta('non-una-data', OGGI)).toBe(true)
+  })
+})
+
+describe('eAssenzaSoloAnnunciata · l’annuncio scade', () => {
+  const OGGI = '2026-08-08'
+
+  it('l’annuncio di IERI non è più un annuncio: il giorno è concluso e nessuno l’ha smentito', () => {
+    expect(
+      eAssenzaSoloAnnunciata(
+        { stato: 'assente', giustificata_da: 'g-1', registrato_da: null, data: '2026-08-07' },
+        OGGI,
+      ),
+    ).toBe(false)
+  })
+
+  it('l’annuncio di OGGI resta un annuncio: l’appello può ancora smentirlo', () => {
+    expect(
+      eAssenzaSoloAnnunciata(
+        { stato: 'assente', giustificata_da: 'g-1', registrato_da: null, data: OGGI },
+        OGGI,
+      ),
+    ).toBe(true)
+  })
+
+  it('l’annuncio per un giorno FUTURO resta un annuncio', () => {
+    expect(
+      eAssenzaSoloAnnunciata(
+        { stato: 'assente', giustificata_da: 'g-1', registrato_da: null, data: '2026-09-20' },
+        OGGI,
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('eFattoDelRegistro · i due casi di R15', () => {
+  const OGGI = '2026-08-08'
+
+  it('(a) l’assenza comunicata per un giorno ORMAI PASSATO conta nel registro', () => {
+    // Il caso che non finiva mai: comunicata il 5, mai confermata dall'appello,
+    // e ancora invisibile il 20 — nel monte ore con cui si valuta la validità
+    // dell'anno scolastico.
+    expect(
+      eFattoDelRegistro(
+        { data: '2026-08-05', stato: 'assente', giustificata_da: 'g-1', registrato_da: null },
+        OGGI,
+      ),
+    ).toBe(true)
+  })
+
+  it('(b) l’assenza storica NON sparisce quando il genitore la giustifica', () => {
+    // La stessa riga, prima e dopo il gesto che l'app chiede al genitore: il 15
+    // luglio è passato da ventiquattro giorni e resta un fatto in entrambi gli
+    // istanti. Prima del rimedio la seconda riga era `false`.
+    const prima = { data: '2026-07-15', stato: 'assente', giustificata_da: null, registrato_da: null }
+    expect(eFattoDelRegistro(prima, OGGI)).toBe(true)
+    expect(eFattoDelRegistro({ ...prima, giustificata_da: 'g-1' }, OGGI)).toBe(true)
+  })
+
+  it('l’annuncio di oggi e quello futuro restano fuori (il rimedio non si mangia se stesso)', () => {
+    expect(eFattoDelRegistro({ data: OGGI, stato: 'assente', giustificata_da: 'g-1', registrato_da: null }, OGGI)).toBe(false)
+    expect(eFattoDelRegistro({ data: '2026-08-20', stato: 'assente', giustificata_da: 'g-1', registrato_da: null }, OGGI)).toBe(false)
+  })
+})
+
+describe('soloFatti · con la scadenza dell’annuncio', () => {
+  it('tiene l’annuncio scaduto, toglie quello di oggi e quello futuro', () => {
+    const righe = [
+      { data: '2026-08-05', stato: 'assente', giustificata_da: 'g-1', registrato_da: null },  // annuncio SCADUTO → fatto
+      { data: '2026-08-08', stato: 'assente', giustificata_da: 'g-1', registrato_da: null },  // annuncio di oggi
+      { data: '2026-08-20', stato: 'assente', giustificata_da: 'g-1', registrato_da: null },  // annuncio futuro
+    ]
+    expect(soloFatti(righe, (r) => r.data, '2026-08-08').map((r) => r.data)).toEqual(['2026-08-05'])
+  })
+})
+
+describe('filtroFatti · la stessa scadenza lato PostgREST', () => {
+  it('porta il QUARTO termine: la data già passata basta da sola a fare un fatto', () => {
+    expect(filtroFatti('2026-08-08')).toBe(
+      'giustificata_da.is.null,registrato_da.not.is.null,stato.neq.assente,data.lt.2026-08-08',
+    )
+  })
+
+  it('il quarto termine usa la STESSA colonna del tetto temporale', () => {
+    expect(filtroFatti('2026-08-08', 'giorno')).toContain('giorno.lt.2026-08-08')
+  })
+
+  it('un `oggi` malformato non entra nella stringa di filtro', () => {
+    // La stringa finisce dentro `or=(…)` di PostgREST: un valore arbitrario ci
+    // aggiungerebbe termini. Nessun chiamante lo fa oggi — tutti passano
+    // `oggiFiscaleISO()` — e il presidio serve perché continui a essere vero.
+    const sporco = filtroFatti('2026-08-08),alunno_id.not.is.null,(')
+    expect(sporco).not.toContain('alunno_id')
+    expect(sporco).toContain(`data.lt.${oggiFiscaleISO()}`)
+  })
+
+  it('limitaAiFatti manda a PostgREST il filtro CON la data, non i soli tre termini', () => {
+    const or: string[] = []
+    const finta = {
+      lte() { return this },
+      or(filtro: string) { or.push(filtro); return this },
+    }
+    limitaAiFatti(finta, 'data', '2026-08-08')
+    expect(or).toEqual(['giustificata_da.is.null,registrato_da.not.is.null,stato.neq.assente,data.lt.2026-08-08'])
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LE DUE STRADE DELLA STESSA REGOLA DEVONO DIRE LA STESSA COSA.
+//
+// La regola vive in due forme perché i conteggi si fanno in due posti: in
+// MEMORIA (`eFattoDelRegistro`, quando le righe sono già scaricate) e nel
+// DATABASE (`filtroFatti` + `.lte`, quando si conta con `head: true`). Sono due
+// implementazioni della stessa frase, e finora nessuna prova le confrontava: il
+// difetto R15 è nato esattamente lì — il termine sulla data è stato dimenticato
+// in ENTRAMBE, e nessun test poteva accorgersene perché ognuna era coerente con
+// se stessa.
+//
+// Il valutatore qui sotto interpreta le clausole PostgREST che usiamo (`is.null`,
+// `not.is.null`, `neq`, `lt`) in disgiunzione, come fa `or=(…)`. Non è un motore
+// SQL: è il minimo che serve per far parlare le due strade.
+// ═════════════════════════════════════════════════════════════════════════════
+
+type RigaFinta = { data: string; stato: string; giustificata_da: string | null; registrato_da: string | null }
+
+/** Valuta una clausola `campo.op[.valore]` su una riga. */
+function clausolaVera(clausola: string, riga: RigaFinta): boolean {
+  const [campo, ...resto] = clausola.split('.')
+  const op = resto.join('.')
+  const valore = (riga as unknown as Record<string, string | null>)[campo] ?? null
+  if (op === 'is.null') return valore === null
+  if (op === 'not.is.null') return valore !== null
+  if (op.startsWith('neq.')) return valore !== op.slice(4)
+  if (op.startsWith('lt.')) return valore !== null && valore < op.slice(3)
+  throw new Error(`clausola PostgREST non prevista dal valutatore: ${clausola}`)
+}
+
+/** `.lte(colonna, oggi)` + `or=(…)`, cioè ciò che il DATABASE tiene davvero. */
+function tenutaDalDatabase(riga: RigaFinta, oggi: string): boolean {
+  if (!(riga.data <= oggi)) return false
+  return filtroFatti(oggi).split(',').some((c) => clausolaVera(c, riga))
+}
+
+describe('la regola in memoria e la regola in PostgREST danno lo stesso verdetto', () => {
+  const OGGI = '2026-08-08'
+  const CASI: { nome: string; riga: RigaFinta }[] = [
+    { nome: 'annuncio di oggi', riga: { data: OGGI, stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'annuncio futuro', riga: { data: '2026-08-20', stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'annuncio SCADUTO', riga: { data: '2026-08-05', stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'appello del docente di oggi', riga: { data: OGGI, stato: 'assente', giustificata_da: null, registrato_da: 'd' } },
+    { nome: 'riga storica senza registrato_da', riga: { data: '2026-07-15', stato: 'assente', giustificata_da: null, registrato_da: null } },
+    { nome: 'riga storica poi GIUSTIFICATA dal genitore', riga: { data: '2026-07-15', stato: 'assente', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'ritardo storico giustificato', riga: { data: '2026-07-15', stato: 'ritardo', giustificata_da: 'g', registrato_da: null } },
+    { nome: 'presenza di oggi', riga: { data: OGGI, stato: 'presente', giustificata_da: null, registrato_da: 'd' } },
+  ]
+
+  for (const { nome, riga } of CASI) {
+    it(`${nome}: stesso verdetto in memoria e nel database`, () => {
+      expect(tenutaDalDatabase(riga, OGGI)).toBe(eFattoDelRegistro(riga, OGGI))
+    })
+  }
+
+  it('il valutatore di clausole funziona davvero (altrimenti l’equivalenza è vuota)', () => {
+    const riga: RigaFinta = { data: '2026-08-05', stato: 'assente', giustificata_da: 'g', registrato_da: null }
+    expect(clausolaVera('giustificata_da.is.null', riga)).toBe(false)
+    expect(clausolaVera('registrato_da.not.is.null', riga)).toBe(false)
+    expect(clausolaVera('stato.neq.assente', riga)).toBe(false)
+    expect(clausolaVera('data.lt.2026-08-08', riga)).toBe(true)
+    // …e i TRE termini della sola sorgente la escluderebbero: è il difetto R15,
+    // riprodotto qui sopra la riga che lo chiude.
+    expect(FILTRO_NON_ANNUNCIO.split(',').some((c) => clausolaVera(c, riga))).toBe(false)
+    expect(filtroFatti('2026-08-08').split(',').some((c) => clausolaVera(c, riga))).toBe(true)
   })
 })

@@ -395,6 +395,101 @@ describe('descriviErrore — il PATH nello stack è una credenziale, e non esce'
     });
 });
 
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ * SAFARI E iOS SCRIVONO GLI STACK IN UN ALTRO MODO — e la posizione dell'errore spariva.
+ *
+ * R10 del quinto collaudo. WebKit/JavaScriptCore (e Firefox) non scrivono
+ * `    at f (file:riga:col)` ma `funzione@url:riga:col`, e senza header: `error.stack` è
+ * l'elenco NUDO dei frame. `preparaStack` riconosceva solo la forma di V8, quindi
+ * `findIndex(FRAME)` tornava -1 e l'INTERO stack veniva trattato come header: passava da
+ * `sanificaMessaggio` (taglio a 500) e da `redigiPathNelTesto`, che riduce i segmenti opachi
+ * a `[tok]` — cioè cancellava esattamente file, riga e colonna.
+ *
+ * Misurato in produzione su 30 giorni: 204 stack, 197 in formato V8 (intatti) e 6 in formato
+ * WebKit, TUTTI e 6 ridotti a `[tok]`, due troncati a metà frame. L'app è sullo store: è il
+ * canale su cui si diagnosticano i guasti degli iPhone, cioè le segnalazioni che non si
+ * possono riprodurre a mano.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+describe('descriviErrore — gli stack di Safari/iOS (WebKit) conservano la posizione', () => {
+    /** La forma vera, copiata da una riga di `app_log`: nessun header, frame `nome@url:riga:col`. */
+    const STACK_WEBKIT = [
+        'sh@https://app.kidville.it/_next/static/chunks/app/parent/layout-1a2b3c4d5e6f7a8b.js:1:2345',
+        'sd@https://app.kidville.it/_next/static/chunks/main-app-9f8e7d6c5b4a3210.js:12:98',
+        '@https://app.kidville.it/_next/static/chunks/webpack-0011223344556677.js:3:456',
+        'global code@https://app.kidville.it/parent/attendance:1:1',
+    ].join('\n');
+
+    it('i frame restano INTATTI: file, riga e colonna non diventano [tok]', () => {
+        const d = descriviErrore({ message: 'boom', stack: STACK_WEBKIT });
+
+        expect(d.stack, 'la posizione dell\'errore è stata cancellata').not.toContain('[tok]');
+        expect(d.stack).toContain('layout-1a2b3c4d5e6f7a8b.js:1:2345');
+        expect(d.stack).toContain('main-app-9f8e7d6c5b4a3210.js:12:98');
+        expect(d.stack).toBe(STACK_WEBKIT);
+    });
+
+    it('uno stack WebKit lungo NON viene troncato a 500 caratteri come un messaggio', () => {
+        // Due dei sei stack veri erano chiusi da «…» a metà frame: erano passati dal cap del
+        // MESSAGGIO, che sui frame non si applica.
+        const lungo = Array.from(
+            { length: 8 },
+            (_, i) => `f${i}@https://app.kidville.it/_next/static/chunks/app/parent/pagina-${i}-aabbccdd11223344.js:${i}:${i}0`,
+        ).join('\n');
+        const d = descriviErrore({ message: 'boom', stack: lungo });
+
+        expect(lungo.length).toBeGreaterThan(500);
+        expect(d.stack).toBe(lungo);
+        expect(d.stack).not.toContain('…');
+    });
+
+    it('il cap dei 10 frame e quello in caratteri valgono anche qui', () => {
+        const molti = Array.from({ length: 30 }, (_, i) => `f${i}@https://app.kidville.it/a.js:${i}:1`).join('\n');
+        const stack = String(descriviErrore({ message: 'x', stack: molti }).stack);
+
+        expect(stack.split('\n')).toHaveLength(10);
+        expect(stack.length).toBeLessThanOrEqual(2_000);
+    });
+
+    it('un frame nativo (`x@[native code]`) è un frame, non prosa da sanificare', () => {
+        const stack = 'promiseReactionJob@[native code]\nsh@https://app.kidville.it/a.js:1:2';
+        expect(descriviErrore({ message: 'x', stack }).stack).toBe(stack);
+    });
+
+    /**
+     * LA DIREZIONE OPPOSTA, e conta quanto l'altra: il riconoscimento dei frame decide CHE
+     * COSA NON viene sanificato. Se una riga di prosa passasse per un frame WebKit, un'email
+     * dentro il messaggio uscirebbe in chiaro in `app_log` — scavalcando dal basso tutta la
+     * redazione. Perciò dopo la `@` si pretende uno SCHEMA (`https://`, `capacitor://`) o uno
+     * slash: `mario.rossi@example.com` non è un URL e non diventa un frame.
+     */
+    it('una riga di prosa con dentro un\'email NON viene scambiata per un frame', () => {
+        const d = descriviErrore({
+            message: 'boom',
+            stack: 'Invio a mario.rossi@example.com fallito alle 12:30:45\n    at f (/src/a.ts:1:1)',
+        });
+
+        expect(d.stack).not.toContain('mario.rossi@example.com');
+        expect(d.stack).toContain('[email]');
+    });
+
+    it('un header V8 seguito da frame WebKit: l\'header si sanifica lo stesso', () => {
+        // Il caso ibrido (uno stack ricostruito a mano dal client): l'header è tutto ciò che
+        // precede il primo frame, e quel taglio non deve spostarsi.
+        const TOKEN = 'tok_live_9f8e7d6c5b4a3210';
+        const d = descriviErrore({
+            message: 'boom',
+            stack: `Error: Errore caricando https://app.kidville.it/m/${TOKEN}\n`
+                + 'sh@https://app.kidville.it/_next/static/chunks/main-1a2b3c4d5e6f7a8b.js:1:2',
+        });
+
+        expect(d.stack).not.toContain(TOKEN);
+        expect(d.stack).toContain('/m/[tok]');
+        expect(d.stack).toContain('main-1a2b3c4d5e6f7a8b.js:1:2');
+    });
+});
+
 describe('descriviErrore — un campo rotto non azzera la riga di log', () => {
     it('un getter `stack` che lancia non fa perdere il messaggio', () => {
         const e = new Error('salvataggio fallito');

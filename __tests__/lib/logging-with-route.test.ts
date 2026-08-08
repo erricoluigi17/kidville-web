@@ -341,10 +341,51 @@ describe('withRoute — degrada, non esplode', () => {
         await expect(GET(ostile as never)).resolves.toBeInstanceOf(Response);
     });
 
-    it('non lancia se l\'handler restituisce qualcosa che non è una Response', async () => {
-        // Non è il contratto, ma un JS non tipizzato può farlo: il wrapper resta trasparente.
+    /**
+     * ⚠️ RISCRITTO IL 2026-08-08 — prima pretendeva `resolves.toBeUndefined()`,
+     * cioè che il wrapper restituisse intatto ciò che l'handler gli aveva dato,
+     * «trasparente». La trasparenza qui non protegge niente: se l'handler non
+     * torna una Response, quel valore non arriva a nessuno — Next solleva «No
+     * response is returned from route handler» e manda al client 500 con **corpo
+     * vuoto, zero byte** (misurato otto volte nel quinto collaudo). Non c'era una
+     * risposta da rispettare: c'era un guasto da dichiarare.
+     */
+    it('l\'handler che non restituisce una Response riceve un 500 DICHIARATO, non un 500 muto', async () => {
         const GET = withRoute('x:GET', (async () => undefined) as never);
-        await expect(GET(req())).resolves.toBeUndefined();
+        const res = await GET(req());
+        expect(res).toBeInstanceOf(Response);
+        expect(res.status).toBe(500);
+        // Il corpo è la differenza che conta: senza, chi indaga non ha nemmeno un id.
+        await expect(res.json()).resolves.toMatchObject({ codice: 'HANDLER_SENZA_RESPONSE' });
+        expect(res.headers.get('x-request-id')).toBeTruthy();
+    });
+
+    it('la stringa «TURBOPACK unreachable» — il valore VERO del quinto collaudo — non esce come risposta', async () => {
+        // È letteralmente ciò che l'ottimizzatore metteva al posto di `null` in
+        // `assertGenitoreNonSospeso`, e che le rotte restituivano con
+        // `if (sospesoErr) return sospesoErr`.
+        const POST = withRoute('parent/presenze/comunica-assenza:POST', (async () => 'TURBOPACK unreachable') as never);
+        const res = await POST(req());
+        expect(res.status).toBe(500);
+        await expect(res.json()).resolves.toMatchObject({ codice: 'HANDLER_SENZA_RESPONSE' });
+    });
+
+    it('CONTROLLO NEGATIVO: una Response valida esce INTATTA, la stessa istanza', async () => {
+        // La guardia non deve poter toccare una risposta buona: è il rischio di
+        // questa correzione, e vale più del difetto che chiude.
+        const vera = NextResponse.json({ ok: true }, { status: 201 });
+        const POST = withRoute('x:POST', async () => vera);
+        await expect(POST(req())).resolves.toBe(vera);
+    });
+
+    it('CONTROLLO NEGATIVO: una risposta di un ALTRO realm non viene scambiata per un guasto', async () => {
+        // `instanceof Response` fallisce su una Response nata altrove (Edge, un
+        // polyfill, un runtime futuro) pur essendo valida: per questo la guardia
+        // guarda lo `status`, non il prototipo. Se un giorno tornasse
+        // `instanceof`, questa prova diventa rossa invece che la produzione.
+        const daAltroRealm = { status: 204, headers: new Headers() };
+        const GET = withRoute('x:GET', (async () => daAltroRealm) as never);
+        await expect(GET(req())).resolves.toBe(daAltroRealm);
     });
 
     it('NON consuma il body multipart (la famiglia di route dove il danno sarebbe peggiore)', async () => {

@@ -4,6 +4,31 @@ const PORT = 3100;
 const BASE_URL = `http://localhost:${PORT}`;
 
 /**
+ * IL SERVER DELL'ARTEFATTO — `next start`, non `next dev`.
+ *
+ * Il quinto collaudo (2026-08-08) ha misurato otto rotte che rispondevano 500 con
+ * corpo vuoto a tutte le famiglie per un difetto dell'ottimizzatore di Turbopack:
+ * esisteva SOLO nel codice compilato. Nessun cancello del gate poteva vederlo —
+ * `eslint`, `tsc` e i test girano sul sorgente, `next build` esce 0 perché la
+ * build riesce — e nemmeno l'E2E, che gira su `npm run dev`, cioè sull'unica
+ * configurazione in cui quel difetto non c'è.
+ *
+ * Un secondo server, su una porta sua, per uno spec solo (`smoke-artefatto`).
+ * Non sostituisce il server di sviluppo per tutta la suite: quella scelta
+ * riscriverebbe le condizioni di 40 spec in un lavoro che ne ha altre, e un E2E
+ * che diventa rosso per il cambio di server non dice niente sul prodotto.
+ */
+const PORT_ARTEFATTO = 3101;
+const URL_ARTEFATTO = `http://localhost:${PORT_ARTEFATTO}`;
+
+/**
+ * Gira in CI, e in locale solo a richiesta (`KV_SMOKE_ARTEFATTO=1`): costruire il
+ * prodotto costa qualche minuto, e chi sta iterando su uno spec non deve pagarlo
+ * a ogni salvataggio.
+ */
+const SMOKE_ARTEFATTO = !!process.env.CI || process.env.KV_SMOKE_ARTEFATTO === '1';
+
+/**
  * IL SOTTOINSIEME CHE SI RIPETE SU WEBKIT.
  *
  * L'app iOS di Kidville è una WebView **WebKit** (Capacitor), e fino al
@@ -82,12 +107,44 @@ export default defineConfig({
       // che i file esistano e fallirebbero su un redirect al login.
       dependencies: ['setup'],
     },
+    ...(SMOKE_ARTEFATTO
+      ? [
+          {
+            // L'unico progetto che parla con `next start`. `baseURL` diverso: è
+            // ciò che lo distingue: stessa suite, altro prodotto sotto.
+            name: 'smoke-artefatto',
+            testMatch: /smoke-artefatto\.spec\.ts$/,
+            use: { ...devices['Desktop Chrome'], baseURL: URL_ARTEFATTO },
+            // Gli storageState vengono dal progetto `setup`, che fa il login sul
+            // server di sviluppo: sono cookie di Supabase, validi per l'host, non
+            // per la porta. La sessione vale su entrambi i server.
+            dependencies: ['setup'],
+          },
+        ]
+      : []),
   ],
-  webServer: {
-    command: `npm run dev -- --port ${PORT}`,
-    url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
+  webServer: [
+    ...(SMOKE_ARTEFATTO
+      ? [
+          {
+            // `npm run build` porta con sé `postbuild` → `verifica-artefatto.mjs`,
+            // cioè il cancello che cerca il segnaposto di Turbopack nei chunk.
+            // Se quello è rosso, il server non parte nemmeno: il difetto si ferma
+            // prima, e questo spec è la seconda rete, non la prima.
+            command: `npm run build && npm run start -- --port ${PORT_ARTEFATTO}`,
+            url: URL_ARTEFATTO,
+            reuseExistingServer: !process.env.CI,
+            // Il build è la parte lunga: in CI, a freddo, sta sotto i 5 minuti.
+            timeout: 600_000,
+            env: { KV_LOG_LEVEL: 'silent' },
+          },
+        ]
+      : []),
+    {
+      command: `npm run dev -- --port ${PORT}`,
+      url: BASE_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
     /**
      * Il logger si spegne da sé sotto vitest (guardia su `process.env.VITEST`, letta al
      * caricamento del modulo), ma Playwright NON è vitest: avvia un vero server Next, in un
@@ -112,6 +169,7 @@ export default defineConfig({
      * variabile già presente nel processo con quella di `.env.local`, quindi qui il valore
      * vince — anche se un domani qualcuno mettesse `KV_LOG_LEVEL` nel file.
      */
-    env: { KV_LOG_LEVEL: 'silent' },
-  },
+      env: { KV_LOG_LEVEL: 'silent' },
+    },
+  ],
 });

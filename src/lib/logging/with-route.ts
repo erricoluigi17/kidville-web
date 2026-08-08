@@ -114,7 +114,12 @@ export function withRoute<A extends [Request, ...unknown[]]>(
             // un altro id) — e riflettergli un valore arbitrario che lui controlla.
             const rid = contesto()?.requestId;
 
-            let res: Response;
+            // `unknown` e non `Response`: la firma lo PROMETTE, il runtime no. Il quinto
+            // collaudo ha misurato otto rotte in cui questo valore era la stringa
+            // «TURBOPACK unreachable» (vedi `sospensione.ts`). Dichiararlo `Response`
+            // qui significherebbe che il controllo poche righe più sotto è codice morto
+            // per il compilatore — e non lo è: è l'unica cosa fra un guasto e un 500 muto.
+            let res: unknown;
             try {
                 res = await handler(...args);
             } catch (err) {
@@ -125,9 +130,41 @@ export function withRoute<A extends [Request, ...unknown[]]>(
                 throw err;
             }
 
+            // Si registra il valore VERO, quello che l'handler ha davvero restituito:
+            // è `registraEsito` a riconoscere «senza Response» e a scriverne la riga.
             senzaLanciare(() => registraEsito(nome, res, Date.now() - t0, conSessione(args[0])));
-            senzaLanciare(() => rifletti(res, rid));
-            return res;
+
+            /**
+             * ⚠️ E QUI IL WRAPPER, PER UNA VOLTA, DECIDE.
+             *
+             * La regola di questo file è «osserva, non decide» — il ramo ECCEZIONE
+             * rilancia apposta. Questo è l'unico caso in cui non basta, e la ragione è
+             * che non c'è nessuna risposta da proteggere: se l'handler non ne ha
+             * restituita una, Next solleva «No response is returned from route handler»
+             * e manda al client **500 con corpo vuoto e zero byte**. Non stiamo
+             * sostituendo una risposta buona con la nostra: stiamo sostituendo un 500
+             * muto con un 500 che dice di essere un guasto del server e porta il
+             * `x-request-id` con cui si ritrova la riga in `app_log`.
+             *
+             * Perché `statoDi` e non `res instanceof Response`: `instanceof` confronta
+             * il prototipo, e una Response nata in un altro realm (Edge, un polyfill,
+             * un runtime futuro) NON lo supera pur essendo perfettamente valida —
+             * trasformeremmo in 500 delle risposte buone, che è molto peggio del
+             * difetto che stiamo chiudendo. La stessa condizione la usa `registraEsito`
+             * dal 2026-08-08: «ha uno status numerico» è la definizione operativa di
+             * risposta che questo modulo ha già adottato, in un posto solo.
+             *
+             * Vale per tutte e 239 le rotte, non per le otto che avevano il difetto:
+             * il collaudo chiedeva un `instanceof Response` ai cinque chiamanti di
+             * `assertGenitoreNonSospeso`, ma la classe di guasto non è dei chiamanti —
+             * è di qualunque handler che, per qualunque ragione, non torni una
+             * risposta. La difesa sta dove sta il collo di bottiglia.
+             */
+            const finale: Response =
+                statoDi(res) === undefined ? rispostaSenzaHandler(rid) : (res as Response);
+
+            senzaLanciare(() => rifletti(finale, rid));
+            return finale;
         };
 
         // Rientranza: se siamo GIÀ dentro una richiesta (una route wrappata invocata come
@@ -144,6 +181,28 @@ export function withRoute<A extends [Request, ...unknown[]]>(
         // polyfilla a mano su `window`) e che qui sarebbe un throw del wrapper.
         return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]) }, esegui);
     };
+}
+
+/**
+ * Il 500 che si manda quando l'handler non ha restituito niente di utilizzabile.
+ *
+ * Un CORPO c'è, ed è la differenza che conta: il collaudo ha misurato «HTTP 500,
+ * corpo vuoto, zero byte», cioè una schermata su cui il genitore legge il messaggio
+ * generico dell'app e chi indaga non ha nemmeno un id da cercare. Le stesse chiavi
+ * degli altri errori del progetto (`error` + `codice`), perché i client sanno già
+ * leggerle, e nessun dettaglio del guasto: all'utente non serve, e non è suo.
+ */
+function rispostaSenzaHandler(rid: string | undefined): Response {
+    return new Response(
+        JSON.stringify({ error: 'Errore interno del server', codice: 'HANDLER_SENZA_RESPONSE' }),
+        {
+            status: 500,
+            headers: {
+                'content-type': 'application/json; charset=utf-8',
+                ...(rid ? { 'x-request-id': rid } : {}),
+            },
+        },
+    );
 }
 
 /** L'osservabilità non può rompere la risposta che sta osservando. */

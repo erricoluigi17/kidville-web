@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { EMAILS, IDS, login, attendiFineCaricamento } from './fixtures';
+import itStudents from '../messages/it/adminStudents.json';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ISOLAMENTO FRA SEDI — la prova che la suite E2E non poteva fare
@@ -53,7 +54,7 @@ test('la segreteria della sede 1 non trova l’alunna della sede 2 (elenco e URL
   await entra(page, EMAILS.segreteria, 'admin');
 
   await page.goto('/admin/students');
-  await expect(page.getByText('Totale (tutti gli stati)').first()).toBeVisible({ timeout: RENDER });
+  await expect(page.getByText(itStudents.statTotale).first()).toBeVisible({ timeout: RENDER });
 
   // Senza la punteggiatura finale: il catalogo è passato da `...` a `…` e il
   // match per sottostringa di Playwright non li considera equivalenti.
@@ -69,15 +70,23 @@ test('la segreteria della sede 1 non trova l’alunna della sede 2 (elenco e URL
   // client-side sulla lista già ricevuta: se il server l'avesse mandata, qui si
   // vedrebbe.
   await ricerca.fill('Eclissi');
-  await expect(page.getByText('Nessun alunno trovato').first()).toBeVisible({ timeout: AZIONE });
+  await expect(page.getByText(itStudents.vuotoAlunni).first()).toBeVisible({ timeout: AZIONE });
   await expect(page.getByText('Eclissi-E2E')).toHaveCount(0);
 
   // URL DIRETTO: conoscere l'uuid non basta. La scheda è il fascicolo completo
   // (codice fiscale, note mediche, genitori con documento e recapiti): è
   // l'insieme di dati personali più ampio che una sola rotta espone.
+  // ⚠️ LE FRASI SI CHIEDONO AL CATALOGO, non si ricopiano (2026-08-08).
+  // Questa riga è stata rossa in CI per un APOSTROFO: il catalogo è passato a
+  // quello tipografico (`L’alunno`) in un rilievo «minore» del quinto collaudo,
+  // il test cercava ancora quello dritto (`L'alunno`), e il match per
+  // sottostringa di Playwright non li considera equivalenti. Stessa famiglia
+  // della nota sui puntini di sospensione qui sopra: un test che ricopia il
+  // glossario diventa rosso su una riscrittura che non tocca una riga di
+  // prodotto — e chi lo legge crede a una perdita di dati fra sedi.
   await page.goto(`/admin/students/${IDS.B1}`);
-  await expect(page.getByText('Anagrafica non disponibile').first()).toBeVisible({ timeout: RENDER });
-  await expect(page.getByText("L'alunno non esiste o non appartiene ai tuoi plessi.").first()).toBeVisible();
+  await expect(page.getByText(itStudents.detailPageNonDisp).first()).toBeVisible({ timeout: RENDER });
+  await expect(page.getByText(itStudents.detailPageNonDispHint).first()).toBeVisible();
   await expect(page.getByText('Eclissi-E2E')).toHaveCount(0);
 
   // E la rotta che alimenta quella scheda, chiamata con la STESSA sessione:

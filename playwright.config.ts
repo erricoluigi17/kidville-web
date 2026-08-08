@@ -88,6 +88,13 @@ export default defineConfig({
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
       name: 'chromium',
+      // Lo smoke dell'artefatto NON gira qui: questo progetto parla col server di
+      // SVILUPPO, cioè l'unica configurazione in cui il difetto che lo smoke cerca
+      // non esiste. Eseguirlo anche qui non aggiunge una prova — aggiunge tre
+      // righe verdi che non provano niente, e che al primo sguardo sembrano la
+      // prova stessa. (Misurato nel run del 2026-08-08: 47, 48, 49 su `chromium`
+      // e 65, 66, 67 su `smoke-artefatto`, gli stessi tre test due volte.)
+      testIgnore: /smoke-artefatto\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },

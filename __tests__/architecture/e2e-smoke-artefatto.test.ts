@@ -68,6 +68,21 @@ describe('LOCK · una prova gira sull’artefatto, non sul sorgente', () => {
         ).toContain('baseURL: URL_ARTEFATTO')
     })
 
+    it('e SOLO quel progetto: `chromium` non lo esegue contro il server di sviluppo', () => {
+        // Nel primo run (2026-08-08) lo smoke è girato DUE volte: 47·48·49 sotto
+        // `chromium` e 65·66·67 sotto `smoke-artefatto`. Le prime tre erano verdi
+        // contro `next dev` — cioè contro l'unica configurazione in cui il difetto
+        // che cercano non esiste. Tre righe verdi che sembrano la prova e non lo
+        // sono: è la stessa forma del progetto che matcha zero file.
+        const chromium = CONFIG.slice(CONFIG.indexOf("name: 'chromium'"))
+        const finoAlProssimo = chromium.slice(0, chromium.indexOf('name:', 10))
+        expect(
+            finoAlProssimo,
+            'il progetto `chromium` non esclude più lo smoke: lo eseguirebbe una seconda volta ' +
+                'contro il server di sviluppo, dove è verde per costruzione',
+        ).toContain('smoke-artefatto')
+    })
+
     it('in CI gira: non è una prova che si esegue solo se qualcuno se la ricorda', () => {
         // `SMOKE_ARTEFATTO` è vero quando `process.env.CI` c'è: il workflow non
         // deve dichiarare niente, ma la condizione deve restare quella.

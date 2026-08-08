@@ -326,8 +326,11 @@ describe('lock localizzazione · la riga di testa delle pagine pubbliche', () =>
         ).toEqual([])
     })
 
-    it('tutte e quattro montano lo STESSO componente di testa', () => {
-        const senza = PAGINE_PUBBLICHE.filter((f) => !leggi(f).includes('PublicPageHeader'))
+    it('tutte e quattro MONTANO lo stesso componente di testa (non basta importarlo)', () => {
+        // `includes('PublicPageHeader')` da solo è VACUO: l'import resta nel file
+        // anche quando la riga di testa è tornata a mano, e la prova sarebbe verde
+        // sul difetto. Si pretende il TAG, cioè che il componente sia reso.
+        const senza = PAGINE_PUBBLICHE.filter((f) => !/<PublicPageHeader[\s/>]/.test(leggi(f)))
         expect(
             senza,
             `Queste pagine ridisegnano la riga di testa per conto proprio:\n  ${senza.join('\n  ')}\n` +

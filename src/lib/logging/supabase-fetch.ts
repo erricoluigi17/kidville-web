@@ -369,8 +369,11 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
         const ms = Date.now() - t0;
 
         try {
-            if (!ok(res)) {
+            const esito = esitoDi(res);
+            if (esito === 'ko') {
                 await registraFallimento(b, res, ms);
+            } else if (esito === 'illeggibile') {
+                registraIlleggibile(b, res, ms);
             } else if (ms > LENTA_MS) {
                 registraLenta(b, res, ms);
             }
@@ -562,6 +565,19 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
 
     logEvento(b.area, livello, campiDi(b, { stato: s, ms }), err, {
         persisti: daPersistere(livello, b.area, s),
+    });
+}
+
+/**
+ * Una risposta di cui non si è potuto leggere l'esito. Non si dichiara un guasto — il corpo non
+ * si tocca, e il chiamante riceve la sua risposta intatta — ma nemmeno un successo: `warn`, con
+ * l'esito NOMINATO, così che in `app_log` si distingua da un fallimento vero e si possa contare
+ * nel tempo. Vedi `esitoDi`: è il terzo stato che prima non aveva una casella.
+ */
+function registraIlleggibile(b: Descrizione, res: Response, ms: number): void {
+    const s = stato(res);
+    logEvento(b.area, 'warn', campiDi(b, { stato: s, ms, esito: 'esito-illeggibile' }), undefined, {
+        persisti: daPersistere('warn', b.area, s ?? 0),
     });
 }
 
@@ -847,11 +863,26 @@ function intestazione(init: RequestInit | undefined, nome: string): string | und
     }
 }
 
-function ok(res: Response): boolean {
+/**
+ * Tre stati, non due: `ok`, `ko`, e «non l'ho potuto leggere».
+ *
+ * Il terzo esisteva già nei fatti — `res.ok` può lanciare (getter ostile, Response esotica) —
+ * ma veniva fatto ricadere su `ok` con la motivazione «non si inventa un guasto». Astenersi
+ * dall'inventare un guasto è giusto; il difetto era la conseguenza, perché in QUESTO modulo il
+ * ramo del successo è il SILENZIO: la richiesta usciva senza nessuna riga, e «tutto ok» e «non
+ * so com'è andata» diventavano indistinguibili — l'ambiguità che AGENTS.md §5 vieta.
+ *
+ * È la stessa forma che in `withRoute` ha prodotto 73 righe `KV_OK` su altrettante richieste
+ * finite in 500 (quinto collaudo, R3·R7·R12·R16·R24) e che in `externalFetch` emetteva il
+ * battito di successo di un evento critico. Terza strada, stessa regola: il valore di ritorno
+ * NON cambia — la risposta arriva al chiamante intatta, e non tocca al logger far riprovare
+ * nessuno — ma la riga esiste e dice quello che sa.
+ */
+function esitoDi(res: Response): 'ok' | 'ko' | 'illeggibile' {
     try {
-        return res.ok === true;
+        return res.ok === true ? 'ok' : 'ko';
     } catch {
-        return true; // risposta illeggibile: non si inventa un guasto.
+        return 'illeggibile';
     }
 }
 

@@ -816,7 +816,13 @@ function AttendanceInner() {
                    spaziatore da 200vh sborda e allunga la PAGINA di un'altra
                    schermata e mezza di vuoto. Misurato sul prodotto compilato:
                    documento 2147 px con la riserva, 1060 senza. */
-                className="kv-ospita-piede mt-5 rounded-card bg-kidville-white p-6 shadow-sm"
+                /* `mt-2` e non `mt-5`: con la testata compatta mancavano UNDICI
+                   pixel — misurati — perché il centro del campo «Motivo»
+                   uscisse da sotto il piede a 390×731 (textarea a y 491, bordo
+                   del piede a 536, centro a 547). Dodici pixel di respiro fra
+                   testata e modulo valevano meno di un campo che non si può
+                   toccare dove lo si vede. */
+                className="kv-ospita-piede mt-2 rounded-card bg-kidville-white p-6 shadow-sm"
             >
                 {/* Icona DR */}
                 <div className="mb-4 flex items-center gap-3">
@@ -1183,12 +1189,26 @@ function AttendanceInner() {
     );
 
     return (
-        <div className="px-4 pt-5 pb-24">
+        <div className="px-4 pt-3 pb-24">
             {/* Il `PageHeaderCard` — cioè l'`<h1>` — resta montato in ENTRAMBI gli
                 stati: prima la conferma lo portava via con sé, e la schermata di
                 successo restava una pagina con un `<h2>` e nessun titolo di primo
-                livello (WCAG 1.3.1). */}
+                livello (WCAG 1.3.1).
+
+                ⚠️ `compatta` (2026-08-08). Questa schermata è un MODULO, e su un
+                telefono da 640-731 px la testata alta ~360 px spingeva il campo
+                «Motivo» sotto il piede appiccicato: un tocco dove l'utente vede il
+                campo finiva sul pulsante che invia. Misurato che la leva è
+                l'altezza della TESTATA, non quella del campo né del piede (le
+                misure stanno nella prop, dentro `PageHeaderCard`).
+                Non si toglie NIENTE di leggibile: occhiello, titolo e sottotitolo
+                restano tutti e tre. In particolare il sottotitolo NON si tocca —
+                è l'ancora con cui i flow Maestro provano di essere arrivati qui,
+                perché il solo titolo coincide con l'azione rapida della Home
+                (lock `maestro-flows-selettori`, voce `soloDestinazione`).
+                Il `pt-5` della pagina diventa `pt-3` per la stessa ragione. */}
             <PageHeaderCard
+                compatta
                 eyebrow={t('attendanceEyebrow')}
                 title={t('attendanceTitolo')}
                 subtitle={t('attendanceSottotitolo')}

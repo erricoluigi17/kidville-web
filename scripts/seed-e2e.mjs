@@ -141,10 +141,31 @@ const UTENTI_E2E = [
 /** Autori degli avvisi creati DAI TEST (la bacheca docente pubblica davvero). */
 const AUTORI_AVVISI_TEST = [IDS.DOCENTE, IDS.DOCENTE2];
 
-function ymdUTC(offsetGiorni = 0) {
+/**
+ * Il giorno NEL FUSO DELL'ISTITUTO, come `oggiFiscaleISO()` lato prodotto.
+ *
+ * ⚠️ Era `ymdUTC`, e fra la mezzanotte e le due italiane seminava IERI.
+ * Misurato il 2026-08-09 alle 00:04: il seed scriveva le presenze del giorno
+ * 2026-08-08 (UTC) e `/api/admin/presenze/realtime` — che usa Europe/Rome —
+ * cercava quelle del 2026-08-09. Nessuna riga, KPI a zero, e
+ * `admin-dashboard.spec.ts` rosso tre volte di fila su un prodotto sano.
+ * Cioè: **per due ore ogni notte l'E2E delle presenze non poteva passare.**
+ *
+ * È la terza faccia della stessa trappola, tutta nella stessa notte: il test
+ * unitario che confrontava in UTC, il filtro che passava per coincidenza, e
+ * questo. Il repo la conosce da tempo — `ComunicaAssenzaCard` la cita nel
+ * proprio commento («`new Date().toISOString()` fra la mezzanotte e le due
+ * italiane restituisce IERI») — ma la conosceva nel PRODOTTO, non nel banco di
+ * prova. Un banco che vive in un altro fuso dal prodotto misura un altro
+ * prodotto.
+ *
+ * `sv-SE` non è un vezzo: è l'unico locale che `Intl` formatta già come
+ * `YYYY-MM-DD`, quindi non serve ricomporre i pezzi a mano.
+ */
+function ymdRoma(offsetGiorni = 0) {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + offsetGiorni);
-  return d.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome' }).format(d);
 }
 
 function must(label, { error }) {
@@ -186,7 +207,7 @@ async function ensureBuckets() {
 
 async function main() {
   console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2);
-  const oggi = ymdUTC(0);
+  const oggi = ymdRoma(0);
   await ensureBuckets();
 
   // 1. Scuole (schools = tabella referenziata dalle FK; scuole = registry admin)
@@ -388,20 +409,20 @@ async function main() {
       id: IDS.AVVISO, author_id: IDS.ADMIN, titolo: 'Avviso E2E: uscita al parco',
       contenuto: 'Gita della sezione Girasoli: serve la vostra adesione entro venerdì.',
       tipo: 'adesione', target_scope: 'classe', target_classes: ['Girasoli'],
-      scuola_id: IDS.SCUOLA, scadenza: ymdUTC(60),
+      scuola_id: IDS.SCUOLA, scadenza: ymdRoma(60),
     },
     {
       id: IDS.AVVISO_S2, author_id: IDS.SEGRETERIA2, titolo: 'Avviso E2E sede 2: assemblea',
       contenuto: 'Assemblea della sezione Girasoli della seconda sede.',
       tipo: 'presa_visione', target_scope: 'classe', target_classes: ['Girasoli'],
-      scuola_id: IDS.SCUOLA2, scadenza: ymdUTC(60),
+      scuola_id: IDS.SCUOLA2, scadenza: ymdRoma(60),
     },
   ], { onConflict: 'id' }));
 
   // 10. Evento agenda futuro, visibile ai genitori (sezione Girasoli)
   must('eventi_agenda', await db.from('eventi_agenda').insert({
     id: IDS.EVENTO, scuola_id: IDS.SCUOLA, section_id: IDS.SEC_GIRASOLI,
-    titolo: 'Gita al museo E2E', tipo: 'uscita', data: ymdUTC(7),
+    titolo: 'Gita al museo E2E', tipo: 'uscita', data: ymdRoma(7),
     orario_inizio: '09:30', visibile_genitori: true, creato_da: IDS.ADMIN,
   }));
 
@@ -423,8 +444,8 @@ async function main() {
 
   // 12. Pagamenti di Aurora (uno aperto + uno pagato)
   must('pagamenti', await db.from('pagamenti').insert([
-    { id: IDS.PAG_APERTO, alunno_id: IDS.A1, scuola_id: IDS.SCUOLA, descrizione: 'Retta E2E luglio', importo: 150, importo_pagato: 0, scadenza: ymdUTC(10), stato: 'da_pagare', tipo: 'singolo', obbligatorio: true },
-    { id: IDS.PAG_PAGATO, alunno_id: IDS.A1, scuola_id: IDS.SCUOLA, descrizione: 'Gita E2E', importo: 25, importo_pagato: 25, scadenza: ymdUTC(-5), stato: 'pagato', tipo: 'singolo', obbligatorio: false },
+    { id: IDS.PAG_APERTO, alunno_id: IDS.A1, scuola_id: IDS.SCUOLA, descrizione: 'Retta E2E luglio', importo: 150, importo_pagato: 0, scadenza: ymdRoma(10), stato: 'da_pagare', tipo: 'singolo', obbligatorio: true },
+    { id: IDS.PAG_PAGATO, alunno_id: IDS.A1, scuola_id: IDS.SCUOLA, descrizione: 'Gita E2E', importo: 25, importo_pagato: 25, scadenza: ymdRoma(-5), stato: 'pagato', tipo: 'singolo', obbligatorio: false },
   ]));
 
   // 13. Armadietto di Aurora: stock 1 ⇒ bottone "Avvisa" visibile in home
@@ -444,7 +465,7 @@ async function main() {
     data: { note: 'Compilazione E2E' }, gestita_il: null, gestita_da: null,
   }, { onConflict: 'id' }));
 
-  console.log('✅ Seed E2E completato (idempotente, 2 sedi). Oggi UTC:', oggi);
+  console.log('✅ Seed E2E completato (idempotente, 2 sedi). Oggi (Europe/Rome):', oggi);
 }
 
 main().catch((err) => {

@@ -319,13 +319,38 @@ describe('filtroFatti · la stessa scadenza lato PostgREST', () => {
     expect(filtroFatti('2026-08-08', 'giorno')).toContain('giorno.lt.2026-08-08')
   })
 
+  /**
+   * ⚠️ RISCRITTO IL 2026-08-09, e la versione prima PASSAVA PER COINCIDENZA.
+   *
+   * Pretendeva che un `oggi` sporco ricadesse sul giorno del server
+   * (`data.lt.${oggiFiscaleISO()}`). Ma la stringa sporca di prova COMINCIA con
+   * «2026-08-08», e `FORMA_DATA` è ancorata solo all'inizio: il valore viene
+   * TRONCATO a dieci caratteri, non rifiutato. Finché «2026-08-08» è stato anche
+   * il giorno corrente, le due strade davano lo stesso risultato e nessuno poteva
+   * accorgersene. A mezzanotte le due strade si sono separate e il test è
+   * diventato rosso da solo, in CI, dentro un rilascio che non c'entrava niente.
+   *
+   * Il presidio, quello vero, REGGE ed è ciò che conta: qualunque cosa segua i
+   * dieci caratteri della data — la virgola, il termine iniettato, la parentesi —
+   * non arriva dentro `or=(…)`. Qui si fotografa il comportamento REALE, e si
+   * aggiunge il caso che prima mancava: una stringa che non comincia nemmeno per
+   * data, dove il ripiego sul giorno del server si vede davvero.
+   */
   it('un `oggi` malformato non entra nella stringa di filtro', () => {
     // La stringa finisce dentro `or=(…)` di PostgREST: un valore arbitrario ci
     // aggiungerebbe termini. Nessun chiamante lo fa oggi — tutti passano
     // `oggiFiscaleISO()` — e il presidio serve perché continui a essere vero.
     const sporco = filtroFatti('2026-08-08),alunno_id.not.is.null,(')
-    expect(sporco).not.toContain('alunno_id')
+    expect(sporco, 'il termine iniettato è arrivato dentro or=(…)').not.toContain('alunno_id')
+    expect(sporco).not.toContain(')')
+    // Troncata ai dieci caratteri della data: è così che l'iniezione muore.
+    expect(sporco).toContain('data.lt.2026-08-08')
+  })
+
+  it('un `oggi` che non è nemmeno una data ricade sul giorno del server', () => {
+    const sporco = filtroFatti('ieri, per favore')
     expect(sporco).toContain(`data.lt.${oggiFiscaleISO()}`)
+    expect(sporco).not.toContain('favore')
   })
 
   it('limitaAiFatti manda a PostgREST il filtro CON la data, non i soli tre termini', () => {

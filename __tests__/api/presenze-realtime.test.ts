@@ -35,6 +35,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { GET } from '@/app/api/admin/presenze/realtime/route'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 
 const req = () =>
   ({ url: 'http://test/api/admin/presenze/realtime', headers: new Headers() }) as never
@@ -97,10 +98,26 @@ describe('GET /api/admin/presenze/realtime', () => {
     expect(inCalls.find((f) => f.table === 'schools')?.args).toEqual(['id', ['sc-1']])
   })
 
-  it('filtra le presenze sulla data di OGGI', async () => {
+  it('filtra le presenze sulla data di OGGI, nel fuso dell’istituto', async () => {
     await GET(req())
     const eqPresenze = h.filters.find((f) => f.table === 'presenze' && f.method === 'eq')
     expect(eqPresenze?.args[0]).toBe('data')
-    expect(eqPresenze?.args[1]).toBe(new Date().toISOString().slice(0, 10))
+    /**
+     * ⚠️ `oggiFiscaleISO()` e NON `new Date().toISOString().slice(0,10)`.
+     *
+     * Questa riga diceva UTC, e il prodotto dice Europe/Rome: fra la mezzanotte
+     * e le due italiane sono due giorni DIVERSI, e il test diventava rosso da
+     * solo — senza che nessuno avesse toccato una riga. Misurato il 2026-08-09
+     * alle 00:06: atteso «2026-08-08» (UTC), ricevuto «2026-08-09» (Roma, che è
+     * la risposta giusta). La CI, che quella notte girava a cavallo della
+     * mezzanotte, ha bloccato un rilascio per questo.
+     *
+     * Il difetto è la copia esatta di quello che la rotta dichiara di aver
+     * corretto — `route.ts:38`, «`new Date().toISOString()` è UTC, e il runtime
+     * gira in UTC: fra le 00:00 e le 02:00…». Il commento c'era, il test lo
+     * contraddiceva: una prova che pretende il contrario di ciò che il codice
+     * accanto spiega è un allarme che suonerà sempre all'ora sbagliata.
+     */
+    expect(eqPresenze?.args[1]).toBe(oggiFiscaleISO())
   })
 })

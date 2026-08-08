@@ -1,12 +1,12 @@
 {
   "titolo": "Kidville non è raggiungibile",
   "titoloScheda": "Kidville — nessuna connessione",
-  "corpo": "Non riusciamo a collegarci. Controlla la connessione: le pagine che hai già aperto restano consultabili, con i dati dell'ultimo aggiornamento.",
-  "corpoSenzaCache": "Non riusciamo a collegarci. Controlla la connessione e riprova: su questo dispositivo non c'è ancora nessuna pagina salvata da consultare.",
+  "corpo": "Non riusciamo a collegarci. Controlla la connessione: le pagine che hai già aperto restano consultabili, con i dati dell’ultimo aggiornamento.",
+  "corpoSenzaCache": "Non riusciamo a collegarci. Controlla la connessione e riprova: su questo dispositivo non c’è ancora nessuna pagina salvata da consultare.",
   "riprova": "Riprova",
   "nessunaRete": "Ancora nessuna connessione. Riprova tra qualche istante.",
   "disponibili": "Pagine già aperte, consultabili adesso",
-  "nota": "Se il problema continua, riapri l'app tra qualche minuto.",
+  "nota": "Se il problema continua, riapri l’app tra qualche minuto.",
   "etichette": {
     "esatte": {
       "/": "Home",

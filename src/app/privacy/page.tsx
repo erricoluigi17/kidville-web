@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { PublicContrastButton } from '@/components/ui/PublicContrastButton';
+import { PublicPageHeader } from '@/components/ui/PublicPageHeader';
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni';
 
 // Pagina PUBBLICA (nessun login): informativa GDPR. Serve anche come
@@ -77,24 +77,21 @@ const UL = `list-disc space-y-1.5 pl-5 ${P}`;
 // l'informativa sui dati dei minori con la pronuncia sbagliata: WCAG 3.1.2
 // «Lingua delle parti». Il giorno in cui il testo verrà tradotto, questo attributo
 // va tolto — il lock `pagine-legali` lo pretende, e fallisce se resta.
-export default function PrivacyPage() {
+// `searchParams` serve al solo `?da=`: il percorso da cui si è arrivati, che la
+// riga di testa usa come ritorno. `PublicPageHeader` lo filtra (solo percorsi
+// interni), perché è un valore che scrive chiunque sappia comporre un URL.
+export default async function PrivacyPage({ searchParams }: { searchParams?: Promise<{ da?: string }> }) {
+  const { da } = (await searchParams) ?? {};
+
   return (
     <main lang="it" className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
-        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ. Il comando di Alto
-            Contrasto viveva solo nei menu account, cioè dopo il login: su una
-            pagina pubblica — che per lo store è anche il recapito legale — chi ne
-            ha bisogno non poteva raggiungerlo. Sta in un componente unico proprio
-            perché queste cinque pagine non ricomincino a divergere. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
-          >
-            <span aria-hidden="true">←</span> Torna indietro
-          </Link>
-          <PublicContrastButton />
-        </div>
+        {/* Riga di testa: ritorno + comando di ACCESSIBILITÀ, in un componente
+            unico. Il comando di Alto Contrasto era già condiviso; il link di
+            RITORNO no, ed è rimasto italiano a mano mentre l'altro si traduceva
+            (R13). Ora la riga è UNA, e il ritorno torna dove il mittente dice
+            (`?da=`), perché nel guscio nativo non ci sono schede da chiudere. */}
+        <PublicPageHeader ritorno={da} />
 
         <article className="mt-6 rounded-card border border-kidville-line bg-white p-6 shadow-sm sm:p-8">
           <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-kidville-green sm:text-4xl">
@@ -412,6 +409,30 @@ export default function PrivacyPage() {
                 dell&rsquo;iscrizione, salvi i documenti che confluiscono nel fascicolo
                 dell&rsquo;alunno soggetti agli obblighi archivistici di cui sopra;
               </li>
+              {/*
+                LA PAROLA È TORNATA, E IL GIORNO IN CUI SE L'È GUADAGNATA.
+                Questa voce è nata dicendo «cancellato AUTOMATICAMENTE» quando la macchina che
+                lo fa non esisteva ancora in produzione: la parola è stata TOLTA il 2026-08-07
+                (commit 9e36055) e RIMESSA lo stesso giorno, poche ore dopo, quando la
+                migrazione 20260807211157_presenze_retention_motivo_assenza.sql è stata
+                applicata davvero.
+                La prova non è il «success» dello strumento: `presenze_giustificazioni_retention_tick`
+                è in `pg_proc`, `presenze-giustificazioni-retention` è in `cron.job` («59 4 * * *»,
+                attivo) e la corsa una tantum ha lasciato in `app_log` la sua riga con n_righe = 0.
+                Il lock __tests__/architecture/informativa-conservazione-dichiarata.test.ts tiene
+                insieme le tre cose: i dodici mesi qui e nella migrazione devono essere lo stesso
+                numero, il job dev'essere installato da un `cron.schedule`, e quella migrazione
+                non dev'essere marcata «NON APPLICATA». Se un giorno il job sparisse, questa
+                riga diventerebbe rossa prima di diventare una bugia.
+              */}
+              <li>
+                <strong>motivo dell&rsquo;assenza</strong> comunicato o scritto dalla famiglia, e
+                note dell&rsquo;appello del personale docente: <strong>dodici mesi</strong> dal
+                giorno dell&rsquo;assenza e comunque non oltre la fine dell&rsquo;iscrizione,
+                dopodiché il testo è cancellato automaticamente. Resta la registrazione della presenza o
+                dell&rsquo;assenza, che è un dato sulla frequenza e segue i tempi indicati al
+                primo punto;
+              </li>
               <li>
                 <strong>fotografie e video</strong>: fino alla revoca del consenso e comunque non
                 oltre la durata dell&rsquo;iscrizione;
@@ -442,8 +463,11 @@ export default function PrivacyPage() {
               i dati di propria competenza; l&rsquo;accesso alla banca dati è regolato da politiche
               di sicurezza applicate a livello di singola riga; gli accessi e le operazioni sono{' '}
               <strong>registrati</strong> per finalità di sicurezza; i dati personali sono{' '}
-              <strong>oscurati nei registri tecnici</strong>, che non contengono nomi, recapiti,
-              contenuti dei messaggi né informazioni sulla salute.
+              <strong>oscurati automaticamente nei registri tecnici</strong> prima che la riga
+              sia scritta: nomi, recapiti e codici fiscali vengono sostituiti da un codice non
+              reversibile, e i testi liberi — comprese le informazioni sulla salute — vengono
+              rimossi. Nei registri tecnici restano leggibili soltanto identificativi tecnici,
+              date e conteggi.
             </p>
           </section>
 

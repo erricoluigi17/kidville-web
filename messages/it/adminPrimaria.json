@@ -18,7 +18,7 @@
   "hubTabFascicoli": "Fascicoli/Accessi",
 
   "registriTitolo": "Registri di classe",
-  "registriSottotitolo": "Accedi a tutto ciò che fa l'insegnante (registro, voti, lezioni, presenze, note, scrutinio) per qualsiasi classe, in modalità modifica.",
+  "registriSottotitolo": "Accedi a tutto ciò che fa l’insegnante (registro, voti, lezioni, presenze, note, scrutinio) per qualsiasi classe, in modalità modifica.",
   "registriRegistroLabel": "Registro di classe",
   "registriRegistroDesc": "Lezioni svolte, argomenti, compiti, firme",
   "registriAppelloLabel": "Appello / Presenze",
@@ -148,7 +148,7 @@
   "giudiziTemplateSottotitolo": "Frammenti componibili per dimensione/valore. Modificandoli sovrascrivi il default per la tua scuola.",
 
   "impostazioniTitolo": "Vincoli temporali e notifiche",
-  "impostazioniSottotitolo": "Finestre di modifica del registro e buffer di invio notifiche valutazioni. L'attivazione dei moduli per grado si gestisce da Impostazioni → Funzioni & moduli.",
+  "impostazioniSottotitolo": "Finestre di modifica del registro e buffer di invio notifiche valutazioni. L’attivazione dei moduli per grado si gestisce da Impostazioni → Funzioni & moduli.",
   "impostazioniRegistroOrali": "Registro/orali (giorni)",
   "impostazioniScrittiPratici": "Scritti/pratici (giorni)",
   "impostazioniBufferNotifiche": "Buffer notifiche (min)",
@@ -168,7 +168,7 @@
   "periodiTitolo": "Periodi di scrutinio",
   "periodiSottotitolo": "Definisci i periodi (es. 1° Quadrimestre, Scrutinio finale). I docenti li selezioneranno nella sezione Scrutinio.",
   "periodiAnnoScolastico": "Anno scolastico:",
-  "periodiNessuno": "Nessun periodo per quest'anno.",
+  "periodiNessuno": "Nessun periodo per quest’anno.",
   "periodiAttivo": "attivo",
   "periodiDisattivo": "disattivo",
   "periodiNuovoTitolo": "Nuovo periodo",

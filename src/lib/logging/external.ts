@@ -279,10 +279,32 @@ export async function externalFetch(
     const ms = Date.now() - t0;
     const stato = statoDi(res);
 
-    if (ok(res)) {
+    const esito = esitoDi(res);
+
+    if (esito !== 'ko') {
         // Il corpo NON si tocca: lo stream si consuma una volta sola e il `res.json()` è del
         // chiamante. Il battito di successo è questa riga.
-        emetti(provider, url, ms, stato, 'info', opzioni, undefined);
+        //
+        // ⚠️ «NON SO» NON È «È ANDATA BENE» — la forma gemella dei rilievi R3·R7·R12·R16·R24.
+        // Quando `res.ok` non si può interrogare (getter ostile, Response esotica) il modulo
+        // si asteneva dall'inventare un guasto — giusto — ma emetteva comunque il BATTITO DI
+        // SUCCESSO, cioè `info` su un evento critico: email, push, fattura. Dichiarare
+        // riuscito ciò che non si è potuto verificare è esattamente il guasto storico di
+        // questo repo (mesi di credenziali «inviate» mentre il provider rispondeva 403).
+        // Il valore di ritorno NON cambia — non tocca al logger decidere se il chiamante
+        // debba riprovare — ma la riga smette di dire di sì e dice quello che sa.
+        const illeggibile = esito === 'illeggibile';
+        emetti(
+            provider,
+            url,
+            ms,
+            stato,
+            illeggibile ? 'warn' : 'info',
+            illeggibile
+                ? { ...opzioni, campi: { ...opzioni?.campi, esito: 'esito-illeggibile' } }
+                : opzioni,
+            undefined,
+        );
         return { ok: true, stato, corpo: '', res };
     }
 
@@ -478,11 +500,24 @@ function messaggioDi(err: unknown): string {
     }
 }
 
-function ok(res: Response): boolean {
+/**
+ * Tre stati, non due: `ok`, `ko`, e «non l'ho potuto leggere».
+ *
+ * Il terzo esisteva già nei fatti — `res.ok` può lanciare — ma veniva fatto ricadere su `ok`
+ * con la motivazione «non si inventa un guasto». Astenersi dall'inventare un guasto è giusto;
+ * il difetto era la conseguenza: la richiesta usciva col BATTITO DI SUCCESSO di un evento
+ * critico. È la stessa forma che in `withRoute` ha prodotto 73 righe `KV_OK` su altrettante
+ * richieste finite in 500 (quinto collaudo, R3·R7·R12·R16·R24): «non so» e «è andata bene»
+ * sotto lo stesso marker.
+ *
+ * Chi chiama continua a ricevere `ok: true` — cambiare quello significherebbe far riprovare
+ * un invio che forse è riuscito, e non è una decisione del logger — ma la riga lo dice.
+ */
+function esitoDi(res: Response): 'ok' | 'ko' | 'illeggibile' {
     try {
-        return res.ok === true;
+        return res.ok === true ? 'ok' : 'ko';
     } catch {
-        return true; // risposta illeggibile: non si inventa un guasto.
+        return 'illeggibile';
     }
 }
 

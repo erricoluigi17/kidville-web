@@ -239,6 +239,18 @@ export const onRequestError: Instrumentation.onRequestError = async (err, reques
                     // route, che è la prima domanda che ci si fa. `tipo` è in lista bianca.
                     tipo: context.routeType,
                     metodo: request.method,
+                    // LO STATO DELLA RISPOSTA, che Next non passa e che qui si CONOSCE lo
+                    // stesso: un errore che arriva a `onRequestError` è per definizione una
+                    // richiesta a cui Next risponde 5xx (500 con corpo vuoto, quando l'handler
+                    // non restituisce una Response; la pagina d'errore, quando muore un render).
+                    //
+                    // Senza, `rigaEvento` lascia `stato_http` a NULL — e la colonna esiste
+                    // proprio per essere il primo filtro delle query («dammi i 5xx di ieri»,
+                    // vedi logger.ts). Misurato nel quinto collaudo (R9): 70 richieste morte,
+                    // tutte con `stato_http` NULL, cioè invisibili al filtro con cui questo
+                    // repo dichiara di cercare i guasti. È lo stesso `stato: 500` che
+                    // `withRoute` scrive da sempre sul ramo dell'eccezione.
+                    stato: 500,
                     // IL DIGEST È LA CHIAVE CHE CHIUDE IL CERCHIO, e qui è l'unico posto che ce
                     // l'ha. `error.tsx` lo mostra all'utente come «il codice da dare alla
                     // segreteria»: è l'unico numero che un genitore ha in mano quando telefona.
@@ -317,6 +329,11 @@ function rigaEdge(
             coppia('rt', context.routePath),
             coppia('tipo', context.routeType),
             coppia('metodo', request.method),
+            // Come sul canale Node (R9): un errore che arriva a `onRequestError` è una 5xx.
+            // Qui non c'è nessuna colonna `stato_http` da riempire, ma su Vercel la ricerca è
+            // full-text e senza questo campo «gli errori 500 del middleware» non è una ricerca
+            // che si possa fare. La stessa regola sulle due strade, non su una sola.
+            coppia('stato', '500'),
             // Sulla riga di Vercel il path di solito non si logga (la piattaforma lo conosce
             // già). Qui sì: nell'Edge non c'è nessuna tabella in cui finisca la colonna
             // `route`, e senza il path la riga non direbbe QUALE navigazione è caduta.

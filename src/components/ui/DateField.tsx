@@ -16,6 +16,14 @@ interface DateFieldProps {
   required?: boolean;
   name?: string;
   'aria-label'?: string;
+  /**
+   * Id dell'elemento che DESCRIVE il campo — tipicamente l'aiuto che dichiara il
+   * formato `gg/mm/aaaa`. Serve perché il campo è MASCHERATO: finché quel formato
+   * viveva solo nel segnaposto, spariva al primo carattere digitato, e chi
+   * sbagliava non aveva più modo di sapere qual era. A differenza di `aria-label`
+   * non tocca il nome accessibile, quindi l'etichetta resta quella della `<label>`.
+   */
+  'aria-describedby'?: string;
 }
 
 /**

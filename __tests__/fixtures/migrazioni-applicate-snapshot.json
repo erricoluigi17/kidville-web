@@ -1,7 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-02",
-  "sha256": "0be7bb86b5c48c048a4048ebfead789760fd0ebc6d13b9384b13d8a855ff6e82",
+  "generato_il": "2026-08-08",
+  "generato_alle": "2026-08-08T04:28:34Z",
+  "sha256": "8a476d250ec9fcf10d6c6cb590fe8ca67ffbad3efa8d15cfeb6f6e1d8a8a7279",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -370,6 +371,38 @@
     {
       "version": "20260802191025",
       "name": "form_attachments_tipi_e_limite"
+    },
+    {
+      "version": "20260803203201",
+      "name": "revoke_funzioni_anon"
+    },
+    {
+      "version": "20260803203241",
+      "name": "revoke_funzioni_public_davvero"
+    },
+    {
+      "version": "20260804103025",
+      "name": "indici_tabelle_ponte_e_indice_duplicato"
+    },
+    {
+      "version": "20260804103151",
+      "name": "app_log_ambiente_dai_lavori_sql"
+    },
+    {
+      "version": "20260804124245",
+      "name": "tetto_frequenza_condiviso"
+    },
+    {
+      "version": "20260807211157",
+      "name": "presenze_retention_motivo_assenza"
+    },
+    {
+      "version": "20260807215530",
+      "name": "notifiche_retention"
+    },
+    {
+      "version": "20260808042814",
+      "name": "retention_battito_leggibile"
     }
   ]
 }

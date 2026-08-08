@@ -78,14 +78,12 @@ function dbSano(): DBFinto {
         avvisi: [{ id: 'v1' }],
         notifiche: [{ id: 'n1' }],
         pagamenti: [{ id: 'p1' }],
-        app_log: [
-            battito('push-dispatch', 2 * MIN),
-            battito('news-cron', 3 * MIN),
-            battito('fattura-sync', 10 * MIN),
-            battito('notifiche-promemoria', 4 * ORA),
-            battito('pagamenti-solleciti', 4 * ORA),
-            battito('mensa-allergie-check', 3 * ORA),
-        ],
+        // DERIVATI da `JOB_CRON`, non elencati a mano: un elenco cablato qui dentro dice
+        // «tutto sano» finché qualcuno non aggiunge un job sorvegliato — e da quel momento
+        // il fixture descrive un mondo che non esiste più, e il test rosso parla del
+        // fixture invece che del codice. Un battito a un terzo della propria finestra è
+        // fresco per definizione, qualunque sia la cadenza.
+        app_log: JOB_CRON.map((j) => battito(j.nome, Math.floor(j.finestraMs / 3))),
     }
 }
 
@@ -467,10 +465,18 @@ describe('GET /api/health', () => {
         expect([...nomi].sort()).toEqual([...VARIABILI_CRITICHE].sort())
     })
 
-    it('i job sorvegliati esistono davvero come costante JOB di una route', () => {
+    it('i job sorvegliati esistono davvero: una route HTTP, oppure una funzione SQL che batte', () => {
         // Un nome di job sbagliato produce un allarme permanente su un job che non
         // esiste: rumore che porta a spegnere l'allarme. I nomi vengono da `app_log` in
-        // produzione, ma la loro sorgente è la costante `JOB` delle route.
+        // produzione, ma la loro sorgente è la costante `JOB` delle route —
+        // O una funzione SQL che scrive il battito con quel `fingerprint`.
+        //
+        // La seconda forma è entrata con `presenze-giustificazioni-retention` (rilievo Q3):
+        // è un lavoro di sola SQL, non passa da nessuna route, e il suo battito lo scrive
+        // `INSERT INTO public.app_log … 'cron:<nome>'` dentro la migrazione. Pretendere una
+        // route lo escluderebbe dalla sorveglianza per una ragione puramente formale — cioè
+        // rimetterebbe fuori dal radar proprio il lavoro che fa scadere un dato sanitario
+        // di un minore.
         const root = path.join(process.cwd(), 'src', 'app', 'api')
         const trovati = new Set<string>()
         const scandisci = (dir: string) => {
@@ -485,7 +491,18 @@ describe('GET /api/health', () => {
             }
         }
         scandisci(root)
-        const inesistenti = JOB_CRON.map((j) => j.nome).filter((n) => !trovati.has(n))
-        expect(inesistenti, 'job sorvegliati che non corrispondono a nessuna route').toEqual([])
+
+        const migrazioni = path.join(process.cwd(), 'supabase', 'migrations')
+        const sql = fs.readdirSync(migrazioni)
+            .filter((f) => f.endsWith('.sql'))
+            .map((f) => fs.readFileSync(path.join(migrazioni, f), 'utf8'))
+            .join('\n')
+
+        const inesistenti = JOB_CRON.map((j) => j.nome)
+            .filter((n) => !trovati.has(n) && !sql.includes(`'cron:${n}'`))
+        expect(
+            inesistenti,
+            'job sorvegliati che non corrispondono né a una route né a un battito SQL',
+        ).toEqual([])
     })
 })

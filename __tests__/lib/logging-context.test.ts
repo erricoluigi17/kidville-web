@@ -39,7 +39,11 @@ describe('contesto di richiesta', () => {
     it('impostaPayload conserva l\'ultimo payload validato', async () => {
         await conContesto({ requestId: 'r3', path: '/api/z' }, async () => {
             impostaPayload('body', { tipo: 'assenza' });
-            expect(contesto()?.payload).toEqual({ body: { tipo: 'assenza' } });
+            // Il valore esce REDATTO anche sotto una chiave della lista bianca: qui dentro
+            // arriva il corpo di una richiesta, e lì il nome del campo lo sceglie il client
+            // (vedi `redactInput`). Ciò che il payload deve conservare è che lo slot c'è, con
+            // il nome del campo e la sua lunghezza — non il valore che il client ha scritto.
+            expect(contesto()?.payload).toEqual({ body: { tipo: '[redatto:str/7]' } });
         });
     });
 
@@ -172,7 +176,11 @@ describe('contesto — isolamento sotto scrittura concorrente', () => {
                 await cedi(ritardo);
                 impostaUtente({ userId: `utente-${id}`, ruolo: id, scuolaId: `scuola-${id}` });
                 await cedi(ritardo);
-                impostaPayload('body', { tipo: id });
+                // `ordine` NUMERICO oltre a `tipo`: dal 2026-08-08 il valore di un campo di
+                // richiesta esce redatto (`[redatto:str/1]` per tutte e tre), e senza un campo
+                // che resti distinguibile questa prova non vedrebbe più una contaminazione del
+                // payload — direbbe «verde» confrontando tre volte lo stesso marcatore.
+                impostaPayload('body', { tipo: id, ordine: id.charCodeAt(0) });
                 await cedi(ritardo);
                 const c = contesto()!;
                 esito[id] = {
@@ -194,7 +202,7 @@ describe('contesto — isolamento sotto scrittura concorrente', () => {
                 userId: `utente-${id}`,
                 ruolo: id,
                 scuolaId: `scuola-${id}`,
-                payload: { body: { tipo: id } },
+                payload: { body: { tipo: '[redatto:str/1]', ordine: id.charCodeAt(0) } },
             });
         }
     });
@@ -288,24 +296,45 @@ describe('contesto — il payload è redatto e limitato', () => {
         });
     });
 
+    /**
+     * IL RIEMPITIVO È CAMBIATO IL 2026-08-08, e vale la pena dire perché.
+     *
+     * Era `{ tipo: 'x'.repeat(100) }`: cento caratteri qualunque sotto una chiave in lista
+     * bianca, che uscivano in chiaro e da soli portavano il payload oltre il tetto. Quella
+     * strada non esiste più — `redact` chiede ora anche la FORMA del valore (rilievo M11) e
+     * una stringa di cento caratteri non è un enumerato: esce `[redatto:str/100]`, sedici
+     * caratteri. Il payload si comprimeva e il tetto non scattava più: i test erano rossi non
+     * perché il tetto fosse rotto, ma perché il loro riempitivo era il canale appena chiuso.
+     *
+     * Cosa resta grande dopo la redazione, e quindi cosa sfonda ancora il tetto: uuid e date
+     * (in chiaro per FORMA, sotto qualunque chiave), numeri, e gli enumerati fino a 64
+     * caratteri. È anche il payload realistico che il tetto esiste per fermare — un import di
+     * anagrafiche è esattamente un array di righe con dentro degli uuid.
+     */
+    const RIGA_PESANTE = {
+        id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+        alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3302',
+        creato_il: '2026-07-31T13:24:07Z',
+        tipo: 'anagrafica-import',
+        anno: 2026,
+    };
+
     it('SOSTITUISCE lo slot che sfora il tetto (non lo tiene in RAM)', async () => {
         await conContesto({ requestId: 'r11', path: '/api/x' }, async () => {
-            // 5.000 record: `redact` da solo ne terrebbe comunque 20 (≈2.500 caratteri), che è
+            // 5.000 record: `redact` da solo ne terrebbe comunque 20 (≈3.000 caratteri), che è
             // già più di quanto serva a capire cosa si stava tentando. Il tetto li butta.
-            const record = { tipo: 'x'.repeat(100), anno: 2026 };
-            impostaPayload('body', { righe: Array.from({ length: 5_000 }, () => record) });
+            impostaPayload('body', { righe: Array.from({ length: 5_000 }, () => RIGA_PESANTE) });
             expect(contesto()!.payload!.body).toBe('[payload-troppo-grande]');
         });
     });
 
     it('CONSERVA lo slot che sta sotto il tetto (il cap non è incondizionato)', async () => {
         await conContesto({ requestId: 'r11b', path: '/api/x' }, async () => {
-            const record = { tipo: 'x'.repeat(100), anno: 2026 };
-            impostaPayload('body', { righe: Array.from({ length: 10 }, () => record) });
+            impostaPayload('body', { righe: Array.from({ length: 10 }, () => RIGA_PESANTE) });
             const body = contesto()!.payload!.body as { righe: unknown[] };
             expect(Array.isArray(body.righe)).toBe(true);
             expect(body.righe).toHaveLength(10);
-            expect(body.righe[0]).toEqual({ tipo: 'x'.repeat(100), anno: 2026 });
+            expect(body.righe[0]).toEqual({ ...RIGA_PESANTE, tipo: '[redatto:str/17]' });
         });
     });
 
@@ -327,8 +356,10 @@ describe('contesto — il payload è redatto e limitato', () => {
     it('uno slot già presente si può sempre aggiornare (l\'ultimo vince)', async () => {
         await conContesto({ requestId: 'r10', path: '/api/x' }, async () => {
             impostaPayload('body', { tipo: 'primo' });
-            impostaPayload('body', { tipo: 'secondo' });
-            expect(contesto()?.payload).toEqual({ body: { tipo: 'secondo' } });
+            impostaPayload('body', { tipo: 'secondo-piu-lungo' });
+            // Le lunghezze diverse sono ciò che rende la prova non vacua: `[redatto:str/17]`
+            // è il SECONDO, non il primo.
+            expect(contesto()?.payload).toEqual({ body: { tipo: '[redatto:str/17]' } });
         });
     });
 

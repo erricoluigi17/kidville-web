@@ -7,6 +7,7 @@ import { Check, X, Clock, LogOut, Users, BarChart2 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 import { DateField } from '@/components/ui/DateField';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 
 type Stato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 interface Riga {
@@ -24,8 +25,11 @@ interface RiepilogoAssenze {
 }
 
 function annoScolasticoDefault(): { from: string; to: string } {
-  const oggi = new Date();
-  const anno = oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1;
+  // Il mese si legge da «oggi ITALIANO», non dai getter del dispositivo: a
+  // cavallo del 31 agosto due utenti in due fusi diversi vedrebbero proposto un
+  // anno scolastico diverso sulla stessa schermata.
+  const [annoOggi, meseOggi] = oggiFiscaleISO().split('-').map(Number);
+  const anno = meseOggi >= 9 ? annoOggi : annoOggi - 1;
   return { from: `${anno}-09-01`, to: `${anno + 1}-06-30` };
 }
 
@@ -50,8 +54,22 @@ const STATI: { key: Stato; icon: React.ReactNode; cls: string }[] = [
   { key: 'uscita_anticipata', icon: <LogOut size={14} />, cls: 'bg-kidville-info text-white' },
 ];
 
+/**
+ * «Oggi» nel fuso dell'istituto — la STESSA sorgente che usano le route chiamate
+ * da questa pagina e il modulo del genitore.
+ *
+ * Qui c'era `new Date().toISOString().slice(0, 10)`, cioè UTC. Misurato dal
+ * collaudo alle 01:2x italiane dell'8 agosto: il campo «Data dell'appello»
+ * apriva sul **07/08/2026** mentre la pagina gemella dell'appello 0-6, nello
+ * stesso istante e nello stesso browser, mostrava l'8. Le conseguenze erano due,
+ * e la seconda è una SCRITTURA: (a) l'assenza comunicata dal genitore per oggi
+ * non compariva nella schermata che la maestra apre — ed è la destinazione del
+ * link della notifica «Assenza comunicata»; (b) segnando e salvando, l'appello
+ * finiva sul giorno PRECEDENTE, sovrascrivendo righe già lavorate.
+ * Lock: `__tests__/pages/teacher-appello-primaria-oggi.test.tsx`.
+ */
 function oggiIso() {
-  return new Date().toISOString().slice(0, 10);
+  return oggiFiscaleISO();
 }
 
 export default function AppelloPage() {

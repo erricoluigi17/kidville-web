@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
+import { LinkInterno } from '@/components/ui/LinkInterno';
 import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -141,20 +141,24 @@ function Inner() {
         <LanguageSwitcher />
       </div>
 
-      {/* Link legali / assistenza */}
+      {/* Link legali / assistenza.
+          `LinkInterno` e non `<Link target="_blank">`: nella WebView di Capacitor
+          le schede non esistono, quindi il sistema consegnava queste tre pagine a
+          Safari/Chrome e il genitore usciva dall'app senza un comando per
+          rientrare (R25). Sul web restano una scheda nuova, com'erano. */}
       <section className="rounded-card border border-kidville-line bg-white p-2">
-        <Link href="/privacy" className="flex items-center gap-3 rounded-xl px-3 py-3 active:bg-kidville-cream" target="_blank" rel="noopener noreferrer">
+        <LinkInterno href="/privacy" className="flex items-center gap-3 rounded-xl px-3 py-3 active:bg-kidville-cream">
           <ShieldCheck size={20} className="text-kidville-green" />
           <span className="font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('linkPrivacy')}</span>
-        </Link>
-        <Link href="/termini" className="flex items-center gap-3 rounded-xl px-3 py-3 border-t border-kidville-line active:bg-kidville-cream" target="_blank" rel="noopener noreferrer">
+        </LinkInterno>
+        <LinkInterno href="/termini" className="flex items-center gap-3 rounded-xl px-3 py-3 border-t border-kidville-line active:bg-kidville-cream">
           <FileText size={20} className="text-kidville-green" />
           <span className="font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('linkTermini')}</span>
-        </Link>
-        <Link href="/assistenza" className="flex items-center gap-3 rounded-xl px-3 py-3 border-t border-kidville-line active:bg-kidville-cream" target="_blank" rel="noopener noreferrer">
+        </LinkInterno>
+        <LinkInterno href="/assistenza" className="flex items-center gap-3 rounded-xl px-3 py-3 border-t border-kidville-line active:bg-kidville-cream">
           <LifeBuoy size={20} className="text-kidville-green" />
           <span className="font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('linkAssistenza')}</span>
-        </Link>
+        </LinkInterno>
       </section>
 
       {/* Sblocco biometrico (opt-in) — solo se il dispositivo lo supporta */}

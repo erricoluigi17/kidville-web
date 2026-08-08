@@ -4,15 +4,18 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zLimite } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   // '' oggi equivale ad assente (filtro saltato): normalizzato prima della validazione
   alunnoId: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
-  // default 100 e cap 500 applicati nell'handler come oggi
-  limit: z.coerce.number().optional(),
+  // default 100 e cap 500, ma anche un PAVIMENTO: `Math.min(limit ?? 100, 500)` era un
+  // tetto senza minimo, quindi `?limit=-1` arrivava intatto a PostgREST — 416, e questa
+  // rotta il ramo d'errore lo chiude con un 500 che rimanda al chiamante il `message` del
+  // database. Stessa regola della rotta genitore, in un posto solo (rilievi Q18/Q20).
+  limit: zLimite({ predefinito: 100, max: 500 }),
 })
 
 // GET /api/admin/primaria/fascicolo-audit?alunnoId=&limit=&userId=
@@ -24,8 +27,7 @@ export const GET = withRoute('admin/primaria/fascicolo-audit:GET', async (reques
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const { alunnoId } = q.data
-    const limit = Math.min(q.data.limit ?? 100, 500)
+    const { alunnoId, limit } = q.data
 
     const supabase = await createAdminClient()
 

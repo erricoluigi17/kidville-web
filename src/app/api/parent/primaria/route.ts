@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { limitaAiFatti } from '@/lib/presenze/finestra-trascorsa'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -96,13 +97,23 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
         .eq('alunno_id', studentId)
         .order('creato_il', { ascending: false }),
       // Assenze/ritardi/uscite degli ultimi 30 giorni, con stato giustificazione.
-      supabase
-        .from('presenze')
-        .select('id, data, stato, giustificata, giustificazione_testo, giust_vista_il')
-        .eq('alunno_id', studentId)
-        .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
-        .gte('data', new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10))
-        .order('data', { ascending: false }),
+      //
+      // Il tetto a OGGI (rilievo T26): questa lettura non aveva alcun limite
+      // superiore, e da quando «Comunica un'assenza» scrive nel futuro un giorno
+      // non ancora arrivato sarebbe comparso fra le assenze del bambino. Oggi è
+      // latente — il suo unico consumatore, `PrimariaParentView`, non è montato
+      // da nessuna pagina — ma è una porta aperta, e la regola sta in un posto
+      // solo (`@/lib/presenze/finestra-trascorsa`). Con Q4 il tetto porta anche
+      // il secondo asse (la SORGENTE): il solo `data <= oggi` non esclude
+      // l'assenza annunciata per il giorno corrente.
+      limitaAiFatti(
+        supabase
+          .from('presenze')
+          .select('id, data, stato, giustificata, giustificazione_testo, giust_vista_il')
+          .eq('alunno_id', studentId)
+          .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
+          .gte('data', new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)),
+      ).order('data', { ascending: false }),
       // Materie della sezione (per il selettore della giustifica didattica).
       supabase
         .from('materie')

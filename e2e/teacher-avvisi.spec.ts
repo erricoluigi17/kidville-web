@@ -25,7 +25,7 @@ test('bacheca: vede l’avviso seedato e ne pubblica uno per la propria classe',
   // Il selettore si ferma prima della punteggiatura: il catalogo usa l'ellissi
   // `…` dal 2026-08-01 e il match per sottostringa non la riconosce come `...`.
   await page
-    .getByPlaceholder("Scrivi il testo dell'avviso")
+    .getByPlaceholder('Scrivi il testo dell’avviso')
     .fill('Contenuto creato dalla suite Playwright.');
 
   // La classe propria è già selezionata → pubblico direttamente.

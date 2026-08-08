@@ -90,7 +90,22 @@ export function PageHeaderCard({
             <div
               className={cx(
                 'mt-1.5 font-maven text-xs',
-                giallo ? 'text-kidville-green-dark/80' : 'text-white/80',
+                // ⚠️ NIENTE ALFA SUL RAMO GIALLO (2026-08-07, WCAG 1.4.3).
+                // `green-dark/80` composto sul giallo di marchio dà rgb(51,106,60)
+                // su rgb(253,196,0) = 4,00:1 a 12px, sotto i 4,5:1 richiesti al
+                // testo normale. Non era il token a essere sbagliato — a piena
+                // opacità vale 5,52:1 — ma l'opacità DECORATIVA applicata a un
+                // inchiostro che stava già stretto: l'80% si è mangiato tutto il
+                // margine. Nessuno strumento del repo poteva vederlo: Tailwind v4
+                // compila l'alfa in `lab(… / 0.8)` e axe-core restituisce `NaN`
+                // su quel formato, dichiarando «insufficient contrast of NaN».
+                // Il ramo verde resta con l'alfa: bianco/80 su #006A5F = 4,77:1.
+                // `green-dark` e non `green-ink` di proposito: il primo è già
+                // nell'elenco che l'Alto Contrasto ribalta a bianco sulla
+                // card-header nera (globals.css), il secondo no — e cambiarlo
+                // aprirebbe un difetto nuovo proprio in quella modalità.
+                // Lock: `__tests__/a11y/contrasto-schermate-assenza.test.tsx` §1.
+                giallo ? 'text-kidville-green-dark' : 'text-white/80',
               )}
             >
               {subtitle}

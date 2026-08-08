@@ -47,7 +47,7 @@ import { GET } from '@/app/api/pagamenti/ricevuta/route'
 
 const PAG_SALDATO = {
   id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', descrizione: 'Retta Marzo', importo: 150, importo_pagato: 150, stato: 'pagato',
-  scadenza: '2026-03-31', alunno_id: 'al-1', alunni: { nome: 'Mario', cognome: 'Rossi' },
+  scadenza: '2026-03-31', alunno_id: 'a1111111-1111-4111-8111-111111111111', alunni: { nome: 'Mario', cognome: 'Rossi' },
 }
 function req(pid?: string) {
   const url = pid ? `http://localhost/api/pagamenti/ricevuta?pagamento_id=${pid}` : 'http://localhost/api/pagamenti/ricevuta'
@@ -58,7 +58,7 @@ describe('GET /api/pagamenti/ricevuta', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     h.pagamento = PAG_SALDATO
-    h.legame = { alunno_id: 'al-1' }
+    h.legame = { alunno_id: 'a1111111-1111-4111-8111-111111111111' }
     h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   })
 
@@ -90,7 +90,7 @@ describe('GET /api/pagamenti/ricevuta', () => {
 
   it('genitore collegato: 200 PDF', async () => {
     h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
-    h.legame = { alunno_id: 'al-1' }
+    h.legame = { alunno_id: 'a1111111-1111-4111-8111-111111111111' }
     const res = await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/pdf')

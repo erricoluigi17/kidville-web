@@ -2,6 +2,7 @@ import { AdminSidebar } from '@/components/features/admin/AdminSidebar';
 import { AdminTopBar } from '@/components/features/admin/AdminTopBar';
 import { AdminTopBarMobile } from '@/components/features/admin/AdminTopBarMobile';
 import { AdminBottomNav } from '@/components/features/admin/AdminBottomNav';
+import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import { SedeProvider, SedeScopeBoundary } from '@/lib/context/sede-context';
 import { AdminIdentityProvider } from '@/lib/context/admin-identity';
 import { requireArea } from '@/lib/auth/area-guard';
@@ -31,6 +32,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <div className="min-h-screen bg-kidville-cream" data-kv-shell>
           <AdminTopBarMobile />
           <AdminTopBar />
+          {/* La topbar mobile è sticky come l'AppBar delle altre due shell, e
+              con la tastiera aperta copre allo stesso modo il campo a fuoco —
+              qui i moduli sono quelli della segreteria, che scrive tutto il
+              giorno. Il componente riconosce entrambe le classi di barra
+              (`.kv-appbar` e `.kv-appbar-admin`) e su desktop non fa nulla,
+              perché lì la tastiera non riduce la viewport. */}
+          <CampoNonCoperto />
           <div className="lg:flex">
             <AdminSidebar />
             <main className="flex-1 min-w-0 pb-28 lg:pb-0" data-cockpit-content>

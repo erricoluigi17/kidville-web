@@ -6,7 +6,7 @@
   "dashboardTitolo": "Management Dashboard",
   "azioneIscrizioni": "Enrollments",
   "azioneGeneraRette": "Generate fees",
-  "erroreDashboard": "Loading error. Please make sure you're signed in as staff.",
+  "erroreDashboard": "Loading error. Please make sure you’re signed in as staff.",
   "sessioneNonValida": "Invalid session: please sign in again.",
 
   "kpiAlunniIscritti": "Enrolled pupils",

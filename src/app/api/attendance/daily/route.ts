@@ -7,8 +7,10 @@ import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { colonneConMotivo } from '@/lib/presenze/motivo-visibile';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
@@ -18,6 +20,23 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
  * Body: { alunno_id, data, stato, orario_entrata?, orario_uscita? }
  * Upsert diretto su Supabase — bypassa Dexie per dati live nel registro mensile.
  */
+
+/**
+ * Le colonne dell'appello del giorno. `giustificazione_testo` è l'unica che non arriva a
+ * tutti: la toglie `colonneConMotivo` per chi vede tutte le classi del plesso (vedi
+ * `src/lib/presenze/motivo-visibile.ts`).
+ */
+const COLONNE_APPELLO = [
+    'id',
+    'alunno_id',
+    'data',
+    'stato',
+    'orario_entrata',
+    'orario_uscita',
+    'panic_alert',
+    'giustificazione_testo',
+    'alunni!inner ( id, nome, cognome, classe_sezione )',
+] as const;
 
 const getQuerySchema = z.object({
     // default dinamico (oggi) calcolato nell'handler
@@ -40,6 +59,48 @@ const postBodySchema = z.object({
     orario_uscita: z.string().nullable().optional(),
 });
 
+/**
+ * Il 500 «non è colpa tua» della POST, in un posto solo.
+ *
+ * Esiste per due ragioni, e la seconda non è cosmetica: (1) il guasto di lettura
+ * dell'anagrafica, il guasto di SCRITTURA e l'eccezione generica raccontano al
+ * docente la stessa cosa e devono dirla con le stesse parole; (2) il debito
+ * misurato da `errori-con-codice.test.ts` è congelato e può solo essere PAGATO —
+ * una quarta copia letterale della stessa risposta lo farebbe crescere dentro il
+ * lock che esiste per impedirlo.
+ *
+ * Il `message` di PostgREST non compare qui: è prosa inglese con dentro nomi di
+ * colonne, e resta nel log — che è dove dice *perché*.
+ */
+const erroreInterno = () =>
+    NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
+
+/**
+ * LE SEI COLONNE CHE LA SCHERMATA DELL'APPELLO USA DAVVERO.
+ *
+ * `.select()` NUDO È `select *`, e su un UPDATE PostgREST non restituisce ciò che
+ * hai scritto: restituisce ciò che C'ERA. La riga di `presenze` ne ha
+ * venticinque, e tre non devono uscire da qui:
+ *  · `giustificazione_testo` — il motivo che il genitore ha scritto: testo
+ *    libero di natura sanitaria di un MINORE (art. 9 GDPR);
+ *  · `giustificazione_firma` — il log della firma elettronica del genitore, che
+ *    porta la sua email, il suo indirizzo IP e il suo user-agent;
+ *  · `note_appello` — la nota interna del docente sul bambino.
+ * Nessuno dei tre è mostrato dalla schermata: viaggiavano sul filo e si
+ * fermavano nello stato React di chiunque superi `requireDocente` con l'alunno
+ * nel proprio scope — quindi anche segreteria e Direzione del plesso.
+ *
+ * È la TERZA volta che questo ciclo scrive la stessa correzione: `COLONNE_ESITO`
+ * in `comunica-assenza`, `.select('id')` in `giustifica`, e ora qui — nel file
+ * in cui era già scritto «la correzione era stata applicata al genitore e non al
+ * docente… Divulgazione per omissione».
+ *
+ * Il motivo dell'assenza NON sparisce dal prodotto: arriva alla GET, che è la
+ * schermata dove il docente della sezione lo LEGGE (vedi la `select` della GET).
+ * Esce dall'eco di un salvataggio, dove nessuno lo guardava.
+ */
+const COLONNE_ESITO = 'id, alunno_id, data, stato, orario_entrata, orario_uscita';
+
 export const GET = withRoute('attendance/daily:GET', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
@@ -47,7 +108,11 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
 
-    const data = q.data.data ?? new Date().toISOString().split('T')[0];
+    // «Oggi» è quello ITALIANO: il runtime gira in UTC e fra mezzanotte e le
+    // due del mattino `toISOString()` restituisce ancora ieri — la maestra
+    // aprirebbe l'appello sul giorno precedente e, salvando, ci scriverebbe
+    // sopra. Stesso difetto (e stesso rimedio) del cockpit, rilievo T27.
+    const data = q.data.data ?? oggiFiscaleISO();
     const sezione = q.data.sezione;
 
     try {
@@ -82,18 +147,40 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         if (sede.response) return sede.response;
         const plessi = sede.plessi ?? [];
 
+        // ─── IL MOTIVO DELL'ASSENZA ARRIVA A CHI LA FAMIGLIA CREDE LO LEGGA ──
+        //
+        // Sotto il campo «Motivo» il modulo del genitore dichiara: «Il motivo lo
+        // leggono le insegnanti della sezione e viene cancellato dopo dodici
+        // mesi». Per la PRIMARIA era vero (l'appello lo mostra da sempre); per
+        // NIDO e INFANZIA — i due gradi che questo ciclo ha aperto per la prima
+        // volta — no: questa `select` non lo restituiva affatto, e nessuna
+        // schermata del personale lo mostrava. Si raccoglieva un dato particolare
+        // di un minore (art. 9) per una finalità che su due gradi su tre non era
+        // realizzabile, e la si dichiarava al momento della raccolta.
+        //
+        // Delle due strade possibili — mostrarlo, oppure non raccoglierlo dove
+        // nessuno lo legge — si è scelta la prima: il motivo SERVE a chi accoglie
+        // il bambino la mattina dopo. Arriva quindi qui, dove la riga dell'alunno
+        // lo mostra (`StudentAttendanceRow`), e NON nell'eco della POST, dove
+        // nessuno lo guardava (vedi `COLONNE_ESITO`).
+        //
+        // Restano fuori `giustificazione_firma` (email, IP e user-agent del
+        // genitore) e `note_appello` (nota interna): non servono a questa
+        // schermata, e ciò che non serve non viaggia.
+        //
+        // ─── E NON ARRIVA A CHIUNQUE (rilievo Q1) ───────────────────────────
+        //
+        // La frase dice «le insegnanti DELLA SEZIONE», ma `requireDocente`
+        // ammette anche admin, coordinator e segreteria, e per loro
+        // `soloSezioniAssegnate` non restringe niente: `vedeTutteLeClassi` li
+        // fa passare su OGNI classe del plesso. Misurato con un `coordinator`
+        // non assegnato: 200, motivo per intero. La colonna si chiede quindi
+        // solo per chi la frase nomina — la regola sta in
+        // `src/lib/presenze/motivo-visibile.ts`, perché vale identica sulla
+        // rotta gemella `primaria/appello:GET`.
         const { data: rows, error } = await supabase
             .from('presenze')
-            .select(`
-                id,
-                alunno_id,
-                data,
-                stato,
-                orario_entrata,
-                orario_uscita,
-                panic_alert,
-                alunni!inner ( id, nome, cognome, classe_sezione )
-            `)
+            .select(colonneConMotivo(COLONNE_APPELLO, auth.user))
             .eq('data', data)
             .eq('alunni.classe_sezione', sezione)
             // Difesa in profondità sul join: il gate impedisce di NOMINARE una
@@ -148,23 +235,52 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
 
         // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
         // le policy scolastiche su presenze e l'aggregato realtime li richiedono.
-        const { data: alunno } = await supabase
+        //
+        // «NON C'È» E «NON L'HO POTUTO LEGGERE» NON SONO LA STESSA COSA.
+        // PostgREST non lancia: l'errore torna nel valore (AGENTS.md, regola 7),
+        // e il `try/catch` che avvolge questo handler su quel ramo non scatta
+        // mai. Senza il controllo, un guasto di lettura usciva dalla porta del
+        // 404 qui sotto: al DOCENTE si diceva che il bambino non esiste. E la
+        // riga non veniva scritta affatto — cioè veniva a mancare in silenzio
+        // proprio `registrato_da`, che è il presidio a cui è appeso
+        // l'annullamento dell'assenza comunicata dal genitore.
+        const { data: alunno, error: alunnoErr } = await supabase
             .from('alunni')
             .select('nome, scuola_id, section_id')
             .eq('id', alunno_id)
             .maybeSingle();
+        if (alunnoErr) {
+            logErrore({ operazione: 'attendance/daily:POST', stato: 500, evento: 'db' }, alunnoErr);
+            return erroreInterno();
+        }
         if (!alunno) {
             return NextResponse.json({ error: 'Alunno non trovato.' }, { status: 404 });
         }
 
         // Stato precedente del giorno: la notifica di assenza allo 0-6 scatta
         // solo alla PRIMA marcatura 'assente' (i ri-salvataggi non duplicano).
-        const { data: prima } = await supabase
+        //
+        // Anche qui `{ error }` va guardato, e la conseguenza è DIVERSA da quella
+        // sopra: su errore `prima` resta `null`, la condizione
+        // `prima?.stato !== 'assente'` diventa vera e la notifica «tuo figlio è
+        // stato segnato assente» riparte a OGNI ri-salvataggio dell'appello. Non
+        // una notifica mancata: una notifica DUPLICATA su un dato di un minore.
+        const { data: prima, error: primaErr } = await supabase
             .from('presenze')
             .select('stato')
             .eq('alunno_id', alunno_id)
             .eq('data', data)
             .maybeSingle();
+        if (primaErr) {
+            // `warn` e non `error`: il salvataggio prosegue e riesce — degrada la
+            // sola notifica. Muto no: senza questa riga «la maestra ha salvato e
+            // il genitore non ha ricevuto niente» non ha nessuna spiegazione.
+            logEvento('registro', 'warn', {
+                operazione: 'attendance/daily:POST',
+                esito: 'stato-precedente-non-letto',
+                alunno_id,
+            }, primaErr);
+        }
 
         const record = {
             alunno_id,
@@ -175,29 +291,76 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             scuola_id: alunno.scuola_id,
             section_id: alunno.section_id,
             aggiornato_il: new Date().toISOString(),
+            // CHI ha fatto l'appello. Provenienza operativa, non una firma —
+            // come nella primaria (`primaria/appello/route.ts`, `registrato_da: userId`).
+            //
+            // Perché serve, e perché proprio qui: la riga che il genitore scrive
+            // comunicando un'assenza porta `giustificata_da`, MAI `registrato_da`.
+            // Con questa riga `registrato_da IS NULL` diventa il criterio uniforme
+            // su tutti i gradi per «l'insegnante non ha ancora lavorato questa
+            // presenza» — la condizione a cui è appeso l'annullamento della
+            // comunicazione da parte del genitore. Fino a oggi lo 0-6 non lo
+            // scriveva: misurato in produzione il 2026-08-07, 13 righe su 49
+            // avevano `registrato_da`, ed erano tutte e sole quelle della primaria.
+            //
+            // `aggiornato_il` non poteva servire allo scopo: ha `DEFAULT now()` e
+            // si valorizza anche sull'INSERT del genitore, quindi non separa i due casi.
+            //
+            // L'id viene dal GATE, mai dalla richiesta: `presenze.registrato_da` ha
+            // una FK verso `utenti(id)`, e `requireDocente` → `loadAppUser` restituisce
+            // l'`id` letto DALLA riga di `utenti`. Se il gate è passato, la chiave
+            // esterna è per costruzione soddisfatta.
+            registrato_da: auth.user.id,
         };
 
         // Upsert su (alunno_id, data) — un solo record per bambino per giorno
         const { data: result, error } = await supabase
             .from('presenze')
             .upsert(record, { onConflict: 'alunno_id,data' })
-            .select()
+            .select(COLONNE_ESITO)
             .single();
 
         if (error) {
+            // IL `message` DI POSTGREST NON ESCE DA QUI, e fino al 2026-08-08 usciva:
+            // la risposta era `{ error: 'Errore salvataggio presenza.', details:
+            // error.message }`. Quel messaggio porta nomi di colonna, nomi di VINCOLO
+            // (`unique_presenza_giornaliera`), `details` e `hint`: una mappa dello schema
+            // consegnata a chiunque superi `requireDocente` — che include la segreteria.
+            //
+            // Ed è esattamente ciò che la rotta gemella dello stesso lavoro dichiarava di
+            // aver tolto («prosa inglese con dentro nomi di colonne, mostrata a un
+            // genitore», `parent/presenze/comunica-assenza`): la correzione era stata
+            // applicata al genitore e non al docente, in un file che quel commit aveva
+            // toccato. Divulgazione per omissione, non per scelta.
+            //
+            // Il messaggio non si perde: sta tutto intero nel `logErrore` qui sopra, che è
+            // dove dice PERCHÉ.
             logErrore({ operazione: 'attendance/daily:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json(
-                { error: 'Errore salvataggio presenza.', details: error.message },
-                { status: 500 }
-            );
+            return erroreInterno();
         }
 
         // Notifica di assenza ai genitori (best-effort). Allo 0-6 il genitore
         // non può comunicare assenze in anticipo → si notifica SEMPRE la prima
         // marcatura assente (testo neutro); la correzione entro il buffer 10'
         // (assente → presente/ritardo) revoca la notifica pending.
+        //
+        // ─── IN DUBBIO NON SI SPEDISCE, IN DUBBIO SI REVOCA ─────────────────
+        //
+        // Quando lo stato precedente non si è potuto leggere (`primaErr`) le due
+        // direzioni NON si trattano allo stesso modo, ed è una decisione, non
+        // una svista:
+        //  · non si SPEDISCE — una seconda «tuo figlio è stato segnato assente»
+        //    per lo stesso giorno è peggio di nessuna: il genitore non ha modo di
+        //    capire quale delle due sia vera, e la riga di `warn` qui sopra dice
+        //    perché non è partita;
+        //  · si REVOCA lo stesso — togliere dalla coda una notifica che sarebbe
+        //    FALSA (l'appello è stato corretto) non costa niente su una coda
+        //    vuota, e su una coda piena salva un genitore da un allarme già
+        //    rientrato.
+        // L'asimmetria è tutta qui: sbagliare per eccesso di silenzio costa una
+        // notifica, sbagliare per eccesso di zelo costa la fiducia in tutte.
         try {
-            if (stato === 'assente' && prima?.stato !== 'assente') {
+            if (stato === 'assente' && !primaErr && prima?.stato !== 'assente') {
                 await notificaEvento(supabase, {
                     tipo: 'assenza_non_comunicata',
                     scuolaId: (alunno.scuola_id as string | undefined) ?? null,
@@ -210,7 +373,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                     bufferMin: 10,
                     debounce: true,
                 });
-            } else if (stato !== 'assente' && prima?.stato === 'assente') {
+            } else if (stato !== 'assente' && (primaErr || prima?.stato === 'assente')) {
                 // REVOCA: l'appello è stato corretto entro il buffer di 10' e la notifica
                 // pending va tolta dalla coda prima che il cron la spedisca.
                 //
@@ -251,9 +414,49 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             }, e);
         }
 
-        return NextResponse.json(result, { status: 200 });
+        // IL SUCCESSO SI LOGGA — anche dal lato del DOCENTE.
+        //
+        // Il genitore che comunica un'assenza lascia una riga `info` in
+        // `app_log`; il docente che registra l'appello no, e questa è la
+        // controparte esatta di quel gesto (AGENTS.md, regola 5: gli eventi
+        // critici loggano anche il successo). È la riga che serve quando la POST
+        // del genitore risponde 409 «l'appello è già stato fatto»: senza, di
+        // quella corsa si vede solo la metà che ha perso.
+        //
+        // Solo uuid, enumerati e conteggi: `stato` è un enumerato in lista bianca
+        // di `redact`, gli uuid passano per forma. Il MOTIVO dell'assenza non
+        // compare qui e non deve comparirci mai.
+        //
+        // `distingui`: `app_log` deduplica per impronta, e l'impronta non
+        // contiene il contesto. Senza, l'appello di una classe intera lascerebbe
+        // UNA riga a nome del primo bambino segnato — che è esattamente il
+        // difetto appena chiuso sulla rotta del genitore. Il volume è quello
+        // dell'appello: una riga per (docente, alunno, giorno).
+        logEvento('registro', 'info', {
+            operazione: 'attendance/daily:POST',
+            esito: 'appello-registrato',
+            alunno_id,
+            presenza_id: (result as { id?: string } | null)?.id ?? null,
+            attore_id: auth.user.id,
+            stato,
+        }, undefined, { distingui: ['alunno_id'] });
+
+        // LA RISPOSTA SI COMPONE, NON SI INOLTRA. Difesa in profondità, non
+        // ridondanza: `COLONNE_ESITO` decide cosa viaggia sul filo, questa riga
+        // decide cosa esce dall'API — e il giorno in cui qualcuno riallarga la
+        // `select` per un motivo suo, la risposta non cambia. La forma è quella
+        // che `AttendanceRecord` (StudentAttendanceRow) dichiara.
+        const riga = (result ?? {}) as Record<string, unknown>;
+        return NextResponse.json({
+            id: riga.id ?? null,
+            alunno_id: riga.alunno_id ?? alunno_id,
+            data: riga.data ?? data,
+            stato: riga.stato ?? stato,
+            orario_entrata: riga.orario_entrata ?? null,
+            orario_uscita: riga.orario_uscita ?? null,
+        }, { status: 200 });
     } catch (err) {
         logErrore({ operazione: 'attendance/daily:POST', stato: 500 }, err);
-        return NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
+        return erroreInterno();
     }
 });

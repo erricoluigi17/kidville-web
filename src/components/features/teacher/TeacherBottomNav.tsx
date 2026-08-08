@@ -163,9 +163,20 @@ export default function TeacherBottomNav() {
   return (
     <>
       {/* ── BOTTOM NAV PILL ─────────────────────── */}
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[460px] z-50 px-3 pb-3"
+      {/* `data-kv-barra-bassa`: come sulla barra del genitore, è l'aggancio con
+          cui `CampoNonCoperto` sa dove comincia lo strato fisso in fondo. */}
+      <div data-kv-barra-bassa
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[460px] z-50 px-3 pb-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
-        <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)] border border-white/60">
+        {/* ⚠️ ANELLO INTERNO, NON BORDO — la stessa correzione fatta sulla barra
+            del genitore il 2026-08-08, che qui era rimasta indietro. `border`
+            aggiunge 1px sopra e 1px sotto: la barra occupa 62px dove
+            `--kv-bottomnav-h` ne dichiara 60 + margine, e quei 2px non li conta
+            nessuno dei due addendi. Oggi nessuna schermata docente si appoggia a
+            quella variabile, quindi non si vedeva niente — ed è esattamente il
+            modo in cui un difetto aspetta: il lock leggeva solo il file del
+            genitore, quindi le due barre potevano divergere in silenzio. */}
+        <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08),inset_0_0_0_1px_rgba(255,255,255,0.6)]">
           <nav aria-label={t('ariaNavigazionePrincipale')} className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;

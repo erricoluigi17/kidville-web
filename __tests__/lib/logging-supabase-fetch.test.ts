@@ -578,6 +578,61 @@ describe('fetch strumentato — emissione reale', () => {
         expect(String(log.mock.calls[0][0])).toContain('KV_EVT');
     });
 
+    /* ── «Non so» non è «è andata bene» ──────────────────────────────────── */
+
+    /**
+     * LA FORMA GEMELLA DEI RILIEVI R3·R7·R12·R16·R24 DEL QUINTO COLLAUDO, sulla terza strada.
+     *
+     * In `withRoute` una risposta il cui status non si leggeva ricadeva nel ramo del 200 e
+     * usciva come `KV_OK`: 73 richieste finite in 500, 73 righe che dicevano «riuscita».
+     * In `externalFetch` la stessa forma emetteva il BATTITO DI SUCCESSO di un evento critico.
+     * Qui la terza copia: `ok(res)` restituiva `true` quando `res.ok` non si poteva
+     * interrogare, «per non inventare un guasto» — e il ramo del successo di questo modulo è il
+     * SILENZIO. Il risultato non è una riga che mente: è nessuna riga, cioè l'altra metà
+     * dell'ambiguità vietata da AGENTS.md §5 (con i soli errori, «nessun log» non distingue
+     * «tutto ok» da «non è mai partito niente»).
+     *
+     * Astenersi dall'inventare un guasto resta giusto: il valore di ritorno NON cambia, la
+     * risposta arriva al chiamante intatta e nessuno lo fa riprovare. Ciò che cambia è che la
+     * riga esiste e dice quello che sa.
+     */
+    it('una risposta il cui `ok` non si può leggere NON passa in silenzio: è un warn che lo dice', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        const ostile = risposta('{}', 200);
+        Object.defineProperty(ostile, 'ok', { get() { throw new Error('getter ostile'); } });
+
+        const f = crea(async () => ostile);
+        const tornata = await f('https://x.supabase.co/rest/v1/alunni', { method: 'POST' });
+
+        // 1. Il chiamante riceve la SUA risposta, intatta: l'osservabilità non decide.
+        expect(tornata).toBe(ostile);
+        // 2. La riga esiste, ed è un warn — non un successo, non il silenzio.
+        const righe: string[] = err.mock.calls.map((c: unknown[]) => String(c[0]));
+        expect(
+            righe.filter((r) => r.startsWith('KV_WARN ')),
+            'una risposta di cui non sappiamo l\'esito non ha lasciato nessuna riga',
+        ).toHaveLength(1);
+        expect(righe[0]).toContain('evt=db');
+        // 3. E finisce in tabella con l'esito NOMINATO: se capita, si deve poter contare nel
+        //    tempo e distinguere da un guasto vero. Su Vercel la riga vive un giorno.
+        expect(appLog).toHaveBeenCalledTimes(1);
+        const riga = appLog.mock.calls[0][0];
+        expect(riga.livello).toBe('warn');
+        expect(riga.evento).toBe('db');
+        expect((riga.contestoExtra as { campi?: Record<string, unknown> } | undefined)?.campi?.esito)
+            .toBe('esito-illeggibile');
+    });
+
+    it('CONTROLLO NEGATIVO: una risposta 200 normale resta muta (nessuna riga per il caso buono)', async () => {
+        // Senza questo, il test qui sopra passerebbe anche se il modulo cominciasse a loggare
+        // TUTTO: la riga sarebbe verde per la ragione sbagliata.
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        await crea(async () => risposta('{}', 200))('https://x.supabase.co/rest/v1/alunni');
+        expect(err).not.toHaveBeenCalled();
+        expect(log).not.toHaveBeenCalled();
+        expect(appLog).not.toHaveBeenCalled();
+    });
+
     /* ── Anti-ricorsione ─────────────────────────────────────────────────── */
 
     it('dentro il logger NON si logga (altrimenti un log rotto genera log fino all\'OOM)', async () => {

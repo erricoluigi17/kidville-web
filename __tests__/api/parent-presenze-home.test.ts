@@ -18,7 +18,15 @@ const h = vi.hoisted(() => {
     return {
       from(table: string) {
         const qb: Record<string, unknown> = {}
-        for (const m of ['select', 'eq', 'gte', 'lte', 'order', 'limit', 'in']) qb[m] = () => qb
+        // `not` e `is` servono alla query delle assenze comunicate ancora
+        // annullabili (`.not('giustificata_da','is',null).is('registrato_da',null)`):
+        // senza, la catena esplode e la route risponde 500.
+        // `or` serve al filtro sulla SORGENTE del riepilogo (Q4,
+        // `limitaAiFatti`): un metodo mancante qui non produce un'asserzione
+        // rossa sul merito, produce un 500 — ed è il motivo per cui questi test
+        // guardano lo `status` prima del corpo.
+        for (const m of ['select', 'eq', 'gte', 'lte', 'order', 'limit', 'in', 'not', 'is', 'or'])
+          qb[m] = () => qb
         qb.single = () => Promise.resolve(take(table))
         qb.maybeSingle = () => Promise.resolve(take(table))
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
@@ -102,6 +110,9 @@ describe('GET /api/parent/presenze', () => {
     expect(body.data.oggi.orario_entrata).toBe('08:30:00')
     expect(body.data.riepilogo).toMatchObject({ presenze: 2, assenze: 1, ritardi: 1, uscite: 0 })
     expect(body.data.riepilogo.ore).toBeUndefined()
+    // Campo additivo: c'è sempre, anche quando è vuoto (il dettaglio sta in
+    // `parent-presenze-comunicate.test.ts`).
+    expect(body.data.comunicate).toEqual([])
   })
 
   it('200 con oggi=null se appello non registrato', async () => {

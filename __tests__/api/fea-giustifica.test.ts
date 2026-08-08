@@ -112,7 +112,14 @@ describe('POST /api/parent/presenze/giustifica', () => {
     h.state.queues = {
       alunni: [{ data: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
       sections: [{ data: { school_type: 'primaria' }, error: null }],
-      presenze: [{ data: { id: 'p-1', giustificata: true }, error: null }],
+      presenze: [
+        // Q5 · DUE letture su `presenze`: prima il testo ARCHIVIATO (serve a
+        // decidere se la presa visione del docente decade), poi l'esito
+        // dell'UPDATE. Senza la prima voce la coda si sfasa e il caso buono
+        // esce 404 — un rosso che non parla del merito.
+        { data: { giustificazione_testo: null }, error: null },
+        { data: { id: 'p-1', giustificata: true }, error: null },
+      ],
     }
     const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, motivo: 'malattia', code: '424242', expiry: 999, ticket: 't' }))
     const body = await res.json()
@@ -136,7 +143,14 @@ describe('POST /api/parent/presenze/giustifica', () => {
     h.state.queues = {
       alunni: [{ data: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
       sections: [{ data: { school_type: 'primaria' }, error: null }],
-      presenze: [{ data: { id: 'p-1', giustificata: true }, error: null }],
+      presenze: [
+        // Q5 · DUE letture su `presenze`: prima il testo ARCHIVIATO (serve a
+        // decidere se la presa visione del docente decade), poi l'esito
+        // dell'UPDATE. Senza la prima voce la coda si sfasa e il caso buono
+        // esce 404 — un rosso che non parla del merito.
+        { data: { giustificazione_testo: null }, error: null },
+        { data: { id: 'p-1', giustificata: true }, error: null },
+      ],
     }
     const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, motivo: 'visita' }))
     const body = await res.json()

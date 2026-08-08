@@ -776,11 +776,13 @@ const AMMESSE: Record<string, string> = {
     // parent/primaria/pagella/firma:POST, diary/checkin:GET,
     // locker/inventory:{GET,POST}.
     'parent/students:GET': 'scope famiglia: i figli del richiedente, in qualunque plesso',
-    // NON è «scope famiglia»: la scopertura qui è un `upsert` su `presenze` — che
-    // ha `scuola_id` — senza dichiarare la sede. Chi scrive è verificato
-    // (`requireParentOfStudent`), la RIGA no: nasce con il plesso vuoto. Debito
-    // aperto e dichiarato, non una giustificazione.
-    'parent/presenze/comunica-assenza:POST': "upsert su `presenze` senza `scuola_id`: l'attore è verificato, la riga nasce senza plesso — debito aperto (2026-07-31)",
+    // `parent/presenze/comunica-assenza:POST` NON è più qui (2026-08-07), e il
+    // debito è stato pagato davvero: l'upsert dichiara `scuola_id`, letto da
+    // `alunni` — la stessa fonte che usa il trigger `trg_presenze_scuola_id`.
+    // La voce diceva «l'attore è verificato, la riga nasce senza plesso», ed era
+    // esatta: chi scriveva lo si sapeva, DOVE finiva la riga no. Restava appesa a
+    // un trigger che il DB E2E della CI non ha, perché non è migrato — cioè in
+    // CI la riga nasceva senza plesso per davvero.
     'parent/submissions:GET': 'scope famiglia: moduli compilati per i propri figli',
     'parent/medical-certificates:GET': 'scope famiglia: certificati medici dei propri figli',
     'parent/medical-certificates:POST': 'scope famiglia: caricamento su un proprio figlio',
@@ -1131,8 +1133,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // perché non c'è niente di nessuno. Se un domani qualcuno gli facesse
             // restituire un conteggio per sede, quel numero dovrebbe salire, e questo
             // lock è il posto dove il fatto diventerebbe visibile.
+            // 435 → 436 il 2026-08-07: è nato
+            // `parent/presenze/comunica-assenza:DELETE`, l'annullamento della
+            // comunicazione d'assenza da parte del genitore. NON porta esenzioni:
+            // legge la riga per `(alunno_id, data)` — che è una chiave unica
+            // (`unique_presenza_giornaliera`) — e la cancella con LE STESSE
+            // chiavi, una delle quali è l'identità che `requireParentOfStudent`
+            // ha appena verificato.
             routeConServiceRole: 275,
-            handlerControllati: 435,
+            handlerControllati: 436,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1166,7 +1175,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // una sede venga calcolata (regola d'insieme): i tre filtri non li vede —
             // misurato, vedi la nota accanto alla voce tolta in AMMESSE. La prova sta
             // in `__tests__/api/segnalazioni-scope-sede.test.ts`.
-            handlerEsentati: 92,
+            //
+            // 92 → 91 il 2026-08-07: via `parent/presenze/comunica-assenza:POST`.
+            // Debito pagato, non presidio tolto: l'upsert su `presenze` ora
+            // dichiara `scuola_id`. La differenza si misura togliendo quel campo
+            // dalla route — questo lock torna rosso con `scrittura-senza-sede`.
+            handlerEsentati: 91,
         })
     })
 })

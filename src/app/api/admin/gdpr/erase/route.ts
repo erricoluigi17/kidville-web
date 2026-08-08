@@ -67,11 +67,21 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
 
   try {
     const supabase = await createAdminClient()
-    const { data: alunno } = await supabase
+    // «NON C'È» E «NON L'HO POTUTO LEGGERE» NON SONO LA STESSA COSA — e qui la
+    // differenza è la più cara dell'applicazione. PostgREST non lancia: senza il
+    // controllo del valore di ritorno, una lettura fallita usciva dalla porta del
+    // 404 qui sotto, cioè a una richiesta di cancellazione ex art. 17 si
+    // rispondeva **che il bambino non esiste**. È l'unica risposta che nessuno
+    // pensa di riprovare: la richiesta della famiglia si chiude lì.
+    const { data: alunno, error: alunnoErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome, stato, anonimizzato_il, documento_path, codice_fiscale, fiscal_code')
       .eq('id', alunno_id)
       .maybeSingle()
+    if (alunnoErr) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, alunnoErr)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Isolamento per sede, PRIMA di qualunque effetto. È l'operazione più grave
@@ -91,10 +101,23 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     }
 
     // Genitori collegati (anagrafica reale `parents` via `student_parents`).
-    const { data: links } = await supabase
+    //
+    // ⚠️ QUI L'ERRORE SI FERMA, NON SI DEGRADA. Senza il controllo, una lettura
+    // fallita lasciava `parentIds` a `[]`: l'oblio proseguiva, anonimizzava il
+    // bambino e **non toccava nessun adulto**, rispondendo 200 con «0 genitori».
+    // Un oblio eseguito a metà è peggio di un oblio fallito — il secondo si
+    // ripete, il primo risulta concluso e lascia in chiaro nomi, codici fiscali e
+    // documenti d'identità di due adulti, senza che nessuno lo sappia mai.
+    // È l'unico punto di questa route in cui una lista vuota è indistinguibile da
+    // un guasto e ha conseguenze irreversibili: si esce, e si riprova.
+    const { data: links, error: linksErr } = await supabase
       .from('student_parents')
       .select('parent_id')
       .eq('student_id', alunno_id)
+    if (linksErr) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db' }, linksErr)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+    }
     const parentIds = (links ?? []).map((l: { parent_id: string }) => l.parent_id)
 
     // Genitori "orfani" (nessun altro figlio iscritto) → anonimizzabili.
@@ -176,6 +199,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     let iscrizioniAdulti = 0
     let fileAdultiRimossi = 0
     let fileAdultiNonRimossi = 0
+    let notificheRimosse = esitoAlunno.notificheRimosse
     for (const pid of parentiOrfani) {
       const e = await anonimizzaParent(supabase, pid, at, OP)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
@@ -184,6 +208,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       iscrizioniAdulti += e.iscrizioniScrubbate
       fileAdultiRimossi += e.fileRimossi
       fileAdultiNonRimossi += e.fileNonRimossi
+      notificheRimosse += e.notificheRimosse
     }
 
     const nFileNonRimossi = esitoAlunno.fileNonRimossi + fileAdultiNonRimossi
@@ -199,12 +224,23 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       riconciliazione_bonificati: esitoAlunno.riconciliazione,
       incassi_bonificati: esitoAlunno.incassi,
       cassa_bonificati: esitoAlunno.cassa,
+      // Il motivo dell'assenza scritto dalla famiglia e le note d'appello del
+      // docente (`presenze.giustificazione_testo` / `note_appello`): testo libero
+      // di natura sanitaria, che fino al 2026-08-07 nessun canale di oblio
+      // toccava. Sta nella risposta perché è la parte che si racconta alla
+      // famiglia: «quante righe del registro portavano ancora un suo testo».
+      presenze_bonificate: esitoAlunno.presenzeBonificate,
       news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
       consensi_prova_bonificati: consensiProvaBonificati,
       // I dispositivi che smettono di ricevere le notifiche della scuola. Sta
       // nell'esito e non solo nei log perché è la parte dell'oblio che la famiglia
       // VEDE: se il telefono continua a suonare, «fatto» è una parola vuota.
       push_subscriptions_rimosse: pushRimosse,
+      // Le notifiche già recapitate che nominavano il minore (la campanella dei
+      // docenti e quella del genitore). La scadenza automatica a dodici mesi
+      // chiude il «per sempre»; l'art. 17 chiede «senza ingiustificato ritardo»,
+      // e questo è il numero che lo dimostra.
+      notifiche_rimosse: notificheRimosse,
     }
 
     // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è
@@ -229,6 +265,11 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         entita_tipo: 'alunni',
         entita_id: alunno_id,
         n_file: esito.file_rimossi,
+        // Quante righe del registro portavano ancora un testo scritto dalla
+        // famiglia o dal docente. È un CONTEGGIO — nessun testo, nessun nome —
+        // e sta qui perché `gdpr` è persistito: senza, fra sei mesi la domanda
+        // «il motivo dell'assenza è stato tolto davvero?» non ha una query.
+        n_presenze: esito.presenze_bonificate,
       })
     }
 

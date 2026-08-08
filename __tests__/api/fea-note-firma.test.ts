@@ -110,7 +110,7 @@ describe('POST /api/parent/primaria/note/firma', () => {
 
   it('403 se il genitore non è collegato all\'alunno della nota', async () => {
     h.state.queues = {
-      note_disciplinari: [{ data: { id: 'n-1', alunno_id: 'a-1', richiede_firma: true }, error: null }],
+      note_disciplinari: [{ data: { id: 'n-1', alunno_id: 'a1111111-1111-4111-8111-111111111111', richiede_firma: true }, error: null }],
       legame_genitori_alunni: [{ data: null, error: null }],
     }
     const res = await POST(req({ notaId: 'n-1', code: '424242', expiry: 999, ticket: 't' }))
@@ -121,8 +121,8 @@ describe('POST /api/parent/primaria/note/firma', () => {
 
   it('200 firma → nota_ricezioni con signature_log + audit signed + firmata_il', async () => {
     h.state.queues = {
-      note_disciplinari: [{ data: { id: 'n-1', alunno_id: 'a-1', richiede_firma: true }, error: null }],
-      legame_genitori_alunni: [{ data: { alunno_id: 'a-1' }, error: null }],
+      note_disciplinari: [{ data: { id: 'n-1', alunno_id: 'a1111111-1111-4111-8111-111111111111', richiede_firma: true }, error: null }],
+      legame_genitori_alunni: [{ data: { alunno_id: 'a1111111-1111-4111-8111-111111111111' }, error: null }],
       nota_ricezioni: [{ data: { id: 'r-1' }, error: null }],
     }
     const res = await POST(req({ notaId: 'n-1', code: '424242', expiry: 999, ticket: 't' }))

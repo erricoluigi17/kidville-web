@@ -108,6 +108,12 @@ vi.mock('next-intl', async () => {
     parentChat: (await import('../messages/it/parentChat.json')).default,
     parentPrimaria: (await import('../messages/it/parentPrimaria.json')).default,
     parentServizi: (await import('../messages/it/parentServizi.json')).default,
+    // Le frasi che le DUE schermate dell'assenza condividono. Senza questa riga
+    // ogni test che monta `/parent/attendance` o `ComunicaAssenzaCard` mostrava a
+    // schermo `parentAssenze.motivoPrivacy` — cioè il nome della chiave — e
+    // qualunque asserzione sul testo sarebbe stata verde su una stringa che
+    // nessun genitore leggerà mai.
+    parentAssenze: (await import('../messages/it/parentAssenze.json')).default,
     parentForms: (await import('../messages/it/parentForms.json')).default,
     public: (await import('../messages/it/public.json')).default,
   };

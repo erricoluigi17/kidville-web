@@ -16,7 +16,7 @@ const labels: Record<string, string> = {
   ugcBannerSuspendedTitle: 'Conversazione sospesa',
   ugcBannerSuspendedBody: 'Non puoi inviare nuovi messaggi in questa conversazione.',
   ugcBannerISuspendedTitle: 'Hai sospeso questa conversazione',
-  ugcBannerISuspendedBody: "L'altra persona non può scriverti finché non la riapri.",
+  ugcBannerISuspendedBody: `L’altra persona non può scriverti finché non la riapri.`,
   ugcReopen: 'Riapri',
   ugcReopening: 'Riapertura…',
   ugcReopenError: 'Impossibile riaprire',

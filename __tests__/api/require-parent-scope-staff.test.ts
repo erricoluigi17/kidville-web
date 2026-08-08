@@ -40,7 +40,11 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
-vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFiglio }))
+vi.mock('@/lib/anagrafiche/legami', () => ({
+  genitoreHasFiglio: h.genitoreHasFiglio,
+  // Esito a tre valori del gate: qui si deriva dal mock booleano storico.
+  verificaLegameGenitore: async (...a: unknown[]) => ((await h.genitoreHasFiglio(...a)) ? 'si' : 'no'),
+}))
 vi.mock('@/lib/logging/logger', async (originale) => {
   const reale = await originale<typeof import('@/lib/logging/logger')>()
   return { ...reale, logEvento: h.logEvento }
@@ -111,6 +115,55 @@ describe('requireParentOfStudent — genitore (comportamento invariato)', () => 
     const r = await requireParentOfStudent(req(), ALU_B)
     expect(r.response?.status).toBe(403)
     expect(h.genitoreHasFiglio).toHaveBeenCalledWith(expect.anything(), 'gen-1', ALU_B)
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // IL 403 DEL RAMO GENITORE NON LASCIAVA NESSUNA RIGA INTERROGABILE.
+  //
+  // Il collaudo del 2026-08-07 ha provato dodici volte di fila a scrivere sul
+  // registro di un bambino altrui: dodici 403 corretti, e in `app_log` **niente**
+  // — `withRoute` classifica i 403 a livello `info`, e `vaPersistito` tiene in
+  // tabella solo `warn` ed `error`. È la stessa forma del difetto originale di
+  // questo ciclo (un mese di silenzio perfetto), applicata alla difesa della
+  // rotta che scrive dati di minori.
+  //
+  // Il `warn` esisteva già 27 righe più sotto, ma solo per i NON-genitori: il
+  // ramo genitore esce prima e non ci arrivava mai. Il tentativo che più di ogni
+  // altro si vorrebbe poter contare era l'unico senza un contatore.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('legame assente: lascia un `warn` `alunno-non-della-famiglia` (persistito)', async () => {
+    comeUtente('gen-1', 'genitore', null)
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    await requireParentOfStudent(req(), ALU_B)
+    expect(
+      warnAuth(),
+      'senza gate non esiste neppure il segnale che qualcuno ci ha provato',
+    ).toContain('alunno-non-della-famiglia')
+  })
+
+  it('la riga porta SOLO uuid ed enumerati: attore, alunno, ruolo, azione', async () => {
+    comeUtente('gen-1', 'genitore', null)
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    await requireParentOfStudent(req(), ALU_B)
+    const riga = h.logEvento.mock.calls.find(
+      (c) => c[0] === 'auth' && c[1] === 'warn' && (c[2] as { tipo?: string })?.tipo === 'alunno-non-della-famiglia',
+    )
+    expect(riga?.[2]).toMatchObject({
+      tipo: 'alunno-non-della-famiglia',
+      azione: 'requireParentOfStudent',
+      utente: 'gen-1',
+      ruolo: 'genitore',
+      alunno_id: ALU_B,
+    })
+    // Niente nomi, niente email, niente testo libero: sono dati di minori.
+    expect(JSON.stringify(riga?.[2])).not.toMatch(/@|nome|cognome/i)
+  })
+
+  it('il legame che C\'È non lascia nessuna riga: un logger loquace acceca', async () => {
+    comeUtente('gen-1', 'genitore', null)
+    h.genitoreHasFiglio.mockResolvedValue(true)
+    await requireParentOfStudent(req(), ALU_B)
+    expect(warnAuth()).not.toContain('alunno-non-della-famiglia')
   })
 
   it('legame presente: passa, e la sede NON c\'entra (fratelli in due plessi)', async () => {

@@ -32,3 +32,32 @@ export function haCookieSessione(cookieStore: CookieStore): boolean {
     return false
   }
 }
+
+/**
+ * Come sopra, ma a partire dall'INTESTAZIONE `Cookie` grezza di una richiesta.
+ *
+ * Serve a `withRoute` (`src/lib/logging/with-route.ts`), che osserva l'esito di una route e
+ * deve sapere se un 400 arriva da una sessione o da un anonimo — ma non può usare le API
+ * solo-`NextRequest` (`request.cookies`): i ~90 test API del repo invocano gli handler con una
+ * `Request` NUDA. Un header, invece, ce l'hanno tutte.
+ *
+ * Sta QUI e non lì per una ragione sola: il nome del cookie è già scritto in questo file, e
+ * `sb-<ref>-auth-token` scritto due volte è `sb-<ref>-auth-token` che diverge la prima volta
+ * che Supabase cambia forma — con l'effetto silenzioso di far tornare invisibile un'intera
+ * classe di rifiuti.
+ *
+ * ⚠️ NON è un controllo di autorizzazione, come la funzione qui sopra: dice che una sessione
+ * è STATA PRESENTATA, non che sia valida. Per decidere il LIVELLO DI UN LOG è esattamente
+ * l'informazione giusta (un 400 con un cookie scaduto resta un 400 del nostro client); per
+ * decidere un accesso non lo sarebbe mai.
+ */
+export function haCookieSessioneNellIntestazione(cookieHeader: string | null | undefined): boolean {
+  try {
+    if (typeof cookieHeader !== 'string' || cookieHeader === '') return false
+    return cookieHeader
+      .split(';')
+      .some((pezzo) => SESSIONE.test(pezzo.split('=')[0].trim()))
+  } catch {
+    return false
+  }
+}

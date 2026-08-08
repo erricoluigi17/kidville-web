@@ -1,0 +1,17 @@
+{
+  "finestraGiorni": "Puoi arrivare fino a {giorni, plural, one {# giorno} other {# giorni}} in anticipo.",
+  "motivoPlaceholder": "Es. febbre, visita medica, motivi familiari…",
+  "motivoPrivacy": "Il motivo lo leggono le insegnanti della sezione e viene cancellato dopo dodici mesi.",
+  "motivoPrivacyLink": "Leggi l’informativa",
+  "giaComunicataAvviso": "Per questo giorno hai già comunicato un’assenza: inviando di nuovo aggiorni quella comunicazione.",
+  "aggiornataTitolo": "Assenza aggiornata",
+  "motivoNonCancellabile": "Il motivo già registrato resta anche svuotando il campo: questa schermata non lo cancella. Per toglierlo, annulla la comunicazione qui sotto e ricomunicala senza motivo.",
+  "invioInCorso": "Invio della comunicazione in corso…",
+  "annullamentoInCorso": "Annullamento della comunicazione in corso…",
+  "identitaInCorso": "Sto verificando il profilo: fra un istante potrai inviare.",
+  "nessunAlunno": "Nessun alunno risulta collegato a questo account: contatta la segreteria della scuola.",
+  "giornoMancante": "Scegli il giorno dell’assenza per poter inviare.",
+  "cronologiaNonLetta": "Non è stato possibile caricare le presenze di questo periodo.",
+  "riprova": "Riprova",
+  "statoSconosciuto": "Altro"
+}

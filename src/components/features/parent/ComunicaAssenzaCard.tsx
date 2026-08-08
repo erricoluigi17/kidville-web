@@ -1,0 +1,880 @@
+'use client';
+
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { CalendarPlus, RotateCcw } from 'lucide-react';
+import { useDateFormat } from '@/lib/i18n/date';
+import { Btn } from '@/components/ui/Btn';
+import { LinkInterno } from '@/components/ui/LinkInterno';
+import { RigaAssenzaComunicata } from '@/components/features/parent/RigaAssenzaComunicata';
+import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
+import { PiedeAzioneAssenza } from '@/components/features/parent/PiedeAzioneAssenza';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
+import {
+  GIORNI_MASSIMI_IN_ANTICIPO,
+  rifiutoDelGiorno,
+  ultimoGiornoComunicabile,
+} from '@/lib/presenze/finestra-comunicazione';
+import { CODICI_ERRORE, erroreDaRisposta } from '@/lib/ui/esito-fetch';
+import {
+  BLOCCO_CAMPO_ASSENZA,
+  CAMPO_ASSENZA,
+  ETICHETTA_CAMPO_ASSENZA,
+  SPAZIO_FRA_BLOCCHI_ASSENZA,
+} from '@/lib/ui/campo-assenza';
+import { logClient } from '@/lib/logging/client';
+
+/**
+ * «Comunica un'assenza» — il gesto che il genitore fa PRIMA, non dopo.
+ *
+ * ─── DA DOVE VIENE ──────────────────────────────────────────────────────────
+ * Il codice di questa card esisteva da mesi dentro `PrimariaParentView.tsx`
+ * (`AssenzeCard`, righe 258-314): un componente esportato e **mai importato da
+ * nessuna pagina**. Cioè una funzione scritta, tradotta in due lingue e mai
+ * arrivata a nessuno. Qui è estratta la sola parte «comunica assenza» — pagelle,
+ * valutazioni, note e impreparato vivono già in altre pagine — e corretta nei due
+ * difetti che portava con sé.
+ *
+ * ─── DIFETTO 1: IL SUCCESSO DICHIARATO SENZA VERIFICA ───────────────────────
+ * L'originale faceva `await onComunicaAssenza(data, motivo)` e subito dopo
+ * `setMsg('Assenza comunicata ✓')`, sempre — anche quando il server aveva appena
+ * risposto 400 o 403. È il vizio che questo progetto ha già pagato altrove (le
+ * email di credenziali «inviate» per mesi con un 403 in mano): un'operazione che
+ * dichiara successo senza averlo verificato. Qui la conferma la scrive SOLO
+ * `res.ok`; ogni rifiuto diventa una frase italiana presa dal catalogo dei codici
+ * (`CODICI_ERRORE`), mai la prosa del server — che è italiana per costruzione e
+ * a un'interfaccia in inglese mostrerebbe italiano, nomi di colonne compresi
+ * (lock `errori-server-schermate-famiglia`).
+ *
+ * ─── DIFETTO 2: IL FUSO ─────────────────────────────────────────────────────
+ * `oggiIso()` dell'originale era `new Date().toISOString().slice(0,10)`: fra la
+ * mezzanotte e le due italiane restituisce IERI. Ora che il server rifiuta le
+ * date passate, quel campo sarebbe nato precompilato con una data che il server
+ * respinge. Si usa `oggiFiscaleISO()`, che dichiara `Europe/Rome`.
+ *
+ * ─── PERCHÉ LEGGE `parent/presenze` E NON L'ELENCO DELLA PAGINA ─────────────
+ * Le assenze annullabili sono quelle che ha scritto un genitore (`giustificata_da`
+ * valorizzato) e su cui l'insegnante non ha ancora fatto l'appello
+ * (`registrato_da` nullo): la distinzione la fa il server, in
+ * `GET /api/parent/presenze` (campo `comunicate`). La cronologia che le pagine
+ * genitore mostrano non porta quelle due colonne, e ricavare da lì «questa si può
+ * ancora ritirare» sarebbe indovinare. La card si legge da sé ciò che le serve, e
+ * avvisa la pagina ospite con `onAggiornato` perché ricarichi la SUA lista.
+ */
+
+/** Una riga di `GET /api/parent/presenze` → `data.comunicate`. */
+export interface AssenzaComunicata {
+  id: string;
+  data: string;
+  giustificazione_testo: string | null;
+  stato: string;
+}
+
+interface Props {
+  /** L'alunno a cui si riferisce l'assenza. `null` finché l'identità non è risolta. */
+  studentId: string | null;
+  /** Il genitore che comunica. `null` finché l'identità non è risolta. */
+  parentId: string | null;
+  /**
+   * Chiamato dopo ogni scrittura RIUSCITA (invio o annullamento): la pagina che
+   * ospita la card ricarica il proprio elenco. Non viene mai chiamato dopo un
+   * rifiuto — un ricaricamento dopo un errore ridipinge i vecchi valori e fa
+   * sparire il gesto senza una parola, che è il difetto da cui nasce questo file.
+   */
+  onAggiornato?: () => void;
+  className?: string;
+}
+
+export function ComunicaAssenzaCard({ studentId, parentId, onAggiornato, className }: Props) {
+  const t = useTranslations('parentPrimaria');
+  /** Le frasi condivise con la schermata gemella: namespace `parentAssenze`. */
+  const ta = useTranslations('parentAssenze');
+  /** Le frasi d'errore condivise con il server: stesse chiavi, stessi codici. */
+  const tShared = useTranslations('shared');
+  const f = useDateFormat();
+  const uid = useId();
+  const idData = `comunica-assenza-data-${uid}`;
+  const idDataAiuto = `comunica-assenza-data-aiuto-${uid}`;
+  const idMotivo = `comunica-assenza-motivo-${uid}`;
+  const idMotivoNota = `comunica-assenza-motivo-nota-${uid}`;
+  const idModulo = `comunica-assenza-modulo-${uid}`;
+  const idErrore = `comunica-assenza-errore-${uid}`;
+
+  /** «Oggi» nel fuso dell'istituto: è anche il PAVIMENTO del campo del giorno. */
+  const oggi = oggiFiscaleISO();
+
+  const [aperto, setAperto] = useState(false);
+  // Inizializzazione pigra: `oggiFiscaleISO` è deterministica nel fuso italiano,
+  // quindi server e client concordano e l'idratazione non diverge.
+  const [data, setData] = useState<string>(oggiFiscaleISO);
+  const [motivo, setMotivo] = useState('');
+  const [inviando, setInviando] = useState(false);
+  const [annullando, setAnnullando] = useState<string | null>(null);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  /**
+   * Il CODICE del rifiuto, accanto alla frase già tradotta — come sulla gemella,
+   * e per la stessa ragione: serve a sapere se il rifiuto riguarda IL GIORNO
+   * SCELTO, e quindi se marcare il campo con `aria-invalid`. Marcarlo sempre
+   * manderebbe il genitore a correggere un valore giusto quando il guasto è del
+   * server, e uno screen reader annuncerebbe «non valido» su un campo innocente.
+   * La card non lo aveva affatto: la stessa diagnosi, due schermate, due modi.
+   */
+  const [codiceErr, setCodiceErr] = useState<string | null>(null);
+  /** Tutti i rifiuti che parlano della data cominciano con `ASSENZA_DATA_`. */
+  const erroreSullaData = codiceErr?.startsWith('ASSENZA_DATA_') ?? false;
+  const [comunicate, setComunicate] = useState<AssenzaComunicata[]>([]);
+  /**
+   * L'elenco non è ancora stato letto — che NON è «letto e vuoto».
+   *
+   * Fino al 2026-08-07 i due stati erano lo stesso `useState([])`, e il render
+   * trattava `length === 0` come «non ne hai»: aprendo la pagina, per tutta la
+   * durata della GET (≈2s sul server di collaudo, di più su 3G o all'avvio
+   * dell'app nativa), la card affermava «Non hai comunicato assenze per i
+   * prossimi giorni» a un genitore che ne aveva due — e che quindi poteva
+   * ricomunicarle. Il ciclo 1 aveva modellato il guasto di lettura
+   * (`elencoRotto`) e non l'attesa: sono tre stati, e ne mancava uno.
+   * La schermata sorella lo modella dal ciclo 1 (`caricandoElenco`).
+   */
+  const [caricando, setCaricando] = useState(true);
+  /**
+   * La lettura dell'elenco è fallita. È un BOOLEANO e non il testo tradotto, e la
+   * differenza non è di stile: il testo verrebbe da `t`, e `t` finirebbe fra le
+   * dipendenze dell'effetto che carica. Misurato con un `useTranslations` che
+   * restituisce una funzione nuova a ogni render (il finto dei test, più severo di
+   * next-intl vero): la card rifaceva la GET **a ogni battito di stato** — quattro
+   * richieste per due interazioni, cioè una tempesta di letture sul database a
+   * ogni tasto premuto nel campo motivo. Lo stato conserva il FATTO, il render ci
+   * mette la lingua.
+   */
+  const [elencoRotto, setElencoRotto] = useState(false);
+
+  /**
+   * DOVE VA IL FUOCO quando l'azione finisce — riuscita o rifiutata.
+   *
+   * Ogni scrittura di questa card SMONTA il comando che l'ha lanciata: l'invio
+   * chiude il modulo (`setAperto(false)`) portandosi via il bottone «Invia la
+   * comunicazione», l'annullamento fa sparire la riga con il suo «Annulla». Chi
+   * ha premuto da tastiera si ritrova il fuoco su `<body>` — cioè riparte
+   * dall'inizio della pagina — e chi usa uno screen reader perde il punto in cui
+   * stava: il `role="status"` c'è, quindi la frase viene annunciata, ma il
+   * CURSORE resta indietro (WCAG 2.4.3, la stessa ragione per cui `ui/Modal.tsx`
+   * ripristina il fuoco alla chiusura).
+   *
+   * Non è ignoranza del pattern: `parent/attendance/page.tsx` lo applica dal
+   * ciclo 1, con tanto di commento. Questo componente è nato nello stesso commit
+   * e non l'ha ereditato — la correzione era stata scritta dov'era stato
+   * segnalato il sintomo invece che sulla regola. Qui c'è per entrambi gli
+   * esiti, compreso il RIFIUTO, che su tutte e due le schermate era rimasto
+   * indietro: è proprio quando il server dice di no che serve arrivare al testo.
+   *
+   * Gli effetti dipendono dal testo di `msg`/`err` e funzionano anche al secondo
+   * esito identico, perché i due gestori azzerano ENTRAMBI prima di chiamare il
+   * server: lo stato fa comunque '' → frase, e l'effetto riparte.
+   */
+  const refMsg = useRef<HTMLDivElement | null>(null);
+  const refErr = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (msg) refMsg.current?.focus();
+  }, [msg]);
+
+  useEffect(() => {
+    if (err) refErr.current?.focus();
+  }, [err]);
+
+  /**
+   * Una riga di log per ogni chiamata che non è andata a buon fine. `stato` è un
+   * numero e `cosa` una costante di codice: passano la lista bianca della
+   * redazione. Il corpo della risposta NON si logga — può contenere il motivo
+   * dell'assenza, cioè testo libero sulla salute di un minore.
+   */
+  const segnala = useCallback((cosa: string, stato?: number, errore?: unknown) => {
+    logClient({
+      livello: 'error',
+      evento: 'fetch',
+      messaggio: `parent/comunica-assenza: ${cosa}${errore instanceof Error ? ` (${errore.name})` : ''}`,
+      stato,
+    });
+  }, []);
+
+  /**
+   * Rilegge le assenze comunicate ancora ritirabili.
+   *
+   * ⚠️ LA FORMA — `try/finally` e NON `try/catch` — è obbligata, e costa una
+   * riga di spiegazione perché sembra un errore. La regola
+   * `react-hooks/set-state-in-effect` (React Compiler, `error` in questo repo)
+   * boccia una funzione async chiamata da `useEffect` che aggiorni lo stato
+   * senza avvolgere i suoi `await` in un `try`: li considera raggiungibili in
+   * modo sincrono. Misurato qui: senza il `try` la lint è rossa, con `try/finally`
+   * è verde, a parità di logica. Stessa forma di `PagamentiSummary`.
+   *
+   * Il fallimento (rete giù, corpo illeggibile) NON resta muto: lo raccoglie chi
+   * chiama — l'effetto qui sotto e i due gestori di scrittura — e in tutti e tre
+   * i casi si logga e si dice a schermo.
+   */
+  const caricaComunicate = useCallback(async () => {
+    if (!studentId || !parentId) return;
+    try {
+      const r = await fetch(`/api/parent/presenze?studentId=${studentId}&userId=${parentId}`, {
+        headers: { 'x-user-id': parentId },
+      });
+      // `.catch(() => null)` come la schermata gemella (`attendance/page.tsx`):
+      // un 200 con corpo vuoto o troncato fa lanciare `r.json()`. Non era un
+      // guasto — l'eccezione risale al `.catch` dell'effetto, che logga e mostra
+      // lo stato d'errore giusto — ma lì `stato` arriva indefinito, e nel log si
+      // perde l'unica cosa che distingue «il server ha rifiutato» da «la rete è
+      // caduta». Due porte della stessa funzione, due modi di leggere: uno.
+      const corpo = r.ok ? await r.json().catch(() => null) : null;
+      /**
+       * DUE GUASTI, UNA SOLA CONCLUSIONE: l'elenco non lo abbiamo.
+       *
+       * Il primo è la risposta rifiutata (`!r.ok`). Il secondo è più insidioso e
+       * ha vissuto nascosto dietro un 200: `GET /api/parent/presenze` degrada a
+       * `comunicate: []` quando la sua query fallisce — scelta giusta, la home
+       * non deve rompersi per un elenco accessorio — e risponde comunque 200.
+       * Il ramo d'errore qui sotto era scritto e funzionante, e su quel guasto
+       * non veniva MAI raggiunto: la card scriveva «Non hai comunicato assenze»
+       * a chi ne aveva, e che quindi non poteva nemmeno annullarle.
+       *
+       * `!== false`, non `Boolean(...)`: un server che il campo non lo manda
+       * ancora — rilascio a scaglioni, app dello store più nuova del backend —
+       * spedisce `undefined`, e «non lo dichiara» non è «dichiara di no».
+       */
+      const letto = r.ok && corpo?.data?.comunicateLette !== false;
+      if (letto) {
+        const righe = corpo?.data?.comunicate;
+        setComunicate(Array.isArray(righe) ? (righe as AssenzaComunicata[]) : []);
+        setElencoRotto(false);
+      } else {
+        // Silenzio qui direbbe al genitore «non hai comunicato niente» — che è la
+        // bugia peggiore delle due, perché toglie anche il modo di annullare.
+        // `r.status` resta quello vero (200 quando è il server a dichiararlo):
+        // nel log è l'unica cosa che distingue i due guasti.
+        segnala('elenco-non-letto', r.status);
+        setElencoRotto(true);
+      }
+    } finally {
+      // L'attesa finisce QUI, e in tutti i modi in cui può finire — risposta
+      // buona, rifiuto, rete caduta (l'eccezione nasce dentro il `try`, quindi
+      // il `finally` gira prima che risalga a chi chiama). Lo spegnimento sta
+      // dopo un `await`, che è ciò che `react-hooks/set-state-in-effect`
+      // pretende: prima del primo await questa funzione non tocca lo stato.
+      setCaricando(false);
+    }
+  }, [studentId, parentId, segnala]);
+
+  useEffect(() => {
+    // La lettura che fallisce del tutto (rete giù) si logga e si dice. Non è un
+    // catch muto — quelli sono vietati da AGENTS.md — ed è QUI, fuori dalla
+    // funzione, per la stessa regola del compiler.
+    void caricaComunicate().catch((e) => {
+      segnala('elenco-non-letto', undefined, e);
+      setElencoRotto(true);
+    });
+  }, [caricaComunicate, segnala]);
+
+  /**
+   * IL RICARICO ESPLICITO — la via d'uscita che la card non aveva.
+   *
+   * Misurato il 2026-08-08 con `/api/parent/presenze` forzata a 500: la card
+   * diceva «Non è stato possibile caricare le assenze già comunicate» e non
+   * offriva nessun comando. L'unica uscita era ricaricare la pagina a mano — e
+   * finché l'elenco manca, le assenze già comunicate **non sono annullabili**.
+   * Peggio: il «Riprova» che si vede più giù in pagina appartiene alla
+   * cronologia e non tocca questo stato, quindi a schermo c'era un pulsante che
+   * faceva credere a una via d'uscita che non c'era.
+   *
+   * La schermata gemella ce l'ha dal ciclo 1 (`ricaricaComunicate`): è di nuovo
+   * la stessa funzione con una metà rimasta indietro. Qui è un gestore d'evento,
+   * quindi lo stato «sto caricando» si può rimostrare senza incorrere in
+   * `react-hooks/set-state-in-effect`.
+   */
+  const ricaricaComunicate = useCallback(() => {
+    setCaricando(true);
+    setElencoRotto(false);
+    void caricaComunicate().catch((e) => {
+      segnala('elenco-non-letto', undefined, e);
+      setElencoRotto(true);
+    });
+  }, [caricaComunicate, segnala]);
+
+  /**
+   * La comunicazione GIÀ ARCHIVIATA per il giorno scelto — e la ragione per cui
+   * il campo «Motivo» non riparte mai da vuoto su un giorno che un motivo ce
+   * l'ha. Il perché per esteso sta nella pagina gemella
+   * (`parent/attendance/page.tsx`, `giaComunicata`): in due parole, il campo è
+   * facoltativo, il client lo mandava comunque vuoto e la route lo normalizzava
+   * a NULL sull'UPDATE — cancellando un dato sanitario di un minore per il solo
+   * fatto che non era stato riscritto.
+   *
+   * ⚠️ E DAL 2026-08-08 svuotare il campo NON cancella più niente: il server ha
+   * scelto, deliberatamente, di non azzerare mai `giustificazione_testo` su un
+   * campo vuoto. Il commento dell'invio qui sotto diceva l'opposto («il server lo
+   * normalizza a null») ed era stale: corretto insieme all'avviso che ora lo dice
+   * al genitore PRIMA, invece di dichiarargli «Assenza aggiornata» dopo.
+   */
+  const giaComunicata = comunicate.find((a) => a.data === data) ?? null;
+  /** Il genitore ha svuotato un motivo ARCHIVIATO: gesto che qui non si esegue. */
+  const motivoSvuotato = Boolean(giaComunicata?.giustificazione_testo) && motivo.trim() === '';
+
+  /**
+   * Cambia il giorno e riallinea il motivo a QUEL giorno. Non azzera ciò che il
+   * genitore ha digitato se né il giorno lasciato né quello scelto hanno una
+   * comunicazione in archivio: correggere la data non deve costare il testo.
+   */
+  const cambiaGiorno = (giorno: string) => {
+    const partenza = comunicate.find((a) => a.data === data);
+    const arrivo = comunicate.find((a) => a.data === giorno);
+    setData(giorno);
+    if (arrivo || partenza) setMotivo(arrivo?.giustificazione_testo ?? '');
+    // Correggere il valore invalida la diagnosi precedente: un `aria-invalid`
+    // che sopravvive alla propria causa dice a chi ascolta «non valido» su un
+    // valore giusto (WCAG 4.1.2), e il messaggio accanto descrive un errore che
+    // il genitore ha già risolto. Stessa riga, stessa ragione, sulla gemella.
+    setErr('');
+    setCodiceErr(null);
+  };
+
+  const invia = async () => {
+    if (!studentId || !parentId || !data || inviando) return;
+    // ═══ IL GIORNO SI VALIDA QUI, PRIMA DI USCIRE DAL DISPOSITIVO ═══════════
+    //
+    // La guardia controllava che la data ci FOSSE, non che fosse valida. Il
+    // campo ha `min`/`max`, ma su iOS il selettore nativo non li rispetta —
+    // misurato dal collaudo, e dichiarato dal commento della gemella. Simulando
+    // esattamente ciò che fa il selettore di sistema (setter nativo del value +
+    // `input`/`change`) con `2026-01-15`: «POST partiti: 1». La richiesta
+    // usciva per farsi rifiutare, consumando il budget del tetto di frequenza, e
+    // il genitore scopriva l'errore dopo un giro di rete.
+    // La regola è la stessa della gemella e della route, e vive in un posto solo.
+    const rifiuto = rifiutoDelGiorno(data, oggi);
+    if (rifiuto) {
+      setMsg('');
+      setErr(tShared(CODICI_ERRORE[rifiuto]));
+      setCodiceErr(rifiuto);
+      return;
+    }
+    setInviando(true);
+    setMsg('');
+    setErr('');
+    setCodiceErr(null);
+    try {
+      const r = await fetch(`/api/parent/presenze/comunica-assenza?userId=${parentId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+        // Il motivo resta FACOLTATIVO (decisione del titolare): si manda com'è,
+        // vuoto compreso. ⚠️ Il server NON lo normalizza più a null su una riga
+        // che esiste già (route.ts:518-522, dal 2026-08-08): un campo vuoto
+        // riconferma, non cancella. Il genitore lo legge PRIMA di premere —
+        // vedi `motivoSvuotato` — invece di sentirsi dire «Assenza aggiornata»
+        // per una cancellazione che non è avvenuta.
+        body: JSON.stringify({ studentId, data, motivo }),
+      });
+      if (!r.ok) {
+        // ⚠️ IL CORPO SI LEGGE IN MODO DIFENSIVO, E LO STATUS NON SI PERDE MAI (R17).
+        // `await r.json()` LANCIA su una risposta senza corpo — il 500 vuoto che Next
+        // produce quando un handler non restituisce una Response, un 502 di proxy, una
+        // risposta troncata — e l'eccezione finiva nel `catch` qui sotto, che è scritto
+        // per la RETE CADUTA: a schermo compariva il messaggio sbagliato e nel log
+        // `invio-non-riuscito` con `stato` indefinito, cioè senza la sola informazione
+        // rimasta. La regola vive in `esito-fetch.ts`, una volta per tutte le schermate.
+        const esito = await erroreDaRisposta(r, t('comunicaNonRiuscita'));
+        setErr(esito.testo);
+        // Il codice si conserva a parte: la frase serve a chi legge, il codice a
+        // decidere se il campo del giorno va marcato non valido.
+        setCodiceErr(esito.codice);
+        segnala(esito.corpoLetto ? 'invio-respinto' : 'invio-respinto-senza-corpo', esito.stato);
+        return;
+      }
+      setMotivo('');
+      setAperto(false);
+      // «Comunicata» e «aggiornata» sono due fatti diversi: il secondo ha appena
+      // sovrascritto ciò che c'era, motivo compreso. Si decide con l'elenco
+      // ancora quello di PRIMA della rilettura, che è l'unico momento in cui la
+      // differenza esiste ancora.
+      setMsg(giaComunicata ? ta('aggiornataTitolo') : t('comunicaFatta'));
+      onAggiornato?.();
+      // La RILETTURA dell'elenco ha un esito suo, e non può ricadere nel `catch`
+      // qui sotto: se cadesse la rete adesso, il genitore leggerebbe «assenza non
+      // comunicata» per una scrittura ANDATA A BUON FINE — il difetto speculare a
+      // quello che questa card corregge, e altrettanto bugiardo. Riproverebbe, e
+      // comunicherebbe due volte la stessa assenza.
+      await caricaComunicate().catch((e) => {
+        segnala('elenco-non-letto', undefined, e);
+        setElencoRotto(true);
+      });
+    } catch (e) {
+      // Rete caduta, oppure un corpo che non è JSON: in entrambi i casi NON
+      // sappiamo se l'assenza è stata registrata, e il modulo resta aperto con
+      // dentro ciò che il genitore ha scritto.
+      setErr(t('comunicaNonRiuscita'));
+      // La rete caduta non dice niente sul giorno scelto: nessun codice, quindi
+      // nessun `aria-invalid` su un campo che non ha nessuna colpa.
+      setCodiceErr(null);
+      segnala('invio-non-riuscito', undefined, e);
+    } finally {
+      setInviando(false);
+    }
+  };
+
+  const annullaComunicata = async (a: AssenzaComunicata) => {
+    if (!studentId || !parentId || annullando) return;
+    setAnnullando(a.id);
+    setMsg('');
+    setErr('');
+    // L'annullamento non parla mai del giorno scelto nel modulo: il campo non
+    // deve ereditare il marchio di non valido da un'altra azione.
+    setCodiceErr(null);
+    try {
+      const r = await fetch(
+        `/api/parent/presenze/comunica-assenza?userId=${parentId}&studentId=${studentId}&data=${a.data}`,
+        { method: 'DELETE', headers: { 'x-user-id': parentId } },
+      );
+      if (!r.ok) {
+        // Stessa regola dell'invio, e per la stessa ragione: un DELETE che il server
+        // rifiuta senza corpo non deve travestirsi da rete caduta.
+        const esito = await erroreDaRisposta(r, t('comunicaAnnullaNonRiuscito'));
+        setErr(esito.testo);
+        segnala(esito.corpoLetto ? 'annullamento-respinto' : 'annullamento-respinto-senza-corpo', esito.stato);
+        return;
+      }
+      setMsg(t('comunicaAnnullata'));
+      onAggiornato?.();
+      // Stessa ragione dell'invio: l'annullamento è riuscito, e una rilettura
+      // caduta non deve travestirlo da fallimento.
+      await caricaComunicate().catch((e) => {
+        segnala('elenco-non-letto', undefined, e);
+        setElencoRotto(true);
+      });
+    } catch (e) {
+      setErr(t('comunicaAnnullaNonRiuscito'));
+      segnala('annullamento-non-riuscito', undefined, e);
+    } finally {
+      setAnnullando(null);
+    }
+  };
+
+  /**
+   * Il giorno, nel formato della schermata gemella: «12/08/2026».
+   *
+   * Era «mercoledì 12 agosto» — più discorsivo, e senza L'ANNO. Sembra un
+   * dettaglio e non lo è: l'anno è il dato per cui la riga esiste. Un genitore
+   * che sceglie il giorno a mano e sbaglia l'anno (il campo è mascherato e
+   * accetta `gg/mm/aaaa`) non ha, in tutta la schermata, nessun modo di
+   * accorgersene. E soprattutto è il formato che l'altra schermata usa già: con
+   * due figli di grado diverso lo stesso elenco si leggeva in due modi.
+   * `T12:00:00` e non `T00:00:00`: a mezzanotte UTC il giorno italiano è ancora
+   * quello prima per una parte dell'anno.
+   */
+  const giorno = (iso: string) => f.dataBreve(`${iso}T12:00:00`) || iso;
+
+  const senzaIdentita = !studentId || !parentId;
+
+  /**
+   * PERCHÉ IL COMANDO NON RISPONDE — o che è appena partito.
+   *
+   * Non era un rilievo del collaudo: è la stessa forma cercata sulla porta
+   * accanto. La schermata gemella ha questa riga dal terzo ciclo (T32: «un
+   * pulsante spento e senza spiegazione è solo un no-op più silenzioso») e la
+   * lega al comando con `aria-describedby`; qui il pulsante si spegneva su
+   * `!data || senzaIdentita` senza dire una parola. Le frasi sono quelle
+   * CONDIVISE, non nuove: `parentAssenze` esiste per questo.
+   */
+  const statoComando = inviando
+    ? ta('invioInCorso')
+    : senzaIdentita
+      ? ta('nessunAlunno')
+      : !data
+        ? ta('giornoMancante')
+        : '';
+  const idStato = `comunica-assenza-stato-${uid}`;
+
+  /**
+   * IL RIFIUTO, in un nodo solo, montato in DUE posti diversi.
+   *
+   * Col modulo aperto vive DENTRO il piede appiccicato, sopra il pulsante: è la
+   * risposta a quel pulsante, e là non può finire sotto niente. Misurato il
+   * 2026-08-08 quando stava in coda alla card: il riquadro nasceva a y 794→844 e
+   * la bottom-nav (`fixed`, `z-50`) lo copriva al **100%** — `elementFromPoint`
+   * al suo centro restituiva un'etichetta della barra. Il fuoco ci arrivava
+   * (il ricovero funziona), ma atterrava su un testo che nessuno poteva leggere.
+   *
+   * Col modulo CHIUSO il piede non esiste — e nemmeno l'invio: l'unico rifiuto
+   * possibile è quello di un annullamento, che nasce in mezzo alla card, con
+   * sotto l'elenco e il resto della pagina. Là il posto giusto è dove è sempre
+   * stato.
+   */
+  const fasciaErrore = err ? (
+    <FasciaStatoAssenza tipo="errore" ruolo="alert" ricovero={refErr} tabIndex={-1}>
+      <span id={idErrore}>{err}</span>
+    </FasciaStatoAssenza>
+  ) : null;
+
+  return (
+    <section className={`rounded-2xl bg-kidville-white p-4 shadow-sm ${className ?? ''}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          {/* ⚠️ BARLOW CONDENSED, come i titoli di card di TUTTA l'area genitore
+              (2026-08-08). Questi due titoli erano in Maven Pro: censimento
+              dell'area, `<h2>`/`<h3>` con `font-barlow` = 37, con `font-maven` =
+              3 — e due dei tre erano qui. La stessa identica stringa «Assenze già
+              comunicate» usciva in Barlow condensato maiuscolo verde 18px sulla
+              schermata gemella e in Maven Pro minuscolo scuro 12px qui. Il
+              componente era stato scritto guardando la gerarchia LOCALE della
+              pagina che lo ospita invece del sistema tipografico dell'area, e il
+              codice da cui è stato estratto (`PrimariaParentView`) Barlow ce
+              l'aveva: l'estrazione, nata per far somigliare le due schermate, le
+              aveva rese più diverse. `design.md` §Tipografia: «Titoli — Barlow
+              Condensed … H1, H2, H3, titoli delle card». */}
+          <h2 className="flex items-center gap-2 font-barlow text-lg font-black uppercase text-kidville-green">
+            <CalendarPlus size={16} className="text-kidville-green shrink-0" />
+            {t('comunicaTitolo')}
+          </h2>
+          {/* È anche l'ISTRUZIONE del campo del giorno: il campo la referenzia
+              con `aria-describedby` (WCAG 3.3.2). Scritta UNA volta — ripeterla
+              identica otto righe più giù, sotto il campo, sarebbe la stessa
+              frase due volte nella stessa card. Resta a schermo sia col modulo
+              aperto sia chiuso, quindi è persistente per davvero.
+              `text-sm` come la gemella: era `text-xs`, cioè la stessa frase due
+              corpi diversi. E dichiara l'intervallo INTERO — il tetto dei 60
+              giorni, interpolato dalla costante condivisa, che fino a oggi non
+              era mai arrivato all'interfaccia. */}
+          <p id={idDataAiuto} className="mt-1 font-maven text-sm text-kidville-sub">
+            {t('comunicaHint')} {ta('finestraGiorni', { giorni: GIORNI_MASSIMI_IN_ANTICIPO })}
+          </p>
+        </div>
+        <Btn
+          variant={aperto ? 'ghost' : 'primary'}
+          size="sm"
+          onClick={() => {
+            const apre = !aperto;
+            setAperto(apre);
+            // APRIRE il modulo è un riallineamento come cambiare giorno: dopo un
+            // invio riuscito il campo viene svuotato e il modulo chiuso, quindi
+            // riaprendolo sullo stesso giorno — che ORA una comunicazione ce
+            // l'ha — il motivo sarebbe vuoto, e il prossimo invio lo
+            // cancellerebbe. Il campo mostra sempre ciò che risulta archiviato.
+            if (apre) setMotivo(comunicate.find((a) => a.data === data)?.giustificazione_testo ?? '');
+            setMsg('');
+            setErr('');
+            setCodiceErr(null);
+          }}
+          aria-expanded={aperto}
+          // `aria-controls` solo a modulo aperto: puntare a un id che nel DOM non
+          // c'è è una violazione di `aria-valid-attr-value` (axe), e da chiuso
+          // `aria-expanded` dice già tutto quello che serve sapere.
+          aria-controls={aperto ? idModulo : undefined}
+          className="shrink-0"
+        >
+          {aperto ? t('comunicaChiudi') : t('comunicaApri')}
+        </Btn>
+      </div>
+
+      {/* `kv-ospita-piede` sul pannello qui sotto: contiene la riserva di
+          sollevamento del piede, che altrimenti sborda e allunga la pagina di due
+          schermate vuote — vedi globals.css e il commento di `PiedeAzioneAssenza`. */}
+      {aperto && (
+        <div id={idModulo} className="kv-ospita-piede mt-3 rounded-2xl bg-kidville-cream p-3">
+          {/* I CAMPI stanno in un contenitore loro, e il piede fuori: la
+              spaziatura del modulo non deve valere anche fra l'ultimo campo e il
+              piede appiccicato, che ha il proprio ritaglio a filo del pannello.
+              ⚠️ Il contenitore non dichiara PIÙ una spaziatura sua (`space-y-3`,
+              12px): le distanze le porta il blocco condiviso, perché erano
+              divergenti di 4px su quattro misure su quattro. */}
+          <div>
+          <div className={BLOCCO_CAMPO_ASSENZA}>
+            {/* La tipografia dell'etichetta viene da `campo-assenza`, condivisa
+                con la gemella: era 12px/600/ink contro 16px/500/verde, sopra due
+                campi resi identici dal ciclo precedente. Si era allineato il
+                campo e non il suo BLOCCO — etichetta, aiuto, controllo. Dal
+                2026-08-08 da lì viene anche lo SPAZIO fra le tre parti. */}
+            <label htmlFor={idData} className={ETICHETTA_CAMPO_ASSENZA}>
+              {t('comunicaDataLabel')}
+            </label>
+            {/*
+              LO STESSO CAMPO DELLA SCHERMATA GEMELLA — e la ragione per cui è
+              questo e non l'altro.
+
+              Qui c'era un `DateField`: un `type="text"` mascherato `gg/mm/aaaa`,
+              con l'aiuto persistente sul formato. La pagina di nido·infanzia
+              usava (e usa) l'`<input type="date">` nativo. Due campi diversi per
+              la stessa funzione, e un genitore con due figli di grado diverso li
+              vedeva tutti e due.
+
+              La coerenza si è fatta portando QUESTO sul campo nativo, e non il
+              contrario, per una misura che esiste già: il collaudo iOS del
+              2026-08-07 (vedi `refIntro` in `parent/attendance/page.tsx`) ha
+              stabilito che su telefono il selettore nativo è il gesto migliore —
+              si tocca invece di digitare — e che `min` dà un PAVIMENTO che un
+              campo mascherato non può imporre. Ribaltare quella decisione una
+              settimana dopo, senza una misura nuova, sarebbe stato un
+              ping-pong, non una correzione.
+
+              Guadagno che il rilievo non chiedeva: questa card non aveva NESSUN
+              pavimento. Si poteva digitare una data passata e scoprirlo solo dal
+              rifiuto del server.
+
+              L'aiuto persistente RESTA (WCAG 3.3.2), ma dice ciò che è vero di
+              questo controllo: non il formato — su un campo nativo lo disegna il
+              sistema, e dichiararlo sarebbe falso appena il browser è in inglese
+              — bensì l'intervallo ammesso, che è esattamente ciò che `min`
+              impone.
+            */}
+            {/*
+              LA FORMA DEI CAMPI È QUELLA DELLA SCHERMATA GEMELLA (2026-08-08).
+              Erano pillole (`rounded-full`) alte 34px con testo a 14px, contro
+              i 12px di raggio, i 16px di testo e i 50px d'altezza di
+              `/parent/attendance`: la stessa funzione con due linguaggi visivi.
+              La pillola sui campi contraddice anche `design.md`, dove la forma
+              a pillola è quella dei PULSANTI e gli input sono dichiarati a 8 o
+              12px — cioè `rounded-input`, il token che esiste apposta. In più i
+              34px erano il bersaglio di tocco più piccolo della schermata.
+            */}
+            <input
+              id={idData}
+              type="date"
+              value={data}
+              min={oggi}
+              // IL SOFFITTO, che non c'era né qui né sulla gemella: il calendario
+              // nativo offriva qualunque giorno futuro mentre il server ne
+              // accetta 60. ⚠️ `max` da solo non basta — su iOS il selettore
+              // nativo non rispetta nemmeno `min` — e infatti la guardia vera è
+              // in `invia()`, con la stessa regola condivisa.
+              max={ultimoGiornoComunicabile(oggi)}
+              onChange={(e) => cambiaGiorno(e.target.value)}
+              // Il campo si dichiara «non valido» SOLO quando il rifiuto parla
+              // della data, e rimanda al messaggio che dice perché.
+              aria-invalid={erroreSullaData || undefined}
+              aria-describedby={erroreSullaData ? `${idDataAiuto} ${idErrore}` : idDataAiuto}
+              className={CAMPO_ASSENZA}
+            />
+          {/* Il giorno scelto è GIÀ stato comunicato: inviando si sovrascrive,
+              motivo compreso. Senza questa riga il modulo si comporta come se
+              stesse creando qualcosa. Anatomia (raggio, bordo, icona) in un
+              posto solo: `FasciaStatoAssenza`, condivisa con la gemella.
+              Sta DENTRO il blocco del giorno, come sulla gemella: parla del
+              giorno scelto, non del modulo. */}
+          {giaComunicata && (
+            <FasciaStatoAssenza tipo="avviso" ruolo="status">
+              {ta('giaComunicataAvviso')}
+            </FasciaStatoAssenza>
+          )}
+          </div>
+          <div className={`${SPAZIO_FRA_BLOCCHI_ASSENZA} ${BLOCCO_CAMPO_ASSENZA}`}>
+            <label htmlFor={idMotivo} className={ETICHETTA_CAMPO_ASSENZA}>
+              {t('comunicaMotivoLabel')}
+            </label>
+            {/* La nota sul trattamento è nel PIEDE, non qui: vedi il commento di
+                `PiedeAzioneAssenza` (R19). «Sopra il campo» non la toglieva dalla
+                fascia coperta, e il suo link eseguiva l'invio invece di aprire
+                l'informativa. Stessa posizione della schermata gemella: le due
+                porte della stessa funzione non divergono. */}
+            {/* Svuotare il campo NON cancella il motivo archiviato: lo si dice
+                prima, non dopo aver dichiarato «Assenza aggiornata».
+                ⚠️ E STA SOPRA IL CAMPO (2026-08-08): sotto, nasceva nella fascia
+                che la barra di navigazione copre — sulla gemella la stessa riga
+                è stata misurata a 0px visibili e non ostruiti su 82. L'avviso
+                compare in reazione a un gesto fatto GUARDANDO il campo: chi lo
+                fa non ha nessun motivo di scorrere per cercarlo. */}
+            {motivoSvuotato && (
+              <FasciaStatoAssenza tipo="avviso" ruolo="status">
+                {ta('motivoNonCancellabile')}
+              </FasciaStatoAssenza>
+            )}
+            {/* `<textarea>` e non `<input type="text">`: il motivo è testo
+                libero — una nota medica, non una parola — e nella schermata
+                gemella ha quattro righe. Su una riga sola il genitore non
+                rilegge quello che ha scritto. */}
+            <textarea
+              id={idMotivo}
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              // Il segnaposto viene dal catalogo CONDIVISO: qui diceva «Es.
+              // visita medica» e sulla gemella «Es. febbre, visita medica,
+              // motivi familiari…» — due suggerimenti diversi su come si scrive
+              // lo stesso dato sanitario, nella stessa app.
+              placeholder={ta('motivoPlaceholder')}
+              // Stesso tetto del server, dalla stessa costante che lo impone.
+              maxLength={MOTIVO_MAX_CARATTERI}
+              aria-describedby={idMotivoNota}
+              // `placeholder-kidville-sub` (dentro `CAMPO_ASSENZA`): senza, il
+              // segnaposto lo dipinge l'agente utente con `currentColor` al 50%
+              // di alfa — 2,79:1 su bianco. Un segnaposto è testo, e 1.4.3 si
+              // applica.
+              className={`h-28 resize-none ${CAMPO_ASSENZA}`}
+            />
+            </div>
+          </div>
+          {/*
+            IL PIEDE DELL'AZIONE — e il bloccante che chiude.
+
+            Misurato il 2026-08-08 a 390×844, modulo appena aperto e senza
+            scorrere: il pulsante «Comunica assenza» stava a y 805→841 e la
+            bottom-nav a 770→844, copertura **100%**;
+            `document.elementFromPoint(112, 823)` restituiva un link a
+            /parent/diary, e `page.mouse.click(112, 823)` ci portava davvero. Il
+            gesto principale della funzione, per chi ha un figlio alla primaria,
+            apriva un'altra schermata.
+
+            È letteralmente il difetto chiuso il 2026-08-07 sulla gemella. La
+            card si difendeva con il `pb-24` della pagina, che è ESATTAMENTE il
+            rimedio che il commento della gemella dichiara insufficiente:
+            «riserva spazio in FONDO al documento, mentre il pulsante sta a metà
+            e la pagina è più alta della viewport». La lezione era scritta in un
+            commento invece che in un componente, e non ha attraversato la porta.
+            Ora il componente c'è, e lo usano tutte e due.
+
+            Il ritaglio (`-mx-3 -mb-3 px-3`) annulla il `p-3` del pannello, così
+            la superficie arriva ai bordi come sulla gemella; la superficie è la
+            CREMA del pannello che lo ospita, non il bianco della card.
+          */}
+          {/* Il margine SUPERIORE non si passa più da qui: dal 2026-08-08 è
+              load-bearing — è il margine negativo che toglie il tetto al
+              sollevamento dello sticky — e lo dichiara il componente. Era anche
+              l'ennesimo 4px di divergenza fra le due porte (12px di qua, 16px
+              di là). */}
+          <PiedeAzioneAssenza className="-mx-3 -mb-3 rounded-b-2xl bg-kidville-cream px-3 py-3">
+            {/* Chi legge il motivo, per quanto resta, e dove sta l'informativa —
+                accanto al gesto che conferisce il dato, e sempre a schermo.
+                Vedi il commento di `PiedeAzioneAssenza` (R19): sopra il campo
+                restava coperta, e il link eseguiva l'invio. Il legame con la
+                textarea è `aria-describedby`, che non chiede vicinanza. */}
+            <p id={idMotivoNota} className="font-maven text-xs text-kidville-sub">
+              {ta('motivoPrivacy')}{' '}
+              {/* `LinkInterno` e non `<a target="_blank">`: nella WebView di
+                  Capacitor le schede non esistono e il sistema consegnava
+                  l'informativa a Safari, buttando fuori dall'app il genitore che
+                  stava cercando di capire come viene trattato un dato sanitario
+                  del proprio figlio (R25). Sul web non cambia niente. */}
+              <LinkInterno href="/privacy" className="font-semibold underline">
+                {ta('motivoPrivacyLink')}
+              </LinkInterno>
+            </p>
+            {fasciaErrore}
+            {/* L'ATTESA e il MOTIVO DEL BLOCCO in una riga sola, annunciata
+                (WCAG 4.1.3) e legata al comando (`aria-describedby`).
+                `aria-disabled` e non `disabled` mentre la richiesta è in volo: il
+                comando resta leggibile e non perde il fuoco (Chrome sfoca ciò che
+                React marca `disabled`). Il doppio invio lo impedisce la guardia
+                di `invia`. */}
+            {statoComando && (
+              <p id={idStato} role="status" className="font-maven text-xs text-kidville-sub">
+                {statoComando}
+              </p>
+            )}
+            <Btn
+              variant="primary"
+              aria-describedby={statoComando ? idStato : undefined}
+              // `lg` e larghezza piena, come la gemella: la stessa azione
+              // primaria era alta 36px di qua e 54px di là, larga 136px contro
+              // 310. Due prodotti, per un genitore che ha un figlio per grado.
+              size="lg"
+              className="w-full"
+              onClick={invia}
+              disabled={!data || senzaIdentita}
+              aria-disabled={inviando || undefined}
+            >
+              {inviando ? t('comunicaInvio') : t('comunicaInvia')}
+            </Btn>
+          </PiedeAzioneAssenza>
+        </div>
+      )}
+
+      {msg && (
+        <FasciaStatoAssenza
+          tipo="conferma"
+          ruolo="status"
+          ricovero={refMsg}
+          // Raggiungibile dal codice ma NON dal Tab: non aggiunge una tappa
+          // all'ordine di navigazione, ci arriva solo chi viene dal comando
+          // appena smontato. `outline-none` non toglie l'indicatore, lo
+          // SOSTITUISCE con l'anello verde della casa (`focus:`, non
+          // `focus-visible:`: il fuoco arriva da codice).
+          tabIndex={-1}
+          className="mt-3"
+        >
+          {msg}
+        </FasciaStatoAssenza>
+      )}
+      {/* Col modulo aperto il rifiuto vive DENTRO il piede appiccicato: vedi
+          `fasciaErrore`. Qui resta solo il caso in cui il piede non c'è. */}
+      {!aperto && fasciaErrore && <div className="mt-3">{fasciaErrore}</div>}
+
+      {/* Barlow Condensed come i 37 titoli su 40 dell'area genitore, e come la
+          stringa IDENTICA sulla schermata gemella — che la rendeva in Barlow
+          maiuscolo verde mentre qui usciva in Maven Pro minuscolo scuro. */}
+      <h3 className="mt-4 font-barlow text-base font-black uppercase text-kidville-green">
+        {t('comunicaElencoTitolo')}
+      </h3>
+      {/*
+        T8 del terzo collaudo: delle due schermate gemelle SOLO l'altra diceva al
+        genitore fino a quando può ritirare un'assenza comunicata. La stessa
+        informazione, sulla stessa funzione, presente da una parte e assente
+        dall'altra: chi ha un figlio per grado vedeva due prodotti diversi.
+        La chiave è byte-identica a `parentServizi.attendanceElencoNota`, e una
+        coppia gemella del lock del glossario lo tiene fermo.
+      */}
+      <p className="font-maven text-xs text-kidville-sub mt-1">{t('comunicaElencoNota')}</p>
+      {/*
+        Elenco illeggibile: si dice, e NON si scrive «non hai comunicato assenze».
+        Quella frase, con la lettura fallita, sarebbe falsa nel modo peggiore — il
+        genitore crederebbe di non aver avvisato nessuno e comunicherebbe due volte.
+      */}
+      {/* L'ATTESA si dichiara, e viene PRIMA di tutto il resto: finché la
+          risposta non è arrivata non si sa né che l'elenco è vuoto né che è
+          rotto, e dirlo lo stesso sarebbe inventare. */}
+      {caricando && (
+        <p role="status" className="font-maven text-xs text-kidville-sub mt-1">{t('caricamento')}</p>
+      )}
+      {!caricando && elencoRotto && (
+        <div className="mt-1">
+          <FasciaStatoAssenza tipo="errore" ruolo="alert">
+            {t('comunicaElencoNonLetto')}
+          </FasciaStatoAssenza>
+          {/* LA VIA D'USCITA, che qui non c'era. Senza, l'unico modo di
+              riprovare era ricaricare la pagina a mano — e finché l'elenco
+              manca, le assenze già comunicate non sono annullabili. Il
+              «Riprova» che si vede più giù in pagina appartiene alla cronologia
+              e non tocca questo stato: a schermo c'era un pulsante che faceva
+              credere a una via d'uscita che non c'era. La chiave del catalogo è
+              quella che la pagina ospite usa già (`parentAssenze.riprova`), non
+              una nuova. */}
+          <Btn variant="ghost" size="sm" className="mt-3" onClick={ricaricaComunicate}>
+            <RotateCcw size={14} /> {ta('riprova')}
+          </Btn>
+        </div>
+      )}
+      {!caricando && !elencoRotto && comunicate.length === 0 && (
+        <p className="font-maven text-xs text-kidville-sub mt-1">{t('comunicaElencoVuoto')}</p>
+      )}
+      {/* L'ATTESA dell'annullamento, annunciata (WCAG 4.1.3). */}
+      {annullando && (
+        <p role="status" className="mt-1 font-maven text-xs text-kidville-sub">{ta('annullamentoInCorso')}</p>
+      )}
+      {!caricando && comunicate.length > 0 && (
+        // La riga è la STESSA della schermata dedicata (`/parent/attendance`):
+        // un solo componente, non due copie. Vedi `RigaAssenzaComunicata`.
+        <ul className="mt-2 space-y-2">
+          {comunicate.map((a) => (
+            <RigaAssenzaComunicata
+              key={a.id}
+              giorno={giorno(a.data)}
+              motivo={a.giustificazione_testo}
+              // Il nome accessibile dice DI QUALE giorno: due comandi identici
+              // nell'annuncio e diversi nell'effetto sono WCAG 4.1.2, ed è un
+              // difetto che questo repo ha già trovato e corretto altrove.
+              etichettaAnnulla={t('comunicaAnnullaAria', { giorno: giorno(a.data) })}
+              testoAnnulla={t('comunicaAnnulla')}
+              testoAnnullamento={t('comunicaAnnullamento')}
+              inCorso={annullando === a.id}
+              bloccato={annullando !== null}
+              onAnnulla={() => annullaComunicata(a)}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

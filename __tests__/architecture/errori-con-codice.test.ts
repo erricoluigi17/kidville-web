@@ -51,10 +51,22 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
 
 /**
  * TETTI MONOTONI DECRESCENTI, misurati il 2026-08-01 dopo la conversione dei 20 dinieghi di
- * sede. Si abbassano, mai si alzano.
+ * sede e RIMISURATI il 2026-08-07 con la conversione di «comunica un'assenza» (4 risposte, il
+ * file esce dall'elenco). Si abbassano, mai si alzano.
+ *
+ * ⚠️ E si abbassano FINO ALLA MISURA, non di un po'. Fino a oggi dicevano 284/1478 mentre
+ * l'allowlist era già scesa a 282/1471: sette risposte d'errore potevano tornare senza codice
+ * con questo lock verde — cioè il debito poteva ricrescere dentro il test che esiste per
+ * impedirlo. Non era una scelta: è ciò che succede quando si paga il debito e ci si dimentica
+ * di stringere il tetto. Oggi i due numeri coincidono con `totale_occorrenze` e con la
+ * lunghezza dell'elenco, e chi convertirà la prossima risposta dovrà toccarli per forza.
+ *
+ * 2026-08-08 · −1 (1465 → 1464). `attendance/daily:POST` restituiva il `message` grezzo di
+ * PostgREST dentro `details` (rilievo M10): la risposta ora passa da `erroreInterno()`, che
+ * nel file c'era già. Una risposta in meno scritta a mano, e il messaggio resta nel log.
  */
-const MAX_FILE = 284;
-const MAX_OCCORRENZE = 1478;
+const MAX_FILE = 280;
+const MAX_OCCORRENZE = 1464;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

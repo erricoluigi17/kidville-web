@@ -1,6 +1,6 @@
 import { contesto, inLogger, entraNelLogger, segnalaErroreLoggato } from './context';
 import { descriviErrore, sanificaMessaggio, serializza, type ErroreDescritto } from './serialize';
-import { redact } from './redact';
+import { redact, valoreDistintivo } from './redact';
 import { appLog, type RigaLog } from './app-log';
 
 /**
@@ -136,6 +136,20 @@ export const EVENTI_NOTI = new Set([
  * esplicita e vive lì: `supabase-fetch` non persiste MAI i propri `info`, qualunque cosa dica
  * l'allowlist. Chi aggiunge qui `db`, `rpc`, `auth` o `altro` legga prima quel modulo.
  *
+ * `registro` entra il 2026-08-07, e la sua deroga cade con la ragione che la reggeva. Diceva
+ * «degradi di colonna sulle lezioni: il registro ha il suo dato in tabella, il log è
+ * diagnostica» — vero finché su quel canale non passava nessun successo di dominio. Ora ci passa
+ * l'assenza comunicata dal genitore, che è **una consegna**: la famiglia avvisa la scuola e i
+ * docenti della sezione ricevono la notifica.
+ *
+ * Il punto non è la simmetria dell'elenco. La domanda che ha aperto quel lavoro era «il pulsante
+ * dà errore e all'insegnante non arriva niente», e la risposta è stata trovata con una query:
+ * *zero* notifiche `assenza_comunicata` emesse da sempre, su un difetto vissuto un mese senza
+ * lasciare una riga. Senza questa voce, «sta funzionando adesso?» tornerebbe a essere
+ * un'opinione: nei log di piattaforma la riga c'è, ma in `app_log` — l'unico posto
+ * interrogabile — no. Gli `info` di questo canale sono **quattro** in tutto il repo: il volume
+ * non è un argomento.
+ *
  * Il lock è `__tests__/architecture/eventi-log.test.ts`: ogni `logEvento(evento,'info')` del
  * repo o è in questa lista, o sta fra le deroghe motivate. È l'unica cosa che impedisce al
  * difetto di tornare — perché quando torna, non si vede.
@@ -143,6 +157,7 @@ export const EVENTI_NOTI = new Set([
 export const EVENTI_PERSISTITI = new Set([
     'email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa', 'news', 'chat',
     'gdpr', 'segnalazione', 'galleria', 'modulistica', 'multi_sede', 'avvisi', 'storage',
+    'registro',
 ]);
 
 /**
@@ -454,39 +469,25 @@ export function logEvento(
     livello: Livello,
     campi: Record<string, Valore>,
     err?: unknown,
-    opzioni?: { persisti?: boolean },
+    opzioni?: OpzioniEvento,
 ): void {
     try {
         const d = err !== undefined ? descriviErrore(err) : undefined;
-        const c = contesto();
-        const codice = d?.codice ?? d?.causa?.codice;
 
-        if (opzioni?.persisti !== false) persisti({
-            livello,
-            evento,
-            messaggio: d ? d.messaggio : testoEvento(evento, campi),
-            stack: d?.stack,
-            codice,
-            // Lo status HTTP va in COLONNA, non solo dentro `campi`: è il primo filtro di
-            // qualunque query ("dammi i 5xx di ieri"), e sepolto in un JSONB non è né ovvio
-            // né indicizzabile. Solo se `stato` è un NUMERO: negli eventi di dominio la stessa
-            // chiave vale anche 'inviata', 'scaduto' — quello non è uno status HTTP.
-            statoHttp: numeroDi(campi, 'stato'),
-            sorgente: 'server',
-            contestoExtra: {
-                campi: redact(campi),
-                dettagli: d?.dettagli,
-                suggerimento: d?.suggerimento,
-                causa: d?.causa,
-                payload: c?.payload, // già redatto: vedi logErrore
-            },
-        });
+        if (opzioni?.persisti !== false) {
+            const riga = rigaEvento(evento, livello, campi, err, opzioni);
+            if (riga) persisti(riga);
+        }
 
         if (SILENZIOSO) return;
 
         const riga = unisci({ ...campiDelContesto(), evt: evento }, perLaRiga(campi));
         if (d) {
             // Assegnati DOPO l'unione: quando c'è un errore, è l'errore la verità, non i campi.
+            // Sulla riga di console il `code` resta quello dell'ERRORE: `error_code` dei campi
+            // è già stampato per conto suo, e stamparlo due volte con due nomi diversi
+            // consumerebbe budget per dire la stessa cosa.
+            const codice = d.codice ?? d.causa?.codice;
             if (codice) riga.code = codice;
             riga.msg = d.messaggio;
             const det = d.dettagli ?? d.causa?.dettagli;
@@ -509,6 +510,132 @@ export function logEvento(
         if (d && livello === 'error') scriviErrore(erroreNativo(err, d));
     } catch {
         // Fail-open, sempre.
+    }
+}
+
+/**
+ * Opzioni di `logEvento`.
+ *
+ * `distingui` — I CAMPI CHE DEVONO DISTINGUERE LA RIGA IN TABELLA.
+ *
+ * `app_log` deduplica per `(fingerprint, giorno)` e l'`ON CONFLICT` somma le occorrenze SENZA
+ * aggiornare il `contesto`: la riga superstite conserva quello della PRIMA. E l'impronta si
+ * compone dalle COLONNE, non dal contesto — per una ragione buona, scritta in `app-log.ts`: i
+ * campi portano contatori che cambiano a ogni richiesta, e includerli ucciderebbe la deduplica.
+ *
+ * Conseguenza, misurata dal terzo collaudo: venti rifiuti su venti bambini altrui producevano
+ * UNA riga, la cui colonna `contesto.campi.alunno_id` nominava il bambino della prima
+ * occorrenza — mentendo su diciannove casi su venti; e due comunicazioni riuscite dello stesso
+ * genitore lasciavano `alunno_id`, `presenza_id` e `n_docenti` della sola prima.
+ *
+ * `distingui: ['alunno_id']` fa entrare QUEL campo nell'impronta, e nient'altro. La decisione
+ * sta nel chiamante perché è il chiamante a sapere se la riga descrive un'ENTITÀ (una
+ * comunicazione, un rifiuto su un bambino) o un fatto aggregato (una tempesta di errori di
+ * rete, dove sommare è esattamente ciò che si vuole).
+ *
+ * IL COSTO IN VOLUME VA DICHIARATO da chi la usa: una riga per (utente, bersaglio, giorno)
+ * invece di una per (utente, giorno). Si usa dove il volume è limitato da un tetto di
+ * frequenza o dalla natura del gesto — non sui canali ad alto volume.
+ *
+ * I valori passano da `valoreDistintivo`: uuid, numeri, booleani, date, enumerati. Un nome non
+ * distingue, e non è una raccomandazione — è il codice a non farlo passare.
+ */
+export interface OpzioniEvento {
+    persisti?: boolean;
+    distingui?: readonly string[];
+}
+
+/**
+ * Il BERSAGLIO della riga: `campo=valore` per ogni campo dichiarato, nell'ordine dichiarato.
+ *
+ * `undefined` quando non c'è niente di dichiarabile — e allora l'impronta resta quella di
+ * sempre, cioè le righe già in tabella continuano a sommarsi con le nuove.
+ */
+function bersaglioDa(campi: Record<string, Valore>, distingui?: readonly string[]): string | undefined {
+    try {
+        if (!distingui || distingui.length === 0) return undefined;
+        const parti: string[] = [];
+        for (const nome of distingui) {
+            if (!Object.hasOwn(campi, nome)) continue;
+            const v = valoreDistintivo(campi[nome]);
+            // FUORI FORMA NON SIGNIFICA «SALTA»: se il campo c'era e non è distinguibile, la
+            // riga deve dirlo — altrimenti un valore ammesso e uno rifiutato finirebbero nella
+            // stessa impronta senza che nessuno possa accorgersene. Il marcatore è costante:
+            // due nomi diversi restano indistinguibili, che è il punto.
+            parti.push(`${nome}=${v ?? '[fuori-forma]'}`);
+        }
+        return parti.length === 0 ? undefined : parti.join(';');
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * IL CODICE DI UN RIFIUTO VA IN COLONNA, non solo dentro `campi` (rilievo T11).
+ *
+ * `app_log.codice` è popolata da `descriviErrore`, cioè solo quando c'è un ERRORE. Ma i rifiuti
+ * 4xx non hanno un errore: hanno un codice deciso dal codice applicativo, che ventisette
+ * chiamanti passano come `campi.error_code` — dove è in lista bianca di `redact` (mentre
+ * `codice` non lo sarebbe). Risultato misurato: tre rifiuti con tre codici diversi collassavano
+ * in UNA riga con `codice` NULL, e «quanti rifiuti per motivo troppo lungo?» non era una query.
+ *
+ * `codice` È nell'impronta: promuovendolo, i tre rifiuti diventano tre righe — ognuna con il
+ * proprio contesto, quindi con il proprio `n` (la lunghezza del motivo, i giorni di distanza).
+ *
+ * L'errore VINCE: se c'è, il codice è quello di PostgREST, che descrive il guasto vero.
+ */
+function codiceDaCampi(campi: Record<string, Valore>): string | undefined {
+    try {
+        const v = campi.error_code;
+        if (typeof v === 'string' && v !== '') return valoreDistintivo(v) ?? undefined;
+        return undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * La riga destinata ad `app_log` per un evento di dominio.
+ *
+ * È estratta da `logEvento` — che la passa a `persisti` — perché è la parte DECIDIBILE del
+ * logging: quale messaggio, quale codice, quale bersaglio. `persisti` è muta sotto vitest (il
+ * bersaglio della suite non può essere il database di produzione), quindi senza questa
+ * funzione le decisioni qui dentro non sarebbero misurabili da nessun test.
+ */
+export function rigaEvento(
+    evento: string,
+    livello: Livello,
+    campi: Record<string, Valore>,
+    err?: unknown,
+    opzioni?: OpzioniEvento,
+): RigaLog | undefined {
+    try {
+        const d = err !== undefined ? descriviErrore(err) : undefined;
+        const c = contesto();
+        return {
+            livello,
+            evento,
+            messaggio: d ? d.messaggio : testoEvento(evento, campi),
+            stack: d?.stack,
+            codice: d?.codice ?? d?.causa?.codice ?? codiceDaCampi(campi),
+            // Lo status HTTP va in COLONNA, non solo dentro `campi`: è il primo filtro di
+            // qualunque query ("dammi i 5xx di ieri"), e sepolto in un JSONB non è né ovvio
+            // né indicizzabile. Solo se `stato` è un NUMERO: negli eventi di dominio la stessa
+            // chiave vale anche 'inviata', 'scaduto' — quello non è uno status HTTP.
+            statoHttp: numeroDi(campi, 'stato'),
+            sorgente: 'server',
+            bersaglio: bersaglioDa(campi, opzioni?.distingui),
+            contestoExtra: {
+                campi: redact(campi),
+                dettagli: d?.dettagli,
+                suggerimento: d?.suggerimento,
+                causa: d?.causa,
+                payload: c?.payload, // già redatto: vedi logErrore
+            },
+        };
+    } catch {
+        // Fail-open: un guasto nella composizione non deve rompere il chiamante.
+        return undefined;
     }
 }
 

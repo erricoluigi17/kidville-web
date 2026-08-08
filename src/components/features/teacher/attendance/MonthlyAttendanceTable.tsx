@@ -118,9 +118,34 @@ function mergeStudentsAndPresences(
         .sort((a, b) => `${a.student_cognome} ${a.student_nome}`.localeCompare(`${b.student_cognome} ${b.student_nome}`));
 }
 
-function calcSummary(s: StudentMonthData): StudentSummary {
+/**
+ * Il riepilogo di riga (e la sua somma di sezione, e il PDF: tutti passano di
+ * qui). È ESPORTATA perché è la regola di conteggio della schermata, ed è ciò
+ * che il lock `riepilogo-mensile-solo-trascorsi` misura: montare l'intera
+ * tabella per contare due celle renderebbe il test fragile su tutto il resto.
+ */
+export function calcSummary(s: StudentMonthData): StudentSummary {
+    // ─── SI CONTA CIÒ CHE È GIÀ ACCADUTO (rilievo T26) ───────────────────────
+    //
+    // Il calendario CONTINUA a mostrare le assenze che il genitore ha comunicato
+    // in anticipo — è il motivo per cui le comunica, e la maestra deve vederle.
+    // Il riepilogo no: prima di questa riga il prospetto diceva «2 A» e «10 ORE»
+    // per un alunno con UNA sola assenza avvenuta e una comunicata per dodici
+    // giorni nel futuro, e gli stessi numeri finivano nel PDF esportabile.
+    //
+    // La marca la mette il SERVER (`attendance/monthly:GET`): l'orologio di un
+    // tablet può essere sbagliato o su un altro fuso, e due dispositivi
+    // conterebbero diversamente lo stesso registro.
+    //
+    // ⚠️ SI CHIAMAVA `futura`, E IL NOME NASCONDEVA IL CASO PEGGIORE (Q4).
+    // «Futura» è vero solo per i giorni non ancora arrivati, ma l'assenza che il
+    // genitore comunica per OGGI — il valore preimpostato del modulo — ha
+    // `data = oggi`: era `futura: false`, e finiva nelle «A», nelle ORE e nel
+    // PDF prima che il docente avesse fatto l'appello. Ora la marca dice ciò che
+    // deve decidere: «questa riga è un fatto del registro».
+    const avvenute = Object.values(s.byDate).filter((r) => r.fattoDelRegistro);
     let presenze = 0, assenze = 0, ritardi = 0, uscite = 0;
-    for (const r of Object.values(s.byDate)) {
+    for (const r of avvenute) {
         if (r.stato === 'presente') presenze++;
         else if (r.stato === 'assente') assenze++;
         else if (r.stato === 'ritardo') ritardi++;
@@ -128,7 +153,7 @@ function calcSummary(s: StudentMonthData): StudentSummary {
     }
     // Monte ore di assenza (assenze intere + ritardi + permessi), giornata di default.
     const { oreTotali } = calcolaOreAssenza(
-        Object.values(s.byDate).map((r) => ({ stato: r.stato, orario_entrata: r.orario_entrata, orario_uscita: r.orario_uscita })),
+        avvenute.map((r) => ({ stato: r.stato, orario_entrata: r.orario_entrata, orario_uscita: r.orario_uscita })),
     );
     return { presenze, assenze, ritardi, uscite, oreAssenza: oreTotali };
 }

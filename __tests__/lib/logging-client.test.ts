@@ -221,6 +221,72 @@ describe('difetto 2 — nessun evento nasce invalido', () => {
  * server come `info` e rientrava dal browser come `error`.
  * ════════════════════════════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════════════════════════════
+ * Q7 — LA POLITICA VALE PER CHI CHIAMA `logClient`, NON SOLO PER IL PATCH DI `fetch`.
+ *
+ * Misurato nel quarto collaudo, dalla UI vera: un genitore che sceglie un giorno già passato
+ * — il rifiuto più ordinario che «Comunica un'assenza» produca — lasciava DUE righe con DUE
+ * livelli diversi per lo stesso evento:
+ *   · server: `{"livello":"warn","codice":"ASSENZA_DATA_PASSATA","stato_http":400}`
+ *   · client: `{"livello":"error","evento":"client:fetch","stato_http":400}`
+ * `livello: 'error'` era cablato in un helper del componente (`segnala`), che chiama
+ * `logClient` direttamente e quindi scavalcava `livelloFetch`.
+ *
+ * Conseguenza misurabile: `utenteId` entra nell'impronta e `controlloTassoErrore` conta le
+ * impronte `error` distinte degli ultimi 15 minuti con soglia 5. Sei famiglie che sbagliano
+ * giorno nella stessa finestra facevano rispondere `degradato` a `/api/health` su
+ * un'applicazione perfettamente sana.
+ *
+ * La correzione non poteva stare nel componente: sarebbe stata la quarta copia di una regola
+ * che vive già in `livelloFetch`, e il prossimo componente l'avrebbe sbagliata di nuovo. Sta
+ * quindi in `logClient`, che è il collo di bottiglia da cui passa OGNI evento — la stessa
+ * ragione per cui lì dentro sta già `redigiPathNelTesto`.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('Q7 — lo STATO decide il livello, non chi chiama', () => {
+    it.each([400, 401, 403, 404, 422])(
+        'un %i annunciato come `error` da un componente non viene spedito affatto',
+        async (stato) => {
+            const { logClient, flush } = await carica();
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'invio-respinto', stato });
+            flush();
+            expect(rete.mock.calls.some(([u]) => String(u).startsWith('/api/logs'))).toBe(false);
+        },
+    );
+
+    it.each([408, 409, 413, 429])('un %i annunciato come `error` viene declassato a `warn`', async (stato) => {
+        const { logClient, flush } = await carica();
+        logClient({ livello: 'error', evento: 'fetch', messaggio: 'invio-respinto', stato });
+        flush();
+        expect(batchSpedito().eventi[0].livello).toBe('warn');
+    });
+
+    it('un 5xx resta `error`: quello è il guasto vero', async () => {
+        const { logClient, flush } = await carica();
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'invio-respinto', stato: 500 });
+        flush();
+        expect(batchSpedito().eventi[0].livello).toBe('error');
+    });
+
+    it('la fetch che non è mai PARTITA (`stato: 0`) resta com’è: non è una risposta HTTP', async () => {
+        // Qui la politica dei 4xx non si applica — non c'è nessuno status da giudicare — e il
+        // livello lo decide chi chiama, come per la testata di `eAnnullata`. Se `livelloFetch`
+        // venisse applicata anche a `0`, si sopprimerebbe l'unica traccia possibile di
+        // un'interruzione di rete: il server quella richiesta non la vede mai.
+        const { logClient, flush } = await carica();
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'rete-caduta', stato: 0 });
+        flush();
+        expect(batchSpedito().eventi[0].livello).toBe('warn');
+    });
+
+    it('un evento SENZA stato (js, react, offline) conserva il livello di chi lo emette', async () => {
+        const { logClient, flush } = await carica();
+        logClient({ livello: 'error', evento: 'js', messaggio: 'TypeError: x is not a function' });
+        flush();
+        expect(batchSpedito().eventi[0].livello).toBe('error');
+    });
+});
+
 describe('difetto 3 — la politica dei livelli è quella di `with-route`', () => {
     it.each([400, 401, 403, 404, 422])('un %i NON viene spedito affatto', async (stato) => {
         const { flush } = await carica();

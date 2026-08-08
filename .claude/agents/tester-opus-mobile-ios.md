@@ -77,9 +77,18 @@ vedi `.claude/maestro-flows/README.md`. **Non scriverle mai dentro un file.**
    deve coprire il campo attivo; lo scroll elastico non deve staccare l'header.
 3. **Crash**: log del simulatore durante il flow.
    ```bash
-   xcrun simctl spawn booted log stream --level error --predicate 'processImage CONTAINS "App"' &
+   xcrun simctl spawn booted log stream --level error --predicate 'process == "App"' &
    ```
    Un crash è un FAIL, sempre.
+   ⚠️ Il campo si chiama `process`. Fino al 2026-08-07 qui ce n'era un altro, che su
+   iOS 26.2 non esiste: `log` usciva con `invalid predicate: no such field` e poi
+   stampava **zero righe**. Zero righe si leggono «nessun crash», e chi lancia il
+   comando in background crede di star guardando mentre non guarda niente — due lanci
+   di collaudo sono andati persi così. Se cambi il predicato, **verifica che stia
+   catturando**: con `process == "App"` sono arrivate 65.401 righe in tre lanci.
+   La forma esatta ormai vietata sta nel registro del lock
+   `__tests__/architecture/maestro-flows-selettori.test.ts` (R20), che impedisce
+   che rientri qui.
 4. **Regressioni della WebView**: contenuto invisibile, tap che non arrivano, scroll bloccato.
 
 ## Se qualcosa manca

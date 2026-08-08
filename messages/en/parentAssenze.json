@@ -1,0 +1,17 @@
+{
+  "finestraGiorni": "You can go up to {giorni, plural, one {# day} other {# days}} ahead.",
+  "motivoPlaceholder": "E.g. fever, medical appointment, family reasons…",
+  "motivoPrivacy": "The reason is read by the section’s teachers and is deleted after twelve months.",
+  "motivoPrivacyLink": "Read the privacy policy",
+  "giaComunicataAvviso": "You have already reported an absence for this day: sending again updates that report.",
+  "aggiornataTitolo": "Absence updated",
+  "motivoNonCancellabile": "The reason already saved stays even if you clear the field: this screen does not delete it. To remove it, cancel the report below and send it again without a reason.",
+  "invioInCorso": "Sending your report…",
+  "annullamentoInCorso": "Cancelling your report…",
+  "identitaInCorso": "Checking your profile: you will be able to send in a moment.",
+  "nessunAlunno": "No child is linked to this account: please contact the school office.",
+  "giornoMancante": "Choose the day of the absence before sending.",
+  "cronologiaNonLetta": "We could not load the attendance records for this period.",
+  "riprova": "Try again",
+  "statoSconosciuto": "Other"
+}

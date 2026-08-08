@@ -288,6 +288,34 @@ describe('onRequestError (runtime Node)', () => {
         expect(campi.metodo).toBe('GET');
     });
 
+    /**
+     * R9 del quinto collaudo — «dammi tutti i 5xx di oggi» non trovava il guasto peggiore.
+     *
+     * Misurato in produzione: 70 richieste finite in HTTP 500 (l'handler che non restituiva
+     * una Response) avevano lasciato le LORO uniche righe in `app_log` con `stato_http` NULL,
+     * perché questo gestore non dichiarava nessuno `stato`. La colonna esiste proprio per
+     * essere il primo filtro delle query (commento in `logger.ts`): su questo canale non veniva
+     * mai popolata, e il fallimento più grave del sistema era invisibile a un filtro per stato.
+     *
+     * Non è uno status inventato: un'eccezione che arriva fin qui è, per definizione, una
+     * richiesta a cui Next risponde 5xx.
+     */
+    it('la riga porta stato_http 500: un errore che arriva qui è SEMPRE una 5xx', async () => {
+        const m = await carica();
+        await m.onRequestError(
+            new Error('No response is returned from route handler'),
+            richiesta('/api/parent/presenze/comunica-assenza'),
+            contestoNext('/api/parent/presenze/comunica-assenza', 'route'),
+        );
+        await vi.waitFor(() => expect(rpc).toHaveBeenCalled());
+
+        const r = rigaSpedita();
+        expect(
+            r.stato_http,
+            'la riga del guasto non è filtrabile con «stato_http >= 500», che è la query primaria del repo',
+        ).toBe(500);
+    });
+
     it('il PATH è ridotto a pattern: la query string e il token del modulo pubblico non entrano nei log', async () => {
         const m = await carica();
         await m.onRequestError(
@@ -414,6 +442,10 @@ describe('onRequestError (runtime Edge, middleware)', () => {
         expect(righe).toContain('tipo=proxy');
         expect(righe).toContain('path=/parent/pagamenti');
         expect(righe).toContain('msg="sessione non rinnovabile"');
+        // Stessa dichiarazione del canale Node (R9): un errore che arriva qui è una 5xx, e su
+        // Vercel la ricerca è full-text — senza il campo, «gli errori 500 del middleware» non
+        // è una ricerca che si possa fare.
+        expect(righe).toContain('stato=500');
         // Se il middleware si rompe cadono TUTTE le navigazioni: una ricerca `KV_ERR` che non
         // trovasse nulla direbbe che l'app sta benissimo mentre è giù.
         expect(rpc).not.toHaveBeenCalled();

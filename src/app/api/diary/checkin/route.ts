@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 
 const getQuerySchema = z.object({
@@ -20,7 +21,9 @@ export const GET = withRoute('diary/checkin:GET', async (request: NextRequest) =
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const alunnoId = q.data.alunno_id;
-    const date = q.data.date ?? new Date().toISOString().split('T')[0];
+    // Giorno civile ITALIANO, non UTC: fra mezzanotte e le due il check-in
+    // sarebbe letto sul giorno precedente (rilievo T27).
+    const date = q.data.date ?? oggiFiscaleISO();
 
     // G1 — orario di entrata/stato presenza è un dato del minore: chiudiamo l'IDOR.
     // Il genitore solo i propri figli; lo staff solo i bambini del proprio plesso

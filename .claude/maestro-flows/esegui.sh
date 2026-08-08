@@ -78,8 +78,80 @@ fi
 
 export MAESTRO_KV_PASSWORD="$PW"
 export MAESTRO_KV_EMAIL_SEGRETERIA="${MAESTRO_KV_EMAIL_SEGRETERIA:-test.segreteria@kidville.test}"
-export MAESTRO_KV_EMAIL_GENITORE="${MAESTRO_KV_EMAIL_GENITORE:-test.inf.genitore1@kidville.test}"
-export MAESTRO_KV_EMAIL_DOCENTE="${MAESTRO_KV_EMAIL_DOCENTE:-test.inf.docente1@kidville.test}"
+# ⚠️ NON `test.inf.genitore1`. Misurato il 2026-08-07 (collaudo mobile-ios): quello è
+# l'account DEMO consegnato alla review Apple e dal 2026-07-28 ha una password
+# DEDICATA, diversa dal segreto comune del repo. Con `KV_TEST_PASSWORD` risponde
+#   HTTP 400 {"error_code":"invalid_credentials"}
+# mentre `test.inf.docente1@kidville.test`, con la STESSA password, risponde 200.
+# A schermo compare «Credenziali non valide. L'accesso è solo su invito della
+# Segreteria.» — lo stesso testo che la login mostra per un errore di rete: il
+# collaudo scrive «l'app non fa entrare» e la colpa cade sull'app.
+# `test.inf.genitore2` è stato verificato quel giorno con HTTP 200.
+export MAESTRO_KV_EMAIL_GENITORE="${MAESTRO_KV_EMAIL_GENITORE:-test.inf.genitore2@kidville.test}"
+# ⚠️ NON `test.inf.docente1`. Questo default e il piano di collaudo dicevano due
+# cose diverse — il tester iOS l'ha segnalato il 2026-08-07 — e la fonte che
+# aveva ragione è il piano: `test.inf.docente1` è uno dei TRE account la cui
+# password è stata RUOTATA a mano durante il collaudo del 2026-08-07
+# (`test.inf.genitore1`, `test.inf.docente1`, `test.segreteria`), e la rotazione
+# è poi stata sovrascritta da un altro attore entro una ventina di minuti: la
+# password con cui due flow avevano appena fatto login ha ricominciato a
+# rispondere `400 invalid_credentials` (report tester-15-ios, «ALTRUI»). Cioè
+# quell'indirizzo NON è più governato dal segreto comune del repo, e con
+# `KV_TEST_PASSWORD` il flow muore sulla login mostrando «Credenziali non
+# valide» — lo stesso testo di un errore di rete.
+# `test.pri.docente1@kidville.test` è verificato in ingresso. I due flow docente
+# non sono legati al grado (le ancore sono «Dashboard», «Fai l'appello
+# ora|Modifica appello», «Appello», «Presente»: esistono per infanzia e per
+# primaria), quindi il cambio non tocca i selettori né le loro firme.
+export MAESTRO_KV_EMAIL_DOCENTE="${MAESTRO_KV_EMAIL_DOCENTE:-test.pri.docente1@kidville.test}"
+
+# ── Guardia sugli account con password DEDICATA ──────────────────────────────
+# Cambiare il default non basta: chi passa a mano `MAESTRO_KV_EMAIL_GENITORE`
+# ricade nello stesso silenzio, perché il messaggio della login è identico per
+# «password sbagliata» e per «server giù». Qui il lanciatore lo dice a voce alta
+# PRIMA di partire, così il tester sa cosa sta guardando. Non blocca: chi ha
+# davvero la password del revisore (fuori dal repo) deve poter procedere.
+#
+# ⚠️ E la guardia NON guarda più il solo genitore. Fino al 2026-08-07 controllava
+# `MAESTRO_KV_EMAIL_GENITORE` e basta, mentre l'elenco degli account fuori dal
+# segreto comune nel frattempo era cresciuto anche sul lato docente: la guardia
+# copriva una porta e ne lasciava due aperte, che è la stessa forma di difesa
+# parziale che questo repo ha già pagato altrove.
+ACCOUNT_PASSWORD_DEDICATA=(
+  "test.inf.genitore1@kidville.test"
+  "test.pri.genitore1@kidville.test"
+  "test.inf.docente1@kidville.test"
+)
+for _acc in "${ACCOUNT_PASSWORD_DEDICATA[@]}"; do
+  for _var in MAESTRO_KV_EMAIL_GENITORE MAESTRO_KV_EMAIL_DOCENTE MAESTRO_KV_EMAIL_SEGRETERIA; do
+    if [[ "${!_var}" == "$_acc" ]]; then
+      echo "ATTENZIONE: $_acc ha una password DEDICATA (account DEMO della review Apple," >&2
+      echo "            oppure ruotato a mano durante un collaudo): con KV_TEST_PASSWORD la" >&2
+      echo "            login risponde «Credenziali non valide» — NON è un difetto dell'app." >&2
+      echo "            Passa $_var con un altro account TEST (genitore:" >&2
+      echo "            test.inf.genitore2@kidville.test · docente: test.pri.docente1@kidville.test)." >&2
+    fi
+  done
+done
+
+# ── Account NON verificati in ingresso ───────────────────────────────────────
+# `test.segreteria@kidville.test` è il default storico dei due flow del cockpit,
+# ed è nella stessa terna di account la cui password è stata ruotata a mano il
+# 2026-08-07 e poi sovrascritta da un altro attore. Al 2026-08-08 NON risulta più
+# fra quelli che entrano col segreto comune, e nessun sostituto è stato misurato:
+# non si può correggere il default indovinando un indirizzo. Lo si dice a voce
+# alta, che è l'unica cosa onesta da fare quando la misura manca — chi lancia un
+# flow del cockpit e vede «Credenziali non valide» sappia dove guardare prima di
+# accusare l'app.
+# `$SOLO_BONIFICA -eq 0`: la nota si stampa solo quando si sta per lanciare un
+# flow davvero. `--solo-bonifica` è ciò che esegue il lock dei segreti dentro
+# `vitest`, e una nota informativa lì dentro finisce nell'output della suite —
+# cioè rumore in un posto dove l'unica cosa che deve comparire è un problema.
+if [[ $SOLO_BONIFICA -eq 0 && "$MAESTRO_KV_EMAIL_SEGRETERIA" == "test.segreteria@kidville.test" ]]; then
+  echo "NOTA: test.segreteria@kidville.test non è verificato in ingresso col segreto comune" >&2
+  echo "      (password ruotata durante il collaudo del 2026-08-07 e sovrascritta da terzi)." >&2
+  echo "      Se la login fallisce, è la credenziale, non l'app." >&2
+fi
 
 # ── Bonifica del log ─────────────────────────────────────────────────────────
 # Gira SEMPRE — flow fallito, run interrotto a metà, timeout dell'orchestratore.

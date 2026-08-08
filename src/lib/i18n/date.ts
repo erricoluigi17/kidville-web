@@ -63,18 +63,55 @@ export function formatData(input: DateInput, locale: string, kind: FormatoData):
 }
 
 /**
+ * L'iniziale maiuscola di un testo già formattato — **solo la prima lettera**.
+ *
+ * ─── PERCHÉ ESISTE, invece della classe CSS `capitalize` ─────────────────────
+ *
+ * `text-transform: capitalize` alza l'iniziale di OGNI parola: è la regola
+ * tipografica inglese, e non sa nulla della lingua che sta trasformando. Su una
+ * data italiana composta il risultato è sbagliato, e il DOM è innocente:
+ *
+ *   textContent  «sabato 8 agosto»   →   reso a schermo  «Sabato 8 Agosto»
+ *
+ * mentre l'italiano vuole giorni e mesi minuscoli («sabato 8 agosto»), al più
+ * con la sola iniziale di frase. La stessa identica riga di CSS produce invece
+ * un esito CORRETTO in inglese — «Saturday 8 August» — ed è la firma di una
+ * decisione che dipende dalla lingua affidata a un meccanismo che la ignora.
+ * Misurato il 2026-08-08 in quattro punti (home genitore, appello docente,
+ * diario docente, armadietto docente): il difetto si è propagato copiando una
+ * riga di classi.
+ *
+ * Qui la lingua è nota, quindi la decisione si prende qui. In inglese `Intl`
+ * consegna già «Saturday 8 August»: alzare il primo carattere non cambia nulla,
+ * l'operazione è idempotente e una funzione sola serve entrambe le lingue.
+ *
+ * Testo vuoto → testo vuoto (una data non valida arriva da `formatData` come
+ * stringa vuota, e deve restare tale: mai «Invalid Date», mai una `I` sola).
+ *
+ * Lock: `__tests__/i18n/date-maiuscola-dalla-lingua.test.ts`, che vieta anche la
+ * classe `capitalize` su un elemento che rende una data.
+ */
+export function conIniziale(testo: string): string {
+  if (testo === '') return '';
+  return testo.charAt(0).toUpperCase() + testo.slice(1);
+}
+
+/**
  * Nome del mese (1 = gennaio … 12 = dicembre) localizzato e con l'iniziale
  * maiuscola, così in IT resta «Gennaio» (identico all'array MESI_IT) e in EN
  * diventa «January». Mese fuori range → stringa vuota. Sostituisce gli usi di
  * MESI_IT nei componenti client.
+ *
+ * La maiuscola la mette `conIniziale`, che è la stessa funzione usata dalle date
+ * composte: la regola («in italiano si alza la PRIMA lettera, non ogni parola»)
+ * vive in un posto solo, e due strade non possono più divergere.
  */
 export function nomeMese(mese: number, locale: string): string {
   if (!Number.isInteger(mese) || mese < 1 || mese > 12) return '';
   // Giorno 15 UTC: mai a cavallo del cambio-mese per qualunque fuso.
-  const nome = intlDateTime(locale, { month: 'long', timeZone: 'UTC' }).format(
-    new Date(Date.UTC(2020, mese - 1, 15)),
+  return conIniziale(
+    intlDateTime(locale, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2020, mese - 1, 15))),
   );
-  return nome.charAt(0).toUpperCase() + nome.slice(1);
 }
 
 /** Le funzioni di formato ritornate dall'hook, già legate al `locale` corrente. */

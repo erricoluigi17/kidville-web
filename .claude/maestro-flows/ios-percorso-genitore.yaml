@@ -1,6 +1,43 @@
 # =============================================================================
 # Kidville · iOS — percorso utente reale del GENITORE
-#   login → dashboard → presenze → comunicazioni → ritorno home
+#   login → dashboard → presenze → COMUNICA UN'ASSENZA e la ANNULLA →
+#   comunicazioni → ritorno home
+#
+# ⚠️ QUESTO FLOW SCRIVE SU DATI VERI, e per questo il percorso ANNULLA ciò che
+# comunica. Le tappe 4 e 5 fanno un POST e poi la DELETE su
+# `/api/parent/presenze/comunica-assenza`: una riga in `presenze` per l'alunno
+# dell'account TEST, sul database di PRODUZIONE. L'ultima asserzione della
+# tappa 5 — l'elenco che torna vuoto — è la PROVA che la riga è stata disfatta.
+# Se il flow muore fra la tappa 4 e la 5 la comunicazione resta: si annulla a
+# mano dalla stessa schermata (Menu → Assenze e giustifiche → «ANNULLA»).
+#
+# ⚠️ DUE PRECONDIZIONI DELLA TAPPA 4, che sono dell'AMBIENTE e non dell'app:
+#   a) l'elenco «Assenze già comunicate» dev'essere VUOTO all'inizio (il flow lo
+#      asserisce): se è rosso lì, l'account ha una comunicazione residua.
+#   b) l'appello di OGGI non dev'essere ancora registrato per quell'alunno — il
+#      modulo propone il giorno corrente e il server risponde 409
+#      ASSENZA_GIA_REGISTRATA quando la maestra l'ha già fatto. Lì il rosso è
+#      corretto e non è un difetto.
+# Il campo del giorno NON si tocca: `<input type="date">` precompilato a oggi.
+# Il campo «Motivo» resta VUOTO: è facoltativo, è testo libero di natura
+# sanitaria di un minore, e Maestro scrive nel proprio log tutto ciò che digita
+# (`Inputting text: …`).
+#
+# ⚠️ SU iOS L'ALBERO ESPONE SOLO CIÒ CHE STA NEL VIEWPORT — è la ragione per cui
+# questo file è pieno di `scrollUntilVisible`, ed è la lezione che è costata due
+# cicli di collaudo. MISURATO il 2026-08-07 con `maestro hierarchy`: sulla home a
+# scroll zero l'albero contiene 43 nodi di testo, l'ultimo dei quali è «LA
+# GIORNATA DI ALUNNO2» a [20,860][200,882] su uno schermo alto 874; «PROSSIMI
+# APPUNTAMENTI» non compare affatto (0 occorrenze in 3 dump), e compare a
+# [20,630][199,652] dopo lo scroll. Su /parent/attendance la zona dell'elenco
+# esiste («ASSENZE GIÀ COMUNICATE, zona» [16,786][386,964]) ma la frase
+# dell'elenco vuoto NON è nell'albero finché non si scrolla.
+# NON è come Android, e la differenza è il punto: là i nodi fuori schermo CI
+# SONO, proiettati a `bounds="[0,0][0,0]"`, e Maestro non li considera visibili.
+# Due cause diverse, lo stesso rosso su un'app sana — e chi scrive un flow iOS
+# col modello Android sbaglia in un modo che i commenti di ieri non spiegavano.
+# Vedi il README, sezione «Le due piattaforme tagliano la pagina in due modi
+# diversi».
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
@@ -95,8 +132,23 @@ env:
 
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
 # La tab Menu ha aria-label "Menu · tutte le sezioni".
+#
+# ⚠️ IL GATE DI PRONTEZZA NON È PIÙ «Prossimi appuntamenti», ed è il difetto
+# BLOCCANTE del collaudo del 2026-08-07: quel titolo sta in fondo alla home, cioè
+# fuori dal viewport, e su iOS quindi FUORI DALL'ALBERO. Ha superato il gate 1
+# volta su 3 — e la volta buona per un motivo che rende la cosa peggiore, non
+# migliore: subito dopo il login le card asincrone (presenze, pagamenti, diario,
+# news, galleria, armadietto) non avevano ancora allungato la pagina, e per
+# qualche centinaio di ms quel nodo era davvero nel viewport. Una finestra che si
+# chiude quando i dati arrivano: il flow non collaudava l'app, collaudava chi
+# arrivava primo.
+# Il gate è ora il sottotitolo dell'hero, MISURATO a [36,304][183,320] e presente
+# in 3 dump su 3. Si scrive `.*Ecco le novit.*` perché il nodo porta l'accento e
+# l'emoji finale e il match di Maestro è FULL-match (misurato: «Ecco le novità di
+# oggi» fallisce, «Ecco le novità di oggi.*» passa).
 - extendedWaitUntil:
-    visible: "Avvisi"
+    visible:
+      text: ".*Ecco le novit.*"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
@@ -108,6 +160,25 @@ env:
 # ogni voce del Menu-sheet è UN SOLO nodo con accessibilityText concatenato
 # ("PRESENZE Assenze e giustifiche", "NEWS Novità e comunicati", ...) e Maestro fa
 # full-match → i selettori delle voci Menu-sheet vanno in regex NON ancorata ".*…​.*".
+# Per la stessa ragione tutte le asserzioni delle tappe 3-6 sono in quella forma.
+#
+# L'arrivo NON si prova più con il TITOLO della pagina («Comunica un’assenza», dal
+# 2026-08-08: era «Segnala assenza»): è il titolo, ma è anche l'azione rapida della
+# home (home.json → azioneAssenza, «Comunica\nun’assenza», che l'accname appiattisce
+# allo stesso testo). Se il tap sul foglio non atterra si resta sulla home, dove
+# quel testo c'è già. Si usa il SOTTOTITOLO, «Avvisa gli insegnanti in anticipo: …».
+#
+# ⚠️ LA PROVA NEGATIVA NON È PIÙ «Tutte le sezioni», ed è l'altro difetto
+# BLOCCANTE del 2026-08-07. `.*Tutte le sezioni.*` combacia SEMPRE con
+# l'aria-label del quinto tab, «Menu · tutte le sezioni» (match full ma
+# case-insensitive), e la bottom-nav sta su OGNI pagina: era un'asserzione che
+# non poteva essere vera da nessuna parte. Errore misurato:
+#   Assertion is false: ".*Tutte le sezioni.*" is not visible   (17.033 ms)
+# con lo screenshot che mostrava /parent/attendance aperta e il foglio chiuso.
+# Al suo posto una voce che vive SOLO dentro il foglio: «CHAT Scrivi alle
+# maestre» (nav.json → voceChatSub). Verificata nei DUE versi sul device — passa
+# a foglio chiuso, fallisce a foglio ancora aperto — che è ciò che rende una
+# prova negativa una prova e non una decorazione. Lock: R21.
 - tapOn:
     text: "Menu · tutte le sezioni"
 - extendedWaitUntil:
@@ -117,23 +188,191 @@ env:
 - tapOn:
     text: ".*Assenze e giustifiche.*"
 - extendedWaitUntil:
-    visible: "Segnala assenza"
+    visible:
+      text: ".*Avvisa gli insegnanti in anticipo.*"
     timeout: 45000
+- assertNotVisible:
+    text: ".*Scrivi alle maestre.*"
 - takeScreenshot: /tmp/kv-ios-genitore-2-presenze
 
-# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# ── 4. COMUNICA UN'ASSENZA ───────────────────────────────────────────────────
+# La funzione riaperta dal ciclo del 2026-08-07. Fino a ieri i flow si fermavano
+# al titolo della pagina: collaudavano che una schermata esiste, non che una
+# funzione funziona. La forma è `vuoto → pieno → vuoto`, l'unica che non si può
+# soddisfare stando fermi — a patto di guardare DOVE l'elenco si vede.
+#
+# ⚠️ LO SCROLL NON È PRUDENZA: senza, questa tappa è rossa su un'app sana. La
+# frase dell'elenco vuoto non è nell'albero a scroll zero (la zona sì: «ASSENZE
+# GIÀ COMUNICATE, zona» [16,786][386,964] su schermo alto 874); dopo `- scroll`
+# compare a [40,715][311,752]. `centerElement: true` perché fermarsi appena il
+# nodo entra nel viewport lo lascia sotto la bottom-nav flottante.
+- scrollUntilVisible:
+    element:
+      text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
+# `Assenze già comunicate` ANCORATO (senza `.*`) di proposito: la forma non
+# ancorata combacia anche con «Non è stato possibile caricare le assenze già
+# comunicate.» (parentServizi.json → attendanceElencoErrore), cioè con il
+# messaggio d'errore del caricamento. Il flow direbbe «sono sull'elenco» proprio
+# nel momento in cui l'elenco NON si è caricato. Lock: R23.
+- assertVisible: "Assenze già comunicate"
+- assertVisible:
+    text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+# Il modulo è sopra l'elenco: dopo lo scroll la CTA è fuori dal viewport, e su
+# iOS fuori dal viewport vuol dire fuori dall'albero. Si torna su prima di
+# toccarla.
+- scrollUntilVisible:
+    element:
+      text: ".*Comunica assenza.*"
+    direction: UP
+    centerElement: true
+    timeout: 20000
+# Il campo data, che con la CTA centrata è a schermo: prova che è tornato il
+# MODULO, non solo la pagina. Il gemello Android ce l'aveva e questo no — ed è la
+# stessa asimmetria per cui il sottotitolo della conferma stava qui e non di là.
+# Lock: R18c, che le pretende su tutti e due.
+# ANCORATO, senza `.*`: la forma non ancorata combacia anche con il testo d'aiuto
+# della stessa schermata, «Indica il giorno dell'assenza e, se vuoi, il motivo.»
+# (parentServizi.json → attendanceIndicaGiorno), che è SEMPRE lì — anche quando il
+# campo non c'è. L'ha detto R23 al primo giro, prima che questa riga toccasse un
+# simulatore.
+- assertVisible: "Giorno dell.assenza"
+# `enabled: true` non è prudenza generica: il bottone nasce `disabled` finché
+# l'identità del genitore non è risolta (`disabled={!ready || submitting}`), e
+# un tap su un nodo disabilitato risulta COMPLETED senza fare niente.
+- tapOn:
+    text: ".*Comunica assenza.*"
+    enabled: true
+# ⚠️ LA CONFERMA NON SI CERCA PIÙ CON «Assenza comunicata». Quel titolo è
+# INTERAMENTE CONTENUTO nell'aria-label del bottone ANNULLA di una riga già in
+# elenco («Annulla l'assenza comunicata per il {data}»), e con il full-match
+# case-insensitive i due nodi sono indistinguibili. Misurato il 2026-08-07:
+#   ('COMPLETED', 174, …)   ← 174 ms dopo il tap
+# mentre lo screenshot di 76 ms più tardi mostrava il bottone ancora in «INVIO…»:
+# il flow dichiarava riuscito un POST ancora in volo. L'ancora è ora la CTA della
+# schermata di conferma, che esiste solo lì. Lock: R23.
+- extendedWaitUntil:
+    visible:
+      text: ".*Comunica un.altra assenza.*"
+    timeout: 30000
+# La seconda asserzione dice PER QUALE GIORNO: il sottotitolo della conferma
+# (parentServizi.json → attendanceInviataTesto) è l'unico testo che nomina la
+# data, quindi prova che il server ha risposto con la riga giusta e non solo che
+# una schermata è cambiata.
+#
+# ⚠️ QUESTA RIGA È DIVENTATA ROSSA MENTRE L'INVIO RIUSCIVA, il 2026-08-07, ed è
+# andata esattamente come il commento di ieri prevedeva — salvo che la causa non
+# era il viewport. Il testo cercato era «La scuola è stata notificata
+# dell'assenza…», cioè la formulazione PRECEDENTE di `attendanceInviataTesto`:
+# il catalogo era stato riscritto e il flow no. L'app diceva
+#     ASSENZA COMUNICATA
+#     «Abbiamo registrato l’assenza del 08/08/2026. Grazie per la collaborazione.»
+#     COMUNICA UN’ALTRA ASSENZA
+# e il flow moriva sul 29° comando dopo aver scritto davvero la riga su `presenze`
+# — lasciandola lì, perché la morte cadeva prima della tappa che annulla.
+# La lezione non è «tre ancore da aggiornare»: è che un'ancora scritta a mano si
+# scolla da un catalogo che cambia, e nessun gate se ne accorge. Ora l'ancora è
+# legata alla sua CHIAVE (lock R18c, che legge il valore atteso da
+# parentServizi.json) e una frase che l'app non pronuncia più non può restare nel
+# file (lock R24b).
+- assertVisible:
+    text: ".*Abbiamo registrato l.assenza del .*"
+- takeScreenshot: /tmp/kv-ios-genitore-3-assenza-inviata
+
+# ── 5. L'ASSENZA COMPARE NELL'ELENCO, E L'ANNULLAMENTO LA FA SPARIRE ─────────
+# «Comunica un'altra assenza» riporta al modulo con l'elenco sotto, già riletto
+# dal server dopo l'invio.
+- tapOn:
+    text: ".*Comunica un.altra assenza.*"
+# Di nuovo lo scroll, e di nuovo perché l'elenco sta sotto il modulo. Si scrolla
+# sul TITOLO della sezione e lo si centra: la riga appena comunicata sta subito
+# sotto, quindi entra nel viewport con lui — ed è ciò che rende SENSATE le due
+# asserzioni che seguono.
+- scrollUntilVisible:
+    element:
+      text: "Assenze già comunicate"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
+- assertVisible: "Assenze già comunicate"
+# Questa è la prova che l'invio è servito a qualcosa, ed è VERA solo qui: fatta a
+# scroll zero passerebbe anche con l'elenco vuoto, perché il nodo non sarebbe
+# nell'albero in nessun caso (è il difetto misurato su Android il 2026-08-07,
+# 17/17 COMPLETED senza che fosse successo niente). Lock: R22.
+- assertNotVisible:
+    text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+- takeScreenshot: /tmp/kv-ios-genitore-4-assenza-in-elenco
+# Il bottone della riga porta un `aria-label` parlante (parentServizi.json →
+# attendanceAnnullaAria): per l'accname l'aria-label SOSTITUISCE il testo
+# interno, quindi il nome è «Annulla l'assenza comunicata per il <data>».
+- tapOn:
+    text: ".*Annulla l.assenza comunicata per il .*"
+    enabled: true
+- extendedWaitUntil:
+    visible:
+      text: ".*Assenza annullata.*"
+    timeout: 20000
+# L'elenco torna vuoto: è la PROVA che la riga scritta su `presenze` è stata
+# disfatta, non un abbellimento. Lo scroll ci riporta sulla zona dell'elenco, che
+# nel frattempo si è accorciata di una riga.
+- scrollUntilVisible:
+    element:
+      text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+    direction: DOWN
+    centerElement: true
+    timeout: 20000
+- assertVisible:
+    text: ".*Non hai comunicato nessuna assenza per i prossimi giorni.*"
+- takeScreenshot: /tmp/kv-ios-genitore-5-assenza-annullata
+
+# ── 6. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# ⚠️ SU ANDROID QUESTA TAPPA MENTIVA (misurato il 2026-08-07): `tapOn: "Avvisi"`
+# colpiva un nodo `bounds="[0,0][0,0]"` e `assertVisible: "Comunicazioni"` era
+# soddisfatto da un secondo nodo fantasma della home — COMPLETED senza essersi
+# mossi. Il flow iOS aveva gli stessi due selettori.
+# Qui il tap resta per testo: su iOS i bounds dei nodi fuori schermo NON sono
+# stati misurati e una guardia `width/height` inventata sarebbe una difesa finta.
+#
+# ⚠️ E LE DUE PROVE CHE DOVEVANO RENDERE LA TAPPA INCAPACE DI MENTIRE ERANO
+# ENTRAMBE SBAGLIATE, in versi opposti (secondo collaudo, 2026-08-07):
+#   · la POSITIVA era il footer «Le prese visione vengono registrate
+#     automaticamente.» — fuori viewport, e per di più reso nello STESSO
+#     paragrafo di footerRiga1 separato da <br/>, quindi il nodo porta il testo
+#     UNITO e il full-match sulla sola seconda riga non riuscirebbe nemmeno in
+#     viewport: due ragioni indipendenti per non poter mai passare;
+#   · la NEGATIVA era «Prossimi appuntamenti», che sulla home non è nell'albero:
+#     vera sempre, anche restando fermi.
+# Ora la positiva è il SOTTOTITOLO dell'intestazione, che sta in cima alla pagina
+# ed esiste solo lì. Ha tre facce a seconda dei dati (avvisi.json →
+# sottotitoloDaGestire · sottotitoloOk · sottotitoloCaricamento) e vanno coperte
+# tutte e tre, altrimenti il flow è rosso i giorni in cui non c'è niente da
+# gestire. L'occhiello «Comunicazioni» e il titolo «Avvisi» NON servono: sono
+# entrambi ambigui con la home (lock R16).
+# La negativa è l'hero della home, che sta sopra la piega e quindi è nell'albero
+# quando ci si è davvero. Lock: R17, R22.
 - tapOn: "Avvisi"
 - extendedWaitUntil:
-    visible: "Comunicazioni"
+    visible:
+      text: ".*avvis[oi] da gestire|Tutto in regola.*|Comunicazioni dalla scuola"
     timeout: 45000
-- takeScreenshot: /tmp/kv-ios-genitore-3-avvisi
+- assertNotVisible:
+    text: ".*Ecco le novit.*"
+- takeScreenshot: /tmp/kv-ios-genitore-6-avvisi
 
-# ── 5. RITORNO ALLA HOME ─────────────────────────────────────────────────────
+# ── 7. RITORNO ALLA HOME ─────────────────────────────────────────────────────
 # Su iOS non c'è back hardware: si torna con la bottom nav. Serve anche a
 # verificare che la nav resti agganciata sopra l'home indicator (safe-area).
+# Anche qui la coppia: la home c'è (il suo testo univoco sopra la piega) e la
+# pagina di prima non c'è più (il suo sottotitolo, in tutte e tre le facce).
 - tapOn: "Home"
 - extendedWaitUntil:
     visible:
-      text: "Menu · tutte le sezioni"
+      text: ".*Ecco le novit.*"
     timeout: 20000
-- takeScreenshot: /tmp/kv-ios-genitore-4-home
+- assertNotVisible:
+    text: ".*avvis[oi] da gestire|Tutto in regola.*|Comunicazioni dalla scuola"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-ios-genitore-7-home

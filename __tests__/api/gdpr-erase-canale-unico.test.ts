@@ -239,4 +239,39 @@ describe('POST /api/admin/gdpr/erase — un canale solo, le stesse funzioni', ()
     }
     expect(h.logScrittura).toHaveBeenCalled()
   })
+
+  it('dice anche quante presenze ha bonificato: il motivo dell’assenza è un dato sanitario', async () => {
+    // Aggiunto il 2026-08-07 con la copertura di `presenze.giustificazione_testo`
+    // e `presenze.note_appello`. Sta nella RISPOSTA, non solo nei log, per la
+    // stessa ragione di `push_subscriptions_rimosse`: chi esegue l'oblio deve
+    // poter dire alla famiglia CHE COSA è stato tolto. Il finto client di questo
+    // file non ha righe di presenza, quindi il numero atteso è 0 — ciò che si
+    // pretende è che il campo ESISTA, cioè che il canale della Direzione passi
+    // dalla funzione condivisa anche per questa tabella.
+    const res = await esegui()
+    const json = await res.json()
+    expect(
+      json,
+      'la risposta non dichiara `presenze_bonificate`: il motivo dell’assenza è testo libero ' +
+        'di natura sanitaria di un minore, e un oblio che non lo nomina non si può verificare',
+    ).toHaveProperty('presenze_bonificate')
+    // E l'UPDATE dev'essere davvero partito verso `presenze`: senza, il campo
+    // sarebbe un numero che non descrive nessuna scrittura.
+    expect(
+      h.updates.some((u) => u.table === 'presenze'),
+      'nessun UPDATE su `presenze`: l’oblio non raggiunge il motivo dell’assenza',
+    ).toBe(true)
+    // E il conteggio dev'essere INTERROGABILE: `gdpr` è in `EVENTI_PERSISTITI`,
+    // quindi la riga di successo finisce in `app_log`. Senza il numero lì dentro,
+    // fra sei mesi la domanda «quel testo è stato tolto?» ha per sola risposta
+    // una riga di audit che bisogna sapere di dover cercare.
+    const ok = spie.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'oblio-eseguito',
+    )
+    expect(ok, 'nessuna riga di successo `oblio-eseguito`').toBeTruthy()
+    expect(
+      ok![2] as Record<string, unknown>,
+      'il log di successo non dice quante presenze sono state bonificate',
+    ).toHaveProperty('n_presenze')
+  })
 })

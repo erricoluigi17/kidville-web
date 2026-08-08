@@ -1,3 +1,4 @@
+import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie';
 import { conContesto, contesto, erroreGiaLoggato } from './context';
 import { logErrore, logEvento, logOk } from './logger';
 
@@ -44,6 +45,8 @@ import { logErrore, logEvento, logOk } from './logger';
  *                                                       nessuno ha già loggato l'errore vero
  *   eccezione              → `logErrore`                KV_ERR + Error VERO (stack vero)
  *                                                       + TABELLA, poi re-throw
+ *   NON è una Response     → `logEvento(…, 'error', …)` KV_ERR + TABELLA, con `stato: 500`
+ *                                                       (è quel che Next manda al posto suo)
  *
  * Perché 401/403/404 a `info`: `vaPersistito()` persiste error E warn, e questi 4xx sono
  * frequentissimi (una sessione scaduta ne produce a raffica). A `warn` finirebbero tutti in
@@ -111,7 +114,12 @@ export function withRoute<A extends [Request, ...unknown[]]>(
             // un altro id) — e riflettergli un valore arbitrario che lui controlla.
             const rid = contesto()?.requestId;
 
-            let res: Response;
+            // `unknown` e non `Response`: la firma lo PROMETTE, il runtime no. Il quinto
+            // collaudo ha misurato otto rotte in cui questo valore era la stringa
+            // «TURBOPACK unreachable» (vedi `sospensione.ts`). Dichiararlo `Response`
+            // qui significherebbe che il controllo poche righe più sotto è codice morto
+            // per il compilatore — e non lo è: è l'unica cosa fra un guasto e un 500 muto.
+            let res: unknown;
             try {
                 res = await handler(...args);
             } catch (err) {
@@ -122,9 +130,41 @@ export function withRoute<A extends [Request, ...unknown[]]>(
                 throw err;
             }
 
-            senzaLanciare(() => registraEsito(nome, res, Date.now() - t0));
-            senzaLanciare(() => rifletti(res, rid));
-            return res;
+            // Si registra il valore VERO, quello che l'handler ha davvero restituito:
+            // è `registraEsito` a riconoscere «senza Response» e a scriverne la riga.
+            senzaLanciare(() => registraEsito(nome, res, Date.now() - t0, conSessione(args[0])));
+
+            /**
+             * ⚠️ E QUI IL WRAPPER, PER UNA VOLTA, DECIDE.
+             *
+             * La regola di questo file è «osserva, non decide» — il ramo ECCEZIONE
+             * rilancia apposta. Questo è l'unico caso in cui non basta, e la ragione è
+             * che non c'è nessuna risposta da proteggere: se l'handler non ne ha
+             * restituita una, Next solleva «No response is returned from route handler»
+             * e manda al client **500 con corpo vuoto e zero byte**. Non stiamo
+             * sostituendo una risposta buona con la nostra: stiamo sostituendo un 500
+             * muto con un 500 che dice di essere un guasto del server e porta il
+             * `x-request-id` con cui si ritrova la riga in `app_log`.
+             *
+             * Perché `statoDi` e non `res instanceof Response`: `instanceof` confronta
+             * il prototipo, e una Response nata in un altro realm (Edge, un polyfill,
+             * un runtime futuro) NON lo supera pur essendo perfettamente valida —
+             * trasformeremmo in 500 delle risposte buone, che è molto peggio del
+             * difetto che stiamo chiudendo. La stessa condizione la usa `registraEsito`
+             * dal 2026-08-08: «ha uno status numerico» è la definizione operativa di
+             * risposta che questo modulo ha già adottato, in un posto solo.
+             *
+             * Vale per tutte e 239 le rotte, non per le otto che avevano il difetto:
+             * il collaudo chiedeva un `instanceof Response` ai cinque chiamanti di
+             * `assertGenitoreNonSospeso`, ma la classe di guasto non è dei chiamanti —
+             * è di qualunque handler che, per qualunque ragione, non torni una
+             * risposta. La difesa sta dove sta il collo di bottiglia.
+             */
+            const finale: Response =
+                statoDi(res) === undefined ? rispostaSenzaHandler(rid) : (res as Response);
+
+            senzaLanciare(() => rifletti(finale, rid));
+            return finale;
         };
 
         // Rientranza: se siamo GIÀ dentro una richiesta (una route wrappata invocata come
@@ -143,6 +183,28 @@ export function withRoute<A extends [Request, ...unknown[]]>(
     };
 }
 
+/**
+ * Il 500 che si manda quando l'handler non ha restituito niente di utilizzabile.
+ *
+ * Un CORPO c'è, ed è la differenza che conta: il collaudo ha misurato «HTTP 500,
+ * corpo vuoto, zero byte», cioè una schermata su cui il genitore legge il messaggio
+ * generico dell'app e chi indaga non ha nemmeno un id da cercare. Le stesse chiavi
+ * degli altri errori del progetto (`error` + `codice`), perché i client sanno già
+ * leggerle, e nessun dettaglio del guasto: all'utente non serve, e non è suo.
+ */
+function rispostaSenzaHandler(rid: string | undefined): Response {
+    return new Response(
+        JSON.stringify({ error: 'Errore interno del server', codice: 'HANDLER_SENZA_RESPONSE' }),
+        {
+            status: 500,
+            headers: {
+                'content-type': 'application/json; charset=utf-8',
+                ...(rid ? { 'x-request-id': rid } : {}),
+            },
+        },
+    );
+}
+
 /** L'osservabilità non può rompere la risposta che sta osservando. */
 function senzaLanciare(fn: () => void): void {
     try {
@@ -159,18 +221,43 @@ function senzaLanciare(fn: () => void): void {
  * `[redatto:str/24]` e la riga non direbbe più QUALE route ha fallito. Sulla riga di Vercel
  * lo rinomina `logEvento` in `rt=`, che è la chiave unica dei tre marker.
  */
-function registraEsito(nome: string, res: unknown, ms: number): void {
+function registraEsito(nome: string, res: unknown, ms: number, sessione: boolean): void {
     const stato = statoDi(res);
 
-    // Status illeggibile (handler che non restituisce una Response): non è un guasto
-    // dimostrabile, e il wrapper non inventa guasti. Resta la riga di esito.
-    if (stato === undefined || stato < 400) {
+    // ⚠️ L'HANDLER NON HA RESTITUITO UNA RESPONSE. È il guasto più grave che una rotta possa
+    // avere, ed è CERTO: Next non ha niente da inviare e risponde 500 con corpo vuoto, dopo
+    // aver sollevato «No response is returned from route handler …».
+    //
+    // Fino al 2026-08-08 questo caso ricadeva nel ramo del 200 (`stato === undefined ||
+    // stato < 400` → `logOk`), motivato così: «non è un guasto dimostrabile, e il wrapper non
+    // inventa guasti». Ma emettendo `logOk` il wrapper non si asteneva: inventava un SUCCESSO —
+    // e `logOk` non persiste mai, quindi la riga interrogabile non esisteva proprio. Misurato in
+    // produzione (quinto collaudo, rilievi R3·R7·R12·R16·R24): 73 richieste finite in 500,
+    // 73 righe `KV_OK rid=… rt=parent/presenze/comunica-assenza:POST`, e in `app_log` nessuna
+    // riga del wrapper. L'unica traccia la scriveva `onRequestError`. «Non so com'è andata» e
+    // «è andata bene» sotto lo stesso marker: è l'ambiguità vietata da AGENTS.md §5, nella
+    // forma peggiore — un log che dice attivamente di sì.
+    //
+    // Lo `stato: 500` non è inventato più di quanto lo sia nel ramo ECCEZIONE (che lo scrive da
+    // sempre senza aver visto una risposta): è ciò che Next manda al client in questo esatto
+    // caso, ed è la colonna con cui il repo dichiara di cercare i guasti («dammi i 5xx di
+    // ieri», logger.ts). Senza, la riga più grave del sistema resterebbe fuori da quel filtro.
+    //
+    // La deduplica del 5xx NON si applica: «l'handler non ha restituito una Response» è un
+    // fatto diverso da qualunque cosa la route abbia loggato prima, ed è l'unico che spiega
+    // il 500 vuoto che vede l'utente.
+    if (stato === undefined) {
+        logEvento('route', 'error', { operazione: nome, esito: 'handler-senza-response', stato: 500, ms });
+        return;
+    }
+
+    if (stato < 400) {
         logOk({ ms, rt: nome });
         return;
     }
 
     if (stato < 500) {
-        logEvento('route', livello4xx(stato), { operazione: nome, stato, ms });
+        logEvento('route', livello4xx(stato, sessione), { operazione: nome, stato, ms });
         return;
     }
 
@@ -180,12 +267,31 @@ function registraEsito(nome: string, res: unknown, ms: number): void {
     logEvento('route', 'error', { operazione: nome, stato, ms });
 }
 
-function livello4xx(stato: number): 'info' | 'warn' {
+function livello4xx(stato: number, sessione: boolean): 'info' | 'warn' {
     if (ANOMALIE_4XX.has(stato)) return 'warn';
     // Un 400 con una sessione aperta: il payload che zod ha rifiutato l'ha spedito il NOSTRO
     // client. È un bug nostro, e va in tabella.
-    if (stato === 400 && !!contesto()?.userId) return 'warn';
+    //
+    // ⚠️ IL CONTESTO NON BASTA A SAPERLO, e per due settimane ha deciso lui (rilievo Q8).
+    // `contesto()?.userId` lo deposita il GATE: su cinque rotte del repo il corpo si valida
+    // PRIMA del gate, per una ragione buona e dichiarata (l'`studentId` che il gate deve
+    // controllare sta nel body — allowlist `CORPO_PRIMA_DEL_GATE_AMMESSO`). Su quelle rotte,
+    // al momento del 400, l'utente c'è e il contesto è vuoto: il rifiuto più frequente che una
+    // famiglia possa produrre finiva a `info`, cioè fuori dalla tabella. Misurato: tre POST
+    // consecutive con sessione valida, tre 400, zero righe.
+    // Il discriminante vero è «questa richiesta porta una sessione», e si legge dai cookie
+    // senza validarli — per scegliere un LIVELLO DI LOG basta che sia stata presentata.
+    if (stato === 400 && (!!contesto()?.userId || sessione)) return 'warn';
     return 'info';
+}
+
+/**
+ * `true` se la richiesta porta un cookie di sessione Supabase. Difensiva come tutto il resto
+ * del wrapper: `args[0]` è una `Request` solo per contratto (i test la passano `as never`), e
+ * il nome del cookie sta in un posto solo — vedi `haCookieSessioneNellIntestazione`.
+ */
+function conSessione(req: unknown): boolean {
+    return haCookieSessioneNellIntestazione(intestazione(req, 'cookie'));
 }
 
 /**

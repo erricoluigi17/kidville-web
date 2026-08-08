@@ -274,6 +274,144 @@ export const CODICI_ERRORE = {
      * un'informazione per chi lavora in segreteria.
      */
     DOMANDA_NON_LETTA: 'erroreDomandaNonLetta',
+    /**
+     * 400 — l'assenza si comunica in ANTICIPO, e la data indicata è già passata
+     * (`POST /api/parent/presenze/comunica-assenza`, fuso Europe/Rome).
+     *
+     * La frase dice anche dove andare — la giustifica — perché il rifiuto arriva
+     * a chi ha appena provato a fare la cosa giusta con lo strumento sbagliato:
+     * senza quel rimando l'unico messaggio possibile sarebbe «no», e il genitore
+     * riproverebbe con la stessa data.
+     */
+    ASSENZA_DATA_PASSATA: 'erroreAssenzaDataPassata',
+    /**
+     * 403 — l'account della famiglia è sospeso per morosità
+     * (`src/lib/pagamenti/sospensione.ts`, `negato()`): le azioni di servizio sono
+     * inibite finché la posizione non è regolarizzata.
+     *
+     * Fino al 2026-08-08 quella risposta portava solo `motivo: 'account_sospeso'`,
+     * che `soloCatalogoDaCorpo` non guarda: il genitore leggeva la frase generica
+     * della schermata e non sapeva né perché era stato respinto né cosa fare. La
+     * frase nomina la segreteria perché è l'unico modo che ha di risolvere: non è
+     * un errore che si corregge riprovando.
+     */
+    ACCOUNT_SOSPESO: 'erroreAccountSospeso',
+    /**
+     * 400 — l'assenza si comunica in anticipo, ma non a QUALUNQUE distanza
+     * (`POST /api/parent/presenze/comunica-assenza`, tetto in
+     * `GIORNI_MASSIMI_IN_ANTICIPO`).
+     *
+     * NON riusa `ASSENZA_DATA_PASSATA`, che dice l'esatto contrario («è già
+     * passata») e manderebbe il genitore verso la giustifica per un giorno che
+     * deve ancora arrivare. Fino al 2026-08-07 questo rifiuto non esisteva
+     * affatto: `2099-12-31` rispondeva 201.
+     */
+    ASSENZA_DATA_TROPPO_LONTANA: 'erroreAssenzaDataTroppoLontana',
+    /**
+     * 400 — il motivo dell'assenza supera la lunghezza massima
+     * (`POST /api/parent/presenze/comunica-assenza`, `MOTIVO_MAX_CARATTERI`).
+     *
+     * Ha un codice suo perché il rimedio è diverso da ogni altro rifiuto di
+     * questa rotta: qui non si cambia il giorno né si chiama la scuola, si
+     * accorcia il testo. La frase dice il numero, altrimenti «troppo lungo» non
+     * è un'istruzione. In produzione è stata scritta una riga da 200.000
+     * caratteri prima che questo confine esistesse.
+     */
+    ASSENZA_MOTIVO_TROPPO_LUNGO: 'erroreAssenzaMotivoTroppoLungo',
+    /**
+     * 500 — l'oblio (art. 17) non è stato eseguito: una delle due letture che lo
+     * decidono — l'anagrafica dell'alunno, i suoi genitori — non è riuscita
+     * (`POST /api/admin/gdpr/erase`).
+     *
+     * NON riusa il 404 «Alunno non trovato», ed è tutto il punto: fino al
+     * 2026-08-07 una lettura fallita usciva proprio da quella porta, e a una
+     * richiesta di cancellazione di una famiglia si rispondeva che il bambino
+     * non esiste. «Non c'è» chiude la pratica; «non l'ho potuto leggere» chiede
+     * di riprovare. La frase lo dice, perché chi la legge è la Direzione e
+     * l'operazione non ha un annulla.
+     */
+    GDPR_ERASE_NON_RIUSCITO: 'erroreGdprEraseNonRiuscito',
+    /**
+     * 409 — l'insegnante ha GIÀ fatto l'appello di quel giorno: la comunicazione
+     * del genitore (e il suo annullamento) non sovrascrive il registro.
+     *
+     * È un rifiuto che protegge un dato altrui, non un guasto, e va detto come
+     * tale: un 500 generico farebbe riprovare all'infinito una cosa che non può
+     * riuscire. La via d'uscita è una persona, non un altro tentativo.
+     */
+    ASSENZA_GIA_REGISTRATA: 'erroreAssenzaGiaRegistrata',
+    /**
+     * 404 — l'alunno indicato non esiste, oppure non è fra i figli di chi chiede.
+     *
+     * Un solo codice per i due casi, come per `DOMANDA_NON_APRIBILE` e per la
+     * stessa ragione: distinguerli direbbe a chi prova un id a caso quando ha
+     * imbroccato un bambino vero. Qui la posta è più alta che altrove — la
+     * risposta confermerebbe l'esistenza di un minore a chi non ha titolo di
+     * conoscerlo. La differenza vive nel log, non a schermo.
+     *
+     * NON riusa `MODULO_NON_TROVATO`: quello è il 404 del link pubblico di un
+     * modulo, e la sua frase parla di collegamenti scaduti. A un genitore che ha
+     * appena toccato il nome di suo figlio in un elenco direbbe una cosa falsa.
+     */
+    ALUNNO_NON_TROVATO: 'erroreAlunnoNonTrovato',
+    /**
+     * 500 — la riga di presenza non è stata scritta (errore PostgREST).
+     *
+     * Il `message` grezzo di PostgREST NON esce di qui: è prosa inglese con dentro
+     * nomi di colonne, e fino a questo ciclo era proprio ciò che il server rimandava
+     * al client (`{ error: error.message }`). Il motivo tecnico resta nel log.
+     *
+     * La frase invita a RIPROVARE perché è l'unico caso dei quattro in cui il
+     * secondo tentativo può andare bene: gli altri tre chiedono di cambiare
+     * qualcosa. Dirlo sbagliato manda il genitore contro un muro o, peggio, gli
+     * fa credere che l'assenza sia registrata quando non lo è.
+     */
+    ASSENZA_NON_SALVATA: 'erroreAssenzaNonSalvata',
+    /**
+     * 500 — la GIUSTIFICA non si è potuta scrivere
+     * (`POST /api/parent/presenze/giustifica`: il guasto PostgREST sull'UPDATE, e
+     * l'eccezione del `catch` esterno).
+     *
+     * NON riusa `ASSENZA_NON_SALVATA`: quella parla di un'assenza COMUNICATA in
+     * anticipo, questa di una giustifica FIRMATA a posteriori. La differenza che
+     * il genitore deve poter leggere è cosa è rimasto valido: qui l'assenza è già
+     * in registro e ciò che manca è la firma, quindi la frase non deve fargli
+     * temere di aver perso anche l'assenza.
+     *
+     * Fino al 2026-08-08 questa rotta mandava al client il `message` grezzo di
+     * PostgREST — prosa inglese con dentro il nome di un vincolo — e nel ramo
+     * dell'eccezione non lo LOGGAVA nemmeno: il genitore leggeva il dettaglio
+     * tecnico e nessun altro lo vedeva.
+     */
+    GIUSTIFICA_NON_SALVATA: 'erroreGiustificaNonSalvata',
+    /**
+     * 500 — le presenze del bambino non si sono POTUTE LEGGERE
+     * (`GET /api/parent/presenze`: anagrafica, appello di oggi, riepilogo).
+     *
+     * NON riusa `ALUNNO_NON_TROVATO`, ed è tutto il punto: fino al 2026-08-07 una
+     * lettura fallita usciva proprio da quella porta, perché PostgREST non lancia e
+     * `alunno` restava `null`. Al genitore si diceva che suo figlio non esiste — per
+     * un guasto del database. «Non c'è» e «non l'ho potuto leggere» hanno rimedi
+     * opposti: il primo si risolve in segreteria, il secondo riprovando.
+     *
+     * NON riusa nemmeno `ASSENZA_NON_SALVATA`: quella frase parla di una scrittura
+     * («non siamo riusciti a registrare l'assenza») e qui non si stava scrivendo
+     * niente — racconterebbe a chi ha solo aperto la home un fallimento che non è
+     * avvenuto.
+     */
+    PRESENZE_NON_LETTE: 'errorePresenzeNonLette',
+    /**
+     * 500 — l'ANNULLAMENTO della comunicazione non è riuscito
+     * (`DELETE /api/parent/presenze/comunica-assenza`).
+     *
+     * NON riusa `ASSENZA_NON_SALVATA`, ed è l'unica ragione per cui esiste: quella
+     * frase dice «non siamo riusciti a registrare l'assenza», che a chi ha appena
+     * premuto «annulla» racconta il contrario di quello che è successo — e nel
+     * verso peggiore, perché lascia credere che l'assenza non ci sia più mentre è
+     * ancora lì. I due guasti hanno lo stesso status e rimedi identici (riprova),
+     * ma direzioni opposte: un codice solo per entrambi mentirebbe metà delle volte.
+     */
+    ASSENZA_NON_ANNULLATA: 'erroreAssenzaNonAnnullata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;
@@ -455,4 +593,93 @@ export async function messaggioSoloCatalogo(res: Response, fallback: string): Pr
 export function soloCatalogoDaCorpo(corpoGrezzo: unknown, fallback: string): string {
     const corpo = corpoGrezzo as { codice?: unknown } | null;
     return testoDelCodice(corpo?.codice) ?? fallback;
+}
+
+/** Ciò che si sa di una risposta di ERRORE dopo averla letta senza mai lanciare. */
+export interface EsitoErrore {
+    /** Il testo da mostrare: catalogo se il codice è dichiarato, altrimenti il `fallback`. */
+    testo: string;
+    /** Il codice dichiarato dal server, se c'è ed è una stringa. Altrimenti `null`. */
+    codice: string | null;
+    /**
+     * Lo status HTTP. `undefined` solo se la risposta non ne ha uno leggibile (un oggetto
+     * costruito a mano nei test): **non** si ripiega su `0`, che in tabella somiglia a un
+     * codice HTTP vero e mentirebbe.
+     */
+    stato: number | undefined;
+    /**
+     * `false` quando il corpo non era JSON leggibile (500 senza corpo, HTML di un proxy,
+     * risposta troncata). Serve a chi LOGGA: «il server ha rifiutato dicendo perché» e «il
+     * server è morto senza dire niente» sono due fatti diversi e vanno detti in modo diverso.
+     */
+    corpoLetto: boolean;
+}
+
+/**
+ * Legge una risposta di errore SENZA MAI LANCIARE, e senza perdere lo status.
+ *
+ * ─── PERCHÉ ESISTE (R17 del quinto collaudo) ────────────────────────────────
+ *
+ * La forma ripetuta in quattro punti su due schermate era:
+ *
+ *     if (!r.ok) { const corpo = await r.json(); … segnala('invio-respinto', r.status) }
+ *
+ * e presuppone che ogni risposta d'errore porti un corpo JSON. È vero per i rifiuti che la
+ * rotta scrive di suo pugno; NON per gli errori che nascono FUORI dall'handler — il 500 di
+ * Next quando l'handler non restituisce una Response (misurato: `Transfer-Encoding: chunked`
+ * e ZERO byte), il 502/504 di un proxy, una risposta troncata. In quei casi `await r.json()`
+ * lancia dentro il `try`, l'eccezione salta al `catch` esterno — che è scritto per un'altra
+ * cosa, la RETE CADUTA — e il numero di stato, che il codice aveva in mano un istante prima,
+ * viene buttato via prima di arrivare al log.
+ *
+ * Conseguenza misurata: a schermo il messaggio del ramo sbagliato («non sappiamo se l'assenza
+ * è stata registrata», mentre il server aveva risposto eccome) e in `app_log` una riga
+ * `invio-non-riuscito` con `stato` indefinito. Chi indaga dal log non sa nemmeno che il
+ * server ha risposto.
+ *
+ * È il rovescio esatto della regola che il repo si è già dato per i provider esterni
+ * («loggare uno status senza il corpo è il bug»): qui lo status si perde perché il corpo non
+ * si è potuto leggere. Le due metà dell'informazione vanno tenute insieme.
+ *
+ * ─── PERCHÉ QUI E NON NEI COMPONENTI ────────────────────────────────────────
+ *
+ * Perché la stessa forma vive su due schermate («Comunica un'assenza» dell'infanzia e quella
+ * della primaria) e in due gesti ciascuna (invio e annullamento). Una regola valida per due
+ * strade deve vivere in un posto solo: è la lezione che questo ciclo ripete da tre giri, e
+ * l'unico modo perché la prossima schermata la erediti invece di doverla riscoprire.
+ *
+ * Il `catch` esterno del chiamante NON sparisce: resta per la rete davvero caduta (`fetch`
+ * che rigetta), che è un fatto diverso — lì il server non ha risposto affatto, e non si sa
+ * se la scrittura è avvenuta.
+ */
+export async function erroreDaRisposta(res: Response, fallback: string): Promise<EsitoErrore> {
+    const stato = statoDi(res);
+    let corpo: unknown;
+    let corpoLetto = false;
+    try {
+        corpo = await res.json();
+        corpoLetto = true;
+    } catch {
+        // Corpo assente, troncato o non JSON. Non è un caso da segnalare qui: è
+        // un'informazione da restituire (`corpoLetto: false`), perché chi chiama è l'unico
+        // che sa quale operazione stava facendo e quindi come raccontarlo.
+        corpo = null;
+    }
+    const codice = (corpo as { codice?: unknown } | null)?.codice;
+    return {
+        testo: soloCatalogoDaCorpo(corpo, fallback),
+        codice: typeof codice === 'string' ? codice : null,
+        stato,
+        corpoLetto,
+    };
+}
+
+/** Lo status, letto in modo difensivo: `res` è una `Response` solo per contratto. */
+function statoDi(res: unknown): number | undefined {
+    try {
+        const s = (res as { status?: unknown } | null | undefined)?.status;
+        return typeof s === 'number' && Number.isFinite(s) ? s : undefined;
+    } catch {
+        return undefined;
+    }
 }

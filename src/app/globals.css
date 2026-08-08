@@ -167,6 +167,48 @@ body {
    e calc() delle altezze (chat). */
 [data-kv-shell] {
   --kv-appbar-h: 58px;
+  /* Altezza OCCUPATA dalla barra di navigazione in fondo (`BottomNav`,
+     `TeacherBottomNav`): la pillola (`h-[60px]`) più il margine che il suo
+     contenitore le mette sotto (`max(12px, env(safe-area-inset-bottom))`, cioè
+     la safe-area quando c'è).
+
+     Esiste per la stessa ragione di `--kv-appbar-h`: la barra è `fixed` con
+     `z-50` e sta SOPRA il contenuto, quindi chi deve restarle fuori ha bisogno
+     di sapere quanto è alta. Misurato sull'emulatore il 2026-08-07: il pulsante
+     «COMUNICA ASSENZA» di `/parent/attendance` cadeva dentro questa fascia
+     (sovrapposizione di 137px su 145) e un tocco al suo centro apriva la scheda
+     AVVISI. Il `pb-24` della pagina non protegge un elemento a metà documento:
+     riserva spazio in FONDO, non davanti alla barra.
+     Il numero non si copia a mano da nessuna parte: il lock
+     `__tests__/pages/assenze-rifiniture-secondo-collaudo.test.tsx` lo rilegge da
+     `BottomNav.tsx` e fallisce se la pillola cambia altezza. */
+  --kv-bottomnav-h: calc(60px + max(12px, env(safe-area-inset-bottom)));
+}
+
+/* =============================================================================
+   LA TASTIERA APERTA E L'APPBAR — `scroll-margin-top` sui campi della shell.
+
+   Quando la tastiera si apre, la viewport si accorcia e il browser porta in
+   vista il campo a fuoco calcolando il bordo SUPERIORE del layout: l'AppBar è
+   `sticky top-0` (58px sul web, più la safe-area nella shell nativa) e il campo
+   finisce esattamente dietro di essa. Misurato il 2026-08-07 su emulatore
+   Android, campo «Motivo» di `/parent/attendance`: dopo `inputText "prova"` il
+   testo si vedeva SOLO nella barra dei suggerimenti della tastiera; nella pagina
+   restava il bordo inferiore del riquadro e il resto era coperto dalla barra
+   verde. Con uno swipe di 250px il campo tornava visibile — cioè si scriveva
+   alla cieca finché non si scorreva a mano.
+
+   `scroll-margin-top` è ciò che il browser AGGIUNGE sopra l'elemento quando lo
+   porta in vista: dichiarare l'altezza dell'AppBar significa dire «non
+   considerare buono un allineamento che ti finisce sotto quella barra». Vale
+   sul web tanto quanto in shell nativa, perché l'AppBar è sticky in entrambe;
+   il valore è la VARIABILE, non un numero, così sui telefoni col notch (dove
+   `--kv-appbar-h` cresce dell'inset) resta esatto.
+   ============================================================================= */
+[data-kv-shell] input,
+[data-kv-shell] select,
+[data-kv-shell] textarea {
+  scroll-margin-top: var(--kv-appbar-h);
 }
 .cap-native [data-kv-shell] {
   margin-top: calc(-1 * env(safe-area-inset-top));
@@ -183,6 +225,104 @@ body {
    alla status bar). `calc()` replica lo spazio effettivo dell'AppBar. */
 .cap-native [data-kv-shell] .kv-appbar-admin {
   padding-top: calc(0.5rem + env(safe-area-inset-top));
+}
+
+/* =============================================================================
+   CHI OSPITA IL PIEDE DELL'AZIONE — e la coda di pagina vuota che si portava.
+
+   `PiedeAzioneAssenza` toglie il tetto al proprio sollevamento con uno spaziatore
+   alto due schermate e un margine negativo identico sul piede (vedi il componente:
+   è ciò che ha chiuso il bloccante R21, il pulsante coperto dalla barra a ogni
+   altezza di telefono). La somma è zero per l'ALTEZZA del contenitore — misurato,
+   i pannelli con e senza restano alti uguali al pixel — ma NON per l'area
+   SCORRIBILE: lo spaziatore è un box alto 200vh che sborda oltre il fondo della
+   card, e `scrollHeight` del documento lo conta.
+
+   Misurato il 2026-08-08 sulla pagina vera (server compilato, sessione vera,
+   390×731): documento 2147 px con la riserva, **1060 senza**. Cioè il genitore
+   che scorre trova, dopo l'elenco, un'altra schermata e mezza di NULLA. È anche
+   ciò che ha fatto fallire l'ultimo passo del percorso Maestro su iPhone: dopo
+   l'annullamento lo scroll finiva in quella coda e non ritrovava più l'elenco.
+
+   `contain: paint` dice al browser che niente di questa card va disegnato fuori
+   dai suoi confini: lo spaziatore smette di sbordare e l'area scrollabile torna
+   quella vera. La meccanica della riserva NON cambia — è il vincolo dello sticky
+   a contare, e quello vive nei margini. Misurato a 390×568/640/731:
+
+     senza riserva      cta coperta 17 px a 568 · documento 980
+     riserva (oggi)     cta scoperta          · documento 1713…2039  ← la coda
+     riserva + contain  cta scoperta          · documento 996        ← qui
+
+   e la geometria del piede è IDENTICA nei due casi (x 16→374, y 489→568): non
+   viene ritagliato niente, perché i margini negativi lo portano esattamente ai
+   bordi della card, non oltre.
+
+   ⚠️ `contain: paint` rende la card il contenitore di riferimento per i
+   discendenti `position: fixed`. Verificato prima di adottarlo: nelle due
+   schermate che ospitano il piede non ce n'è nessuno. Chi ne aggiungerà uno qui
+   dentro deve saperlo — ed è il motivo per cui questa regola ha un nome parlante
+   invece di essere una utility sparsa nel markup.
+   ============================================================================= */
+.kv-ospita-piede {
+  contain: paint;
+}
+
+/* =============================================================================
+   LA FASCIA DELLA DYNAMIC ISLAND — dipinta dal CONTENITORE, non dall'intestazione.
+
+   Rilievo R26 del quinto collaudo (2026-08-08), simulatore iOS: con la tastiera
+   aperta sul campo «Motivo» l'intestazione verde sparisce e il contenuto della
+   pagina risale nella fascia riservata all'isola — l'etichetta «Giorno
+   dell'assenza» e il valore della data finiscono lassù, senza barra di stato
+   visibile.
+
+   La causa è che quella fascia, oggi, la dipinge SOLO `.kv-appbar` col suo
+   `padding-top` (regola qui sopra): è l'intestazione a fare da fondale. Ma
+   l'intestazione è `sticky top-0`, cioè ancorata al viewport di LAYOUT, e quando
+   la tastiera accorcia il viewport VISUALE la WKWebView la porta fuori dalla
+   vista. Sparita lei, sparisce il fondale, e in quella fascia si vede quello che
+   passa.
+
+   Qui il fondale diventa una cosa a sé, `fixed`, che non dipende da nessuno
+   scorrimento e da nessun elemento del contenuto. È OPACO e sta SOPRA il
+   contenuto (`z-index: 60`): quando qualcosa risale lassù, ci finisce sotto
+   invece che sopra, che è la sola differenza che l'occhio nota.
+
+   Perché `z-index: 60` e non di più: sopra l'AppBar (30), il piede dell'azione
+   (40) e la barra di navigazione (50) — cioè sopra tutto il chrome di pagina — e
+   SOTTO i fogli e i modali (80…120), che coprono lo schermo per loro conto e si
+   portano il proprio fondo. `pointer-events: none` perché è un fondale, non un
+   comando: non deve rubare un tocco a niente.
+
+   Fuori dall'app nativa non esiste: la regola è dentro `.cap-native`, e comunque
+   `env(safe-area-inset-top)` vale 0 nel browser e su Android (status bar solida),
+   quindi l'altezza è zero e non si dipinge niente.
+
+   ⚠️ Questa è METÀ del rimedio, ed è la metà senza rischi. Non impedisce al
+   contenuto di risalire: lo nasconde. L'altra metà — impedire alla pagina di
+   scorrere oltre il proprio limite quando la tastiera è aperta — cambia il
+   comportamento di ogni campo di ogni schermata dell'app nativa, e si decide
+   dopo averla misurata sul simulatore, non prima.
+   ============================================================================= */
+.cap-native [data-kv-shell]::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: var(--color-kidville-green);
+  z-index: 60;
+  pointer-events: none;
+}
+/* In Alto Contrasto l'intestazione è nera (`[data-contrast="high"] .kv-appbar`):
+   il fondale la segue, altrimenti sopra la barra nera comparirebbe una striscia
+   verde che in quella modalità non esiste da nessun'altra parte.
+   I due selettori sono sullo STESSO elemento — `<html>` porta sia `data-contrast`
+   (`app/layout.tsx`) sia `cap-native` (`lib/mobile/native-shell.ts`): scriverli
+   come discendenti darebbe una regola che non combacia mai. */
+[data-contrast='high'].cap-native [data-kv-shell]::before {
+  background: #000000;
 }
 
 /* =============================================================================
@@ -277,6 +417,34 @@ body {
 [data-contrast="high"] .kv-header-card {
   background: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
+}
+
+/* I RICOVERI DEL FUOCO delle schermate «comunica un'assenza» (`.kv-fuoco-esito`).
+
+   Sono i messaggi di esito — conferma, errore, paragrafo introduttivo — su cui
+   il codice sposta il fuoco quando il comando che l'utente ha premuto si smonta
+   (WCAG 2.4.3). Non sono controlli: hanno `tabIndex={-1}`, non entrano
+   nell'ordine di tabulazione, e il loro UNICO indicatore di fuoco è l'anello
+   dichiarato con `focus:ring-2 focus:ring-kidville-green`.
+
+   Ed è lì il difetto misurato il 2026-08-07: `ring-kidville-green` è una utility
+   nata da `@theme inline`, che porta l'hex #006A5F INLINATO nel `box-shadow` e
+   quindi NON partecipa al rimappaggio dei token dentro `[data-contrast="high"]`.
+   Risultato: nella stessa schermata, in Alto Contrasto, il fuoco era giallo su
+   bottoni e campi (`[data-contrast="high"] *:focus-visible`, qui sopra) e VERDE
+   su questi due punti. Il verde su card bianca resta a 6,51:1 — leggibile — ma
+   due linguaggi del fuoco nella stessa pagina sono un difetto di coerenza per
+   chi quella modalità la usa perché ne ha bisogno.
+
+   Perché una regola per-superficie e non un rimedio globale: `focus:ring-*`
+   compare su 148 elementi in `src/`, e ribaltarli tutti in blocco cambierebbe
+   schermate che nessuno ha misurato. Qui si copre la classe di elementi che ha
+   il problema, con lo stesso linguaggio del resto dell'Alto Contrasto: anello
+   giallo #FFE500 più il separatore nero che lo stacca dai fondi chiari.
+   `focus:` e non `:focus-visible`: il fuoco ci arriva DA CODICE, e le euristiche
+   di `focus-visible` su un elemento non interattivo non lo mostrerebbero. */
+[data-contrast="high"] .kv-fuoco-esito:focus {
+  box-shadow: 0 0 0 2px #FFE500, 0 0 0 4px #000000;
 }
 
 /* News — testo posato direttamente sul body (back-link, stati vuoti), fuori
@@ -599,6 +767,47 @@ input[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:f
 select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
 textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
   border-color: var(--color-kidville-neutral);
+}
+/* =============================================================================
+   …E LO STESSO CONTORNO SU UNA SUPERFICIE CREMA NON BASTA (collaudo 2026-08-08).
+
+   `neutral` #8A958F è tarato sul BIANCO delle card: 3,10:1, appena sopra i 3:1
+   che WCAG 2.2 AA 1.4.11 chiede al confine di un componente d'interfaccia. Sulla
+   crema #FEF1E4 lo stesso colore vale **2,79:1**, e sotto la soglia ci finisce
+   ogni campo posato su quella superficie. Misurato sul modulo «Nuova assenza»
+   della primaria, dove i due campi stanno dentro un pannello `bg-kidville-cream`:
+   il riempimento non aiuta — bianco su crema è 1,11:1 — quindi il contorno è
+   l'UNICO indizio di dove comincia il campo. Gli stessi due campi, sulla
+   schermata gemella, stanno su bianco e passano.
+
+   I due numeri il repo li conosceva già: `src/components/ui/Btn.tsx:19` li
+   scrive entrambi («3,10:1 su bianco, 2,79:1 su crema») senza collegarli a
+   questo caso.
+
+   Il rimedio è agganciato alla SUPERFICIE e non al file: correggere il colore
+   dentro `ComunicaAssenzaCard` avrebbe chiuso il sintomo lasciando aperta la
+   regola, e la prossima superficie crema con un campo dentro avrebbe ripetuto il
+   difetto — che è la forma di errore che questo ciclo ha già pagato tre volte.
+   `sub` #55615C su crema vale 5,33:1, e sul riempimento bianco del campo 6,46:1:
+   il confine si vede da entrambi i lati.
+
+   Specificità (0,3,1) — un pesetto in più della regola qui sopra, quindi vince
+   sulla crema e la lascia intatta ovunque. Resta SOTTO al blocco dell'hover e a
+   quello dell'Alto Contrasto, che vengono dopo e hanno lo stesso peso: al
+   passaggio del mouse il contorno va al verde pieno (5,86:1 su crema) e in Alto
+   Contrasto resta nero. Lock: `__tests__/a11y/contrasto-campi-assenza.test.tsx` §4,
+   che risolve la cascata e misura il rapporto invece di guardare le classi.
+   ============================================================================= */
+.bg-kidville-cream input[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream select[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream textarea[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream input[class*="border-kidville-muted"]:not(:focus),
+.bg-kidville-cream select[class*="border-kidville-muted"]:not(:focus),
+.bg-kidville-cream textarea[class*="border-kidville-muted"]:not(:focus),
+.bg-kidville-cream input[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+.bg-kidville-cream select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
+.bg-kidville-cream textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
+  border-color: var(--color-kidville-sub);
 }
 /* 🟠 design #2 del collaudo 2026-08-02, chiuso qui.
    La regola qui sopra si sfila solo con `:not(:focus)`: l'HOVER non era escluso,
@@ -1053,6 +1262,24 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hov
    `opacity: 1` perché Firefox applica di suo un'opacità al segnaposto.
    In Alto Contrasto la carta pubblica resta BIANCA (blocco «1 · La carta»):
    l'inchiostro va a nero pieno, 21:1. Lock: contrasto-cascata §10. */
+/* Il segnaposto non si sbiadisce OLTRE il colore che gli è stato dato (2026-08-07).
+   La regola qui sopra vale solo dentro `.kv-public`, ma il problema non è delle sole
+   superfici pubbliche: Firefox applica di suo `::placeholder { opacity: .54 }` — quirk
+   storico, documentato da MDN — e un segnaposto portato in regola con
+   `placeholder-kidville-sub` (#55615C, 6,46:1 su bianco) tornerebbe lì intorno a 2,3:1,
+   cioè al difetto appena chiuso, riaperto da un browser. Il caso che pesa è il campo
+   data di «Comunica un'assenza»: è MASCHERATO, accetta solo `gg/mm/aaaa`, e quel formato
+   il segnaposto lo dice.
+   Qui si toglie SOLO l'opacità, mai il colore: se questa regola dichiarasse anche un
+   `color:` scavalcherebbe in blocco ogni `placeholder-*` scritto nei componenti (le
+   utility Tailwind sono in `@layer utilities` e perdono contro qualunque regola
+   non-layered), e nessuno se ne accorgerebbe finché non fosse sbagliato. Togliere
+   un'alfa può solo ALLONTANARE il testo dal fondo, mai avvicinarlo: è un rimedio che
+   non ha un verso in cui peggiora. Lock: `__tests__/a11y/contrasto-campi-assenza.test.tsx`. */
+::placeholder {
+  opacity: 1;
+}
+
 .kv-public ::placeholder {
   color: var(--color-kidville-sub);
   opacity: 1;

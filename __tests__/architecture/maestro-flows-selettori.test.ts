@@ -520,25 +520,12 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
   // muove. Da qui la versione della WebView dentro `device`: una riga che non
   // dice su quale motore è stata presa non è ripetibile. (Un campo dedicato
   // sarebbe meglio di una stringa libera: vedi il report dello step.)
-  {
-    flow: 'android-percorso-genitore.yaml',
-    data: '2026-08-02',
-    device:
-      'emulatore KV-play-phone · Android 16 (API 36) · WebView com.google.android.webview ' +
-      '150.0.7871.181 · APK su http://10.0.2.2:3100 (`next start`, build di produzione)',
-    esito:
-      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due, col selettore alternato. ' +
-      'Il primo tentativo di conferma era fallito sulla pagina di LOGIN, e la causa — ' +
-      'misurata, e del tutto esterna ai flow — vale la pena tenerla scritta: il server ' +
-      ':3100 girava da ore su una build che nel frattempo era stata sostituita, e serviva ' +
-      'HTML con chunk che su disco non esistevano più → niente CSS → React non idrata → ' +
-      'i campi del form restano vuoti e «Accedi» risulta COMPLETED senza inviare niente. ' +
-      'Sullo schermo restava il messaggio nativo del browser «Please fill out this field», ' +
-      'e il flow moriva due passi dopo su «Dashboard», facendo sembrare che la dashboard ' +
-      'non ci fosse. Un `next build` NON lo ripara: il manifest è in memoria, serve il ' +
-      'RIAVVIO del server. Verde dopo il riavvio, senza toccare il flow.',
-    firma: 'aa404640c8ce',
-  },
+  // ⚠️ `android-percorso-genitore.yaml` STAVA QUI con la firma aa404640c8ce (27
+  // COMPLETED su KV-play-phone il 2026-08-02). Il 2026-08-07 il flow è stato
+  // riscritto e la riga è scesa in FLOW_SENZA_ESECUZIONE_VERDE, dove il motivo
+  // conserva per intero anche la lezione di quel giorno (il server :3100 che
+  // serviva una build sostituita). Stessa sorte per `ios-percorso-genitore.yaml`,
+  // che stava qui con la firma cfd3e836a2f5.
   {
     flow: 'android-percorso-docente.yaml',
     data: '2026-08-02',
@@ -629,21 +616,8 @@ const ESECUZIONI_VERDI: EsecuzioneMisurata[] = [
       'versione di questa riga diceva «su iOS non era mai stato provato»: era falsa.',
     firma: '46bf862d8936',
   },
-  {
-    flow: 'ios-percorso-genitore.yaml',
-    data: '2026-08-02',
-    device:
-      'simulatore iPhone 17 Pro · iOS 26.2 · App.app con CAP_SERVER_URL=http://localhost:3100 ' +
-      '(`next start`, build di produzione)',
-    esito:
-      '27 COMPLETED, 0 FAILED, DUE esecuzioni su due. Già verde il 2026-08-01 (tre esecuzioni, ' +
-      '24 e 30 comandi, 0 FAILED). Il 31/07 era ROSSO al 13° comando su `next dev`, ma con ' +
-      'selettori DIVERSI (riscritti dal commit 462630c del 01/08): il sospetto di allora — ' +
-      '«è l\'ambiente, non i selettori» — NON è isolato da questi dati, perché fra le due ' +
-      'misure sono cambiate entrambe le cose. La prima versione di questa riga lo dava per ' +
-      'misurato: diceva più di quanto i log dimostrino.',
-    firma: 'cfd3e836a2f5',
-  },
+  // ⚠️ `ios-percorso-genitore.yaml` STAVA QUI con la firma cfd3e836a2f5 — vedi la
+  // nota gemella più sopra e il motivo in FLOW_SENZA_ESECUZIONE_VERDE.
   {
     flow: 'ios-percorso-docente.yaml',
     data: '2026-08-02',
@@ -671,6 +645,7 @@ const FLOW_SENZA_ESECUZIONE_VERDE: { flow: string; motivo: string }[] = [
   // I TRE FLOW iOS SONO USCITI DA QUI il 2026-08-02: eseguiti due volte ciascuno su
   // iPhone 17 Pro / iOS 26.2 con l'app servita da `next start`, tutti verdi. Le loro
   // righe sono in ESECUZIONI_VERDI, con data, device, esito e firma.
+  // I DUE PERCORSI GENITORE CI SONO RIENTRATI il 2026-08-07: riscritti, non rieseguiti.
   {
     flow: 'android-screenshot-playstore.yaml',
     motivo:
@@ -679,12 +654,138 @@ const FLOW_SENZA_ESECUZIONE_VERDE: { flow: string; motivo: string }[] = [
       'toccava. Contiene anche una spiegazione oggi smentita (vedi la deroga in ' +
       'AFFERMAZIONI_SMENTITE): chi lo riesegue corregga entrambe le cose e tolga questa riga.',
   },
+  {
+    flow: 'android-percorso-genitore.yaml',
+    motivo:
+      // ─── 2026-08-08, SECONDA SERATA · TERZO TENTATIVO, TERZA CAUSA D'AMBIENTE ───
+      'TENTATO SUL DEVICE il 2026-08-08 alle 02:1x-02:3x, TRE volte, e NON arrivato in fondo. ' +
+      'Le tre correzioni di oggi (l\'etichetta «Giorno dell\'assenza», il sottotitolo della ' +
+      'conferma, l\'ancora dopo il `back`) restano quindi NON provate su emulatore, e questa ' +
+      'riga non si sposta finché non lo saranno. Cosa è successo, misurato: al terzo lancio il ' +
+      'flow ha superato login, dashboard e i primi 12 comandi, poi è morto sul gate della home ' +
+      '(«Ecco le novità»). La causa NON è il flow: mentre girava, un altro lavoro in parallelo ' +
+      'ha ricostruito l\'applicazione sotto al server di collaudo — `.next/BUILD_ID` riscritto ' +
+      'alle 02:29:36 e di nuovo alle 02:40:49 — e da quel momento :3100 serve HTML che punta a ' +
+      'file che su disco non ci sono più. Prova diretta: `/auth/login` cita tre fogli di stile, ' +
+      'due rispondono 200 e `/_next/static/chunks/3zhxck7dz54r9.css` risponde **HTTP 500** ' +
+      '(`ls` su disco: No such file). Effetto a schermo: la login si vede in Times New Roman, ' +
+      'senza CSS; React non idrata; `inputText` risulta COMPLETED e il campo resta col ' +
+      'segnaposto (verificato con un flow di sonda: dopo aver digitato l\'email, ' +
+      '`assertVisible ".*genitore.*"` FALLISCE). È la stessa trappola già descritta più in ' +
+      'basso in questa riga, alla data del 2026-08-02, ripetuta identica. Il rimedio è il ' +
+      'RIAVVIO di `next start`, che non è nel perimetro di chi ha scritto queste correzioni ' +
+      '(il mandato dice esplicitamente di non riavviare il server, che altri stanno usando). ' +
+      'Per farlo scendere di qui: riavviare :3100 sulla build corrente, verificare che i CSS ' +
+      'citati da /auth/login rispondano tutti 200, poi `export KV_TEST_PASSWORD=…; ' +
+      'KV_DEVICE=emulator-5554 .claude/maestro-flows/esegui.sh android-percorso-genitore.yaml`. ' +
+      '─── Storia precedente ─── ' +
+      'RISCRITTO UNA SECONDA VOLTA il 2026-08-08 e di nuovo NON eseguito. Questa volta però ' +
+      'la riscrittura NON è una teoria: parte dai fallimenti MISURATI del collaudo del ' +
+      '2026-08-07 su questo stesso file — il gate «Prossimi appuntamenti» che scade sempre ' +
+      '(nodo [0,0][0,0]), le asserzioni dell\'elenco eseguite prima di scrollarci sopra, e le ' +
+      'due prove negative vacue (17/17 COMPLETED di /tmp/kv-and-vacuita.yaml SENZA che fosse ' +
+      'successo niente). Le correzioni sono ancorate a nodi con bounds misurati quel giorno. ' +
+      'PERCHÉ NON È STATO ESEGUITO, e sono due ragioni indipendenti, entrambe d\'ambiente: ' +
+      '(1) il server di collaudo :3100 era APPESO — processo `next-server` al 100% di CPU per ' +
+      '34 minuti dentro un ciclo di eccezioni non catturate (`sample`: uv__run_check → ' +
+      'CheckImmediate → TriggerUncaughtException in loop), 30 connessioni ESTABLISHED e mai ' +
+      'una risposta, `curl -m 20 /api/health` → HTTP 000; fermare quel processo non è ' +
+      'nel perimetro dell\'esecutore. (2) `KV_TEST_PASSWORD` non è nell\'ambiente e non sta in ' +
+      'nessun file del repo (docs/env.md: sta nel gestore di credenziali del titolare), quindi ' +
+      '`esegui.sh` esce prima di toccare il device. Nessuna delle due si aggira scrivendo un ' +
+      'numero in questo registro. ' +
+      'Per farlo scendere di qui: riavviare :3100 (`npx next start -p 3100`, `curl -s ' +
+      'localhost:3100/api/health` deve rispondere), poi `export KV_TEST_PASSWORD=…; ' +
+      '.claude/maestro-flows/esegui.sh android-percorso-genitore.yaml` con l\'emulatore ' +
+      'KV-play-phone acceso. ' +
+      '─── Storia precedente, che resta vera e utile ─── ' +
+      'RISCRITTO il 2026-08-07 e NON rieseguito: la firma era aa404640c8ce (27 COMPLETED, 0 ' +
+      'FAILED, due esecuzioni su due su KV-play-phone · Android 16 API 36 · WebView ' +
+      '150.0.7871.181 · APK su http://10.0.2.2:3100, il 2026-08-02). Quella misura non vale ' +
+      'più: la tappa «Comunicazioni» è stata rifatta (il tap ora porta la guardia ' +
+      'width/height, l\'arrivo si prova su un testo della sola pagina di destinazione e la ' +
+      'partenza su un testo della sola home) e sono nate le tappe 4-5, che INVIANO e ' +
+      'ANNULLANO una comunicazione d\'assenza. Perché non è stato rieseguito: il server di ' +
+      'collaudo :3100 non parla col database (SUPABASE_SERVICE_ROLE_KEY non registrata sul ' +
+      'progetto, «Unregistered API key», /api/health 503) e NESSUN account supera il login — ' +
+      'guasto d\'ambiente, non del flow. Per farlo scendere di qui: sistemare la chiave, ' +
+      'riavviare il server (`curl -s localhost:3100/api/health` deve dire "ok"), poi ' +
+      '`export KV_TEST_PASSWORD=…; .claude/maestro-flows/esegui.sh ' +
+      'android-percorso-genitore.yaml`. ' +
+      'Vale la pena tenere anche la lezione del 2026-08-02, che sta in agguato a ogni ' +
+      'riesecuzione: quel giorno il flow era rosso sulla LOGIN perché :3100 girava da ore su ' +
+      'una build sostituita e serviva HTML con chunk non più su disco → niente CSS → React ' +
+      'non idrata → i campi restano vuoti e «Accedi» risulta COMPLETED senza inviare niente. ' +
+      'Un `next build` NON lo ripara: serve il RIAVVIO del server.',
+  },
+  {
+    flow: 'ios-percorso-genitore.yaml',
+    motivo:
+      // ─── 2026-08-08, SECONDA SERATA · TENTATO DUE VOLTE, STESSA CAUSA DEL GEMELLO ───
+      'TENTATO SUL SIMULATORE il 2026-08-08 alle 02:3x, DUE volte, morto entrambe le volte sul ' +
+      'gate della home dopo il login. La correzione di oggi (l\'ancora della conferma, che ' +
+      'citava una frase che l\'app non pronuncia più — «La scuola è stata notificata ' +
+      'dell\'assenza…») resta NON provata sul device. Causa misurata, identica a quella del ' +
+      'gemello Android e indipendente dal flow: il server di collaudo :3100 serve una build ' +
+      'sostituita sotto di lui (`/_next/static/chunks/3zhxck7dz54r9.css` → HTTP 500, il file su ' +
+      'disco non esiste), quindi niente CSS e niente idratazione. Lo screenshot della login lo ' +
+      'mostra senza stili, in carattere con grazie; una sonda che digita l\'email e poi la ' +
+      'cerca nell\'albero fallisce, cioè il testo non arriva nel campo. Le credenziali NON ' +
+      'c\'entrano: provate contro `auth/v1/token` rispondono 200 per tutti e tre gli account ' +
+      'genitore TEST. Nessuna scrittura è arrivata su `presenze` (verificato: 0 righe create ' +
+      'nelle ultime 3 ore, 0 notifiche `assenza_comunicata`). ' +
+      'Per farlo scendere di qui: riavviare :3100 sulla build corrente, poi ' +
+      '`export KV_TEST_PASSWORD=…; KV_DEVICE=<udid> .claude/maestro-flows/esegui.sh ' +
+      'ios-percorso-genitore.yaml`. ' +
+      '─── Storia precedente ─── ' +
+      'RISCRITTO UNA SECONDA VOLTA il 2026-08-08 e di nuovo NON eseguito, per le stesse due ' +
+      'ragioni d\'ambiente del gemello Android (server :3100 appeso al 100% di CPU in un ciclo ' +
+      'di eccezioni non catturate, HTTP 000 per 34 minuti; `KV_TEST_PASSWORD` fuori ' +
+      'dall\'ambiente e fuori dal repo). Le correzioni partono dai fallimenti MISURATI del ' +
+      '2026-08-07 su questo file: l\'`assertNotVisible ".*Tutte le sezioni.*"` che combaciava ' +
+      'con l\'aria-label del quinto tab e non poteva essere vera su nessuna pagina (17.033 ms, ' +
+      'l\'intera finestra di ritentativo); il gate «Prossimi appuntamenti» passato 1 volta su ' +
+      '3 perché su iOS l\'albero espone SOLO il viewport; la conferma cercata con ' +
+      '«.*Assenza comunicata.*», soddisfatta dall\'aria-label del bottone ANNULLA (COMPLETED a ' +
+      '174 ms, con lo schermo ancora su «INVIO…»); le asserzioni dell\'elenco a scroll zero, ' +
+      'dove quei nodi non esistono. Il simulatore iPhone 17 Pro (B9FA2E7A-…) era acceso e ' +
+      'raggiungibile: ciò che mancava era l\'app servita, non il device. ' +
+      'Per farlo scendere di qui: riavviare :3100, poi `export KV_TEST_PASSWORD=…; ' +
+      'KV_DEVICE=<udid> .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml`. ' +
+      '─── Storia precedente, che resta vera e utile ─── ' +
+      'RISCRITTO il 2026-08-07 e NON rieseguito: la firma era cfd3e836a2f5 (27 COMPLETED, 0 ' +
+      'FAILED, due esecuzioni su due su iPhone 17 Pro · iOS 26.2 · CAP_SERVER_URL=' +
+      'http://localhost:3100, il 2026-08-02; già verde il 2026-08-01 con tre esecuzioni). ' +
+      'Stessa riscrittura del gemello Android — arrivo e partenza provati su testi univoci, ' +
+      'più le tappe che inviano e annullano la comunicazione d\'assenza — con una differenza ' +
+      'dichiarata: su iOS il tap sul tab resta per solo testo, perché i bounds dei nodi fuori ' +
+      'schermo non sono mai stati misurati e una guardia width/height inventata sarebbe una ' +
+      'difesa finta. Non rieseguito per lo stesso guasto d\'ambiente (:3100 senza database, ' +
+      'login impossibile). Per farlo scendere di qui: `export KV_TEST_PASSWORD=…; ' +
+      'KV_DEVICE=<udid> .claude/maestro-flows/esegui.sh ios-percorso-genitore.yaml`.',
+  },
 ];
 
 // 2026-08-02: sceso da 4 a 1. I tre flow iOS erano qui dentro perché i selettori erano
 // stati corretti il 01/08 e nessuno li aveva più lanciati — il gate era verde proprio
 // perché la prova MANCAVA, ed era dichiarata. Ora la prova c'è.
-const TETTO_FLOW_SENZA_ESECUZIONE_VERDE = 1;
+//
+// 2026-08-07: RISALITO da 1 a 3, ed è la prima volta che questo numero sale. Va detto
+// per esteso, perché il commento qui sopra dice che il tetto «può solo scendere» e
+// alzarlo è esattamente la mossa che il registro esiste per rendere difficile.
+// Cosa è successo: i due percorsi genitore sono stati riscritti per chiudere il difetto
+// «il flow dichiara COMPLETED una tappa che non ha aperto» e per collaudare davvero
+// «Comunica un'assenza». Riscritti, NON rieseguiti — e non per pigrizia: il server di
+// collaudo :3100 non ha accesso al database (chiave Supabase non registrata,
+// /api/health 503) e nessun account supera il login, quindi nessun flow che faccia
+// login può arrivare in fondo. Le alternative erano due, e nessuna delle due è questa:
+//   · lasciare le righe in ESECUZIONI_VERDI aggiornando le firme a mano — cioè
+//     dichiarare provato ciò che non lo è, che è LETTERALMENTE il difetto che questo
+//     registro è nato per impedire;
+//   · non toccare i flow, e tenersi un collaudo che mente.
+// Il tetto torna a 1 quando i due percorsi girano verdi su device: comandi esatti nel
+// `motivo` di ciascuno. Chi li riesegue tolga la sua riga e rimetta questo numero.
+const TETTO_FLOW_SENZA_ESECUZIONE_VERDE = 3;
 
 function leggiFlow(nome: string): string {
   return fs.readFileSync(path.join(DIR_FLOWS, nome), 'utf8');
@@ -1460,5 +1561,1465 @@ describe('lock: flow Maestro (le teorie scritte nei commenti)', () => {
         `${TETTO_DEROGHE_STORICHE}. Il tetto si abbassa quando si bonifica un file, ` +
         'non si alza per farci stare una frase nuova.',
     ).toBeLessThanOrEqual(TETTO_DEROGHE_STORICHE);
+  });
+});
+
+/**
+ * ─── R16 · LE ETICHETTE CHE SULLA HOME DEL GENITORE ESISTONO DUE VOLTE ─────
+ *
+ * Collaudo mobile-android del 2026-08-07, `android-percorso-genitore.yaml`:
+ *   Tap on "Avvisi"... COMPLETED
+ *   Assert that "Comunicazioni" is visible... COMPLETED
+ * e lo screenshot dello step mostra la HOME, con la pillola verde su HOME.
+ * Il flow ha dichiarato superata una tappa che non ha mai aperto — ed è la faccia
+ * SILENZIOSA già descritta in cima a questo file, vista succedere su un flow
+ * committato.
+ *
+ * MISURA (`maestro hierarchy`, iPhone 17 Pro / iOS 26.2, Maestro 2.6.1, home
+ * genitore, foglio Menu CHIUSO, 2026-08-08 — presa per verificare R21 e valida
+ * anche qui): l'unico nodo che contiene «tutte le sezioni» è
+ *   'Menu · tutte le sezioni'  [311,779][386,839]
+ * cioè il quinto tab; col foglio APERTO se ne aggiunge un secondo, l'occhiello
+ *   'TUTTE LE SEZIONI'         [37,162][123,175]
+ * Da qui la doppia natura di quel testo: ancorato è l'occhiello del foglio, non
+ * ancorato è anche il tab — che è su ogni pagina.
+ *
+ * MISURA (`adb shell uiautomator dump`, home genitore, foglio Menu CHIUSO):
+ *   text="COMUNICAZIONI" bounds="[0,0][0,0]"
+ *   text="AVVISI"        bounds="[0,0][0,0]"
+ *   text="COMUNICAZIONI" bounds="[0,0][0,0]"
+ *   text="AVVISI"        bounds="[506,1803][572,1834]"
+ * `adb shell input tap 539 1818` (centro del nodo con bounds veri) apre davvero
+ * la pagina: il tab funziona, il selettore no.
+ *
+ * DA DOVE VENGONO I DOPPIONI. Il rapporto del collaudo lo attribuiva al foglio
+ * «tutte le sezioni» che «resta nel DOM anche da chiuso». Quella spiegazione non
+ * regge il conto: il foglio porta UNA sola «Comunicazioni»
+ * (`nav.json:gruppoComunicazioni`) e `BottomNav.tsx` lo smonta con
+ * `<AnimatePresence>{showMenu && …}</AnimatePresence>`. I due nodi misurati
+ * corrispondono invece esattamente ai DUE `SectionHeader` della Home
+ * (`parent/page.tsx:145` e `:153`), che rendono entrambi
+ * `home.json:eyebrowComunicazioni`; e la seconda «Avvisi» è il TITOLO di sezione
+ * `home.json:titoloAvvisi`, identico all'etichetta del tab `nav.json:tabAvvisi`.
+ * Le due sezioni stanno sotto la piega, ed è la causa `altezza-0` già registrata
+ * in CTA_SOTTO_LA_PIEGA. ⚠️ Questa ricostruzione è DEDOTTA dai cataloghi e dal
+ * componente, non da un dump che isoli i nodi: chi rimette le mani qui la
+ * confermi con `uiautomator dump` prima di darla per certa. Ciò che è misurato
+ * sono i quattro nodi qui sopra.
+ *
+ * È la stessa classe di ETICHETTE_AMBIGUE_COCKPIT (tile + tab per «Mensa» e
+ * «Anagrafica»): la conoscenza c'era, non era mai stata portata sulla home del
+ * genitore.
+ *
+ * `soloDestinazione` / `soloPartenza` sono la coppia che rende la tappa
+ * INCAPACE di mentire: un testo che esiste solo dove si va, e uno che esiste
+ * solo da dove si viene. Il secondo è la parte che conta.
+ *
+ * ⚠️ MA IL PERCHÉ SCRITTO QUI IL 2026-08-07 ERA FALSO, e va detto per esteso
+ * perché è la trappola in cui questo stesso registro è caduto. Diceva: «se il
+ * tap non è atterrato, il nodo FANTASMA della pagina di partenza è ancora lì e
+ * fa FALLIRE l'assertNotVisible; lo stesso nodo che prima rendeva la tappa verde
+ * a torto ora la rende rossa a ragione». Misurato il giorno dopo
+ * (`/tmp/kv-and-vacuita.yaml`, 17/17 COMPLETED): **falso**. Un nodo fantasma è
+ * fantasma proprio perché ha `bounds="[0,0][0,0]"`, e Maestro 2.6.1 non lo
+ * considera visibile: `assertNotVisible` su di lui passa SEMPRE, anche restando
+ * fermi sulla pagina di partenza. La proprietà che avrebbe dovuto far fallire
+ * l'asserzione è esattamente quella che la rende vacua.
+ *
+ * La coppia resta giusta; ciò che era sbagliato è la scelta del testo. Il
+ * marcatore di partenza deve essere VISIBILE sulla pagina di partenza — sopra la
+ * piega, misurato lì — altrimenti la difesa non spara mai. Da qui i `Marcatore`
+ * con i frammenti e la loro fonte, e la regola R22 che vieta di ancorarsi a ciò
+ * che è stato misurato fuori dal viewport.
+ */
+/**
+ * ⚠️ RETTIFICA DEL 2026-08-07 (secondo collaudo, entrambe le piattaforme).
+ * `soloDestinazione` e `soloPartenza` erano due STRINGHE, ed erano **le due
+ * peggiori possibili**: «Le prese visione vengono registrate automaticamente.»
+ * (footer di /parent/avvisi) e «Prossimi appuntamenti» (ultima sezione della
+ * home). Tutte e due stanno SOTTO LA PIEGA, cioè in nessuno dei due alberi di
+ * accessibilità — e questo registro le IMPONEVA. Il risultato misurato:
+ *   · la prova positiva falliva sempre (Android: `assertVisible "Le prese
+ *     visione…"` FAILED col tap sul tab andato a buon fine);
+ *   · la prova negativa era VACUA (Android: `assertNotVisible "Prossimi
+ *     appuntamenti"` COMPLETED **stando sulla home**).
+ * Cioè: la regola nata per rendere una tappa incapace di mentire prescriveva
+ * un'ancora che mentiva sempre in un verso e un'ancora che mentiva sempre
+ * nell'altro. Ora i marcatori sono LISTE di frammenti con la loro fonte nel
+ * catalogo, e R16a verifica che ogni frammento sia ancora lì: il registro non
+ * può più prescrivere un testo che nessuno ha misurato a schermo.
+ *
+ * Più d'un frammento significa ancora ALTERNATIVA: il testo cambia con lo stato
+ * dei dati (il sottotitolo di /parent/avvisi ha tre facce — «N avvisi da
+ * gestire», «Tutto in regola ✓», «Comunicazioni dalla scuola» durante il
+ * caricamento) e chi ne conosce una sola è rosso a giorni alterni. È la stessa
+ * lezione di R12, applicata alle prove di navigazione.
+ */
+type Marcatore = {
+  frammenti: { testo: string; fonte: { file: string; chiave: string } }[];
+  /** Perché è raggiungibile senza scroll: la misura, non l'intenzione. */
+  nota: string;
+};
+
+type EtichettaAmbiguaHome = {
+  /** Il testo, nella forma nuda che i flow non possono più usare. */
+  selettore: string;
+  misurato: string;
+  /** `misurato` = visto sull'albero; `dedotto` = ricavato dai cataloghi. */
+  esito: 'misurato' | 'dedotto';
+  prova: string;
+  /** I punti del catalogo che producono lo STESSO testo: due o più = ambiguo. */
+  fonti: { file: string; chiave: string; normalizzato?: boolean }[];
+  /** Testo che esiste SOLO sulla pagina di destinazione (prova POSITIVA). */
+  soloDestinazione?: Marcatore;
+  /** Testo che esiste SOLO sulla pagina di partenza (prova NEGATIVA). */
+  soloPartenza?: Marcatore;
+};
+
+/**
+ * L'hero della home genitore: la prova NEGATIVA di aver lasciato la home.
+ *
+ * Sta in cima alla pagina, quindi è nel viewport di entrambe le piattaforme —
+ * ed è la differenza che conta rispetto a «Prossimi appuntamenti», che chiudeva
+ * la home in fondo. Misurato su iOS a `[36,304][183,320]`, presente 3 volte su 3.
+ * Nei flow si scrive `.*Ecco le novit.*`: il nodo porta l'accento e l'emoji
+ * finale, e il match di Maestro è FULL-match (misurato: «Ecco le novità di oggi»
+ * fallisce, «Ecco le novità di oggi.*» passa).
+ */
+const HERO_HOME_GENITORE: Marcatore = {
+  frammenti: [{ testo: 'Ecco le novit', fonte: { file: 'messages/it/home.json', chiave: 'heroSottotitolo' } }],
+  nota:
+    'Sottotitolo dell\'hero, sopra la piega su entrambe le piattaforme (iOS: [36,304][183,320], ' +
+    '3 dump su 3 il 2026-08-07). Reso solo quando il nome del figlio è risolto ' +
+    '(`subtitle={firstName ? t(\'heroSottotitolo\') : undefined}`, parent/page.tsx:85): con un ' +
+    'account TEST senza figli collegati non ci sarebbe, e il rosso sarebbe dell\'ambiente.',
+};
+
+const ETICHETTE_AMBIGUE_HOME_GENITORE: EtichettaAmbiguaHome[] = [
+  {
+    selettore: 'Avvisi',
+    misurato: '2026-08-07',
+    esito: 'misurato',
+    prova:
+      'due nodi text="AVVISI" sulla home genitore: [0,0][0,0] e [506,1803][572,1834]. ' +
+      'Maestro prende il PRIMO, cioè quello a dimensione zero, e il tap finisce in (0,0).',
+    fonti: [
+      { file: 'messages/it/nav.json', chiave: 'tabAvvisi' },
+      { file: 'messages/it/home.json', chiave: 'titoloAvvisi' },
+    ],
+    soloDestinazione: {
+      frammenti: [
+        { testo: 'da gestire', fonte: { file: 'messages/it/avvisi.json', chiave: 'sottotitoloDaGestire' } },
+        { testo: 'Tutto in regola', fonte: { file: 'messages/it/avvisi.json', chiave: 'sottotitoloOk' } },
+        {
+          testo: 'Comunicazioni dalla scuola',
+          fonte: { file: 'messages/it/avvisi.json', chiave: 'sottotitoloCaricamento' },
+        },
+      ],
+      nota:
+        'Sottotitolo della PageHeaderCard di /parent/avvisi: sta in cima alla pagina ed è ' +
+        'l\'unico testo di quella schermata che sia insieme sopra la piega e univoco — ' +
+        'l\'occhiello («Comunicazioni») e il titolo («Avvisi») sono entrambi ambigui con la ' +
+        'home. Ha TRE facce a seconda dei dati (avvisi/page.tsx:119) e vanno coperte tutte, ' +
+        'altrimenti il flow è rosso i giorni in cui non c\'è niente da gestire.',
+    },
+    soloPartenza: HERO_HOME_GENITORE,
+  },
+  {
+    selettore: 'Comunicazioni',
+    misurato: '2026-08-07',
+    esito: 'misurato',
+    prova:
+      'due nodi text="COMUNICAZIONI" [0,0][0,0] sulla home genitore, più l\'eyebrow della ' +
+      'pagina di destinazione: come asserzione di arrivo è soddisfatta SENZA essersi mossi.',
+    fonti: [
+      { file: 'messages/it/avvisi.json', chiave: 'pageEyebrow' },
+      { file: 'messages/it/home.json', chiave: 'eyebrowComunicazioni' },
+      { file: 'messages/it/nav.json', chiave: 'gruppoComunicazioni' },
+    ],
+  },
+  {
+    // Il testo è cambiato il 2026-08-08 — era «Segnala assenza» — perché l'azione
+    // aveva QUATTRO nomi e questo era il fuori posto: il resto del prodotto (PRD,
+    // card della primaria, pulsante) dice «comunicare». L'AMBIGUITÀ NON È SPARITA
+    // col nome: `home.json:azioneAssenza` è stata cambiata insieme al titolo,
+    // apposta — se la home dicesse «Comunica un'assenza» e la pagina un'altra cosa,
+    // il genitore toccherebbe una cosa e ne aprirebbe un'altra. Le due fonti restano
+    // due, e questa voce con loro.
+    selettore: 'Comunica un’assenza',
+    misurato: '2026-08-07',
+    esito: 'dedotto',
+    prova:
+      'NON misurato sull\'albero: dedotto dai cataloghi. `home.json:azioneAssenza` vale ' +
+      '«Comunica\\nun’assenza» ed è l\'azione rapida della Home; il nome accessibile ' +
+      'appiattisce gli spazi interni (accname §4), quindi arriva identico al titolo della ' +
+      'pagina `parentServizi.json:attendanceTitolo`. Finché non c\'è un dump che lo ' +
+      'smentisca, un flow che prova di essere ARRIVATO su /parent/attendance con quel ' +
+      'testo può essere soddisfatto dalla Home — che è dove si finisce quando il tap sul ' +
+      'foglio Menu non atterra. Il testo univoco costa zero: si usa quello.',
+    fonti: [
+      { file: 'messages/it/parentServizi.json', chiave: 'attendanceTitolo' },
+      { file: 'messages/it/home.json', chiave: 'azioneAssenza', normalizzato: true },
+    ],
+    soloDestinazione: {
+      frammenti: [
+        {
+          testo: 'Avvisa gli insegnanti in anticipo',
+          fonte: { file: 'messages/it/parentServizi.json', chiave: 'attendanceSottotitolo' },
+        },
+      ],
+      nota:
+        'Sottotitolo dell\'intestazione di /parent/attendance: in cima alla pagina, presente ' +
+        'in entrambi gli alberi (Android e iOS, 2026-08-07). Era «Comunica un’assenza alla ' +
+        'scuola», cioè il titolo ripetuto con tre parole in più: dal 2026-08-08 dice la cosa ' +
+        'che il titolo non dice (QUANDO si può comunicare) ed è lo stesso testo della card ' +
+        'della primaria — le due schermate della stessa funzione ora si somigliano. Vive su ' +
+        'due pagine e non più su una: /parent/primaria/assenze porta la stessa frase, ma non ' +
+        'è sul percorso di questo flow, e la pagina di PARTENZA (la home) non la contiene — ' +
+        'che è l\'unica proprietà che serve a una prova d\'arrivo.',
+    },
+    soloPartenza: HERO_HOME_GENITORE,
+  },
+];
+
+/** I due percorsi utente del genitore: sono loro a navigare la home di famiglia. */
+const FLOWS_GENITORE = ['android-percorso-genitore.yaml', 'ios-percorso-genitore.yaml'];
+
+/** Appiattisce gli spazi interni come fa il calcolo del nome accessibile. */
+function comeAccname(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+/** Il testo «nudo» di un selettore: senza ancore, alternative e punteggiatura regex. */
+function seleNudo(s: string): string {
+  return comeAccname(s.replace(/[\\^$*+?()[\]{}|.]/g, ' ')).toLowerCase();
+}
+
+/**
+ * Confronto fra il testo del CATALOGO e quello scritto in un flow, indifferente
+ * alla forma dell'apostrofo.
+ *
+ * I cataloghi usano l'apostrofo TIPOGRAFICO (U+2019: «Comunica un’assenza alla
+ * scuola»); i flow scrivono `.`, cioè il metacarattere regex, proprio per non
+ * dipendere da quale dei due caratteri arriva dall'albero di accessibilità. Un
+ * `includes` letterale non li riconoscerebbe uguali, e le regole qui sotto
+ * direbbero «manca la prova» a un flow che la prova ce l'ha. Il registro deve
+ * poter contenere il testo VERO dell'app: è la forma del flow ad adattarsi.
+ */
+function contieneTesto(corpo: string, testo: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[’‘'´]/g, '.');
+  return norm(corpo).includes(norm(testo));
+}
+
+describe('lock: flow Maestro (le etichette doppie della home genitore)', () => {
+  it('R16a · il registro delle etichette ambigue è ancora vero nei cataloghi', () => {
+    // Controllo di SCADENZA, sullo stampo di R8a: se qualcuno rinomina una delle due
+    // fonti, l'ambiguità sparisce e la regola smette di descrivere l'app.
+    const scaduti: string[] = [];
+    for (const e of ETICHETTE_AMBIGUE_HOME_GENITORE) {
+      const vive = e.fonti.filter((s) => {
+        const v = leggiCatalogo(s.file)[s.chiave];
+        if (typeof v !== 'string') return false;
+        return (s.normalizzato ? comeAccname(v) : v) === e.selettore;
+      });
+      if (vive.length < 2) {
+        scaduti.push(
+          `«${e.selettore}»: ${vive.length} fonte/i su ${e.fonti.length} portano ancora quel ` +
+            'valore. L\'ambiguità potrebbe non esserci più: RIMISURARE con `uiautomator dump` ' +
+            'prima di fidarsi di R16b.',
+        );
+      }
+      // E i marcatori che il registro PRESCRIVE devono esistere davvero nel catalogo.
+      // Senza questo controllo il registro può imporre ai flow un testo che l'app non
+      // produce più — che è esattamente com'è andata fino al 2026-08-07, quando
+      // prescriveva un footer fuori viewport e una sezione in fondo alla home.
+      for (const [ruolo, m] of [
+        ['soloDestinazione', e.soloDestinazione],
+        ['soloPartenza', e.soloPartenza],
+      ] as const) {
+        if (!m) continue;
+        for (const fr of m.frammenti) {
+          const valore = leggiCatalogo(fr.fonte.file)[fr.fonte.chiave];
+          if (typeof valore !== 'string') {
+            scaduti.push(`${fr.fonte.file}: la chiave ${fr.fonte.chiave} non esiste più`);
+            continue;
+          }
+          if (!contieneTesto(valore, fr.testo)) {
+            scaduti.push(
+              `«${e.selettore}» · ${ruolo}: il frammento «${fr.testo}» non è più dentro ` +
+                `${fr.fonte.file}:${fr.fonte.chiave} = ${JSON.stringify(valore)}. I flow ` +
+                'cercherebbero un testo che l\'app non produce.',
+            );
+          }
+        }
+      }
+    }
+    expect(scaduti, 'Registro R16 scaduto: la regola non descrive più i cataloghi.').toEqual([]);
+  });
+
+  it('R16b · nessuna ASSERZIONE dei flow genitore si regge su un\'etichetta doppia', () => {
+    // La regola guarda le ASSERZIONI, non i tap, e la distinzione è il cuore della
+    // cosa. Un TAP su un'etichetta doppia produce un difetto RUMOROSO: il tocco va
+    // sul nodo a dimensione zero, non si naviga, e la coppia positiva+negativa che
+    // R17 pretende lo fa fallire. Un'ASSERZIONE su un'etichetta doppia produce il
+    // difetto SILENZIOSO: risulta vera anche restando fermi, e il flow dichiara
+    // superata una tappa che non ha aperto. Il primo si può gestire, il secondo no.
+    // Vietare anche i tap costringerebbe a scrivere ancore che NON disambiguano
+    // niente (Maestro fa già full-match) solo per far tacere il lock: una difesa
+    // finta, che è peggio di nessuna difesa.
+    const colpevoli: string[] = [];
+    for (const f of FLOWS_GENITORE) {
+      for (const passo of passi(leggiFlow(f), { annidati: true })) {
+        if (passo.nome === 'tapOn') continue;
+        for (const sel of tuttiISelettori(`---\n${passo.corpo}`)) {
+          const amb = ETICHETTE_AMBIGUE_HOME_GENITORE.find(
+            (e) => e.selettore.toLowerCase() === sel.trim().toLowerCase(),
+          );
+          if (!amb) continue;
+          colpevoli.push(
+            `${f} · ${passo.nome} → "${sel}": esiste in ${amb.fonti.length} punti del ` +
+              `catalogo (${amb.fonti.map((s) => `${s.file}:${s.chiave}`).join(', ')}) e sulla ` +
+              `home ${amb.esito === 'misurato' ? 'è stato MISURATO' : 'risulta'} come nodo ` +
+              `doppio (${amb.misurato}). ` +
+              (amb.soloDestinazione
+                ? `Usa «${amb.soloDestinazione}» per provare l'arrivo.`
+                : 'Usa un testo che esista SOLO sulla pagina di destinazione.'),
+          );
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Etichetta doppia sulla home del genitore usata come PROVA: è soddisfatta anche ' +
+        'restando fermi, quindi il flow dichiara COMPLETED una tappa che non ha aperto ' +
+        '(mobile-android, 2026-08-07).',
+    ).toEqual([]);
+  });
+
+  it('R17 · chi tocca un tab ambiguo prova di essere arrivato E di essersi mosso', () => {
+    const colpevoli: string[] = [];
+    for (const f of FLOWS_GENITORE) {
+      const p = passi(leggiFlow(f), { annidati: true });
+      p.forEach((passo, i) => {
+        if (passo.nome !== 'tapOn') return;
+        for (const e of ETICHETTE_AMBIGUE_HOME_GENITORE) {
+          if (!e.soloDestinazione || !e.soloPartenza) continue;
+          // Il confronto è sul CORPO del passo, non sul solo selettore estratto: un
+          // `tapOn` può essere inline (`- tapOn: "Avvisi"`) o a blocco con `text:` più
+          // le chiavi di disambiguazione, e la regola deve valere per entrambe le forme.
+          // Volutamente generoso: nel dubbio chiede più prove, non meno.
+          if (!seleNudo(passo.corpo).includes(e.selettore.toLowerCase())) continue;
+          const dopo = p.slice(i + 1, i + 7);
+          // `every`, non `some`: quando il marcatore ha più frammenti è perché il testo
+          // cambia con lo stato dei dati, e un'ancora che ne copre uno solo è rossa nei
+          // giorni in cui a schermo c'è l'altro.
+          const copre = (x: { corpo: string }, m: Marcatore) =>
+            m.frammenti.every((fr) => contieneTesto(x.corpo, fr.testo));
+          const elenco = (m: Marcatore) => m.frammenti.map((fr) => `«${fr.testo}»`).join(' + ');
+          if (!dopo.some((x) => copre(x, e.soloDestinazione!))) {
+            colpevoli.push(
+              `${f} · tapOn «${e.selettore}» #${i}: manca la prova POSITIVA di arrivo su ` +
+                `${elenco(e.soloDestinazione!)} (testo della sola pagina di destinazione; se ` +
+                'sono più d\'uno vanno in UN\'UNICA ancora alternata, perché dipendono dai dati)',
+            );
+          }
+          if (
+            !dopo.some((x) => x.nome === 'assertNotVisible' && copre(x, e.soloPartenza!))
+          ) {
+            colpevoli.push(
+              `${f} · tapOn «${e.selettore}» #${i}: manca la prova NEGATIVA ` +
+                `\`assertNotVisible\` su ${elenco(e.soloPartenza!)} (testo della sola pagina ` +
+                'di partenza)',
+            );
+          }
+        }
+      });
+    }
+    expect(
+      colpevoli,
+      'Senza la coppia positiva+negativa un tap che non atterra resta COMPLETED e la tappa ' +
+        'successiva lo conferma sullo stesso nodo fantasma. La prova NEGATIVA è quella che ' +
+        'conta: se non ci si è mossi, il fantasma della pagina di partenza è ancora lì e ' +
+        'l\'asserzione FALLISCE.',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R18 · IL PERCORSO DEL GENITORE COLLAUDA DAVVERO «COMUNICA UN'ASSENZA» ──
+ *
+ * La funzione riaperta dal ciclo del 2026-08-07 — il genitore comunica
+ * un'assenza, la maestra la riceve, il genitore la annulla — non era in nessun
+ * flow: i percorsi mobile si fermavano a «Segnala assenza», cioè al titolo della
+ * pagina, senza premere niente. Un percorso che apre il modulo e non lo invia
+ * collauda l'esistenza di una schermata, non il funzionamento di una funzione.
+ *
+ * La sequenza qui sotto è ORDINATA di proposito, e l'ordine è il punto:
+ * l'annullamento deve venire DOPO l'invio, perché il flow scrive su `presenze`
+ * di un alunno vero (account TEST, database di produzione) e deve disfare ciò
+ * che ha scritto. La prova che l'ha disfatto è l'ultimo marcatore: l'elenco
+ * torna vuoto.
+ *
+ * `vuoto → pieno → vuoto` è anche l'unica forma che non si può soddisfare
+ * stando fermi — **a una condizione che il primo giro aveva mancato**: che
+ * l'asserzione NEGATIVA in mezzo («l'elenco NON è più vuoto») sia fatta DOVE
+ * quell'elenco si vede. Misurato il 2026-08-07 su Android: fatta a scroll zero
+ * passa con l'elenco VUOTO e nessuna assenza comunicata, perché il nodo è fuori
+ * viewport e non è «visibile» in nessun caso. La forma resta giusta, il posto
+ * dove si guarda no: prima si porta l'elenco nel viewport (R22), poi si asserisce.
+ *
+ * ⚠️ RETTIFICA DEL 2026-08-07 SUL MARCATORE DELLA CONFERMA. Era «Assenza
+ * comunicata» (`attendanceInviataTitolo`), ed è la stessa forma di bugia che il
+ * resto di questo file combatte: quel testo è INTERAMENTE CONTENUTO
+ * nell'aria-label del bottone ANNULLA di una riga già in elenco («Annulla
+ * l'assenza comunicata per il {data}»), e con il full-match case-insensitive i
+ * due nodi sono indistinguibili. Misurato: il comando risulta COMPLETED **174 ms
+ * dopo il tap**, mentre lo screenshot scattato 76 ms più tardi mostra il bottone
+ * ancora in stato «INVIO…». Il flow dichiarava riuscito un invio ancora in volo.
+ * Il marcatore è ora la CTA della schermata di conferma, «Comunica un'altra
+ * assenza», che esiste SOLO lì — ed è anche il passo successivo del percorso.
+ * La regola generale che lo impedisce da qui in avanti è R23.
+ *
+ * ⚠️ RISCRITTURA DEL 2026-08-08 — DA COPIA A CHIAVE, ed è il punto di tutto.
+ * Fino a ieri questo registro conteneva i TESTI. Un testo copiato è una fotografia:
+ * il giorno in cui il catalogo cambia, la fotografia resta e il flow cerca una
+ * frase che l'app non pronuncia più. È successo due volte nello stesso ciclo, a
+ * ventott'ore di distanza, su due piattaforme diverse:
+ *   · iOS  (2026-08-07) — `attendanceInviataTesto` riscritto: il flow cercava
+ *     «La scuola è stata notificata dell'assenza…», l'app diceva «Abbiamo
+ *     registrato l'assenza del …». Collaudo ROSSO su un invio RIUSCITO;
+ *   · Android (2026-08-08, commit 2090cbf) — `attendanceGiorno` da «Giorno» a
+ *     «Giorno dell'assenza». Il flow moriva alla tappa 4 di un'app sana.
+ * In entrambi i casi il gate era VERDE: nessuna regola legava il flow al catalogo.
+ *
+ * Ora il registro porta la CHIAVE, e il valore atteso lo legge il lock dal
+ * catalogo al momento in cui gira. Il testo nel flow resta scritto per esteso —
+ * si deve poter leggere un flow e capire cosa asserisce, e Maestro non sa leggere
+ * i JSON del progetto — ma non è più libero di scollarsi: se qualcuno rinomina la
+ * chiave, il valore atteso cambia con lui, il flow non lo contiene più e il gate
+ * diventa rosso PRIMA che qualcuno accenda un emulatore.
+ *
+ * PERCHÉ NON SI INIETTANO LE ANCORE NEI FLOW (via `env:` da `esegui.sh`), che
+ * sarebbe la versione «senza copia» di questa idea, ed è stata valutata e scartata:
+ *   1. i selettori di Maestro sono REGEX. `attendanceInviataTesto` vale «Abbiamo
+ *      registrato l'assenza del {data}. Grazie…»: iniettato grezzo porta dentro un
+ *      segnaposto ICU e due punti che sono metacaratteri. Servirebbe un livello di
+ *      escape+troncamento nel lanciatore, e un suo difetto somiglierebbe a un
+ *      difetto dell'app — la malattia che stiamo curando, spostata di un piano;
+ *   2. una variabile che non arriva diventa stringa vuota: `assertVisible: ""`
+ *      combacia con tutto, e il flow tornerebbe verde senza aver guardato niente.
+ *      È il difetto «asserzione vacua» di R22, con una faccia nuova;
+ *   3. un flow che asserisce `${ANCORA_7}` non è più leggibile, e chi lo debugga
+ *      alle due di notte non sa cosa stia cercando.
+ * Il lock legge il catalogo; il flow resta leggibile. La copia c'è ancora, ma non
+ * può più mentire più a lungo di un `npm run gate`.
+ */
+const CATALOGO_ASSENZE = 'messages/it/parentServizi.json';
+
+const TAPPE_COMUNICA_ASSENZA = [
+  { chiave: 'attendanceElencoVuoto', cosa: 'elenco VUOTO di partenza' },
+  { chiave: 'attendanceComunicaAssenza', cosa: 'la CTA che invia la comunicazione' },
+  { chiave: 'attendanceComunicaAltra', cosa: 'la schermata di conferma' },
+  { chiave: 'attendanceElencoTitolo', cosa: 'il ritorno all\'elenco' },
+  { chiave: 'attendanceAnnullata', cosa: 'l\'esito dell\'annullamento' },
+];
+
+/**
+ * Le ancore che NON scandiscono il percorso ma provano di essere sulla schermata
+ * giusta e sul GIORNO giusto. Stanno qui, e non fra le tappe, perché non hanno un
+ * posto nell'ordine: la prima sta nel modulo, la seconda nella conferma.
+ *
+ * Sono le due che il ciclo ha visto rompersi, ed entrambe erano presenti su UN
+ * SOLO flow dei due — la divergenza fra gemelli è il modo in cui questi difetti
+ * sopravvivono, perché il flow sano fa credere che la tappa sia coperta.
+ */
+const ANCORE_DI_SCHERMATA = [
+  {
+    chiave: 'attendanceGiorno',
+    cosa: 'l\'etichetta del campo data: prova che il MODULO è a schermo, non solo la pagina',
+  },
+  {
+    chiave: 'attendanceInviataTesto',
+    cosa: 'il sottotitolo della conferma: è l\'unico testo che nomina il GIORNO comunicato',
+  },
+];
+
+/** Il valore di una chiave del catalogo delle assenze, istanziato come a runtime. */
+function testoDaCatalogo(chiave: string): string {
+  const v = leggiCatalogo(CATALOGO_ASSENZE)[chiave];
+  return typeof v === 'string' ? comeARuntime(v) : '';
+}
+
+describe('lock: flow Maestro (il percorso «Comunica un\'assenza»)', () => {
+  it('R18a · ogni tappa del percorso ha una chiave viva nel catalogo', () => {
+    const catalogo = leggiCatalogo(CATALOGO_ASSENZE);
+    const scaduti = [...TAPPE_COMUNICA_ASSENZA, ...ANCORE_DI_SCHERMATA]
+      .filter((t) => typeof catalogo[t.chiave] !== 'string' || (catalogo[t.chiave] as string) === '')
+      .map((t) => `${CATALOGO_ASSENZE} → ${t.chiave} (${t.cosa}) non esiste più`);
+    expect(
+      scaduti,
+      'Registro R18 scaduto: la chiave da cui il lock legge l\'ancora non c\'è più. Se la ' +
+        'schermata è stata rifatta, si aggiorna la chiave QUI e il flow nello stesso lavoro.',
+    ).toEqual([]);
+  });
+
+  it('R18b · i due percorsi genitore comunicano, verificano, annullano e riverificano', () => {
+    for (const f of FLOWS_GENITORE) {
+      const sel = tuttiISelettori(leggiFlow(f));
+      let da = -1;
+      for (const t of TAPPE_COMUNICA_ASSENZA) {
+        const atteso = testoDaCatalogo(t.chiave);
+        const i = sel.findIndex((s, k) => k > da && combaciaComeMaestro(s, atteso));
+        expect(
+          i,
+          `${f}: manca (o è fuori ordine) la tappa «${t.cosa}». Il testo che l'app produce ` +
+            `OGGI è ${JSON.stringify(atteso)} (${CATALOGO_ASSENZE} → ${t.chiave}) e nessun ` +
+            'selettore del flow lo combacia. Il percorso deve INVIARE la comunicazione e poi ' +
+            'ANNULLARLA: il flow scrive su dati veri, e la prova di aver disfatto la scrittura ' +
+            'è l\'ultima tappa.',
+        ).toBeGreaterThan(da);
+        da = i;
+      }
+      // L'elenco deve tornare VUOTO alla fine: il marcatore del vuoto compare due volte,
+      // prima dell'invio e dopo l'annullamento. Senza il secondo, il flow lascerebbe una
+      // riga in `presenze` e nessuno se ne accorgerebbe.
+      const vuoto = testoDaCatalogo(TAPPE_COMUNICA_ASSENZA[0].chiave);
+      expect(
+        sel.filter((s) => combaciaComeMaestro(s, vuoto)).length,
+        `${f}: ${JSON.stringify(vuoto)} compare una volta sola. Serve due volte — prima ` +
+          'dell\'invio e DOPO l\'annullamento — altrimenti nessuno prova che la riga scritta ' +
+          'è sparita.',
+      ).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('R18c · entrambi i flow provano di essere sul modulo e su QUALE giorno', () => {
+    // La regola è scritta al plurale su ENTRAMBI i flow di proposito: le due ancore
+    // esistevano, ma una per parte — «Giorno dell'assenza» solo su Android, il
+    // sottotitolo della conferma solo su iOS. Ognuno dei due copriva ciò che
+    // all'altro mancava, e nessuno dei due lo diceva.
+    const colpevoli: string[] = [];
+    for (const f of FLOWS_GENITORE) {
+      const sel = tuttiISelettori(leggiFlow(f));
+      for (const a of ANCORE_DI_SCHERMATA) {
+        const atteso = testoDaCatalogo(a.chiave);
+        if (!sel.some((s) => combaciaComeMaestro(s, atteso))) {
+          colpevoli.push(
+            `${f}: nessuna ancora combacia con ${JSON.stringify(atteso)} ` +
+              `(${CATALOGO_ASSENZE} → ${a.chiave}) — ${a.cosa}`,
+          );
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Il flow arriva sulla pagina e non guarda il modulo, oppure dichiara riuscito l\'invio ' +
+        'senza leggere PER QUALE GIORNO. Sono le due ancore che questo ciclo ha visto ' +
+        'scollarsi dal catalogo (iOS 07/08, Android 08/08): valgono per tutti e due i flow.',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R19 · IL LANCIATORE NON PARTE CON L'ACCOUNT DEL REVISORE APPLE ────────
+ *
+ * Collaudo mobile-ios del 2026-08-07: `esegui.sh` senza variabili usava come
+ * genitore `test.inf.genitore1@kidville.test`, che dal 2026-07-28 ha una
+ * password DEDICATA alla review Apple. Con il segreto comune del repo risponde
+ *   HTTP 400 {"error_code":"invalid_credentials"}
+ * (misurato contro Supabase; `test.inf.docente1@kidville.test` con la stessa
+ * password risponde 200), e a schermo compare «Credenziali non valide. L'accesso
+ * è solo su invito della Segreteria.» — lo stesso testo che la login userebbe per
+ * un errore di rete. Il collaudo scrive «l'app non fa entrare» e la colpa cade
+ * sull'app.
+ *
+ * È la stessa malattia dei selettori morti, spostata sulle credenziali: il
+ * lanciatore parte con un valore che NON PUÒ funzionare, e il fallimento è
+ * indistinguibile da un difetto vero.
+ */
+const ACCOUNT_CON_PASSWORD_DEDICATA = [
+  'test.inf.genitore1@kidville.test',
+  'test.pri.genitore1@kidville.test',
+  // Aggiunto il 2026-08-08. Non è un account della review Apple: è un account
+  // NORMALE la cui password è stata ruotata a mano durante il collaudo del
+  // 2026-08-07 (`test.inf.genitore1`, `test.inf.docente1`, `test.segreteria`) e
+  // la rotazione è stata sovrascritta da un altro attore entro una ventina di
+  // minuti — la password con cui due flow avevano appena fatto login ha
+  // ricominciato a rispondere `400 invalid_credentials` (report tester-15-ios).
+  // La lezione che allarga la regola: un account esce dal segreto comune anche
+  // SENZA che nessuno lo decida, e da quel momento il flow muore sulla login
+  // mostrando lo stesso testo di un errore di rete. Il lanciatore partiva
+  // proprio da qui, mentre il piano di collaudo indicava `test.pri.docente1`:
+  // due fonti che dicevano cose diverse, e nessuna delle due lo diceva a chi
+  // guardava il flow morire.
+  'test.inf.docente1@kidville.test',
+];
+
+describe('lock: lanciatore Maestro (le credenziali di partenza)', () => {
+  const esegui = () => fs.readFileSync(path.join(DIR_FLOWS, 'esegui.sh'), 'utf8');
+
+  it('R19a · nessun default di esegui.sh è un account con password dedicata', () => {
+    const testo = esegui();
+    const colpevoli: string[] = [];
+    for (const riga of testo.split('\n')) {
+      const m = riga.match(/^export\s+(MAESTRO_KV_EMAIL_[A-Z]+)="\$\{[A-Z_]+:-([^"}]+)\}"/);
+      if (!m) continue;
+      if (ACCOUNT_CON_PASSWORD_DEDICATA.includes(m[2].trim())) {
+        colpevoli.push(`esegui.sh → ${m[1]} parte da ${m[2].trim()}`);
+      }
+    }
+    expect(
+      colpevoli,
+      'Account con password dedicata alla review Apple: con il segreto comune del repo NON ' +
+        'autentica (HTTP 400 invalid_credentials, misurato il 2026-08-07). Il flow muore sulla ' +
+        'login e il collaudo accusa l\'app.',
+    ).toEqual([]);
+  });
+
+  it('R19b · esegui.sh dice a voce alta quando gli si passa quell\'account', () => {
+    // Controllo POSITIVO: cambiare il default non basta, perché chi ha bisogno DAVVERO
+    // dell'account del revisore lo passerà a mano e ricadrà nello stesso silenzio.
+    const testo = esegui();
+    for (const a of ACCOUNT_CON_PASSWORD_DEDICATA) {
+      expect(
+        testo.includes(a),
+        `esegui.sh non nomina ${a}: senza una guardia esplicita, chi lo passa a mano rivede ` +
+          '«Credenziali non valide» e non ha modo di sapere che è la password sbagliata.',
+      ).toBe(true);
+    }
+  });
+});
+
+/**
+ * ─── R20 · IL PREDICATO CHE NON GUARDA NIENTE ──────────────────────────────
+ *
+ * Collaudo mobile-ios del 2026-08-07, warning: il comando di cattura dei crash
+ * scritto nelle istruzioni dei tester,
+ *   xcrun simctl spawn booted log stream --predicate 'processImage CONTAINS "App"'
+ * su iOS 26.2 esce con `log: invalid predicate: no such field: processImage` e
+ * produce ZERO righe. Zero righe si legge «nessun crash»: il tester ha perso i
+ * primi due lanci credendo di star guardando. È esattamente la malattia di
+ * questo ciclo — qualcosa che dichiara successo senza verificare — nello
+ * strumento che dovrebbe accorgersene.
+ *
+ * Il campo valido è `process` (oppure `processImagePath`), e con quello sono
+ * state catturate 65.401 righe, 0 Error e 0 Fault.
+ */
+const PREDICATI_CRASH_INVALIDI = [
+  {
+    pattern: /processImage\s+(CONTAINS|==)/,
+    dove: 'predicato di `log stream`',
+    errore: 'log: invalid predicate: no such field: processImage',
+    sostituto: 'process == "App"  (oppure processImagePath CONTAINS "App")',
+  },
+];
+
+/** I file che dicono ai tester mobile come catturare i crash. */
+const ISTRUZIONI_CATTURA_CRASH = [
+  '.claude/agents/tester-opus-mobile-ios.md',
+  '.codex/agents/tester-opus-mobile-ios.toml',
+  'docs/collaudo/prompt/tester-15-ios.md',
+];
+
+describe('lock: collaudo mobile iOS (la cattura dei crash)', () => {
+  it('R20 · nessuna istruzione usa un predicato che su iOS 26 non compila', () => {
+    const colpevoli: string[] = [];
+    for (const f of ISTRUZIONI_CATTURA_CRASH) {
+      const p = path.join(process.cwd(), f);
+      if (!fs.existsSync(p)) {
+        colpevoli.push(`${f}: il file non esiste più — aggiorna ISTRUZIONI_CATTURA_CRASH`);
+        continue;
+      }
+      const testo = fs.readFileSync(p, 'utf8');
+      for (const pr of PREDICATI_CRASH_INVALIDI) {
+        if (pr.pattern.test(testo)) {
+          colpevoli.push(`${f}: ${pr.dove} invalido → «${pr.errore}» · usa \`${pr.sostituto}\``);
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Un predicato invalido non fallisce rumorosamente: stampa una riga di errore e poi ' +
+        'ZERO righe di log. Chi lo lancia in background legge «nessun crash» mentre non sta ' +
+        'guardando niente (mobile-ios, 2026-08-07).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R21 · L'ANCORA CHE COMBACIA CON UN'ETICHETTA PRESENTE SU OGNI PAGINA ───
+ *
+ * Collaudo mobile-ios del 2026-08-07, `ios-percorso-genitore.yaml`, 24° comando:
+ *   Assertion is false: ".*Tutte le sezioni.*" is not visible
+ *   (durata 17.033 ms, cioè l'intera finestra di ritentativo)
+ * L'app era sana: il foglio Menu si era chiuso davvero e la pagina
+ * `/parent/attendance` era a schermo, come mostra lo screenshot dello step.
+ *
+ * LA MISURA. Dump dell'albero su `/parent/attendance`: l'unico nodo che contiene
+ * «sezioni» è `accessibilityText='Menu · tutte le sezioni'` a `[126,779][386,839]`
+ * — il quinto tab della bottom-nav, che sta su OGNI pagina. L'occhiello del
+ * foglio («TUTTE LE SEZIONI») non c'è più.
+ *
+ * PERCHÉ COMBACIA. Il match di Maestro è full-match sulla regex e
+ * case-insensitive: `.*Tutte le sezioni.*` copre per intero «Menu · tutte le
+ * sezioni». La prova NEGATIVA scelta per difendere la tappa era quindi una difesa
+ * che spara sempre: **non può essere vera su nessuna pagina dell'app**.
+ *
+ * È la faccia opposta e simmetrica dell'asserzione VACUA di R22: là un
+ * `assertNotVisible` sempre vero, qui uno sempre falso. Entrambi non guardano
+ * niente; il primo dichiara COMPLETED senza aver aperto niente, il secondo
+ * dichiara FAILED senza che l'app abbia niente che non va.
+ *
+ * La regola vale solo per le asserzioni NEGATIVE: `assertVisible: "Menu · tutte
+ * le sezioni"` è legittimo — è il modo giusto di provare che la bottom-nav c'è.
+ *
+ * ⚠️ RIPRODOTTO DI PRIMA MANO il 2026-08-08 (iPhone 17 Pro / iOS 26.2, Maestro
+ * 2.6.1), sulla home genitore col foglio CHIUSO e nello stesso istante:
+ *   assertNotVisible ".*Tutte le sezioni.*"    → FAILED
+ *   assertNotVisible ".*Scrivi alle maestre.*" → COMPLETED
+ * e col foglio APERTO la seconda → FAILED. Cioè: l'ancora nuova morde quando
+ * deve e tace quando deve, la vecchia non poteva fare né l'una né l'altra cosa.
+ * Le due esecuzioni in versi opposti sono la ragione per cui la sostituta è
+ * `voceChatSub` e non l'occhiello ancorato: dell'una si conosce il
+ * comportamento in entrambi i sensi, dell'altro no.
+ */
+type AriaPersistente = {
+  catalogo: string;
+  chiave: string;
+  /** Il componente che lo rende: se sparisce l'aria-label, il registro è scaduto. */
+  componente: string;
+  dove: string;
+};
+
+const ARIA_PERSISTENTI: AriaPersistente[] = [
+  {
+    catalogo: 'messages/it/nav.json',
+    chiave: 'ariaMenu',
+    componente: 'src/components/features/parent/BottomNav.tsx',
+    dove: 'quinto tab della bottom-nav del genitore, su ogni schermata /parent/**',
+  },
+  {
+    catalogo: 'messages/it/nav.json',
+    chiave: 'ariaNavigazionePrincipale',
+    componente: 'src/components/features/parent/BottomNav.tsx',
+    dove: '<nav> della bottom-nav del genitore, su ogni schermata /parent/**',
+  },
+  {
+    catalogo: 'messages/it/teacherNav.json',
+    chiave: 'ariaMenu',
+    componente: 'src/components/features/teacher/TeacherBottomNav.tsx',
+    dove: 'quinto tab della bottom-nav del docente',
+  },
+  {
+    catalogo: 'messages/it/teacherNav.json',
+    chiave: 'ariaNavigazionePrincipale',
+    componente: 'src/components/features/teacher/TeacherBottomNav.tsx',
+    dove: '<nav> della bottom-nav del docente',
+  },
+  {
+    catalogo: 'messages/it/adminNav.json',
+    chiave: 'menuAria',
+    componente: 'src/components/features/admin/AdminBottomNav.tsx',
+    dove: 'quinto tab della bottom-nav del cockpit Direzione/Segreteria',
+  },
+  {
+    catalogo: 'messages/it/adminNav.json',
+    chiave: 'navAria',
+    componente: 'src/components/features/admin/AdminBottomNav.tsx',
+    dove: '<nav> della bottom-nav del cockpit Direzione/Segreteria',
+  },
+];
+
+/**
+ * Combacia come Maestro: **full-match** sulla regex e **case-insensitive**.
+ *
+ * Le due proprietà sono misurate, non dedotte dalla documentazione:
+ *  · full-match — «Ecco le novità di oggi» FALLISCE e «Ecco le novità di oggi.*»
+ *    passa, perché il nodo porta anche l'emoji finale (mobile-android, 2026-08-07);
+ *  · case-insensitive — `.*Tutte le sezioni.*` combacia con «Menu · tutte le
+ *    sezioni» (mobile-ios, stesso giorno).
+ * Un selettore che non compila come regex non combacia con niente: qui vale
+ * `false`, che è anche ciò che farebbe fallire il flow sul device.
+ */
+function combaciaComeMaestro(selettore: string, testo: string): boolean {
+  try {
+    return new RegExp(`^(?:${selettore})$`, 'i').test(testo);
+  } catch {
+    return false;
+  }
+}
+
+/** I passi che asseriscono un'ASSENZA: `assertNotVisible` e `extendedWaitUntil: notVisible:`. */
+function passiNegativi(testo: string): { nome: string; corpo: string }[] {
+  return passi(testo, { annidati: true }).filter(
+    (p) => p.nome === 'assertNotVisible' || /notVisible:/.test(p.corpo),
+  );
+}
+
+describe('lock: flow Maestro (le ancore che stanno su OGNI pagina)', () => {
+  it('R21a · il registro delle etichette persistenti è ancora vero nel codice', () => {
+    // Controllo di SCADENZA, sullo stampo di R8a: se qualcuno toglie l'aria-label dalla
+    // bottom-nav, quel testo smette di essere presente su ogni pagina e R21b starebbe
+    // vietando un'ancora legittima.
+    const scaduti: string[] = [];
+    for (const a of ARIA_PERSISTENTI) {
+      const valore = leggiCatalogo(a.catalogo)[a.chiave];
+      if (typeof valore !== 'string' || valore.trim() === '') {
+        scaduti.push(`${a.catalogo}: la chiave ${a.chiave} non esiste più`);
+        continue;
+      }
+      const sorgente = fs.readFileSync(path.join(process.cwd(), a.componente), 'utf8');
+      if (!new RegExp(`aria-label=\\{t\\('${a.chiave}'\\)\\}`).test(sorgente)) {
+        scaduti.push(
+          `${a.componente}: non contiene più aria-label={t('${a.chiave}')} → «${valore}» ` +
+            'potrebbe non essere più su ogni pagina. RIMISURARE prima di fidarsi di R21b.',
+        );
+      }
+    }
+    expect(scaduti, 'Registro R21 scaduto: la regola non descrive più il codice.').toEqual([]);
+  });
+
+  it('R21b · nessuna asserzione NEGATIVA cade su un\'etichetta presente su ogni pagina', () => {
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      for (const passo of passiNegativi(leggiFlow(f))) {
+        for (const sel of tuttiISelettori(`---\n${passo.corpo}`)) {
+          for (const a of ARIA_PERSISTENTI) {
+            const valore = String(leggiCatalogo(a.catalogo)[a.chiave]);
+            if (!combaciaComeMaestro(sel, valore)) continue;
+            colpevoli.push(
+              `${f} · ${passo.nome} → "${sel}" combacia (full-match, case-insensitive) con ` +
+                `«${valore}» = ${a.catalogo}:${a.chiave}, che è ${a.dove}. L'asserzione non ` +
+                'può essere vera su NESSUNA pagina: usa un testo che esista solo dentro la ' +
+                'schermata di partenza.',
+            );
+          }
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Asserzione negativa che spara sempre: il flow dichiara FAILED senza che l\'app abbia ' +
+        'niente che non va, e il collaudo scrive che la funzione non si raggiunge ' +
+        '(mobile-ios, 2026-08-07).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R22 · LE ANCORE MISURATE FUORI DAL VIEWPORT ───────────────────────────
+ *
+ * Collaudo mobile-android e mobile-ios del 2026-08-07, sullo STESSO errore e con
+ * DUE cause diverse — ed è questa la conoscenza che è costata due cicli:
+ *
+ *  · **Android** — i nodi fuori schermo ci sono, ma la WebView li proietta con
+ *    `bounds="[0,0][0,0]"` e Maestro 2.6.1 non considera visibile un nodo di
+ *    dimensione zero. Misurato sulla home genitore: `text="PROSSIMI APPUNTAMENTI"
+ *    bounds="[0,0][0,0]"`; su `/parent/attendance`: `text="ASSENZE GIÀ COMUNICATE"
+ *    bounds="[0,0][0,0]"` senza scroll, `[105,1257][976,1336]` dopo uno swipe.
+ *  · **iOS** — l'albero di accessibilità della WKWebView espone **solo i nodi
+ *    dentro il viewport**: quei nodi non esistono affatto. Misurato con `maestro
+ *    hierarchy` sulla home: 43 nodi di testo, l'ultimo «LA GIORNATA DI ALUNNO2» a
+ *    `[20,860][200,882]` su uno schermo alto 874; «PROSSIMI APPUNTAMENTI» 0
+ *    occorrenze in 3 dump consecutivi, e presente a `[20,630][199,652]` dopo lo
+ *    scroll.
+ *
+ * DUE CONSEGUENZE OPPOSTE, e servono due regole:
+ *  · **R22b** — un `assertNotVisible` su uno di questi testi è **VACUO**: è vero
+ *    anche quando non è successo niente. Misurato (`/tmp/kv-and-vacuita.yaml`,
+ *    17/17 COMPLETED): `assertNotVisible "Prossimi appuntamenti"` passa STANDO
+ *    sulla home, e `assertNotVisible "Non hai comunicato nessuna assenza per i
+ *    prossimi giorni."` passa con l'elenco VUOTO. Un'asserzione vera in ogni caso
+ *    non è una difesa: è la stessa bugia dei nodi fantasma con un'altra faccia.
+ *  · **R22c** — un'asserzione POSITIVA su uno di questi testi **fallisce sempre**
+ *    (Android: `extendedWaitUntil` scade dopo 60 s; iOS: 1 volta su 3, e solo
+ *    nella finestra di poche centinaia di ms in cui le card asincrone non hanno
+ *    ancora allungato la pagina). Va preceduta da uno `scrollUntilVisible` che
+ *    porti il nodo — o la sua zona — dentro il viewport.
+ *
+ * `regione` sono i testi che aprono la STESSA zona: portarne uno nel viewport ci
+ * porta anche gli altri, ed è ciò che rende di nuovo SENSATA la prova negativa
+ * sull'elenco vuoto. Non è una comodità di scrittura, è una misura: su iOS il
+ * titolo dell'elenco e la sua riga di stato stanno dentro un solo contenitore,
+ * «ASSENZE GIÀ COMUNICATE, zona» [16,786][386,964]. Senza `regione` la vacuità
+ * non si cura scrollando: si cura cambiando ancora (vedi `rimedio`) — ed è il
+ * caso della home, dove «Prossimi appuntamenti» chiude la pagina e non ha
+ * nessun vicino sopra la piega.
+ */
+type AncoraFuoriViewport = {
+  /** Il frammento come lo scrivono i flow (regex-compatibile, apostrofi come `.`). */
+  frammento: string;
+  /** Da dove nasce il testo: se cambia lì, il registro è scaduto. */
+  fonte: { file: string; chiave: string };
+  schermata: string;
+  piattaforme: ('android' | 'ios')[];
+  misurato: string;
+  prova: string;
+  /** Testi che, portati in viewport, portano anche questo (rendono non-vacua la negativa). */
+  regione?: string[];
+  rimedio: string;
+};
+
+const ANCORE_FUORI_VIEWPORT: AncoraFuoriViewport[] = [
+  {
+    frammento: 'Prossimi appuntamenti',
+    fonte: { file: 'messages/it/home.json', chiave: 'titoloProssimiAppuntamenti' },
+    schermata: 'home del genitore /parent (sezione CALENDARIO, l\'ULTIMA della pagina)',
+    piattaforme: ['android', 'ios'],
+    misurato: '2026-08-07',
+    prova:
+      'Android: `text="PROSSIMI APPUNTAMENTI" bounds="[0,0][0,0]"`; controprova sullo stesso ' +
+      'blocco, «NESSUN APPUNTAMENTO IN PROGRAMMA» fallisce e «OGGI A SCUOLA» ([49,1241]' +
+      '[328,1291]) passa. iOS: 0 occorrenze in 3 dump a scroll zero, presente dopo lo scroll ' +
+      'a [20,630][199,652]. Come gate della dashboard è passato 1 volta su 3 su iOS e MAI su ' +
+      'Android; come prova negativa di aver lasciato la home è vacuo su entrambe. ' +
+      '⚠️ RIPRODOTTO DI PRIMA MANO il 2026-08-08 su iPhone 17 Pro / iOS 26.2, Maestro 2.6.1, ' +
+      'STANDO SULLA HOME: `assertVisible ".*Prossimi appuntamenti.*"` → FAILED e ' +
+      '`assertNotVisible ".*Prossimi appuntamenti.*"` → COMPLETED, cioè la stessa ancora è ' +
+      'falsa in un verso e vacuamente vera nell\'altro. Il dump della home a scroll zero ' +
+      'conta 70 nodi di testo, 0 occorrenze di «Prossimi appuntamenti» e 0 di «Nessun ' +
+      'appuntamento», con l\'ultimo nodo «LA GIORNATA DI ALUNNO2» a [20,860][200,882] su uno ' +
+      'schermo alto 874. E il RIMEDIO è verificato, non supposto: `scrollUntilVisible ' +
+      'centerElement: true` seguito da `assertVisible` → COMPLETED entrambi.',
+    rimedio:
+      'Usare l\'hero della home, «Ecco le novità di oggi 🌈» (home.json → heroSottotitolo), ' +
+      'che sta sopra la piega: misurato a [36,304][183,320] su iOS, 3 volte su 3. Nei flow si ' +
+      'scrive `.*Ecco le novit.*` perché il nodo porta l\'accento e l\'emoji e il match è ' +
+      'full-match.',
+  },
+  {
+    frammento: 'Non hai comunicato nessuna assenza per i prossimi giorni.',
+    fonte: { file: 'messages/it/parentServizi.json', chiave: 'attendanceElencoVuoto' },
+    schermata: '/parent/attendance, elenco «Assenze già comunicate», a scroll zero',
+    piattaforme: ['android', 'ios'],
+    misurato: '2026-08-07',
+    prova:
+      'iOS: la zona esiste («ASSENZE GIÀ COMUNICATE, zona» [16,786][386,964] su uno schermo ' +
+      'alto 874) ma la frase dell\'elenco vuoto NON è nell\'albero; dopo `- scroll` compare a ' +
+      '[40,715][311,752]. Android: `assertNotVisible` su questo testo risulta COMPLETED con ' +
+      'l\'elenco VUOTO e nessuna assenza comunicata (17/17 di /tmp/kv-and-vacuita.yaml).',
+    regione: ['Assenze già comunicate', 'Non hai comunicato nessuna assenza per i prossimi giorni.'],
+    rimedio:
+      '`scrollUntilVisible` con `centerElement: true` sulla zona dell\'elenco PRIMA di ' +
+      'asserire, sia in positivo sia in negativo.',
+  },
+  {
+    frammento: 'Assenze già comunicate',
+    fonte: { file: 'messages/it/parentServizi.json', chiave: 'attendanceElencoTitolo' },
+    schermata: '/parent/attendance, titolo dell\'elenco, a scroll zero',
+    piattaforme: ['android'],
+    misurato: '2026-08-07',
+    prova:
+      'Android: `text="ASSENZE GIÀ COMUNICATE" bounds="[0,0][0,0]"` senza scroll, ' +
+      '[105,1257][976,1336] dopo uno swipe; nel flow committato l\'asserzione falliva SEMPRE, ' +
+      'con l\'app perfettamente funzionante. Su iOS NO: lì il titolo è nell\'albero già a ' +
+      'scroll zero ([40,813][213,835]) — le due piattaforme non tagliano la pagina nello ' +
+      'stesso punto, e per questo la riga vale solo per Android.',
+    regione: ['Assenze già comunicate', 'Non hai comunicato nessuna assenza per i prossimi giorni.'],
+    rimedio: '`scrollUntilVisible` sull\'elenco prima delle asserzioni della tappa.',
+  },
+  {
+    frammento: 'Le prese visione vengono registrate automaticamente.',
+    fonte: { file: 'messages/it/avvisi.json', chiave: 'footerRiga2' },
+    schermata: '/parent/avvisi, footer in fondo alla pagina',
+    piattaforme: ['android', 'ios'],
+    misurato: '2026-08-07',
+    prova:
+      'Android: `text="📋 Gli avvisi restano visibili fino alla loro scadenza.&#10;Le prese ' +
+      'visione vengono registrate automaticamente." bounds="[0,0][0,0]"`. DUE cause ' +
+      'sovrapposte, e la seconda non si cura con lo scroll: `footerRiga1` e `footerRiga2` ' +
+      'stanno nello STESSO paragrafo separate da <br/>, quindi il nodo porta il testo unito e ' +
+      'il full-match sulla sola seconda riga non riuscirebbe nemmeno in viewport. Su iOS non è ' +
+      'stato misurato, ma il footer è l\'ultimo elemento della pagina e su iOS l\'albero ' +
+      'espone solo il viewport: fuori dalla piega non c\'è.',
+    rimedio:
+      'Ancorarsi al sottotitolo dell\'intestazione (avvisi.json → sottotitoloDaGestire / ' +
+      'sottotitoloOk / sottotitoloCaricamento), che sta sopra la piega ed esiste solo su ' +
+      'quella pagina — coprendo TUTTE le varianti, perché dipende dai dati.',
+  },
+];
+
+/** La piattaforma di un flow, dal suo prefisso. */
+function piattaformaDi(flow: string): 'android' | 'ios' | null {
+  if (flow.startsWith('android-')) return 'android';
+  if (flow.startsWith('ios-')) return 'ios';
+  return null;
+}
+
+/** Quanti passi indietro si guarda per trovare lo scroll che apre la zona. */
+const FINESTRA_SCROLL = 8;
+
+describe('lock: flow Maestro (le ancore sotto la piega)', () => {
+  it('R22a · il registro delle ancore fuori viewport è ancora vero nei cataloghi', () => {
+    const scaduti: string[] = [];
+    for (const a of ANCORE_FUORI_VIEWPORT) {
+      const valore = leggiCatalogo(a.fonte.file)[a.fonte.chiave];
+      if (typeof valore !== 'string') {
+        scaduti.push(`${a.fonte.file}: la chiave ${a.fonte.chiave} non esiste più`);
+        continue;
+      }
+      if (!contieneTesto(valore, a.frammento)) {
+        scaduti.push(
+          `${a.fonte.file}:${a.fonte.chiave} = ${JSON.stringify(valore)} non contiene più ` +
+            `«${a.frammento}»: la misura del ${a.misurato} riguardava un altro testo. ` +
+            'RIMISURARE prima di fidarsi di R22b/R22c.',
+        );
+      }
+    }
+    expect(scaduti, 'Registro R22 scaduto: la regola non descrive più i cataloghi.').toEqual([]);
+  });
+
+  it('R22b · nessuna asserzione NEGATIVA si regge su un\'ancora mai visibile (vacuità)', () => {
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      const piattaforma = piattaformaDi(f);
+      if (!piattaforma) continue;
+      const p = passi(leggiFlow(f), { annidati: true });
+      p.forEach((passo, i) => {
+        if (passo.nome !== 'assertNotVisible' && !/notVisible:/.test(passo.corpo)) return;
+        for (const a of ANCORE_FUORI_VIEWPORT) {
+          if (!a.piattaforme.includes(piattaforma)) continue;
+          if (!contieneTesto(passo.corpo, a.frammento)) continue;
+          // Unica assoluzione: la zona è stata appena portata in viewport, quindi lì
+          // quel testo CI SAREBBE se ci fosse — e la negativa torna a dire qualcosa.
+          const prima = p.slice(Math.max(0, i - FINESTRA_SCROLL), i);
+          const apertaLaZona = prima.some(
+            (x) =>
+              x.nome === 'scrollUntilVisible' &&
+              (contieneTesto(x.corpo, a.frammento) ||
+                (a.regione ?? []).some((r) => contieneTesto(x.corpo, r))),
+          );
+          if (apertaLaZona) continue;
+          colpevoli.push(
+            `${f} · ${passo.nome} «${a.frammento}» #${i}: su ${piattaforma} quel nodo non è ` +
+              `MAI visibile a scroll zero (${a.prova.slice(0, 120)}…), quindi l'asserzione è ` +
+              `vera anche quando non è successo niente. ${a.rimedio}`,
+          );
+        }
+      });
+    }
+    expect(
+      colpevoli,
+      'Asserzione VACUA: passa anche quando non è successo niente. È la stessa bugia dei nodi ' +
+        'fantasma con un\'altra faccia — il flow dichiara superata una tappa che non ha ' +
+        'aperto (mobile-android, 2026-08-07).',
+    ).toEqual([]);
+  });
+
+  it('R22c · un\'asserzione POSITIVA sotto la piega è preceduta da uno scroll', () => {
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      const piattaforma = piattaformaDi(f);
+      if (!piattaforma) continue;
+      const p = passi(leggiFlow(f), { annidati: true });
+      p.forEach((passo, i) => {
+        // Lo `scrollUntilVisible` È il rimedio: non si accusa da solo.
+        if (passo.nome === 'scrollUntilVisible') return;
+        if (passo.nome === 'assertNotVisible' || /notVisible:/.test(passo.corpo)) return;
+        if (!['assertVisible', 'extendedWaitUntil', 'tapOn'].includes(passo.nome)) return;
+        for (const a of ANCORE_FUORI_VIEWPORT) {
+          if (!a.piattaforme.includes(piattaforma)) continue;
+          if (!contieneTesto(passo.corpo, a.frammento)) continue;
+          const prima = p.slice(Math.max(0, i - FINESTRA_SCROLL), i);
+          const scroll = prima.some(
+            (x) =>
+              x.nome === 'scrollUntilVisible' &&
+              (contieneTesto(x.corpo, a.frammento) ||
+                (a.regione ?? []).some((r) => contieneTesto(x.corpo, r))),
+          );
+          if (scroll) continue;
+          colpevoli.push(
+            `${f} · ${passo.nome} «${a.frammento}» #${i}: misurato fuori dal viewport su ` +
+              `${piattaforma} il ${a.misurato}. Senza scroll l'asserzione fallisce SEMPRE, e ` +
+              `il collaudo accusa l'app. ${a.rimedio}`,
+          );
+        }
+      });
+    }
+    expect(
+      colpevoli,
+      '`extendedWaitUntil: visible` su un nodo fuori viewport scade e basta: su Android il ' +
+        'nodo c\'è ma è [0,0][0,0], su iOS non è proprio nell\'albero. Due cause diverse, ' +
+        'stesso rosso su un\'app sana (2026-08-07).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R23 · L'ANCORA CHE COMBACIA CON DUE VOCI DELLO STESSO CATALOGO ────────
+ *
+ * Collaudo mobile-ios del 2026-08-07, tappa 4 di `ios-percorso-genitore.yaml`:
+ * la conferma dell'invio era cercata con `.*Assenza comunicata.*` — e quel testo
+ * è una sottostringa dell'`aria-label` del bottone ANNULLA di una riga già in
+ * elenco: «Annulla l'assenza comunicata per il {data}»
+ * (`parentServizi.json:attendanceAnnullaAria`).
+ *
+ * Non è un nodo fantasma: è un nodo OMONIMO. Il comando risulta
+ * `('COMPLETED', 174, …)` — 174 ms dopo il tap — mentre lo screenshot scattato
+ * 76 ms più tardi mostra il bottone ancora in stato «INVIO…»: il flow ha
+ * dichiarato riuscito un invio che era ancora in volo.
+ *
+ * La regola è STATICA e non richiede un device: si compila il selettore come lo
+ * compila Maestro (full-match, case-insensitive) e si contano quante voci DELLO
+ * STESSO catalogo può soddisfare. Due o più = ancora ambigua.
+ *
+ * PERIMETRO: le ASSERZIONI, non i tap — la stessa distinzione di R16b, e per la
+ * stessa ragione. Un tap su un'ancora omonima produce un difetto RUMOROSO (il
+ * tocco va sul nodo sbagliato, non si naviga, e la coppia positiva+negativa che
+ * R17 pretende lo fa fallire); un'ASSERZIONE su un'ancora omonima produce il
+ * difetto SILENZIOSO — risulta vera sul nodo sbagliato, e il flow dichiara fatto
+ * ciò che non è successo. Vietare anche i tap qui costringerebbe a smontare
+ * selettori ALTERNATI misurati («Menu · tutte le sezioni|^MENU$», che regge due
+ * versioni della WebView) per far tacere il lock: una difesa finta.
+ *
+ * LIMITI, dichiarati: (a) i segnaposto ICU vengono istanziati in modo grossolano
+ * (`{x}` → `3`, del plurale si prende il ramo `other`), quindi una collisione che
+ * dipende dal valore esatto può sfuggire; (b) il confronto è per CATALOGO, non per
+ * schermata: due voci omonime che non compaiono mai insieme risultano comunque
+ * ambigue — ed è voluto, perché quale delle due sia a schermo dipende dai dati.
+ */
+const CATALOGHI_R23 = [
+  'messages/it/parentServizi.json',
+  'messages/it/home.json',
+  'messages/it/nav.json',
+  'messages/it/avvisi.json',
+];
+
+/**
+ * Le ALTERNATIVE di un selettore, valutate una per una.
+ *
+ * `A|B` in Maestro è un selettore che combacia con A **oppure** con B, e le due
+ * rami vanno giudicati separatamente: «Menu · tutte le sezioni|^MENU$» è la difesa
+ * MISURATA contro le due esposizioni della WebView (109 e 150), e giudicarla
+ * come un blocco unico la farebbe risultare ambigua — un ramo pesca il testo
+ * corto, l'altro quello lungo — spingendo a smontarla per far tacere il lock.
+ * Le alternative che non compilano da sole (parentesi a cavallo del `|`) vengono
+ * scartate dal `try/catch` di `combaciaComeMaestro`.
+ */
+function alternativeDi(selettore: string): string[] {
+  return selettore.includes('|') ? selettore.split('|') : [selettore];
+}
+
+/** Il valore come lo vede l'albero: i segnaposto ICU istanziati alla buona. */
+function comeARuntime(valore: string): string {
+  const plurale = valore.match(/other\s*\{([^{}]*)\}/);
+  const base = plurale ? plurale[1] : valore;
+  return base.replace(/\{[^{}]*\}/g, '3').replace(/#/g, '3').trim();
+}
+
+describe('lock: flow Maestro (le ancore omonime dello stesso catalogo)', () => {
+  it('R23 · nessuna ancora dei percorsi genitore combacia con due voci dello stesso catalogo', () => {
+    const colpevoli: string[] = [];
+    for (const f of FLOWS_GENITORE) {
+      for (const passo of passi(leggiFlow(f), { annidati: true })) {
+        if (passo.nome === 'tapOn') continue;
+        for (const sel of tuttiISelettori(`---\n${passo.corpo}`).flatMap(alternativeDi)) {
+          for (const file of CATALOGHI_R23) {
+            const voci = Object.entries(leggiCatalogo(file))
+              .filter((e): e is [string, string] => typeof e[1] === 'string')
+              .filter(([, v]) => combaciaComeMaestro(sel, comeARuntime(v)));
+            if (voci.length < 2) continue;
+            // Il difetto ha una forma precisa: l'ancora è INGOIATA da una voce più lunga
+            // dello stesso catalogo («Assenza comunicata» dentro «Annulla l'assenza
+            // comunicata per il …»). Due voci IDENTICHE che combaciano — «Menu» del tab e
+            // «Menu» del titolo del foglio — sono un'altra malattia, quella dei nodi
+            // omonimi, e ha già i suoi lock (R4, R16): qui produrrebbe solo rumore, e il
+            // rumore si paga smontando difese misurate per far tacere il gate.
+            for (const [kCorto, vCorto] of voci) {
+              const lungo = voci.find(
+                ([k, v]) =>
+                  k !== kCorto &&
+                  v.length > vCorto.length &&
+                  contieneTesto(comeARuntime(v), comeARuntime(vCorto)),
+              );
+              if (!lungo) continue;
+              colpevoli.push(
+                `${f} · ${passo.nome} → "${sel}" combacia con ${file}:${kCorto} = ` +
+                  `${JSON.stringify(vCorto)}, che è CONTENUTO in ${file}:${lungo[0]} = ` +
+                  `${JSON.stringify(lungo[1])}. Con il full-match case-insensitive i due nodi ` +
+                  'sono indistinguibili: ancora l\'asserzione a un testo che solo la voce ' +
+                  'attesa può produrre.',
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(
+      colpevoli,
+      'Ancora OMONIMA: il match di Maestro è full-match e case-insensitive, e un\'ancora che ' +
+        'due voci dello stesso catalogo possono soddisfare non distingue la conferma di un ' +
+        'invio dal bottone ANNULLA di una riga già in elenco (mobile-ios, 2026-08-07: ' +
+        'COMPLETED a 174 ms con lo schermo che mostrava ancora «INVIO…»).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R24 · NESSUNA ANCORA ORFANA: SE L'APP NON LA DICE, NON ESISTE ─────────
+ *
+ * R18 lega al catalogo le ancore del percorso genitore, una per una. Ma una
+ * regola POSITIVA («questa frase dev'esserci») non toglie dal file la frase
+ * VECCHIA: dopo la rinomina di `attendanceInviataTesto` il flow iOS conteneva
+ * ancora `.*La scuola . stata notificata dell.assenza.*`, un'ancora che nessuna
+ * schermata dell'app può soddisfare, e che il collaudo del 2026-08-07 ha pagato
+ * con un ROSSO su un invio riuscito.
+ *
+ * Questa è la regola NEGATIVA che la toglie: ogni testo che un flow cerca
+ * nell'albero deve combaciare — come combacia Maestro, full-match e
+ * case-insensitive — con almeno una voce dei cataloghi `messages/it/*.json`,
+ * oppure essere DICHIARATO qui sotto come testo che dall'app non nasce.
+ *
+ * ⚠️ IL LIMITE CHE VA DETTO SUBITO, PERCHÉ È QUELLO CHE FA MALE. Il catalogo è
+ * uno solo per tutta l'app: «Giorno» — l'ancora morta del flow Android — esiste
+ * eccome, ma è `teacherServizi.json → mensaGiorno`, l'intestazione della tabella
+ * della MENSA del docente. Una regola che chiedesse soltanto «esiste da qualche
+ * parte?» l'avrebbe lasciata passare, e il collaudo sarebbe morto lo stesso.
+ * Per questo R24 non basta da sola e non pretende di bastare: le ancore che
+ * contano davvero — quelle del percorso «Comunica un'assenza» — sono legate alla
+ * loro CHIAVE, cioè alla loro schermata, da R18. R24 è la rete sotto: prende ciò
+ * che l'app non dice più in nessun punto.
+ *
+ * COSA NON COPRE, dichiarato: (a) l'ancora viva sulla schermata sbagliata (vedi
+ * sopra: serve R18, che è per chiave); (b) i testi che nascono dai DATI (nomi,
+ * date, importi) — sono nella lista qui sotto per costruzione; (c) i cataloghi
+ * inglesi: si guarda solo `it/`, perché i flow girano in italiano.
+ */
+type AncoraNonDiCatalogo = {
+  /** Il selettore così com'è scritto nei flow. */
+  selettore: string;
+  /** Chi produce quel testo, se non l'app. */
+  origine: string;
+  /** Perché non può stare in un catalogo. */
+  nota: string;
+};
+
+const ANCORE_NON_DI_CATALOGO: AncoraNonDiCatalogo[] = [
+  {
+    selettore: 'Non consentire',
+    origine: 'dialogo di sistema Android/iOS per il permesso delle notifiche',
+    nota:
+      'Lo scrive il sistema operativo nella lingua del dispositivo, non l\'app: non è in ' +
+      'nessun catalogo e non può esserci. I flow lo cercano dentro un ramo `runFlow when:` ' +
+      'proprio perché può non comparire affatto.',
+  },
+  {
+    selettore: 'Not now|Non ora',
+    origine: 'dialogo di sistema Android (Play Services / backup), nelle due lingue',
+    nota:
+      'Stessa natura del precedente. L\'alternativa a due rami esiste perché l\'emulatore ' +
+      'può essere in inglese anche con l\'app in italiano.',
+  },
+];
+
+/** Tutti i valori dei cataloghi italiani, istanziati come li vede l'albero. */
+function valoriDiTuttiICataloghi(): { file: string; chiave: string; valore: string }[] {
+  const dir = path.join(process.cwd(), 'messages', 'it');
+  const fuori: { file: string; chiave: string; valore: string }[] = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json'))) {
+    const catalogo = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Record<string, unknown>;
+    for (const [chiave, valore] of Object.entries(catalogo)) {
+      if (typeof valore === 'string') {
+        fuori.push({ file: `messages/it/${f}`, chiave, valore: comeARuntime(valore) });
+      }
+    }
+  }
+  return fuori;
+}
+
+describe('lock: flow Maestro (ancore che l\'app non pronuncia più)', () => {
+  it('R24a · il registro delle ancore non-di-catalogo è ancora usato', () => {
+    // Controllo di SCADENZA, sullo stampo di R8a/R22a: un'eccezione che nessun flow usa
+    // più è un permesso lasciato aperto, e il prossimo che ci passa non se ne accorge.
+    const usati = new Set(tuttiIFlow().flatMap((f) => tuttiISelettori(leggiFlow(f))));
+    const inutili = ANCORE_NON_DI_CATALOGO.filter((a) => !usati.has(a.selettore)).map(
+      (a) => `«${a.selettore}» non è più cercata da nessun flow: toglila dal registro`,
+    );
+    expect(inutili, 'Eccezione senza più un caso d\'uso.').toEqual([]);
+  });
+
+  it('R24b · ogni ancora dei flow combacia con un testo che l\'app produce', () => {
+    const voci = valoriDiTuttiICataloghi();
+    const dichiarate = new Set(ANCORE_NON_DI_CATALOGO.map((a) => a.selettore));
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      for (const sel of new Set(tuttiISelettori(leggiFlow(f)))) {
+        if (dichiarate.has(sel)) continue;
+        if (voci.some((v) => combaciaComeMaestro(sel, v.valore))) continue;
+        // Ci sarà pure una voce che lo CONTIENE: dirlo aiuta chi legge il rosso, perché
+        // nove volte su dieci il testo è stato allungato e l'ancora è rimasta corta.
+        const vicine = voci
+          .filter((v) => {
+            try {
+              return new RegExp(sel, 'i').test(v.valore);
+            } catch {
+              return false;
+            }
+          })
+          .slice(0, 2)
+          .map((v) => `${v.file}:${v.chiave} = ${JSON.stringify(v.valore.slice(0, 70))}`);
+        colpevoli.push(
+          `${f} · «${sel}» non combacia con nessuna voce di messages/it/. ` +
+            (vicine.length
+              ? `Forse è stato allungato: ${vicine.join(' | ')}`
+              : 'Nessuna voce lo contiene nemmeno in parte: o l\'app non lo dice più, o è ' +
+                'un testo di sistema e va dichiarato in ANCORE_NON_DI_CATALOGO con la ragione.'),
+        );
+      }
+    }
+    expect(
+      colpevoli,
+      'Ancora ORFANA: il flow cerca una frase che l\'app non pronuncia in nessun punto. Non ' +
+        'può fallire «a volte» — fallisce SEMPRE, e il collaudo accusa un prodotto sano ' +
+        '(mobile-ios 2026-08-07: rosso sul sottotitolo della conferma mentre l\'assenza era ' +
+        'stata scritta davvero su `presenze`).',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ─── R25 · IL TASTO INDIETRO NON RIPORTA LA PAGINA IN CIMA ─────────────────
+ *
+ * Collaudo mobile-android del 2026-08-07, ultima tappa di
+ * `android-percorso-genitore.yaml`: dopo `- back` l'app torna su
+ * /parent/attendance — la `topResumedActivity` resta `it.kidville.app/.MainActivity`,
+ * la pagina è quella giusta — e l'asserzione successiva fallisce lo stesso.
+ * Il motivo non è la navigazione: è che il browser RIPRISTINA la posizione di
+ * scorrimento che la pagina aveva quando la si è lasciata. Le tappe precedenti
+ * l'avevano portata in fondo, quindi l'intestazione è finita SOPRA il viewport e
+ * Chromium l'ha passata ad AccessibilityNodeInfo con `bounds="[0,0][0,0]"`.
+ * Misura di quel momento:
+ *   'Avvisa gli insegnanti in anticipo: …'  bounds="[0,0][0,0]"     ← l'ancora usata
+ *   'Giorno dell’assenza'                   bounds="[105,275][976,341]"
+ *   'COMUNICA ASSENZA'  Button              bounds="[105,1065][976,1210]"
+ * Uno swipe verso il basso restituiva al primo nodo bounds reali: c'era, non era
+ * in viewport.
+ *
+ * È la terza faccia della stessa malattia (R7 il nodo alto 0, R22 il nodo sotto
+ * la piega, qui il nodo SOPRA la piega dopo un ripristino), e ha una regola sua
+ * perché il segnale che la distingue è il comando `back`: l'ancora della tappa 3
+ * — la stessa, sulla stessa pagina — funzionava benissimo, perché ci si arrivava
+ * con la pagina appena montata.
+ *
+ * LA REGOLA, per come è scritta, è a INVERSIONE DELL'ONERE: dopo un `back` non si
+ * asserisce niente che non sia stato MISURATO visibile in quel punto, oppure si
+ * usa uno `scrollUntilVisible`, che cerca il nodo dovunque sia. La strada in
+ * discesa — «tanto ci passavo prima» — è quella che ha prodotto il difetto.
+ *
+ * NON COPRE: il `back` che cambia pagina (torna a una schermata diversa da quella
+ * da cui si era partiti), dove lo scroll ripristinato è quello di UN'ALTRA pagina
+ * e il registro non dice niente di utile.
+ */
+type AncoraDopoBack = {
+  flow: string;
+  /** Il testo asserito subito dopo il `back`. */
+  ancora: string;
+  /** Dove nasce quel testo: se il catalogo cambia, R25a lo dice. */
+  fonte: { file: string; chiave: string };
+  /** Come si sa che DOPO il back quel nodo è in viewport. */
+  prova: string;
+};
+
+const ANCORE_DOPO_BACK: AncoraDopoBack[] = [
+  {
+    flow: 'android-percorso-genitore.yaml',
+    ancora: 'Giorno dell’assenza',
+    fonte: { file: 'messages/it/parentServizi.json', chiave: 'attendanceGiorno' },
+    prova:
+      'uiautomator dump del 2026-08-07 subito dopo il `back` da /parent/avvisi: ' +
+      'bounds="[105,275][976,341]", cioè sotto l\'AppBar (alta 82 px) e dentro lo schermo. ' +
+      'Nello stesso dump il sottotitolo dell\'hero — l\'ancora che il flow usava — era a ' +
+      '[0,0][0,0]. Il campo data resta visibile perché il ripristino riporta lo scroll a ' +
+      'circa 267 px, dove il MODULO è la parte di pagina in viewport.',
+  },
+  {
+    flow: 'android-percorso-docente.yaml',
+    ancora: 'Dashboard',
+    fonte: { file: 'messages/it/teacherNav.json', chiave: 'tabDashboard' },
+    prova:
+      'È l\'etichetta di un tab della bottom-nav, che sta a schermo qualunque sia lo ' +
+      'scorrimento della pagina. Provata dall\'esecuzione verde del 2026-08-02 su ' +
+      'KV-play-phone (31 COMPLETED, due esecuzioni su due), che contiene questo stesso ' +
+      '`back` seguito da questa stessa asserzione.',
+  },
+  {
+    flow: 'android-percorso-segreteria.yaml',
+    ancora: 'Dashboard Direzione',
+    fonte: { file: 'messages/it/adminNav.json', chiave: 'dashboardTitolo' },
+    prova:
+      'Titolo dell\'header del cockpit, che è `sticky` in cima e non scorre via con il ' +
+      'contenuto. Provato dall\'esecuzione verde del 2026-07-31 (39/39), che esegue TRE ' +
+      'volte la sequenza `back` + questa asserzione.',
+  },
+];
+
+/** I comandi che chiudono la finestra di osservazione dopo un `back`. */
+const CHIUDONO_LA_FINESTRA = ['tapOn', 'back', 'launchApp', 'stopApp', 'scrollUntilVisible', 'scroll'];
+
+describe('lock: flow Maestro (le ancore dopo il tasto Indietro)', () => {
+  it('R25a · il registro delle ancore dopo il back è ancora vero nei cataloghi', () => {
+    const scaduti: string[] = [];
+    for (const a of ANCORE_DOPO_BACK) {
+      const valore = leggiCatalogo(a.fonte.file)[a.fonte.chiave];
+      if (typeof valore !== 'string') {
+        scaduti.push(`${a.fonte.file}: la chiave ${a.fonte.chiave} non esiste più`);
+        continue;
+      }
+      if (comeARuntime(valore) !== a.ancora) {
+        scaduti.push(
+          `${a.fonte.file}:${a.fonte.chiave} = ${JSON.stringify(valore)}, ma il registro ` +
+            `dichiara misurata «${a.ancora}». La misura riguardava un altro testo: ` +
+            'RIMISURARE prima di fidarsi di R25b.',
+        );
+      }
+    }
+    expect(scaduti, 'Registro R25 scaduto: non descrive più i cataloghi.').toEqual([]);
+  });
+
+  it('R25b · dopo un `back` si asserisce solo ciò che è stato misurato visibile lì', () => {
+    // Le etichette della bottom-nav sono ASSOLTE senza bisogno di una riga nel registro:
+    // ARIA_PERSISTENTI le dichiara presenti su OGNI pagina (R21a ne verifica la scadenza
+    // sul codice), e una barra fissa non si sposta con lo scorrimento del documento.
+    // Riusare quella misura invece di ricopiarla è la stessa scelta di R18: una regola
+    // valida per due strade deve vivere in un posto solo.
+    const persistenti = ARIA_PERSISTENTI.map((a) => leggiCatalogo(a.catalogo)[a.chiave]).filter(
+      (v): v is string => typeof v === 'string',
+    );
+    const colpevoli: string[] = [];
+    for (const f of tuttiIFlow()) {
+      const p = passi(leggiFlow(f), { annidati: true });
+      const ammesse = [...ANCORE_DOPO_BACK.filter((a) => a.flow === f).map((a) => a.ancora), ...persistenti];
+      p.forEach((passo, i) => {
+        if (passo.nome !== 'back') return;
+        for (let j = i + 1; j < p.length; j++) {
+          if (CHIUDONO_LA_FINESTRA.includes(p[j].nome)) break;
+          // Solo le asserzioni POSITIVE. Una negativa dopo un `back` ha un difetto suo —
+          // è VACUA quando il nodo non è in viewport — e ha già la sua regola (R22b):
+          // trattarla qui vorrebbe dire chiedere due volte la stessa cosa in due modi
+          // diversi, e il secondo modo è quello sbagliato.
+          const positiva =
+            p[j].nome === 'assertVisible' ||
+            (p[j].nome === 'extendedWaitUntil' && /\bvisible:/.test(p[j].corpo));
+          if (!positiva) continue;
+          const sel = tuttiISelettori(`---\n${p[j].corpo}`);
+          for (const s of sel) {
+            if (ammesse.some((a) => combaciaComeMaestro(s, a))) continue;
+            colpevoli.push(
+              `${f} · ${p[j].nome} «${s}» subito dopo un \`back\`: nessuna misura dice che ` +
+                'quel nodo sia in viewport DOPO il ripristino dello scorrimento. Il `back` ' +
+                'riporta la pagina dov\'era, non in cima: un\'intestazione arriva ad Android ' +
+                'con bounds [0,0][0,0] e su iOS non è proprio nell\'albero. O si usa ' +
+                '`scrollUntilVisible`, che il nodo lo cerca, o si misura e si scrive la riga ' +
+                'in ANCORE_DOPO_BACK.',
+            );
+          }
+        }
+      });
+    }
+    expect(
+      colpevoli,
+      'Asserzione dopo `back` non misurata: fallisce SEMPRE su un\'app che si è comportata ' +
+        'bene, e l\'ultima tappa del percorso risulta rossa (mobile-android, 2026-08-07).',
+    ).toEqual([]);
   });
 });

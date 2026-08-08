@@ -59,7 +59,7 @@
 > | Modulo | Stato | Pagine | API Routes |
 > |--------|-------|--------|------------|
 > | **Diario 0-6** | ✅ Operativo | `/teacher/diary` | `/api/diary/students`, `/api/diary/entries` |
-> | **Presenze** | 🔶 UI pronta | `/teacher/attendance`, `/parent/attendance` | `/api/panic-alert`, `/api/attendance/*` |
+> | **Presenze** | ✅ Operativo | `/teacher/attendance`, `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*`, `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP) |
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
 > | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
@@ -83,9 +83,364 @@
 > | **Vincoli temporali immodificabilità** | ❌ Da implementare | Fase 1 | Blocco 2gg classe/orali, 15gg scritti; sblocco solo dirigente |
 > | **Scrutinio + Pagella online** | ❌ Da implementare | Fase 2 | 6 giudizi sintetici, Ed. Civica, comportamento; PDF statico (firma qualificata rimandata) |
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
-> | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
+> | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## ✅ Changelog — «Comunica un'assenza» chiusa e provata sui due telefoni, dopo cinque collaudi 2026-08-08 (branch `chore/piani-pro-supabase-vercel`)
+
+Il ciclo aperto il 07/08 ha girato tre giorni e cinque collaudi. Qui si chiudono i sei difetti
+rimasti dall'ultimo, e per la prima volta il percorso completo passa **sul dispositivo**, non solo
+nei test.
+
+### La prova che conta, e che prima non esisteva
+
+Percorso Maestro completo — *comunico → compare nell'elenco → annullo → sparisce* — verde su
+**iPhone 17 Pro (iOS 26.2)** e su **emulatore Android**, contro il prodotto compilato
+(`next start`). E una POST/DELETE reale con una sessione vera:
+
+| Prova sul prodotto compilato | Esito |
+|---|---|
+| POST `comunica-assenza` | **201**, corpo `{id, data}` — due colonne, non venticinque |
+| L'assenza compare fra le annullabili | sì |
+| DELETE | **200**, e la riga sparisce |
+| Tetti (data passata · 60 giorni · 500 caratteri) | 400 con i tre codici distinti |
+
+### I sei difetti, e cosa si è imparato da due di loro
+
+1. **Il link all'informativa faceva partire l'assenza.** Su WebView a 390×731 il link cade a
+   y 592→607 e il piede appiccicato, sollevato, occupa 568→659: `elementFromPoint` sul suo centro
+   restituiva il **pulsante**, e un tocco reale scriveva l'assenza invece di aprire l'informativa.
+   La nota era già stata spostata «sopra il campo» sei ore prima, per lo stesso motivo, e non era
+   bastato: **il piede si solleva sopra ciò che lo precede, e quanto copre dipende dallo
+   scorrimento, non dall'ordine dei nodi.** Ora la nota vive *dentro* il piede — dove è anche
+   sempre visibile, che per un'informativa su un dato sanitario è meglio di «sotto la piega».
+2. **La riserva che ha chiuso R21 allungava la pagina di due schermate vuote.** «La somma è zero»
+   valeva per l'altezza del contenitore ma non per l'area scorribile: lo spaziatore da 200vh
+   sborda, e `scrollHeight` lo conta. Misurato sul prodotto: **documento 2147 px, contenuto 754**.
+   Il rimedio non è togliere la riserva (tornerebbe il pulsante coperto) ma contenerla
+   (`contain: paint`): documento 1076, geometria del piede identica al pixel.
+3. **Le difese dopo il guasto dei 500.** La guardia sta ora in `withRoute` — un posto solo, tutte
+   e 239 le rotte: un handler che non restituisce una Response produce un 500 **con un corpo e un
+   request-id**, non i zero byte muti di Next. Più un test che smette di mockare il modulo
+   `sospensione` (venti file lo facevano, ed erano verdi mentre nessun genitore poteva comunicare
+   un'assenza) e uno smoke che gira contro `next start` — l'unica configurazione in cui quel
+   difetto esisteva.
+4. **La fascia della Dynamic Island** ha un fondale suo, `fixed`, invece di dipendere
+   dall'intestazione `sticky` che la tastiera porta via.
+5. **La regola dei bordi campo** non si tocca (dipinge più scuro: i campi si vedono meglio), ma il
+   controllo che la copriva montava i componenti *senza* la shell — cioè misurava un DOM che in
+   produzione non esiste. Ora è rappresentativo e dimostra da sé di misurare qualcosa.
+6. **L'annullabilità viveva in due posti**, e coincidevano: ora il verso positivo della finestra
+   sta accanto agli altri e un lock tiene d'accordo le due facce.
+
+### Cosa resta aperto, dichiarato
+
+Su telefono il campo **«Motivo» resta parzialmente sotto il piede** quando la pagina si apre: si
+raggiunge scorrendo, ma un tocco dove l'utente lo vede può non entrare nel campo (osservato sul
+simulatore). Il motivo è facoltativo e la funzione principale non ne dipende — l'invio e
+l'annullamento passano su entrambi i telefoni. Chiuderlo del tutto richiede una scelta di prodotto
+(barra più bassa, modulo più corto, o due zone affiancate invece che sovrapposte).
+
+---
+
+## 🐞 Changelog — «Comunica un'assenza»: la pagina e la porta si escludevano a vicenda, e nessuno poteva usarla 2026-08-07 (branch `chore/piani-pro-supabase-vercel`)
+
+Segnalazione del titolare: *«il pulsante segnala errore, e all'insegnante di riferimento non
+arriva»*. Erano due sintomi della stessa cosa, e la cosa non era una regressione: **la funzione non
+era mai stata utilizzabile da nessuno**, dal giorno in cui è stata scritta.
+
+### La prova, prima della diagnosi
+
+| Misura sul database di produzione | Valore |
+|---|---|
+| Notifiche `assenza_comunicata` emesse da sempre | **0** |
+| Righe `presenze` con `giustificata_da`, cioè toccate da un genitore | **0** su 49 |
+| Alunni in grado di usare la funzione col codice di ieri | **0** su 32 |
+
+Non «poco usata»: **mai usata**, perché non si poteva.
+
+### Le due metà che non si incontravano
+
+La pagina del modulo e la route che lo riceve si escludevano a vicenda, e ciascuna delle due era
+scritta bene per conto suo:
+
+- la dashboard manda a `/parent/attendance` **solo** quando il figlio **non** è di primaria
+  (`src/app/(dashboard)/parent/page.tsx:64`, `BottomNav.tsx:90`);
+- quella pagina fa `POST /api/parent/presenze/comunica-assenza`, che rispondeva
+  **403 «Disponibile solo per la scuola primaria»** a chiunque non fosse primaria.
+
+Chi vedeva il pulsante era per costruzione nido o infanzia: **403 garantito**. In produzione sono
+17 bambini di infanzia più 3 senza sezione — 20 famiglie su 32.
+
+E i 12 di primaria, che la route avrebbe accettato, **non avevano nessun pulsante da premere**: il
+componente che glielo dava — `PrimariaParentView.tsx`, con la sua `AssenzeCard` — è esportato e non
+importato **da nessuna parte**. Codice morto, verificato con `grep` su tutto il repo.
+
+### Perché è vissuto un mese senza che nessuno lo vedesse
+
+Tre silenzi sovrapposti, e sono la parte da ricordare:
+
+1. **Il rifiuto non lasciava traccia.** `withRoute` registra i 401/403/404 a livello `info`, e
+   `info` non si persiste in `app_log`. In un mese di produzione quella rotta ha prodotto **una
+   riga sola**, un «Failed to fetch» del 25 luglio. Un 403 sistematico era letteralmente
+   invisibile a una query.
+2. **Il messaggio a schermo non distingueva niente.** Il client mostra solo i testi di un `codice`
+   dichiarato in `CODICI_ERRORE`; la route non ne emetteva **mai** uno, quindi account sospeso,
+   grado sbagliato, alunno inesistente ed errore del database collassavano tutti nella stessa
+   frase generica.
+3. **Il test che c'era mockava proprio il pezzo rotto.** `comunica-assenza-sospensione.test.ts`
+   sostituisce `notificaEvento` con un finto: verificava che venisse *chiamata*, non che qualcosa
+   arrivasse a qualcuno. Il nuovo `comunica-assenza-tutti-i-gradi.test.ts` (29 casi) **non lo
+   mocka** e ispeziona le righe realmente inserite in `notifiche`.
+
+### Cosa è cambiato
+
+- **Tutti e tre i gradi.** Via il gate di grado; `school_type` sopravvive solo per scegliere il
+  link della notifica: `/teacher/attendance` per lo 0-6, `/teacher/primaria/<id>/appello` per la
+  primaria.
+- **La data si valida sul server**, e solo da oggi in avanti. Prima `data` era
+  `z.string().min(1)`: con l'upsert su `(alunno_id, data)` un genitore poteva ribaltare a
+  «assente» un giorno già chiuso dall'appello. Il confronto usa `oggiFiscaleISO()`
+  (**Europe/Rome**): il runtime gira in UTC, e fra mezzanotte e le due italiane «oggi» in UTC è
+  ieri — su questa funzione un giorno di scarto significa scrivere sull'appello della maestra.
+  ⚠️ Il controllo sta **dopo** il gate, non nello schema zod: l'E2E adversarial pretende **403**
+  su un figlio altrui, e una validazione anticipata l'avrebbe degradato.
+- **`DELETE` per annullare**, finché `registrato_da IS NULL`. Perché il criterio valesse su tutti i
+  gradi, l'appello 0-6 (`attendance/daily`) ora **firma la riga** come già faceva la primaria:
+  `aggiornato_il` non poteva servire, ha `DEFAULT now()` ed è valorizzato anche sulla riga del
+  genitore. L'annullamento è **di famiglia**, non dell'autore: legarlo a chi ha scritto la riga
+  produce «l'ha comunicata mia moglie e io non posso toglierla».
+- **`docentiDiSezione` non confonde più un guasto con un'assenza di dati**: controllava solo
+  `{ data }` e buttava `{ error }` — una query fallita era indistinguibile da «questa sezione non
+  ha docenti», con la notifica spedita a zero persone e la route che rispondeva comunque «fatto».
+  🔑 Il filtro sui disattivati è `attivo !== false` e **non** `= true`: la colonna è nullable, e
+  `= true` avrebbe escluso i NULL in silenzio — lo stesso difetto spostato di un metro.
+- **`scuola_id` esplicito** nell'upsert: chiude il debito che il lock isolamento-sede dichiarava
+  dal 31 luglio (`handlerEsentati` 92 → 91). Il presidio è stato **falsificato prima di crederci**:
+  tolto `scuola_id`, il lock torna rosso; rimesso, verde.
+- **`entita_id`** della notifica è l'id della riga `presenze`, non più `studentId`: due assenze di
+  giorni diversi dello stesso bambino non sono più la stessa entità, e la revoca diventa chirurgica.
+- **Cinque codici d'errore** con i testi IT/EN, e la voce della route **tolta** dall'allowlist
+  «errori senza codice» invece che spostata.
+- **`comunicateLette`**: la GET dichiara se l'elenco è stato letto davvero. Senza, una lettura
+  fallita diceva a un genitore *«non hai comunicato nessuna assenza»* avendone, e senza modo di
+  annullarle.
+
+### Le due cose che il codice non risolve
+
+1. **La push arriverebbe a 1 docente su 12**: solo uno ha una sottoscrizione in
+   `push_subscriptions`. La campanella in-app arriva a tutti — non dipende dalla sottoscrizione —
+   la notifica sul telefono no. È adozione, non un difetto.
+2. **La sezione «3 ANNI» non ha nessun docente collegato** e ha un bambino iscritto. Per decisione
+   del titolare la comunicazione viene registrata lo stesso e non avvisa nessuno, lasciando un log
+   `warn`. Si chiude collegando un docente dal pannello, non dal codice.
+
+### Il collaudo, e quello che ha trovato
+
+Undici tester hanno collaudato la funzione riparata. **Nessuno ha detto che andava bene.** I difetti
+veri, corretti nello stesso lavoro:
+
+- 🔴 **Il genitore sovrascriveva l'appello di OGGI.** Tre tester indipendenti, per tre strade
+  diverse. La difesa scelta era la sola data (`data < oggi`): copre **ieri**, ma l'appello si fa
+  **oggi**. Un bambino segnato «presente» alle 08:45 diventava «assente giustificato» con un 201,
+  con l'orario d'entrata ancora nella riga — e poi **nessuno dei due poteva rimediare**
+  dall'interfaccia: il genitore riceveva 409 e non vedeva la riga in elenco, il docente si
+  ritrovava un'assenza che non aveva scritto. L'`upsert` cieco è stato sostituito da una scrittura
+  **condizionata dal database sotto lock di riga**, con la corsa fra i due gesti arbitrata da
+  `unique_presenza_giornaliera` e distinta nel merito: persa contro un docente → 409, persa contro
+  l'altro genitore → 201.
+  ⚠️ Il commento del file **dichiarava chiusa proprio questa classe di difetto**. È stato riscritto:
+  *una protezione descritta e assente è peggio di nessuna protezione*.
+- 🔴 **Il `DELETE` non guardava la data**: si poteva cancellare fisicamente dal registro una
+  presenza di qualunque giorno passato. Ora rifiuta il passato come il `POST`.
+- 🔴 **Con l'Alto Contrasto acceso i due campi erano bianchi su bianco** — invisibili esattamente
+  a chi accende quella modalità. Più: la conferma non veniva annunciata agli screen reader e il
+  fuoco finiva su `<body>`; due frasi (fra cui l'unica che dice *per quale giorno*) erano a
+  **2,51:1**, ora **6,46:1**; il formato `gg/mm/aaaa` viveva solo nel segnaposto di un campo
+  mascherato, e spariva al primo carattere digitato.
+- 🔴 **Il motivo dell'assenza è un dato sanitario di un minore e non scadeva mai.** Il segnaposto
+  chiede testualmente un sintomo, il campo veniva raccolto da tutte le famiglie per la prima volta,
+  e l'informativa prometteva «non oltre la durata dell'iscrizione» senza che **nessun meccanismo**
+  applicasse quel termine: dopo una cancellazione richiesta, il nome del bambino diventava un
+  segnaposto e il motivo della sua assenza restava leggibile per sempre. Ora entra nell'oblio
+  (`anonimizzaAlunno`) e scade a **12 mesi**, con il numero in un posto solo e un lock che lo
+  confronta con l'informativa.
+- 🟠 **La data nella notifica al docente era ISO grezza** (`sarà assente il 2026-08-11`) — l'unico
+  testo che questa funzione produce per il docente, cioè il motivo per cui esiste.
+- 🟠 **Il collaudo mobile dichiarava «superato» senza aver aperto niente**: `tapOn: "Avvisi"`
+  colpiva un nodo di dimensione zero e l'asserzione era soddisfatta da un secondo nodo fantasma.
+  Stessa malattia del difetto di partenza — *qualcosa che dichiara successo senza verificarlo* — e
+  peggiore, perché un collaudo che mente occupa il posto di quello vero.
+
+### La lezione
+
+**Due metà scritte bene possono non toccarsi mai, e i test di ciascuna restano verdi.** Il gate di
+grado della route era corretto per la primaria; la navigazione della dashboard era corretta per lo
+0-6; il componente della primaria era scritto bene. Nessuno dei tre era sbagliato **da solo**, e
+proprio per questo nessun test unitario poteva accorgersene. Se ne accorge solo una misura sui dati
+veri — *quante volte questa funzione è stata usata da quando esiste* — e la risposta era zero.
+
+E il seguito insegna la seconda metà: **la difesa scritta contro un difetto va misurata contro il
+difetto, non contro la propria descrizione.** Il controllo sulla data era stato aggiunto proprio
+per impedire che un genitore riscrivesse l'appello, il commento lo dichiarava fatto, e copriva il
+giorno sbagliato.
+
+Per questo il canale `registro` entra in `EVENTI_PERSISTITI`: la comunicazione riuscita lascia ora
+una riga in `app_log`. La domanda che ha aperto tutto — *«sta funzionando? qualcuno sta comunicando
+assenze?»* — ha da oggi una risposta che è una query, non un'opinione.
+
+---
+
+## 🔻 Changelog — Apple rifiuta la conversione, e il ripiego di ieri era l'unica strada che esisteva 2026-08-07 (branch `chore/piani-pro-supabase-vercel`)
+
+Giornata **senza una riga di codice**: solo misura dello stato delle due console e una decisione.
+
+### 1. La conversione a *Organization* è RIFIUTATA — e la delega non c'entrava
+
+Risposta di **Claudio, Developer Support**, sulla pratica `20000121958970`, il **07/08 h11:46**:
+
+> *«To be eligible for migration, the Account Holder of the individual membership must be the
+> **founder or cofounder** of the organization. However, your organization can **enroll separately**
+> into the Apple Developer Program. After the enrollment is complete, it's possible to **transfer
+> apps** to the organization membership.»*
+
+Il requisito è **anagrafico, non documentale**: Errico Luigi è consigliere dal 2020 di una
+cooperativa costituita nel 2007 — non sarà mai fondatore né cofondatore. La delega firmata da
+**Errico Cesario** inviata il 05/08, che il PRD del 05/08 indicava come il passo che sbloccava
+tutto, **non poteva funzionare in nessun caso**. Non è stata compilata male: chiedeva una cosa che
+quel canale non concede.
+
+**Ciò che Apple indica al suo posto sono due passi distinti**: (a) iscrizione **separata** della
+cooperativa al Developer Program (D-U-N-S `432360401`, **+99 $/anno che si sommano**, non
+sostituiscono); (b) **App Transfer** dall'account individuale a quello della coop.
+
+🔑 **Conseguenza che ribalta la voce del 05/08**: l'App Transfer pretende un'app **già pubblicata**.
+Quindi la sequenza obbligata è *prima pubblicare dall'account individuale — cioè col DSA compilato
+il 06/08 — e solo dopo, eventualmente, trasferire*. **Il «ripiego» del 06/08 era l'unica via
+percorribile**, e l'attesa della conversione impostata il 05/08 attendeva una porta che non si
+sarebbe aperta mai. ⚠️ Il vincolo «app mai pubblicata = non trasferibile» va **riverificato quando
+si arriverà lì**: oggi la `1.0` è `READY_FOR_SALE` ma disponibile in **0** territori, ed è un caso
+di confine.
+
+### 2. Decisione del titolare (2026-08-07): si pubblica come `luigi errico`, e si decide dopo
+
+Nessuna seconda iscrizione adesso. L'app esce a nome dell'account individuale; la scelta se
+trasferirla alla cooperativa **si riapre dopo la prima pubblicazione riuscita**, quando il rischio
+sarà misurato invece che immaginato. Restano noti e accettati:
+
+- **Guideline 5.1.1(ix)** — dato empirico a favore: la revisione **è già passata il 06/08** con
+  quei contenuti e quell'account. Il rischio non è la prima uscita, è che un revisore la applichi
+  a un **aggiornamento futuro** e faccia rimuovere l'app;
+- **dati personali sulla scheda UE** — `luigi errico` + Vico Silvio Pellico 7 + `+39 3318153108` +
+  `info@kidville.it`. Telefono, email e indirizzo sono **già pubblici** (recapito di Giugliano,
+  casella istituzionale, sede legale da visura): l'unico dato nuovo è il nome accanto a quell'indirizzo;
+- **Titolare del trattamento ≠ publisher** — la privacy policy indica la cooperativa, l'App Store
+  indicherà una persona fisica. Si scioglie solo col trasferimento.
+
+La pratica `20000121958970` **non si chiude**: quella mail è la procedura corretta messa per
+iscritto da Apple, ed è la cosa più utile da avere in mano se un domani un revisore solleva la
+5.1.1(ix).
+
+### 3. Stato misurato delle due console
+
+**🍏 Apple** — *Azienda → Conformità*: **Normativa sui servizi digitali · 27 paesi · aggiornata
+6 ago · `Verifica in corso`**, nessun rigetto e nessuna richiesta di altri documenti. Ricevuta del
+06/08 h17:12 (*«We'll verify your information and get back to you soon»*) con i dati registrati:
+`luigi errico` · `+39 3318153108` · `info@kidville.it` · **Vico Silvio Pellico 7, Cesa (CE)** ·
+**DUNS: N/A**. ⚠️ Nome di persona fisica + indirizzo della sede legale della coop: è lo scostamento
+già segnalato il 05/08 come rischio di rigetto della verifica.
+Invariati e coerenti: ITA `TRADER_STATUS_NOT_PROVIDED`, `itunes.apple.com/lookup` → `resultCount:0`,
+pagina prodotto → `404`. **La verifica non ha SLA.**
+
+**🤖 Google Play** — il contatore **esiste**, ed è in corsivo sotto il terzo requisito in
+*Dashboard → Richiedere l'accesso alla produzione*: **«Al momento partecipano 12 tester per
+1 giorno»**. Quindi il conteggio è partito il **6 agosto**, non il 5: traguardo **~20 agosto**.
+⚠️ **12 su 12 richiesti, margine zero**: se un tester si disiscrive si scende a 11 e i giorni
+**ripartono da capo**. Panoramica della pubblicazione pulita, nessuna modifica in sospeso.
+
+🔓 **`developer.apple.com` è accessibile dall'estensione Chrome** — la nota del 06/08 («dominio non
+autorizzato») è superata. ⚠️ `recent-cases` mostra **solo la riga dell'evento, mai il testo**: le
+mail stanno su `lerrico7@icloud.com`, fuori dalle 9 caselle del server MCP, e si leggono in Chrome
+dopo un login fatto dal titolare.
+
+---
+
+## 💳 Changelog — I piani Pro, il progetto che si chiamava come uno di prova, e i 700 alunni che in produzione sono 32 2026-08-06 (branch `chore/piani-pro-supabase-vercel`)
+
+Giornata **senza una riga di codice**: solo infrastruttura, fatta a schermo con `claude --chrome`.
+Ne sono usciti un passaggio a pagamento su entrambe le piattaforme, una cancellazione evitata per
+un soffio, e una misura che ribalta la pianificazione della capacità.
+
+### 1. Supabase e Vercel su Pro — e la P.IVA che nessun checkout accetta
+
+Entrambe le organizzazioni erano **fuori quota sul piano gratuito**: Supabase in *grace period* per
+`Storage Size Exceeded` con restrizione annunciata dal **4 settembre**, Vercel con *Fluid Active
+CPU* a 6h53m su 4h incluse. Ora: **Supabase Pro** ($25) e **Vercel Pro** ($20), fatturati alla
+cooperativa (Via Silvio Pellico 7, 81030 Cesa).
+
+**La partita IVA `03394870616` non entra in nessuno dei due checkout**: ha il check digit corretto
+ed è regolare in Italia, ma **non è iscritta al VIES** (`isValid: false`, `userError: INVALID` dalla
+REST API della Commissione UE), e Stripe valida contro il VIES ogni numero che inizia per `IT`. Con
+la spunta *«I'm purchasing as a business»* attiva il tax ID diventa **obbligatorio** → si paga solo
+**togliendo la spunta**. L'importo non cambia: nessuna IVA aggiunta, verificato a schermo prima di
+confermare. VIES ≠ fatturazione italiana: le fatture della cooperativa non c'entrano nulla, ed è
+per questo che l'assenza dall'elenco non era mai emersa.
+
+### 2. Il progetto di produzione si chiamava `erricoluigi17's Project`
+
+Il preventivo Supabase mostrava **$35 invece di $25** perché **sul piano Pro ogni progetto oltre il
+primo costa $10/mese anche se è fermo**. Il candidato apparente alla cancellazione era
+`erricoluigi17's Project` — **che era la produzione**, col nome di default mai cambiato dal 2 maggio.
+La verifica prima di toccare qualsiasi cosa: `343` righe in `enrollment_submissions` contro `0` nel
+progetto CI. Rinominato in **`kidville-web-prod`** (`ref` invariato: `uimulkjyekgemjakmepp`).
+`kidville-web-ci` è **vuoto ma indispensabile**: è il DB degli E2E. Non c'era niente da cancellare.
+
+### 3. Il dimensionamento per ~1000 connessi, e la misura che lo rimanda
+
+| | Prima | Dopo |
+|---|---|---|
+| Compute prod | **Nano** 0,5 GB, memoria al **66%** a vuoto | **Small** 2 GB, `shared_buffers` 128 MB → **512 MB** |
+| Spend cap | ON → tetto **rigido a 500** connessioni Realtime | **OFF** → fino a **10.000**, a consumo |
+| Leaked password protection | OFF (richiedeva il Pro) | **ON**, advisor a 0 ERROR |
+
+Il resize ha richiesto **~2m20s di downtime reale** (`status: RESIZING` via API). I limiti Realtime
+dipendono **dal piano e dallo spend cap, non dalla taglia di compute**: Pro con cap 500 conn /
+500 msg-s / 500 join-s, senza cap 10.000 / 2.500 / 2.500. L'overage è `$10 per 1000` connessioni
+oltre le 500, fatturato **una volta al mese sul picco massimo del ciclo** (voce *Max in period*):
+sforare trenta volte costa quanto sforarne una. Lo spend cap è **binario** — nessun tetto
+intermedio acquistabile — e con il cap spento **Supabase non manda alcun avviso di budget**.
+
+**La misura che conta**: in produzione ci sono **58 account** (38 genitori, 12 `educator`, 8 fra
+segreteria/admin/coordinatore/cuoca) e **32 alunni** in anagrafica. I 700 alunni sono la scuola
+vera, non ciò che l'app conosce: il muro delle 500 connessioni **non era raggiungibile**, e lo
+diventerà solo il giorno del caricamento dell'organico.
+
+### 4. Il collo di bottiglia per il pieno regime è nel codice, non nel piano
+
+`src/middleware.ts:301` ha un matcher che copre **tutto tranne gli asset statici** — ogni pagina e
+tutte le 283 route API — e alla riga 262 fa `supabase.auth.getUser()`, cioè **una chiamata di rete a
+GoTrue per ogni singola richiesta**. A 1000 utenti attivi sono centinaia di chiamate al secondo
+all'Auth prima di qualunque query utile. Cura: **verifica locale del JWT** con le chiavi asimmetriche
+(sezione *JWT Keys* già presente sul progetto), tenendo `getUser()` solo dove serve la verifica
+contro il server. Da pianificare con TDD: tocca la porta d'ingresso dell'autenticazione.
+
+Nello stesso capitolo: **`revalidate` non compare in nessuna pagina** (nulla è cachato) e alcune
+route servono i file con `storage.download()` + `Buffer` invece di `createSignedUrl()`, facendo
+passare i byte dentro la funzione Vercel e pagandoli due volte. Verificato che **non** è un problema
+il logging: `vaPersistito()` scrive su `app_log` solo `error`, `warn` e una allowlist di eventi.
+
+### 5. Advisor di sicurezza dopo le modifiche
+
+`auth_leaked_password_protection` **non compare più**. Advisor a **0 ERROR**. Residui accettati
+invariati (RLS-senza-policy a livello INFO, `pg_net` in `public`, `current_parent_student_ids`
+SECURITY DEFINER). **Nuovi WARN aperti**: `worm_fatture_emesse` e `worm_ricevute_emesse` hanno il
+`search_path` mutabile.
+
+**Spesa mensile**: da $0 a **~$60** — Supabase $39,72 previsti a fine ciclo (Pro $25 + Small $14,83
++ CI $10 − $10 di crediti compute) e Vercel $20 con $20 di credito d'uso incluso.
 
 ---
 
@@ -3389,6 +3744,12 @@ suo corpo. `handlerEsentati` scende da 109 a **96** — il calo più grosso mai 
 numero. Resta una sola voce, riscritta per dire il vero: `parent/presenze/comunica-assenza:POST` fa
 un `upsert` su `presenze` **senza `scuola_id`** — l'attore è verificato, la riga nasce senza plesso.
 Debito aperto e dichiarato, non una giustificazione.
+
+> **Pagato il 2026-08-07.** L'`upsert` dichiara ora la sede, letta da `alunni`, e la voce di
+> esenzione è stata **tolta** dal lock invece di essere riscritta: `handlerEsentati` 92 → 91,
+> `handlerControllati` 435 → 436 (nasce il `DELETE` dell'annullamento). Il presidio è stato
+> **falsificato prima di crederci**: tolto `scuola_id` dall'`upsert`, il lock torna rosso citando
+> `inserimento-senza-sede su 'presenze'`; rimesso, torna verde.
 
 ### Le lezioni
 

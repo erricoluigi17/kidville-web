@@ -13,6 +13,7 @@ import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formattaIstante } from '@/i18n/config';
+import { conIniziale } from '@/lib/i18n/date';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -74,9 +75,14 @@ function addDays(iso: string, n: number): string {
     return toISO(d);
 }
 
+// La maiuscola iniziale sta QUI, dove il `locale` è noto, e non nella classe CSS
+// `capitalize`: quella alzava anche l'iniziale del mese («Sabato 8 Agosto 2026»),
+// che è la regola inglese applicata all'italiano. Vedi src/lib/i18n/date.ts.
 function formatDataLunga(iso: string, locale: string): string {
     const d = new Date(iso + 'T12:00:00');
-    return formattaIstante(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return conIniziale(
+        formattaIstante(d, locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+    );
 }
 
 // ─── Navigatore Data ─────────────────────────────────────────────────────────
@@ -252,6 +258,7 @@ function TodayView({ sezione }: { sezione: string }) {
                 stato: AttendanceStato;
                 orario_entrata: string | null;
                 orario_uscita: string | null;
+                giustificazione_testo?: string | null;
             }) => {
                 map[row.alunno_id] = {
                     id: row.id,
@@ -260,6 +267,10 @@ function TodayView({ sezione }: { sezione: string }) {
                     stato: row.stato,
                     orario_entrata: row.orario_entrata,
                     orario_uscita: row.orario_uscita,
+                    // Il motivo che il genitore ha comunicato: la riga lo mostra
+                    // (vedi `StudentAttendanceRow`). È il dato che rende vera la
+                    // frase mostrata alla famiglia al momento della raccolta.
+                    giustificazione_testo: row.giustificazione_testo ?? null,
                 };
             });
         }
@@ -307,10 +318,15 @@ function TodayView({ sezione }: { sezione: string }) {
         const orario_entrata = stato === 'assente' ? null : (records[studentId]?.orario_entrata ?? now);
         const orario_uscita = stato === 'uscita_anticipata' ? now : null;
 
-        // Ottimistic update
+        // Ottimistic update. Si PARTE dal record precedente invece di ricostruirlo
+        // da zero: il motivo comunicato dal genitore non arriva dalla POST (la
+        // risposta porta solo le colonne dell'appello, vedi `COLONNE_ESITO`), e
+        // ricreando l'oggetto sparirebbe dalla riga appena la maestra tocca un
+        // bottone — cioè proprio mentre lo sta leggendo.
         setRecords(prev => ({
             ...prev,
             [studentId]: {
+                ...prev[studentId],
                 alunno_id: studentId,
                 data: selectedDate,
                 stato,
@@ -341,7 +357,10 @@ function TodayView({ sezione }: { sezione: string }) {
                 throw new Error(errData.error ?? 'Errore salvataggio');
             }
             const saved = await res.json();
-            setRecords(prev => ({ ...prev, [studentId]: saved }));
+            // Si FONDE, non si sostituisce: la risposta del salvataggio dichiara
+            // le sei colonne dell'appello e non il motivo del genitore, che resta
+            // quello già in mano al client.
+            setRecords(prev => ({ ...prev, [studentId]: { ...prev[studentId], ...saved } }));
             // Questa riga è salvata: se era in errore, esce dall'avviso.
             setErroriSalvataggio(prev => {
                 if (!(studentId in prev)) return prev;
@@ -465,7 +484,7 @@ function TodayView({ sezione }: { sezione: string }) {
             {/* Navigatore data + intestazione */}
             <div className="flex flex-col gap-3 rounded-2xl border border-kidville-line bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-maven text-sm capitalize text-kidville-muted">{formatDataLunga(selectedDate, locale)}</p>
+                    <p className="font-maven text-sm text-kidville-muted">{formatDataLunga(selectedDate, locale)}</p>
                     <div className="flex items-center gap-2">
                         {isOffline && (
                             <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">

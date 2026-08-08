@@ -103,6 +103,55 @@ const DA_HASHARE = insieme(
 const RADICI_NASCITA = ['nascita', 'birth'];
 
 /**
+ * IL TESTO LIBERO — e PERCHÉ LA CHIAVE DEVE DECIDERE PRIMA DEL TIPO.
+ *
+ * ─── LA REGOLA, prima del caso ──────────────────────────────────────────────
+ *
+ * In questo modulo la deroga per TIPO («numeri, booleani e date passano, da soli non
+ * identificano nessuno») nasce pensando ai campi che scriviamo NOI: `ms`, `n_righe`,
+ * `stato`, `occorrenze`. Ma `redact()` non gira solo su quelli: gira sul BODY GREZZO di
+ * ogni richiesta, che `parseBody` deposita PRIMA di zod. Su quel materiale **il tipo non è
+ * una proprietà del dato: è una scelta di chi manda la richiesta.** `motivo` è dichiarato
+ * `z.unknown()` nello schema della rotta, quindi la stessa informazione può arrivare come
+ * stringa, come numero, come booleano o come oggetto — e una difesa che guarda la forma
+ * prima del nome tratta in quattro modi diversi lo stesso dato.
+ *
+ * Da qui la regola generale, che vale per tutte e quattro le famiglie di chiavi sensibili
+ * (`RADICI_SEGRETE`, `DA_HASHARE`, `RADICI_NASCITA`, e queste): **la CHIAVE decide, e decide
+ * per prima.** Il tipo può solo aggiungere una difesa, mai toglierne una. Il ramo per tipo
+ * resta dov'è, ma sotto le chiavi che nominano un dato è irraggiungibile.
+ *
+ * ─── IL CASO CHE L'HA MOSTRATA (Q19, quarto collaudo) ───────────────────────
+ *
+ * `{"motivo": 40404}` usciva **in chiaro** in `app_log` — 30 giorni, interrogabile in SQL —
+ * mentre `{"motivo":"40404"}` usciva `[redatto:str/5]`. Misurato in produzione su 18
+ * occorrenze, più una riga preesistente della stessa forma. È la TERZA direzione da cui
+ * questo stesso canale si è aperto: prima le CHIAVI (M15), poi le STRINGHE sotto lista
+ * bianca (M11), ora il TIPO. Le prime due sono state chiuse una alla volta; questa chiude
+ * la regola.
+ *
+ * ─── COSA C'È DENTRO, E PERCHÉ NON DI PIÙ ───────────────────────────────────
+ *
+ * I nomi con cui, in QUESTO schema, viaggia un testo scritto da una persona su un'altra:
+ * il motivo dell'assenza e le note dell'appello (`presenze`, art. 9 su un minore), le note
+ * mediche e le allergie del modulo d'iscrizione, il corpo di una notifica (porta il nome
+ * del bambino), la descrizione — che «vale tanto "Merenda" quanto una diagnosi clinica»,
+ * come dice la testata di questo file.
+ *
+ * NON è un elenco di parole «sensibili» a naso: ogni radice qui dentro corrisponde a una
+ * colonna o a un campo di richiesta che esiste. Una radice troppo golosa spegnerebbe log
+ * innocui, e una difesa che dà fastidio viene disattivata sei mesi dopo da qualcuno che non
+ * sa perché c'era. Falsi positivi noti e accettati: `sospeso_motivo`, `annotazioni` (sono
+ * testo libero davvero). Volutamente FUORI: `testo` — perché `contesto` lo contiene, e
+ * redigere la chiave `contesto` cancellerebbe l'intera riga di log; il caso vero
+ * (`giustificazione_testo`) è già coperto da `giustificazione`.
+ */
+const RADICI_TESTO_LIBERO = [
+    'motivo', 'nota', 'note', 'giustificazione', 'descrizione', 'commento', 'corpo',
+    'diagnosi', 'allerg', 'intolleran', 'patolog', 'terapia', 'farmac', 'sintom', 'anamnes',
+];
+
+/**
  * Path e URL: MAI in chiaro. In questo repo il token del modulo pubblico è un
  * SEGMENTO di path (`/m/[token]`, `/api/public/forms/[token]/submit`) ed è una
  * capability; le query string trasportano `?userId=`, `?email=`, `?token=`.
@@ -137,14 +186,106 @@ const FORMA_PATH = /^(\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/;
  * NB: `codice` NON è qui. Sembra innocuo, ma la valutazione di competenza viaggia
  * anche come `Livello.codice: 'A'|'B'|'C'|'D'` (src/lib/competenze/modello.ts): stessa
  * informazione di `livello`, altro nome. I codici d'errore hanno il loro campo dedicato.
+ *
+ * ESPORTATO perché il lock `logging-redact-canale-testo-libero.test.ts` gira sull'ELENCO e
+ * non su un campione: una chiave aggiunta domani è coperta il giorno in cui viene aggiunta,
+ * che è il solo momento in cui nessuno la sta guardando.
  */
-const IN_CHIARO = insieme(
+export const CHIAVI_IN_CHIARO = [
     'tipo', 'tipo_evento', 'stato', 'esito', 'azione', 'operazione', 'metodo',
     'ordine', 'periodo', 'anno', 'anno_scolastico', 'mese', 'cadenza',
     'ruolo', 'grado', 'classe_sezione', 'sezione', 'bucket', 'mime', 'content_type',
     'estensione', 'formato', 'canale', 'piattaforma', 'ambiente', 'provider',
     'error_code', 'evento', 'entita_tipo',
-);
+] as const;
+
+const IN_CHIARO = insieme(...CHIAVI_IN_CHIARO);
+
+/**
+ * LA FORMA DI UN ENUMERATO — la stessa deroga di `digest` e di `url`, estesa alle venti
+ * chiavi che erano rimaste indietro.
+ *
+ * IL PROBLEMA (collaudo del 2026-08-07, rilievo M11). `redact()` non gira solo sui campi che
+ * scriviamo noi: gira sul BODY GREZZO di ogni richiesta, perché `parseBody` fa
+ * `impostaPayload('body', raw)` PRIMA di zod. Finché bastava la CHIAVE, `{"stato": "<quello
+ * che ti pare>"}` era un canale di TESTO LIBERO verso `app_log` — 30 giorni, interrogabile in
+ * SQL — e con `stato` uscivano `tipo`, `esito`, `operazione`, `sezione`, `grado`, `error_code`,
+ * `entita_tipo`… Il canale non è anonimo (serve una sessione perché `withRoute` persista il
+ * 400), ma su `parent/presenze/comunica-assenza` basta un account genitore, e il testo libero
+ * di quella rotta è il MOTIVO dell'assenza: dato sanitario di un minore.
+ *
+ * Il modulo aveva già scritto la risposta due volte — `CHIAVI_DIGEST`, `CHIAVI_PATH`: **la
+ * chiave apre, il valore conferma** — e non l'aveva generalizzata. Qui la forma è quella di un
+ * ENUMERATO tecnico: comincia con una lettera o una cifra, niente spazi, niente a capo, e non
+ * più lunga di 64 caratteri.
+ *
+ * PERCHÉ PROPRIO QUESTA FORMA, e perché non stringe i log veri. Misurati i 1.261 valori
+ * letterali che `src/` scrive sotto queste chiavi: nessuno supera i **45** caratteri e nessuno
+ * esce da questo alfabeto — ci stanno i nomi di rotta con segmento dinamico
+ * (`admin/sections/[id]/teachers:DELETE`), i mime (`application/vnd.api+json`), i periodi
+ * (`2026-07`), gli slug (`body-json-malformato`). 64 è il tetto che `/api/logs` usa già per
+ * `evento`: non è un numero nuovo.
+ *
+ * NIENTE SPAZI è la riga che fa il lavoro: la prosa ne ha, un enumerato no. E un `\n` è nella
+ * stessa classe per una ragione in più della privacy — spezzerebbe la riga di log in due voci,
+ * e la seconda la scriverebbe il client.
+ *
+ * LO SLASH INIZIALE È AMMESSO, e non è una concessione: sotto `operazione` questo repo scrive
+ * anche un PATTERN DI PATH — `instrumentation.ts` passa la rotta di render (`/dashboard`),
+ * `external.ts` passa `redigiPath(new URL(url).pathname)` del provider. Quei valori sono già
+ * ridotti a pattern da `redigiPath` prima di arrivare qui, e senza lo slash uscivano
+ * `[redatto:str/10]`: si perdeva la sola colonna che dice DOVE è successo. Un path resta senza
+ * spazi e sotto i 64 caratteri, quindi la difesa non cambia natura.
+ *
+ * ⚠️ LIMITE DICHIARATO, perché nessuno lo scopra da solo fra sei mesi: un token SENZA spazi e
+ * più corto di 64 caratteri passa ancora — un codice fiscale (`RSSMRA80A01H501U`) ha questa
+ * forma. Questa difesa chiude il testo libero, non ogni dato possibile. Il presidio contro i
+ * dati personali resta quello di sempre: la chiave (`DA_HASHARE`, `RADICI_SEGRETE`,
+ * `RADICI_NASCITA`) e la lista bianca chiusa per default.
+ */
+const FORMA_ENUMERATO = /^[A-Za-z0-9/][A-Za-z0-9._:/+[\]-]{0,63}$/;
+
+/**
+ * LA FORMA DI UN CODICE FISCALE — l'unica eccezione alla forma dell'enumerato, e perché.
+ *
+ * Misurata in `app_log` una riga che non veniva dal collaudo, scritta da un `educator`:
+ * `"sezione": "RSSMRA80A01H501U"` in chiaro dentro `campi` e dentro `payload.query`. Il nome
+ * della classe arriva da un query param, il codice lo rimette nei campi, e sedici caratteri
+ * senza spazi sono un enumerato perfetto: `FORMA_ENUMERATO` non aveva niente da obiettare.
+ *
+ * È il caso in cui il «limite dichiarato» del commento qui sopra («un codice fiscale ha questa
+ * forma») smette di essere un limite teorico. In produzione ce ne sono centinaia, di minori, e
+ * il codice fiscale è l'unico identificatore di questo dominio che si riconosca dalla forma
+ * senza ambiguità — sei lettere, due cifre, lettera, due cifre, lettera, tre cifre, lettera.
+ *
+ * Costa zero in diagnosi: nessuno dei 1.261 valori letterali che `src/` scrive sotto le chiavi
+ * in lista bianca ha questa forma, e i nomi di sezione veri (`TEST-1A`, `Primavera-A`) non le
+ * somigliano nemmeno. Vale ovunque — campi e payload — perché il difetto misurato stava nei
+ * campi, dove la difesa sulla provenienza (`redactInput`) non arriva.
+ */
+const FORMA_CODICE_FISCALE = /^[A-Za-z]{6}\d{2}[A-Za-z]\d{2}[A-Za-z]\d{3}[A-Za-z]$/;
+
+/** Un enumerato tecnico: la forma giusta E non la forma di un codice fiscale. */
+function eEnumerato(v: string): boolean {
+    return FORMA_ENUMERATO.test(v) && !FORMA_CODICE_FISCALE.test(v);
+}
+
+/**
+ * L'alfabeto di una CHIAVE, e perché le chiavi vanno guardate come i valori (rilievo M15).
+ *
+ * `redactValore` riusava il nome della chiave intatto: `out[kk] = redactValore(kk, …)`. Quindi
+ * bastava spostare il testo dal valore al NOME per non passare da nessuna riduzione —
+ * `{"motivo": {"HA LA VARICELLA": 1}}` usciva intero, mentre `{"motivo": "HA LA VARICELLA"}`
+ * usciva `[redatto:str/15]`. Lo stesso dato, due trattamenti, decisi dalla forma che gli dà
+ * il client. E il client la forma la sceglie: `motivo` è dichiarato `z.unknown()`, e le chiavi
+ * dello slot `query` sono i nomi dei query param, cioè testo che arriva dall'esterno.
+ *
+ * Alfabeto conservativo — quello di un identificatore, più `.` e `-` per gli header e i nomi
+ * composti — e tetto a 64 come per i valori. Una chiave fuori forma esce come
+ * `[chiave-redatta:N]`: si perde il nome, si tiene il fatto che il campo c'era e quanto era
+ * lungo, che è metà della diagnosi.
+ */
+const FORMA_CHIAVE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 
 /**
  * IL `digest` DI NEXT — l'unica deroga alla lista bianca, e vale la pena scrivere perché.
@@ -214,6 +355,33 @@ function eSegreta(chiaveNorm: string): boolean {
 
 function eNascita(chiaveNorm: string): boolean {
     return RADICI_NASCITA.some((radice) => chiaveNorm.includes(radice));
+}
+
+function eTestoLibero(chiaveNorm: string): boolean {
+    return RADICI_TESTO_LIBERO.some((radice) => chiaveNorm.includes(radice));
+}
+
+/**
+ * Il valore di un campo di testo libero, redatto SENZA far sparire il campo.
+ *
+ * `[redatto:num]` e non `[redatto]` secco: la diagnosi di un 400 sta metà nel sapere che il
+ * campo c'era e di che forma era. «`motivo` è arrivato come numero» è esattamente ciò che
+ * spiega perché `motivoNormalizzato` l'ha scartato e la riga di `presenze` è rimasta senza
+ * testo — con `[redatto]` per tutti quel filo si perde e resta solo la riproduzione a mano.
+ *
+ * Le stringhe conservano la lunghezza come qualunque altra stringa fuori dalla lista bianca;
+ * oggetti e array collassano, perché lì il testo può stare tanto nei valori quanto nei nomi
+ * (rilievo M15) e non c'è una forma da conservare che valga il rischio.
+ *
+ * `null`/`undefined` passano intatti: «il campo mancava» è il 95% dei bug, e un `null` non è
+ * il dato di nessuno.
+ */
+function redigiTestoLibero(v: unknown): unknown {
+    if (v === null || v === undefined) return v;
+    if (typeof v === 'string') return redigiStringa(v);
+    if (typeof v === 'number') return '[redatto:num]';
+    if (typeof v === 'boolean') return '[redatto:bool]';
+    return '[redatto]';
 }
 
 /**
@@ -297,16 +465,52 @@ function redigiErrore(v: Error): Record<string, unknown> {
     return out;
 }
 
-function redactValore(chiave: string | null, v: unknown, prof: number, visti: Set<object>): unknown {
+/**
+ * Il nome con cui una chiave arriva in tabella.
+ *
+ * Fuori dalla `FORMA_CHIAVE` diventa `[chiave-redatta:N]` — e il progressivo `#2`, `#3` non è
+ * un vezzo: senza, due chiavi ostili della stessa lunghezza (`{'a b':1,'c d':2}`) collasserebbero
+ * nello stesso nome e la seconda sovrascriverebbe la prima. Il log direbbe che il campo era uno
+ * solo, cioè mentirebbe sul numero — che in una riga di diagnosi è metà dell'informazione.
+ *
+ * NB: la sensibilità del VALORE si continua a decidere sulla chiave VERA (`redactValore(kk, …)`
+ * riceve `kk`, non il nome in uscita): `{'password!': 'hunter2'}` perde il nome per la forma e
+ * il valore per la radice segreta. Se si passasse il nome redatto, redigere una chiave
+ * significherebbe ASSOLVERE il suo valore — l'esatto contrario di ciò che serve.
+ */
+function nomeInUscita(chiave: string, gia: Record<string, unknown>): string {
+    if (FORMA_CHIAVE.test(chiave)) return chiave;
+    const base = `[chiave-redatta:${chiave.length}]`;
+    if (!(base in gia)) return base;
+    let i = 2;
+    while (`${base}#${i}` in gia) i++;
+    return `${base}#${i}`;
+}
+
+function redactValore(
+    chiave: string | null,
+    v: unknown,
+    prof: number,
+    visti: Set<object>,
+    /**
+     * `false` per il PAYLOAD GREZZO di una richiesta: lì le chiavi le sceglie il client, e una
+     * chiave scelta dal client non può aprire niente. Vedi `redactInput`.
+     */
+    fidato = true,
+): unknown {
     const k = chiave === null ? null : normalizzaChiave(chiave);
 
+    // ═══ LA CHIAVE DECIDE, E DECIDE PER PRIMA ════════════════════════════════════
+    // Tutte e quattro le politiche per NOME stanno qui, sopra ogni ramo per tipo. Non è
+    // ordine estetico: sotto, `typeof v === 'number' || 'boolean'` e `v instanceof Date`
+    // farebbero uscire in chiaro proprio le forme con cui questi dati arrivano davvero —
+    // e su un body grezzo la forma la sceglie il client, non il dato (vedi
+    // `RADICI_TESTO_LIBERO`). Il tipo può aggiungere una difesa, mai toglierne una.
     if (k !== null) {
         if (eSegreta(k)) return '[redatto]';
         if (DA_HASHARE.has(k)) return v === null || v === undefined ? v : hashCorrelabile(v);
-        // PRIMA di ogni ramo per tipo, e deve stare qui: `v instanceof Date` e
-        // `stringaAutoDescrittiva` più in basso lascerebbero uscire in chiaro proprio le
-        // due forme con cui una data di nascita arriva davvero (oggetto Date e ISO).
         if (eNascita(k)) return redigiNascita(v);
+        if (eTestoLibero(k)) return redigiTestoLibero(v);
     }
 
     if (v === null || v === undefined) return v;
@@ -317,13 +521,19 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
     if (v instanceof Error) return redigiErrore(v);
 
     if (typeof v === 'string') {
-        if (k !== null) {
+        // `fidato === false`: nessuna chiave apre. Restano solo le stringhe auto-descrittive
+        // per FORMA (uuid, data ISO) — quelle sono tali chiunque le scriva.
+        if (k !== null && fidato) {
             // LA CHIAVE APRE, IL VALORE CONFERMA: solo ciò che ha la forma di un path o di un
             // URL viene ridotto a pattern. Quello che path non è cade sotto, e viene redatto
             // come qualunque altra stringa — così `url` e `fileUrl` dicono la stessa cosa
             // dello stesso valore.
             if (CHIAVI_PATH.has(k)) return FORMA_PATH.test(v) ? tronca(redigiPath(v)) : redigiStringa(v);
-            if (IN_CHIARO.has(k)) return tronca(v);
+            // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `FORMA_ENUMERATO`). Niente `tronca`:
+            // la forma impone già 64 caratteri, e un troncamento a 120 non scatterebbe mai —
+            // ma soprattutto un enumerato tagliato a metà non è un enumerato, è un'altra
+            // cosa che si legge come se fosse quella giusta.
+            if (IN_CHIARO.has(k)) return eEnumerato(v) ? v : redigiStringa(v);
             // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`): niente `tronca`, perché
             // un digest o ci sta intero — e allora si può cercare — o non serve a niente. Se la
             // forma non torna si cade sotto, e la stringa esce redatta come qualunque altra:
@@ -344,7 +554,7 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
 
     try {
         if (Array.isArray(v)) {
-            const testa = v.slice(0, ELEMENTI_MAX).map((el) => redactValore(chiave, el, prof + 1, visti));
+            const testa = v.slice(0, ELEMENTI_MAX).map((el) => redactValore(chiave, el, prof + 1, visti, fidato));
             return v.length > ELEMENTI_MAX ? [...testa, `[+${v.length - ELEMENTI_MAX} elementi]`] : testa;
         }
 
@@ -361,15 +571,59 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
                 out['[…]'] = `[+${chiavi.length - CHIAVI_MAX} chiavi]`;
                 break;
             }
+            // Il nome si decide PRIMA del try: calcolarlo anche nel `catch` significherebbe
+            // chiamare due volte il progressivo delle collisioni su uno stato diverso.
+            const nome = nomeInUscita(kk, out);
             try {
-                out[kk] = redactValore(kk, (v as Record<string, unknown>)[kk], prof + 1, visti);
+                out[nome] = redactValore(kk, (v as Record<string, unknown>)[kk], prof + 1, visti, fidato);
             } catch {
-                out[kk] = '[campo-illeggibile]';
+                out[nome] = '[campo-illeggibile]';
             }
         }
         return out;
     } finally {
         visti.delete(v as object);
+    }
+}
+
+/**
+ * IL VALORE PUÒ DISTINGUERE UNA RIGA DI LOG? — «uuid sì, nomi mai», come CODICE.
+ *
+ * Serve a `logEvento({ distingui: [...] })`, che fa entrare nell'IMPRONTA di
+ * `app_log` l'identità del bersaglio di una riga: senza, tutti i rifiuti di un
+ * genitore su venti bambini diversi cadono in una riga sola e la colonna
+ * `contesto.campi.alunno_id` dichiara UN bambino — quello della prima
+ * occorrenza del giorno (rilievi T9, T10, T29).
+ *
+ * L'AMMISSIONE PASSA DALLA FORMA, non dalla buona volontà del chiamante: si
+ * accetta esattamente ciò che questo modulo lascia già uscire IN CHIARO senza
+ * bisogno di una chiave in lista bianca — uuid, numeri, booleani, date ISO,
+ * enumerati tecnici. Tutto il resto (un nome, un'email, il motivo di
+ * un'assenza) restituisce `null` e NON distingue: due nomi diversi producono
+ * la stessa impronta, che è il comportamento che si vuole.
+ *
+ * PERCHÉ CONTA anche se l'impronta è un hash e non si legge: un'impronta
+ * calcolata su un nome è comunque una chiave stabile e correlabile per
+ * PERSONA. Su dati di minori, «non si vede» non è «non c'è».
+ *
+ * ⚠️ LIMITE DICHIARATO, lo stesso di `FORMA_ENUMERATO`: un token senza spazi e
+ * più corto di 64 caratteri passa (un codice fiscale ha questa forma). Il
+ * presidio resta che il chiamante DICHIARA il campo, e i campi dichiarati sono
+ * id ed enumerati scelti dal codice, non input dell'utente.
+ */
+export function valoreDistintivo(v: unknown): string | null {
+    try {
+        if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+        if (typeof v === 'boolean') return String(v);
+        if (typeof v !== 'string' || v === '') return null;
+        if (UUID.test(v)) return v;
+        if (DATA_ISO.test(v)) return v;
+        // `eEnumerato` e non `FORMA_ENUMERATO`: un codice fiscale ha la forma di un enumerato,
+        // e un'impronta calcolata su un codice fiscale è una chiave stabile per PERSONA anche
+        // se il valore non si legge. Su dati di minori, «non si vede» non è «non c'è».
+        return eEnumerato(v) ? v : null;
+    } catch {
+        return null;
     }
 }
 
@@ -380,6 +634,37 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
 export function redact(v: unknown): unknown {
     try {
         return redactValore(null, v, 0, new Set());
+    } catch {
+        return '[redazione-fallita]';
+    }
+}
+
+/**
+ * Come `redact`, ma per ciò che ARRIVA DALLA RETE: il body, la query, i params di una
+ * richiesta, depositati da `impostaPayload` prima ancora che zod li guardi.
+ *
+ * ─── LA DIFFERENZA, IN UNA RIGA: QUI LA CHIAVE NON APRE ─────────────────────
+ *
+ * La lista bianca di `redact` («`stato`, `esito`, `tipo`… escono in chiaro») presuppone una
+ * cosa che nel payload non è vera: che il nome del campo lo abbia scelto il NOSTRO codice.
+ * Sotto `payload` il nome lo sceglie chi fa la richiesta, e `FORMA_ENUMERATO` non può
+ * distinguere `body-json-malformato` da `diagnosi-inventata-per-collaudo` — hanno la stessa
+ * forma, e la seconda è stata piantata in produzione con la sola sessione di un genitore
+ * (quarto collaudo, rilievo Q2). Non c'è una forma che separi le due: c'è la PROVENIENZA.
+ *
+ * Cosa resta leggibile, ed è quanto serve a diagnosticare un 400: gli uuid e le date (sono
+ * auto-descrittivi per forma, chiunque li scriva), i numeri e i booleani sotto chiavi che non
+ * nominano un dato, i nomi dei campi, e la lunghezza di ciò che è stato redatto. Cioè: QUALE
+ * bambino, QUALE giorno, QUALI campi c'erano e quanto erano lunghi.
+ *
+ * NON si applica ai `campi`: quelli li scrive il nostro codice, e lì la lista bianca è ciò che
+ * rende `app_log` interrogabile. Il residuo noto è dichiarato: una route che rimette un query
+ * param dentro i campi (`sezione`) riporta il valore del client in un canale fidato — per quel
+ * caso la difesa è sulla forma, vedi `FORMA_CODICE_FISCALE`.
+ */
+export function redactInput(v: unknown): unknown {
+    try {
+        return redactValore(null, v, 0, new Set(), false);
     } catch {
         return '[redazione-fallita]';
     }

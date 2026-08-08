@@ -1,8 +1,8 @@
 {
   "titolo": "Kidville is unreachable",
   "titoloScheda": "Kidville — no connection",
-  "corpo": "We can't connect right now. Check your connection: the pages you already opened are still available, showing data from their last update.",
-  "corpoSenzaCache": "We can't connect right now. Check your connection and try again: no page has been saved on this device yet.",
+  "corpo": "We can’t connect right now. Check your connection: the pages you already opened are still available, showing data from their last update.",
+  "corpoSenzaCache": "We can’t connect right now. Check your connection and try again: no page has been saved on this device yet.",
   "riprova": "Try again",
   "nessunaRete": "Still no connection. Try again in a moment.",
   "disponibili": "Pages you already opened, available now",

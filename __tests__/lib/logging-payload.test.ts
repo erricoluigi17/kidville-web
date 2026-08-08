@@ -26,8 +26,12 @@ describe('il payload validato finisce nel contesto, già redatto', () => {
             const out = await parseBody(req, schema);
             expect('data' in out).toBe(true);
             const p = contesto()?.payload?.body as Record<string, string>;
-            expect(p.tipo).toBe('assenza');            // allowlist → in chiaro
-            expect(p.note).toBe('[redatto:str/12]');   // testo libero → redatto
+            // ⚠️ Dal 2026-08-08 (rilievo Q2) NIENTE del corpo esce in chiaro per via della
+            // chiave: la lista bianca di `redact` presuppone che il nome del campo l'abbia
+            // scelto il nostro codice, e nel body lo sceglie il client. Restano leggibili solo
+            // le stringhe auto-descrittive per FORMA (uuid, date), i numeri e i booleani.
+            expect(p.tipo).toBe('[redatto:str/7]');
+            expect(p.note).toBe('[redatto:str/12]');
         });
     });
 
@@ -45,6 +49,45 @@ describe('il payload validato finisce nel contesto, già redatto', () => {
         const schema = z.object({ a: z.string() });
         const req = new Request('http://localhost/api/x?a=1');
         expect(() => parseQuery(req, schema)).not.toThrow();
+    });
+
+    /**
+     * IL VETTORE VERO, PERCORSO PER INTERO — rilievi M11 e M15 del collaudo del 2026-08-07.
+     *
+     * Non è la prova di `redact()` (quella sta nel suo file): è la prova che il PERCORSO che
+     * porta un body dalla rete ad `app_log` non ha una scorciatoia. `parseBody` deposita il
+     * body GREZZO **prima** di zod, apposta per poter diagnosticare i 400; da lì il payload
+     * finisce in `app_log.contesto`, che conserva 30 giorni e si interroga in SQL.
+     *
+     * Il corpo qui sotto è quello vero di `parent/presenze/comunica-assenza`, dove `motivo` è
+     * dichiarato `z.unknown()` e il testo libero è il MOTIVO dell'assenza — dato sanitario di
+     * un minore. Le due strade che erano aperte:
+     *  · il VALORE sotto una chiave in lista bianca (`stato`), che usciva in chiaro;
+     *  · la CHIAVE di un oggetto annidato, che non passava da nessuna riduzione.
+     * Un rifiuto di quella rotta lascia una riga `warn`, e i `warn` si persistono sempre:
+     * bastava un account genitore.
+     */
+    it('un body ostile non porta testo libero nel payload, né nei valori né nelle chiavi', async () => {
+        const schema = z.object({ studentId: z.string(), data: z.string(), motivo: z.unknown().optional() });
+        await conContesto({ requestId: 'r-ostile', path: '/api/parent/presenze/comunica-assenza' }, async () => {
+            const req = new Request('http://localhost/api/parent/presenze/comunica-assenza', {
+                method: 'POST',
+                body: JSON.stringify({
+                    studentId: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+                    data: '2020-01-01',
+                    stato: 'IL BAMBINO HA AVUTO UNA CRISI IN MENSA',
+                    motivo: { 'E QUESTO STA NELLA CHIAVE': 1 },
+                }),
+                headers: { 'content-type': 'application/json' },
+            });
+            await parseBody(req, schema);
+            const p = JSON.stringify(contesto()?.payload);
+            expect(p).not.toContain('CRISI');
+            expect(p).not.toContain('NELLA CHIAVE');
+            // Il payload non si svuota: la diagnosi del 400 resta (uuid e data in chiaro).
+            expect(p).toContain('3f2504e0-4f89-11d3-9a0c-0305e82c3301');
+            expect(p).toContain('2020-01-01');
+        });
     });
 
     it('il body resta leggibile per la route (non viene consumato due volte)', async () => {
@@ -76,7 +119,9 @@ describe('il payload INVALIDO (400 di zod) finisce comunque nel contesto', () =>
             });
             const out = await parseBody(req, schema);
             expect('response' in out).toBe(true);
-            expect(contesto()?.payload?.body).toEqual({ tipo: 'boh', extra: 1 });
+            // Il campo c'era, si chiamava `tipo`, era lungo 3: è ciò che serve a diagnosticare
+            // un 400. Il VALORE no — su questa stessa strada è passata prosa sanitaria.
+            expect(contesto()?.payload?.body).toEqual({ tipo: '[redatto:str/3]', extra: 1 });
         });
     });
 
@@ -84,7 +129,7 @@ describe('il payload INVALIDO (400 di zod) finisce comunque nel contesto', () =>
         const schema = z.object({ mese: z.coerce.number().int() });
         await conContesto({ requestId: 'r', path: '/api/x' }, async () => {
             parseQuery(new Request('http://localhost/api/x?mese=marzo'), schema);
-            expect(contesto()?.payload?.query).toEqual({ mese: 'marzo' });
+            expect(contesto()?.payload?.query).toEqual({ mese: '[redatto:str/5]' });
         });
     });
 
@@ -139,7 +184,7 @@ describe('payload ostile: i cap reggono e niente lancia', () => {
             });
             expect(() => parseData(z.object({ tipo: z.string() }), ostile)).not.toThrow();
             const p = contesto()?.payload?.params as Record<string, unknown>;
-            expect(p.tipo).toBe('assenza');
+            expect(p.tipo).toBe('[redatto:str/7]');
             expect(p.cattivo).toBe('[campo-illeggibile]');
         });
     });
@@ -164,10 +209,21 @@ describe('payload ostile: i cap reggono e niente lancia', () => {
 
     it('un payload che sopravvive ai cap ma resta enorme viene marcato, non tenuto', async () => {
         // Il testo libero si redige in un marcatore CORTO (`[redatto:str/9999]`), quindi la
-        // strada per sfondare PAYLOAD_CARATTERI_MAX passa dai valori che restano IN CHIARO:
-        // 50 righe con un `tipo` (lista bianca) da 120 caratteri. `redact` ne tiene 20 —
-        // e già quelle 20 pesano più di 2.000 caratteri.
-        const grosso = { righe: Array.from({ length: 50 }, () => ({ tipo: 'a'.repeat(120) })) };
+        // strada per sfondare PAYLOAD_CARATTERI_MAX passa dai valori che restano IN CHIARO.
+        //
+        // ⚠️ QUELLI NON SONO PIÙ «120 CARATTERI SOTTO UNA CHIAVE IN LISTA BIANCA», e questo
+        // test lo diceva fino al 2026-08-08: dal rilievo M11 la lista bianca chiede anche la
+        // FORMA del valore, e una stringa di 120 caratteri qualunque esce `[redatto:str/120]`.
+        // Ciò che resta in chiaro — e che quindi pesa ancora — sono uuid, date e numeri: cioè
+        // il payload di un import di anagrafiche, che è il caso vero per cui il tetto esiste.
+        // 50 righe, `redact` ne tiene 20, e già quelle pesano più di 2.000 caratteri.
+        const riga = {
+            id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+            alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3302',
+            creato_il: '2026-07-31T13:24:07Z',
+            tipo: 'anagrafica-import',
+        };
+        const grosso = { righe: Array.from({ length: 50 }, () => riga) };
         const p = await body(JSON.stringify(grosso));
         expect(p).toBe('[payload-troppo-grande]');
     });
@@ -193,8 +249,8 @@ describe('gli slot del payload restano i tre canonici', () => {
 
             const p = contesto()?.payload as Record<string, unknown>;
             expect(Object.keys(p).sort()).toEqual(['body', 'params', 'query']);
-            expect(p.body).toEqual({ tipo: 'assenza' });
-            expect(p.query).toEqual({ stato: 'attivo' });
+            expect(p.body).toEqual({ tipo: '[redatto:str/7]' });
+            expect(p.query).toEqual({ stato: '[redatto:str/6]' });
             expect(p.params).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301');
         });
     });
@@ -205,8 +261,10 @@ describe('gli slot del payload restano i tre canonici', () => {
             parseData(z.object({ mese: z.number() }), { mese: 'marzo' });         // il campo: fallisce
             const p = contesto()?.payload as Record<string, unknown>;
             expect(Object.keys(p)).toEqual(['params']);
-            // `mese` è nella lista bianca di redact: esce in chiaro (ed è ciò che serve leggere).
-            expect(p.params).toEqual({ mese: 'marzo' });
+            // La prova è su QUALE slot resta (l'ultimo), non sul valore: dal 2026-08-08 il
+            // valore di un campo di richiesta esce redatto anche sotto una chiave in lista
+            // bianca. Resta il nome del campo e la sua lunghezza.
+            expect(p.params).toEqual({ mese: '[redatto:str/5]' });
         });
     });
 
@@ -292,8 +350,12 @@ describe('la prova del valore e la prova della fuga', () => {
         expect(riga.livello).toBe('warn');
         const payload = (riga.contestoExtra as Riga).payload as Riga;
         expect(payload.body).toEqual({
-            tipo: 'boh',                 // il valore che zod ha rifiutato: LEGGIBILE
-            data: '2026-07-12',          // data ISO: auto-descrittiva
+            // Il campo che zod ha rifiutato si NOMINA e si MISURA, non si legge: dal rilievo
+            // Q2 il valore di un campo di richiesta esce redatto anche sotto una chiave in
+            // lista bianca — su questa stessa strada, con la sola sessione di un genitore, è
+            // passata prosa sanitaria in chiaro.
+            tipo: '[redatto:str/3]',
+            data: '2026-07-12',          // data ISO: auto-descrittiva, chiunque la scriva
             note: '[redatto:str/12]',    // testo libero: redatto
         });
         // …e sulla riga di Vercel c'è il KV_WARN della route (il payload, lì, sta solo in

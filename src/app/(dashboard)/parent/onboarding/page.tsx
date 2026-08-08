@@ -6,6 +6,10 @@ import { useTranslations } from 'next-intl';
 import { ShieldCheck, KeyRound, Loader2 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { Btn } from '@/components/ui/Btn';
+// `LinkInterno` e non `<a target="_blank">`: nel guscio Capacitor un `_blank`
+// consegna la pagina al browser di sistema, e il genitore che sta accettando i
+// consensi al PRIMO accesso si ritroverebbe fuori dall'app a metà onboarding (R25).
+import { LinkInterno } from '@/components/ui/LinkInterno';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Onboarding genitore (DL-045): primo accesso → password + consensi GDPR.
@@ -80,7 +84,7 @@ function Inner() {
             {t.rich('consenso', {
               privacy: (chunks) => (
                 <strong>
-                  <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">{chunks}</a>
+                  <LinkInterno href="/privacy" className="underline">{chunks}</LinkInterno>
                 </strong>
               ),
             })}{' '}
@@ -94,7 +98,7 @@ function Inner() {
             {t.rich('consensoTermini', {
               termini: (chunks) => (
                 <strong>
-                  <a href="/termini" target="_blank" rel="noopener noreferrer" className="underline">{chunks}</a>
+                  <LinkInterno href="/termini" className="underline">{chunks}</LinkInterno>
                 </strong>
               ),
             })}{' '}

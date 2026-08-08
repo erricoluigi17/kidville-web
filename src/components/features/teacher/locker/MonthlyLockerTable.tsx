@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { CheckCircle2, XCircle, ChevronDown, CalendarDays } from 'lucide-react';
 import { formattaIstante } from '@/i18n/config';
+import { conIniziale } from '@/lib/i18n/date';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
 
@@ -112,8 +113,15 @@ export function MonthlyLockerTable({
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
                 <div className="flex items-center gap-2">
                     <CalendarDays className="w-5 h-5 text-kidville-info" />
-                    <h2 className="text-lg font-semibold text-kidville-green capitalize">
-                        {formatMonthLabel(month, locale)}
+                    {/* `conIniziale` e non la classe `capitalize`: quella alza
+                        l'iniziale di OGNI parola («Agosto 2026» ci passa, ma
+                        «Sabato 8 Agosto» no) ed è la regola inglese applicata
+                        all'italiano. Qui il mese apre l'intestazione, quindi la
+                        maiuscola ci vuole — ma la mette la lingua, non il CSS.
+                        Nel messaggio «Nessun dato disponibile per {mese}» il
+                        mese sta in mezzo alla frase e resta minuscolo. */}
+                    <h2 className="text-lg font-semibold text-kidville-green">
+                        {conIniziale(formatMonthLabel(month, locale))}
                     </h2>
                 </div>
 

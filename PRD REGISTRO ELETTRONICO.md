@@ -89,6 +89,54 @@
 
 ---
 
+## 🤖 Changelog — Il bundle Android che non si poteva caricare, e i 16 KB che nessuno aveva misurato 2026-08-09 (branch `feat/bundle-android-v2`)
+
+Controllo store del 2026-08-09. Sul lato Android il collaudo ha trovato due difetti che si vedono
+solo guardando **dentro** l'artefatto, e che il gate verde non intercetta perché non riguardano il
+sorgente:
+
+| | prima (5 ago) | adesso (9 ago) |
+|---|---|---|
+| `versionCode` dentro l'`.aab` | **1** — già bruciato su Play il 05/08 | **2** |
+| `server.url` nel bundle | `http://10.0.2.2:3100` (emulatore) | `https://app.kidville.it` |
+| `server.cleartext` | `true` | `false` |
+| SHA-256 | `435f0eb0…` | `9df36ce6…` |
+
+`build.gradle` diceva `versionCode 2` da giorni, ma **nessuno aveva mai costruito un bundle con quel
+numero**: l'unico `.aab` sul disco era del 5 agosto e portava dentro l'1. Play non riaccetta un
+versionCode già usato nemmeno se l'upload precedente è stato eliminato, quindi fino a oggi *non
+esisteva alcun artefatto caricabile*. La config sincronizzata da Capacitor è **gitignorata**: puntava
+all'emulatore e nessun controllo di CI poteva vederlo.
+
+### Il requisito che stava per passare inosservato
+
+Il bundle contiene **12 librerie native** (3 × 4 architetture, tutte da AndroidX: datastore, camera,
+surface). Con `targetSdk 36`, Play pretende dal 1 novembre 2025 che i segmenti `LOAD` delle librerie
+a 64 bit siano allineati a **16 KB**. Misurato leggendo i program header ELF di tutte e dodici:
+`align = 16384` ovunque, e `extractNativeLibs=false`. **Conforme** — ma per saperlo bisognava
+guardare, non dedurlo.
+
+### Cosa è stato verificato sull'artefatto, non sul sorgente
+
+- `versionCode 2` letto con un decoder protobuf scritto apposta: `aapt2` 36.1 rifiuta il formato di
+  un `.aab` e `bundletool` non è installato. La scansione a occhio dei byte non è una misura.
+- firma: `jar verified.`, e l'impronta SHA-256 del certificato **dentro** il bundle coincide con
+  quella di `upload_certificate.pem` (`6C:65:EC:19:…:66:B2`). È il controllo che evita di scoprire
+  la chiave sbagliata *dopo* l'upload.
+- `allowBackup=false`, `debuggable` e `testOnly` assenti, `usesCleartextTraffic` assente,
+  `networkSecurityConfig` = la variante di **release** (cleartext bloccato senza eccezioni; quella
+  con `10.0.2.2` vive in `src/debug/` e nel pacchetto non compare).
+- scansione di tutte le 1090 voci del bundle: l'unica occorrenza di `10.0.2.2` sta **dentro un
+  commento HTML** di `offline.html`, dove documenta un compromesso noto. Il codice eseguibile usa
+  `URL_APP = 'https://app.kidville.it/'`. Era un falso positivo, ed è stato trattato come tale.
+
+### Quello che resta ignoto
+
+Se il `versionCode 1` sia davvero occupato su Play **non è verificabile da qui**: la fonte è un
+commento in `build.gradle`, cioè una mano umana. Lo dice solo la Play Console.
+
+---
+
 ## 🔧 Changelog — Il campo «Motivo» si tocca dove lo si vede: la testata cede 250 px 2026-08-08 (branch `fix/campo-motivo-hero`)
 
 Il residuo dichiarato nel rilascio di poche ore prima. Su un telefono da 640-731 px il campo

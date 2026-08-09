@@ -284,3 +284,46 @@ cui su Apple si sta convertendo l'account ([A1](A1-dsa-operatore-commerciale.md)
 - [ ] Build: `JAVA_HOME` → JDK 21 · `CAP_SERVER_URL` → sync · **`cat` del JSON** · `bundleRelease`
 - [ ] Firma verificata con `apksigner verify --print-certs`
 - [ ] `.aab` prodotto e conservato
+- [ ] **Verifica sull'ARTEFATTO** (§11) — non basta che il sorgente sia giusto
+
+---
+
+## §11 — Verificare l'AAB, non il sorgente
+
+Il 2026-08-09 il bundle sul disco aveva `versionCode 1` mentre `build.gradle` diceva 2, e portava
+dentro `http://10.0.2.2:3100`. Entrambi i difetti sono invisibili a `git status`, al gate e a una
+build che riesce benissimo: **il file gitignorato che li contiene non è il file che si legge.**
+Quindi i controlli si fanno sul `.aab`, uno per uno.
+
+```bash
+A=android/app/build/outputs/bundle/release/app-release.aab
+
+# 1. la config che finisce davvero nel pacchetto
+unzip -p "$A" base/assets/capacitor.config.json | python3 -m json.tool | grep -A3 '"server"'
+#    atteso: "url": "https://app.kidville.it"  ·  "cleartext": false
+
+# 2. versionCode — serve un decoder protobuf
+#    aapt2 36.x RIFIUTA il manifest di un .aab, e bundletool non è installato.
+#    Una scansione dei byte a occhio NON è una misura: usare un parser vero.
+python3 scripts/leggi-manifest-aab.py "$A"
+
+# 3. firma: l'impronta dentro il bundle deve coincidere con quella attesa da Play
+unzip -p "$A" 'META-INF/*.RSA' > /tmp/c.bin
+keytool -J-Duser.language=en -printcert -file /tmp/c.bin              | grep SHA256
+keytool -J-Duser.language=en -printcert -file ~/Documenti/kidville-play/upload_certificate.pem | grep SHA256
+#    ⚠️ `keytool` in locale italiano su JDK 25 muore con
+#       `MissingFormatArgumentException: Format specifier '%2$s'` — da qui il -J-Duser.language=en
+
+# 4. residui dell'ambiente di sviluppo, su TUTTE le voci (sono ~1090, non solo res/xml)
+unzip -q -o "$A" -d /tmp/aab && LC_ALL=C grep -ral '10\.0\.2\.2\|:3100' /tmp/aab
+#    ⚠️ FALSO POSITIVO NOTO: `base/assets/public/offline.html` contiene `10.0.2.2:3100`
+#       dentro un COMMENTO HTML che documenta un compromesso. Il codice eseguibile usa
+#       `URL_APP = 'https://app.kidville.it/'`. Verificare sempre se l'occorrenza è codice.
+
+# 5. allineamento 16 KB — obbligatorio su Play dal 2025-11-01 per targetSdk >= 35
+#    Il bundle contiene 12 .so (3 librerie AndroidX × 4 architetture): il requisito SI APPLICA.
+#    Vanno controllati i segmenti LOAD delle sole architetture a 64 bit (arm64-v8a, x86_64):
+#    align deve essere >= 16384. Misurato il 09/08: 16384 ovunque, `extractNativeLibs=false`.
+```
+
+Se uno solo di questi cinque non torna, **il bundle non si carica**: si ricostruisce.

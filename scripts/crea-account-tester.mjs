@@ -2,22 +2,25 @@
  * crea-account-tester.mjs — crea gli account di prova mancanti per il collaudo
  * chiuso di Google Play: genitori (con il loro alunno fittizio) e docenti.
  *
- * PERCHÉ TUTTO SU **KIDVILLE CESA**, e non su Giugliano.
+ * PERCHÉ GLI ACCOUNT NASCONO TUTTI SU UNA SEDE SOLA.
  *
  *   Un account `educator` è agganciato alla SEDE (`utenti.scuola_id`), non alla
- *   sezione: vede tutte le classi del plesso. Misurato il 2026-08-05:
+ *   sezione: vede TUTTE le classi del plesso, quindi anche l'anagrafica dei
+ *   bambini iscritti davvero. Consegnare un account così a un tester dello store
+ *   significa consegnargli quei dati.
  *
- *     Kidville Giugliano  20 alunni TEST  ·  5 REALI      ← docente vede 5 bambini veri
- *     Kidville Aversa      1 alunno  TEST ·  1 REALE      ← docente vede 1 bambino vero
- *     Kidville Cesa        1 alunno  TEST ·  0 REALI      ← unica sede pulita
+ *   Perciò lo script crea solo dove non ci sono alunni reali, e — questa è la
+ *   parte che conta — **non si fida di ciò che era vero quando è stato scritto**:
+ *   il controllo è rifatto A RUNTIME a ogni esecuzione, e lo script si FERMA se
+ *   nel frattempo sulla sede scelta è comparso un alunno vero. Un nome di sezione
+ *   che sembra finto («TEST …») non è una prova che lo sia: si contano le righe.
  *
- *   In più la sezione `TEST 1A` di Giugliano — che il nome fa sembrare finta —
- *   contiene **2 bambini veri**, con codice fiscale e, per uno dei due, dati
- *   sanitari. Creare lì un docente significherebbe consegnare quei dati a un tester.
- *
- *   Perciò: tutto quello che questo script crea vive su **Cesa**, dove oggi non
- *   esiste nessun alunno reale. Il controllo è rifatto A RUNTIME e lo script si
- *   FERMA se nel frattempo a Cesa è comparso un alunno vero.
+ *   ⚠️ E i conteggi non si scrivono qui. Questo commento riportava, sede per
+ *   sede, quanti bambini reali ci fossero e quali avessero dati sanitari: numeri
+ *   che invecchiano in una settimana e che, in un repository PUBBLICO, non hanno
+ *   ragione di stare in chiaro. La regola resta, la fotografia no — chi ha
+ *   bisogno del numero lo chiede al database, che è l'unico posto in cui è
+ *   aggiornato.
  *
  * LA PASSWORD NON È IN QUESTO FILE e non viene mai stampata. Viene letta da
  * `docs/collaudo/risultati/messaggi-tester-pronti.md`, che generi tu da terminale.

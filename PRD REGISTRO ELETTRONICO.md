@@ -130,10 +130,37 @@ guardare, non dedurlo.
   commento HTML** di `offline.html`, dove documenta un compromesso noto. Il codice eseguibile usa
   `URL_APP = 'https://app.kidville.it/'`. Era un falso positivo, ed è stato trattato come tale.
 
-### Quello che resta ignoto
+### Letto in Play Console lo stesso giorno — la scadenza non è più una stima
 
-Se il `versionCode 1` sia davvero occupato su Play **non è verificabile da qui**: la fonte è un
-commento in `build.gradle`, cioè una mano umana. Lo dice solo la Play Console.
+Dashboard dell'app, *Richiedere l'accesso alla produzione*: due requisiti su tre sono barrati, il
+terzo riporta **«Al momento partecipano 12 tester per 3 giorni di fila»**. Oggi 09/08 è quindi il
+**giorno 3 su 14**: primo giorno valido il **07/08**, traguardo **20 agosto 2026**, mancano 11
+giorni. Il pulsante *Richiedi per la produzione* è disattivato.
+
+Delle due date che circolavano nei documenti, **quella giusta era la stima del PRD (20/08)**, non
+quella della memoria di lavoro (19/08): il contatore non parte dalla creazione della release Alpha
+(05/08) ma da quando i 12 tester risultano attivi. Il margine è **12 su 12** — se un tester esce si
+scende a 11 e **i giorni ripartono da capo**. Fino al 20/08 la lista tester non si tocca.
+
+Nella stessa sessione, e non era misurato prima:
+
+- *Test chiusi → alpha* mostra il bundle **`1 (1.0)`** del 5 ago 16:27 → **il `versionCode` 1 è
+  davvero occupato**. Il commento in `build.gradle` diceva il vero, ma fino a oggi era una mano
+  umana e non una misura.
+- *Panoramica della pubblicazione*: nessuna modifica non pubblicata, niente in attesa di revisione.
+- ⚠️ Avviso **non bloccante** «API deprecate per l'edge-to-edge» (Android 15). Le chiamate stanno
+  tutte in dipendenze di terze parti — `com.capacitorjs.plugins.statusbar.StatusBar`,
+  `com.google.android.material.*`, `io.ionic.libs.ioncameralib.*` — e non nel codice di Kidville:
+  si chiude aggiornando le librerie, non toccando l'app.
+
+### Sul lato Apple, la stessa sessione ha escluso un sospettato
+
+*App Store Connect → Azienda → Contratti*: il **contratto per le app gratuite è Attivo** su tutti i
+paesi (12 lug 2026 – 12 lug 2027). Quello per le app a pagamento risulta *Nuovo*, ma riguarda solo
+prezzi e acquisti in-app e **non va accettato**. Cade quindi l'ipotesi che a trattenere l'app
+approvata fosse un contratto: resta in piedi solo la **Normativa sui servizi digitali**, che nella
+stessa pagina risulta *«Verifica in corso»* su 27 paesi, ferma dal 6 agosto. È una verifica di
+Apple, senza tempi garantiti.
 
 ---
 

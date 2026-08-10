@@ -14,33 +14,28 @@
  * `L=0 M=1 N=2 P=3 Q=4 R=5 S=6 T=7 U=8 V=9`. Un parser che legge le posizioni
  * numeriche come cifre e basta ricava una data di nascita SBAGLIATA — e in questo
  * repo la data di nascita decide la serie fiscale su cui esce la fattura. La stessa
- * convenzione è già in `@/lib/logging/serialize.ts` (classe `[\dLMNPQRSTUV]`), ed è
- * ripetuta qui perché i due moduli servono a cose diverse: là si maschera, qui si legge.
- */
-
-/**
- * Struttura: 6 lettere (cognome+nome), 2 cifre (anno), 1 lettera (mese),
- * 2 cifre (giorno+sesso), 4 caratteri (codice catastale: 1 lettera + 3 cifre),
- * 1 lettera (carattere di controllo).
+ * convenzione è in `@/lib/logging/serialize.ts` (classe `[\dLMNPQRSTUV]`), ed è ripetuta
+ * là perché i due moduli servono a cose diverse: là si maschera, qui si legge.
  *
- * Le posizioni "numeriche" accettano anche le lettere dell'omocodia — è per questo
- * che la classe non è `\d`.
+ * ⚠️ LE TABELLE NON STANNO PIÙ QUI. Forma del codice, lettere dei mesi, tabella
+ * dell'omocodia, scarto del femminile e **calendario** vivono in `./tabelle`, insieme a
+ * quelle del carattere di controllo, e sono le stesse che usano `calcolo.ts`,
+ * `validazione.ts` e `coerenza.ts`. Una regola valida per due strade deve vivere in un posto solo: quando la
+ * copia A viene corretta e la copia B no, il difetto non è una riga sbagliata — è che le
+ * due risposte divergono e nessun test se ne accorge, perché ogni copia ha i suoi.
+ *
+ * Il comportamento pubblico di questo file non è cambiato con lo spostamento: lo dimostra
+ * `__tests__/lib/fiscale/codice-fiscale.test.ts`, che non è stato toccato.
  */
-const OMOCODIA = '[\\dLMNPQRSTUVlmnpqrstuv]'
-const FORMA_CF = new RegExp(
-  `^[A-Za-z]{6}${OMOCODIA}{2}[A-Za-z]${OMOCODIA}{2}[A-Za-z]${OMOCODIA}{3}[A-Za-z]$`,
-)
 
-/** Lettera dell'omocodia → cifra che ha sostituito. */
-const CIFRA_DA_OMOCODIA: Readonly<Record<string, string>> = {
-  L: '0', M: '1', N: '2', P: '3', Q: '4', R: '5', S: '6', T: '7', U: '8', V: '9',
-}
-
-/** Lettere del mese in ordine: A=gennaio … T=dicembre (indice + 1 = numero del mese). */
-const LETTERE_MESE = 'ABCDEHLMPRST'
-
-/** Alle donne si somma 40 al giorno di nascita. */
-const SCARTO_FEMMINA = 40
+import {
+  CIFRA_DA_OMOCODIA,
+  FORMA_CF,
+  LETTERE_MESE,
+  SCARTO_FEMMINA,
+  dataEsiste,
+  giornoDiNascitaAmmesso,
+} from './tabelle'
 
 /**
  * Il codice fiscale si legge su DUE secoli: `20` può essere 1920 o 2020. Oltre non
@@ -94,18 +89,31 @@ function leggiPezzi(cf: unknown): PezziCodiceFiscale | null {
   if (giornoGrezzo.length !== 2) return null
 
   const numero = Number(giornoGrezzo)
+  // 0 e 32–40 non esistono né al maschile né al femminile: il codice è rotto.
+  // ⚠️ La regola non è più scritta qui: vive in `giornoDiNascitaAmmesso` (`./tabelle`) ed è
+  // la STESSA che usa `validaCodiceFiscale`. Fino al 2026-08-10 stava solo in questo file,
+  // e i due moduli davano verdetti opposti sulla stessa stringa.
+  if (!giornoDiNascitaAmmesso(numero)) return null
+
   const femmina = numero > SCARTO_FEMMINA
   const giorno = femmina ? numero - SCARTO_FEMMINA : numero
-  // 0 e 32–40 non esistono né al maschile né al femminile: il codice è rotto.
-  if (giorno < 1 || giorno > 31) return null
 
   return { annoDueCifre: Number(anno), mese, giorno, femmina }
 }
 
-/** La terna anno/mese/giorno esiste davvero sul calendario? (31 aprile e 29 febbraio non bisestile: no) */
-function dataReale(anno: number, mese: number, giorno: number): boolean {
-  const d = new Date(anno, mese - 1, giorno)
-  return d.getFullYear() === anno && d.getMonth() === mese - 1 && d.getDate() === giorno
+/**
+ * `(anno, mese, giorno)` viene prima o insieme al giorno di `oggi`?
+ *
+ * Confronto fra terne, non fra `Date`: costruire `new Date(anno, mese - 1, giorno)` solo
+ * per confrontarlo rimetterebbe in mezzo il fuso orario del processo — e per un anno sotto
+ * il 100 farebbe anche di peggio, perché `new Date(50, …)` è il 1950, non l'anno 50.
+ */
+function nonFutura(anno: number, mese: number, giorno: number, oggi: Date): boolean {
+  const annoOggi = oggi.getFullYear()
+  const meseOggi = oggi.getMonth() + 1
+  if (anno !== annoOggi) return anno < annoOggi
+  if (mese !== meseOggi) return mese < meseOggi
+  return giorno <= oggi.getDate()
 }
 
 /**
@@ -139,13 +147,13 @@ function annoConSecolo(
   oggi: Date,
 ): number | null {
   const inizioSecolo = Math.floor(oggi.getFullYear() / 100) * 100
-  const limite = new Date(oggi.getFullYear(), oggi.getMonth(), oggi.getDate()).getTime()
 
   for (let indietro = 0; indietro < SECOLI_DA_PROVARE; indietro++) {
     const anno = inizioSecolo - indietro * 100 + annoDueCifre
-    if (!dataReale(anno, mese, giorno)) continue
+    // Il calendario lo decide `tabelle.ts`, in aritmetica: qui non si costruiscono `Date`.
+    if (!dataEsiste(anno, mese, giorno)) continue
     // Nato oggi conta come non futuro.
-    if (new Date(anno, mese - 1, giorno).getTime() <= limite) return anno
+    if (nonFutura(anno, mese, giorno, oggi)) return anno
   }
   return null
 }

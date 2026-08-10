@@ -1,0 +1,413 @@
+name: DB migrate (CI)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️  QUESTO WORKFLOW SCRIVE SU UN DATABASE. Si lancia a mano, consapevolmente.
+#
+# Applica migrazioni al progetto Supabase **della CI** (`kidville-web-ci`,
+# eu-west-3), cioè il database su cui gira il job `e2e` di `ci.yml`. NON è la
+# produzione, e questo file esiste in buona parte per garantire che resti vero:
+# vedi il passo «Guardia» più sotto, che è la parte importante di tutto il resto.
+#
+# PERCHÉ ESISTE. Il progetto CI non è mai stato migrato: non ha lo storico in
+# `supabase_migrations.schema_migrations`. Finora ci si è convissuti chiedendo al
+# codice nuovo di degradare in modo pulito (PostgREST `PGRST204` sugli INSERT,
+# `42703` sulle SELECT). Funziona finché la funzionalità nuova non è essa stessa
+# ciò che l'E2E deve provare: allora la colonna che manca non è un difetto
+# tollerato, è il test che non può esistere.
+#
+# PERCHÉ NON `supabase db push`, che sarebbe la strada ovvia. `db push` legge lo
+# storico remoto per sapere cosa manca. Su un database senza storico conclude che
+# manca TUTTO, e prova ad applicare le ~95 migrazioni dall'inizio: la prima che
+# incontra un oggetto già esistente muore con «already exists», a metà strada,
+# lasciando lo schema in uno stato che nessuno ha descritto e che nessun file del
+# repo racconta. Da lì non si torna indietro leggendo il codice. Quindi qui si
+# applicano **solo i file elencati nell'input**, uno per uno, e si accetta che sia
+# un'operazione manuale: è meno elegante e molto più difficile da sbagliare.
+#
+# PERCHÉ SOLO `workflow_dispatch`, senza trigger su push. Quel database serve ai
+# collaudi. Una migrazione che parte da sola mentre un E2E è in corso produce un
+# fallimento che ha tutta l'aria di un difetto del prodotto, e si passa mezza
+# giornata a cercarlo nel posto sbagliato. Si lancia quando si decide di lanciarlo.
+#
+# PRESUPPOSTO SULL'IDEMPOTENZA — dichiarato qui perché un domani qualcuno passerà
+# a questo workflow un file diverso da questi due. I due file di default sono
+# ri-eseguibili senza danno, ed è stato verificato aprendoli:
+#   · 20260810094610_candidature_insegnanti.sql → `create table if not exists`,
+#     `create unique index if not exists`, `create index if not exists`,
+#     `alter table … enable row level security` (già abilitata = no-op),
+#     `comment on` (sovrascrive lo stesso testo);
+#   · 20260810094625_codice_belfiore_nascita.sql → `alter table … add column if
+#     not exists` e un blocco `do $$` che aggiunge i due CHECK solo se il
+#     `conname` non è già in `pg_constraint`.
+# Un file NON idempotente qui dentro fallisce al secondo lancio, e `ON_ERROR_STOP`
+# lo fa fallire rumorosamente invece che a metà: è il comportamento voluto, ma chi
+# ce lo mette deve sapere che il presupposto era questo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: >-
+          Percorsi dei file .sql da applicare, separati da virgola o spazio,
+          relativi alla radice del repo. Solo file sotto supabase/migrations/.
+        required: true
+        default: 'supabase/migrations/20260810094610_candidature_insegnanti.sql,supabase/migrations/20260810094625_codice_belfiore_nascita.sql'
+
+jobs:
+  migrate-ci:
+    name: psql · migrazioni sul DB della CI
+    runs-on: ubuntu-latest
+
+    # NIENTE `environment: production`: questo non è il database di produzione, e
+    # dichiararlo tale renderebbe l'approvazione dell'environment `production` una
+    # formalità svuotata — la si concederebbe per un database che non la merita, e
+    # il giorno in cui serve davvero varrebbe un po' meno.
+
+    # LO STESSO GRUPPO DEL JOB `e2e` DI `ci.yml`, e non è una svista.
+    # I gruppi di concorrenza sono condivisi fra i workflow dello stesso
+    # repository: mettendo questo job in `e2e-ci-db` una migrazione e una suite
+    # E2E non possono girare insieme sullo stesso database. Chi lancia questo
+    # workflow mentre una CI è in corso lo vede semplicemente attendere.
+    # `cancel-in-progress: false` perché nessuna delle due va troncata a metà.
+    concurrency:
+      group: e2e-ci-db
+      cancel-in-progress: false
+
+    env:
+      # La stringa di connessione non compare MAI in un comando echo, non entra in
+      # un `set -x` (che qui non c'è) e non viene stampata. Viaggia solo come
+      # variabile d'ambiente fino a `psql -d "$PGURL"`.
+      PGURL: ${{ secrets.CI_SUPABASE_DB_URL }}
+      # Serve alla guardia d'identità: è il secret che il job `e2e` già usa per
+      # parlare col progetto CI, e contiene il suo project ref.
+      CI_URL: ${{ secrets.CI_SUPABASE_URL }}
+      # Serve alla guardia d'identità in negativo: non lo usiamo per connetterci,
+      # solo per pretendere che NON sia lo stesso progetto.
+      PROD_URL: ${{ secrets.PROD_SUPABASE_DB_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ───────────────────────────────────────────────────────────────────────
+      # 1. L'INPUT SI VALIDA PRIMA DI TOCCARE QUALUNQUE COSA.
+      #
+      # `files` è testo che un essere umano digita in una casella e che finisce a
+      # un passo da `psql -f`. Un percorso libero lì dentro è una porta aperta:
+      # `-f /etc/passwd` non farebbe niente di grave, ma `-f` su un file che un
+      # workflow precedente ha lasciato in giro sì. La regola è stretta e non
+      # negoziabile: il percorso deve stare sotto `supabase/migrations/`, finire
+      # in `.sql`, non contenere sottocartelle (quindi nessun `..` possibile,
+      # perché il nome file non può contenere `/`), esistere ed essere un file
+      # regolare — non un link simbolico che punta altrove.
+      # ───────────────────────────────────────────────────────────────────────
+      - name: Verifica l'elenco dei file da applicare
+        env:
+          FILES_INPUT: ${{ inputs.files }}
+        run: |
+          set -euo pipefail
+          # Virgole, spazi, tabulazioni e ritorni a capo: un elenco per riga.
+          printf '%s' "$FILES_INPUT" \
+            | tr ',\t\r ' '\n\n\n\n' \
+            | grep -v '^$' > "$RUNNER_TEMP/elenco.txt" || true
+
+          if [ ! -s "$RUNNER_TEMP/elenco.txt" ]; then
+            echo "::error::l'input 'files' è vuoto: non c'è niente da applicare"
+            exit 1
+          fi
+
+          errori=0
+          while IFS= read -r f; do
+            if [[ ! "$f" =~ ^supabase/migrations/[A-Za-z0-9][A-Za-z0-9._-]*\.sql$ ]]; then
+              echo "::error::percorso rifiutato: «$f» — sono ammessi solo file supabase/migrations/<nome>.sql"
+              errori=$((errori+1))
+              continue
+            fi
+            if [ -L "$f" ]; then
+              echo "::error::«$f» è un link simbolico: rifiutato"
+              errori=$((errori+1))
+              continue
+            fi
+            if [ ! -f "$f" ]; then
+              echo "::error::«$f» non esiste in questo commit"
+              errori=$((errori+1))
+              continue
+            fi
+            echo "ok: $f"
+          done < "$RUNNER_TEMP/elenco.txt"
+
+          if [ "$errori" -ne 0 ]; then
+            echo "::error::$errori percorso/i non valido/i: non viene aperta nessuna connessione"
+            exit 1
+          fi
+
+          n=$(wc -l < "$RUNNER_TEMP/elenco.txt" | tr -d ' ')
+          echo "::notice::$n file da applicare, tutti validati"
+
+      - name: Verifica che psql sia disponibile
+        run: |
+          set -euo pipefail
+          if command -v psql >/dev/null 2>&1; then
+            psql --version
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+            psql --version
+          fi
+
+      # ───────────────────────────────────────────────────────────────────────
+      # 2. LA GUARDIA. È il passo che conta più di tutti gli altri messi insieme.
+      #
+      # In produzione ci sono i dati di famiglie e bambini veri. Se il segreto
+      # `CI_SUPABASE_DB_URL` venisse un giorno riempito, per errore o per fretta,
+      # con la connessione del progetto di produzione, questo workflow eseguirebbe
+      # DDL su quel database senza che nessuno se ne accorga fino a dopo. Non c'è
+      # un secondo controllo umano a valle: la guardia è l'unico controllo.
+      #
+      # Sono due verifiche indipendenti, e devono passare entrambe.
+      #
+      # (a) IDENTITÀ — il project ref. La stringa di connessione di Supabase
+      #     contiene sempre il ref del progetto, in una delle due forme:
+      #       · connessione diretta →  @db.<ref>.supabase.co
+      #       · pooler              →  postgres.<ref>:<password>@…pooler…
+      #     Si estrae il ref dalla connessione e lo si confronta con quello del
+      #     secret `CI_SUPABASE_URL` (https://<ref>.supabase.co), che il job `e2e`
+      #     già usa da mesi per parlare col progetto CI. Il ref NON è scritto a
+      #     mano dentro questo file di proposito: un valore cablato qui invecchia
+      #     in silenzio il giorno in cui il progetto CI viene ricreato, e una
+      #     guardia che confronta con un valore stantio è peggio che nessuna
+      #     guardia. Confrontare due secret fra loro li tiene allineati da soli.
+      #     In più si pretende che il ref sia DIVERSO da quello di
+      #     `PROD_SUPABASE_DB_URL`, quando quel secret esiste.
+      #     Nessuno dei due ref viene stampato: si stampa solo l'esito.
+      #
+      # (b) FORMA DEI DATI — perché (a) presuppone che i due secret CI siano
+      #     coerenti fra loro, e due errori coordinati non sono impossibili.
+      #     Qui si interroga il database e si guarda che cosa contiene.
+      #
+      #     ⚠️  ATTENZIONE A UN CRITERIO CHE SEMBRA BUONO E NON LO È: «c'è la sede
+      #     e2e00000-… quindi è la CI». **È FALSO, ed è stato misurato il
+      #     2026-08-10 sul database di produzione**: la produzione contiene anche
+      #     lei una sede con id `e2e00000-…` (4 sedi in totale = 3 reali + quella
+      #     fittizia; `isScuolaE2E` in src/lib/scuole/reali.ts la nasconde dagli
+      #     elenchi pubblici, ma la riga c'è). Un workflow che si fosse accontentato
+      #     di quella presenza avrebbe dato via libera sulla produzione.
+      #     Il criterio che discrimina davvero è il suo complementare: quante sedi
+      #     NON sono e2e. In produzione sono 3. Sul progetto CI devono essere 0.
+      #
+      #     Numeri misurati sulla PRODUZIONE il 2026-08-10, come riferimento di
+      #     ciò che questa guardia deve rifiutare:
+      #         sedi non-e2e 3 · sedi e2e 1 · alunni 33 · genitori 50 ·
+      #         domande di iscrizione 378
+      #     Il progetto CI è sostanzialmente vuoto: il seed E2E vi semina due sedi
+      #     `e2e00000-*`, 8 alunni e una manciata di genitori, e si ripulisce da
+      #     solo. Le soglie sotto (20) lasciano margine al seed e restano lontane
+      #     un ordine di grandezza dai numeri di produzione.
+      #
+      #     Le soglie sono deliberatamente FAIL-CLOSED: nel dubbio ci si ferma. Un
+      #     lancio bloccato costa cinque minuti a chi lo rilancia; una migrazione
+      #     applicata al database sbagliato costa molto di più, e a persone che
+      #     non hanno scelto di correre il rischio.
+      # ───────────────────────────────────────────────────────────────────────
+      - name: Guardia — è davvero il database della CI, e non la produzione?
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PGURL:-}" ]; then
+            echo "::error::il secret CI_SUPABASE_DB_URL non è configurato (vedi docs/cicd.md)"
+            exit 1
+          fi
+
+          # ── (a) identità ────────────────────────────────────────────────────
+          # `estrai_ref` non stampa mai niente di sensibile: restituisce solo il
+          # project ref, e nemmeno quello finisce nel log.
+          estrai_ref() {
+            printf '%s' "$1" \
+              | grep -oE '(db\.[a-z0-9]{16,24}\.supabase\.(co|com)|postgres\.[a-z0-9]{16,24}[:@]|//[a-z0-9]{16,24}\.supabase\.(co|com))' \
+              | head -n 1 \
+              | grep -oE '[a-z0-9]{16,24}' \
+              | grep -v -x -E 'supabase|postgres' \
+              | head -n 1
+          }
+
+          ref_conn=$(estrai_ref "$PGURL" || true)
+          if [ -z "$ref_conn" ]; then
+            echo "::error::non riesco a riconoscere il project ref dentro CI_SUPABASE_DB_URL: mi fermo invece di indovinare"
+            exit 1
+          fi
+
+          if [ -z "${CI_URL:-}" ]; then
+            echo "::error::il secret CI_SUPABASE_URL non è configurato: senza non posso verificare di essere sul progetto giusto"
+            exit 1
+          fi
+          ref_atteso=$(estrai_ref "$CI_URL" || true)
+          if [ -z "$ref_atteso" ]; then
+            echo "::error::non riesco a riconoscere il project ref dentro CI_SUPABASE_URL"
+            exit 1
+          fi
+
+          if [ "$ref_conn" != "$ref_atteso" ]; then
+            echo "::error::la connessione NON punta al progetto Supabase della CI (il project ref non coincide con quello di CI_SUPABASE_URL). Nessuna istruzione eseguita."
+            exit 1
+          fi
+          echo "identità: la connessione punta allo stesso progetto di CI_SUPABASE_URL ✔"
+
+          if [ -n "${PROD_URL:-}" ]; then
+            ref_prod=$(estrai_ref "$PROD_URL" || true)
+            if [ -n "$ref_prod" ] && [ "$ref_prod" = "$ref_conn" ]; then
+              echo "::error::la connessione punta allo STESSO progetto di PROD_SUPABASE_DB_URL. Mi fermo."
+              exit 1
+            fi
+            echo "identità: il progetto è diverso da quello di produzione ✔"
+          else
+            echo "::warning::PROD_SUPABASE_DB_URL non configurato: salto il confronto in negativo"
+          fi
+
+          # ── (b) forma dei dati ──────────────────────────────────────────────
+          # Le tre tabelle interrogate esistono su entrambi i progetti: il seed
+          # E2E scrive su `schools`, `alunni`, `parents` e cancella da
+          # `enrollment_submissions`, e se una mancasse il seed sarebbe rosso.
+          righe=$(psql -d "$PGURL" -v ON_ERROR_STOP=1 -At -c "
+            select
+              (select count(*) from public.schools where id::text not like 'e2e00000%'),
+              (select count(*) from public.schools where id::text like 'e2e00000%'),
+              (select count(*) from public.alunni),
+              (select count(*) from public.parents),
+              (select count(*) from public.enrollment_submissions)
+          ")
+          IFS='|' read -r sedi_reali sedi_e2e alunni genitori iscrizioni <<< "$righe"
+
+          echo "misurato sul database collegato:"
+          echo "  sedi NON e2e ............ $sedi_reali   (produzione: 3 — atteso qui: 0)"
+          echo "  sedi e2e00000-* ......... $sedi_e2e    (non discrimina: la produzione ne ha 1)"
+          echo "  alunni .................. $alunni   (produzione: 33 — soglia: 20)"
+          echo "  genitori ................ $genitori   (produzione: 50 — soglia: 20)"
+          echo "  domande di iscrizione ... $iscrizioni   (produzione: 378 — soglia: 20)"
+
+          {
+            echo "### Guardia"
+            echo ""
+            echo "| grandezza | misurato | produzione (2026-08-10) | limite |"
+            echo "|---|---:|---:|---|"
+            echo "| sedi NON e2e | $sedi_reali | 3 | deve essere 0 |"
+            echo "| sedi \`e2e00000-*\` | $sedi_e2e | 1 | almeno 1 |"
+            echo "| alunni | $alunni | 33 | max 20 |"
+            echo "| genitori | $genitori | 50 | max 20 |"
+            echo "| domande di iscrizione | $iscrizioni | 378 | max 20 |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fermati=0
+          if [ "$sedi_reali" -ne 0 ]; then
+            echo "::error::ci sono $sedi_reali sedi NON e2e: questo database ha sedi reali dentro"
+            fermati=1
+          fi
+          if [ "$sedi_e2e" -lt 1 ]; then
+            echo "::error::nessuna sede e2e00000-*: il seed della CI non è mai passato di qui"
+            fermati=1
+          fi
+          if [ "$alunni" -gt 20 ]; then
+            echo "::error::$alunni alunni: troppi per il progetto CI"
+            fermati=1
+          fi
+          if [ "$genitori" -gt 20 ]; then
+            echo "::error::$genitori genitori: troppi per il progetto CI"
+            fermati=1
+          fi
+          if [ "$iscrizioni" -gt 20 ]; then
+            echo "::error::$iscrizioni domande di iscrizione: troppe per il progetto CI"
+            fermati=1
+          fi
+
+          if [ "$fermati" -ne 0 ]; then
+            echo "::error::GUARDIA SCATTATA — i dati assomigliano alla produzione. Nessuna migrazione applicata."
+            echo "> 🛑 **Guardia scattata**: nessuna migrazione applicata." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "::notice::guardia superata: è il database della CI"
+          echo "> ✅ Guardia superata: è il progetto Supabase della CI." >> "$GITHUB_STEP_SUMMARY"
+
+      # ───────────────────────────────────────────────────────────────────────
+      # 3. L'APPLICAZIONE. Una transazione per file.
+      #
+      # `--single-transaction` più `ON_ERROR_STOP=1`: se un file fallisce a metà,
+      # quel file non lascia niente dietro di sé. È l'esatto contrario di quello
+      # che farebbe `db push` sullo storico mancante, ed è il motivo per cui qui
+      # si usa psql invece della CLI.
+      #
+      # Il ciclo si ferma al primo file rosso: i file successivi potrebbero
+      # dipendere da quello, e applicarli comunque significherebbe scegliere di
+      # non sapere in che stato è lo schema.
+      # ───────────────────────────────────────────────────────────────────────
+      - name: Applica le migrazioni
+        run: |
+          # `set +e` ESPLICITO, stessa lezione del passo di bonifica in `ci.yml`:
+          # GitHub Actions esegue i `run:` con `bash -e {0}`, quindi `-e` è già
+          # attivo prima della prima istruzione. Qui serve che un `psql` rosso non
+          # tronchi lo script, ma lasci scrivere la riga di riepilogo e l'uscita
+          # esplicita in fondo. Non basta non scrivere `-e`: va spento.
+          set +e
+          set -u
+          set -o pipefail
+          echo "### File applicati" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| file | esito |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          esito_finale=0
+          saltati=0
+          while IFS= read -r f; do
+            if [ "$esito_finale" -ne 0 ]; then
+              echo "SALTATO (un file precedente è fallito): $f"
+              echo "| \`$f\` | ⏭️ saltato |" >> "$GITHUB_STEP_SUMMARY"
+              saltati=$((saltati+1))
+              continue
+            fi
+            echo "── applico: $f"
+            if psql -d "$PGURL" -v ON_ERROR_STOP=1 --single-transaction -f "$f"; then
+              echo "| \`$f\` | ✅ applicato |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::«$f» è fallito: la sua transazione è stata annullata per intero"
+              echo "| \`$f\` | ❌ fallito (transazione annullata) |" >> "$GITHUB_STEP_SUMMARY"
+              esito_finale=1
+            fi
+          done < "$RUNNER_TEMP/elenco.txt"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$esito_finale" -ne 0 ]; then
+            echo "🛑 **Esito: FALLITO.** Il file rosso non ha lasciato nulla a metà (\`--single-transaction\`); $saltati file successivi non sono stati toccati." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "✅ **Esito: tutti i file applicati.** Ricorda che questo workflow NON scrive in \`supabase_migrations.schema_migrations\`: il progetto CI resta senza storico, e la prossima volta va di nuovo indicato l'elenco a mano." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$esito_finale"
+
+      # Il riepilogo esiste perché un workflow che finisce verde senza dire cosa
+      # ha fatto è indistinguibile da uno che non ha fatto niente — ed è già
+      # successo in questo repo che un'operazione dichiarasse successo senza
+      # aver toccato un byte. Questo passo gira anche quando la guardia ferma
+      # tutto, così il riepilogo non resta monco.
+      - name: Riepilogo
+        if: always()
+        env:
+          # `files` è testo scritto da una persona in una casella: passa da una
+          # variabile d'ambiente e non viene MAI interpolato dentro il testo dello
+          # script. Interpolare `${{ inputs.… }}` in un `run:` significa lasciare
+          # che quel testo diventi codice della shell.
+          FILES_INPUT: ${{ inputs.files }}
+          ATTORE: ${{ github.actor }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo ""
+            echo "---"
+            echo "Progetto: **Supabase CI** (\`kidville-web-ci\`) — non è la produzione."
+            echo "Lanciato da: \`$ATTORE\` · commit \`$COMMIT\`"
+            echo ""
+            echo "Input \`files\`:"
+            echo ""
+            echo '```'
+            echo "$FILES_INPUT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

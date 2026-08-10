@@ -103,12 +103,24 @@ export function impronta(normalizzata) {
     return createHash('sha256').update(JSON.stringify(normalizzata)).digest('hex')
 }
 
+// L'ISTANTE dello scatto, in UTC e al secondo — come gli altri tre generatori
+// (`fk-sede-fotografia.mjs`, `rls-fotografia.mjs`, `migrazioni-fotografia.mjs`).
+// Qui c'era la sola DATA, ed era l'unica delle quattro fotografie rimasta indietro.
+// Oggi nessun lock legge `generato_alle` da QUESTO file, quindi non fa danno: ma
+// `sogliaFotografia()` ripiega sulla mezzanotte UTC quando l'istante manca, e un
+// guard sulle migrazioni posteriori aggiunto domani a `isolamento-sede-coverage`
+// nascerebbe con dodici ore di falsi allarmi al giorno — rumore che si impara a
+// ignorare, che è il modo in cui un lock muore. Si allinea PRIMA che serva.
+// Vedi `__tests__/architecture/soglia-fotografia.ts`.
+const ADESSO = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+
 const stdin = readFileSync(0, 'utf8')
 const normalizzata = normalizza(estrai(stdin))
 const uscita = {
     _come_si_rigenera:
         'node scripts/tabelle-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/tabelle-sede-fotografia.mjs < risposta.json',
-    generato_il: new Date().toISOString().slice(0, 10),
+    generato_il: ADESSO.slice(0, 10),
+    generato_alle: ADESSO,
     sha256: impronta(normalizzata),
     ...normalizzata,
 }

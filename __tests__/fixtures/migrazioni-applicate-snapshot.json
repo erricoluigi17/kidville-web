@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-08",
-  "generato_alle": "2026-08-08T04:28:34Z",
-  "sha256": "8a476d250ec9fcf10d6c6cb590fe8ca67ffbad3efa8d15cfeb6f6e1d8a8a7279",
+  "generato_il": "2026-08-10",
+  "generato_alle": "2026-08-10T18:26:18Z",
+  "sha256": "0eef734cd1442308df9e74c1886c826d3d299254ba3b21d3623e53629fbb4f77",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -403,6 +403,34 @@
     {
       "version": "20260808042814",
       "name": "retention_battito_leggibile"
+    },
+    {
+      "version": "20260809235457",
+      "name": "fattura_causali_config"
+    },
+    {
+      "version": "20260809235520",
+      "name": "fiscale_config_cedente"
+    },
+    {
+      "version": "20260809235620",
+      "name": "fatture_numerazione_sezionale"
+    },
+    {
+      "version": "20260809235759",
+      "name": "worm_search_path"
+    },
+    {
+      "version": "20260810000914",
+      "name": "fiscale_config_email_cedente"
+    },
+    {
+      "version": "20260810094610",
+      "name": "candidature_insegnanti"
+    },
+    {
+      "version": "20260810094625",
+      "name": "codice_belfiore_nascita"
     }
   ]
 }

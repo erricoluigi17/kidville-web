@@ -32,6 +32,7 @@
 > | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `segnalazioni` | Coda di triage UGC (C5, Google Play): segnalazione **contenuto** (chat/galleria/diario, discriminante `tipo_oggetto`+`oggetto_id` polimorfico) o **utente** (`segnalato_id`), categoria, motivo libero, stato/gestione. Nessuna FK utente: la riga sopravvive a un'eventuale anonimizzazione | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `candidature_insegnanti` | Candidature spontanee di personale docente dal modulo **pubblico** `/lavora-con-noi` (base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
 > ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
@@ -86,6 +87,108 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🧑‍🏫 Changelog — «Lavora con noi»: le fondamenta del modulo pubblico di candidatura 2026-08-10 (branch `feat/insegnanti-codice-fiscale`)
+
+Questa voce copre **una corsia sola** del lavoro in corso su `/lavora-con-noi`: il **template dei
+campi**, i **codici d'errore** e il **vocabolario dei log**. La pagina, la route
+`POST /api/iscrizione/insegnanti` e il cockpit di segreteria sono di altre corsie dello stesso
+ciclo e non sono descritti qui: quando arrivano, questa voce va estesa, non riscritta.
+
+### 1. Cosa raccoglie il modulo — e cosa NON raccoglie
+
+Nuova tabella `candidature_insegnanti` (già creata in produzione), alimentata dal modulo
+**pubblico e senza login** di `/lavora-con-noi`. Template in `src/lib/forms/insegnanti-template.ts`.
+
+| | |
+|---|---|
+| Obbligatori | nome, cognome, email, **fasce d'età** (`gradi`, multi-valore), titolo di studio |
+| Facoltativi | telefono, comune e provincia di residenza, dettaglio del titolo, anni di esperienza (0-60), disponibilità, presentazione libera (1000 caratteri), **curriculum** |
+| **Mai chiesto** | **il codice fiscale.** Serve all'**assunzione**, non alla candidatura (minimizzazione, art. 5.1.c GDPR). Su un modulo pubblico che chiunque può alimentare sarebbe un identificativo nazionale raccolto senza necessità: si chiede dopo, a una persona sola |
+| Residenza facoltativa | serve a capire se la sede è raggiungibile, non a decidere: pretenderla vorrebbe dire respingere una candidatura per un dato che non c'entra col lavoro |
+
+**Base giuridica: art. 6.1.b GDPR** — *misure precontrattuali adottate su richiesta
+dell'interessato*. Valutare una candidatura **è** la misura precontrattuale: chiedere il consenso
+per fare la cosa che la persona ha appena chiesto di fare non sarebbe un consenso libero (art. 7
+§4, cons. 43). Quindi i due blocchi in fondo al modulo sono:
+
+1. **presa visione dell'informativa** (art. 13) — obbligatoria, non è un consenso al trattamento;
+2. **conservazione della candidatura per 24 mesi** dopo una valutazione negativa — **facoltativa e
+   revocabile**, perché *quella* è una finalità nuova e rifiutarla non costa nulla. Chi non la
+   spunta viene valutato uguale e poi cancellato.
+
+Il numero **24** non è scritto due volte: `CANDIDATURA_LIMITI.mesiConservazione` è interpolato nel
+testo del consenso che finisce in `consents_log`, così il termine **promesso** e quello
+**applicato** dal futuro cron di cancellazione non possono divergere (art. 13 §2 lett. a).
+⚠️ *Questa frase è stata falsa per qualche ora*: il testo ribatteva il letterale «per 24 mesi»
+mentre PRD e commento del test dichiaravano l'interpolazione — lo stesso difetto che il commento di
+`CANDIDATURA_LIMITI` condanna, e per giunta su un termine promesso all'interessata. Corretto il
+2026-08-10 interpolando davvero, e il legame non è più affidato a una frase: il test legge il
+**sorgente** e pretende `${CANDIDATURA_LIMITI.mesiConservazione}` dentro il testo, oltre a
+confrontare il valore.
+⏭️ **Resta scoperto**: `src/app/privacy/page.tsx` non ha ancora una sezione sulle candidature — il
+link del consenso porta oggi a un testo che non parla di chi lo sta leggendo.
+
+### 2. I sette codici d'errore, e il `409` che sul modulo pubblico non si usa
+
+In `CODICI_ERRORE` (`src/lib/ui/esito-fetch.ts`), tradotti in italiano e inglese:
+`CANDIDATURA_NON_INVIATA` (500) · `CANDIDATURA_GIA_INVIATA` (409) · `CANDIDATURE_NON_DISPONIBILI`
+(503) · `CANDIDATURA_NON_TROVATA` (404) · `CANDIDATURA_GIA_EVASA` (409) ·
+`CANDIDATURA_EMAIL_GIA_STAFF` · `CANDIDATURA_EMAIL_GIA_GENITORE`.
+
+`CANDIDATURA_GIA_INVIATA` **non si usa sul modulo pubblico**: sarebbe un oracolo di enumerazione
+(digitando l'indirizzo di una maestra si scoprirebbe se ha una candidatura aperta — per chi lavora
+altrove è precisamente l'informazione che non deve uscire). Il modulo pubblico risponde `201`
+generico anche al secondo invio; il codice resta per il **cockpit autenticato**.
+
+⚠️ **Attenzione a chi scriverà `POST /api/iscrizione/insegnanti`**: il commento della migrazione
+`supabase/migrations/20260810094610_candidature_insegnanti.sql:58-60` — cioè il file che *definisce
+l'indice* da cui il `23505` arriva, e quindi il primo che si apre — prescrive l'**opposto** («la
+route traduce il 23505 in 409 “l'abbiamo già ricevuta”»). Quella riga è **superata da questa
+decisione**: vale per il cockpit, **non** per il modulo pubblico, dove il 409 è l'oracolo di
+enumerazione qui sopra. La contraddizione è nominata anche nel blocco di `CANDIDATURA_GIA_INVIATA`
+in `src/lib/ui/esito-fetch.ts`; il commento della migrazione appartiene a un'altra corsia e va
+corretto lì («la route **del cockpit**»).
+
+### 3. Le tre misure che hanno smentito il codice
+
+Nessuna di queste era deducibile leggendo il repo: sono state **eseguite** sul database di
+produzione il 2026-08-10, in sola lettura.
+
+| Cosa si credeva | Cosa dice la misura |
+|---|---|
+| «il CHECK `array_length(gradi,1) >= 1` garantisce almeno una fascia» | su un array vuoto `array_length` vale **NULL**, e un CHECK NULL **passa**. Con `gradi ... not null default '{}'`, una route che non manda `gradi` archivia una candidatura con **zero fasce**, in silenzio. La difesa è del modulo (`validateField`), non del database |
+| «un valore di fascia sbagliato lo scarta la validazione» | `gradi` è `school_type_enum[]` (`udt_name = _school_type_enum`); `validateField` sulle checkbox controlla solo il **vuoto**, non l'appartenenza. Un valore fuori enum arriva all'INSERT e prende `22P02` → 500 opaco su un modulo pubblico. La route **deve filtrare** contro `GRADI_OPTIONS` |
+| «il CV può pesare 5 MB e può essere un `.doc`» | **nessun bucket per i curriculum esiste**; l'unica strada pubblica scrive in `form_attachments`, che ammette **5 tipi** (pdf/jpeg/png/webp/heic — **niente Word**) e sta a 8 MB, mentre il tetto che morde per primo è quello della **piattaforma: 4 MB**. Il selettore offriva `.doc`/`.docx` (respinti dal server **dopo** la compilazione) ed escludeva `.heic` (che il gate accetta). Corretto: `accept` allineato a `ESTENSIONI_ALLEGATO_PUBBLICO`, tetto derivato da `LIMITE_UPLOAD_MB` |
+
+### 4. L'indice di deduplicazione è GLOBALE, e le sedi sono tre
+
+`candidature_insegnanti_email_viva` è unique su `lower(email)` — **non** su
+`(scuola_id, lower(email))`. Chi si propone a una **seconda sede** prende `23505`, riceve il `201`
+«ricevuta», e la riga resta con lo `scuola_id` della prima. **Decisione scritta**: una candidatura
+viva vale per l'**intera cooperativa** (un solo datore di lavoro, una sola Direzione che valuta, e
+un curriculum in tre copie sarebbe tre volte lo stesso dato da conservare e cancellare). Il prezzo
+è dichiarato: il cockpit delle candidature **non si filtra per sede** — eccezione motivata alla
+regola di isolamento, perché qui il dato non è di una famiglia né di un minore — e il `23505` si
+logga a **`warn`** (persistito **per livello**, senza aspettare la promozione dell'evento) con
+`scuola_id`, l'uuid della riga viva ed `error_code`, **mai** l'email.
+
+### 5. Osservabilità
+
+`candidatura` è entrato in **`EVENTI_NOTI`** (vocabolario chiuso). **Non** è ancora in
+`EVENTI_PERSISTITI`: un'allowlist che promette un battito inesistente rende rosso il lock
+`eventi-log` («ogni evento persistito ha un ramo felice che parla»). La promozione è **cablata a
+un biconditional** in `__tests__/lib/insegnanti-template.test.ts`: l'evento sta in
+`EVENTI_PERSISTITI` **se e solo se** nel sorgente esiste il ramo felice che lo emette — nelle
+**due** forme che il lock condiviso riconosce (`logEvento(evento,'info',…)` **o**
+`externalFetch(…, { evento })`). Quando la route arriverà, la riga dirà da sola cosa fare.
+
+Il template non è confrontato con un elenco scritto a mano ma con
+`__tests__/fixtures/candidature-schema-snapshot.json`, fotografia dello schema di produzione
+protetta da `sha256`: un id inventato non farebbe rosso da nessun'altra parte, morirebbe come
+`PGRST204` sul primo invio vero.
 
 ---
 
@@ -304,7 +407,7 @@ completare — distinguendo «manca» da «c'è ma non si legge»: la serie fisc
   **buco**, che è tollerabile, invece che un **doppione**, che non lo è. Una query su Aruba chiude
   la questione.
 - **La migrazione è scritta e NON applicata**
-  (`supabase/migrations/20260809233000_fatture_numerazione_sezionale.sql`).
+  (`supabase/migrations/20260809235620_fatture_numerazione_sezionale.sql`).
 
 ---
 
@@ -334,7 +437,7 @@ pannello parla con un'API vera da luglio.
 | interruttore del bollo (attiva/disattiva · soglia · importo · dicitura) | `FiscaleSettings` in `SettingsPanel.tsx` + `bolloDovuto()` |
 | regime fiscale: i **19 codici** dello schema, non «RF + due cifre» | `REGIMI_FISCALI` in `src/lib/fatturazione/cedente.ts`, verificato contro lo XSD in `fatturapa-xsd.test.ts` |
 | il test che impedisce il ritorno del difetto | `__tests__/lib/fatturazione/cedente.test.ts` — genera l'XML dalla configurazione **vera** e fallisce se `<CAP>` o `<Comune>` escono vuoti |
-| anagrafica riempita sulle sedi che non l'hanno mai compilata | migrazione `20260809220000_fiscale_config_cedente.sql` (additiva, **non ancora applicata**) |
+| anagrafica riempita sulle sedi che non l'hanno mai compilata | migrazione `20260809235520_fiscale_config_cedente.sql` (additiva, **non ancora applicata**) |
 
 **Tre scelte che vale la pena aver scritto.**
 
@@ -401,7 +504,7 @@ configurato niente. Un modulo pieno che non ha salvato è esattamente il modo in
    fa il controllo di Luhn prima di tutto; le P.IVA vere in uso (cooperativa e `ARUBA_PEC_PIVA`)
    sono nel test, così se un giorno il controllo sbagliasse si vedrebbe da lì.
 
-**La migrazione non mescola più le anagrafiche.** `20260809220000_fiscale_config_cedente.sql`
+**La migrazione non mescola più le anagrafiche.** `20260809235520_fiscale_config_cedente.sql`
 completava `fiscale_config` **chiave per chiave**: una sede con `denominazione: 'ALTRA COOPERATIVA'`
 e il CAP non ancora inserito si sarebbe ritrovata CAP, comune, provincia e civico **di Cesa**
 attaccati a una ragione sociale diversa — proprio ciò che il pannello si rifiuta di fare da luglio
@@ -440,7 +543,7 @@ segnaposto. La configurazione delle fatture sta nella colonna nuova
 | modello di fabbrica delle fatture | `{descrizione} - a favore {minore} {nome_completo} - CF: {codice_fiscale}` |
 | risoluzione categoria → «Predefinito» → fabbrica | `modelloCausale()` in `src/lib/pagamenti/causale.ts` |
 | funzione per l'emissione | `causaleFattura()` in `src/lib/pagamenti/causale-fattura.ts` |
-| colonna nuova | migrazione `20260809213500_fattura_causali_config.sql` (additiva, **non ancora applicata**) |
+| colonna nuova | migrazione `20260809235457_fattura_causali_config.sql` (additiva, **non ancora applicata**) |
 
 **Tre cose misurate, non dedotte.**
 
@@ -530,7 +633,7 @@ perché il resto del pannello è tradotto e in inglese si leggeva «Del/della mi
 inglesi.
 
 Resta da fare, e non è in questo lavoro: **applicare la migrazione**
-`20260809213500_fattura_causali_config.sql`. `causaleFattura()` è invece già agganciata
+`20260809235457_fattura_causali_config.sql`. `causaleFattura()` è invece già agganciata
 all'emissione (`src/lib/aruba/emissione.ts:463`).
 
 ---

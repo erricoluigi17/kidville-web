@@ -78,11 +78,14 @@ const SILENZIOSO = !!process.env.VITEST || process.env.KV_LOG_LEVEL === 'silent'
  * evento del server. Lì il vocabolario è aperto per progetto e il presidio è il prefisso.
  */
 export const EVENTI_NOTI = new Set([
-    // Dominio applicativo.
-    'agenda', 'anagrafica', 'audit', 'avvisi', 'cassa', 'chat', 'competenze', 'credenziali',
-    'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr', 'iscrizione',
-    'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento', 'pagella',
-    'protocolli', 'registro', 'segnalazione', 'sidi',
+    // Dominio applicativo. `candidatura` è il modulo pubblico di `/lavora-con-noi`: NON è un
+    // sinonimo di `iscrizione`, che è la domanda di iscrizione di un bambino — due percorsi
+    // diversi, due tabelle diverse, e tenerli sulla stessa etichetta renderebbe illeggibile
+    // proprio la query che serve («quante candidature sono arrivate?»).
+    'agenda', 'anagrafica', 'audit', 'avvisi', 'candidatura', 'cassa', 'chat', 'competenze',
+    'credenziali', 'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr',
+    'iscrizione', 'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento',
+    'pagella', 'protocolli', 'registro', 'segnalazione', 'sidi',
     // Infrastruttura. `db`/`rpc`/`storage`/`auth`/`altro` sono le aree di `supabase-fetch`,
     // `esterno` il default di `externalFetch`, `email`/`push` i suoi due chiamanti nominati,
     // `route` la riga di esito di `withRoute`, `app_log` il sink che si segnala da solo,
@@ -149,6 +152,27 @@ export const EVENTI_NOTI = new Set([
  * un'opinione: nei log di piattaforma la riga c'è, ma in `app_log` — l'unico posto
  * interrogabile — no. Gli `info` di questo canale sono **quattro** in tutto il repo: il volume
  * non è un argomento.
+ *
+ * ⚠️ `candidatura` NON È ANCORA QUI, e va aggiunto — ma nel commit che porta la route, non
+ * prima. È stato messo in questa lista il 2026-08-10, quando `/lavora-con-noi` esisteva solo
+ * come template dei campi, e il lock qui sotto è diventato rosso all'istante: «ogni evento di
+ * `EVENTI_PERSISTITI` ha almeno un percorso di SUCCESSO che logga» non trovava nessun ramo
+ * felice che lo emettesse. Un'allowlist che promette un battito inesistente è la stessa bugia
+ * che questo lock esiste per impedire, e lasciarla lì significava tenere l'albero rosso per
+ * tutti gli altri.
+ *
+ * La ragione per cui ci andrà resta intatta, e va letta prima di scrivere quella route: gli
+ * `info` di questo canale sono **la sola prova che il modulo riceve candidature**. Non c'è una
+ * schermata che si riempie a vista, non c'è una famiglia che telefona se non arriva niente: una
+ * candidatura che non parte non se ne accorge nessuno. Senza quella riga, «nessun log»
+ * significherebbe insieme «non si candida nessuno» e «il modulo è rotto» — l'ambiguità che ha
+ * nascosto per mesi il guasto delle email di credenziali, quando il provider rispondeva 403 e
+ * nessun test era rosso.
+ *
+ * Quindi: chi aggiunge `logEvento('candidatura', 'info', …)` nel ramo di successo del POST
+ * aggiunge `'candidatura'` a questa lista NELLO STESSO COMMIT. Non è affidato alla memoria —
+ * `__tests__/lib/insegnanti-template.test.ts` asserisce il BICONDIZIONALE (l'evento sta qui se
+ * e solo se il battito esiste nel sorgente) e diventa rosso in entrambe le direzioni.
  *
  * Il lock è `__tests__/architecture/eventi-log.test.ts`: ogni `logEvento(evento,'info')` del
  * repo o è in questa lista, o sta fra le deroghe motivate. È l'unica cosa che impedisce al

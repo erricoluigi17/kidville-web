@@ -1,0 +1,189 @@
+{
+  "_come_si_rigenera": "node __tests__/fixtures/candidature-schema-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json",
+  "generato_il": "2026-08-10",
+  "generato_alle": "2026-08-10T18:43:06Z",
+  "sha256": "7c5c4b60e016252523433567e4981eadb3154af1170df18fd8c8e0efe6f0d838",
+  "tabella": "candidature_insegnanti",
+  "colonne": [
+    {
+      "posizione": 1,
+      "nome": "id",
+      "udt": "uuid",
+      "nullable": false,
+      "default": "gen_random_uuid()"
+    },
+    {
+      "posizione": 2,
+      "nome": "scuola_id",
+      "udt": "uuid",
+      "nullable": false,
+      "default": null
+    },
+    {
+      "posizione": 3,
+      "nome": "stato",
+      "udt": "text",
+      "nullable": false,
+      "default": "'pending'::text"
+    },
+    {
+      "posizione": 4,
+      "nome": "nome",
+      "udt": "text",
+      "nullable": false,
+      "default": null
+    },
+    {
+      "posizione": 5,
+      "nome": "cognome",
+      "udt": "text",
+      "nullable": false,
+      "default": null
+    },
+    {
+      "posizione": 6,
+      "nome": "email",
+      "udt": "text",
+      "nullable": false,
+      "default": null
+    },
+    {
+      "posizione": 7,
+      "nome": "telefono",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 8,
+      "nome": "residence_city",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 9,
+      "nome": "residence_province",
+      "udt": "varchar",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 10,
+      "nome": "gradi",
+      "udt": "_school_type_enum",
+      "nullable": false,
+      "default": "'{}'::school_type_enum[]"
+    },
+    {
+      "posizione": 11,
+      "nome": "titolo_studio",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 12,
+      "nome": "titolo_dettaglio",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 13,
+      "nome": "anni_esperienza",
+      "udt": "int2",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 14,
+      "nome": "disponibilita",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 15,
+      "nome": "note",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 16,
+      "nome": "cv_path",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 17,
+      "nome": "consents_log",
+      "udt": "jsonb",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 18,
+      "nome": "creata_il",
+      "udt": "timestamptz",
+      "nullable": false,
+      "default": "now()"
+    },
+    {
+      "posizione": 19,
+      "nome": "aggiornata_il",
+      "udt": "timestamptz",
+      "nullable": false,
+      "default": "now()"
+    },
+    {
+      "posizione": 20,
+      "nome": "evasa_il",
+      "udt": "timestamptz",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 21,
+      "nome": "evasa_da",
+      "udt": "uuid",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 22,
+      "nome": "utente_id",
+      "udt": "uuid",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 23,
+      "nome": "motivo_rifiuto",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    }
+  ],
+  "enum_school_type": [
+    "nido",
+    "infanzia",
+    "primaria"
+  ],
+  "check": [
+    {
+      "nome": "candidature_insegnanti_anni_esperienza_check",
+      "definizione": "CHECK (((anni_esperienza IS NULL) OR ((anni_esperienza >= 0) AND (anni_esperienza <= 60))))"
+    },
+    {
+      "nome": "candidature_insegnanti_gradi_check",
+      "definizione": "CHECK ((array_length(gradi, 1) >= 1))"
+    },
+    {
+      "nome": "candidature_insegnanti_stato_check",
+      "definizione": "CHECK ((stato = ANY (ARRAY['pending'::text, 'in_approvazione'::text, 'approvata'::text, 'rifiutata'::text])))"
+    }
+  ]
+}

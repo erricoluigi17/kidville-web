@@ -177,7 +177,7 @@ export function progressivoInvioFattura(sezionale: Sezionale, numero: number, an
  * eliminava comunque (fra la lettura e l'upload la finestra resta aperta), mentre il
  * 429 a metà lotto era una certezza. Va detto fino in fondo: contro quel caso non c'è
  * nemmeno l'indice unico del registro, perché una fattura emessa sul gestionale di
- * Aruba in `fatture_emesse` NON C'È. La migrazione `20260809233000_…` sosteneva il
+ * Aruba in `fatture_emesse` NON C'È. La migrazione `20260809235620_…` sosteneva il
  * contrario in un commento e dentro un `COMMENT ON FUNCTION`; è stata corretta il
  * 2026-08-10, e le due frasi devono restare d'accordo.
  *
@@ -683,7 +683,7 @@ export async function emettiFatturaPagamento(
   // L'idempotenza per-quota vive in due posti, e nessuno dei due è facoltativo:
   // qui (che evita di allocare un numero e caricare un secondo XML) e sul
   // database, con l'indice unico parziale `fatture_emesse_pagamento_quota_uidx`
-  // introdotto da `20260809233000_fatture_numerazione_sezionale.sql`. L'indice è
+  // introdotto da `20260809235620_fatture_numerazione_sezionale.sql`. L'indice è
   // l'ultima difesa e arriva TARDI — scatta sull'INSERT, cioè dopo che il
   // documento è già partito — quindi la difesa vera è questa riga.
   //

@@ -55,9 +55,19 @@ Solo dopo che il dry-run è pulito, `migrate.yml` è sicuro da attivare.
 | `CI_SUPABASE_ANON_KEY` | anon key del progetto CI | job `e2e` |
 | `CI_SUPABASE_SERVICE_ROLE_KEY` | service-role del progetto CI (usata dal seed) | job `e2e` |
 | `PROD_SUPABASE_DB_URL` | connection string del DB **di produzione** | `migrate.yml` |
+| `CI_SUPABASE_DB_URL` | connection string (**Session pooler**, porta 5432) del DB del **progetto CI** | `migrate-ci.yml` |
 
 > Il progetto CI è un secondo progetto Supabase (gratis sul free tier). La E2E ci semina
 > la scuola dedicata `e2e00000-*` in modo idempotente. **Mai** usare il progetto di produzione.
+
+> `migrate-ci.yml` si lancia **solo a mano** (`workflow_dispatch`) e applica **solo i file
+> elencati nel suo input**, non tutto lo storico: il progetto CI non ha
+> `supabase_migrations.schema_migrations`, quindi `supabase db push` proverebbe a riapplicare
+> tutte le migrazioni dall'inizio e morirebbe con «already exists» a metà. Prima di eseguire
+> qualunque istruzione verifica di essere collegato al progetto giusto — confrontando il
+> project ref con quello di `CI_SUPABASE_URL` e misurando che il database non contenga sedi
+> reali. ⚠️ **Non basta cercare la sede `e2e00000-…`**: misurato il 2026-08-10, la produzione
+> ne contiene una anche lei.
 
 ### Branch protection (Settings → Branches → `main`)
 

@@ -13,7 +13,7 @@ import { join } from 'node:path'
  * stata emessa» → numero nuovo, XML nuovo, upload nuovo. In silenzio.
  *
  * E il caso non è ipotetico: quella SELECT chiede la colonna `sezionale`, che
- * esiste solo dopo la migrazione `20260809233000`. Codice in produzione prima della
+ * esiste solo dopo la migrazione `20260809235620`. Codice in produzione prima della
  * migrazione (o sul DB E2E della CI, che non è migrato) = `42703` su OGNI chiamata.
  * Prima pressione: numero allocato, documento caricato, INSERT in `PGRST204`, riga a
  * registro assente. La segreteria vede il pagamento ancora «da fatturare» e ripreme:
@@ -200,7 +200,7 @@ afterEach(() => {
 
 describe('idempotenza NON verificabile → non si emette (e non in silenzio)', () => {
   it('la SELECT su `fatture_emesse` fallisce (42703, colonna `sezionale` assente) → nessun numero, nessun upload', async () => {
-    // È lo stato ESATTO della produzione finché la migrazione 20260809233000 non è
+    // È lo stato ESATTO della produzione finché la migrazione 20260809235620 non è
     // applicata, ed è lo stato permanente del DB E2E della CI, che non è migrato.
     const upload = vi.fn(async () => ({ ok: true, uploadFileName: 'IT_doppia.xml.p7m', errorCode: '0000' }))
     const { emettiFatturaPagamento } = await carica({
@@ -417,7 +417,7 @@ describe('un guasto di lettura non si traveste da «non trovato» né da «non c
 
 describe('la migrazione porta il vincolo, e non promette ciò che non fa', () => {
   const sql = readFileSync(
-    join(process.cwd(), 'supabase/migrations/20260809233000_fatture_numerazione_sezionale.sql'),
+    join(process.cwd(), 'supabase/migrations/20260809235620_fatture_numerazione_sezionale.sql'),
     'utf-8',
   )
 

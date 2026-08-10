@@ -25,7 +25,11 @@ describe('buildFatturaElettronicaXml — bollo e IVA parametrica', () => {
     const xml = buildFatturaElettronicaXml(base)
     expect(xml).toContain('<AliquotaIVA>0.00</AliquotaIVA>')
     expect(xml).toContain('<Natura>N4</Natura>')
-    expect(xml).toContain('Esente art. 10 DPR 633/1972')
+    // La dicitura è quella MISURATA sulle fatture vere il 2026-08-10 (`Art.`
+    // maiuscolo, anno a due cifre), non quella che sembra più corretta a leggerla:
+    // nella stessa serie fiscale convivono documenti scritti a mano e documenti
+    // scritti dal software, e due diciture diverse si notano.
+    expect(xml).toContain('<RiferimentoNormativo>Esente Art. 10 DPR 633/72</RiferimentoNormativo>')
     expect(xml).not.toContain('<DatiBollo>')
   })
 

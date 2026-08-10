@@ -97,12 +97,20 @@ const pagamentoSaldato = {
   descrizione: 'Retta di Marzo',
   importo: 150,
   stato: 'pagato',
+  scadenza: '2026-03-10',
+  periodo_competenza: '2026-03-01',
   scuola_id: SCUOLA,
   fattura_causale: null,
+  categoria_id: null,
   alunno_id: 'al-1',
+  payment_categories: null,
   alunni: {
+    id: 'al-1',
     nome: 'Mario',
     cognome: 'Rossi',
+    // La data di nascita decide la SERIE FISCALE (dato sintetico: repo pubblico).
+    codice_fiscale: null,
+    data_nascita: '2019-03-15',
     intestatario_fatture: { tipo: 'adult', nome: 'Giulia Farina', adult_id: 'parent-1' },
   },
 }
@@ -122,9 +130,9 @@ const settingsConfig = {
       provincia: 'RM',
     },
   },
-  fattura_causale_template: '{descrizione}',
 }
 const parent = {
+  id: 'parent-1',
   first_name: 'Giulia',
   last_name: 'Farina',
   fiscal_code: 'FRNGLI80A41H501Z',
@@ -263,12 +271,22 @@ describe('emettiFatturaPagamento — il battito che mancava', () => {
     expect(String(r.messaggio)).toContain('pagamento')
   })
 
-  it('L\'AGGRAVANTE DOCUMENTALE: il `warn` del progressivo porta davvero il corpo di Aruba', async () => {
+  it('L\'AGGRAVANTE DOCUMENTALE: il progressivo illeggibile FERMA l\'emissione, col corpo di Aruba nella riga', async () => {
     // `emissione.ts` dichiarava, in un commento, che «il corpo dell'errore del provider va
     // conservato — è l'unica cosa che dice se è un token scaduto o un 5xx di Aruba». Era
     // FALSO: `client.ts` lo gettava a monte, e qui arrivava «Aruba findByUsername fallita
     // (HTTP 403)». Un commento che promette ciò che il codice non fa ferma l'indagine di chi
     // legge — costa più di un commento assente. Questo test è ciò che tiene vera la frase.
+    //
+    // ⚠️ IL VERDETTO È CAMBIATO DI PROPOSITO IL 2026-08-09, e la ragione va scritta qui.
+    // Prima questo test pretendeva `esito.ok === true`: il ripiego «sul contatore interno»
+    // era considerato non bloccante. Poi si è misurato che le due serie fiscali vivono sul
+    // gestionale di Aruba e contano 2.327 e 1.946 documenti, mentre il contatore interno di
+    // questo database parte da ZERO. «Non bloccante» significava quindi: emetti «FPR 1/26»
+    // su una serie arrivata a 1.946, cioè un numero già usato — un illecito fiscale, non un
+    // degrado elegante. Ora l'emissione si ferma (503) e NESSUN documento parte.
+    // Il livello sale da `warn` a `error` per la stessa ragione. Ciò che NON cambia, ed è il
+    // motivo per cui questo test esiste, è che il corpo del provider arriva fino alla riga.
     //
     // NB: il client NON è mockato in questo test — è il pezzo che si sta verificando. Si
     // mocka la RETE, che è l'unica cosa che in un test non deve esistere.
@@ -282,11 +300,42 @@ describe('emettiFatturaPagamento — il battito che mancava', () => {
     const sb = makeSupabase({ pagamenti: pagamentoSaldato, admin_settings: settingsConfig, parents: parent, rpc: 14 })
 
     const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
-    expect(esito.ok, 'il ripiego sul contatore interno deve restare non bloccante').toBe(true)
+    expect(esito.ok, 'un progressivo che non si conosce non si indovina: si blocca').toBe(false)
+    if (!esito.ok) expect(esito.motivo).toBe('numerazione_non_allineata')
+    expect(sb._inserts.filter((i) => i.table === 'fatture_emesse')).toHaveLength(0)
 
-    const r = await rigaCon('fattura', 'warn')
+    const r = await rigaCon('fattura', 'error')
     expect(String(r.messaggio)).toContain('User not enabled for outgoing invoices')
     expect(r.codice).toBe('403')
+  })
+
+  it('SERIE FISCALE non determinabile: la riga lo dice, e NON porta dati del minore', async () => {
+    // Il bambino non ha né codice fiscale né data di nascita: la serie non si può
+    // scegliere, quindi non si emette. La riga deve dire cosa correggere e dove —
+    // ma la data di nascita di un minore nei log non ci entra (regola 8), e infatti
+    // `redact` chiude qualunque chiave che contenga «nascita».
+    const { emettiFatturaPagamento } = await carica({
+      arubaSignin: vi.fn(async () => tokenOk),
+      arubaUltimoNumeroFattura: vi.fn(async () => 0),
+      arubaUpload: vi.fn(async () => ({ ok: true, uploadFileName: 'IT_z.xml.p7m', errorCode: '0000' })),
+    })
+    const sb = makeSupabase({
+      pagamenti: { ...pagamentoSaldato, alunni: { ...pagamentoSaldato.alunni, data_nascita: null } },
+      admin_settings: settingsConfig,
+      parents: parent,
+      rpc: 15,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    expect(esito.ok).toBe(false)
+
+    const r = await rigaCon('fattura', 'error')
+    // Il messaggio è quello dell'ERRORE (che vince sui campi) e dice cosa fare.
+    expect(String(r.messaggio)).toContain('serie fiscale non si indovina')
+    // `esito` è in lista bianca: `where contesto->>'esito' = '…'` si può fare.
+    expect(JSON.stringify(r)).toContain('sezionale-non-determinabile')
+    // La data di nascita di un minore non entra nei log, in nessuna forma.
+    expect(JSON.stringify(r)).not.toContain('2019-03-15')
   })
 
   it('PRIVACY: un codice fiscale nel motivo dello scarto di Aruba NON arriva in chiaro', async () => {

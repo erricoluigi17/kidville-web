@@ -12,7 +12,9 @@ import {
   datiStruttura,
   CATEGORIE_ESCLUSE_ADE,
   BOLLO_SOGLIA_DEFAULT,
+  type FiscaleConfig,
 } from '@/lib/pagamenti/fiscale'
+import * as fiscale from '@/lib/pagamenti/fiscale'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -46,6 +48,35 @@ describe('bolloDovuto', () => {
   })
 })
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IL RIADDEBITO DEL BOLLO NON ESISTE — e questo test serve a impedire che torni
+// a esistere solo a parole.
+//
+// Fino al 2026-08-10 c'erano `bolloRiaddebitato()` e una casella in Impostazioni
+// che prometteva «il bollo è una riga in più in fattura e il totale cresce di
+// 2 €». L'helper aveva ZERO chiamanti: nessuna riga in più, `ImportoTotale-
+// Documento` invariato. E il test che stava QUI certificava che l'impostazione
+// «si salva» — cioè collaudava un comando senza effetto, ed è così che il
+// difetto è sopravvissuto al primo collaudo.
+//
+// Se qualcuno reintroduce l'helper, questo test diventa rosso: la reintroduzione
+// va accompagnata dal riepilogo con `Natura N1` (art. 15 DPR 633/1972) nel
+// generatore, non da una casella.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('il bollo non si riaddebita: nessuna leva che prometta un totale diverso', () => {
+  it('`bolloRiaddebitato` non è più esportato da `@/lib/pagamenti/fiscale`', () => {
+    expect(Object.keys(fiscale)).not.toContain('bolloRiaddebitato')
+  })
+
+  it('una chiave `bollo_riaddebito` rimasta nel JSONB non cambia un centesimo', () => {
+    // È il caso reale di una sede che l'aveva salvata prima della rimozione: il
+    // bollo dovuto resta 2 €, e nessun percorso legge quella chiave.
+    const conResiduo = { bollo_enabled: true, bollo_riaddebito: true } as unknown as FiscaleConfig
+    expect(bolloDovuto(180, conResiduo)).toBe(2)
+    expect(bolloDovuto(180, { bollo_enabled: true })).toBe(bolloDovuto(180, conResiduo))
+  })
+})
+
 describe('datiStruttura', () => {
   it('usa fiscale_config e ricade su aruba_config.fiscal per i campi mancanti', () => {
     const d = datiStruttura(
@@ -59,6 +90,34 @@ describe('datiStruttura', () => {
     const d = datiStruttura(null, null)
     expect(d.denominazione).toBe('')
     expect(d.piva).toBe('')
+  })
+
+  // Il numero civico è diventato un campo a parte perché lo pretende il tracciato
+  // FatturaPA. Le ricevute e le attestazioni stampano una riga sola: se la
+  // composizione non avvenisse qui, dal giorno in cui la segreteria compila i
+  // campi separati le ricevute perderebbero il civico — in silenzio.
+  it('indirizzo e numero civico tornano una riga sola sulle ricevute', () => {
+    const d = datiStruttura(
+      { denominazione: 'Cooperativa', piva: '03394870616', indirizzo: 'Via Silvio Pellico', numero_civico: '7' },
+      null,
+    )
+    expect(d.indirizzo).toBe('Via Silvio Pellico 7')
+  })
+
+  it('senza numero civico l\'indirizzo resta quello di prima, senza spazi in coda', () => {
+    const d = datiStruttura({ denominazione: 'Cooperativa', piva: '03394870616', indirizzo: 'Via Silvio Pellico' }, null)
+    expect(d.indirizzo).toBe('Via Silvio Pellico')
+  })
+
+  it('una chiave salvata VUOTA cede il posto al ripiego invece di azzerarlo', () => {
+    // Col vecchio `??` bastava che il pannello salvasse `comune: ''` perché la
+    // ricevuta uscisse senza comune, avendo il dato in `aruba_config.fiscal`.
+    const d = datiStruttura(
+      { denominazione: 'Cooperativa', piva: '03394870616', comune: '', cap: '' },
+      { fiscal: { comune: 'Cesa', cap: '81030' } },
+    )
+    expect(d.comune).toBe('Cesa')
+    expect(d.cap).toBe('81030')
   })
 })
 

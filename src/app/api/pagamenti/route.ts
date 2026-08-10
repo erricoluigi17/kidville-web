@@ -10,7 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 import { getModuleConfig } from '@/lib/settings/module-config'
-import { renderCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
+import { renderCausale, modelloCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
 import { meseAnnoDaPeriodo } from '@/lib/pagamenti/periodo'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
@@ -239,7 +239,11 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
         const cfg = causaliBySede[r.scuola_id] ?? {}
         const cat = r.payment_categories as { slug?: string | null } | null | undefined
         const slug = cat?.slug ?? undefined
-        const template = (slug ? cfg[slug] : undefined) ?? cfg.default ?? DEFAULT_CAUSALE_TEMPLATE
+        // La regola (categoria → «Predefinito» → modello di fabbrica) sta in
+        // `modelloCausale`, un posto solo: la stessa causale la compone anche il
+        // motore dei solleciti, e due copie che divergono mandano al genitore due
+        // stringhe diverse per lo stesso pagamento.
+        const template = modelloCausale(cfg, slug, DEFAULT_CAUSALE_TEMPLATE)
         const al = r.alunni as { nome?: string | null; cognome?: string | null; codice_fiscale?: string | null } | null | undefined
         const { mese, anno } = meseAnnoDaPeriodo(r.periodo_competenza as string | null)
         const causale_suggerita = renderCausale(template, {

@@ -94,7 +94,15 @@ const ECCEZIONI: Record<string, string> = {
     // fatturazione elettronica (Aruba/SDI), non una struttura scolastica:
     // in inglese si dice «registered office» e chiamarla «location» sarebbe
     // sbagliato proprio nel campo dove conta.
-    'adminSettings.spArubaSedeLegale': 'domicilio fiscale della società, non una struttura: «registered office»',
+    //
+    // La chiave `adminSettings.spArubaSedeLegale` che stava qui è stata
+    // CANCELLATA il 2026-08-09 insieme al campo che nominava: era la stringa
+    // libera in cui si scriveva la sede legale nel pannello Aruba mentre l'XML
+    // cercava CAP e comune separati (`<CAP></CAP>` → scarto SDI). L'anagrafica
+    // del cedente ora sta in campi separati nel pannello «Dati fiscali», e le
+    // due voci qui sotto sono le sue: stesso motivo, stesso «registered office».
+    'adminSettings.spFiscaleDesc': 'domicilio fiscale della società, non una struttura: «registered office»',
+    'adminSettings.spArubaRimandoDatiFiscali': 'domicilio fiscale della società, non una struttura: «registered office»',
 }
 
 describe('lock architettura · glossario «sede» → «location»', () => {

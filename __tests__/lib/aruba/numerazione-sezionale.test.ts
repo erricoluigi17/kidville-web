@@ -1,0 +1,222 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { arubaUltimoNumeroFattura, numeroSezionaleDaEtichetta } from '@/lib/aruba/client'
+import { progressivoInvioFattura } from '@/lib/aruba/emissione'
+
+/**
+ * L'ULTIMO NUMERO DI UNA SERIE FISCALE — il pezzo che, sbagliato, produce un illecito.
+ *
+ * ─── COSA C'ERA PRIMA, MISURATO ──────────────────────────────────────────────
+ * `arubaUltimoNumeroFattura` faceva, su ogni etichetta:
+ *     parseInt(String(inv.number).replace(/[^\d]/g, ''), 10)
+ * Da `Asilo 2327/2026` ricavava **23272026**; da `FPR 1946/26` **194626**. Le due serie
+ * finivano nello stesso mucchio e il «massimo» era un numero senza alcun rapporto con la
+ * numerazione vera. L'unico test che esisteva passava un numero già nudo, quindi non poteva
+ * accorgersene.
+ *
+ * ─── PERCHÉ IL VERSO DELL'ERRORE CONTA PIÙ DELL'ERRORE ───────────────────────
+ * In produzione «Asilo» è a 2.327 documenti e «FPR» a 1.946: sono serie vere, tenute a mano
+ * dalla segreteria sul gestionale di Aruba. Un numero LETTO TROPPO BASSO fa emettere un
+ * documento con un numero già usato — che si corregge solo con una nota di variazione. Un
+ * numero letto troppo alto lascia un buco, che è tollerabile. Perciò qui la severità è
+ * deliberata: ciò che non si riconosce vale `null`, mai «zero».
+ */
+describe('numeroSezionaleDaEtichetta — legge la serie, non le cifre', () => {
+  it('legge le due forme reali: «Asilo 2327/2026» (4 cifre) e «FPR 1946/26» (2 cifre)', () => {
+    expect(numeroSezionaleDaEtichetta('Asilo 2327/2026', 'Asilo', 2026)).toBe(2327)
+    expect(numeroSezionaleDaEtichetta('FPR 1946/26', 'FPR', 2026)).toBe(1946)
+  })
+
+  it('LA REGRESSIONE: non concatena più le cifre di numero e anno', () => {
+    // 23272026 e 194626 sono i due valori che il vecchio codice restituiva.
+    expect(numeroSezionaleDaEtichetta('Asilo 2327/2026', 'Asilo', 2026)).not.toBe(23272026)
+    expect(numeroSezionaleDaEtichetta('FPR 1946/26', 'FPR', 2026)).not.toBe(194626)
+  })
+
+  it('LE DUE SERIE NON SI MESCOLANO: chiedendo «FPR» un documento «Asilo» non conta', () => {
+    // È il difetto peggiore del vecchio parser: «Asilo» è quasi mille documenti più avanti,
+    // e il suo massimo trascinato su FPR avrebbe bruciato in un colpo 380 numeri della serie
+    // sbagliata — buchi su una serie e collisioni sull'altra.
+    expect(numeroSezionaleDaEtichetta('Asilo 2327/2026', 'FPR', 2026)).toBeNull()
+    expect(numeroSezionaleDaEtichetta('FPR 1946/26', 'Asilo', 2026)).toBeNull()
+  })
+
+  it('l\'ANNO deve tornare, nelle due scritture: 4 cifre esatte, oppure le ultime 2', () => {
+    expect(numeroSezionaleDaEtichetta('Asilo 2327/2025', 'Asilo', 2026)).toBeNull()
+    expect(numeroSezionaleDaEtichetta('FPR 1946/25', 'FPR', 2026)).toBeNull()
+    expect(numeroSezionaleDaEtichetta('FPR 1946/06', 'FPR', 2006)).toBe(1946)
+    // Il 2000 scritto a due cifre è «00»: senza il padding sarebbe stato «0» e non tornava.
+    expect(numeroSezionaleDaEtichetta('FPR 12/00', 'FPR', 2000)).toBe(12)
+  })
+
+  it('tollera le sbavature di scrittura (maiuscole, spazi doppi, spazi attorno alla barra)', () => {
+    expect(numeroSezionaleDaEtichetta('  asilo   2327 / 2026 ', 'Asilo', 2026)).toBe(2327)
+    expect(numeroSezionaleDaEtichetta('FPR\t1946/26', 'FPR', 2026)).toBe(1946)
+  })
+
+  it('ciò che non si riconosce vale `null`, MAI zero', () => {
+    // «zero» significherebbe «questa serie non è mai partita»: è esattamente
+    // l'affermazione che fa emettere un «1» su una serie di duemila documenti.
+    for (const etichetta of ['2327', 'Asilo 2327', '', null, undefined, 42, 'Fattura n. 12 del 2026', 'Asilo /2026']) {
+      expect(numeroSezionaleDaEtichetta(etichetta, 'Asilo', 2026), String(etichetta)).toBeNull()
+    }
+  })
+
+  it('un progressivo 0 o negativo non è un numero di fattura', () => {
+    expect(numeroSezionaleDaEtichetta('Asilo 0/2026', 'Asilo', 2026)).toBeNull()
+  })
+})
+
+describe('progressivoInvioFattura — un nome file diverso per ogni serie', () => {
+  it('la stessa 2328 su due serie NON produce lo stesso progressivo', () => {
+    // Lo SdI costruisce il nome del file sul ProgressivoInvio: due uguali e Aruba
+    // risponde «00404 File già inviato con lo stesso nome» su una fattura valida.
+    expect(progressivoInvioFattura('Asilo', 2328, 2026)).toBe('A26002328')
+    expect(progressivoInvioFattura('FPR', 2328, 2026)).toBe('F26002328')
+    expect(progressivoInvioFattura('Asilo', 2328, 2026)).not.toBe(progressivoInvioFattura('FPR', 2328, 2026))
+  })
+
+  it('sta nei 10 caratteri di `String10Type`, anche a numeri alti', () => {
+    expect(progressivoInvioFattura('Asilo', 999999, 2026).length).toBeLessThanOrEqual(10)
+  })
+
+  it('anni diversi, progressivi diversi: la serie che riparte non ricicla un nome file', () => {
+    expect(progressivoInvioFattura('Asilo', 1, 2026)).not.toBe(progressivoInvioFattura('Asilo', 1, 2027))
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * La lettura vera, con la rete finta.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+function rispostaConNumeri(numeri: (string | number | null)[]): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ invoices: numeri.map((n) => ({ number: n })) }),
+  } as Response
+}
+
+describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const parametri = { username: 'utente@scuola.it', anno: 2026 } as const
+
+  it('prende il massimo della serie richiesta e ignora l\'altra', async () => {
+    fetchMock.mockResolvedValue(
+      rispostaConNumeri(['Asilo 2325/2026', 'FPR 1946/26', 'Asilo 2327/2026', 'FPR 1900/26', 'Asilo 2326/2026']),
+    )
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    fetchMock.mockClear()
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' })).toBe(1946)
+  })
+
+  it('la finestra è l\'anno, e il filtro sul mittente arriva alla query', async () => {
+    fetchMock.mockResolvedValue(rispostaConNumeri(['Asilo 10/2026']))
+    await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'Asilo', vatcodeSender: '03394870616' })
+    const url = String(fetchMock.mock.calls[0][0])
+    expect(url).toContain('https://ws.fatturazioneelettronica.aruba.it/services/invoice/out/findByUsername')
+    expect(url).toContain('startDate=2026-01-01')
+    expect(url).toContain('endDate=2026-12-31')
+    expect(url).toContain('vatcodeSender=03394870616')
+  })
+
+  it('SCORRE LE PAGINE: con 2.327 documenti il massimo non sta nei primi 500', async () => {
+    // Il vecchio codice chiedeva `page=1&size=500` e prendeva il massimo di quei 500,
+    // senza che nessuno avesse mai verificato in che ORDINE Aruba li restituisce. Su una
+    // serie da 2.327 documenti è il massimo di un pezzo qualunque dell'elenco.
+    const paginaPiena = (da: number) =>
+      rispostaConNumeri(Array.from({ length: 500 }, (_, i) => `Asilo ${da + i}/2026`))
+    fetchMock
+      .mockResolvedValueOnce(paginaPiena(1))
+      .mockResolvedValueOnce(paginaPiena(501))
+      .mockResolvedValueOnce(rispostaConNumeri(['Asilo 1001/2026', 'Asilo 2327/2026']))
+
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(String(fetchMock.mock.calls[2][0])).toContain('page=3')
+  })
+
+  it('si ferma alla prima pagina non piena (nessuna richiesta di troppo)', async () => {
+    fetchMock.mockResolvedValue(rispostaConNumeri(['Asilo 7/2026']))
+    await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('anno senza documenti → guarda l\'anno PRECEDENTE, per non ricominciare da 1', async () => {
+    // Non sappiamo se le due serie ripartano da 1 a gennaio: 2.327 documenti in un anno
+    // solo, per una scuola con una trentina di bambini, dicono di no. Nel dubbio si sbaglia
+    // nel verso che lascia un BUCO invece di un doppione.
+    fetchMock
+      .mockResolvedValueOnce(rispostaConNumeri([]))
+      .mockResolvedValueOnce(rispostaConNumeri(['Asilo 2327/2025']))
+
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    expect(String(fetchMock.mock.calls[1][0])).toContain('startDate=2025-01-01')
+  })
+
+  it('nessun documento in due anni → 0 (la serie è davvero nuova)', async () => {
+    fetchMock.mockResolvedValue(rispostaConNumeri([]))
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' })).toBe(0)
+  })
+
+  it('ARUBA RISPONDE 200 E NON SE NE CAPISCE UN\'ETICHETTA → LANCIA, non «serie nuova»', async () => {
+    // IL DIFETTO CHE QUESTO CASO CHIUDE, ed è quello che nessun errore segnalava.
+    // `numeroSezionaleDaEtichetta` è severa e fa bene: ciò che non riconosce vale
+    // `null`. Ma la funzione aggregata sommava quei `null` a zero e restituiva 0 —
+    // che significa «la serie non è mai partita». Con `findByUsername` che risponde
+    // 200 e duemila documenti, il risultato era `p_min = 0` → «Asilo 1/2026» su una
+    // serie da 2.327 documenti.
+    //
+    // Basta che il campo `number` contenga il progressivo NUDO — ed è proprio la
+    // forma che `docs/fatturazione/tracciato-di-riferimento.md` documenta per il
+    // `ProgressivoInvio`. Nessuno in questo repo ha mai MISURATO cosa contenga quel
+    // campo: è un'assunzione, e un'assunzione non può valere un numero di fattura.
+    fetchMock.mockResolvedValue(rispostaConNumeri(['2325', '2326', '2327']))
+    const errore = await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }).catch((e) => e)
+    expect(errore, 'zero qui significherebbe emettere il numero 1 su una serie viva').toBeInstanceOf(Error)
+    expect((errore as Error).name).toBe('ArubaNumerazioneError')
+    // Il campione serve a chi legge il log per capire in che forma Aruba parla adesso.
+    expect((errore as Error).message).toContain('2325')
+  })
+
+  it('etichette LEGGIBILI ma di un\'altra serie → 0 è una risposta VERA, e non lancia', async () => {
+    // La distinzione è tutto il punto: «non ho capito niente» è un guasto, «ho capito
+    // e questa serie non ha documenti» è un fatto. Qui `FPR` non ha nulla nel 2026 e
+    // nemmeno nel 2025: la serie è davvero nuova e deve poter partire da 1.
+    fetchMock.mockResolvedValue(rispostaConNumeri(['Asilo 2325/2026', 'Asilo 2327/2026']))
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' })).toBe(0)
+  })
+
+  it('anche UNA SOLA etichetta capita basta a non lanciare (il resto è rumore del gestionale)', async () => {
+    // Una riga storta fra mille — una nota di credito, un documento importato — non
+    // deve bloccare l'emissione: si blocca solo quando NON SE NE CAPISCE NEMMENO UNA.
+    fetchMock.mockResolvedValue(rispostaConNumeri(['boh', 'n. 12', 'Asilo 2327/2026', null]))
+    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+  })
+
+  it('l\'anno PRECEDENTE illeggibile lancia anche lui: il ripiego non è una scorciatoia', async () => {
+    fetchMock
+      .mockResolvedValueOnce(rispostaConNumeri([]))
+      .mockResolvedValueOnce(rispostaConNumeri([1946, 1947]))
+    const errore = await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }).catch((e) => e)
+    expect(errore).toBeInstanceOf(Error)
+    expect((errore as Error).name).toBe('ArubaNumerazioneError')
+  })
+
+  it('un rifiuto HTTP LANCIA, col corpo del provider: non si degrada a zero', async () => {
+    // Zero vorrebbe dire «serie nuova», e su una serie viva è un numero già usato.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => '{"errorDescription":"User not enabled for outgoing invoices"}',
+    } as Response)
+    const errore = await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }).catch((e) => e)
+    expect(errore).toBeInstanceOf(Error)
+    expect((errore as Error).message).toContain('User not enabled for outgoing invoices')
+  })
+})

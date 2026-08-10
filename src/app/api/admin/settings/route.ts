@@ -31,7 +31,13 @@ const ALLOWED_FIELDS = [
   'retta_auto_enabled',
   'insoluto_tolleranza_giorni',
   'ticket_pacchetti',
-  'fattura_causale_template',
+  // `fattura_causale_template` NON è più ammesso, ed è la chiusura del difetto, non una
+  // svista: era un modello unico per tutta la scuola che questa route accettava e
+  // scriveva davvero in colonna, mentre l'emissione della fattura non lo leggeva mai.
+  // La causale della fattura si configura per tipologia di pagamento e vive in
+  // `fattura_causali_config` (vedi `@/lib/pagamenti/causale-fattura`). Una PATCH che lo
+  // porti ancora viene semplicemente ignorata da zod: nessun campo scritto e poi
+  // scartato, che è esattamente ciò che rendeva il difetto invisibile.
   'mensa_cutoff_ora',
   'mensa_giorni_attivi',
   'mensa_settimane_rotazione',
@@ -54,8 +60,102 @@ const ALLOWED_FIELDS = [
   'notifiche_config',
   'rette_config',
   'causali_config',
+  'fattura_causali_config',
   'cassa_config',
 ] as const
+
+/**
+ * I due JSONB dei modelli di causale (bonifico e fattura): stessa forma FLAT
+ * (`{ default?, <slug-categoria>: }`) e quindi stesse regole di salvataggio.
+ * Elencarli qui invece di ripetere un `if` per ciascuno è ciò che impedisce alla
+ * gemella di nascere già priva del filtro sulle stringhe vuote.
+ */
+const CHIAVI_CAUSALI = ['causali_config', 'fattura_causali_config'] as const
+
+/**
+ * Colonne JSONB nate DOPO il baseline del DB E2E della CI, che non è migrato: là non
+ * esistono, e PostgREST lo dice in due dialetti diversi — `PGRST204` quando si prova a
+ * SCRIVERLE, `42703` quando si prova a LEGGERLE.
+ */
+const COLONNE_RECENTI: readonly string[] = ['rette_config', ...CHIAVI_CAUSALI]
+
+/** Codice Postgres di «colonna inesistente», come arriva da PostgREST su una SELECT. */
+const COLONNA_INESISTENTE = '42703'
+
+/**
+ * Legge i valori ATTUALI delle sole colonne JSONB in arrivo, per lo shallow-merge.
+ *
+ * Perché non è un `const { data } = await …`: PostgREST NON LANCIA (AGENTS.md, regola 7).
+ * Se la SELECT fallisce, `data` è `null`, e senza guardare `error` il merge ripartirebbe
+ * da `{}` per TUTTE le chiavi della stessa PATCH — riscrivendo la configurazione da zero
+ * mentre l'utente crede di aggiornarne un pezzo, e senza una riga di log. Non è teorico:
+ * basta UNA colonna mancante perché PostgREST faccia fallire l'INTERA select, comprese
+ * le colonne che esistono.
+ *
+ * DEGRADAZIONE su `42703`. PostgREST non dice QUALE colonna manca, quindi non si può
+ * indovinare: si rilegge **una colonna per volta**. Quelle che esistono conservano il
+ * loro pregresso, quelle che non esistono valgono `{}` — che per una colonna inesistente
+ * è la verità, non una perdita. Costa N interrogazioni, ma solo su un database in ritardo
+ * di migrazioni: in produzione la prima select riesce e il ramo non viene mai percorso.
+ * Filtrare per `COLONNE_RECENTI` invece di sondare NON basterebbe, ed è il motivo per cui
+ * non si fa: `causali_config` è essa stessa recente, e una PATCH che porti insieme le due
+ * chiavi delle causali su un DB dove solo la prima esiste tornerebbe a partire da `{}`
+ * proprio per quella che c'era.
+ *
+ * @returns la riga letta (`{}` se la scuola non ne ha ancora una), oppure `null` se la
+ *          lettura è fallita per un motivo che non sappiamo degradare: chi chiama deve
+ *          FERMARSI, non proseguire come se il salvato fosse vuoto.
+ */
+async function leggiPregressoJsonb(
+  supabase: SupabaseClient,
+  scuolaId: string,
+  colonne: string[],
+): Promise<Record<string, unknown> | null> {
+  const { data, error } = await supabase
+    .from('admin_settings')
+    .select(colonne.join(','))
+    .eq('scuola_id', scuolaId)
+    .maybeSingle()
+  if (!error) return (data ?? {}) as Record<string, unknown>
+
+  if (error.code !== COLONNA_INESISTENTE) {
+    logEvento('config', 'error', {
+      operazione: 'admin/settings:PATCH',
+      esito: 'lettura-pregresso-fallita',
+      error_code: error.code ?? null,
+      n: colonne.length,
+      stato: 500,
+    }, error)
+    return null
+  }
+
+  // Una sola colonna, e non esiste: niente da conservare.
+  if (colonne.length === 1) {
+    logEvento('config', 'warn', {
+      operazione: 'admin/settings:PATCH',
+      esito: 'lettura-pregresso-colonna-inesistente',
+      error_code: error.code,
+      recente: COLONNE_RECENTI.includes(colonne[0]),
+      stato: 200,
+    })
+    return {}
+  }
+
+  logEvento('config', 'warn', {
+    operazione: 'admin/settings:PATCH',
+    esito: 'lettura-pregresso-ritento-per-colonna',
+    error_code: error.code,
+    n: colonne.length,
+    stato: 200,
+  })
+  const riga: Record<string, unknown> = {}
+  for (const c of colonne) {
+    const parziale = await leggiPregressoJsonb(supabase, scuolaId, [c])
+    if (parziale === null) return null
+    Object.assign(riga, parziale)
+  }
+  return riga
+}
 
 // Configurazione rette (sconto fratelli + pro-rata iscrizione) — shape S6.
 // Validazione conservativa: la shape è quella di `@/lib/pagamenti/rette-config`.
@@ -163,7 +263,6 @@ export const GET = withRoute('admin/settings:GET', async (request: NextRequest) 
         retta_auto_enabled: true,
         insoluto_tolleranza_giorni: 7,
         ticket_pacchetti: [],
-        fattura_causale_template: '{descrizione} - {alunno}',
         aruba_config: {},
         mensa_cutoff_ora: '09:30',
         mensa_giorni_attivi: [1, 2, 3, 4, 5],
@@ -215,7 +314,7 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         'solleciti_config',
         'notifiche_config',
         'rette_config',
-        'causali_config',
+        ...CHIAVI_CAUSALI,
         'cassa_config',
       ]
       const updates: Record<string, unknown> = { scuola_id: scuolaId }
@@ -223,12 +322,19 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
 
       const incomingMerged = mergedKeys.filter((k) => updates[k] !== undefined)
       if (incomingMerged.length > 0) {
-        const { data: existing } = await supabase
-          .from('admin_settings')
-          .select(incomingMerged.join(','))
-          .eq('scuola_id', scuolaId)
-          .maybeSingle()
-        const existingRow = (existing ?? {}) as Record<string, unknown>
+        const existingRow = await leggiPregressoJsonb(supabase, scuolaId, incomingMerged)
+        // Lettura fallita e non degradabile: si RIFIUTA la PATCH. Proseguire vorrebbe
+        // dire riscrivere ogni chiave JSONB partendo da `{}`, cioè cancellare la
+        // configurazione esistente credendo di aggiornarla.
+        if (existingRow === null) {
+          return NextResponse.json(
+            {
+              error: 'Impossibile rileggere le impostazioni già salvate: non è stato salvato niente',
+              codice: 'CONFIG_PREGRESSO_NON_LETTO',
+            },
+            { status: 500 },
+          )
+        }
         for (const k of incomingMerged) {
           const prev = (existingRow[k] ?? {}) as Record<string, unknown>
           const next = updates[k] as Record<string, unknown>
@@ -244,7 +350,7 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
             updates[k] = merged
           } else {
             updates[k] = { ...prev, ...next }
-            if (k === 'causali_config') {
+            if ((CHIAVI_CAUSALI as readonly string[]).includes(k)) {
               // Solo stringhe NON vuote: una stringa vuota = reset al Predefinito
               // (si rimuove la chiave — lo shallow-merge da solo non potrebbe), e
               // nessun valore non-stringa (che farebbe esplodere renderCausale → 500).
@@ -263,11 +369,11 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         .single()
 
       // Degradazione: sul DB E2E CI (NON migrato) alcune colonne JSONB recenti
-      // (rette_config, causali_config) non esistono ancora → PostgREST risponde
-      // PGRST204. Si rimuovono e si ritenta, salvando tutto il resto best-effort
-      // (il flusso base resta invariato) con un warn. In produzione le colonne
-      // esistono, quindi questo ramo non scatta mai.
-      const COLONNE_RECENTI = ['rette_config', 'causali_config']
+      // (rette_config, causali_config, fattura_causali_config) non esistono ancora →
+      // PostgREST risponde PGRST204. Si rimuovono e si ritenta, salvando tutto il resto
+      // best-effort (il flusso base resta invariato) con un warn. In produzione le
+      // colonne esistono, quindi questo ramo non scatta mai. L'elenco è quello di
+      // `COLONNE_RECENTI`, condiviso con la degradazione in LETTURA (`42703`).
       if (error && error.code === 'PGRST204' && COLONNE_RECENTI.some((c) => c in updates)) {
         logEvento('config', 'warn', {
           operazione: 'admin/settings:PATCH',

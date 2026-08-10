@@ -17,15 +17,64 @@ const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
 const getQuerySchema = z.object({ scuola_id: zScuolaId })
 
-// Campi della config Aruba: oggi accettati senza vincoli di tipo (finiscono in
-// JSONB via merge server-side): schema volutamente permissivo. L'.optional() su
-// z.unknown() è OBBLIGATORIO (in zod v4 z.unknown() nudo è required a runtime).
+/**
+ * ─── LE RIGHE IVA NON SONO PIÙ `z.unknown()`, ED È IL PUNTO ──────────────────
+ *
+ * Fino al 2026-08-10 anche `iva` passava da `z.unknown().optional()`: una riga
+ * `{causale:'iscrizione', aliquota:0}` — senza `natura` — si salvava senza un
+ * fiato, e l'emissione la portava fino allo SDI, che scarta con **00401**
+ * («natura non presente a fronte di un'aliquota pari a zero»). Lo XSD non lo vede:
+ * misurato con il validatore di questo repo, quel documento è formalmente VALIDO.
+ * Il gemello è **00400**: un'aliquota maggiore di zero CON una natura.
+ *
+ * La regola sta in tre posti perché tre sono le strade, e nessuna delle tre è
+ * ridondante: qui all'ingresso (così una configurazione sbagliata non si salva),
+ * in `emissione.ts` prima di consumare un numero (le righe salvate PRIMA di oggi
+ * esistono già), e nel generatore XML come ultima difesa. Le prime due chiamano la
+ * stessa funzione del generatore, `verificaCoerenzaIva`: una regola valida per tre
+ * strade vive comunque in un posto solo.
+ *
+ * `NaturaType` dello schema: `N1`…`N7`, con le sotto-nature `N2.1`, `N3.4`, `N6.9`…
+ */
+const zRigaIva = z
+  .object({
+    causale: z.string().trim().min(1, 'La causale della riga IVA non può essere vuota'),
+    aliquota: z.coerce.number().min(0).max(100),
+    natura: z
+      .string()
+      .trim()
+      .regex(/^N[1-7](\.\d)?$/, 'Natura non valida: sono ammesse N1…N7 e le sotto-nature (es. N2.1)')
+      .optional()
+      .or(z.literal('')),
+    riferimento_normativo: z.string().trim().max(100).optional().or(z.literal('')),
+  })
+  .superRefine((riga, ctx) => {
+    const natura = (riga.natura ?? '').trim()
+    if (riga.aliquota === 0 && natura === '')
+      ctx.addIssue({
+        code: 'custom',
+        path: ['natura'],
+        message:
+          'Aliquota 0 senza Natura: lo SDI scarterebbe la fattura (00401). ' +
+          'Indica la natura dell’operazione (es. N4 per l’esente art. 10 DPR 633/1972).',
+      })
+    if (riga.aliquota > 0 && natura !== '')
+      ctx.addIssue({
+        code: 'custom',
+        path: ['natura'],
+        message: `Aliquota ${riga.aliquota} con Natura «${natura}»: lo SDI scarterebbe la fattura (00400). La natura vale solo sulle operazioni ad aliquota zero.`,
+      })
+  })
+
+// Gli altri campi della config Aruba restano accettati senza vincoli di tipo
+// (finiscono in JSONB via merge server-side). L'.optional() su z.unknown() è
+// OBBLIGATORIO (in zod v4 z.unknown() nudo è required a runtime).
 const patchBodySchema = z.object({
   scuola_id: zScuolaId,
   username: z.unknown().optional(),
   password_ref: z.unknown().optional(),
   fiscal: z.unknown().optional(),
-  iva: z.unknown().optional(),
+  iva: z.array(zRigaIva).optional(),
   abilitato: z.unknown().optional(),
   ambiente: z.unknown().optional(),
 })

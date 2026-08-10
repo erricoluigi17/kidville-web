@@ -27,6 +27,8 @@ const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamen
 const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: Caricamento });
 const TransazioniPanel = dynamic(() => import('@/components/features/admin/pagamenti/TransazioniPanel').then((m) => m.TransazioniPanel), { loading: Caricamento });
 const CausaliPanel = dynamic(() => import('@/components/features/admin/pagamenti/CausaliPanel').then((m) => m.CausaliPanel), { ssr: false, loading: Caricamento });
+// Stesso modulo del pannello qui sopra (un solo chunk): l'editor è uno, le istanze due.
+const CausaliFatturaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CausaliPanel').then((m) => m.CausaliFatturaPanel), { ssr: false, loading: Caricamento });
 const CassaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CassaPanel').then((m) => m.CassaPanel), { ssr: false, loading: Caricamento });
 type PrecompilaTransazione = import('@/components/features/admin/pagamenti/TransazioniPanel').PrecompilaTransazione;
 
@@ -108,7 +110,14 @@ function PagamentiInner() {
 
                         {vista === 'cassa' && userId && <CassaPanel userId={userId} scuolaId={scuolaId} />}
 
-                        {vista === 'causali' && userId && <CausaliPanel userId={userId} scuolaId={scuolaId} />}
+                        {/* Due editor, uno per documento: la causale del bonifico la ricopia
+                            il genitore, quella della fattura finisce nell'XML per lo SDI. */}
+                        {vista === 'causali' && userId && (
+                            <div className="space-y-8">
+                                <CausaliPanel userId={userId} scuolaId={scuolaId} />
+                                <CausaliFatturaPanel userId={userId} scuolaId={scuolaId} />
+                            </div>
+                        )}
                     </Card>
                 )}
             </SedeRequired>

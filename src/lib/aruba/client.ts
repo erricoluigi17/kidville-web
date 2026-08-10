@@ -38,6 +38,9 @@
  */
 import { externalFetch, type EsitoEsterno } from '@/lib/logging/external'
 import { logEvento } from '@/lib/logging/logger'
+// Solo il TIPO: nessun accoppiamento a runtime fra il client HTTP e le regole
+// fiscali. Il vocabolario delle due serie però è uno solo, e sta là.
+import type { Sezionale } from '@/lib/fatturazione/sezionale'
 
 export interface ArubaConfig {
   username?: string
@@ -45,7 +48,16 @@ export interface ArubaConfig {
   abilitato?: boolean
   ambiente?: string
   fiscal?: Record<string, unknown>
-  iva?: { causale: string; aliquota: number; natura?: string }[]
+  /**
+   * Righe IVA per causale. `natura` è OBBLIGATORIA quando `aliquota` è 0 e VIETATA
+   * quando è maggiore di zero: sono i due scarti SDI 00401 e 00400, che lo XSD non
+   * intercetta. `riferimento_normativo` è facoltativo per lo schema, ma è ciò che
+   * compare sulle fatture vere della cooperativa accanto alla natura N4 — e fino al
+   * 2026-08-10 non veniva passato al generatore, quindi spariva proprio sulle righe
+   * esenti configurate a mano. La regola è imposta all'ingresso da
+   * `admin/settings/aruba:PATCH` e ri-verificata prima di consumare un numero.
+   */
+  iva?: { causale: string; aliquota: number; natura?: string; riferimento_normativo?: string }[]
 }
 
 export interface ArubaCredentials {
@@ -361,23 +373,95 @@ export async function arubaGetByFilename(
   return { stato, pdfBase64: pdf, raw: json }
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * L'ultimo numero di una SERIE FISCALE.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
 /**
- * Ultimo (massimo) numero di fattura EMESSA su Aruba per l'anno indicato:
- * GET /services/invoice/out/findByUsername. Serve ad allineare il progressivo
- * interno ed evitare collisioni con fatture emesse anche fuori dalla web app.
- * Best-effort: il chiamante degrada al contatore locale se questa fallisce.
- * NB il `number` è una stringa: si estrae la parte numerica e si prende il max.
+ * L'etichetta di un numero di fattura: `Asilo 2327/2026`, `FPR 1946/26`.
+ *
+ * I due sezionali scrivono l'anno in modo DIVERSO — quattro cifre l'uno, due
+ * l'altro — ed è così sui documenti già trasmessi allo SdI: non è un refuso da
+ * uniformare, è come si chiamano quelle fatture.
  */
-export async function arubaUltimoNumeroFattura(
-  ambiente: string | undefined,
+const FORMA_NUMERO_SEZIONALE = /^([A-Za-z]+) (\d{1,9}) ?\/ ?(\d{2}|\d{4})$/
+
+/** Quante pagine al massimo si scorrono. 20 × 500 = 10.000 documenti per anno. */
+const PAGINE_MAX = 20
+/** Quanti documenti per pagina si chiedono ad Aruba. */
+const PAGINA_SIZE = 500
+
+/**
+ * Il progressivo dentro un'etichetta, **se e solo se** appartiene a QUESTA serie e
+ * a QUEST'ANNO. Altrimenti `null`.
+ *
+ * ⚠️ QUI STAVA UN DIFETTO CHE VALEVA UN ILLECITO FISCALE, e vale la pena scriverlo.
+ * Fino al 2026-08-09 questo pezzo faceva `String(number).replace(/[^\d]/g, '')`:
+ * da `Asilo 2327/2026` ricavava `23272026` — ventitré milioni — e da `FPR 1946/26`
+ * `194626`. Le due serie finivano nello stesso mucchio, il massimo era un numero
+ * senza senso, e il progressivo interno ci si allineava. Nessun test era rosso:
+ * l'unico che esisteva passava un numero già nudo.
+ *
+ * La severità è deliberata. Un'etichetta che non si riconosce vale `null`, non
+ * «zero»: contarla come zero sarebbe come dire «questa serie non è mai partita»,
+ * ed è esattamente l'affermazione che fa emettere un «1» su una serie che di
+ * documenti ne ha duemila.
+ */
+export function numeroSezionaleDaEtichetta(
+  etichetta: unknown,
+  sezionale: Sezionale,
+  anno: number,
+): number | null {
+  if (etichetta == null) return null
+  const testo = String(etichetta).replace(/\s+/g, ' ').trim()
+  const pezzi = FORMA_NUMERO_SEZIONALE.exec(testo)
+  if (!pezzi) return null
+  if (pezzi[1].toUpperCase() !== sezionale.toUpperCase()) return null
+
+  const annoScritto = pezzi[3]
+  const annoAtteso = annoScritto.length === 2 ? String(anno % 100).padStart(2, '0') : String(anno)
+  if (annoScritto !== annoAtteso) return null
+
+  const numero = Number(pezzi[2])
+  return Number.isInteger(numero) && numero > 0 ? numero : null
+}
+
+/**
+ * L'etichetta ha la FORMA di un numero di sezionale? (qualunque serie, qualunque anno)
+ *
+ * È una domanda diversa da quella di `numeroSezionaleDaEtichetta`, e la differenza è
+ * tutto il punto del difetto qui sotto: «`Asilo 2327/2026` non appartiene alla serie
+ * FPR» è un FATTO sui dati, «`2327` non si capisce» è un GUASTO del nostro parser.
+ * La prima risposta si conta come zero senza rimorsi; la seconda no.
+ */
+function etichettaNellaFormaAttesa(etichetta: unknown): boolean {
+  if (etichetta == null) return false
+  return FORMA_NUMERO_SEZIONALE.test(String(etichetta).replace(/\s+/g, ' ').trim())
+}
+
+/** Quanto di un'etichetta incomprensibile si porta nel log: serve la forma, non l'elenco. */
+const CAMPIONE_ETICHETTA_MAX = 40
+
+/** Una pagina di `findByUsername`: il massimo, quanti documenti e quanti se ne sono CAPITI. */
+interface EsitoPagina {
+  max: number
+  ricevuti: number
+  /** Etichette nella forma attesa, di QUALUNQUE serie e anno: quante ne abbiamo capite. */
+  leggibili: number
+  /** La prima etichetta che non si è saputo leggere, troncata. Vuota se non ce ne sono. */
+  campione: string
+}
+
+async function paginaUltimoNumero(
+  ws: string,
   accessToken: string,
-  params: { username: string; anno: number; vatcodeSender?: string }
-): Promise<number> {
-  const { ws } = arubaBaseUrls(ambiente)
+  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string },
+  pagina: number,
+): Promise<EsitoPagina> {
   const qs = new URLSearchParams({
     username: params.username,
-    page: '1',
-    size: '500',
+    page: String(pagina),
+    size: String(PAGINA_SIZE),
     startDate: `${params.anno}-01-01`,
     endDate: `${params.anno}-12-31`,
   })
@@ -393,12 +477,130 @@ export async function arubaUltimoNumeroFattura(
   const json = await leggiCorpoJson(esito.res, 'aruba:findByUsername')
   const env = (json.value as Record<string, unknown>) ?? json
   const invoices = (env.invoices ?? env.content ?? []) as { number?: string | number | null }[]
+
   let max = 0
+  let leggibili = 0
+  let campione = ''
   for (const inv of invoices) {
-    const n = parseInt(String(inv.number ?? '').replace(/[^\d]/g, ''), 10)
-    if (Number.isFinite(n) && n > max) max = n
+    if (etichettaNellaFormaAttesa(inv.number)) leggibili++
+    else if (campione === '') campione = String(inv.number ?? '(vuoto)').slice(0, CAMPIONE_ETICHETTA_MAX)
+    const n = numeroSezionaleDaEtichetta(inv.number, params.sezionale, params.anno)
+    if (n !== null && n > max) max = n
   }
-  return max
+  return { max, ricevuti: invoices.length, leggibili, campione }
+}
+
+/**
+ * Ultimo (massimo) numero già emesso su Aruba **per quella serie e quell'anno**:
+ * GET /services/invoice/out/findByUsername.
+ *
+ * ─── PERCHÉ SI SCORRONO LE PAGINE ────────────────────────────────────────────
+ * Si chiedeva `page=1&size=500` e si prendeva il massimo di quei 500. Con una
+ * serie che di documenti ne ha 2.327 — «Asilo», misurata — quel massimo è il
+ * massimo di un pezzo qualunque dell'elenco, non della serie: nessuna garanzia
+ * che l'API ordini per numero decrescente, e chiederlo senza saperlo sarebbe
+ * inventare il comportamento del provider. Si scorre finché le pagine sono piene,
+ * fino a `PAGINE_MAX`.
+ *
+ * ─── L'ANNO PRECEDENTE, e l'incertezza dichiarata ────────────────────────────
+ * Se nell'anno richiesto non risulta NIENTE, si guarda l'anno prima. Il motivo è
+ * che non sappiamo — e da questo repo non è verificabile — se le due serie
+ * ripartano da 1 a gennaio o proseguano: 2.327 documenti in un anno solo, per una
+ * scuola con una trentina di bambini, dicono di no. Nel dubbio si sbaglia nel
+ * verso che NON produce un doppione: continuare la serie può lasciare un buco di
+ * numerazione (tollerabile, e giustificabile), ricominciare da 1 su una serie
+ * viva è un documento con un numero già usato.
+ *
+ * NON è best-effort e NON degrada: se questa chiamata fallisce, LANCIA. Chi
+ * emette non deve poter proseguire «col contatore interno», perché il contatore
+ * interno di una serie nata fuori da questo database può benissimo valere 0.
+ *
+ * ─── E NON DEGRADA NEMMENO QUANDO ARUBA RISPONDE BENE ────────────────────────
+ * Fino al 2026-08-09 c'era una terza strada per arrivare a `0`, ed era la peggiore
+ * perché non passava da nessun errore: Aruba rispondeva `200` con duemila documenti
+ * dentro, NESSUNA etichetta superava `numeroSezionaleDaEtichetta`, e questa funzione
+ * restituiva `0` — cioè «la serie non è mai partita» — facendo emettere il numero 1
+ * su una serie da 2.327 documenti. Bastava che il campo `number` di `findByUsername`
+ * contenesse il progressivo NUDO (`2327`) invece dell'etichetta completa
+ * (`Asilo 2327/2026`): una forma che nessuno in questo repo ha mai misurato, e il
+ * tracciato di riferimento (`docs/fatturazione/tracciato-di-riferimento.md`) dice
+ * proprio che il numero nudo è la forma usata altrove. Un'assunzione sul formato di
+ * un provider non può valere un numero di fattura.
+ *
+ * Ora la distinzione è esplicita e sta in `EsitoPagina.leggibili`: se sono arrivati
+ * documenti e NON SE NE È CAPITO NEMMENO UNO — nessuna etichetta nella forma attesa,
+ * di nessuna serie e di nessun anno — si LANCIA, come per un 5xx. Se invece le
+ * etichette si leggono e semplicemente nessuna è di questa serie, `0` è una risposta
+ * vera: quella serie in quell'anno non ha documenti.
+ */
+export async function arubaUltimoNumeroFattura(
+  ambiente: string | undefined,
+  accessToken: string,
+  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string }
+): Promise<number> {
+  const { ws } = arubaBaseUrls(ambiente)
+
+  /**
+   * L'errore del formato incomprensibile. `name` a sé perché `get_runtime_errors` di
+   * Vercel raggruppa per *error name*: questo non è un guasto di Aruba, è il nostro
+   * parser che non riconosce più ciò che Aruba manda, e va visto come categoria
+   * propria. `code` non è uno status HTTP — la risposta era `200` — quindi dice cosa
+   * è successo, non un numero che non esiste.
+   */
+  const erroreEtichette = (anno: number, ricevuti: number, campione: string): Error => {
+    const err = new Error(
+      `Aruba findByUsername: ${ricevuti} documenti nell'anno ${anno} e nessuna etichetta nella forma attesa ` +
+        `«${params.sezionale} <numero>/<anno>» (primo valore non riconosciuto: «${campione}»). ` +
+        'Il progressivo NON è stato letto: emettere adesso significherebbe ripartire da 1 su una serie viva.',
+    )
+    err.name = 'ArubaNumerazioneError'
+    Object.assign(err, { code: 'etichette-illeggibili' })
+    return err
+  }
+
+  const massimoDellAnno = async (anno: number): Promise<number> => {
+    let max = 0
+    let ricevutiTotali = 0
+    let leggibiliTotali = 0
+    let campione = ''
+    /** Vero solo se sono arrivati documenti e non se n'è riconosciuto nemmeno uno. */
+    const nessunaEtichettaCapita = () => ricevutiTotali > 0 && leggibiliTotali === 0
+    for (let pagina = 1; pagina <= PAGINE_MAX; pagina++) {
+      const { max: maxPagina, ricevuti, leggibili, campione: campionePagina } = await paginaUltimoNumero(
+        ws,
+        accessToken,
+        { ...params, anno },
+        pagina,
+      )
+      if (maxPagina > max) max = maxPagina
+      ricevutiTotali += ricevuti
+      leggibiliTotali += leggibili
+      if (campione === '' && campionePagina !== '') campione = campionePagina
+      if (ricevuti < PAGINA_SIZE) {
+        if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione)
+        return max
+      }
+      if (pagina === PAGINE_MAX) {
+        // Il tetto è stato toccato: l'elenco continua e noi smettiamo di guardarlo.
+        // `warn` e non `error` perché il numero che restituiamo resta un limite
+        // INFERIORE valido (il progressivo non torna indietro), ma se questa riga
+        // compare la finestra va allargata prima che il massimo vero ci sfugga.
+        logEvento('fattura', 'warn', {
+          operazione: 'aruba:findByUsername',
+          provider: 'aruba',
+          esito: 'pagine-troncate',
+          anno,
+          msg: `Aruba findByUsername: superate ${PAGINE_MAX} pagine da ${PAGINA_SIZE} per la serie ${params.sezionale}; il massimo letto potrebbe non essere l'ultimo`,
+        })
+      }
+    }
+    if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione)
+    return max
+  }
+
+  const corrente = await massimoDellAnno(params.anno)
+  if (corrente > 0) return corrente
+  return await massimoDellAnno(params.anno - 1)
 }
 
 /** Notifiche SDI relative a una fattura inviata. */

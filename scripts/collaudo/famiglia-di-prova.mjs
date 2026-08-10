@@ -158,6 +158,7 @@ async function rimuovi() {
 }
 
 async function crea() {
+    const sede = await risolviSede();
     // `parents` usa first_name/last_name, `alunni` usa nome/cognome: la funzione parla
     // una lingua sola e la traduzione si fa qui, dove si vede.
     const cfGenitore = codiceFiscale({ ...GENITORE, nome: GENITORE.first_name, cognome: GENITORE.last_name });

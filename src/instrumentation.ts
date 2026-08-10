@@ -74,6 +74,12 @@ function variabiliCritiche(): ReadonlyArray<readonly [string, string | undefined
         ['OTP_FROM_EMAIL', process.env.OTP_FROM_EMAIL],
         ['CRON_SECRET', process.env.CRON_SECRET],
         ['LOG_HASH_SALT', process.env.LOG_HASH_SALT],
+        // Senza, nessuna fattura elettronica parte — e non si scopre finché qualcuno non
+        // preme «Fattura». NON c'è `ARUBA_USERNAME`: l'utenza ha un ripiego in banca dati
+        // (`aruba_config.username`), la password no. Il nome è accoppiato a
+        // `aruba_config.password_ref`: se cambia lì, cambia anche qui.
+        // La ragione completa sta accanto alla copia in `src/lib/health/controlli.ts`.
+        ['ARUBA_PASSWORD', process.env.ARUBA_PASSWORD],
     ];
 }
 

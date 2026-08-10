@@ -112,3 +112,6 @@ RISULTATI*.txt
 report-tester-*
 e2e/collaudo-giornata/report/*.md
 e2e/collaudo-giornata/report/*.html
+
+# Referti dei collaudi manuali: possono contenere estratti del DB di produzione
+scripts/collaudo/referto.txt*

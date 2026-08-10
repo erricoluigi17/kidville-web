@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import itSettings from '../../messages/it/adminSettings.json'
 import enSettings from '../../messages/en/adminSettings.json'
@@ -23,6 +23,16 @@ const USER = 'aaaabbbb-1111-4111-8111-dddddddddddd'
 
 const h = vi.hoisted(() => ({ logClient: vi.fn() }))
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: () => 'Error' }))
+
+// `next/link` fuori dall'App Router non ha il contesto del router: qui interessa
+// soltanto che l'ancora esista e punti dove deve.
+vi.mock('next/link', async () => {
+    const React = await import('react')
+    return {
+        default: ({ children, href }: { children?: React.ReactNode; href: string }) =>
+            React.createElement('a', { href }, children),
+    }
+})
 
 import { SettingsPanel } from '@/components/features/admin/settings/SettingsPanel'
 
@@ -106,6 +116,54 @@ describe('SettingsPanel — il salvataggio dice com\'è andato', () => {
         ))
         expect(screen.queryByRole('alert')).not.toBeInTheDocument()
         expect(h.logClient).not.toHaveBeenCalled()
+    })
+})
+
+/**
+ * Il campo «Causale fattura (template)» — `admin_settings.fattura_causale_template` —
+ * era un modello UNICO per tutta la scuola: l'interfaccia lo mostrava, la route lo
+ * accettava e lo scriveva davvero in colonna, e l'emissione della fattura non lo
+ * leggeva mai. La segreteria scriveva «Retta {periodo} - {alunno}», premeva Salva,
+ * riceveva la conferma, ed emetteva una fattura con la causale di fabbrica. Nessun
+ * errore, nessun log, su un documento fiscale che si corregge solo con una nota di
+ * variazione. (I due segnaposto suggeriti, `{alunno}` e `{periodo}`, non sono mai
+ * esistiti nel motore delle causali.)
+ *
+ * La causale della fattura si configura per TIPOLOGIA DI PAGAMENTO in
+ * Contabilità → Causali. Qui resta il rimando, e questo blocco è ciò che impedisce
+ * al campo di tornare: due verità su dove si scrive una causale sono peggio di una
+ * verità sbagliata, perché la seconda è quella che sembra funzionare.
+ */
+describe('SettingsPanel — il campo unico «Causale fattura» non esiste più', () => {
+    it('a schermo non c\'è più un campo modificabile, ma il rimando al pannello giusto', async () => {
+        render(<SettingsPanel userId={USER} scuolaId={SEDE_A} />)
+        await bottoniSalva()
+
+        // Il valore di fabbrica del vecchio campo arriva ancora dalla GET (la colonna
+        // esiste in tabella): se un input lo mostrasse, sarebbe di nuovo modificabile.
+        expect(screen.queryByDisplayValue('{descrizione} - {alunno}')).toBeNull()
+        expect(screen.queryByPlaceholderText('{descrizione} - {alunno}')).toBeNull()
+
+        const rimando = screen.getByRole('link', { name: itSettings.spCausaleFatturaVaiAlPannello })
+        expect(rimando.getAttribute('href')).toContain('vista=causali')
+    })
+
+    it('nessuna PATCH del pannello porta più `fattura_causale_template`', async () => {
+        render(<SettingsPanel userId={USER} scuolaId={SEDE_A} />)
+        // Il bottone si prende DENTRO la sezione «Retta e morosità»: è quel `save()`
+        // che spediva il campo, e pescare a indice fra i sei pannelli sceglierebbe
+        // quello sbagliato appena ne nasce un altro.
+        const sezione = (await screen.findByText(itSettings.spRettaMorosita)).closest('section') as HTMLElement
+        fireEvent.click(within(sezione).getByRole('button', { name: new RegExp(itSettings.salva, 'i') }))
+
+        const corpiPatch = () => fetchMock.mock.calls
+            .filter(([, init]) => (init as { method?: string } | undefined)?.method === 'PATCH')
+            .map(([, init]) => JSON.parse(String((init as { body?: string }).body)) as Record<string, unknown>)
+
+        // Si aspetta proprio la PATCH della retta: è quella che portava il campo, e
+        // asserire su un elenco ancora vuoto renderebbe il test verde per finta.
+        await waitFor(() => expect(corpiPatch().some((c) => 'retta_default_importo' in c)).toBe(true))
+        expect(JSON.stringify(corpiPatch())).not.toContain('fattura_causale_template')
     })
 })
 

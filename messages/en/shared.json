@@ -33,6 +33,7 @@
   "erroreSedeDaSpecificare": "Please specify which location this applies to",
   "erroreTroppeRichieste": "Too many requests in a short time: please try again in a few minutes",
   "erroreNotificheConteggioNonLetto": "The unread notification count could not be retrieved: please try again shortly",
+  "erroreConfigPregressoNonLetto": "The settings already saved could not be read back: to avoid overwriting them, nothing was saved. Please try again in a moment",
   "erroreClasseDestinatariaMancante": "Select at least one recipient class for a class announcement",
   "erroreClassiFuoriSede": "Some recipient classes do not belong to the announcement’s location: please check the recipients",
   "erroreVerificaClassiNonRiuscita": "The recipient classes could not be verified: please try again in a moment",

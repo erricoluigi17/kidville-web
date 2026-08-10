@@ -64,7 +64,7 @@
 > | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
@@ -86,6 +86,452 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🧾 Changelog — Il «1» che stava per finire su una serie da 2.327 documenti 2026-08-09 (branch `feat/fatturazione-aruba`)
+
+Questo è il pezzo che cuce insieme i tre lavori precedenti dentro il motore di emissione
+(`src/lib/aruba/emissione.ts`). Non aggiunge una schermata: rende **spedibile** una fattura che
+prima sarebbe uscita con il numero sbagliato, sulla serie sbagliata, con la sede vuota.
+
+### 1. La numerazione: due serie vere, e nessuna di loro vive in questo database
+
+La cooperativa emette da anni su **due sezionali**: «Asilo», arrivato a **2.327** documenti, e
+«FPR», a **1.946**. Vivono sul gestionale di Aruba e la segreteria continua a scriverci **a
+mano**. L'applicazione, invece, numerava con un intero nudo partendo da 1, con chiave
+`(scuola_id, anno)`. Alla prima fattura emessa dall'app sarebbe uscito un **«1»** su una serie che
+ne ha duemila: non un difetto estetico, un documento con un numero già usato — che si corregge
+solo con una nota di variazione.
+
+Cosa c'è adesso:
+
+| | |
+|---|---|
+| Contatore | `fatture_numerazione_sezionale (sezionale, anno)` — **senza `scuola_id`**: le tre sedi sono un unico soggetto fiscale (P.IVA 03394870616), quindi la numerazione è una sola |
+| Allocazione | `prossimo_numero_fattura_sezionale(text, int, int)` = `GREATEST(contatore interno, ultimo numero letto da Aruba) + 1`, con `pg_advisory_xact_lock` sulla serie |
+| Lettura da Aruba | **una volta per lotto** (cache di 5 minuti su serie+anno), non una per fattura — vedi qui sotto |
+| Ultima difesa | **due** indici unici su `fatture_emesse`: `(sezionale, anno, numero)` — un numero non si ripete dentro il registro — e `(pagamento_id, quota_adult_id)` sulle sole righe **non scartate**, che è ciò che impedisce due documenti vivi per la stessa retta (la difesa applicativa da sola non basta: PostgREST non lancia, e una `SELECT` fallita faceva sembrare il pagamento mai fatturato) |
+| Cosa NON copre | l'emissione **manuale** sul gestionale Aruba durante un lotto: quel documento in `fatture_emesse` non c'è, quindi nessun indice può vederlo. `p_min` allinea la serie all'**inizio** del lotto e riduce la finestra; non la chiude. È una regola organizzativa, e va detta invece che promessa |
+| A registro | nuova colonna `fatture_emesse.sezionale` (e il trigger WORM la protegge come il numero): senza, «2328/2026» è ambiguo fra due documenti diversi |
+
+**Il difetto che la lettura da Aruba nascondeva, ed è il più grave dei tre.**
+`arubaUltimoNumeroFattura` faceva `String(number).replace(/[^\d]/g, '')`: da `Asilo 2327/2026`
+ricavava **23272026**, da `FPR 1946/26` **194626**. Le due serie finivano nello stesso mucchio e
+il «massimo» non aveva alcun rapporto con la numerazione vera. Nessun test era rosso: l'unico che
+esisteva passava un numero già nudo. Ora la lettura riconosce le due forme reali — «Asilo» con
+l'anno a **quattro** cifre, «FPR» a **due**, come sui documenti già trasmessi — filtra per serie,
+e **scorre le pagine** invece di fermarsi alle prime 500 (con 2.327 documenti, il massimo delle
+prime 500 è il massimo di un pezzo qualunque dell'elenco).
+
+**La lettura non è più «best-effort».** Se Aruba non risponde, l'emissione si **ferma** (503) e non
+parte nessun documento. Prima si proseguiva «col contatore interno», che per una serie nata fuori
+di qui vale **zero** — cioè è la strada esatta che produce il «1». Non si perde nulla in
+robustezza: se `findByUsername` non risponde, non risponderebbe nemmeno l'`upload`.
+
+**C'era però una TERZA strada verso lo zero, e non passava da nessun errore** (chiusa il
+2026-08-10). Aruba poteva rispondere `200` con duemila documenti dentro, nessuna etichetta superare
+il riconoscitore di serie, e la funzione restituire `0` — cioè *«questa serie non è mai partita»*.
+Basta che il campo `number` di `findByUsername` contenga il progressivo **nudo** (`2327`) invece
+dell'etichetta completa (`Asilo 2327/2026`): ed è proprio la forma che il tracciato di riferimento
+documenta per il `ProgressivoInvio`. **Nessuno ha mai misurato cosa contenga quel campo**: era
+un'assunzione, e un'assunzione non può valere un numero di fattura. Ora la funzione distingue
+*«non ho capito niente»* (nessuna etichetta nella forma attesa, di nessuna serie e di nessun anno →
+**lancia**, come per un 5xx, col primo valore incomprensibile nel messaggio) da *«ho capito, e
+questa serie non ha documenti»* (→ `0`, che è una risposta vera). Una sola etichetta riconosciuta
+fra mille basta a non bloccare: si blocca solo quando non se ne capisce **nemmeno una**.
+
+**Una lettura per LOTTO, non per fattura** (corretto il 2026-08-10). Il tracciato di riferimento
+scritto in questo stesso lavoro dice che Aruba strozza a circa **60 richieste l'ora** (leaky bucket,
+risposta `429` come **pagina HTML**) e che il numero va letto «una volta per lotto, mai una volta
+per fattura». Il motore faceva l'opposto, con un commento che lo rivendicava — e da quando la
+lettura **scorre le pagine**, quella singola lettura vale fino a 20 richieste (40 col ripiego
+sull'anno precedente). Le rette del mese per i 32 bambini avrebbero sfondato il secchio a metà
+lotto: da lì in poi ogni quota fallisce con `motivo: 'numerazione'` e la segreteria si ritrova metà
+delle fatture emesse e metà no. Il pavimento è ora in **cache 5 minuti** per `(ambiente, utenza,
+serie, anno)`, e sale da solo a ogni numero allocato. Non si perde una difesa: il numero lo assegna
+la RPC, che tiene il contatore in tabella ed è monotona — la lettura da Aruba serve solo a dargli un
+**pavimento**, e un pavimento di cinque minuti fa resta un pavimento valido. Il `429` ha un
+messaggio suo («riprova fra qualche minuto»), perché la risposta giusta è aspettare, non
+ricontrollare la configurazione.
+
+### 2. La serie si sceglie dalla data di nascita del bambino — e se non c'è, non si emette
+
+Regola dai dati reali: chi compie **3 anni entro il 30 aprile** dell'anno scolastico va su «FPR»,
+chi li compie dopo resta su «Asilo». La data si legge dal **codice fiscale** e dall'anagrafica.
+
+**Quando discordano vince l'anagrafica** (`alunni.data_nascita`), e la contraddizione viene loggata
+a livello **`error`**. La motivazione scritta qui fino al 2026-08-09 — «l'ha verificata una persona
+su un documento» — **era falsa**: la data di nascita arriva dallo stesso modulo pubblico di
+iscrizione da cui arriva il codice fiscale. Le ragioni vere sono misurate: `data_nascita` è una
+colonna `date` (il database rifiuta ciò che non è una data) mentre `codice_fiscale` è un `char(16)`
+che accetta qualunque testo — **su 32 alunni in produzione, 14 hanno un codice fiscale valorizzato e
+solo 3 di forma valida, mentre la data di nascita c'è su 32 su 32** (misurato il 2026-08-10); ed è
+il campo con cui il resto del prodotto già ragiona sull'età del bambino.
+
+**Un campo valorizzato ma illeggibile non è un campo vuoto, e da oggi non è più muto.** Fino al
+2026-08-09 l'esito di un codice fiscale spazzatura era identico a quello di un codice fiscale
+assente: la fattura partiva e **nessuna riga di log** lo diceva, mentre quello stesso codice
+sbagliato finiva verbatim nella descrizione della riga — l'unico punto del documento dove il minore
+è identificato, e da cui dipende la detrazione del genitore. Ora `sezionalePerMinore` distingue
+«assente» da «illeggibile» e l'emissione scrive un **`error`** (`esito =
+'anagrafica-minore-illeggibile'`) col solo `alunno_id`.
+
+**L'anno scolastico è quello del periodo che si fattura** (`pagamenti.periodo_competenza`), non del
+giorno in cui si preme il bottone: una retta di maggio fatturata a settembre cambierebbe serie.
+Quando il periodo manca — **71 pagamenti su 98** al 2026-08-10 — si ripiega sulla data del documento
+e si scrive un **`warn`** (`esito = 'anno-scolastico-da-data-documento'`).
+
+Se mancano **entrambe** le fonti, l'emissione si blocca con **422** e un messaggio che dice cosa
+completare — distinguendo «manca» da «c'è ma non si legge»: la serie fiscale non si indovina.
+
+### 3. Causale, cedente, e un campo che si auto-avvelenava
+
+- **Causale**: cascata `correzione manuale della segreteria → modello della categoria del
+  pagamento → «Predefinito» → descrizione`. I segnaposto parlano dell'**alunno**: è il bambino che
+  il documento deve identificare, non chi paga.
+- **⚠️ `pagamenti.fattura_causale` non viene più riscritto dall'emissione.** Ci veniva salvata la
+  causale *composta*: dal secondo giro quel campo non era più «ciò che una persona ha scritto» ma
+  l'eco della prima composizione, e cambiare il modello della categoria **non aveva più alcun
+  effetto** — senza che nessuno potesse capire perché. La causale davvero emessa resta a registro,
+  in `fatture_emesse.causale`.
+- **Cedente**: composto da `cedenteDaConfig` (fonte unica `fiscale_config`, ripiego
+  `aruba_config.fiscal`). CAP, comune e provincia escono **valorizzati**; se l'anagrafica è
+  incompleta si risponde **503** e non si brucia nessun numero.
+- **Le due letture di configurazione sono fail-closed** (dal 2026-08-10), e prima solo un
+  commento diceva che lo fossero. `getModuleConfig` restituisce `{}` sia quando la config non
+  c'è sia quando la SELECT **fallisce** (PostgREST non lancia), e `cedenteDaConfig({}, …)` non
+  rifiuta affatto: **ripiega su `aruba_config.fiscal`**. Messe insieme, le due cose facevano sì
+  che un permesso negato o una colonna assente cambiassero **in silenzio l'anagrafica di chi
+  emette** il documento. Ora `leggiModuleConfig` dice se la lettura è riuscita: se non lo è,
+  l'emissione si ferma con **503** e una riga `error` (`fiscale-config-non-letta`,
+  `causali-config-non-letta`) — la seconda perché la causale è la **descrizione di riga**, cioè
+  l'unico punto in cui il documento identifica il minore. Config **assente** resta config
+  assente: il ripiego continua a valere per le sedi che non hanno mai compilato il pannello.
+  La riga `config-illeggibile-<colonna>` di `getModuleConfig` porta ora **quale** colonna e
+  **quale sede**: prima non c'era né l'una né l'altra, su una funzione che serve quindici moduli.
+- **Cessionario: lo stesso gate, che fino al 2026-08-10 NON esisteva.** Sul cedente il controllo
+  era fail-closed; sull'intestatario l'unica verifica era «il codice fiscale c'è». Indirizzo, CAP e
+  comune del genitore entravano nell'XML **anche vuoti**, e l'invio partiva **dopo** che
+  `prossimo_numero_fattura_sezionale` aveva già scritto il contatore: numero bruciato più scarto
+  SDI. Misurato col validatore XSD di questo repo — residenza vuota = tre violazioni di `pattern`
+  su `Indirizzo`, `CAP`, `Comune`. E non era un rischio futuro: **misura del 2026-08-10 su
+  `parents`** (solo conteggi e maschere) — 49 righe, **22 con un `fiscal_code` valorizzato, di cui
+  21 non sono codici fiscali**: venti hanno la forma `XXXX99X99X999X` (quattordici caratteri,
+  quattro lettere iniziali invece di sei) e una ne ha due. Quattordici caratteri alfanumerici
+  **superano il `pattern` dello XSD** (`[A-Za-z0-9]{11,16}`) e li scarta lo SdI a valle
+  (00301/00302). Ora `validaCessionario` (`src/lib/fatturazione/cessionario.ts`) blocca **prima**
+  di numerare, e l'**omocodia è ammessa** (`L M N P Q R S T U V` al posto delle cifre): una regex
+  ingenua rifiuterebbe codici fiscali veri e bloccherebbe famiglie senza colpa.
+
+### 4. Il tracciato: tre buchi chiusi, e un carattere che valeva uno scarto
+
+- **`<DatiPagamento>`** ora c'è (mancava del tutto, mentre le fatture vere ce l'hanno):
+  `TP02` unica soluzione, `MP05` bonifico, scadenza e importo. Posizione **dopo
+  `DatiBeniServizi`**, come vuole la `xs:sequence`.
+  ⚠️ **NIENTE `IBAN` e niente `Beneficiario`, e fino al 2026-08-10 questa riga diceva il
+  contrario.** Prescriveva l'IBAN «da `fiscale_config.iban`» mentre
+  `docs/fatturazione/tracciato-di-riferimento.md`, scritto nello stesso lavoro, elencava
+  «aggiungere `IBAN` per completezza» fra gli errori: due documenti committati insieme che si
+  contraddicevano su un tracciato irreversibile, e il codice seguiva questo. Ha deciso la
+  **misura**: due fatture vere riscaricate da Aruba lo stesso giorno (`Asilo 2327/2026`,
+  `FPR 1946/26`) hanno in `<DettaglioPagamento>` soltanto `ModalitaPagamento`,
+  `DataScadenzaPagamento` e `ImportoPagamento`. `fiscale_config.iban` resta dov'è e continua a
+  servire a ricevute e solleciti: fuori dal tracciato, non cancellato.
+- **`<Contatti><Email>` del cedente** (dal 2026-08-10): c'è su **tutte** le fatture scritte a
+  mano e dal software non usciva **mai** — il generatore chiudeva `</CedentePrestatore>` subito
+  dopo `<Sede>` e in `AnagraficaCedente` il campo non esisteva. Ogni fattura emessa dall'app era
+  quindi distinguibile dalle sue vicine di serie, per una differenza che nessun documento
+  dichiarava. Ora l'indirizzo si configura in **Impostazioni → Dati fiscali** (campo
+  facoltativo, validato con la stessa forma che poi finisce nel tracciato) e, quando manca,
+  l'emissione scrive un `warn` `cedente-senza-email`: il documento parte lo stesso — l'elemento
+  è facoltativo — ma la differenza è **dichiarata**, non silenziosa.
+- **`<Causale>` NON si valorizza** (dal 2026-08-10): sulle fatture vere è assente e la
+  descrizione sta solo nella riga. Il motore passava lo **stesso testo due volte**, con due
+  limiti diversi (1.000 caratteri in `<Descrizione>`, 200 in `<Causale>`): una causale di 230
+  caratteri — facile col modello di fabbrica più il suffisso « - quota Papà» — usciva intera
+  nella riga e **tagliata a metà parola** nell'intestazione dello stesso documento. Di
+  conseguenza il `warn` `causale-troncata` ora misura il limite che si applica davvero, quello
+  della descrizione di riga (campo 2.2.1.4, 1.000 caratteri).
+- **`RiferimentoNormativo` dell'esente: `Esente Art. 10 DPR 633/72`**, `Art.` maiuscolo e anno a
+  **due** cifre. Il generatore scriveva `Esente art. 10 DPR 633/1972`, cioè testualmente la
+  stringa che il documento del tracciato elenca come «l'errore facile»: nella stessa serie
+  fiscale sarebbero convissute due diciture. Il troncamento di quel campo, inoltre, stava sui
+  200 caratteri della causale invece che sui **100** di `String100LatinType`: una dicitura
+  configurata a mano più lunga produceva un documento **XSD-invalido** col numero già consumato.
+- **`NumeroCivico` e `Provincia` del cessionario** (`parents.residence_street_number` /
+  `residence_province`) entrano nell'XML: prima esistevano in anagrafica e non uscivano.
+- **`<Numero>`** porta il prefisso del sezionale, e il **`ProgressivoInvio`** porta la lettera
+  della serie più l'anno (`A26002328`): senza, la 2328 di «Asilo» e la 2328 di «FPR» avrebbero
+  generato lo **stesso nome file** e Aruba avrebbe risposto «00404 File già inviato».
+- **Normalizzazione e troncamento**: il generatore translittera i caratteri che il tracciato non
+  ammette (`—`, `–`, `’`, `“”`, `€`, `…`) e taglia alle lunghezze dello schema. È il difetto che la
+  validazione XSD aveva **misurato** il giorno prima: l'emissione scriveva a mano un trattino lungo
+  (U+2014) nelle fatture dei genitori separati, e **ogni fattura di quel ramo nasceva invalida**.
+  I due test che descrivevano il difetto sono stati **rovesciati**, come il loro stesso commento
+  chiedeva, e ora sorvegliano la correzione.
+- **Aliquota e Natura: la regola che lo XSD non vede** (chiusa il 2026-08-10). `aliquota 22` con
+  `Natura N4` e `aliquota 0` **senza** `Natura` sono due scarti SDI (**00400** e **00401**) — e
+  sono entrambi **XSD-validi**: misurato, non dedotto, in
+  `__tests__/lib/aruba/iva-coerenza.test.ts`, costruendo i due documenti e passandoli allo schema
+  ufficiale. Cioè: il collaudo del tracciato, che è la difesa più forte di questo generatore, su
+  questo punto era cieco. La combinazione sbagliata era **raggiungibile dalla configurazione**:
+  `admin/settings/aruba:PATCH` validava le righe IVA con `z.unknown().optional()`, quindi
+  `{causale:'iscrizione', aliquota:0}` si salvava senza un fiato. Ora la regola sta in
+  `verificaCoerenzaIva` — **un posto solo, tre strade**: all'ingresso della configurazione (400,
+  con i codici SDI nel messaggio), **prima di consumare un numero** in emissione (503
+  `non_configurato`, perché le righe salvate prima esistono già), e nel generatore come ultima
+  difesa (lancia: un documento incoerente non nasce nemmeno come stringa).
+- **`RiferimentoNormativo` delle righe configurate**: non veniva **mai** passato al generatore, e
+  spariva proprio sulle esenti configurate a mano dalla sede. La chiave è
+  `aruba_config.iva[].riferimento_normativo`.
+
+### Cosa NON è stato fatto, e va deciso da una persona
+
+- **`bollo_riaddebito` era un interruttore scollegato, ed è stato TOLTO** (2026-08-10). Scriverlo
+  qui non bastava: a schermo la casella diceva «il bollo è una riga in più in fattura e il totale
+  cresce di 2 €», e chi l'accendeva credeva di aver deciso. `bolloRiaddebitato()` non aveva
+  chiamanti — nessuna riga aggiunta, `<ImportoTotaleDocumento>` invariato — e due test verdi
+  certificavano che «l'impostazione si salva». Casella, helper e chiavi i18n sono spariti; il
+  perché e il come rifarlo davvero stanno in `src/lib/pagamenti/fiscale.ts`: il riaddebito è
+  **escluso IVA ex art. 15 DPR 633/1972 (`Natura N1`)**, cioè una riga con natura DIVERSA dal
+  resto del documento, e il generatore ha oggi una sola `iva` e un solo `<DatiRiepilogo>` —
+  vanno resi plurali. È una modifica al tracciato più una decisione del commercialista, non una
+  casella.
+- **Non è verificato se le due serie ripartano da 1 a gennaio o proseguano.** 2.327 documenti in un
+  anno solo, per una scuola con una trentina di bambini, dicono di no. Nel dubbio il codice
+  continua la serie (guarda l'anno precedente quando l'anno corrente è vuoto): sbaglia lasciando un
+  **buco**, che è tollerabile, invece che un **doppione**, che non lo è. Una query su Aruba chiude
+  la questione.
+- **La migrazione è scritta e NON applicata**
+  (`supabase/migrations/20260809233000_fatture_numerazione_sezionale.sql`).
+
+---
+
+## 🧾 Changelog — La sede legale stava in una casella di testo, e il tracciato la voleva in cinque 2026-08-09 (branch `feat/fatturazione-aruba`)
+
+**Il difetto, e perché era garantito.** Il pannello «Fatturazione Aruba» chiedeva la sede legale
+come **una stringa libera** (`aruba_config.fiscal.sede`, es. «Via Silvio Pellico 7, 81030 Cesa
+(CE)»). L'emissione, dall'altra parte, leggeva `fiscal.cap` e `fiscal.comune` come **campi
+separati**: due chiavi che quel pannello non ha mai scritto. L'XML usciva con
+`<CAP></CAP><Comune></Comune>` e lo SDI lo scartava (00423 / 00200). Nessun test era rosso, perché
+tutti i test dell'XML partivano da un input già completo scritto a mano: **nessuno partiva dalla
+configurazione**, che è il punto esatto in cui il dato si perdeva. Il PRD, §5.3, dichiarava intanto
+la sede strutturata «consumata dal `CedentePrestatore`»: falso da quando è stato scritto.
+
+**Cosa c'è adesso.** Una fonte sola — `admin_settings.fiscale_config` — con l'anagrafica in campi
+separati (denominazione · P.IVA · codice fiscale · indirizzo · **numero civico** · CAP · comune ·
+provincia · regime fiscale), validati **con le stesse regole** nel pannello e sul server. Il
+pannello Aruba tiene ora solo ciò che è suo: username, riferimento della password, **ambiente**
+(Demo/Produzione, prima invisibile) e l'interruttore d'invio. Via anche il badge «Scaffold»: quel
+pannello parla con un'API vera da luglio.
+
+| | dove |
+|---|---|
+| `fiscale_config` → `CedentePrestatore`, **fail-closed** | `cedenteDaConfig()` in `src/lib/fatturazione/cedente.ts` |
+| stesse regole per pannello e server | `validaCedente()` / `CEDENTE_COOPERATIVA` (stesso modulo, puro: lo carica anche il browser) |
+| indirizzo + civico, una regola sola per fattura e ricevuta | `componiIndirizzo()`, usata anche da `datiStruttura()` |
+| interruttore del bollo (attiva/disattiva · soglia · importo · dicitura) | `FiscaleSettings` in `SettingsPanel.tsx` + `bolloDovuto()` |
+| regime fiscale: i **19 codici** dello schema, non «RF + due cifre» | `REGIMI_FISCALI` in `src/lib/fatturazione/cedente.ts`, verificato contro lo XSD in `fatturapa-xsd.test.ts` |
+| il test che impedisce il ritorno del difetto | `__tests__/lib/fatturazione/cedente.test.ts` — genera l'XML dalla configurazione **vera** e fallisce se `<CAP>` o `<Comune>` escono vuoti |
+| anagrafica riempita sulle sedi che non l'hanno mai compilata | migrazione `20260809220000_fiscale_config_cedente.sql` (additiva, **non ancora applicata**) |
+
+**Tre scelte che vale la pena aver scritto.**
+
+- **Fail-closed invece di «quasi giusto».** Se manca un campo obbligatorio, `cedenteDaConfig` non
+  restituisce un cedente a metà: restituisce l'elenco di cosa manca. Una fattura senza CAP non è
+  una fattura imperfetta — è uno scarto SDI e un numero bruciato nel sezionale, che poi si ripara
+  con una nota di variazione.
+- **La stringa libera non si interpreta.** Da «Via Silvio Pellico 7, 81030 Cesa (CE)» non si ricava
+  un CAP con certezza, e indovinare qui significa lo stesso scarto con in più la convinzione di
+  aver fatto qualcosa. Il campo vecchio resta nel database (fa ancora da ripiego per chi l'aveva
+  compilato) e sparisce solo dall'interfaccia: toglierlo dal pannello non doveva cancellarlo.
+- **Il bollo nasce spento.** Il motore c'era da luglio (`bolloDovuto`, `<DatiBollo>`), mancava solo
+  il comando: attiva/disattiva, soglia, importo, dicitura — i tre valori che il codice consuma
+  davvero. «Chi paga i 2 €» resta una domanda per il commercialista, e finché non c'è la risposta
+  **non c'è nemmeno l'interruttore**: la casella «riaddebita al cliente» è stata tolta il
+  2026-08-10 perché prometteva un totale diverso e non lo produceva (vedi sopra, «Cosa NON è stato
+  fatto»). Un comando che non ha effetto è peggio di un comando assente: chi lo accende crede di
+  aver deciso.
+
+**Precompilare non è configurare.** Un pannello mai compilato mostra i dati veri della cooperativa
+già dentro i campi — ma con un avviso che dice, testualmente, che finché non si preme Salva non è
+configurato niente. Un modulo pieno che non ha salvato è esattamente il modo in cui questo difetto
+è nato.
+
+**Resta fuori da questo lavoro** (è dell'agente dell'integrazione): agganciare `cedenteDaConfig()` a
+`src/lib/aruba/emissione.ts`, che oggi legge ancora `fiscal.*` a mano, e applicare la migrazione.
+
+### Correzione del 2026-08-10 — tre cose che il collaudo ha misurato e che erano sbagliate
+
+1. **La casella «Riaddebita il bollo al cliente» è stata TOLTA.** Prometteva «il totale cresce di
+   2 €» e non toccava nessun importo: `bolloRiaddebitato()` aveva zero chiamanti. Via la casella,
+   l'helper, la chiave `bollo_riaddebito` e le due chiavi i18n (it + en). Un test al posto loro
+   sorveglia che non tornino a parole (`__tests__/lib/pagamenti-fiscale.test.ts`,
+   `__tests__/components/SettingsPanel-cedente.test.tsx`).
+2. **Il regime fiscale si valida sull'enumerazione, non su una regex.** `/^RF\d{2}$/` accettava
+   `RF03` e `RF00`, **che non esistono** (lo schema salta dal 02 al 04), e `RF87`: la
+   configurazione passava il pannello, l'emissione **allocava un numero sul sezionale** e la
+   fattura tornava scartata dallo SDI, con un progressivo bruciato. Ora l'elenco è
+   `REGIMI_FISCALI` (19 codici) e la prova che coincide con lo schema è **misurata**: 19
+   validazioni positive e 3 negative contro lo XSD ufficiale in `fatturapa-xsd.test.ts`. Anche il
+   messaggio d'errore è stato corretto: diceva «RF01…RF19», e lasciava fuori `RF20`.
+3. **Il cedente scrive `<NumeroCivico>` nel suo elemento**, come già faceva il cessionario: via e
+   civico non si incollano più dentro `<Indirizzo>` (dove il civico poteva cadere nel troncamento
+   a 60 caratteri). Le ricevute continuano a stampare una riga sola — quella composizione è
+   `componiIndirizzo()`, usata da `datiStruttura()`.
+4. **Una sola definizione di «codice fiscale», e ammette l'omocodia.** `cedente.ts` aveva la sua
+   regex — `^[A-Za-z]{6}\d{2}…` — cioè esattamente la forma che `cessionario.ts` dichiara
+   sbagliata a parole: nei codici omocodici l'Agenzia sostituisce le cifre con `L M N P Q R S T U V`,
+   e quella regex rifiutava un codice fiscale **vero**. Un cedente persona fisica con codice
+   omocodico non riusciva a salvare l'anagrafica e `cedenteDaConfig` rispondeva `ok:false` (503,
+   nessuna fattura). Ora `validaCedente` chiama `codiceFiscaleIntestatarioValido`, che è l'unica
+   definizione del repo, e P.IVA e codice fiscale arrivano nel tracciato **senza gli spazi**
+   dell'incollato (validare una stringa e spedirne un'altra è il modo più silenzioso di sbagliare).
+5. **Le lunghezze si decidono, non si tagliano.** Il campo «numero civico» invitava a scrivere 10
+   caratteri su un elemento che il tracciato tronca a **8** (`LIMITI.numeroCivico`, XSD
+   `NumeroCivicoType`): `27/B int.3` usciva nell'XML come `27/B int`, senza errore e senza log.
+   Ora il `maxLength` del pannello si legge da `LUNGHEZZE_CEDENTE` (che legge `LIMITI`: due copie
+   dello stesso numero divergono) e `validaCedente` ha un terzo motivo, `'lungo'`, su
+   denominazione (80), indirizzo (60), civico (8) e comune (60). Il troncamento resta l'ultima
+   difesa, non il posto dove si decide.
+6. **La P.IVA si verifica col carattere di controllo.** `/^\d{11}$/` accettava `03394870615` — la
+   P.IVA vera con l'ultima cifra storta: passava il pannello, passava lo XSD, **allocava un numero
+   sul sezionale** e tornava indietro come scarto 00305 per PEC giorni dopo. `partitaIvaValida()`
+   fa il controllo di Luhn prima di tutto; le P.IVA vere in uso (cooperativa e `ARUBA_PEC_PIVA`)
+   sono nel test, così se un giorno il controllo sbagliasse si vedrebbe da lì.
+
+**La migrazione non mescola più le anagrafiche.** `20260809220000_fiscale_config_cedente.sql`
+completava `fiscale_config` **chiave per chiave**: una sede con `denominazione: 'ALTRA COOPERATIVA'`
+e il CAP non ancora inserito si sarebbe ritrovata CAP, comune, provincia e civico **di Cesa**
+attaccati a una ragione sociale diversa — proprio ciò che il pannello si rifiuta di fare da luglio
+(«o si propone tutto, o niente»). Il commento diceva «non sovrascrive nemmeno un carattere»: vero
+alla lettera, fuorviante nella sostanza, perché non sovrascriveva — **aggiungeva dati altrui**. Ora
+la `where` è lo stesso predicato del pannello: si propone l'anagrafica solo alle righe in cui
+`denominazione` **e** `piva` sono entrambe assenti. Sul database di oggi non cambia niente
+(`fiscale_config` è `{}` su tutte e quattro le righe), ma la migrazione è rieseguibile e la
+prossima sede configurata a metà la incontrerebbe.
+
+---
+
+## 🧾 Changelog — Le causali delle fatture: un pannello per tipologia, e un campo che da mesi non serviva a niente 2026-08-09 (branch `feat/fatturazione-aruba`)
+
+Richiesta del committente: *«utilizziamo sempre la stessa causale ma sostituendo nome, cognome,
+codice fiscale, mese di pagamento… un pannello per creare le causali automatiche di ogni tipologia
+di pagamento creata»*.
+
+**Il difetto che chiude.** `admin_settings.fattura_causale_template` esisteva: comparivano un campo
+nelle Impostazioni, una lettura nella `select` dell'emissione (`src/lib/aruba/emissione.ts:135`) e
+poi, alla riga 201, `causaleBase = s(pag.fattura_causale) || s(pag.descrizione)`. Il modello veniva
+**buttato via**. Chi lo compilava non otteneva nulla, e nessun test poteva accorgersene: la causale
+usciva comunque, solo che era un'altra. Il suo valore di fabbrica, `{descrizione} - {alunno}`,
+citava per giunta un segnaposto che non è mai esistito — sarebbe finito a stampa fra graffe.
+
+**Cosa c'è adesso.** In Contabilità → Causali vivono **due** editor, uno per documento: «Causali
+bonifico» (invariato) e «Causali fattura» (nuovo). Ogni editor ha una riga per ciascuna
+`payment_categories` più un «Predefinito», l'anteprima dal vivo con dati sintetici e i chip dei
+segnaposto. La configurazione delle fatture sta nella colonna nuova
+`admin_settings.fattura_causali_config` (JSONB flat indicizzato per slug), gemella di
+`causali_config`: due documenti, due configurazioni, nessuna che possa scrivere sull'altra.
+
+| | dove |
+|---|---|
+| editor generalizzato, istanziato due volte | `src/components/features/admin/pagamenti/CausaliPanel.tsx` (`EditorCausali` + `CausaliPanel` + `CausaliFatturaPanel`) |
+| modello di fabbrica delle fatture | `{descrizione} - a favore {minore} {nome_completo} - CF: {codice_fiscale}` |
+| risoluzione categoria → «Predefinito» → fabbrica | `modelloCausale()` in `src/lib/pagamenti/causale.ts` |
+| funzione per l'emissione | `causaleFattura()` in `src/lib/pagamenti/causale-fattura.ts` |
+| colonna nuova | migrazione `20260809213500_fattura_causali_config.sql` (additiva, **non ancora applicata**) |
+
+**Tre cose misurate, non dedotte.**
+
+- **`{minore}` legge il sesso dal codice fiscale**, non da un campo d'anagrafica che non esiste:
+  «del minore» / «della minore», **omocodia compresa** (`RR` = 55 = femmina). Codice assente o
+  illeggibile → stringa **vuota**, mai un maschile di comodo: il segmento resta leggibile («a favore
+  Mario Rossi») e un genere indovinato non finisce su un documento fiscale, che si corregge solo con
+  una nota di variazione.
+- **Il limite di 200 caratteri del campo 2.1.1.11** si misura sulla causale **resa e normalizzata**,
+  non sul modello scritto né sulla stringa che si vede: `{descrizione}` sono 13 caratteri sullo
+  schermo e ne diventano venti a runtime. Il costruttore XML scrive un solo `<Causale>` e lo
+  **tronca** a 200 (`testoLatin(input.causale, LIMITI.causale)`), quindi il documento non nasce
+  invalido: nasce con la causale mozzata.
+  🔴 **Il conteggio era sulla stringa sbagliata, ed è stato corretto il 2026-08-10.** `testoLatin`
+  prima **translittera** e poi tronca, e la translitterazione **allunga**: `€`→`EUR` (1→3),
+  `…`→`...`, `™`→`(TM)`. Siccome `€ 150,00` è l'esempio del chip `{importo}` — un chip di questo
+  stesso pannello — un modello che rendeva 200 caratteri con l'importo in coda mostrava «200/200»
+  in nero, **senza avviso**, e usciva a stampa tagliato a `EUR 150,` invece di `EUR 150,00`, su un
+  documento che si corregge solo con una nota di variazione. Il gate del log
+  (`emissione.ts` → `causale-troncata`) usava la stessa misura, quindi il taglio era anche **muto**.
+  Ora la riduzione senza troncamento è esportata una volta sola come `causalePerTracciato()`
+  (`src/lib/aruba/fatturapa-xml.ts`, accanto alla tabella di translitterazione che la determina) e
+  la usano tutti e tre i punti: il contatore del pannello, `eccedeLimiteFatturaPA()` e il gate del
+  log. Il pannello riceve `VINCOLO_CAUSALE_FATTURAPA` — **limite e misura insieme**, così non si
+  può più prendere il numero senza la funzione che lo rende vero — e l'anteprima mostra il testo
+  **com'è scritto nel tracciato**. Lock: `__tests__/lib/pagamenti-causale-fattura.test.ts` e
+  `__tests__/components/CausaliFatturaPanel.test.tsx` verificano l'equivalenza nei due sensi contro
+  l'XML vero (avviso ⟺ `<Causale>` troncato).
+  ⚠️ Resta vero che **il conteggio è misurato sui DATI D'ESEMPIO**: «Retta Settembre 2026» sono 20
+  caratteri, una descrizione reale può essere il doppio, e alle quote dei genitori separati
+  l'emissione aggiunge in coda « - quota &lt;genitore&gt;». Perciò il conteggio è **sempre a
+  schermo** (non solo quando si sfora), dichiara su cosa è stato misurato, e a valle resta la rete:
+  `emissione.ts` logga `causale-troncata`.
+- **La regola di risoluzione era scritta tre volte** (elenco pagamenti, solleciti, e mai davvero nella
+  fatturazione). Ora è in `modelloCausale()`, un posto solo: due copie che divergono manderebbero al
+  genitore due stringhe diverse per lo stesso pagamento. Con un dettaglio in più delle copie
+  precedenti — una riga **vuota o di soli spazi** conta come assente, che è la promessa che l'editor
+  fa a chi cancella un campo.
+
+**Il campo vecchio è stato TOLTO, non lasciato lì.** `fattura_causale_template` non compare più
+nelle Impostazioni (`SettingsPanel.tsx`), non è più in `ALLOWED_FIELDS` né nel default della GET di
+`/api/admin/settings`, e le tre chiavi i18n `spCausaleFattura*` sono sostituite da un rimando a
+Contabilità → Causali. Finché restava a schermo — modificabile, salvato davvero in colonna, ignorato
+dall'emissione — il pannello nuovo non chiudeva niente: **aggiungeva una seconda verità**, e quella
+che sembrava funzionare era la sbagliata. La **colonna resta in tabella** (non si droppa una colonna
+di un database con dati veri per una pulizia), ma non è più né letta né scrivibile. Lock:
+`__tests__/components/SettingsPanel-esito.test.tsx` e `__tests__/api/settings-fiscale-config.test.ts`.
+
+**Due correzioni di contorno, nate dallo stesso giro.**
+
+- **Il CF d'esempio dell'anteprima non era sintetico.** `RSSMRA85T10A562S` ha il **carattere di
+  controllo valido** e un codice catastale reale (`A562` = Ferrara): un codice pienamente
+  assegnabile a una persona esistente, reso a schermo due volte per pagina in un **repository
+  pubblico**, contro la regola scritta in fondo a `src/lib/fiscale/codice-fiscale.ts`. Ora è
+  `RSSMRA85T10Z999X` (catastale non assegnato, controllo volutamente sbagliato), in `DATI_ESEMPIO` e
+  in `PLACEHOLDER_CAUSALE`. Il lock è una checksum ricalcolata nel test, non un confronto di stringa.
+- **La `select` di lettura del PATCH non guardava `{ error }`** (AGENTS.md, regola 7). Basta una
+  colonna mancante perché PostgREST faccia fallire l'intera select: `existing` diventava `null` e il
+  merge ripartiva da `{}` per **tutte** le chiavi della stessa PATCH, cancellando in silenzio quanto
+  era già configurato. Ora l'errore si legge e si logga; su `42703` si rilegge **una colonna per
+  volta** (filtrare per «colonne recenti» non basterebbe: `causali_config` è essa stessa recente);
+  su un errore non degradabile la PATCH si **ferma con 500** invece di riscrivere da zero.
+
+**Tre cose che il pannello non diceva, e ora dice** (correzioni del 2026-08-10).
+
+- **L'avviso di lunghezza non veniva annunciato.** Il `role="status"` era montato **insieme** al suo
+  testo: un live region inserito nel DOM col contenuto già dentro spesso resta muto (NVDA/JAWS
+  osservano le mutazioni di quelli **già presenti**). Ora il paragrafo esiste sempre, vuoto, e si
+  riempie — ed è lo stesso nodo, il test lo verifica. In più il campo **dichiara** il proprio
+  conteggio e il proprio avviso con `aria-describedby`: prima chi navigava con uno screen reader
+  sentiva l'etichetta e basta, cioè tutto tranne la misura che è il senso del pannello.
+- **Un caricamento fallito non si vedeva.** Se la GET delle impostazioni o quella delle categorie
+  falliva, il pannello si apriva lo stesso sul modello di fabbrica — indistinguibile da una scuola
+  che non ha mai configurato niente — e chi salvava credeva di partire dal salvato. Ora l'esito
+  delle due risposte si guarda separatamente, il fallimento è **scritto a schermo** (`role="alert"`)
+  e il pulsante «Salva» è **bloccato**.
+- **I modelli orfani restavano nel JSONB per sempre.** Una `payment_categories` cancellata lasciava
+  la sua chiave in `fattura_causali_config`, invisibile a schermo e pronta a tornare in vita — su
+  una fattura elettronica — se lo slug fosse stato riusato. Il salvataggio ora le azzera (`''`, che
+  lato server **rimuove** la chiave), ma **solo** se l'elenco delle categorie è arrivato davvero:
+  con quella fetch fallita ogni slug sembrerebbe orfano e il primo «Salva» spazzerebbe via la
+  configurazione dell'intera scuola.
+
+Nello stesso giro le **etichette dei chip** hanno smesso di essere italiano cablato in `src/lib`:
+vengono da `caus_ph_<chiave>` nei cataloghi `it`/`en` (con `PLACEHOLDER_CAUSALE.label` come ripiego),
+perché il resto del pannello è tradotto e in inglese si leggeva «Del/della minore» in mezzo a testi
+inglesi.
+
+Resta da fare, e non è in questo lavoro: **applicare la migrazione**
+`20260809213500_fattura_causali_config.sql`. `causaleFattura()` è invece già agganciata
+all'emissione (`src/lib/aruba/emissione.ts:463`).
 
 ---
 
@@ -7436,7 +7882,7 @@ lavoro manuale della Segreteria.
 ## 4. Regole Fiscali e Numerazione
 • Numerazione Sequenziale: Kidville delega completamente la gestione del progressivo numerico (es. Fattura n. 1, 2, 3...) al sistema Aruba, evitando conflitti di numerazione e garantendo l'allineamento fiscale sul cassetto fiscale della scuola.
 • Regime IVA e Natura: Tutte le fatture emesse tramite questo flusso applicano automaticamente l'esenzione IVA per i servizi scolastici, utilizzando l'impostazione fissa: 0% di IVA, Natura N4 (Esente Articolo 10).
-• Esclusione Marca da Bollo: Il sistema è configurato per non applicare in automatico alcuna riga relativa all'addebito della marca da bollo, lasciando l'importo della prestazione pulito.
+• Marca da Bollo: **spenta di fabbrica** — nessuna riga di addebito, l'importo della prestazione resta pulito. Dal 2026-08-09 esiste però l'**interruttore** in Impostazioni → Pagamenti → «Dati fiscali & bollo» (attiva/disattiva · soglia 77,47 € · importo 2 € · dicitura sulla ricevuta): il motore c'era già (`bolloDovuto`, `<DatiBollo>`), mancava solo il comando. Si accende quando il commercialista si pronuncia, non prima: attivarlo cambia gli importi di tutte le fatture emesse da lì in avanti. **Il bollo resta a carico della struttura**: non c'è nessun riaddebito al cliente, e dal 2026-08-10 non c'è più nemmeno la casella che diceva di farlo — riaddebitare significa una riga con `Natura N1` (escluso art. 15 DPR 633/1972) e un secondo `<DatiRiepilogo>`, che il generatore oggi non produce.
 
 ## 5. Gestione Errori e Interfaccia Genitore
 • Monitoraggio Scarti SDI: Se la fattura inviata ad Aruba viene successivamente scartata dal Sistema di Interscambio (SDI) dell'Agenzia delle Entrate (ad esempio per un Codice Fiscale errato nell'anagrafica del genitore), il backend di Kidville intercetta lo stato e invia una notifica di errore in tempo reale alla dashboard della Segreteria, specificando il motivo dello scarto per permettere una rapida correzione.
@@ -7485,8 +7931,9 @@ garantisce che la piattaforma sia scalabile e totalmente personalizzabile per og
 • Accesso al motore di creazione template (Form Builder). Da qui la Segreteria genera i modelli per uscite didattiche e consensi privacy, impostando i campi dinamici richiesti ai genitori.
 
 ### 5.3 Fatturazione Elettronica (Integrazione Aruba)
-• Credenziali API: Sezione sicura per l'inserimento e l'aggiornamento delle chiavi API di Aruba. **✅ (P3.1)** username in `admin_settings.aruba_config`; la **password non è mai salvata in chiaro** — si memorizza solo un riferimento (`password_ref`) risolto lato server da env/vault. Ambiente DEMO/PROD selezionabile.
-• Dati Scuola: Inserimento dei dati di fatturazione dell'istituto (Partita IVA, Codice Fiscale, PEC, sede strutturata indirizzo/CAP/comune/provincia) necessari per la corretta generazione del tracciato XML. **✅ (P3.1)** consumati dal `CedentePrestatore`.
+• Credenziali API: Sezione sicura per l'inserimento e l'aggiornamento delle chiavi API di Aruba. **✅ (P3.1)** username in `admin_settings.aruba_config`; la **password non è mai salvata in chiaro** — si memorizza solo un riferimento (`password_ref`) risolto lato server da env/vault. Ambiente DEMO/PROD selezionabile **dal pannello dal 2026-08-09** (prima stava solo nel JSONB).
+• Dati Scuola: Inserimento dei dati di fatturazione dell'istituto (Partita IVA, Codice Fiscale, sede strutturata indirizzo/numero civico/CAP/comune/provincia, regime fiscale) necessari per la corretta generazione del tracciato XML. **✅ (2026-08-09)** in `admin_settings.fiscale_config`, che è la **fonte unica**: la leggono ricevute e attestazioni (`datiStruttura`) e da lì nasce il `CedentePrestatore` (`cedenteDaConfig`, `src/lib/fatturazione/cedente.ts`), che **rifiuta di comporre** un cedente incompleto invece di emettere una fattura con `<CAP></CAP>`.
+  🔻 **Fino al 2026-08-09 questa riga diceva il falso**, e vale la pena lasciarlo scritto: dichiarava la sede strutturata «consumata dal `CedentePrestatore`» mentre il pannello Aruba raccoglieva la sede legale come **una stringa libera** (`aruba_config.fiscal.sede`) e l'emissione leggeva `fiscal.cap`/`fiscal.comune`, due chiavi che nessuno scriveva. L'XML usciva con CAP e comune vuoti — scarto SDI garantito — e il PRD diceva che era a posto.
 • Regime IVA: Pannello per mappare le causali di default (es. Retta = Esente IVA Art. 10). **✅ (P3.1)** campo `RegimeFiscale` (default RF01) nei dati fiscali; le fatture applicano comunque IVA 0%/Natura N4 fissa (DL-018).
 
 ---
@@ -9388,19 +9835,33 @@ _Modulo PRD: Modulo Impostazioni (tutto)_
 - Pulsante 'Aggiungi pacchetto'
 - Icona 'Elimina pacchetto ticket'
 - Pulsante 'Salva' (Pacchetti ticket)
+- Campo 'Denominazione' (Dati fiscali & bollo)
+- Campo 'Partita IVA' (Dati fiscali & bollo)
+- Campo 'Codice fiscale' (Dati fiscali & bollo)
+- Campo 'Regime fiscale' (Dati fiscali & bollo) — accetta solo i 19 codici RF01, RF02, RF04…RF20
+- Campo 'Indirizzo' (Dati fiscali & bollo)
+- Campo 'Numero civico' (Dati fiscali & bollo)
+- Campo 'CAP' (Dati fiscali & bollo)
+- Campo 'Comune' (Dati fiscali & bollo)
+- Campo 'Provincia' (Dati fiscali & bollo)
+- Avviso 'anagrafica precompilata, non ancora salvata' (compare solo se `fiscale_config` è vuota)
+- Toggle 'Applica l'imposta di bollo' (spento di fabbrica)
+- Campo 'Soglia (€)' · Campo 'Importo bollo (€)' · Campo 'Dicitura su ricevuta' (solo a bollo acceso)
+- Pulsante 'Salva' (Dati fiscali & bollo)
 - Campo 'Username Aruba'
 - Campo 'Password Aruba (riferimento vault)'
-- Campo 'Partita IVA'
-- Campo 'Codice Fiscale'
-- Campo 'PEC'
-- Campo 'Ragione sociale'
-- Campo 'Sede legale'
-- Campo 'Regime fiscale'
 - Selettore 'Mappatura aliquote/cause IVA'
 - Toggle 'Abilita invio fatture (produzione)'
-- Selettore 'Ambiente Aruba (test/prod)'
-- Badge 'Scaffold' (Fatturazione Aruba)
+- Selettore 'Ambiente Aruba (Demo/Produzione)'
+- Rimando 'i dati fiscali si impostano in Dati fiscali & bollo'
 - Pulsante 'Salva' (Fatturazione Aruba)
+
+> ⚠️ **Cosa NON deve esserci più in questa pagina** (elencato perché fino al 2026-08-10 la
+> checklist qui sopra li chiedeva ancora, e un collaudatore li avrebbe segnalati come regressioni):
+> il campo unico **'Sede legale'** (stringa libera), i campi **'Partita IVA' / 'Codice Fiscale' /
+> 'Ragione sociale' / 'Regime fiscale' / 'PEC'** dentro il riquadro *Fatturazione Aruba* — sono
+> migrati in *Dati fiscali & bollo*, e devono comparire **una volta sola** in pagina — il badge
+> **'Scaffold'**, e la casella **'Riaddebita il bollo al cliente'**.
 - Tabella 'Funzioni × Grado' (matrice attivazione moduli)
 - Toggle 'Funzione attiva per grado'
 - Pulsante 'Salva' (Funzioni & moduli)

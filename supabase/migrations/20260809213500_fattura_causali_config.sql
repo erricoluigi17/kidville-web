@@ -1,0 +1,22 @@
+-- Modelli di causale della FATTURA ELETTRONICA, personalizzabili PER CATEGORIA
+-- di pagamento — gemella di `causali_config`, che fa lo stesso per il bonifico.
+--
+-- Perché una colonna nuova invece di riusare quella che c'è già. `admin_settings`
+-- aveva `fattura_causale_template`: un campo unico per tutta la scuola, che
+-- l'interfaccia mostrava, l'emissione leggeva e poi **scartava** — la causale si
+-- componeva dalla descrizione del pagamento, e chi compilava quel campo non
+-- otteneva niente. Il suo valore di fabbrica, `{descrizione} - {alunno}`, cita
+-- perfino un segnaposto che non è mai esistito. Non lo si allarga: lo si sostituisce
+-- con la stessa forma già in uso per i bonifici, cioè un JSONB per-scuola indicizzato
+-- per SLUG di categoria (chiave stabile), più una riga «predefinito»:
+--   { "default": "{descrizione} - a favore {minore} {nome_completo} - CF: {codice_fiscale}",
+--     "retta": "…", "mensa": "…", … }
+--
+-- La vecchia colonna resta al suo posto in questa migrazione: toglierla è un'altra
+-- decisione, e va presa quando l'emissione avrà smesso di nominarla.
+--
+-- Additivo e sicuro. Sul DB E2E della CI (non migrato) la colonna manca → PostgREST
+-- risponde PGRST204 sull'upsert e 42703 in lettura, la route degrada e il pannello
+-- ricade sul modello di fabbrica.
+alter table public.admin_settings
+  add column if not exists fattura_causali_config jsonb not null default '{}'::jsonb;

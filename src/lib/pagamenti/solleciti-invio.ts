@@ -7,7 +7,7 @@ import { logErrore } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
-import { rigaCausaleSollecito } from './causale'
+import { DEFAULT_CAUSALE_TEMPLATE, modelloCausale, rigaCausaleSollecito } from './causale'
 import { meseAnnoDaPeriodo } from './periodo'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from './fiscale'
 import {
@@ -160,10 +160,11 @@ export async function sollecitaPagamenti(
             giorni_ritardo: giorniRitardo,
         }
         const oggetto = renderTemplate(liv.oggetto, ctx)
-        // Modello di causale per la categoria della voce (per slug) → `default` → predefinito
-        // (undefined lasciato a `rigaCausaleSollecito`, che ricade sul predefinito).
+        // Modello di causale per la categoria della voce (per slug) → `default` → predefinito.
+        // La regola sta in `modelloCausale`: era scritta qui e nell'elenco pagamenti, e le
+        // due copie potevano divergere sulla cosa che il genitore ricopia nel bonifico.
         const slug = pag.payment_categories?.slug ?? undefined
-        const templateCausale = (slug ? causaliCfg[slug] : undefined) ?? causaliCfg.default
+        const templateCausale = modelloCausale(causaliCfg, slug, DEFAULT_CAUSALE_TEMPLATE)
         const { mese, anno } = meseAnnoDaPeriodo(pag.periodo_competenza)
         // Il CF del bambino va SOLO nel corpo dell'email (destinatario = tutore →
         // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e

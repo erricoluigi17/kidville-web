@@ -4,33 +4,46 @@
 //  • marca da bollo su documenti esenti IVA art. 10 DPR 633/72 oltre € 77,47;
 //  • dati struttura per ricevute/attestazioni con fallback sui dati fiscali
 //    già configurati per Aruba (aruba_config.fiscal).
+//
+// `fiscale_config` è la FONTE UNICA dell'anagrafica di chi emette: le ricevute e
+// le attestazioni la leggono da qui (`datiStruttura`), la fattura elettronica la
+// legge dagli stessi campi tramite `cedenteDaConfig` (@/lib/fatturazione/cedente).
+// Prima erano due: il pannello Aruba raccoglieva la sede legale come stringa
+// libera e l'XML cercava CAP e comune separati, che nessuno aveva mai scritto.
 
 import { logEvento } from '@/lib/logging/logger'
+import {
+    componiIndirizzo,
+    primoNonVuoto,
+    type AnagraficaCedente,
+    type FiscalAruba,
+} from '@/lib/fatturazione/cedente'
 
-export interface FiscaleConfig {
-    denominazione?: string
-    piva?: string
-    codice_fiscale?: string
-    indirizzo?: string
-    cap?: string
-    comune?: string
-    provincia?: string
+/**
+ * `admin_settings.fiscale_config`: l'anagrafica del CEDENTE più le regole del bollo.
+ *
+ * L'anagrafica non è ridichiarata qui — estende `AnagraficaCedente`, che è la
+ * stessa forma che il pannello delle impostazioni valida e che il tracciato
+ * FatturaPA consuma. Due elenchi di campi destinati a divergere erano esattamente
+ * il difetto: `<CAP></CAP>` nell'XML perché la sede legale stava altrove, in una
+ * stringa libera.
+ *
+ * L'import di `@/lib/fatturazione/cedente` va in QUESTA direzione (fiscale →
+ * cedente) e non nell'altra: quel modulo è puro e lo carica anche il browser,
+ * questo invece importa il logger, che trascina `node:crypto`.
+ */
+export interface FiscaleConfig extends AnagraficaCedente {
     bollo_enabled?: boolean
     bollo_soglia?: number
     bollo_importo?: number
     dicitura_bollo_ricevuta?: string
+    // ⚠️ NON esiste `bollo_riaddebito`, ed è una scelta: vedi il blocco qui sotto
+    // a `bolloDovuto`. Una chiave rimasta in un `fiscale_config` già salvato viene
+    // semplicemente ignorata (il JSONB tollera le chiavi in più).
 }
 
 export interface ArubaFiscalConfig {
-    fiscal?: {
-        piva?: string
-        cf?: string
-        ragione_sociale?: string
-        indirizzo?: string
-        cap?: string
-        comune?: string
-        provincia?: string
-    }
+    fiscal?: FiscalAruba
 }
 
 export interface DatiStruttura {
@@ -73,6 +86,30 @@ export function bolloDovuto(importo: number, cfg?: FiscaleConfig | null): number
     return cfg.bollo_importo ?? BOLLO_IMPORTO_DEFAULT
 }
 
+/* ─── IL BOLLO NON SI RIADDEBITA AL CLIENTE, E NON C'È UN INTERRUTTORE CHE DICA
+ * DI SÌ ───────────────────────────────────────────────────────────────────────
+ *
+ * Fino al 2026-08-10 qui viveva `bolloRiaddebitato(cfg)`, con in Impostazioni una
+ * casella «Riaddebita il bollo al cliente» il cui testo prometteva: «il bollo è
+ * una riga in più in fattura e il totale cresce di 2 €». Non lo faceva. La
+ * funzione aveva ZERO chiamanti: `emissione.ts` passava il bollo al solo blocco
+ * `<DatiBollo>`, la riga non veniva aggiunta e `<ImportoTotaleDocumento>` restava
+ * l'imponibile. Accendere quella casella non cambiava un centesimo di nessuna
+ * fattura, e due test verdi certificavano che «l'impostazione si salva».
+ *
+ * Un comando che promette un importo diverso e non lo produce è peggio di un
+ * comando assente: chi lo accende crede di aver deciso. Perciò casella, helper e
+ * chiavi i18n sono stati TOLTI, non lasciati con una nota nel PRD.
+ *
+ * Cosa servirebbe per implementarlo davvero, scritto qui perché chi lo riprenderà
+ * non lo scopra a fatture emesse: il riaddebito è un'operazione ESCLUSA dall'IVA
+ * ex art. 15 DPR 633/1972, cioè `Natura N1` — una riga con natura DIVERSA da
+ * quella del resto del documento (N4, esente art. 10). Il generatore oggi ha
+ * un'unica `iva` per tutte le righe e un solo `<DatiRiepilogo>`: vanno resi
+ * plurali, riepilogo per natura. È una modifica al tracciato più una decisione
+ * del commercialista, non una casella.
+ */
+
 /** Da dove arriva la richiesta, per la riga di log della config mancante. */
 export interface ContestoStruttura {
     /** Nome della route/operazione: finisce nella colonna `operazione` di `app_log`. */
@@ -106,14 +143,23 @@ export function datiStruttura(
 ): DatiStruttura {
     const f = fiscale ?? {}
     const a = aruba?.fiscal ?? {}
+    // `primoNonVuoto` e non `??`: una chiave salvata come stringa VUOTA dal
+    // pannello è "non configurata" quanto una chiave assente, e con `??` avrebbe
+    // azzerato il ripiego su `aruba_config.fiscal` invece di cedergli il posto —
+    // cioè avrebbe stampato una ricevuta anonima avendo il dato a due righe di
+    // distanza. Stessa regola che usa il cedente della fattura elettronica.
     const dati: DatiStruttura = {
-        denominazione: f.denominazione ?? a.ragione_sociale ?? '',
-        piva: f.piva ?? a.piva ?? '',
-        codice_fiscale: f.codice_fiscale ?? a.cf ?? '',
-        indirizzo: f.indirizzo ?? a.indirizzo ?? '',
-        cap: f.cap ?? a.cap ?? '',
-        comune: f.comune ?? a.comune ?? '',
-        provincia: f.provincia ?? a.provincia ?? '',
+        denominazione: primoNonVuoto(f.denominazione, a.ragione_sociale),
+        piva: primoNonVuoto(f.piva, a.piva),
+        codice_fiscale: primoNonVuoto(f.codice_fiscale, a.cf),
+        // Il numero civico è un campo a parte nella configurazione (lo pretende il
+        // tracciato FatturaPA, che non lo indovina): sulle ricevute e sulle
+        // attestazioni torna a essere una riga sola, con la stessa composizione
+        // che finisce in `<Indirizzo>`.
+        indirizzo: componiIndirizzo(primoNonVuoto(f.indirizzo, a.indirizzo), f.numero_civico),
+        cap: primoNonVuoto(f.cap, a.cap),
+        comune: primoNonVuoto(f.comune, a.comune),
+        provincia: primoNonVuoto(f.provincia, a.provincia),
     }
 
     // Denominazione e partita IVA sono il minimo perché un documento sia

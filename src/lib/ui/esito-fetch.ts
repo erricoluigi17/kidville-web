@@ -111,6 +111,17 @@ export const CODICI_ERRORE = {
      */
     NOTIFICHE_CONTEGGIO_NON_LETTO: 'erroreNotificheConteggioNonLetto',
     /**
+     * 500 — la configurazione GIÀ SALVATA non si è potuta rileggere, e quindi non si
+     * salva niente (`PATCH /api/admin/settings`).
+     *
+     * Le colonne JSONB di `admin_settings` si aggiornano in shallow-merge col salvato:
+     * se la lettura del pregresso fallisce e si prosegue lo stesso, il merge riparte da
+     * `{}` e la PATCH **cancella** ciò che l'operatore non stava toccando, rispondendo
+     * 200. Meglio un guasto dichiarato che un salvataggio riuscito a metà: qui il
+     * fallimento è NOSTRO e va detto come tale, senza accusare chi ha premuto Salva.
+     */
+    CONFIG_PREGRESSO_NON_LETTO: 'erroreConfigPregressoNonLetto',
+    /**
      * 400 — un avviso «di classe» senza nessuna classe destinataria. Non degrada a
      * globale in silenzio: notifica e bacheca devono sempre dire la stessa cosa.
      */

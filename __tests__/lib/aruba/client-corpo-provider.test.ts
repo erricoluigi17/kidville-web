@@ -112,14 +112,18 @@ describe('client Aruba — su !ok il motivo del provider arriva nell\'errore', (
     expect((errore as { code?: string }).code).toBe('502')
   })
 
-  it('findByUsername 403: il ramo best-effort del progressivo dice PERCHÉ ha ripiegato', async () => {
-    // Il chiamante (`emissione.ts`) degrada al contatore interno e logga a `warn`: senza il
-    // corpo, quella riga direbbe «403» e nessuno saprebbe se è un permesso mancante sul
-    // servizio o l'ambiente sbagliato.
+  it('findByUsername 403: il progressivo che non si è potuto leggere dice PERCHÉ', async () => {
+    // Il chiamante (`emissione.ts`) dal 2026-08-09 NON degrada più al contatore interno: si
+    // ferma e logga a `error`. Il corpo resta la cosa che conta — senza, quella riga direbbe
+    // «403» e nessuno saprebbe se è un permesso mancante sul servizio o l'ambiente sbagliato.
     const { arubaUltimoNumeroFattura } = await carica()
     globalThis.fetch = rispondi('{"errorDescription":"User not enabled for outgoing invoices"}', 403)
 
-    const errore = await arubaUltimoNumeroFattura('demo', 'AT', { username: 'u', anno: 2026 }).catch((e: unknown) => e)
+    const errore = await arubaUltimoNumeroFattura('demo', 'AT', {
+      username: 'u',
+      anno: 2026,
+      sezionale: 'Asilo',
+    }).catch((e: unknown) => e)
 
     expect((errore as Error).message).toContain('User not enabled for outgoing invoices')
     expect((errore as { code?: string }).code).toBe('403')

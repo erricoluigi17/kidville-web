@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('@/lib/aruba/client', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/aruba/client')>()
-  return { ...actual, arubaSignin: vi.fn(), arubaUpload: vi.fn() }
+  return { ...actual, arubaSignin: vi.fn(), arubaUpload: vi.fn(), arubaUltimoNumeroFattura: vi.fn() }
 })
 
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
-import { arubaSignin, arubaUpload } from '@/lib/aruba/client'
+import { arubaSignin, arubaUpload, arubaUltimoNumeroFattura } from '@/lib/aruba/client'
 import { ripartisci, determinaQuoteFatturazione } from '@/lib/pagamenti/intestatari'
 
 const SCUOLA = '11111111-1111-1111-1111-111111111111'
@@ -67,12 +67,14 @@ function makeSupabase(cfg: Cfg) {
   return api
 }
 
+// Nessun `fiscale_config` qui: il cedente arriva dal RIPIEGO `aruba_config.fiscal`,
+// che è la configurazione delle sedi non ancora aggiornate. È completo, quindi la
+// fattura parte — ed è il caso che tiene onesto il ripiego.
 const settingsConfig = {
   aruba_config: {
     username: 'utente@scuola.it', password_ref: 'ARUBA_PASSWORD', abilitato: true, ambiente: 'demo',
     fiscal: { piva: '12345678903', ragione_sociale: 'Kidville Srl', regime: 'RF01', indirizzo: 'Via Roma 1', cap: '00100', comune: 'Roma', provincia: 'RM' },
   },
-  fattura_causale_template: '{descrizione}',
 }
 const reg = (first: string, cf: string | null) => ({
   id: `reg-${first}`, first_name: first, last_name: 'Rossi', fiscal_code: cf,
@@ -80,8 +82,14 @@ const reg = (first: string, cf: string | null) => ({
 })
 const pagamentoSeparati = {
   id: 'pag-1', descrizione: 'Retta di Marzo', importo: 150, stato: 'pagato', scuola_id: SCUOLA,
-  fattura_causale: null, alunno_id: 'al-1',
-  alunni: { id: 'al-1', nome: 'Mario', cognome: 'Rossi', genitori_separati: true, retta_split_config: null, intestatario_fatture: { tipo: 'adult', adult_id: 'parent-x' } },
+  scadenza: '2026-03-10', periodo_competenza: '2026-03-01', categoria_id: null,
+  fattura_causale: null, alunno_id: 'al-1', payment_categories: null,
+  // La data di nascita decide la SERIE FISCALE: senza, l'emissione si blocca
+  // prima ancora di guardare le quote. Dato sintetico, repository pubblico.
+  alunni: {
+    id: 'al-1', nome: 'Mario', cognome: 'Rossi', codice_fiscale: null, data_nascita: '2019-03-15',
+    genitori_separati: true, retta_split_config: null, intestatario_fatture: { tipo: 'adult', adult_id: 'parent-x' },
+  },
 }
 
 describe('ripartisci (arrotondamento, resto alla prima quota)', () => {
@@ -114,6 +122,9 @@ describe('emettiFatturaPagamento — multi-quota', () => {
     vi.clearAllMocks()
     process.env.ARUBA_PASSWORD = 'segretissima'
     vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
+    // Il progressivo si rilegge da Aruba PRIMA DI OGNI quota, e la lettura è
+    // bloccante: senza questo mock nessuna delle emissioni qui sotto partirebbe.
+    vi.mocked(arubaUltimoNumeroFattura).mockResolvedValue(0)
     vi.mocked(arubaUpload).mockImplementation(async (_amb, _tok, args) =>
       ({ ok: true, uploadFileName: `F_${(args as { dataFileBase64: string }).dataFileBase64.slice(0, 6)}.xml`, errorCode: '0000' }))
   })
@@ -174,6 +185,27 @@ describe('emettiFatturaPagamento — multi-quota', () => {
     expect(sb._inserts.filter((i) => i.table === 'fatture_emesse')).toHaveLength(0)
     expect(vi.mocked(arubaUpload)).not.toHaveBeenCalled()
     if (esito.ok) expect(esito.quote!.every((q) => q.motivo === 'idempotente')).toBe(true)
+  })
+
+  it('la causale della quota NON contiene il trattino lungo: fuori dal tracciato, scarto certo', async () => {
+    // `${causaleBase} — quota ${label}` con «—» (U+2014) stava fuori da
+    // `[\p{IsBasicLatin}\p{IsLatin-1Supplement}]`: OGNI fattura del ramo
+    // multi-quota nasceva formalmente invalida, e nessun test lo diceva perché
+    // tutti confrontavano sottostringhe. La validazione XSD l'ha misurato.
+    const sb = makeSupabase({
+      pagamento: pagamentoSeparati, settings: settingsConfig,
+      quote: [{ adult_id: 'u-mamma', importo: 75, etichetta: 'Mamma' }, { adult_id: 'u-papa', importo: 75, etichetta: 'Papà' }],
+      parentsByAuth: { 'u-mamma': reg('Giulia', 'FRNGLI80A41H501Z'), 'u-papa': reg('Marco', 'RSSMRC80A01H501A') },
+    })
+    await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    for (const f of sb._inserts.filter((i) => i.table === 'fatture_emesse')) {
+      const causale = (f.row as { causale: string }).causale
+      expect(causale, 'trattino lungo nella causale').not.toContain('—')
+      expect(causale).toContain(' - quota ')
+      // «Papà» ha la à: è Latin-1 Supplement, e il tracciato la accetta. Il
+      // controllo è sull'INTERO alfabeto ammesso, non su un carattere solo.
+      expect(causale.replace(/[ -~¡-ÿ]/g, ''), 'caratteri fuori tracciato').toBe('')
+    }
   })
 
   it('quota scartata in precedenza → viene RI-emessa (non è bloccante)', async () => {

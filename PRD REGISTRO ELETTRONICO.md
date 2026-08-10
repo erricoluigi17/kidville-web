@@ -67,6 +67,7 @@
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
+> | **Anagrafiche — verifica dei codici fiscali** | 🔶 **Solo API: nessuna pagina** | — (la UI non esiste ancora: la rotta oggi si raggiunge solo da un client HTTP) | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
@@ -128,8 +129,11 @@ mentre PRD e commento del test dichiaravano l'interpolazione — lo stesso difet
 2026-08-10 interpolando davvero, e il legame non è più affidato a una frase: il test legge il
 **sorgente** e pretende `${CANDIDATURA_LIMITI.mesiConservazione}` dentro il testo, oltre a
 confrontare il valore.
-⏭️ **Resta scoperto**: `src/app/privacy/page.tsx` non ha ancora una sezione sulle candidature — il
-link del consenso porta oggi a un testo che non parla di chi lo sta leggendo.
+✅ **Coperto il 2026-08-10** (corsia «retention + informativa», vedi §7): `src/app/privacy/page.tsx`
+ha ora la voce «candidature spontanee di personale», e il link del consenso porta a un testo che
+parla di chi lo sta leggendo. *Fino a quel giorno questa riga diceva «Resta scoperto», ed è rimasta
+falsa per qualche ora dopo che la sezione era stata scritta: è lo stesso ritardo fra il fatto e la
+sua dichiarazione che il capoverso qui sopra racconta, e vale la pena che si veda.*
 
 ### 2. I sette codici d'errore, e il `409` che sul modulo pubblico non si usa
 
@@ -170,25 +174,282 @@ produzione il 2026-08-10, in sola lettura.
 «ricevuta», e la riga resta con lo `scuola_id` della prima. **Decisione scritta**: una candidatura
 viva vale per l'**intera cooperativa** (un solo datore di lavoro, una sola Direzione che valuta, e
 un curriculum in tre copie sarebbe tre volte lo stesso dato da conservare e cancellare). Il prezzo
-è dichiarato: il cockpit delle candidature **non si filtra per sede** — eccezione motivata alla
-regola di isolamento, perché qui il dato non è di una famiglia né di un minore — e il `23505` si
-logga a **`warn`** (persistito **per livello**, senza aspettare la promozione dell'evento) con
+è dichiarato: una candidatura arrivata alla seconda sede resta archiviata sulla prima. E il `23505`
+si logga a **`warn`** (persistito **per livello**, senza aspettare la promozione dell'evento) con
 `scuola_id`, l'uuid della riga viva ed `error_code`, **mai** l'email.
+
+🔻 **Questo paragrafo prevedeva anche che «il cockpit delle candidature non si filtra per sede», e
+il cockpit è arrivato facendo l'opposto** (§8). La previsione non è stata rinnegata per
+distrazione: quell'esenzione avrebbe dovuto essere dichiarata in `AMMESSE`
+(`__tests__/architecture/isolamento-sede-coverage.test.ts`), dove `admin/candidature-insegnanti`
+**non c'è** — quindi il lock pretende lo scope di sede su quell'handler, e un cockpit senza filtro
+sarebbe rosso. Le due conseguenze, scritte perché nessuno le scopra da solo: una segreteria di
+**una sola** sede non vede la candidatura archiviata su un'altra (l'unico admin reale gestisce
+tutti e tre i plessi, quindi oggi non lo tocca nessuno), e la ricerca per email del cockpit **non
+è** l'oracolo globale che il §2 evita sul modulo pubblico.
 
 ### 5. Osservabilità
 
-`candidatura` è entrato in **`EVENTI_NOTI`** (vocabolario chiuso). **Non** è ancora in
-`EVENTI_PERSISTITI`: un'allowlist che promette un battito inesistente rende rosso il lock
-`eventi-log` («ogni evento persistito ha un ramo felice che parla»). La promozione è **cablata a
-un biconditional** in `__tests__/lib/insegnanti-template.test.ts`: l'evento sta in
-`EVENTI_PERSISTITI` **se e solo se** nel sorgente esiste il ramo felice che lo emette — nelle
-**due** forme che il lock condiviso riconosce (`logEvento(evento,'info',…)` **o**
-`externalFetch(…, { evento })`). Quando la route arriverà, la riga dirà da sola cosa fare.
+`candidatura` è entrato in **`EVENTI_NOTI`** (vocabolario chiuso). La promozione a
+`EVENTI_PERSISTITI` è **cablata a un biconditional** in
+`__tests__/lib/insegnanti-template.test.ts`: l'evento sta in `EVENTI_PERSISTITI` **se e solo se**
+nel sorgente esiste il ramo felice che lo emette — nelle **due** forme che il lock condiviso
+riconosce (`logEvento(evento,'info',…)` **o** `externalFetch(…, { evento })`). Un'allowlist che
+promette un battito inesistente rende rosso il lock `eventi-log` («ogni evento persistito ha un
+ramo felice che parla»).
+
+✅ **La route è arrivata, e la riga ha detto da sola cosa fare**: `candidatura` è in
+`EVENTI_PERSISTITI` (`src/lib/logging/logger.ts`) da quando `POST /api/iscrizione/insegnanti`
+emette `esito: 'candidatura-ricevuta'`. *Fino al 2026-08-10 questo paragrafo diceva «**Non** è
+ancora in `EVENTI_PERSISTITI`» mentre il file ce l'aveva già*: la frase era stata scritta al
+futuro e nessuno l'ha riletta quando quel futuro è arrivato — lo stesso ritardo fra il fatto e la
+sua dichiarazione raccontato al §1, e la ragione per cui il legame vive in un biconditional
+eseguibile invece che in questa riga.
 
 Il template non è confrontato con un elenco scritto a mano ma con
 `__tests__/fixtures/candidature-schema-snapshot.json`, fotografia dello schema di produzione
 protetta da `sha256`: un id inventato non farebbe rosso da nessun'altra parte, morirebbe come
 `PGRST204` sul primo invio vero.
+
+### 6. La route pubblica — e le quattro misure che hanno corretto sé stessa
+
+`POST /api/iscrizione/insegnanti` (corsia della **route**, estende questa voce come previsto
+sopra). Tetto **3/ora per IP** prima di leggere il corpo, esca a due nomi (`sito_web` e
+`honeypot`), ri-validazione server con le stesse funzioni del wizard, gate dei consensi,
+`consents_log` con le versioni prese dalle **costanti server**, notifica alla segreteria della
+sede, successo loggato. Il **doppio invio risponde 201 come il primo** — un 409 su un modulo
+anonimo direbbe a chiunque, digitando l'indirizzo di una maestra, se quella persona è in
+valutazione.
+
+Quattro cose che il codice affermava e che una misura ha smentito:
+
+| Affermava | La misura | Adesso |
+|---|---|---|
+| «la sede fittizia E2E in produzione non esiste» — l'unica ragione per validare su `tutte` | `select id,nome from schools where id::text like 'e2e%'` → **esiste**: `e2e00000-…-001` «Kidville E2E», 4 utenti collegati, uno con `ruolo='admin'` | validazione su **`reali`**: la sede di collaudo e i plessi `attiva = false` non sono più scrivibili da anonimo |
+| il doppione si ritrova con `.eq('email', …)` | l'indice è `unique (lower(email))` e la colonna si scriveva **come digitata**: «Ines.Prova@…» prendeva `23505` e poi non si ritrovava → risposta `{"id": null}`, cioè una **forma diversa** dal primo invio, cioè l'oracolo che il 201 serve a togliere | l'email si normalizza a **minuscolo prima dell'INSERT**, e la rilettura usa lo stesso valore passato all'INSERT — non una seconda normalizzazione |
+| «nel log solo gli id dei campi» | `esito` concatenava gli id: **158** caratteri nel caso peggiore, **78** già con sei campi, contro i **64** di `FORMA_ENUMERATO` → sopra il tetto `redact()` cancella l'**intero** valore, classificazione del ramo compresa | esito troncato con il **conteggio dei tagliati** (`+7`): il prefisso è garantito, l'elenco entra finché ci sta |
+| il collaudo copriva questi rami | `.eq` era un no-op nel mock e il sinonimo `honeypot` non era mai inviato: **entrambe le mutazioni restavano verdi** | il finto memorizza colonna e valore e confronta **per byte** come `eq`; le tre mutazioni (predicato sbagliato, sinonimo rimosso, `reali`→`tutte`) sono ora **rosse** |
+
+Nei log `scuola_id` e non `sede_id` — il nome della colonna, uno solo: due nomi per la stessa cosa
+si scoprono quando la query su `app_log` torna vuota.
+
+⏭️ **Resta scoperto**: `src/app/lavora-con-noi` **non esiste** (misurato il 2026-08-10), quindi il
+prefisso pubblico omonimo è aperto su un 404. La voce resta in `PUBLIC_PREFIXES` — toglierla
+farebbe nascere la pagina dietro il login, difetto che da server non si vede — ed è ora
+**dichiarata** in `__tests__/architecture/prefissi-pubblici.test.ts`, insieme all'altro prefisso
+orfano trovato dalla stessa misura (`/forms`). Quel lock rende rosso ogni **nuovo** percorso
+anonimo aperto su niente.
+
+### 7. La conservazione: chi fa scadere le candidature, e l'informativa che ora lo dice
+
+Corsia «retention + informativa». Fino al 2026-08-10 il modulo **prometteva** un termine di
+conservazione e **nessuno lo applicava**: il consenso diceva 24 mesi, e le righe sarebbero rimaste
+per sempre. Una promessa di cancellazione senza un automa che la esegua non è un adempimento
+dell'art. 13 §2 lett. a: è una dichiarazione falsa scritta in un modulo pubblico.
+
+**I due termini applicati** — `POST /api/gdpr/retention-candidature`:
+
+| Caso | Termine | Da quando |
+|---|---|---|
+| candidatura **mai valutata** | **12 mesi** | dalla ricezione |
+| candidatura **non accolta**, senza consenso | **12 mesi** | dalla decisione |
+| candidatura non accolta, **col consenso** (o consenso ignoto, che vale consenso) | **24 mesi** | dalla decisione |
+
+Il **24** non è ribattuto nella route: è `CANDIDATURA_LIMITI.mesiConservazione`, la stessa costante
+interpolata nel testo che la persona spunta e che finisce congelato in `consents_log`. Il **12** è
+un letterale (`MESI_SENZA_CONSENSO`) perché nessun testo di consenso lo promette: lo dichiara
+l'informativa, in lettere. La route toglie **prima il curriculum dal bucket `form_attachments` e
+poi la riga**: l'ordine inverso lascerebbe file orfani che nessuna query sa più trovare.
+
+**Chi la chiama**: `supabase/migrations/20260810204727_candidature_retention_cron.sql`, che installa
+il job `candidature-retention` con schedule **`5 5 * * *`**. ✅ **Migrazione applicata in produzione
+il 2026-08-10** — verificato: `cron.job` riporta il job `active: true`, `schema_migrations` contiene
+`20260810204727`, e la funzione `candidature_retention_http` è `SECURITY DEFINER` con `EXECUTE`
+concesso **solo** a `service_role` (né `anon` né `authenticated`).
+⚠️ **La migrazione è in produzione mentre la route non è ancora deployata**: dal primo giro
+successivo al deploy della migrazione, la chiamata delle 05:05 UTC riceve un **404** finché il merge
+non avviene, e non lo vede nessuno — `net.http_post` è asincrono, l'`EXCEPTION` del blocco copre
+solo il rifiuto dell'accodamento, e l'esito HTTP finisce in `net._http_response`, che nessuno
+interroga.
+**Misurato il 2026-08-10 alle 21:21 UTC**: `cron.job_run_details` per questo job riporta **0
+esecuzioni** e `ultima_esecuzione` **`NULL`** — la migrazione è stata applicata alle ~20:47 UTC e il
+primo giro cade il **2026-08-11 alle 05:05 UTC**. Quindi al momento i 404 sono **zero**, non «da
+stanotte»: se il merge avviene prima di quell'ora, non ne esisterà mai nessuno. La finestra di
+rumore è nota e limitata, e il danno è comunque nullo (`count(*) FROM candidature_insegnanti` →
+**0** righe).
+Se invece la corsia restasse ferma, il controllo utile **non** è
+`SELECT … FROM net._http_response LIMIT 5`: quella tabella è dominata dai job a cadenza di 5 minuti
+(le ultime cinque righe del 10/08 sono tutte `200` di altri lavori) e il 404 di questo job non vi
+comparirebbe in cima. Va filtrato per il proprio giro, incrociando `cron.job_run_details` del job.
+
+**Il battito**: la route lascia il proprio battito in `app_log` dentro un `finally`, quindi anche a
+zero righe cancellate, e `candidature-retention` è in `JOB_CRON` (`src/lib/health/controlli.ts`) con
+finestra **26 h**: se smette di girare, `/api/health` lo dice col nome del job.
+⚠️ Fra il deploy e le 05:05 successive `/api/health` dirà **degradato** per questo job, e questo è
+l'unico degrado che questa corsia introduce. (`presenze-giustificazioni-retention`, l'unico altro
+job giornaliero sorvegliato, è sano: ultimo battito a 16,7 ore, dentro la sua finestra di 26 h — il
+pattern route+cron+battito funziona.)
+
+🔻 **Qui questa voce aveva scritto un guasto che non esiste, e la correzione vale più della frase
+corretta.** Diceva: «`notifiche-retention` ha come ultimo battito il 2026-08-08 04:28 — 64,9 ore
+prima, oltre il doppio della sua finestra di 26 h, quindi `/api/health` è **già** degradato», e
+mandava il rilievo «a chi possiede la corsia notifiche». Tre misure, tutte a portata di mano nei
+file che questa stessa corsia aveva aperto:
+
+| L'affermazione | La misura |
+|---|---|
+| `notifiche-retention` ha una finestra di 26 h | **non è in `JOB_CRON`**: sta in `JOB_CRON_NON_SORVEGLIATI` (`src/lib/health/controlli.ts:198`), ~25 righe SOPRA la voce `candidature-retention` aggiunta a riga 173. `/api/health` non lo guarda affatto, e nessuna finestra gli si applica |
+| 64,9 ore di silenzio sono un guasto | `SELECT jobname, schedule FROM cron.job` → **`35 4 1 * *`**, cioè **MENSILE**. Tre giorni senza battito sono il funzionamento normale, ed è esattamente la ragione — `app_log` conserva 30 giorni — per cui il job è dichiarato fuori sorveglianza |
+| «ultimo battito» = ultima esecuzione | le uniche due righe di quel job in `app_log` sono del 2026-08-07 21:55:30 e del 2026-08-08 04:28:14, cioè gli **istanti di apply** delle migrazioni `20260807215530` e `20260808042814`. In `cron.job_run_details` (che risale al 2026-06-07) il job ha **0 righe**: non è mai partito da schedule, il primo giro è il **2026-09-01 04:35** |
+
+Nessuna azione, nessuna corsia da avvisare: la **segnalazione girata alla corsia notifiche è
+ritirata**. Il difetto è lo stesso che due capoversi più su questa voce contesta a chi l'aveva
+esaminata — «sbaglia sui tempi» — commesso subito dopo, e per giunta depositato in un documento
+permanente: una finestra di 26 h applicata a un job mensile che il file accanto dichiara, per
+iscritto e con la ragione, non sorvegliabile. **Un cron che tace non è un cron fermo finché non si
+è letta la sua `schedule`.**
+
+**L'informativa** (`src/app/privacy/page.tsx`) ha ora la voce «candidature spontanee di personale»
+con i due termini in lettere. La voce **non** dice «automaticamente»: il lock
+`informativa-conservazione-dichiarata` pretende che l'automa esista **prima** che l'informativa lo
+prometta, e ciò che la persona ha diritto di sapere è il **termine**, non il meccanismo.
+
+⚠️ **`VERSIONE_PRIVACY` è stata alzata a `'2026-08-10'`** (solo quella: `src/app/termini/page.tsx` è
+invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31). Non è un formalismo: quella costante
+finisce dentro `consents_log.versione_informativa` di **ogni** candidatura e di **ogni** iscrizione.
+Lasciandola ferma, ogni riga avrebbe attestato l'accettazione di un documento che la voce sulle
+candidature non conteneva, mentre alla persona era mostrato quello che la contiene — la prova
+avrebbe detto il falso proprio sul punto per cui esiste. Alzarla **non** invalida i consensi già
+raccolti e non forza nessuno a riaccettare: `consensi_accettazioni` è append-only e la versione vi è
+congelata all'inserimento; nessun gate confronta la versione registrata con quella corrente.
+🔒 **E la svista è stata resa non ripetibile**: il lock `pagine-legali` confrontava
+`VERSIONE_PRIVACY` con una data scritta **dentro il lock stesso**, e per costruzione non poteva
+accorgersi che era cambiato un terzo file — misurato, girava **verde, 17 su 17**, con l'informativa
+già modificata nel merito e la versione ferma. Ora pinza anche l'**impronta sha256** del testo che
+l'utente legge davvero: i soli **nodi di testo del JSX** — fuori i commenti, fuori gli import e le
+costanti di stile, fuori i tag con i loro attributi.
+La prima stesura di questo lock **prometteva** quel perimetro e ne aveva un altro: hashava il
+sorgente meno i commenti, e una misura l'ha smentita — aggiungere una classe a un `className`
+spostava l'impronta da `97d68d52…` a `8a1f2574…`. Non è un dettaglio di precisione: il messaggio
+d'errore, in quel caso, invitava ad «aggiornare l'impronta di questa versione», cioè a
+**sovrascrivere l'impronta di una versione già citata in `consents_log`** — la cosa esatta che il
+lock esiste per impedire. Un lock che va aggirato per una spaziatura viene aggirato per abitudine, e
+poi anche quando conta.
+Adesso il perimetro non è affidato a una frase: una **prova di sanità** muta il sorgente in memoria e
+pretende che una classe in più, un import in più, una costante di stile diversa e un a capo nel JSX
+lascino l'impronta **identica**, mentre un termine di conservazione cambiato o la voce sulle
+candidature rimossa la cambino. Verificato anche sul file vero: la mutazione «ventiquattro→trentasei
+mesi» rende rosso il lock, la mutazione «una classe in più» no.
+E la data della versione non è più ribattuta in due punti: la chiave di `IMPRONTE_PRIVACY` è la sola
+fonte, il test sulle costanti verifica ora solo la **forma** della data.
+
+### 8. Il cockpit di segreteria: leggere, approvare, rifiutare
+
+La corsia che il §4 dava per futura. `GET`/`PATCH /api/admin/candidature-insegnanti`
+(`withRoute('admin/candidature-insegnanti:GET'|':PATCH')`, gate `requireStaff`, input `zod`).
+
+| | |
+|---|---|
+| `GET` | elenco **povero** — niente email, telefono o curriculum in lista: quei campi si aprono uno per volta, e il curriculum solo con un URL firmato a scadenza. Filtri `stato`, `q`, `limit`/`offset`; scope di sede **dentro** ogni query |
+| `PATCH … action:'approva'` | **solo Direzione**. Claim atomico `pending → in_approvazione` nella stessa istruzione che filtra la sede: due clic non creano due account. Poi `ensureStaffIdentity`, poi le credenziali via email, poi la chiusura |
+| `PATCH … action:'rifiuta'` | **solo Direzione**. Ammette `pending` **e** `in_approvazione` (una presa in carico rimasta appesa). Il motivo è una nota interna: sta in tabella, **non** nell'audit e **non** nei log |
+| Codici | `CANDIDATURA_NON_TROVATA` (404, identico per «non esiste» e «non è tua»: distinguerli direbbe a chi non ha titolo che quella candidatura c'è) · `CANDIDATURA_GIA_EVASA` (409) · `CANDIDATURA_EMAIL_GIA_STAFF` / `_GIA_GENITORE` (409) · `CANDIDATURE_OPERAZIONE_NON_RIUSCITA` (503) |
+
+**`ensureStaffIdentity`** (`src/lib/auth/staff-identity.ts`) è il gemello di `parent-identity` per
+lo staff: account `auth.users` + riga `utenti` con `ruolo`/`nome`/`cognome` (**mai** `role`,
+`first_name`, `last_name`: sono colonne generate). Non lancia mai — ogni esito è un valore, perché
+chi chiama deve poter rimettere la candidatura in `pending`. Due porte restano chiuse a chiave:
+email **già di uno staff** e uid **già di un genitore** non si toccano (un upsert sovrascriverebbe
+ruolo e sede di una persona già dentro il sistema; e la stessa persona può essere insegnante *e*
+madre di un bambino della Scuola — è una decisione umana, non una route). Se la riga `utenti` non
+riesce, l'account appena creato viene **annullato**: un 503 con dietro un account muto significa
+che la seconda «Approva» non genererà nessuna password e l'insegnante non entrerà mai.
+
+**Nessuna prosa di terze parti esce da queste route.** PostgREST e GoTrue rispondono in inglese,
+con dentro nomi di colonne, di vincoli e — su un `23505` — il **valore** che ha violato la chiave,
+cioè l'email di una persona vera. Alla segreteria torna una frase stabile con il suo `codice`; il
+testo esatto vive nell'ultimo argomento di `logEvento`. *Sei rami, e per due cicli sono stati
+chiusi in quattro*: mancavano il `catch` di `findAuthUserIdByEmail` — che **lancia** invece di
+ritornare `{ error }`, e lanciava `auth.admin.listUsers (pagina 1): A user with this email address
+has already been registered` diritto dentro `body.error` — e il `catch` finale, che serviva il
+messaggio di **qualunque** eccezione. Chiusi il 2026-08-10 con i due test che mancavano.
+
+**L'audit non afferma ciò che non è stato scritto.** Il degrado su colonna assente (DB della CI non
+migrato) toglie dalla scrittura la colonna che il database non ha e ritenta: `stato` è protetto,
+quindi l'`UPDATE` passa comunque e restituisce una riga. Ne segue che «la riga è passata ad
+approvata» e «la riga è legata all'account» sono **due** domande, e `cambiaStato` ora restituisce
+le colonne cadute per poterle distinguere. Con `utente_id` caduta, `valore_dopo` porta
+`utente_id: null` (com'è nella riga) e `account_uid: <uid>` (perché l'account esiste, le
+credenziali sono partite, e `app_log` si cancella a 30 giorni mentre l'audit no); l'operatore legge
+un `warning` che **nomina** la colonna. Stessa regola sul rifiuto: `motivo_presente` parla della
+riga, non dell'intenzione di chi ha premuto.
+
+⚠️ **Il cockpit filtra per sede**, al contrario di quanto il §4 prevedeva: il lock
+`isolamento-sede-coverage` non esenta questo handler. Le conseguenze sono scritte lì.
+
+---
+
+## 🪪 Changelog — Un pannello che segnala tutto non segnala niente: i codici fiscali hanno TRE stati 2026-08-10 (branch `feat/insegnanti-codice-fiscale`)
+
+Corsia sorella di quella qui sopra, e indipendente: la **verifica dei codici fiscali già in
+anagrafica**. Niente UI ancora — questa voce descrive la rotta e la colonna, non una pagina.
+
+**`GET /api/admin/anagrafiche/codici-fiscali`** (`withRoute('admin/anagrafiche/codici-fiscali:GET')`,
+gate `requireStaff`, query validata `zod`). Confronta il codice fiscale registrato con nome,
+cognome, sesso, data e luogo di nascita, e propone quello corretto quando lo sa calcolare.
+Parametri: `tipo` (`tutti`/`alunni`/`genitori`), `stato`, `scuola_id` (sempre **in AND** con lo
+scope di sede, mai al posto suo), `limit`/`offset`. Totale in `X-Total-Count`.
+
+**La decisione che regge tutto: tre stati, non due.** Misurato sul database di produzione il
+2026-08-10 — **33 alunni** (18 senza codice fiscale, 18 senza comune di nascita, 17 senza sesso
+registrato) e **50 genitori** (27 senza codice fiscale). Trattare «manca» come «sbagliato» avrebbe
+aperto il pannello con **45 record su 83 in rosso** per un dato che nessuno ha mai inserito, e un
+pannello che segnala tutto si impara a ignorare in una settimana — da lì in poi non segnala più
+nemmeno le cose vere. Quindi: `incoerente` (c'è un codice e non torna: è l'unico rosso, ed è
+azionabile) · `non-verificabile` (c'è un codice ma mancano i dati per confrontarlo) ·
+`da-compilare` (il codice non c'è: neutro, non un errore).
+
+**Migrazione `20260810094625_codice_belfiore_nascita.sql`** (già applicata in produzione): colonna
+`codice_belfiore_nascita` su `alunni` e `parents`. **`varchar(4)` e non `char(4)`, deliberatamente**:
+`alunni.codice_fiscale` è `character(16)` e **impagina con spazi**, per cui ogni `length() = 16`
+scritto su quella colonna mente — è il difetto che aveva reso invisibile metà del problema, e non si
+ripete. Nullable, **nessun default, nessun trigger di validazione e nessun backfill** (la decisione
+è «segnala sempre, non blocca mai»); solo un `check` sulla forma `^[A-Z][0-9]{3}$`. Al momento della
+scrittura le righe valorizzate sono **0 su 83**: il ramo che gira davvero sui dati veri è quello
+«colonna NULL + comune scritto a mano», e il codice catastale si risolve dal testo libero.
+
+**La verifica gira in Node, non in SQL**, e la conseguenza è dichiarata invece che nascosta:
+`verificaCoerenza` è pura e testata, riscriverla in PL/pgSQL sarebbe la seconda copia della stessa
+regola (lezione già pagata da questo repo). Ma «incoerente» così non è indicizzabile, quindi la
+paginazione è **in memoria** e la scansione ha un tetto: **2000 righe**, e quando morde la risposta
+lo **dichiara** (`troncato: true`) e la rotta lo **logga** a livello `warn` con le due coppie di
+conteggi separate (alunni letti/totali, legami letti/totali) — un elenco troncato non dà errore, dà
+meno righe, ed è il modo più silenzioso di mentire.
+
+**Gli uuid viaggiano a lotti da 150.** PostgREST riceve i filtri nella query string di una GET:
+2000 uuid dentro un `.in(…)` fanno ~76 KB di riga di richiesta e nessun proxy la accetta (soglia
+tipica 8 KB). Senza lotti il tetto vero non sarebbe stato 2000 ma **~180 alunni in scope**, con un
+500 esattamente dove il resto del file promette di degradare: un tetto dichiarato 2000 e vero 180 è
+peggio di nessun tetto, perché è un numero su cui qualcuno deciderà.
+
+**Nuovo modulo condiviso `src/lib/supabase/select-resiliente.ts`.** Il DB E2E della CI non è
+migrato: una `select` che cita `codice_belfiore_nascita` lì risponde `42703`. Il modulo ritenta
+senza la colonna caduta e **la NOMINA** nel log (`esito=colonna-assente:<colonna>`, dentro `esito`
+perché `redact()` è a lista bianca per chiave e un `campo: 'codice_belfiore_nascita'` finirebbe in
+`app_log` come `[redatto:str/23]`, cioè direbbe che qualcosa è caduto senza dire cosa). Convertiti
+`admin/parents:GET` (due call-site) e questa rotta. Il blocco in testa al modulo **non contiene un
+inventario delle copie ancora a mano**: contiene le grep per ricostruirlo, dopo che due stesure di
+fila avevano scritto elenchi e numeri già falsi il giorno stesso.
+
+**Osservabilità e privacy.** Successo loggato a `info` (solo conteggi, booleani e uuid di sede) con
+il limite scritto accanto: `anagrafica` è fra le deroghe di `eventi-log.test.ts` e **non** è in
+`EVENTI_PERSISTITI`, quindi quella riga vive sui Runtime Logs di Vercel e in `app_log` non arriva —
+le due che sopravvivono al deploy sono il `warn` di troncamento e l'`error` di lettura fallita.
+Errore di lettura → **500** con codice `VERIFICA_CODICI_FISCALI_NON_RIUSCITA` (tradotto IT+EN); il
+`message` di PostgREST resta nel log e non esce nella risposta. Nei test la spia sui dati personali
+è in **`afterEach`** e non dentro un solo `it`: finché guardava i soli eventi della richiesta di
+default ispezionava l'unico ramo che sul server non lascia traccia, e iniettare un cognome nel `warn`
+di troncamento lasciava la suite verde.
 
 ---
 

@@ -8,7 +8,8 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore, logEvento } from '@/lib/logging/logger';
+import { logErrore } from '@/lib/logging/logger';
+import { selectResiliente } from '@/lib/supabase/select-resiliente';
 
 // ============================================================
 // Anagrafica genitori — gated Segreteria+Direzione (DL-036) + audit
@@ -66,30 +67,9 @@ const COLONNE_ELENCO = ['id', 'first_name', 'last_name', 'emails', 'phone_number
 // l'intestatario di famiglia predefinito. Legge `id` e `intestatario_default`.
 const COLONNE_PER_ALUNNO = ['id', 'intestatario_default'];
 
-/**
- * Esegue una SELECT togliendo le colonne che questo database non ha (42703) e
- * riprovando, invece di restituire un 500. `select('*')` non falliva mai; una
- * proiezione esplicita sì — e il progetto E2E della CI non è migrato
- * (`intestatario_default` arriva dalla migrazione 20260718200000).
- */
-async function selectResiliente(
-    colonne: string[],
-    esegui: (cols: string[]) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>,
-    operazione: string,
-) {
-    let cols = [...colonne];
-    let esito = await esegui(cols);
-    let tentativi = 0;
-    while (esito.error && esito.error.code === '42703' && tentativi < 6) {
-        const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(esito.error.message)?.[1];
-        if (!col || !cols.includes(col)) break;
-        logEvento('db', 'info', { operazione, esito: 'colonna-assente-rimossa', campo: col });
-        cols = cols.filter((c) => c !== col);
-        esito = await esegui(cols);
-        tentativi++;
-    }
-    return esito;
-}
+// `selectResiliente` viveva qui fino al 2026-08-10, ed è stato ESTRATTO in
+// `@/lib/supabase/select-resiliente`: il pannello dei codici fiscali ne è
+// diventato il terzo chiamante, e la terza copia è quella che diverge.
 
 export const GET = withRoute('admin/parents:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request);
@@ -169,7 +149,11 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
         );
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        const conSede = ((data ?? []) as Record<string, unknown>[]).map((p) => ({
+        // `as unknown as` e non un cast diretto: `selectResiliente` è generica e
+        // conserva il tipo vero di PostgREST (che su una select dinamica include
+        // `GenericStringError[]`), invece di appiattirlo a `unknown` come faceva
+        // la copia locale. Il tipo è più preciso, il cast deve dirlo.
+        const conSede = ((data ?? []) as unknown as Record<string, unknown>[]).map((p) => ({
             ...p,
             scuole_ids: [...(sediPerGenitore.get(p.id as string) ?? [])],
         }));

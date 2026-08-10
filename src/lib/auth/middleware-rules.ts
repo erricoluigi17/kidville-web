@@ -24,6 +24,22 @@ const PUBLIC_PREFIXES = [
   '/m', // link pubblico dei modelli pubblicati (DL-030)
   '/api/public', // API token-scoped per i form pubblicati (DL-030)
   '/onboarding',
+  // Modulo pubblico «Lavora con noi»: chi si candida come insegnante non ha (e
+  // non deve avere) un account — l'account nasce solo se la Direzione approva.
+  // La sua API sta sotto `/api/iscrizione` e da lì eredita già il passaggio
+  // libero; questa voce serve alla PAGINA, che senza sarebbe reindirizzata al
+  // login e il modulo non lo vedrebbe nessuno.
+  //
+  // ⚠️ LA PAGINA NON ESISTE ANCORA — misurato il 2026-08-10: `src/app/lavora-con-noi`
+  // non è nell'albero, e questo percorso risponde 404. La voce è in anticipo
+  // sulla corsia che scriverà la pagina, ed è tenuta apposta: toglierla
+  // significherebbe che il modulo, il giorno in cui nasce, finisce dietro il
+  // login — un difetto che da server non si vede, perché lo si scopre solo
+  // aprendo la pagina da disconnessi. Un 404 pubblico non apre niente; una
+  // pagina di candidatura irraggiungibile la vede subito solo chi non è entrato.
+  // Lo stato è dichiarato in `__tests__/architecture/prefissi-pubblici.test.ts`,
+  // che tiene l'elenco delle voci senza pagina invece di lasciarle invisibili.
+  '/lavora-con-noi',
   '/privacy', // informativa GDPR pubblica (Privacy Policy URL per lo store)
   '/termini', // termini di servizio pubblici
   '/assistenza', // pagina di supporto pubblica (Support URL per lo store)

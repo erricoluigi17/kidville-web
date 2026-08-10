@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
+import { dataCivile } from '@/i18n/config'
 
 // =============================================================================
 // W2-M — `/api/agenda`: il risolutore nome→sezione non «ne prende una».
@@ -27,7 +28,23 @@ const ID_ADMIN = 'd0000000-0000-4000-8000-00000000ad00'
 const SEC_A = 'aaaa1111-0000-4000-8000-0000000000a1'
 const SEC_B = 'bbbb2222-0000-4000-8000-0000000000b2'
 const SEC_SOLO_A = 'aaaa3333-0000-4000-8000-0000000000a3'
-const GIORNO = '2026-08-10'
+/**
+ * Il giorno degli eventi di prova è OGGI, calcolato con la stessa funzione che usa la
+ * route (`dataCivile`, nel fuso della scuola) — non una data scritta a mano.
+ *
+ * ⚠️ PERCHÉ, e non è una raffinatezza: `GET /api/agenda` filtra `.gte('data', from)`
+ * con `from = dataCivile()`. Finché qui c'era la costante `'2026-08-10'`, questo file
+ * ha collaudato davvero l'isolamento fra sedi soltanto **il 10 agosto 2026**: a
+ * mezzanotte gli eventi di prova sono finiti nel passato, la GET ha restituito un
+ * elenco vuoto e due asserzioni sono diventate rosse — misurato, alle 00:01 dell'11
+ * agosto, mentre girava un lavoro che con l'agenda non c'entrava niente.
+ *
+ * È la stessa lezione già pagata in questo repo il 2026-08-09 con il fuso orario del
+ * banco di prova: un test legato al calendario non è un test, è una scadenza. E qui
+ * il danno era doppio, perché ciò che smetteva di essere collaudato — che una sede
+ * non veda gli eventi di un'altra — è esattamente la garanzia che vale di più.
+ */
+const GIORNO = dataCivile()
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),

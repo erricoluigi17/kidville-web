@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { mascheraSorgente } from '../fixtures/sorgente';
+
 /**
  * Coverage-lock del logging: OGNI export HTTP di OGNI route deve essere avvolto in `withRoute()`.
  *
@@ -111,11 +113,31 @@ describe('logging coverage lock', () => {
         // niente messaggio. `logErrore` è ciò che salva lo stack (e alza la marca che impedisce al
         // wrapper di aggiungere un doppione più povero). Una route che cattura senza loggare è cieca
         // esattamente dove serve vedere.
+        //
+        // ⚠️ SI LEGGE IL CODICE, NON LA PROSA — e fino al 2026-08-10 questa riga
+        // leggeva il sorgente GREZZO. Il difetto è simmetrico e va detto in tutti e
+        // due i versi: un `catch` nominato dentro un COMMENTO accendeva questo lock
+        // su una route che non ne ha nessuno (falso positivo, e il messaggio parlava
+        // di «catch muto», cioè mandava chi indaga a cercare una cosa che non c'è);
+        // e all'inverso un `logErrore(` nominato dentro un commento avrebbe ESENTATO
+        // una route che cattura davvero senza loggare — un falso VERDE, che su questo
+        // lock è il danno vero, visto che esiste per scoprire il codice cieco.
+        //
+        // MISURATO il 2026-08-10 sulle 288 route di `src/app/api`, prima di cambiare
+        // la riga: col sorgente grezzo l'insieme dei muti era `['anagrafiche/comuni']`
+        // — l'unica route del repo che nomina `catch` solo in un commento, per
+        // spiegare che il `catch` sta in `session-cookie.ts` ed è irraggiungibile —
+        // e col codice mascherato è VUOTO. Nel verso pericoloso: le route con un
+        // `catch` vero esentate SOLO da un `logErrore(`/`logEvento(` scritto in un
+        // commento sono ZERO, quindi questa correzione non toglie il presidio a
+        // nessuno. È la stessa cura applicata lo stesso giorno a `USA_SERVICE_ROLE`
+        // in `isolamento-sede-coverage`, dove il falso positivo aveva già fatto
+        // scrivere un numero sbagliato in un inventario.
         const muti: string[] = [];
         for (const f of FILES) {
-            const src = fs.readFileSync(f, 'utf8');
-            if (!/\bcatch\b/.test(src)) continue;
-            if (/\blogErrore\s*\(/.test(src) || /\blogEvento\s*\(/.test(src)) continue;
+            const { senzaCommenti } = mascheraSorgente(fs.readFileSync(f, 'utf8'));
+            if (!/\bcatch\b/.test(senzaCommenti)) continue;
+            if (/\blogErrore\s*\(/.test(senzaCommenti) || /\blogEvento\s*\(/.test(senzaCommenti)) continue;
             muti.push(path.relative(API_ROOT, f));
         }
         expect(muti, 'route con un catch che non logga (AGENTS regola 6)').toEqual([]);

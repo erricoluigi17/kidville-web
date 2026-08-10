@@ -158,6 +158,19 @@ export const JOB_CRON: readonly JobCron[] = [
     // famiglie che quella cancellazione è automatica. Una promessa mantenuta da un lavoro che
     // nessuno guarda è una promessa a scadenza. 26 h come gli altri giornalieri.
     { nome: 'presenze-giustificazioni-retention', finestraMs: 26 * ORA },
+    // `candidature-retention` (`POST /api/gdpr/retention-candidature`): fa scadere la
+    // candidatura spontanea di una persona adulta e il CURRICULUM che ha allegato.
+    //
+    // ⚠️ DEV'ESSERE SCHEDULATO GIORNALIERO, e la ragione non è di gusto: `app_log`
+    // conserva 30 giorni, quindi un lavoro MENSILE non è sorvegliabile da qui — è
+    // esattamente perché il gemello `iscrizioni-retention` gira il primo del mese che
+    // sta in `JOB_CRON_NON_SORVEGLIATI` invece che qui. Con la cadenza giornaliera la
+    // finestra è 26 h come gli altri: assorbe un giro saltato, non due.
+    //
+    // A differenza del gemello, il battito di questo lavoro dichiara `esito: 'ok'`
+    // (lo scrive `logEvento` da una route, non un `jsonb_build_object` da SQL), quindi
+    // `controlloBattitoCron` lo conta davvero.
+    { nome: 'candidature-retention', finestraMs: 26 * ORA },
 ]
 
 /**

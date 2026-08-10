@@ -182,6 +182,15 @@ export const EVENTI_PERSISTITI = new Set([
     'email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa', 'news', 'chat',
     'gdpr', 'segnalazione', 'galleria', 'modulistica', 'multi_sede', 'avvisi', 'storage',
     'registro',
+    // `candidatura` entra ORA, con la route che porta il battito — non prima, che
+    // era l'errore descritto nel blocco ⚠️ qui sopra. Il ramo felice di
+    // `POST /api/iscrizione/insegnanti` emette `logEvento('candidatura','info',…)`
+    // con `esito: 'candidatura-ricevuta'`: è la sola prova che il modulo pubblico
+    // riceve candidature, perché nessuna schermata si riempie a vista e nessuno
+    // telefona se non arriva niente. Il bicondizionale è sorvegliato da
+    // `__tests__/lib/insegnanti-template.test.ts`, che diventa rosso in ENTRAMBE
+    // le direzioni: evento promosso senza battito, e battito senza promozione.
+    'candidatura',
 ]);
 
 /**

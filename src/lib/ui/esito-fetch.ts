@@ -589,6 +589,32 @@ export const CODICI_ERRORE = {
      * sbagliata metà delle volte.
      */
     CANDIDATURA_EMAIL_GIA_GENITORE: 'erroreCandidaturaEmailGiaGenitore',
+    /**
+     * 503 — il COCKPIT delle candidature (segreteria e Direzione) non è riuscito
+     * a leggere o a evadere: tabella non ancora migrata, lettura fallita, claim
+     * non riuscito, curriculum non firmabile, account non creato.
+     *
+     * NON riusa `CANDIDATURE_NON_DISPONIBILI`, che è della PORTA PUBBLICA: quella
+     * frase dice «non possiamo ricevere candidature… oppure scrivi alla segreteria
+     * della scuola», cioè manda la segreteria a scrivere a sé stessa, e la sua
+     * documentazione dichiara che riprovare non serve a niente — mentre qui
+     * riprovare è esattamente il rimedio. Un codice solo per due situazioni con
+     * rimedi opposti è la stessa bugia del 404 su un guasto, con un altro numero.
+     */
+    CANDIDATURE_OPERAZIONE_NON_RIUSCITA: 'erroreCandidatureOperazioneNonRiuscita',
+    /**
+     * 500 — l'anagrafica non si è potuta leggere, quindi il pannello «Codici
+     * fiscali da verificare» (`GET /api/admin/anagrafiche/codici-fiscali`) non ha
+     * verificato NIENTE.
+     *
+     * Ha un codice suo, e a livello 500, perché il guasto è NOSTRO e va detto
+     * come tale. Un elenco vuoto sarebbe indistinguibile da «va tutto bene»:
+     * esattamente il contrario di ciò che è successo, e la lettura più
+     * pericolosa che quel pannello possa dare. Il `message` di PostgREST resta
+     * nel log — è prosa inglese con dentro nomi di colonne — e la frase qui
+     * dice solo che non si è potuto guardare.
+     */
+    VERIFICA_CODICI_FISCALI_NON_RIUSCITA: 'erroreVerificaCodiciFiscaliNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

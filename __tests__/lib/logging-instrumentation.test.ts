@@ -28,16 +28,24 @@ vi.mock('@/lib/supabase/server-client', () => ({
     createLogClient: () => createLogClient(),
 }));
 
+import { VARIABILI_CRITICHE } from '@/lib/health/controlli';
+
 type Modulo = typeof import('@/instrumentation');
 
-const VARIABILI = [
-    'SUPABASE_SERVICE_ROLE_KEY',
-    'NEXT_PUBLIC_SUPABASE_URL',
-    'RESEND_API_KEY',
-    'OTP_FROM_EMAIL',
-    'CRON_SECRET',
-    'LOG_HASH_SALT',
-] as const;
+/**
+ * Le variabili critiche, IMPORTATE dalla fonte di verità invece che ricopiate.
+ *
+ * Qui c'era una TERZA copia dell'elenco (le altre due sono `variabiliCritiche()` in
+ * `src/instrumentation.ts` e `VARIABILI_CRITICHE` in `src/lib/health/controlli.ts`, tenute
+ * insieme da un lock in `__tests__/api/health.test.ts`). Il lock però sorvegliava solo
+ * quelle due: aggiungendo `ARUBA_PASSWORD` alle prime, questo file ha continuato a
+ * preparare un ambiente in cui la settima variabile MANCAVA, e due test sono diventati
+ * rossi lamentando un conteggio — cioè segnalando il posto sbagliato.
+ *
+ * L'elenco che prepara l'ambiente di prova non deve essere una copia: deve essere
+ * l'elenco vero. Così un'aggiunta futura non può più rompere questo file.
+ */
+const VARIABILI = VARIABILI_CRITICHE;
 
 const originali = new Map<string, string | undefined>();
 

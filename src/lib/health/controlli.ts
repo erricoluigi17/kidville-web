@@ -248,6 +248,21 @@ export const VARIABILI_CRITICHE = [
     'OTP_FROM_EMAIL',
     'CRON_SECRET',
     'LOG_HASH_SALT',
+    // La password del pannello Aruba: senza, NESSUNA fattura elettronica può partire,
+    // e il guasto è del tipo che questo elenco esiste per intercettare — non si vede
+    // finché qualcuno non preme «Fattura», e allora è già il momento sbagliato.
+    //
+    // ⚠️ Perché c'è la password e NON `ARUBA_USERNAME`. `resolveArubaCredentials`
+    // (`src/lib/aruba/client.ts`) legge `config.username || ARUBA_USERNAME`: l'utenza sta
+    // già in `admin_settings.aruba_config.username`, quindi la variabile d'ambiente è un
+    // ripiego e la sua assenza non rompe niente. La password invece non ha nessun ripiego
+    // in banca dati — e non deve averlo: un segreto non si scrive in una tabella.
+    //
+    // ⚠️ Il nome è accoppiato a `aruba_config.password_ref`, che oggi vale esattamente
+    // `ARUBA_PASSWORD`. Se un giorno quella chiave venisse cambiata, questo elenco va
+    // cambiato con lei: altrimenti sorveglierebbe una variabile che nessuno legge più —
+    // cioè suonerebbe l'allarme sbagliato, che è peggio del silenzio.
+    'ARUBA_PASSWORD',
 ] as const
 
 /* ════════════════════════════════════════════════════════════════════════════

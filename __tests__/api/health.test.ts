@@ -465,6 +465,28 @@ describe('GET /api/health', () => {
         expect([...nomi].sort()).toEqual([...VARIABILI_CRITICHE].sort())
     })
 
+    it('la password Aruba è sorvegliata, e l\'utenza deliberatamente NO', () => {
+        // Il lock qui sopra pretende che le DUE copie coincidano — ma resterebbe verde
+        // anche se qualcuno togliesse una variabile da entrambe. Per la fatturazione
+        // elettronica quel silenzio costa caro: senza `ARUBA_PASSWORD` nessun documento
+        // parte, e non lo si scopre finché la segreteria non preme «Fattura», cioè quando
+        // sta già cercando di emettere. Questa riga è ciò che impedisce di perderla.
+        expect(
+            VARIABILI_CRITICHE,
+            'senza ARUBA_PASSWORD nessuna fattura elettronica può essere emessa',
+        ).toContain('ARUBA_PASSWORD')
+
+        // E l'assenza dell'utenza è voluta, non una dimenticanza: `resolveArubaCredentials`
+        // legge `config.username || ARUBA_USERNAME`, e lo username sta già in
+        // `admin_settings.aruba_config.username`. Sorvegliare un ripiego significherebbe
+        // suonare l'allarme per una configurazione che funziona — e un allarme che suona a
+        // torto è un allarme che qualcuno spegne.
+        expect(
+            VARIABILI_CRITICHE,
+            "ARUBA_USERNAME ha un ripiego in banca dati: sorvegliarlo produrrebbe un falso allarme",
+        ).not.toContain('ARUBA_USERNAME')
+    })
+
     it('i job sorvegliati esistono davvero: una route HTTP, oppure una funzione SQL che batte', () => {
         // Un nome di job sbagliato produce un allarme permanente su un job che non
         // esiste: rumore che porta a spegnere l'allarme. I nomi vengono da `app_log` in

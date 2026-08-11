@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createRef } from 'react'
-import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 import itAdminStudents from '../../messages/it/adminStudents.json'
@@ -25,7 +25,6 @@ import enAdminStudents from '../../messages/en/adminStudents.json'
  */
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'e' }))
-vi.mock('@/lib/utils/fiscalCodeApi', () => ({ fetchFiscalCode: vi.fn(async () => '') }))
 
 // Stato del contesto sedi, riscrivibile per test (il mock legge la variabile).
 let sediAttive: {
@@ -60,6 +59,12 @@ const SEZIONI: Record<string, { id: string; name: string; school_type: string; s
   ],
 }
 
+/** Toponimi e codici catastali: dati aperti dell'Agenzia, nessuna persona. */
+const COMUNI_NA = [
+  { belfiore: 'H501', nome: 'NAPOLI', sigla: 'NA', attivo: true },
+  { belfiore: 'E054', nome: 'GIUGLIANO IN CAMPANIA', sigla: 'NA', attivo: true },
+]
+
 const fetchMock = vi.fn()
 
 beforeEach(() => {
@@ -72,7 +77,13 @@ beforeEach(() => {
     sedeCorrente: null,
   }
   fetchMock.mockImplementation((url: string) => {
-    const sede = new URL(String(url), 'http://t.test').searchParams.get('scuola_id')
+    const u = new URL(String(url), 'http://t.test')
+    // La cascata del luogo di nascita passa di qui: il dataset dei comuni non
+    // entra nel bundle del browser, si chiede alla rotta.
+    if (u.pathname === '/api/anagrafiche/comuni') {
+      return Promise.resolve({ ok: true, json: async () => ({ comuni: COMUNI_NA }) })
+    }
+    const sede = u.searchParams.get('scuola_id')
     return Promise.resolve({
       ok: true,
       // Senza `scuola_id` il vero server risponde con TUTTE le sedi attive: è
@@ -85,13 +96,36 @@ beforeEach(() => {
 
 import { ScrollableStudentForm, type StudentFormHandle } from '@/components/features/admin/ScrollableStudentForm'
 
-/** Compila i campi minimi che lo schema zod richiede (tutti tranne la sede). */
-function compilaAnagrafica() {
+/**
+ * Compila i campi minimi che lo schema zod richiede (tutti tranne la sede).
+ *
+ * ⚠️ È ASINCRONA da quando il luogo di nascita è un campo solo: comune e
+ * provincia non sono più due caselle di testo, sono la cascata
+ * `<LuogoNascitaFields>` — e l'elenco dei comuni arriva da
+ * `GET /api/anagrafiche/comuni`, cioè da una fetch. Il banco monta il componente
+ * VERO e non un finto: le prop che questa scheda gli passa devono restare quelle
+ * giuste anche quando l'altro file cambia.
+ */
+async function compilaAnagrafica() {
   fireEvent.change(document.querySelector('input[name="nome"]')!, { target: { name: 'nome', value: 'Ada' } })
   fireEvent.change(document.querySelector('input[name="cognome"]')!, { target: { name: 'cognome', value: 'Verdi' } })
   fireEvent.change(document.querySelector('input[name="data_nascita"]')!, { target: { value: '01/01/2022' } })
-  fireEvent.change(document.querySelector('input[name="comune_nascita"]')!, { target: { name: 'comune_nascita', value: 'Napoli' } })
-  fireEvent.change(document.querySelector('input[name="provincia_nascita"]')!, { target: { name: 'provincia_nascita', value: 'NA' } })
+  await scegliLuogoNascita()
+}
+
+/** Apre la tendina di un Combobox dal suo pulsante «Mostra o nascondi l'elenco». */
+function apriTendina(campo: HTMLElement) {
+  const contenitore = campo.closest('div')?.parentElement as HTMLElement
+  fireEvent.click(within(contenitore).getByRole('button', { name: 'Mostra o nascondi l’elenco' }))
+}
+
+/** Provincia → comune, come li sceglie un operatore. */
+async function scegliLuogoNascita() {
+  apriTendina(screen.getByRole('combobox', { name: 'Provincia di nascita' }))
+  fireEvent.click(screen.getByRole('option', { name: /Napoli \(NA\)/ }))
+  await waitFor(() => expect(screen.getByRole('combobox', { name: /Comune di nascita/ })).toBeEnabled())
+  apriTendina(screen.getByRole('combobox', { name: /Comune di nascita/ }))
+  fireEvent.click(screen.getByRole('option', { name: 'NAPOLI' }))
 }
 
 const selectSede = () => document.querySelector('select[name="scuola_id"]') as HTMLSelectElement
@@ -105,10 +139,10 @@ describe('ScrollableStudentForm — la sede si dichiara, non si indovina', () =>
     expect(selectSede().value).toBe('')
   })
 
-  it('senza sede scelta il salvataggio è BLOCCATO e nessun payload esce dal form', () => {
+  it('senza sede scelta il salvataggio è BLOCCATO e nessun payload esce dal form', async () => {
     const ref = createRef<StudentFormHandle>()
     render(<ScrollableStudentForm ref={ref} />)
-    compilaAnagrafica()
+    await compilaAnagrafica()
 
     let esito: ReturnType<StudentFormHandle['validate']> | undefined
     act(() => {
@@ -157,7 +191,7 @@ describe('ScrollableStudentForm — la sede si dichiara, non si indovina', () =>
     expect(selectSede().value).toBe(SEDE_A)
     await waitFor(() => expect(urlChiamate()).toContain(`/api/admin/sections?scuola_id=${SEDE_A}`))
 
-    compilaAnagrafica()
+    await compilaAnagrafica()
     let esito: ReturnType<StudentFormHandle['validate']> | undefined
     act(() => {
       esito = ref.current!.validate()
@@ -172,7 +206,7 @@ describe('ScrollableStudentForm — la sede si dichiara, non si indovina', () =>
     fireEvent.change(selectSede(), { target: { name: 'scuola_id', value: SEDE_B } })
     await waitFor(() => expect(opzioniSezione()).toContain('PRIMAVERA (nido)'))
     fireEvent.change(selectSezione(), { target: { name: 'classe_sezione', value: 'PRIMAVERA' } })
-    compilaAnagrafica()
+    await compilaAnagrafica()
 
     let esito: ReturnType<StudentFormHandle['validate']> | undefined
     act(() => {

@@ -6,9 +6,9 @@ import { assertAlunnoInScope, assertParentInScope, resolveScuoleAttive } from '@
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
-import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
+import { colonnaSconosciuta, linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 import { selectResiliente } from '@/lib/supabase/select-resiliente';
 
 // ============================================================
@@ -232,12 +232,40 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
 
         const updates: Record<string, unknown> = { ...dataToUpdate };
         let { data, error } = await supabase.from('parents').update(updates).eq('id', id).select();
-        // Resilienza pre-migration: rimuove le colonne non ancora esistenti (42703) e riprova.
+        /**
+         * ─── RESILIENZA ALLE COLONNE CHE L'AMBIENTE NON CONOSCE ─────────────────
+         *
+         * ⚠️ FINO ALL'11 AGOSTO QUESTO CICLO GUARDAVA SOLO `42703`, ed è il codice
+         * sbagliato. `42703` lo emette Postgres, e su un UPDATE arriva raramente:
+         * PostgREST valida il corpo contro la propria cache dello schema PRIMA di
+         * parlare col database, e quando una chiave lì non è una colonna risponde
+         * **`PGRST204`**. Due conseguenze misurate, non dedotte:
+         *
+         *  · in PRODUZIONE, `app_log` porta `route=/api/admin/parents`,
+         *    `codice=PGRST204`, «Could not find the 'student_parents' column of
+         *    'parents' in the schema cache», `stato_http=400` → 500 al chiamante.
+         *    `audit_scritture_docente` (scritto SOLO dopo un update riuscito) ha
+         *    405 righe dal 5 luglio, 255 `update`, e **nessuna** su `genitori`:
+         *    da questa rotta un genitore non è mai stato aggiornato.
+         *  · nel DB E2E della CI, che è un progetto SEPARATO e NON migrato,
+         *    `codice_belfiore_nascita` non esiste: senza questo ramo, aggiungerlo
+         *    al corpo avrebbe reso 500 OGNI salvataggio di genitore in CI.
+         *
+         * `colonnaSconosciuta` è la stessa funzione che usa `insertParentResilient`:
+         * una regola valida per due strade vive in un posto solo.
+         */
         let attempts = 0;
-        while (error && (error as { code?: string }).code === '42703' && attempts < 6) {
-            const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
-            if (!col || !(col in updates)) break;
+        for (;;) {
+            const col = colonnaSconosciuta(error as { code?: string; message?: string } | null);
+            if (!col || !(col in updates) || attempts >= 6) break;
             delete updates[col];
+            // Un campo che l'ambiente non sa dove mettere non sparisce in silenzio:
+            // a log va il solo NOME della colonna, che non è un dato di persona.
+            logEvento('anagrafica', 'warn', {
+                operazione: 'admin/parents:PATCH',
+                azione: 'colonna-assente-scartata',
+                esito: col,
+            });
             ({ data, error } = await supabase.from('parents').update(updates).eq('id', id).select());
             attempts++;
         }
@@ -250,7 +278,10 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
             entitaId: id,
             azione: 'update',
             valorePrima: prima ?? null,
-            valoreDopo: dataToUpdate,
+            // `updates`, non `dataToUpdate`: se una colonna è stata scartata perché
+            // l'ambiente non la conosce, l'audit deve dire quello che è stato scritto
+            // davvero, non quello che era stato chiesto.
+            valoreDopo: updates,
         });
 
         return NextResponse.json({ success: true, data });

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { useForm, type FieldValues } from 'react-hook-form'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
+import { PROVINCE, normalizzaProvincia } from '@/lib/anagrafiche/province'
 import type { FormField } from '@/types/database.types'
 
 // Harness minimale: un solo FieldRenderer dentro un form RHF + un bottone che
@@ -149,5 +150,59 @@ describe('FieldRenderer — associazione label ↔ campo', () => {
   it('(i) provincia (Controller): getByLabelText trova l\'input', () => {
     render(<Harness field={provincia} />)
     expect(screen.getByLabelText(/Provincia di Residenza/)).toBeInstanceOf(HTMLInputElement)
+  })
+
+  /*
+   * ─── L'AUTOCOMPLETAMENTO SUL CAMPO PROVINCIA ────────────────────────────────
+   *
+   * Il campo dichiara `address-level1` (SC 1.3.5: lo scopo di un campo che
+   * raccoglie un dato della persona va dichiarato) e ha una regola sua — si
+   * scrive per esteso e si riduce a sigla su blur. Il rischio, sollevato e non
+   * misurato, è che il browser ci scriva un valore che quella regola non
+   * riconosce: la validazione bloccherebbe l'avanzamento su un campo
+   * FACOLTATIVO che chi compila non ha mai toccato.
+   *
+   * Qui sotto quel rischio si misura per quel che si può misurare senza un
+   * browser vero (in jsdom l'autofill non esiste): che cosa il campo accetta.
+   * Per l'Italia l'«admin area» di Chromium — la lista da cui `address-level1`
+   * pesca — È l'elenco delle province, con la sigla per chiave e il nome per
+   * etichetta: quindi i valori possibili sono «NA» oppure «Napoli», mai
+   * «Campania», che è una regione e in quell'elenco non compare.
+   */
+
+  it('(m) autofill: TUTTE le 107 province sono riconosciute in sigla, nome e nome maiuscolo', () => {
+    const falliti: string[] = []
+    for (const p of PROVINCE) {
+      if (normalizzaProvincia(p.sigla) !== p.sigla) falliti.push(`sigla:${p.sigla}`)
+      if (normalizzaProvincia(p.nome) !== p.sigla) falliti.push(`nome:${p.nome}`)
+      if (normalizzaProvincia(p.nome.toUpperCase()) !== p.sigla) falliti.push(`NOME:${p.nome}`)
+    }
+    expect(PROVINCE.length).toBe(107)
+    expect(falliti).toEqual([])
+  })
+
+  it('(n) NIENTE `maxlength` sul campo provincia: troncare «Campania» darebbe «CA», cioè Cagliari', () => {
+    // La ragione per cui `max_length: 2` del template NON diventa un attributo
+    // del DOM. Con `maxlength` un riempimento automatico che scrivesse una
+    // regione verrebbe troncato a due lettere e accettato come una provincia
+    // VERA, in silenzio; senza, resta intero, `normalizzaProvincia` non lo
+    // riconosce e la validazione lo blocca nominandolo — un errore visibile e
+    // correggibile è meglio di un dato sbagliato che nessuno vedrà mai.
+    render(<Harness field={provincia} />)
+    expect(screen.getByLabelText(/Provincia di Residenza/)).not.toHaveAttribute('maxlength')
+    expect(normalizzaProvincia('Campania')).toBeNull()
+    expect(normalizzaProvincia('Campania'.slice(0, 2))).toBe('CA')
+  })
+
+  it('(o) lo scopo dichiarato dal template arriva nel DOM; senza dichiarazione resta `off`', () => {
+    const conScopo = render(<Harness field={{ ...provincia, autocomplete: 'address-level1' }} />)
+    expect(screen.getByLabelText(/Provincia di Residenza/)).toHaveAttribute(
+      'autocomplete',
+      'address-level1',
+    )
+    conScopo.unmount()
+
+    render(<Harness field={provincia} />)
+    expect(screen.getByLabelText(/Provincia di Residenza/)).toHaveAttribute('autocomplete', 'off')
   })
 })

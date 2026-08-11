@@ -13,33 +13,43 @@ import path from 'node:path'
  * ── PERCHÉ ESISTE QUESTO FILE ───────────────────────────────────────────────
  *
  * Perché una riga può sopravvivere alla cosa che giustificava. Misurato il
- * 2026-08-10: DUE prefissi su tredici non corrispondono a nessuna pagina.
+ * 2026-08-10: DUE prefissi su tredici non corrispondevano a nessuna pagina.
  *
- *   `/lavora-con-noi`  aggiunto insieme alla ROUTE del modulo di candidatura,
- *                      in anticipo sulla PAGINA, che al 2026-08-10 non esiste
- *                      (`src/app/lavora-con-noi` non è nell'albero: la corsia
- *                      che la scrive è un'altra). Oggi quel percorso risponde
- *                      404 — a chiunque, e senza login.
+ *   `/lavora-con-noi`  aggiunto insieme alla ROUTE del modulo di candidatura, in
+ *                      anticipo sulla PAGINA. ✅ CHIUSO l'11/08/2026: la pagina
+ *                      esiste (`src/app/lavora-con-noi/page.tsx`, e `npm run
+ *                      build` elenca `ƒ /lavora-con-noi`), la deroga è stata
+ *                      TOLTA, e da oggi questo prefisso è sorvegliato come tutti
+ *                      gli altri: se quella cartella sparisce, il test qui sotto
+ *                      diventa rosso.
  *   `/forms`           più vecchio: in `src/app` esiste solo `api/forms`, già
  *                      coperto dalla voce `/api/forms`. Le pagine dei moduli
  *                      stanno sotto `(dashboard)/admin/forms` e
  *                      `(dashboard)/parent/forms`, che sono percorsi PROTETTI e
  *                      non cominciano per `/forms`.
  *
- * Nessuno dei due è pericoloso oggi: un prefisso pubblico su un 404 non apre
- * niente. Il punto è che nessuno se n'era accorto, e nessuno se ne sarebbe
- * accorto — a differenza degli handler API, sorvegliati da `gate-coverage`,
- * questo elenco non aveva un solo test addosso (`grep -rn PUBLIC_PREFIXES
- * __tests__` non trovava nulla).
+ * Non è pericoloso oggi: un prefisso pubblico su un 404 non apre niente. Il
+ * punto è che nessuno se n'era accorto, e nessuno se ne sarebbe accorto — a
+ * differenza degli handler API, sorvegliati da `gate-coverage`, questo elenco
+ * non aveva un solo test addosso (`grep -rn PUBLIC_PREFIXES __tests__` non
+ * trovava nulla).
  *
  * ── COSA GARANTISCE, E COSA NO ──────────────────────────────────────────────
  *
  * Garantisce che un prefisso pubblico NUOVO senza pagina diventi rosso subito.
- * NON fa cadere i due noti: sono dichiarati qui sotto per nome, con la data
- * della misura e il motivo. Un'eccezione scritta non è un'assoluzione — è la
+ * NON fa cadere quello noto: è dichiarato qui sotto per nome, con la data della
+ * misura e il motivo. Un'eccezione scritta non è un'assoluzione — è la
  * differenza fra un difetto che sta in un elenco e uno che non sta da nessuna
- * parte. Se una delle due voci resterà qui quando la sua pagina esisterà, sarà
- * perché qualcuno l'avrà riletta: è più di quanto valesse prima.
+ * parte.
+ *
+ * ⚠️ E UNA DEROGA SI TOGLIE IL GIORNO IN CUI SMETTE DI ESSERE VERA, non quando
+ * qualcuno ci ripassa. Finché `/lavora-con-noi` è rimasto qui dentro, questo
+ * lock lo scavalcava con un `continue`: la pagina è nata e il prefisso sarebbe
+ * restato esentato PER SEMPRE — cancellando `src/app/lavora-con-noi/` la suite
+ * sarebbe rimasta verde con un percorso pubblico che non apre più niente. Una
+ * deroga scaduta non è una nota: è un presidio spento che ha l'aria di essere
+ * acceso. Il test «le eccezioni dichiarate sono ANCORA nell'elenco» guarda un
+ * verso solo; questo paragrafo guarda l'altro.
  */
 
 const RADICE = process.cwd()
@@ -65,9 +75,6 @@ function prefissiPubblici(): string[] {
  * ancora a niente.
  */
 const SENZA_PAGINA_DICHIARATI: Record<string, string> = {
-  '/lavora-con-noi':
-    'la PAGINA del modulo di candidatura non esiste ancora (misurato 2026-08-10); ' +
-    'la route API sta sotto /api/iscrizione ed è già pubblica per quella voce',
   '/forms':
     'in src/app esiste solo api/forms, già coperto da /api/forms; le pagine dei ' +
     'moduli sono sotto (dashboard) e sono protette (misurato 2026-08-10)',
@@ -136,14 +143,26 @@ describe('lock — i prefissi pubblici e ciò che proteggono', () => {
     }
   })
 
-  it('la pagina di «Lavora con noi», quando nascerà, resta pubblica', () => {
-    // L'invariante che conta davvero, e che vale in entrambi gli stati del
-    // mondo: il modulo di candidatura è ANONIMO per costruzione — chi si propone
-    // come insegnante non ha un account, e l'account nasce solo se la Direzione
-    // approva. Se quella pagina finisse dietro il login non la vedrebbe nessuno,
-    // e il difetto sarebbe invisibile da server: la si vede solo aprendola da
-    // disconnessi. Questa riga impedisce che la voce sparisca dall'elenco
-    // mentre la pagina viene scritta in un'altra corsia.
+  it('la pagina di «Lavora con noi» esiste ED è pubblica (niente più deroga)', () => {
+    // L'invariante che conta davvero: il modulo di candidatura è ANONIMO per
+    // costruzione — chi si propone come insegnante non ha un account, e
+    // l'account nasce solo se la Direzione approva. Se quella pagina finisse
+    // dietro il login non la vedrebbe nessuno, e il difetto sarebbe invisibile
+    // da server: la si vede solo aprendola da disconnessi.
     expect(prefissiPubblici()).toContain('/lavora-con-noi')
+    // ⚠️ E ADESSO LE DUE METÀ SI TENGONO INSIEME. Fino all'11/08/2026 la voce
+    // stava in `SENZA_PAGINA_DICHIARATI` e il controllo generale la scavalcava:
+    // la pagina è nata e la deroga sarebbe rimasta, cioè un `continue` per
+    // sempre su un prefisso pubblico vero. La riga qui sotto è la stessa
+    // domanda del controllo generale, fatta per nome su questa rotta, così che
+    // rimettere la deroga non basti a far tacere il lock.
+    expect(
+      esistePagina('/lavora-con-noi'),
+      'il prefisso pubblico c’è ma la pagina no: o nasce la pagina, o si toglie la voce',
+    ).toBe(true)
+    expect(
+      Object.keys(SENZA_PAGINA_DICHIARATI),
+      'la pagina esiste: la deroga non ha più ragione di stare qui',
+    ).not.toContain('/lavora-con-noi')
   })
 })

@@ -171,8 +171,18 @@
 // blocco esiste per proteggere: i cataloghi di /offline sono serviti dalla
 // CacheStorage, e senza un Service Worker nuovo la pagina vecchia resterebbe su
 // ogni dispositivo che l'ha già salvata. La cache riparte pulita.
-const VERSIONE = 'v7';
-// IMPRONTA-PAGINA-OFFLINE: 03ef4f9ba7c227073781f84bb21ebdbceb03653b9f131e1d2b1e5c54ad0d92bb
+// 2026-08-11 — nasce `/lavora-con-noi`, il modulo pubblico di candidatura delle
+// insegnanti, e i due cataloghi di /offline guadagnano la sua etichetta
+// («Lavora con noi» / «Work with us»). Senza, il lock
+// `offline-etichette-rotte` è rosso e la pagina renderebbe quella rotta
+// capitalizzando l'URL — cioè, in inglese, in italiano.
+//
+// `VERSIONE` sale a `v8` per la ragione di sempre, che è tutta di questo blocco:
+// i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
+// questo file restano identici il browser non reinstalla niente. La copia
+// vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
+const VERSIONE = 'v8';
+// IMPRONTA-PAGINA-OFFLINE: 07d6b16d18049feec4170785d4533758cb2c134b1cd418855cca320655055b7a
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

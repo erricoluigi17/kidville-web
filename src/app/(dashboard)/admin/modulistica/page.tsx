@@ -13,6 +13,7 @@ import { DateField } from '@/components/ui/DateField';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
+import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
 import { formattaIstante } from '@/i18n/config';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
@@ -100,7 +101,7 @@ interface PreInscription {
   created_at: string;
 }
 
-type ModulisticaTab = 'inviabili' | 'ricevuti' | 'moduli-genitori' | 'attesa' | 'odt';
+type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'moduli-genitori' | 'attesa' | 'odt';
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
@@ -108,8 +109,13 @@ function ModulisticaInner() {
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
+  // `candidature` è nell'elenco perché è il bersaglio del collegamento della
+  // notifica di una nuova candidatura (`/admin/modulistica?tab=candidature`):
+  // senza, quel collegamento aprirebbe la linguetta sbagliata in silenzio.
   const initialTab: ModulisticaTab =
-    tabParam === 'ricevuti' || tabParam === 'moduli-genitori' || tabParam === 'odt' ? tabParam : 'inviabili';
+    tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'moduli-genitori' || tabParam === 'odt'
+      ? tabParam
+      : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [preInscriptions] = useState<PreInscription[]>([]);
@@ -518,16 +524,21 @@ function ModulisticaInner() {
         options={[
           { id: 'inviabili', label: t('modTabInviabili'), icon: Send },
           { id: 'ricevuti', label: t('modTabRicevuti'), icon: Inbox },
+          { id: 'candidature', label: t('modTabCandidature'), icon: UserCheck },
           { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
           { id: 'odt', label: t('modTabOdt'), icon: Settings },
         ]}
       />
 
-      {/* Moduli inviabili / ricevuti: operano multi-sede (nessuna guardia sede singola). */}
+      {/* Moduli inviabili / ricevuti / candidature: operano multi-sede — leggono
+          e scrivono dichiarando le sedi attive con `x-sedi`, quindi non passano
+          dalla guardia di sede singola (che pretende UNA sede sola). */}
       {activeTab === 'inviabili' ? (
         <ModuliInviabili />
       ) : activeTab === 'ricevuti' ? (
         <ModuliRicevuti />
+      ) : activeTab === 'candidature' ? (
+        <CandidatureInsegnanti />
       ) : sediLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />

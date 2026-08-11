@@ -32,6 +32,35 @@ import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
  * `enrollment_submissions` di questo stesso repo ne conteneva 324 di minori
  * quattro giorni dopo che qualcuno aveva scritto «tanto siamo pre-lancio».
  * Quando l'assunzione ci sarà, il dato si chiede allora, a una persona sola.
+ *
+ * ── LO SCOPO DEI CAMPI È DICHIARATO (`autocomplete`) ─────────────────────────
+ *
+ * I sei campi che raccolgono i dati di chi compila portano `autocomplete`
+ * (`given-name`, `family-name`, `email`, `tel`, `address-level2`,
+ * `address-level1`): è WCAG 2.1 AA, SC 1.3.5 «Identify Input Purpose», e su un
+ * modulo PUBBLICO che si compila dal telefono è la differenza fra sei campi
+ * digitati e un tocco. Va dichiarato QUI e non in `FieldRenderer`: lo scopo di un
+ * campo lo conosce chi lo definisce, e l'id di un modello costruito dal builder
+ * può essere qualunque cosa. `enrollment-template.ts` non lo dichiara ancora, ed
+ * è lo stesso debito visto dall'altro lato.
+ *
+ * ── ⚠️ DEBITO DICHIARATO: LE ETICHETTE QUI SOTTO SONO SOLO IN ITALIANO ───────
+ *
+ * Tutto ciò che si legge a schermo di questo template — le `label` dei campi, i
+ * sette `TITOLI_STUDIO`, le cinque `DISPONIBILITA`, i tre `GRADI_OPTIONS` (che
+ * il riepilogo di `/lavora-con-noi` ristampa così come sono) e i testi dei
+ * consensi — è cablato in italiano. Il guscio della pagina è bilingue per
+ * davvero (36 chiavi `cand*` in `messages/it` e `messages/en`, con lock di
+ * parità), quindi con l'interfaccia in inglese la schermata esce TRADOTTA A
+ * METÀ: è il difetto R13, quello che `PublicPageHeader` è nato per chiudere,
+ * ricomparso un livello più sotto.
+ *
+ * Non è un difetto introdotto qui — è la forma di `enrollment-template.ts`, e
+ * vale identico per `/iscrizione` — ma è scritto perché nessuno lo scambi per
+ * fatto. Si chiude portando le etichette a chiavi di messaggio (e il testo dei
+ * consensi con la sua `CONSENSI_INSEGNANTI_VERSIONE`, che è ciò che finisce
+ * archiviato in `consents_log`: tradurlo significa versionarlo). Il giorno in cui
+ * si fa, si fa per ENTRAMBI i template, altrimenti il difetto si sposta e basta.
  */
 
 /** Sigla di provincia: due lettere. L'ESISTENZA la controlla `validateField`. */
@@ -131,20 +160,20 @@ export const CANDIDATURA_LIMITI = {
 
 // ── Campi della CANDIDATURA (→ candidature_insegnanti) ────────────────────────
 export const INSEGNANTE_FIELDS: FormField[] = [
-  { id: 'nome', type: 'text', label: 'Nome', required: true, db_mapping: 'candidature_insegnanti.nome', placeholder: 'Es. Maria', validation: { min_length: 2, max_length: 50 } },
-  { id: 'cognome', type: 'text', label: 'Cognome', required: true, db_mapping: 'candidature_insegnanti.cognome', placeholder: 'Es. Rossi', validation: { min_length: 2, max_length: 50 } },
-  { id: 'email', type: 'email', label: 'Email', required: true, db_mapping: 'candidature_insegnanti.email', placeholder: 'Es. mario.rossi@email.com', validation: { max_length: 200 } },
-  { id: 'telefono', type: 'phone', label: 'Numero di telefono', required: false, db_mapping: 'candidature_insegnanti.telefono', placeholder: 'Es. +39 333 1234567', validation: { max_length: 30 } },
+  { id: 'nome', type: 'text', label: 'Nome', required: true, autocomplete: 'given-name', db_mapping: 'candidature_insegnanti.nome', placeholder: 'Es. Maria', validation: { min_length: 2, max_length: 50 } },
+  { id: 'cognome', type: 'text', label: 'Cognome', required: true, autocomplete: 'family-name', db_mapping: 'candidature_insegnanti.cognome', placeholder: 'Es. Rossi', validation: { min_length: 2, max_length: 50 } },
+  { id: 'email', type: 'email', label: 'Email', required: true, autocomplete: 'email', db_mapping: 'candidature_insegnanti.email', placeholder: 'Es. mario.rossi@email.com', validation: { max_length: 200 } },
+  { id: 'telefono', type: 'phone', label: 'Numero di telefono', required: false, autocomplete: 'tel', db_mapping: 'candidature_insegnanti.telefono', placeholder: 'Es. +39 333 1234567', validation: { max_length: 30 } },
 
   // Residenza: FACOLTATIVA. Serve a capire se la sede è raggiungibile, non a
   // decidere; pretenderla vorrebbe dire respingere una candidatura per un dato
   // che non c'entra con il lavoro.
-  { id: 'residence_city', type: 'text', label: 'Comune di residenza', required: false, db_mapping: 'candidature_insegnanti.residence_city', placeholder: 'Es. Giugliano in Campania', validation: { max_length: 100 } },
+  { id: 'residence_city', type: 'text', label: 'Comune di residenza', required: false, autocomplete: 'address-level2', db_mapping: 'candidature_insegnanti.residence_city', placeholder: 'Es. Giugliano in Campania', validation: { max_length: 100 } },
   // ⚠️ L'id FINISCE per `_province` di proposito: `isProvinceField` guarda quel
   // suffisso, e da lì arrivano gratis l'auto-maiuscolo, lo snap su blur
   // («Napoli» → «NA») e il controllo che la sigla ESISTA davvero. Chiamarlo
   // `provincia_residenza` avrebbe spento tutte e tre le cose senza un rosso.
-  { id: 'residence_province', type: 'text', label: 'Provincia di residenza', required: false, db_mapping: 'candidature_insegnanti.residence_province', placeholder: 'Es. NA', validation: { pattern: PROV_PATTERN, min_length: 2, max_length: 2 } },
+  { id: 'residence_province', type: 'text', label: 'Provincia di residenza', required: false, autocomplete: 'address-level1', db_mapping: 'candidature_insegnanti.residence_province', placeholder: 'Es. NA', validation: { pattern: PROV_PATTERN, min_length: 2, max_length: 2 } },
 
   { id: 'titolo_studio', type: 'select', label: 'Titolo di studio', required: true, db_mapping: 'candidature_insegnanti.titolo_studio', options: TITOLI_STUDIO },
   { id: 'titolo_dettaglio', type: 'text', label: 'Dettaglio del titolo (indirizzo, istituto)', required: false, db_mapping: 'candidature_insegnanti.titolo_dettaglio', placeholder: 'Es. Scienze dell’educazione', validation: { max_length: 200 } },

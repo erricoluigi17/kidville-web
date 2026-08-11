@@ -93,10 +93,12 @@
 
 ## 🧑‍🏫 Changelog — «Lavora con noi»: le fondamenta del modulo pubblico di candidatura 2026-08-10 (branch `feat/insegnanti-codice-fiscale`)
 
-Questa voce copre **una corsia sola** del lavoro in corso su `/lavora-con-noi`: il **template dei
-campi**, i **codici d'errore** e il **vocabolario dei log**. La pagina, la route
-`POST /api/iscrizione/insegnanti` e il cockpit di segreteria sono di altre corsie dello stesso
-ciclo e non sono descritti qui: quando arrivano, questa voce va estesa, non riscritta.
+Questa voce è nata coprendo **una corsia sola** del lavoro su `/lavora-con-noi` — il **template dei
+campi**, i **codici d'errore** e il **vocabolario dei log** — dichiarando che le altre corsie
+dello stesso ciclo l'avrebbero **estesa, non riscritta**. È quello che è successo: §6 ha aggiunto
+la route `POST /api/iscrizione/insegnanti`, §8 e §9 il cockpit di segreteria, e §10 la **pagina
+pubblica** e il suo wizard. Chi arriva qui li trova tutti nello stesso posto; chi aggiunge una
+corsia aggiunge un paragrafo e aggiorna questa riga, invece di lasciarla dire il falso.
 
 ### 1. Cosa raccoglie il modulo — e cosa NON raccoglie
 
@@ -386,6 +388,294 @@ riga, non dell'intenzione di chi ha premuto.
 
 ⚠️ **Il cockpit filtra per sede**, al contrario di quanto il §4 prevedeva: il lock
 `isolamento-sede-coverage` non esenta questo handler. Le conseguenze sono scritte lì.
+
+### 9. Il pannello che la segreteria guarda (2026-08-11)
+
+`src/components/features/admin/iscrizioni/CandidatureInsegnanti.tsx`, scheda **Candidature** di
+`/admin/modulistica`. Il §8 descrive la route; questa è la parte che si vede, e le sue decisioni
+non sono ripetizioni di quelle del server.
+
+| | |
+|---|---|
+| Elenco povero **anche qui** | il pannello non disegna i campi del dettaglio a partire dalla riga d’elenco: se domani la proiezione del server tornasse generosa, l’elenco resterebbe povero lo stesso. Email, telefono, presentazione e curriculum si chiedono con `?id=`, una candidatura alla volta |
+| Azioni spente per la segreteria | il gate vero resta il `requireStaff(['admin','coordinator'])` della route; qui i due pulsanti si mostrano **spenti con il motivo scritto** (e nel `title`), perché scoprire il 403 dopo il clic fa sembrare un guasto un divieto legittimo. «Ruolo non ancora noto» e «non puoi» sono due frasi diverse — e dal 2026-08-11 anche «c’è già un’operazione in corso su questa candidatura», che è la **terza** ragione per cui possono essere spenti |
+| Un’operazione in corso è **di una candidatura**, non della schermata | era un booleano condiviso: mentre la `PATCH` su una persona viaggiava (secondi veri), chi apriva un’ALTRA candidatura ne trovava i due pulsanti spenti, senza `title` e senza una riga che dicesse perché. Ora è legata all’`id`: il pannello degli altri non ne risente, e riaprendo **quella** i pulsanti restano spenti — giusto, ripremerli creerebbe due account — ma con il motivo scritto |
+| `in_approvazione` non è azionabile | l’account docente **esiste già** e la riga non è chiusa: il riquadro è **warn, non verde**, l’intestazione dice «chiusura NON riuscita» e i due pulsanti restano spenti — «Rifiuta» è accettato dal server anche su questo stato e manderebbe un’email di esito negativo a chi ha appena ricevuto le credenziali |
+| Credenziali | si vedono **una volta sola**, e se l’email non è partita lo si dice insieme al fatto che l’account esiste comunque. Gli avvisi del server vivono **fuori** dal riquadro congedabile: erano l’unica traccia che un docente nuovo è stato creato, e «Ho preso nota» se li portava via |
+| Elenco: **tre** stati | «caricato», «vuoto» e «non letto». Con la `GET` a 503 la schermata scriveva *«Nessuna candidatura ricevuta»* accanto all’avviso rosso: un’affermazione di fatto falsa su una casella di reclutamento che riceve invii veri. Ora, se l’ultima lettura è fallita, al posto del riquadro vuoto c’è la frase che lo dice, con il **ritenta** |
+| Mai `alert()` | gli errori stanno in pagina in `role="alert"` e non fanno perdere il motivo del rifiuto, che è testo libero |
+
+**Le richieste in volo portano un gettone**, e non solo le letture. Due clic ravvicinati sono due
+`fetch` in aria: senza gettone vince la risposta arrivata per **ultima**, non il gesto fatto per
+ultimo. Il gettone del dettaglio copre anche la **`PATCH`**, ed è lì che conta di più — quella
+chiamata crea un’utenza e manda un’email, cioè dura secondi veri, e fino al 2026-08-11 la sua
+risposta atterrava sul pannello aperto in quel momento: **la password dell’account di una persona
+finiva sotto il nome di un’altra**, il badge «Approvata» si timbrava su una candidatura ancora in
+attesa e i suoi due pulsanti sparivano. Adesso quell’esito viene **scartato e detto**.
+Le righe dell’elenco **non** si spengono durante l’operazione: la difesa sta nella risposta, non nel
+gesto, perché una segreteria che per secondi non può nemmeno leggere un’altra candidatura ha in
+mano una schermata che sembra rotta.
+
+Il gettone avanza anche quando il pannello si **chiude** («Indietro»): è un cambio d’apertura come
+un altro. Senza quella riga la risposta della `PATCH` si considerava attuale e scriveva esito e
+avvisi dentro un componente **non più montato** — a schermo non restava niente. Account docente
+creato, password monouso persa, email delle credenziali mai partita, e nessun avviso da nessuna
+parte: lo «scartare in silenzio» che questa scheda dichiara di aver chiuso, sull’unico percorso che
+nessun test copriva (misurato il 2026-08-11: tolta la riga, la suite restava verde).
+
+**Dove finisce un esito che non si può mostrare.** In un avviso fuori dal pannello, che nomina la
+persona e riporta l’esito **per intero, credenziali comprese**: la password è monouso e non è
+archiviata da nessuna parte, quindi buttarla vuol dire una reimpostazione obbligata — e con l’email
+delle credenziali non partita vuol dire una docente che non entra mai. Il pannello se ne priva
+perché lì finirebbe sotto il nome di un’altra persona; qui il nome è quello giusto, ed è il motivo
+per cui questo è il posto in cui possono stare. Le voci si **accumulano** e se ne vanno **solo** con
+un gesto esplicito: fino al 2026-08-11 bastava aprire un’altra candidatura per azzerare l’unica
+traccia esistente, cioè due clic. E le parole cambiano col fatto: «l’account docente è stato
+creato», «la chiusura è rimasta a metà», «il server ha respinto l’operazione» e «la risposta non è
+mai arrivata» sono quattro frasi diverse, e dirne una per l’altra manda a cercare credenziali che
+non esistono. Il vecchio testo ne diceva **una sola** per tutti i casi, e per giunta affermava che
+era stata aperta un’altra candidatura anche quando il pannello era stato solo chiuso.
+
+**«Mostra altre» si spegne mentre una rilettura d’elenco è in volo** (cambio sede, ritenta, ricarica
+dopo un’azione). Accodare vuol dire aggiungere alla lista che è a schermo, con l’offset calcolato su
+quella: a metà di un cambio sede sarebbe la pagina 2 del plesso nuovo in coda alle righe del
+plesso vecchio. Con tre sedi vere, un elenco che mescola plessi è la classe di difetto già pagata
+dall’audit multi-sede.
+
+Collaudo: `__tests__/components/CandidatureInsegnanti.test.tsx` (47 test), con le gare misurate
+facendo atterrare le risposte **fuori ordine**, non simulandole, e le asserzioni prese **dentro** la
+finestra della `PATCH` invece che dopo il suo atterraggio — perché è lì che l’interfaccia sembrava
+rotta. Testi in italiano e inglese in `messages/{it,en}/adminAltro.json`.
+
+### 10. La pagina pubblica `/lavora-con-noi`: il wizard, e le sei decisioni che lo tengono in piedi (2026-08-11)
+
+`src/app/lavora-con-noi/page.tsx` (server, metadata + normalizzazione dei due parametri d’URL) e
+`src/components/features/public/CandidaturaInsegnanteWizard.tsx` (client, i cinque passi). È la
+superficie che i §1-§7 alimentavano senza che nessuna riga di PRD la descrivesse.
+
+**Il modulo è pubblico e senza login**: chi si candida non ha un account e non deve averlo — nasce
+solo se la Direzione approva. `/lavora-con-noi` era **già** in `PUBLIC_PREFIXES`
+(`src/lib/auth/middleware-rules.ts`) prima che la pagina esistesse, e il lock
+`__tests__/architecture/prefissi-pubblici.test.ts` lo pretende: senza quella voce la pagina
+sarebbe nata dietro il login, cioè con un difetto che dal server non si vede.
+
+**1. L’elenco delle sedi ha TRE stati, e devono restare tre.** `caricamento` · `pronto` (che può
+essere vuoto, o di una sede, o di più) · `errore`. Il difetto da cui nascono è già arrivato in
+produzione sul modulo fratello `/iscrizione`: `GET /api/iscrizione/sedi` rispondeva **429** (tetto
+per IP, e dietro il NAT di una scuola quell’IP lo condividono decine di persone), il wizard
+registrava il guasto e tirava dritto, e **un elenco vuoto per errore era indistinguibile da «c’è
+una sede sola»**. Qui pesa di più: `POST /api/iscrizione/insegnanti` pretende `scuola_id` come uuid
+**obbligatorio** — più severo della rotta d’iscrizione, e giustamente, perché con tre plessi
+dedurre la sede vuol dire archiviare la candidatura nel posto sbagliato in silenzio.
+
+| Stato | Cosa si vede | Perché |
+|---|---|---|
+| `caricamento` | rotellina annunciata (`role="status"`), **nessun passo dipinto** | finché la FORMA della procedura non è definitiva, dipingere un passo e cambiarlo dopo lo fa saltare sotto le mani di chi ci sta scrivendo |
+| `errore` (429, rete giù, **200 con un corpo senza `data`**) | «Non riusciamo a caricare le sedi» + **Riprova**, e il modulo non comincia | `!r.ok` **non** è un’eccezione: il `catch` di una promise non scatta, ed è da lì che il 429 passava muto. `null` non è `[]`: un 200 senza l’array è «elenco NON ottenuto», non «nessuna sede» |
+| `pronto` e **vuoto** | «Nessuna sede riceve candidature online», **senza** «Riprova» | ricaricare darebbe la stessa risposta, e un pulsante che ripete la stessa risposta insegna a non fidarsi dei pulsanti |
+| `pronto` con **una** sede | nessun passo di scelta, ma la sede è **decisa** lo stesso | lasciarla `null` sarebbe un 400 dopo quattro passi compilati |
+| `pronto` con **due o più** | il passo «sede» è il primo | — |
+
+**2. `?sede=` è un SUGGERIMENTO, non una decisione — e l’elenco si chiede comunque.** Fino
+all’11/08/2026 un link «targato» faceva saltare del tutto la fetch: la sede era «già decisa», e con
+un uuid che la rotta non accetta (plesso soft-deleted, sede E2E, volantino dell’anno prima, uuid
+ritoccato) si arrivava al riepilogo con «Sede scelta **—**» e all’invio a un 400 che ordinava di
+scegliere una sede che a schermo non esisteva — `radio` disponibili per obbedire: **0**. Adesso
+l’elenco è l’**autorità**, ed è lo stesso predicato (`sediReali`) che la rotta applica: link
+confermato → nessun passo di scelta *e* il nome del plesso nel riepilogo; link smentito → si
+abbandona **prima** che sia stato compilato alcunché; elenco non ottenuto → il link si tiene e il
+modulo parte lo stesso, perché nessun guasto dell’elenco può impedire una candidatura.
+⚠️ `?sede=` **senza valore** vale come **assente** e si normalizza nella pagina: la stringa vuota è
+falsy ma non `null`, e scambiata per «sede già decisa» farebbe partire l’invio senza sede.
+
+**3. Il 400 `SEDE_DA_SPECIFICARE` è un rifiuto AZIONABILE, e i dati non si perdono.** Si segna
+l’uuid come rifiutato (il link targato smette di valere), si dimentica la scelta, si torna al primo
+passo e si **richiede** l’elenco. Da quel momento vale una regola sola — `sedeRifiutata !== null` =
+*il modulo è già cominciato ed è già compilato* — e le tre notizie sull’elenco (attesa, guasto,
+elenco vuoto) si danno **dentro** il passo «sede», accanto alla spiegazione, invece che al posto
+dell’intera pagina. Prima portavano via il modulo compilato insieme al motivo: e non è il caso
+raro, perché la causa documentata per cui il link viene creduto è un 429 che dura **dieci minuti**,
+cioè il tentativo che parte subito dopo il rifiuto cade quasi certamente nella stessa finestra. I
+valori restano perché react-hook-form conserva i campi smontati (`shouldUnregister` è false).
+
+Tre correzioni dell’11/08/2026 su questo stesso percorso, tutte misurate:
+
+- **la frase dice di chi è la colpa.** `SEDE_DA_SPECIFICARE` non arriva solo dal link: `GET` e
+  `POST` applicano lo stesso `sediReali` ma non nello stesso istante, e un plesso disattivato
+  mentre si compilava produce il 400 su una sede **scelta a schermo**. Accusare «il collegamento
+  con cui hai aperto il modulo» davanti a chi non ne ha mai aperto uno targato manda a cercare un
+  link da sostituire che non esiste — il link diffuso è **UNO solo** per tutte e tre le sedi. Due
+  chiavi, due frasi (`candSedeRifiutataCorpo` / `candSedeRifiutataCorpoScelta`);
+- **la spiegazione se ne va quando smette di essere vera.** Il pannello vive nel ramo dei passi,
+  cioè in tutti, e la sua nota («scegli la sede qui sopra») si decide sullo stato dell’**elenco**,
+  non sul fatto che il selettore sia a schermo. Con **una sola sede** il radio è auto-spuntato, si
+  preme «Avanti» senza toccarlo — e l’`onChange` che spegneva l’avviso non scatta — e la nota
+  arrivava intatta nel passo «I tuoi dati», dove di sedi non ce n’è nessuna. Ora uscire dal passo
+  «sede» in avanti spegne l’errore, come già faceva «Indietro»;
+- **il fuoco della tastiera non cade su `<body>`.** Chi preme «Invia candidatura» ha il fuoco su
+  quel bottone; il rifiuto riporta a `indice = 0`, e lì lo stesso bottone si **disabilita** finché
+  l’elenco non torna, mentre «Indietro» è disabilitato perché è il primo passo. Un browser vero
+  toglie il fuoco a un elemento che si disabilita: chi naviga da tastiera restava senza appiglio.
+  Ora il fuoco si posa sul pannello che spiega (`tabIndex={-1}`, mai nel Tab), come già si faceva
+  per la conferma d’invio. ⚠️ **jsdom non riproduce quel salto** — misurato: `activeElement`
+  restava il bottone — quindi il collaudo asserisce dove il fuoco viene **posato**, non dove non
+  cade: è il motivo per cui la suite verde non diceva niente su questo punto.
+
+**4. Gli errori si mostrano IN PAGINA, mai in un `alert()`.** Il pannello sta sopra i bottoni, con
+`role="alert"`, e dice l’unica cosa che conta a chi ha compilato quattro passi: **i dati sono
+ancora qui**. Il testo non è la prosa del server (`soloCatalogoDaCorpo` traduce il **codice**
+dichiarato e altrimenti ripiega sulla frase tradotta della schermata: la prosa del server nasce
+dove il locale non esiste ed è italiana per costruzione — difetto T10-F1, e qui la leggerebbe chi
+cerca lavoro), e nemmeno finisce nei log: si logga un’**etichetta stabile** più lo status, perché
+`err.stack` comincia dal messaggio e su un 400 quel messaggio nomina i campi respinti. Un 400 con
+`{ campi: {…} }` o `{ consensi: [...] }` riporta invece **sul passo del campo sbagliato**, con il
+messaggio sotto di esso; se nulla è mappabile si ricade sul pannello generico, mai sul silenzio.
+
+**5. Il guardiano del doppio tocco è un `ref`, non uno stato — e non poteva essere altro.**
+`disabled={inviando}` si arma **dentro** `invia()`, cioè dopo l’`await trigger(...)` della
+validazione: fra il clic e il render che disabilita il bottone c’è un confine asincrono, e tre
+tocchi rapidi facevano partire **tre POST** (misurato: 3 su 3). Sui dati non succede niente —
+l’indice unico `candidature_insegnanti_email_viva` fa servire il duplicato come 201 — ma il tetto
+pubblico è di **3 richieste all’ora per IP**: un doppio tocco brucia la dotazione oraria del NAT di
+una scuola o del CGNAT di un operatore mobile, cioè della stessa popolazione per cui questo modulo
+teme il 429. Lo stesso guardiano copre «Avanti» semplice: due clic nella stessa finestra facevano
+due `setIndice(i => i + 1)`, cioè il passo «profilo» **scavalcato** — dove stanno titolo di studio
+e fasce d’età — e il salto si scopriva solo con un 400.
+
+**6. `autocomplete` è dichiarato sui sei campi anagrafici, e `maxlength` NON c’è.** `given-name`,
+`family-name`, `email`, `tel`, `address-level2`, `address-level1`: è WCAG 2.1 AA, SC 1.3.5
+*Identify Input Purpose*, e su un modulo pubblico che si compila dal telefono è la differenza fra
+sei campi digitati e un tocco. Si dichiara nel **template** e non in `FieldRenderer`, perché lo
+scopo di un campo lo conosce chi lo definisce. Sulla provincia **non** si aggiunge `maxlength`, per
+quanto il template dichiari `max_length: 2`: **misurato l’11/08/2026**, «Campania» troncata a due
+lettere fa `CA`, cioè **Cagliari** — un dato sbagliato accettato in silenzio — mentre lasciata
+intera fa `null`, cioè un errore visibile e correggibile. Tutte e **107** le province sono
+riconosciute in sigla, nome e NOME (collaudi (m) e (n) di `FieldRenderer-validation.test.tsx`).
+
+**Cosa il modulo NON rende, e perché.** Il **curriculum** (`cv_path`, facoltativo): la rotta accetta
+solo percorsi `candidature/<uuid>-<nome>`, e al 2026-08-11 nessuna rotta di caricamento produce
+quel prefisso — l’unica pubblica scrive sotto `iscrizioni/…`. Renderlo vorrebbe dire far caricare
+un curriculum e respingerlo all’invio, dopo tutto il resto: è il difetto «bucket più stretto del
+gate», già pagato una volta. Torna il giorno in cui nasce la rotta, togliendolo da `IDS_NON_RESI`.
+⚠️ **Nessun `AnimatePresence mode="wait"`** attorno ai passi, e nessuna animazione che monti o
+smonti un pannello: un passo mai montato **non registra i suoi campi** in react-hook-form e si
+arriva all’invio con i dati vuoti (difetto già pagato su `EnrollmentWizard`).
+
+⚠️ **Limite dichiarato: con l’interfaccia in inglese la pagina è tradotta a metà.** Il guscio è
+bilingue per davvero (le chiavi `cand*` in `messages/{it,en}/public.json`, sorvegliate dal lock di
+parità); le **etichette dei campi** no — arrivano da `INSEGNANTE_FIELDS` e sono cablate in
+italiano. È lo stesso debito del §1 visto dal lato della schermata, ed è il difetto R13 ricomparso
+un livello più sotto. Si chiude portando le etichette a chiavi di messaggio, per **entrambi** i
+template insieme, altrimenti si sposta e basta.
+
+Collaudo: `CandidaturaInsegnanteWizard-sede.test.tsx` (28), `-errore-invio.test.tsx` (13),
+`-consensi.test.tsx`, `-gradi.test.tsx` e `__tests__/a11y/candidatura-insegnante-a11y.test.tsx`
+(`jest-axe` su un albero vero, passo per passo). Testi in `messages/{it,en}/public.json`.
+
+---
+
+## 🪪 Changelog — La scheda del genitore non salvava NIENTE: `PATCH /api/admin/parents` e il PGRST204 2026-08-11 (branch `feat/insegnanti-codice-fiscale`)
+
+Le riparazioni sul codice fiscale della scheda genitore (campo svuotabile, messaggio sul duplicato
+leggibile) erano **corrette nel componente e inerti nel prodotto**: la strada che porta il dato in
+archivio era rotta a monte, e nessuno dei 66 test della corsia poteva vederlo perché mockavano
+`fetch` senza mai esercitare la rotta.
+
+**La misura, non la deduzione** (produzione, 11 agosto, sole `SELECT`):
+
+| Fonte | Cosa dice |
+|---|---|
+| `app_log` | `route=/api/admin/parents`, `codice=PGRST204`, `stato_http=400`, «Could not find the `'student_parents'` column of `'parents'` in the schema cache», con `admin/parents:PATCH` a 500 accanto |
+| `audit_scritture_docente` | 405 righe dal 5 luglio, **255 `update`** riusciti, e **zero** con `entita_tipo='genitori'` e `azione='update'`. Cinque `insert`, nessun aggiornamento |
+
+`logScrittura` scrive **solo dopo** che l'`update` è riuscito: quella tabella è la prova che da
+questa scheda un genitore non è **mai** stato aggiornato. Causa: `handleSave` faceva
+`onSave({ id, ...form })`, e `form` è il corpo intero di `GET /api/admin/parents/[id]` — che
+seleziona `*` **più la relazione annidata `student_parents`**. Lo schema `.loose()` del PATCH lo
+lasciava passare, `update()` lo spalmava, e PostgREST — che valida il corpo contro la propria
+cache dello schema **prima** di parlare col database — rispondeva `PGRST204`, perché
+`student_parents` è una tabella, non una colonna.
+
+**Le due riparazioni, e sono due perché il guasto è su due strade:**
+
+1. **La scheda costruisce il corpo per elenco** (`corpoGenitoreDaSalvare` in `ParentDetailPanel`):
+   partono solo le 17 colonne di `parents` che la scheda modifica, con la stessa normalizzazione
+   di `buildParentRecord` (`''` ⇒ `null`) — che su `fiscal_code` (UNIQUE, e in produzione **un**
+   genitore ha già la stringa vuota) e su `birth_date` (colonna `date`, dove `''` è un errore di
+   sintassi) non è una preferenza di stile.
+2. **La rotta riconosce `PGRST204`, non solo `42703`.** `colonnaSconosciuta()` era già scritta in
+   `src/lib/anagrafiche/parents.ts` per il ramo INSERT, con la motivazione per esteso; il ramo
+   UPDATE guardava solo `42703`, che su una scrittura **non arriva quasi mai**. Ora è **una
+   funzione sola per le due strade**, la colonna scartata si **logga** (nome soltanto, mai un dato
+   di persona) e l'audit registra `updates` — quello che è stato scritto — invece di quello che
+   era stato chiesto. Senza questo ramo, `codice_belfiore_nascita` avrebbe reso **500 ogni
+   salvataggio di genitore in CI**, dove il DB E2E è un progetto separato e non migrato.
+
+**Il collaudo che prima non esisteva**: `__tests__/pages/admin-anagrafica-genitore-corpo-patch.test.tsx`
+monta la **pagina vera**, la riempie con la **forma vera** della risposta del GET (embed a due
+livelli compreso) e legge il `body` della `fetch`; `__tests__/api/admin-parents-patch-colonna-assente.test.ts`
+esercita la rotta contro un finto PostgREST che rifiuta le colonne una alla volta col codice vero.
+Sonde di mutazione eseguite: rimettere `...form` ⇒ 3 rossi, rimettere il solo `42703` ⇒ 5 rossi.
+
+**Più due arretrati su `AdultRegistryForm`** (scheda dormiente, non montata da nessuna pagina, ma
+finché esiste deve dire la stessa cosa delle altre due): stringhe cablate portate su
+`messages/{it,en}/adminStudents.json`, e il `.catch(() => {})` sul caricamento delle **sedi** —
+vietato da AGENTS.md §6 — diventato un `logClient` di livello `warn` col motivo. Voce tolta da
+`docs/superpowers/catch-muti-allowlist.json`, tetti del lock abbassati **54→53 file** e
+**84→83 occorrenze**, e il file iscritto fra quelli che non possono tornare in allowlist.
+
+---
+
+## 🪪 Changelog — Il pannello «Codici fiscali da verificare»: la UI dei tre stati, e il numero sulla linguetta 2026-08-11 (branch `feat/insegnanti-codice-fiscale`)
+
+Chiude la voce qui sotto, che si fermava alla rotta e diceva «niente UI ancora». Adesso c'è:
+**quinta linguetta «Codici fiscali» in `/admin/students`** (`CodiciFiscaliDaVerificare`), che elenca
+alunni e genitori con un codice fiscale da guardare, dice **perché**, propone quello che
+l'anagrafica implica e permette di scriverlo — **un record alla volta**.
+
+**I tre stati arrivano fino allo schermo**, e non solo nel JSON: `incoerente` (rosso,
+`error-soft`/`error-strong`) · `non-verificabile` (giallo) · `da-compilare` (**neutro**,
+`neutral-soft`/`sub`, 5,75:1). Ogni stato porta **icona + parola**, mai il solo colore. Le tre
+coppie di token sono esportate (`ASPETTO`) e collaudate come dato: dipingere `da-compilare` di
+rosso — cioè i ~45 record che nessuno ha mai compilato — fa **3 test rossi**.
+
+**Il numero sulla pillola della linguetta: `contaAzionabili`.** È l'unica cosa di questa voce che
+è già stata sbagliata due volte, in due modi opposti, e vale la pena scriverla per esteso:
+
+1. prima portava `totale` → con i numeri veri avrebbe aperto a **~83**, di cui ~45 soltanto «mai
+   compilato»: la confusione fra «manca» e «sbagliato», spostata dai colori al numero;
+2. poi contava le sole righe `incoerente` → **per difetto**, perché il pannello mostra «Applica»
+   anche sulle righe `da-compilare` con la proposta pronta. Misurato in produzione l'11 agosto, in
+   sola lettura e a soli conteggi: **1 alunno su 29** e **1 genitore su 50** sono esattamente
+   così — proposta pronta, `priorita: 0`, comando a schermo, e fuori dal badge.
+
+Oggi il badge conta **i rossi più le righe su cui il comando di scrittura compare davvero**, e la
+regola vive in **una funzione sola** (`scrivibile`), usata sia da chi conta sia da chi disegna il
+bottone: erano due espressioni diverse per la stessa domanda, ed è bastato questo per farle
+divergere. La **ripartizione completa dei tre stati** resta dentro il pannello, dove convive con la
+loro spiegazione. Lock: `__tests__/pages/admin-students-pillola-codici-fiscali.test.tsx` — rimettere
+`totale`, o riscrivere il conteggio a mano, lo fa rosso (verificato con la mutazione).
+
+**La scrittura.** `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**: nessun
+«applica a tutti», ed è una decisione, non una funzione mancante — sarebbe un `UPDATE` di massa sui
+codici fiscali di minori, e in questo progetto (CLAUDE.md, 2026-08-03) nessun essere umano vede una
+scrittura prima che parta. Prima della PATCH si legge il **riepilogo per esteso** (quale codice, al
+posto di quale, su chi, in quale struttura); il doppio invio lo ferma una guardia **sincrona**
+(`ref`), non `disabled` — che spegnerebbe il fuoco (regola di casa, `Btn.tsx:27-32`).
+
+**Dopo la scrittura non si perde il posto.** La rilettura **non** riporta la fase a `caricamento`:
+lo spinner a tutta pagina sostituirebbe il pannello, l'esito e il fuoco. L'elenco resta, la
+rilettura si annuncia con una riga `aria-live="polite"` (l'attributo è **asserito**, non solo il
+testo), e una rilettura **fallita** si dice in una fascia d'allarme **con i dati sotto**, non al
+posto loro. Il dettaglio aperto **si rilegge dall'elenco nuovo**: se la riga è stata chiusa, sotto
+l'esito verde non si legge più «Incoerente» col vecchio codice — c'è una frase che dice che quel
+nominativo non è più fra i codici da verificare (`cfRigaNonPiuInElenco`, IT+EN).
+
+Chiavi di catalogo nuove, tutte in **IT e EN**: la ripartizione a tre conteggi (`cfRipartizione`,
+ICU `plural` su **tutti e tre** i numeri), l'annuncio della rilettura in corso (`cfRicaricando`),
+l'avviso di rilettura fallita (`cfRiletturaFallita`) e `cfRigaNonPiuInElenco`. Due campi nuovi
+sull'esito dell'elenco (`ricaricando`, `riletturaFallita`) e uno per il badge (`azionabili`).
+70 test sul pannello, 2 sul badge della linguetta.
 
 ---
 

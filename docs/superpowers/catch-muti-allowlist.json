@@ -20,7 +20,7 @@
     "senza quel ramo resta silenzioso esattamente come prima."
   ],
   "aggiornato": "2026-08-04",
-  "totale_occorrenze": 84,
+  "totale_occorrenze": 83,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -128,10 +128,6 @@
     },
     {
       "path": "src/components/features/admin/AdminSearchPanel.tsx",
-      "n": 1
-    },
-    {
-      "path": "src/components/features/admin/AdultRegistryForm.tsx",
       "n": 1
     },
     {

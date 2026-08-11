@@ -111,6 +111,35 @@ export function ModuliInviabili() {
         </div>
       </div>
 
+      {/* Candidatura insegnanti: modulo pubblico `/lavora-con-noi`.
+          NIENTE «Modifica» e niente «Reimposta», e non è una dimenticanza: questo
+          modulo NON passa dal costruttore. I suoi campi finiscono in colonne
+          tipizzate di `candidature_insegnanti` e le fasce in un enum del database
+          (`school_type_enum`), non in un JSON libero come i moduli del builder —
+          quindi una modifica dal builder non avrebbe nessun effetto sul modulo
+          vero, e una «Reimposta» non avrebbe niente da reimpostare. È scritto
+          nella descrizione perché altrimenti qualcuno lo cerca nel costruttore,
+          non lo trova e conclude che manchi. */}
+      <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="font-barlow font-bold text-kidville-ink">{t('inviabiliCandidatureTitolo')}
+              <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-sub">{t('inviabiliPredefinito')}</span>
+            </p>
+            <p className="font-maven text-xs text-kidville-sub max-w-md">{t('inviabiliCandidatureDesc')}</p>
+            {/* Come per il modulo d'iscrizione: il link copiato è UNO, senza
+                parametro di sede. La sede la sceglie chi si candida dentro il
+                modulo — scriverlo qui evita tre link inventati, uno per plesso. */}
+            <p className="font-maven text-xs text-kidville-green mt-1 max-w-md">{t('inviabiliCandidatureSediNota')}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => copyLink(`${origin}/lavora-con-noi`, 'cand')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
+              {copied === 'cand' ? <><CheckCircle2 size={14} /> {t('inviabiliCopiato')}</> : <><Copy size={14} /> {t('inviabiliCopiaLink')}</>}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="flex items-center gap-2 text-kidville-muted p-4"><Loader2 size={16} className="animate-spin" /> {t('caricamento')}</div>
       ) : models.length === 0 ? (

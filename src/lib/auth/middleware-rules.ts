@@ -30,15 +30,23 @@ const PUBLIC_PREFIXES = [
   // libero; questa voce serve alla PAGINA, che senza sarebbe reindirizzata al
   // login e il modulo non lo vedrebbe nessuno.
   //
-  // ⚠️ LA PAGINA NON ESISTE ANCORA — misurato il 2026-08-10: `src/app/lavora-con-noi`
-  // non è nell'albero, e questo percorso risponde 404. La voce è in anticipo
-  // sulla corsia che scriverà la pagina, ed è tenuta apposta: toglierla
-  // significherebbe che il modulo, il giorno in cui nasce, finisce dietro il
-  // login — un difetto che da server non si vede, perché lo si scopre solo
-  // aprendo la pagina da disconnessi. Un 404 pubblico non apre niente; una
-  // pagina di candidatura irraggiungibile la vede subito solo chi non è entrato.
-  // Lo stato è dichiarato in `__tests__/architecture/prefissi-pubblici.test.ts`,
-  // che tiene l'elenco delle voci senza pagina invece di lasciarle invisibili.
+  // ✅ LA PAGINA C'È — `src/app/lavora-con-noi/page.tsx`, dall'11/08/2026, e
+  // `npm run build` la elenca come rotta (`ƒ /lavora-con-noi`). Fino a quel
+  // giorno queste righe dicevano il contrario: la voce era stata aggiunta in
+  // anticipo, insieme alla ROUTE, e il commento — «la pagina non esiste ancora,
+  // questo percorso risponde 404» — è sopravvissuto alla cosa che descriveva.
+  // Un documento che descrive un mondo che non c'è più è peggio di nessun
+  // documento: la prossima persona lo legge come vero.
+  //
+  // Perché resta pubblica, che è l'unica cosa che questa voce deve garantire:
+  // il modulo di candidatura è ANONIMO per costruzione — chi si propone come
+  // insegnante non ha un account, e l'account nasce solo se la Direzione
+  // approva. Senza questa riga la pagina verrebbe reindirizzata a `/auth/login`
+  // e non la vedrebbe nessuno: un difetto che da server non si vede, perché lo
+  // si scopre solo aprendo la pagina da disconnessi.
+  // Il presidio è `__tests__/architecture/prefissi-pubblici.test.ts`, che da
+  // oggi pretende (senza deroghe) che a questo prefisso corrisponda una pagina
+  // vera: se `src/app/lavora-con-noi/` sparisce, il lock diventa rosso.
   '/lavora-con-noi',
   '/privacy', // informativa GDPR pubblica (Privacy Policy URL per lo store)
   '/termini', // termini di servizio pubblici

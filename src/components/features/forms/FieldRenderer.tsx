@@ -60,6 +60,13 @@ export function FieldRenderer({
   // non puntare a un id inesistente); il gruppo usa già `aria-describedby`.
   const CONTROLLO_SINGOLO = ['text', 'number', 'email', 'phone', 'date', 'textarea', 'select']
   const associaLabel = CONTROLLO_SINGOLO.includes(field.type)
+  // WCAG 2.1 AA, SC 1.3.5 «Identify Input Purpose»: lo scopo del campo lo
+  // dichiara il TEMPLATE (`given-name`, `email`, `tel`, …) e da qui arriva al
+  // controllo. Nessun campo lo dichiarava fino al 2026-08-11, e il prezzo lo
+  // pagava chi compila dal telefono un modulo pubblico: sei campi digitati a
+  // mano invece di un tocco. Omesso = nessun attributo, cioè il comportamento
+  // di prima per ogni modello che non lo dichiara.
+  const autoCompleteProps = field.autocomplete ? { autoComplete: field.autocomplete } : {}
 
   // Blocchi non-input
   if (field.type === 'section_header') {
@@ -165,7 +172,25 @@ export function FieldRenderer({
                 type="text"
                 inputMode="text"
                 autoCapitalize="characters"
-                autoComplete="off"
+                // LO SCOPO SI DICHIARA — e il ripiego non dice il contrario.
+                // `off` vale per un template che NON dichiara niente: senza uno
+                // scopo dichiarato il suggerimento del browser è un valore
+                // qualunque, e questo campo ha una regola sua (si scrive per
+                // esteso e si riduce a sigla su blur). Quando il template dice
+                // `address-level1` lo scopo È noto, e dichiararlo è ciò che
+                // SC 1.3.5 chiede: le due frasi parlano di due casi diversi.
+                //
+                // ⚠️ E NON si aggiunge `maxlength`, per quanto il template
+                // dichiari `max_length: 2`. MISURATO l'11/08/2026: «Campania»
+                // troncata a due lettere fa «CA», cioè Cagliari — un dato
+                // sbagliato accettato in silenzio; lasciata intera fa `null`,
+                // cioè un errore visibile e correggibile. Un valore che
+                // l'autofill può davvero scrivere qui viene dall'elenco delle
+                // province italiane (in Chromium l'admin area per l'Italia è
+                // quell'elenco: chiave = sigla, nome = provincia) e tutte e 107
+                // sono riconosciute in entrambe le forme — collaudi (m) e (n) di
+                // `__tests__/components/FieldRenderer-validation.test.tsx`.
+                autoComplete={field.autocomplete ?? 'off'}
                 placeholder={field.placeholder}
                 className={FIELD_BASE}
                 name={rhf.name}
@@ -187,6 +212,7 @@ export function FieldRenderer({
             type={field.type === 'phone' ? 'tel' : field.type === 'number' ? 'number' : field.type === 'email' ? 'email' : 'text'}
             placeholder={field.placeholder}
             className={FIELD_BASE}
+            {...autoCompleteProps}
             {...ariaProps}
             {...register(field.id, rules)}
           />
@@ -194,7 +220,7 @@ export function FieldRenderer({
       )}
 
       {field.type === 'date' && (
-        <input id={field.id} type="date" className={`${FIELD_BASE} [color-scheme:light]`} {...ariaProps} {...register(field.id, rules)} />
+        <input id={field.id} type="date" className={`${FIELD_BASE} [color-scheme:light]`} {...autoCompleteProps} {...ariaProps} {...register(field.id, rules)} />
       )}
 
       {field.type === 'textarea' && (
@@ -203,13 +229,14 @@ export function FieldRenderer({
           rows={4}
           placeholder={field.placeholder}
           className={`${FIELD_BASE} resize-none`}
+          {...autoCompleteProps}
           {...ariaProps}
           {...register(field.id, rules)}
         />
       )}
 
       {field.type === 'select' && (
-        <select id={field.id} className={`${FIELD_BASE} [color-scheme:light]`} defaultValue="" {...ariaProps} {...register(field.id, rules)}>
+        <select id={field.id} className={`${FIELD_BASE} [color-scheme:light]`} defaultValue="" {...autoCompleteProps} {...ariaProps} {...register(field.id, rules)}>
           <option value="" disabled className="bg-white text-kidville-green">
             {t('seleziona')}
           </option>

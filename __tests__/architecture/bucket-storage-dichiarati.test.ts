@@ -179,6 +179,15 @@ const RISERVATI = [
   'certificati-medici',
   'chat-allegati',
   'credenziali',
+  // Scansioni dei documenti d'identità del PERSONALE in servizio (2026-08-11), dal
+  // modulo pubblico `/anagrafica-personale`. Bucket suo e non `form_attachments`
+  // per una ragione che non è di ordine: quello custodisce i documenti allegati
+  // alle domande d'iscrizione, cioè carte d'identità di genitori e fotografie di
+  // minori. Due popolazioni, due basi giuridiche, due termini di conservazione —
+  // e, soprattutto, due risolutori di percorso. Tenendoli separati, il gate di
+  // scope di un modulo non può firmare per sbaglio l'oggetto dell'altro: un
+  // percorso `documenti/…` non si risolve MAI a una riga d'iscrizione.
+  'documenti_personale',
   'fatture',
   'form_attachments',
   'gallery',

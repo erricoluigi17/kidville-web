@@ -1,6 +1,5 @@
 {
   "css.lint.unknownAtRules": "ignore",
-
   // ───────────────────────────────────────────────────────────────────────────
   // GLI 8 ERRORI DEL PANNELLO «PROBLEMI» — cosa sono, e cosa è stato provato
   //
@@ -57,5 +56,6 @@
       "name": "JavaSE-21",
       "path": "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
     }
-  ]
+  ],
+  "java.configuration.updateBuildConfiguration": "interactive"
 }

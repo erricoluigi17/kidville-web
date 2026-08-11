@@ -90,6 +90,12 @@ import { cx } from '@/lib/ui/cx'
  * file fa. `role="status"` resta perché è il ruolo semanticamente esatto per
  * un'osservazione non bloccante, non perché garantisca un annuncio.
  *
+ * ⚠️ E QUEL COLLEGAMENTO È CONDIZIONALE, perché questo componente può restituire
+ * `null`. Fino all'11 agosto i chiamanti scrivevano `aria-describedby` sempre: sui
+ * record in cui il badge non compare — la maggioranza, vedi `badgeHaQualcosaDaDire`
+ * qui sotto — il campo rimandava a un elemento che non esiste. Chi monta il badge
+ * chiede al predicato se c'è, invece di darlo per scontato.
+ *
  * ─── ⚠️ «NON VERIFICABILE» DEVE NOMINARE IL DATO CHE MANCA DAVVERO ─────────
  * Il giallo del luogo di nascita ha detto il falso, e vale la pena scrivere come.
  * `coerenza.ts` mette `luogo-nascita` fra i `nonVerificabili` quando manca il
@@ -142,6 +148,68 @@ interface BadgeCoerenzaCfProps {
 
 /** L'id di default: stabile, così `aria-describedby` funziona anche senza passare `id`. */
 export const ID_BADGE_COERENZA_CF = 'badge-coerenza-cf'
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * QUANDO IL BADGE C'È — la regola in UN POSTO SOLO, perché la terza copia diverge.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * Questo componente restituisce `null` quando non ha niente da dire, ed è la
+ * risposta giusta (vedi lo stato ⚪️ DA COMPILARE in cima). Ma i sei chiamanti
+ * puntano al suo `id` con `aria-describedby` dal campo del codice fiscale, e un
+ * `aria-describedby` che punta a un elemento INESISTENTE non è una sfumatura: lo
+ * screen reader annuncia un campo che rimanda a una descrizione che non c'è.
+ *
+ * ⚠️ E NON È IL CASO RARO, È QUELLO COMUNE. Misurato in produzione l'11 agosto: su
+ * 33 alunni **18 non hanno il codice fiscale** e **17 non hanno il sesso**, e
+ * `codice_belfiore_nascita` è NULL su **83 record su 83**. Senza sesso e senza
+ * codice catastale `codiceAtteso` è `null`, quindi non c'è nemmeno la proposta: il
+ * badge non compare. Cioè lo stato in cui il collegamento pendeva nel vuoto era lo
+ * stato ORDINARIO dell'archivio, non l'eccezione.
+ *
+ * La condizione vive qui e SOLO qui: `statoBadge` la calcola, il render la consuma,
+ * e i chiamanti chiedono `badgeHaQualcosaDaDire()` invece di riscriverla. Tre copie
+ * della stessa regola sono tre occasioni di divergere, e la terza è sempre quella
+ * che resta indietro.
+ */
+interface StatoBadge {
+  /** Contraddizione dimostrata, o codice scritto male. */
+  rosso: boolean
+  /** C'è un codice, torna quello che si poteva confrontare, il resto non c'era. */
+  giallo: boolean
+  /** Il codice che l'anagrafica implica, quando ha senso proporlo. */
+  codiceProposto: string | null
+  /** C'è una proposta da mostrare, e differisce da ciò che è già scritto. */
+  proposta: boolean
+}
+
+function statoBadge(esito: EsitoCoerenza): StatoBadge {
+  const rosso = esito.motivi.length > 0
+  const daCompilare = esito.codiceEsaminato === ''
+  const giallo = !rosso && !daCompilare && esito.nonVerificabili.length > 0
+
+  /**
+   * La proposta si mostra SOLO dove è sensata: c'è una contraddizione da sanare,
+   * oppure il campo è vuoto. Vedi il blocco sull'omocodia in cima.
+   */
+  const codiceProposto = rosso || daCompilare ? esito.codiceAtteso : null
+  const proposta = codiceProposto !== null && codiceProposto !== esito.codiceEsaminato
+
+  return { rosso, giallo, codiceProposto, proposta }
+}
+
+/**
+ * `true` quando `<BadgeCoerenzaCf esito={…} />` renderà davvero un elemento.
+ *
+ * Serve ai chiamanti per decidere se il campo del codice fiscale può puntare al
+ * badge: `aria-describedby={badgeHaQualcosaDaDire(esito) ? idBadgeCf : undefined}`.
+ * È una funzione pura sull'esito — nessuno stato, nessun DOM da interrogare — così
+ * la decisione si prende PRIMA del render, non dopo averlo guardato.
+ */
+export function badgeHaQualcosaDaDire(esito: EsitoCoerenza): boolean {
+  const { rosso, giallo, proposta } = statoBadge(esito)
+  return rosso || giallo || proposta
+}
 
 /**
  * Il sesso che il CODICE dichiara, o `null` se non si riesce a leggerlo.
@@ -211,20 +279,16 @@ export function BadgeCoerenzaCf({
     'luogo-nascita': t('cfMancaLuogoNascita'),
   }
 
-  const rosso = esito.motivi.length > 0
-  const daCompilare = esito.codiceEsaminato === ''
-  const giallo = !rosso && !daCompilare && esito.nonVerificabili.length > 0
-
-  /**
-   * La proposta si mostra SOLO dove è sensata: c'è una contraddizione da sanare,
-   * oppure il campo è vuoto. Vedi il blocco sull'omocodia in cima.
-   */
-  const codiceProposto = rosso || daCompilare ? esito.codiceAtteso : null
-  const proposta = codiceProposto !== null && codiceProposto !== esito.codiceEsaminato
+  const { rosso, giallo, codiceProposto, proposta } = statoBadge(esito)
 
   // Coerente, tutto verificato, niente da proporre: il campo non ha bisogno di
   // nessuna decorazione. «Niente» è una risposta, ed è quella giusta.
-  if (!rosso && !giallo && !proposta) return null
+  //
+  // Si passa dal predicato ESPORTATO, non da una copia locale della condizione: è
+  // lo stesso che i chiamanti interrogano per decidere l'`aria-describedby`, e se
+  // le due risposte potessero differire il collegamento tornerebbe a pendere nel
+  // vuoto esattamente nei casi in cui nessuno guarda.
+  if (!badgeHaQualcosaDaDire(esito)) return null
 
   const voci = rosso
     ? esito.motivi.map((m) => testoMotivo[m])

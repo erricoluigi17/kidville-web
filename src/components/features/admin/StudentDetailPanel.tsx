@@ -8,7 +8,7 @@ import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultPr
 import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
 import { AllergeniSelect } from './AllergeniSelect';
-import { BadgeCoerenzaCf } from '@/components/features/anagrafica/BadgeCoerenzaCf';
+import { BadgeCoerenzaCf, badgeHaQualcosaDaDire } from '@/components/features/anagrafica/BadgeCoerenzaCf';
 import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { verificaCoerenza } from '@/lib/fiscale/coerenza';
@@ -222,6 +222,24 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
         [codiceFiscaleAttuale, form.nome, form.cognome, form.gender, form.data_nascita, codiceBelfiore],
     );
 
+    /**
+     * ⚠️ IL CAMPO PUNTA AL BADGE SOLO SE IL BADGE C'È. `BadgeCoerenzaCf` restituisce
+     * `null` quando non ha niente da dire, e fino all'11 agosto qui `aria-describedby`
+     * era incondizionato: su una scheda senza codice fiscale lo screen reader
+     * annunciava un campo che rimanda a una descrizione INESISTENTE.
+     *
+     * Non era il caso di laboratorio: al 2026-08-11 in produzione 18 alunni su 33 non
+     * hanno il codice fiscale, 17 non hanno il sesso e `codice_belfiore_nascita` è NULL
+     * su 83 record su 83 — senza sesso e senza codice catastale non c'è nemmeno il
+     * codice calcolato da proporre, quindi il badge non compare. Lo stato rotto era
+     * quello ORDINARIO di questa scheda.
+     *
+     * La condizione non si riscrive qui: la decide il predicato del badge, che è
+     * l'unico posto in cui quella regola vive (`badgeHaQualcosaDaDire`). Misurato in
+     * `__tests__/a11y/schede-alunno-a11y.test.tsx`.
+     */
+    const badgeVisibile = badgeHaQualcosaDaDire(esitoCoerenza);
+
     if (!student) return null;
 
     const handleSave = async () => {
@@ -239,30 +257,43 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
              * `StudentDetailPanel-codice-fiscale.test.tsx` §3, con una fixture che la
              * chiave non ce l'ha: tolta questa riga, quel test diventa rosso.
              *
-             * ⚠️ OGGI QUESTO VALORE NON ARRIVA IN COLONNA, E VA DETTO QUI ─────────────
-             * Non per la migrazione — `alunni.codice_belfiore_nascita` ESISTE in
-             * produzione ed è nullable (misurato l'11 agosto) — ma perché la rotta non
-             * la nomina. Servono TRE modifiche in `src/app/api/admin/students/route.ts`,
-             * che è di un'altra corsia e qui non si tocca:
+             * ⚠️ FINO ALL'11 AGOSTO QUESTO VALORE NON ARRIVAVA IN COLONNA — riparato,
+             * e la storia resta scritta perché è la ragione per cui il collaudo che la
+             * sorveglia esiste. Non mancava la migrazione: `alunni.codice_belfiore_nascita`
+             * esiste in produzione ed è nullable (misurato l'11 agosto su
+             * `information_schema.columns`). Mancava nella rotta, in QUATTRO punti di
+             * `src/app/api/admin/students/route.ts` — e la prima stesura di questo
+             * commento ne elencava tre, dimenticando proprio quello del PATCH:
              *
-             *   1. `postBodySchema` (≈riga 26) deve dichiarare
-             *      `codice_belfiore_nascita: z.string().nullable().optional()`.
-             *      Finché non lo fa, `z.object` SCARTA la chiave prima dell'handler;
-             *   2. l'oggetto `record` del POST (≈riga 283, dove stanno `birth_nation`
-             *      / `birth_city` / `birth_province`) deve nominarla;
-             *   3. `allowedFields` del PATCH singolo (≈riga 591) deve contenerla,
-             *      altrimenti il ciclo `if (body[field] !== undefined)` la ignora.
+             *   1. `postBodySchema` (riga 26) — uno `z.object` NON strict, che quindi
+             *      scartava la chiave prima dell'handler senza errore e senza log;
+             *   2. `patchBodySchema` (riga 92) — stessa forma di guasto sulla strada
+             *      che questa scheda percorre davvero, ed è quella che l'elenco
+             *      precedente non nominava: senza, il PATCH rispondeva `200` su un
+             *      campo mai scritto;
+             *   3. l'oggetto `record` del POST (riga 300, accanto a `birth_nation` /
+             *      `birth_city` / `birth_province`);
+             *   4. `allowedFields` del PATCH singolo (riga 638), altrimenti il ciclo
+             *      `if (body[field] !== undefined)` la ignora.
              *
-             * Finché quelle tre righe non esistono, questa scheda si riapre col comune
-             * marcato «valore in archivio, non riconosciuto» e il badge fermo su «non
-             * verificabile»: il payload è pronto, la colonna resta vuota. È una
-             * dipendenza dichiarata, non un difetto di questo file.
+             * Il campo PERSISTE dall'11 agosto 2026. La misura che chiude la catena —
+             * POST e PATCH, il valore che sopravvive fino al record scritto, e il
+             * degrado tracciato dove la colonna non c'è — è
+             * `__tests__/api/admin-students-belfiore.test.ts`: questa scheda verifica il
+             * PAYLOAD, e un payload corretto contro una rotta che lo scarta è verde in
+             * perpetuo mentre in archivio non arriva niente.
              *
-             * Quando la rotta la nominerà, sull'ambiente non migrato (il DB E2E della
-             * CI: `PGRST204` in scrittura, `42703` in lettura) la scarterà e il resto
-             * della scheda si salverà comunque: nessun campo di questa pagina dipende
-             * da lei, e il badge continua a dire «non verificabile» invece di
-             * «sbagliato».
+             * PERCHÉ IL CODICE CATASTALE SERVE, che è la parte che non invecchia: da
+             * «Napoli» scritto a mano non esce nessun codice fiscale — `F839` sì. È il
+             * dato che rende il codice CALCOLABILE e VERIFICABILE, e senza di lui questa
+             * scheda si riapre col comune marcato «valore in archivio, non riconosciuto»
+             * e il badge fermo su «non verificabile». Non è un requisito d'iscrizione:
+             * `null` resta un valore legittimo, ed è il caso di ogni riga già in archivio.
+             *
+             * Sull'ambiente non migrato (il DB E2E della CI: `PGRST204` in scrittura,
+             * `42703` in lettura) la colonna viene scartata e il resto della scheda si
+             * salva comunque: nessun campo di questa pagina dipende da lei, e il badge
+             * continua a dire «non verificabile» invece di «sbagliato».
              */
             await onSave({
                 id: student.id,
@@ -443,7 +474,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     // Il verdetto si sente arrivando sul campo, una volta
                                     // sola: senza questo, chi legge con uno screen reader
                                     // non riceve mai il badge (vedi `idBadgeCf` sopra).
-                                    aria-describedby={idBadgeCf}
+                                    // `undefined` quando il badge non c'è: un rimando a un
+                                    // elemento inesistente è peggio di nessun rimando.
+                                    aria-describedby={badgeVisibile ? idBadgeCf : undefined}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green uppercase"
                                 />
                             </div>

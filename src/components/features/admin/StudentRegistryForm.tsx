@@ -7,7 +7,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { z } from 'zod';
 import { useTranslations } from 'next-intl';
 import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
-import { BadgeCoerenzaCf } from '@/components/features/anagrafica/BadgeCoerenzaCf';
+import { BadgeCoerenzaCf, badgeHaQualcosaDaDire } from '@/components/features/anagrafica/BadgeCoerenzaCf';
 import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { calcolaCodiceFiscale } from '@/lib/fiscale/calcolo';
 import { verificaCoerenza } from '@/lib/fiscale/coerenza';
@@ -180,6 +180,18 @@ export function StudentRegistryForm() {
         [codiceFiscaleMostrato, formData.nome, formData.cognome, formData.sesso, formData.data_nascita, formData.codice_belfiore_nascita],
     );
 
+    /**
+     * ⚠️ IL CAMPO PUNTA AL BADGE SOLO SE IL BADGE C'È. `BadgeCoerenzaCf` restituisce
+     * `null` quando non ha niente da dire — e a wizard appena aperto è esattamente
+     * così: campo vuoto, niente da calcolare, nessun badge. Un `aria-describedby`
+     * incondizionato rimanderebbe a un elemento che non esiste.
+     *
+     * La condizione non si riscrive qui: la decide `badgeHaQualcosaDaDire`, unico
+     * posto in cui quella regola vive. Misurato in
+     * `__tests__/a11y/schede-alunno-a11y.test.tsx`.
+     */
+    const badgeVisibile = badgeHaQualcosaDaDire(esitoCoerenza);
+
     /** La nomenclatura di QUESTA scheda: `comune_nascita` / `provincia_nascita` / `nazione_nascita`. */
     const luogoNascita: ValoreLuogoNascita = {
         provincia: formData.provincia_nascita,
@@ -233,23 +245,25 @@ export function StudentRegistryForm() {
     };
 
     /**
-     * ⚠️ RAMO PREVENTIVO, OGGI NON ESERCITABILE DAL PRODOTTO — e va scritto qui,
-     * perché il contrario è ciò che si dà per scontato leggendo il test che lo copre.
+     * ⚠️ IL RAMO DI RESILIENZA, e cosa lo può accendere DAVVERO — riscritto l'11
+     * agosto, perché fino a quel giorno questo blocco diceva il contrario del vero.
      *
      * La colonna `codice_belfiore_nascita` esiste in produzione (migrazione
-     * `20260810094625`) ma NON sul database E2E della CI, che non è migrato: lì
-     * PostgREST risponderebbe `PGRST204` («Could not find the … column … in the schema
-     * cache») a un INSERT che la nomina. **Nessun INSERT la nomina, oggi**:
-     * `postBodySchema` di `src/app/api/admin/students/route.ts` (≈riga 26) non la
-     * dichiara, e `z.object` scarta le chiavi che non conosce — quindi il campo muore
-     * nel parse della rotta e quell'errore non può nascere. Il ramo qui sotto è
-     * PRONTO per il giorno in cui la rotta lo nominerà (le tre modifiche sono elencate
-     * accanto allo schema, in cima a questo file): quel giorno, senza questo ramo, la
-     * creazione di un alunno si romperebbe nell'E2E della CI.
+     * `20260810094625`) ma NON sul database E2E della CI, che è un progetto separato e
+     * non migrato: lì PostgREST risponde `PGRST204` («Could not find the … column … in
+     * the schema cache») a un INSERT che la nomina.
      *
-     * Il test che lo copre (`§4`) costruisce a mano la risposta `PGRST204`: misura il
-     * RAMO, non il degrado end-to-end. Non c'è modo di misurare il secondo finché la
-     * rotta non nomina la colonna, e dichiararlo è meno costoso che scoprirlo.
+     * La stesura precedente sosteneva che «nessun INSERT la nomina, oggi», perché
+     * `postBodySchema` di `src/app/api/admin/students/route.ts` non la dichiarava e
+     * `z.object` scartava le chiavi sconosciute. **Quelle righe adesso esistono** —
+     * `postBodySchema` (riga 26), `patchBodySchema` (riga 92), l'oggetto `record` del
+     * POST (riga 300) e `allowedFields` del PATCH (riga 638): il campo persiste
+     * dall'11 agosto 2026, misurato in `__tests__/api/admin-students-belfiore.test.ts`.
+     * Quindi il ramo qui sotto non è più preventivo: è la strada che l'E2E della CI
+     * percorre a ogni creazione di alunno, e senza di lui si romperebbe.
+     *
+     * (Questa scheda, va ricordato, non è montata da nessuna pagina — vedi la testata
+     * in cima: il ramo vive per davvero nel gemello, non qui.)
      *
      * La regola che il ramo implementa resta quella giusta: un codice catastale
      * mancante non può impedire l'iscrizione di un bambino. Si ritenta UNA volta senza
@@ -438,8 +452,10 @@ export function StudentRegistryForm() {
                                 name="codice_fiscale"
                                 value={codiceFiscaleMostrato}
                                 onChange={handleInputChange}
-                                // Il verdetto si sente arrivando sul campo, una volta sola.
-                                aria-describedby={idBadgeCf}
+                                // Il verdetto si sente arrivando sul campo, una volta sola —
+                                // e `undefined` quando il badge non c'è: un rimando a un
+                                // elemento inesistente è peggio di nessun rimando.
+                                aria-describedby={badgeVisibile ? idBadgeCf : undefined}
                                 className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 ${errors.codice_fiscale ? 'border-kidville-error bg-kidville-error-soft' : cfDalCalcolo ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`}
                             />
                             {errors.codice_fiscale && <span className="text-xs text-kidville-error">{errors.codice_fiscale}</span>}

@@ -56,6 +56,12 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
  *     da `verificaEtichette`, che prima saltava del tutto questa scheda;
  *   · `StudentDetailPanel` — scheda a dati caricati, con `bes` acceso nella fixture.
  *
+ * Dall'11 agosto c'è anche il caso che mancava, ed è l'ultimo blocco di questo file:
+ * un record **senza codice fiscale e senza i dati per calcolarlo** — cioè lo stato
+ * più comune dell'archivio vero, non l'eccezione — con la misura che il campo non
+ * rimandi a una descrizione inesistente. Non è un caso che axe copra: le sette prove
+ * `axe` restavano VERDI col difetto in pagina.
+ *
  * Resta FUORI, e va detto invece di lasciarlo intendere: il contrasto dei colori
  * (non calcolabile senza layout in jsdom — ha il suo lock dedicato,
  * `contrasto-cascata.test.tsx`), le regole a livello di documento (disattivate qui
@@ -134,6 +140,44 @@ const ALUNNA = {
   zip_code: '80014',
   citizenship: 'Italiana',
   bes: true,
+  note_bes: '',
+  note_mediche: '',
+  allergeni: [] as string[],
+}
+
+/**
+ * ⚠️ L'ALUNNA CHE RAPPRESENTA LA MAGGIORANZA DELL'ARCHIVIO, non l'eccezione.
+ *
+ * Niente codice fiscale, niente sesso, niente codice catastale: è la combinazione
+ * misurata in produzione l'11 agosto — su 33 alunni **18 senza codice fiscale** e
+ * **17 senza il sesso**, con `codice_belfiore_nascita` NULL su **83 record su 83**.
+ * Senza sesso e senza codice catastale `verificaCoerenza` non riesce nemmeno a
+ * calcolare il codice atteso, quindi non c'è neppure la proposta «Usa questo»: il
+ * badge di coerenza **non compare affatto**.
+ *
+ * È lo stato in cui `aria-describedby` puntava a un elemento inesistente, ed è per
+ * questo che la fixture esiste: `ALUNNA` ha il sesso e il codice catastale, quindi il
+ * badge lo mostra sempre e non poteva accorgersi di niente.
+ */
+const ALUNNA_SENZA_CF = {
+  id: 'al-2',
+  nome: 'Bea',
+  cognome: 'Bianchi',
+  gender: null as string | null,
+  data_nascita: '2020-05-04',
+  scuola_id: SEDE_A,
+  birth_city: '',
+  birth_province: '',
+  birth_nation: '',
+  codice_belfiore_nascita: null as string | null,
+  codice_fiscale: null as string | null,
+  residence_address: '',
+  residence_street_number: '',
+  residence_city: '',
+  residence_province: '',
+  zip_code: '',
+  citizenship: '',
+  bes: false,
   note_bes: '',
   note_mediche: '',
   allergeni: [] as string[],
@@ -312,5 +356,97 @@ describe('ogni campo ha un nome, e ogni `htmlFor` un bersaglio', () => {
     )
     await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
     verificaEtichette(container)
+  })
+})
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * NESSUN CAMPO RIMANDA A UNA DESCRIZIONE CHE NON ESISTE.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * ⚠️ QUESTO CASO MANCAVA, e non perché fosse esotico: mancava perché tutte le
+ * fixture avevano abbastanza dati da far comparire il badge di coerenza. Il campo
+ * del codice fiscale porta `aria-describedby` verso `BadgeCoerenzaCf`, che
+ * restituisce `null` quando non ha niente da dire — e su un record **senza codice
+ * fiscale e senza i dati per calcolarlo** (18 alunni su 33, 17 senza il sesso,
+ * `codice_belfiore_nascita` NULL su 83 su 83: misura di produzione dell'11 agosto)
+ * il badge non c'è. Chi legge con uno screen reader arrivava sul campo e sentiva un
+ * rimando a un elemento che non esiste.
+ *
+ * ⚠️ E axe NON lo vede: le sette prove qui sopra erano VERDI mentre il difetto era
+ * in pagina — provato eseguendole prima della riparazione. `aria-valid-attr-value`
+ * non fa fallire un `aria-describedby` orfano, quindi la misura dev'essere questa,
+ * esplicita: ogni `id` elencato in `aria-describedby` risolve a un elemento del
+ * contenitore.
+ */
+describe('ogni `aria-describedby` punta a un elemento che esiste', () => {
+  /**
+   * `aria-describedby` è una LISTA di id separati da spazio: si controllano tutti,
+   * uno per uno. Un solo riferimento morto in mezzo a due buoni è comunque un campo
+   * che rimanda al nulla.
+   */
+  const verificaDescrizioni = (container: HTMLElement) => {
+    const descritti = Array.from(container.querySelectorAll('[aria-describedby]'))
+    for (const el of descritti) {
+      const ids = (el.getAttribute('aria-describedby') ?? '').split(' ').filter((s) => s !== '')
+      // Un attributo presente ma vuoto è già un difetto: dichiara una descrizione
+      // e non ne nomina nessuna.
+      expect(ids.length).toBeGreaterThan(0)
+      for (const id of ids) {
+        expect(container.querySelectorAll(`[id="${CSS.escape(id)}"]`)).toHaveLength(1)
+      }
+    }
+  }
+
+  it('StudentDetailPanel — un record SENZA codice fiscale e senza i dati per calcolarlo', async () => {
+    const { container } = render(
+      <StudentDetailPanel
+        student={ALUNNA_SENZA_CF}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        variant="page"
+      />,
+    )
+    const campoCf = await screen.findByLabelText(/Codice Fiscale/)
+
+    // La premessa del caso, dichiarata invece che sperata: il badge NON è in pagina.
+    expect(container.querySelector('#dettaglio-badge-coerenza-cf')).toBeNull()
+
+    // E quindi il campo non lo nomina. Nominarlo sarebbe un rimando nel vuoto.
+    expect(campoCf.getAttribute('aria-describedby')).toBeNull()
+    verificaDescrizioni(container)
+  })
+
+  it('StudentDetailPanel — e quando il badge C\'È, il campo torna a puntarci', async () => {
+    // Il rovescio della misura: senza questo, «togli sempre l'attributo» passerebbe.
+    const { container } = render(
+      <StudentDetailPanel
+        student={ALUNNA}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+        variant="page"
+      />,
+    )
+    const campoCf = await screen.findByLabelText(/Codice Fiscale/)
+    expect(campoCf.getAttribute('aria-describedby')).toBe('dettaglio-badge-coerenza-cf')
+    verificaDescrizioni(container)
+  })
+
+  it('ScrollableStudentForm — scheda appena aperta, che è lo stato senza badge', async () => {
+    const { container } = render(<ScrollableStudentForm />)
+    const campoCf = await screen.findByLabelText(/Codice Fiscale/)
+    expect(container.querySelector('#alunno-badge-coerenza-cf')).toBeNull()
+    expect(campoCf.getAttribute('aria-describedby')).toBeNull()
+    verificaDescrizioni(container)
+  })
+
+  it('StudentRegistryForm — wizard appena aperto, che è lo stato senza badge', async () => {
+    const { container } = render(<StudentRegistryForm />)
+    const campoCf = await screen.findByLabelText(/Codice Fiscale/)
+    expect(container.querySelector('#registry-badge-coerenza-cf')).toBeNull()
+    expect(campoCf.getAttribute('aria-describedby')).toBeNull()
+    verificaDescrizioni(container)
   })
 })

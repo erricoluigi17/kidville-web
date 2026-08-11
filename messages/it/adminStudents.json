@@ -438,7 +438,7 @@
   "cfFiltroTipo": "Tipo",
   "cfMancaCognome": "il cognome",
   "cfMancaDataNascita": "la data di nascita",
-  "cfMancaLuogoNascita": "il comune di nascita",
+  "cfMancaLuogoNascita": "il codice catastale del comune di nascita",
   "cfMancaNome": "il nome",
   "cfMancaSesso": "il sesso",
   "cfMotivoCfAssente": "il codice fiscale non c’è",

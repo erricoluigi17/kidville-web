@@ -36,11 +36,21 @@ import { parseQuery } from '@/lib/validation/http'
  * del tetto a ogni richiesta, e non serve a nessun utente: il rilascio ha senso solo
  * insieme alla tendina che la consuma.
  *
- * E il debito che questa route esiste per sanare è ancora intatto: la deroga
- * `src/lib/utils/fiscalCodeApi.ts` in `dataset-comuni-fuori-dal-bundle.test.ts` — 425
- * KB di `codice-fiscale-js` in un chunk del browser — è al suo posto, e quel lock
- * pretende che venga TOLTA quando il ripiego passerà di qui. Non è stato fatto in
- * questo lavoro: quel file sta fuori da questo perimetro.
+ * ✅ IL DEBITO CHE QUESTA ROUTE ESISTEVA PER SANARE È CHIUSO — ma non da qui, e va
+ * detto con precisione perché la riga precedente diceva il contrario e sarebbe
+ * invecchiata male. Fino al 2026-08-10 `dataset-comuni-fuori-dal-bundle.test.ts`
+ * portava una deroga per `src/lib/utils/fiscalCodeApi.ts`: 425 KB di
+ * `codice-fiscale-js` in un chunk del browser, come ripiego locale al calcolo del CF
+ * fatto da un servizio terzo. L'11 agosto 2026 quel file è stato CANCELLATO, non
+ * ricondotto qui: la sua `fetch` spediva nome, cognome, sesso, data e comune di
+ * nascita di un bambino ad `api.codicefiscale.it`, e il titolare del trattamento ha
+ * deciso di toglierla (`HOST_VIETATI` in `provider-esterni-osservati.test.ts`). Il
+ * calcolo vive ora in `src/lib/fiscale/calcolo.ts`: locale, sincrono, senza dataset
+ * nel bundle. Le deroghe di quel lock sono ZERO e `codice-fiscale-js` è passato in
+ * `devDependencies`.
+ *
+ * Il che lascia questa route con una sola ragione di esistere, ed è quella scritta
+ * qui sopra: essere la tendina delle province, il giorno in cui qualcuno la consumerà.
  *
  * Il modulo `comuni.ts` costruisce il proprio indice AL PRIMO USO e non
  * all'import: la prima richiesta di ogni istanza paga il parsing, le successive no.

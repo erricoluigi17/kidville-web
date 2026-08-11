@@ -30,6 +30,10 @@ import path from 'node:path';
  *     `src/` sta o fra i provider qui sotto o fra gli host che non si chiamano (un iframe, un
  *     namespace XML, un link in una pagina legale). Senza questa regola il lock difenderebbe
  *     solo i provider che qualcuno si è ricordato di scrivere — cioè difenderebbe il passato.
+ *  1-bis. **Alcuni host sono VIETATI, non «da dichiarare».** La regola 1 chiede di dichiarare;
+ *     questa vieta. Serve quando la ragione del divieto non è tecnica ma di titolarità — quali
+ *     dati di un minore escono dal dispositivo e verso chi — perché altrimenti riaprire la
+ *     porta costerebbe una riga in una mappa di test. Vedi `HOST_VIETATI`.
  *  2. **Dove si parla con un terzo non c'è `fetch` grezzo.** È la regola che era violata.
  *  3. **Controllo positivo: le chiamate esistono davvero.** Un lock che verifica solo assenze
  *     resta verde anche quando il codice sparisce, ed è il modo in cui un lock muore.
@@ -113,17 +117,42 @@ const PROVIDER_ESTERNI = new Map<string, Provider>([
             + 'questa deroga va tolta e il file messo fra i chiamanti — AGENTS.md regola 3 nomina '
             + 'SIDI accanto ad Aruba, ed è lo stesso identico rischio.',
     }],
-    ['api.codicefiscale.it (calcolo CF)', {
-        host: ['api.codicefiscale.it'],
-        chiamanti: ['src/lib/utils/fiscalCodeApi.ts'],
-        nome: null,
-        deroga:
-            'Gira SOLO nel browser: `externalFetch` scrive su `app_log` col client di servizio e '
-            + 'lì dentro non esiste. Il file usa `logClient` e — questa è la parte che conta — il '
-            + 'corpo dell\'errore lo legge, lo maschera (`mascheraDati`: i sei valori spediti sono '
-            + 'quelli di un MINORE) e lo logga. La regola 3 è rispettata per altra strada, non '
-            + 'aggirata. Il lock sui `fetch` grezzi lo esenta per questo, e per nient\'altro.',
-    }],
+]);
+
+/**
+ * HOST MESSI AL BANDO — non «dichiarati altrove»: VIETATI. Il divieto è più forte della
+ * regola 1, e la differenza conta.
+ *
+ * ─── IL FATTO, 2026-08-11 ────────────────────────────────────────────────────────
+ * Fino a oggi qui c'era un settimo provider: `api.codicefiscale.it`, chiamato da
+ * `src/lib/utils/fiscalCodeApi.ts`, con una deroga lunga che spiegava come mai non passasse
+ * da `externalFetch`. La deroga era onesta e il logging era stato sistemato. Ma ciò che
+ * quella `fetch` spediva erano NOME, COGNOME, SESSO, DATA DI NASCITA, COMUNE e PROVINCIA
+ * DI NASCITA di un bambino, dal browser del genitore o della segreteria a un terzo che non
+ * compare in nessuna informativa e che nessun consenso copre. La testata di quel file lo
+ * diceva per esteso e concludeva che toglierlo era «una decisione di titolarità, non di
+ * codice». Il titolare l'ha presa l'11 agosto 2026: si toglie. Il file è stato cancellato,
+ * e con esso il ripiego da 425 KB di `codice-fiscale-js` in un chunk del browser.
+ *
+ * ─── PERCHÉ UN ELENCO A PARTE, E NON SEMPLICEMENTE «NIENTE» ──────────────────────
+ * Perché togliere la voce dai provider lascia il divieto affidato alla regola 1, che è una
+ * regola sulla DICHIARAZIONE: chiunque rimetta quell'host in `src/` può renderla verde
+ * riaggiungendolo qui fra i provider o là fra gli host non chiamati. Sarebbe di nuovo una
+ * decisione di titolarità presa modificando un test. Un host in questo elenco invece non
+ * può comparire in `src/` in nessun modo, e non può nemmeno essere «riabilitato» altrove:
+ * le due asserzioni qui sotto guardano entrambe le porte.
+ *
+ * Il calcolo del CF non ne ha più bisogno: `src/lib/fiscale/calcolo.ts` dà lo stesso
+ * risultato senza rete e all'istante, perché il codice catastale arriva certo dalla tendina.
+ */
+const HOST_VIETATI = new Map<string, string>([
+    ['api.codicefiscale.it',
+        'Riceveva nome, cognome, sesso, data e comune di nascita di un MINORE da un servizio '
+        + 'terzo non coperto da informativa né da consenso. Rimosso l\'11 agosto 2026 per '
+        + 'decisione del titolare del trattamento, insieme a `src/lib/utils/fiscalCodeApi.ts`. '
+        + 'Il codice fiscale si calcola in locale con `src/lib/fiscale/calcolo.ts`: stesso '
+        + 'risultato, nessun dato che esce dal dispositivo. Non si rimette, e non si rimette '
+        + 'nemmeno spostandolo fra i provider o fra gli host non chiamati.'],
 ]);
 
 /**
@@ -140,12 +169,16 @@ const HOST_NON_CHIAMATI = new Map<string, string>([
 ]);
 
 /**
- * File con un `fetch` grezzo ammesso, e perché. UNO SOLO, ed è quello di sopra: il calcolo del
- * codice fiscale gira nel browser, dove `externalFetch` non può esistere.
+ * File con un `fetch` grezzo ammesso verso un terzo, e perché.
+ *
+ * ⚠️ OGGI È VUOTA, ed è la forma giusta in cui deve restare. L'unica voce che c'era —
+ * `src/lib/utils/fiscalCodeApi.ts`, «client-side, `externalFetch` nel browser non esiste» —
+ * è caduta l'11 agosto 2026 insieme al file: vedi `HOST_VIETATI` qui sopra. La mappa resta
+ * dichiarata perché il caso è reale (una chiamata a un terzo dal browser non può passare da
+ * `externalFetch`, che scrive su `app_log` col client di servizio), ma riempirla è una
+ * decisione da scrivere, non un'abitudine da ereditare.
  */
-const FETCH_GREZZO_AMMESSO = new Map<string, string>([
-    ['src/lib/utils/fiscalCodeApi.ts', 'client-side: vedi la deroga di `api.codicefiscale.it` fra i provider.'],
-]);
+const FETCH_GREZZO_AMMESSO = new Map<string, string>([]);
 
 /* ────────────────────────────────────────────────────────────────────────────────
  * LA MISURA. Testuale, come negli altri lock di questa cartella e per la stessa ragione: far
@@ -261,6 +294,76 @@ describe('lock — le chiamate ai provider esterni passano da externalFetch', ()
             + 'Un provider che entra in silenzio è come ci è entrato Aruba: due mesi con «401» al '
             + 'posto del motivo, e nessun test rosso.',
         ).toEqual([]);
+    });
+
+    it('1-bis. gli host MESSI AL BANDO non ricompaiono in `src/`, e non si riabilitano altrove', () => {
+        // La regola 1 pretende che un host sia DICHIARATO; questa pretende che certi host non
+        // esistano affatto. Senza, rimettere `api.codicefiscale.it` — cioè rimettere i dati di un
+        // bambino su una `fetch` verso un terzo — costerebbe una riga in una delle due mappe qui
+        // sopra, e il gate resterebbe verde. È una decisione di titolarità: non si prende
+        // modificando un test, e questo test esiste perché non si possa.
+        const risorti = [...HOST_VIETATI.keys()]
+            .filter((h) => HOST_TROVATI.has(h))
+            .map((h) => `${h} → ${HOST_TROVATI.get(h)!.join(', ')}`)
+            .sort();
+        expect(
+            risorti,
+            'Un host messo al bando è tornato in `src/`. Il motivo del bando è scritto in '
+            + 'HOST_VIETATI, e non è tecnico: riguarda quali dati di un minore escono dal '
+            + 'dispositivo, e verso chi. Va riaperto dal titolare del trattamento, non qui.',
+        ).toEqual([]);
+
+        // E la seconda porta: nessuno lo «riabilita» dichiarandolo provider o host non chiamato.
+        for (const host of HOST_VIETATI.keys()) {
+            // `eDiUnProvider` e non `HOST_DEI_PROVIDER.includes`: la dichiarazione avviene per
+            // FRAMMENTI, e `codicefiscale.it` riaprirebbe la porta senza nominare l'host intero.
+            expect(eDiUnProvider(host), `${host} è tornato fra i PROVIDER_ESTERNI`).toBe(false);
+            expect(HOST_NON_CHIAMATI.has(host), `${host} è tornato fra gli HOST_NON_CHIAMATI`).toBe(false);
+            expect(HOST_VIETATI.get(host)!.length, `il bando di ${host} non è motivato`).toBeGreaterThan(80);
+        }
+
+        // ─── LA TERZA PORTA: IL NOME NUDO ───────────────────────────────────────────
+        //
+        // `HOST_TROVATI` nasce da uno scanner che cerca URL INTERI (`https?://…`). Basta
+        // non scriverne uno per passargli davanti:
+        //
+        //     const H = 'api.codicefiscale.it'
+        //     await fetch(`https://${H}/api/v1/calcola`, …)
+        //
+        // Misurato l'11 agosto 2026, con un file di sonda in `src/lib/`: i test di questo
+        // file restavano TUTTI VERDI. Il commento di `HOST_VIETATI` prometteva che l'host
+        // «non si rimette in nessun modo», e la misura ne copriva uno solo — cioè
+        // esattamente il difetto che questo repo si è impegnato a non commettere: una
+        // protezione descritta più forte di com'è.
+        //
+        // Per gli host BANDITI (non per tutti gli altri: qui la severità in più è
+        // giustificata dalla posta in gioco) si cerca anche il nome nudo, in qualunque
+        // stringa. I commenti sono già mascherati da `mascheraCommenti`, quindi
+        // raccontare la storia di questo bando in un commento resta permesso — ed è
+        // giusto che lo sia: la memoria di perché una porta è chiusa vale quanto la porta.
+        for (const host of HOST_VIETATI.keys()) {
+            const nudo = [...CODICE.entries()]
+                .filter(([, src]) => src.includes(host))
+                .map(([f]) => f)
+                .sort();
+            expect(
+                nudo,
+                `Il nome di ${host} compare in \`src/\` fuori da un URL: una stringa spezzata, `
+                + 'una costante, una concatenazione. Il bando non si aggira scrivendo l\'host '
+                + 'in un altro modo — il motivo è in HOST_VIETATI, e riguarda quali dati di un '
+                + 'minore escono dal dispositivo.',
+            ).toEqual([]);
+        }
+
+        // Autoinganno: se `eDiUnProvider` o lo scanner smettessero di funzionare, l'elenco
+        // resterebbe vuoto per il motivo sbagliato. Un host che c'è DAVVERO deve essere visto.
+        expect(HOST_TROVATI.has('api.resend.com'), 'lo scanner non vede più un host che esiste').toBe(true);
+        // E lo stesso per la ricerca del nome nudo, che ha uno scanner suo: se `CODICE` si
+        // svuotasse, il ciclo qui sopra passerebbe per il motivo sbagliato.
+        expect(
+            [...CODICE.values()].some((src) => src.includes('api.resend.com')),
+            'la ricerca del nome nudo non vede più un host che esiste',
+        ).toBe(true);
     });
 
     it('2. dove si parla con un terzo NON c\'è un `fetch` grezzo', () => {

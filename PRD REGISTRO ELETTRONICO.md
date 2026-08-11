@@ -15,7 +15,7 @@
 > |---------|-------------|-----|
 > | `schools` | Anagrafica sedi (multi-tenant) | ✅ Policy anon SELECT |
 > | `utenti` | Staff (PK `id` FK → `auth.users`); **genitori reali su `parents`** | ⚠️ RLS abilitata ma **bypassata via `service_role`** — lockdown letture genitore in P0 (DL-003) |
-> | `alunni` | Anagrafica alunni con allergie | ✅ Policy anon SELECT |
+> | `alunni` | Anagrafica alunni con allergie. Dal 2026-08-10 porta anche `codice_belfiore_nascita` (`varchar(4)`, migr. `20260810094625`, colonna gemella su `parents`): il codice catastale del comune di nascita **scelto da un elenco**, dal quale il codice fiscale si calcola in locale. Nullable, senza default, senza trigger e senza backfill — segnala sempre, non blocca mai. Misurato l'11/08/2026: **0 righe valorizzate su 83** (33 alunni + 50 genitori) | ✅ Policy anon SELECT |
 > | `eventi_diario` | Eventi giornalieri del Diario 0-6 | ✅ SELECT + INSERT + UPDATE |
 > | `legame_genitori_alunni` | Relazione genitore↔figlio | ✅ RLS attivo |
 > | `valutazioni` | Voti e giudizi (Primaria) | Schema creato, non ancora popolato |
@@ -53,7 +53,7 @@
 > | Provisioning di una sede nuova | ✅ corredo minimo automatico + checklist di ciò che resta umano | migr. `20260731123052_provisiona_sede_v2` |
 > | File negli Storage | ✅ `gallery`, `avvisi_allegati`, `task_allegati` **privati** con link firmati a scadenza breve; `news` **pubblico per scelta scritta** del titolare (blog verso l'esterno), dichiarato in migrazione | migr. `20260731192108`, `20260731192048` · `src/lib/gallery/storage.ts` · lock `bucket-storage-dichiarati` |
 > | Copertura dell'isolamento nel gate | ✅ lock per **handler** (non per file), per **scrittura**, su tabelle lette dallo schema, allowlist a match esatto `route:METODO` | `__tests__/architecture/isolamento-sede-coverage.test.ts` |
-> | Migrazioni ↔ database | ✅ **97** file = 97 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256` | lock `migrazioni-complete` |
+> | Migrazioni ↔ database | ✅ **108** file = 108 versioni applicate, stessi nomi e stesso ordine; fotografia versionata del registro con `sha256`. *Rimisurato l'11/08/2026 con `list_migrations` — erano 97, e la riga lo diceva ancora* | lock `migrazioni-complete` |
 > | Collaudo dell'isolamento | ✅ account TEST su Aversa e Cesa · account `test.multisede.admin` (solo accesso, tre sedi) per il selettore · seed E2E a **due** sedi con sezione omonima · `e2e/isolamento-sedi.spec.ts` | `scripts/seed-test-sedi.mjs`, `scripts/seed-e2e.mjs` |
 >
 > ### Moduli Implementati
@@ -67,12 +67,13 @@
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
-> | **Anagrafiche — verifica dei codici fiscali** | 🔶 **Solo API: nessuna pagina** | — (la UI non esiste ancora: la rotta oggi si raggiunge solo da un client HTTP) | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde |
+> | **Anagrafiche — il codice fiscale certo** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione**: le due migrazioni sono applicate, il codice attende il merge | `/admin/students` → **quinta linguetta «Codici fiscali»** (`CodiciFiscaliDaVerificare`); la cascata **provincia → comune** (`LuogoNascitaFields`) e il badge di coerenza (`BadgeCoerenzaCf`) sulle sei schede di alunno e genitore | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde. Scrittura con `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**. `GET /api/anagrafiche/comuni` serve la sola provincia scelta: le 13.656 righe della tabella Belfiore **non escono mai** verso il browser (lock `dataset-comuni-fuori-dal-bundle`). Il calcolo è locale e sincrono (`src/lib/fiscale/`): **nessuna chiamata a terzi**, `api.codicefiscale.it` è al bando |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
+> | **«Lavora con noi» — candidature insegnanti** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione** (`candidature_insegnanti`: 0 righe all'11/08; la migrazione e il cron sono già là, la route no) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede e fasce d'età scelte da elenco), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione`), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi). **La candidatura non è un account**: l'utenza `educator` nasce solo all'approvazione |
 >
 > ### 🎓 Moduli Normativi Scuola Primaria (gap da colmare)
 > Requisiti derivati da L. 150/2024, O.M. 3 del 9/1/2025 (All. A), note MIM 5274/2024 e 2773/2025,
@@ -574,6 +575,233 @@ Collaudo: `CandidaturaInsegnanteWizard-sede.test.tsx` (28), `-errore-invio.test.
 
 ---
 
+## 🪪 Changelog — Il codice fiscale di un bambino smette di uscire dal dispositivo, e comincia a essere esatto per costruzione 2026-08-11 (branch `feat/insegnanti-codice-fiscale`)
+
+È la voce **di fondazione** della famiglia «codice fiscale»: le tre qui sotto — il pannello che la
+segreteria guarda, la `PATCH` del genitore che non salvava niente, i tre stati della rotta di
+verifica — poggiano tutte su questa e non la ripetono. Qui c'è quello che nessuna di loro racconta:
+**da dove viene il codice**, e da dove **non viene più**.
+
+### 1. Il fatto che vale più di tutto il resto: `api.codicefiscale.it` è al bando
+
+Fino all'11 agosto 2026 il codice fiscale di un bambino si otteneva così: il browser della
+segreteria — o quello del genitore, sul modulo pubblico d'iscrizione — mandava **nome, cognome,
+sesso, data di nascita, comune e provincia di nascita** a `https://api.codicefiscale.it`, un
+servizio terzo che **non compare in nessuna informativa** e che **nessun consenso copre**.
+`src/lib/utils/fiscalCodeApi.ts` lo dichiarava per esteso nella propria testata e concludeva che
+toglierlo era «una decisione di titolarità, non di codice». Era vero, ed è per questo che è rimasto:
+nessun test poteva essere rosso su una decisione che non era stata presa.
+
+**Il titolare l'ha presa l'11 agosto 2026: si toglie.** Il file è stato cancellato, e con lui il
+ripiego locale da **425 KB** di `codice-fiscale-js` che finiva in un chunk del browser — cioè la
+stessa tabella dei comuni che il lock del dataset teneva fuori dalla porta principale e che rientrava
+dalla finestra. Misurato dopo: `src/lib/utils/` non esiste più.
+
+Togliere la voce e basta avrebbe lasciato il divieto affidato a una regola sulla **dichiarazione**:
+chiunque rimettesse quell'host in `src/` avrebbe potuto far tornare verde il gate riaggiungendolo
+fra i provider osservati, cioè prendendo di nuovo una decisione di titolarità **modificando un
+test**. Perciò `__tests__/architecture/provider-esterni-osservati.test.ts` ha ora una mappa
+`HOST_VIETATI` con **due porte sorvegliate**: l'host non può ricomparire in `src/` in nessuna forma,
+e non può essere «riabilitato» dichiarandolo provider o host-non-chiamato — il confronto avviene per
+**frammenti**, così `codicefiscale.it` senza il prefisso non riapre nulla. Il bando pretende anche
+una motivazione lunga almeno 80 caratteri: una riga vuota non è una decisione.
+
+Le stesse due righe erano da correggere in `dataset-comuni-fuori-dal-bundle.test.ts` (la deroga da
+425 KB, che «va TOLTA quando il ripiego passerà dalla route» — è passato) e in `logging-tetto.test.ts`.
+
+### 2. Il calcolo è locale, sincrono, e non aspetta più niente
+
+`calcolaCodiceFiscale` è **puro**: nessun I/O, nessuna rete, nessun log, nessun orologio. Tolta la
+rete, gli 800 ms di *debounce* che stavano in un `useEffect` non hanno più niente da attendere, e
+l'effetto è sparito insieme a loro — un effetto che scrive stato riaprirebbe il ciclo
+`setState → effect → setState` che in questo repo ESLint vieta (`react-hooks/set-state-in-effect`).
+Adesso è un `useMemo` che gira **in render**: si digita il cognome e il codice c'è, senza attesa e
+senza un pacchetto che parte.
+
+Tre limiti sono scritti nella testata del modulo perché non vengano scoperti sul campo:
+
+| | |
+|---|---|
+| **Non produce mai un codice omocodico** | l'omocodia la assegna l'Agenzia quando due persone otterrebbero lo stesso codice: non è una funzione dell'anagrafica, è una decisione presa altrove. Un modulo che la calcolasse produrrebbe, **con la faccia della certezza, il codice di qualcun altro** |
+| **Il codice calcolato non è il codice vero** | è il codice che l'anagrafica *implica*: serve a confrontare e a suggerire, mai a sostituire il documento. Fra i due, l'unico dato certo è quello sul tesserino |
+| Non è il generatore finto | esisteva già un generatore segnaposto (mese sempre `A`, giorno fisso, catastale fisso) per riempire un modulo a schermo. Quello non calcola niente e non va esteso |
+
+### 3. `src/lib/fiscale/`: sei moduli, e il carattere di controllo che questo repo non aveva mai verificato
+
+| Modulo | Cosa fa |
+|---|---|
+| `tabelle.ts` | ciò che l'Agenzia ha deciso una volta per tutte: lettere dei mesi, pesi pari/dispari, alfabeto di controllo, scarto femmina (+40), tabella dell'omocodia, aritmetica del calendario |
+| `calcolo.ts` | dall'anagrafica al codice. **42** test |
+| `validazione.ts` | **è scritto bene? e il carattere di controllo torna?** **59** test |
+| `coerenza.ts` | è di *questa* persona? Confronta il codice con nome, cognome, sesso, data e luogo. **35** test |
+| `codice-fiscale.ts` | legge data e sesso **da** un codice (serve al sezionale della fattura e alla causale). **41** test |
+| `comuni.ts` + `dati/comuni-belfiore.ts` | la tabella Belfiore e il suo indice pigro. **31** test |
+
+Il file `tabelle.ts` esiste per una ragione sola, ed è la lezione già pagata dal ciclo 2 di
+`/ship-cycle`: **le stesse lettere dei mesi e la stessa tabella dell'omocodia erano già scritte in
+due posti diversi, e una terza copia stava per nascere.** Quando la copia A viene corretta e la B
+no, il difetto non è una riga sbagliata — è che le due risposte divergono e nessun test se ne
+accorge, perché ogni copia ha i suoi.
+
+**Il carattere di controllo è la novità vera.** Prima di oggi questo repository non l'aveva mai
+verificato: sapeva riconoscere la *forma* di un codice fiscale (sei lettere, due cifre, una lettera…)
+e nient'altro. Una forma giusta con l'ultima lettera sbagliata passava per buona — ed è precisamente
+il refuso che si fa ricopiando un codice a mano da un documento. Ora `validazione.ts` lo ricalcola,
+e sa fare due cose che la sola forma non consente: distinguere un giorno **fuori scala** (1-31 per i
+maschi, 41-71 per le femmine) da una **data inesistente** (31 febbraio), e riportare un codice
+omocodico alla sua **base** — posizioni numeriche ricondotte a cifra e checksum ricalcolata su
+quelle.
+⚠️ **`codice-fiscale.ts` NON verifica il carattere di controllo, ed è deliberato**: quel modulo
+*legge* data e sesso anche da un codice sbagliato, perché per chi deve scegliere il sezionale di una
+fattura **un dato illeggibile è peggio di un dato discordante**. I due moduli convivono, condividono
+le tabelle e non si sovrappongono: uno legge, l'altro giudica.
+
+### 4. Il codice catastale arriva certo — e ciò che è in archivio non si perde
+
+Il calcolo **vuole il codice catastale, non il nome del comune**: «Napoli» scritto a mano non produce
+niente, `F839` sì. È la ragione per cui i campi liberi di provincia e comune sono diventati
+`<LuogoNascitaFields>`, la cascata **provincia → comune** in cui ogni scelta valorizza
+`codice_belfiore_nascita`. Il campo di testo che sostituisce faceva **indovinare** quei quattro
+caratteri a chi compilava, e ciò che si indovina resta scritto nel codice fiscale per tutta la vita
+della scheda.
+
+Due regole reggono il campo, e la seconda non è una promessa ma una proprietà strutturale:
+
+1. **il valore in archivio non si perde mai.** Un comune che non combacia con nessuna opzione
+   diventa un'**opzione fantasma** in cima all'elenco — selezionata, con la nota «valore in archivio,
+   non riconosciuto» — e un avviso giallo agganciato col vero `aria-describedby` al campo che
+   descrive. Il testo non si tocca, non si «corregge», non si cancella. Vale anche per la provincia:
+   il dataset è fermo al 2022 e un campo che azzera ciò che non riconosce **cancella dati veri per il
+   solo fatto di essere aperto**;
+2. **il comune si azzera solo al cambio interattivo di provincia**, mai al primo montaggio. L'unico
+   punto del file che azzera `comune`/`belfiore` è l'`onChange` del selettore delle province, e **non
+   esiste nessun `useEffect` che chiami `onChange`**: finché resta così, il difetto classico di
+   questo pattern — la scheda che si svuota da sola mentre i dati arrivano dal server — non può
+   accadere.
+
+**E il Belfiore in archivio non c'è ancora: si risolve dal nome, in sola lettura.** La migrazione
+`20260810094625` non fa backfill, e all'11 agosto la colonna è NULL su **83 record su 83**, di cui
+**38 hanno un comune scritto**. Pretendere `belfiore !== ''` avrebbe marcato «non riconosciuto» il
+100% dell'archivio popolato — GIUGLIANO IN CAMPANIA compreso, che nell'elenco c'è. Quindi il comune
+si risolve **per nome**, con la stessa normalizzazione dell'elenco, e con due limiti deliberati
+perché «mai indovinare» è la regola di casa: corrispondenza **esatta** sul nome intero (in archivio
+c'è un `NAPO` troncato: resta fantasma, e deve) e, se i nomi che combaciano sono più d'uno, **non si
+sceglie**. Sui 38 record veri, 35 si risolvono e **3 restano gialli** — un `NAPO`, un `RTHRH` e un
+`VILLA DI BRIANO` archiviato sotto la provincia NA quando quel comune sta in CE. Quei tre gialli sono
+esattamente ciò per cui il giallo esiste.
+La risoluzione **non chiama `onChange`, non scrive niente in archivio e non corregge nulla**: il
+Belfiore si scrive quando qualcuno sceglie una voce, mai perché una schermata si è aperta.
+
+⚠️ **Per un giorno campo e badge si sono contraddetti**, ed è la classe di difetto che questo
+perimetro esiste per combattere: sugli stessi 36 record il campo mostrava GIUGLIANO IN CAMPANIA
+scelto e senza avvisi, mentre `BadgeCoerenzaCf` — che riceve il Belfiore **grezzo**, cioè NULL —
+scriveva «manca il comune di nascita». Il comune non mancava: stava lì sotto, e chi guardava lo
+vedeva. Non si è risolta facendo tacere il badge (il Belfiore manca davvero) né esportando la
+risoluzione verso i sei chiamanti (una risoluzione di sola lettura non è un dato in archivio). Si è
+corretta la **frase**, che nominava il dato sbagliato: ora dice che manca il **codice catastale** —
+l'unica cosa che `coerenza.ts` legge — e dice il gesto che lo spegne. Le due schermate dicono cose
+diverse perché sono cose diverse.
+
+### 5. La tabella dei comuni non arriva mai al browser (e adesso qualcuno la chiede davvero)
+
+`src/lib/fiscale/dati/comuni-belfiore.ts` è **generato** (`node scripts/genera-comuni.mjs`), è una
+stringa sola con `BELFIORE|SIGLA|NOME|ATTIVO` per riga, e l'indice si costruisce **al primo uso** e
+non all'import: la prima richiesta di ogni istanza paga il parsing, le successive no.
+
+| | |
+|---|---|
+| righe | **13.656** (~294 KB) |
+| comuni attivi | **8.174** |
+| comuni soppressi | **5.482** (le denominazioni storiche servono: un adulto nato nel 1975 ha sul tesserino il codice del comune di *allora*) |
+| stati esteri | **335**, tutti sotto la sigla `EE` |
+| sigle distinte | **110** — le 107 province più `EE` e le storiche `PL`/`ZA` |
+
+📄 **Attribuzione, e non è un dettaglio perché questo repository è PUBBLICO**: i dati vengono da
+«codice-fiscale-js» 2.3.23 di Luca Vandro e contributori, sotto **CC BY-SA 4.0**. Il file è
+un'**opera derivata** (riformattata e riordinata, non alterata nel contenuto) e resta sotto la stessa
+licenza. L'attribuzione è scritta in testa al file generato, dove nessuno può toglierla per sbaglio.
+
+⚠️ **L'elenco non è aggiornato a oggi, ed è stato MISURATO invece che dedotto dalla data del
+pacchetto**: la fonte è ferma a circa il 2022. `MISILISCEMI` (TP, `M432`), istituito nel 2022, c'è;
+`UGGIATE CON RONAGO` (CO), istituito nel 2024, **non c'è** — al suo posto compaiono ancora
+`UGGIATE-TREVANO` e `RONAGO` separati. Conseguenza da conoscere prima di fidarsi di uno
+«sconosciuto»: un comune nato dopo il 2022 non si risolve, e uno fuso dopo il 2022 risulta ancora
+attivo. **Per un bambino nato oggi il comune di nascita è quello che risulta sul certificato**, quindi
+il caso si presenta: si aggiorna la dipendenza e si rilancia lo script.
+
+`GET /api/anagrafiche/comuni` è la porta che rende il divieto **sostenibile**: al client arriva
+l'elenco già ridotto alla provincia scelta (Torino, il caso peggiore d'Italia, sono 484 voci e 33 KB;
+Napoli 6 KB con le sole attive). Il lock `dataset-comuni-fuori-dal-bundle.test.ts` fa fallire il gate
+se un file `'use client'` importa `@/lib/fiscale/comuni` o `@/lib/fiscale/dati/**`, per qualunque via
+lo faccia (`import`, `export … from`, `import()`, `require`) e anche per sottopercorso del pacchetto
+originale. **Senza la route quel divieto sarebbe una privazione, e qualcuno l'avrebbe aggirato.**
+✅ **E da oggi la route ha un chiamante.** Fino al 2026-08-10 la sua testata dichiarava, misurandolo:
+*«e oggi non la chiama nessuno»* — una superficie pubblica senza gate che provocava una scrittura
+service-role sul contatore del tetto a ogni richiesta e non serviva a nessun utente. È
+`LuogoNascitaFields` a chiamarla, ed è il motivo per cui il rilascio della route e quello della
+tendina sono lo stesso rilascio.
+La rotta resta **senza gate di ruolo** per scelta scritta: la chiama un **anonimo** dal wizard
+pubblico d'iscrizione, che un account non ce l'ha ancora, e ciò che restituisce è l'elenco dei comuni
+italiani — lo stesso che chiunque scarica dall'Agenzia delle Entrate. Un anonimo che passa non
+ottiene niente che non fosse già suo. Tetto **60/10 min** per IP.
+
+### 6. I numeri veri, e perché un dato mancante non è un errore
+
+Tutto misurato **in produzione l'11 agosto 2026**, in sola lettura e a soli conteggi.
+
+| | |
+|---|---|
+| alunni | **33** — 18 senza codice fiscale, 18 senza comune di nascita, 17 senza sesso registrato |
+| genitori | **50** — 27 senza codice fiscale |
+| `codice_belfiore_nascita` | **0 valorizzati su 83** |
+| candidature insegnanti | **0** (la tabella esiste dal 10/08, il modulo pubblico non è ancora in produzione) |
+
+Da qui viene la decisione che dà forma a tutto il pannello, ed è l'unica che valeva la pena prendere
+prima di scrivere una riga di interfaccia: **«manca» e «sbagliato» sono due cose diverse.** Trattarle
+allo stesso modo avrebbe aperto la schermata con **~45 record su 83 in rosso** per un dato che
+nessuno ha mai inserito — e un pannello che segnala tutto si impara a ignorare in una settimana, da
+lì in poi non segnala più nemmeno le cose vere. Quindi tre stati e non due: `incoerente` (c'è un
+codice e non torna: l'unico rosso) · `non-verificabile` (c'è un codice ma mancano i dati per
+confrontarlo) · `da-compilare` (il codice non c'è: **neutro**). Il dettaglio della resa a schermo sta
+nella voce «Il pannello Codici fiscali da verificare» qui sotto, che non lo ripete per caso: è la
+stessa decisione vista dal lato di chi la guarda.
+
+🧾 **I 30 «codici fiscali» da 14 caratteri sono tutti record di prova**, e conta perché sono la
+ragione per cui al 10/08 una sola fattura elettronica risultava emettibile su 99 pagamenti. Misurato,
+non dedotto: **10 alunni** creati il 5 luglio e **20 genitori** creati fra il 7 e l'8 luglio, tutti e
+20 con un'email di dominio di prova, **0 su 20** con la forma di un codice fiscale valido, tutti e 30
+con **la stessa identica lunghezza** — un profilo strutturale che un archivio di famiglie vere non
+produce. Le anagrafiche con un codice fiscale di 16 caratteri sono in tutto **6** (4 alunni, 2
+genitori). Il guasto della fatturazione non era dunque «i dati sono sporchi»: era **il seed di
+collaudo lasciato in produzione**, ed è una diagnosi diversa che porta a una riparazione diversa.
+
+### 7. Cosa resta aperto, dichiarato
+
+- ⏸️ **Il collaudo end-to-end della candidatura non esiste ancora**, e non è una dimenticanza: il
+  database E2E della CI è un **progetto separato e non migrato**, quindi `candidature_insegnanti` lì
+  non c'è e un INSERT risponderebbe `PGRST204`. Lo stesso vale per `codice_belfiore_nascita` in
+  `SELECT` (`42703`) — motivo per cui la lettura passa da `select-resiliente.ts` e la `PATCH` del
+  genitore riconosce entrambi i codici (voce qui sotto). La spec si scrive quando il DB della CI
+  viene migrato; scriverla prima vorrebbe dire consegnare un test rosso per costruzione.
+- 🌐 **Le etichette dei campi dei moduli restano in italiano anche con l'interfaccia in inglese.** È
+  un comportamento **preesistente, non introdotto oggi**: arrivano dai template
+  (`INSEGNANTE_FIELDS`, `enrollment-template`) e sono cablate. Il guscio delle pagine è bilingue per
+  davvero e sorvegliato dal lock di parità. Si chiude portando le etichette a chiavi di messaggio per
+  **entrambi** i template insieme — altrimenti il debito si sposta e basta. Dettaglio in §10 della
+  voce «Lavora con noi».
+- 📅 **Il dataset dei comuni va rigenerato** quando serve un comune istituito dopo il 2022 (§5).
+
+**Gate della corsia** (eseguito l'11/08/2026, non dedotto): `npx tsc --noEmit` → **0**; perimetro
+fiscale → **8 file, 299 test, tutti verdi** — `__tests__/lib/fiscale/**` **208**
+(calcolo 42 · validazione 59 · coerenza 35 · codice-fiscale 41 · comuni 31), `anagrafiche-comuni`
+**36**, `LuogoNascitaFields` **32**, `BadgeCoerenzaCf` **23** — più i **sei** collaudi
+`*-codice-fiscale` sulle schede di alunno e genitore.
+*I numeri di questa riga sono stati sbagliati una prima volta contando i `it(` col `grep` invece di
+eseguire la suite: `it.each` espande un caso in molti, e cinque conteggi su cinque erano per difetto.
+Un conteggio di test si misura eseguendoli.*
+
+---
+
 ## 🪪 Changelog — La scheda del genitore non salvava NIENTE: `PATCH /api/admin/parents` e il PGRST204 2026-08-11 (branch `feat/insegnanti-codice-fiscale`)
 
 Le riparazioni sul codice fiscale della scheda genitore (campo svuotabile, messaggio sul duplicato
@@ -690,9 +918,11 @@ cognome, sesso, data e luogo di nascita, e propone quello corretto quando lo sa 
 Parametri: `tipo` (`tutti`/`alunni`/`genitori`), `stato`, `scuola_id` (sempre **in AND** con lo
 scope di sede, mai al posto suo), `limit`/`offset`. Totale in `X-Total-Count`.
 
-**La decisione che regge tutto: tre stati, non due.** Misurato sul database di produzione il
-2026-08-10 — **33 alunni** (18 senza codice fiscale, 18 senza comune di nascita, 17 senza sesso
-registrato) e **50 genitori** (27 senza codice fiscale). Trattare «manca» come «sbagliato» avrebbe
+**La decisione che regge tutto: tre stati, non due.** I numeri che la impongono stanno **in un posto
+solo**, la §6 della voce «Il codice fiscale di un bambino smette di uscire dal dispositivo» qui sopra:
+misurati il 2026-08-10 e **rimisurati l'11**, invariati. In sintesi: **33 alunni** (18 senza codice
+fiscale, 18 senza comune di nascita, 17 senza sesso registrato) e **50 genitori** (27 senza codice
+fiscale). Trattare «manca» come «sbagliato» avrebbe
 aperto il pannello con **45 record su 83 in rosso** per un dato che nessuno ha mai inserito, e un
 pannello che segnala tutto si impara a ignorare in una settimana — da lì in poi non segnala più
 nemmeno le cose vere. Quindi: `incoerente` (c'è un codice e non torna: è l'unico rosso, ed è
@@ -988,7 +1218,7 @@ pannello parla con un'API vera da luglio.
 | interruttore del bollo (attiva/disattiva · soglia · importo · dicitura) | `FiscaleSettings` in `SettingsPanel.tsx` + `bolloDovuto()` |
 | regime fiscale: i **19 codici** dello schema, non «RF + due cifre» | `REGIMI_FISCALI` in `src/lib/fatturazione/cedente.ts`, verificato contro lo XSD in `fatturapa-xsd.test.ts` |
 | il test che impedisce il ritorno del difetto | `__tests__/lib/fatturazione/cedente.test.ts` — genera l'XML dalla configurazione **vera** e fallisce se `<CAP>` o `<Comune>` escono vuoti |
-| anagrafica riempita sulle sedi che non l'hanno mai compilata | migrazione `20260809235520_fiscale_config_cedente.sql` (additiva, **non ancora applicata**) |
+| anagrafica riempita sulle sedi che non l'hanno mai compilata | migrazione `20260809235520_fiscale_config_cedente.sql` (additiva). ✅ **Applicata in produzione** — *questa riga ha detto «non ancora applicata» fino all'11/08/2026, quando `list_migrations` ha risposto il contrario: una nota scritta al futuro che nessuno ha riletto quando il futuro è arrivato* |
 
 **Tre scelte che vale la pena aver scritto.**
 
@@ -1094,7 +1324,7 @@ segnaposto. La configurazione delle fatture sta nella colonna nuova
 | modello di fabbrica delle fatture | `{descrizione} - a favore {minore} {nome_completo} - CF: {codice_fiscale}` |
 | risoluzione categoria → «Predefinito» → fabbrica | `modelloCausale()` in `src/lib/pagamenti/causale.ts` |
 | funzione per l'emissione | `causaleFattura()` in `src/lib/pagamenti/causale-fattura.ts` |
-| colonna nuova | migrazione `20260809235457_fattura_causali_config.sql` (additiva, **non ancora applicata**) |
+| colonna nuova | migrazione `20260809235457_fattura_causali_config.sql` (additiva). ✅ **Applicata in produzione** — verificato con `list_migrations` l'11/08/2026, stessa correzione della voce sul cedente qui sopra |
 
 **Tre cose misurate, non dedotte.**
 
@@ -4150,12 +4380,18 @@ guardando il corpo della risposta sul server vivo.
 
 Gate a repo fermo: `eslint 0` · `tsc 0` · **vitest 672 file / 6302 test** · `build ok`.
 Migrazioni **applicate in produzione** con l'approvazione del titolare, una per una:
-`20260802173254` (sorveglianza sulla conservazione a 24 mesi) e `20260802200000` — il bucket
+`20260802173446_retention_iscrizioni_esito_e_sorveglianza` (sorveglianza sulla conservazione a 24
+mesi) e `20260802191025_form_attachments_tipi_e_limite` — il bucket
 `form_attachments`, che custodisce carte d'identità, certificati e fotografie di minori, era
 configurato **senza alcun limite** (`file_size_limit` e `allowed_mime_types` entrambi `NULL`)
 ed era raggiungibile da due rotte anonime. Ora dichiara cinque tipi e un tetto di 8 MB.
 Verificato prima di applicare: i 962 file presenti sono tutti dei tipi ammessi e il più grande
 pesa 4,49 MB — nessun caricamento reale viene respinto. `get_advisors`: **0 ERROR**.
+*I due nomi di migrazione qui sopra sono stati corretti l'11/08/2026: la voce citava `20260802173254`
+e `20260802200000`, due versioni che non esistono né fra i file né nel registro del database — l'ora
+era stata scritta a memoria invece che copiata dal nome del file. Sono la quarta e la quinta citazione
+sbagliata trovata dalla stessa passata, e il modo per non farne una sesta è incollare il nome intero,
+non i quattordici numeri.*
 
 È la rete che resta quando la prossima rotta di upload dimenticherà il gate applicativo, e non
 è un'ipotesi: `iscrizione/upload` è nata senza controlli ed è vissuta così finché il collaudo
@@ -4684,6 +4920,13 @@ non l'indirizzo di rete di una famiglia.
   che i dati anagrafici di un minore vadano a un servizio terzo — senza consenso a monte e senza
   comparire in nessuna informativa — è una decisione di titolarità, non di codice. Il fallback
   locale calcola lo stesso codice senza far uscire niente dal dispositivo.
+  > **Superato l'11 agosto 2026.** La decisione di titolarità è stata presa: la chiamata **non
+  > c'è più**, e con essa `src/lib/utils/fiscalCodeApi.ts`. Il codice fiscale si calcola solo sul
+  > dispositivo (`src/lib/fiscale/calcolo.ts`), con il codice catastale scelto da una tendina —
+  > stesso risultato, e nessun dato di un bambino che esce verso un terzo. L'host è al bando:
+  > vedi §1 «`api.codicefiscale.it` è al bando». Questa riga resta perché il paragrafo qui sopra
+  > è la cronaca di come il difetto fu visto, e serve a ricordare che per settimane la risposta
+  > giusta era già nel bundle mentre i dati continuavano a uscire.
 - **Le notifiche alle famiglie uscivano mute.** I due imbuti da cui passa ogni notifica alle
   famiglie — `notificaEvento` ed `enqueueNotifiche` — uscivano con un `return` nudo sulla lista
   vuota, e il codice lo ammetteva in due commenti senza rimediarci. La condizione è viva: 2 alunni

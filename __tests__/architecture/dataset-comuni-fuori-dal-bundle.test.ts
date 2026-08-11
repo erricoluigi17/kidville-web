@@ -33,8 +33,10 @@ import { mascheraSorgente, fileSorgente, riga } from '../fixtures/sorgente';
  * ─── SECONDA REGOLA: `codice-fiscale-js` non si importa da `src/` ────────────────
  * È il pacchetto da cui il dataset è STATO GENERATO, e porta con sé la stessa tabella
  * (il suo `dist` pesa 425 KB). Importarlo significa rimettere nel bundle esattamente
- * ciò che questo lock toglie, passando da un'altra porta. C'è UNA deroga, misurata e
- * scritta qui sotto: non è un'assoluzione, è un debito che si vede.
+ * ciò che questo lock toglie, passando da un'altra porta. C'era UNA deroga, misurata e
+ * scritta qui sotto — il ripiego locale di `fiscalCodeApi.ts` — e l'11 agosto 2026 è
+ * caduta insieme al file: oggi le deroghe sono ZERO e il pacchetto è passato in
+ * `devDependencies`, cioè non entra più in nessun bundle nemmeno per sbaglio.
  *
  * E la porta è larga quanto il pacchetto, non quanto il suo nome: `codice-fiscale-js`
  * espone i suoi sorgenti, e `codice-fiscale-js/src/lista-comuni` È LA TABELLA — è
@@ -53,27 +55,29 @@ const SRC = path.join(RADICE, 'src');
 const VIETATI_AL_CLIENT = ['src/lib/fiscale/comuni.ts', 'src/lib/fiscale/dati/'];
 
 /**
- * La sola deroga al divieto di importare `codice-fiscale-js`, con la sua ragione.
+ * Le deroghe al divieto di importare `codice-fiscale-js` da `src/`. **NESSUNA.**
  *
- * `src/lib/utils/fiscalCodeApi.ts` lo carica con un `await import()` come RIPIEGO
- * locale quando il servizio esterno di calcolo non risponde — ed è un ripiego che
- * fa bene il suo lavoro: calcola lo stesso codice senza far uscire dal dispositivo
- * il nome e la data di nascita di un bambino. Quel file è precedente a questo lock e
- * sta fuori dal perimetro di chi l'ha scritto.
+ * ─── IL DEBITO C'ERA, ED È STATO PAGATO L'11 AGOSTO 2026 ─────────────────────────
+ * Qui stava `src/lib/utils/fiscalCodeApi.ts`, che caricava il pacchetto con un
+ * `await import()` come ripiego locale quando il servizio esterno di calcolo del CF
+ * non rispondeva: 425 KB (il `dist`) in un chunk del browser, e dentro quei 425 KB la
+ * stessa tabella comuni che questo lock tiene fuori dalla porta principale.
  *
- * Resta un DEBITO, e va detto per intero: quell'`import()` mette 425 KB (il `dist` di
- * `codice-fiscale-js`) in un chunk del browser, e dentro quei 425 KB c'è la stessa
- * tabella comuni che questo lock tiene fuori dalla porta principale. La via d'uscita
- * esiste già ed è la route API che legge `@/lib/fiscale/comuni`: quando il ripiego
- * passerà da lì, questa voce va TOLTA — e il test qui sotto lo pretende, perché una
- * deroga che non serve più fa fallire il lock invece di restare per sempre.
+ * Il file non esiste più. Non è stato «ricondotto alla route API» come la via d'uscita
+ * scritta qui prevedeva: è stato tolto per intero, insieme alla chiamata a
+ * `api.codicefiscale.it` che spediva a un terzo nome, cognome, sesso, data e comune di
+ * nascita di un bambino — decisione del titolare del trattamento, motivata per esteso in
+ * `HOST_VIETATI` di `__tests__/architecture/provider-esterni-osservati.test.ts`. Il
+ * codice fiscale si calcola ora con `src/lib/fiscale/calcolo.ts`: sincrono, in locale, e
+ * senza il dataset nel bundle, perché il codice catastale glielo consegna la tendina.
+ *
+ * Il pacchetto resta nel repo, ma in `devDependencies`: è la sorgente da cui
+ * `scripts/genera-comuni.mjs` genera il dataset e l'oracolo con cui i test di
+ * `src/lib/fiscale/**` verificano le proprie attese. Nessuna delle due cose entra in un
+ * bundle. La mappa resta dichiarata — e vuota — perché il test qui sotto pretende che sia
+ * ESATTA: una deroga nuova va scritta, e una che non serve più fa fallire il lock.
  */
-const DEROGHE_CODICE_FISCALE_JS: Record<string, string> = {
-  'src/lib/utils/fiscalCodeApi.ts':
-    'Ripiego locale al servizio esterno di calcolo del CF: precedente a questo lock. ' +
-    'Costa 425 KB in un chunk del browser. Da sostituire con la route API che legge ' +
-    '@/lib/fiscale/comuni, e allora questa voce va tolta.',
-};
+const DEROGHE_CODICE_FISCALE_JS: Record<string, string> = {};
 
 interface Modulo {
   /** Percorso relativo alla radice del repo, con `/` (stabile fra macchine). */
@@ -285,11 +289,27 @@ describe('`codice-fiscale-js` non si importa da src/', () => {
     const dichiarate = Object.keys(DEROGHE_CODICE_FISCALE_JS).sort();
     const effettive = importatori.map((i) => i.rel).sort();
     expect(effettive).toEqual(dichiarate);
-    expect(dichiarate.length).toBe(1);
+    // ZERO, dall'11 agosto 2026: l'unica deroga è caduta con il file che la reggeva. Il numero
+    // sta scritto perché scenda soltanto — se un giorno risalisse, è una decisione, e va presa
+    // qui sopra insieme alla sua ragione.
+    expect(dichiarate.length).toBe(0);
     for (const [file, ragione] of Object.entries(DEROGHE_CODICE_FISCALE_JS)) {
       expect(fs.existsSync(path.join(RADICE, file))).toBe(true);
       expect(ragione.length).toBeGreaterThan(60);
     }
+  });
+
+  /**
+   * Il complemento, e senza di esso il test qui sopra è verde per il motivo sbagliato: con la
+   * mappa vuota, `effettive.toEqual(dichiarate)` verifica «nessun importatore» solo se lo
+   * scanner degli specificatori funziona ancora. Se `SPECIFICATORE` o `eCodiceFiscaleJs` si
+   * rompessero, l'elenco sarebbe vuoto perché non guarda, non perché non c'è niente.
+   */
+  it('lo scanner degli import guarda davvero (autoinganno con la mappa a zero)', () => {
+    const conSpecificatori = [...GRAFO.values()].filter((m) => m.specificatori.length > 0);
+    expect(conSpecificatori.length).toBeGreaterThan(400);
+    // E riconosce il pacchetto quando lo incontra: la prova sta nel test dei sottopercorsi.
+    expect(conSpecificatori.some((m) => m.specificatori.some((s) => s.testo.startsWith('@/lib/')))).toBe(true);
   });
 });
 

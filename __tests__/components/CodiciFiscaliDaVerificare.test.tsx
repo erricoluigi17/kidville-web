@@ -3,6 +3,7 @@ import { render, renderHook, act, screen, fireEvent, waitFor, within } from '@te
 import { axe, toHaveNoViolations } from 'jest-axe'
 
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
+import itAdminStudents from '../../messages/it/adminStudents.json'
 
 expect.extend(toHaveNoViolations)
 
@@ -566,15 +567,47 @@ describe('CodiciFiscaliDaVerificare · la correzione, un record alla volta', () 
         })
     })
 
+    /**
+     * ⚠️ I TESTI SI LEGGONO DAL CATALOGO, non si ricopiano — come già fanno
+     * `StudentDetailPanel-codice-fiscale.test.tsx`,
+     * `ScrollableStudentForm-codice-fiscale.test.tsx` e
+     * `StudentRegistryForm-codice-fiscale.test.tsx`. Qui la frase era scritta a
+     * mano («il comune di nascita») e diceva il dato SBAGLIATO: a rendere una
+     * riga non verificabile non è il comune — che può essere scritto benissimo —
+     * ma il CODICE CATASTALE, cioè la colonna `codice_belfiore_nascita`.
+     * La misura sta nella route, `src/app/api/admin/anagrafiche/codici-fiscali/route.ts:268`:
+     * a `verificaCoerenza` si passa `normalizzaCodiceBelfiore(persona.belfioreColonna)`,
+     * e `src/lib/fiscale/coerenza.ts:222` mette `luogo-nascita` fra i
+     * `nonVerificabili` esattamente quando quel Belfiore è `null` — mai
+     * guardando `birth_city`. In produzione (11 agosto) la colonna è NULL su
+     * tutte e 83 le righe, quindi è la voce che la segreteria legge più spesso:
+     * mandarla a controllare un campo già pieno le fa concludere che sbaglia il
+     * pannello. Asserire sulla CHIAVE tiene fermo il significato e lascia libera
+     * la formulazione — un apostrofo cambiato non deve fare rosso un prodotto sano.
+     */
     it('il dettaglio dice PERCHÉ, in chiaro, e che cosa manca per confrontare', () => {
         render(<CodiciFiscaliDaVerificare esito={esitoPronto([NON_VERIFICABILE])} />)
         const riga = screen.getByText('Verdi Luca').closest('tr') as HTMLElement
         fireEvent.click(within(riga).getByRole('button', { name: 'Apri' }))
 
         const dialogo = screen.getByRole('dialog')
-        expect(within(dialogo).getByText('il sesso')).toBeInTheDocument()
-        expect(within(dialogo).getByText('il comune di nascita')).toBeInTheDocument()
-        expect(within(dialogo).getByText(/non si può proporre finché il comune di nascita/)).toBeInTheDocument()
+        expect(within(dialogo).getByText(itAdminStudents.cfMancaSesso)).toBeInTheDocument()
+        expect(within(dialogo).getByText(itAdminStudents.cfMancaLuogoNascita)).toBeInTheDocument()
+        expect(within(dialogo).getByText(itAdminStudents.cfDettaglioBloccoLuogo)).toBeInTheDocument()
+    })
+
+    it('la voce che manca nomina il CODICE CATASTALE, non il solo comune', () => {
+        // Il difetto per cui la prova esiste: la riga qui sotto ha `birth_city`
+        // pieno e la colonna Belfiore vuota (la forma più comune in produzione).
+        // Se il testo dicesse solo «il comune di nascita», chi legge andrebbe a
+        // controllare un campo che è già compilato. Si asserisce sul SENSO —
+        // il codice catastale è nominato — non sulla frase intera.
+        render(<CodiciFiscaliDaVerificare esito={esitoPronto([NON_VERIFICABILE])} />)
+        const riga = screen.getByText('Verdi Luca').closest('tr') as HTMLElement
+        fireEvent.click(within(riga).getByRole('button', { name: 'Apri' }))
+
+        expect(itAdminStudents.cfMancaLuogoNascita).toMatch(/codice catastale/i)
+        expect(within(screen.getByRole('dialog')).getByText(/codice catastale/i)).toBeInTheDocument()
     })
 })
 

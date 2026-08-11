@@ -7,7 +7,7 @@ import { Fingerprint, FileWarning, User, AlertTriangle } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { z } from 'zod';
 import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
-import { BadgeCoerenzaCf } from '@/components/features/anagrafica/BadgeCoerenzaCf';
+import { BadgeCoerenzaCf, badgeHaQualcosaDaDire } from '@/components/features/anagrafica/BadgeCoerenzaCf';
 import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { calcolaCodiceFiscale } from '@/lib/fiscale/calcolo';
@@ -58,11 +58,14 @@ const buildStudentSchema = (t: (k: string) => string) => z.object({
      * storia resta scritta perché è la ragione per cui esiste il collaudo che la
      * sorveglia. Non mancava la colonna (`alunni.codice_belfiore_nascita` esiste in
      * produzione ed è nullable, misurato l'11 agosto su `information_schema.columns`):
-     * mancava nella rotta, in tre punti di `src/app/api/admin/students/route.ts` —
-     * `postBodySchema`, che è uno `z.object` NON strict e quindi scartava la chiave
-     * senza errore e senza log; l'oggetto `record` del POST; `allowedFields` del PATCH.
+     * mancava nella rotta, in QUATTRO punti di `src/app/api/admin/students/route.ts` —
+     * `postBodySchema` (riga 26) e `patchBodySchema` (riga 92), che sono `z.object` NON
+     * strict e quindi scartavano la chiave senza errore e senza log; l'oggetto `record`
+     * del POST (riga 300); `allowedFields` del PATCH (riga 638). Sono quattro e non tre:
+     * la prima stesura di questo elenco dimenticava `patchBodySchema`, cioè proprio il
+     * punto su cui passa la modifica di una scheda già in archivio.
      * L'operatore sceglieva il comune dalla tendina, premeva Salva, riceveva `201`/`200`
-     * e il dato non esisteva. Le tre righe ci sono dall'11 agosto, e con loro il ramo
+     * e il dato non esisteva. Le quattro righe ci sono dall'11 agosto, e con loro il ramo
      * `PGRST204` della resilienza, senza il quale il campo in più avrebbe fatto 500 su
      * ogni creazione di alunno nel DB E2E della CI (progetto separato, non migrato).
      *
@@ -329,6 +332,20 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
     );
 
     /**
+     * ⚠️ IL CAMPO PUNTA AL BADGE SOLO SE IL BADGE C'È. `BadgeCoerenzaCf` restituisce
+     * `null` quando non ha niente da dire, e qui è lo stato di PARTENZA: a scheda
+     * appena aperta il codice fiscale è vuoto e non c'è ancora nulla da calcolare,
+     * quindi nessun badge. Fino all'11 agosto `aria-describedby` era incondizionato:
+     * chi legge con uno screen reader arrivava sul campo e sentiva un rimando a una
+     * descrizione INESISTENTE, per tutta la compilazione dei primi campi.
+     *
+     * La condizione non si riscrive qui — la decide `badgeHaQualcosaDaDire`, che è
+     * l'unico posto in cui quella regola vive. Tre copie della stessa regola sono tre
+     * occasioni di divergere. Misurato in `__tests__/a11y/schede-alunno-a11y.test.tsx`.
+     */
+    const badgeVisibile = badgeHaQualcosaDaDire(esitoCoerenza);
+
+    /**
      * I tre campi del luogo di nascita, che ora sono UN campo solo. La nomenclatura di
      * QUESTA scheda è `comune_nascita` / `provincia_nascita` / `nazione_nascita` (la
      * scheda di dettaglio usa `birth_city` / `birth_province` / `birth_nation`: sono lo
@@ -507,8 +524,10 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                 name="codice_fiscale"
                                 value={codiceFiscaleMostrato}
                                 onChange={handleInputChange}
-                                // Il verdetto si sente arrivando sul campo, una volta sola.
-                                aria-describedby={idBadgeCf}
+                                // Il verdetto si sente arrivando sul campo, una volta sola —
+                                // e `undefined` quando il badge non c'è: un rimando a un
+                                // elemento inesistente è peggio di nessun rimando.
+                                aria-describedby={badgeVisibile ? idBadgeCf : undefined}
                                 className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 bg-kidville-white text-kidville-green placeholder-kidville-green/40 ${errors.codice_fiscale ? `border-kidville-error bg-kidville-error-soft ${ALONE_ERRORE}` : cfDalCalcolo ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`}
                             />
                             {errors.codice_fiscale && <span className="text-xs text-kidville-error font-bold">{errors.codice_fiscale}</span>}

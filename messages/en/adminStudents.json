@@ -438,7 +438,7 @@
   "cfFiltroTipo": "Type",
   "cfMancaCognome": "the surname",
   "cfMancaDataNascita": "the date of birth",
-  "cfMancaLuogoNascita": "the town of birth",
+  "cfMancaLuogoNascita": "the cadastral code of the town of birth",
   "cfMancaNome": "the first name",
   "cfMancaSesso": "the sex",
   "cfMotivoCfAssente": "the tax code is missing",

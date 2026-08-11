@@ -432,6 +432,90 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 per opportunità future: <strong>ventiquattro mesi</strong>. Il curriculum
                 allegato viene cancellato insieme alla candidatura;
               </li>
+              {/*
+                I TRE TERMINI DEL PERSONALE, E DA DOVE VENGONO I NUMERI.
+                Non sono scritti qui e non sono scritti nel codice: sono `PERSONALE_LIMITI`
+                (src/lib/forms/personale-template.ts), gli stessi che il TESTO del consenso
+                interpola nella frase che l'interessata legge e spunta — «cancellata entro N
+                mesi dalla cessazione, ed entro N giorni se questa richiesta non viene
+                approvata» — e che `gdpr/retention-personale/route.ts` importa invece di
+                ribattere. Il lock `gdpr-retention-personale.test.ts` confronta queste tre
+                voci con quella costante: promettere dodici mesi qui e ventiquattro nel
+                codice è il difetto che queste righe esistono per impedire.
+                PERCHÉ TRE VOCI E NON UNA. Perché sono tre termini diversi su tre cose
+                diverse, e il più corto è quello che regge di meno: nessuna norma impone al
+                datore di conservare una FOTOCOPIA del documento — impone di identificare — e
+                cessato il rapporto l'identificazione è finita. Annegare i dodici mesi dentro
+                i dieci anni del fascicolo significherebbe dichiarare il termine lungo su un
+                dato che ne ha uno breve.
+                CHI LE FA SCADERE: il job `retention-personale`, che chiama
+                `POST /api/gdpr/retention-personale` — toglie PRIMA il file dal bucket
+                `documenti_personale` e POI la riga (o azzera `documento_path`, che è la
+                stessa perdita di riferimento), e lascia il proprio battito in `app_log`.
+                ⚠️ L'ULTIMA FRASE DELLA TERZA VOCE È STATA SCRITTA L'11/08/2026, e dice ciò
+                che prima nessuno faceva. La voce diceva già che la richiesta approvata
+                «segue i termini indicati ai due punti precedenti», ma MISURATO: in tutto
+                `src/` non esisteva una `.delete()` che toccasse una riga `approvata` di
+                `pratiche_personale` — la route leggeva i soli stati non approvati. Una
+                richiesta accolta sarebbe rimasta in tabella per sempre, con codice fiscale,
+                nascita, residenza, domicilio, recapiti, estremi del documento e la prova di
+                presa visione, mentre questo documento le prometteva dieci anni. Ora la route
+                la cancella INSIEME all'anagrafica che ne è nata (`origine_pratica_id`), e la
+                cancella PRIMA di lei: nell'ordine opposto un guasto a metà lascerebbe la
+                copia in tabella e nessuna riga che sappia più a chi appartiene. La frase è
+                esplicita perché il termine più lungo di tutti non si deduce da un rimando.
+                ⚠️ QUESTE TRE VOCI NON DICONO «automaticamente», e non è una svista: il lock
+                `informativa-conservazione-dichiarata` pretende che l'automa esista — e sia
+                APPLICATO al database — prima che l'informativa lo prometta. Ciò che la
+                persona ha diritto di sapere (art. 13 §2 lett. a) è il TERMINE, non il
+                meccanismo. Il giorno in cui la migrazione
+                `..._retention_personale_cron.sql` sarà applicata e attestata, si potrà
+                aggiungere la parola insieme alla voce in `AUTOMI_DICHIARATI` di quel lock:
+                la parola tira con sé una prova.
+                ⚠️ E LA SOSTITUZIONE DELLA COPIA NON È PIÙ PROMESSA — c'era, ed è stata TOLTA
+                l'11/08/2026, per la stessa ragione per cui manca «automaticamente».
+                Questa voce e il paragrafo della sezione sul personale dicevano che la copia
+                del documento «viene sostituita, con cancellazione della precedente, appena
+                l'interessata ne consegna una nuova». MISURATO: in tutto `src/` non esiste una
+                sola riga che scriva `anagrafica_personale.documento_path` (l'unica scrittura
+                su quella colonna è l'azzeramento di `retention-personale`), e nessuna
+                `remove()` sul bucket `documenti_personale` vive fuori da quel job. Il giorno
+                in cui la route di approvazione sovrascriverà il percorso con la seconda
+                scansione di una persona, il file precedente resterà nel bucket senza più
+                nessuna riga che lo nomini: `retention-personale` legge `documento_path`, e
+                quello punta ormai al nuovo. Una fotografia di carta d'identità conservata per
+                sempre e irrintracciabile — «invisibile, non cancellata», che è la definizione
+                di guasto peggiore secondo la testata di quella route. Era per giunta il termine
+                a base giuridica più fragile: nessuna norma impone al datore di custodire una
+                FOTOCOPIA.
+                Il divieto non è affidato alla memoria di chi rilegge: `gdpr-retention-personale`
+                ha una prova che va rossa se la frase torna qui o nel testo del consenso
+                (`personale-template.ts`) senza che nel repo esista chi rimuove la copia
+                precedente. Chi scriverà quel meccanismo rimetta la frase: la prova diventa
+                verde da sé, ed è quello il momento in cui la promessa è vera.
+              */}
+              <li>
+                <strong>dati anagrafici del personale</strong> della Scuola (fascicolo di
+                dipendenti e collaboratori): <strong>dieci anni</strong> dalla cessazione del
+                rapporto di lavoro, in ragione degli obblighi documentali, contributivi e
+                fiscali che gravano sul datore;
+              </li>
+              <li>
+                <strong>copia del documento d&rsquo;identità del personale</strong>:{' '}
+                <strong>dodici mesi</strong> dalla cessazione del rapporto. È il termine più breve
+                di questa sezione perché la copia serve soltanto a identificare la persona per gli
+                adempimenti obbligatori, e cessato il rapporto quella finalità è esaurita;
+              </li>
+              <li>
+                <strong>richieste di anagrafica del personale non approvate</strong> (in attesa di
+                valutazione o respinte): <strong>novanta giorni</strong> dalla ricezione, o dalla
+                decisione se la richiesta è stata respinta, dopodiché la richiesta e la copia del
+                documento allegata sono cancellate. Se la richiesta viene approvata, i dati
+                confluiscono nel fascicolo del personale e seguono i termini indicati ai due punti
+                precedenti: la richiesta stessa, che resta agli atti come prova di come quei dati
+                sono stati raccolti, è cancellata <strong>insieme al fascicolo</strong>, cioè a{' '}
+                <strong>dieci anni</strong> dalla cessazione del rapporto;
+              </li>
               <li>
                 <strong>documenti contabili e fiscali</strong>: <strong>dieci anni</strong>, come
                 previsto dall&rsquo;art. 2220 del Codice civile e dalla normativa tributaria;
@@ -483,6 +567,117 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
             <p className={P}>
               Al termine dei periodi indicati i dati sono cancellati oppure resi anonimi in modo
               irreversibile.
+            </p>
+          </section>
+
+          {/*
+            LA CATEGORIA DI INTERESSATI CHE QUESTA INFORMATIVA NON AVEVA.
+            Fino alla versione 2026-08-10 questo documento parlava di minori, di genitori e
+            — dal 10 agosto — di chi si candida a un lavoro. Del PERSONALE IN SERVIZIO non
+            diceva niente, e dall'11/08/2026 la Scuola ne raccoglie l'anagrafica completa
+            con un modulo pubblico (`/anagrafica-personale`), compresa la scansione del
+            documento d'identità. Una categoria di interessati che non trova sé stessa
+            nell'informativa non è una lacuna redazionale: è l'art. 13 non adempiuto verso
+            le persone che quei dati li stanno consegnando.
+            PERCHÉ NON SI CHIEDE IL CONSENSO, ed è scritto nel testo e non solo qui: fra
+            datore e dipendente il potere è squilibrato per presunzione, e un consenso che
+            non si può rifiutare senza mettere a rischio il rapporto non è libero (art. 7
+            §4 e cons. 43 GDPR). Chi ci si appoggiasse tratterebbe quei dati credendo di
+            avere una base e non avendola. Le basi vere sono due, e sono NOMINATE.
+            ⚠️ QUESTA SEZIONE STA DOPO «Conservazione dei dati», E NON PUÒ STARE PRIMA.
+            Non è una scelta editoriale: `informativa-conservazione-dichiarata.test.ts`
+            ritaglia la sezione della conservazione con
+            `indexOf('Conservazione dei dati')` sul FILE INTERO, e il testo qui sotto la
+            cita per rimando. Messa più in alto, quel rimando diventava l'inizio del
+            ritaglio e il lock finiva per contare i `<li>` di QUESTA sezione: misurato,
+            2 voci invece di 9, con due prove rosse. Chi riordina le sezioni sposti anche
+            il rimando, o tenga questa dopo.
+          */}
+          <section className="mt-8 space-y-3">
+            <h2 className={H2}>Personale della Scuola (dipendenti e collaboratori)</h2>
+            <p className={P}>
+              Questa sezione riguarda le <strong>persone che lavorano per la Scuola</strong> —
+              insegnanti, educatrici, personale ausiliario e amministrativo, collaboratori — e non
+              i minori né le loro famiglie. I dati sono raccolti dalla Segreteria o tramite il
+              modulo di <strong>anagrafica del personale</strong>, e diventano parte del fascicolo
+              solo dopo che la Segreteria o la Direzione hanno verificato e approvato la richiesta.
+            </p>
+            <p className={P}>Le categorie di dati trattate sono:</p>
+            <ul className={UL}>
+              <li>
+                dati anagrafici e identificativi: nome, cognome, sesso, data e luogo di nascita,
+                cittadinanza, codice fiscale;
+              </li>
+              <li>residenza, domicilio e recapiti (indirizzo email e numero di telefono);</li>
+              <li>
+                estremi e <strong>copia del documento d&rsquo;identità</strong>, con la relativa
+                data di scadenza;
+              </li>
+              <li>
+                titolo di studio e fasce d&rsquo;età su cui si presta servizio, necessari a
+                configurare le funzioni dell&rsquo;applicazione;
+              </li>
+              <li>
+                nominativo e recapito di una persona da avvisare in caso di urgenza, se
+                l&rsquo;interessata sceglie di indicarli: il conferimento è{' '}
+                <strong>facoltativo</strong>, perché sono dati di un terzo.
+              </li>
+            </ul>
+            <p className={P}>
+              La Scuola <strong>non chiede</strong>, con questi moduli, dati relativi alla salute o
+              all&rsquo;idoneità sanitaria, dati giudiziari, il permesso di soggiorno, lo stato
+              civile o i carichi di famiglia, la firma autografa e le coordinate bancarie.
+            </p>
+            <p className={P}>Le basi giuridiche sono due, e nessuna delle due è il consenso:</p>
+            <ul className={UL}>
+              <li>
+                l&rsquo;<strong>esecuzione del contratto di lavoro</strong> di cui
+                l&rsquo;interessata è parte (<strong>art. 6, par. 1, lett. b GDPR</strong>);
+              </li>
+              <li>
+                l&rsquo;adempimento di <strong>obblighi legali</strong> a cui la Scuola è soggetta
+                in quanto datore di lavoro (<strong>art. 6, par. 1, lett. c GDPR</strong>): la
+                comunicazione obbligatoria di instaurazione, trasformazione e cessazione del
+                rapporto (<strong>UNILAV</strong>), la tenuta del{' '}
+                <strong>libro unico del lavoro</strong>, le denunce contributive e assicurative a{' '}
+                <strong>INPS e INAIL</strong> e gli adempimenti della Scuola quale{' '}
+                <strong>sostituto d&rsquo;imposta</strong>.
+              </li>
+            </ul>
+            <p className={P}>
+              La <strong>copia del documento d&rsquo;identità</strong> è chiesta per
+              l&rsquo;identificazione certa della persona ai fini di quegli adempimenti: è
+              conservata separatamente dal resto del fascicolo e ha il termine di conservazione più
+              breve fra i dati di questa sezione (vedi &laquo;Conservazione dei dati&raquo;). Il
+              conferimento dei dati anagrafici e della copia del documento è{' '}
+              <strong>necessario</strong>: senza, la Scuola non può eseguire gli adempimenti
+              obbligatori sopra indicati.
+            </p>
+            <p className={P}>
+              Oltre al personale interno autorizzato, i dati di questa sezione possono essere
+              comunicati a:
+            </p>
+            <ul className={UL}>
+              <li>
+                il <strong>consulente del lavoro</strong> incaricato dalla Scuola, che tratta i
+                dati quale <strong>responsabile del trattamento</strong> ai sensi
+                dell&rsquo;art. 28 GDPR, sulla base di un atto di nomina;
+              </li>
+              <li>
+                <strong>INPS</strong>, <strong>INAIL</strong> e{' '}
+                <strong>Agenzia delle Entrate</strong>, nonché gli altri enti pubblici competenti,
+                quali <strong>autonomi titolari</strong> e per obbligo di legge.
+              </li>
+            </ul>
+            <p className={P}>
+              L&rsquo;interessata può in qualsiasi momento esercitare i diritti previsti dagli
+              articoli 15-22 del GDPR — accesso ai propri dati, rettifica, cancellazione,
+              limitazione, opposizione e portabilità — e proporre reclamo al{' '}
+              <strong>Garante per la protezione dei dati personali</strong>, con le modalità
+              indicate nella sezione &laquo;Diritti dell&rsquo;interessato&raquo;. Al momento della
+              raccolta le viene inoltre chiesto di impegnarsi a comunicare tempestivamente alla
+              Segreteria ogni variazione dei propri dati, compreso il rinnovo del documento
+              d&rsquo;identità.
             </p>
           </section>
 

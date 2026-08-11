@@ -373,6 +373,26 @@ const PUBBLICHE: Record<string, string> = {
     'iscrizione/insegnanti:POST':
         "modulo pubblico «Lavora con noi»: chi si candida non ha un account, e non può averlo — l'account nasce solo se la Direzione approva, e `utenti.attivo` non è letto da nessun gate (vedi la migrazione della tabella). L'anonimo che passa può solo SCRIVERE una candidatura: non legge nulla, la risposta è un id. Perimetro: tetto 3 invii/ora per IP + honeypot + ri-validazione server-side dei campi + consensi obbligatori verificati qui + `scuola_id` valido solo se è una sede nota (nessun default silenzioso)",
 
+    // ── Modulo pubblico «Anagrafica del personale» ───────────────────────────
+    // La porta è ANONIMA per decisione del titolare dell'11/08/2026: il link si manda
+    // alle maestre in servizio e si condivide, e l'alternativa (un codice OTP prima dei
+    // campi sensibili) è stata valutata e scartata. Quindi il gate qui non è
+    // dimenticato — è stato deciso di non metterlo, ed è la voce di questo elenco che
+    // va guardata con più sospetto, perché è la sola in cui un anonimo scrive un
+    // CODICE FISCALE e il riferimento alla scansione di un documento d'identità.
+    //
+    // COSA OTTIENE UN ANONIMO CHE PASSA: scrivere una riga in `pratiche_personale` e
+    // caricare un file nel bucket `documenti_personale`. NON legge niente — la sola
+    // SELECT del POST è quella sulla riga già viva dopo un `23505`, e restituisce un
+    // uuid — e non produce né un account né un'anagrafica: quelli nascono solo quando
+    // una persona in Segreteria approva. La risposta è `{ id, avvisi }`, con la STESSA
+    // forma sul primo invio e sul doppione, apposta per non essere un oracolo su chi
+    // lavora qui.
+    'iscrizione/personale:POST':
+        "modulo pubblico «Anagrafica del personale»: chi compila è una dipendente che un account non ce l'ha (in produzione, misurato l'11/08/2026, sono nel sistema 10 insegnanti su tre sedi), e l'account nasce solo all'approvazione della Segreteria. L'anonimo che passa può solo SCRIVERE una pratica: non legge nulla, e la pratica non è né un account né l'anagrafica. Perimetro: tetto 20 invii/ora per IP — per RETE e non per persona, perché il modulo si compila in gruppo dietro il NAT di una sede, e la più grande ha 13 account — + honeypot + ri-validazione server-side dei 32 campi + carattere di controllo del codice fiscale + limite di calendario e limite inferiore sulle due date (i CHECK della tabella rispecchiati) + gate sulla forma di `documento_path` (solo ciò che la rotta di upload può produrre) + tre prese visione obbligatorie + `scuola_id` valido solo se è una sede REALE e ATTIVA (nessun default silenzioso) + avviso alla Segreteria a ogni invio, così una pratica falsa si vede il giorno stesso",
+    'iscrizione/personale/upload:POST':
+        'modulo pubblico «Anagrafica del personale»: la scansione del documento d’identità di chi già lavora qui, su un bucket PRIVATO e separato da quello dei documenti dei minori (`documenti_personale`, migrazione 20260811205643). Perimetro: tetto per IP condiviso con le altre porte di caricamento + limite di dimensione della piattaforma (413) + `verificaAllegatoPubblico` sui tipi. Il percorso è `documenti/<uuid>/<uuid>.<ext>`: due identificativi generati dal server, e del nome scelto dal browser non sopravvive un byte — su questa porta si chiama «carta-identita-<cognome>»',
+
     'admin/pre-inscriptions:POST': "sottomissione del portale onboarding pubblico (il GET e il PATCH della stessa route sono `requireStaff`: qui la porta è aperta di proposito, ed è dichiarato nel file). Scrive una riga `pending`, non legge niente",
 
     // ── Modulistica pubblica: il gate è un TOKEN, non una sessione ───────────
@@ -609,12 +629,49 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // `__tests__/api/candidature-insegnanti-log-senza-pii.test.ts`. Il giorno in
         // cui quella risposta cominciasse a portare dati di qualcuno, o il tetto
         // sparisse, questa voce non sarebbe più difendibile.
+        //
+        // 19 dall'11/08/2026, quarta SALITA e la più pesante finora: le due rotte del
+        // modulo pubblico «Anagrafica del personale». Mi sono fermato, e la risposta
+        // alla domanda «cosa ottiene un anonimo che passa?» qui è la peggiore
+        // dell'elenco: può scrivere una riga che contiene un CODICE FISCALE e caricare
+        // la scansione di un DOCUMENTO D'IDENTITÀ.
+        //
+        // Il gate manca perché è stato DECISO che manchi — il titolare, l'11/08/2026,
+        // ha scelto il link aperto valutando e scartando l'alternativa (un codice OTP
+        // prima dei campi sensibili) — e questa è una differenza che va detta invece
+        // che nascosta dietro un «non può averlo»: chi compila un account davvero non
+        // ce l'ha, ma qui la porta si poteva stringere e si è scelto di no.
+        //
+        // Ciò che rende la voce difendibile è che dietro la porta non c'è NIENTE DA
+        // LEGGERE — nessuna anagrafica, nessun elenco, nemmeno la conferma che una
+        // certa persona lavori qui: il doppio invio risponde `201` con la stessa forma
+        // del primo — e che ciò che si scrive non produce niente finché un essere umano
+        // non lo riconosce: `pratiche_personale` non è un account e non è l'anagrafica,
+        // e la RLS è abilitata senza policy (solo service-role).
+        //
+        // Ciò che tiene ferme queste affermazioni non sta qui ma in
+        // `__tests__/api/anagrafica-personale-post.test.ts` (tetto 20/ora, honeypot,
+        // codice fiscale con il carattere di controllo sbagliato respinto, percorso di
+        // un altro bucket respinto, `503` e mai `201` sul DB non migrato, `201` con la
+        // STESSA forma sul doppione) e in `anagrafica-personale-upload.test.ts`. Il
+        // giorno in cui la risposta cominciasse a portare dati di qualcuno, o il tetto
+        // sparisse, queste due voci non sarebbero più difendibili.
+        //
+        // ⚠️ E IL NUMERO SCRITTO QUI SOPRA È PROSA IN UNA MAPPA, cioè può mentire
+        // restando verde: è successo. La voce ha dichiarato «tetto 3 invii/ora» per un
+        // intero giro dopo che la rotta era passata a 20, con quaranta righe di misura
+        // a giustificare il cambio — e chi legge questo elenco «con più sospetto», come
+        // il commento qui sopra chiede di fare, concludeva che il contro-presidio fosse
+        // sette volte più stretto del vero. Adesso a confrontare la frase col valore
+        // che la rotta passa davvero a `rateLimit` c'è un'asserzione, e sta in
+        // `anagrafica-personale-post.test.ts` («la motivazione di gate-coverage dichiara
+        // il tetto VERO»): il numero non si tocca più da un lato solo.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(17)
+        ).toBe(19)
     })
 })
 

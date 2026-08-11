@@ -235,6 +235,138 @@ describe('GET /api/health', () => {
         )
     })
 
+    /* ═══════════════════════════════════════════════════════════════════════
+     * IL BATTITO «ok-parziale» — il difetto che teneva l'endpoint rosso per
+     * sette giorni su un lavoro che non aveva saltato una notte.
+     *
+     * MISURATO in produzione il 2026-08-11: `notifiche-promemoria` gira ogni
+     * notte alle 06:00 UTC (`cron.job_run_details`: sette `succeeded` di fila),
+     * risponde 200 — ma dal 2026-08-05 non scrive più `esito: 'ok'`. Scrive
+     * `ok-parziale` a livello `warn`, perché in produzione `locker_requests` non
+     * esiste e la scansione dell'armadietto viene saltata. Ultimo `ok`:
+     * 2026-08-04.
+     *
+     * Il controllo filtrava `.eq('livello','info')` e pretendeva `esito === 'ok'`:
+     * quel battito non lo vedeva né per livello né per esito, e `/api/health`
+     * rispondeva «job senza battito: notifiche-promemoria» da una settimana. Un
+     * allarme che suona da solo viene spento — ed è la frase scritta in testa a
+     * `controlli.ts`, che il rilevatore aveva finito per applicare a se stesso.
+     *
+     * I due test qui sotto tengono ferme le DUE metà della correzione: che il
+     * parziale conti come battito, e che si continui a leggerlo nel dettaglio.
+     * ═══════════════════════════════════════════════════════════════════════ */
+
+    it("un battito 'ok-parziale' (livello warn) vale come battito: il job ha girato, non è muto", async () => {
+        const db = dbSano()
+        db.app_log = db.app_log.filter((r) => jobDi(r) !== 'notifiche-promemoria')
+        // La riga ESATTA che la produzione scrive: `warn` + `ok-parziale`. Se il
+        // filtro tornasse a `.eq('livello','info')`, o l'esito tornasse a valere solo
+        // `ok`, questa riga sparirebbe e il test diventerebbe rosso.
+        db.app_log.push({
+            id: 'log-parziale',
+            evento: 'cron',
+            livello: 'warn',
+            ambiente: 'production',
+            creato_il: fa(2 * ORA),
+            visto_l_ultima: fa(2 * ORA),
+            contesto: {
+                campi: {
+                    operazione: 'notifiche-promemoria',
+                    esito: 'ok-parziale',
+                    azione: 'armadietto',
+                },
+            },
+        })
+        montaDb(db)
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('ok')
+        expect(controllo(corpo, 'cron-battito').esito).toBe('ok')
+        // …e soprattutto NON deve comparire fra i muti: è il difetto misurato.
+        expect(controllo(corpo, 'cron-battito').dettaglio).not.toContain('job senza battito')
+    })
+
+    it("il job che ha girato in modo parziale viene comunque NOMINATO nel dettaglio", async () => {
+        // L'informazione non deve andare persa insieme al falso allarme: «ha girato
+        // saltando una scansione» resta scritto, solo senza tingere di rosso. Senza
+        // questa asserzione la correzione precedente si ridurrebbe a nascondere il
+        // parziale, che è l'altro modo di sbagliare.
+        const db = dbSano()
+        db.app_log = db.app_log.filter((r) => jobDi(r) !== 'notifiche-promemoria')
+        db.app_log.push({
+            id: 'log-parziale',
+            evento: 'cron',
+            livello: 'warn',
+            ambiente: 'production',
+            creato_il: fa(2 * ORA),
+            visto_l_ultima: fa(2 * ORA),
+            contesto: { campi: { operazione: 'notifiche-promemoria', esito: 'ok-parziale' } },
+        })
+        montaDb(db)
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'cron-battito').dettaglio).toContain('parziale')
+        expect(controllo(corpo, 'cron-battito').dettaglio).toContain('notifiche-promemoria')
+    })
+
+    it("un 'ok' più fresco cancella il marchio di parziale della notte prima", async () => {
+        // Un job riparato stanotte non deve restare marchiato: il dettaglio descrive
+        // ADESSO, non la storia.
+        //
+        // ⚠️ ONESTÀ SU COSA QUESTO TEST TIENE FERMO, verificato manomettendo il codice
+        // e non supponendolo: la proprietà è garantita da DUE meccanismi indipendenti —
+        // l'`.order('visto_l_ultima', desc)` della query e il `parziali.delete()` nel
+        // ramo `else` — e togliendone UNO il test resta verde, perché l'altro basta da
+        // solo. Non è quindi un lock sul singolo ramo: è un lock sul COMPORTAMENTO
+        // osservabile, che diventa rosso solo se cadono entrambi. È il caso che conta,
+        // perché è quello in cui il dettaglio comincerebbe a mentire.
+        const db = dbSano()
+        db.app_log = db.app_log.filter((r) => jobDi(r) !== 'notifiche-promemoria')
+        db.app_log.push({
+            id: 'log-parziale-vecchio',
+            evento: 'cron',
+            livello: 'warn',
+            ambiente: 'production',
+            creato_il: fa(25 * ORA),
+            visto_l_ultima: fa(25 * ORA),
+            contesto: { campi: { operazione: 'notifiche-promemoria', esito: 'ok-parziale' } },
+        })
+        db.app_log.push(battito('notifiche-promemoria', 2 * ORA))
+        montaDb(db)
+
+        const { corpo } = await chiama()
+
+        expect(controllo(corpo, 'cron-battito').esito).toBe('ok')
+        expect(controllo(corpo, 'cron-battito').dettaglio).not.toContain('parziale')
+    })
+
+    it("un livello 'error' non vale come battito nemmeno con un esito che somiglia", async () => {
+        // Il filtro si è allargato a `warn`, e l'allargamento poteva scappare di mano:
+        // `url-assente` e `post-fallito` sono righe `error` scritte DAL DATABASE quando
+        // il lavoro NON è partito. Se finissero fra i battiti, il guasto più grave —
+        // «il cron non chiama nessuno» — si presenterebbe come un job sano.
+        const db = dbSano()
+        db.app_log = db.app_log.filter((r) => jobDi(r) !== 'candidature-retention')
+        db.app_log.push({
+            id: 'log-url-assente',
+            evento: 'cron',
+            livello: 'error',
+            ambiente: 'production',
+            creato_il: fa(1 * ORA),
+            visto_l_ultima: fa(1 * ORA),
+            contesto: { campi: { operazione: 'candidature-retention', esito: 'url-assente' } },
+        })
+        montaDb(db)
+
+        const { corpo } = await chiama()
+
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'cron-battito').dettaglio).toContain('candidature-retention')
+    })
+
     it("una riga cron con esito diverso da 'ok' non vale come battito", async () => {
         const db = dbSano()
         // Il job è PARTITO (`avviato`) ma non ha mai dichiarato di aver finito: è

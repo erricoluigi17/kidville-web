@@ -70,20 +70,17 @@ const MAX_OCCORRENZE = 83;
  * niente». Il file ha per giunta un `attempted` di modulo che rende il tentativo UNICO per
  * sessione: il catch muto non perdeva un errore fra tanti, perdeva l'unico che ci fosse.
  *
- * AGGIUNTO IL 2026-08-11 — `AdultRegistryForm.tsx`. Il suo `.catch(() => {})` inghiottiva il
- * caricamento dell'elenco SEDI, cioè il campo che decide in quale dei tre plessi finisce
- * l'anagrafica di una persona. Il fallimento si presentava come «la select della sede non
- * compare», che è indistinguibile da «c'è una sede sola» — ed è il modo esatto in cui un dato
- * finisce nel plesso sbagliato in silenzio. Il file non è montato da nessuna pagina, e la
- * bonifica è stata fatta lo stesso: un modulo dormiente con la regola sbagliata è la regola
- * sbagliata che torna il giorno in cui qualcuno lo monta.
+ * TOLTO IL 2026-08-11 — `AdultRegistryForm.tsx` era entrato qui il giorno prima, e il giorno
+ * dopo il file non esiste più: cancellato insieme a `POST /api/admin/adults`, la rotta
+ * irraggiungibile e rotta che serviva. Una voce che punta a un percorso inesistente farebbe
+ * cadere il controllo POSITIVO qui sotto (`fs.existsSync`), che è esattamente ciò che deve
+ * fare: questo elenco parla di file vivi e bonificati, non di file scomparsi.
  */
 const MAI_PIU_IN_ALLOWLIST = [
     'src/app/api/admin/regenerate-credentials/route.ts',
     'src/app/(dashboard)/admin/students/page.tsx',
     'src/components/features/admin/pagamenti/TicketMensaPanel.tsx',
     'src/components/providers/NativePushAutoRegister.tsx',
-    'src/components/features/admin/AdultRegistryForm.tsx',
 ];
 
 /* ────────────────────────────────────────────────────────────────────────────────

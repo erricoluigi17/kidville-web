@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
@@ -155,9 +155,16 @@ describe('lock · nessun percorso interno si apre in una scheda nuova', () => {
   it('nessun file dell’area riservata espelle l’utente su un percorso interno', () => {
     const guasti: string[] = []
     for (const cartella of AREA) {
+      // `git ls-files` elenca i file TRACCIATI, che non è la stessa cosa dei file
+      // PRESENTI: un file cancellato e non ancora committato resta in elenco e non
+      // esiste su disco. Senza `existsSync` questo lock non falliva su un link
+      // sbagliato — moriva con `ENOENT`, cioè smetteva di misurare l'intera cartella
+      // per un motivo che non c'entra niente con i link. Misurato il 2026-08-11,
+      // cancellando `AdultRegistryForm.tsx` insieme alla rotta che serviva.
       const elenco = execFileSync('git', ['ls-files', cartella], { cwd: RADICE, encoding: 'utf8' })
         .split('\n')
         .filter((f) => f.endsWith('.tsx'))
+        .filter((f) => existsSync(join(RADICE, f)))
       for (const file of elenco) {
         for (const href of apertureEsterne(readFileSync(join(RADICE, file), 'utf8'))) {
           guasti.push(`${file} → ${href}`)

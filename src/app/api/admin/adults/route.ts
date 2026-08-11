@@ -2,24 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
-import { parseBody, parseQuery } from '@/lib/validation/http';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
     role: z.string().optional(),
-});
-
-const postBodySchema = z.object({
-    // La presenza della prima email resta verificata nell'handler (400 dedicato);
-    // nessun vincolo di formato, come oggi.
-    emails: z.array(z.string()).optional(),
-    first_name: z.string().nullable().optional(),
-    last_name: z.string().nullable().optional(),
-    role: z.string().nullable().optional(),
-    scuola_id: z.string().nullable().optional(),
 });
 
 // GET /api/admin/adults?role=educator
@@ -79,79 +69,37 @@ export const GET = withRoute('admin/adults:GET', async (request: NextRequest) =>
     }
 });
 
-// POST /api/admin/adults
-// Creates a new staff user in auth + utenti
-export const POST = withRoute('admin/adults:POST', async (request: NextRequest) => {
-    // Gap auth segnalato in M3, chiuso in M9: creava utenze staff (auth+utenti)
-    // SENZA gate — privilege escalation. Riservato allo staff di gestione
-    // (la creazione staff con RBAC completo resta su /api/admin/staff, P3.4a).
-    const auth = await requireStaff(request);
-    if (auth.response) return auth.response;
-
-    const b = await parseBody(request, postBodySchema);
-    if ('response' in b) return b.response;
-    const { emails, first_name, last_name, role, scuola_id } = b.data;
-
-    try {
-        const primaryEmail = emails && emails.length > 0 ? emails[0] : null;
-
-        if (!primaryEmail) {
-            return NextResponse.json({ error: 'Primary Email is required' }, { status: 400 });
-        }
-
-        const supabase = await createAdminClient();
-
-        // scuola_id: risolto dallo scope dell'admin (una sola sede per la scrittura).
-        const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
-        if (sw.response) return sw.response;
-
-        // 1. Crea l'utente in Auth
-        const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(primaryEmail, {
-            data: { first_name, last_name, role }
-        });
-
-        if (authError) {
-            return NextResponse.json({ error: authError.message }, { status: 400 });
-        }
-
-        const userId = authData.user.id;
-
-        // 2. Inserisci in utenti
-        const { data: utentiData, error: utentiError } = await supabase
-            .from('utenti')
-            .upsert({
-                id: userId,
-                email: primaryEmail,
-                nome: first_name,
-                cognome: last_name,
-                first_name,
-                last_name,
-                ruolo: role || 'educator',
-                scuola_id: sw.scuolaId,
-                attivo: true,
-            })
-            .select()
-            .single();
-
-        if (utentiError) {
-            // Ramo che FALLISCE la richiesta (500): `logErrore`, non `logEvento`. Porta
-            // l'errore PostgREST intero (code/details/hint) e marca l'errore come già
-            // registrato, così `withRoute` non aggiunge una seconda riga più povera.
-            // NB: l'utente auth è già stato invitato — resta senza riga `utenti`.
-            logErrore({ operazione: 'admin/adults:POST', stato: 500, evento: 'db' }, utentiError);
-            return NextResponse.json({ error: utentiError.message }, { status: 500 });
-        }
-
-        return NextResponse.json({
-            ...utentiData,
-            first_name: utentiData.first_name || utentiData.nome,
-            last_name: utentiData.last_name || utentiData.cognome,
-            role: utentiData.ruolo,
-        }, { status: 201 });
-
-    } catch (err: unknown) {
-        logErrore({ operazione: 'admin/adults:POST', stato: 500 }, err);
-        const msg = err instanceof Error ? err.message : String(err);
-        return NextResponse.json({ error: 'Errore interno del server', details: msg }, { status: 500 });
-    }
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// QUI STAVA `POST /api/admin/adults`. TOLTO IL 2026-08-11, con la sua scheda
+// `AdultRegistryForm.tsx`. Chi sta per riscriverlo legga prima queste tre righe:
+// da fuori sembrava «la rotta che crea un account del personale», e non lo era.
+//
+//  1. IRRAGGIUNGIBILE — il suo unico chiamante era `AdultRegistryForm.tsx`, che
+//     nessuna pagina montava (`grep -rn AdultRegistryForm src/`, 11 agosto: solo
+//     il file stesso). Zero utenti, zero chiamate, zero collaudi possibili.
+//  2. ROTTO — faceva `upsert` su `utenti` scrivendo ANCHE `first_name`,
+//     `last_name` e `role`, che lì sono `GENERATED ALWAYS AS (…) STORED`
+//     (`nome`/`cognome`/`ruolo` sono le colonne vere). Postgres rifiuta con
+//     `428C9` e la rotta rispondeva 500 — ma `inviteUserByEmail` era GIÀ passato:
+//     ogni tentativo lasciava un account `auth.users` senza riga `utenti`.
+//  3. PERICOLOSO SE RIPARATO ALLA CIECA — `role` era uno `z.string()` libero e il
+//     gate è `requireStaff`, che comprende la segreteria. Sistemare solo il punto
+//     2 avrebbe dato alla segreteria la creazione di un `admin`: una scalata di
+//     privilegi servita da una rotta che, non funzionando, nessuno guardava.
+//
+// DOVE SI CREA DAVVERO UN ACCOUNT DEL PERSONALE, per chi era arrivato qui a
+// farlo: `ensureStaffIdentity()` in `src/lib/auth/staff-identity.ts`. È l'unica
+// funzione che apre un account `auth.users` (o riusa quello che c'è) e scrive la
+// riga `utenti` con `nome`/`cognome`/`ruolo` — cioè le colonne VERE. Oggi la
+// chiama l'approvazione delle candidature (`PATCH /api/admin/candidature-insegnanti`),
+// e sarà la stessa strada per l'approvazione delle pratiche di `/anagrafica-personale`.
+//
+// NON `/api/admin/staff`: fino all'11 agosto queste righe ci mandavano, ed era
+// falso. Misurato lo stesso giorno, quel modulo esporta soltanto `GET` e `PATCH`
+// — legge e modifica account che esistono GIÀ, non ne crea nessuno. Un rimando
+// sbagliato in un commento come questo è peggio del silenzio: chi lo segue trova
+// una strada che non c'è, conclude che nessuna esiste e riscrive proprio la porta
+// che qui si è chiusa.
+//
+// Il lock che tiene ferma questa decisione: `__tests__/api/admin-adults-senza-post.test.ts`.
+// ─────────────────────────────────────────────────────────────────────────────

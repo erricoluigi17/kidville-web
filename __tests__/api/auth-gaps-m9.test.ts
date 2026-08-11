@@ -78,7 +78,7 @@ import { GET as xlsxGET } from '@/app/api/forms/export/xlsx/route'
 import { GET as pdfGET } from '@/app/api/forms/export/pdf/route'
 import { GET as formsGET, POST as formsPOST } from '@/app/api/admin/forms/route'
 import { GET as parentByIdGET } from '@/app/api/admin/parents/[id]/route'
-import { GET as adultsGET, POST as adultsPOST } from '@/app/api/admin/adults/route'
+import { GET as adultsGET } from '@/app/api/admin/adults/route'
 import { GET as preInsGET, PATCH as preInsPATCH } from '@/app/api/admin/pre-inscriptions/route'
 import { GET as chatConfigGET } from '@/app/api/chat/config/route'
 import { GET as chatContactsGET } from '@/app/api/chat/contacts/route'
@@ -124,9 +124,25 @@ describe('M9 — gate propagati (401 in anonimo)', () => {
     })
     expect(res.status).toBe(401)
   })
-  it('GET/POST /api/admin/adults → 401', async () => {
+  // Era «GET/POST». Il POST è stato CANCELLATO il 2026-08-11 (irraggiungibile e
+  // rotto: scriveva le colonne generate di `utenti`), quindi qui non c'è più
+  // niente da misurare — e questa riga non è un'asserzione tolta per far tornare
+  // il verde: che il POST non esista lo tiene fermo
+  // `__tests__/api/admin-adults-senza-post.test.ts`.
+  //
+  // Il GET resta per DECISIONE, non perché qualcuno lo chiami. La misura, presa
+  // l'11/08/2026: `grep -rn "api/admin/adults" --include='*.ts' --include='*.tsx' src/
+  // __tests__/ e2e/` trova la rotta stessa, questi test e dei commenti — e NESSUNA
+  // `fetch`. Zero chiamanti, `/admin/students` compresa. Qui c'era scritto il
+  // contrario, come se fosse una misura, e non lo era.
+  // La decisione: non si cancella oggi, perché toglierla è un intervento suo, con
+  // la sua verifica, e non un effetto collaterale della rimozione del POST. Ma
+  // finché resta va guardata per quello che è — service-role, risponde nomi ed
+  // email dello staff di TUTTE le sedi in scope — e l'unica cosa che la tiene a
+  // freno è il gate che questa riga misura. Chi farà pulizia: non c'è nessun
+  // chiamante da riparare, solo questa riga e il lock qui sopra da togliere.
+  it('GET /api/admin/adults → 401', async () => {
     expect((await adultsGET(req('http://x/api/admin/adults') as never)).status).toBe(401)
-    expect((await adultsPOST(jsonReq('http://x/api/admin/adults', 'POST', { emails: ['a@b.it'] }) as never)).status).toBe(401)
   })
   it('GET/PATCH /api/admin/pre-inscriptions → 401 (il POST pubblico resta senza gate)', async () => {
     expect((await preInsGET(req('http://x/api/admin/pre-inscriptions') as never)).status).toBe(401)

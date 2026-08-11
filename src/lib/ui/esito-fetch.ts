@@ -615,6 +615,61 @@ export const CODICI_ERRORE = {
      * dice solo che non si è potuto guardare.
      */
     VERIFICA_CODICI_FISCALI_NON_RIUSCITA: 'erroreVerificaCodiciFiscaliNonRiuscita',
+
+    /* ── Modulo pubblico «Anagrafica del personale» (`/anagrafica-personale`) ──
+     *
+     * Due codici, e nessuno dei due riusa quelli delle CANDIDATURE, benché le due
+     * porte si somiglino riga per riga. Non è simmetria: è la parola che una persona
+     * legge a schermo. Chi apre questo modulo è una maestra che LAVORA già qui e a cui
+     * la Segreteria ha mandato il link; dirle «non siamo riusciti a registrare la tua
+     * candidatura» le direbbe che il sistema ha capito un'altra cosa di lei — e su un
+     * modulo in cui ha appena caricato il proprio documento d'identità è esattamente il
+     * momento in cui non deve dubitare di dove siano finiti i suoi dati.
+     */
+
+    /**
+     * 400/500 — l'anagrafica del personale NON è stata registrata: campi non validi,
+     * consensi mancanti, esca scattata, o guasto PostgREST sull'INSERT.
+     *
+     * La frase invita a riprovare perché il 500 è l'unico rifiuto di questa rotta in
+     * cui il secondo tentativo può andare bene da solo; i 400 portano con sé `campi`
+     * (o `consensi`), che è ciò che il modulo mostra accanto al campo. Il motivo
+     * tecnico resta nel log: il `message` grezzo di PostgREST è prosa inglese con
+     * dentro nomi di colonne, e non è un'informazione per chi sta compilando.
+     */
+    PRATICA_NON_INVIATA: 'errorePraticaPersonaleNonInviata',
+    /**
+     * 503 — l'anagrafica del personale non si può ricevere adesso: la tabella non
+     * risponde (è lo stato del database della CI, che non è migrato).
+     *
+     * NON riusa `PRATICA_NON_INVIATA`, che invita a riprovare fra qualche minuto: qui
+     * riprovare non serve a niente, e mandare qualcuno a ritentare ogni cinque minuti
+     * una cosa che non può riuscire è peggio di non dire nulla. La frase indirizza alla
+     * segreteria, che è l'unica via d'uscita — ed è anche l'unica cosa vera da dire, al
+     * posto di un `201` che direbbe «ricevuta» su una riga che non esiste.
+     */
+    PRATICHE_NON_DISPONIBILI: 'errorePratichePersonaleNonDisponibili',
+    /**
+     * 413 — la scansione del documento supera il limite della PIATTAFORMA.
+     *
+     * ⚠️ NON riusa `ALLEGATO_TROPPO_GRANDE`, ed è una misura e non una preferenza:
+     * la frase di quel codice dice «un allegato può pesare al massimo 10 MB» in
+     * entrambi i cataloghi, mentre il tetto vero di una funzione Vercel è
+     * `LIMITE_UPLOAD_MB` (4 MB) — sopra i ~4,5 MB il corpo lo rifiuta la
+     * piattaforma prima che l'handler esista. Mostrarla qui direbbe a una maestra
+     * che ha ancora 6 MB di margine mentre il caricamento è già stato respinto: è
+     * il modo di rendere il modulo inutilizzabile con un messaggio rassicurante.
+     *
+     * E LA FRASE NON PORTA IL NUMERO, di proposito. Scriverlo nel catalogo
+     * significherebbe una TERZA copia di `LIMITE_UPLOAD_MB` (dopo la route e il
+     * `file_size_limit` del bucket), in due lingue, in un file che nessuno rilegge
+     * quando la piattaforma alza il tetto: è la divergenza di `gallery` (50 MB nel
+     * bucket, 200 MB nella route, per mesi) con un passaggio in più. Il numero
+     * esatto resta nella prosa del server — che lo interpola dalla costante — e nel
+     * log; a schermo va ciò che si può fare, che è la cosa che serve davvero a chi
+     * sta fotografando una carta d'identità col telefono.
+     */
+    ALLEGATO_OLTRE_LIMITE_PIATTAFORMA: 'erroreAllegatoOltreLimitePiattaforma',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

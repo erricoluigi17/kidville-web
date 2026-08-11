@@ -48,7 +48,15 @@ import { GRADI_OPTIONS, TITOLI_STUDIO } from '@/lib/forms/insegnanti-template'
  *
  * Quindi la difesa non è la porta: è ciò che sta dietro. Ogni voce qui sotto è un
  * requisito, non un auspicio, e chi tocca questo modulo non ne tolga nessuna:
- *   1. tetto di 3 invii l'ora per IP, ed esca (`sito_web`) — come la candidatura;
+ *   1. tetto di invii l'ora per INDIRIZZO IP, ed esca (`sito_web`) — come la
+ *      candidatura. ⚠️ Il NUMERO non si scrive qui, e la ragione è quella per cui
+ *      fino all'11/08/2026 questa riga diceva «3»: quel tre veniva dalla candidatura
+ *      spontanea, che arriva da casa, una per rete. Qui il modo previsto di usare il
+ *      modulo è l'opposto — «la Segreteria manda il link alle maestre in servizio»,
+ *      cioè più dipendenti che compilano lo stesso pomeriggio dietro il NAT della
+ *      sede — e con tre l'ora dalla quarta in poi prendevano un 429. Il numero vivo,
+ *      con la misura che lo giustifica, sta in `iscrizione/personale:POST`: un tetto
+ *      ribattuto in due posti diverge alla prima modifica, e questo l'aveva già fatto;
  *   2. la pratica NON è un account e NON è l'anagrafica: vive in
  *      `pratiche_personale`, RLS senza policy, e non produce niente finché una
  *      persona non la riconosce;
@@ -352,11 +360,34 @@ export const CONSENSI_PERSONALE_FIELDS: FormField[] = [
     // ⚠️ I due termini sono INTERPOLATI da `PERSONALE_LIMITI`, non ribattuti a mano:
     // sono ciò che viene promesso all'interessata e archiviato in `consents_log`, e
     // devono coincidere con quelli che il cron di conservazione applica davvero.
+    //
+    // ⚠️ LA FRASE SULLA SOSTITUZIONE È STATA TOLTA l'11/08/2026, ed è la correzione
+    // più importante di questo blocco. Diceva: «viene sostituita, con cancellazione
+    // della precedente, appena ne consegno una nuova». MISURATO lo stesso giorno: in
+    // tutto `src/` nessuna riga scrive `anagrafica_personale.documento_path` — l'unica
+    // scrittura su quella colonna è l'azzeramento di `retention-personale` — e nessuna
+    // `remove()` sul bucket `documenti_personale` esiste fuori da quel job. Quando la
+    // route di approvazione sovrascriverà il percorso con una seconda scansione, il
+    // file precedente resterà nel bucket senza più nessuna riga che lo nomini, e
+    // `retention-personale` non lo troverà mai: una fotografia di carta d'identità
+    // conservata per sempre e irrintracciabile.
+    // Qui pesa il doppio che in `/privacy`: questo testo viene CONGELATO in
+    // `pratiche_personale.consents_log` e resta la prova, fra dieci anni, di ciò che
+    // alla persona è stato dichiarato. Una promessa non mantenuta è un documento
+    // legale che dice il falso, non un refuso redazionale.
+    // NON è stata alzata `CONSENSI_PERSONALE_VERSIONE`, e la ragione è una misura, non
+    // una comodità: il 2026-08-11 `pratiche_personale` conteneva ZERO righe in
+    // produzione (`select count(*)`), il modulo non è mai stato rilasciato e la
+    // versione nasce oggi — nessuna presa visione è mai stata archiviata con la
+    // formulazione vecchia, quindi non c'è nessuna differenza da rendere tracciabile.
+    // Chi toccherà questo testo dopo il rilascio rifaccia quella query prima di
+    // decidere: da quel momento la versione va alzata.
+    // Il divieto di rimetterla senza il meccanismo non è affidato alla memoria: la
+    // prova sta in `__tests__/api/gdpr-retention-personale.test.ts`.
     text:
       'Ho letto perché mi viene chiesta la copia del documento d’identità: serve a identificarmi ' +
       'per gli adempimenti obbligatori del datore di lavoro. La copia è conservata separatamente ' +
-      'dal resto del fascicolo e viene sostituita, con cancellazione della precedente, appena ne ' +
-      `consegno una nuova. È cancellata entro ${PERSONALE_LIMITI.mesiDocumentoDopoCessazione} mesi ` +
+      `dal resto del fascicolo. È cancellata entro ${PERSONALE_LIMITI.mesiDocumentoDopoCessazione} mesi ` +
       'dalla cessazione del rapporto, ed entro ' +
       `${PERSONALE_LIMITI.giorniPraticaNonApprovata} giorni se questa richiesta non viene approvata.`,
   },

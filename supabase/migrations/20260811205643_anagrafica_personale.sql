@@ -299,6 +299,41 @@ begin
 end;
 $$;
 
+-- ⚠️ QUESTE TRE RIGHE SONO STATE AGGIUNTE DOPO, il 2026-08-12, e va detto invece
+-- che nascosto.
+--
+-- Il fatto: questa funzione è nata `SECURITY DEFINER` senza revocarne l'EXECUTE,
+-- e in Supabase `anon`/`authenticated` ricevono l'EXECUTE per GRANT esplicito —
+-- `REVOKE ... FROM PUBLIC` non li tocca. Se n'è accorto `get_advisors(security)`
+-- un minuto dopo l'applicazione, e la migrazione successiva
+-- (`20260811205733_anagrafica_personale_trigger_invoker.sql`) ha chiuso tutto in
+-- produzione: `security invoker` + revoca a `public`, `anon`, `authenticated`.
+-- Misurato il 12/08 su produzione: `has_function_privilege` risponde `false` per
+-- entrambi i ruoli, e la funzione è `prosecdef = false`.
+--
+-- Perché allora toccare questo file, che è già applicato. Per due ragioni, e
+-- nessuna delle due è «far tacere il lock»:
+--
+--  1. su una RICOSTRUZIONE DA ZERO a partire dai file — disaster recovery, nuovo
+--     ambiente, database di collaudo — fra questa migrazione e la successiva la
+--     funzione resterebbe eseguibile via `/rest/v1/rpc/`. È una finestra breve, ma
+--     è una finestra che il repo apre da solo ogni volta che qualcuno ricostruisce;
+--  2. `__tests__/architecture/security-definer-revoke-lock.test.ts` legge le
+--     migrazioni UN FILE ALLA VOLTA, per una ragione giusta: fra due migrazioni
+--     c'è un intervallo reale in cui la porta è aperta. MISURATO il 12/08: una
+--     migrazione nuova di sole revoche NON rende verde il lock — l'ho eseguita.
+--     Quindi «aggiungere una migrazione» non è un'alternativa a questo blocco:
+--     è un'altra cosa, che non chiude né la finestra (1) né il lock.
+--
+-- Il rischio reale di sfruttamento resta nullo — Postgres rifiuta una funzione
+-- trigger invocata fuori da un trigger («trigger functions can only be called as
+-- triggers») — ed è esattamente l'argomento che la migrazione 205733 rifiuta di
+-- accettare: è un argomento sul fatto che l'attacco fallisca oggi, non sul fatto
+-- che la porta sia chiusa.
+revoke all on function public.anagrafica_personale_tocca() from public;
+revoke all on function public.anagrafica_personale_tocca() from anon;
+revoke all on function public.anagrafica_personale_tocca() from authenticated;
+
 drop trigger if exists anagrafica_personale_tocca_trg on public.anagrafica_personale;
 create trigger anagrafica_personale_tocca_trg
   before update on public.anagrafica_personale

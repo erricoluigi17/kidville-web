@@ -4,11 +4,11 @@ import { axe, toHaveNoViolations } from 'jest-axe'
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════
- * LE TRE SCHEDE DELL'ADULTO — L'ACCESSIBILITÀ MISURATA, non dichiarata.
+ * LE SCHEDE DELL'ADULTO — L'ACCESSIBILITÀ MISURATA, non dichiarata.
  * ═════════════════════════════════════════════════════════════════════════════
  *
  * ⚠️ PERCHÉ QUESTO FILE ESISTE, detto senza giri di parole. `smoke.axe.test.tsx`
- * è verde, e su queste tre schermate NON GIRA: nessuno dei tre componenti è fra
+ * è verde, e su queste schermate NON GIRA: nessuno di questi componenti è fra
  * quelli che monta. Eseguendo axe su di loro l'11 agosto sono uscite violazioni
  * vere e banali — `label` ×8 su `ParentDetailPanel` (indirizzo, civico, città,
  * provincia, CAP, telefono, email, cittadinanza: `<label>` senza `htmlFor` e
@@ -18,7 +18,13 @@ import { axe, toHaveNoViolations } from 'jest-axe'
  *
  * «Il gate è verde» e «qualcuno ha guardato» sono due frasi diverse, e questo file
  * esiste perché diventino la stessa. Da qui in avanti una casella senza nome su
- * una di queste tre schede fa rosso.
+ * una di queste schede fa rosso.
+ *
+ * ⚠️ ERANO TRE. `AdultRegistryForm` è stata cancellata il 2026-08-11 insieme alla
+ * rotta che la serviva (`POST /api/admin/adults`, irraggiungibile e rotta: vedi
+ * `src/app/api/admin/adults/route.ts`). Misurare l'accessibilità di una scheda
+ * che nessuno può aprire è lavoro che sembra copertura e non lo è: restano le
+ * due schede vive, e sono quelle su cui passa un'anagrafica vera.
  *
  * ⚠️ REPOSITORY PUBBLICO: nessuna persona, nessun codice fiscale reale.
  */
@@ -43,7 +49,6 @@ vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => '
 
 import { ScrollableAdultForm } from '@/components/features/admin/ScrollableAdultForm'
 import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel'
-import { AdultRegistryForm } from '@/components/features/admin/AdultRegistryForm'
 
 const ID_GENITORE = '00000000-0000-4000-8000-000000000001'
 
@@ -88,7 +93,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('axe · le tre schede dell’adulto, zero violazioni', () => {
+describe('axe · le schede dell’adulto, zero violazioni', () => {
   it('ScrollableAdultForm — la scheda della famiglia (l’unica montata in pagina)', async () => {
     const { container } = render(<ScrollableAdultForm />)
     await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
@@ -101,12 +106,6 @@ describe('axe · le tre schede dell’adulto, zero violazioni', () => {
     )
     // A dati non ancora arrivati la scheda è uno spinner: misurarla lì non
     // direbbe niente sui campi, che sono il punto.
-    await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
-    expect(await axe(container, axeOpts)).toHaveNoViolations()
-  })
-
-  it('AdultRegistryForm — non montata da nessuna pagina, ma finché esiste si misura', async () => {
-    const { container } = render(<AdultRegistryForm />)
     await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
     expect(await axe(container, axeOpts)).toHaveNoViolations()
   })

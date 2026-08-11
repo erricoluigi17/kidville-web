@@ -246,6 +246,33 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
     come: '`obliaPdfCredenziali`: il nome del file è `<id>-<timestamp>.pdf`, si cercano i PDF di `parents.id` e dell’`auth_user_id` collegato.',
   },
 
+  // ── coperti, ma da un meccanismo che non è l'oblio ─────────────────────────
+  //
+  // Aperto l'11/08/2026 dal modulo `/anagrafica-personale` (migrazione
+  // `20260811205643`), ed è il quattordicesimo magazzino. Sta qui e non fra i
+  // «coperti» per una ragione di fatto e non di forma: i canali dell'oblio sono
+  // `alunno` e `genitore`, e una dipendente non è né l'uno né l'altro — nessuna
+  // `anonimizzaAlunno` né `anonimizzaGenitore` potrà mai arrivarci, e scrivere
+  // `coperto` significherebbe promettere una chiamata che non esiste. Non sta
+  // nemmeno fra gli «esclusi», perché un'esclusione dice «questi file restano»,
+  // e questi invece se ne vanno: li fa scadere `retention-personale`.
+  documenti_personale: {
+    stato: 'coperto-fuori-oblio',
+    come:
+      'Scansioni del documento d’identità di ADULTI CHE LAVORANO per la Scuola, non di minori né di ' +
+      'famiglie: i due canali dell’oblio (`alunno`, `genitore`) non li raggiungono per costruzione. ' +
+      'Li svuota `POST /api/gdpr/retention-personale` (`src/app/api/gdpr/retention-personale/route.ts`), ' +
+      'con i termini di `PERSONALE_LIMITI` che `/privacy` dichiara: 90 giorni per la pratica non ' +
+      'approvata, 12 mesi dalla cessazione per la sola scansione (il file esce dal bucket e ' +
+      '`documento_path` torna NULL), 10 anni per il fascicolo. PRIMA il file e POI la riga, con ' +
+      'rinuncia per singola riga — la prova sta accanto al meccanismo, in ' +
+      '`__tests__/api/gdpr-retention-personale.test.ts`, perché questo registro dichiara chi svuota ' +
+      'un magazzino ma non verifica che lo svuoti davvero. ⚠️ La richiesta di cancellazione di una ' +
+      'DIPENDENTE (art. 15-22) non passa da qui: è un percorso di Segreteria, e su ciò che è ' +
+      'trattenuto da un obbligo del datore (libro unico, denunce, sostituto d’imposta) l’art. 17 §3 ' +
+      'lett. b vale come per le fatture.',
+  },
+
   // ── esclusi, con la ragione scritta ────────────────────────────────────────
   fatture: {
     stato: 'escluso',

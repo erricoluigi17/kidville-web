@@ -4,10 +4,18 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslations } from 'next-intl'
 import { useForm, type FieldValues } from 'react-hook-form'
 import {
-  AlertCircle, AlertTriangle, ArrowLeft, ArrowRight, Check, GraduationCap, ListChecks,
-  Loader2, MapPin, PartyPopper, RefreshCw, ShieldCheck, UserRound,
+  AlertCircle, AlertTriangle, Check, GraduationCap, Loader2, MapPin, RefreshCw,
+  ShieldCheck, UserRound,
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
+import {
+  BarraAvanzamento, ColonnaCentrale, ColonnaContesto, ComandiWizard, ContatorePassi,
+  EscaHoneypot, GrigliaPasso, GuscioPubblico, PannelloConferma, PannelloErroreInvio,
+  TestataPasso, type ComandoAvanti,
+} from '@/components/features/public/wizard/pezzi-wizard-pubblico'
+import {
+  corpoDellaRisposta, useSediPubbliche,
+} from '@/components/features/public/wizard/use-sedi-pubbliche'
 import {
   INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS,
 } from '@/lib/forms/insegnanti-template'
@@ -26,91 +34,26 @@ import type { FormField } from '@/types/database.types'
  * averlo — l'account nasce solo se la Direzione approva
  * (`POST /api/iscrizione/insegnanti`, e la tabella `candidature_insegnanti`).
  *
- * ── LA FORMA È COPIATA DA `EnrollmentWizard`, NON REINVENTATA ───────────────
+ * ── L'IMPIANTO DELLE SEDI NON VIVE PIÙ QUI ──────────────────────────────────
  *
- * Ogni pezzo dell'impianto delle SEDI qui sotto esiste perché un difetto è
- * arrivato in produzione sul modulo fratello, ed è ripetuto pezzo per pezzo:
+ * Era ricopiato da `EnrollmentWizard` riga per riga, e stava per esserlo una
+ * terza volta per `/anagrafica-personale`. Dall'11/08/2026 sta in
+ * `wizard/use-sedi-pubbliche.ts`, insieme alle misure che gli hanno dato la
+ * forma che ha: i tre stati (`null` non è `[]`), il `!r.ok` che non è
+ * un'eccezione, `?sede=` come SUGGERIMENTO che l'elenco può smentire, e la
+ * regola per cui dopo un rifiuto del server il modulo non si smonta più. Chi
+ * cambia il comportamento delle sedi apre quel file, non questo.
  *
- *   · `!r.ok` NON è un'eccezione. Il `catch` di una promise non scatta su un
- *     429, e fino al 2026-08-02 il rate-limit di `/api/iscrizione/sedi` passava
- *     in silenzio: l'elenco restava vuoto, «vuoto» valeva «una sede sola», e la
- *     domanda partiva per non poter essere inviata;
- *   · un 200 con un corpo SENZA l'array `data` non è «nessuna sede»: è «elenco
- *     non ottenuto». `null` non è `[]`, e confonderli è lo stesso difetto con
- *     un'altra faccia;
- *   · un elenco VUOTO non è «una sede sola, vai avanti». Qui pesa ancora di più
- *     che sull'iscrizione: `POST /api/iscrizione/insegnanti` pretende
- *     `scuola_id` come uuid OBBLIGATORIO — è più severo della rotta sorella, e
- *     giustamente, perché con tre plessi dedurre la sede vuol dire archiviare la
- *     candidatura nel posto sbagliato in silenzio. Senza sede non c'è nessun
- *     invio possibile, quindi il modulo non comincia;
- *   · finché la FORMA della procedura non è definitiva non si dipinge NESSUN
- *     passo. Dipingerne uno e cambiarlo dopo è ciò che congelava il wizard
- *     fratello, e comunque farebbe saltare sotto le mani il passo su cui si sta
- *     scrivendo.
- *
- * ── PERCHÉ `?sede=` NON BASTA, E L'ELENCO SI CHIEDE COMUNQUE ────────────────
- *
- * Fino al 2026-08-11 un link «targato» (`/lavora-con-noi?sede=<uuid>`) faceva
- * saltare del tutto la fetch dell'elenco: la sede era «già decisa», `mostraSede`
- * restava false per sempre e nessun passo di scelta poteva esistere. Misurato
- * percorrendo il modulo per intero con un uuid che la rotta non accetta:
- * riepilogo «Sede scelta —», e all'invio il 400 `SEDE_DA_SPECIFICARE`, cioè
- * «Specificare la sede a cui si riferisce questa operazione» seguito dall'invito
- * a ripremere «Invia candidatura» — un ordine che l'interfaccia non permetteva
- * di eseguire (zero `radio` in pagina) e un bottone che avrebbe ripetuto la
- * stessa risposta per sempre. Esattamente le due cose che questo file condanna
- * più sotto.
- *
- * E un uuid che la rotta non accetta NON è un caso di scuola: `POST
- * /api/iscrizione/insegnanti` valida `scuola_id` contro `sediReali`, che applica
- * `scuole.attiva` ed esclude la sede di collaudo. Un plesso soft-deleted, la
- * sede E2E, un volantino stampato l'anno prima, un uuid ritoccato a mano: quattro
- * strade per lo stesso vicolo cieco.
- *
- * Adesso l'elenco è l'AUTORITÀ e si chiede sempre; `?sede=` è un suggerimento
- * che vale solo se l'elenco lo conferma:
- *
- *   · elenco ottenuto e il link c'è dentro → nessun passo di scelta (com'era), e
- *     in più il riepilogo può dire il NOME del plesso invece di un trattino;
- *   · elenco ottenuto e il link NON c'è dentro → il link si abbandona PRIMA che
- *     sia stato compilato alcunché, e il passo «sede» torna al suo posto: chi
- *     apre il volantino vecchio sceglie, e non se ne accorge nemmeno;
- *   · elenco NON ottenuto (429, rete giù, corpo strano) → il link si tiene e il
- *     modulo parte lo stesso. È la proprietà che il ramo precedente proteggeva e
- *     che resta vera: nessun guasto dell'elenco può impedire una candidatura;
- *   · e se in quel caso il server rifiuta comunque con `SEDE_DA_SPECIFICARE`
- *     (link davvero morto, oppure plesso disattivato mentre si compilava), il
- *     rifiuto è AZIONABILE: si abbandona il link, si richiede l'elenco, il passo
- *     «sede» ricompare davanti e i dati restano dove sono — react-hook-form
- *     conserva i valori dei campi smontati (`shouldUnregister` è false).
- *
- * ── E DOPO IL RIFIUTO IL MODULO NON SI SMONTA PIÙ, QUALUNQUE COSA DICA L'ELENCO
- *
- * La rete residua qui sopra, scritta l'11/08/2026, non copriva il caso per cui
- * era nata. `sedeSmentitaDalServer()` richiede l'elenco, e finché quella
- * richiesta è in volo la forma dei passi tornava «non decisa»: il ramo dei passi
- * — l'UNICO che contiene il pannello `erroreInvio` — veniva smontato, e se il
- * ri-caricamento falliva di nuovo si cadeva sulla schermata «Non riusciamo a
- * caricare le sedi / Controlla la connessione». MISURATO sullo scenario esatto
- * (`?sede=` morto + elenco illeggibile): messaggio della sede rifiutata in
- * pagina, `false`; pannello generico delle sedi, `true`.
- *
- * E non è il caso raro: la causa documentata per cui il link viene creduto è il
- * 429 di `/api/iscrizione/sedi`, che dura DIECI MINUTI — il tentativo che parte
- * subito dopo il rifiuto cade quasi certamente nella stessa finestra. Chi aveva
- * compilato quattro passi leggeva una schermata che non diceva che l'invio era
- * fallito, non nominava la sede del collegamento, dava la colpa a una
- * connessione che non ne aveva, e offriva un bottone destinato a ripetere lo
- * stesso errore fino allo scadere del tetto.
- *
- * Da qui in avanti vale una regola sola, ed è `sedeRifiutata !== null`: quando il
- * server ha rifiutato la sede, il modulo è GIÀ COMINCIATO ed è già compilato. La
- * forma dei passi resta decisa (il passo «sede» ci sarà comunque), e le tre
- * notizie sull'elenco — attesa, guasto, elenco vuoto — si danno DENTRO il passo
- * «sede», accanto al pannello del rifiuto, invece che al posto dell'intera
- * pagina. Nessun esito del ri-caricamento può più far sparire ciò che si è
- * scritto, né la spiegazione di ciò che è successo.
+ * Resta qui la parte che è di QUESTO modulo, e che è più severa della sorella:
+ * `POST /api/iscrizione/insegnanti` pretende `scuola_id` come uuid
+ * OBBLIGATORIO, perché con tre plessi dedurre la sede vuol dire archiviare la
+ * candidatura nel posto sbagliato in silenzio. Senza sede non c'è nessun invio
+ * possibile, quindi il modulo non comincia; e finché la FORMA della procedura
+ * non è definitiva (`formaDecisa`) non si dipinge NESSUN passo — dipingerne uno
+ * e cambiarlo dopo farebbe saltare sotto le mani il passo su cui si sta
+ * scrivendo. I dati restano dove sono anche quando un passo si smonta:
+ * react-hook-form conserva i valori dei campi smontati (`shouldUnregister` è
+ * false).
  *
  * ── PERCHÉ NON C'È `AnimatePresence mode="wait"` (e nemmeno framer-motion) ──
  *
@@ -168,26 +111,21 @@ import type { FormField } from '@/types/database.types'
  * hanno «Sì» e «No», per la stessa ragione per cui il `false` viaggia nel payload
  * — «non gliel'ho chiesto» e «ha detto no» non sono la stessa cosa.
  *
- * ── PERCHÉ I COMANDI NON SONO INCOLLATI IN FONDO ALLO SCHERMO ──────────────
+ * ── E NEMMENO IL GUSCIO VIVE PIÙ QUI ────────────────────────────────────────
  *
- * Il guscio non ha più `flex-1`: i comandi stanno subito sotto il contenuto, a
- * ogni larghezza. Prima il contenitore si allungava fino in fondo alla finestra e
- * spingeva i bottoni contro il bordo inferiore, lasciando in mezzo un vuoto
- * misurato in 180 px a 360×740 (riepilogo), 230 al primo passo e 327 a 768: sul
- * telefono si legge come «manca qualcosa più sotto».
+ * Barra di avanzamento, pallini dei passi, testata del passo, impaginatura a due
+ * colonne, comandi, pannelli d'errore e di conferma, colonna di contesto ed esca
+ * stanno in `wizard/pezzi-wizard-pubblico.tsx`, con i commenti misurati che li
+ * accompagnano — comprese le due regole che decidono la forma della pagina: i
+ * comandi NON sono incollati in fondo allo schermo (il vuoto di 180-327 px) e non
+ * sono una barra `sticky` (il piede che copre l'ultimo campo, difetto già pagato
+ * su «Comunica un'assenza»). Qui l'ultimo campo è la presentazione libera, cioè
+ * una textarea alta: sarebbe lo stesso guasto.
  *
- * E NON è una barra `sticky`: un piede appiccicato al fondo copre l'ultimo campo
- * del modulo, che è esattamente il difetto che questo repo ha già pagato su
- * «Comunica un'assenza» (il campo «Motivo» finito sotto il piede, e la misura che
- * ha mostrato che la leva era l'altezza della testata). Qui l'ultimo campo è la
- * presentazione libera, cioè una textarea alta: sarebbe lo stesso guasto.
- *
- * Da `lg` in su la colonna di contenuto non si allarga — 65-75 caratteri per riga
- * restano il limite di leggibilità — ma le accanto compare una colonna di
- * CONTESTO, che è ciò che riempie i 384 px di crema per lato invece di stirare il
- * modulo. Il suo testo non promette NIENTE più di quanto prometta il pannello di
- * conferma: nessun termine di risposta (perché la conferma non ne dichiara uno) e
- * le credenziali via email solo «se la candidatura viene accolta».
+ * Di quel guscio resta a questo file una sola regola sua: il testo della colonna
+ * di contesto non promette NIENTE più di quanto prometta il pannello di conferma
+ * — nessun termine di risposta (perché la conferma non ne dichiara uno) e le
+ * credenziali via email solo «se la candidatura viene accolta».
  *
  * ── ⚠️ LIMITE NOTO: CON L'INTERFACCIA IN INGLESE LA PAGINA È TRADOTTA A METÀ ─
  *
@@ -219,45 +157,20 @@ import type { FormField } from '@/types/database.types'
 
 /** Dove arriva la candidatura. */
 const ROTTA_INVIO = '/api/iscrizione/insegnanti'
-/** Da dove si legge l'elenco pubblico dei plessi (lo stesso di `/iscrizione`). */
-const ROTTA_SEDI = '/api/iscrizione/sedi'
-
 /**
- * Stato dell'elenco sedi. Sono TRE, e il difetto nasceva dall'averne due:
- * «elenco vuoto» e «elenco non ottenuto» finivano nella stessa variabile, e
- * `sedi.length` non poteva distinguerli.
+ * Lo slug di QUESTO modulo nei log del client.
+ *
+ * Il `messaggio` di `logClient` è anche la chiave del suo throttle: due moduli
+ * pubblici che spedissero lo stesso slug si dedurrebbero a vicenda proprio
+ * mentre uno dei due è guasto. Le stringhe che ne escono — `candidatura-sedi-
+ * non-caricate`, `candidatura-corpo-illeggibile` — sono le stesse di prima
+ * dell'estrazione: si interrogano in SQL su `app_log`, e cambiarle vorrebbe dire
+ * perdere la continuità della serie.
  */
-type StatoSedi = 'caricamento' | 'pronto' | 'errore'
-
-interface Sede {
-  id: string
-  nome: string
-}
+const ETICHETTA_LOG = 'candidatura'
 
 /** I passi possibili. Il primo esiste solo quando c'è davvero da scegliere. */
 type Passo = 'sede' | 'dati' | 'profilo' | 'consensi' | 'riepilogo'
-
-/**
- * Estrae `[{ id, nome }]` dalla risposta di `/api/iscrizione/sedi`, scartando le
- * voci di forma inattesa.
- *
- * `null` = **elenco NON ottenuto** (il corpo non contiene affatto un array
- * `data`), che NON è la stessa cosa di un elenco vuoto: `[]` è una risposta
- * valida — è ciò che risponde il database della CI — e va detta con la sua
- * frase; `null` è un guasto, e si può riprovare.
- */
-function sediValide(payload: unknown): Sede[] | null {
-  const data = (payload as { data?: unknown } | null)?.data
-  if (!Array.isArray(data)) return null
-  return data
-    .filter(
-      (s): s is Sede =>
-        s !== null && typeof s === 'object' &&
-        typeof (s as Sede).id === 'string' && (s as Sede).id.length > 0 &&
-        typeof (s as Sede).nome === 'string' && (s as Sede).nome.length > 0,
-    )
-    .map((s) => ({ id: s.id, nome: s.nome }))
-}
 
 /**
  * I campi del PRIMO passo compilabile: chi sei e come ti si ricontatta.
@@ -372,28 +285,6 @@ function testoDelValore(f: FormField, grezzo: unknown): string | null {
   return testo
 }
 
-/**
- * Il corpo JSON di una risposta, senza mai lanciare e senza mai tacere.
- *
- * Non si usa `.catch(() => null)`: un `catch` che non logga è un bug (AGENTS.md,
- * regola 6), e qui il caso vero esiste — un 500 di piattaforma senza corpo, o
- * l'HTML di un proxy. Il livello è `warn` perché il fatto è «il server ha
- * risposto e non l'abbiamo capito», che è diverso dal guasto vero e proprio.
- */
-async function corpoDellaRisposta(res: Response): Promise<unknown> {
-  try {
-    return await res.json()
-  } catch (err) {
-    logClient({
-      livello: 'warn',
-      evento: 'fetch',
-      messaggio: `candidatura-corpo-illeggibile: ${nomeErrore(err)}`,
-      stato: res.status,
-    })
-    return null
-  }
-}
-
 export function CandidaturaInsegnanteWizard({
   sedeId = null,
   intestazione,
@@ -416,21 +307,21 @@ export function CandidaturaInsegnanteWizard({
    * rifiuto, sulla stessa casella, a seconda di chi l'ha rilevato.
    */
   const tCampi = useTranslations('parentForms')
-  /** L'uuid arrivato dal link, normalizzato. È un SUGGERIMENTO, non una decisione. */
-  const sedeLink = sedeId !== null && sedeId.trim().length > 0 ? sedeId.trim() : null
 
-  const [sedi, setSedi] = useState<Sede[]>([])
-  const [statoSedi, setStatoSedi] = useState<StatoSedi>('caricamento')
-  /** Cambia a ogni «Riprova»: è ciò che fa ripartire la fetch dell'elenco. */
-  const [tentativoSedi, setTentativoSedi] = useState(0)
-  const [sedeScelta, setSedeScelta] = useState<string | null>(null)
-  const [erroreSede, setErroreSede] = useState(false)
   /**
-   * La sede che il SERVER ha appena rifiutato (400 `SEDE_DA_SPECIFICARE`), se
-   * c'è stata. Non è un doppione dell'elenco: è l'unico modo di sapere che quel
-   * plesso non vale più anche quando l'elenco non si è potuto leggere.
+   * TUTTO CIÒ CHE QUESTO MODULO SA DELLE SEDI, e i comandi con cui lo cambia.
+   * L'elenco, i tre stati, il link smentito, la forma dei passi e il rifiuto del
+   * server stanno in `wizard/use-sedi-pubbliche.ts`: erano ricopiati da
+   * `EnrollmentWizard`, e ogni copia ha aggiunto un difetto suo.
    */
-  const [sedeRifiutata, setSedeRifiutata] = useState<string | null>(null)
+  const {
+    sedi, statoSedi, elencoPronto, riprova: riprovaSedi,
+    sedeScelta, scegliSede, sedeSmentitaDalServer,
+    sedeDaLink, sedeDecisa, nomeSedeDalLink, nomeSedeDecisa,
+    mostraSede, formaDecisa, sediVuote, nonPuoCominciare, sedeSceglibile,
+  } = useSediPubbliche({ sedeId, etichetta: ETICHETTA_LOG })
+
+  const [erroreSede, setErroreSede] = useState(false)
 
   const [indice, setIndice] = useState(0)
   /**
@@ -540,167 +431,12 @@ export function CandidaturaInsegnanteWizard({
     formState: { errors },
   } = useForm<FieldValues>({ mode: 'onTouched' })
 
-  useEffect(() => {
-    // L'elenco si chiede SEMPRE, anche col link targato: è l'unica autorità su
-    // quali plessi ricevono candidature, ed è lo stesso predicato (`sediReali`)
-    // che la rotta d'invio applica a `scuola_id`. Chiederlo qui costa una
-    // richiesta e vale la differenza fra un link vecchio che si corregge da solo
-    // al primo schermo e un vicolo cieco dopo quattro passi compilati.
-    let annullato = false
-    fetch(ROTTA_SEDI)
-      .then(async (r) => {
-        // `!r.ok` NON è un'eccezione: il `catch` qui sotto non scatterebbe, ed è
-        // esattamente da qui che il 429 del rate-limit passava in silenzio.
-        if (!r.ok) {
-          logClient({
-            livello: 'error',
-            evento: 'fetch',
-            messaggio: 'candidatura-sedi-non-caricate',
-            stato: r.status,
-          })
-          return null
-        }
-        const lista = sediValide(await corpoDellaRisposta(r))
-        if (lista === null) {
-          // 200 con un corpo che non contiene l'elenco: l'elenco non c'è lo
-          // stesso, e trattarlo come «nessuna sede» sarebbe una bugia diversa.
-          logClient({
-            livello: 'error',
-            evento: 'fetch',
-            messaggio: 'candidatura-sedi-corpo-inatteso',
-            stato: r.status,
-          })
-        }
-        return lista
-      })
-      .then((lista) => {
-        if (annullato) return
-        if (lista === null) {
-          setStatoSedi('errore')
-          return
-        }
-        setSedi(lista)
-        // Con UNA sola sede non si fa scegliere niente, ma la sede va DECISA lo
-        // stesso: `scuola_id` è obbligatorio sulla rotta, e lasciarlo `null`
-        // qui significherebbe un 400 all'invio dopo quattro passi compilati.
-        if (lista.length === 1) setSedeScelta(lista[0].id)
-        setStatoSedi('pronto')
-      })
-      .catch((err) => {
-        // Rete giù, o JSON illeggibile. Un catch che non logga è un bug, e
-        // `logClient` non lancia mai.
-        logClient({
-          livello: 'error',
-          evento: 'fetch',
-          messaggio: `candidatura-sedi-non-caricate: ${nomeErrore(err)}`,
-          stack: err instanceof Error ? err.stack : undefined,
-        })
-        if (annullato) return
-        setStatoSedi('errore')
-      })
-    return () => {
-      annullato = true
-    }
-  }, [tentativoSedi])
-
-  const elencoPronto = statoSedi === 'pronto'
-  /**
-   * Il link è SMENTITO: l'elenco è arrivato e non lo contiene, oppure il server
-   * ha rifiutato proprio quell'uuid. In entrambi i casi smette di valere, e da
-   * qui in poi il modulo si comporta come se il link non ci fosse mai stato.
-   */
-  const linkSmentito =
-    sedeLink !== null &&
-    (sedeLink === sedeRifiutata || (elencoPronto && !sedi.some((s) => s.id === sedeLink)))
-  /** La sede decisa dal link, se il link vale ancora qualcosa. */
-  const sedeDaLink = sedeLink !== null && !linkSmentito ? sedeLink : null
-  /** La sede che partirà nel POST: il link se regge, altrimenti la scelta. */
-  const sedeDecisa = sedeDaLink ?? sedeScelta
-  /**
-   * Il NOME del plesso indicato dal collegamento, quando si sa.
-   *
-   * Con `?sede=<uuid>` il passo di scelta non esiste e fino all'11/08/2026 la
-   * scuola non veniva nominata da nessuna parte fino al riepilogo: si compilavano
-   * tre passi su quattro senza sapere per quale sede — e il collegamento targato è
-   * proprio quello che una sede manda su WhatsApp. Il nome c'è già in casa: dal
-   * 2026-08-11 l'elenco si chiede SEMPRE, anche col link (vedi il blocco in testa
-   * al file), quindi non costa nemmeno una richiesta in più.
-   * Resta `null` nell'unico caso in cui il nome non è noto — elenco non arrivato
-   * (429, rete giù) — e allora non si scrive niente: un uuid non dice nulla a chi
-   * lo legge, ed è meglio nessuna riga che una riga vuota.
-   */
-  const nomeSedeDalLink =
-    sedeDaLink !== null ? (sedi.find((s) => s.id === sedeDaLink)?.nome ?? null) : null
-
-  /**
-   * IL MODULO È GIÀ COMINCIATO, ED È GIÀ COMPILATO.
-   *
-   * Un rifiuto `SEDE_DA_SPECIFICARE` si può ricevere solo dal riepilogo, cioè
-   * dopo aver riempito tutti i passi. Da quel momento nessuna notizia
-   * sull'elenco può più smontare il modulo: le schermate che «non fanno
-   * cominciare» sono giuste all'apertura e sarebbero una perdita di lavoro qui.
-   */
-  const giaCompilato = sedeRifiutata !== null
-
-  /**
-   * La sede si sceglie quando c'è davvero da scegliere — e SEMPRE dopo un
-   * rifiuto del server sulla sede, anche con un plesso solo, anche mentre
-   * l'elenco si sta ricaricando: lì la frase d'errore parla della sede, e una
-   * frase che nomina un passo che non c'è è precisamente il vicolo cieco che
-   * questo ramo esiste per chiudere.
-   */
-  const mostraSede = sedeDaLink === null && (giaCompilato || sedi.length > 1)
-
-  /**
-   * La FORMA dei passi è definitiva e si può dipingere il primo.
-   *
-   * `errore` non decide la forma DA SOLO: con l'elenco ignoto non si sa se il
-   * passo sede serva, e far cominciare il modulo significherebbe farlo compilare
-   * per intero per poi rifiutarlo. Col link ancora in piedi però la forma È
-   * decisa (nessuna scelta da fare), e il modulo parte: un guasto dell'elenco non
-   * può impedire una candidatura.
-   *
-   * Dopo un rifiuto sulla sede la forma è decisa una volta per tutte: il passo
-   * «sede» c'è, e ci resta qualunque cosa risponda il ri-caricamento. È la riga
-   * che impedisce al modulo compilato di sparire mentre l'elenco è in volo.
-   */
-  const formaDecisa =
-    (elencoPronto && sedi.length > 0) || (statoSedi === 'errore' && sedeDaLink !== null) || giaCompilato
-  /** L'elenco non è arrivato e non c'è un link su cui ripiegare: si offre «Riprova». */
-  const sediNonCaricate = statoSedi === 'errore' && sedeDaLink === null && !giaCompilato
-  /**
-   * L'elenco è ARRIVATO ed è VUOTO: non esiste nessuna sede a cui candidarsi, e
-   * la rotta pretende `scuola_id`. Quindi il modulo non comincia, e si dice
-   * perché — senza «Riprova»: ricaricare darebbe la stessa risposta, e un
-   * pulsante che ripete la stessa risposta insegna a non fidarsi dei pulsanti.
-   *
-   * Vale anche col link targato: se nessun plesso riceve candidature, quel link
-   * non ne indica uno valido per definizione (è lo stesso predicato).
-   *
-   * NON vale a modulo già compilato: la stessa notizia si dà dentro il passo
-   * «sede», che a quel punto esiste, senza buttare via quattro passi di lavoro.
-   */
-  const sediVuote = elencoPronto && sedi.length === 0 && !giaCompilato
-  const nonPuoCominciare = sediNonCaricate || sediVuote
-  /**
-   * Nel passo «sede» c'è davvero una scelta da fare. Quando l'elenco è in volo,
-   * guasto o vuoto non c'è: «Avanti» prometterebbe un passaggio che non esiste e
-   * risponderebbe solo «Scegli una sede per proseguire», davanti a zero sedi.
-   */
-  const sedeSceglibile = elencoPronto && sedi.length > 0
-
   const passi: Passo[] = useMemo(
     () => (mostraSede ? ['sede', 'dati', 'profilo', 'consensi', 'riepilogo'] : ['dati', 'profilo', 'consensi', 'riepilogo']),
     [mostraSede],
   )
   const passo = passi[Math.min(indice, passi.length - 1)]
   const ultimo = indice === passi.length - 1
-  const avanzamento = ((indice + 1) / passi.length) * 100
-
-  function riprovaSedi(): void {
-    setStatoSedi('caricamento')
-    setTentativoSedi((n) => n + 1)
-  }
 
   // Il fuoco sulla conferma. Sta in un effetto e non nel gestore dell'invio
   // perché l'`h2` non esiste ancora quando `setInviata(true)` viene chiamato: si
@@ -1035,29 +771,6 @@ export function CandidaturaInsegnanteWizard({
     setIndice((i) => Math.max(0, i - 1))
   }
 
-  /**
-   * IL SERVER HA RIFIUTATO LA SEDE (400 `SEDE_DA_SPECIFICARE`).
-   *
-   * È il ramo che trasforma un vicolo cieco in un rifiuto azionabile, e fa
-   * quattro cose in un ordine che conta:
-   *  1. segna l'uuid come rifiutato — così il link targato smette di valere e
-   *     `mostraSede` diventa vero anche se i plessi sono uno solo;
-   *  2. dimentica la scelta, che il server ha appena smentito;
-   *  3. riporta al primo passo, dove il passo «sede» sta ricomparendo;
-   *  4. RICHIEDE l'elenco. È l'unica autorità su quali plessi accettano, ed è lo
-   *     stesso predicato che la rotta applica: dopo l'aggiornamento, ciò che si
-   *     può scegliere è ciò che il server accetta.
-   *
-   * I dati compilati NON si toccano: react-hook-form li conserva anche mentre il
-   * pannello dei campi è smontato dall'attesa dell'elenco.
-   */
-  function sedeSmentitaDalServer(sede: string): void {
-    setSedeRifiutata(sede)
-    setSedeScelta(null)
-    setIndice(0)
-    riprovaSedi()
-  }
-
   async function invia(): Promise<void> {
     // Ultima difesa lato client: la rotta pretende `scuola_id`, e senza sede non
     // si invia alla cieca — si torna a farla scegliere. Una candidatura
@@ -1097,7 +810,7 @@ export function CandidaturaInsegnanteWizard({
           [CAMPO_ESCA]: typeof valori[CAMPO_ESCA] === 'string' ? valori[CAMPO_ESCA] : '',
         }),
       })
-      const corpo = await corpoDellaRisposta(res)
+      const corpo = await corpoDellaRisposta(res, ETICHETTA_LOG)
 
       if (!res.ok) {
         // ⚠️ IL RIFIUTO SULLA SEDE VIENE PRIMA DI TUTTI GLI ALTRI, e non ricade
@@ -1106,7 +819,11 @@ export function CandidaturaInsegnanteWizard({
         // un'azione, e su questo modulo l'azione dev'essere possibile. Qui si
         // rimette il passo «sede» davanti e ci si porta chi compila.
         if (res.status === 400 && (corpo as { codice?: unknown } | null)?.codice === 'SEDE_DA_SPECIFICARE') {
+          // L'hook abbandona il link, dimentica la scelta e richiede l'elenco; il
+          // ritorno al primo passo — dove il passo «sede» sta ricomparendo — è
+          // l'unica parte che sa di numeri, e resta qui.
           sedeSmentitaDalServer(sede)
+          setIndice(0)
           // ⚠️ LA FRASE DIPENDE DA DOVE VENIVA LA SEDE, e le strade sono due.
           // Col link targato la causa probabile è un collegamento vecchio, e
           // dirlo aiuta. Senza link la sede l'ha scelta chi compila, da un
@@ -1213,8 +930,7 @@ export function CandidaturaInsegnanteWizard({
    * dice da dove viene la sede, che è l'unica cosa vera che si sa.
    */
   function testoSede(): string {
-    const nome = sedi.find((s) => s.id === sedeDecisa)?.nome
-    if (nome) return nome
+    if (nomeSedeDecisa !== null) return nomeSedeDecisa
     return sedeDaLink !== null ? t('candRiepilogoSedeDalLink') : '—'
   }
 
@@ -1343,7 +1059,35 @@ export function CandidaturaInsegnanteWizard({
     consensi: { icona: ShieldCheck, titolo: t('candConsensiTitolo'), sotto: t('candConsensiSottotitolo') },
     riepilogo: { icona: Check, titolo: t('candRiepilogo'), sotto: t('candRiepilogoSub') },
   }
-  const Intestazione = testata[passo].icona
+
+  /**
+   * Che cosa sta per succedere premendo il comando primario — e quindi come si
+   * chiama e che icona porta (`ComandiWizard`).
+   *
+   * L'ordine dei rami NON è indifferente: `inCorso` viene per primo perché
+   * l'ultimo passo è anche quello da cui si invia, e la rotellina deve vincere
+   * sulla spunta; `riepilogo` viene dopo `invio` perché dal riepilogo non si
+   * torna al riepilogo.
+   */
+  const versoDelComando: ComandoAvanti['verso'] = inviando
+    ? 'inCorso'
+    : ultimo
+      ? 'invio'
+      : ritornoAlRiepilogo
+        ? 'riepilogo'
+        : 'avanti'
+  /**
+   * L'etichetta segue il VERSO, e non una seconda catena di ternari sulle stesse
+   * variabili. Due catene identiche scritte a dieci righe di distanza sono il
+   * modo in cui un comando finisce per dire «Avanti» mostrando la lista spuntata
+   * del riepilogo: la condizione si corregge in una sola delle due.
+   */
+  const etichettaDelComando: Record<ComandoAvanti['verso'], string> = {
+    inCorso: t('candInvioInCorso'),
+    invio: t('candInvia'),
+    riepilogo: t('candTornaAlRiepilogo'),
+    avanti: t('candAvanti'),
+  }
 
   /**
    * La seconda riga del pannello d'errore, e si decide al RENDER, non al rifiuto.
@@ -1363,52 +1107,10 @@ export function CandidaturaInsegnanteWizard({
         : erroreInvio.nota
 
   return (
-    // `kv-public` è il marcatore della superficie PUBBLICA: senza, l'Alto
-    // Contrasto su questa pagina non cambia un pixel — i token si ribaltano, ma
-    // il guscio è dipinto con utility il cui hex `@theme inline` ha già inlinato,
-    // e le regole per-superficie di `globals.css` sono l'unico modo di
-    // raggiungerlo.
-    <div className="kv-public flex min-h-screen flex-col bg-kidville-cream text-kidville-ink">
-      {/*
-        LA BARRA DI AVANZAMENTO, ED È IL PRIMO GIALLO DELLA PAGINA.
-        Il censimento dei colori calcolati, l'11/08/2026, contava ZERO elementi
-        con `#FDC400` in tutta la schermata: verde, crema, bianco e grigio — una
-        scuola per bambini con l'aria di un portale amministrativo. Il giallo
-        torna come ACCENTO, mai come inchiostro su bianco (1,6:1, e su questo il
-        repo ha già ragione da tempo): qui è la testa della barra, che sta sopra
-        il riempimento verde (4,05:1) e accanto alla traccia crema.
-        È decorativa e ridondante — «Passo N di M» dice la stessa cosa a parole —
-        quindi non porta informazione che il colore da solo debba reggere.
-      */}
-      <div className="h-1.5 w-full bg-kidville-cream-dark">
-        <div
-          className="relative h-full bg-kidville-green transition-all duration-300"
-          style={{ width: `${avanzamento}%` }}
-        >
-          <span aria-hidden="true" className="absolute right-0 top-0 h-full w-6 bg-kidville-yellow" />
-        </div>
-      </div>
+    <GuscioPubblico>
+      <BarraAvanzamento indice={indice} totale={passi.length} />
 
-      {/* Niente `flex-1` sul guscio: i comandi seguono il contenuto invece di
-          essere spinti in fondo alla finestra con un vuoto in mezzo (180 px al
-          riepilogo a 360×740, 327 a 768). Vedi il blocco in testa al file. */}
-      {/*
-        IL MARGINE NON SI STRINGE MAI QUANDO LA FINESTRA SI ALLARGA.
-        Con `lg:max-w-5xl` (1024 px) e il solo `sm:px-5`, a 1024 px di finestra il
-        contenitore occupava il vetro per intero e restavano 20 px di riempimento:
-        MISURATO l'11/08/2026 sulla pagina viva (x dell'`h1` al variare della
-        larghezza) 360→16, 640→20, 768→68, **1024→20**, 1280→148, 1440→228. Cioè
-        allargando la finestra da 768 a 1024 il contenuto si AVVICINAVA al bordo
-        di 48 px, con la barra di avanzamento che corre da vetro a vetro sopra di
-        esso: la pagina sembra tagliata a sinistra, ed è la larghezza di un iPad
-        in orizzontale e di una finestra non massimizzata su un portatile da 13".
-        La curva dei margini dev'essere monotona, e per esserlo non basta
-        aggiungere riempimento: 59,5rem = 952 px = 888 px di contenuto + i 64 px
-        di `lg:px-8`, cioè a 1024 px restano 36 px di margine + 32 di riempimento
-        = 68, esattamente quanto a 768. Le due colonne ci stanno tutte (colonna
-        del modulo 592 + 40 di spazio + 256 di contesto).
-      */}
-      <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-5 sm:py-8 lg:max-w-[59.5rem] lg:px-8">
+      <ColonnaCentrale>
         {/* La riga di testa pubblica (ritorno + Alto Contrasto) arriva dalla
             pagina: è un componente server, e il suo posto è sopra il titolo. */}
         {intestazione}
@@ -1443,54 +1145,7 @@ export function CandidaturaInsegnanteWizard({
             </p>
           )}
           {!inviata && formaDecisa && (
-            <p
-              id={ID_PASSO_CONTATORE}
-              className="mt-2 flex items-center gap-2 text-xs font-medium text-kidville-sub"
-            >
-              {/* I pallini dei passi: fatti (verde), corrente (GIALLO, con
-                  l'anello verde che lo stacca dal crema), da fare (crema
-                  scuro, CON un anello verde da 1 px). Sono `aria-hidden`
-                  perché la frase accanto dice già la stessa cosa a parole: il
-                  colore non porta da solo nessuna informazione.
-
-                  L'anello sui pallini DA FARE non è decorazione: senza, quei
-                  pallini si reggevano sul solo riempimento, e il riempimento è
-                  la cosa che l'Alto Contrasto ribalta. MISURATO l'11/08/2026
-                  con «Alto contrasto» acceso: `bg-kidville-cream-dark` finisce
-                  dentro il blocco «1 · La carta» di `globals.css` e diventa
-                  `rgb(255,255,255)` su fondo `rgb(255,255,255)` — 1,00:1, cioè
-                  quattro pallini su cinque semplicemente non c'erano, e al loro
-                  posto restava un vuoto largo quanto loro accanto al pallino
-                  giallo. In luce normale non stavano molto meglio: 1,12:1.
-                  L'anello è un `box-shadow`, non un `border-color`: la regola
-                  `[data-contrast="high"] .kv-public [class*="border-kidville-"]`
-                  non lo tocca, e il verde resta verde in entrambe le modalità —
-                  6,51:1 sul bianco dell'Alto Contrasto, 5,86:1 sul crema. È lo
-                  stesso mezzo con cui il pallino corrente si stacca dal fondo, e
-                  quello con cui i punti elenco della colonna di contesto si
-                  staccano dal loro. */}
-              <span aria-hidden="true" className="flex items-center gap-1.5">
-                {passi.map((p, i) => (
-                  <span
-                    key={p}
-                    className={`h-2 w-2 rounded-pill ${
-                      i === indice
-                        ? 'bg-kidville-yellow ring-2 ring-kidville-green'
-                        : i < indice
-                          ? 'bg-kidville-green'
-                          : 'bg-kidville-cream-dark ring-1 ring-kidville-green'
-                    }`}
-                  />
-                ))}
-              </span>
-              {/* La chiave è quella del modulo d'iscrizione, ed è deliberato:
-                  «Passo N di M» è una posizione in una sequenza, non un
-                  conteggio, ed è dichiarata come tale nell'allowlist del lock
-                  `messaggi-plurali-e-glossario` — un'allowlist che «può solo
-                  accorciarsi». Una seconda chiave identica con un altro nome
-                  sarebbe la stessa frase da mantenere in due posti. */}
-              {t('wizardPassoDi', { corrente: indice + 1, totale: passi.length })}
-            </p>
+            <ContatorePassi id={ID_PASSO_CONTATORE} indice={indice} totale={passi.length} />
           )}
         </div>
 
@@ -1557,718 +1212,492 @@ export function CandidaturaInsegnanteWizard({
             <span className="sr-only">{t('candCaricamento')}</span>
           </div>
         ) : inviata ? (
-          /*
-           * LA CONFERMA È IL MOMENTO PIÙ IMPORTANTE DEL MODULO, E VA ANNUNCIATA.
-           *
-           * Questo ramo SOSTITUISCE l'intero blocco dei passi: il bottone «Invia
-           * candidatura» appena premuto viene smontato, e con lui se ne va il
-           * fuoco della tastiera, che cade su `<body>`. Senza le due righe qui
-           * sotto chi usa uno screen reader preme «Invia», torna in cima al
-           * documento e non sente niente: indistinguibile da una pagina che si è
-           * rotta, sul solo schermo che dice che la candidatura è partita.
-           *
-           * `jest-axe` non poteva vederlo — l'assenza di una regione live non è
-           * una violazione axe — e infatti gli 11 controlli di accessibilità
-           * passavano lo stesso. Il presidio è il test che asserisce l'annuncio,
-           * non la sonda automatica.
-           *
-           * `role="status"` (che implica `aria-live="polite"`) annuncia il
-           * pannello a chi non guarda; il fuoco sull'`h2` (`tabIndex={-1}`, non
-           * raggiungibile col Tab) rimette chi usa la tastiera dentro il
-           * contenuto nuovo invece che all'inizio del documento.
-           */
-          <div role="status" className="flex flex-col items-center py-12 text-center">
-            {/* QUI il verde del successo è al suo posto: la candidatura È
-                partita. È l'unico punto della pagina in cui `success` dice la
-                verità — l'icona del passo, che lo usava per «stai compilando il
-                passo 2», adesso porta il giallo di marchio. */}
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-card bg-kidville-success-soft">
-              <PartyPopper className="h-8 w-8 text-kidville-success" aria-hidden="true" />
-            </div>
-            <h2 ref={confermaRef} tabIndex={-1} className="text-xl font-semibold text-kidville-green">
-              {t('candInviata')}
-            </h2>
-            <p className="mt-1.5 max-w-sm text-sm text-kidville-sub">{t('candInviataCorpo')}</p>
-          </div>
+          /* Questo ramo SOSTITUISCE l'intero blocco dei passi, e con esso il
+             bottone appena premuto: il perché il pannello si annunci e si prenda
+             il fuoco sta su `PannelloConferma`. Qui basti che `candInviataCorpo`
+             è anche il TETTO di ciò che la colonna di contesto può promettere. */
+          <PannelloConferma
+            titolo={t('candInviata')}
+            corpo={t('candInviataCorpo')}
+            riferimento={confermaRef}
+          />
         ) : (
-          /*
-            TRE FIGLI, NON DUE — e il terzo esiste perché su `lg` i comandi
-            restino sotto il modulo mentre il contesto sta a destra.
-            Su `lg` la griglia colloca a mano: contenuto in (1,1), contesto in
-            (2,1), comandi in (1,2). Sotto `lg` la griglia non c'è: è una colonna
-            flex, e l'ordine si decide con `order`.
+          <GrigliaPasso
+            contenuto={
+              <>
+                <TestataPasso
+                  icona={testata[passo].icona}
+                  titolo={testata[passo].titolo}
+                  sotto={testata[passo].sotto}
+                  titoloRef={titoloPassoRef}
+                  contatoreId={ID_PASSO_CONTATORE}
+                />
 
-            ── SOTTO `lg` IL CONTESTO STA DOPO I COMANDI. E il perché è misurato.
-            Fino all'11/08/2026 stava PRIMA, cioè incastrato fra i campi e i
-            bottoni a OGNI passo. Al primo passo — tre card di sede, un tocco solo
-            — la prima schermata di un telefono finiva con 262 px di testo
-            esplicativo e nessun bottone: MISURATO a 360×740 con la sede già
-            scelta, docH 827, riquadro «Dopo l'invio» da y 457 a y 719, «Avanti»
-            a y 759, cioè 19 px SOTTO la piega — e su un telefono vero, dove la
-            barra del browser mangia 60-120 px, molto più giù. Chi apre il link da
-            WhatsApp sceglie la sede e non vede niente da premere. Al riepilogo lo
-            stesso riquadro si infilava fra l'ultima card dei propri dati e «Invia
-            candidatura».
-            L'ordine di prima era stato scelto per una ragione vera — la frase
-            «controlla che l'email sia giusta prima di inviare» non deve stare
-            dopo il bottone d'invio — ma quella ragione riguarda UNA riga e UN
-            passo: adesso quella riga è scritta dov'è utile, nel riepilogo, sopra
-            i comandi (`candRiepilogoControllaEmail`). Il resto del riquadro
-            racconta cosa succede DOPO l'invio, e dopo i comandi ci sta bene.
-
-            Lo spostamento è nel DOM e non con `order`: sotto `lg` l'ordine di
-            lettura di uno screen reader e l'ordine di tabulazione seguono il
-            documento, non il foglio di stile, e un riquadro che a schermo sta
-            dopo i comandi ma nel documento prima è la stessa incoerenza vista da
-            un'altra parte. Da `lg` in su non cambia nulla comunque: i tre figli
-            hanno una collocazione ESPLICITA nella griglia, che non dipende
-            dall'ordine in cui sono scritti.
-            `gap-x-10` e non `gap-10`: la riga dei comandi porta già il suo
-            `mt-4`/`pt-6`, e un `row-gap` di 40 px la staccherebbe dal modulo.
-          */
-          <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start lg:gap-x-10">
-            <div className="lg:col-start-1 lg:row-start-1">
-              <div className="mb-5 flex items-center gap-3">
                 {/*
-                  L'ICONA DEL PASSO — e il verde che portava era di troppo.
-                  Era `text-kidville-success` su `bg-kidville-success-soft`:
-                  2,89:1, sotto il 3:1 degli elementi non testuali (formalmente
-                  esente perché `aria-hidden`, ma illeggibile lo stesso), ed era
-                  un QUARTO verde accanto agli altri tre della pagina — per di
-                  più il token del SUCCESSO, su una cosa che non è un successo
-                  ma «il passo che stai compilando». Adesso è il giallo di
-                  marchio con l'inchiostro verde, che `globals.css` porta a
-                  `green-ink` sulla coppia `bg-kidville-yellow .text-kidville-green`
-                  (più scuro di #006A5F su #FDC400, quindi sopra 4:1), e in Alto
-                  Contrasto la regola `.kv-public` lo manda a nero pieno.
+                  IL RITORNO AL RIEPILOGO SI È DOVUTO FERMARE QUI, E LO DICE.
+                  Sta subito sotto il titolo del passo — cioè dove l'effetto del
+                  cambio di passo ha appena posato il fuoco e lo scorrimento —
+                  perché è la spiegazione di una schermata che non è quella
+                  promessa: chi ha premuto «Torna al riepilogo» si aspetta il
+                  riepilogo, e riceve un passo. `role="alert"` e non `status`: non è
+                  un aggiornamento di cortesia, è la ragione per cui il comando non
+                  ha fatto ciò che c'era scritto sopra.
+                  Il colore è la famiglia dell'AVVISO (`warn`), non quella
+                  dell'errore: non è un guasto, è un passaggio in più — il dato che
+                  manca ha già il suo messaggio rosso sotto il campo che lo chiede,
+                  e due rossi sulla stessa schermata direbbero che i problemi sono
+                  due. `warn-strong` su `warn-soft` è 4,95:1, misurato in
+                  `globals.css` accanto al token.
                 */}
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-card bg-kidville-yellow">
-                  <Intestazione className="h-4 w-4 text-kidville-green" aria-hidden="true" />
-                </div>
-                <div>
-                  {/* Il titolo del passo è un `h2`, COMPRESO quello dei consensi:
-                      sul wizard fratello quel ramo mancava, la catena di ternari
-                      cadeva sul ramo finale, e la schermata su cui si presta il
-                      consenso al trattamento si annunciava col titolo della
-                      pagina successiva. È la prima cosa che uno screen reader
-                      legge quando ci si arriva.
-
-                      La FORMA è quella dei titoli di questo repo — Barlow
-                      Condensed, maiuscolo — e non più Maven Pro 20 px minuscolo:
-                      due famiglie diverse a 4 px di distanza dall'`h1` non si
-                      leggevano come due livelli, si leggevano come due titoli in
-                      disaccordo. */}
-                  {/* `tabIndex={-1}` = raggiungibile col FUOCO ma non col Tab,
-                      esattamente come l'`h2` della conferma: serve solo perché
-                      l'effetto del cambio di passo possa posarci chi arriva, non
-                      per aggiungere una tappa alla tabulazione di tutti gli
-                      altri. `aria-describedby` gli aggancia la riga «Passo N di
-                      M», che sta già a schermo qualche riga più su. */}
-                  <h2
-                    ref={titoloPassoRef}
-                    tabIndex={-1}
-                    aria-describedby={ID_PASSO_CONTATORE}
-                    className="font-barlow text-lg font-bold uppercase tracking-wide leading-tight text-kidville-green"
+                {ritornoInterrotto !== null && (
+                  <div
+                    role="alert"
+                    /* `mb-5` come la testata del passo qui sopra: il riquadro si
+                       infila fra due blocchi che quel margine se lo davano da soli,
+                       e senza resterebbe incollato al primo campo. */
+                    className="mb-5 rounded-card border border-kidville-warn bg-kidville-warn-soft px-4 py-3"
                   >
-                    {testata[passo].titolo}
-                  </h2>
-                  <p className="text-sm text-kidville-sub">{testata[passo].sotto}</p>
-                </div>
-              </div>
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-kidville-warn-strong">
+                      <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      {t('candRitornoInterrottoTitolo')}
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
+                      {t('candRitornoInterrottoCorpo', { passo: testata[ritornoInterrotto].titolo })}
+                    </p>
+                  </div>
+                )}
 
-              {/*
-                IL RITORNO AL RIEPILOGO SI È DOVUTO FERMARE QUI, E LO DICE.
-                Sta subito sotto il titolo del passo — cioè dove l'effetto del
-                cambio di passo ha appena posato il fuoco e lo scorrimento —
-                perché è la spiegazione di una schermata che non è quella
-                promessa: chi ha premuto «Torna al riepilogo» si aspetta il
-                riepilogo, e riceve un passo. `role="alert"` e non `status`: non è
-                un aggiornamento di cortesia, è la ragione per cui il comando non
-                ha fatto ciò che c'era scritto sopra.
-                Il colore è la famiglia dell'AVVISO (`warn`), non quella
-                dell'errore: non è un guasto, è un passaggio in più — il dato che
-                manca ha già il suo messaggio rosso sotto il campo che lo chiede,
-                e due rossi sulla stessa schermata direbbero che i problemi sono
-                due. `warn-strong` su `warn-soft` è 4,95:1, misurato in
-                `globals.css` accanto al token.
-              */}
-              {ritornoInterrotto !== null && (
-                <div
-                  role="alert"
-                  /* `mb-5` come la testata del passo qui sopra: il riquadro si
-                     infila fra due blocchi che quel margine se lo davano da soli,
-                     e senza resterebbe incollato al primo campo. */
-                  className="mb-5 rounded-card border border-kidville-warn bg-kidville-warn-soft px-4 py-3"
-                >
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-kidville-warn-strong">
-                    <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    {t('candRitornoInterrottoTitolo')}
-                  </h3>
-                  <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
-                    {t('candRitornoInterrottoCorpo', { passo: testata[ritornoInterrotto].titolo })}
-                  </p>
-                </div>
-              )}
+                {/*
+                  IL PASSO «SEDE» PORTA ANCHE LE NOTIZIE SULL'ELENCO.
+                  Ci si arriva in due modi: dall'apertura, e allora l'elenco è per
+                  forza già pronto con almeno due plessi; oppure dopo un rifiuto
+                  del server sulla sede, e allora l'elenco si sta ricaricando
+                  proprio adesso. Nel secondo caso attesa, guasto ed elenco vuoto
+                  si dicono QUI DENTRO — sopra ci sono il titolo del passo e, più
+                  sotto, il pannello che spiega che l'invio è fallito e che i dati
+                  sono salvi. Prima queste tre notizie sostituivano l'intera
+                  pagina, e portavano via il modulo compilato insieme alla
+                  spiegazione.
+                */}
+                {passo === 'sede' && statoSedi === 'caricamento' && (
+                  <div
+                    className="flex items-center justify-center gap-2 py-8"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <Loader2 className="h-5 w-5 animate-spin text-kidville-green" aria-hidden="true" />
+                    <span className="text-sm text-kidville-sub">{t('candCaricamento')}</span>
+                  </div>
+                )}
 
-              {/*
-                IL PASSO «SEDE» PORTA ANCHE LE NOTIZIE SULL'ELENCO.
-                Ci si arriva in due modi: dall'apertura, e allora l'elenco è per
-                forza già pronto con almeno due plessi; oppure dopo un rifiuto
-                del server sulla sede, e allora l'elenco si sta ricaricando
-                proprio adesso. Nel secondo caso attesa, guasto ed elenco vuoto
-                si dicono QUI DENTRO — sopra ci sono il titolo del passo e, più
-                sotto, il pannello che spiega che l'invio è fallito e che i dati
-                sono salvi. Prima queste tre notizie sostituivano l'intera
-                pagina, e portavano via il modulo compilato insieme alla
-                spiegazione.
-              */}
-              {passo === 'sede' && statoSedi === 'caricamento' && (
-                <div
-                  className="flex items-center justify-center gap-2 py-8"
-                  role="status"
-                  aria-live="polite"
-                >
-                  <Loader2 className="h-5 w-5 animate-spin text-kidville-green" aria-hidden="true" />
-                  <span className="text-sm text-kidville-sub">{t('candCaricamento')}</span>
-                </div>
-              )}
+                {passo === 'sede' && statoSedi === 'errore' && (
+                  <div className="space-y-3">
+                    <div
+                      role="alert"
+                      className="rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3"
+                    >
+                      <h3 className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
+                        <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        {t('candSediErroreTitolo')}
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
+                        {t('candSediErroreCorpo')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={riprovaSedi}
+                      className="flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-yellow-ink transition-all hover:bg-kidville-green-dark"
+                    >
+                      <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                      {t('candSediRiprova')}
+                    </button>
+                  </div>
+                )}
 
-              {passo === 'sede' && statoSedi === 'errore' && (
-                <div className="space-y-3">
+                {/* Elenco arrivato e VUOTO a modulo già compilato: nessun plesso
+                    riceve candidature. Niente «Riprova» — ricaricare darebbe la
+                    stessa risposta — e niente schermata che cancella il lavoro
+                    fatto: la notizia sta accanto ad esso. */}
+                {passo === 'sede' && elencoPronto && sedi.length === 0 && (
                   <div
                     role="alert"
                     className="rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3"
                   >
                     <h3 className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
                       <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                      {t('candSediErroreTitolo')}
+                      {t('candSediVuoteTitolo')}
                     </h3>
                     <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
-                      {t('candSediErroreCorpo')}
+                      {t('candSediVuoteCorpo')}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={riprovaSedi}
-                    className="flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-yellow-ink transition-all hover:bg-kidville-green-dark"
-                  >
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                    {t('candSediRiprova')}
-                  </button>
-                </div>
-              )}
-
-              {/* Elenco arrivato e VUOTO a modulo già compilato: nessun plesso
-                  riceve candidature. Niente «Riprova» — ricaricare darebbe la
-                  stessa risposta — e niente schermata che cancella il lavoro
-                  fatto: la notizia sta accanto ad esso. */}
-              {passo === 'sede' && elencoPronto && sedi.length === 0 && (
-                <div
-                  role="alert"
-                  className="rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3"
-                >
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
-                    <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    {t('candSediVuoteTitolo')}
-                  </h3>
-                  <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
-                    {t('candSediVuoteCorpo')}
-                  </p>
-                </div>
-              )}
-
-              {passo === 'sede' && sedeSceglibile && (
-                <fieldset
-                  className="space-y-3"
-                  /* Il messaggio del gruppo è legato al gruppo, come lo lega
-                     `FieldRenderer` ai suoi (`role="radiogroup"` +
-                     `aria-describedby`): chi ascolta sente la frase quando entra
-                     nel gruppo, non solo quando l'`alert` viene annunciato. */
-                  aria-describedby={erroreSede ? ID_ERRORE_SEDE : undefined}
-                >
-                  <legend className="sr-only">{t('candSedeLegenda')}</legend>
-                  {sedi.map((s, i) => {
-                    const scelta = sedeScelta === s.id
-                    return (
-                      <label
-                        key={s.id}
-                        htmlFor={`sede-${s.id}`}
-                        /*
-                          LA CARD DI SCELTA HA UNA GRAFICA SOLA IN TUTTO IL
-                          MODULO, e questa è la copia FEDELE — token per token —
-                          di `SCELTA_LIBERA`/`SCELTA_PRESA` di `FieldRenderer`
-                          (le card delle fasce d'età e dei consensi):
-                            · presa   → `border-kidville-green bg-kidville-green-soft`
-                            · libera  → `border-kidville-neutral bg-kidville-white`
-                            · testo   → `text-kidville-green`, `font-semibold` da scelta
-                          Il contorno a riposo era `border-kidville-line`, e non
-                          era «un grigio più tenue»: MISURATO l'11/08/2026 sulla
-                          pagina viva, `rgb(239,231,220)` = 1,10:1 sul crema e
-                          1,09:1 sul bianco della card — un contorno che non
-                          esiste. Le stesse tre card, un passo più avanti, ne
-                          avevano uno da 2,79:1 (`neutral`, `rgb(138,149,143)`):
-                          la stessa domanda posta in due grafiche, e la peggiore
-                          delle due proprio al primo passo.
-                          Il rimando NON è un `import` da `FieldRenderer`: quel
-                          file è condiviso con la modulistica in-app e non è il
-                          perimetro di questo intervento. A tenere insieme le due
-                          famiglie c'è un lock che RENDE ENTRAMBE e confronta le
-                          classi calcolate — `__tests__/components/
-                          candidatura-card-di-scelta-unico-linguaggio.test.tsx` —
-                          che è ciò che si romperebbe se una delle due cambiasse
-                          da sola.
-
-                          ── L'ANELLO DI FUOCO, INVECE, RESTA DIVERSO. E DI PROPOSITO.
-                          Qui non c'è `focus-within:ring-2 ring-offset-2`, che
-                          `SCELTA_STRUTTURA` porta: `globals.css` dichiara
-                          `:focus-visible { outline: 2px solid #006A5F }` FUORI da
-                          ogni `@layer` (blocco con scritto «non spostare», più il
-                          lock che lo sorveglia), quindi il radio riceve comunque
-                          il suo contorno. MISURATO l'11/08/2026 arrivando col TAB
-                          su una card delle fasce: `outline: 2px solid rgb(0,106,95)`
-                          sull'input 16×16 **e insieme** `box-shadow … rgb(0,106,95)
-                          0 0 0 4px` sulla label 688×50 — due anelli concentrici,
-                          cioè esattamente il difetto «doppio anello» rilevato sui
-                          campi di testo. Copiarlo qui vorrebbe dire propagare un
-                          difetto per simmetria: la coerenza si chiude togliendo
-                          l'anello di troppo là, in `FieldRenderer`, non
-                          aggiungendone uno qui.
-                        */
-                        /*
-                          ── IL GRUPPO IN ERRORE LO DICE ANCHE SULLE CARD ──────
-                          «Scegli una sede per proseguire» compariva sotto il
-                          gruppo e le tre card restavano identiche a tre card
-                          valide non spuntate: `rgb(138,149,143)` a 1 px, cioè lo
-                          stato di riposo, mentre un `input` obbligatorio vuoto
-                          due passi più avanti mostra `rgb(229,57,53)` a 1,5 px.
-                          I tre token sono copiati da `SCELTA_ERRORE` di
-                          `FieldRenderer` — stesso rosso, stesso peso — e
-                          `data-scelta-invalida` è il gancio con cui `globals.css`
-                          dà alla card il bordo DOPPIO in Alto Contrasto, dove
-                          `[class*="border-kidville-"]` porta ogni contorno al
-                          nero e il rosso semplicemente non esiste più.
-                          Il peso del bordo sta nello STATO e non nella struttura:
-                          fra `border` e `border-[1.5px]` scritte sullo stesso
-                          elemento vince quella che sta più avanti nel FOGLIO, non
-                          quella scritta dopo nella stringa — l'unico modo di
-                          sceglierla è non averle entrambe.
-                          Qui non si può mai dare il caso «scelta E in errore»:
-                          l'`onChange` del radio spegne `erroreSede`.
-                        */
-                        {...(erroreSede && !scelta ? { 'data-scelta-invalida': 'true' } : {})}
-                        className={`flex cursor-pointer items-center gap-3 rounded-card px-4 py-3.5 transition-all ${
-                          scelta
-                            ? 'border border-kidville-green bg-kidville-green-soft'
-                            : erroreSede
-                              ? 'border-[1.5px] border-kidville-error bg-kidville-white'
-                              : 'border border-kidville-neutral bg-kidville-white hover:border-kidville-green'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          id={`sede-${s.id}`}
-                          name="sede"
-                          value={s.id}
-                          /* Il primo radio è il bersaglio del fuoco quando manca
-                             la scelta: l'errore lo dice, e la mano ci finisce
-                             sopra senza cercarlo. */
-                          ref={i === 0 ? primoRadioRef : undefined}
-                          checked={scelta}
-                          onChange={() => {
-                            setSedeScelta(s.id)
-                            setErroreSede(false)
-                            // Scegliere È la risposta all'avviso: si spegne qui,
-                            // non al prossimo invio. `sedeRifiutata` invece NON
-                            // si azzera — è ciò che tiene morto il link targato e
-                            // tiene in piedi questo passo: cancellarla farebbe
-                            // sparire il passo sotto le mani di chi ci sta
-                            // scegliendo.
-                            setErroreInvio(null)
-                          }}
-                          className="h-4 w-4 accent-kidville-green"
-                        />
-                        {/* Un solo inchiostro per card: il segnaposto seguiva il
-                            testo quando la sede era scelta e se ne staccava
-                            quando non lo era (`sub`), aggiungendo un quarto
-                            stato cromatico a una grafica che ne ha due. */}
-                        <MapPin className="h-4 w-4 shrink-0 text-kidville-green" aria-hidden="true" />
-                        <span className={`text-sm text-kidville-green ${scelta ? 'font-semibold' : ''}`}>
-                          {s.nome}
-                        </span>
-                      </label>
-                    )
-                  })}
-                  {/*
-                    L'ERRORE DEL GRUPPO STA SOTTO IL GRUPPO — come quello delle
-                    fasce, come quello dei consensi, come ogni messaggio di campo
-                    di `FieldRenderer`. Era l'unico messaggio della pagina a
-                    comparire SOPRA ciò che descrive: misurato dal critico, sede
-                    a y=267 con le card che cominciano a y=291, fasce a y=535 con
-                    il gruppo che finisce a y=518.
-                    Era stato messo in cima l'11/08/2026 per una misura vera —
-                    a 360 px la frase cadeva a `top` 437 mentre «Avanti» stava a
-                    676, 259 px più in basso — ma quella distanza NON veniva da
-                    qui: veniva dal `flex-1` sul guscio, che spingeva i comandi in
-                    fondo alla finestra lasciando il vuoto in mezzo. Il `flex-1`
-                    è stato tolto nello stesso rilascio (vedi il blocco in testa
-                    al file), quindi la causa non c'è più e la posizione può
-                    tornare dove sta tutto il resto. Il fuoco continua ad andare
-                    sul primo radio, cioè dentro il gruppo che la frase descrive.
-                  */}
-                  {erroreSede && (
-                    <p
-                      id={ID_ERRORE_SEDE}
-                      role="alert"
-                      className="flex items-center gap-1.5 text-xs font-bold text-kidville-error-strong"
-                    >
-                      <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      {t('candSedeErrore')}
-                    </p>
-                  )}
-                </fieldset>
-              )}
-
-              {(passo === 'dati' || passo === 'profilo' || passo === 'consensi') && (
-                <div className={passo === 'consensi' ? 'space-y-3' : 'space-y-6'}>
-                  {campiDelPasso(passo).map((f) => (
-                    <FieldRenderer
-                      key={f.id}
-                      field={f}
-                      modelId="candidature"
-                      register={register}
-                      control={control}
-                      error={errors[f.id]}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/*
-                IL RIEPILOGO — tutto ciò che è stato scritto, dentro le card che
-                la pagina già usa, raggruppato per passo e con un «Modifica» per
-                gruppo. La ragione per esteso è in testa al file: qui basti che
-                l'elenco NON è scritto a mano, è `gruppiRiepilogo()`, cioè le
-                stesse liste che disegnano i passi.
-              */}
-              {passo === 'riepilogo' && (
-                <div className="space-y-4">
-                  {gruppiRiepilogo().map((g) => (
-                    <div
-                      key={g.passo}
-                      className="rounded-card border border-kidville-line bg-kidville-white px-4 py-3"
-                    >
-                      <div className="flex items-center justify-between gap-3 border-b border-kidville-line pb-2">
-                        <h3
-                          id={`riepilogo-titolo-${g.passo}`}
-                          className="font-barlow text-base font-bold uppercase tracking-wide text-kidville-green"
-                        >
-                          {g.titolo}
-                        </h3>
-                        {g.modificabile && (
-                          /*
-                            Il nome accessibile porta il GRUPPO — «Modifica I
-                            tuoi dati» — perché quattro comandi chiamati tutti
-                            «Modifica» sono, per chi li ascolta in fila, quattro
-                            volte la stessa cosa: l'elenco dei comandi di uno
-                            screen reader non porta con sé il titolo che a
-                            schermo sta accanto.
-                            Il nome si compone con `aria-labelledby` che punta al
-                            bottone STESSO e poi al titolo del gruppo — «Modifica»
-                            + «Sede» — invece che con un `aria-label` interpolato:
-                            così non c'è nessuna chiave di messaggio in più da
-                            tradurre in due lingue, e il nome resta giusto anche
-                            il giorno in cui il titolo del gruppo cambia.
-                            (Uno `sr-only` accodato NON avrebbe funzionato: il
-                            calcolo del nome accessibile concatena i nodi di
-                            testo dopo averli sfrondati, e «Modifica» + « Sede»
-                            diventa `ModificaSede` — misurato con
-                            `dom-accessibility-api`, che è ciò che usano sia i
-                            test sia i browser.)
-                          */
-                          <button
-                            type="button"
-                            id={`riepilogo-modifica-${g.passo}`}
-                            aria-labelledby={`riepilogo-modifica-${g.passo} riepilogo-titolo-${g.passo}`}
-                            onClick={() => vaiAlPasso(g.passo)}
-                            /* `py-3.5` e non `py-2`: 28 px di riempimento + 16 px
-                               di riga = 44 px. Erano 66×32, e su telefono questi
-                               quattro comandi sono l'UNICO modo di correggere
-                               prima di inviare — l'altezza raccomandata per un
-                               pollice è la stessa che «Indietro»/«Avanti» hanno
-                               già qui sotto (44 px). La larghezza non cambia:
-                               `px-3` resta, il bersaglio cresce solo dove serve. */
-                            className="shrink-0 rounded-pill px-3 py-3.5 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green underline transition-all hover:bg-kidville-green-soft"
-                          >
-                            {t('candRiepilogoModifica')}
-                          </button>
-                        )}
-                      </div>
-                      {/* Non è una `<dl>`: `dl` ammette come contenuto solo
-                          coppie `dt`/`dd` (anche dentro un `div`), e axe lo
-                          verifica con la regola `definition-list`. Qui le righe
-                          sono due `<p>` — etichetta e valore — perché è la
-                          stessa forma delle card di questa pagina. */}
-                      <div className="divide-y divide-kidville-line">
-                        {g.righe.map((r) => (
-                          <div key={r.id} className="py-2">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-kidville-sub">
-                              {r.etichetta}
-                            </p>
-                            {/*
-                              `wrap-anywhere` (`overflow-wrap: anywhere`) SUL
-                              VALORE, e non è una rifinitura: il valore che
-                              trabocca più spesso è proprio l'email, cioè l'unico
-                              dato con cui la Scuola può rispondere e il motivo
-                              per cui questo riepilogo esiste.
-                              MISURATO l'11/08/2026 a 360 px: la scatola di testo
-                              del valore è larga 294 px (card 328, riempimento 17
-                              per lato) e «mariaconcetta.esposito@scuolainfanzia
-                              lafavola.it» — 48 caratteri, un indirizzo di scuola
-                              del tutto ordinario — ne occupa 313: il testo
-                              scavalcava il bordo arrotondato bianco e le righine
-                              divisorie e correva fino al margine dello schermo.
-                              Con una parte locale non spezzabile (nome e cognome
-                              attaccati, 31 caratteri) `scrollWidth` saliva a 382
-                              contro 360 di `clientWidth` e l'INTERA pagina si
-                              trascinava di lato di 22,5 px — che su un telefono
-                              si legge come «la pagina è rotta».
-                              Vale per ogni valore, non solo per l'email:
-                              «Dettaglio del titolo» e «Comune di residenza» sono
-                              testo libero e possono portare parole altrettanto
-                              lunghe. `anywhere` e non `break-word` perché è
-                              l'unico dei due che entra anche nel calcolo della
-                              larghezza minima del contenuto, cioè quello che
-                              regge se un giorno la riga finisse dentro un flex.
-                            */}
-                            {r.elenco ? (
-                              <ul className="mt-1 space-y-0.5">
-                                {r.elenco.map((voce) => (
-                                  <li key={voce} className="wrap-anywhere text-sm text-kidville-ink">
-                                    {voce}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p
-                                className={`mt-0.5 wrap-anywhere text-sm ${
-                                  r.mancante
-                                    ? 'text-kidville-error-strong'
-                                    : r.vuoto
-                                      ? 'text-kidville-sub'
-                                      : 'text-kidville-ink'
-                                }`}
-                              >
-                                {r.valore}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {/*
-                    L'AVVERTIMENTO SULL'EMAIL STA QUI, NON NELLA COLONNA DI
-                    CONTESTO — ed è il pezzo che quella colonna lascia indietro
-                    scendendo sotto i comandi (vedi il commento sull'ordine, più
-                    sotto). È l'unica riga del riquadro «Dopo l'invio» che
-                    riguarda un gesto da fare PRIMA di premere «Invia», e il posto
-                    in cui va letta è questo: subito sotto la card che contiene
-                    l'indirizzo appena riletto, subito sopra il bottone.
-                    Il resto di quel riquadro — chi valuta, quando risponde, che
-                    non serve un account — si legge quando si vuole, e per quello
-                    stare dopo i comandi va benissimo.
-                  */}
-                  <p className="text-xs font-semibold leading-relaxed text-kidville-green">
-                    {t('candRiepilogoControllaEmail')}
-                  </p>
-                  <p className="text-xs leading-relaxed text-kidville-sub">{t('candRiepilogoNota')}</p>
-                </div>
-              )}
-
-              {/*
-                L'ESCA, e sta QUI dentro perché deve esistere in ogni passo del
-                modulo: react-hook-form conserva i valori dei campi smontati, ma
-                un campo che non viene montato MAI non è registrato affatto e
-                l'esca non scatterebbe. È nascosta agli occhi (`hidden`) e agli
-                screen reader (`aria-hidden`), fuori dall'ordine di tabulazione,
-                e senza autocompletamento: nessuna persona la trova, nessun
-                assistente vocale la annuncia. Un compilatore automatico che
-                riempie ogni `input` sì.
-              */}
-              <div hidden aria-hidden="true">
-                <label htmlFor={CAMPO_ESCA}>{t('candEscaEtichetta')}</label>
-                <input
-                  id={CAMPO_ESCA}
-                  type="text"
-                  tabIndex={-1}
-                  autoComplete="off"
-                  {...register(CAMPO_ESCA)}
-                />
-              </div>
-            </div>
-
-            {/* I COMANDI, e l'avviso d'invio fallito che li precede: secondo
-                figlio della griglia, cioè riga 2 della prima colonna su schermo
-                largo e — da oggi — il blocco che su telefono segue subito il
-                modulo. Stanno insieme perché il pannello
-                «non siamo riusciti a inviare» parla del bottone che gli sta
-                sotto: separarli li farebbe finire in due colonne diverse. */}
-            <div className="lg:col-start-1 lg:row-start-2">
-            {/* L'invio è fallito. Sta QUI — sopra i bottoni, dentro la pagina —
-                e non in un `alert()`: chi ha appena premuto «Invia candidatura»
-                deve leggere, senza chiudere niente, che il lavoro fatto non è
-                andato perduto. */}
-            {erroreInvio !== null && (
-              <div
-                role="alert"
-                /* `tabIndex={-1}` = raggiungibile col FUOCO ma non col Tab, come
-                   l'`h2` della conferma: serve solo perché l'effetto qui sopra
-                   possa posarci chi ha appena perso l'appiglio, non per
-                   aggiungere una tappa alla tabulazione di tutti gli altri. */
-                ref={pannelloErroreRef}
-                tabIndex={-1}
-                className="mt-4 rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3"
-              >
-                <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
-                  <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  {t('candErroreInvioTitolo')}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{erroreInvio.corpo}</p>
-                <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{notaErrore}</p>
-              </div>
-            )}
-
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-kidville-line pt-6">
-              {/*
-                «INDIETRO» AL PRIMO PASSO NON C'È, invece di esserci spento.
-                `disabled:opacity-30` su testo `text-kidville-sub` dà 1,3:1 sul
-                crema: non è un comando disabilitato, è un fantasma — si legge
-                come un pezzo di interfaccia rotto. Uno spazio vuoto dice la
-                stessa cosa («da qui non si torna indietro») senza chiedere a
-                nessuno di decifrare un grigio.
-                Il bottone «Avanti» tiene la sua posizione a destra da solo, con
-                `ml-auto`: `justify-between` con un figlio solo lo porterebbe a
-                sinistra, e i comandi salterebbero da un lato all'altro fra il
-                primo passo e il secondo.
-              */}
-              {indice > 0 && (
-                <button
-                  type="button"
-                  onClick={indietro}
-                  disabled={inviando}
-                  className="flex items-center gap-2 rounded-pill px-4 py-3 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-sub transition-all hover:bg-kidville-green-soft hover:text-kidville-green disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  <ArrowLeft className="h-4 w-4" aria-hidden="true" /> {t('candIndietro')}
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={avanti}
-                /* Nel passo «sede» senza un elenco da cui scegliere il comando
-                   non porta da nessuna parte: premerlo risponderebbe soltanto
-                   «Scegli una sede per proseguire» davanti a zero sedi. Ciò che
-                   si può fare adesso — riprovare l'elenco — sta qui sopra. */
-                disabled={inviando || (passo === 'sede' && !sedeSceglibile)}
-                /* `py-3` e non `py-2.5`: 24 px di riempimento + 20 px di riga =
-                   44 px, il bersaglio raccomandato per un pollice (WCAG 2.5.5
-                   AAA / 2.5.8 «Target Size Minimum» ne chiede 24, che questi
-                   comandi passavano già a 40 px — ma 40 px su un modulo pubblico
-                   che si compila dal telefono restano quattro sotto la misura
-                   che tutti raccomandano, e costano solo 4 px). */
-                className="ml-auto flex items-center gap-2 rounded-pill bg-kidville-green px-6 py-3 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-yellow-ink transition-all hover:bg-kidville-green-dark disabled:opacity-50"
-              >
-                {inviando ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : ultimo ? (
-                  <Check className="h-4 w-4" aria-hidden="true" />
-                ) : null}
-                {/*
-                  IL COMANDO DICE DOVE PORTA, e quando si è entrati dal riepilogo
-                  porta al riepilogo. Tre etichette e non due: «Invia candidatura»
-                  sull'ultimo passo, «Torna al riepilogo» finché il segno del
-                  ritorno è acceso, «Avanti» nel percorso normale. L'icona segue
-                  l'etichetta — la lista spuntata è il riepilogo, la freccia è il
-                  passo dopo — così non ci sono due comandi con lo stesso segno
-                  che fanno cose diverse.
-                */}
-                <span>
-                  {inviando
-                    ? t('candInvioInCorso')
-                    : ultimo
-                      ? t('candInvia')
-                      : ritornoAlRiepilogo
-                        ? t('candTornaAlRiepilogo')
-                        : t('candAvanti')}
-                </span>
-                {!inviando && !ultimo && (
-                  ritornoAlRiepilogo
-                    ? <ListChecks className="h-4 w-4" aria-hidden="true" />
-                    : <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 )}
-              </button>
-            </div>
-            </div>
 
-            {/*
-              LA COLONNA DI CONTESTO — ed è ciò che riempie i 300 px di crema per
-              lato a 1440, invece di stirare il modulo.
-              Da `lg` in su è la seconda colonna della griglia e SI MUOVE COL
-              CONTENUTO (`lg:sticky lg:top-6`): ferma in cima lasciava 1022 px di
-              colonna destra vuoti su 1362 di griglia al passo del riepilogo (75%
-              dell'altezza), e la frase che dice di ricontrollare l'email era già
-              uscita dallo schermo quando si arrivava al pulsante d'invio.
-              Sotto `lg` non c'è griglia e conta l'ordine del documento: sta
-              DOPO i comandi, che è il motivo per cui è scritta quaggiù e non
-              accanto al modulo (il perché misurato è nel commento sui tre figli,
-              in testa alla griglia). Un solo nodo, quindi nessun testo scritto
-              due volte.
+                {passo === 'sede' && sedeSceglibile && (
+                  <fieldset
+                    className="space-y-3"
+                    /* Il messaggio del gruppo è legato al gruppo, come lo lega
+                       `FieldRenderer` ai suoi (`role="radiogroup"` +
+                       `aria-describedby`): chi ascolta sente la frase quando entra
+                       nel gruppo, non solo quando l'`alert` viene annunciato. */
+                    aria-describedby={erroreSede ? ID_ERRORE_SEDE : undefined}
+                  >
+                    <legend className="sr-only">{t('candSedeLegenda')}</legend>
+                    {sedi.map((s, i) => {
+                      const scelta = sedeScelta === s.id
+                      return (
+                        <label
+                          key={s.id}
+                          htmlFor={`sede-${s.id}`}
+                          /*
+                            LA CARD DI SCELTA HA UNA GRAFICA SOLA IN TUTTO IL
+                            MODULO, e questa è la copia FEDELE — token per token —
+                            di `SCELTA_LIBERA`/`SCELTA_PRESA` di `FieldRenderer`
+                            (le card delle fasce d'età e dei consensi):
+                              · presa   → `border-kidville-green bg-kidville-green-soft`
+                              · libera  → `border-kidville-neutral bg-kidville-white`
+                              · testo   → `text-kidville-green`, `font-semibold` da scelta
+                            Il contorno a riposo era `border-kidville-line`, e non
+                            era «un grigio più tenue»: MISURATO l'11/08/2026 sulla
+                            pagina viva, `rgb(239,231,220)` = 1,10:1 sul crema e
+                            1,09:1 sul bianco della card — un contorno che non
+                            esiste. Le stesse tre card, un passo più avanti, ne
+                            avevano uno da 2,79:1 (`neutral`, `rgb(138,149,143)`):
+                            la stessa domanda posta in due grafiche, e la peggiore
+                            delle due proprio al primo passo.
+                            Il rimando NON è un `import` da `FieldRenderer`: quel
+                            file è condiviso con la modulistica in-app e non è il
+                            perimetro di questo intervento. A tenere insieme le due
+                            famiglie c'è un lock che RENDE ENTRAMBE e confronta le
+                            classi calcolate — `__tests__/components/
+                            candidatura-card-di-scelta-unico-linguaggio.test.tsx` —
+                            che è ciò che si romperebbe se una delle due cambiasse
+                            da sola.
 
-              ⚠️ IL TESTO NON PROMETTE PIÙ DEL PANNELLO DI CONFERMA, ed è la sola
-              regola che lo governa. `candInviataCorpo` dice che la Direzione
-              valuta e risponde, e che le credenziali arrivano SE la candidatura
-              è accolta: nessun termine, nessuna garanzia. Perciò qui non c'è
-              «ti rispondiamo entro N giorni» — sarebbe una promessa che nessuna
-              parte del prodotto mantiene, scritta proprio a chi cerca lavoro.
-            */}
-            {/* `<div>` e non `<aside>`, e dall'11/08/2026 la condizione al futuro
-                che stava scritta qui è diventata il presente: `/lavora-con-noi`
-                un `<main>` CE L'HA (`src/app/lavora-con-noi/page.tsx`), quindi
-                un `aside` in questo punto sarebbe un landmark `complementary`
-                annidato dentro `main` — il rilievo axe
-                `landmark-complementary-is-top-level` — non più «il giorno in
-                cui».
-                Per essere un `aside` legittimo dovrebbe stare FUORI dal `<main>`,
-                e non può: è la seconda colonna della griglia da `lg` in su
-                (`lg:col-start-2`), e sotto `lg` il suo posto nell'ordine del
-                documento — dopo i comandi — è misurato e sorvegliato da un test.
-                Resta un `<div>`, e resta navigabile perché ha la sua `h2`. */}
-            <div className="mt-8 rounded-card border border-kidville-line bg-kidville-cream-dark px-4 py-4 lg:sticky lg:top-6 lg:col-start-2 lg:row-start-1 lg:mt-0">
-              <h2 className="font-barlow text-base font-bold uppercase tracking-wide text-kidville-green">
-                {t('candContestoTitolo')}
-              </h2>
-              <ul className="mt-2 space-y-2.5">
-                {[
+                            ── L'ANELLO DI FUOCO, INVECE, RESTA DIVERSO. E DI PROPOSITO.
+                            Qui non c'è `focus-within:ring-2 ring-offset-2`, che
+                            `SCELTA_STRUTTURA` porta: `globals.css` dichiara
+                            `:focus-visible { outline: 2px solid #006A5F }` FUORI da
+                            ogni `@layer` (blocco con scritto «non spostare», più il
+                            lock che lo sorveglia), quindi il radio riceve comunque
+                            il suo contorno. MISURATO l'11/08/2026 arrivando col TAB
+                            su una card delle fasce: `outline: 2px solid rgb(0,106,95)`
+                            sull'input 16×16 **e insieme** `box-shadow … rgb(0,106,95)
+                            0 0 0 4px` sulla label 688×50 — due anelli concentrici,
+                            cioè esattamente il difetto «doppio anello» rilevato sui
+                            campi di testo. Copiarlo qui vorrebbe dire propagare un
+                            difetto per simmetria: la coerenza si chiude togliendo
+                            l'anello di troppo là, in `FieldRenderer`, non
+                            aggiungendone uno qui.
+                          */
+                          /*
+                            ── IL GRUPPO IN ERRORE LO DICE ANCHE SULLE CARD ──────
+                            «Scegli una sede per proseguire» compariva sotto il
+                            gruppo e le tre card restavano identiche a tre card
+                            valide non spuntate: `rgb(138,149,143)` a 1 px, cioè lo
+                            stato di riposo, mentre un `input` obbligatorio vuoto
+                            due passi più avanti mostra `rgb(229,57,53)` a 1,5 px.
+                            I tre token sono copiati da `SCELTA_ERRORE` di
+                            `FieldRenderer` — stesso rosso, stesso peso — e
+                            `data-scelta-invalida` è il gancio con cui `globals.css`
+                            dà alla card il bordo DOPPIO in Alto Contrasto, dove
+                            `[class*="border-kidville-"]` porta ogni contorno al
+                            nero e il rosso semplicemente non esiste più.
+                            Il peso del bordo sta nello STATO e non nella struttura:
+                            fra `border` e `border-[1.5px]` scritte sullo stesso
+                            elemento vince quella che sta più avanti nel FOGLIO, non
+                            quella scritta dopo nella stringa — l'unico modo di
+                            sceglierla è non averle entrambe.
+                            Qui non si può mai dare il caso «scelta E in errore»:
+                            l'`onChange` del radio spegne `erroreSede`.
+                          */
+                          {...(erroreSede && !scelta ? { 'data-scelta-invalida': 'true' } : {})}
+                          className={`flex cursor-pointer items-center gap-3 rounded-card px-4 py-3.5 transition-all ${
+                            scelta
+                              ? 'border border-kidville-green bg-kidville-green-soft'
+                              : erroreSede
+                                ? 'border-[1.5px] border-kidville-error bg-kidville-white'
+                                : 'border border-kidville-neutral bg-kidville-white hover:border-kidville-green'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            id={`sede-${s.id}`}
+                            name="sede"
+                            value={s.id}
+                            /* Il primo radio è il bersaglio del fuoco quando manca
+                               la scelta: l'errore lo dice, e la mano ci finisce
+                               sopra senza cercarlo. */
+                            ref={i === 0 ? primoRadioRef : undefined}
+                            checked={scelta}
+                            onChange={() => {
+                              scegliSede(s.id)
+                              setErroreSede(false)
+                              // Scegliere È la risposta all'avviso: si spegne qui,
+                              // non al prossimo invio. `sedeRifiutata` invece NON
+                              // si azzera — è ciò che tiene morto il link targato e
+                              // tiene in piedi questo passo: cancellarla farebbe
+                              // sparire il passo sotto le mani di chi ci sta
+                              // scegliendo.
+                              setErroreInvio(null)
+                            }}
+                            className="h-4 w-4 accent-kidville-green"
+                          />
+                          {/* Un solo inchiostro per card: il segnaposto seguiva il
+                              testo quando la sede era scelta e se ne staccava
+                              quando non lo era (`sub`), aggiungendo un quarto
+                              stato cromatico a una grafica che ne ha due. */}
+                          <MapPin className="h-4 w-4 shrink-0 text-kidville-green" aria-hidden="true" />
+                          <span className={`text-sm text-kidville-green ${scelta ? 'font-semibold' : ''}`}>
+                            {s.nome}
+                          </span>
+                        </label>
+                      )
+                    })}
+                    {/*
+                      L'ERRORE DEL GRUPPO STA SOTTO IL GRUPPO — come quello delle
+                      fasce, come quello dei consensi, come ogni messaggio di campo
+                      di `FieldRenderer`. Era l'unico messaggio della pagina a
+                      comparire SOPRA ciò che descrive: misurato dal critico, sede
+                      a y=267 con le card che cominciano a y=291, fasce a y=535 con
+                      il gruppo che finisce a y=518.
+                      Era stato messo in cima l'11/08/2026 per una misura vera —
+                      a 360 px la frase cadeva a `top` 437 mentre «Avanti» stava a
+                      676, 259 px più in basso — ma quella distanza NON veniva da
+                      qui: veniva dal `flex-1` sul guscio, che spingeva i comandi in
+                      fondo alla finestra lasciando il vuoto in mezzo. Il `flex-1`
+                      è stato tolto nello stesso rilascio (vedi il blocco in testa
+                      al file), quindi la causa non c'è più e la posizione può
+                      tornare dove sta tutto il resto. Il fuoco continua ad andare
+                      sul primo radio, cioè dentro il gruppo che la frase descrive.
+                    */}
+                    {erroreSede && (
+                      <p
+                        id={ID_ERRORE_SEDE}
+                        role="alert"
+                        className="flex items-center gap-1.5 text-xs font-bold text-kidville-error-strong"
+                      >
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        {t('candSedeErrore')}
+                      </p>
+                    )}
+                  </fieldset>
+                )}
+
+                {(passo === 'dati' || passo === 'profilo' || passo === 'consensi') && (
+                  <div className={passo === 'consensi' ? 'space-y-3' : 'space-y-6'}>
+                    {campiDelPasso(passo).map((f) => (
+                      <FieldRenderer
+                        key={f.id}
+                        field={f}
+                        modelId="candidature"
+                        register={register}
+                        control={control}
+                        error={errors[f.id]}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/*
+                  IL RIEPILOGO — tutto ciò che è stato scritto, dentro le card che
+                  la pagina già usa, raggruppato per passo e con un «Modifica» per
+                  gruppo. La ragione per esteso è in testa al file: qui basti che
+                  l'elenco NON è scritto a mano, è `gruppiRiepilogo()`, cioè le
+                  stesse liste che disegnano i passi.
+                */}
+                {passo === 'riepilogo' && (
+                  <div className="space-y-4">
+                    {gruppiRiepilogo().map((g) => (
+                      <div
+                        key={g.passo}
+                        className="rounded-card border border-kidville-line bg-kidville-white px-4 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-3 border-b border-kidville-line pb-2">
+                          <h3
+                            id={`riepilogo-titolo-${g.passo}`}
+                            className="font-barlow text-base font-bold uppercase tracking-wide text-kidville-green"
+                          >
+                            {g.titolo}
+                          </h3>
+                          {g.modificabile && (
+                            /*
+                              Il nome accessibile porta il GRUPPO — «Modifica I
+                              tuoi dati» — perché quattro comandi chiamati tutti
+                              «Modifica» sono, per chi li ascolta in fila, quattro
+                              volte la stessa cosa: l'elenco dei comandi di uno
+                              screen reader non porta con sé il titolo che a
+                              schermo sta accanto.
+                              Il nome si compone con `aria-labelledby` che punta al
+                              bottone STESSO e poi al titolo del gruppo — «Modifica»
+                              + «Sede» — invece che con un `aria-label` interpolato:
+                              così non c'è nessuna chiave di messaggio in più da
+                              tradurre in due lingue, e il nome resta giusto anche
+                              il giorno in cui il titolo del gruppo cambia.
+                              (Uno `sr-only` accodato NON avrebbe funzionato: il
+                              calcolo del nome accessibile concatena i nodi di
+                              testo dopo averli sfrondati, e «Modifica» + « Sede»
+                              diventa `ModificaSede` — misurato con
+                              `dom-accessibility-api`, che è ciò che usano sia i
+                              test sia i browser.)
+                            */
+                            <button
+                              type="button"
+                              id={`riepilogo-modifica-${g.passo}`}
+                              aria-labelledby={`riepilogo-modifica-${g.passo} riepilogo-titolo-${g.passo}`}
+                              onClick={() => vaiAlPasso(g.passo)}
+                              /* `py-3.5` e non `py-2`: 28 px di riempimento + 16 px
+                                 di riga = 44 px. Erano 66×32, e su telefono questi
+                                 quattro comandi sono l'UNICO modo di correggere
+                                 prima di inviare — l'altezza raccomandata per un
+                                 pollice è la stessa che «Indietro»/«Avanti» hanno
+                                 già qui sotto (44 px). La larghezza non cambia:
+                                 `px-3` resta, il bersaglio cresce solo dove serve. */
+                              className="shrink-0 rounded-pill px-3 py-3.5 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green underline transition-all hover:bg-kidville-green-soft"
+                            >
+                              {t('candRiepilogoModifica')}
+                            </button>
+                          )}
+                        </div>
+                        {/* Non è una `<dl>`: `dl` ammette come contenuto solo
+                            coppie `dt`/`dd` (anche dentro un `div`), e axe lo
+                            verifica con la regola `definition-list`. Qui le righe
+                            sono due `<p>` — etichetta e valore — perché è la
+                            stessa forma delle card di questa pagina. */}
+                        <div className="divide-y divide-kidville-line">
+                          {g.righe.map((r) => (
+                            <div key={r.id} className="py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-kidville-sub">
+                                {r.etichetta}
+                              </p>
+                              {/*
+                                `wrap-anywhere` (`overflow-wrap: anywhere`) SUL
+                                VALORE, e non è una rifinitura: il valore che
+                                trabocca più spesso è proprio l'email, cioè l'unico
+                                dato con cui la Scuola può rispondere e il motivo
+                                per cui questo riepilogo esiste.
+                                MISURATO l'11/08/2026 a 360 px: la scatola di testo
+                                del valore è larga 294 px (card 328, riempimento 17
+                                per lato) e «mariaconcetta.esposito@scuolainfanzia
+                                lafavola.it» — 48 caratteri, un indirizzo di scuola
+                                del tutto ordinario — ne occupa 313: il testo
+                                scavalcava il bordo arrotondato bianco e le righine
+                                divisorie e correva fino al margine dello schermo.
+                                Con una parte locale non spezzabile (nome e cognome
+                                attaccati, 31 caratteri) `scrollWidth` saliva a 382
+                                contro 360 di `clientWidth` e l'INTERA pagina si
+                                trascinava di lato di 22,5 px — che su un telefono
+                                si legge come «la pagina è rotta».
+                                Vale per ogni valore, non solo per l'email:
+                                «Dettaglio del titolo» e «Comune di residenza» sono
+                                testo libero e possono portare parole altrettanto
+                                lunghe. `anywhere` e non `break-word` perché è
+                                l'unico dei due che entra anche nel calcolo della
+                                larghezza minima del contenuto, cioè quello che
+                                regge se un giorno la riga finisse dentro un flex.
+                              */}
+                              {r.elenco ? (
+                                <ul className="mt-1 space-y-0.5">
+                                  {r.elenco.map((voce) => (
+                                    <li key={voce} className="wrap-anywhere text-sm text-kidville-ink">
+                                      {voce}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p
+                                  className={`mt-0.5 wrap-anywhere text-sm ${
+                                    r.mancante
+                                      ? 'text-kidville-error-strong'
+                                      : r.vuoto
+                                        ? 'text-kidville-sub'
+                                        : 'text-kidville-ink'
+                                  }`}
+                                >
+                                  {r.valore}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {/*
+                      L'AVVERTIMENTO SULL'EMAIL STA QUI, NON NELLA COLONNA DI
+                      CONTESTO — ed è il pezzo che quella colonna lascia indietro
+                      scendendo sotto i comandi (vedi il commento sull'ordine, più
+                      sotto). È l'unica riga del riquadro «Dopo l'invio» che
+                      riguarda un gesto da fare PRIMA di premere «Invia», e il posto
+                      in cui va letta è questo: subito sotto la card che contiene
+                      l'indirizzo appena riletto, subito sopra il bottone.
+                      Il resto di quel riquadro — chi valuta, quando risponde, che
+                      non serve un account — si legge quando si vuole, e per quello
+                      stare dopo i comandi va benissimo.
+                    */}
+                    <p className="text-xs font-semibold leading-relaxed text-kidville-green">
+                      {t('candRiepilogoControllaEmail')}
+                    </p>
+                    <p className="text-xs leading-relaxed text-kidville-sub">{t('candRiepilogoNota')}</p>
+                  </div>
+                )}
+
+                {/* L'esca deve esistere in OGNI passo, e per questo sta dentro
+                    il contenuto invece che accanto ai comandi: il perché sta su
+                    `EscaHoneypot`. La rotta accetta `sito_web` e `honeypot` come
+                    sinonimi; si manda il primo. */}
+                <EscaHoneypot
+                  nome={CAMPO_ESCA}
+                  etichetta={t('candEscaEtichetta')}
+                  register={register}
+                />
+              </>
+            }
+            comandi={
+              <>
+                {erroreInvio !== null && (
+                  <PannelloErroreInvio
+                    titolo={t('candErroreInvioTitolo')}
+                    corpo={erroreInvio.corpo}
+                    nota={notaErrore}
+                    riferimento={pannelloErroreRef}
+                  />
+                )}
+                <ComandiWizard
+                  indietro={
+                    indice > 0
+                      ? { etichetta: t('candIndietro'), onClick: indietro, disabilitato: inviando }
+                      : null
+                  }
+                  avanti={{
+                    etichetta: etichettaDelComando[versoDelComando],
+                    onClick: avanti,
+                    /* Nel passo «sede» senza un elenco da cui scegliere il comando
+                       non porta da nessuna parte: premerlo risponderebbe soltanto
+                       «Scegli una sede per proseguire» davanti a zero sedi. Ciò che
+                       si può fare adesso — riprovare l'elenco — sta qui sopra. */
+                    disabilitato: inviando || (passo === 'sede' && !sedeSceglibile),
+                    verso: versoDelComando,
+                  }}
+                />
+              </>
+            }
+            contesto={
+              <ColonnaContesto
+                titolo={t('candContestoTitolo')}
+                voci={[
                   /* «la sede che hai scelto» è FALSO quando la sede è arrivata
                      dal collegamento: nessuna scelta c'è stata, e il passo non
                      esiste nemmeno. La variante dice da dove viene davvero. */
                   sedeDaLink !== null ? t('candContestoDirezioneDalLink') : t('candContestoDirezione'),
                   t('candContestoTempi'),
                   t('candContestoCredenziali'),
-                ].map((riga) => (
-                  <li key={riga} className="flex gap-2 text-xs leading-relaxed text-kidville-ink">
-                    <span
-                      aria-hidden="true"
-                      className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-pill bg-kidville-yellow ring-1 ring-kidville-green"
-                    />
-                    {riga}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+                ]}
+              />
+            }
+          />
         )}
-      </div>
-    </div>
+      </ColonnaCentrale>
+    </GuscioPubblico>
   )
 }

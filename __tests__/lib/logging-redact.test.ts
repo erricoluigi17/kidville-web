@@ -381,6 +381,76 @@ describe('redact — lista bianca', () => {
         expect(out.visto_l_ultima).toBe('2026-07-31T13:24:07Z');
     });
 
+    /* ────────────────────────────────────────────────────────────────────────
+     * IL CAP E IL CIVICO — il buco che restava aperto sui NUMERI.
+     *
+     * Come stringhe erano già redatti (sono fuori dalla lista bianca), ma la forma del
+     * valore la sceglie chi manda la richiesta: `redact()` gira anche sul BODY GREZZO,
+     * che `parseBody` deposita PRIMA di zod. `{"cap": 80014}` usciva quindi intero per
+     * TIPO — la stessa terza direzione da cui il canale si era già aperto con `motivo`
+     * (rilievo Q19) — e un CAP più un civico, accanto a un `sede_id` in chiaro,
+     * restringono a una manciata di case. Identico per il numero del documento
+     * d'identità, che il modulo `/anagrafica-personale` chiede insieme agli altri due.
+     *
+     * Le tre forme si provano tutte e tre, ed è il punto: se una difesa tratta in modo
+     * diverso lo stesso dato a seconda di come arriva, non è una difesa.
+     * ──────────────────────────────────────────────────────────────────────── */
+    it('CAP, civico e numero del documento non escono in chiaro: stringa, NUMERO e dentro un oggetto', () => {
+        const out = redact({
+            sede_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+            cap: 80014,
+            zip_code: '80014',
+            civico: 12,
+            numero_civico: '12',
+            residence_street_number: 12,
+            domicilio_zip_code: 80014,
+            domicilio_street_number: 12,
+            street_number: 12,
+            numero_documento: 1234567,
+            document_number: 'AB1234567',
+            // La stessa informazione un piano più sotto: se la difesa guardasse solo il
+            // primo livello, basterebbe annidare per scavalcarla.
+            residenza: { cap: 80014, civico: 12, numero_documento: 1234567 },
+        }) as Record<string, unknown>;
+
+        const tutto = JSON.stringify(out);
+        for (const perduto of ['80014', '1234567', 'AB1234567']) {
+            expect(tutto, `«${perduto}» è sopravvissuto alla redazione`).not.toContain(perduto);
+        }
+        // Il NUMERO non esce più, e si vede che era un numero: `[redatto:num]` è ciò che
+        // spiega perché il CHECK `^[0-9]{5}$` l'ha respinto.
+        expect(out.cap).toBe('[redatto:num]');
+        expect(out.civico).toBe('[redatto:num]');
+        expect(out.numero_documento).toBe('[redatto:num]');
+        // La STRINGA conserva la lunghezza, e deve continuare a farlo: `zip_code` è
+        // `varchar(5)`, e il guasto vero già pagato una volta è un `22001` (valore
+        // troppo lungo). Con `[redatto]` secco quella diagnosi sparirebbe.
+        expect(out.zip_code).toBe('[redatto:str/5]');
+        expect(out.document_number).toBe('[redatto:str/9]');
+        // …e l'uuid della sede resta leggibile: la riga deve restare diagnosticabile.
+        expect(out.sede_id).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301');
+    });
+
+    it('…e sono NOMI ESATTI: `capienza` e `n_documenti` continuano a uscire', () => {
+        // Il verso opposto dell'errore, e costa quanto l'altro: `cap` dentro un
+        // `includes` prenderebbe `capienza` (la capienza di una sede) e `capitolo`, e
+        // `document` come radice cancellerebbe `n_documenti` — il conteggio che il cron
+        // delle scadenze del documento esiste per scrivere. Una difesa che spegne il log
+        // del lavoro che deve sorvegliare non è una difesa.
+        const out = redact({
+            capienza: 60,
+            capitolo: 3,
+            n_documenti: 12,
+            documenti_in_scadenza: 4,
+            capacita: 25,
+        }) as Record<string, unknown>;
+        expect(out.capienza).toBe(60);
+        expect(out.capitolo).toBe(3);
+        expect(out.n_documenti).toBe(12);
+        expect(out.documenti_in_scadenza).toBe(4);
+        expect(out.capacita).toBe(25);
+    });
+
     it('una chiave sconosciuta con valore stringa è redatta (default chiuso)', () => {
         const out = redact({ campo_inventato_domani: 'dato sensibilissimo' }) as Record<string, string>;
         expect(out.campo_inventato_domani).toBe('[redatto:str/19]');

@@ -92,6 +92,297 @@
 
 ---
 
+## 🪪 Changelog — Il documento d'identità di una maestra scade e nessuno se ne accorge: l'allarme notturno, e l'interruttore che lo spegne davvero 2026-08-12 (branch `feat/anagrafica-personale`)
+
+L'anagrafica del personale raccoglie la **data di scadenza del documento d'identità**. Senza un
+lavoro che la guardi, l'unico modo di accorgersi che è passata è che qualcuno ci pensi: e il
+documento serve al datore per identificare la persona negli adempimenti obbligatori (comunicazione
+UNILAV, libro unico, denunce INPS/INAIL), che nel frattempo si continuano a fare su un dato non più
+verificabile.
+
+**Cosa esiste adesso**
+
+| Pezzo | Dove |
+|---|---|
+| La logica, PURA | `src/lib/anagrafica/scadenze.ts` — `giorniResidui` · `sogliaRaggiunta` · `vaAvvisato` · `emailRisollecitoDovuta` |
+| Il lavoro notturno | `POST /api/notifiche/scadenze-documenti` (`withRoute('notifiche/scadenze-documenti:POST')`), job `scadenze-documenti-personale`, **05:47 UTC**, segreto cron dall'header |
+| L'automa | `supabase/migrations/…_scadenze_documenti_cron.sql` — URL dal Vault (origine di `app.push_dispatch_url`), **nessun segreto nel file**, `DO … EXCEPTION` perché in CI pg_cron non c'è |
+| Il tipo di notifica | `documento_personale_in_scadenza` (gruppo **staff**) in `src/lib/notifiche/tipi.ts`: compare da solo nel pannello Impostazioni, con il suo interruttore |
+| La sorveglianza | due voci nuove in `JOB_CRON` (`src/lib/health/controlli.ts`), finestra **26 h**: `scadenze-documenti-personale` e `retention-personale` |
+
+**Chi riceve cosa, e perché non tutti tutto.** A 90 giorni solo notifica in-app (all'interessata e
+alla segreteria della sede): non c'è ancora niente da fare, e un'email che non chiede niente consuma
+l'attenzione che servirà a quella dei 7 giorni. A 60 e 30 giorni si aggiunge l'email
+**all'interessata** — è lei che deve prenotare in Comune. A 7 giorni e a documento **scaduto**
+l'email va **anche alla segreteria**: da lì in poi non è più un promemoria personale, è una non
+conformità del datore di lavoro. **Nel corpo di email e notifiche non compaiono mai il numero del
+documento né il codice fiscale**: un'email non è un canale riservato, e quel numero non serve né a
+chi lo possiede né a chi glielo deve chiedere.
+
+**Le due date sono CIVILI, e il conto non passa da nessun `Date`.** `document_expiry` è una colonna
+`date` — un giorno del calendario italiano, non un istante — e `oggi` arriva da `dataCivile()`
+(`Europe/Rome`). La differenza si calcola con aritmetica intera sui giorni gregoriani
+(`days_from_civil` di Hinnant): una sottrazione fra `Date` attraversa il cambio dell'ora legale,
+restituisce `30.041…` e fa scattare la soglia «30 giorni» un giorno prima o dopo **a seconda del
+mese**. `oggi` è sempre un parametro, mai `new Date()` dentro le funzioni — la disciplina di
+`src/lib/pagamenti/aging.ts` — ed è ciò che rende i confini collaudabili invece che dipendenti
+dall'istante in cui gira la suite. Due lock di forma lo tengono per il futuro.
+
+**Il battito sta in un `finally`, sempre, anche a zero righe.** È il pezzo che rende sorvegliabile
+tutto il resto, e la ragione è nella natura del lavoro: la condizione **normale** è non mandare
+niente. Un job che tacesse a zero righe sarebbe indistinguibile, per mesi, da un job che non parte
+più — e la prova del guasto arriverebbe il giorno in cui si scopre che una maestra lavora da tre
+mesi con un documento scaduto. I conteggi sono **per sede** (mai una riga per persona: `app_log`
+resta 30 giorni ed è interrogabile in SQL, e un elenco di chi ha il documento scaduto sarebbe un
+registro delle non conformità del personale che nessuno ha chiesto di costruire), con `distingui:
+['sede_id']` perché senza, tre sedi collassano in una riga sola. Nel battito c'è anche
+`n_senza_scadenza`: le persone in servizio **senza** data di scadenza, che questo allarme non può
+coprire — `null` quando non è stato possibile misurarlo, che è una cosa diversa da `0`.
+
+**Job DEDICATO, non una quarta scansione dentro `notifiche/promemoria`.** Quella route chiude con un
+battito **unico** per tutte le sue scansioni: una caduta sui documenti del personale spegnerebbe il
+battito dei promemoria alle **famiglie**, e `/api/health` direbbe che i moduli non compilati non
+vengono più ricordati. Un allarme che punta alla cosa sbagliata manda chi risponde a cercare nel
+posto sbagliato, di notte.
+
+**Due difetti trovati dal revisore il 12/08, e chiusi qui**
+
+1. **L'interruttore spegneva metà allarme.** `notificaEvento` consulta `isNotificaAbilitata` per
+   conto suo, quindi le notifiche in-app si fermavano; `sendEmailDetailed` era invocata **fuori da
+   qualunque gate** e le email partivano lo stesso. Adesso il gate sta **prima di ogni canale** — è
+   il precedente di `src/lib/mensa/notify.ts:90` e `src/lib/news/digest.ts:330` — e con
+   l'interruttore spento **non si scrive `scadenza_soglia_avvisata`**: alla riaccensione l'avviso
+   riparte, esattamente come `digest.ts` non marca `inviata_il`. Il permesso si chiede **una volta
+   per sede**, e il battito lo dice (`n_disattivate`, più una riga `tipo-disattivato` per sede).
+2. **Il risollecito del documento scaduto non finiva mai.** `vaAvvisato` lo fa ripartire ogni 7
+   giorni finché il documento non viene rinnovato o `cessato_il` valorizzato: una persona che per
+   mesi non riesce a rinnovare — o un rapporto chiuso che nessuno ha registrato — produceva
+   **un'email a settimana a lei e a ogni membro della segreteria, per sempre**. Adesso l'email si
+   ferma dopo `MAX_RISOLLECITI_EMAIL` = **8** risolleciti (≈ due mesi: più del tempo di un
+   appuntamento in Comune), e resta la **notifica in-app** più il conteggio `n_scaduti` nel battito.
+   L'allarme non si spegne da solo: smette di occupare le caselle di posta. Il numero è derivato
+   dalle date — nessuna colonna nuova su una tabella già in produzione — e sta nel battito come
+   `n_email_oltre_tetto`, perché «la segreteria non riceve più posta su quella persona» non deve
+   essere indistinguibile da «il documento è stato rinnovato».
+
+**Il rilevatore `cron-battito` di `/api/health` era rotto nella direzione che grida**, ed è stato
+corretto nello stesso lavoro: contava come battito solo `esito: 'ok'`. Misurato in produzione
+l'11/08: `notifiche-promemoria` gira ogni notte, risponde 200 e fa il suo lavoro, ma dal **05/08**
+scrive `ok-parziale` a livello `warn` (in produzione `locker_requests` non esiste e quella scansione
+viene saltata) — quindi `/api/health` rispondeva «job senza battito: notifiche-promemoria» **da
+sette giorni** su un lavoro che non aveva saltato una notte. `ESITI_BATTITO` adesso è
+`{'ok', 'ok-parziale'}`; restano fuori tutti gli esiti che significano «non ho fatto il lavoro»
+(`avviato`, `giro-incompleto`, `eccezione`, `non-autorizzato`, `url-assente`, `post-fallito`).
+
+**Cosa resta da fare a mano** (è il punto per cui questa voce esiste: dal codice non si deduce)
+
+1. **La migrazione del cron NON è applicata.** Il file porta un numero **provvisorio**
+   (`20260811999900`): chi la applica con `apply_migration` deve **rinominarlo** con la versione
+   vera, altrimenti il `db push` successivo la riapplica. Il lock che lega la route al suo
+   `cron.schedule` cerca il file **per contenuto**, non per nome, proprio perché il rinomino è la
+   norma (`a9dcc6d`, `fc7c94a`, `59f1a3b`, `528cb30`).
+2. **La migrazione si applica DOPO il deploy**, mai prima: nell'ordine inverso il database chiama
+   una rotta che non c'è ancora e ogni giro caduto lì dentro produce un «job senza battito» che non
+   descrive nessun guasto.
+3. **Il primo battito si innesca a mano** (`SELECT public.scadenze_documenti_personale_http();`)
+   invece di aspettare le 05:47 della notte dopo: chiude il freddo d'avvio di ~24 h che sul gemello
+   `candidature-retention` fu scambiato per un guasto. Al momento dell'apply la tabella è nuova e
+   vuota, quindi il giro scrive il battito e non spedisce niente.
+4. **Finché la migrazione non è applicata, `/api/health` è `degradato`**: `controlloBattitoCron`
+   considera muto anche il job che non ha **mai** battuto. È un fatto atteso, non un guasto nuovo.
+
+**Le prove**: `__tests__/lib/documenti-scadenza.test.ts` (confini −1/0/+7/+30/+89/+90/+91, date
+inesistenti, nessun doppio invio sulla stessa soglia, il jitter del cron che non allontana il
+risollecito, il tetto dell'email, e i due lock di forma su «`oggi` iniettato») e
+`__tests__/api/scadenze-documenti-cron.test.ts` (battito a zero righe, tabella assente ⇒
+`ok-parziale` e non 500, nessun CF/nome/email nei log, la seconda esecuzione che non rimanda niente,
+l'interruttore che spegne **entrambi** i canali, e il `cron.schedule` cercato per contenuto).
+
+---
+
+## 🗄️ Changelog — La fotocopia di una carta d'identità non ha un termine finché qualcuno non lo scrive: la conservazione del personale, e la sezione dell'informativa che non esisteva 2026-08-12 (branch `feat/anagrafica-personale`)
+
+Il modulo `/anagrafica-personale` raccoglie di una dipendente il codice fiscale, la residenza e **la
+fotografia del suo documento d'identità**. La base giuridica non è il consenso — fra datore e
+dipendente non sarebbe libero (art. 7 §4 e cons. 43) — ma l'**esecuzione del contratto di lavoro**
+(art. 6.1.b) e gli **obblighi legali del datore** (art. 6.1.c: comunicazione UNILAV, libro unico del
+lavoro, denunce INPS/INAIL, sostituto d'imposta). Nessuna delle due copre la conservazione
+all'infinito, e **nessuna norma impone al datore di custodire una fotocopia**: impone di
+identificare. Da qui i tre termini, e da qui questa voce.
+
+**I tre termini, che sono numeri di un posto solo**
+
+| Cosa scade | Quando | Cosa se ne va |
+|---|---|---|
+| Richiesta di anagrafica **non approvata** (`pending`, `in_approvazione`, `rifiutata`) | **90 giorni** dalla ricezione, o **dalla decisione** se è stata respinta | il file dal bucket, poi la riga |
+| **Copia del documento** di chi ha cessato il rapporto | **12 mesi** dalla cessazione | il file dal bucket, poi `documento_path = null` — la riga resta |
+| **Fascicolo anagrafico** di chi ha cessato | **10 anni** dalla cessazione | il file, poi la riga, **e con lei la pratica approvata** che l'ha generata (`origine_pratica_id`) |
+| `cessato_il` **NULL** = rapporto in corso | mai | niente, per nessun motivo |
+
+I numeri non sono scritti nella route: sono `PERSONALE_LIMITI` (`src/lib/forms/personale-template.ts`),
+cioè gli stessi che il **testo del consenso interpola** nella frase che l'interessata legge e spunta —
+frase che finisce congelata in `pratiche_personale.consents_log`. Due costanti per lo stesso termine
+divergono in silenzio, e a divergere sarebbe la dichiarazione dell'art. 13 §2 lett. a.
+
+**Cosa esiste adesso**
+
+| Pezzo | Dove |
+|---|---|
+| Il lavoro notturno | `POST /api/gdpr/retention-personale` (`withRoute('gdpr/retention-personale:POST')`), job `retention-personale`, **05:17 UTC**, segreto cron dall'header oppure `requireStaff` per il lancio a mano |
+| L'automa | `supabase/migrations/…_retention_personale_cron.sql` — `retention_personale_http()`, URL dal Vault, **nessun segreto nel file** |
+| L'informativa | `src/app/privacy/page.tsx`, sezione nuova **«Personale della Scuola (dipendenti e collaboratori)»** + tre voci in «Conservazione dei dati» |
+| La versione | `VERSIONE_PRIVACY` **`'2026-08-10'` → `'2026-08-11'`** (`src/lib/legal/versioni.ts`; `VERSIONE_TERMINI` invariata) |
+| Le prove | `__tests__/api/gdpr-retention-personale.test.ts` — **70 collaudi** |
+
+**Perché una route HTTP e non una funzione SQL**, che è la domanda che si rifà ogni volta: **i file si
+tolgono solo dalla Storage API**, e da Postgres non ci si arriva. La versione SQL del bisnonno — la
+conservazione delle domande d'iscrizione — nacque con un `DELETE FROM storage.objects` dentro, e
+Postgres lo vieta (`42501`, trigger `protect_objects_delete`, FOR EACH STATEMENT: scatta **anche a
+zero righe**). Sarebbe fallita dalla prima notte e per sempre.
+
+**Le quattro lezioni dei gemelli, riusate e non reinventate.** ① **Prima il file, poi la riga** — e la
+rinuncia è **per pratica**, non per lotto: una scansione che non esce trattiene *la sua* riga. Vale
+anche per l'`UPDATE`: azzerare `documento_path` non è una cancellazione più mite di una `DELETE`, è la
+stessa perdita di riferimento, e fatto prima lascerebbe un oggetto nel bucket che nessuna riga nomina
+più. ② **Il battito sta in un `finally`**, sempre, anche a zero righe e anche sul giro fallito. ③
+**Righe trattenute ⇒ 500**: un 200 direbbe «fatto» a chi sorveglia. ④ **Colonna del percorso ignota ⇒
+non si cancella niente** (503 dichiarato): senza questa regola resterebbero scansioni di documenti
+d'identità nel bucket e nessuna riga che le nomini — invisibili, non cancellate.
+
+**La pratica APPROVATA non poteva restare per sempre, e per un dettaglio di schema si cancella PRIMA
+della sua anagrafica.** `origine_pratica_id` sta sul lato anagrafica (`on delete set null`): chiudere
+prima il fascicolo distruggerebbe l'unica riga che sapeva quale fosse la pratica, e una seconda
+`delete` fallita lascerebbe in tabella una copia integrale — codice fiscale, nascita, residenza,
+domicilio, recapiti, `consents_log` — che nessun giro successivo saprebbe più trovare. Nello stesso
+verso: se `origine_pratica_id` **non si può leggere**, non si chiude nessun fascicolo.
+
+**Due difetti trovati dal revisore il 12/08, e chiusi qui**
+
+1. **Il ripiego sulla decorrenza ANTICIPAVA la cancellazione, e il log dichiarava l'opposto.** Il
+   riferimento era `evasa_il ?? creata_il`, e il `warn` del ripiego prometteva che «la ricezione è la
+   data più vecchia: non si anticipa nessuna cancellazione». È rovesciato, ed è aritmetica:
+   `creata_il <= evasa_il`, quindi per una pratica **respinta** il termine calcolato dalla data più
+   vecchia scade **prima** — di tutto il tempo che la Segreteria ci ha messo a decidere. Su un
+   database che avesse `stato` e non `evasa_il` se ne andavano la riga **e la scansione della carta
+   d'identità allegata**. Adesso una decorrenza illeggibile vale «non toccare», e il verso opposto —
+   conservare oltre il termine — non è silenzioso: `n_pratiche_senza_riferimento` nel battito, più un
+   `warn` che lo dichiara. Un messaggio di log che promette una garanzia che il codice non dà è
+   esattamente ciò che `CLAUDE.md` chiama «un documento che descrive una protezione che non c'è».
+2. **Mancava il lock simmetrico su `documento_path`.** Una prova pretendeva già che chi crea un
+   fascicolo scriva `origine_pratica_id` (il termine **più lungo**); nessuna pretendeva che rilasciasse
+   `pratiche_personale.documento_path`, come il commento di colonna della migrazione `20260811205643`
+   dichiara: «all'approvazione l'oggetto **non si copia**: l'anagrafica punta allo stesso file e questa
+   colonna torna NULL — un oggetto, un proprietario». Senza, una copia del percorso lasciata sulla
+   pratica sopravvive **dieci anni** (la Fase 3 della route la rilegge solo al decimo) mentre
+   `/privacy` promette **dodici mesi**: si sforerebbe proprio il termine con la base giuridica più
+   fragile, e lo si scoprirebbe fra anni. Il rilevatore è stato **provato**: un file finto che crea
+   un'anagrafica senza `documento_path: null` lo fa diventare rosso.
+
+**L'informativa, e perché la versione doveva cambiare.** La sezione nuova nomina le due basi
+giuridiche, dice che la copia del documento serve **all'identificazione per quegli adempimenti**, ed
+elenca i destinatari: il **consulente del lavoro** come responsabile ex art. 28, e **INPS, INAIL e
+Agenzia delle Entrate** per obbligo di legge. Le tre voci di conservazione hanno i numeri **scritti in
+lettere** come le altre, e ognuna nomina anche la **decorrenza** — «dalla cessazione» — perché un
+numero senza il suo dies a quo non è un termine. Nessuna dice «automaticamente»: il lock
+`informativa-conservazione-dichiarata` pretende che l'automa esista **prima** che il documento lo
+prometta, e ciò che la persona ha diritto di sapere è il termine, non il meccanismo.
+`VERSIONE_PRIVACY` sale a **`'2026-08-11'`** perché entra una **categoria di interessati** che non
+c'era, con due basi giuridiche e destinatari nuovi — e perché quella costante finisce dentro
+`pratiche_personale.consents_log`, sotto un blocco che dice testualmente «dichiaro di aver preso
+visione dell'informativa sul trattamento dei dati del personale». Lasciandola ferma, ogni riga avrebbe
+attestato la presa visione di un documento che quella sezione **non conteneva**: la prova avrebbe
+detto il falso proprio sul punto per cui esiste.
+
+**Due restrizioni in `src/lib/logging/redact.ts`, e nessuna chiave aggiunta alla lista bianca.**
+`{"cap": 80014}` e `{"civico": 12}` sono **numeri**: il ramo per tipo li lasciava uscire in chiaro, e
+un CAP più un civico accanto a un `sede_id` restringono a una manciata di case. Idem
+`{"numero_documento": 1234567}`. Sono **nomi esatti**, mai radici: `cap` dentro un `includes`
+prenderebbe `capienza` e `capitolo` (l'errore da cui mette in guardia il commento di `RADICI_NASCITA`),
+e `document` come radice farebbe sparire `n_documenti`, cioè il conteggio che il cron delle scadenze
+esiste per scrivere. Si redige **tenendo la forma** (`[redatto:num]`, lunghezza per le stringhe): la
+lunghezza è metà della diagnosi di un `22001` su `zip_code varchar(5)`.
+
+**Cosa NON finisce nei log**, e qui conta più che altrove: mai il **percorso** della scansione, mai il
+nome del file, mai un uuid di persona, mai un codice fiscale. `app_log` è interrogabile in SQL per 30
+giorni, e una riga con quel percorso pubblicherebbe l'indirizzo di un documento d'identità dentro una
+tabella di diagnosi. Conteggi, esiti, codici d'errore.
+
+**Cosa resta da fare a mano** (dal codice non si deduce, ed è lo stesso elenco del job gemello — le
+due migrazioni **si applicano insieme**)
+
+1. **La migrazione del cron NON è applicata.** Nome provvisorio `20260811999999`: chi la applica la
+   **rinomini** con la versione vera, o il `db push` successivo la riapplica.
+2. **Si applica DOPO il deploy**, mai prima: nell'ordine inverso il database chiama una rotta che non
+   c'è ancora.
+3. **Insieme a `20260811999900`** (`scadenze-documenti-personale`): applicandone una sola il gate
+   diventa verde e `/api/health` resta `degradato` per l'altra **senza che nulla lo segnali**. È il
+   caso «gate verde sopra un allarme rotto», e il lock che tiene la coppia per **tutti** i job è
+   `__tests__/architecture/cron-sorvegliato-e-applicato.test.ts`.
+4. **Rigenerare `__tests__/fixtures/migrazioni-applicate-snapshot.json`** e **attestare in testata**
+   «APPLICATA il AAAA-MM-GG»: i lock leggono la fotografia di `supabase_migrations.schema_migrations`,
+   non la prosa.
+5. **Innescare il primo battito a mano** (`SELECT public.retention_personale_http();`) invece di
+   aspettare le 05:17 della notte dopo: chiude il freddo d'avvio di ~24 h che sul gemello
+   `candidature-retention` fu scambiato per un guasto.
+
+---
+
+## 🚪 Changelog — La porta rotta che nessuno poteva aprire: `POST /api/admin/adults` non esiste più 2026-08-11 (branch `feat/anagrafica-personale`)
+
+Da fuori sembrava **la rotta che crea un account del personale**. Non lo era, per tre ragioni
+misurate — e ognuna da sola sarebbe bastata:
+
+1. **Irraggiungibile.** Il suo unico chiamante era `AdultRegistryForm.tsx`, che **nessuna pagina
+   montava**: `grep -rn "AdultRegistryForm" src/` trovava soltanto il file stesso. Zero utenti,
+   zero chiamate, zero collaudi possibili.
+2. **Rotta.** Faceva `upsert` su `utenti` scrivendo anche `first_name`, `last_name` e `role`, che
+   lì sono `GENERATED ALWAYS AS (…) STORED` (baseline, righe 2801-2803): le colonne vere sono
+   `nome`, `cognome`, `ruolo`. Postgres rifiuta con **`428C9`** e la rotta rispondeva **500** — ma
+   `inviteUserByEmail` era **già** passato: ogni tentativo lasciava un account `auth.users` **senza
+   riga `utenti`**. Lo ammetteva un commento nel file stesso.
+3. **Pericolosa se riparata alla cieca.** `role` era uno `z.string()` **libero** e il gate è
+   `requireStaff`, che **comprende la segreteria**. Sistemare solo il punto 2 — la tentazione
+   ovvia — avrebbe dato alla segreteria la creazione di un `admin`: una scalata di privilegi
+   servita da una rotta che, non funzionando, nessuno guardava.
+
+**Tolto**: l'export `POST` e il suo schema zod da `src/app/api/admin/adults/route.ts` (il **`GET`
+resta**, gated, con `parseQuery` e `resolveScuoleAttive`), il componente
+`src/components/features/admin/AdultRegistryForm.tsx` e il suo test. Al posto del codice, nel
+`route.ts` resta un **commento datato** con le tre ragioni e la misura: senza, fra sei mesi
+qualcuno lo riscrive.
+
+**Il lock nuovo misura la CATEGORIA, non il file cancellato**
+(`__tests__/api/admin-adults-senza-post.test.ts`): che il modulo esporti **solo `GET`** (Next.js
+serve qualunque verbo esportato da un `route.ts`), che il `GET` sia **vivo e a 401 in anonimo**
+(controllo positivo: senza, il primo test resterebbe verde anche cancellando il file), che
+**nessuna scrittura su `utenti`, in tutto `src/`, nomini una colonna generata** — distinguendo
+`{ nome: first_name }` da `{ first_name }` — e che nessun componente torni a postare su quella
+rotta. Con la **prova di validità permanente del rilevatore**: il codice vero che è stato
+cancellato, dato in pasto alla misura, deve farla diventare rossa. È la stessa difesa che serve
+all'approvazione delle pratiche di **`/anagrafica-personale`**, che scrive proprio su `utenti`.
+
+**Dove si crea davvero un account del personale**, perché il rimando sbagliato è il modo in cui
+una porta chiusa si riapre: `ensureStaffIdentity()` in `src/lib/auth/staff-identity.ts` — **non**
+`/api/admin/staff`, che l'11/08 esporta solo `GET` e `PATCH` e non crea niente. Fino a stamattina
+il commento diceva il contrario.
+
+**Tetti abbassati, perché cancellare codice e lasciare il tetto alto è il modo silenzioso in cui
+un lock smette di misurare**: `docs/superpowers/errori-senza-codice-allowlist.json` porta la voce
+di quel file da **6 a 2** risposte d'errore senza `codice` (le quattro tolte erano tutte nel POST;
+le due che restano sono nel GET) e `totale_occorrenze` **1464 → 1460**, con `MAX_OCCORRENZE`
+allineato in `__tests__/architecture/errori-con-codice.test.ts` (`MAX_FILE` resta 280: la voce non
+è arrivata a zero). In `__tests__/architecture/isolamento-sede-coverage.test.ts`
+`handlerControllati` scende **441 → 440**, con la nota che dichiara l'**uscita**: sullo stesso
+branch nascono quattro handler, e senza quella riga il 444 finale si legge come «441 + 4» —
+un'attribuzione che quadra per caso e nasconde un handler sparito.
+
+**Aggiornati** anche `__tests__/a11y/schede-adulto-a11y.test.tsx` (via il blocco che montava la
+scheda), `__tests__/api/auth-gaps-m9.test.ts` (il POST non c'è più da misurare; il `GET` resta per
+**decisione**, non perché qualcuno lo chiami: al 2026-08-11 i chiamanti sono **zero**) e
+`__tests__/architecture/catch-muti-allowlist.test.ts` (via la voce, con la ragione scritta).
+
+---
+
 ## ♿ Changelog — I quattro rilievi minori di `/lavora-con-noi`, chiusi ognuno in un posto solo 2026-08-11 (branch `feat/insegnanti-codice-fiscale`)
 
 Il collaudo visivo del modulo pubblico di candidatura ha lasciato **quattro rilievi minori**:
@@ -911,6 +1202,15 @@ finché esiste deve dire la stessa cosa delle altre due): stringhe cablate porta
 vietato da AGENTS.md §6 — diventato un `logClient` di livello `warn` col motivo. Voce tolta da
 `docs/superpowers/catch-muti-allowlist.json`, tetti del lock abbassati **54→53 file** e
 **84→83 occorrenze**, e il file iscritto fra quelli che non possono tornare in allowlist.
+
+> ⚠️ **Aggiornamento 2026-08-11 — quel file non esiste più.** `AdultRegistryForm.tsx` è stato
+> **cancellato** il giorno dopo, insieme a `POST /api/admin/adults` (vedi il changelog «La porta
+> rotta che nessuno poteva aprire»). I due arretrati qui sopra sono stati fatti sul serio, e il
+> lavoro non è sprecato — le stringhe stanno sui cataloghi, che restano — ma **chi legge questo
+> paragrafo non cerchi il file**: la voce è uscita anche da `MAI_PIU_IN_ALLOWLIST`
+> (`__tests__/architecture/catch-muti-allowlist.test.ts`), perché quell'elenco parla di file vivi
+> e bonificati, non di file scomparsi, e un percorso inesistente farebbe cadere il suo controllo
+> positivo `fs.existsSync`. I tetti **53/83 restano dove sono**: un debito pagato non si ripaga.
 
 ---
 
@@ -7058,7 +7358,7 @@ Quindici problemi raccolti usando l'app reale (web + native iOS/Android), risolt
 - **Provisioning reale** (migrazione `provisiona_sede` SECURITY DEFINER + riconciliazione idempotente): la UI «Gestione Multi-Sede» creava una sede solo nel registry `scuole`, scollegato dal tenant vero `schools` → sede fantasma. Ora `POST /api/admin/schools` crea `schools` + `scuole` con lo **stesso id** + `utenti_scuole` per gli admin; `GET /api/admin/sedi` esclude le sedi disattivate.
 - **Coerenza filtri sede**: `resolveScuoleAttive` (rispetto del SedeSelector) portato su avvisi (ramo staff), diario, sezioni-primaria e presenze mensili (che prima non filtravano affatto per scuola).
 - **Galleria isolata per sede** (migrazione `galleria_media_v2.scuola_id` + backfill): POST valorizza la sede, GET docente/genitore filtrano per plesso (prima i nomi-classe omonimi collidevano cross-tenant), con degrado pulito sul DB E2E non migrato.
-- **Staff per sede**: verificato che il flusso reale (`StaffPanel` su `/admin/staff`) permette già di assegnare sede e classi; il componente orfano `AdultRegistryForm` resta dead-code (cleanup rinviato).
+- **Staff per sede**: verificato che il flusso reale (`StaffPanel` su `/admin/staff`) permette già di assegnare sede e classi; il componente orfano `AdultRegistryForm` resta dead-code (cleanup rinviato). — **Chiuso il 2026-08-11**: il componente è stato cancellato insieme alla rotta che serviva (`POST /api/admin/adults`, irraggiungibile e rotta). Non era solo dead-code: era una porta che, riparata alla cieca, avrebbe dato alla segreteria la creazione di un `admin`.
 
 **Correzioni di sicurezza (2° ciclo — route toccate dal batch, chiuse su dati di minori)**
 - `DELETE /api/gallery` non accetta più `?userId=` come identità (spoofing admin → `requireDocente`); `GET/POST /api/chat/messages` e `PATCH /api/chat/messages/read` ora hanno `requireUser` con verifica del partecipante **sempre** (prima la lettura senza `markRead` era libera, e `sender_id`/`userId` erano fidati dal body): IDOR e impersonazione chiusi, RLS a difesa in profondità verificata.
@@ -7067,7 +7367,7 @@ Quindici problemi raccolti usando l'app reale (web + native iOS/Android), risolt
 
 **Gate finale**: eslint **0** · vitest **1810 / 227 file** verdi (14 test nuovi) · build ok · E2E in CI al push. Collaudo: 11 tester-opus (backend con sessioni reali, mobile-iOS e mobile-Android con percorso utente completo via Maestro su simulatore/emulatore, sicurezza/privacy/accessibilità/localizzazione). Flow Maestro committati riallineati alla UI reale.
 
-**Follow-up dichiarati** (non bloccanti, pre-lancio): Alto Contrasto completo sulle utility Tailwind (sistemico: `@theme inline` inlina l'hex); `text-kidville-muted` dei timestamp su fondo chiaro (~2,5:1, pre-esistente); rimozione del componente orfano `AdultRegistryForm`; scoping chat per sede; `data_consegna_propri` per i compiti mirati; hardening `assertClasseNomeInScope` con verifica docente (4 route); alternativa mensa self-service lato genitore; vincolo `author_id = auth.user.id` negli avvisi educator; signed-URL sul bucket galleria. **Nota tecnica**: un `*/` nel testo di un commento CSS chiude il commento in anticipo — rompe Turbopack (dev) ma **non** `next build`; verificare sempre il dev server, non solo il build.
+**Follow-up dichiarati** (non bloccanti, pre-lancio): Alto Contrasto completo sulle utility Tailwind (sistemico: `@theme inline` inlina l'hex); `text-kidville-muted` dei timestamp su fondo chiaro (~2,5:1, pre-esistente); ~~rimozione del componente orfano `AdultRegistryForm`~~ (**fatta il 2026-08-11**, con la rotta `POST /api/admin/adults` che la serviva); scoping chat per sede; `data_consegna_propri` per i compiti mirati; hardening `assertClasseNomeInScope` con verifica docente (4 route); alternativa mensa self-service lato genitore; vincolo `author_id = auth.user.id` negli avvisi educator; signed-URL sul bucket galleria. **Nota tecnica**: un `*/` nel testo di un commento CSS chiude il commento in anticipo — rompe Turbopack (dev) ma **non** `next build`; verificare sempre il dev server, non solo il build.
 
 ## 🗓️ Changelog — Batch: diario che scorre, foto private, anagrafica Staff viva, mensa allo sportello 2026-07-13 (branch `feat/batch-diario-galleria-staff-mensa`)
 

@@ -82,10 +82,17 @@ export const EVENTI_NOTI = new Set([
     // sinonimo di `iscrizione`, che è la domanda di iscrizione di un bambino — due percorsi
     // diversi, due tabelle diverse, e tenerli sulla stessa etichetta renderebbe illeggibile
     // proprio la query che serve («quante candidature sono arrivate?»).
+    //
+    // `personale` (2026-08-11) è il TERZO di quella famiglia, e vale lo stesso ragionamento:
+    // è il modulo pubblico `/anagrafica-personale`, cioè l'anagrafica di chi il rapporto di
+    // lavoro ce l'ha GIÀ. Non è `candidatura` (chi si propone, e di cui la Scuola non sa
+    // ancora nulla) e non è `anagrafica`, che in questo repo indica le note tecniche
+    // sull'identità di genitori e alunni: tre canali sulla stessa etichetta renderebbero
+    // impossibile la sola query che conta, «quante anagrafiche del personale sono arrivate?».
     'agenda', 'anagrafica', 'audit', 'avvisi', 'candidatura', 'cassa', 'chat', 'competenze',
     'credenziali', 'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr',
     'iscrizione', 'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento',
-    'pagella', 'protocolli', 'registro', 'segnalazione', 'sidi',
+    'pagella', 'personale', 'protocolli', 'registro', 'segnalazione', 'sidi',
     // Infrastruttura. `db`/`rpc`/`storage`/`auth`/`altro` sono le aree di `supabase-fetch`,
     // `esterno` il default di `externalFetch`, `email`/`push` i suoi due chiamanti nominati,
     // `route` la riga di esito di `withRoute`, `app_log` il sink che si segnala da solo,
@@ -191,6 +198,21 @@ export const EVENTI_PERSISTITI = new Set([
     // `__tests__/lib/insegnanti-template.test.ts`, che diventa rosso in ENTRAMBE
     // le direzioni: evento promosso senza battito, e battito senza promozione.
     'candidatura',
+    // `personale` entra con la route che porta il battito, per la stessa ragione e
+    // con lo stesso rischio: il ramo felice di `POST /api/iscrizione/personale` emette
+    // `logEvento('personale','info',…)` con `esito: 'pratica-ricevuta'`, ed è la sola
+    // prova che il modulo `/anagrafica-personale` riceve qualcosa. Nessuna schermata si
+    // riempie a vista, e una maestra che ha compilato non telefona per chiedere se è
+    // arrivato: senza questa riga, «nessun log» significherebbe insieme «non ha
+    // compilato nessuno» e «il modulo è rotto».
+    //
+    // ⚠️ NON si è usato `anagrafica`, che è già un evento noto e sarebbe stata la
+    // scorciatoia: quel canale sta in `DEROGHE_INFO_NON_PERSISTITI`
+    // (`__tests__/architecture/eventi-log.test.ts`) perché i suoi `info` sono note
+    // tecniche di `ensureParentIdentity`. Riusarlo avrebbe voluto dire o un successo
+    // che NON arriva in tabella — cioè il difetto misurato su `avvisi` il 2026-07-31 —
+    // oppure promuovere di colpo 23 chiamate scritte per un altro scopo.
+    'personale',
 ]);
 
 /**

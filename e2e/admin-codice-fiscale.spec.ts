@@ -133,7 +133,14 @@ test('la linguetta «Codici fiscali» risponde e offre i tre stati', async ({ pa
   // e tre fasi. Il pannello d'errore va escluso ESPLICITAMENTE: senza,
   // un'asserzione sul solo titolo lascerebbe passare la schermata di guasto, che
   // il titolo non ce l'ha ma la pagina sì.
-  await expect(page.getByText(itAdminStudents.cfTitolo)).toBeVisible({ timeout: 30_000 });
+  // `getByRole('heading')` e non `getByText`: il titolo del pannello e l'etichetta
+  // per lo screen reader del campo di ricerca («Cerca fra i codici fiscali da
+  // verificare») contengono **la stessa frase**, e Playwright in modo rigoroso
+  // fallisce con «resolved to 2 elements» invece di dire cosa non va — misurato in
+  // CI l'11/08/2026, tre tentativi rossi di fila su una schermata che funzionava.
+  // Il ruolo distingue le due cose e dice anche ciò che ci interessa davvero: che
+  // sia il TITOLO a essere lì, non una qualunque occorrenza di quelle parole.
+  await expect(page.getByRole('heading', { name: itAdminStudents.cfTitolo })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(itAdminStudents.cfErroreTitolo)).toHaveCount(0);
   await expect(page.getByText(itAdminStudents.cfCaricamento)).toHaveCount(0);
 
@@ -159,7 +166,9 @@ test('la linguetta «Codici fiscali» risponde e offre i tre stati', async ({ pa
     // Con l'archivio di collaudo l'elenco filtrato può essere vuoto: è un esito
     // legittimo, e il pannello lo dice con la propria frase invece di sparire.
     // Ciò che NON deve succedere è che la linguetta si smonti o vada in errore.
-    await expect(page.getByText(itAdminStudents.cfTitolo)).toBeVisible();
+    // Per ruolo, e non per testo: vedi la nota qui sopra — la stessa frase compare
+    // anche nell'etichetta nascosta del campo di ricerca.
+    await expect(page.getByRole('heading', { name: itAdminStudents.cfTitolo })).toBeVisible();
     await expect(page.getByText(itAdminStudents.cfErroreTitolo)).toHaveCount(0);
   }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 /**
  * Lock sulle tre pagine legali pubbliche.
@@ -19,7 +20,9 @@ function leggi(p: string): string {
 }
 
 /**
- * Il file SENZA commenti: è ciò che l'utente legge davvero.
+ * Il sorgente SENZA i commenti. Attenzione: è il SORGENTE, non il testo reso —
+ * restano import, tag JSX e attributi. Basta per le ricerche di stringa qui
+ * sotto, NON basta per calcolare un'impronta (vedi `testoVisibile`).
  *
  * Serve perché i commenti di quelle pagine CITANO le formule sbagliate per
  * spiegare perché sono state tolte («utilizzando il servizio dichiari di
@@ -32,6 +35,39 @@ function leggiTesto(p: string): string {
         .replace(/\/\*[\s\S]*?\*\//g, ' ')
         .replace(/^\s*\/\/.*$/gm, ' ');
 }
+
+/**
+ * IL TESTO CHE L'UTENTE LEGGE DAVVERO — cioè i soli nodi di testo del JSX.
+ *
+ * Non è la stessa cosa di `leggiTesto`, e la differenza è stata MISURATA: con il
+ * sorgente-meno-commenti, aggiungere una classe a un `className` cambiava
+ * l'impronta (97d68d52… → 8a1f2574…). Un lock che diventa rosso perché qualcuno
+ * ha ritoccato una spaziatura chiede, ogni volta, di riscrivere l'impronta di
+ * una versione GIÀ citata nelle righe di `consents_log` — e un lock che va
+ * aggirato di routine smette di proteggere esattamente ciò per cui esiste.
+ *
+ * Si tiene quindi solo il JSX (dal `return (` del componente in giù: sopra ci
+ * sono import e costanti di stile) e da lì si tolgono i tag con i loro
+ * attributi. Restano le parole, la punteggiatura e le entità.
+ *
+ * `__provaSorgente` esiste per la prova di sanità qui sotto: la stessa
+ * estrazione va applicata a un sorgente MUTATO in memoria, senza toccare il
+ * file su disco.
+ */
+function testoVisibile(p: string, __provaSorgente?: string): string {
+    const src = (__provaSorgente ?? leggi(p))
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/^\s*\/\/.*$/gm, ' ');
+    const dal = src.indexOf('return (', src.indexOf('export default'));
+    if (dal === -1) return '';
+    return src
+        .slice(dal + 'return ('.length)
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+const improntaDi = (testo: string): string => createHash('sha256').update(testo).digest('hex');
 
 /** Le forme dei segnaposto usati durante la stesura. */
 const SEGNAPOSTO = /\[(Ragione sociale|indirizzo sede|email d[^\]]*)\]/i;
@@ -186,9 +222,128 @@ describe('lock — pagine legali', () => {
         // Se il testo cambia e la costante no, il genitore accetta un documento
         // e nel registro dei consensi ne risulta un altro: la prova si svuota.
         const versioni = fs.readFileSync(path.join(RADICE, 'src/lib/legal/versioni.ts'), 'utf8');
-        expect(versioni).toMatch(/VERSIONE_PRIVACY = '2026-07-31'/);
+        // ⚠️ La data dell'informativa NON è ribattuta qui. Era scritta in due
+        // punti — questo regex e le chiavi di `IMPRONTE_PRIVACY` — e chi avesse
+        // alzato la versione avrebbe raccolto due rossi, il primo dei quali dice
+        // solo «non combacia» senza indicare dove sta l'altra copia. La chiave
+        // di `IMPRONTE_PRIVACY` è la sola fonte, e la prova qui sotto la usa.
+        expect(versioni).toMatch(/VERSIONE_PRIVACY = '\d{4}-\d{2}-\d{2}'/);
         expect(versioni).toMatch(/VERSIONE_TERMINI = '2026-07-31'/);
         expect(leggi('privacy')).toContain('VERSIONE_PRIVACY');
         expect(leggi('termini')).toContain('VERSIONE_TERMINI');
+    });
+
+    /**
+     * L'IMPRONTA DEL TESTO, e perché il controllo qui sopra da solo non bastava.
+     *
+     * MISURATO il 2026-08-10: l'informativa era stata modificata NEL MERITO —
+     * una voce nuova che dichiara «dodici mesi … ventiquattro mesi» per una
+     * categoria di interessati che prima non c'era (chi si candida a un lavoro)
+     * — e `VERSIONE_PRIVACY` era rimasta a '2026-07-31'. Questo file girava
+     * VERDE, 17 test su 17. Non per un difetto di scrittura: per costruzione.
+     * Un lock che confronta una costante con una data SCRITTA NEL LOCK STESSO
+     * non può accorgersi che è cambiato un terzo file. Vede due cose ferme e
+     * conclude che tutto è fermo.
+     *
+     * Conseguenza reale, non teorica: `VERSIONE_PRIVACY` viene stampata dentro
+     * `consents_log.versione_informativa` a ogni candidatura e a ogni
+     * iscrizione. Ogni riga avrebbe attestato l'accettazione di un documento
+     * che quella voce non conteneva — la prova d'accettazione avrebbe detto il
+     * falso proprio sul punto per cui esiste (art. 13 §2 lett. a).
+     *
+     * COSA FA QUESTA PROVA: lega la versione al CONTENUTO che quella versione
+     * dichiara. L'impronta è calcolata sui soli NODI DI TESTO del JSX
+     * (`testoVisibile`): fuori i commenti, fuori gli import e le costanti di
+     * stile, fuori i tag con i loro attributi, spazi normalizzati. Cambiare una
+     * parola del testo legale è rosso; ritoccare una classe, andare a capo o
+     * riscrivere un commento no. Non è un'affermazione di intenti: la prova di
+     * sanità qui sotto lo verifica mutando il sorgente in memoria.
+     *
+     * SE QUESTO TEST È ROSSO non «aggiustare l'impronta»: dato ciò che entra
+     * nell'impronta, un rosso significa che le PAROLE dell'informativa sono
+     * cambiate. L'ordine giusto è (1) alzare `VERSIONE_PRIVACY` in
+     * `src/lib/legal/versioni.ts` alla data della modifica, scrivendoci accanto
+     * COSA è cambiato, e (2) aggiungere qui la voce nuova, lasciando intatte le
+     * vecchie. Sovrascrivere l'impronta di una versione GIÀ PUBBLICATA — cioè
+     * già accettata da persone vere e già citata nelle righe di `consents_log` —
+     * significa riscrivere a posteriori il contenuto di un documento che
+     * qualcuno ha firmato: è la cosa che questo lock esiste per rendere
+     * impossibile per distrazione, e per questo il messaggio d'errore non la
+     * propone come alternativa comoda.
+     */
+    const IMPRONTE_PRIVACY: Record<string, string> = {
+        // 2026-08-10 — aggiunta la voce «candidature spontanee di personale».
+        '2026-08-10': 'f073aa87b1cfcd1e879ebe1ef9166383868d263a45fab4167dcf31e1c69a1143',
+    };
+
+    /**
+     * PROVA DI SANITÀ DELL'ESTRATTORE — senza, il commento qui sopra sarebbe una
+     * promessa non verificata, ed è già successo: la prima stesura affermava
+     * «una riformattazione non produce un rosso falso» mentre l'impronta girava
+     * sul sorgente intero e cambiava per una classe in più.
+     */
+    it("l'impronta guarda le parole e non il markup (sanità dell'estrattore)", () => {
+        const sorgente = leggi('privacy');
+        const base = testoVisibile('privacy');
+
+        // Nulla di ciò che l'utente NON legge deve essere finito nel testo.
+        for (const scoria of ['className', 'import ', 'export default', 'font-maven']) {
+            expect(base, `«${scoria}» è finito nel testo su cui si calcola l'impronta`).not.toContain(scoria);
+        }
+        // …e ciò che legge dev'esserci: se l'estrattore un giorno restituisse il
+        // vuoto, l'impronta sarebbe stabilissima e non guarderebbe niente.
+        for (const frase of ['Informativa sulla privacy', 'Conservazione dei dati', 'candidature spontanee di personale']) {
+            expect(base, `«${frase}» non si legge più: l'estrattore non sta leggendo l'informativa`).toContain(frase);
+        }
+
+        const impronta = (src: string) => improntaDi(testoVisibile('privacy', src));
+        const invariante: [string, string][] = [
+            ['una classe in più', sorgente.replace('className="', 'className="pt-0 ')],
+            ['un import in più', sorgente.replace(/^import /m, 'import { Fragment } from "react";\nimport ')],
+            ['una costante di stile diversa', sorgente.replace("font-maven text-[15px]", "font-lato text-[15px]")],
+            ['un a capo nel JSX', sorgente.replace('<strong>ventiquattro mesi</strong>', '<strong>\n  ventiquattro mesi\n</strong>')],
+        ];
+        for (const [che, mutato] of invariante) {
+            expect(mutato, `la mutazione «${che}» non è stata applicata: la prova girerebbe a vuoto`).not.toBe(sorgente);
+            expect(impronta(mutato), `«${che}» ha cambiato l'impronta: è un rosso falso`).toBe(improntaDi(base));
+        }
+
+        const sostanziali: [string, string][] = [
+            ['un termine di conservazione', sorgente.replace('ventiquattro mesi', 'trentasei mesi')],
+            ['la voce sulle candidature, tolta', sorgente.replace(/<li>\s*<strong>candidature spontanee[\s\S]*?<\/li>/, '')],
+        ];
+        for (const [che, mutato] of sostanziali) {
+            expect(mutato, `la mutazione «${che}» non è stata applicata: la prova girerebbe a vuoto`).not.toBe(sorgente);
+            expect(impronta(mutato), `«${che}» NON ha cambiato l'impronta: il lock non protegge`).not.toBe(improntaDi(base));
+        }
+    });
+
+    it("l'impronta del testo dell'informativa corrisponde alla versione dichiarata", () => {
+        const versioni = fs.readFileSync(path.join(RADICE, 'src/lib/legal/versioni.ts'), 'utf8');
+        const versione = versioni.match(/VERSIONE_PRIVACY = '([^']+)'/)?.[1];
+        expect(versione, 'VERSIONE_PRIVACY non è leggibile da versioni.ts').toBeTruthy();
+
+        expect(
+            IMPRONTE_PRIVACY[versione!],
+            `Nessuna impronta registrata per la versione '${versione}' dell'informativa. ` +
+                `Chi ha alzato la versione non ha depositato qui il testo che quella versione ` +
+                `dichiara: aggiungi la voce '${versione}' a IMPRONTE_PRIVACY.`,
+        ).toBeTruthy();
+
+        const atteso = improntaDi(testoVisibile('privacy'));
+
+        expect(
+            atteso,
+            `Le PAROLE dell'informativa non sono più quelle della versione '${versione}'.\n` +
+                `Nell'impronta entrano i soli nodi di testo del JSX: né classi, né import, né ` +
+                `commenti, né a capo. Un rosso qui è una modifica al testo legale, non al markup.\n` +
+                `Da fare: alza VERSIONE_PRIVACY in src/lib/legal/versioni.ts alla data di oggi e ` +
+                `aggiungi qui la voce nuova (impronta attuale: ${atteso}), LASCIANDO le voci ` +
+                `vecchie dove sono.\n` +
+                `Riscrivere l'impronta di '${versione}' invece di aggiungerne una nuova cambia a ` +
+                `posteriori il contenuto di un documento già citato in consents_log: se davvero ` +
+                `il testo reso non è cambiato, allora è rotto l'estrattore — lo dice la prova di ` +
+                `sanità qui sopra — e si ripara quello, non l'impronta.`,
+        ).toBe(IMPRONTE_PRIVACY[versione!]);
     });
 });

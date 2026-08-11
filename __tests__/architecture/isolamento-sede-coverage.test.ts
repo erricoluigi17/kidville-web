@@ -126,6 +126,33 @@ const METODI = 'GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS'
  */
 const USA_SERVICE_ROLE = /createAdminClient\s*\(|SUPABASE_SERVICE_ROLE_KEY/
 
+/**
+ * ⚠️ QUESTA REGEX SI APPLICA AL CODICE, NON ALLA PROSA. Non è un dettaglio di
+ * stile: fino al 2026-08-10 i due punti che la usano (`scopertureDelRepo` e il
+ * test dei NUMERI) la passavano sul sorgente GREZZO, commenti compresi, e una
+ * route ci finiva dentro per una parola scritta in una testata.
+ *
+ * MISURATO quel giorno, su tutte le 288 route di `src/app/api`: applicata al
+ * sorgente grezzo la regex prende 280 file, applicata al codice ne prende 279, e
+ * la differenza è UNA sola — `anagrafiche/comuni/route.ts`, che nomina
+ * `createAdminClient()` in un commento per spiegare che è `rateLimit()` ad
+ * aprirlo, e che non lo importa né lo chiama. Nessun altro file cambia lato:
+ * questa correzione non allenta il lock di un millimetro, toglie un falso
+ * positivo e basta.
+ *
+ * La difesa esisteva già ed era questo il solo punto del file che non la usava:
+ * `mascheraSorgente` è nata (vedi la sua testata in `__tests__/fixtures/sorgente.ts`)
+ * proprio perché in questo repo i commenti CITANO il codice che vietano — di
+ * `.eq('scuola_id', …)` dentro un commento ce ne sono a decine, scritti apposta —
+ * e ogni altro criterio di questo lock (`unitaDiQuery`, `rpcDi`, `helperDiScope`)
+ * legge già `senzaCommenti`. Un lock che conta la prosa non misura il codice: fa
+ * diventare rossa una riscrittura di un commento con un messaggio che parla di
+ * service role, cioè manda chi indaga esattamente dalla parte sbagliata.
+ */
+function usaServiceRole(src: string): boolean {
+    return USA_SERVICE_ROLE.test(mascheraSorgente(src).senzaCommenti)
+}
+
 /** `export const GET = withRoute(` — la granularità di questo lock. */
 const EXPORT_HANDLER = new RegExp(`export\\s+const\\s+(${METODI})\\s*=\\s*withRoute\\s*\\(`, 'g')
 
@@ -867,6 +894,31 @@ const AMMESSE: Record<string, string> = {
     'public/forms/[token]/upload:POST': 'token pubblico del modello',
     'iscrizione:<modulo>': 'modulo pubblico: la sede è scelta nel wizard e validata dentro la route',
     'iscrizione/model:GET': 'modulo pubblico: legge il modello di iscrizione, che è globale',
+    // ── `iscrizione/insegnanti:POST` NON È QUI, ed è una decisione misurata ───
+    //
+    // È l'INSERT pubblico del modulo «Lavora con noi»: un anonimo scrive una riga
+    // in `candidature_insegnanti`, che è una tabella CON `scuola_id` (fotografia
+    // del 2026-08-10). Sembra il caso da esentare — non c'è nessun utente da cui
+    // derivare uno scope — e invece l'esenzione non serve, perché il debito non
+    // esiste: l'INSERT la sede la DICHIARA (`scuola_id: scuolaId`), e quel valore
+    // non arriva crudo dal client — è accettato solo se compare fra le sedi note
+    // lette da `sediReali`, senza nessun default silenzioso. Con tre plessi, una
+    // route che «indovina» archivia la candidatura nel plesso sbagliato e la
+    // segreteria che l'aspetta crede che non sia mai arrivata.
+    //
+    // Una voce qui sarebbe una voce MORTA (il test «l'allowlist non contiene voci
+    // morte» la respingerebbe), e sarebbe peggio che inutile: spegnerebbe il
+    // sospetto su un handler che il lock guarda davvero. La differenza si misura
+    // togliendo `scuola_id` dall'INSERT — questo file torna rosso con
+    // `inserimento-senza-sede su candidature_insegnanti`.
+    //
+    // ⚠️ LIMITE DICHIARATO, perché nessuno lo scopra da solo: la regola d'insieme
+    // di questo lock è soddisfatta anche da `staffScuola(supabase, scuolaId, …)`,
+    // che nomina una sede per scegliere i destinatari della notifica. Cioè su
+    // questo handler il lock certifica che una sede si calcola, non che sia
+    // QUELLA a finire nella riga. A dimostrarlo è
+    // `__tests__/api/candidature-insegnanti-post.test.ts`, che asserisce
+    // `inserts[0].scuola_id` e il 400 sulla sede sconosciuta.
 
     // ── Gestione delle sedi stesse ───────────────────────────────────────────
     // ⚠️ Questa voce diceva «gestione sedi (Direzione): opera SULLE sedi, quindi
@@ -922,6 +974,27 @@ const AMMESSE: Record<string, string> = {
     // ── Oblio GDPR: per definizione NON si ferma al confine della sede ───────
     // Cancellare «solo nella mia sede» sarebbe una cancellazione finta.
     'gdpr/retention-iscrizioni:POST': 'conservazione a 24 mesi: come l\'oblio, deve valere su TUTTE le sedi — una domanda mai evasa scade allo stesso modo a Giugliano, Aversa e Cesa, e un filtro di sede qui lascerebbe indietro i plessi che il job non conosce. Nessun utente da cui derivare uno scope: la chiama pg_net.',
+    // Gemella della voce qui sopra, e per le stesse due ragioni — che vale la pena
+    // scrivere per esteso invece di rimandare, perché un'esenzione che si giustifica
+    // con «come quell'altra» è un'esenzione che nessuno ha più riletto.
+    //
+    // (1) UN TERMINE DI CONSERVAZIONE NON HA CONFINI DI SEDE. Il curriculum di chi si
+    //     candida scade dodici mesi dopo la ricezione a Giugliano esattamente come ad
+    //     Aversa e a Cesa: è una promessa fatta alla persona nell'informativa, non un
+    //     dato da mostrare a un utente. Un `.in('scuola_id', plessi)` qui non
+    //     proteggerebbe nessuno — lascerebbe indietro i plessi che il job non conosce,
+    //     e li lascerebbe indietro IN SILENZIO, perché il conteggio nel battito
+    //     direbbe comunque «ok».
+    // (2) NON C'È NESSUN UTENTE DA CUI DERIVARE UNO SCOPE. La chiamante è pg_net
+    //     (`candidature_retention_http()`, `5 5 * * *`), autenticata con l'header
+    //     `x-cron-secret`. Il lancio manuale dello staff passa da `requireStaff`, ma
+    //     fa lo stesso identico lavoro: la conservazione non è un elenco che cambia a
+    //     seconda di chi guarda.
+    //
+    // Le due righe che questo lock segnala sono la lettura delle candidature scadute
+    // e la loro cancellazione. La sede la porta comunque la riga (`scuola_id NOT NULL`
+    // con FK a `schools`): non si perde nulla, semplicemente non si filtra.
+    'gdpr/retention-candidature:POST': 'conservazione delle candidature spontanee (12 mesi, 24 col consenso), curriculum compreso: come l\'oblio, il termine deve valere su TUTTE le sedi — un curriculum scade allo stesso giorno a Giugliano, Aversa e Cesa, e un filtro di sede qui lascerebbe scoperti in silenzio i plessi che il job non conosce. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.',
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
     // fa il gate (`assertAlunnoInScope`, che il confine di sede lo verifica eccome,
@@ -1020,8 +1093,8 @@ function scopertureDelRepo(): { chiave: string; dettaglio: string }[] {
     for (const f of FILES) {
         const src = fs.readFileSync(f, 'utf8')
         // Solo il client service-role: dove c'è la RLS, il gate applicativo non è
-        // l'unico presidio.
-        if (!USA_SERVICE_ROLE.test(src)) continue
+        // l'unico presidio. Sul CODICE, non sui commenti: vedi `usaServiceRole`.
+        if (!usaServiceRole(src)) continue
         for (const s of scoperte(src)) {
             out.push({
                 chiave: `${nomeRoute(f)}:${s.handler}`,
@@ -1090,7 +1163,7 @@ describe('coverage-lock isolamento fra sedi', () => {
         // AMMESSE questo test diventa rosso e va aggiornato A MANO: è il momento
         // in cui la decisione passa sotto gli occhi di qualcuno. Un lock che si
         // allarga in silenzio non è un lock.
-        const serviceRole = FILES.filter((f) => USA_SERVICE_ROLE.test(fs.readFileSync(f, 'utf8')))
+        const serviceRole = FILES.filter((f) => usaServiceRole(fs.readFileSync(f, 'utf8')))
         const handlerControllati = new Set<string>()
         for (const f of serviceRole) {
             const { struttura } = mascheraSorgente(fs.readFileSync(f, 'utf8'))
@@ -1140,8 +1213,72 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (`unique_presenza_giornaliera`) — e la cancella con LE STESSE
             // chiavi, una delle quali è l'identità che `requireParentOfStudent`
             // ha appena verificato.
-            routeConServiceRole: 275,
-            handlerControllati: 436,
+            // 436 → 441 e 275 → 279 il 2026-08-10: sono QUATTRO route, nate lo
+            // stesso giorno con il modulo «Lavora con noi». Vale la pena
+            // nominarle una per una — un +4 senza attribuzione è il modo in cui
+            // una route entra in questo inventario senza che nessuno l'abbia
+            // guardata:
+            //
+            //  · `iscrizione/insegnanti:POST` — la porta PUBBLICA del modulo, ed
+            //    è l'unica che questa riga VERIFICA. NON porta esenzioni, ed è
+            //    il punto che vale la pena guardare: l'INSERT è anonimo, ma la
+            //    sede la DICHIARA, e la dichiara con un valore accettato solo se
+            //    compare fra le sedi note lette da `sediReali`. La ragione per
+            //    esteso sta in AMMESSE — dove la voce NON c'è, e c'è scritto
+            //    perché.
+            //  · `admin/candidature-insegnanti` — il cockpit di segreteria.
+            //  · `gdpr/retention-candidature:POST` — la conservazione delle
+            //    candidature, che porta con sé le proprie esenzioni (come
+            //    `gdpr/retention-iscrizioni:POST`: l'oblio non si ferma al
+            //    confine della sede).
+            //  · `admin/anagrafiche/codici-fiscali:GET` — la lettura dei codici
+            //    fiscali per la segreteria.
+            //
+            // Le ultime tre arrivano dalle corsie accanto e sono contate qui, non
+            // certificate: chi le ha scritte dichiara le proprie esenzioni sotto
+            // e muove `handlerEsentati`, che è la sola metà di questi tre numeri
+            // a misurare una difesa invece di un inventario — ed è rimasta FERMA
+            // a 91 in questo passaggio. Chi rilegge ricalcoli invece di fidarsi:
+            // il messaggio del test dice come.
+            // 🔻 441 → 442 e 279 → 280 il 2026-08-10, POI RIPORTATI a 441 e 279
+            // LO STESSO GIORNO, e la ragione va scritta per esteso perché è la
+            // trappola che questo file esiste per non ripetere.
+            //
+            // Quella riga diceva: «`anagrafiche/comuni:GET` … è passata a
+            // `createAdminClient` mentre questa riga veniva scritta. MISURATA,
+            // non dedotta». Era FALSA, e il modo in cui lo era è il punto: quella
+            // route non importa e non chiama `createAdminClient`, mai. Entrava in
+            // questo conteggio perché la sua TESTATA contiene la stringa
+            // `createAdminClient()` dentro un commento — la riga che spiega che è
+            // `rateLimit()` ad aprirlo — e `USA_SERVICE_ROLE` veniva applicata al
+            // sorgente GREZZO. La «misura» aveva misurato una prosa: riscrivere
+            // quel commento senza toccare una riga di codice faceva scendere il
+            // numero a 279.
+            //
+            // Corretto alla radice, non qui: la regex ora si applica al codice
+            // (`usaServiceRole`, in cima al file, con la misura che dice perché
+            // nessun altro file cambia lato). Questi due numeri tornano al valore
+            // vero, e `handlerEsentati` non si muove — nessun presidio è stato
+            // tolto, è sparito un falso positivo.
+            //
+            // Quello che resta VERO, e che nessuno tolga credendo di far pulizia:
+            // a runtime quella route TOCCA il database con il service role, in
+            // modo TRANSITIVO, perché `rateLimit()` apre il client e scrive sul
+            // contatore del tetto — una scrittura per richiesta, provocabile da un
+            // anonimo. Questo lock non lo vede e non deve pretendere di vederlo:
+            // legge il codice di un file `route.ts`, non il grafo dei moduli. Se
+            // il criterio fosse «service role per via transitiva», dentro
+            // dovrebbero starci tutte le route che chiamano `rateLimit(` — sono
+            // 21, misurate lo stesso giorno, e 19 sono già qui per una ragione
+            // loro (usano il client in proprio) mentre `chat/translate` e `logs`
+            // non ci sono affatto. Cioè: come voce transitiva questa era l'unica
+            // presente su tre, e per caso. Il perimetro di sede di quella route è
+            // dichiarato altrove ed è la scelta giusta: `PUBBLICHE` in
+            // `gate-coverage`, con la sua ragione scritta — un elenco di comuni
+            // italiani non è dato di nessuna sede, non c'è niente da isolare
+            // perché non c'è niente di nessuno.
+            routeConServiceRole: 279,
+            handlerControllati: 441,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1180,7 +1317,19 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Debito pagato, non presidio tolto: l'upsert su `presenze` ora
             // dichiara `scuola_id`. La differenza si misura togliendo quel campo
             // dalla route — questo lock torna rosso con `scrittura-senza-sede`.
-            handlerEsentati: 91,
+            //
+            // 91 → 92 il 2026-08-10: `gdpr/retention-candidature:POST`. È la sola
+            // fra le quattro route del modulo «Lavora con noi» che porta
+            // un'esenzione, ed è quella prevista dal commento accanto ai due
+            // numeri qui sopra: la conservazione, come l'oblio, non si ferma al
+            // confine della sede. La ragione per esteso sta in AMMESSE, e questo
+            // +1 è il momento in cui la decisione passa sotto gli occhi di
+            // qualcuno invece che in silenzio — che è tutto ciò per cui questo
+            // test esiste. Le altre tre (`iscrizione/insegnanti:POST`,
+            // `admin/candidature-insegnanti`, `admin/anagrafiche/codici-fiscali:GET`)
+            // restano a zero esenzioni: sono contate nei due numeri sopra e
+            // basta.
+            handlerEsentati: 92,
         })
     })
 })

@@ -82,9 +82,17 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
  * Con la scadenza qui sotto, il tetto non può costare più di
  * `ATTESA_MASSIMA_DB_MS` a nessuna richiesta.
  *
- * Le rotte che lo pagano sono 18, e le PUBBLICHE — quelle senza nessun gate
- * d'identità, cioè dove il costo lo paga un anonimo e il volume non lo decidiamo
- * noi — sono nove:
+ * ⚠️ QUESTO ELENCO È UN CONTEGGIO SCRITTO A MANO, cioè la cosa che questo stesso
+ * file spiega quanto costi credere. Fino al 2026-08-10 diceva «18 rotte, di cui nove
+ * pubbliche» ed era già indietro di due: `health:GET` (dal 04/08) non era mai stato
+ * aggiunto. Quindi, prima dei numeri, il modo per NON crederci:
+ *
+ *     grep -rl 'rateLimit(' src/app/api --include=route.ts | wc -l
+ *
+ * Misurato così il 2026-08-10: **21 file di route**. Le PUBBLICHE — quelle senza
+ * nessun gate d'identità, cioè dove il costo lo paga un anonimo e il volume non lo
+ * decidiamo noi; l'elenco autorevole è `PUBBLICHE` in
+ * `__tests__/architecture/gate-coverage.test.ts` — sono undici:
  *
  *     POST /api/iscrizione                    (5/10min)
  *     GET  /api/iscrizione/sedi              (30/10min)
@@ -95,9 +103,19 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
  *     POST /api/public/forms/[token]/upload  (30/10min)
  *     POST /api/public/cancellazione-account  (5/10min)
  *     POST /api/logs                          (per-IP, vedi la route)
+ *     GET  /api/health                        (per-IP, vedi la route)
+ *     GET  /api/anagrafiche/comuni           (60/10min)
  *
- * Tutte e nove parlano già con Postgres nello stesso handler: la connessione è
- * calda e la query è un accesso per chiave primaria. Il `PATCH /api/forms/send-otp`
+ * 🔻 Ne manca una, e la si dice invece di sbagliare il totale in due punti diversi:
+ * `POST /api/iscrizione/insegnanti` (3/ora) nasce in una corsia parallela nello
+ * stesso giorno e porterà le pubbliche a DODICI. Il conteggio va rifatto UNA volta
+ * sola, a corsie chiuse, con il `grep` qui sopra — non alzato di uno da ogni agente
+ * che passa, che è il modo in cui un numero scritto a mano diventa di nuovo falso.
+ *
+ * Tutte quante parlano già con Postgres nello stesso handler — tranne
+ * `anagrafiche/comuni`, che legge un file del repo e per cui il tetto è quindi
+ * l'UNICA andata e ritorno verso il database: lì il costo del contatore non si
+ * nasconde dentro una query che ci sarebbe comunque. Il `PATCH /api/forms/send-otp`
  * lo paga attraverso `limitaVerificaOtpOggetto` ed è l'unico caso in cui la
  * precisione del tetto ha un valore legale (vedi `otp-rate-limit.ts`).
  *

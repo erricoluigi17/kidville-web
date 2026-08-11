@@ -423,6 +423,198 @@ export const CODICI_ERRORE = {
      * ma direzioni opposte: un codice solo per entrambi mentirebbe metà delle volte.
      */
     ASSENZA_NON_ANNULLATA: 'erroreAssenzaNonAnnullata',
+
+    /* ── Candidature insegnanti (`/lavora-con-noi`) ──────────────────────────
+     *
+     * Il modulo è PUBBLICO, si compila dal telefono e senza login: è la porta
+     * con la platea più larga e meno assistita di tutta l'app. Nessuno di
+     * questi rifiuti può ricadere sulla prosa italiana del server — chi si
+     * candida può benissimo avere l'interfaccia in inglese, e non ha una
+     * segreteria a cui chiedere che cosa vuol dire quello che ha appena letto.
+     */
+
+    /**
+     * 500 — la candidatura NON è stata scritta (guasto PostgREST sull'INSERT, o
+     * l'eccezione del `catch` esterno).
+     *
+     * La frase invita a riprovare perché è l'unico rifiuto di questa rotta in cui
+     * il secondo tentativo può andare bene: tutti gli altri chiedono di cambiare
+     * qualcosa, o non si risolvono affatto da soli. Il motivo tecnico resta nel
+     * log: il `message` grezzo di PostgREST è prosa inglese con dentro nomi di
+     * colonne, e non è un'informazione per chi sta cercando lavoro.
+     */
+    CANDIDATURA_NON_INVIATA: 'erroreCandidaturaNonInviata',
+    /**
+     * 409 — da questo indirizzo email una candidatura è già arrivata ed è ancora
+     * in valutazione.
+     *
+     * ⚠️ NON SI USA SUL MODULO PUBBLICO. È riservato al COCKPIT DI SEGRETERIA,
+     * cioè alle rotte autenticate: quando una collega inserisce a mano una
+     * candidatura arrivata per posta e l'indice `candidature_insegnanti_email_viva`
+     * risponde `23505`, dirle che quella persona è già in valutazione le fa aprire
+     * la scheda che c'è invece di crearne una seconda.
+     *
+     * Sul modulo pubblico la stessa frase sarebbe un ORACOLO DI ENUMERAZIONE:
+     * chiunque, digitando l'indirizzo di una maestra, scoprirebbe se quella persona
+     * ha una candidatura aperta alla Kidville — che per un'insegnante attualmente
+     * impiegata altrove è precisamente l'informazione che non deve uscire. Il
+     * modulo è pubblico e senza login: non c'è nessun costo da pagare per provare
+     * un indirizzo, e nessuno a cui sia dovuta quella risposta.
+     *
+     * PERCIÒ `POST /api/iscrizione/insegnanti` RISPONDE `201` GENERICO ANCHE SUL
+     * DOPPIO INVIO, e la deduplicazione avviene in silenzio lato server (il `23505`
+     * si intercetta, si logga come `candidatura` e NON si racconta a chi ha
+     * compilato). Non è una perdita per chi rinvia il modulo temendo che il primo
+     * invio non sia passato: il `201` gli dice «ricevuta», che è esattamente la
+     * risposta che stava cercando — e gliela dà senza dire nulla su nessun altro.
+     *
+     * È anche la scelta che il repo fa già altrove: `POST /api/iscrizione`, che ha
+     * lo stesso identico problema di doppio invio sullo stesso modulo pubblico, non
+     * espone nessun codice equivalente.
+     *
+     * ⚠️ E C'È UNA PRESCRIZIONE CONTRARIA, SCRITTA PRIMA DI QUESTA, NEL FILE CHE CHI
+     * SCRIVERÀ LA ROUTE APRIRÀ DI SICURO. Il commento di
+     * `supabase/migrations/20260810094610_candidature_insegnanti.sql:58-60` — cioè
+     * proprio la migrazione che crea l'indice da cui il `23505` arriva — dice:
+     * «il secondo invio prende 23505, che la route traduce in 409 “l'abbiamo già
+     * ricevuta” — non in un doppione muto». Quel 409 sul modulo PUBBLICO è l'oracolo
+     * di enumerazione descritto qui sopra, ed è **SUPERATO da questa decisione**:
+     * sul pubblico si risponde `201` generico, `CANDIDATURA_GIA_INVIATA` è del
+     * COCKPIT autenticato — dove chi legge ha già titolo di vedere quella riga, e la
+     * frase serve a mandarlo sulla scheda esistente invece che a crearne una seconda.
+     * La frase della migrazione resta corretta per il cockpit e sbagliata per il
+     * modulo: chi corregge quel commento tolga «la route» e scriva «la route del
+     * cockpit». Nominarlo qui costa una riga; scoprirlo dopo il rilascio costa
+     * l'indirizzo di una maestra.
+     *
+     * ── ⚠️ E LE SEDI SONO TRE. Cosa succede al doppio invio a SEDE DIVERSA ──────
+     *
+     * Questa prescrizione era stata scritta senza guardare la FORMA dell'indice che
+     * genera il `23505`. Misurata il 2026-08-10 su `pg_indexes`:
+     *
+     *   CREATE UNIQUE INDEX candidature_insegnanti_email_viva
+     *     ON public.candidature_insegnanti USING btree (lower(email))
+     *     WHERE (stato = ANY (ARRAY['pending','in_approvazione']))
+     *
+     * `lower(email)` e basta: l'unicità è **GLOBALE**, non `(scuola_id, lower(email))`.
+     * Con Giugliano, Aversa e Cesa questo significa che la stessa persona che dopo
+     * una settimana si propone a una SECONDA sede prende `23505`, riceve il `201`
+     * «ricevuta» — e la segreteria di quella sede non vede mai niente, perché la
+     * riga esistente porta lo `scuola_id` della PRIMA.
+     *
+     * LA DECISIONE, scritta invece che lasciata implicita: **una candidatura viva
+     * vale per l'intera cooperativa.** Il datore di lavoro è uno solo («Scuola
+     * dell'infanzia La Favola soc. coop.»), la Direzione che valuta è una sola, e
+     * un curriculum duplicato in tre righe sarebbe tre volte lo stesso dato
+     * personale da conservare e da cancellare. L'indice globale è quindi la forma
+     * GIUSTA, non un difetto da correggere in migrazione.
+     *
+     * Ma «vale per tutte» ha un prezzo, e va pagato invece che taciuto — perché
+     * altrimenti la sede che non vede la candidatura crede che non sia arrivata:
+     *
+     *   1. IL COCKPIT DELLE CANDIDATURE NON SI FILTRA PER SEDE. È l'eccezione
+     *      dichiarata alla regola di isolamento di questo repo (AGENTS.md: «non
+     *      dare più per scontato che la sede sia una sola»), e sta in piedi solo
+     *      perché qui il dato NON è di una famiglia né di un minore: è la proposta
+     *      di un adulto a un unico datore di lavoro. `scuola_id` resta la sede di
+     *      PROVENIENZA — da dove la persona ha bussato — non un recinto di lettura.
+     *   2. IL `23505` NON È RUMORE, ed è l'informazione che si perde: dice che
+     *      quella persona ha bussato una seconda volta, e a un'altra porta. Va
+     *      loggato a livello **`warn`**, con lo `scuola_id` RICHIESTO ADESSO e l'id
+     *      della riga già viva. Non `info`: `candidatura` oggi non è in
+     *      `EVENTI_PERSISTITI` (ci entra insieme al ramo felice della route), e un
+     *      `info` su un evento non persistito vive qualche giorno sui Runtime Logs
+     *      di Vercel e poi sparisce — cioè non è interrogabile in SQL proprio
+     *      quando serve, che è quando la seconda segreteria chiede «è arrivata?».
+     *      Un `warn` invece si persiste PER LIVELLO, oggi, senza aspettare nessuna
+     *      promozione (`src/lib/logging/logger.ts`: `livello === 'error' ||
+     *      livello === 'warn' || EVENTI_PERSISTITI.has(evento)`).
+     *      Nel log ci vanno `scuola_id`, l'uuid della candidatura viva ed
+     *      `error_code: '23505'` — mai l'email, che è la chiave: `redact()` è a
+     *      lista bianca e la lascerebbe fuori comunque.
+     *
+     * Se un domani si decidesse il contrario — una candidatura per sede — non
+     * basta cambiare questo commento: va cambiato l'INDICE, in migrazione, a
+     * `(scuola_id, lower(email))`. Finché l'indice è quello misurato qui sopra,
+     * questa è la sola lettura vera.
+     */
+    CANDIDATURA_GIA_INVIATA: 'erroreCandidaturaGiaInviata',
+    /**
+     * 503 — le candidature non si possono ricevere adesso: il modulo è chiuso
+     * dalla Scuola, oppure la sede non è configurata per riceverle.
+     *
+     * NON riusa `CANDIDATURA_NON_INVIATA`, che invita a riprovare fra qualche
+     * minuto: qui riprovare non serve a niente, e mandare qualcuno a ritentare
+     * ogni cinque minuti una cosa che non può riuscire è peggio di non dire
+     * nulla. La frase indirizza alla segreteria, che è l'unica via d'uscita.
+     */
+    CANDIDATURE_NON_DISPONIBILI: 'erroreCandidatureNonDisponibili',
+    /**
+     * 404 — la candidatura chiesta per id non è apribile dal cockpit.
+     *
+     * Un solo codice per due situazioni, come per `DOMANDA_NON_APRIBILE` e per la
+     * stessa ragione: non esiste, oppure esiste ed è di un'altra sede.
+     * Distinguerle direbbe a chi non ha titolo di vederla che quella candidatura
+     * c'è — e da lì esce il curriculum di una persona. La differenza vive nel log.
+     */
+    CANDIDATURA_NON_TROVATA: 'erroreCandidaturaNonTrovata',
+    /**
+     * 409 — la candidatura è già stata evasa (accolta o rifiutata) da qualcun
+     * altro: non si valuta due volte.
+     *
+     * È il rifiuto di due schede aperte sulla stessa riga, e va detto come tale:
+     * un 500 generico farebbe premere «Accetta» all'infinito, e la seconda
+     * decisione sovrascriverebbe in silenzio quella di una collega. La frase dice
+     * di ricaricare, perché lo stato vero è già in tabella.
+     */
+    CANDIDATURA_GIA_EVASA: 'erroreCandidaturaGiaEvasa',
+    /**
+     * 409 — l'email della candidatura appartiene GIÀ a un account del personale:
+     * l'approvazione si fermerebbe alla creazione delle credenziali.
+     *
+     * Il rifiuto arriva a chi sta in segreteria, non a chi si è candidato, e per
+     * questo la frase dice cosa fare: la persona un accesso ce l'ha già, va
+     * collegata all'account esistente invece di crearne un secondo. Due account
+     * per la stessa insegnante significano un registro diviso in due.
+     */
+    CANDIDATURA_EMAIL_GIA_STAFF: 'erroreCandidaturaEmailGiaStaff',
+    /**
+     * 409 — la stessa email è già quella di un GENITORE.
+     *
+     * Ha un codice suo e non riusa quello del personale, perché il rimedio è
+     * l'opposto: lì si collega un account che ha già il ruolo giusto, qui no —
+     * la stessa persona può essere insegnante *e* genitore di un bambino della
+     * Scuola, e sovrascriverle il ruolo le toglierebbe l'accesso ai suoi figli.
+     * Un codice solo per i due casi manderebbe la segreteria a fare la mossa
+     * sbagliata metà delle volte.
+     */
+    CANDIDATURA_EMAIL_GIA_GENITORE: 'erroreCandidaturaEmailGiaGenitore',
+    /**
+     * 503 — il COCKPIT delle candidature (segreteria e Direzione) non è riuscito
+     * a leggere o a evadere: tabella non ancora migrata, lettura fallita, claim
+     * non riuscito, curriculum non firmabile, account non creato.
+     *
+     * NON riusa `CANDIDATURE_NON_DISPONIBILI`, che è della PORTA PUBBLICA: quella
+     * frase dice «non possiamo ricevere candidature… oppure scrivi alla segreteria
+     * della scuola», cioè manda la segreteria a scrivere a sé stessa, e la sua
+     * documentazione dichiara che riprovare non serve a niente — mentre qui
+     * riprovare è esattamente il rimedio. Un codice solo per due situazioni con
+     * rimedi opposti è la stessa bugia del 404 su un guasto, con un altro numero.
+     */
+    CANDIDATURE_OPERAZIONE_NON_RIUSCITA: 'erroreCandidatureOperazioneNonRiuscita',
+    /**
+     * 500 — l'anagrafica non si è potuta leggere, quindi il pannello «Codici
+     * fiscali da verificare» (`GET /api/admin/anagrafiche/codici-fiscali`) non ha
+     * verificato NIENTE.
+     *
+     * Ha un codice suo, e a livello 500, perché il guasto è NOSTRO e va detto
+     * come tale. Un elenco vuoto sarebbe indistinguibile da «va tutto bene»:
+     * esattamente il contrario di ciò che è successo, e la lettura più
+     * pericolosa che quel pannello possa dare. Il `message` di PostgREST resta
+     * nel log — è prosa inglese con dentro nomi di colonne — e la frase qui
+     * dice solo che non si è potuto guardare.
+     */
+    VERIFICA_CODICI_FISCALI_NON_RIUSCITA: 'erroreVerificaCodiciFiscaliNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

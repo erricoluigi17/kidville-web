@@ -648,10 +648,29 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           <label
                             key={s.id}
                             htmlFor={`sede-${s.id}`}
-                            className={`flex items-center gap-3 px-4 py-3.5 rounded-xl border cursor-pointer transition-all focus-within:ring-2 focus-within:ring-kidville-green focus-within:ring-offset-2 ${
+                            /* Niente `focus-within:ring-*`: l'anello lo disegna
+                               `:focus-visible` sul radio, come sulle card che
+                               rende `FieldRenderer` nei passi successivi di
+                               QUESTO stesso modulo. Tenerlo qui e non là (o
+                               viceversa) vuol dire due segni del fuoco diversi
+                               nella stessa schermata, ed è il rilievo chiuso
+                               l'11/08/2026 sul modulo insegnanti: sull'`input`
+                               `outline: 2px solid rgb(0,106,95)` e sulla
+                               `<label>` un secondo anello da 4px, concentrico. */
+                            className={`flex items-center gap-3 px-4 py-3.5 rounded-xl border cursor-pointer transition-all ${
                               scelta
                                 ? 'border-kidville-green bg-kidville-green-soft'
-                                : 'border-kidville-line bg-kidville-white hover:border-kidville-green/40'
+                                /* `neutral` e non `line`: misurato l'11/08/2026, `--color-kidville-line`
+                                   (#EFE7DC) su fondo crema fa **1,10:1**, cioè un contorno che a
+                                   occhio non esiste — e qui il riempimento bianco su crema aggiunge
+                                   appena 1,11:1, quindi quel bordo è l'UNICO indizio di dove
+                                   finisce una sede e comincia l'altra. Con `neutral` la regola per
+                                   superficie di `globals.css` (§ «il confine di una card di scelta»)
+                                   lo porta a 5,82:1, e in Alto Contrasto a nero pieno. Non è una
+                                   scelta estetica: WCAG 1.4.11 chiede 3:1 al confine di un
+                                   componente, e questa è la schermata su cui 375 famiglie hanno
+                                   scelto il plesso del proprio figlio. */
+                                : 'border-kidville-neutral bg-kidville-white hover:border-kidville-green/40'
                             }`}
                           >
                             <input

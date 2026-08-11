@@ -1,0 +1,1529 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import { useTranslations } from 'next-intl'
+import { useDateFormat } from '@/lib/i18n/date'
+import {
+  AlertTriangle, CheckCircle2, ChevronLeft, Clock, ExternalLink, FileText,
+  KeyRound, Loader2, Mail, MapPin, UserCheck, Users, XCircle,
+} from 'lucide-react'
+import { StatCard } from '@/components/ui/cockpit'
+import { GRADI_OPTIONS } from '@/lib/forms/insegnanti-template'
+import { LIMITE_ISCRIZIONI_DEFAULT } from '@/lib/api/paginazione'
+import { useSediAttive } from '@/lib/context/sede-context'
+import { useAdminIdentity } from '@/lib/context/admin-identity'
+import { logClient, nomeErrore } from '@/lib/logging/client'
+import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
+
+/**
+ * IL COCKPIT DELLE CANDIDATURE — lato segreteria del modulo `/lavora-con-noi`.
+ *
+ * ── PERCHÉ L'ELENCO È POVERO ─────────────────────────────────────────────────
+ * È la stessa lezione di «Moduli ricevuti» (`ModuliRicevuti.tsx:33-42`), e la
+ * route la applica già dal suo lato (`COLONNE_ELENCO`): in lista escono solo i
+ * campi che servono a RICONOSCERE una candidatura — chi è, per quali fasce, in
+ * quale stato, di quando. Email, telefono, titolo di studio, presentazione e
+ * curriculum arrivano da `GET ?id=<uuid>`, cioè quando qualcuno apre QUELLA
+ * candidatura: un gesto deliberato, e uno alla volta.
+ *
+ * Questo componente NON si limita a fidarsi della route: non disegna nemmeno i
+ * campi del dettaglio a partire dalla riga d'elenco. Se domani la proiezione del
+ * server tornasse generosa, l'elenco resterebbe povero lo stesso — il posto in
+ * cui un recapito può comparire è uno solo, ed è il pannello di dettaglio.
+ *
+ * ── PERCHÉ OGNI RICHIESTA PORTA UN GETTONE ──────────────────────────────────
+ * Due clic ravvicinati su due candidature diverse sono due `fetch` in volo, e
+ * senza un gettone vince la risposta che arriva per ULTIMA, non il clic fatto
+ * per ultimo: il pannello si rimpiazza da solo con la persona sbagliata, mentre
+ * il pulsante «Approva» agisce su `selezionata.id`. Qui ogni apertura e ogni
+ * caricamento d'elenco incrementano un contatore, e la risposta che non
+ * corrisponde all'ultimo gesto viene SCARTATA — compreso lo spegnimento del velo
+ * di caricamento, che altrimenti lo spegneva la prima risposta arrivata mentre
+ * un'altra era ancora in volo.
+ *
+ * Il gettone del dettaglio copre anche la `PATCH`, ed è lì che conta di più: la
+ * PATCH dura SECONDI veri (crea un'utenza e manda un'email), quindi la finestra
+ * in cui si può aprire un'altra candidatura è enorme rispetto a quella di una
+ * lettura. Fino al 2026-08-11 non ce l'aveva: la risposta atterrava sul pannello
+ * aperto in quel momento, e ci scriveva la password dell'account di un'ALTRA
+ * persona, timbrava `approvata` su una riga ancora in attesa e faceva sparire i
+ * due pulsanti. Adesso quell'esito viene scartato — e DETTO, perché l'account è
+ * stato creato lo stesso e chi ha premuto «Confermo» deve sapere dove guardare.
+ *
+ * Anche CHIUDERE il pannello («Indietro») avanza il gettone: è un cambio
+ * d'apertura come un altro, e senza quella riga la risposta della PATCH tornava
+ * su un pannello che non c'era più — cioè `esito` e `avvisi` si scrivevano dentro
+ * un componente non montato e a schermo non restava NIENTE. Non un avviso, non la
+ * password, non la frase del server che diceva che l'email non era partita:
+ * account docente creato, credenziali perse, e nessuno che lo sapesse.
+ *
+ * ── DOVE FINISCE UN ESITO CHE NON SI PUÒ MOSTRARE ───────────────────────────
+ * In un avviso fuori dal pannello, che NOMINA la persona e riporta l'esito per
+ * intero, credenziali comprese: la password è monouso e non è archiviata da
+ * nessuna parte, quindi buttarla vuol dire una reimpostazione obbligata — e con
+ * l'email delle credenziali non partita vuol dire una docente che non entra mai.
+ * Le voci si ACCUMULANO e se ne vanno solo con un gesto: fino al 2026-08-11
+ * bastava aprire un'altra candidatura per azzerarle, cioè due clic.
+ *
+ * Le righe dell'elenco NON si spengono durante l'operazione, di proposito: la
+ * PATCH dura secondi, e una segreteria che nel frattempo non può nemmeno leggere
+ * un'altra candidatura è una schermata che sembra rotta. La difesa sta nella
+ * risposta, non nel gesto. Per la stessa ragione l'operazione in corso è legata
+ * all'`id` su cui si sta agendo: il pannello di un'ALTRA candidatura non deve
+ * ritrovarsi i pulsanti spenti senza sapere perché.
+ *
+ * ── PERCHÉ «MOSTRA ALTRE» SI SPEGNE DURANTE UNA RILETTURA ───────────────────
+ * `caricaAltre` ACCODA a ciò che è a schermo. Se una rilettura d'elenco (cambio
+ * sede, o la ricarica dopo un'azione) è ancora in volo, ciò che è a schermo è la
+ * lista VECCHIA e l'offset è calcolato su quella: accodare vorrebbe dire mettere
+ * la pagina 2 della sede nuova in coda alle righe della sede vecchia. In un repo
+ * con tre sedi vere un elenco che mescola plessi è la classe di difetto già
+ * pagata dall'audit multi-sede, quindi il pulsante si spegne finché la rilettura
+ * non è atterrata. Per la stessa ragione `caricaAltre` LEGGE il gettone senza
+ * incrementarlo: un'accodatura non è un'identità d'elenco nuova, e incrementando
+ * scartava la rilettura in corso invece di lasciarsi scartare da lei.
+ *
+ * ── PERCHÉ LE AZIONI SONO DISABILITATE PER LA SEGRETERIA ────────────────────
+ * `PATCH` è riservata alla Direzione (`requireStaff(request, ['admin',
+ * 'coordinator'])`): approvare CREA UN ACCOUNT DOCENTE, e un account docente
+ * legge l'anagrafica dei bambini. Il gate vero è sul server e resta lì; qui i
+ * pulsanti si mostrano SPENTI, con scritto il perché — scoprire il 403 dopo il
+ * clic è il modo in cui un divieto legittimo si presenta come un guasto.
+ *
+ * ── PERCHÉ `in_approvazione` NON È AZIONABILE ───────────────────────────────
+ * La route risponde `success: true` con `stato: 'in_approvazione'` quando
+ * l'account docente È STATO CREATO ma la riga non è stata marcata come approvata
+ * (`route.ts:865`). È un successo a metà, e va detto con parole sue: intestare
+ * quel riquadro «Candidatura approvata» mentre il badge accanto dice «In
+ * approvazione» sono due frasi contraddittorie nello stesso pannello. Da lì in
+ * poi i due pulsanti restano SPENTI — «Rifiuta» è accettato dal server anche su
+ * `in_approvazione` (`route.ts:893`) e manderebbe un'email di esito negativo a
+ * una persona a cui le credenziali sono già state spedite.
+ *
+ * ── PERCHÉ MAI `alert()` ─────────────────────────────────────────────────────
+ * Gli errori si mostrano in pagina, in una regione `role="alert"`, e non fanno
+ * perdere quello che si stava scrivendo (il motivo del rifiuto è un testo
+ * libero: un `alert` che chiude tutto lo butterebbe via).
+ */
+
+/** La riga d'ELENCO: esattamente le colonne che la route proietta in lista. */
+interface RigaElenco {
+  id: string
+  scuola_id?: string | null
+  stato: string
+  nome?: string | null
+  cognome?: string | null
+  gradi?: unknown
+  creata_il?: string | null
+}
+
+/** La candidatura APERTA: la riga d'elenco più tutto ciò che arriva da `?id=`. */
+interface Candidatura extends RigaElenco {
+  email?: string | null
+  telefono?: string | null
+  residence_city?: string | null
+  residence_province?: string | null
+  titolo_studio?: string | null
+  titolo_dettaglio?: string | null
+  anni_esperienza?: number | null
+  disponibilita?: string | null
+  note?: string | null
+  cv_path?: string | null
+  motivo_rifiuto?: string | null
+}
+
+/**
+ * L'esito di un'azione della Direzione, mostrato una volta e poi congedato.
+ *
+ * `stato` è quello che ha risposto il SERVER, non quello che si era chiesto: è
+ * l'unica fonte che distingue un'approvazione chiusa da una rimasta a metà.
+ */
+interface Esito {
+  azione: 'approva' | 'rifiuta'
+  stato: string | null
+  credentials?: { email: string; password: string } | null
+  credentialsEmailSent?: boolean
+  esitoEmailInviato?: boolean
+}
+
+/**
+ * Un esito che NON si è potuto mostrare nel pannello, perché nel frattempo quel
+ * pannello era stato chiuso o ne era stata aperta un'altra candidatura.
+ *
+ * Non è una notifica di cortesia. Sul ramo «approva» l'account docente ESISTE, e
+ * la password monouso non è archiviata da nessuna parte: questo avviso è l'unica
+ * copia che ne esista. Fino al 2026-08-11 era una stringa sola, azzerata a ogni
+ * apertura successiva — bastavano due clic durante una PATCH che dura secondi per
+ * portarsi via account creato, credenziali e avvisi del server, e a schermo non
+ * restava niente. Adesso le voci si ACCUMULANO e se ne vanno solo con un gesto.
+ *
+ * `esito` è quello che ha risposto il SERVER; è `null` quando l'operazione non è
+ * riuscita, e allora `guasto` dice quale delle due cose è successa — perché
+ * «l'account è stato creato» e «il server ha rifiutato» sono frasi opposte e
+ * dirne una per l'altra è il difetto, non la sua correzione.
+ */
+interface EsitoScartato {
+  chiave: number
+  nome: string
+  esito: Esito | null
+  avvisi: string[]
+  guasto: 'respinta' | 'senzaRisposta' | null
+}
+
+const ROUTE_LOG = '/admin/modulistica'
+const API = '/api/admin/candidature-insegnanti'
+
+/** Gli stati che il server usa in colonna, e la chiave i18n del loro badge. */
+const CHIAVE_STATO: Record<string, string> = {
+  pending: 'candStatoAttesa',
+  in_approvazione: 'candStatoInApprovazione',
+  approvata: 'candStatoApprovata',
+  rifiutata: 'candStatoRifiutata',
+}
+
+/** Il colore del badge di stato: solo token, mai un hex (Alto Contrasto). */
+const TINTA_STATO: Record<string, string> = {
+  pending: 'bg-kidville-warn-soft text-kidville-warn-strong',
+  in_approvazione: 'bg-kidville-info-soft text-kidville-info-strong',
+  approvata: 'bg-kidville-success-soft text-kidville-success-strong',
+  rifiutata: 'bg-kidville-error-soft text-kidville-error-strong',
+}
+
+/** Le fasce, con la chiave i18n di ciascuna: l'ordine è quello del template. */
+const CHIAVE_GRADO: Record<string, string> = {
+  nido: 'candGradoNido',
+  infanzia: 'candGradoInfanzia',
+  primaria: 'candGradoPrimaria',
+}
+
+/**
+ * Titolo di studio e disponibilità: enum in tabella, ETICHETTE a schermo.
+ *
+ * Sono due dei tre campi da cui dipende la decisione, e fino al 2026-08-11 in
+ * segreteria si leggevano come valori di database — `laurea_magistrale`,
+ * `tempo_pieno`, con l'underscore — in italiano come in inglese, mentre le fasce
+ * accanto erano tradotte. Le etichette del template (`TITOLI_STUDIO`,
+ * `DISPONIBILITA` in `insegnanti-template.ts`) sono italiane per costruzione:
+ * servono al modulo pubblico, non a un cockpit bilingue. Quindi qui si passa
+ * dal catalogo, come per i gradi, e il lock in coda al test verifica che ogni
+ * valore dell'enum abbia la sua chiave.
+ *
+ * Un valore FUORI enum resta grezzo: nasconderlo direbbe che il campo è vuoto.
+ */
+const CHIAVE_TITOLO: Record<string, string> = {
+  diploma: 'candTitoloDiploma',
+  magistrale: 'candTitoloMagistrale',
+  laurea_triennale: 'candTitoloLaureaTriennale',
+  laurea_magistrale: 'candTitoloLaureaMagistrale',
+  formazione_primaria: 'candTitoloFormazionePrimaria',
+  master: 'candTitoloMaster',
+  altro: 'candTitoloAltro',
+}
+
+const CHIAVE_DISPONIBILITA: Record<string, string> = {
+  tempo_pieno: 'candDispTempoPieno',
+  part_time_mattina: 'candDispPartTimeMattina',
+  part_time_pomeriggio: 'candDispPartTimePomeriggio',
+  supplenze: 'candDispSupplenze',
+  tirocinio: 'candDispTirocinio',
+}
+
+const ORDINE_GRADI = GRADI_OPTIONS.map((o) => String(o.value))
+
+/**
+ * Le fasce della candidatura, ordinate come nel modulo pubblico e senza
+ * doppioni. Un valore FUORI dall'enum non si butta: si mostra grezzo, perché
+ * nasconderlo direbbe alla Direzione che quella candidatura non ha fasce
+ * mentre in tabella ce n'è una che il pannello Personale dovrà sistemare.
+ */
+function gradiOrdinati(grezzi: unknown): string[] {
+  if (!Array.isArray(grezzi)) return []
+  const presenti = [...new Set(grezzi.map((g) => String(g)).filter((g) => g !== ''))]
+  return [
+    ...ORDINE_GRADI.filter((g) => presenti.includes(g)),
+    ...presenti.filter((g) => !ORDINE_GRADI.includes(g)),
+  ]
+}
+
+/**
+ * L'esito e gli avvisi, letti dal corpo della PATCH.
+ *
+ * Vivono qui, in un posto solo, perché li leggono DUE strade — il riquadro nel
+ * pannello e l'avviso dell'esito scartato — e una regola valida per due strade
+ * che se ne sta in due copie diverge alla prima modifica.
+ */
+function esitoDaRisposta(
+  azione: 'approva' | 'rifiuta',
+  stato: string | null,
+  json: unknown,
+): Esito {
+  const corpo = (json ?? {}) as Record<string, unknown>
+  return {
+    azione,
+    stato,
+    credentials: (corpo.credentials as Esito['credentials']) ?? null,
+    credentialsEmailSent: corpo.credentialsEmailSent === true,
+    esitoEmailInviato: corpo.esitoEmailInviato === true,
+  }
+}
+
+function avvisiDaRisposta(json: unknown): string[] {
+  const w = ((json ?? {}) as Record<string, unknown>).warnings
+  return Array.isArray(w) ? (w as string[]) : []
+}
+
+/** Accoda una pagina DEDUPLICANDO per `id`: l'offset conta le righe già viste. */
+function accoda(precedenti: RigaElenco[], nuove: RigaElenco[]): RigaElenco[] {
+  const perId = new Map(precedenti.map((r) => [r.id, r]))
+  for (const riga of nuove) perId.set(riga.id, riga)
+  return [...perId.values()]
+}
+
+export function CandidatureInsegnanti() {
+  const t = useTranslations('adminAltro')
+  const f = useDateFormat()
+  const { reFetchKey, sedi } = useSediAttive()
+  const { ruolo } = useAdminIdentity()
+
+  const [righe, setRighe] = useState<RigaElenco[]>([])
+  const [totale, setTotale] = useState(0)
+  // «La pagina è tornata più corta del limite», cioè: non ce n'è un'altra. È il
+  // secondo segnale, e serve perché dalla pagina 2 in poi `total` può mancare:
+  // con il solo `righe.length < totale` un `total` rimasto vecchio lascia
+  // «Mostra altre» acceso per sempre su un elenco che non cresce più.
+  const [finePagine, setFinePagine] = useState(false)
+  const [caricamento, setCaricamento] = useState(true)
+  const [caricandoAltre, setCaricandoAltre] = useState(false)
+  /**
+   * Una rilettura d'elenco è in volo (cambio sede, ritenta, ricarica dopo
+   * un'azione). NON è `caricamento`, che è il velo della prima apertura: qui le
+   * righe restano a schermo, e l'unica cosa che cambia è che «Mostra altre» si
+   * spegne — accodare a una lista che sta per essere sostituita mescolerebbe due
+   * plessi. Alzare `caricamento` non è un'alternativa: sostituirebbe l'intera
+   * griglia, e quindi anche il riquadro con le credenziali appena generate.
+   */
+  const [ricaricaInVolo, setRicaricaInVolo] = useState(false)
+  /**
+   * L'ULTIMA lettura d'elenco è FALLITA. Serve a tenere separati due stati che
+   * altrimenti collassano in uno: «l'archivio è vuoto» e «l'archivio non si è
+   * riusciti a leggerlo». Con zero righe si disegnava «Nessuna candidatura
+   * ricevuta.» anche con la GET a 503 — un'affermazione di fatto FALSA, in
+   * inchiostro neutro, accanto all'avviso rosso che diceva il contrario.
+   */
+  const [letturaFallita, setLetturaFallita] = useState(false)
+  const [aprendo, setAprendo] = useState<string | null>(null)
+  const [selezionata, setSelezionata] = useState<Candidatura | null>(null)
+  const [conferma, setConferma] = useState<'approva' | 'rifiuta' | null>(null)
+  const [motivo, setMotivo] = useState('')
+  // SPENTA di default, ed è una scelta: l'email di esito negativo si manda
+  // quando qualcuno decide di mandarla, non perché la casella era già segnata.
+  const [avvisaEmail, setAvvisaEmail] = useState(false)
+  /**
+   * L'`id` della candidatura su cui una PATCH è in volo — non un booleano.
+   *
+   * Era `lavorando: boolean`, cioè uno stato CONDIVISO fra tutte le candidature:
+   * mentre la PATCH su Anna viaggiava (secondi veri), chi apriva Bruno trovava i
+   * suoi due pulsanti spenti, senza `title` e senza una riga che dicesse perché —
+   * proprio l'anti-pattern che l'intestazione di questo file si impegna a evitare.
+   * Legandolo all'`id`, il pannello di Bruno non risente dell'operazione di Anna,
+   * e riaprendo ANNA i pulsanti restano spenti (giusto: non si fa partire due
+   * volte la stessa PATCH) ma adesso con il motivo scritto.
+   */
+  const [lavorandoSu, setLavorandoSu] = useState<string | null>(null)
+  const [errore, setErrore] = useState<string | null>(null)
+  const [esito, setEsito] = useState<Esito | null>(null)
+  /**
+   * Gli avvisi del server vivono FUORI dal riquadro congedabile.
+   *
+   * Prima stavano dentro, e con «Ho preso nota» se ne andava anche la sola frase
+   * che diceva che l'account era stato creato lo stesso: l'unica traccia che
+   * esiste un docente nuovo spariva insieme al riquadro che la conteneva.
+   */
+  const [avvisi, setAvvisi] = useState<string[]>([])
+  /** La URL firmata del curriculum, quando il browser ha bloccato la finestra. */
+  const [cvBloccato, setCvBloccato] = useState<string | null>(null)
+  /**
+   * Gli esiti che NON si sono potuti mostrare nel pannello. Scartare è giusto;
+   * scartare in SILENZIO no: su «approva» l'account docente esiste comunque, e
+   * la sua password monouso non esiste da nessun'altra parte.
+   *
+   * Si ACCUMULANO e non si azzerano aprendo un'altra candidatura: erano l'unica
+   * traccia di un account creato, e due clic se la portavano via.
+   */
+  const [esitiScartati, setEsitiScartati] = useState<EsitoScartato[]>([])
+
+  // I gettoni: uno per l'elenco, uno per il dettaglio. Vedi il commento in cima.
+  const gettoneElenco = useRef(0)
+  const gettoneDettaglio = useRef(0)
+  /** Solo la `key` React delle voci scartate: due esiti possono avere lo stesso nome. */
+  const contatoreScartati = useRef(0)
+
+  /** Registra un esito scartato in coda a quelli che sono già a schermo. */
+  function annotaScartato(voce: Omit<EsitoScartato, 'chiave'>) {
+    setEsitiScartati((prec) => [...prec, { ...voce, chiave: ++contatoreScartati.current }])
+  }
+
+  /**
+   * La Direzione, lato client. Il gate VERO è il `requireStaff(['admin',
+   * 'coordinator'])` della route: questo serve solo a non far scoprire il
+   * divieto dopo il clic. `ruolo` nasce vuoto e arriva da una fetch, quindi
+   * «non ancora saputo» e «segreteria» sono due cose diverse e si dicono con
+   * due frasi diverse.
+   */
+  const ruoloRisolto = ruolo !== ''
+  const isDirezione = ruolo === 'admin' || ruolo === 'coordinator'
+  const motivoBlocco = !ruoloRisolto ? t('candRuoloInCorso') : t('candSoloDirezione')
+
+  // Un uuid non dice niente a nessuno: la sede si risolve nel nome del plesso.
+  const nomeSede = (scuolaId?: string | null) =>
+    sedi.find((s) => s.id === scuolaId)?.nome ?? t('candSedeSconosciuta')
+
+  const etichettaGrado = (g: string) => (CHIAVE_GRADO[g] ? t(CHIAVE_GRADO[g]) : g)
+
+  /** L'etichetta di un enum, o il valore grezzo se è fuori dall'elenco chiuso. */
+  const daCatalogo = (mappa: Record<string, string>, valore?: string | null) => {
+    const grezzo = (valore ?? '').trim()
+    if (grezzo === '') return null
+    return mappa[grezzo] ? t(mappa[grezzo]) : grezzo
+  }
+
+  const nomeCompleto = (r: RigaElenco | Candidatura) =>
+    [r.nome ?? '', r.cognome ?? ''].map((s) => s.trim()).filter(Boolean).join(' ')
+    || t('candSenzaNome')
+
+  async function carica(sediKey: string) {
+    const mio = ++gettoneElenco.current
+    setRicaricaInVolo(true)
+    try {
+      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0`, {
+        headers: { 'x-sedi': sediKey },
+      })
+      if (!res.ok) {
+        const messaggio = await messaggioErrore(res, t('candErroreElenco'))
+        if (mio === gettoneElenco.current) {
+          setErrore(messaggio)
+          setLetturaFallita(true)
+        }
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `candidature-elenco-non-caricato: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      const json = await res.json()
+      // La risposta di una richiesta SUPERATA non si scrive: se nel frattempo le
+      // sedi sono cambiate, l'elenco a schermo sarebbe quello del plesso di prima.
+      if (mio !== gettoneElenco.current) return
+      if (Array.isArray(json?.data)) {
+        setRighe(json.data as RigaElenco[])
+        // `total` è il conteggio ESATTO del server: con 60 candidature su 200,
+        // la lunghezza della pagina direbbe «60» e nessuno saprebbe delle altre.
+        setTotale(typeof json.total === 'number' ? json.total : json.data.length)
+        // La prima pagina porta con sé il suo `total`, che è fresco: da qui si
+        // riparte fidandosi di quello, e `finePagine` torna a essere una domanda
+        // aperta che risponderà la prima pagina successiva.
+        setFinePagine(false)
+        setErrore(null)
+        setLetturaFallita(false)
+      } else {
+        // 200 con un corpo che non è un elenco: è una lettura FALLITA quanto un
+        // 503, e prima finiva in silenzio — nessun avviso, e a schermo lo stesso
+        // riquadro dell'archivio vuoto.
+        setErrore(t('candErroreElenco'))
+        setLetturaFallita(true)
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: 'candidature-elenco-corpo-inatteso: data non è un elenco',
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+      }
+    } catch (e) {
+      if (mio === gettoneElenco.current) {
+        setErrore(t('candErroreElenco'))
+        setLetturaFallita(true)
+      }
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidature-elenco-fallito: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    } finally {
+      if (mio === gettoneElenco.current) {
+        setCaricamento(false)
+        setRicaricaInVolo(false)
+      }
+    }
+  }
+
+  /** Il ritenta del riquadro «elenco non letto»: rimette il velo e rilegge. */
+  function riprovaElenco() {
+    setCaricamento(true)
+    void carica(reFetchKey)
+  }
+
+  /**
+   * Si ricarica quando cambiano le sedi attive, e SOLO per quello.
+   *
+   * `carica` non è fra le dipendenze e NON serve una deroga: l'effetto chiama la
+   * versione più fresca passando da un `ref`, e un ref è stabile per costruzione.
+   *
+   * Perché non `useCallback`: `carica` usa `t()`, e `t` non è stabile — nel banco
+   * di prova `test/setup.ts` `useTranslations` costruisce una funzione NUOVA a
+   * ogni chiamata, quindi `useCallback(carica, [t])` produrrebbe un `carica`
+   * diverso a ogni render e l'effetto rifarebbe la fetch all'infinito. (La
+   * ragione scritta qui fino al 2026-08-11 era sbagliata: diceva che la deroga
+   * serviva «perché usa `t()`», mentre una dichiarazione di funzione nel corpo
+   * del componente è nuova a ogni render qualunque cosa contenga. Un commento che
+   * spiega male una deroga è peggio di nessun commento: il prossimo lo usa come
+   * precedente.)
+   */
+  const caricaRef = useRef(carica)
+  useEffect(() => { caricaRef.current = carica })
+  useEffect(() => { caricaRef.current(reFetchKey) }, [reFetchKey])
+
+  /** Pagina successiva, in coda a quelle già mostrate. */
+  async function caricaAltre() {
+    // Il gettone si LEGGE, non si incrementa: accodare non crea un'identità
+    // d'elenco nuova. Incrementandolo, un clic su «Mostra altre» scartava una
+    // rilettura per cambio sede ancora in volo e accodava la pagina della sede
+    // nuova alle righe di quella vecchia; così invece è l'accodatura a essere
+    // scartata se una rilettura arriva dopo, che è il verso giusto.
+    const mio = gettoneElenco.current
+    setCaricandoAltre(true)
+    try {
+      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${righe.length}`, {
+        headers: { 'x-sedi': reFetchKey },
+      })
+      if (!res.ok) {
+        const messaggio = await messaggioErrore(res, t('candErrorePagina'))
+        if (mio === gettoneElenco.current) setErrore(messaggio)
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `candidature-pagina-non-caricata: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      const json = await res.json()
+      if (mio !== gettoneElenco.current) return
+      if (Array.isArray(json?.data)) {
+        const nuove = json.data as RigaElenco[]
+        // DEDUPLICATO per `id`: l'offset conta le righe già viste, e il modulo
+        // pubblico riceve invii di continuo. Una candidatura arrivata fra la
+        // prima pagina e la seconda sposta tutto di uno e fa ricomparire una
+        // riga — con la stessa `key` React, cioè un doppione a schermo.
+        setRighe((prec) => accoda(prec, nuove))
+        if (typeof json.total === 'number') setTotale(json.total)
+        if (nuove.length < LIMITE_ISCRIZIONI_DEFAULT) setFinePagine(true)
+        setErrore(null)
+      }
+    } catch (e) {
+      if (mio === gettoneElenco.current) setErrore(t('candErrorePagina'))
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidature-pagina-fallita: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    } finally {
+      setCaricandoAltre(false)
+    }
+  }
+
+  /**
+   * Apre una candidatura: è QUI che si chiedono recapiti, presentazione e
+   * curriculum, per una riga sola. L'esito non si butta via — il server
+   * risponde 404 anche quando la candidatura è di un'altra sede, e un pannello
+   * che resta vuoto senza dire niente è peggio di un errore.
+   */
+  async function apriDettaglio(riga: RigaElenco) {
+    const mio = ++gettoneDettaglio.current
+    setSelezionata(null)
+    setAprendo(riga.id)
+    setConferma(null)
+    setMotivo('')
+    setAvvisaEmail(false)
+    setEsito(null)
+    setAvvisi([])
+    setCvBloccato(null)
+    setErrore(null)
+    // Gli esiti scartati NON si azzerano qui, ed è il punto: parlano di
+    // un'ALTRA candidatura, quindi non c'entrano con quella che si sta aprendo, e
+    // sono l'unica copia di una password monouso. Fino al 2026-08-11 la riga
+    // `setEsitoScartato(null)` stava qui: approvata Anna e aperti Bruno e poi
+    // Carla, a schermo non restava niente — né l'avviso, né le credenziali, né
+    // l'avvertimento del server che l'email non era partita. Se ne vanno solo
+    // con «Ho preso nota di questi esiti».
+    try {
+      const res = await fetch(`${API}?id=${encodeURIComponent(riga.id)}`, {
+        headers: { 'x-sedi': reFetchKey },
+      })
+      const json = await res.json().catch((e: unknown) => {
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `candidatura-dettaglio-corpo-illeggibile: ${nomeErrore(e)}`,
+          route: ROUTE_LOG,
+        })
+        return null
+      })
+      // Il clic più recente ha già vinto: questa risposta non tocca lo schermo.
+      if (mio !== gettoneDettaglio.current) return
+      if (!res.ok || !json?.data) {
+        setErrore(messaggioDaCorpo(json, t('candDettaglioNonAperto')))
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `candidatura-dettaglio-non-aperto: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      setSelezionata(json.data as Candidatura)
+    } catch (e) {
+      if (mio === gettoneDettaglio.current) setErrore(t('candDettaglioNonAperto'))
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidatura-dettaglio-fallito: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    } finally {
+      // Il velo si spegne solo se non c'è una richiesta più recente in volo:
+      // altrimenti lo spegneva la PRIMA risposta arrivata, mostrando il pannello
+      // vuoto mentre l'apertura vera stava ancora viaggiando.
+      if (mio === gettoneDettaglio.current) setAprendo(null)
+    }
+  }
+
+  /**
+   * Chiude il pannello — ed è un CAMBIO D'APERTURA a tutti gli effetti: il
+   * gettone avanza, così l'esito di una PATCH ancora in volo non si ritrova a
+   * riaprire da solo un pannello che qualcuno ha appena chiuso.
+   */
+  function chiudiDettaglio() {
+    gettoneDettaglio.current += 1
+    setSelezionata(null)
+  }
+
+  /**
+   * Il curriculum: la URL è firmata dal server e vive dieci minuti.
+   *
+   * La finestra si apre PRIMA della fetch, dentro il gesto dell'utente: Safari e
+   * la WebView Capacitor (l'app è spedita nativa) bloccano una `window.open`
+   * chiamata in continuazione di promise, e il valore di ritorno non lo guardava
+   * nessuno — il pulsante non faceva niente e non diceva niente. Se la finestra
+   * non c'è, la URL firmata si mostra come link da aprire a mano.
+   */
+  async function apriCurriculum(path?: string | null) {
+    if (!path) return
+    setCvBloccato(null)
+    const finestra = typeof window !== 'undefined' ? window.open('', '_blank') : null
+    try {
+      const res = await fetch(`${API}?doc=${encodeURIComponent(path)}`, {
+        headers: { 'x-sedi': reFetchKey },
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.url) {
+        finestra?.close()
+        // Qui si resta su `candErroreCv`, e non è una dimenticanza: i codici che
+        // la route manda su questo ramo (`CANDIDATURE_OPERAZIONE_NON_RIUSCITA`,
+        // `CANDIDATURA_NON_TROVATA`) parlano della CANDIDATURA, non del file, e
+        // il loro testo di catalogo («l'operazione non è riuscita») direbbe meno
+        // di questa frase — che è già tradotta e non è mai prosa del server.
+        setErrore(t('candErroreCv'))
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `candidatura-cv-non-firmato: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      const url = String(json.url)
+      if (finestra && !finestra.closed) {
+        // `opener` a null: la scheda del curriculum non deve poter toccare il
+        // cockpit da cui è nata.
+        try { finestra.opener = null } catch { /* alcune WebView la rendono non scrivibile: l'apertura vale comunque */ }
+        finestra.location.replace(url)
+        return
+      }
+      setCvBloccato(url)
+      logClient({
+        livello: 'warn',
+        evento: 'react',
+        messaggio: 'candidatura-cv-finestra-bloccata: window.open ha ritornato null',
+        route: ROUTE_LOG,
+      })
+    } catch (e) {
+      finestra?.close()
+      setErrore(t('candErroreCv'))
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidatura-cv-fallito: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    }
+  }
+
+  /** Approva o rifiuta. La conferma è già stata data nel pannello qui sotto. */
+  async function esegui(azione: 'approva' | 'rifiuta') {
+    if (!selezionata) return
+    // Il gettone dell'apertura in corso, LETTO e non incrementato: l'azione non
+    // cambia quale candidatura è aperta, ma la sua risposta vale solo se
+    // nessun'altra apertura è arrivata nel frattempo. Il nome si cattura adesso,
+    // perché è di questa persona che parlerà l'avviso se l'esito va scartato.
+    const mio = gettoneDettaglio.current
+    const idBersaglio = selezionata.id
+    const nomeBersaglio = nomeCompleto(selezionata)
+    const attuale = () => mio === gettoneDettaglio.current
+    setLavorandoSu(idBersaglio)
+    setErrore(null)
+    // Gli esiti già scartati NON si azzerano: appartengono a un'altra
+    // candidatura, e questa operazione non li rende meno veri.
+    try {
+      const res = await fetch(API, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-sedi': reFetchKey },
+        body: JSON.stringify(
+          azione === 'approva'
+            ? { id: selezionata.id, action: 'approva' }
+            : {
+                id: selezionata.id,
+                action: 'rifiuta',
+                motivo: motivo.trim() || undefined,
+                inviaEmailEsito: avvisaEmail,
+              },
+        ),
+      })
+      const json = await res.json().catch((e: unknown) => {
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `candidatura-azione-corpo-illeggibile: ${nomeErrore(e)}`,
+          route: ROUTE_LOG,
+        })
+        return null
+      })
+      if (!res.ok) {
+        // L'esito NON si butta via: 403 di sede, 409 «già evasa», 503. Ricaricare
+        // e chiudere il pannello senza guardare significherebbe dire «fatto» su
+        // un'approvazione che non è mai avvenuta.
+        //
+        // E si passa dal CATALOGO, non dalla prosa del server: la PATCH è l'unico
+        // posto da cui arrivano `CANDIDATURA_GIA_EVASA`,
+        // `CANDIDATURA_EMAIL_GIA_STAFF`, `CANDIDATURA_EMAIL_GIA_GENITORE`,
+        // `CANDIDATURA_NON_TROVATA` e `CANDIDATURE_OPERAZIONE_NON_RIUSCITA`, e
+        // finché il `codice` veniva buttato via le loro traduzioni inglesi erano
+        // irraggiungibili — a schermo usciva l'italiano scritto a mano nella route,
+        // anche con l'interfaccia in inglese.
+        //
+        // E anche l'errore appartiene alla candidatura su cui si è agito: se nel
+        // frattempo ne è stata aperta un'altra, scriverlo qui vorrebbe dire
+        // attribuire il «già evasa» alla persona sbagliata.
+        //
+        // E quando è scartato si dice che l'operazione è stata RESPINTA, non che
+        // un account è stato creato: sono due frasi opposte, e dirne una per
+        // l'altra manderebbe la segreteria a cercare credenziali che non esistono.
+        if (attuale()) setErrore(messaggioDaCorpo(json, t('candErroreAzione')))
+        else annotaScartato({ nome: nomeBersaglio, esito: null, avvisi: [], guasto: 'respinta' })
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `candidatura-azione-respinta: ${azione} http ${res.status}${attuale() ? '' : ' (esito scartato: apertura cambiata)'}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      const statoNuovo = typeof json?.stato === 'string' ? json.stato : null
+      if (!attuale()) {
+        // L'operazione è AVVENUTA: quello che si scarta è solo il POSTO in cui
+        // mostrarla. Il riquadro del pannello non si disegna — ci scriverebbe le
+        // credenziali di una persona sotto il nome di un'altra — ma l'esito viene
+        // riportato per intero in un avviso che NOMINA la persona: password
+        // compresa, perché è monouso, non è archiviata da nessuna parte e
+        // buttarla via costringe a una reimpostazione (e con l'email delle
+        // credenziali non partita, la docente non entrerebbe mai). L'elenco si
+        // ricarica: è da lì che si rilegge lo stato vero.
+        annotaScartato({
+          nome: nomeBersaglio,
+          esito: esitoDaRisposta(azione, statoNuovo, json),
+          avvisi: avvisiDaRisposta(json),
+          guasto: null,
+        })
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `candidatura-azione-esito-scartato: ${azione} apertura cambiata durante la PATCH`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        await carica(reFetchKey)
+        return
+      }
+      setConferma(null)
+      setEsito(esitoDaRisposta(azione, statoNuovo, json))
+      setAvvisi(avvisiDaRisposta(json))
+      if (statoNuovo) setSelezionata((s) => (s ? { ...s, stato: statoNuovo } : s))
+      await carica(reFetchKey)
+    } catch (e) {
+      // Qui non si sa nemmeno se l'operazione sia avvenuta: la risposta non è
+      // mai arrivata. È diverso da «respinta», e va detto con parole diverse.
+      if (attuale()) setErrore(t('candErroreAzione'))
+      else annotaScartato({ nome: nomeBersaglio, esito: null, avvisi: [], guasto: 'senzaRisposta' })
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidatura-azione-fallita: ${azione} ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    } finally {
+      // Solo se è ancora la NOSTRA: se nel frattempo è partita un'operazione su
+      // un'altra candidatura, spegnere qui accenderebbe i suoi due pulsanti
+      // mentre la sua PATCH è ancora in volo.
+      setLavorandoSu((corrente) => (corrente === idBersaglio ? null : corrente))
+    }
+  }
+
+  const inAttesa = righe.filter((r) => r.stato === 'pending' || r.stato === 'in_approvazione')
+  // Due domande diverse, e prima erano una sola: «le righe caricate sono TUTTE
+  // quelle che esistono?» governa i riquadri per stato (un conteggio parziale
+  // spacciato per totale è una bugia scritta in grande), «c'è un'altra pagina?»
+  // governa il pulsante.
+  const tuttoContato = righe.length >= totale
+  const altrePagine = !finePagine && righe.length < totale
+
+  return (
+    <>
+      <p className="mb-4 max-w-2xl font-maven text-sm text-kidville-sub">{t('candIntro')}</p>
+
+      {errore && (
+        <p
+          role="alert"
+          className="mb-4 flex items-start gap-2 rounded-card border border-kidville-error/30 bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error-strong"
+        >
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {errore}
+        </p>
+      )}
+
+      {/* Gli esiti che non si sono potuti mostrare: stanno QUI, fuori dal pannello,
+          perché parlano di candidature che non sono più quella aperta. */}
+      {esitiScartati.length > 0 && (
+        <AvvisoEsitiScartati voci={esitiScartati} onCongeda={() => setEsitiScartati([])} />
+      )}
+
+      {!caricamento && righe.length > 0 && (
+        <div className={`mb-6 grid grid-cols-2 gap-3 ${tuttoContato ? 'sm:grid-cols-4' : 'sm:grid-cols-1'}`}>
+          <StatCard icon={Users} label={t('candStatTotale')} value={totale} tone="green" />
+          {tuttoContato && (
+            <>
+              <StatCard icon={Clock} label={t('candStatAttesa')} value={inAttesa.length} tone="warn" />
+              <StatCard icon={CheckCircle2} label={t('candStatApprovate')} value={righe.filter((r) => r.stato === 'approvata').length} tone="success" />
+              <StatCard icon={XCircle} label={t('candStatRifiutate')} value={righe.filter((r) => r.stato === 'rifiutata').length} tone="error" />
+            </>
+          )}
+        </div>
+      )}
+
+      {caricamento ? (
+        <div role="status" className="flex min-h-[40vh] items-center justify-center gap-3">
+          <Loader2 className="h-6 w-6 animate-spin text-kidville-green" />
+          <span className="font-maven text-kidville-sub">{t('caricamento')}</span>
+        </div>
+      ) : righe.length === 0 ? (
+        // Tre stati, non due: «vuoto» è un'affermazione, e si fa solo quando
+        // l'elenco è stato letto davvero. Se l'ultima lettura è fallita, qui non
+        // si dice che non ci sono candidature: si dice che non si sa.
+        letturaFallita ? (
+          <div className="rounded-card border border-kidville-warn/40 bg-kidville-warn-soft p-10 text-center">
+            <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-kidville-warn-strong" />
+            <p className="font-maven text-kidville-warn-strong">{t('candElencoNonLetto')}</p>
+            <button
+              type="button"
+              onClick={riprovaElenco}
+              className="mt-4 inline-flex items-center gap-2 rounded-pill border border-kidville-green bg-kidville-white px-4 py-2 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
+            >
+              {t('candElencoRiprova')}
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-card border border-kidville-line bg-kidville-white p-10 text-center">
+            <UserCheck className="mx-auto mb-3 h-10 w-10 text-kidville-neutral" />
+            <p className="font-maven text-kidville-sub">{t('candVuoto')}</p>
+          </div>
+        )
+      ) : (
+        <div className="grid gap-5 md:grid-cols-2">
+          {/* Elenco */}
+          <div className="space-y-3">
+            {/* Un vero titolo, non un `p` vestito da titolo: con uno screen reader
+                è l'unico punto di salto che questo frammento offre. */}
+            <h2 className="text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('candListaHeader')}</h2>
+            {/* `sub` e non `muted`: questa riga È l'avviso che l'elenco è
+                troncato, cioè l'unico segnale che dice che ci sono candidature
+                che non si stanno vedendo. */}
+            {!tuttoContato && (
+              <p className="font-maven text-xs text-kidville-sub">
+                {t('candMostrate', { n: righe.length, totale })}
+              </p>
+            )}
+            {righe.map((riga) => (
+              <button
+                key={riga.id}
+                type="button"
+                onClick={() => apriDettaglio(riga)}
+                className={`w-full rounded-card border bg-kidville-white p-4 text-left transition-all ${
+                  selezionata?.id === riga.id
+                    ? 'border-kidville-green ring-1 ring-kidville-green/30'
+                    : 'border-kidville-line hover:border-kidville-green/40'
+                }`}
+              >
+                <span className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className="font-barlow font-bold text-kidville-ink">{nomeCompleto(riga)}</span>
+                  <BadgeStato stato={riga.stato} />
+                </span>
+                <span className="flex flex-wrap items-center gap-2">
+                  {gradiOrdinati(riga.gradi).map((g) => (
+                    <span key={g} className="rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wider text-kidville-green">
+                      {etichettaGrado(g)}
+                    </span>
+                  ))}
+                </span>
+                <span className="mt-1.5 flex flex-wrap items-center gap-3 font-maven text-xs text-kidville-sub">
+                  <span className="flex items-center gap-1 font-semibold text-kidville-green">
+                    <MapPin size={13} /> {nomeSede(riga.scuola_id)}
+                  </span>
+                  <span>{riga.creata_il ? f.dataBreve(riga.creata_il) : t('candNonIndicato')}</span>
+                </span>
+              </button>
+            ))}
+            {altrePagine && (
+              <button
+                type="button"
+                onClick={caricaAltre}
+                // Spento anche mentre una RILETTURA è in volo: accodare alla
+                // lista vecchia mescolerebbe due plessi (vedi il commento in cima).
+                disabled={caricandoAltre || ricaricaInVolo}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-kidville-line px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green-soft disabled:opacity-50"
+              >
+                {caricandoAltre && <Loader2 size={14} className="animate-spin" />}
+                {t('candMostraAltre')}
+              </button>
+            )}
+          </div>
+
+          {/* Dettaglio */}
+          <div aria-busy={aprendo !== null}>
+            {aprendo ? (
+              <div role="status" className="flex items-center justify-center gap-3 rounded-card border border-kidville-line bg-kidville-white p-10">
+                <Loader2 className="h-5 w-5 animate-spin text-kidville-green" />
+                <span className="font-maven text-kidville-sub">{t('caricamento')}</span>
+              </div>
+            ) : !selezionata ? (
+              <div className="rounded-card border border-kidville-line bg-kidville-white p-10 text-center font-maven text-kidville-sub">
+                {t('candSelezionaDettagli')}
+              </div>
+            ) : (
+              <PannelloDettaglio
+                cand={selezionata}
+                nomeSede={nomeSede(selezionata.scuola_id)}
+                nomeCompleto={nomeCompleto(selezionata)}
+                gradi={gradiOrdinati(selezionata.gradi)}
+                etichettaGrado={etichettaGrado}
+                titoloStudio={daCatalogo(CHIAVE_TITOLO, selezionata.titolo_studio)}
+                disponibilita={daCatalogo(CHIAVE_DISPONIBILITA, selezionata.disponibilita)}
+                isDirezione={isDirezione}
+                motivoBlocco={motivoBlocco}
+                conferma={conferma}
+                setConferma={setConferma}
+                motivo={motivo}
+                setMotivo={setMotivo}
+                avvisaEmail={avvisaEmail}
+                setAvvisaEmail={setAvvisaEmail}
+                lavorando={lavorandoSu === selezionata.id}
+                esito={esito}
+                avvisi={avvisi}
+                cvBloccato={cvBloccato}
+                onChiudiEsito={() => setEsito(null)}
+                onEsegui={esegui}
+                onApriCv={apriCurriculum}
+                onIndietro={chiudiDettaglio}
+              />
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * GLI ESITI CHE NON SI SONO POTUTI MOSTRARE NEL PANNELLO.
+ *
+ * Dice tre cose che il testo precedente non diceva, e che sono la ragione per cui
+ * questo avviso esiste:
+ *
+ *  1. CHE COSA È SUCCESSO DAVVERO. «L'account docente è stato creato» e «il
+ *     server ha respinto l'operazione» sono frasi opposte: la prima manda a
+ *     cercare un account, la seconda a rileggere lo stato. Il vecchio testo ne
+ *     diceva UNA sola per tutti i casi, e rimandava alla riga d'elenco — che dirà
+ *     «Approvata» e non contiene niente di ciò che si è perso.
+ *  2. LE CREDENZIALI. La password è monouso e non è archiviata da nessuna parte:
+ *     buttarla qui vuol dire una reimpostazione obbligata, e con l'email delle
+ *     credenziali non partita vuol dire una docente che non entra mai. Compaiono
+ *     sotto il NOME della persona giusta — che è esattamente ciò che mancava al
+ *     pannello, e il motivo per cui lì l'esito si scarta.
+ *  3. PERCHÉ non è stato mostrato: il pannello era stato chiuso **oppure** ne era
+ *     stata aperta un'altra. Il testo di prima affermava solo la seconda, e sul
+ *     percorso «Indietro» descriveva alla segreteria un fatto mai avvenuto.
+ *
+ * Se ne vanno solo con il gesto in coda: aprire un'altra candidatura non è una
+ * presa d'atto.
+ */
+function AvvisoEsitiScartati({ voci, onCongeda }: { voci: EsitoScartato[]; onCongeda: () => void }) {
+  const t = useTranslations('adminAltro')
+  return (
+    <div
+      role="alert"
+      className="mb-4 space-y-3 rounded-card border border-kidville-warn/40 bg-kidville-warn-soft px-4 py-3"
+    >
+      {voci.map((v) => (
+        <div key={v.chiave} className="flex items-start gap-2 font-maven text-sm text-kidville-warn-strong">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <div className="space-y-1">
+            <p>
+              {t('candEsitoScartatoPre')} <strong>{v.nome}</strong> {t('candEsitoScartatoPost')}
+            </p>
+
+            {v.guasto === 'respinta' && <p>{t('candScartatoRespinta')}</p>}
+            {v.guasto === 'senzaRisposta' && <p>{t('candScartatoSenzaRisposta')}</p>}
+
+            {v.esito?.azione === 'rifiuta' && (
+              <p>
+                {t('candScartatoRifiutoRegistrato')}{' '}
+                {v.esito.esitoEmailInviato ? t('candEsitoEmailInviata') : t('candEsitoEmailNonInviata')}
+              </p>
+            )}
+
+            {v.esito?.azione === 'approva' && (
+              <>
+                <p className="font-semibold">
+                  {v.esito.stato === 'in_approvazione'
+                    ? t('candScartatoAccountCreatoAMeta')
+                    : t('candScartatoAccountCreato')}
+                </p>
+                {v.esito.credentials ? (
+                  <>
+                    <p className="flex items-start gap-1.5 text-kidville-ink">
+                      <KeyRound size={14} className="mt-0.5 shrink-0" />
+                      <span className="select-all">
+                        {t('candCredenziali')} <strong>{v.esito.credentials.email}</strong> /{' '}
+                        <code>{v.esito.credentials.password}</code>
+                      </span>
+                    </p>
+                    <p className="text-xs">{t('candCredenzialiAvviso')}</p>
+                    {!v.esito.credentialsEmailSent && (
+                      <p className="text-xs font-semibold">{t('candCredNonInviate')}</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs">{t('candNessunaCredenziale')}</p>
+                )}
+              </>
+            )}
+
+            {/* Gli avvisi del server viaggiano con l'esito: sono la sola traccia
+                di ciò che è stato scritto a metà, e qui non c'è un pannello in
+                cui andarli a rileggere. */}
+            {v.avvisi.length > 0 && (
+              <ul className="ml-4 list-disc text-xs">
+                {v.avvisi.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={onCongeda}
+        className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green bg-kidville-white px-3.5 py-1.5 font-barlow text-xs font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
+      >
+        {t('candEsitoScartatoCongeda')}
+      </button>
+    </div>
+  )
+}
+
+function BadgeStato({ stato }: { stato: string }) {
+  const t = useTranslations('adminAltro')
+  const chiave = CHIAVE_STATO[stato] ?? CHIAVE_STATO.pending
+  const tinta = TINTA_STATO[stato] ?? TINTA_STATO.pending
+  return (
+    <span className={`rounded-pill px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wider ${tinta}`}>
+      {t(chiave)}
+    </span>
+  )
+}
+
+/**
+ * Una voce del dettaglio: etichetta + valore, o «Non indicato».
+ *
+ * Un dato mancante NON è un errore: qui si dice che non c'è, in inchiostro
+ * neutro, invece di lasciare una riga vuota che si legge come un guasto. (La
+ * residenza è facoltativa nel modulo pubblico, il telefono anche.)
+ *
+ * Volutamente `div`/`p` e non `dl`/`dt`/`dd`: la lista di definizione con i
+ * wrapper `div` che serve alla griglia è terreno incerto per la regola `dlitem`
+ * di axe, e un dubbio sull'accessibilità non si spende su una coppia
+ * etichetta-valore che il markup semplice rende altrettanto bene.
+ */
+function Voce({ etichetta, valore }: { etichetta: string; valore?: string | number | null }) {
+  const t = useTranslations('adminAltro')
+  const testo = valore === null || valore === undefined || String(valore).trim() === ''
+    ? t('candNonIndicato')
+    : String(valore)
+  return (
+    <div>
+      <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-sub">{etichetta}</p>
+      <p className="font-maven text-sm text-kidville-ink">{testo}</p>
+    </div>
+  )
+}
+
+function PannelloDettaglio({
+  cand, nomeSede, nomeCompleto, gradi, etichettaGrado, titoloStudio, disponibilita,
+  isDirezione, motivoBlocco, conferma, setConferma, motivo, setMotivo, avvisaEmail,
+  setAvvisaEmail, lavorando, esito, avvisi, cvBloccato, onChiudiEsito, onEsegui,
+  onApriCv, onIndietro,
+}: {
+  cand: Candidatura
+  nomeSede: string
+  nomeCompleto: string
+  gradi: string[]
+  etichettaGrado: (g: string) => string
+  titoloStudio: string | null
+  disponibilita: string | null
+  isDirezione: boolean
+  motivoBlocco: string
+  conferma: 'approva' | 'rifiuta' | null
+  setConferma: (v: 'approva' | 'rifiuta' | null) => void
+  motivo: string
+  setMotivo: (v: string) => void
+  avvisaEmail: boolean
+  setAvvisaEmail: (v: boolean) => void
+  lavorando: boolean
+  esito: Esito | null
+  avvisi: string[]
+  cvBloccato: string | null
+  onChiudiEsito: () => void
+  onEsegui: (azione: 'approva' | 'rifiuta') => void
+  onApriCv: (path?: string | null) => void
+  onIndietro: () => void
+}) {
+  const t = useTranslations('adminAltro')
+  const f = useDateFormat()
+  const decisa = cand.stato === 'approvata' || cand.stato === 'rifiutata'
+  /**
+   * `in_approvazione` = l'account docente ESISTE e la riga non è chiusa. Non è
+   * uno stato azionabile da questa schermata: «Approva» ricreerebbe (la route lo
+   * respinge, ma il gesto non va nemmeno offerto) e «Rifiuta» è ACCETTATO dal
+   * server, scriverebbe `rifiutata` e, con la spunta, manderebbe l'email di
+   * rifiuto a chi ha già ricevuto le credenziali.
+   */
+  const sospesa = cand.stato === 'in_approvazione'
+  /**
+   * I due pulsanti sono spenti per TRE ragioni, e ognuna ha la sua frase.
+   *
+   * La terza è nuova: `lavorando` è ora legato alla candidatura su cui si sta
+   * agendo, e riaprendo QUELLA mentre la sua PATCH è ancora in volo i pulsanti
+   * restano spenti — giusto, perché ripremerli farebbe partire due volte la
+   * creazione di un account. Prima lo stato era condiviso e spegneva i pulsanti
+   * di CHIUNQUE, senza `title` e senza una riga che dicesse perché: cioè un
+   * divieto legittimo che si presenta come un guasto, l'anti-pattern che
+   * l'intestazione di questo file si impegna a evitare.
+   */
+  const azioniSpente = !isDirezione || sospesa || lavorando
+  const motivoAzioniSpente = sospesa
+    ? t('candSospesaAzioniSpente')
+    : !isDirezione
+      ? motivoBlocco
+      : t('candAzioneInCorso')
+
+  /**
+   * Il fuoco si sposta sull'intestazione del pannello a ogni apertura: su schermo
+   * stretto il pannello SOSTITUISCE l'elenco, e chi naviga da tastiera restava
+   * sul pulsante della riga con il «torna indietro» irraggiungibile senza
+   * attraversare tutto.
+   */
+  const titoloRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => { titoloRef.current?.focus() }, [cand.id])
+
+  // Comune e provincia sono DUE colonne e sono entrambe facoltative: si uniscono
+  // solo quelle che ci sono. Un `Giugliano ()` a schermo direbbe che manca un
+  // dato che non è mai stato chiesto.
+  const residenza = [cand.residence_city, cand.residence_province]
+    .map((s) => (s ?? '').trim())
+    .filter(Boolean)
+    .join(' · ')
+
+  const titoloEsito = esito === null
+    ? ''
+    : esito.azione === 'rifiuta'
+      ? t('candEsitoRifiutata')
+      : esito.stato === 'in_approvazione'
+        ? t('candEsitoPresaInCarico')
+        : t('candEsitoApprovata')
+  // Il riquadro si tinge di ciò che è successo davvero: verde solo quando la
+  // chiusura è riuscita. Prima era verde anche sull'approvazione rimasta a metà.
+  const esitoRiuscito = esito !== null && esito.stato !== 'in_approvazione'
+
+  return (
+    <div className="space-y-5 rounded-card border border-kidville-line bg-kidville-white p-5">
+      <button
+        type="button"
+        onClick={onIndietro}
+        className="flex items-center gap-1 font-maven text-sm text-kidville-sub md:hidden"
+      >
+        <ChevronLeft size={16} /> {t('candIndietro')}
+      </button>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2
+          ref={titoloRef}
+          tabIndex={-1}
+          className="font-barlow text-lg font-black uppercase tracking-[0.01em] text-kidville-green"
+        >
+          {nomeCompleto}
+        </h2>
+        <BadgeStato stato={cand.stato} />
+      </div>
+
+      {/* Per quale scuola si sta decidendo: prima di ogni altro dato. */}
+      <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
+        <MapPin size={14} /> {t('candSede')} <strong>{nomeSede}</strong>
+      </p>
+
+      <section>
+        <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-kidville-sub">
+          <Mail size={14} /> {t('candContatti')}
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Voce etichetta={t('candEmail')} valore={cand.email} />
+          <Voce etichetta={t('candTelefono')} valore={cand.telefono} />
+          <Voce etichetta={t('candResidenza')} valore={residenza} />
+          <Voce etichetta={t('candRicevutaIl')} valore={cand.creata_il ? f.dataBreve(cand.creata_il) : null} />
+        </div>
+      </section>
+
+      <section>
+        <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-kidville-sub">
+          <FileText size={14} /> {t('candProfilo')}
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Voce etichetta={t('candTitoloStudio')} valore={titoloStudio} />
+          <Voce etichetta={t('candTitoloDettaglio')} valore={cand.titolo_dettaglio} />
+          <Voce etichetta={t('candAnni')} valore={cand.anni_esperienza} />
+          <Voce etichetta={t('candDisponibilita')} valore={disponibilita} />
+        </div>
+        <div className="mt-3">
+          <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-sub">{t('candFasce')}</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {gradi.length === 0 ? (
+              <span className="font-maven text-sm text-kidville-ink">{t('candNonIndicato')}</span>
+            ) : (
+              gradi.map((g) => (
+                <span key={g} className="rounded-pill bg-kidville-green-soft px-2.5 py-1 font-barlow text-[11px] font-bold uppercase tracking-wider text-kidville-green">
+                  {etichettaGrado(g)}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('candPresentazione')}</h3>
+        <p className="whitespace-pre-line rounded-xl border border-kidville-line bg-kidville-cream/50 p-3 font-maven text-sm text-kidville-ink">
+          {(cand.note ?? '').trim() || t('candNonIndicato')}
+        </p>
+      </section>
+
+      <section>
+        {cand.cv_path ? (
+          <button
+            type="button"
+            onClick={() => onApriCv(cand.cv_path)}
+            className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green px-3.5 py-1.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
+          >
+            <FileText size={14} /> {t('candApriCv')} <ExternalLink size={12} />
+          </button>
+        ) : (
+          <p className="font-maven text-sm text-kidville-sub">{t('candNessunCv')}</p>
+        )}
+        {cvBloccato && (
+          <p
+            role="alert"
+            className="mt-2 flex flex-wrap items-start gap-1.5 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong"
+          >
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            {t('candCvBloccato')}{' '}
+            <a
+              href={cvBloccato}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-kidville-green underline"
+            >
+              {t('candCvApriManuale')}
+            </a>
+          </p>
+        )}
+      </section>
+
+      {cand.stato === 'rifiutata' && (cand.motivo_rifiuto ?? '').trim() !== '' && (
+        <section>
+          <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('candMotivoRegistrato')}</h3>
+          <p className="whitespace-pre-line rounded-xl border border-kidville-line bg-kidville-cream/50 p-3 font-maven text-sm text-kidville-ink">
+            {cand.motivo_rifiuto}
+          </p>
+        </section>
+      )}
+
+      {/* ── APPROVAZIONE RIMASTA A METÀ: resta finché resta lo stato ────────── */}
+      {sospesa && (
+        <div className="space-y-1 rounded-xl border border-kidville-warn/40 bg-kidville-warn-soft p-4">
+          <p className="flex items-center gap-1.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-warn-strong">
+            <AlertTriangle size={16} /> {t('candSospesaTitolo')}
+          </p>
+          <p className="font-maven text-sm text-kidville-warn-strong">{t('candSospesaTesto')}</p>
+        </div>
+      )}
+
+      {/* Gli avvisi del server: FUORI dal riquadro congedabile, perché sono la
+          sola traccia di ciò che è stato scritto a metà. */}
+      {avvisi.length > 0 && (
+        <div className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+          <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> {t('candAvvisi')}</p>
+          <ul className="ml-5 list-disc">
+            {avvisi.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* ── ESITO: le credenziali si vedono UNA volta sola ─────────────────── */}
+      {esito && (
+        <div
+          className={`space-y-2 rounded-xl border p-4 ${
+            esitoRiuscito
+              ? 'border-kidville-success/30 bg-kidville-success-soft'
+              : 'border-kidville-warn/40 bg-kidville-warn-soft'
+          }`}
+        >
+          <p
+            className={`flex items-center gap-1.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] ${
+              esitoRiuscito ? 'text-kidville-success-strong' : 'text-kidville-warn-strong'
+            }`}
+          >
+            {esitoRiuscito ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            {titoloEsito}
+          </p>
+
+          {esito.azione === 'approva' && (
+            esito.credentials ? (
+              <>
+                <p className="flex items-start gap-2 font-maven text-sm text-kidville-ink">
+                  <KeyRound size={14} className="mt-0.5 shrink-0 text-kidville-success-strong" />
+                  <span className="select-all">
+                    {t('candCredenziali')} <strong>{esito.credentials.email}</strong> /{' '}
+                    <code>{esito.credentials.password}</code>
+                  </span>
+                </p>
+                <p className="font-maven text-xs text-kidville-sub">{t('candCredenzialiAvviso')}</p>
+                {esito.credentialsEmailSent ? (
+                  <p className="flex items-center gap-1.5 font-maven text-xs text-kidville-success-strong">
+                    <CheckCircle2 size={12} /> {t('candCredInviate')}
+                  </p>
+                ) : (
+                  // Se l'email non è partita l'account ESISTE comunque, e chi
+                  // guarda deve saperlo: qui si dice tutte e due le cose.
+                  <p className="flex items-start gap-1.5 rounded-lg bg-kidville-warn-soft px-2.5 py-2 font-maven text-xs text-kidville-warn-strong">
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {t('candCredNonInviate')}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="font-maven text-xs text-kidville-sub">{t('candNessunaCredenziale')}</p>
+            )
+          )}
+
+          {esito.azione === 'rifiuta' && (
+            <p className="font-maven text-xs text-kidville-sub">
+              {esito.esitoEmailInviato ? t('candEsitoEmailInviata') : t('candEsitoEmailNonInviata')}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={onChiudiEsito}
+            className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green px-3.5 py-1.5 font-barlow text-xs font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
+          >
+            {t('candHoPresoNota')}
+          </button>
+        </div>
+      )}
+
+      {/* ── LE AZIONI, solo per la Direzione ──────────────────────────────── */}
+      {!decisa && !esito && (
+        <div className="space-y-3 border-t border-kidville-line pt-3">
+          {/* Il motivo si scrive quando i due pulsanti sono a schermo e spenti.
+              Durante la conferma (`conferma !== null`) i pulsanti non ci sono e
+              al loro posto gira la rotella del «Confermo»: ripetere lì che
+              un'operazione è in corso sarebbe rumore, non informazione. */}
+          {azioniSpente && conferma === null && (
+            <p className="flex items-start gap-2 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {motivoAzioniSpente}
+            </p>
+          )}
+
+          {conferma === null && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setConferma('approva')}
+                disabled={azioniSpente}
+                title={azioniSpente ? motivoAzioniSpente : undefined}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-yellow-ink disabled:border disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub"
+              >
+                <CheckCircle2 size={16} /> {t('candApprova')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConferma('rifiuta')}
+                disabled={azioniSpente}
+                title={azioniSpente ? motivoAzioniSpente : undefined}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-kidville-error px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-error-strong disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub"
+              >
+                <XCircle size={16} /> {t('candRifiuta')}
+              </button>
+            </div>
+          )}
+
+          {/* Conferma di APPROVAZIONE: nomina ciò che sta per succedere. */}
+          {conferma === 'approva' && (
+            <div className="space-y-2 rounded-xl border border-kidville-green/40 bg-kidville-green-soft p-4">
+              <p className="font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green">
+                {t('candConfermaApprovaTitolo')}
+              </p>
+              <p className="font-maven text-sm text-kidville-ink">
+                {t('candConfermaApprovaAccount')} <strong>{nomeCompleto}</strong>{' '}
+                {t('candConfermaApprovaSede')} <strong>{nomeSede}</strong>
+                {gradi.length > 0 && (
+                  <>
+                    {', '}
+                    {t('candConfermaApprovaFasce')}{' '}
+                    <strong>{gradi.map(etichettaGrado).join(', ')}</strong>
+                  </>
+                )}
+                {'. '}
+                {t('candConfermaApprovaCredenziali')}{' '}
+                <strong>{(cand.email ?? '').trim() || t('candNonIndicato')}</strong>.
+              </p>
+              {gradi.length === 0 && (
+                <p className="flex items-start gap-1.5 font-maven text-xs text-kidville-warn-strong">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {t('candConfermaApprovaFasceMancanti')}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => onEsegui('approva')}
+                  disabled={lavorando}
+                  className="inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-yellow-ink disabled:border disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub"
+                >
+                  {lavorando ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                  {t('candConferma')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConferma(null)}
+                  disabled={lavorando}
+                  className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-sub hover:bg-kidville-cream disabled:opacity-50"
+                >
+                  {t('candAnnulla')}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Conferma di RIFIUTO: motivo facoltativo, email SPENTA di default. */}
+          {conferma === 'rifiuta' && (
+            <div className="space-y-3 rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-4">
+              <p className="font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-error-strong">
+                {t('candConfermaRifiutaTitolo')}
+              </p>
+              <p className="font-maven text-sm text-kidville-ink">
+                {t('candConfermaRifiutaTesto')} <strong>{nomeCompleto}</strong>.
+              </p>
+              <div>
+                <label htmlFor="cand-motivo" className="block font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-sub">
+                  {t('candMotivo')}
+                </label>
+                <textarea
+                  id="cand-motivo"
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value)}
+                  rows={3}
+                  maxLength={2000}
+                  className="mt-1 w-full rounded-input border border-kidville-line bg-kidville-white p-2.5 font-maven text-sm text-kidville-ink focus:border-kidville-green focus:outline-none"
+                />
+                <p className="mt-1 font-maven text-xs text-kidville-sub">{t('candMotivoAiuto')}</p>
+              </div>
+              <label className="flex cursor-pointer items-start gap-2 font-maven text-sm text-kidville-ink">
+                <input
+                  type="checkbox"
+                  checked={avvisaEmail}
+                  onChange={(e) => setAvvisaEmail(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-kidville-green"
+                />
+                <span>
+                  {t('candAvvisaEmail')}
+                  <span className="block font-maven text-xs text-kidville-sub">{t('candAvvisaEmailNota')}</span>
+                </span>
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onEsegui('rifiuta')}
+                  disabled={lavorando}
+                  className="inline-flex items-center gap-2 rounded-pill border border-kidville-error bg-kidville-white px-4 py-2 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-error-strong disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub"
+                >
+                  {lavorando ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                  {t('candConferma')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConferma(null)}
+                  disabled={lavorando}
+                  className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-sub hover:bg-kidville-cream disabled:opacity-50"
+                >
+                  {t('candAnnulla')}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

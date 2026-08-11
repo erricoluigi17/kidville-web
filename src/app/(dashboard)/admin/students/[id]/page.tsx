@@ -87,13 +87,42 @@ function AnagraficaDetailInner() {
         flash(res?.ok ? `✅ ${t('detailPageEliminato')}` : `❌ ${t('detailPageEliminaErr')}`);
     };
 
+    /**
+     * ⚠️ QUESTO È L'UNICO PUNTO DI MONTAGGIO DI `ParentDetailPanel`, e fino all'11
+     * agosto era anche il muro che rendeva IRRAGGIUNGIBILE il suo messaggio sul
+     * codice fiscale duplicato. La funzione faceva `.catch(() => null)` e non
+     * restituiva niente: `esito` arrivava alla scheda come `undefined`, il ramo
+     * `esito.ok === false` non scattava mai, e la sola cosa che l'operatore vedeva
+     * era un `❌ Errore nel salvataggio` seguito — 900 ms dopo — dal ritorno
+     * automatico alla lista. Cioè: messaggio generico, causa ignota, **e le
+     * correzioni appena digitate buttate via**. Su una scheda che serve proprio a
+     * correggere un codice fiscale sbagliato.
+     *
+     * Ora la risposta del server torna alla scheda, che la traduce in una frase
+     * («esiste già un genitore con questo codice fiscale») dentro un `role="alert"`
+     * in pagina. E soprattutto: **sul fallimento non si naviga**. `flash` fa `push`
+     * verso la lista, quindi chiamarlo qui significherebbe smontare il modulo con
+     * dentro il lavoro dell'operatore. Si resta dov'è, e si riprova.
+     *
+     * Il corpo si legge una volta sola (`res.json()` consuma lo stream) e con la
+     * propria rete: un 500 senza JSON è comunque un fallimento, non un'eccezione da
+     * far risalire.
+     */
     const handleSaveParent = async (data: Record<string, unknown> & { id: string }) => {
         const res = await fetch('/api/admin/parents', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }).catch(() => null);
-        flash(res?.ok ? `✅ ${t('detailPageAnagAgg')}` : `❌ ${t('erroreSalvataggio')}`);
+        if (res?.ok) {
+            flash(`✅ ${t('detailPageAnagAgg')}`);
+            return { ok: true as const };
+        }
+        const corpo = res ? await res.json().catch(() => null) : null;
+        const errore = typeof (corpo as { error?: unknown } | null)?.error === 'string'
+            ? ((corpo as { error: string }).error)
+            : null;
+        return { ok: false as const, errore };
     };
 
     const Back = (

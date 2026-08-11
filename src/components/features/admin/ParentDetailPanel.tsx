@@ -1,10 +1,39 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { logClient } from '@/lib/logging/client';
+import { useState, useEffect, useId, useMemo } from 'react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useTranslations } from 'next-intl';
 import { X, Save, Users, User, ChevronRight, KeyRound } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { BadgeCoerenzaCf } from '@/components/features/anagrafica/BadgeCoerenzaCf';
+import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
+import { verificaCoerenza } from '@/lib/fiscale/coerenza';
+import { eCfGenitoreDuplicato } from '@/lib/anagrafiche/errori-cf';
+
+/**
+ * ⚠️ `parents.fiscal_code` È UNIQUE, e questa è la scheda da cui si correggono i
+ * codici sbagliati: scrivere su un genitore il codice che appartiene già a un altro
+ * fa rispondere Postgres `23505`. Il riconoscimento di quel messaggio NON vive più
+ * qui: dall'11 agosto sta in `@/lib/anagrafiche/errori-cf`, perché una regola di
+ * dominio valida per più strade non può stare dentro un componente `'use client'` —
+ * l'altra scheda la importava passando per questo file, cioè per un pezzo di
+ * interfaccia di cui non ha nessun bisogno.
+ */
+
+/**
+ * L'esito che il contenitore può restituire da `onSave`.
+ *
+ * ⚠️ È FACOLTATIVO di proposito: `onSave` continua a poter restituire `void`, come
+ * fa oggi la pagina `/admin/students/[id]`. Un contenitore che non lo restituisce
+ * non si rompe — semplicemente questa scheda non ha nulla da mostrare, e il
+ * messaggio del duplicato resta invisibile finché quel contenitore non inoltra
+ * l'errore. Chi lo restituisce ottiene il messaggio leggibile senza toccare altro.
+ */
+export interface EsitoSalvataggioGenitore {
+    ok: boolean;
+    /** Il messaggio GREZZO del server, così com'è: qui dentro viene tradotto. */
+    errore?: string | null;
+}
 
 // Strutture dati
 interface LinkedParentRef {
@@ -26,24 +55,45 @@ interface LinkedChild {
     student_parents?: ChildStudentParent[];
 }
 
+/**
+ * ⚠️ `string | null` SU TUTTE LE COLONNE DI TESTO, e non è pedanteria di tipi: in
+ * `parents` sono tutte nullable, e in produzione lo sono davvero (26 righe su 50 senza
+ * codice fiscale, 27 senza). Dichiararle `string` obbligava chi salva a scrivere `''`
+ * al posto dell'assenza — che su `birth_date` (colonna `date`) è un errore di sintassi
+ * Postgres, e su `fiscal_code` (UNIQUE) è un valore che collide.
+ */
 interface ParentProfile {
     id: string;
-    first_name: string;
-    last_name: string;
-    gender: string;
-    birth_date: string;
-    birth_city: string;
-    birth_province?: string;
-    birth_nation?: string;
-    fiscal_code: string;
+    first_name: string | null;
+    last_name: string | null;
+    gender: string | null;
+    birth_date: string | null;
+    birth_city: string | null;
+    birth_province?: string | null;
+    birth_nation?: string | null;
+    /**
+     * `parents.codice_belfiore_nascita`: i quattro caratteri del comune di nascita che
+     * entrano nel codice fiscale. Nullable, e in produzione quasi sempre nullo — la
+     * colonna è nuova e non è stato fatto nessun backfill. Senza, il codice non è
+     * calcolabile e il confronto sul luogo di nascita resta «non verificabile»: che è
+     * un'informazione, non un allarme.
+     */
+    codice_belfiore_nascita?: string | null;
+    /**
+     * `| null` non è una comodità di tipizzazione: la colonna È nullable, e in
+     * produzione lo è su 26 righe su 50. Dichiararla `string` costringeva chi salva
+     * a mandare `''` al posto dell'assenza — su una colonna UNIQUE, dove `''` è un
+     * valore e `NULL` no.
+     */
+    fiscal_code: string | null;
     emails: string[];
     phone_numbers: string[];
-    residence_address: string;
-    residence_street_number?: string;
-    residence_city: string;
-    residence_province?: string;
-    zip_code: string;
-    citizenship?: string;
+    residence_address: string | null;
+    residence_street_number?: string | null;
+    residence_city: string | null;
+    residence_province?: string | null;
+    zip_code: string | null;
+    citizenship?: string | null;
     student_parents?: {
         alunni: LinkedChild | null;
         is_primary: boolean;
@@ -51,10 +101,75 @@ interface ParentProfile {
     }[];
 }
 
+/** `''`/spazi ⇒ `null`: in archivio l'assenza si scrive `NULL`, non stringa vuota. */
+const orNull = (v: unknown): string | null => (typeof v === 'string' ? v.trim() : v == null ? '' : String(v).trim()) || null;
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * IL CORPO DEL PATCH SI COSTRUISCE PER ELENCO. `...form` NON SALVAVA NIENTE.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * ⚠️ MISURATO, non dedotto. Fino all'11 agosto `handleSave` faceva `onSave({ id,
+ * ...form })`, e `form` è il corpo INTERO di `GET /api/admin/parents/[id]` — che
+ * seleziona `*` **più la relazione annidata `student_parents`** (con dentro gli
+ * `alunni` e i co-genitori). Quel corpo arrivava a `PATCH /api/admin/parents`, il
+ * cui schema è `.loose()`, e finiva spalmato in `update()`. PostgREST valida il
+ * corpo contro la propria cache dello schema PRIMA di parlare col database e
+ * risponde `PGRST204` — «Could not find the 'student_parents' column of 'parents'
+ * in the schema cache» — perché `student_parents` è una TABELLA, non una colonna.
+ *
+ * Le due prove, lette in produzione l'11 agosto:
+ *  · `app_log` → `route=/api/admin/parents`, `codice=PGRST204`, `stato_http=400`,
+ *    con quel messaggio esatto, seguito da `admin/parents:PATCH` a 500;
+ *  · `audit_scritture_docente` — dove `logScrittura` scrive SOLO dopo che
+ *    l'`update` è riuscito — ha 405 righe dal 5 luglio, 255 delle quali `update`,
+ *    e **zero** con `entita_tipo='genitori'` e `azione='update'`. Cinque `insert`,
+ *    nessun aggiornamento: da questa scheda non è mai stato salvato niente.
+ *
+ * Quindi: si elencano le colonne che questa scheda modifica, e nient'altro parte.
+ * La normalizzazione è la stessa di `buildParentRecord` (la strada dell'INSERT),
+ * perché una regola valida per due strade deve dire la stessa cosa su entrambe.
+ */
+export function corpoGenitoreDaSalvare(form: Partial<ParentProfile>): Partial<ParentProfile> {
+    return {
+        first_name: orNull(form.first_name),
+        last_name: orNull(form.last_name),
+        gender: orNull(form.gender),
+        // `''` su una colonna `date` è un errore di sintassi Postgres, non un vuoto:
+        // svuotare il campo data deve poter dire «non lo so».
+        birth_date: orNull(form.birth_date),
+        birth_city: orNull(form.birth_city),
+        birth_province: orNull(form.birth_province),
+        birth_nation: orNull(form.birth_nation),
+        // Nullable, e accetta solo `^[A-Z][0-9]{3}$`: una stringa vuota sarebbe un
+        // valore che non esiste.
+        codice_belfiore_nascita: orNull(form.codice_belfiore_nascita),
+        /**
+         * ⚠️ VUOTO ⇒ `null`, E QUI NON È UNA PREFERENZA DI STILE. `fiscal_code` è
+         * UNIQUE (`parents_fiscal_code_key`), e per un vincolo UNIQUE la stringa
+         * vuota è un valore come tutti gli altri mentre `NULL` no: due righe possono
+         * essere entrambe NULL, non entrambe `''`. MISURATO in produzione l'11
+         * agosto: su 50 genitori, 26 hanno `NULL` e **uno ha già la stringa vuota**.
+         * Salvare `''` da questa scheda farebbe collidere il secondo genitore senza
+         * codice con quell'unico, e il messaggio che ne uscirebbe («esiste già un
+         * genitore con questo codice fiscale») parlerebbe di un codice che non esiste.
+         */
+        fiscal_code: orNull(form.fiscal_code),
+        citizenship: orNull(form.citizenship),
+        residence_address: orNull(form.residence_address),
+        residence_street_number: orNull(form.residence_street_number),
+        residence_city: orNull(form.residence_city),
+        residence_province: orNull(form.residence_province)?.toUpperCase() ?? null,
+        zip_code: orNull(form.zip_code),
+        phone_numbers: Array.isArray(form.phone_numbers) ? form.phone_numbers : [],
+        emails: Array.isArray(form.emails) ? form.emails : [],
+    };
+}
+
 interface Props {
     parentBasicInfo: { id: string } | null;
     onClose: () => void;
-    onSave: (data: Partial<ParentProfile> & { id: string }) => void;
+    onSave: (data: Partial<ParentProfile> & { id: string }) => void | Promise<void | EsitoSalvataggioGenitore>;
     // 'page' = scheda a tutta area (route /admin/students/[id]); 'drawer' = pannello laterale.
     variant?: 'drawer' | 'page';
 }
@@ -68,6 +183,17 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
     const [expandedChild, setExpandedChild] = useState<string | null>(null);
     const [regen, setRegen] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
     const [regenMsg, setRegenMsg] = useState('');
+    /** Il messaggio LEGGIBILE dell'ultimo salvataggio fallito. Mai il testo grezzo del server. */
+    const [erroreSalvataggio, setErroreSalvataggio] = useState<string | null>(null);
+
+    /**
+     * Radice unica degli `id`: questa scheda vive sia come pannello laterale sia a
+     * tutta pagina, e in entrambi i casi convive con la barra di ricerca del cockpit.
+     * Un `id` fisso qui dentro sarebbe un `htmlFor` che punta al campo di un'altra
+     * scheda il giorno in cui due pannelli si aprono insieme.
+     */
+    const radiceId = `genitore-${useId().replace(/[^A-Za-z0-9_-]+/g, '-')}`;
+    const idBadgeCf = `${radiceId}-badge-cf`;
 
     useEffect(() => {
         if (!parentBasicInfo) return;
@@ -90,13 +216,100 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
         fetchParentDetails();
     }, [parentBasicInfo]);
 
+    /**
+     * ─── IL CAMPO PORTA IL CODICE IN ARCHIVIO. IL CALCOLO SI *PROPONE*. ─────────
+     *
+     * ⚠️ Fino all'11 agosto l'`input` valeva `form.fiscal_code || calcolato` e
+     * `handleSave` inviava quello stesso valore. Su questa scheda — che è quella
+     * aperta sui record VERI — significava due cose, entrambe misurate: il campo non
+     * si poteva svuotare (cancellandolo, il calcolato tornava alla battuta dopo), e
+     * premere Salva su un genitore senza codice ne SCRIVEVA uno che nessuno aveva
+     * confermato, su una colonna UNIQUE, per 27 genitori su 50.
+     *
+     * Il contratto corretto è quello che `BadgeCoerenzaCf` già espone: sul campo
+     * vuoto il badge PROPONE il codice che l'anagrafica implica, con «Usa questo».
+     * Adottarlo è un gesto. Senza quel gesto, in archivio resta l'assenza — che è
+     * ciò che l'archivio dice davvero.
+     *
+     * `codiceAtteso` lo produce `verificaCoerenza`, che chiama `calcolaCodiceFiscale`:
+     * qui non si calcola più niente a parte. Il calcolo vuole il codice catastale
+     * (non il nome del comune) e vuole il sesso — che su questa scheda è spesso
+     * vuoto, perché in archivio non c'è: in quel caso non c'è nulla da proporre e il
+     * badge lo dice a parole.
+     *
+     * Tre stati distinti e mai due: incoerente (rosso, azionabile) · non verificabile
+     * (giallo, manca un dato per confrontare) · da compilare (neutro). Un campo mai
+     * compilato non accende niente.
+     */
+    const esitoCoerenza = useMemo(
+        () => verificaCoerenza(form.fiscal_code ?? '', {
+            nome: form.first_name,
+            cognome: form.last_name,
+            sesso: form.gender,
+            dataNascita: form.birth_date,
+            codiceBelfiore: form.codice_belfiore_nascita,
+        }),
+        [form.fiscal_code, form.first_name, form.last_name, form.gender, form.birth_date, form.codice_belfiore_nascita],
+    );
+
     if (!parentBasicInfo) return null;
+
+    /** Il luogo di nascita: qui la nomenclatura è `birth_city`, non `birth_place`. */
+    const luogoNascita: ValoreLuogoNascita = {
+        provincia: form.birth_province ?? '',
+        comune: form.birth_city ?? '',
+        nazione: form.birth_nation ?? '',
+        belfiore: form.codice_belfiore_nascita ?? '',
+    };
+
+    const cambiaLuogoNascita = (v: ValoreLuogoNascita) => {
+        setForm(prev => ({
+            ...prev,
+            birth_province: v.provincia,
+            birth_city: v.comune,
+            birth_nation: v.nazione,
+            codice_belfiore_nascita: v.belfiore,
+        }));
+    };
 
     const handleSave = async () => {
         if (!parent) return;
         setIsSaving(true);
+        setErroreSalvataggio(null);
         try {
-            await onSave({ id: parent.id, ...form });
+            // ⚠️ NON `...form`: quello è il fascicolo intero del GET, `student_parents`
+            // compreso, e mandarlo al PATCH faceva rispondere PGRST204 a PostgREST —
+            // cioè NESSUN salvataggio, mai. Vedi `corpoGenitoreDaSalvare` qui sopra.
+            const esito = await onSave({
+                id: parent.id,
+                ...corpoGenitoreDaSalvare(form),
+            });
+            // ⚠️ I DATI COMPILATI NON SI PERDONO MAI: si mostra il messaggio e basta,
+            // il modulo resta esattamente com'era. Chi ha appena corretto un codice
+            // fiscale non deve riscrivere l'intera scheda per colpa di un doppione.
+            if (esito && esito.ok === false) {
+                setErroreSalvataggio(
+                    eCfGenitoreDuplicato(esito.errore) ? t('parentCfDuplicato') : t('erroreSalvataggio'),
+                );
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: `salvataggio-genitore-rifiutato: ${eCfGenitoreDuplicato(esito.errore) ? 'cf-duplicato' : 'altro'}`,
+                    route: '/admin/students',
+                });
+            }
+        } catch (e) {
+            // Un `catch` che non logga è un bug. Il codice fiscale NON entra nel log:
+            // è il dato, non l'errore.
+            setErroreSalvataggio(
+                eCfGenitoreDuplicato((e as Error)?.message) ? t('parentCfDuplicato') : t('erroreSalvataggio'),
+            );
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: `salvataggio-genitore-fallito: ${nomeErrore(e)}`,
+                route: '/admin/students',
+            });
         } finally {
             setIsSaving(false);
         }
@@ -191,19 +404,21 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNome')}</label>
+                                    <label htmlFor={`${radiceId}-nome`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNome')}</label>
                                     <input
+                                        id={`${radiceId}-nome`}
                                         type="text"
-                                        value={(form.first_name as string) ?? ''}
+                                        value={form.first_name ?? ''}
                                         onChange={e => updateForm('first_name', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCognome')}</label>
+                                    <label htmlFor={`${radiceId}-cognome`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCognome')}</label>
                                     <input
+                                        id={`${radiceId}-cognome`}
                                         type="text"
-                                        value={(form.last_name as string) ?? ''}
+                                        value={form.last_name ?? ''}
                                         onChange={e => updateForm('last_name', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
@@ -211,23 +426,43 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             </div>
                             <div className="grid grid-cols-2 gap-3 mt-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataNascita')}</label>
+                                    <label htmlFor={`${radiceId}-data-nascita`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataNascita')}</label>
                                     <input
+                                        id={`${radiceId}-data-nascita`}
                                         type="date"
-                                        value={(form.birth_date as string) ?? ''}
+                                        value={form.birth_date ?? ''}
                                         onChange={e => updateForm('birth_date', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCodiceFiscale')}</label>
+                                    <label htmlFor={`${radiceId}-codice-fiscale`} className="font-maven text-xs text-kidville-muted mb-1 block">
+                                        {t('campoCodiceFiscale')}
+                                    </label>
+                                    {/* ⚠️ `form.fiscal_code`, non il codice mostrato: è ciò che
+                                        rende il campo SVUOTABILE. Con `value={archivio ||
+                                        calcolato}` cancellarlo lo faceva ricomparire, e
+                                        «questo genitore non ha un codice fiscale» non era una
+                                        cosa che si potesse dire — per 27 genitori su 50. */}
                                     <input
+                                        id={`${radiceId}-codice-fiscale`}
                                         type="text"
-                                        value={(form.fiscal_code as string) ?? ''}
+                                        value={form.fiscal_code ?? ''}
                                         onChange={e => updateForm('fiscal_code', e.target.value.toUpperCase())}
                                         maxLength={16}
+                                        aria-describedby={idBadgeCf}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green uppercase"
                                     />
+                                    {/* Segnala e PROPONE, non decide: da qui non esce nessun
+                                        `disabled`, ed è muto sul campo mai compilato quando non
+                                        c'è nemmeno un codice da proporre. */}
+                                    <div className="mt-2 empty:hidden">
+                                        <BadgeCoerenzaCf
+                                            esito={esitoCoerenza}
+                                            id={idBadgeCf}
+                                            onUsaCalcolato={(codice) => updateForm('fiscal_code', codice)}
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </section>
@@ -239,50 +474,39 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoSesso')}</label>
+                                    <label htmlFor={`${radiceId}-sesso`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoSesso')}</label>
+                                    {/* ⚠️ Il sesso non si deduce dal nome di battesimo e non ha
+                                        un valore predefinito: senza, il codice fiscale non è
+                                        calcolabile, e il badge lo dice invece di indovinare. */}
                                     <select
-                                        value={(form.gender as string) ?? ''}
+                                        id={`${radiceId}-sesso`}
+                                        value={form.gender ?? ''}
                                         onChange={e => updateForm('gender', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                     >
-                                        <option value="">—</option>
+                                        <option value="">{t('optSessoNonIndicato')}</option>
                                         <option value="M">{t('optMaschio')}</option>
                                         <option value="F">{t('optFemmina')}</option>
                                     </select>
                                 </div>
-                                <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneNascita')}</label>
-                                    <input
-                                        type="text"
-                                        value={(form.birth_city as string) ?? ''}
-                                        onChange={e => updateForm('birth_city', e.target.value)}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvNascita')}</label>
-                                    <input
-                                        type="text"
-                                        value={(form.birth_province as string) ?? ''}
-                                        onChange={e => updateForm('birth_province', e.target.value.toUpperCase())}
-                                        maxLength={2}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green uppercase focus:outline-none focus:border-kidville-green"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNazioneNascita')}</label>
-                                    <input
-                                        type="text"
-                                        value={(form.birth_nation as string) ?? ''}
-                                        onChange={e => updateForm('birth_nation', e.target.value)}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                {/* ⚠️ UN CAMPO SOLO al posto di tre caselle libere: da «Napoli»
+                                    scritto a mano non esce nessun codice catastale, e senza
+                                    quello il codice fiscale non è né calcolabile né
+                                    confrontabile. Il dataset dei 13.656 comuni resta fuori dal
+                                    bundle: passa dalla rotta `/api/anagrafiche/comuni`. */}
+                                <div className="col-span-2">
+                                    <LuogoNascitaFields
+                                        valore={luogoNascita}
+                                        onChange={cambiaLuogoNascita}
+                                        idPrefisso={radiceId}
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCittadinanza')}</label>
+                                    <label htmlFor={`${radiceId}-cittadinanza`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCittadinanza')}</label>
                                     <input
+                                        id={`${radiceId}-cittadinanza`}
                                         type="text"
-                                        value={(form.citizenship as string) ?? ''}
+                                        value={form.citizenship ?? ''}
                                         onChange={e => updateForm('citizenship', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
@@ -295,58 +519,70 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
                                 {t('parentRecapitiResidenza')}
                             </h3>
+                            {/* ⚠️ SETTE ETICHETTE SCOLLEGATE, misurate con axe l'11 agosto
+                                (violazione `label`, ×7 su questa sezione più la
+                                cittadinanza): `<label>` senza `htmlFor` e `<input>` senza
+                                `id`. Un clic sul testo non portava il fuoco, e chi legge con
+                                uno screen reader sentiva sette caselle senza nome — su una
+                                scheda che contiene l'anagrafica di una persona vera. */}
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoIndirizzoResidenza')}</label>
+                                    <label htmlFor={`${radiceId}-indirizzo`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoIndirizzoResidenza')}</label>
                                     <input
+                                        id={`${radiceId}-indirizzo`}
                                         type="text"
-                                        value={(form.residence_address as string) ?? ''}
+                                        value={form.residence_address ?? ''}
                                         onChange={e => updateForm('residence_address', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNumeroCivico')}</label>
+                                    <label htmlFor={`${radiceId}-civico`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNumeroCivico')}</label>
                                     <input
+                                        id={`${radiceId}-civico`}
                                         type="text"
-                                        value={(form.residence_street_number as string) ?? ''}
+                                        value={form.residence_street_number ?? ''}
                                         onChange={e => updateForm('residence_street_number', e.target.value)}
                                         maxLength={20}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCitta')}</label>
+                                    <label htmlFor={`${radiceId}-citta`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCitta')}</label>
                                     <input
+                                        id={`${radiceId}-citta`}
                                         type="text"
-                                        value={(form.residence_city as string) ?? ''}
+                                        value={form.residence_city ?? ''}
                                         onChange={e => updateForm('residence_city', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvResidenza')}</label>
+                                    <label htmlFor={`${radiceId}-prov-residenza`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvResidenza')}</label>
                                     <input
+                                        id={`${radiceId}-prov-residenza`}
                                         type="text"
-                                        value={(form.residence_province as string) ?? ''}
+                                        value={form.residence_province ?? ''}
                                         onChange={e => updateForm('residence_province', e.target.value.toUpperCase())}
                                         maxLength={2}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green uppercase focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCap')}</label>
+                                    <label htmlFor={`${radiceId}-cap`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCap')}</label>
                                     <input
+                                        id={`${radiceId}-cap`}
                                         type="text"
-                                        value={(form.zip_code as string) ?? ''}
+                                        value={form.zip_code ?? ''}
                                         onChange={e => updateForm('zip_code', e.target.value)}
                                         maxLength={10}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoTelefono')}</label>
+                                    <label htmlFor={`${radiceId}-telefono`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoTelefono')}</label>
                                     <input
+                                        id={`${radiceId}-telefono`}
                                         type="text"
                                         value={form.phone_numbers?.[0] || ''}
                                         onChange={e => {
@@ -358,8 +594,9 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('parentEmailPrincipale')}</label>
+                                    <label htmlFor={`${radiceId}-email`} className="font-maven text-xs text-kidville-muted mb-1 block">{t('parentEmailPrincipale')}</label>
                                     <input
+                                        id={`${radiceId}-email`}
                                         type="email"
                                         value={form.emails?.[0] || ''}
                                         onChange={e => {
@@ -458,13 +695,24 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
 
                 {/* Footer actions */}
                 <div className="flex-shrink-0 p-5 border-t border-kidville-line bg-kidville-white space-y-2">
+                    {/* In pagina, non in un `alert()`: il messaggio si legge, si copia, e
+                        soprattutto NON butta via quello che l'operatore ha appena scritto. */}
+                    {erroreSalvataggio && (
+                        <p role="alert" className="rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">
+                            {erroreSalvataggio}
+                        </p>
+                    )}
+                    {/* ⚠️ `text-kidville-yellow-ink`, non `text-kidville-yellow`: sul verde
+                        di casa il giallo pieno sta a 4,05:1, cioè SOTTO l'AA per il testo
+                        normale, ed è il criterio che `__tests__/a11y/contrasto-cascata.test.tsx`
+                        misura. Era preesistente e stava sul bottone principale della scheda. */}
                     <button
                         onClick={handleSave}
                         disabled={isSaving}
-                        className="w-full h-12 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                        className="w-full h-12 rounded-pill bg-kidville-green text-kidville-yellow-ink font-barlow font-black uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                         {isSaving ? (
-                            <div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
+                            <div className="w-5 h-5 border-2 border-kidville-yellow-ink/40 border-t-kidville-yellow-ink rounded-full animate-spin" />
                         ) : (
                             <>
                                 <Save size={16} />

@@ -6,7 +6,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
-import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
+import { colonnaSconosciuta, linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { riallineaScadenzeRetteFuture } from '@/lib/pagamenti/scadenze';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
@@ -32,6 +32,26 @@ const postBodySchema = z.object({
     codice_fiscale: z.string().nullable().optional(),
     comune_nascita: z.string().nullable().optional(),
     provincia_nascita: z.string().nullable().optional(),
+    /**
+     * Il codice catastale del comune di nascita (`alunni.codice_belfiore_nascita`,
+     * migrazione `20260810094625`; colonna NULLABLE, verificata l'11 agosto su
+     * `information_schema.columns` insieme alla gemella su `parents`).
+     *
+     * ⚠️ QUESTA RIGA NON È DECORATIVA, e va detto perché la sua assenza non faceva
+     * rumore: `postBodySchema` è uno `z.object` NON strict, quindi fino all'11 agosto
+     * la chiave arrivava nel corpo dal form, zod la SCARTAVA senza errore e senza log,
+     * e l'operatore riceveva `201`. Nessun test era rosso — le tre schede misuravano
+     * il payload della richiesta, non ciò che entrava in archivio. È la stessa forma
+     * di guasto che AGENTS.md descrive («un codice che fallisce in silenzio è un
+     * codice rotto»), e il gemello adulto era già completo
+     * (`buildParentRecord`, `src/lib/anagrafiche/parents.ts`): la stessa schermata
+     * funzionava sui genitori e mentiva sui bambini.
+     *
+     * Il valore non lo digita nessuno: viene dal campo `belfiore` di
+     * `GET /api/anagrafiche/comuni`, scelto dalla tendina. Resta `null` quando il
+     * comune è scritto a mano e non si riconosce — assente non è un errore.
+     */
+    codice_belfiore_nascita: z.string().nullable().optional(),
     nazione_nascita: z.string().nullable().optional(),
     cittadinanza: z.string().nullable().optional(),
     indirizzo_residenza: z.string().nullable().optional(),
@@ -90,6 +110,10 @@ const patchBodySchema = z.object({
     birth_nation: z.unknown().optional(),
     birth_province: z.unknown().optional(),
     birth_city: z.unknown().optional(),
+    // Vedi la testata sul gemello in `postBodySchema`: senza questa riga la chiave
+    // veniva rimossa da zod prima ancora di arrivare ad `allowedFields`, e il PATCH
+    // rispondeva `200` su un campo mai scritto.
+    codice_belfiore_nascita: z.unknown().optional(),
     residence_address: z.unknown().optional(),
     residence_street_number: z.unknown().optional(),
     residence_city: z.unknown().optional(),
@@ -284,6 +308,7 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             codice_fiscale: body.codice_fiscale || null,
             birth_city: body.comune_nascita || null,
             birth_province: body.provincia_nascita || null,
+            codice_belfiore_nascita: body.codice_belfiore_nascita || null,
             residence_address: body.indirizzo_residenza || null,
             residence_street_number: body.civico || null,
             residence_city: body.comune_residenza || null,
@@ -309,14 +334,36 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             .select()
             .single();
 
-        // Resilienza pre-migration: se una colonna non esiste ancora (es. usa_pannolino,
-        // residence_province/residence_street_number prima della migrazione 20260706105201),
-        // rimuovila dal record e riprova (Postgres segnala una colonna alla volta).
+        /**
+         * Resilienza pre-migration: se una colonna non esiste ancora (es. usa_pannolino,
+         * residence_province/residence_street_number prima della migrazione 20260706105201),
+         * rimuovila dal record e riprova (l'errore segnala una colonna alla volta).
+         *
+         * ⚠️ DUE CODICI, NON UNO — e questo ciclo fino all'11 agosto ne guardava uno solo,
+         * quello che in scrittura non arriva quasi mai. PostgREST valida il corpo contro la
+         * PROPRIA cache dello schema prima di parlare col database: quando una colonna lì non
+         * c'è risponde `PGRST204` («Could not find the … column … in the schema cache»), non
+         * `42703`. È il caso del DB E2E della CI, che è un progetto SEPARATO e NON migrato
+         * (vedi CLAUDE.md): con `codice_belfiore_nascita` appena aggiunto al record e senza
+         * questo ramo, ogni creazione di alunno in CI sarebbe diventata un 500 — cioè un
+         * campo in più si sarebbe portato via un'intera funzionalità.
+         *
+         * `colonnaSconosciuta` è la stessa funzione che usa `insertParentResilient`: una
+         * regola valida per più strade vive in un posto solo.
+         */
         let attempts = 0;
-        while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
-            const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
-            if (!col || !(col in record)) break;
+        for (;;) {
+            const col = colonnaSconosciuta(error as { code?: string; message?: string } | null);
+            if (!col || !(col in record) || attempts >= 5) break;
             delete record[col];
+            // Un dato che l'ambiente non sa dove mettere NON si perde in silenzio: la riga
+            // viene scritta senza quel campo e chi legge i log deve poterlo sapere. A log solo
+            // il nome della colonna — che non è un dato di persona (AGENTS.md, punto 8).
+            logEvento('anagrafica', 'warn', {
+                operazione: 'admin/students:POST',
+                azione: 'colonna-assente-scartata',
+                esito: col,
+            });
             ({ data, error } = await supabase.from('alunni').insert(record).select().single());
             attempts++;
         }
@@ -588,7 +635,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
         if (id) {
             try {
                 const updates: Record<string, unknown> = {};
-                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
+                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'codice_belfiore_nascita', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
                     'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade',
                     // I tre consensi fotografici, uno per canale: galleria riservata,
                     // sito pubblico, social. Vanno tutti e tre in allowlist — con solo
@@ -600,8 +647,19 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     if (body[field] !== undefined) updates[field] = body[field];
                 }
 
+                /**
+                 * Una sola risposta, DUE punti di uscita: qui (il client non ha chiesto
+                 * niente di aggiornabile) e dentro il ciclo di resilienza qui sotto (tutto
+                 * ciò che aveva chiesto era una colonna che l'ambiente non conosce).
+                 * Scritta una volta e non copiata: `errori-con-codice.test.ts` congela il
+                 * debito delle risposte SENZA `codice` al conteggio del 2026-08-01, e una
+                 * seconda copia lo farebbe crescere dentro il lock che esiste per impedirlo.
+                 */
+                const nessunCampoDaAggiornare = () =>
+                    NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 });
+
                 if (Object.keys(updates).length === 0) {
-                    return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 });
+                    return nessunCampoDaAggiornare();
                 }
 
                 // Gate di tenant PRIMA di qualunque lettura o scrittura: la
@@ -660,11 +718,23 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     .single();
 
                 // Resilienza pre-migration: rimuove le colonne non ancora esistenti e riprova.
+                // Vale qui la stessa nota sui DUE codici scritta sull'INSERT qui sopra:
+                // in scrittura l'errore che arriva è `PGRST204`, non `42703`.
                 let patchAttempts = 0;
-                while (error && (error as { code?: string }).code === '42703' && patchAttempts < 5) {
-                    const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
-                    if (!col || !(col in updates)) break;
+                for (;;) {
+                    const col = colonnaSconosciuta(error as { code?: string; message?: string } | null);
+                    if (!col || !(col in updates) || patchAttempts >= 5) break;
                     delete updates[col];
+                    logEvento('anagrafica', 'warn', {
+                        operazione: 'admin/students:PATCH',
+                        azione: 'colonna-assente-scartata',
+                        esito: col,
+                    });
+                    // Tutti i campi richiesti erano colonne che l'ambiente non conosce:
+                    // un UPDATE nudo non si manda. Un 400 onesto, non un 500.
+                    if (Object.keys(updates).length === 0) {
+                        return nessunCampoDaAggiornare();
+                    }
                     ({ data, error } = await supabase.from('alunni').update(updates).eq('id', id).in('scuola_id', plessi).select().single());
                     patchAttempts++;
                 }

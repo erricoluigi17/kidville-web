@@ -108,8 +108,17 @@ export function dettaglioErroreAuth(error: unknown): string {
  * Cerca un auth.users per email. L'admin API non ha getUserByEmail: scansione
  * paginata O(utenti totali), accettabile alla scala attuale (decine di account);
  * stesso approccio del backfill S6.
+ *
+ * ⚠️ ESPORTATA dal 2026-08-10, ed è l'unico motivo per cui non è più privata:
+ * `ensureStaffIdentity` (src/lib/auth/staff-identity.ts) deve fare la STESSA
+ * domanda — «esiste già un account con questa email?» — prima di crearne uno per
+ * un'insegnante approvata. Riscriverla lì significherebbe due scansioni di
+ * `auth.users` che possono divergere sul confronto (minuscole), sulla
+ * paginazione e sulla gestione dell'errore: e la divergenza si vedrebbe come un
+ * SECONDO account per la stessa persona, cioè un registro diviso in due.
+ * «Una regola valida per due strade deve vivere in un posto solo».
  */
-async function findAuthUserIdByEmail(admin: SupabaseClient, email: string): Promise<string | null> {
+export async function findAuthUserIdByEmail(admin: SupabaseClient, email: string): Promise<string | null> {
   const key = email.toLowerCase();
   let page = 1;
   for (;;) {

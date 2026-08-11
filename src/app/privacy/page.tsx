@@ -399,6 +399,39 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 i dati confluiscono nella posizione dell&rsquo;alunno iscritto e seguono i tempi
                 indicati al punto precedente;
               </li>
+              {/*
+                LA CANDIDATURA DI CHI CERCA LAVORO, E PERCHÉ I NUMERI SONO DUE.
+                Il modulo pubblico «Lavora con noi» raccoglie nome, recapito e spesso il
+                curriculum di una persona adulta. La base è l'art. 6.1.b (misure
+                precontrattuali su sua richiesta): esaurita la valutazione, quella base non
+                copre più niente, e restano dodici mesi. I ventiquattro esistono solo se la
+                persona li ha chiesti spuntando il consenso facoltativo, il cui testo
+                interpola `CANDIDATURA_LIMITI.mesiConservazione` — lo STESSO numero che
+                `retention-candidature/route.ts` applica, importato e non ribattuto.
+                Il lock `gdpr-retention-candidature.test.ts` confronta questa voce con
+                quelle due costanti: promettere dodici mesi qui e ventiquattro nel codice è
+                il difetto che questa riga esiste per impedire.
+                CHI FA SCADERE QUESTA VOCE, dal 2026-08-10: il job `candidature-retention`
+                (`5 5 * * *`, ogni notte), installato da
+                `supabase/migrations/20260810204727_candidature_retention_cron.sql` e
+                APPLICATO in produzione lo stesso giorno — `cron.job` lo riporta attivo.
+                Chiama `POST /api/gdpr/retention-candidature`, che toglie prima il file dal
+                bucket e poi la riga, e lascia il proprio battito in `app_log`: se smette di
+                girare, `/api/health` lo dice entro 26 h col nome del job.
+                ⚠️ Questa riga NON dice «automaticamente», e non è una svista. Il lock
+                `informativa-conservazione-dichiarata` pretende che l'automa esista prima che
+                l'informativa lo prometta; qui l'automa ora esiste, ma ciò che la persona ha
+                diritto di sapere (art. 13 §2 lett. a) è il TERMINE, non il meccanismo. Se un
+                giorno si vorrà scrivere «automaticamente», va aggiunta la voce in
+                `AUTOMI_DICHIARATI` di quel lock: la parola tira con sé una prova.
+              */}
+              <li>
+                <strong>candidature spontanee di personale</strong> (modulo «Lavora con
+                noi»): <strong>dodici mesi</strong> dalla ricezione, o dalla decisione se la
+                candidatura non è accolta. Con il consenso della persona alla conservazione
+                per opportunità future: <strong>ventiquattro mesi</strong>. Il curriculum
+                allegato viene cancellato insieme alla candidatura;
+              </li>
               <li>
                 <strong>documenti contabili e fiscali</strong>: <strong>dieci anni</strong>, come
                 previsto dall&rsquo;art. 2220 del Codice civile e dalla normativa tributaria;

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-04",
-  "generato_alle": "2026-08-04T12:49:11Z",
-  "sha256": "22fabfe3115ffbb281da938e21455c6563fd5517af9cd173250b60486d0f9b07",
+  "generato_il": "2026-08-10",
+  "generato_alle": "2026-08-10T18:26:18Z",
+  "sha256": "94a4dead8c62270bd00d041e5074fbb15fa71238ed2e7fb09ba50bc1204b284d",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -486,6 +486,7 @@
     "armadietto",
     "audit_scritture_docente",
     "avvisi",
+    "candidature_insegnanti",
     "cassa_categorie",
     "cassa_chiusure",
     "cassa_movimenti",
@@ -556,6 +557,7 @@
     "avvisi",
     "avvisi_risposte",
     "campanelle",
+    "candidature_insegnanti",
     "cassa_categorie",
     "cassa_chiusure",
     "cassa_movimenti",
@@ -577,6 +579,7 @@
     "fascicolo_accessi_audit",
     "fatture_emesse",
     "fatture_numerazione",
+    "fatture_numerazione_sezionale",
     "fea_audit_log",
     "fea_signatures",
     "firme_docenti",

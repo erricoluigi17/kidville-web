@@ -289,7 +289,13 @@ const CONSUMATORI_DEL_TETTO = new Map<string, string>([
     ['src/lib/logging/external.ts', 'i 13 provider esterni'],
     ['src/lib/logging/supabase-fetch.ts', 'tutte le chiamate PostgREST/Storage/auth delle route'],
     ['src/middleware.ts', 'la porta da cui passa OGNI pagina e OGNI route API'],
-    ['src/lib/utils/fiscalCodeApi.ts', 'il calcolo del codice fiscale, che gira nel browser'],
+    // ⚠️ `src/lib/utils/fiscalCodeApi.ts` era la quarta voce, ed è caduta l'11 agosto 2026
+    // insieme al file: la sua `fetch` mandava nome, cognome, sesso, data e comune di nascita di
+    // un bambino ad `api.codicefiscale.it`, e il titolare del trattamento ha deciso di toglierla
+    // (vedi `HOST_VIETATI` in `__tests__/architecture/provider-esterni-osservati.test.ts`). Il
+    // tetto da 5 s che le stava attorno serviva a far partire il ripiego locale prima che il
+    // genitore si stancasse: senza chiamata non c'è più niente da limitare, perché il calcolo è
+    // ora sincrono e in locale (`src/lib/fiscale/calcolo.ts`).
 ]);
 
 /**
@@ -303,7 +309,9 @@ const TETTI_DICHIARATI = new Map<string, string>([
     ['src/lib/logging/supabase-fetch.ts', 'quanto aspetta ciascuna area di Supabase'],
     ['src/lib/auth/errore-accesso.ts', 'il budget dell\'intera sequenza di accesso, lato browser'],
     ['src/middleware.ts', 'il budget di `getUser()` sulla porta di ogni richiesta'],
-    ['src/lib/utils/fiscalCodeApi.ts', 'il calcolo del codice fiscale, con un fallback locale che aspetta'],
+    // ⚠️ `src/lib/utils/fiscalCodeApi.ts:TETTO_MS` (5 s) è uscito da questo inventario l'11
+    // agosto 2026 perché il file non esiste più — non perché il tetto sia stato allentato. Vedi
+    // la nota in `CONSUMATORI_DEL_TETTO` qui sopra.
     ['src/app/offline/script-offline.ts',
         'la sonda di rete della pagina `/offline` e l\'ultima attesa di React. È entrata '
         + 'nell\'inventario il 2026-08-03 non perché fosse nuova, ma perché la regola qui sotto '

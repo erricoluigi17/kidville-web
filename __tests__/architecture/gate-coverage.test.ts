@@ -347,6 +347,32 @@ const PUBBLICHE: Record<string, string> = {
     'iscrizione/sedi:GET': 'modulo pubblico: elenco delle sole sedi reali (id e nome, niente anagrafica), tetto 30/10 min per IP. Il wizard deve poter scegliere il plesso PRIMA di esistere come utente',
     'iscrizione/model:GET': "modulo pubblico: restituisce SOLO lo schema dei campi del modello standard, nessun dato personale",
     'iscrizione/upload:POST': 'modulo pubblico: allegato del wizard di iscrizione, su bucket dedicato con nome randomizzato e tetto di dimensione',
+    // ── Modulo pubblico «Lavora con noi»: chi si candida non ha un account ───
+    // E non può averlo: l'account (`utenti`, ruolo `educator`) nasce SOLO se la
+    // Direzione approva. La migrazione `20260810094610_candidature_insegnanti.sql`
+    // spiega perché la candidatura non può vivere in `utenti` con `attivo=false`:
+    // `utenti.attivo` non è letto da nessun gate di questa applicazione, quindi una
+    // candidata salvata lì avrebbe accesso PIENO all'area docente, e all'anagrafica
+    // dei bambini. Un gate qui non è «scomodo»: è impossibile, perché la persona
+    // che bussa per definizione non è ancora nessuno.
+    //
+    // COSA OTTIENE UN ANONIMO CHE PASSA — che è la domanda che distingue questa
+    // voce da `forms/send-otp` (vedi il tetto in fondo): può SCRIVERE una riga in
+    // `candidature_insegnanti`, e nient'altro. Non legge niente — la sola SELECT
+    // dell'handler è quella sulla riga già viva dopo un `23505`, e restituisce un
+    // uuid, non un dato. La risposta è `{ id }` e basta: nessuna anagrafica, nessun
+    // elenco, nemmeno la conferma che una certa email sia già in valutazione (il
+    // doppio invio risponde `201` proprio per non essere un oracolo di
+    // enumerazione sul lavoro di qualcuno).
+    //
+    // IL PERIMETRO, che è quello che resta quando la sessione non c'è: tetto di 3
+    // invii l'ora per IP (più stretto dell'iscrizione: le candidature spontanee
+    // sono rare), honeypot, ri-validazione server dei campi contro
+    // `INSEGNANTE_FIELDS`, gate dei consensi obbligatori, e `scuola_id` accettato
+    // solo se compare fra le sedi note — nessun default silenzioso.
+    'iscrizione/insegnanti:POST':
+        "modulo pubblico «Lavora con noi»: chi si candida non ha un account, e non può averlo — l'account nasce solo se la Direzione approva, e `utenti.attivo` non è letto da nessun gate (vedi la migrazione della tabella). L'anonimo che passa può solo SCRIVERE una candidatura: non legge nulla, la risposta è un id. Perimetro: tetto 3 invii/ora per IP + honeypot + ri-validazione server-side dei campi + consensi obbligatori verificati qui + `scuola_id` valido solo se è una sede nota (nessun default silenzioso)",
+
     'admin/pre-inscriptions:POST': "sottomissione del portale onboarding pubblico (il GET e il PATCH della stessa route sono `requireStaff`: qui la porta è aperta di proposito, ed è dichiarato nel file). Scrive una riga `pending`, non legge niente",
 
     // ── Modulistica pubblica: il gate è un TOKEN, non una sessione ───────────
@@ -399,6 +425,35 @@ const PUBBLICHE: Record<string, string> = {
     // Quello che un anonimo può dedurre è dunque: se il sistema sta bene, e se un
     // job notturno non gira. È esattamente ciò che deve poter dedurre.
     'health:GET': "endpoint di salute per un monitor esterno, che una sessione non ce l'ha e non può averla: il caso in cui serve di più è quello in cui l'autenticazione è il guasto. Perimetro: tetto per IP + una risposta che non porta dati (nomi di controllo, booleani, ms, al più un codice d'errore — mai messaggi, mai conteggi, mai valori di variabili)",
+
+    // ── Dato APERTO: la tabella dei comuni ───────────────────────────────────
+    // La domanda che decide, quella di `health` e non quella di `send-otp`, è
+    // «cosa ottiene un anonimo che passa». Qui ottiene l'elenco dei comuni
+    // italiani e degli stati esteri con i loro codici catastali: dato pubblico,
+    // fermo da anni, che chiunque scarica dall'Agenzia delle Entrate. Nessun dato
+    // di famiglie, e nessuna query applicativa: la tabella Belfiore è un file del
+    // repo, non una riga di Postgres.
+    //
+    // ⚠️ Ma «nessun accesso al database» sarebbe falso, e fino al 2026-08-10 questa
+    // voce lo diceva: `rateLimit()` — la prima riga dell'handler — apre un
+    // `createAdminClient()` (SERVICE ROLE) e fa `rpc('tetto_frequenza_consuma', …)`,
+    // cioè una SCRITTURA sul contatore condiviso `public.tetto_frequenza`,
+    // provocabile da un anonimo, una per richiesta. È il perimetro stesso, non una
+    // svista, ed è comune a tutte le rotte pubbliche di questo elenco; ma chi
+    // riaprirà questa voce per decidere se il gate mancante è ancora difendibile
+    // deve trovarci il comportamento vero, non una frase più tranquilla di lui.
+    //
+    // E la chiama un anonimo per costruzione: è la tendina provincia → comune del
+    // wizard PUBBLICO d'iscrizione, cioè di chi un account non ce l'ha ancora.
+    // Un gate qui non proteggerebbe niente e chiuderebbe il primo passo del modulo
+    // da cui arrivano le domande vere.
+    //
+    // La route esiste perché il dataset (~294 KB, 13.656 righe) NON deve entrare
+    // nel bundle del browser — lock `dataset-comuni-fuori-dal-bundle`. Senza questa
+    // porta quel divieto sarebbe una privazione, e il primo che ne ha bisogno lo
+    // aggira importando la tabella da un componente `'use client'`: compila, passa
+    // i test, e ogni famiglia scarica 294 KB dalla rete mobile.
+    'anagrafiche/comuni:GET': "tabella Belfiore (comuni italiani e stati esteri): dato APERTO, uguale per tutti, letto da un file del repo — nessun dato di famiglie e nessuna query applicativa. L'unico accesso al database è la scrittura sul contatore del tetto (`rateLimit` → `rpc('tetto_frequenza_consuma')`, client service-role), provocabile da un anonimo una volta per richiesta. La chiama un anonimo dal wizard pubblico d'iscrizione, che un account non ce l'ha ancora. Perimetro: tetto 60/10 min per IP. È anche l'unica risposta del progetto in cache CONDIVISA — e solo per le richieste senza cookie di sessione, perché il middleware può attaccare un `Set-Cookie` alla risposta di una route API (misurato)",
 }
 
 function scopertiDelRepo(): { chiave: string; dettaglio: string }[] {
@@ -493,12 +548,73 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // mai un messaggio d'errore, mai un conteggio di righe reali, mai il valore
         // di una variabile d'ambiente. Se quel giorno la risposta cominciasse a
         // portare dati, questa voce non sarebbe più difendibile.
+        //
+        // 16 dal 2026-08-10, e di nuovo una SALITA: `anagrafiche/comuni:GET`. Mi sono
+        // fermato, come chiede la riga qui sopra, e la domanda l'ho fatta: «cosa
+        // ottiene un anonimo che passa?». La risposta è l'elenco dei comuni italiani
+        // con i loro codici catastali — dato aperto, pubblicato dall'Agenzia delle
+        // Entrate, uguale per chiunque. Nessuna riga che riguardi una famiglia:
+        // dietro questa porta non c'è NIENTE da leggere, che è la stessa ragione per
+        // cui `health` è passata e `forms/send-otp` no.
+        //
+        // Con una precisazione che il 2026-08-10 mancava e che va detta perché la
+        // frase «nessun `.rpc(`» era, alla lettera, sbagliata: nel corpo dell'handler
+        // non c'è, ma `rateLimit()` fa `rpc('tetto_frequenza_consuma', …)` con un
+        // client SERVICE ROLE, cioè un anonimo provoca una scrittura sul contatore
+        // condiviso a ogni richiesta. Vale per tutte le rotte pubbliche di questo
+        // elenco ed è il perimetro stesso; ma «non tocca il database» e «non tocca
+        // dati di famiglie» sono due affermazioni diverse, e solo la seconda è vera.
+        //
+        // La differenza con una voce di comodo è che qui il gate mancante non è
+        // dimenticato: è impossibile. La route serve il primo passo del wizard
+        // PUBBLICO d'iscrizione, dove chi compila un account non ce l'ha ancora —
+        // e da quel modulo, in produzione, sono arrivate le domande vere.
+        //
+        // Ciò che tiene ferma l'affermazione non sta qui ma in
+        // `__tests__/api/anagrafiche-comuni.test.ts`, dove si misura che la risposta
+        // contenga SOLO i quattro campi della tabella Belfiore e pesi quanto deve.
+        // Il giorno in cui quel corpo cominciasse a portare altro, questa voce non
+        // sarebbe più difendibile.
+        //
+        // 17 dal 2026-08-10, terza SALITA: `iscrizione/insegnanti:POST`, il modulo
+        // pubblico «Lavora con noi». Mi sono fermato, e questa volta la risposta alla
+        // domanda «cosa ottiene un anonimo che passa?» NON è «niente»: ottiene di
+        // SCRIVERE una riga in `candidature_insegnanti`. È quindi la voce più pesante
+        // fra queste diciassette dopo `iscrizione:POST`, e va difesa su un piano
+        // diverso da `health` e `comuni`.
+        //
+        // Perché il gate qui non è dimenticato ma IMPOSSIBILE: chi si candida non ha
+        // un account, e non può averlo. L'account (`utenti`, ruolo `educator`) nasce
+        // solo se la Direzione approva — e non si può nemmeno creare la riga «spenta»
+        // in attesa, perché `utenti.attivo` non è letto da NESSUN gate di questa
+        // applicazione: una candidata salvata lì avrebbe accesso pieno all'area
+        // docente, cioè all'anagrafica dei bambini. Non è un'ipotesi, è ciò che
+        // `require-staff.ts` e `profili.ts` fanno oggi, ed è scritto per esteso nella
+        // migrazione `20260810094610_candidature_insegnanti.sql`. La tabella separata
+        // esiste proprio per questo.
+        //
+        // Cosa NON ottiene, che è la metà che rende la voce difendibile: non legge
+        // niente. La sola SELECT dell'handler è quella sulla riga già viva dopo un
+        // `23505`, e restituisce un uuid; la risposta è `{ id }` e nient'altro —
+        // nessuna anagrafica, nessun elenco, e nemmeno la conferma che un dato
+        // indirizzo sia già in valutazione (il doppio invio risponde `201` come il
+        // primo, apposta per non diventare un oracolo di enumerazione sul lavoro di
+        // qualcuno). La scrittura, dal canto suo, è la stessa che il prodotto CHIEDE
+        // a un anonimo di fare: è il punto della funzionalità.
+        //
+        // Ciò che tiene ferma questa affermazione non sta qui ma in
+        // `__tests__/api/candidature-insegnanti-post.test.ts` (tetto 3/ora, honeypot,
+        // ri-validazione server, consensi, sede solo se nota, `503` e mai `201` sul DB
+        // non migrato, `201` e mai `409` sul doppione) e in
+        // `__tests__/api/candidature-insegnanti-log-senza-pii.test.ts`. Il giorno in
+        // cui quella risposta cominciasse a portare dati di qualcuno, o il tetto
+        // sparisse, questa voce non sarebbe più difendibile.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(15)
+        ).toBe(17)
     })
 })
 

@@ -84,8 +84,17 @@ async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   if (n === 1) {
     const avviso = await apiPost(page, '/api/avvisi', {
       author_id: appId, titolo: `${TAG} Gita al Museo di Napoli`,
-      contenuto: `${TAG} Uscita didattica al Museo Archeologico. Si richiede autorizzazione firmata dei genitori entro il 2026-07-15. Aderire tramite il modulo allegato.`,
-      tipo: 'adesione', target_scope: 'classe', target_classes: ['TEST 1A'], scadenza: '2026-07-31',
+      contenuto: `${TAG} Uscita didattica al Museo Archeologico. Si richiede autorizzazione firmata dei genitori. Aderire tramite il modulo allegato.`,
+      // ⚠️ SCADENZA RELATIVA, e non una data scritta a mano. `GET /api/avvisi`
+      // (route.ts:204) toglie dal feed gli avvisi già scaduti: con la costante
+      // '2026-07-31' che c'era qui, **dal 1° agosto 2026** questo journey ha
+      // continuato a girare su un avviso che in bacheca non si vedeva più. Le dieci
+      // adesioni delle famiglie venivano registrate su qualcosa di invisibile, e il
+      // percorso non falliva — l'unica asserzione è che ci siano dei rilievi, non
+      // che siano verdi. Un collaudo che smette di collaudare senza diventare rosso
+      // è peggio di un collaudo che manca: sembra ancora coprire quel percorso.
+      tipo: 'adesione', target_scope: 'classe', target_classes: ['TEST 1A'],
+      scadenza: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
     });
     const avvisoId = (avviso.json as { data?: { id?: string }; id?: string })?.data?.id ?? (avviso.json as { id?: string })?.id;
     if (avvisoId) writeState({ avvisoGitaId: avvisoId });

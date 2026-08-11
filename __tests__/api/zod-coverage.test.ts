@@ -69,6 +69,14 @@ const GRUPPI_COPERTI: string[] = [
     // scritture su `app_log` da chiunque. Valida con zod dal giorno 1, e questo lock è ciò
     // che impedisce che qualcuno la "semplifichi" domani.
     'logs',
+    // Anagrafiche di riferimento (2026-08-10): prefisso di primo livello nuovo, che nasce
+    // con `anagrafiche/comuni` — la tendina provincia → comune del wizard PUBBLICO
+    // d'iscrizione. Entra qui dal giorno 1 e non «quando ce ne saranno abbastanza»: è una
+    // porta ANONIMA, e i suoi query param arrivano da chiunque. Senza zod, `provincia`
+    // sarebbe una stringa qualunque passata a un lettore di dataset, e `includiSoppressi`
+    // un «forse» interpretato a caso — che su un comune di nascita significa scrivere nel
+    // codice fiscale di un bambino un luogo che non è il suo.
+    'anagrafiche',
     // Segnalazioni UGC (C5 §2, 2026-07-27): prefisso di primo livello nuovo (la coda di
     // triage sta sotto `admin/`, già coperta). Valida con zod dal giorno 1: body/query
     // dell'ingresso pubblico delle segnalazioni non deve poter regredire a senza-validazione.

@@ -65,6 +65,20 @@ export interface FormField {
   link?: string
   /** Blocco `consent`: etichetta del link informativa. */
   link_label?: string
+  /**
+   * Valore dell'attributo HTML `autocomplete` del controllo (WCAG 2.1 AA, SC
+   * 1.3.5 «Identify Input Purpose»): `given-name`, `family-name`, `email`,
+   * `tel`, `address-level2`, `address-level1`, …
+   *
+   * Serve a chi compila dal telefono — il riempimento automatico è la differenza
+   * fra sei campi digitati e un tocco — e a chi usa un ausilio che si appoggia
+   * allo scopo dichiarato del campo. Si dichiara nel TEMPLATE e non in
+   * `FieldRenderer`, perché lo scopo lo conosce chi definisce il campo: l'id di
+   * un modello costruito dal builder può essere qualunque cosa.
+   *
+   * Omesso = nessun attributo (il browser decide come ha sempre fatto).
+   */
+  autocomplete?: string
   /** Blocco `file`: estensioni/MIME ammessi (es. ".pdf,.jpg,image/png"). */
   accept?: string
   /** Blocco `file`: dimensione massima in MB (override del default server). */

@@ -1,7 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-07-31",
-  "sha256": "505f2a51626e718974cd0123d3caa8ce5537ee20cb55cbbbc813267386b0fad9",
+  "generato_il": "2026-08-10",
+  "generato_alle": "2026-08-10T18:26:18Z",
+  "sha256": "ac220c312e58f6db0d3cbf01a26369227066585a0d7f3e01656d872916398b9a",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -37,6 +38,12 @@
       "tabella": "avvisi",
       "not_null": false,
       "fk_nome": "avvisi_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "not_null": true,
+      "fk_nome": "candidature_insegnanti_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {
@@ -89,7 +96,7 @@
     },
     {
       "tabella": "enrollment_submissions",
-      "not_null": false,
+      "not_null": true,
       "fk_nome": "enrollment_submissions_scuola_id_fkey",
       "fk_verso": "schools"
     },
@@ -317,7 +324,7 @@
     },
     {
       "tabella": "richieste_cancellazione",
-      "not_null": false,
+      "not_null": true,
       "fk_nome": "richieste_cancellazione_scuola_id_fkey",
       "fk_verso": "schools"
     },
@@ -377,7 +384,7 @@
     },
     {
       "tabella": "task_interni",
-      "not_null": false,
+      "not_null": true,
       "fk_nome": "task_interni_scuola_id_fkey",
       "fk_verso": "schools"
     },

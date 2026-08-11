@@ -70,6 +70,18 @@ beforeEach(() => {
         if (u.includes('/api/admin/gruppi-mensa')) {
             return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [] }) })
         }
+        // La linguetta «Codici fiscali» ha la sua sorgente, e la pagina la
+        // interroga al montaggio perché il CONTEGGIO va sulla pillola della tab.
+        // È una richiesta a sé: senza questo ramo il corpo generico degli elenchi
+        // le arriverebbe come «forma inattesa», cioè come un guasto — e il
+        // controllo positivo qui sotto («nessun allarme») diventerebbe rosso per
+        // un'altra tab.
+        if (u.includes('/api/admin/anagrafiche/codici-fiscali')) {
+            return Promise.resolve({
+                ok: true, status: 200,
+                json: async () => ({ righe: [], totale: 0, scansionati: 0, troncato: false }),
+            })
+        }
         // Gli elenchi: alunni, genitori, staff.
         const staff = u.includes('/api/admin/staff')
         if (esitoElenco === 'rete') return Promise.reject(new TypeError('Failed to fetch'))

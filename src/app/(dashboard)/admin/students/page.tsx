@@ -4,21 +4,22 @@ import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
+import { CodiciFiscaliDaVerificare, useCodiciFiscaliDaVerificare } from '@/components/features/admin/CodiciFiscaliDaVerificare';
 import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
-type TipoVista = 'child' | 'adult' | 'sections' | 'staff';
+type TipoVista = 'child' | 'adult' | 'sections' | 'staff' | 'codici';
 
 /** La tab richiesta dall'URL (`?tab=sections` = back-link dal dettaglio sezione). */
 const tabDaQuery = (v: string | null): TipoVista =>
-  v === 'adult' || v === 'sections' || v === 'staff' ? v : 'child';
+  v === 'adult' || v === 'sections' || v === 'staff' || v === 'codici' ? v : 'child';
 
 /**
  * «Questa tab aspetta un elenco dal server?» — e quindi: lo spinner va acceso?
@@ -36,8 +37,11 @@ const tabDaQuery = (v: string | null): TipoVista =>
  * Legare le tre decisioni a questa sola funzione è ciò che rende il difetto
  * irripetibile: una tab senza elenco non può più accendere uno spinner che
  * nessuno spegnerà, perché è lo stesso predicato a fare entrambe le cose.
+ *
+ * Le tab che caricano da sé sono due: SEZIONI (`SectionsView`) e CODICI FISCALI
+ * (`CodiciFiscaliDaVerificare`, che ha il suo hook e i suoi stati).
  */
-const attendeElenco = (v: TipoVista) => v !== 'sections';
+const attendeElenco = (v: TipoVista) => v !== 'sections' && v !== 'codici';
 
 interface Student {
   id: string;
@@ -72,6 +76,29 @@ function AdminStudentsInner() {
   const router = useRouter();
   const userId = search.get('userId');
   const { reFetchKey } = useSediAttive();
+  // «Codici fiscali»: l'elenco si carica QUI e non dentro la linguetta, perché il
+  // CONTEGGIO va sulla pillola della tab — cioè va saputo anche prima che
+  // qualcuno la apra. Un pannello che si carica solo quando lo guardi non può
+  // dire a nessuno che c'è da guardarlo.
+  //
+  // ─── IL PREZZO DI QUESTA SCELTA, MISURATO (2026-08-11) ────────────────────
+  // La scansione parte a OGNI apertura di /admin/students, qualunque linguetta
+  // si stia guardando. Finora il costo era solo DICHIARATO; eccolo misurato in
+  // produzione con `EXPLAIN (ANALYZE)` sulle tre letture che la rotta esegue:
+  //   · alunni in scope (33 righe, 10 colonne)     → 0,234 ms · 6 pagine
+  //   · student_parents (37 legami)                → 0,153 ms
+  //   · parents dei 37 genitori raggiunti (su 50)  → un `id IN (…)` a lotti
+  // In tutto ~70 righe, tre round-trip PostgREST e meno di 1 ms di lavoro sul
+  // database; il calcolo dei codici fiscali è puro e in memoria.
+  //
+  // ⚠️ Il piano è un Seq Scan su `alunni`: il costo cresce LINEARMENTE con
+  // l'anagrafica, e il tetto dichiarato della rotta è `LIMITE_SCANSIONE = 2000`.
+  // A quel tetto si parla di ~60 volte queste righe, cioè decine di ms: ancora
+  // sotto il costo dell'elenco alunni che questa pagina carica comunque. Perciò
+  // il ramo `?solo_conteggio=1` — proposto in revisione — NON è stato scritto:
+  // ottimizzerebbe 0,4 ms. Se un giorno il numero qui sopra cresce di due ordini
+  // di grandezza, quella è la strada; la misura va rifatta, non ricordata.
+  const codiciFiscali = useCodiciFiscaliDaVerificare();
   // Calcolata UNA volta: la vista iniziale e lo spinner iniziale sono due
   // decisioni che devono nascere dallo stesso valore, non da due letture.
   const tabIniziale = tabDaQuery(search.get('tab'));
@@ -461,12 +488,20 @@ function AdminStudentsInner() {
         subtitle={t('listSottotitolo')}
         actions={
           <>
-            <button
-              onClick={handleExport}
-              className="inline-flex h-[46px] items-center gap-2 rounded-pill border border-kidville-line bg-kidville-white px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green"
-            >
-              <FileDown size={16} /> {t('azioneEsporta')}
-            </button>
+            {/* «Esporta» esporta l'ELENCO di questa tab. Sulla tab «Codici
+                fiscali» quell'elenco non è mai stato caricato (la tab ha la sua
+                sorgente), quindi il bottone esporterebbe le righe della tab
+                visitata prima — o un file vuoto se ci si arriva da `?tab=codici`.
+                Un comando che scarica i dati sbagliati è peggio di un comando
+                assente. */}
+            {viewType !== 'codici' && (
+              <button
+                onClick={handleExport}
+                className="inline-flex h-[46px] items-center gap-2 rounded-pill border border-kidville-line bg-kidville-white px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green"
+              >
+                <FileDown size={16} /> {t('azioneEsporta')}
+              </button>
+            )}
             {/* Il bottone crea PERSONE, quindi vive solo dove ci sono persone.
                 Lo staff non si crea da qui (gestione RBAC dedicata), e le
                 sezioni hanno il loro «Nuova Sezione» dentro `SectionsView`.
@@ -501,11 +536,38 @@ function AdminStudentsInner() {
           { id: 'adult', label: t('tabGenitori'), icon: Users },
           { id: 'sections', label: t('tabSezioni'), icon: GraduationCap },
           { id: 'staff', label: t('tabStaff'), icon: Briefcase },
+          {
+            id: 'codici',
+            label: t('cfTab'),
+            icon: ShieldCheck,
+            // Il conteggio compare solo quando è STATO misurato: uno zero
+            // mostrato mentre l'elenco sta ancora arrivando direbbe «non c'è
+            // niente da verificare», che è l'unica cosa che non si sa ancora.
+            //
+            // ⚠️ E CONTA L'AZIONABILE (`azionabili` → `contaAzionabili`: le righe
+            // `incoerente` PIÙ quelle su cui il pannello offre di scrivere), non
+            // `totale`. Qui c'era `totale`, e con i numeri misurati in produzione
+            // l'11 agosto avrebbe aperto a ~83 — di cui ~45 soltanto «mai
+            // compilato». Il badge è il segnale che porta la persona dentro la
+            // linguetta: sommare i tre stati è la stessa confusione fra «manca» e
+            // «sbagliato» che il pannello combatte sui colori, spostata sul
+            // numero. La ripartizione completa dei tre stati sta DENTRO il
+            // pannello, dove convive con la loro spiegazione.
+            //
+            // ⚠️ E NON è «solo le righe `incoerente`»: quella dizione, misurata lo
+            // stesso giorno, lasciava fuori 1 alunno e 1 genitore veri che hanno
+            // la proposta pronta e il comando «Applica» a schermo. Il lock che
+            // tiene ferma questa riga è
+            // `__tests__/pages/admin-students-pillola-codici-fiscali.test.tsx`:
+            // rimettere `totale`, o riscrivere il conteggio a mano, lo fa rosso.
+            count: codiciFiscali.fase === 'pronto' ? codiciFiscali.azionabili : undefined,
+          },
         ]}
       />
 
-      {/* Toolbar / Filtri — nascosta per la tab Sezioni */}
-      {viewType !== 'sections' && (
+      {/* Toolbar / Filtri — nascosta per le tab che hanno i propri filtri
+          (Sezioni e Codici fiscali). */}
+      {viewType !== 'sections' && viewType !== 'codici' && (
       <div className="bg-kidville-white rounded-card p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
         {/* Search */}
         <div className="relative flex-1 w-full">
@@ -558,6 +620,11 @@ function AdminStudentsInner() {
       {/* Content area — switch by viewType */}
       {viewType === 'sections' ? (
         <SectionsView />
+      ) : viewType === 'codici' ? (
+        /* Prima del ramo `erroreElenco`: quello è l'errore dell'ELENCO alunni,
+           e mostrarlo qui vorrebbe dire raccontare il guasto di un'altra tab al
+           posto del pannello che ha i suoi stati (e il suo «Riprova»). */
+        <CodiciFiscaliDaVerificare esito={codiciFiscali} userId={userId} />
       ) : erroreElenco !== null ? (
         /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
            e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,7 +8,10 @@ import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultPr
 import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
 import { AllergeniSelect } from './AllergeniSelect';
+import { BadgeCoerenzaCf, badgeHaQualcosaDaDire } from '@/components/features/anagrafica/BadgeCoerenzaCf';
+import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { verificaCoerenza } from '@/lib/fiscale/coerenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formattaIstante } from '@/i18n/config';
 
@@ -24,6 +27,14 @@ interface Student {
     birth_nation?: string | null;
     birth_city?: string | null;
     birth_province?: string | null;
+    /**
+     * Il codice catastale del luogo di nascita (`alunni.codice_belfiore_nascita`,
+     * migrazione `20260810094625`). `undefined` su un ambiente non ancora migrato —
+     * il DB E2E della CI risponde `42703` a una `select` che lo nomina — e `null` su
+     * tutte le righe vere: al 2026-08-10 le righe valorizzate sono 0 su 83, e il caso
+     * che gira davvero è «colonna vuota, comune scritto a mano».
+     */
+    codice_belfiore_nascita?: string | null;
     residence_address?: string | null;
     residence_street_number?: string | null;
     residence_city?: string | null;
@@ -155,12 +166,140 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
         load();
     }, [student?.id]);
 
+    /**
+     * ─── IL CODICE FISCALE, IN QUESTA SCHEDA, NON SI SCRIVE DA SOLO ─────────────
+     *
+     * Qui si aprono i record VERI: 33 alunni, di cui 18 senza codice fiscale e 18 senza
+     * comune di nascita (misura sul database di produzione, 2026-08-10). Nei due moduli
+     * di NUOVA anagrafica il campo vuoto si riempie col codice calcolato, e va bene:
+     * non c'è niente in archivio da contraddire. Qui no. Riempire il campo da soli
+     * significherebbe che chi apre una scheda per cambiare un numero di telefono e
+     * preme «Salva» scrive in archivio un codice fiscale che nessun documento ha mai
+     * confermato — su 18 bambini, in silenzio, con il gate verde.
+     *
+     * Perciò il calcolo qui PROPONE e basta: sta dentro l'esito (`codiceAtteso`), e il
+     * badge lo offre col proprio pulsante «Usa questo» — che riempie il campo e non
+     * salva niente. Il salvataggio resta un gesto solo, quello in fondo alla scheda.
+     */
+    const codiceFiscaleAttuale = ((form.codice_fiscale as string) ?? '').trim().toUpperCase();
+    const codiceBelfiore = (form.codice_belfiore_nascita as string | null | undefined) ?? '';
+
+    /**
+     * L'`id` del badge, e il perché è SCRITTO invece di lasciare il default.
+     *
+     * `role="status"` non promette nessun annuncio (lo dice la testata di
+     * `BadgeCoerenzaCf`): la via dichiarata per SENTIRE il verdetto è
+     * `aria-describedby` dal campo del codice fiscale. Senza un `id` esplicito tutte
+     * le schede erediterebbero lo stesso `badge-coerenza-cf` — e `dettaglio-` lo
+     * distingue da `alunno-` (nuova anagrafica) e da `adulto-…` (le tre schede
+     * adulto), che nel cockpit possono stare nella stessa pagina.
+     *
+     * Statico e non `useId()`, a differenza delle schede adulto: quelle
+     * `FamilyRegistryManager` le tiene montate TUTTE insieme (madre, padre, ogni
+     * delegato) e un prefisso fisso le farebbe puntare al badge di un'altra persona.
+     * Di questo pannello, invece, ne esiste uno solo per volta — è montato
+     * per-alunno (`{selectedStudent && <StudentDetailPanel/>}`).
+     */
+    const idBadgeCf = 'dettaglio-badge-coerenza-cf';
+
+    /**
+     * I TRE STATI, e perché non possono diventare due. `verificaCoerenza` distingue
+     * «c'è un codice e contraddice l'anagrafica» (rosso, azionabile) da «manca un dato
+     * per confrontare» (giallo) da «non c'è nessun codice da verificare» (niente): con
+     * 45 record su 83 privi del codice fiscale, confondere il giallo col rosso
+     * dipingerebbe di rosso metà archivio e il pannello smetterebbe di essere guardato
+     * il primo giorno. Il badge riceve l'esito intero e decide da sé quale dei tre
+     * mostrare — e se mostrarne uno.
+     */
+    const esitoCoerenza = useMemo(
+        () => verificaCoerenza(codiceFiscaleAttuale, {
+            nome: (form.nome as string) ?? '',
+            cognome: (form.cognome as string) ?? '',
+            sesso: (form.gender as string) ?? null,
+            dataNascita: (form.data_nascita as string) ?? '',
+            codiceBelfiore,
+        }),
+        [codiceFiscaleAttuale, form.nome, form.cognome, form.gender, form.data_nascita, codiceBelfiore],
+    );
+
+    /**
+     * ⚠️ IL CAMPO PUNTA AL BADGE SOLO SE IL BADGE C'È. `BadgeCoerenzaCf` restituisce
+     * `null` quando non ha niente da dire, e fino all'11 agosto qui `aria-describedby`
+     * era incondizionato: su una scheda senza codice fiscale lo screen reader
+     * annunciava un campo che rimanda a una descrizione INESISTENTE.
+     *
+     * Non era il caso di laboratorio: al 2026-08-11 in produzione 18 alunni su 33 non
+     * hanno il codice fiscale, 17 non hanno il sesso e `codice_belfiore_nascita` è NULL
+     * su 83 record su 83 — senza sesso e senza codice catastale non c'è nemmeno il
+     * codice calcolato da proporre, quindi il badge non compare. Lo stato rotto era
+     * quello ORDINARIO di questa scheda.
+     *
+     * La condizione non si riscrive qui: la decide il predicato del badge, che è
+     * l'unico posto in cui quella regola vive (`badgeHaQualcosaDaDire`). Misurato in
+     * `__tests__/a11y/schede-alunno-a11y.test.tsx`.
+     */
+    const badgeVisibile = badgeHaQualcosaDaDire(esitoCoerenza);
+
     if (!student) return null;
 
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            await onSave({ id: student.id, ...form });
+            /**
+             * `codice_belfiore_nascita` viaggia SEMPRE, anche quando vale `null`: è
+             * l'unico modo perché la scelta «questo comune non lo riconosco» resti
+             * scritta invece di essere indovinata alla lettura successiva. La chiave
+             * è scritta ESPLICITAMENTE dopo lo spread perché su una riga che arriva da
+             * un ambiente non migrato la proprietà non c'è affatto (`select *` senza
+             * quella colonna), e `...form` non può portare ciò che non esiste: senza
+             * questa riga il payload uscirebbe SENZA la chiave, che per la rotta
+             * significa «non toccare» e non «azzera». Misurato in
+             * `StudentDetailPanel-codice-fiscale.test.tsx` §3, con una fixture che la
+             * chiave non ce l'ha: tolta questa riga, quel test diventa rosso.
+             *
+             * ⚠️ FINO ALL'11 AGOSTO QUESTO VALORE NON ARRIVAVA IN COLONNA — riparato,
+             * e la storia resta scritta perché è la ragione per cui il collaudo che la
+             * sorveglia esiste. Non mancava la migrazione: `alunni.codice_belfiore_nascita`
+             * esiste in produzione ed è nullable (misurato l'11 agosto su
+             * `information_schema.columns`). Mancava nella rotta, in QUATTRO punti di
+             * `src/app/api/admin/students/route.ts` — e la prima stesura di questo
+             * commento ne elencava tre, dimenticando proprio quello del PATCH:
+             *
+             *   1. `postBodySchema` (riga 26) — uno `z.object` NON strict, che quindi
+             *      scartava la chiave prima dell'handler senza errore e senza log;
+             *   2. `patchBodySchema` (riga 92) — stessa forma di guasto sulla strada
+             *      che questa scheda percorre davvero, ed è quella che l'elenco
+             *      precedente non nominava: senza, il PATCH rispondeva `200` su un
+             *      campo mai scritto;
+             *   3. l'oggetto `record` del POST (riga 300, accanto a `birth_nation` /
+             *      `birth_city` / `birth_province`);
+             *   4. `allowedFields` del PATCH singolo (riga 638), altrimenti il ciclo
+             *      `if (body[field] !== undefined)` la ignora.
+             *
+             * Il campo PERSISTE dall'11 agosto 2026. La misura che chiude la catena —
+             * POST e PATCH, il valore che sopravvive fino al record scritto, e il
+             * degrado tracciato dove la colonna non c'è — è
+             * `__tests__/api/admin-students-belfiore.test.ts`: questa scheda verifica il
+             * PAYLOAD, e un payload corretto contro una rotta che lo scarta è verde in
+             * perpetuo mentre in archivio non arriva niente.
+             *
+             * PERCHÉ IL CODICE CATASTALE SERVE, che è la parte che non invecchia: da
+             * «Napoli» scritto a mano non esce nessun codice fiscale — `F839` sì. È il
+             * dato che rende il codice CALCOLABILE e VERIFICABILE, e senza di lui questa
+             * scheda si riapre col comune marcato «valore in archivio, non riconosciuto»
+             * e il badge fermo su «non verificabile». Non è un requisito d'iscrizione:
+             * `null` resta un valore legittimo, ed è il caso di ogni riga già in archivio.
+             *
+             * Sull'ambiente non migrato (il DB E2E della CI: `PGRST204` in scrittura,
+             * `42703` in lettura) la colonna viene scartata e il resto della scheda si
+             * salva comunque: nessun campo di questa pagina dipende da lei, e il badge
+             * continua a dire «non verificabile» invece di «sbagliato».
+             */
+            await onSave({
+                id: student.id,
+                ...form,
+                codice_belfiore_nascita: (form.codice_belfiore_nascita as string | null | undefined) ?? null,
+            });
         } finally {
             setIsSaving(false);
         }
@@ -177,6 +316,42 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
 
     const updateForm = (field: string, value: unknown) => {
         setForm(prev => ({ ...prev, [field]: value }));
+    };
+
+    /**
+     * La nomenclatura di QUESTA scheda è `birth_city` / `birth_province` /
+     * `birth_nation` — le colonne di `alunni`. I due moduli di nuova anagrafica usano
+     * `comune_nascita` / `provincia_nascita` / `nazione_nascita`, che è lo stesso dato
+     * con un altro nome: mescolarli significa scrivere in una colonna che non esiste.
+     */
+    const luogoNascita: ValoreLuogoNascita = {
+        provincia: (form.birth_province as string) ?? '',
+        comune: (form.birth_city as string) ?? '',
+        nazione: (form.birth_nation as string) ?? '',
+        belfiore: codiceBelfiore,
+    };
+
+    const cambiaLuogoNascita = (v: ValoreLuogoNascita) => {
+        // Un aggiornamento solo: quattro `updateForm` di fila sarebbero quattro
+        // disegni, e il terzo leggerebbe un `form` in cui la provincia è già cambiata
+        // e il comune no.
+        setForm(prev => ({
+            ...prev,
+            birth_province: v.provincia,
+            birth_city: v.comune,
+            birth_nation: v.nazione,
+            codice_belfiore_nascita: v.belfiore,
+        }));
+    };
+
+    /**
+     * Il contratto del pulsante «Usa questo» del badge: riempie il campo e nulla più.
+     * Nessun `onSave` qui dentro — un pulsante che scrive in archivio senza dirlo è il
+     * modo più rapido di far perdere fiducia a una segreteria, e su 18 bambini senza
+     * codice fiscale sarebbe una scrittura di massa che nessuno ha chiesto.
+     */
+    const applicaCodiceCalcolato = (codice: string) => {
+        updateForm('codice_fiscale', codice);
     };
 
     // Estrai madre, padre e delegati per i tab
@@ -257,8 +432,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNome')}</label>
+                                <label htmlFor="dettaglio-nome" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNome')}</label>
                                 <input
+                                    id="dettaglio-nome"
                                     type="text"
                                     value={(form.nome as string) ?? ''}
                                     onChange={e => updateForm('nome', e.target.value)}
@@ -266,8 +442,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCognome')}</label>
+                                <label htmlFor="dettaglio-cognome" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCognome')}</label>
                                 <input
+                                    id="dettaglio-cognome"
                                     type="text"
                                     value={(form.cognome as string) ?? ''}
                                     onChange={e => updateForm('cognome', e.target.value)}
@@ -277,8 +454,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </div>
                         <div className="grid grid-cols-2 gap-3 mt-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataNascita')}</label>
+                                <label htmlFor="dettaglio-data-nascita" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataNascita')}</label>
                                 <input
+                                    id="dettaglio-data-nascita"
                                     type="date"
                                     value={(form.data_nascita as string) ?? ''}
                                     onChange={e => updateForm('data_nascita', e.target.value)}
@@ -286,15 +464,31 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCodiceFiscale')}</label>
+                                <label htmlFor="dettaglio-codice-fiscale" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCodiceFiscale')}</label>
                                 <input
+                                    id="dettaglio-codice-fiscale"
                                     type="text"
                                     value={(form.codice_fiscale as string) ?? ''}
                                     onChange={e => updateForm('codice_fiscale', e.target.value.toUpperCase())}
                                     maxLength={16}
+                                    // Il verdetto si sente arrivando sul campo, una volta
+                                    // sola: senza questo, chi legge con uno screen reader
+                                    // non riceve mai il badge (vedi `idBadgeCf` sopra).
+                                    // `undefined` quando il badge non c'è: un rimando a un
+                                    // elemento inesistente è peggio di nessun rimando.
+                                    aria-describedby={badgeVisibile ? idBadgeCf : undefined}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green uppercase"
                                 />
                             </div>
+                        </div>
+
+                        {/* ─── VERIFICA DEL CODICE FISCALE ────────────────────────────
+                            Il badge è SEMPRE montato: è lui a sapere se c'è qualcosa da
+                            dire. Non blocca niente — «Salva Modifiche» funziona identico
+                            con il badge rosso, e deve: la segreteria corregge un indirizzo
+                            anche su una scheda il cui codice fiscale non torna. */}
+                        <div className="mt-3">
+                            <BadgeCoerenzaCf esito={esitoCoerenza} id={idBadgeCf} onUsaCalcolato={applicaCodiceCalcolato} />
                         </div>
                     </section>
 
@@ -305,8 +499,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoSesso')}</label>
+                                <label htmlFor="dettaglio-sesso" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoSesso')}</label>
                                 <select
+                                    id="dettaglio-sesso"
                                     value={(form.gender as string) ?? ''}
                                     onChange={e => updateForm('gender', e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
@@ -316,37 +511,25 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     <option value="F">{t('optFemmina')}</option>
                                 </select>
                             </div>
-                            <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneNascita')}</label>
-                                <input
-                                    type="text"
-                                    value={(form.birth_city as string) ?? ''}
-                                    onChange={e => updateForm('birth_city', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-                                />
-                            </div>
-                            <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvNascita')}</label>
-                                <input
-                                    type="text"
-                                    value={(form.birth_province as string) ?? ''}
-                                    onChange={e => updateForm('birth_province', e.target.value.toUpperCase())}
-                                    maxLength={2}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green uppercase focus:outline-none focus:border-kidville-green"
-                                />
-                            </div>
-                            <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNazioneNascita')}</label>
-                                <input
-                                    type="text"
-                                    value={(form.birth_nation as string) ?? ''}
-                                    onChange={e => updateForm('birth_nation', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                            {/* ⚠️ TRE CASELLE DI TESTO LIBERO SONO DIVENTATE UN CAMPO SOLO.
+                                Da «Napoli» scritto a mano non esce nessun codice
+                                catastale, e senza quello il codice fiscale non è
+                                calcolabile né verificabile: erano 18 alunni su 33 con il
+                                comune di nascita vuoto e nessuna strada per riempirlo in
+                                modo utile. Il testo GIÀ IN ARCHIVIO non si perde — un
+                                comune che la tendina non riconosce resta scritto com'è, e
+                                il badge dice «non verificabile», non «sbagliato». */}
+                            <div className="col-span-2">
+                                <LuogoNascitaFields
+                                    valore={luogoNascita}
+                                    onChange={cambiaLuogoNascita}
+                                    idPrefisso="dettaglio-alunno"
                                 />
                             </div>
                             <div className="col-span-2">
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCittadinanza')}</label>
+                                <label htmlFor="dettaglio-cittadinanza" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCittadinanza')}</label>
                                 <input
+                                    id="dettaglio-cittadinanza"
                                     type="text"
                                     value={(form.citizenship as string) ?? ''}
                                     onChange={e => updateForm('citizenship', e.target.value)}
@@ -363,8 +546,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="col-span-2">
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoIndirizzoResidenza')}</label>
+                                <label htmlFor="dettaglio-indirizzo-residenza" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoIndirizzoResidenza')}</label>
                                 <input
+                                    id="dettaglio-indirizzo-residenza"
                                     type="text"
                                     value={(form.residence_address as string) ?? ''}
                                     onChange={e => updateForm('residence_address', e.target.value)}
@@ -372,8 +556,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNumeroCivico')}</label>
+                                <label htmlFor="dettaglio-civico" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNumeroCivico')}</label>
                                 <input
+                                    id="dettaglio-civico"
                                     type="text"
                                     value={(form.residence_street_number as string) ?? ''}
                                     onChange={e => updateForm('residence_street_number', e.target.value)}
@@ -382,8 +567,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneResidenza')}</label>
+                                <label htmlFor="dettaglio-comune-residenza" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneResidenza')}</label>
                                 <input
+                                    id="dettaglio-comune-residenza"
                                     type="text"
                                     value={(form.residence_city as string) ?? ''}
                                     onChange={e => updateForm('residence_city', e.target.value)}
@@ -391,8 +577,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvResidenza')}</label>
+                                <label htmlFor="dettaglio-provincia-residenza" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvResidenza')}</label>
                                 <input
+                                    id="dettaglio-provincia-residenza"
                                     type="text"
                                     value={(form.residence_province as string) ?? ''}
                                     onChange={e => updateForm('residence_province', e.target.value.toUpperCase())}
@@ -401,8 +588,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCap')}</label>
+                                <label htmlFor="dettaglio-cap" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCap')}</label>
                                 <input
+                                    id="dettaglio-cap"
                                     type="text"
                                     value={(form.zip_code as string) ?? ''}
                                     onChange={e => updateForm('zip_code', e.target.value)}
@@ -420,8 +608,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoClasseSezione')}</label>
+                                <label htmlFor="dettaglio-classe-sezione" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoClasseSezione')}</label>
                                 <select
+                                    id="dettaglio-classe-sezione"
                                     name="classe_sezione"
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
@@ -439,8 +628,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 </select>
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoStato')}</label>
+                                <label htmlFor="dettaglio-stato" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoStato')}</label>
                                 <select
+                                    id="dettaglio-stato"
                                     value={(form.stato as string) ?? 'iscritto'}
                                     onChange={e => updateForm('stato', e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
@@ -451,8 +641,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 </select>
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataIscrizione')}</label>
+                                <label htmlFor="dettaglio-data-iscrizione" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataIscrizione')}</label>
                                 <input
+                                    id="dettaglio-data-iscrizione"
                                     type="date"
                                     value={(form.data_iscrizione as string) ?? ''}
                                     onChange={e => updateForm('data_iscrizione', e.target.value || null)}
@@ -486,8 +677,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </div>
 
                         <div className="mb-3">
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('detailNoteMediche')}</label>
+                            <label htmlFor="dettaglio-note-mediche" className="font-maven text-xs text-kidville-muted mb-1 block">{t('detailNoteMediche')}</label>
                             <textarea
+                                id="dettaglio-note-mediche"
                                 value={(form.note_mediche as string) ?? ''}
                                 onChange={e => updateForm('note_mediche', e.target.value)}
                                 placeholder={t('detailNoteMedichePlaceholder')}

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
+import { dataCivile } from '@/i18n/config'
 
 // =============================================================================
 // F3 — LA PROVA DI CAPO: un errore di LETTURA non diventa un PERMESSO.
@@ -25,7 +26,22 @@ import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
 // =============================================================================
 
 const ID_ADMIN = 'd0000000-0000-4000-8000-00000000ad00'
-const GIORNO = '2026-09-10'
+
+/**
+ * Il giorno degli eventi di prova è OGGI, con la stessa funzione che usa la route
+ * (`dataCivile`, nel fuso della scuola) — non una data scritta a mano.
+ *
+ * ⚠️ QUI IL DANNO SAREBBE STATO SILENZIOSO, ed è peggio di un rosso. `GET /api/agenda`
+ * senza `from` filtra `.gte('data', dataCivile())`: con la costante `'2026-09-10'`,
+ * **dall'11 settembre 2026** l'elenco sarebbe uscito vuoto per la DATA e non per lo
+ * scope — e l'asserzione `toEqual([])` sarebbe rimasta verde senza più provare niente.
+ * Nessun test si sarebbe acceso: il file avrebbe continuato a dichiarare che un ponte
+ * `utenti_scuole` illeggibile non allarga la lettura, senza più misurarlo.
+ *
+ * È la gemella del difetto trovato l'11 agosto 2026 in `agenda-sede-scrittura.test.ts`,
+ * che invece si era manifestato come rosso a mezzanotte. Quello si vedeva; questo no.
+ */
+const GIORNO = dataCivile()
 
 /** Non è un codice di «CI non migrata»: è il ponte che c'è e non si legge. */
 const PONTE_ILLEGGIBILE = { code: '42501', message: 'permission denied for table utenti_scuole' }

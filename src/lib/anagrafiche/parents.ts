@@ -34,6 +34,12 @@ export interface ParentPayload {
   birth_nation?: unknown;
   birth_place?: unknown;
   birth_province?: unknown;
+  /**
+   * Il codice catastale (Belfiore) del luogo di nascita → `parents.codice_belfiore_nascita`.
+   * Nullable, mai obbligatorio: è il dato che rende il codice fiscale CALCOLABILE e
+   * RICONTROLLABILE domani, quando il comune sarà stato rinominato o soppresso.
+   */
+  codice_belfiore_nascita?: unknown;
   fiscal_code?: unknown;
   address?: unknown;
   civico?: unknown;
@@ -57,8 +63,22 @@ export interface LinkOrCreateParentResult {
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 const orNull = (v: unknown): string | null => str(v).trim() || null;
 
-/** Costruisce il record `parents` dal payload del form adulto. */
-function buildParentRecord(payload: ParentPayload): Record<string, unknown> {
+/**
+ * Costruisce il record `parents` dal payload del form adulto.
+ *
+ * ⚠️ QUESTA FUNZIONE ELENCA LE COLONNE A MANO, e per questo un campo nuovo del form
+ * non arriva in archivio finché qualcuno non lo scrive QUI. Non è un'ipotesi: fino
+ * al 2026-08-11 `codice_belfiore_nascita` usciva da `ScrollableAdultForm.validate()`,
+ * viaggiava nel corpo di `POST /api/admin/students` e dell'azione `create_parent`, e
+ * spariva esattamente in questo `return` — su una colonna che in produzione ESISTE
+ * ed è nullable (misurato l'11 agosto su `information_schema.columns`; 0 righe su 50
+ * la avevano valorizzata, ed è la ragione per cui nessuno se n'era accorto).
+ *
+ * È esportata perché il giro «payload del form → record da scrivere» va misurabile
+ * senza toccare la rete: `__tests__/lib/anagrafiche/parents-record.test.ts` parte dal
+ * payload vero di `validate()` e verifica che ogni campo sopravviva.
+ */
+export function buildParentRecord(payload: ParentPayload): Record<string, unknown> {
   const role = str(payload.role) || 'delegate';
   const realCitizenship = orNull(payload.citizenship);
   return {
@@ -70,6 +90,11 @@ function buildParentRecord(payload: ParentPayload): Record<string, unknown> {
     birth_nation: orNull(payload.birth_nation),
     birth_city: orNull(payload.birth_place),
     birth_province: orNull(payload.birth_province),
+    codice_belfiore_nascita: orNull(payload.codice_belfiore_nascita),
+    // '' ⇒ `null`, e su questa colonna non è un dettaglio di stile: `fiscal_code` è
+    // UNIQUE, e con UNIQUE la stringa vuota è un valore come un altro mentre `NULL`
+    // no. In produzione, l'11 agosto, un genitore ha già `''`: il secondo che lo
+    // ricevesse collide con lui e il salvataggio fallisce per un dato ASSENTE.
     fiscal_code: orNull(payload.fiscal_code),
     residence_address: orNull(payload.address),
     residence_street_number: orNull(payload.civico),
@@ -81,15 +106,54 @@ function buildParentRecord(payload: ParentPayload): Record<string, unknown> {
   };
 }
 
-/** Insert resiliente: rimuove le colonne non ancora esistenti (42703) e riprova. */
+/**
+ * Il nome della colonna che l'ambiente non conosce, letto dall'errore — oppure
+ * `null` se l'errore non parla di una colonna mancante.
+ *
+ * ⚠️ DUE CODICI, NON UNO, e il secondo è quello che serve davvero in scrittura.
+ * `42703` («column … of relation … does not exist») lo emette POSTGRES, e su un
+ * INSERT/UPDATE arriva raramente: PostgREST valida il corpo contro la propria cache
+ * dello schema PRIMA di parlare col database, e quando una colonna lì non c'è
+ * risponde `PGRST204` — «Could not find the 'x' column of 'parents' in the schema
+ * cache». È il caso del DB E2E della CI, che è un progetto SEPARATO e NON migrato
+ * (vedi CLAUDE.md): senza questo ramo, aggiungere `codice_belfiore_nascita` al
+ * record avrebbe fatto fallire in CI ogni creazione di genitore — cioè avrebbe
+ * trasformato un campo in più in un'intera funzionalità in meno.
+ *
+ * ⚠️ ESPORTATA DALL'11 AGOSTO, e la ragione è un guasto misurato: il ciclo di
+ * resilienza di `PATCH /api/admin/parents` guardava SOLO `42703` — cioè il codice
+ * che in scrittura non arriva quasi mai — e ignorava `PGRST204`, che è quello che
+ * arriva davvero. Con l'aggiunta di `codice_belfiore_nascita` al corpo del PATCH,
+ * sul DB E2E della CI (progetto separato e non migrato) ogni salvataggio di
+ * genitore sarebbe diventato un 500. Una regola valida per due strade vive in un
+ * posto solo: l'INSERT la usa qui sotto, l'UPDATE la importa.
+ */
+export function colonnaSconosciuta(errore: { code?: string; message?: string } | null): string | null {
+  if (!errore) return null;
+  const msg = errore.message ?? '';
+  if (errore.code === '42703') return /column "?([a-z_]+)"? of relation/i.exec(msg)?.[1] ?? null;
+  if (errore.code === 'PGRST204') return /'([a-z_]+)' column/i.exec(msg)?.[1] ?? null;
+  return null;
+}
+
+/** Insert resiliente: rimuove le colonne che l'ambiente non conosce e riprova. */
 async function insertParentResilient(supabase: SupabaseClient, record: Record<string, unknown>) {
   const rec = { ...record };
   let res = await supabase.from('parents').insert(rec).select('id').single();
   let attempts = 0;
-  while (res.error && (res.error as { code?: string }).code === '42703' && attempts < 6) {
-    const col = /column "?([a-z_]+)"? of relation/i.exec(res.error.message)?.[1];
-    if (!col || !(col in rec)) break;
+  for (;;) {
+    const col = colonnaSconosciuta(res.error as { code?: string; message?: string } | null);
+    if (!col || !(col in rec) || attempts >= 6) break;
     delete rec[col];
+    // Un dato che l'ambiente non sa dove mettere non è un fallimento silenzioso:
+    // qui la riga viene scritta SENZA quel campo, e chi legge i log deve poterlo
+    // sapere. Nessun valore a log — solo il nome della colonna, che non è un dato
+    // di persona.
+    logEvento('anagrafica', 'warn', {
+      operazione: 'linkOrCreateParent:insert',
+      azione: 'colonna-assente-scartata',
+      esito: col,
+    });
     res = await supabase.from('parents').insert(rec).select('id').single();
     attempts++;
   }

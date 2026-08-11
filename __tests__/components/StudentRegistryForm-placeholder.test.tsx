@@ -22,10 +22,14 @@ import enAdminStudents from '../../messages/en/adminStudents.json'
  * (`FamilyRegistryManager` usa `ScrollableStudentForm`). Il difetto quindi non
  * raggiunge nessun utente, e le altre ~25 etichette del file restano italiane
  * cablate: qui si chiude il rilievo, non si traduce un componente morto.
+ *
+ * ⚠️ Il finto di `@/lib/utils/fiscalCodeApi` è sparito il 2026-08-11: il codice
+ * fiscale non si chiede più alla rete, si calcola in `useMemo`. Un mock che
+ * finge una funzione che nessuno chiama non è innocuo — dice al prossimo che
+ * quella rete c'è ancora.
  */
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'e' }))
-vi.mock('@/lib/utils/fiscalCodeApi', () => ({ fetchFiscalCode: vi.fn(async () => '') }))
 
 const MARCA = (chiave: string) => `⟦adminStudents.${chiave}⟧`
 

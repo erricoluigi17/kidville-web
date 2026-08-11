@@ -6,9 +6,10 @@ import { assertAlunnoInScope, assertParentInScope, resolveScuoleAttive } from '@
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
-import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
+import { colonnaSconosciuta, linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { selectResiliente } from '@/lib/supabase/select-resiliente';
 
 // ============================================================
 // Anagrafica genitori — gated Segreteria+Direzione (DL-036) + audit
@@ -66,30 +67,9 @@ const COLONNE_ELENCO = ['id', 'first_name', 'last_name', 'emails', 'phone_number
 // l'intestatario di famiglia predefinito. Legge `id` e `intestatario_default`.
 const COLONNE_PER_ALUNNO = ['id', 'intestatario_default'];
 
-/**
- * Esegue una SELECT togliendo le colonne che questo database non ha (42703) e
- * riprovando, invece di restituire un 500. `select('*')` non falliva mai; una
- * proiezione esplicita sì — e il progetto E2E della CI non è migrato
- * (`intestatario_default` arriva dalla migrazione 20260718200000).
- */
-async function selectResiliente(
-    colonne: string[],
-    esegui: (cols: string[]) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>,
-    operazione: string,
-) {
-    let cols = [...colonne];
-    let esito = await esegui(cols);
-    let tentativi = 0;
-    while (esito.error && esito.error.code === '42703' && tentativi < 6) {
-        const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(esito.error.message)?.[1];
-        if (!col || !cols.includes(col)) break;
-        logEvento('db', 'info', { operazione, esito: 'colonna-assente-rimossa', campo: col });
-        cols = cols.filter((c) => c !== col);
-        esito = await esegui(cols);
-        tentativi++;
-    }
-    return esito;
-}
+// `selectResiliente` viveva qui fino al 2026-08-10, ed è stato ESTRATTO in
+// `@/lib/supabase/select-resiliente`: il pannello dei codici fiscali ne è
+// diventato il terzo chiamante, e la terza copia è quella che diverge.
 
 export const GET = withRoute('admin/parents:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request);
@@ -169,7 +149,11 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
         );
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        const conSede = ((data ?? []) as Record<string, unknown>[]).map((p) => ({
+        // `as unknown as` e non un cast diretto: `selectResiliente` è generica e
+        // conserva il tipo vero di PostgREST (che su una select dinamica include
+        // `GenericStringError[]`), invece di appiattirlo a `unknown` come faceva
+        // la copia locale. Il tipo è più preciso, il cast deve dirlo.
+        const conSede = ((data ?? []) as unknown as Record<string, unknown>[]).map((p) => ({
             ...p,
             scuole_ids: [...(sediPerGenitore.get(p.id as string) ?? [])],
         }));
@@ -248,12 +232,40 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
 
         const updates: Record<string, unknown> = { ...dataToUpdate };
         let { data, error } = await supabase.from('parents').update(updates).eq('id', id).select();
-        // Resilienza pre-migration: rimuove le colonne non ancora esistenti (42703) e riprova.
+        /**
+         * ─── RESILIENZA ALLE COLONNE CHE L'AMBIENTE NON CONOSCE ─────────────────
+         *
+         * ⚠️ FINO ALL'11 AGOSTO QUESTO CICLO GUARDAVA SOLO `42703`, ed è il codice
+         * sbagliato. `42703` lo emette Postgres, e su un UPDATE arriva raramente:
+         * PostgREST valida il corpo contro la propria cache dello schema PRIMA di
+         * parlare col database, e quando una chiave lì non è una colonna risponde
+         * **`PGRST204`**. Due conseguenze misurate, non dedotte:
+         *
+         *  · in PRODUZIONE, `app_log` porta `route=/api/admin/parents`,
+         *    `codice=PGRST204`, «Could not find the 'student_parents' column of
+         *    'parents' in the schema cache», `stato_http=400` → 500 al chiamante.
+         *    `audit_scritture_docente` (scritto SOLO dopo un update riuscito) ha
+         *    405 righe dal 5 luglio, 255 `update`, e **nessuna** su `genitori`:
+         *    da questa rotta un genitore non è mai stato aggiornato.
+         *  · nel DB E2E della CI, che è un progetto SEPARATO e NON migrato,
+         *    `codice_belfiore_nascita` non esiste: senza questo ramo, aggiungerlo
+         *    al corpo avrebbe reso 500 OGNI salvataggio di genitore in CI.
+         *
+         * `colonnaSconosciuta` è la stessa funzione che usa `insertParentResilient`:
+         * una regola valida per due strade vive in un posto solo.
+         */
         let attempts = 0;
-        while (error && (error as { code?: string }).code === '42703' && attempts < 6) {
-            const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
-            if (!col || !(col in updates)) break;
+        for (;;) {
+            const col = colonnaSconosciuta(error as { code?: string; message?: string } | null);
+            if (!col || !(col in updates) || attempts >= 6) break;
             delete updates[col];
+            // Un campo che l'ambiente non sa dove mettere non sparisce in silenzio:
+            // a log va il solo NOME della colonna, che non è un dato di persona.
+            logEvento('anagrafica', 'warn', {
+                operazione: 'admin/parents:PATCH',
+                azione: 'colonna-assente-scartata',
+                esito: col,
+            });
             ({ data, error } = await supabase.from('parents').update(updates).eq('id', id).select());
             attempts++;
         }
@@ -266,7 +278,10 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
             entitaId: id,
             azione: 'update',
             valorePrima: prima ?? null,
-            valoreDopo: dataToUpdate,
+            // `updates`, non `dataToUpdate`: se una colonna è stata scartata perché
+            // l'ambiente non la conosce, l'audit deve dire quello che è stato scritto
+            // davvero, non quello che era stato chiesto.
+            valoreDopo: updates,
         });
 
         return NextResponse.json({ success: true, data });

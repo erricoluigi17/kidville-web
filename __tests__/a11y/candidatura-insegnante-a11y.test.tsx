@@ -164,8 +164,33 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { level: 2, name: itPublic.candRiepilogo })).toBeInTheDocument(),
     )
-    // Nessun salto di livello: da `h1` si passa a `h2`, mai a `h3`.
-    expect(screen.queryAllByRole('heading', { level: 3 })).toHaveLength(0)
+    /*
+     * NESSUN SALTO DI LIVELLO — e la sonda misura questo, non «zero `h3`».
+     *
+     * Fino all'11/08/2026 la riga qui era `queryAllByRole('heading', {level:3})`
+     * a zero. Era la formulazione più stretta della regola giusta, e il
+     * riepilogo completo l'ha resa falsa: ogni gruppo del riepilogo («Sede», «I
+     * tuoi dati», «Il tuo profilo», «Consensi e informativa») ha la sua
+     * intestazione, e sotto l'`h2` «Riepilogo» un `h3` NON è un salto — è la
+     * gerarchia con cui uno screen reader salta da un gruppo all'altro invece
+     * di scorrere venti righe di etichette una per una.
+     *
+     * Quello che non deve succedere è che un livello ne SCAVALCHI un altro
+     * (h1 → h3 senza h2, h3 → h5). È ciò che si verifica qui riga per riga, ed
+     * è anche ciò che controlla la regola axe `heading-order`, attiva in
+     * `axeOpts` e già eseguita su questa stessa schermata più sotto.
+     */
+    const livelli = screen.getAllByRole('heading').map((h) => Number(h.tagName.slice(1)))
+    expect(livelli[0], 'la prima intestazione della pagina è l’`h1`').toBe(1)
+    for (let i = 1; i < livelli.length; i += 1) {
+      expect(
+        livelli[i],
+        `salto di livello nel riepilogo: h${livelli[i - 1]} → h${livelli[i]}`,
+      ).toBeLessThanOrEqual(livelli[i - 1] + 1)
+    }
+    // E il riepilogo ha davvero i suoi gruppi: se un giorno tornassero a essere
+    // dei `<p>`, la sonda qui sopra resterebbe verde senza guardare più niente.
+    expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0)
   })
 
   it('la scelta della sede è un `fieldset` con una `legend`, non tre radio sciolti', async () => {

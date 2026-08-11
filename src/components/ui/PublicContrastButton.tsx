@@ -32,8 +32,24 @@ import { AccessibilityContext } from '@/lib/accessibility/context'
 // classe sta QUI e non nel contenitore perché è il componente a doversi
 // difendere ovunque venga montato — è la stessa ragione per cui il comando vive
 // in un posto solo, e `ui/Btn.tsx` la porta già nel proprio BASE.
+// ── IL COMANDO DELL'ACCESSIBILITÀ ERA IL BERSAGLIO PIÙ PICCOLO DELLA PAGINA ──
+// MISURATO a 360 px su `/lavora-con-noi` l'11/08/2026: «Alto contrasto»
+// **148×38**, mentre nella stessa schermata «Indietro», «Avanti» e i «Modifica»
+// del riepilogo stanno tutti a **44**. Non è un difetto formale — WCAG 2.2 AA
+// §2.5.8 chiede 24×24 e questo bottone li passa — ma è la raccomandazione
+// §2.5.5 (44×44), ed è l'ULTIMO bersaglio della pagina rimasto sotto: su un
+// modulo che si compila dal telefono, il comando di Alto Contrasto è proprio
+// quello che cerca chi ci vede poco.
+// L'aritmetica è la stessa già scritta accanto ad «Avanti» nel wizard:
+// `py-3` = 24 px di riempimento + 20 px di riga (`text-sm`) = 44, più il bordo
+// da 1 px per lato = **46**. `py-2.5` si sarebbe fermato a 42, cioè ancora
+// sotto. La larghezza non cambia (`px-3.5` resta) e nemmeno la riga di testa,
+// che è un flex `items-center`: cresce di 8 px in altezza e basta.
+// Vale per tutte e sei le superfici che montano questo comando — le cinque
+// pagine pubbliche via `PublicPageHeader` e `/iscrizione` via `EnrollmentWizard`
+// — ed è il motivo per cui il numero si cambia QUI e in nessun altro posto.
 const CLASSI =
-  'inline-flex items-center gap-2 whitespace-nowrap rounded-pill border border-kidville-green px-3.5 py-2 ' +
+  'inline-flex items-center gap-2 whitespace-nowrap rounded-pill border border-kidville-green px-3.5 py-3 ' +
   'font-maven text-sm font-semibold text-kidville-green transition-colors hover:bg-kidville-green-soft'
 
 /**

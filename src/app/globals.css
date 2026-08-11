@@ -79,6 +79,25 @@
   --color-kidville-muted: #9AA6A2;
   --color-kidville-line: #EFE7DC;
 
+  /* ── Il SUGGERIMENTO dentro un campo (2026-08-11) ──────────────────────────
+     Il segnaposto («Es. Maria») e l'opzione non ancora scelta («Seleziona…»)
+     non sono testo secondario: sono testo che dice COSA SCRIVERE, e devono
+     leggersi come tali senza somigliare al valore digitato. Con `sub` non ci
+     riuscivano: #55615C contro il verde dei valori #006A5F vale 1,01:1, cioè un
+     campo vuoto aveva la stessa identica chiarezza di uno compilato.
+     Misurato l'11/08/2026 sui fondi VERI dei campi:
+       · 5,08:1 sul BIANCO (`bg-kidville-white`, il fondo di ogni campo di
+         `FieldRenderer`, pubblico e admin) — sopra i 4,5:1 di WCAG 1.4.3;
+       · 4,58:1 sul CREMA della pagina (#FEF1E4), il fondo sotto le carte;
+       · 1,28:1 col valore #006A5F (era 1,01:1), e in chiarezza L* 46,5 contro
+         39,8 del valore: 6,7 punti di differenza dove `sub` ne dava 0,2.
+     NON viene rimappato in Alto Contrasto, per la stessa ragione di
+     `yellow-ink`/`green-ink`: vive sopra `bg-kidville-white`, la cui utility ha
+     l'hex già inlinato da `@theme inline` e che in HC resta BIANCA (anche sulle
+     superfici pubbliche, blocco «1 · La carta»). Là il segnaposto ha comunque
+     la sua regola dedicata, che lo porta a #595959. */
+  --color-kidville-hint: #65716C;
+
   --font-barlow: var(--loaded-barlow), "Barlow Condensed", sans-serif;
   --font-maven: var(--loaded-maven), "Maven Pro", sans-serif;
 
@@ -809,6 +828,68 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not
 .bg-kidville-cream textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
   border-color: var(--color-kidville-sub);
 }
+/* =============================================================================
+   …E UNA CARD DI SCELTA È UN CAMPO ANCHE LEI (collaudo 2026-08-11).
+
+   Il blocco qui sopra ha chiuso il difetto per `input`/`select`/`textarea` e ha
+   lasciato fuori l'elemento che disegna le CARD di scelta — la `<label>` di
+   `SCELTA_LIBERA` (`FieldRenderer.tsx`) e la sua gemella scritta a mano nelle
+   card di sede del wizard insegnanti. Sono lo stesso caso, con lo stesso numero:
+   `neutral` #8A958F vale **3,10:1** sul bianco del riempimento e **2,79:1** sul
+   crema della pagina, cioè sotto i 3:1 che WCAG 2.2 AA 1.4.11 chiede al confine
+   di un componente. E il riempimento non aiuta: bianco su crema è 1,11:1, quindi
+   quel contorno è l'unico indizio di dove comincia la card.
+
+   MISURATO l'11/08/2026 sulla pagina viva `/lavora-con-noi`, passo 1 e passo 3,
+   con le transizioni spente e la scheda in primo piano: `border-top-color`
+   `rgb(138,149,143)` a 1 px su fondo `rgb(254,241,228)` → 2,79:1. Dopo la
+   modifica, stessa sonda: `rgb(85,97,92)` → **5,82:1** sulla crema e **6,46:1**
+   sul bianco della card. (Il blocco qui sopra, per lo stesso `sub` su crema,
+   scrive 5,33:1: il numero misurato nel browser è 5,82 — la soglia la passano
+   entrambi, ma quello buono è questo.)
+
+   ⚠️ PERCHÉ QUI E NON NEL TOKEN DEL COMPONENTE. Le due famiglie di card sono due
+   stringhe in due file — `SCELTA_LIBERA` in `FieldRenderer` e la copia fedele
+   nelle card di sede di `CandidaturaInsegnanteWizard` — tenute insieme da un
+   lock che le RENDE ENTRAMBE e confronta i token calcolati
+   (`__tests__/components/CandidaturaInsegnanteWizard-forma-visiva.test.tsx`).
+   Cambiare il token in un file solo le fa divergere; cambiarlo in tutti e due
+   vuol dire scrivere due volte la stessa decisione, che è esattamente ciò che
+   quel lock esiste per impedire. Agganciato alla SUPERFICIE, il rimedio vale per
+   tutte e due senza toccare nessuna delle due stringhe — ed è lo stesso criterio
+   con cui è scritto il blocco qui sopra.
+
+   La cardinalità del selettore è stretta apposta: `label` + `border-kidville-neutral`
+   in tutto `src/` sono le sole card di scelta (le altre occorrenze del token
+   stanno su `input`, su `disabled:` e nelle mappe di stato del cockpit).
+
+   Specificità, e sono tre righe perché i tre stati non si sovrappongono a caso:
+     · riposo (0,2,1) — sta SOTTO l'Alto Contrasto pubblico (0,3,0), che deve
+       continuare a vincere col suo nero;
+     · hover  (0,3,1) — deve stare SOPRA la utility `hover:border-*` del
+       componente (0,2,0), che altrimenti smetterebbe di rispondere: è lo stesso
+       inciampo dei 19 select del cockpit, raccontato nel blocco qui sotto. Al
+       passaggio del mouse il contorno va al verde pieno (5,86:1 su crema), cioè
+       migliora invece di peggiorare;
+     · Alto Contrasto — (0,3,1) sul riposo e (0,4,1) sull'hover. È necessario
+       proprio per l'HOVER: in HC `--color-kidville-green` è #FFFFFF e la card
+       sta su fondo bianco, quindi senza questa riga passarci sopra col mouse
+       CANCELLEREBBE il contorno. Sul riposo pareggia (0,3,1) con l'hover qui
+       sopra e vince perché viene DOPO — la stessa regola d'ordine che governa
+       il blocco HC dei campi, e per la stessa ragione va lasciata sotto.
+   MISURATO ad Alto Contrasto acceso sulla pagina viva: `rgb(0,0,0)` su
+   `rgb(255,255,255)` = 21:1, a riposo E col mouse sopra.
+   ============================================================================= */
+.bg-kidville-cream label[class*="border-kidville-neutral"] {
+  border-color: var(--color-kidville-sub);
+}
+.bg-kidville-cream label[class*="border-kidville-neutral"]:hover {
+  border-color: var(--color-kidville-green);
+}
+[data-contrast="high"] .bg-kidville-cream label[class*="border-kidville-neutral"],
+[data-contrast="high"] .bg-kidville-cream label[class*="border-kidville-neutral"]:hover {
+  border-color: #000000;
+}
 /* 🟠 design #2 del collaudo 2026-08-02, chiuso qui.
    La regola qui sopra si sfila solo con `:not(:focus)`: l'HOVER non era escluso,
    quindi vinceva anche sulle utility `hover:border-*` e i 19 select del cockpit
@@ -1189,8 +1270,13 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hov
 
 /* 1 · La carta. Tutti i fondi chiari delle pagine pubbliche diventano bianco
    pieno: crema del guscio, bianco delle card, i soft di stato e la traccia
-   della barra di avanzamento. `bg-kidville-green-soft` NON è qui: è solo un
-   `hover:` (classe diversa) e su bianco tiene comunque 17,9:1 col nero. */
+   della barra di avanzamento. `bg-kidville-green-soft` NON è qui, e dall'11/08/2026
+   il motivo è cambiato: non è più «solo un `hover:`» — è il riempimento dello
+   STATO SCELTO delle card di sede e delle opzioni di `FieldRenderer`, cioè un
+   fondo vero su superficie pubblica. Resta fuori dal ribaltamento APPOSTA: è
+   l'unica cosa che, in Alto Contrasto, distingue l'opzione spuntata dalle altre
+   (portarlo a bianco lascerebbe tutte le card identiche, col bordo nero uguale
+   per tutte). #E2EEEC col nero dell'inchiostro tiene 17,9:1, ben sopra AA. */
 [data-contrast="high"] .kv-public,
 [data-contrast="high"] .kv-public .bg-kidville-cream,
 [data-contrast="high"] .kv-public .bg-kidville-cream-dark,
@@ -1253,15 +1339,72 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hov
    del campo fa #99C3BF, cioè 1,92:1 — e in Alto Contrasto non si ribaltava,
    restando l'unico elemento delle superfici pubbliche fuori dal ribaltamento.
    Il segnaposto è TESTO: 1.4.3 si applica, e su questo modulo ci arrivano circa
-   nove domande l'ora da famiglie vere. Si corregge QUI, come le etichette qui
-   sopra, perché `FieldRenderer` è condiviso con la modulistica in-app, che non
-   è il perimetro di questo intervento.
-   `sub` tiene 6,46:1 sul bianco e 5,82:1 sul crema, e resta comunque più
-   chiaro del valore digitato (`text-kidville-green`, 6,51:1) — il segnaposto
-   continua a leggersi come suggerimento, non come contenuto.
+   nove domande l'ora da famiglie vere. La regola vive QUI perché è di superficie
+   (il corsivo e il rimappaggio dell'Alto Contrasto); il COLORE, invece, dall'11/08/2026
+   se lo porta il componente col token `hint` — vedi il blocco del token in cima
+   e `FieldRenderer.tsx`, che è la stessa correzione anche per i moduli in-app.
+
+   ⚠️ QUI SOTTO, FINO ALL'11/08/2026, C'ERA UNA FRASE FALSA — e vale la pena
+   lasciarne il segno invece di cancellarla in silenzio. Diceva che `sub` «resta
+   comunque più chiaro del valore digitato (`text-kidville-green`, 6,51:1), il
+   segnaposto continua a leggersi come suggerimento, non come contenuto».
+   MISURATO: #55615C contro #006A5F è **1,01:1**, cioè i due colori sono
+   indistinguibili l'uno dall'altro; in Alto Contrasto sono entrambi #000000,
+   **1,00:1**, lo stesso identico nero. Un campo VUOTO ha esattamente l'aspetto
+   di un campo COMPILATO, ed è il difetto che questo commento sosteneva di non
+   avere. (I due numeri veri — 6,46:1 e 6,51:1 — sono i rapporti col FONDO, non
+   fra loro: due misure giuste che rispondevano a un'altra domanda.)
+
+   Serve un segnale che sopravviva al ribaltamento, e il CORSIVO funziona in
+   entrambe le modalità — è la convenzione tipografica del testo «non ancora
+   scritto». Sta sulle regole qui sotto, quella pubblica e quella dell'Alto
+   Contrasto (che vale ovunque: dove tutto è nero su bianco, il colore non
+   distingue niente da nessuna parte).
+
+   ⚠️ E LA PRIMA RIPARAZIONE SI ERA FERMATA LÌ (rimisurata l'11/08/2026). Al
+   posto di questo paragrafo c'era scritto «il rimedio NON PUÒ essere cromatico:
+   in Alto Contrasto il colore non è più disponibile». La premessa è vera solo in
+   Alto Contrasto, la conclusione era stata applicata anche in luce normale — dove
+   il colore c'è tutto. Esito rovesciato rispetto all'attesa: in Alto Contrasto il
+   segnaposto era stato separato dal valore (#595959 contro il nero, 3,00:1),
+   mentre in luce normale restava a 1,01:1, cioè invariato, con il corsivo come
+   UNICO segnale proprio dove i segnali potevano essere due.
+   Ora il colore lo dà il token `--color-kidville-hint` #65716C, misurato sui
+   fondi veri: 5,08:1 sul bianco del campo, 4,58:1 sul crema della pagina,
+   1,28:1 col valore #006A5F (era 1,01:1).
+   E quanto vale davvero quel 1,28:1, detto senza gonfiarlo: il valore digitato
+   sta a 6,51:1 dal bianco, quindi un inchiostro che debba restare ≥4,5:1 sullo
+   STESSO bianco non può allontanarsi dal valore più di 1,45:1 — il colore a
+   4,5:1 esatti ha luminanza 0,1833, e (0,1833+0,05)/(0,1114+0,05) = 1,45.
+   Tenendo il pavimento anche sul crema il tetto scende a 1,30:1: 1,28:1 è a un
+   capello dal massimo ottenibile, e ogni decimo in più si comprerebbe scendendo
+   sotto la soglia di leggibilità — un segnaposto illeggibile è un difetto
+   peggiore di uno indistinguibile. Il rapporto WCAG fra DUE INCHIOSTRI, a
+   queste distanze, è uno strumento grossolano: la misura che descrive quel che
+   si vede è la chiarezza L*, e lì il salto è 39,8 (valore) → 46,5 (segnaposto),
+   cioè 6,7 punti dove `sub` ne dava 0,2. Il corsivo resta, e resta necessario:
+   è il segnale che non dipende dal colore.
    `opacity: 1` perché Firefox applica di suo un'opacità al segnaposto.
-   In Alto Contrasto la carta pubblica resta BIANCA (blocco «1 · La carta»):
-   l'inchiostro va a nero pieno, 21:1. Lock: contrasto-cascata §10. */
+   In Alto Contrasto la carta pubblica resta BIANCA (blocco «1 · La carta»).
+   Lock: contrasto-cascata §10.
+
+   ⚠️ E IN ALTO CONTRASTO IL CORSIVO ERA RIMASTO SOLO (11/08/2026). Fino a oggi
+   la regola qui sotto portava il segnaposto a #000000, cioè allo STESSO nero del
+   valore digitato: 21:1 tutti e due, 1,00:1 fra loro. Un campo obbligatorio
+   ancora vuoto aveva l'aspetto di un campo già compilato, e a distinguerli
+   restavano il corsivo e il prefisso «Es. » — un segnale solo, proprio nella
+   modalità pensata per chi ci vede peggio. Il paragrafo qui sopra dice che «il
+   rimedio non può essere cromatico»: era vero quando l'alternativa era il verde
+   sbiadito, non è vero che il colore non sia PIÙ disponibile. Fra il nero del
+   valore e il bianco della carta c'è tutta la scala dei grigi, e uno che regga
+   AA sul fondo esiste: #595959 vale 7,00:1 sul bianco — sopra i 4,5:1 di
+   1.4.3 — e 3,00:1 contro il nero del valore, cioè la differenza torna a essere
+   DOPPIA (forma e tono) invece che singola.
+   Perché un hex a mano e non un token: `--color-kidville-sub` in Alto Contrasto
+   vale #E0E0E0, tarato sui fondi NERI dell'app; su questa carta, che in Alto
+   Contrasto resta bianca, darebbe 1,27:1. È la stessa ragione per cui tutto
+   questo blocco scrive #000000 e #FFFFFF invece dei token: dentro
+   `[data-contrast="high"]` i token sono già ribaltati per l'altro fondo. */
 /* Il segnaposto non si sbiadisce OLTRE il colore che gli è stato dato (2026-08-07).
    La regola qui sopra vale solo dentro `.kv-public`, ma il problema non è delle sole
    superfici pubbliche: Firefox applica di suo `::placeholder { opacity: .54 }` — quirk
@@ -1281,10 +1424,77 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hov
 }
 
 .kv-public ::placeholder {
-  color: var(--color-kidville-sub);
+  color: var(--color-kidville-hint);
   opacity: 1;
+  font-style: italic;
 }
 [data-contrast="high"] .kv-public ::placeholder {
-  color: #000000;
+  color: #595959;
   opacity: 1;
+}
+/* L'OPZIONE NON ANCORA SCELTA di un `<select>` è lo stesso testo, senza
+   `::placeholder` (su un menu quello pseudo-elemento non esiste): `FieldRenderer`
+   la dipinge con `text-kidville-hint` sull'elemento. In luce normale l'utility
+   basta; in Alto Contrasto no, perché il blocco «2 · L'inchiostro» manda a
+   #000000 OGNI `[class*="text-kidville-"]` di `.kv-public` — cioè «Seleziona…»
+   tornerebbe nel nero del valore, che è esattamente il difetto chiuso qui sopra
+   per gli `input`. Stesso rimedio e stesso hex: #595959, 7,00:1 sulla carta
+   bianca e 3,00:1 contro il nero del valore. Sta DOPO quel blocco: stessa
+   specificità (0,3,0), vince l'ultima. */
+[data-contrast="high"] .kv-public .text-kidville-hint {
+  color: #595959;
+}
+/* Il corsivo NON è limitato alle superfici pubbliche quando l'aiuto è acceso:
+   in Alto Contrasto ogni inchiostro converge sul nero, quindi il segnaposto
+   perde il suo unico segnale su OGNI schermata, non solo su quelle pubbliche. */
+[data-contrast="high"] ::placeholder {
+  font-style: italic;
+}
+
+/* =============================================================================
+   L'ERRORE SI VEDE ANCHE QUANDO IL ROSSO NON C'È PIÙ (11/08/2026).
+
+   In luce normale il campo in errore ha il bordo `--color-kidville-error`
+   (#E53935, 4,23:1 su bianco) a 1,5px — lo scrive `FieldRenderer` con
+   `FIELD_BASE_ERRORE`. In Alto Contrasto quel bordo diventa nero come tutti gli
+   altri (blocco «Bordi e divisori» qui sopra), e il messaggio d'errore diventa
+   #000000 su bianco: 21:1, cioè lo stesso identico trattamento di un'etichetta.
+   Misurato: fra «Nome» e «Il campo è obbligatorio» non c'era più NESSUNA
+   differenza visiva.
+
+   Due segnali non cromatici, entrambi immuni al ribaltamento:
+     · il messaggio va a peso 700 (`font-bold` nel componente, in tutte e due le
+       modalità: in luce normale è enfasi, in Alto Contrasto è l'unica cosa che
+       resta);
+     · il contorno del campo diventa DOPPIO. `border-style: double` ha bisogno di
+       almeno 3px per disegnare due linee: a 4px sono 1px + 2px di spazio + 1px.
+   L'aggancio è `aria-invalid="true"`, cioè l'attributo che il campo in errore
+   già dichiara per gli screen reader: una sola verità, letta da due canali.
+   Regola non-layered → vince sulle utility Tailwind senza `!important`.
+   ============================================================================= */
+[data-contrast="high"] input[aria-invalid="true"],
+[data-contrast="high"] select[aria-invalid="true"],
+[data-contrast="high"] textarea[aria-invalid="true"] {
+  border-style: double;
+  border-width: 4px;
+}
+
+/* …e lo stesso vale per la CARD DI UNA SCELTA (11/08/2026).
+
+   Dall'11/08/2026 un gruppo obbligatorio lasciato vuoto — le fasce d'età, i
+   consensi — non mostra più tre card identiche a tre card valide: quelle non
+   spuntate prendono `border-kidville-error` a 1,5px (`SCELTA_ERRORE` in
+   `FieldRenderer`), lo stesso rosso di un campo di testo in errore. In Alto
+   Contrasto quel rosso sparisce: `.kv-public [class*="border-kidville-"]` porta
+   OGNI contorno a #000000, e la card in errore tornerebbe uguale alle altre.
+
+   Il secondo segnale è lo stesso della regola qui sopra — contorno DOPPIO — ma
+   l'aggancio non può essere `aria-invalid`: quello sta sull'`input` da 16px,
+   mentre il contorno lo disegna la `<label>` che gli fa da card. Perciò la card
+   in errore dichiara `data-scelta-invalida="true"`, che è l'unico posto in cui
+   quel dato può vivere sull'elemento giusto.
+   Lock: `__tests__/components/FieldRenderer-stati-visivi.test.tsx` §10. */
+[data-contrast="high"] [data-scelta-invalida="true"] {
+  border-style: double;
+  border-width: 4px;
 }

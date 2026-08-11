@@ -409,10 +409,11 @@ const CAMPI: Array<[string, string]> = [
   ['/admin/modulistica (textarea)', '<textarea id="sonda" class="w-full border-2 border-kidville-line rounded-xl"></textarea>'],
   // src/app/cancellazione-account/CancellazioneForm.tsx:58 — modulo PUBBLICO
   ['/cancellazione-account', '<input id="sonda" class="w-full rounded-input border border-kidville-line bg-white">'],
-  // src/components/features/forms/FieldRenderer.tsx:22 — i campi del modulo d'iscrizione
-  ['/iscrizione (FIELD_BASE)', '<input id="sonda" class="w-full rounded-xl bg-white border border-kidville-green/15">'],
-  ['/iscrizione (select)', '<select id="sonda" class="w-full rounded-xl bg-white border border-kidville-green/15"></select>'],
-  ['/iscrizione (textarea)', '<textarea id="sonda" class="w-full rounded-xl bg-white border border-kidville-green/15"></textarea>'],
+  // src/components/features/forms/FieldRenderer.tsx — i campi del modulo d'iscrizione
+  // (`FIELD_BASE`, dall'11/08/2026 scritto coi token `rounded-input`/`bg-kidville-white`).
+  ['/iscrizione (FIELD_BASE)', '<input id="sonda" class="w-full rounded-input bg-kidville-white border border-kidville-green/15">'],
+  ['/iscrizione (select)', '<select id="sonda" class="w-full rounded-input bg-kidville-white border border-kidville-green/15"></select>'],
+  ['/iscrizione (textarea)', '<textarea id="sonda" class="w-full rounded-input bg-kidville-white border border-kidville-green/15"></textarea>'],
   // src/components/features/admin/StudentDetailPanel.tsx:504 — casella di spunta
   ['StudentDetailPanel (checkbox)', '<input type="checkbox" id="sonda" class="w-4 h-4 rounded border-kidville-muted">'],
 ]

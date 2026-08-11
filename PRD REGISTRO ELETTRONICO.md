@@ -92,6 +92,66 @@
 
 ---
 
+## ♿ Changelog — I quattro rilievi minori di `/lavora-con-noi`, chiusi ognuno in un posto solo 2026-08-11 (branch `feat/insegnanti-codice-fiscale`)
+
+Il collaudo visivo del modulo pubblico di candidatura ha lasciato **quattro rilievi minori**:
+nessuno era un fallimento WCAG A/AA, e proprio per questo nessuno di essi poteva rompersi — erano
+quattro stringhe in quattro file e nessun test le guardava. Sono chiusi **alla fonte**, non nel
+punto dove si vedevano, e sorvegliati da
+`__tests__/a11y/superfici-pubbliche-quattro-rilievi-minori.test.tsx` (10 collaudi).
+
+| # | Rilievo | Prima → dopo (misurato nel browser) | Riparato in |
+|---|---|---|---|
+| 1 | Il contorno delle card di scelta è il confine più debole della pagina | `rgb(138,149,143)` = **2,79:1** sul crema (sotto i 3:1 di WCAG 1.4.11) → `rgb(85,97,92)` = **5,82:1** (e 6,46:1 sul bianco della card) | `src/app/globals.css`, regola **per superficie** |
+| 2 | Due anelli di fuoco dove ne basta uno | `outline` 2px sull'input 16×16 **+** `box-shadow` 4px sulla `<label>` 632×51 → il solo `outline` 2px del controllo | `SCELTA_STRUTTURA` in `FieldRenderer.tsx` (+ la card di sede di `EnrollmentWizard`) |
+| 3 | Nessun punto di riferimento per chi naviga per regioni | `document.querySelector('main')` = `null` su tutti e 5 i passi → **1** `<main>` che avvolge il wizard | `src/app/lavora-con-noi/page.tsx` |
+| 4 | Il comando di Alto Contrasto era il bersaglio più piccolo | **148×38** → **148×46** (i comandi del wizard stanno a 44) | `src/components/ui/PublicContrastButton.tsx` |
+
+**§1 — perché nella superficie e non nel token.** Il rimedio «ovvio» era cambiare il colore dentro
+`classeScelta`. Non si poteva: le card di scelta sono **due famiglie** — quelle di `FieldRenderer`
+e la copia fedele nelle card di sede del wizard insegnanti — tenute identiche da un lock che le
+**rende entrambe** e confronta i token calcolati
+(`CandidaturaInsegnanteWizard-forma-visiva.test.tsx`). Cambiarne una sola le fa divergere;
+cambiarle tutt'e due vuol dire scrivere due volte la stessa decisione, che è ciò che quel lock
+esiste per impedire. Agganciato alla **superficie crema**, il rimedio vale per entrambe senza
+toccare nessuna delle due stringhe — ed è lo stesso criterio del blocco gemello che, il
+2026-08-08, aveva chiuso lo stesso difetto per `input`/`select`/`textarea` lasciando fuori la
+`<label>`. Tre regole e non una, perché i tre stati non si sovrappongono a caso: riposo (0,2,1) →
+`sub`; hover (0,3,1) → verde pieno, che deve battere la utility `hover:border-*` del componente
+(0,2,0) o il contorno smetterebbe di rispondere al mouse; **guardia Alto Contrasto**, necessaria
+proprio sull'hover perché in HC `--color-kidville-green` è `#FFFFFF` su card bianca. Verificato ad
+Alto Contrasto acceso: **21:1** a riposo e col mouse sopra.
+
+**§2 — l'anello di troppo si toglie, non si copia.** Il wizard insegnanti aveva già rilevato il
+doppio anello e scelto di **non propagarlo** alle sue card di sede, lasciandolo scritto nel
+commento. Tolto alla fonte, le due famiglie combaciano. Stessa riga rimossa anche dalle card di
+sede di `EnrollmentWizard`: senza, `/iscrizione` — che monta **lo stesso** `FieldRenderer` — sarebbe
+diventata l'unica pagina con due segni del fuoco diversi nella stessa schermata.
+
+**§3 — e la colonna di contesto resta un `<div>`.** Il commento accanto a quel `<div>` prometteva
+`aside` «il giorno in cui questa pagina prendesse un `<main>`»: quel giorno è oggi, e la promessa
+era al contrario. Dentro un `<main>` un `complementary` è **annidato** →
+`landmark-complementary-is-top-level`. Per essere un `aside` legittimo dovrebbe stare **fuori** dal
+`<main>`, e non può: è la seconda colonna della griglia da `lg` in su e sotto `lg` il suo posto
+nell'ordine del documento è misurato e sorvegliato. Resta `<div>`, e il commento adesso lo dice.
+
+**§4 — un posto solo per sei superfici.** `py-2` → `py-3`: 24px di riempimento + 20 di interlinea
+(`text-sm`) + 2 di bordo = **46** (`py-2.5` si sarebbe fermato a 42). Il numero si cambia nel
+componente, che è montato dalle cinque pagine pubbliche via `PublicPageHeader` e da `/iscrizione`
+via `EnrollmentWizard`. Verificato a vetro simulato di 360px su `/lavora-con-noi`, `/iscrizione` e
+`/assistenza`: bottone su **una riga**, riga di testa su una riga, **nessun** scorrimento
+orizzontale. Il link «Torna indietro» resta 111×20 — è testo in linea, esente per §2.5.8 — e la
+riga non cambia altezza perché è il bottone a dettarla.
+
+**Non toccato, e va detto**: le card di sede di `/iscrizione` portano `border-kidville-line`
+(`rgb(239,231,220)`, **1,10:1** sul crema) e restano fuori dal gancio di §1, che aggancia
+`border-kidville-neutral`. È un difetto preesistente e più grave di quello chiuso qui, su una
+pagina diversa: va affrontato con la sua misura, non allargando un selettore per inerzia.
+
+**Gate**: `eslint` 0 · `tsc --noEmit` 0 · `vitest` **850 file / 9211 test** verdi · `npm run build` ok.
+
+---
+
 ## 🧑‍🏫 Changelog — «Lavora con noi»: le fondamenta del modulo pubblico di candidatura 2026-08-10 (branch `feat/insegnanti-codice-fiscale`)
 
 Questa voce è nata coprendo **una corsia sola** del lavoro su `/lavora-con-noi` — il **template dei

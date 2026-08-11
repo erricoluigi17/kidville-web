@@ -194,8 +194,13 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: NOME_SEDE_C })).toBeInTheDocument()
     expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
-    // «Indietro» disabilitato = la sede è davvero il PRIMO passo.
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeDisabled()
+    // Nessun «Indietro» = la sede è davvero il PRIMO passo.
+    // ⚠️ Dall'11/08/2026 il comando NON è più «disabilitato»: non viene reso
+    // affatto. Disabilitato voleva dire `opacity-30` su testo `text-kidville-sub`,
+    // cioè 1,3:1 sul crema — un comando che non si può leggere e non si può
+    // premere, che si legge come interfaccia rotta invece che come «da qui non
+    // si torna indietro».
+    expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
   })
 
   it('«Avanti» senza aver scelto la sede: non avanza, e lo dice', async () => {
@@ -334,7 +339,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
     await compilaEInvia()
 
@@ -352,7 +357,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
     expect(screen.queryByRole('radio')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
     await compilaFinoAlRiepilogo()
     expect(sedeNelRiepilogo()).toBe(NOME_SEDE_A)
@@ -378,7 +383,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     // spiegazione da dare — c'è solo un passo in più, al suo posto.
     expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
     expect(screen.queryByText(itPublic.candErroreInvioTitolo)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_B }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
@@ -561,9 +566,12 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     //    che non si può eseguire — lo stesso difetto, un livello più sotto.
     expect(screen.getByText(itPublic.candSedeRifiutataNotaAttesa)).toBeInTheDocument()
     expect(screen.queryByText(itPublic.candSedeRifiutataNota)).not.toBeInTheDocument()
-    // 4. IL MODULO È ANCORA UN MODULO: i comandi del wizard sono in pagina.
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeInTheDocument()
+    // 4. IL MODULO È ANCORA UN MODULO: la barra dei comandi è in pagina.
+    //    «Indietro» no — e la sua ASSENZA è essa stessa la prova che il rifiuto
+    //    ha riportato al PRIMO passo: dall'11/08/2026 quel comando non viene
+    //    reso a `indice === 0` invece di comparire spento a 1,3:1.
     expect(screen.getByRole('button', { name: itPublic.candAvanti })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
     // Il guasto dell'elenco si dice DENTRO il passo «sede», col suo «Riprova»:
     // è vero, ed è la sola cosa che si può fare adesso.
@@ -639,7 +647,9 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     // suo: le due cose stanno sulla stessa schermata.
     expect(screen.getByText(itPublic.candCaricamento)).toBeInTheDocument()
     expect(screen.getByText(itPublic.candErroreInvioTitolo)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeInTheDocument()
+    // I comandi ci sono ancora; «Indietro» no, perché si è tornati al primo
+    // passo e lì non viene reso (vedi il collaudo del rifiuto, poco sopra).
+    expect(screen.getByRole('button', { name: itPublic.candAvanti })).toBeInTheDocument()
 
     sblocca!()
 
@@ -760,7 +770,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     // tabulazione di chi non ha perso niente.
     expect(pannello).toHaveAttribute('tabindex', '-1')
     expect(screen.getByRole('button', { name: itPublic.candAvanti })).toBeDisabled()
-    expect(screen.getByRole('button', { name: itPublic.candIndietro })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
   })
 
   it('ELENCO VUOTO dopo il rifiuto: lo dice DENTRO il modulo, senza buttare via ciò che è compilato', async () => {

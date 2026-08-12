@@ -194,6 +194,14 @@ describe('S16 · le fasce d\'errore usano il token forte', () => {
     'src/app/(dashboard)/teacher/avvisi/page.tsx',
     'src/components/features/admin/primaria/GiudiziManager.tsx',
     'src/components/features/admin/settings/SettingsPanel.tsx',
+    // Entrato il 2026-08-12. La scheda staff aveva DUE fasce rosse e una sola era
+    // giusta: quella dell'anagrafica a 4,92:1 con `role="alert"`, e quella che
+    // SOSTITUISCE l'intera scheda a **3,70:1** senza alert — cioè l'unica a
+    // schermo intero, e l'unica muta. Il rilevatore qui sotto cerca proprio
+    // `role="alert"`: finché quell'attributo mancava, aggiungere il file a questo
+    // elenco non avrebbe misurato niente (`trovate.length` a zero, che il
+    // controllo positivo fa fallire). Le due cose andavano fatte insieme.
+    'src/components/features/admin/StaffDetailPanel.tsx',
   ]
 
   it.each(CON_FASCIA)('%s: la fascia su `error-soft` porta `error-strong`', (f) => {

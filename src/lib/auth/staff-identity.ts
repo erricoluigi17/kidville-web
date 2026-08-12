@@ -30,6 +30,22 @@ import type { AppRole } from './require-staff'
 //    tutti i bambini — oppure le toglierebbe l'accesso ai propri figli. È una
 //    decisione che prende una persona, non una route.
 //
+// LA PRIMA DELLE DUE SI APRE A RICHIESTA (`seEsisteRiusa`, dal 2026-08-11), e la
+// seconda NO. Il motivo è che le due porte chiudono su due domande diverse: la
+// prima su «esiste già un profilo del personale con questa identità?», la seconda
+// su «questo uid è l'accesso di un genitore?». Per l'approvazione di una PRATICA
+// DI ANAGRAFICA (`/anagrafica-personale`) la risposta «sì» alla prima è il caso
+// NORMALE — la maestra lavora qui da anni, l'account ce l'ha — mentre un «sì»
+// alla seconda resta la stessa decisione umana di sempre. Il riuso è opt-in e
+// spento di default proprio perché per le CANDIDATURE il significato è opposto:
+// chi è già staff non si sta candidando, e lì il `409` è la risposta giusta.
+//
+// E ANCHE APERTA, LA PRIMA PORTA È UN ELENCO DI AMMESSI: si riusa il profilo di
+// chi ha uno dei ruoli del PERSONALE (`RIUSABILE_PER_RUOLO`), e qualunque altro
+// valore — compresi quelli che nessuno ha previsto — non passa. `utenti.ruolo` è
+// un `varchar` senza `CHECK`: un elenco di esclusi avrebbe concesso a tutto il
+// resto, che è il verso sbagliato in cui sbagliare.
+//
 // Non lancia MAI: ogni esito è un valore. Chi chiama deve poter rimettere la
 // candidatura in `pending` e rispondere con un codice, non gestire un throw.
 // =============================================================================
@@ -49,7 +65,39 @@ export interface StaffIdentityInput {
   gradi: Grado[]
 }
 
+/**
+ * Le opzioni di `ensureStaffIdentity`. Tutte spente di default: chi chiama senza
+ * il terzo argomento ottiene esattamente ciò che otteneva prima che esistessero.
+ */
+export interface OpzioniStaffIdentity {
+  /**
+   * `true` = «se un profilo del personale con questa identità c'è già, RIUSALO e
+   * dimmelo», invece di rispondere `email_gia_staff`.
+   *
+   * PERCHÉ È UN'OPZIONE E NON IL COMPORTAMENTO. Le due strade che passano di qui
+   * si fanno la stessa domanda e chiamano «giusta» la risposta opposta:
+   *  · una CANDIDATURA di chi è già dentro è un errore — nessuno si candida al
+   *    posto in cui lavora — e la risposta è il `409` che dice alla segreteria di
+   *    collegare l'account esistente;
+   *  · una PRATICA DI ANAGRAFICA di chi è già dentro è il caso normale, anzi è
+   *    l'unico previsto: il modulo `/anagrafica-personale` è per le insegnanti
+   *    GIÀ DIPENDENTI, e pretendere che non abbiano un account renderebbe la
+   *    funzione inutilizzabile proprio per il suo scopo.
+   *
+   * NON apre la porta del genitore, e nemmeno quella di un ruolo che non sia del
+   * personale: vedi `riusaIdentitaEsistente` e `RIUSABILE_PER_RUOLO`.
+   */
+  seEsisteRiusa?: boolean
+}
+
 export type EnsureStaffIdentityResult =
+  // ── L'identità è stata CREATA (o completata) in questa chiamata ────────────
+  // `input.ruolo` e `input.scuolaId` sono finiti in tabella: non c'è niente da
+  // confrontare, ed è per questo che i tre campi del riuso qui sono `undefined`.
+  // Dichiararli comunque, invece di ometterli, serve a una cosa sola: rende
+  // `identita.scuolaIdEsistente` LEGGIBILE su tutta l'unione `ok:true` senza
+  // restringere — chi non restringe legge `string | null | undefined`, cioè la
+  // verità, invece di prendere un errore di compilazione che invoglia a un cast.
   | {
       ok: true
       authUserId: string
@@ -59,6 +107,73 @@ export type EnsureStaffIdentityResult =
       password: string | null
       /** `false` quando la colonna `gradi` non esiste (DB della CI non migrato). */
       gradiScritti: boolean
+      riusato?: undefined
+      ruoloEsistente?: undefined
+      scuolaIdEsistente?: undefined
+    }
+  // ── L'identità ESISTEVA e `seEsisteRiusa` ha detto di riusarla ─────────────
+  | {
+      ok: true
+      authUserId: string
+      /** Sempre `false`: un riuso non crea niente, in nessuna delle due tabelle. */
+      createdAuth: false
+      /** Sempre `null`: non è nato nessun account, quindi non esiste una password. */
+      password: null
+      /** Sempre `false`: la riga `utenti` c'era già e i `gradi` di `input` non sono stati scritti. */
+      gradiScritti: false
+      /**
+       * `true` SOLO quando un profilo `utenti` ESISTEVA GIÀ e `seEsisteRiusa` ha
+       * detto di riusarlo: niente è stato scritto, in nessuna delle due tabelle.
+       *
+       * PERCHÉ NON BASTAVA `createdAuth === false`. Quel campo risponde a
+       * «l'account di login è nato adesso?», questo a «il profilo del personale
+       * è nato adesso?», e le due domande hanno risposte diverse nel caso che
+       * capita di più: account `auth.users` preesistente (quindi
+       * `createdAuth: false`) e riga `utenti` creata in questa chiamata. Chi
+       * deducesse il riuso dal primo campo tratterebbe quel caso come «c'era già
+       * tutto» e non scriverebbe l'anagrafica di una persona appena creata.
+       *
+       * ⚠️ DICE «il profilo c'era», NON «quella persona riesce ad accedere»: la
+       * lettura è su `utenti`, e una riga `utenti` senza il suo `auth.users` è
+       * uno stato che questo file descrive già (account cancellato a mano, o lo
+       * spazio in cui opera il rollback del punto 5).
+       *
+       * È tipizzato `true` e non `boolean` di proposito: assente significa «non
+       * è un riuso», e con `?: boolean` un `if (identita.riusato === false)`
+       * compilerebbe restando SEMPRE falso. Così quel confronto non compila e
+       * l'unica forma corretta — `if (identita.riusato)` — è l'unica scrivibile.
+       * Restringere su di essa dà anche i due campi qui sotto NON opzionali.
+       */
+      riusato: true
+      /**
+       * Il ruolo che quella persona ha GIÀ, normalizzato — NON `input.ruolo`.
+       *
+       * Sul riuso `input.ruolo` viene scartato, ed è giusto: nessuna pratica di
+       * anagrafica declassa una segretaria a `educator` perché il modulo dice
+       * così. Ma «scartato in silenzio» sarebbe un'altra cosa, e finché questo
+       * campo non esisteva era esattamente ciò che accadeva.
+       */
+      ruoloEsistente: string
+      /**
+       * LA SEDE CHE QUELLA PERSONA HA GIÀ (`utenti.scuola_id`) — e `null` solo se
+       * la colonna non è stata letta.
+       *
+       * PERCHÉ IL CHIAMANTE DEVE AVERLA. `anagrafica_personale` NON ha una
+       * `scuola_id`, per scelta dichiarata nel DDL («quelli vivono in `utenti` e
+       * restano lì»): quindi la sede del personale È questa, mentre
+       * `pratiche_personale.scuola_id` è la sede della PRATICA ed è NOT NULL. Le
+       * due possono divergere — misurato l'11/08/2026: 20 persone su 4 sedi — e
+       * una segreteria che approva una pratica del proprio plesso otterrebbe
+       * `ok:true` con la persona ancora agganciata a un altro, senza appiglio per
+       * accorgersene. È alla lettera ciò che AGENTS.md vieta: «una route che
+       * "indovina" la sede archivia i dati nel plesso sbagliato in silenzio».
+       *
+       * QUI NON SI DECIDE, si DICHIARA: uno spostamento di sede è legittimo (una
+       * maestra trasferita) e va scritto da chi ha il gate e lo scope, non da una
+       * funzione che sa solo creare identità. La divergenza è comunque loggata a
+       * `warn`, così resta contabile anche se la route se ne dimentica.
+       */
+      scuolaIdEsistente: string | null
     }
   | {
       ok: false
@@ -93,6 +208,73 @@ const COLONNE_RIMOVIBILI = new Set(['gradi', 'cellulare', 'attivo'])
 
 /** Codici con cui PostgREST/Postgres dicono «questa COLONNA qui non c'è». */
 const COLONNA_ASSENTE = new Set(['PGRST204', '42703'])
+
+/**
+ * Il `utenti.ruolo` dell'area famiglie — l'unico su cui il riuso si nega.
+ *
+ * Tipizzato `AppRole` e non `string`: se un domani quel ruolo cambiasse nome,
+ * questa riga diventa rossa a compilazione invece di restare un letterale che non
+ * corrisponde più a niente e che quindi non nega più niente.
+ */
+const RUOLO_GENITORE: AppRole = 'genitore'
+
+/**
+ * CHI SI RIUSA — un elenco di AMMESSI, non di esclusi, e la differenza sta tutta
+ * nella direzione in cui si sbaglia.
+ *
+ * LA MISURA (produzione, 2026-08-11, sole SELECT). `utenti.ruolo` è
+ * `character varying NOT NULL` e nient'altro: gli unici vincoli della tabella
+ * sono `PRIMARY KEY (id)`, `UNIQUE (email)` e le due chiavi esterne
+ * (`auth.users`, `schools`). NESSUN `CHECK`, nessun enum. I sei valori vivi
+ * (genitore 38 · educator 12 · segreteria 3 · admin 3 · cuoca 1 · coordinator 1)
+ * sono oggi tutti canonici, ma è una constatazione, non una garanzia: il
+ * database accetta qualunque stringa.
+ *
+ * PERCHÉ NON BASTAVA `ruolo === 'genitore'`. Scritto come diniego, il confronto
+ * CONCEDE a tutto ciò che non è quel letterale esatto: `'Genitore'`, `'genitore '`
+ * e ogni ruolo che nascesse domani aprirebbero la porta. Rovesciato, un valore che
+ * nessuno ha previsto NON passa — che è poi la regola che questo stesso file si dà
+ * al punto 3-bis: «non sapere è motivo per fermarsi».
+ *
+ * PERCHÉ UN `Record` E NON UN ELENCO. `Record<AppRole, boolean>` è esaustivo: un
+ * settimo ruolo aggiunto a `AppRole` rende ROSSO questo oggetto finché qualcuno
+ * non decide se quel personale entra nell'anagrafica del personale. Un elenco lo
+ * avrebbe lasciato fuori in silenzio — negare è il verso giusto, ma senza che
+ * nessuno se ne accorgesse.
+ */
+const RIUSABILE_PER_RUOLO: Record<AppRole, boolean> = {
+  admin: true,
+  coordinator: true,
+  educator: true,
+  segreteria: true,
+  cuoca: true,
+  // L'area famiglie. Il perché sta per esteso in `riusaIdentitaEsistente`.
+  genitore: false,
+}
+
+/**
+ * L'elenco di sopra ridotto a un insieme, ed è per il RUNTIME che serve.
+ *
+ * Il valore da confrontare arriva dal DATABASE, quindi è una stringa qualunque, e
+ * su un oggetto letterale l'interrogazione per chiave non è chiusa: verificato in
+ * `node`, `({educator:true})['toString']` non è `undefined` — è la funzione
+ * ereditata dal prototipo, cioè un valore VERO, e un ruolo scritto `toString`
+ * avrebbe superato il controllo. Un `Set` non ha catena di prototipi da
+ * interrogare: `new Set(['educator']).has('toString')` è `false`.
+ */
+const RUOLI_RIUSABILI: ReadonlySet<string> = new Set(
+  Object.entries(RIUSABILE_PER_RUOLO).filter(([, ammesso]) => ammesso).map(([ruolo]) => ruolo),
+)
+
+/**
+ * La frase del ramo «è già un genitore», scritta una volta sola perché la dicono
+ * due rami — il punto 3 (uid legato a `parents`) e il diniego del riuso — e sono
+ * la stessa risposta allo stesso fatto. Due copie diventano due spiegazioni
+ * diverse alla prima riscrittura, e a leggerle è la stessa segreteria.
+ */
+const MESSAGGIO_GIA_GENITORE =
+  'Questa email è già quella di un genitore: serve una decisione della segreteria per ' +
+  'aggiungere il ruolo di insegnante senza togliere l\'accesso alle schede dei figli.'
 
 /** Il nome della colonna dentro un errore di colonna assente, se dichiarato. */
 function colonnaMancante(messaggio: string): string | null {
@@ -151,14 +333,183 @@ async function annullaAccountAppenaCreato(admin: SupabaseClient, authUserId: str
 }
 
 /**
+ * IL RIUSO DI UN'IDENTITÀ CHE ESISTE GIÀ — la decisione, in un posto solo.
+ *
+ * I rami che la prendono sono due: il punto 1, che trova il profilo per EMAIL, e
+ * il punto 3-bis, che lo trova per UID. Fanno la stessa domanda e devono dare la
+ * stessa risposta; scritta due volte, la seconda modifica ne tocca una sola e la
+ * divergenza si vedrebbe come una pratica accettata da una porta e respinta
+ * dall'altra a seconda di come è scritta l'email — cioè per un motivo che nessuno
+ * potrebbe indovinare guardando la pratica.
+ *
+ * @param input ciò che la pratica DICHIARA. Sul riuso non viene scritto niente,
+ *   quindi serve solo per confrontarlo con ciò che c'è già e dire se divergono.
+ * @param porta quale delle due l'ha trovata. Finisce nel log perché le due cose
+ *   non sono la stessa: «per email» dice che in `utenti` l'indirizzo è archiviato
+ *   nella forma digitata, «per uid» che è archiviato in un'ALTRA forma e che a
+ *   riconoscerlo è stato solo il confronto per uuid.
+ * @returns `null` quando NON si riusa: il chiamante prosegue con la porta chiusa
+ *   che aveva già, cioè il comportamento di sempre.
+ */
+function riusaIdentitaEsistente(
+  opzioni: OpzioniStaffIdentity,
+  profilo: { id: string; ruolo: string; scuolaId: string | null },
+  input: StaffIdentityInput,
+  porta: 'email' | 'uid',
+): EnsureStaffIdentityResult | null {
+  if (!opzioni.seEsisteRiusa) return null
+
+  // UN PROFILO SENZA `id` NON SI RIUSA. `utenti.id` è l'uid, ed è il valore che il
+  // chiamante userà come chiave: `anagrafica_personale.utente_id` è PK e FK su
+  // `utenti(id)`. Tornare `ok:true` con la stringa vuota sarebbe un «sì» che non
+  // indica nessuno. Non capita — le due SELECT chiedono `id` — ma negarlo costa
+  // una riga, e concederlo costa un'anagrafica attaccata al nulla.
+  if (!profilo.id) return null
+
+  // IL RUOLO SI NORMALIZZA PRIMA DI DECIDERCI SOPRA. Arriva da una colonna che il
+  // database non vincola (vedi `RIUSABILE_PER_RUOLO`): `'Genitore'` e `'genitore '`
+  // sono la stessa persona per chiunque legga, e devono esserlo anche per la porta.
+  const ruolo = (profilo.ruolo ?? '').trim().toLowerCase()
+
+  if (ruolo === RUOLO_GENITORE) {
+    // LA PORTA DEL GENITORE RESTA CHIUSA ANCHE COL RIUSO ACCESO — ed è QUESTA riga
+    // a tenerla chiusa, non il punto 3.
+    //
+    // Il punto 3 legge `parents` e vive dentro `if (authUserId)`, ma soprattutto
+    // gira DOPO il punto 1: una madre una riga `utenti` ce l'ha già, con
+    // `ruolo: 'genitore'`, scritta da `ensureParentIdentity`. Quindi per lei il
+    // punto 1 esce per primo e il controllo su `parents` non viene MAI raggiunto.
+    // Senza questa riga, `seEsisteRiusa` non avrebbe aperto una porta: ne avrebbe
+    // scavalcata un'altra — e l'anagrafica del PERSONALE sarebbe finita sull'uid
+    // di un genitore, in una tabella che dichiara «personale in servizio».
+    //
+    // Chi decide che una madre è anche una dipendente è una persona, non una route.
+    logEvento('anagrafica', 'warn', {
+      operazione: OPERAZIONE,
+      esito: 'riuso-negato-profilo-genitore',
+      entita_tipo: 'utenti',
+      utente: profilo.id,
+      // Il ruolo NORMALIZZATO: è il valore su cui la decisione è stata presa, e in
+      // un log serve quello. Il grezzo — `'Genitore'`, `'genitore '` — direbbe
+      // com'è archiviato, ma è una domanda che si fa in SQL, non qui.
+      ruolo,
+      tipo: porta,
+    })
+    return {
+      ok: false,
+      reason: 'email_gia_genitore',
+      ruoloEsistente: RUOLO_GENITORE,
+      message: MESSAGGIO_GIA_GENITORE,
+    }
+  }
+
+  // ── UN RUOLO CHE NON È DEL PERSONALE, E NEMMENO QUELLO DEI GENITORI ────────
+  // Cioè: un valore che nessuno ha previsto. `utenti.ruolo` non ha `CHECK` né
+  // enum (misura in `RIUSABILE_PER_RUOLO`), quindi lo scenario non è teorico —
+  // ed è aggravato dall'ambiente: `CLAUDE.md` dichiara che su questo database
+  // `execute_sql` gira SENZA conferma umana, per cui un `ruolo` scritto a mano in
+  // una forma non canonica è una cosa che questo repo si è già concesso.
+  //
+  // Si torna `null`, non un errore: questa funzione non ha niente da dire su un
+  // valore che non riconosce, e `null` la riporta esattamente alla porta chiusa
+  // che c'era prima che l'opzione esistesse — `email_gia_staff`, col ruolo vero
+  // dentro, che dice a chi opera di collegare l'account a mano. È la STESSA
+  // risposta che ottiene il percorso delle candidature, cioè il verso sicuro.
+  //
+  // `warn` e non `info`: qui, al contrario del riuso, un'anomalia c'è davvero —
+  // in `utenti` esiste una riga con un ruolo fuori dai sei noti — e `warn` è il
+  // livello che la fa arrivare in `app_log`, dove si può contare.
+  if (!RUOLI_RIUSABILI.has(ruolo)) {
+    logEvento('anagrafica', 'warn', {
+      operazione: OPERAZIONE,
+      esito: 'riuso-negato-ruolo-non-riconosciuto',
+      entita_tipo: 'utenti',
+      utente: profilo.id,
+      ruolo: ruolo || null,
+      tipo: porta,
+    })
+    return null
+  }
+
+  // ── LA SEDE DICHIARATA E QUELLA CHE LA PERSONA HA GIÀ ──────────────────────
+  // Non si decide niente — vedi `scuolaIdEsistente` nel tipo di ritorno: uno
+  // spostamento di plesso è legittimo e lo scrive chi ha il gate. Ma «in
+  // silenzio» no: `anagrafica_personale` non ha una `scuola_id`, quindi la sede
+  // del personale resta questa, e una divergenza che nessuno registra è
+  // precisamente il modo in cui i dati finiscono nel plesso sbagliato senza che
+  // se ne accorga nessuno (AGENTS.md, «ogni scrittura dichiara la sua sede»).
+  //
+  // `warn` perché va in tabella: è l'unico modo di rispondere, a mesi di
+  // distanza, alla domanda «quante approvazioni hanno lasciato la persona in un
+  // altro plesso?». La condizione richiede ENTRAMBI i valori: con uno dei due
+  // assente non c'è divergenza, c'è una lettura incompleta, e chiamarla
+  // «divergenza» riempirebbe la tabella di allarmi su un ambiente non migrato.
+  if (profilo.scuolaId && input.scuolaId && profilo.scuolaId !== input.scuolaId) {
+    logEvento('anagrafica', 'warn', {
+      operazione: OPERAZIONE,
+      esito: 'riuso-con-sede-diversa',
+      entita_tipo: 'utenti',
+      utente: profilo.id,
+      // Due uuid: passano in chiaro per FORMA, non per chiave (`redact.ts`), e
+      // senza entrambi la riga direbbe «divergono» senza dire fra cosa.
+      sede_id: profilo.scuolaId,
+      sede_dichiarata: input.scuolaId,
+      tipo: porta,
+    })
+  }
+
+  // Il riuso si logga a `info` e non a `warn`: col riuso acceso non è un'anomalia,
+  // è il caso previsto, e alzarlo a `warn` renderebbe illeggibile il conteggio
+  // delle porte VERE chiuse (`email-gia-staff`/`uid-gia-staff`), che è la query
+  // con cui si vede se qualcuno sta creando account doppi.
+  //
+  // ⚠️ Un `info` su `anagrafica` NON arriva in `app_log`: quel canale sta fra le
+  // deroghe di `DEROGHE_INFO_NON_PERSISTITI` (eventi-log.test.ts), quindi resta
+  // sulla riga di Vercel. È voluto — qui non nasce niente, e il battito DUREVOLE
+  // dell'approvazione lo scrive la route che chiama, che è l'unica a sapere quale
+  // pratica ha chiuso e in quale sede.
+  logEvento('anagrafica', 'info', {
+    operazione: OPERAZIONE,
+    esito: 'identita-staff-riusata',
+    entita_tipo: 'utenti',
+    utente: profilo.id,
+    ruolo: ruolo || null,
+    // La sede che quella persona HA, non quella che la pratica dichiara: è il
+    // dato che rende leggibile la riga accanto a un eventuale
+    // `riuso-con-sede-diversa`.
+    sede_id: profilo.scuolaId,
+    tipo: porta,
+  })
+  return {
+    ok: true,
+    authUserId: profilo.id,
+    createdAuth: false,
+    password: null,
+    // Le fasce d'età di `input` NON sono state scritte: la riga `utenti` c'era già
+    // e non la si tocca. Dire `true` prometterebbe che sono finite da qualche
+    // parte, e il chiamante non avviserebbe che vanno assegnate a mano.
+    gradiScritti: false,
+    riusato: true,
+    // Gli altri due pezzi di `input` scartati dal riuso, restituiti come FATTI:
+    // `gradiScritti: false` era l'unico dei tre a essere dichiarato, e da solo
+    // lasciava credere che ruolo e sede fossero invece stati applicati.
+    ruoloEsistente: ruolo,
+    scuolaIdEsistente: profilo.scuolaId,
+  }
+}
+
+/**
  * Completa l'identità di accesso di un membro dello staff: account `auth.users`
  * (riusato se esiste già per quell'email) e riga `utenti` col ruolo dichiarato.
  *
+ * @param opzioni spente di default: senza terzo argomento il comportamento è
+ *   quello di sempre, ed è ciò su cui conta l'approvazione delle CANDIDATURE.
  * @returns `ok:true` con la password SOLO se l'account è nato adesso.
  */
 export async function ensureStaffIdentity(
   admin: SupabaseClient,
   input: StaffIdentityInput,
+  opzioni: OpzioniStaffIdentity = {},
 ): Promise<EnsureStaffIdentityResult> {
   try {
     const email = (input.email ?? '').trim()
@@ -193,9 +544,16 @@ export async function ensureStaffIdentity(
     // La chiusura vera è un indice su `lower(email)`; quel giorno il filtro giusto
     // è quello e questi due valori diventano superflui.
     const forme = [...new Set([email, email.toLowerCase()])]
+    // `scuola_id` SI LEGGE anche se questa strada non la scrive mai: sul riuso è
+    // l'unica sede che quella persona abbia (`anagrafica_personale` non ne ha una),
+    // e senza leggerla il chiamante non potrebbe nemmeno accorgersi che diverge da
+    // quella della pratica. Non è una colonna a rischio sul DB non migrato della CI:
+    // `loadAppUser` (`require-staff.ts`) la chiede già a OGNI gate, e il punto 5 qui
+    // sotto la SCRIVE tenendola fuori da `COLONNE_RIMOVIBILI` — se mancasse, non
+    // sarebbe questa SELECT a scoprirlo, sarebbe l'intera applicazione.
     const { data: staff, error: errStaff } = await admin
       .from('utenti')
-      .select('id, ruolo, email')
+      .select('id, ruolo, email, scuola_id')
       .in('email', forme)
       .limit(1)
       .maybeSingle()
@@ -216,11 +574,22 @@ export async function ensureStaffIdentity(
     }
     if (staff) {
       const ruoloEsistente = String((staff as { ruolo?: unknown }).ruolo ?? '')
+      const idEsistente = String((staff as { id?: unknown }).id ?? '')
+      const sedeEsistente = String((staff as { scuola_id?: unknown }).scuola_id ?? '') || null
+      // Prima di dichiararla chiusa: col riuso acceso questa non è una porta, è la
+      // risposta attesa. `null` = non si riusa, e allora vale tutto ciò che segue.
+      const riuso = riusaIdentitaEsistente(
+        opzioni,
+        { id: idEsistente, ruolo: ruoloEsistente, scuolaId: sedeEsistente },
+        input,
+        'email',
+      )
+      if (riuso) return riuso
       logEvento('anagrafica', 'warn', {
         operazione: OPERAZIONE,
         esito: 'email-gia-staff',
         entita_tipo: 'utenti',
-        entita_id: String((staff as { id?: unknown }).id ?? ''),
+        entita_id: idEsistente,
         ruolo: ruoloEsistente || null,
       })
       return {
@@ -282,10 +651,8 @@ export async function ensureStaffIdentity(
         return {
           ok: false,
           reason: 'email_gia_genitore',
-          ruoloEsistente: 'genitore',
-          message:
-            'Questa email è già quella di un genitore: serve una decisione della segreteria per ' +
-            'aggiungere il ruolo di insegnante senza togliere l\'accesso alle schede dei figli.',
+          ruoloEsistente: RUOLO_GENITORE,
+          message: MESSAGGIO_GIA_GENITORE,
         }
       }
     }
@@ -301,7 +668,7 @@ export async function ensureStaffIdentity(
     if (authUserId) {
       const { data: giaUtente, error: errUtente } = await admin
         .from('utenti')
-        .select('id, ruolo')
+        .select('id, ruolo, scuola_id')
         .eq('id', authUserId)
         .maybeSingle()
       if (errUtente) {
@@ -320,6 +687,17 @@ export async function ensureStaffIdentity(
       }
       if (giaUtente) {
         const ruoloEsistente = String((giaUtente as { ruolo?: unknown }).ruolo ?? '')
+        const sedeEsistente = String((giaUtente as { scuola_id?: unknown }).scuola_id ?? '') || null
+        // Stessa decisione del punto 1, presa dalla stessa funzione: qui l'uid è
+        // già in mano (siamo dentro `if (authUserId)`), quindi non c'è nemmeno da
+        // rileggerlo dalla riga.
+        const riuso = riusaIdentitaEsistente(
+          opzioni,
+          { id: authUserId, ruolo: ruoloEsistente, scuolaId: sedeEsistente },
+          input,
+          'uid',
+        )
+        if (riuso) return riuso
         logEvento('anagrafica', 'warn', {
           operazione: OPERAZIONE,
           esito: 'uid-gia-staff',

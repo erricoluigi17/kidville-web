@@ -170,7 +170,54 @@ export const JOB_CRON: readonly JobCron[] = [
     // A differenza del gemello, il battito di questo lavoro dichiara `esito: 'ok'`
     // (lo scrive `logEvento` da una route, non un `jsonb_build_object` da SQL), quindi
     // `controlloBattitoCron` lo conta davvero.
+    //
+    // ⚠️ IL FREDDO D'AVVIO, misurato il 2026-08-11 — si legga prima di dichiararlo
+    // rotto. Al 2026-08-11 questo job non aveva NESSUNA riga in `app_log`, e la
+    // deduzione ovvia («è muto dalla nascita, è rotto») è SBAGLIATA. I fatti, in
+    // ordine: la migrazione che lo schedula è stata applicata al database il
+    // 2026-08-10; il codice della route è entrato in `main` — e quindi in produzione —
+    // solo con `a9dcc6d`, il 2026-08-11 alle 08:16 UTC; il job ha avuto UNA sola
+    // occasione di girare, alle 05:05 UTC di quel giorno, cioè **3 ore e 11 minuti
+    // prima che la route esistesse**. Ha chiamato un URL che rispondeva 404: nessun
+    // handler, nessun battito. `cron.job_run_details` diceva `succeeded` perché misura
+    // l'accodamento, non l'esito HTTP.
+    //
+    // La lezione è sull'ORDINE, ed è generale: applicare la migrazione PRIMA del
+    // deploy apre una finestra in cui il database chiama codice che non c'è, e ogni
+    // giro che cade lì dentro produce un «job senza battito» che non descrive nessun
+    // guasto. La migrazione si applica DOPO il rilascio, e il primo battito si innesca
+    // a mano invece di aspettare la notte.
     { nome: 'candidature-retention', finestraMs: 26 * ORA },
+    // `scadenze-documenti-personale` (`POST /api/notifiche/scadenze-documenti`):
+    // avvisa a 90, 60, 30, 7 giorni e a scadenza superata che il documento
+    // d'identità di una persona in servizio sta per scadere.
+    //
+    // ⚠️ È il job più facile da non vedere fermo di tutta la tabella, e la ragione
+    // è nella sua natura: la condizione NORMALE è «zero avvisi». Un lavoro che
+    // quasi ogni notte non manda niente è indistinguibile, dall'esterno, da un
+    // lavoro che non parte più — finché qualcuno non si accorge che una maestra
+    // sta lavorando da tre mesi con un documento scaduto e nessuno l'ha avvisata.
+    // Per questo il battito si scrive in un `finally` anche a zero righe, e per
+    // questo la sua assenza va sorvegliata qui.
+    //
+    // Giornaliero, quindi 26 h come gli altri: assorbe un giro saltato, non due.
+    { nome: 'scadenze-documenti-personale', finestraMs: 26 * ORA },
+    // `retention-personale` (conservazione delle pratiche di
+    // `/anagrafica-personale` non approvate, e della scansione del documento dopo
+    // la cessazione del rapporto): stessa famiglia di `candidature-retention` —
+    // cancella dati personali di persone adulte entro un termine DICHIARATO nel
+    // testo che l'interessata ha letto e spuntato (`PERSONALE_LIMITI`). Un termine
+    // promesso e non applicato è la fattispecie che l'art. 13 §2 lett. a non
+    // copre, e l'unico modo di accorgersene è che il suo lavoro batta ogni notte.
+    //
+    // ⚠️ IL NOME È `retention-personale`, non `personale-retention`. Deve
+    // combaciare CARATTERE PER CARATTERE con la costante `JOB` della route
+    // (`src/app/api/gdpr/retention-personale/route.ts`): `controlloBattitoCron`
+    // associa il battito al job confrontando questa stringa con
+    // `contesto.campi.operazione`, e due grafie che si somigliano producono un
+    // «job senza battito» permanente su un lavoro che gira benissimo — cioè un
+    // allarme che suona da solo, e che qualcuno spegnerà.
+    { nome: 'retention-personale', finestraMs: 26 * ORA },
 ]
 
 /**
@@ -420,8 +467,39 @@ async function controlloSchema(supabase: SupabaseClient): Promise<Controllo> {
 
 interface RigaBattito {
     visto_l_ultima?: string | null
+    livello?: string | null
     contesto?: { campi?: { operazione?: unknown; esito?: unknown } | null } | null
 }
+
+/**
+ * GLI ESITI CHE VALGONO COME BATTITO — e perché non è solo `ok`.
+ *
+ * La domanda a cui questo controllo risponde è **«questo lavoro è partito?»**, non «è
+ * andato tutto perfettamente?». Sono due domande diverse, e confonderle rompe il
+ * rilevatore nella direzione peggiore: quella che grida.
+ *
+ * ⚠️ MISURATO IN PRODUZIONE il 2026-08-11, ed è la ragione per cui questa costante
+ * esiste. `notifiche-promemoria` gira ogni notte alle 06:00 UTC, risponde 200 e fa il
+ * suo lavoro — `cron.job_run_details` lo conferma per sette notti di fila. Ma dal
+ * 2026-08-05 non scrive più `esito: 'ok'`: scrive `ok-parziale` a livello `warn`,
+ * perché in produzione `locker_requests` non esiste e la scansione dell'armadietto
+ * viene saltata (è il terzo stato introdotto di proposito il 2026-08-04, e introdurlo
+ * fu giusto: prima quel giro dichiarava «ok» senza aver guardato).
+ *
+ * Il risultato è che questo controllo lo contava come MUTO. Misura del 2026-08-11:
+ * ultimo `esito: 'ok'` il **2026-08-04**, poi sette righe `ok-parziale` — cioè
+ * `/api/health` rispondeva «job senza battito: notifiche-promemoria» da sette giorni
+ * su un lavoro che non ha saltato una notte. Un allarme che suona da solo viene
+ * spento, e allora non protegge più niente: è la frase in testa a questo file, e il
+ * rilevatore l'aveva applicata a se stesso.
+ *
+ * Restano FUORI, e devono restarci, tutti gli esiti che significano «non ho fatto il
+ * lavoro»: `avviato` (partito e mai finito), `giro-incompleto`, `eccezione`,
+ * `non-autorizzato`, `url-assente`, `post-fallito`. Un lavoro che muore ogni notte a
+ * metà deve continuare a comparire come muto — è il caso che il test «(b) un cron
+ * muto» sorveglia, e non si allarga.
+ */
+export const ESITI_BATTITO: ReadonlySet<string> = new Set(['ok', 'ok-parziale'])
 
 /**
  * IL CONTROLLO CHE DISTINGUE «TUTTO TRANQUILLO» DA «NON È MAI PARTITO NIENTE».
@@ -458,7 +536,13 @@ async function controlloBattitoCron(
             .from('app_log')
             .select('visto_l_ultima, contesto')
             .eq('evento', 'cron')
-            .eq('livello', 'info')
+            // `info` E `warn`: `ok-parziale` è scritto a livello `warn` di proposito (il
+            // livello è ciò che in tabella distingue una notte normale da una notte in cui
+            // una funzionalità non c'era). Filtrare il solo `info` qui rendeva invisibile
+            // il battito di un lavoro che gira benissimo — vedi `ESITI_BATTITO`.
+            // `error` resta fuori: `secret-errato`, `url-assente` e `giro-incompleto` non
+            // sono battiti, e leggerli qui li farebbe passare per tali.
+            .in('livello', ['info', 'warn'])
             .eq('ambiente', ambiente)
             .gte('visto_l_ultima', da)
             // Decrescente: se il tetto tagliasse, taglia le righe VECCHIE. Con l'ordine
@@ -470,16 +554,34 @@ async function controlloBattitoCron(
             return { esito: 'degradato', dettaglio: `lettura app_log ${codiceDi(error)}` }
         }
 
-        /** Ultimo battito «ok» per job, in millisecondi. */
+        /** Ultimo battito valido per job, in millisecondi. */
         const ultimo = new Map<string, number>()
+        /** I job il cui battito più fresco è `ok-parziale`: hanno girato, ma non tutto. */
+        const parziali = new Set<string>()
         for (const riga of (data ?? []) as RigaBattito[]) {
             const campi = riga.contesto?.campi
-            if (!campi || campi.esito !== 'ok') continue
-            const job = campi.operazione
+            const esito = typeof campi?.esito === 'string' ? campi.esito : ''
+            if (!ESITI_BATTITO.has(esito)) continue
+            const job = campi?.operazione
             if (typeof job !== 'string') continue
             const t = Date.parse(String(riga.visto_l_ultima ?? ''))
             if (Number.isNaN(t)) continue
-            if (t > (ultimo.get(job) ?? -Infinity)) ultimo.set(job, t)
+            if (t > (ultimo.get(job) ?? -Infinity)) {
+                ultimo.set(job, t)
+                // Si tiene l'esito del battito PIÙ FRESCO, non «è mai stato parziale»: un
+                // job riparato stanotte non deve restare marchiato dalla notte prima.
+                //
+                // Il `delete` nel ramo `else` è ciò che rende questa mappa INDIPENDENTE
+                // DALL'ORDINE delle righe, ed è deliberato anche se oggi la query le
+                // chiede già decrescenti: quell'`.order()` è lì per governare il
+                // TRONCAMENTO a 500 righe, non per garantire la correttezza di questo
+                // conteggio. Far dipendere il risultato da un ordinamento chiesto per
+                // un'altra ragione significa che il giorno in cui quell'ordinamento
+                // cambia — per un motivo legittimo — questo calcolo comincia a mentire in
+                // silenzio. Con il `delete` l'esito finale è lo stesso comunque arrivino.
+                if (esito === 'ok-parziale') parziali.add(job)
+                else parziali.delete(job)
+            }
         }
 
         // Il nome del job DEVE finire nel dettaglio. «un cron è fermo» non è un allarme:
@@ -491,10 +593,24 @@ async function controlloBattitoCron(
             return t === undefined || adesso - t > j.finestraMs
         }).map((j) => j.nome)
 
+        // I parziali si NOMINANO ma non tingono di rosso, ed è una scelta da difendere.
+        // «Ha girato saltando una scansione» è un'informazione che non deve andare persa —
+        // ma non è un'interruzione, e portare `cron-battito` a `degradato` per una tabella
+        // assente da mesi rimetterebbe l'endpoint nello stato da cui questa correzione lo
+        // tira fuori: rosso fisso, quindi ignorato. Chi legge il dettaglio decide.
+        const nomina = [...parziali].sort()
+        const coda = nomina.length > 0 ? ` (parziale: ${nomina.join(',')})` : ''
+
         if (muti.length > 0) {
-            return { esito: 'degradato', dettaglio: `job senza battito: ${muti.join(',')}` }
+            return {
+                esito: 'degradato',
+                dettaglio: `job senza battito: ${muti.join(',')}${coda}`,
+            }
         }
-        return { esito: 'ok', dettaglio: `${JOB_CRON.length} job con battito nella finestra` }
+        return {
+            esito: 'ok',
+            dettaglio: `${JOB_CRON.length} job con battito nella finestra${coda}`,
+        }
     })
 }
 

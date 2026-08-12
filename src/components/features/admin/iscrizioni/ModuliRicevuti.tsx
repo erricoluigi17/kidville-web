@@ -13,6 +13,7 @@ import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from 
 import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato'
 
 // Esito dell'import. `success:false` = almeno un errore BLOCCANTE (referente/figlio non
 // creati): l'invio resta tra i "Da importare" e va mostrato il pannello d'errore in evidenza.
@@ -72,6 +73,8 @@ export function ModuliRicevuti() {
   const [referenteIndex, setReferenteIndex] = useState(0)
   const [working, setWorking] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
+  /** La URL firmata che il browser ha rifiutato di aprire: si offre come link. */
+  const [docBloccato, setDocBloccato] = useState<string | null>(null)
 
   const { reFetchKey, sedi } = useSediAttive()
 
@@ -175,11 +178,31 @@ export function ModuliRicevuti() {
     }
   }
 
+  /**
+   * La scansione allegata alla domanda: URL firmata dal server, scheda nuova.
+   *
+   * ⚠️ QUESTA FUNZIONE ERA ROTTA IN TRE PUNTI, e il difetto si vedeva solo su
+   * Safari e dentro la WebView Capacitor — cioè proprio dove la segreteria apre
+   * l'app dal telefono. Apriva la finestra DOPO l'`await`, quindi il popup
+   * blocker la fermava; non guardava `res.ok`, quindi un 403 finiva in un
+   * `json.url` assente e in nessun messaggio; e faceva `await res.json()` senza
+   * rete di protezione, cioè una promise rifiutata non gestita su un corpo non
+   * JSON. Il gesto era lo stesso di `CandidatureInsegnanti`, ma la copia aveva
+   * già smesso di somigliare all'originale: adesso il COME sta in un posto solo
+   * (`@/lib/ui/apri-documento-firmato`) e qui resta solo cosa dire.
+   */
   async function viewDoc(path?: string) {
     if (!path) return
-    const res = await fetch(`/api/admin/iscrizioni?doc=${encodeURIComponent(path)}`)
-    const json = await res.json()
-    if (json.url) window.open(json.url, '_blank')
+    setDocBloccato(null)
+    const esito = await apriDocumentoFirmato({
+      endpoint: '/api/admin/iscrizioni',
+      path,
+      headers: { 'x-sedi': reFetchKey },
+      route: '/admin/iscrizioni',
+      etichetta: 'iscrizione-documento',
+    })
+    if (esito.esito === 'bloccato') setDocBloccato(esito.url)
+    else if (esito.esito === 'errore') alert(t('ricevutiDocumentoErrore'))
   }
 
   async function doImport() {
@@ -376,6 +399,7 @@ export function ModuliRicevuti() {
                 onImport={doImport}
                 onReject={doReject}
                 onViewDoc={viewDoc}
+                docBloccato={docBloccato}
                 onBack={() => setSelected(null)}
               />
             )}
@@ -399,7 +423,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function DetailPanel({
   row, sections, nomeSede, assignments, setAssignments, referenteIndex, setReferenteIndex,
-  working, result, onImport, onReject, onViewDoc, onBack,
+  working, result, onImport, onReject, onViewDoc, docBloccato, onBack,
 }: {
   row: SubmissionRow
   sections: Section[]
@@ -413,9 +437,14 @@ function DetailPanel({
   onImport: () => void
   onReject: () => void
   onViewDoc: (path?: string) => void
+  /** URL firmata che il browser ha bloccato: sta in cima, non accanto al bottone
+      premuto — i pulsanti «Documento» sono uno per bambino e uno per adulto, e
+      l'avviso è uno solo. */
+  docBloccato: string | null
   onBack: () => void
 }) {
   const t = useTranslations('adminAltro')
+  const ts = useTranslations('shared')
   const children = row.data?.children ?? []
   const adults = row.data?.adults ?? []
   const done = row.status !== 'pending'
@@ -437,6 +466,16 @@ function DetailPanel({
       <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
         <MapPin size={14} /> {t('ricevutiSede')} <strong>{nomeSede}</strong>
       </p>
+
+      {docBloccato && (
+        <p role="alert" className={AVVISO_FINESTRA_BLOCCATA}>
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          {ts('docFinestraBloccata')}{' '}
+          <a href={docBloccato} target="_blank" rel="noopener noreferrer" className="font-bold text-kidville-green underline">
+            {ts('docApriManuale')}
+          </a>
+        </p>
+      )}
 
       {/* Bambini */}
       <section>

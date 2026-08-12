@@ -118,12 +118,18 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
     // renderebbe verdi per sempre tutte le prove qui sotto, su un elenco vuoto.
     expect(TUTTE.length).toBeGreaterThan(200)
     expect(DI_UPLOAD.length).toBeGreaterThanOrEqual(10)
+    // La TERZA è arrivata l'11/08/2026: `iscrizione/personale/upload` riceve la
+    // scansione del documento d'identità di chi già lavora qui, sul bucket separato
+    // `documenti_personale`. È entrata in questo elenco senza che nessuno la
+    // aggiungesse a mano — è il punto del lock, che ricava le rotte dal codice — e
+    // passa le prove qui sotto perché è stata scritta copiando la sorella.
     expect(
       PUBBLICHE.map((r) => r.rel).sort(),
-      'Le due rotte di upload senza sessione sono queste. Se ne compare una terza va bene: ' +
+      'Le rotte di upload senza sessione sono queste. Se ne compare una in più va bene: ' +
         'deve solo passare le prove qui sotto. Se ne SPARISCONO, il rilevatore non riconosce ' +
         'più i gate e questo lock ha smesso di controllare qualcosa.',
     ).toEqual([
+      'src/app/api/iscrizione/personale/upload/route.ts',
       'src/app/api/iscrizione/upload/route.ts',
       'src/app/api/public/forms/[token]/upload/route.ts',
     ])

@@ -152,6 +152,55 @@ const RADICI_TESTO_LIBERO = [
 ];
 
 /**
+ * IL CAP E IL CIVICO SONO NUMERI — cioè escono in chiaro per TIPO, e nessuna delle
+ * quattro famiglie qui sopra li ferma.
+ *
+ * ─── IL BUCO, DETTO PER QUELLO CHE È ────────────────────────────────────────
+ *
+ * `{"cap": 80014}` e `{"civico": 12}` non sono stringhe: sotto le chiavi che nominano
+ * un indirizzo il ramo per tipo («numeri e booleani passano, da soli non identificano
+ * nessuno») li lascia uscire interi. Come stringhe erano già redatti — sono fuori
+ * dalla lista bianca — ma la forma la sceglie chi manda la richiesta, e `redact()` gira
+ * anche sul BODY GREZZO (`parseBody` deposita il raw PRIMA di zod). È la stessa terza
+ * direzione da cui il canale si è già aperto una volta con `motivo` (rilievo Q19): non
+ * la chiave, non il valore — il TIPO.
+ *
+ * E «da soli non identificano nessuno» qui è falso: un CAP più un civico, accanto a un
+ * `sede_id` in chiaro, restringono a una manciata di case. Vale identico per
+ * `{"numero_documento": 1234567}`, che è l'estremo di un documento d'identità.
+ * Il modulo `/anagrafica-personale` chiede tutti e tre insieme.
+ *
+ * ─── PERCHÉ NOMI ESATTI E NON RADICI ────────────────────────────────────────
+ *
+ * Perché `cap` dentro un `includes` prenderebbe `capienza` (le capienze delle sedi) e
+ * `capitolo`: è precisamente l'errore da cui mette in guardia il commento di
+ * `RADICI_NASCITA`, che per questo esclude `dob`. E `document` come radice farebbe
+ * sparire `n_documenti`, cioè il CONTEGGIO che il cron delle scadenze del documento
+ * esiste per scrivere — una difesa che spegne il log del lavoro che deve sorvegliare
+ * non è una difesa, è un modo di non vedere più niente.
+ *
+ * ─── PERCHÉ NON IN `SEGRETI` ────────────────────────────────────────────────
+ *
+ * Perché `SEGRETI` cancella anche la LUNGHEZZA (`[redatto]` secco), e qui la lunghezza
+ * è metà della diagnosi: `zip_code` è `varchar(5)` con un CHECK `^[0-9]{5}$` e
+ * `residence_province` è `varchar(2)` — il guasto vero, già pagato una volta, è un
+ * `22001` (valore troppo lungo), e `[redatto:str/8]` lo dice mentre `[redatto]` no.
+ * Si redige quindi TENENDO LA FORMA: la lunghezza per le stringhe, il tipo per i
+ * numeri. Rispetto a oggi cambia una cosa sola, ed è quella che serve: il numero non
+ * esce più.
+ */
+const CHIAVI_RESIDENZA_E_DOCUMENTO = insieme(
+    // CAP — italiano e nome di colonna (`enrollment`, `parents`, `pratiche_personale`).
+    'cap', 'zip_code', 'domicilio_zip_code',
+    // Numero civico — la tendina di segreteria manda `civico`, le tabelle
+    // `residence_street_number`.
+    'civico', 'numero_civico', 'street_number', 'residence_street_number',
+    'domicilio_street_number',
+    // Estremo del documento d'identità.
+    'numero_documento', 'document_number',
+);
+
+/**
  * Path e URL: MAI in chiaro. In questo repo il token del modulo pubblico è un
  * SEGMENTO di path (`/m/[token]`, `/api/public/forms/[token]/submit`) ed è una
  * capability; le query string trasportano `?userId=`, `?email=`, `?token=`.
@@ -362,12 +411,19 @@ function eTestoLibero(chiaveNorm: string): boolean {
 }
 
 /**
- * Il valore di un campo di testo libero, redatto SENZA far sparire il campo.
+ * Il valore di un campo che nomina un dato, redatto SENZA far sparire il campo.
+ *
+ * La usano due famiglie: il TESTO LIBERO (`RADICI_TESTO_LIBERO`) e le chiavi di
+ * residenza e documento (`CHIAVI_RESIDENZA_E_DOCUMENTO`). Rispondono alla stessa
+ * esigenza — la chiave dice che lì c'è un dato, qualunque forma abbia il valore — e
+ * una regola valida per due strade vive in un posto solo.
  *
  * `[redatto:num]` e non `[redatto]` secco: la diagnosi di un 400 sta metà nel sapere che il
  * campo c'era e di che forma era. «`motivo` è arrivato come numero» è esattamente ciò che
  * spiega perché `motivoNormalizzato` l'ha scartato e la riga di `presenze` è rimasta senza
  * testo — con `[redatto]` per tutti quel filo si perde e resta solo la riproduzione a mano.
+ * Per il CAP dice la stessa cosa da un'altra porta: «è arrivato come numero» è il motivo per
+ * cui il CHECK `^[0-9]{5}$` l'ha respinto.
  *
  * Le stringhe conservano la lunghezza come qualunque altra stringa fuori dalla lista bianca;
  * oggetti e array collassano, perché lì il testo può stare tanto nei valori quanto nei nomi
@@ -376,7 +432,7 @@ function eTestoLibero(chiaveNorm: string): boolean {
  * `null`/`undefined` passano intatti: «il campo mancava» è il 95% dei bug, e un `null` non è
  * il dato di nessuno.
  */
-function redigiTestoLibero(v: unknown): unknown {
+function redigiTenendoLaForma(v: unknown): unknown {
     if (v === null || v === undefined) return v;
     if (typeof v === 'string') return redigiStringa(v);
     if (typeof v === 'number') return '[redatto:num]';
@@ -510,7 +566,10 @@ function redactValore(
         if (eSegreta(k)) return '[redatto]';
         if (DA_HASHARE.has(k)) return v === null || v === undefined ? v : hashCorrelabile(v);
         if (eNascita(k)) return redigiNascita(v);
-        if (eTestoLibero(k)) return redigiTestoLibero(v);
+        if (eTestoLibero(k)) return redigiTenendoLaForma(v);
+        // CAP, civico e numero del documento: nomi ESATTI, e stanno qui sopra il ramo
+        // per tipo perché è proprio come NUMERI che uscivano in chiaro.
+        if (CHIAVI_RESIDENZA_E_DOCUMENTO.has(k)) return redigiTenendoLaForma(v);
     }
 
     if (v === null || v === undefined) return v;

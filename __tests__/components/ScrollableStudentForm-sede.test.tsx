@@ -116,7 +116,7 @@ async function compilaAnagrafica() {
 /** Apre la tendina di un Combobox dal suo pulsante «Mostra o nascondi l'elenco». */
 function apriTendina(campo: HTMLElement) {
   const contenitore = campo.closest('div')?.parentElement as HTMLElement
-  fireEvent.click(within(contenitore).getByRole('button', { name: 'Mostra o nascondi l’elenco' }))
+  fireEvent.click(within(contenitore).getByRole('button', { name: /^Mostra o nascondi l’elenco/ }))
 }
 
 /** Provincia → comune, come li sceglie un operatore. */

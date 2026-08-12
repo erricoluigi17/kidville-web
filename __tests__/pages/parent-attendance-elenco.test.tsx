@@ -176,6 +176,31 @@ describe('parent/attendance — la data proposta è quella italiana', () => {
 // 2. GLI STATI: caricamento, elenco, vuoto, errore.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('parent/attendance — elenco delle assenze già comunicate', () => {
+    // ⚠️ IL TEMPO SI CONGELA, e non è un vezzo: senza, questo blocco SCADEVA.
+    //
+    // Misurato il 2026-08-12, su `main` e in un albero pulito: la prova qui sotto
+    // era ROSSA senza che nessuno avesse toccato una riga di codice. `VOCI` porta
+    // due assenze datate 12 e 13 agosto 2026, e quel giorno il 12 agosto è
+    // diventato OGGI — cioè il giorno che il modulo propone da sé. La pagina
+    // allora fa la cosa giusta: trova l'assenza già comunicata per il giorno
+    // proposto e ne ripesca il motivo nel campo di testo. Da lì «Visita medica»
+    // esiste due volte nel documento — nel `textarea` e nella riga dell'elenco —
+    // e `getByText` non ammette due riscontri.
+    //
+    // Il difetto non era della pagina: era del banco di prova, che dipendeva dal
+    // giorno in cui veniva eseguito. È la stessa famiglia dei quattro punti caduti
+    // insieme il 09/08 (banco di prova in un fuso diverso dal prodotto) e dei tre
+    // che scadevano l'11/08: un test che diventa rosso da solo va riparato dove sta
+    // il difetto, cioè qui, non rincorso allentando l'asserzione.
+    //
+    // La data scelta sta PRIMA di entrambe le voci: così il giorno proposto non
+    // coincide con nessuna assenza già comunicata, il campo resta vuoto, e la prova
+    // misura ciò per cui è stata scritta — che l'elenco mostri data e motivo.
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-08-01T09:00:00Z'));
+    });
+
     it('mostra le assenze comunicate, con la data e il motivo', async () => {
         fetchMock.mockResolvedValue(presenzeCon(VOCI));
 

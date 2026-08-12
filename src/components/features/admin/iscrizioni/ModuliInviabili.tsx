@@ -140,6 +140,39 @@ export function ModuliInviabili() {
         </div>
       </div>
 
+      {/* Anagrafica del personale: modulo pubblico `/anagrafica-personale`.
+          È il TERZO modulo che non passa dal costruttore, per la stessa ragione degli
+          altri due — colonne tipizzate di `pratiche_personale`, non un JSON libero.
+
+          ⚠️ È però l'unico che NON va mandato alle famiglie, e il posto per dirlo è
+          questo: chiede il codice fiscale e la scansione di un documento d'identità, e
+          il link è APERTO (nessun login, nessun codice). Vale per chi ha già un
+          rapporto di lavoro con la Scuola, e a chi lo riceve per sbaglio non si può
+          chiedere di capirlo da solo. Sta accanto alle candidature perché è lì che
+          qualcuno lo cercherebbe, e la descrizione dice la differenza: `/lavora-con-noi`
+          è per chi si propone, questo è per chi c'è già.
+
+          Come per gli altri due: il link è UNO, senza parametro di sede. La sede la
+          sceglie chi compila dentro il modulo — tre link inventati, uno per plesso,
+          sono il modo in cui una pratica finisce nel plesso sbagliato. */}
+      <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="font-barlow font-bold text-kidville-ink">{t('inviabiliPersonaleTitolo')}
+              <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-sub">{t('inviabiliPredefinito')}</span>
+            </p>
+            <p className="font-maven text-xs text-kidville-sub max-w-md">{t('inviabiliPersonaleDesc')}</p>
+            <p className="font-maven text-xs text-kidville-green mt-1 max-w-md">{t('inviabiliPersonaleSediNota')}</p>
+            <p className="font-maven text-xs text-kidville-warn-strong mt-1 max-w-md">{t('inviabiliPersonaleAvviso')}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => copyLink(`${origin}/anagrafica-personale`, 'pers')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
+              {copied === 'pers' ? <><CheckCircle2 size={14} /> {t('inviabiliCopiato')}</> : <><Copy size={14} /> {t('inviabiliCopiaLink')}</>}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {loading ? (
         <div className="flex items-center gap-2 text-kidville-muted p-4"><Loader2 size={16} className="animate-spin" /> {t('caricamento')}</div>
       ) : models.length === 0 ? (

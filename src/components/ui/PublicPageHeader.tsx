@@ -51,7 +51,14 @@ export async function PublicPageHeader({
       <Link
         href={ritornoInterno(ritorno)}
         lang={locale}
-        className="inline-flex items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
+        /* ── `min-h-11` = 44 px, ed è l'UNICA via d'uscita di queste schermate ──
+           MISURATO il 12/08/2026 a 360 px sulla pagina viva: il link era alto
+           111×20 px, in una riga dove «Alto contrasto» misura 148×46 e, un dito
+           più sotto, «Avanti» 109×44 — cioè il comando più piccolo della
+           schermata era quello che riporta indietro. Non cambia l'impaginatura:
+           la riga è `items-center` e il comando accanto è già più alto di così,
+           quindi la testata resta alta 46 px come prima. */
+        className="inline-flex min-h-11 items-center gap-1 font-maven text-sm font-semibold text-kidville-green hover:underline"
       >
         <span aria-hidden="true">←</span> {tc('tornaIndietro')}
       </Link>

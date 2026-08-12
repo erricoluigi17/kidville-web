@@ -266,6 +266,18 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'staff',
     descrizione: 'Quando un documento di un alunno scade entro 30 giorni',
   },
+  // Il gemello per il PERSONALE, e sono due voci separate di proposito: qui i
+  // destinatari sono l'interessata e la segreteria, là le famiglie non c'entrano
+  // — un toggle solo per entrambe significherebbe che spegnere il promemoria dei
+  // certificati degli alunni zittisce anche la scadenza dei documenti di chi
+  // lavora, che è un obbligo del datore di lavoro e non una comodità.
+  // `gruppo: 'staff'` lo fa comparire da solo nel pannello Impostazioni.
+  documento_personale_in_scadenza: {
+    label: 'Documento del personale in scadenza',
+    gruppo: 'staff',
+    descrizione:
+      'Quando il documento d’identità di una persona in servizio si avvicina alla scadenza (90, 60, 30, 7 giorni) o è già scaduto',
+  },
   cassa_soglia: {
     label: 'Cassa: soglia contanti superata',
     gruppo: 'staff',

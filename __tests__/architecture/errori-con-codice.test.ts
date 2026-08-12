@@ -64,9 +64,18 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * 2026-08-08 · −1 (1465 → 1464). `attendance/daily:POST` restituiva il `message` grezzo di
  * PostgREST dentro `details` (rilievo M10): la risposta ora passa da `erroreInterno()`, che
  * nel file c'era già. Una risposta in meno scritta a mano, e il messaggio resta nel log.
+ *
+ * 2026-08-11 · −4 (1464 → 1460). `POST /api/admin/adults` è stato CANCELLATO — irraggiungibile
+ * (nessuna pagina montava la sua scheda) e rotto (scriveva le colonne generate di `utenti`) — e
+ * con lui quattro delle sei risposte senza codice di quel file: ne restano DUE, entrambe nel GET,
+ * che resta. `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero.
+ * Qui non è stato pagato un debito, è sparito il codice che lo portava: ma il tetto scende lo
+ * stesso, perché lasciarlo a 1464 vorrebbe dire che quelle quattro risposte possono tornare —
+ * dentro un file ancora vivo e gated — con questo lock verde. È il modo silenzioso in cui un
+ * lock smette di misurare.
  */
 const MAX_FILE = 280;
-const MAX_OCCORRENZE = 1464;
+const MAX_OCCORRENZE = 1460;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

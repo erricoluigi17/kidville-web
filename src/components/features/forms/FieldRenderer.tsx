@@ -10,7 +10,7 @@ import type {
 } from 'react-hook-form'
 import { Controller, useWatch } from 'react-hook-form'
 import {
-  Upload, FileCheck2, Loader2, AlertCircle, PenLine, Info, ExternalLink,
+  Upload, FileCheck2, Loader2, AlertCircle, PenLine, ExternalLink,
 } from 'lucide-react'
 import { LinkInterno } from '@/components/ui/LinkInterno'
 import type { FormField } from '@/types/database.types'
@@ -170,7 +170,17 @@ export const FIELD_BASE_ERRORE = `${FIELD_STRUTTURA} ${BORDO_ERRORE} text-kidvil
 // Nulla resta scoperto: il fuoco lo dà comunque `:focus-visible` sul controllo
 // vero, che è l'elemento che il Tab raggiunge e quello che uno screen reader
 // annuncia. La card è il bersaglio allargato, non il controllo.
-export const SCELTA_STRUTTURA = 'gap-3 px-4 py-3.5 rounded-card cursor-pointer transition-all'
+// ── IL CURSORE NON FA PARTE DELLA GEOMETRIA (12/08/2026) ─────────────────────
+// `cursor-pointer` stava dentro la struttura, cioè su OGNI card. Vale finché la
+// card È il comando — un'opzione, una fascia d'età, una sede: lì la label
+// avvolge il controllo e cliccare ovunque lo attiva. Non vale più per il
+// CONSENSO, la cui card ora contiene un testo che si legge e si seleziona e che
+// NON deve spuntare niente (vedi il blocco `consent`): un dito a freccia su un
+// paragrafo inerte è una promessa che il clic poi non mantiene. Le due stringhe
+// non sono ricopiate — la seconda è la prima più il cursore — perché la
+// geometria resta una sola.
+const SCELTA_GEOMETRIA = 'gap-3 px-4 py-3.5 rounded-card transition-all'
+export const SCELTA_STRUTTURA = `${SCELTA_GEOMETRIA} cursor-pointer`
 export const SCELTA_LIBERA = 'border border-kidville-neutral bg-kidville-white hover:border-kidville-green/40'
 export const SCELTA_PRESA = 'border border-kidville-green bg-kidville-green-soft'
 /**
@@ -183,9 +193,21 @@ export const SCELTA_ERRORE = 'border-[1.5px] border-kidville-error bg-kidville-w
 /** Il controllo dentro la card: 16px come nelle card di sede (era 13px, taglia di default). */
 export const SCELTA_CONTROLLO = 'h-4 w-4 shrink-0 accent-kidville-green'
 
-/** La classe di una card di scelta: la stessa per un'opzione, un consenso, una sede. */
-export const classeScelta = (scelta: boolean, allineamento = 'items-center', nonValido = false) =>
-  `flex ${allineamento} ${SCELTA_STRUTTURA} ${
+/**
+ * La classe di una card di scelta: la stessa per un'opzione, un consenso, una sede.
+ *
+ * `cliccabile` dice se la card COINCIDE col comando (una `<label>` che avvolge il
+ * controllo) o se è solo il contenitore che lo disegna. Nel secondo caso resta
+ * fuori il `cursor-pointer`, e basta quello: il disegno — contorno, fondo,
+ * raggio, stato — è identico, altrimenti sarebbero due linguaggi.
+ */
+export const classeScelta = (
+  scelta: boolean,
+  allineamento = 'items-center',
+  nonValido = false,
+  cliccabile = true,
+) =>
+  `flex ${allineamento} ${cliccabile ? SCELTA_STRUTTURA : SCELTA_GEOMETRIA} ${
     scelta ? SCELTA_PRESA : nonValido ? SCELTA_ERRORE : SCELTA_LIBERA
   }`
 
@@ -202,9 +224,13 @@ export const classeScelta = (scelta: boolean, allineamento = 'items-center', non
  */
 export const propsScelta = (
   scelta: boolean,
-  { allineamento, nonValido = false }: { allineamento?: string; nonValido?: boolean } = {},
+  {
+    allineamento,
+    nonValido = false,
+    cliccabile = true,
+  }: { allineamento?: string; nonValido?: boolean; cliccabile?: boolean } = {},
 ) => ({
-  className: classeScelta(scelta, allineamento, nonValido),
+  className: classeScelta(scelta, allineamento, nonValido, cliccabile),
   ...(nonValido && !scelta ? { 'data-scelta-invalida': 'true' as const } : {}),
 })
 
@@ -241,11 +267,40 @@ export function FieldRenderer({
     ? { 'aria-invalid': true, 'aria-describedby': errorId }
     : {}
   // Tipi a controllo SINGOLO: la <label> esterna li etichetta direttamente
-  // (htmlFor ↔ id). radio/checkbox/file hanno un gruppo di controlli o una label
-  // propria annidata → la label esterna resta una didascalia senza htmlFor (per
-  // non puntare a un id inesistente); il gruppo usa già `aria-describedby`.
-  const CONTROLLO_SINGOLO = ['text', 'number', 'email', 'phone', 'date', 'textarea', 'select']
+  // (htmlFor ↔ id). radio/checkbox hanno un GRUPPO di controlli → la label
+  // esterna resta una didascalia senza htmlFor (per non puntare a un id
+  // inesistente) e il gruppo si nomina con `aria-labelledby`.
+  //
+  // ⚠️ `file` È in questo elenco dal 12/08/2026, ed è metà del rimedio al difetto
+  // descritto in `FileField`: il campo del caricamento è un `<input type="file">`
+  // vero, con un `id` vero, e la sua etichetta è quella che sta a schermo. Il
+  // nome accessibile che ne esce è la somma delle due `<label>` che lo puntano —
+  // quella esterna («Scansione o foto del documento *») e quella che lo avvolge e
+  // ne disegna la scatola («Seleziona un file» / il nome del file caricato) —
+  // cioè che cos'è il campo E a che punto sta.
+  const CONTROLLO_SINGOLO = ['text', 'number', 'email', 'phone', 'date', 'textarea', 'select', 'file']
   const associaLabel = CONTROLLO_SINGOLO.includes(field.type)
+  /**
+   * L'`id` dell'etichetta esterna — e serve ai GRUPPI, che senza di esso non
+   * hanno nome affatto.
+   *
+   * MISURATO il 12/08/2026 sul passo «I tuoi dati» di `/anagrafica-personale`:
+   * il `<div role="group">` delle tre caselle `gradi` («Fasce d'età su cui
+   * lavori», campo OBBLIGATORIO) aveva `aria-label: null`, `aria-labelledby:
+   * null` e solo `aria-describedby`, mentre la sua etichetta visibile era una
+   * `<label>` senza `for` e senza controllo annidato — cioè legata a niente. Chi
+   * ascolta sentiva «Nido (0-3), casella di controllo» senza aver mai sentito la
+   * domanda, su un campo che decide quali funzioni vedrà nell'app. Lo stesso
+   * valeva per `role="radiogroup"`.
+   * `jest-axe` non lo vede: un `role="group"` senza nome non è una violazione
+   * axe, ed è la ragione per cui i controlli automatici passavano lo stesso.
+   *
+   * Si lega con `aria-labelledby` e NON promuovendo il blocco a
+   * `<fieldset>`/`<legend>`: questo componente rende una ventina di tipi diversi
+   * con la stessa intestazione — asterisco dell'obbligatorietà compreso — e un
+   * `fieldset` cambierebbe l'impaginatura di tutti per servirne due.
+   */
+  const idEtichetta = `${field.id}-label`
   // WCAG 2.1 AA, SC 1.3.5 «Identify Input Purpose»: lo scopo del campo lo
   // dichiara il TEMPLATE (`given-name`, `email`, `tel`, …) e da qui arriva al
   // controllo. Nessun campo lo dichiarava fino al 2026-08-11, e il prezzo lo
@@ -282,6 +337,42 @@ export function FieldRenderer({
   // obbligatorio il wizard blocca finché non è spuntata. L'accettazione viene
   // archiviata con snapshot del testo + timestamp lato server (consents_log).
   if (field.type === 'consent') {
+    // ── IL CORPO DELL'INFORMATIVA È UNA DESCRIZIONE, NON UN NOME (12/08/2026) ──
+    //
+    // MISURATO sul passo «Informativa e dichiarazioni» di `/anagrafica-personale`,
+    // con `label.textContent` sui tre consensi resi: il NOME ACCESSIBILE delle
+    // caselle era lungo 564 · 292 · 379 caratteri, perché la `<label>` avvolgeva
+    // titolo E corpo. Nessuna delle tre aveva un `id`, nessuna un
+    // `aria-describedby`: il corpo non era agganciato come descrizione, era il
+    // nome — e il titolo ci compariva DUE volte («Ho letto l'informativa sulla
+    // privacy *Dichiaro di aver preso visione dell'informativa sul…»).
+    // Chi ascolta, arrivando sulla casella, si sentiva leggere l'informativa
+    // intera al posto di «Ho letto l'informativa sulla privacy, casella di
+    // controllo, obbligatorio». Il nome è ciò che serve a DECIDERE, e stava
+    // sepolto sotto la cosa su cui si decide.
+    //
+    // Il rimedio è strutturale, non un `aria-label` che rinomini il controllo:
+    // il titolo resta nella `<label>` (quindi nome e testo a schermo restano la
+    // stessa cosa) e il corpo esce dalla label in un nodo con `id`, puntato da
+    // `aria-describedby`. Una descrizione si può saltare, un nome no.
+    //
+    // ── E LA MIRA SEGUE LA STESSA REGOLA ──────────────────────────────────────
+    // Sempre misurato: la `<label>` occupava 328×373 / 328×211 / 328×279 px
+    // contro una casella di 16×16, cioè fino a 477 volte l'area del controllo.
+    // Tutto quel testo era cliccabile: provare a selezionare una riga
+    // dell'informativa per rileggerla SPUNTAVA il consenso. È lo stesso difetto
+    // già chiuso sul collegamento «Leggi l'informativa completa» (§9), e si
+    // chiude allo stesso modo: fuori dalla label. Ora la card è un `<div>` che
+    // disegna e basta — `cliccabile: false`, quindi senza `cursor-pointer` —, e
+    // il comando è la riga del titolo.
+    const descrizioneId = `${field.id}-descrizione`
+    // L'ORDINE non è indifferente: `aria-describedby` viene letto nell'ordine
+    // dichiarato, e il corpo è lungo fra i 292 e i 564 caratteri. Col messaggio
+    // d'errore in coda, chi ascolta dovrebbe attraversare tutta l'informativa
+    // prima di sapere perché il modulo non avanza: l'errore va per primo.
+    const descriveConsenso =
+      [errMsg ? errorId : null, field.text ? descrizioneId : null].filter(Boolean).join(' ') ||
+      undefined
     return (
       <Controller
         name={field.id}
@@ -292,40 +383,66 @@ export function FieldRenderer({
           const accettato = rhf.value === true
           return (
             <div className="space-y-1.5">
-              <label
+              {/* La card disegna, non comanda: `cliccabile: false` le toglie il
+                  `cursor-pointer` e nient'altro — contorno, fondo, raggio e stato
+                  d'errore restano quelli di ogni altra card di scelta.
+                  Il figlio è UNO: così il `gap-3` della geometria non si applica e
+                  l'impaginazione resta identica a quella misurata (titolo a filo
+                  del contorno, corpo a 4px sotto e rientrato di 28px, cioè
+                  esattamente dove stava quando era annidato nella label). */}
+              <div
                 {...propsScelta(accettato, {
                   allineamento: 'items-start',
                   nonValido: Boolean(errMsg),
+                  cliccabile: false,
                 })}
               >
-                <input
-                  type="checkbox"
-                  checked={accettato}
-                  onChange={e => rhf.onChange(e.target.checked)}
-                  name={rhf.name}
-                  // Senza questo `ref` il nodo non entra nel registro di RHF e
-                  // `setFocus(id)` non trova nulla da mettere a fuoco: misurato
-                  // l'11/08/2026 al passo dei consensi, dove premendo «Avanti»
-                  // senza la spunta obbligatoria il fuoco restava sul bottone
-                  // mentre al passo 2 (campi registrati con `register`) andava
-                  // correttamente sul primo campo in errore. Vale per ogni
-                  // controllo disegnato dentro un `Controller`.
-                  ref={rhf.ref}
-                  onBlur={rhf.onBlur}
-                  className={`${SCELTA_CONTROLLO} mt-0.5`}
-                  {...ariaProps}
-                />
-                {/* Gerarchia ricostruita con ciò che il rimappaggio pubblico NON tocca.
-                    `.kv-public [class*="text-kidville-green/"]` porta a #006A5F pieno sia
-                    `/90` sia `/70`: titolo e corpo del consenso finivano identici per
-                    colore, e restavano 14px/500 contro 14px/400. Quella regola è giusta
-                    (chiudeva un 3,96:1) e resta: qui cambia il TOKEN — titolo `green`
-                    semigrassetto, corpo `sub` (5,82:1 su crema, 6,46:1 su bianco). */}
-                <span className="text-sm text-kidville-green">
-                  <span className="font-semibold">
-                    {field.label}
-                    {field.required && <span className="text-kidville-green"> *</span>}
-                  </span>
+                <div className="w-full min-w-0">
+                  {/* IL COMANDO È QUESTA RIGA. `-my-1.5 py-1.5` la porta a 32px di
+                      altezza senza spostare di un pixel né il titolo né il corpo
+                      (il riempimento entra, il margine negativo lo restituisce al
+                      flusso): sopra i 24×24 di WCAG 2.2 §2.5.8, che i 16×16 della
+                      sola casella non raggiungono. */}
+                  <label
+                    htmlFor={field.id}
+                    className="-my-1.5 flex w-full items-start gap-3 py-1.5 cursor-pointer"
+                  >
+                    <input
+                      id={field.id}
+                      type="checkbox"
+                      checked={accettato}
+                      onChange={e => rhf.onChange(e.target.checked)}
+                      name={rhf.name}
+                      // Senza questo `ref` il nodo non entra nel registro di RHF e
+                      // `setFocus(id)` non trova nulla da mettere a fuoco: misurato
+                      // l'11/08/2026 al passo dei consensi, dove premendo «Avanti»
+                      // senza la spunta obbligatoria il fuoco restava sul bottone
+                      // mentre al passo 2 (campi registrati con `register`) andava
+                      // correttamente sul primo campo in errore. Vale per ogni
+                      // controllo disegnato dentro un `Controller`.
+                      ref={rhf.ref}
+                      onBlur={rhf.onBlur}
+                      className={`${SCELTA_CONTROLLO} mt-0.5`}
+                      // NON `{...ariaProps}`: lì `aria-describedby` è il solo
+                      // messaggio d'errore, e qui la descrizione è due cose.
+                      aria-invalid={errMsg ? true : undefined}
+                      aria-describedby={descriveConsenso}
+                      // L'obbligatorietà detta anche a chi non vede l'asterisco.
+                      aria-required={field.required || undefined}
+                    />
+                    {/* Gerarchia ricostruita con ciò che il rimappaggio pubblico NON tocca.
+                        `.kv-public [class*="text-kidville-green/"]` porta a #006A5F pieno sia
+                        `/90` sia `/70`: titolo e corpo del consenso finivano identici per
+                        colore, e restavano 14px/500 contro 14px/400. Quella regola è giusta
+                        (chiudeva un 3,96:1) e resta: qui cambia il TOKEN — titolo `green`
+                        semigrassetto, corpo `sub` (5,82:1 su crema, 6,46:1 su bianco). */}
+                    <span className="text-sm text-kidville-green">
+                      <span className="font-semibold">
+                        {field.label}
+                        {field.required && <span className="text-kidville-green"> *</span>}
+                      </span>
+                    </span>
+                  </label>
                   {field.text && (
                     // ── LA MISURA IN CARATTERI NON SI SCRIVE IN `ch` (11/08/2026) ──
                     // Qui c'era `max-w-[60ch]`, messo per scendere sotto i 78-80
@@ -340,12 +457,22 @@ export function FieldRenderer({
                     // Ora la misura è in rem e il numero qui sotto è quello
                     // MISURATO dopo la modifica, non quello sperato:
                     // 29rem = 464px → massimo 74 caratteri per riga.
-                    <span className="block max-w-[29rem] text-kidville-sub mt-1 leading-relaxed">
+                    //
+                    // ⚠️ Il rientro è `ml-7` e NON `pl-7`: con `box-sizing:
+                    // border-box` (preflight di Tailwind) il riempimento starebbe
+                    // DENTRO i 29rem e la riga scenderebbe a ~70 caratteri, cioè
+                    // il vincolo tornerebbe a dichiarare un numero e a produrne un
+                    // altro. Il margine no. 28px = casella 16 + `gap-3` 12: il
+                    // corpo resta allineato sotto il titolo, dove stava prima.
+                    <p
+                      id={descrizioneId}
+                      className="ml-7 mt-1 block max-w-[29rem] text-sm text-kidville-sub leading-relaxed"
+                    >
                       {field.text}
-                    </span>
+                    </p>
                   )}
-                </span>
-              </label>
+                </div>
+              </div>
               {/* ── L'INFORMATIVA È UN BERSAGLIO, NON UNA POSTILLA (11/08/2026) ──
                   Era un `<a>` alto 16px DENTRO la <label> del consenso: chi lo
                   manca col pollice colpisce un bersaglio alto 325px che fa
@@ -388,6 +515,7 @@ export function FieldRenderer({
   return (
     <div className="space-y-2">
       <label
+        id={idEtichetta}
         htmlFor={associaLabel ? field.id : undefined}
         className="flex items-center gap-1.5 text-sm font-medium text-kidville-green/80"
       >
@@ -496,6 +624,7 @@ export function FieldRenderer({
           register={register}
           rules={rules}
           ariaProps={ariaProps}
+          etichettaId={idEtichetta}
           descriveErrore={errMsg ? errorId : undefined}
           nonValido={Boolean(errMsg)}
         />
@@ -518,7 +647,15 @@ export function FieldRenderer({
             // ancora scelto niente», e sparisce alla prima spunta.
             const vuoto = value.length === 0
             return (
-              <div className="space-y-2" role="group" aria-describedby={errMsg ? errorId : undefined}>
+              <div
+                className="space-y-2"
+                role="group"
+                // Il nome del gruppo È l'etichetta che sta a schermo: vedi
+                // `idEtichetta`. Senza, chi ascolta entra nelle caselle senza
+                // aver mai sentito la domanda.
+                aria-labelledby={idEtichetta}
+                aria-describedby={errMsg ? errorId : undefined}
+              >
                 {(field.options ?? []).map((opt, i) => {
                   const checked = value.includes(opt.value)
                   return (
@@ -568,6 +705,17 @@ export function FieldRenderer({
               uploadEndpoint={uploadEndpoint}
               accept={field.accept}
               maxSizeMb={field.max_size_mb}
+              // Le quattro cose che facevano di questo campo l'unico irraggiungibile
+              // da tastiera: l'`id` (che l'etichetta esterna punta), gli attributi
+              // dell'errore, il `ref` di react-hook-form — senza il quale
+              // `setFocus(id)` non ha niente da mettere a fuoco — e il `blur`.
+              fieldId={field.id}
+              ariaProps={ariaProps}
+              // …e il quinto: che il riquadro CAMBI ASPETTO quando è in errore.
+              // Era l'unico campo del modulo che non lo faceva (vedi `nonValido`).
+              nonValido={Boolean(errMsg)}
+              inputRef={rhf.ref}
+              onBlur={rhf.onBlur}
             />
           )}
         />
@@ -714,6 +862,7 @@ function RadioGroup({
   register,
   rules,
   ariaProps,
+  etichettaId,
   descriveErrore,
   nonValido = false,
 }: {
@@ -722,6 +871,8 @@ function RadioGroup({
   register: UseFormRegister<FieldValues>
   rules: RegisterOptions<FieldValues, string>
   ariaProps: React.AriaAttributes
+  /** L'`id` dell'etichetta esterna: è il NOME del gruppo. Vedi `idEtichetta`. */
+  etichettaId?: string
   descriveErrore?: string
   /** Il gruppo è in errore: le opzioni NON scelte portano il contorno rosso. */
   nonValido?: boolean
@@ -731,7 +882,12 @@ function RadioGroup({
   // non il messaggio (che in `mode: 'onTouched'` sopravvive alla prima scelta).
   const vuoto = valore === undefined || valore === null || valore === ''
   return (
-    <div className="space-y-2" role="radiogroup" aria-describedby={descriveErrore}>
+    <div
+      className="space-y-2"
+      role="radiogroup"
+      aria-labelledby={etichettaId}
+      aria-describedby={descriveErrore}
+    >
       {(field.options ?? []).map((opt, i) => {
         const scelta = valore === opt.value
         return (
@@ -774,7 +930,40 @@ async function messaggioDelServer(res: Response): Promise<string | null> {
   }
 }
 
-// ── Upload allegato (bucket form_attachments) ────────────────
+/**
+ * ── Upload allegato (bucket form_attachments) ────────────────────────────────
+ *
+ * ⚠️ IL CONTROLLO È NASCOSTO AGLI OCCHI, MAI ALLA TASTIERA (12/08/2026).
+ *
+ * Qui c'era `<input type="file" className="hidden">`, cioè `display: none`: un
+ * elemento con `display:none` non è focalizzabile, non entra nell'ordine di
+ * tabulazione e NON ESISTE nell'albero di accessibilità. Attorno c'era una
+ * `<label>` che ne disegna la scatola, senza `tabIndex`, senza `role` e senza
+ * gestore di tastiera — cioè una cosa che sembra un bottone e non lo è — e
+ * nessun altro comando apriva il selettore di file.
+ *
+ * MISURATO sul passo «Documento d'identità» di `/anagrafica-personale` (riquadro
+ * 360×740, pressioni di tasto vere): il giro del Tab faceva
+ * `#document_number` → `#pers-documento-scadenza` → «INDIETRO» → «TORNA AL
+ * RIEPILOGO» → fine del documento. **Zero fermate sul caricamento**, che è
+ * l'unico campo senza il quale «Avanti» non passa. Chi compila con la sola
+ * tastiera riempiva tre caselle, premeva «Avanti», leggeva «Campo obbligatorio»
+ * sotto una cosa che non poteva raggiungere e non aveva nessuna via d'uscita.
+ * `jest-axe` non lo vede — non esiste una regola per «una label che sembra un
+ * bottone» — e infatti dava 0 violazioni su quel passo.
+ *
+ * Il rimedio è che il controllo VERO resti quello che era, e diventi
+ * raggiungibile: `sr-only` invece di `hidden` (fuori dalla vista, dentro
+ * l'albero e dentro il Tab), l'`id` con cui l'etichetta esterna lo nomina, il
+ * `ref` di react-hook-form perché `setFocus` sappia dove andare, e l'anello di
+ * fuoco disegnato sulla `<label>`, che è la sola cosa che si vede.
+ *
+ * ⚠️ E questo è l'UNICO punto del repo in cui l'anello si disegna sul
+ * contenitore: la regola generale — scritta nel blocco delle card di scelta più
+ * su — è che l'anello lo dia `:focus-visible` sul controllo vero, e che un
+ * secondo anello sul contenitore sia un difetto. Qui il controllo è alto un
+ * pixel e clippato: l'anello di sistema esiste, e non lo vede nessuno.
+ */
 export function FileField({
   modelId,
   value,
@@ -782,6 +971,11 @@ export function FileField({
   uploadEndpoint,
   accept,
   maxSizeMb,
+  fieldId,
+  ariaProps,
+  nonValido = false,
+  inputRef,
+  onBlur,
 }: {
   modelId: string
   value: string
@@ -791,6 +985,33 @@ export function FileField({
   accept?: string
   /** Dimensione massima in MB comunicata al server per la validazione. */
   maxSizeMb?: number
+  /** L'`id` del controllo: ciò che l'etichetta esterna punta con `htmlFor`. */
+  fieldId?: string
+  /** `aria-invalid` e `aria-describedby` del campo in errore, come ogni altro tipo. */
+  ariaProps?: React.AriaAttributes
+  /**
+   * Il campo è in ERRORE — e il riquadro lo deve DIRE, non solo dichiararlo.
+   *
+   * ⚠️ MISURATO il 12/08/2026 al passo «Documento d'identità» di
+   * `/anagrafica-personale`, premendo «Avanti» a passo vuoto: `document_type`,
+   * `document_number` e la scadenza prendevano il bordo rosso pieno a 1,5 px
+   * (rgb(229,57,53), **4,23:1** sul bianco); il riquadro del file — che aveva
+   * `aria-invalid="true"` e «Campo obbligatorio» scritto sotto — conservava il
+   * suo `border-kidville-green/20` a 1 px: composto sul crema, **1,35:1**.
+   * WCAG 1.4.11 chiede ≥ 3:1 per gli indicatori non testuali: 1,35:1 non è un
+   * contorno debole, è nessun contorno. Chi rilegge la schermata dopo un
+   * «Avanti» fallito cerca il rosso, vede tre caselle rosse e il riquadro del
+   * documento immutato, e conclude che quello è a posto — proprio il campo che
+   * costa più fatica di tutti (alzarsi, fotografare il documento, allegarlo) e
+   * quindi il più facile da saltare.
+   * La testata di questo file dichiarava già la regola per gli `input`
+   * (righe 41-44 e 68): non era stata applicata al riquadro del caricamento.
+   */
+  nonValido?: boolean
+  /** Il `ref` di react-hook-form: senza, `setFocus(id)` non trova niente da fare. */
+  inputRef?: React.Ref<HTMLInputElement>
+  /** Il `blur` di react-hook-form: è ciò che rende «toccato» il campo. */
+  onBlur?: () => void
 }) {
   const t = useTranslations('parentForms')
   const [uploading, setUploading] = useState(false)
@@ -804,6 +1025,14 @@ export function FileField({
   const consenteImmagini = /image\/|\*|\.jpe?g|\.png|\.webp|\.gif|\.heic/i.test(acceptEff)
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    // ⚠️ LA GUARDIA STA QUI, e non su `disabled` (12/08/2026). Il controllo
+    // NON si disabilita durante il caricamento: disabilitare un elemento che ha
+    // il fuoco lo fa cadere su `<body>` — è lo stesso difetto chiuso sul comando
+    // primario del wizard (`ComandiWizard`) — e qui colpirebbe proprio chi ha
+    // appena scelto un file da tastiera, cioè l'unico percorso che questa
+    // correzione esiste per rendere possibile. Che stia lavorando lo dicono il
+    // testo («Caricamento…»), la rotellina e `aria-busy`.
+    if (uploading) return
     const file = e.target.files?.[0]
     if (!file) return
     await processaFile(file)
@@ -887,10 +1116,34 @@ export function FileField({
   return (
     <div>
       <label
-        className={`flex items-center gap-3 px-4 py-3 rounded-input border border-dashed cursor-pointer transition-all ${
-          value
-            ? 'border-kidville-green/40 bg-kidville-green-light'
-            : 'border-kidville-green/20 bg-kidville-cream hover:border-kidville-green/30'
+        /* `focus-within:ring-*` — vedi la testata: il controllo è `sr-only`,
+           quindi l'anello di `:focus-visible` cade su un rettangolo di 1×1 px
+           clippato e non lo vede nessuno. Qui l'anello sul contenitore non è il
+           SECONDO: è l'unico. `ring-offset-1` è lo stesso stacco usato dai
+           comandi del cockpit, e `ring-kidville-green` porta l'hex inlinato da
+           `@theme inline`, quindi resta verde anche in Alto Contrasto (6,51:1
+           sul bianco, 5,86:1 sulla crema). */
+        /* ⚠️ `border` NON sta più nella base, ed è la stessa ragione per cui non
+           sta in `FIELD_STRUTTURA` né in `SCELTA_STRUTTURA`: il PESO del
+           contorno fa parte dello STATO (1 px a riposo, 1,5 px in errore), e fra
+           `border` e `border-[1.5px]` scritte sullo stesso elemento vince quella
+           che sta più avanti nel FOGLIO, non quella scritta dopo nella stringa.
+           L'unico modo di scegliere è non averle entrambe.
+           Il fondo passa a bianco come su `SCELTA_ERRORE`: il rosso vale 4,23:1
+           sul bianco contro 3,81:1 sul crema, e «in errore» diventa uno stato
+           che si vede anche prima di guardare il bordo.
+           `data-scelta-invalida` è il gancio dell'Alto Contrasto — là ogni
+           contorno diventa nero e il rosso non esiste più, quindi il secondo
+           segnale è il bordo DOPPIO (globals.css). L'attributo ARIA non basta:
+           sta sull'`input` `sr-only` da 1×1 px, mentre il contorno lo disegna
+           questa `<label>`. */
+        {...(nonValido ? { 'data-scelta-invalida': 'true' as const } : {})}
+        className={`flex items-center gap-3 px-4 py-3 rounded-input border-dashed cursor-pointer transition-all focus-within:ring-2 focus-within:ring-kidville-green focus-within:ring-offset-1 ${
+          nonValido
+            ? 'border-[1.5px] border-kidville-error bg-kidville-white'
+            : value
+              ? 'border border-kidville-green/40 bg-kidville-green-light'
+              : 'border border-kidville-green/20 bg-kidville-cream hover:border-kidville-green/30'
         }`}
       >
         {uploading ? (
@@ -907,36 +1160,74 @@ export function FileField({
             ? fileName || t('allegatoCaricato')
             : t('selezionaFile')}
         </span>
+        {/* `sr-only` e NON `hidden`: fuori dalla vista, dentro l'albero di
+            accessibilità e dentro l'ordine di tabulazione. Con lo `spazio` o
+            l'`invio` il browser apre da sé il selettore di file — non serve
+            nessun gestore di tastiera, serve che il controllo ci sia. */}
         <input
+          id={fieldId}
+          ref={inputRef}
+          onBlur={onBlur}
           type="file"
           accept={acceptEff}
-          className="hidden"
-          disabled={uploading}
+          className="sr-only"
+          aria-busy={uploading || undefined}
           onChange={handleFile}
+          {...ariaProps}
         />
       </label>
       {/* Nativo: scatta la foto dell'allegato (solo se il campo ammette immagini).
-          Fuori dalla <label> per non riaprire il file picker. Su web non compare. */}
+          Fuori dalla <label> per non riaprire il file picker. Su web non compare.
+          ⚠️ Lo stato spento si DIPINGE anche qui: portava `disabled:opacity-50`,
+          cioè la stessa alfa che sul comando primario dei wizard è stata misurata
+          a 2,02:1 (vedi `ComandiWizard`). La coppia è quella di `Btn` — `sub`
+          #55615C su `neutral-soft` #F0F2F1, 5,75:1 — e nell'app nativa questo è
+          il modo normale di consegnare la scansione del documento: spento è
+          proprio mentre il caricamento è in volo, cioè quando si guarda. */}
       {consenteImmagini && (
         <ScattaFotoButton
           onFile={processaFile}
           label={t('scattaFoto')}
           disabled={uploading}
-          className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-input border border-dashed border-kidville-green/30 text-sm font-medium text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
+          className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-input border border-dashed border-kidville-green/30 text-sm font-medium text-kidville-green hover:border-kidville-green transition-colors disabled:cursor-not-allowed disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub"
         />
       )}
+      {/* ── ERA L'UNICO MESSAGGIO D'ERRORE DEL MODULO SCRITTO PIÙ PIANO DEGLI
+          ALTRI (12/08/2026) ──────────────────────────────────────────────────
+          «Caricamento non riuscito. Riprova.» portava `text-kidville-error` a
+          peso 400 e nessun ruolo. MISURATO forzando un 500 sulla rotta di
+          caricamento: `rgb(229,57,53)` sul crema della pagina `rgb(254,241,228)`
+          = **3,81:1**, l'unico testo della pagina sotto i 4,5:1 richiesti — e a
+          due centimetri più in basso, sullo STESSO campo, il messaggio di
+          `FieldRenderer` diceva la sua in `error-strong` e `font-bold`.
+          In Alto Contrasto il colore spariva del tutto (nero, 21:1, come
+          un'etichetta qualunque) e restava peso 400: cioè nessuno dei due
+          segnali che la testata di questo file dichiara obbligatori.
+          `role="alert"` perché senza, chi usa uno screen reader non sa nemmeno
+          che il caricamento è fallito: è un guasto che nasce da un gesto
+          riuscito (il file È stato scelto) e non annuncia niente da solo. */}
       {uploadError && (
-        <p className="flex items-center gap-1.5 text-xs text-kidville-error mt-1.5">
+        <p role="alert" className="flex items-center gap-1.5 text-xs font-bold text-kidville-error-strong mt-1.5">
           <AlertCircle className="w-3.5 h-3.5" />
           {uploadError}
         </p>
       )}
-      {value && !uploading && (
-        <p className="flex items-center gap-1.5 text-[11px] text-kidville-sub mt-1.5">
-          <Info className="w-3 h-3" />
-          <span className="font-mono truncate">{value}</span>
-        </p>
-      )}
+      {/* ── ⚠️ QUI NON SI STAMPA IL PERCORSO NEL BUCKET (12/08/2026) ───────────
+          C'era una riga in monospazio da 11 px con dentro il valore di `value`,
+          cioè la chiave con cui si firma un oggetto di un bucket PRIVATO. La
+          forma vera è `documenti/${uuid}/${uuid}.${est}`: MISURATO a 360 px sul
+          modulo del personale, 87 caratteri in una scatola larga 315 px contro
+          576 px di testo — 48 caratteri visibili su 87, troncati.
+          Non diceva niente a chi compila: che la foto sia quella giusta lo dice
+          il NOME DEL FILE, che sta già nella riga qui sopra. E lo stesso repo
+          tratta quel valore come dato da non far uscire — `logClient` lo redige
+          (vedi il `catch` più su) e il riepilogo del wizard del personale
+          rifiuta esplicitamente di mostrarlo, perché una schermata si fotografa,
+          si legge ad alta voce e finisce nelle segnalazioni di guasto. Redatto
+          nei log, nascosto al riepilogo e stampato in pagina erano tre risposte
+          diverse alla stessa domanda.
+          Se un giorno servisse una conferma in più del caricamento riuscito, il
+          posto è l'icona `FileCheck2` qui sopra, non il percorso. */}
     </div>
   )
 }

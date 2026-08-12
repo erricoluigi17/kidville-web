@@ -22,9 +22,11 @@
  * Fino al 2026-08-11 questa funzione viveva dentro `ParentDetailPanel.tsx`, cioè
  * dentro un componente `'use client'`, e l'altra scheda la importava DA LÌ: una
  * regola di dominio raggiungibile solo passando per un pezzo di interfaccia. La
- * regola vale per più strade (PATCH `/api/admin/parents`, POST `/api/admin/adults`,
- * e domani per qualunque rotta che scriva su quella colonna), quindi vive in
- * `src/lib`, dove non porta con sé React.
+ * regola vale per più strade (PATCH `/api/admin/parents` e domani qualunque rotta
+ * che scriva su quella colonna), quindi vive in `src/lib`, dove non porta con sé
+ * React. Qui era citata anche `POST /api/admin/adults`: **non esiste più**,
+ * cancellata l'11/08/2026 perché irraggiungibile e rotta (scriveva le colonne
+ * generate di `utenti`) — vedi il commento in `src/app/api/admin/adults/route.ts`.
  *
  * Non si guarda solo il codice `23505`: le rotte oggi rimandano il solo `message`,
  * senza `code`. Si riconosce il nome del vincolo, che è il segnale più specifico.

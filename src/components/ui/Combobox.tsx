@@ -115,6 +115,21 @@ interface ComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   caricamento?: boolean;
+  /**
+   * Il campo è OBBLIGATORIO: asterisco nell'etichetta e `aria-required` sul
+   * controllo.
+   *
+   * ⚠️ Non è una decorazione, ed è la ragione per cui esiste (12/08/2026).
+   * MISURATO al passo «I tuoi dati» di `/anagrafica-personale`: su dieci campi
+   * sette portavano l'asterisco e i due combobox no — di cui uno,
+   * `codice_belfiore_nascita`, è dichiarato `required: true` nel template e
+   * produce «Campo obbligatorio» quando si preme «Avanti». L'asterisco è
+   * l'UNICA convenzione con cui questa pagina dice «questo è obbligatorio»:
+   * dove non c'è, non c'è per nessuno — chi guarda e chi ascolta.
+   * `aria-required` è il secondo segnale, quello che non dipende da un
+   * carattere dentro l'etichetta.
+   */
+  richiesto?: boolean;
   invalido?: boolean;
   /** Id del messaggio d'errore/aiuto: dev'essere TESTO VISIBILE, non solo colore. */
   describedById?: string;
@@ -200,6 +215,7 @@ export function Combobox({
   placeholder,
   disabled = false,
   caricamento = false,
+  richiesto = false,
   invalido = false,
   describedById,
   className,
@@ -396,11 +412,26 @@ export function Combobox({
 
   return (
     <div className={cx('relative', className)}>
+      {/* ── L'ETICHETTA È QUELLA DI OGNI ALTRO CAMPO (12/08/2026) ─────────────
+          Era `font-barlow text-[12.5px] font-bold uppercase tracking-[0.04em]
+          text-kidville-sub`: Barlow Condensed maiuscolo spaziato, grigio. Nella
+          stessa colonna verticale i campi resi da `FieldRenderer` portano Maven
+          Pro 14 px, peso 500, verde, con l'asterisco — MISURATO al passo «I tuoi
+          dati» di `/anagrafica-personale`, dove le due tipografie stanno una
+          sotto l'altra. Due sistemi di etichette nella stessa colonna non sono
+          una scelta grafica: chi legge prende i combobox per INTESTAZIONI DI
+          SEZIONE invece che per etichette di campo, e cerca il campo sotto.
+          La classe è la stessa di `FieldRenderer` (riga 422) e i sei chiamanti
+          di `LuogoNascitaFields` — pannelli admin compresi, che accanto scrivono
+          `block text-sm font-bold text-kidville-green/80` — si allineano tutti
+          nello stesso verso. Il `mb-1.5` resta: è la spaziatura di questo campo,
+          non la sua tipografia. */}
       <label
         htmlFor={id}
-        className="mb-1.5 block font-barlow text-[12.5px] font-bold uppercase tracking-[0.04em] text-kidville-sub"
+        className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-kidville-green/80"
       >
         {label}
+        {richiesto && <span className="text-kidville-green">*</span>}
       </label>
 
       <div className="relative">
@@ -419,6 +450,7 @@ export function Combobox({
           aria-autocomplete="list"
           aria-activedescendant={aperto && corrente >= 0 ? idVoce(corrente) : undefined}
           aria-invalid={invalido || undefined}
+          aria-required={richiesto || undefined}
           aria-describedby={describedById}
           aria-busy={caricamento || undefined}
           onChange={(e) => {
@@ -485,13 +517,32 @@ export function Combobox({
             if (aperto) chiudi(true);
             else apri(-1);
           }}
+          /* ── IL BERSAGLIO È 44×44, IL DISEGNO NON SI MUOVE (12/08/2026) ────
+             Era `p-1.5` attorno a un'icona da 18 px: 30×30 px MISURATI a 360 px
+             sul modulo pubblico del personale, dove ogni altro comando della
+             stessa schermata sta a 44 (e il campo accanto a 328×46). 30 px
+             passano il minimo di WCAG 2.5.8 (24×24) ma restano il bersaglio più
+             piccolo di un modulo che si compila col pollice.
+             Il riempimento cresce SOLO a sinistra e in verticale (`pl-5`
+             + `py-[13px]` = 44×44) proprio perché il chevron resti dov'era: il
+             margine destro è ancora `pr-1.5`, quindi l'icona non si sposta di un
+             pixel. Il campo è alto 46 px e riserva `pr-16`: il bersaglio ci sta
+             dentro e non copre nessun testo.
+             ⚠️ La rotazione si è spostata sull'ICONA. Su un bottone con
+             riempimento asimmetrico l'icona non sta nel centro geometrico, e
+             `rotate-180` sul bottone la porterebbe dall'altra parte invece di
+             capovolgerla. */
           className={cx(
-            'absolute right-1 top-1/2 -translate-y-1/2 rounded-full p-1.5 transition-transform',
+            'absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-full py-[13px] pl-5 pr-1.5',
             disabled ? 'cursor-not-allowed text-kidville-sub' : 'cursor-pointer text-kidville-green',
-            aperto && 'rotate-180',
           )}
         >
-          <ChevronDown size={18} strokeWidth={2.2} aria-hidden="true" />
+          <ChevronDown
+            size={18}
+            strokeWidth={2.2}
+            aria-hidden="true"
+            className={cx('transition-transform', aperto && 'rotate-180')}
+          />
         </button>
 
         {/* Il pannello resta SEMPRE nel DOM: `aria-controls` dell'input punta al

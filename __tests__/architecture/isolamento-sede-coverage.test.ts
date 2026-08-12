@@ -1277,8 +1277,59 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `gate-coverage`, con la sua ragione scritta — un elenco di comuni
             // italiani non è dato di nessuna sede, non c'è niente da isolare
             // perché non c'è niente di nessuno.
-            routeConServiceRole: 279,
-            handlerControllati: 441,
+            //
+            // 279 → 283 il 2026-08-11, e sono i QUATTRO FILE nuovi di questo branch —
+            // `iscrizione/personale`, `iscrizione/personale/upload`,
+            // `gdpr/retention-personale`, `notifiche/scadenze-documenti` — che aprono
+            // tutti il client con il service role. Questo numero conta i FILE, non gli
+            // handler: le prime due rotte hanno un solo metodo ciascuna, le altre due
+            // pure, quindi qui il +4 e sotto il +4 coincidono per caso e non per regola.
+            //
+            // 283 → 285 il 2026-08-12, e sono DUE file, di due corsie diverse dello
+            // stesso branch. Uno solo lo CERTIFICA questa riga:
+            //
+            //  · `admin/anagrafica-personale` (GET + PATCH) — il cruscotto delle
+            //    scadenze dei documenti, lato Segreteria. NON porta esenzioni, e il
+            //    punto che vale la pena guardare è la forma della sua lettura:
+            //    `anagrafica_personale` non ha `scuola_id` (la sede sta in `utenti`),
+            //    quindi l'elenco è agganciato agli id ricavati da una query PRECEDENTE
+            //    che il filtro di sede ce l'ha dentro — la forma che le regole in testa
+            //    a questo file ammettono per nome. Il `PATCH` passa da
+            //    `assertUtenteInScope` prima di qualunque scrittura.
+            //  · `admin/pratiche-personale` — arriva dalla corsia accanto ed è contata
+            //    qui, non certificata: chi l'ha scritta dichiari le proprie esenzioni.
+            //    `handlerEsentati` è rimasto FERMO a 92 in questo passaggio, ed è la
+            //    sola metà di questi tre numeri che misura una difesa invece di un
+            //    inventario. Chi rilegge ricalcoli invece di fidarsi.
+            routeConServiceRole: 285,
+            // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
+            // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
+            // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
+            // l'account auth). Non è un presidio tolto: è un handler che non esiste più.
+            //
+            // È scritto qui perché questo lock esiste per NON far tornare i conti per caso.
+            // Sullo stesso branch nascono quattro handler nuovi (`iscrizione/personale:POST`,
+            // `iscrizione/personale/upload:POST`, `gdpr/retention-personale:POST`,
+            // `notifiche/scadenze-documenti:POST`): chi li dichiara misura 444 e, senza questa
+            // riga, lo legge come «441 + 4» — un'attribuzione che quadra per caso e nasconde
+            // l'uscita. Il conto vero è 441 − 1 + 4. `routeConServiceRole` invece NON cambia
+            // per questa rimozione: `src/app/api/admin/adults/route.ts` resta contato, il
+            // `createAdminClient()` è nel GET, che è vivo.
+            //
+            // 440 → 444, dichiarato: i quattro handler nuovi ci sono tutti e quattro, e
+            // il conto è quello scritto qui sopra (441 − 1 + 4). La riga era rimasta a
+            // 440 con i quattro nomi già scritti nel commento: un lock rosso e una
+            // spiegazione a fianco è il modo in cui un lock smette di essere creduto —
+            // al giro dopo qualcuno legge il rosso «già noto» e ci aggiunge il proprio.
+            // `handlerEsentati` NON si muove (92): nessuno dei quattro è in allowlist,
+            // che è la sola cosa che questo numero esiste per impedire in silenzio.
+            //
+            // 444 → 448 il 2026-08-12: QUATTRO handler, due per ciascuno dei due file
+            // nominati sopra — `admin/anagrafica-personale:GET`/`:PATCH` (certificati
+            // qui) e i due di `admin/pratiche-personale` (contati, non certificati).
+            // Il +2 di questa corsia è il cruscotto delle scadenze: nessuno dei due
+            // handler è in allowlist, e `handlerEsentati` resta 92.
+            handlerControllati: 448,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

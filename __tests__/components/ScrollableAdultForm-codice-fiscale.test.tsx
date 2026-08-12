@@ -75,7 +75,7 @@ function fintaRete(elenco: unknown = NAPOLI) {
 /** Apre la tendina di un Combobox dal suo pulsante. */
 function apri(campo: HTMLElement) {
   const contenitore = campo.closest('div')?.parentElement as HTMLElement
-  fireEvent.click(within(contenitore).getByRole('button', { name: 'Mostra o nascondi l’elenco' }))
+  fireEvent.click(within(contenitore).getByRole('button', { name: /^Mostra o nascondi l’elenco/ }))
 }
 
 const campoNome = () => screen.getByLabelText('Nome')

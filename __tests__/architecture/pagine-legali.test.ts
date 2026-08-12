@@ -274,6 +274,49 @@ describe('lock — pagine legali', () => {
     const IMPRONTE_PRIVACY: Record<string, string> = {
         // 2026-08-10 — aggiunta la voce «candidature spontanee di personale».
         '2026-08-10': 'f073aa87b1cfcd1e879ebe1ef9166383868d263a45fab4167dcf31e1c69a1143',
+        // 2026-08-11 — aggiunta la sezione «Personale della Scuola (dipendenti e
+        // collaboratori)» e le sue tre voci di conservazione: dieci anni per il
+        // fascicolo, dodici mesi per la copia del documento d'identità, novanta
+        // giorni per la richiesta non approvata. La voce del 2026-08-10 resta
+        // dov'è: è il testo che le persone hanno letto fino a ieri, ed è citato
+        // nelle righe di `consents_log` già scritte.
+        //
+        // ⚠️ QUESTA IMPRONTA È STATA RISCRITTA DUE VOLTE, ed è il caso che il
+        // messaggio d'errore qui sotto vieta — quindi va spiegato con la misura che
+        // lo autorizza, non con una buona intenzione.
+        //
+        // (1) Dall'informativa è stata tolta, prima del rilascio, la frase che
+        // prometteva che la copia del documento d'identità «viene sostituita, con
+        // cancellazione della precedente»: quel meccanismo non esiste nel repo
+        // (nessuna riga di `src/` scrive `anagrafica_personale.documento_path`), ed
+        // era una dichiarazione non veritiera. Vedi la prova in
+        // `__tests__/api/gdpr-retention-personale.test.ts`.
+        //
+        // (2) Alla voce «richieste di anagrafica del personale non approvate» è stata
+        // AGGIUNTA la frase che dice cosa succede alla richiesta APPROVATA: cancellata
+        // insieme al fascicolo, a dieci anni dalla cessazione. La voce prometteva già
+        // che quella richiesta «segue i termini indicati ai due punti precedenti», e
+        // MISURATO: in tutto `src/` non esisteva nessuna `.delete()` che toccasse una
+        // riga `approvata` di `pratiche_personale` — la route di conservazione leggeva
+        // i soli stati non approvati. Era un termine promesso e applicato da nessuno
+        // (art. 13 §2 lett. a). Ora la route la cancella, e la frase lo dice col numero
+        // invece che per rimando.
+        //
+        // PERCHÉ SI PUÒ RISCRIVERE INVECE DI AGGIUNGERE UNA VERSIONE NUOVA: perché
+        // '2026-08-11' non è mai stata mostrata a nessuno. RIMISURATO il 2026-08-12,
+        // in sola lettura, su TUTTE E TRE le tabelle che archiviano un `consents_log`
+        // (la prima volta era stata interrogata solo `enrollment_submissions`):
+        //   · enrollment_submissions → '2026-07-31' 285 righe, '2026-08-10' 4, NULL 93
+        //   · candidature_insegnanti → '2026-08-10' 1 riga
+        //   · pratiche_personale     → nessuna riga (tabella nuova, ancora vuota)
+        // Di '2026-08-11' non esiste una sola riga da nessuna parte, perché nasce su
+        // questo branch e il branch non è mai stato rilasciato. Non c'è quindi nessun
+        // documento «già citato» il cui contenuto cambi a posteriori: è lo stesso
+        // rilascio che corregge il proprio testo prima di consegnarlo.
+        // Chi si trovasse di nuovo qui rifaccia QUELLE query invece di fidarsi di
+        // questa nota: dal primo invio con la versione corrente la risposta cambia, e
+        // da quel momento l'unica strada è aggiungere una voce nuova.
+        '2026-08-11': 'c0396f2a20292e419fbcccced9c9394829cb4ff2b87d71ddb371d8bb6d78bda5',
     };
 
     /**

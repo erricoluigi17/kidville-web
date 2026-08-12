@@ -133,7 +133,7 @@ const campoCf = () => document.getElementById('dettaglio-codice-fiscale') as HTM
 
 function apriTendina(elemento: HTMLElement) {
   const contenitore = elemento.closest('div')?.parentElement as HTMLElement
-  fireEvent.click(within(contenitore).getByRole('button', { name: itShared.anagCommutaElenco }))
+  fireEvent.click(within(contenitore).getByRole('button', { name: new RegExp('^' + itShared.anagCommutaElenco) }))
 }
 
 async function scegliComune(nome = 'NAPOLI') {

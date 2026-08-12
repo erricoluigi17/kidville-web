@@ -44,27 +44,51 @@ begin;
 -- -----------------------------------------------------------------------------
 -- 1. `pratiche_personale` — il dato NON fidato che arriva dal modulo pubblico
 -- -----------------------------------------------------------------------------
-alter table public.pratiche_personale
-  rename column documento_path to documento_fronte_path;
+-- ⚠️ TUTTO QUESTO FILE È IDEMPOTENTE, e non è una raffinatezza: è il requisito del
+--    workflow `.github/workflows/migrate-ci.yml`, che applica gli stessi file al
+--    database della CI con `psql` e SENZA storico in `schema_migrations` — quindi
+--    l'elenco si ridà a mano ogni volta e un file non idempotente fallisce al secondo
+--    lancio. In produzione questa migrazione è già registrata e non verrà rieseguita;
+--    la forma condizionale serve al DB della CI, dove il rename parte da uno schema
+--    che ha ancora il nome vecchio.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'pratiche_personale'
+                and column_name = 'documento_path') then
+    alter table public.pratiche_personale
+      rename column documento_path to documento_fronte_path;
+  end if;
 
--- Il CHECK segue la colonna ma si porta dietro il vecchio nome: rinominarlo evita
--- che fra un anno qualcuno cerchi `…documento_fronte_path_check` e non lo trovi.
-alter table public.pratiche_personale
-  rename constraint pratiche_personale_documento_path_check
-                 to pratiche_personale_documento_fronte_path_check;
+  -- Il CHECK segue la colonna ma si porta dietro il vecchio nome: rinominarlo evita
+  -- che fra un anno qualcuno cerchi `…documento_fronte_path_check` e non lo trovi.
+  if exists (select 1 from pg_constraint
+              where conname = 'pratiche_personale_documento_path_check') then
+    alter table public.pratiche_personale
+      rename constraint pratiche_personale_documento_path_check
+                     to pratiche_personale_documento_fronte_path_check;
+  end if;
+end $$;
 
 alter table public.pratiche_personale
-  add column documento_retro_path text
+  add column if not exists documento_retro_path text
     check (documento_retro_path is null or length(documento_retro_path) <= 200);
 
 -- -----------------------------------------------------------------------------
 -- 2. `anagrafica_personale` — il fascicolo, dopo l'approvazione
 -- -----------------------------------------------------------------------------
-alter table public.anagrafica_personale
-  rename column documento_path to documento_fronte_path;
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'anagrafica_personale'
+                and column_name = 'documento_path') then
+    alter table public.anagrafica_personale
+      rename column documento_path to documento_fronte_path;
+  end if;
+end $$;
 
 alter table public.anagrafica_personale
-  add column documento_retro_path text
+  add column if not exists documento_retro_path text
     check (documento_retro_path is null or length(documento_retro_path) <= 200);
 
 -- ⚠️ IL CHECK CHE MANCAVA, e perché si aggiunge adesso.
@@ -78,9 +102,15 @@ alter table public.anagrafica_personale
 --    chiama. E c'è un vincolo di coerenza: `caricamenti_personale.percorso` ha già
 --    `length(percorso) <= 200` nel CHECK della sua PK, quindi un percorso che sta
 --    in quel registro DEVE poter stare anche qui.
-alter table public.anagrafica_personale
-  add constraint anagrafica_personale_documento_fronte_path_check
-    check (documento_fronte_path is null or length(documento_fronte_path) <= 200);
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                  where conname = 'anagrafica_personale_documento_fronte_path_check') then
+    alter table public.anagrafica_personale
+      add constraint anagrafica_personale_documento_fronte_path_check
+        check (documento_fronte_path is null or length(documento_fronte_path) <= 200);
+  end if;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- 3. `caricamenti_personale` — un oggetto che nasce già di proprietà
@@ -99,19 +129,25 @@ alter table public.anagrafica_personale
 --    ore la scansione di una persona vera mentre `anagrafica_personale` la nomina.
 --    È il caso peggiore possibile: l'anagrafica punterebbe a un file che non c'è.
 alter table public.caricamenti_personale
-  add column anagrafica_utente_id uuid
+  add column if not exists anagrafica_utente_id uuid
     references public.anagrafica_personale(utente_id) on delete cascade;
 
 -- Un oggetto, un proprietario: o una pratica, o un'anagrafica, o nessuno dei due
 -- (ed è quest'ultimo caso che la spazzata raccoglie). Mai entrambi.
-alter table public.caricamenti_personale
-  add constraint caricamenti_personale_un_solo_proprietario
-    check (num_nonnulls(pratica_id, anagrafica_utente_id) <= 1);
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                  where conname = 'caricamenti_personale_un_solo_proprietario') then
+    alter table public.caricamenti_personale
+      add constraint caricamenti_personale_un_solo_proprietario
+        check (num_nonnulls(pratica_id, anagrafica_utente_id) <= 1);
+  end if;
+end $$;
 
 -- L'indice dei sospesi deve conoscere il secondo proprietario, altrimenti la
 -- spazzata continua a vedere «in sospeso» ciò che è già di qualcuno.
 drop index if exists public.caricamenti_personale_sospesi_idx;
-create index caricamenti_personale_sospesi_idx
+create index if not exists caricamenti_personale_sospesi_idx
   on public.caricamenti_personale (caricato_il)
   where pratica_id is null and anagrafica_utente_id is null;
 

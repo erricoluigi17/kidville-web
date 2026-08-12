@@ -44,23 +44,34 @@
 
 begin;
 
+-- ⚠️ IDEMPOTENTE per il workflow `.github/workflows/migrate-ci.yml`, che riapplica gli
+--    stessi file al database della CI con `psql` e SENZA storico in
+--    `schema_migrations`: l'elenco si ridà a mano ogni volta, e un file non idempotente
+--    fallisce al secondo lancio. In produzione questa migrazione è già registrata e non
+--    verrà rieseguita.
 alter table public.alunni
-  add column archiviato_il            timestamptz,
-  add column archiviato_da            uuid,
-  add column archiviato_motivo        varchar(30),
-  add column archiviato_section_id    uuid,
-  add column archiviato_classe_sezione varchar(50),
-  add column spazio_liberato_il       timestamptz;
+  add column if not exists archiviato_il            timestamptz,
+  add column if not exists archiviato_da            uuid,
+  add column if not exists archiviato_motivo        varchar(30),
+  add column if not exists archiviato_section_id    uuid,
+  add column if not exists archiviato_classe_sezione varchar(50),
+  add column if not exists spazio_liberato_il       timestamptz;
 
 -- Insieme CHIUSO, mai testo libero.
 -- Un campo libero sulla scheda di un minore è una PII nuova che nessuna lista bianca
 -- sorveglia: finirebbe nei log, negli export e nell'audit senza che nessuno l'abbia
 -- deciso. Quattro voci coprono i casi reali; la quinta è «altro» e non chiede di
 -- spiegarsi.
-alter table public.alunni
-  add constraint alunni_archiviato_motivo_check
-    check (archiviato_motivo is null
-           or archiviato_motivo in ('ritiro', 'fine_ciclo', 'trasferimento', 'altro'));
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                  where conname = 'alunni_archiviato_motivo_check') then
+    alter table public.alunni
+      add constraint alunni_archiviato_motivo_check
+        check (archiviato_motivo is null
+               or archiviato_motivo in ('ritiro', 'fine_ciclo', 'trasferimento', 'altro'));
+  end if;
+end $$;
 
 -- ⚠️ NESSUN CHECK SU `alunni.stato`.
 --    Verificato prima di scrivere: non ne esiste uno, e i valori usati dalle tendine

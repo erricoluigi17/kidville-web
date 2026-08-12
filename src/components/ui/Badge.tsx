@@ -4,6 +4,7 @@ export type BadgeTone =
   | 'unread'
   | 'evidenza'
   | 'info'
+  | 'inCorso'
   | 'read'
   | 'success'
   | 'warn'
@@ -20,6 +21,15 @@ const TONES: Record<BadgeTone, string> = {
   // normale) → per etichette testuali (es. «In evidenza» nelle News) si usa ink (~8:1).
   evidenza: 'bg-kidville-yellow text-kidville-ink',
   info: 'bg-kidville-green-soft text-kidville-green',
+  // `inCorso` — la coppia semantica `info-soft`/`info-strong`, che al catalogo dei
+  // toni mancava: `info` qui sopra è VERDE (green-soft), cioè lo stesso colore di
+  // «fatto». Un badge «in approvazione» verde accanto a uno «approvata» verde sono
+  // due stati diversi con la stessa faccia. Il blu di `--color-kidville-info-*` è
+  // dichiarato in `globals.css` con i suoi rapporti di contrasto (6,7:1 su soft) e
+  // regge l'Alto Contrasto; passarlo da fuori con `className` NON funzionava: `cx`
+  // concatena, ma fra due utility di pari specificità decide l'ordine nel FOGLIO di
+  // stile, non quello nell'attributo — cioè il colore sarebbe stato una lotteria.
+  inCorso: 'bg-kidville-info-soft text-kidville-info-strong',
   read: 'bg-kidville-neutral-soft text-kidville-muted',
   success: 'bg-kidville-success-soft text-kidville-success-strong',
   warn: 'bg-kidville-warn-soft text-kidville-warn-strong',

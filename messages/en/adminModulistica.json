@@ -313,5 +313,6 @@
   "rtDettaglioRettifiche": "Adjustments detail",
   "sdsChiudi": "Close application detail",
   "builderTornaIndietro": "Back to forms",
-  "modTabCandidature": "Applications"
+  "modTabCandidature": "Applications",
+  "modTabPersonale": "Staff"
 }

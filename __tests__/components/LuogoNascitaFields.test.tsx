@@ -98,6 +98,7 @@ function Banco({
   disabled?: boolean
   mostraNazione?: boolean
   errori?: Partial<Record<'provincia' | 'comune', string>>
+  obbligatori?: Partial<Record<'provincia' | 'comune', boolean>>
 }) {
   const [v, setV] = useState<ValoreLuogoNascita>(iniziale)
   return (
@@ -139,7 +140,7 @@ function fintaRete(risposte: Record<string, { comuni: ComuneFinto[] }>) {
 /** Apre la tendina di un Combobox dal suo pulsante «Mostra o nascondi l'elenco». */
 function apri(campo: HTMLElement) {
   const contenitore = campo.closest('div')?.parentElement as HTMLElement
-  fireEvent.click(within(contenitore).getByRole('button', { name: 'Mostra o nascondi l’elenco' }))
+  fireEvent.click(within(contenitore).getByRole('button', { name: /^Mostra o nascondi l’elenco/ }))
 }
 
 const campoProvincia = () => screen.getByRole('combobox', { name: 'Provincia di nascita' })
@@ -215,6 +216,25 @@ describe('§1 · la cascata provincia → comune, e il Belfiore che ne esce', ()
     // Chi è nato in un comune estinto lo trova sotto il proprio gruppo, non
     // mescolato agli attivi.
     expect(soppresso.closest('[role="group"]')).toHaveAttribute('aria-label', 'Comuni soppressi')
+  })
+
+  it('⚠️ la riga che spiega i soppressi ha un TETTO di larghezza', async () => {
+    // MISURATE il 12/08/2026 con un `Range` sui nodi di testo, carattere per
+    // carattere: **101** caratteri per riga a 640 px, **111** a 768, **101** a
+    // 1024/1280/1440. A 12,5 px una riga di cento caratteri è la lunghezza su
+    // cui l'occhio perde il capo della successiva — e questa riga è ciò che
+    // spiega a chi è nato in un comune che non esiste più perché lo trova lo
+    // stesso.
+    // 26rem = 416 px = 75 caratteri, MISURATI sul modulo pubblico del personale
+    // (384 → 70 · 400 → 70 · **416 → 75** · 432 → 78). In rem e non in `ch`, che
+    // è la larghezza dello ZERO e dichiara un numero mentre ne produce un altro.
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco iniziale={{ provincia: 'NA', comune: '', belfiore: '', nazione: 'Italia' }} />)
+
+    await waitFor(() => expect(campoComune()).toBeEnabled())
+    const aiuto = document.getElementById('alunno-soppressi-aiuto')
+    expect(aiuto, 'la riga d’aiuto dei soppressi non è in pagina').not.toBeNull()
+    expect(aiuto?.className).toContain('max-w-[26rem]')
   })
 })
 
@@ -839,5 +859,116 @@ describe('§9 · il campo e il badge, sullo stesso record, non si contraddicono'
     const { container } = render(<Pannello />)
     await waitFor(() => expect(campoComune()).toBeEnabled())
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// ── §10 · LA FORMA DEI SEGNALI, MISURATA CONTRO GLI ALTRI CAMPI ──────────────
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * TRE RILIEVI DEL CRITICO VISIVO DEL 12/08/2026, e tutti e tre dicono la stessa
+ * cosa: questo componente parlava una lingua sua dentro una schermata che ne
+ * aveva già una.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * 1. **L'ERRORE.** Lo stesso identico testo, «Campo obbligatorio», usciva in due
+ *    rese diverse nella stessa schermata e nello stesso istante: 12 px / peso 700
+ *    / con icona sotto i campi di `FieldRenderer`, 13 px / peso 400 / SENZA icona
+ *    sotto i due combobox. Il contrasto era identico (5,06:1), quindi non è un
+ *    problema di colore: è che il segnale qui era portato da colore e testo
+ *    soltanto, mentre la regola di casa vuole ICONA + TESTO. L'incoerenza è
+ *    peggio dell'assenza — insegna una convenzione e poi la tradisce una volta
+ *    sola, proprio dove serviva.
+ *
+ * 2. **L'ASTERISCO.** «Comune di nascita» è `required: true` nel template
+ *    (`codice_belfiore_nascita`) e non portava nessun segno di obbligatorietà: su
+ *    dieci campi del passo, sette avevano l'asterisco e i due combobox no. E
+ *    nessun campo dichiarava `aria-required`, quindi chi ascolta riceveva quella
+ *    informazione UNICAMENTE dall'asterisco pronunciato dentro l'etichetta.
+ *
+ * 3. **LA CASELLA DEI SOPPRESSI.** Bersaglio 328 × 20,3 px a 360 px: meno della
+ *    metà dei 44 px, accanto a card da 50-51 px sulla stessa schermata. È il
+ *    comando che serve a chi è nato in un comune che oggi non esiste più: senza
+ *    spuntarlo il suo comune non compare e il modulo non si chiude.
+ */
+describe('§10 · i segnali hanno la stessa forma degli altri campi', () => {
+  it('il messaggio d’errore porta ICONA e peso 700, come quello di `FieldRenderer`', () => {
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco errori={{ comune: 'Campo obbligatorio' }} />)
+
+    const messaggio = document.getElementById('alunno-comune-errore') as HTMLElement
+    expect(messaggio).not.toBeNull()
+    const classi = (messaggio.getAttribute('class') ?? '').split(/\s+/)
+    // `font-bold` è il segnale che sopravvive all'Alto Contrasto, dove il rosso
+    // diventa nero come un'etichetta qualunque.
+    expect(classi).toContain('font-bold')
+    expect(classi).toContain('text-xs')
+    // …e l'icona, che è il segnale che sopravvive a chi non distingue il rosso.
+    expect(messaggio.querySelector('svg'), 'il messaggio è colore + testo soltanto').not.toBeNull()
+    // L'icona non entra nel testo annunciato: `aria-hidden`, e il testo resta uno.
+    expect(messaggio.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    expect(messaggio.textContent).toBe('Campo obbligatorio')
+  })
+
+  it('lo stesso vale per il messaggio della PROVINCIA: una sola forma, non due', () => {
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco errori={{ provincia: 'Scegli prima la provincia' }} />)
+
+    const messaggio = document.getElementById('alunno-provincia-errore') as HTMLElement
+    expect((messaggio.getAttribute('class') ?? '').split(/\s+/)).toContain('font-bold')
+    expect(messaggio.querySelector('svg')).not.toBeNull()
+  })
+
+  it('CONTROLLO NEGATIVO: senza `obbligatori` non compare nessun asterisco', () => {
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco />)
+    // È il caso dei cinque pannelli d'amministrazione: là il luogo di nascita si
+    // completa a pezzi su un archivio già scritto, e un obbligo inventato sarebbe
+    // un rosso che quei moduli non hanno.
+    expect(campoProvincia().getAttribute('aria-required')).toBeNull()
+    expect(campoComune().getAttribute('aria-required')).toBeNull()
+    expect(screen.getByText('Provincia di nascita').textContent).toBe('Provincia di nascita')
+  })
+
+  it('con `obbligatori` l’etichetta porta l’asterisco E il controllo `aria-required`', () => {
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco obbligatori={{ provincia: true, comune: true }} />)
+
+    // ⚠️ Non si passa da `campoProvincia()`: quell'aiuto cerca il nome ESATTO, e
+    // l'asterisco entra nel nome accessibile. È la prova che il segno c'è.
+    const provincia = screen.getByRole('combobox', { name: /^Provincia di nascita\s*\*$/ })
+    const comune = screen.getByRole('combobox', { name: /^Comune di nascita\s*\*$/ })
+    // Due segnali, e nessuno dei due sostituisce l'altro: l'asterisco è ciò che
+    // uno screen reader pronuncia dentro l'etichetta, `aria-required` è ciò che
+    // non dipende da un carattere dentro un testo.
+    expect(provincia.getAttribute('aria-required')).toBe('true')
+    expect(comune.getAttribute('aria-required')).toBe('true')
+  })
+
+  it('l’etichetta è quella di ogni altro campo, non una tipografia sua', () => {
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco />)
+    const etichetta = document.querySelector('label[for="alunno-provincia"]') as HTMLElement
+    const classi = (etichetta.getAttribute('class') ?? '').split(/\s+/)
+    // Le stesse di `FieldRenderer` (riga 422). Prima erano Barlow Condensed
+    // maiuscolo grigio: nella stessa colonna i combobox si leggevano come
+    // INTESTAZIONI DI SEZIONE invece che come etichette di campo.
+    expect(classi).toContain('text-sm')
+    expect(classi).toContain('font-medium')
+    expect(classi).toContain('text-kidville-green/80')
+    expect(classi, 'la tipografia da intestazione è rimasta').not.toContain('uppercase')
+    expect(classi).not.toContain('font-barlow')
+  })
+
+  it('la casella «comuni soppressi» ha un bersaglio da 44px', async () => {
+    // jsdom non impagina: si misura la REGOLA (`min-h-[44px]`), non il pixel —
+    // che è comunque l'unica cosa che il foglio garantisce a ogni larghezza,
+    // visto che a 360 px il testo va a capo e la riga cresce da sé.
+    vi.stubGlobal('fetch', fintaRete({ NA: NAPOLI }))
+    render(<Banco iniziale={{ provincia: 'NA', comune: '', belfiore: '', nazione: 'Italia' }} />)
+    await waitFor(() => expect(screen.getByLabelText(/comuni soppressi/i)).toBeInTheDocument())
+
+    const etichetta = document.querySelector('label[for="alunno-soppressi"]') as HTMLElement
+    expect((etichetta.getAttribute('class') ?? '').split(/\s+/)).toContain('min-h-[44px]')
   })
 })

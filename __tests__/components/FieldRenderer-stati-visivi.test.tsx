@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -54,6 +54,18 @@ function Harness({ field }: { field: FormField }) {
 }
 
 const classi = (el: Element) => (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+
+/**
+ * La card di scelta che contiene un controllo.
+ *
+ * NON `closest('label')`: dal 12/08/2026 la card del CONSENSO è un `<div>` — la
+ * `<label>` dentro copre il solo titolo, perché il corpo dell'informativa non
+ * deve né entrare nel nome accessibile né spuntare la casella quando lo si
+ * seleziona (§4bis). La card si riconosce da ciò che la rende una card: il
+ * raggio. Così la stessa sonda vale per le due famiglie — quelle che SONO il
+ * comando (opzioni, fasce, sedi) e quella che lo contiene.
+ */
+const cardDiScelta = (controllo: Element) => controllo.closest('[class*="rounded-card"]')!
 
 // ── WCAG §1.4.3 — il rapporto di contrasto fra due colori opachi ─────────────
 const canale = (c: number) => {
@@ -283,11 +295,95 @@ describe('§4 · il consenso: titolo e corpo sono due cose diverse', () => {
   it('spuntato, il consenso cambia aspetto come ogni altra scelta', async () => {
     render(<Harness field={consenso} />)
     const spunta = screen.getByRole('checkbox')
-    expect(classi(spunta.closest('label')!)).toContain('bg-kidville-white')
+    expect(classi(cardDiScelta(spunta))).toContain('bg-kidville-white')
     fireEvent.click(spunta)
     await waitFor(() =>
-      expect(classi(screen.getByRole('checkbox').closest('label')!)).toContain('bg-kidville-green-soft'),
+      expect(classi(cardDiScelta(screen.getByRole('checkbox')))).toContain('bg-kidville-green-soft'),
     )
+  })
+})
+
+// =============================================================================
+// §4bis — IL NOME DELLA CASELLA È IL TITOLO. IL RESTO È UNA DESCRIZIONE.
+//
+// MISURATO il 12/08/2026 sul passo «Informativa e dichiarazioni» di
+// `/anagrafica-personale`, con `label.textContent` sui tre consensi resi: il
+// NOME ACCESSIBILE delle caselle era lungo 564 · 292 · 379 caratteri, perché la
+// `<label>` avvolgeva titolo E corpo dell'informativa; il titolo ci compariva
+// due volte; `aria-describedby` era null e `id` vuoto su tutte e tre. Chi
+// ascolta si sentiva leggere l'informativa intera come «nome» del controllo,
+// invece di «Ho letto l'informativa sulla privacy, casella di controllo,
+// obbligatorio» — il nome è ciò che serve a decidere, e stava sepolto sotto la
+// cosa su cui si decide.
+//
+// La stessa misura sulla MIRA: la `<label>` occupava 328×373 / 328×211 /
+// 328×279 px contro una casella di 16×16 — fino a 477 volte l'area del
+// controllo — e tutto quel testo era cliccabile: provare a selezionare una riga
+// dell'informativa per rileggerla spuntava il consenso.
+//
+// È il componente CONDIVISO: il difetto valeva identico su `/iscrizione` e
+// `/lavora-con-noi`, già in produzione.
+// =============================================================================
+describe('§4bis · il consenso: il nome è il titolo, il corpo è una descrizione', () => {
+  const consenso: FormField = {
+    id: 'privacy',
+    type: 'consent',
+    label: 'Ho letto l’informativa sulla privacy',
+    required: true,
+    text: 'Dichiaro di aver preso visione dell’informativa sul trattamento dei dati personali.',
+  }
+
+  it('il nome accessibile è il solo titolo (più l’asterisco), non l’informativa intera', () => {
+    render(<Harness field={consenso} />)
+    const spunta = screen.getByRole('checkbox')
+    const nome = spunta.closest('label')!.textContent ?? ''
+    expect(nome).toContain('Ho letto l’informativa sulla privacy')
+    expect(nome, 'il corpo dell’informativa è tornato dentro il nome').not.toContain(
+      'Dichiaro di aver preso visione',
+    )
+    // 564 caratteri era la misura del difetto: il titolo più l'asterisco ne fa 38.
+    expect(nome.trim().length).toBeLessThan(80)
+  })
+
+  it('il corpo è agganciato come DESCRIZIONE, e il riferimento punta a qualcosa', () => {
+    render(<Harness field={consenso} />)
+    const spunta = screen.getByRole('checkbox')
+    const rif = spunta.getAttribute('aria-describedby')
+    expect(rif, 'nessun `aria-describedby`: il corpo non è descrizione di niente').toBeTruthy()
+    const bersagli = rif!.split(/\s+/).map((id) => document.getElementById(id))
+    expect(bersagli.every(Boolean), '`aria-describedby` punta nel vuoto').toBe(true)
+    expect(bersagli.map((n) => n!.textContent).join(' ')).toContain('Dichiaro di aver preso visione')
+  })
+
+  it('l’obbligatorietà è detta anche a chi l’asterisco non lo vede', () => {
+    render(<Harness field={consenso} />)
+    expect(screen.getByRole('checkbox')).toHaveAttribute('aria-required', 'true')
+  })
+
+  it('il corpo NON è più dentro la `<label>`: leggerlo e selezionarlo non spunta niente', () => {
+    render(<Harness field={consenso} />)
+    const corpo = screen.getByText(/Dichiaro di aver preso visione/)
+    expect(corpo.closest('label'), 'il corpo è di nuovo un bersaglio che spunta').toBeNull()
+    // La card resta la card — stesso disegno — ma non è più il comando: senza
+    // questo, il dito a freccia continuerebbe a promettere un clic che non c'è.
+    expect(classi(cardDiScelta(screen.getByRole('checkbox')))).not.toContain('cursor-pointer')
+  })
+
+  it('la riga del titolo è un bersaglio da 24px in su (WCAG 2.2 §2.5.8)', () => {
+    render(<Harness field={consenso} />)
+    const riga = screen.getByRole('checkbox').closest('label')!
+    const c = classi(riga)
+    expect(c).toContain('cursor-pointer')
+    // 20px di interlinea + `py-1.5` due volte = 32px; `-my-1.5` li restituisce al
+    // flusso, quindi il bersaglio cresce e l'impaginazione non si muove.
+    expect(c).toContain('py-1.5')
+    expect(c).toContain('-my-1.5')
+  })
+
+  it('spuntandolo dal titolo il consenso si accende (la label è ancora la label)', async () => {
+    render(<Harness field={consenso} />)
+    fireEvent.click(screen.getByText('Ho letto l’informativa sulla privacy'))
+    await waitFor(() => expect(screen.getByRole('checkbox')).toBeChecked())
   })
 })
 
@@ -327,17 +423,36 @@ describe('§5 · `setFocus` raggiunge i controlli disegnati dentro `Controller`'
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Nido')))
   })
 
-  it('CONTROLLO POSITIVO: dove il `ref` non arriva, il fuoco NON si sposta', async () => {
-    // Il campo `file` disegna una <label> e un input nascosto, e il `Controller`
-    // non gli passa nessun `ref`: è la situazione in cui stavano consenso e
-    // caselle prima dell'11/08/2026. Serve a dimostrare che i due `expect` qui
-    // sopra non passerebbero comunque, qualunque cosa faccia `setFocus`.
+  it('caricamento: il fuoco va sull’input del FILE — che fino al 12/08/2026 non lo prendeva', async () => {
+    // ⚠️ QUESTO COLLAUDO ERA IL CONTRARIO, e diceva la verità di allora: «dove il
+    // `ref` non arriva, il fuoco NON si sposta», col campo `file` come esempio.
+    // Era l'ultimo tipo rimasto senza `ref`, ed era anche l'unico il cui controllo
+    // stava a `display:none` — cioè fuori dalla tastiera e fuori dall'albero di
+    // accessibilità. MISURATO sul passo «Documento d'identità» di
+    // `/anagrafica-personale`: premendo «Avanti» con la SOLA scansione mancante,
+    // `document.activeElement` restava sul campo precedente (valido), `scrollY` 0,
+    // e il giro del Tab non si fermava mai sul caricamento.
+    // Ora l'input è `sr-only` e porta `ref`/`id`: il fuoco ci arriva, e con lui
+    // chi compila.
     render(<Harness field={{ id: 'doc', type: 'file', label: 'Documento' }} />)
     fireEvent.click(screen.getByRole('button', { name: /fuoco/i }))
+    const input = document.querySelector('input[type="file"]')
+    expect(input).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(input))
+  })
+
+  it('CONTROLLO POSITIVO: su un blocco senza controlli il fuoco NON si sposta', async () => {
+    // Serve a dimostrare che i tre `expect` qui sopra non passerebbero comunque,
+    // qualunque cosa faccia `setFocus`. Il soggetto è un `paragraph`: un blocco
+    // che non rende nessun controllo, quindi non è registrato e non ha `ref` —
+    // che è la situazione in cui stavano consenso, caselle e file prima delle
+    // correzioni dell'11 e del 12/08/2026.
+    render(<Harness field={{ id: 'nota', type: 'paragraph', label: 'Una nota' }} />)
+    const bottone = screen.getByRole('button', { name: /fuoco/i })
+    fireEvent.click(bottone)
     await new Promise((r) => setTimeout(r, 0))
-    const nascosto = document.querySelector('input[type="file"]')
-    expect(nascosto).toBeTruthy()
-    expect(document.activeElement).not.toBe(nascosto)
+    expect(document.querySelector('input')).toBeNull()
+    expect(document.activeElement).not.toBe(document.querySelector('input'))
   })
 })
 
@@ -669,8 +784,8 @@ describe('§10 · il gruppo obbligatorio vuoto lo dice anche sulle card', () => 
     label: 'Informativa privacy',
     required: true,
   }
-  const card = (controllo: Element) => controllo.closest('label')!
-  /** Il consenso ha una <label> sola e il nome accessibile porta anche l'asterisco. */
+  const card = cardDiScelta
+  /** Il consenso ha una casella sola e il nome accessibile porta anche l'asterisco. */
   const primoControllo = (tipo: string) =>
     tipo === 'consenso' ? screen.getByRole('checkbox') : screen.getAllByRole(tipo === 'radio' ? 'radio' : 'checkbox')[0]
 
@@ -756,5 +871,101 @@ describe('§10 · il gruppo obbligatorio vuoto lo dice anche sulle card', () => 
     const hex = css.match(/--color-kidville-error:\s*(#[0-9A-Fa-f]{6})/)?.[1]
     expect(hex, 'il token dell\'errore non è più dichiarato').toBeTruthy()
     expect(contrasto(hex!, '#FFFFFF')).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// =============================================================================
+describe('§11 · il riquadro del CARICAMENTO in errore cambia aspetto come tutti', () => {
+  /**
+   * ─── IL DIFETTO, MISURATO IL 12/08/2026 ───────────────────────────────────
+   * Al passo «Documento d'identità» di `/anagrafica-personale`, premuto «Avanti»
+   * a passo vuoto: `document_type`, `document_number` e la scadenza prendevano il
+   * bordo rosso pieno a 1,5 px (rgb(229,57,53), 4,23:1 sul bianco). Il riquadro
+   * del file — che aveva `aria-invalid="true"` e «Campo obbligatorio» scritto
+   * sotto — restava con `border-kidville-green/20` a 1 px: composto sul crema,
+   * **1,35:1**. WCAG 1.4.11 chiede ≥ 3:1 per gli indicatori non testuali, quindi
+   * quello non era un contorno debole: era nessun contorno.
+   *
+   * Perché proprio qui costa di più: è il campo che chiede di alzarsi, fotografare
+   * il documento e allegarlo — l'unico che costa fatica, e quindi il primo che si
+   * salta. Chi rilegge la schermata dopo un «Avanti» fallito cerca il rosso: vedeva
+   * tre caselle rosse e il riquadro del documento immutato, e concludeva che quello
+   * fosse a posto.
+   */
+  const scansione: FormField = {
+    id: 'documento_path',
+    type: 'file',
+    label: 'Scansione o foto del documento',
+    required: true,
+  }
+  /** Il riquadro è la `<label>` che avvolge il controllo `sr-only`. */
+  const riquadro = () => document.querySelector('input[type="file"]')!.closest('label')!
+
+  it('CONTROLLO POSITIVO: a riposo porta la sfumatura di brand a 1px', () => {
+    render(<Harness field={scansione} />)
+    const c = classi(riquadro())
+    expect(c).toContain('border-kidville-green/20')
+    expect(c).toContain('border')
+    expect(c).not.toContain('border-kidville-error')
+  })
+
+  it('in errore prende lo STESSO rosso a 1,5px degli altri campi del passo', async () => {
+    render(<Harness field={scansione} />)
+    fireEvent.click(screen.getByRole('button', { name: /valida/i }))
+    await screen.findByText('Campo obbligatorio')
+
+    const c = classi(riquadro())
+    expect(c, 'il riquadro del file resta identico a uno valido').toContain('border-kidville-error')
+    expect(c).toContain('border-[1.5px]')
+    // La sfumatura di brand deve SPARIRE, non affiancarsi: è la regola già
+    // dichiarata per gli `input` nella testata di `FieldRenderer` (righe 41-44).
+    expect(
+      c.some((x) => x.startsWith('border-kidville-green/')),
+      'il contorno debole è rimasto accanto al rosso',
+    ).toBe(false)
+    // E il peso non si somma: `border` (1px) e `border-[1.5px]` sullo stesso
+    // elemento si risolvono nell'ordine del FOGLIO, non della stringa.
+    expect(c).not.toContain('border')
+  })
+
+  it('in Alto Contrasto il rosso sparisce, e il riquadro porta il marcatore che lo salva', async () => {
+    // Stessa rete di sicurezza delle card di scelta (§10): là il contorno diventa
+    // nero come tutti, e il secondo segnale è il bordo DOPPIO. `aria-invalid` non
+    // può servire — sta sull'`input` `sr-only` da 1×1 px, non sulla `<label>` che
+    // disegna il contorno.
+    render(<Harness field={scansione} />)
+    expect(riquadro().hasAttribute('data-scelta-invalida')).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: /valida/i }))
+    await screen.findByText('Campo obbligatorio')
+    expect(riquadro().getAttribute('data-scelta-invalida')).toBe('true')
+  })
+
+  it('caricato il file il rosso se ne va: l\'errore era l\'assenza, non l\'allegato', async () => {
+    const fetchFinta = vi.fn(async () => new Response(JSON.stringify({ path: 'documenti/a/b.pdf' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchFinta)
+    try {
+      render(<Harness field={scansione} />)
+      fireEvent.click(screen.getByRole('button', { name: /valida/i }))
+      await screen.findByText('Campo obbligatorio')
+
+      const file = new File(['%PD'], 'documento.pdf', { type: 'application/pdf' })
+      fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+        target: { files: [file] },
+      })
+      await screen.findByText('documento.pdf')
+
+      // La rivalidazione la chiede il banco, come la chiede il wizard vero
+      // (`accendiRivalidazione`): qui `mode: 'onTouched'` non rivaluta un campo
+      // che ha preso il rosso da `trigger` e non ha mai avuto un blur.
+      fireEvent.click(screen.getByRole('button', { name: /valida/i }))
+      await waitFor(() => expect(classi(riquadro())).not.toContain('border-kidville-error'))
+      expect(riquadro().hasAttribute('data-scelta-invalida')).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

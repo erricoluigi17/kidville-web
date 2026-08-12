@@ -67,7 +67,24 @@ import {
 export function BarraAvanzamento({ indice, totale }: { indice: number; totale: number }) {
   const avanzamento = totale > 0 ? ((indice + 1) / totale) * 100 : 0
   return (
-    <div className="h-1.5 w-full bg-kidville-cream-dark">
+    /* ⚠️ L'ANELLO SULLA TRACCIA, ed è la stessa misura che i pallini qui sotto
+       hanno già pagato — applicata allora ai pallini e non alla barra che sta
+       sopra di loro. `bg-kidville-cream-dark` è elencata fra le classi che il
+       blocco «1 · La carta» di `globals.css` porta a bianco: MISURATO l'12/08/2026
+       sulla pagina viva con «Alto contrasto» acceso, la traccia leggeva
+       `rgb(255,255,255)` su fondo `rgb(255,255,255)` — 1,00:1, `box-shadow: none`
+       — mentre il riempimento restava scuro (`rgb(0,31,28)`). Cioè: della barra
+       si vedeva un moncone che finiva nel nulla, e nulla diceva più quanto manca.
+       L'anello è `ring-inset` e non un bordo: la regola
+       `[data-contrast="high"] .kv-public [class*="border-kidville-"]` porterebbe
+       un bordo a nero (visibile, ma un contorno nero in più su una superficie
+       che ne ha già molti), mentre il `box-shadow` non viene toccato da nessuna
+       regola per-superficie e `ring-kidville-green` porta l'hex inlinato da
+       `@theme inline` — quindi resta verde in ENTRAMBE le modalità. `inset`
+       perché la barra è alta 6 px e corre da vetro a vetro: un anello esterno
+       aggiungerebbe una riga verde sopra e sotto, cioè un divisore che nessuno
+       ha chiesto. */
+    <div className="h-1.5 w-full bg-kidville-cream-dark ring-1 ring-inset ring-kidville-green">
       <div
         className="relative h-full bg-kidville-green transition-all duration-300"
         style={{ width: `${avanzamento}%` }}
@@ -355,6 +372,47 @@ export interface ComandoAvanti {
   verso: 'avanti' | 'riepilogo' | 'invio' | 'inCorso'
 }
 
+/**
+ * ─── LO STATO SPENTO SI DIPINGE, E MENTRE SI LAVORA NON SI SPEGNE AFFATTO ────
+ *
+ * Due difetti gemelli, misurati il 12/08/2026 sul modulo del personale, e
+ * entrambi già chiusi altrove in questo repo — su `Btn` (`src/components/ui/Btn.tsx`,
+ * blocco in testa) e su «Comunica un'assenza» — ma non qui, perché il guscio dei
+ * moduli pubblici non passa da `Btn` e quei lock leggono solo `Btn`.
+ *
+ * **1. `disabled` non è il modo di dire «sto lavorando».** Mettendo `disabled` al
+ * comando primario mentre l'invio è in volo, Chrome sfila il fuoco da un elemento
+ * che si disabilita: MISURATO col fuoco sul bottone «INVIA L'ANAGRAFICA», clic,
+ * risposta ritardata di 2200 ms → `document.activeElement === document.body`, e
+ * ci restava anche dopo il rifiuto 503. Chi naviga da tastiera preme «Invia», il
+ * fuoco cade all'inizio del documento e per sapere se è successo qualcosa deve
+ * ritabulare l'intero riepilogo — 5 «MODIFICA» e 33 righe. Ora quel caso porta
+ * `aria-disabled` più una guardia nel gestore: il bottone resta focalizzabile,
+ * resta annunciato, cambia nome («INVIO…») ed è quello il messaggio.
+ * Il `disabled` VERO resta dove il comando è davvero inerte e non è successo
+ * niente che riguardi il fuoco: il passo «sede» senza un elenco da cui scegliere.
+ *
+ * **2. Lo stato spento si sbiadiva.** `disabled:opacity-50` sul primario e
+ * `disabled:opacity-30` su «Indietro» abbassano IN BLOCCO riempimento e
+ * inchiostro: MISURATO su «INVIO…», inchiostro `rgb(255,218,92)` su
+ * `rgb(0,106,95)` — nominale 4,78:1, **reale 2,02:1** una volta composto al 50 %
+ * sulla crema `rgb(254,241,228)`. Cioè l'unico segnale visivo che il gesto sia
+ * partito era proprio quello che svaniva. La coppia qui sotto è la stessa di
+ * `Btn` e vale **5,75:1** (`sub` #55615C su `neutral-soft` #F0F2F1), col contorno
+ * `neutral` che dice ancora dove comincia il comando (1.4.11): nessuna alfa, così
+ * il rapporto non dipende da ciò che sta sotto.
+ *
+ * ⚠️ IL BORDO STA NELLA BASE, IL SUO COLORE NELLO STATO. Il contorno dello stato
+ * spento è largo 1 px: dichiararlo solo lì farebbe allargare il bottone di 2 px
+ * nell'istante in cui si preme. E il colore non può stare in due posti — fra
+ * `border-transparent` e `border-kidville-neutral` scritte sullo stesso elemento
+ * vince quella che sta più avanti nel FOGLIO, non quella scritta dopo nella
+ * stringa (è la stessa trappola documentata in `FieldRenderer.tsx`, blocco «I tre
+ * pezzi»): l'unico modo di sceglierla è non averle entrambe.
+ */
+const COMANDO_SPENTO =
+  'cursor-not-allowed border-kidville-neutral bg-kidville-neutral-soft text-kidville-sub'
+
 export function ComandiWizard({
   indietro,
   avanti,
@@ -362,15 +420,24 @@ export function ComandiWizard({
   indietro: ComandoIndietro | null
   avanti: ComandoAvanti
 }) {
+  /** L'invio è in volo: il comando è un MESSAGGIO, non un controllo spento. */
+  const inVolo = avanti.verso === 'inCorso'
+  const avantiSpento = avanti.disabilitato === true
+  const indietroSpento = indietro?.disabilitato === true
+
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-kidville-line pt-6">
       {/*
         «INDIETRO» AL PRIMO PASSO NON C'È, invece di esserci spento.
-        `disabled:opacity-30` su testo `text-kidville-sub` dà 1,3:1 sul
-        crema: non è un comando disabilitato, è un fantasma — si legge
+        Portava `disabled:opacity-30` su testo `text-kidville-sub`: 1,3:1 sul
+        crema, cioè non un comando disabilitato ma un fantasma — si legge
         come un pezzo di interfaccia rotto. Uno spazio vuoto dice la
         stessa cosa («da qui non si torna indietro») senza chiedere a
         nessuno di decifrare un grigio.
+        (L'`opacity` non c'è più nemmeno negli altri passi: dal 12/08/2026 lo
+        stato spento si DIPINGE — vedi `COMANDO_SPENTO` qui sopra. Questo
+        comando resta comunque assente al primo passo: un comando che non porta
+        da nessuna parte è meglio non renderlo affatto.)
         Il bottone «Avanti» tiene la sua posizione a destra da solo, con
         `ml-auto`: `justify-between` con un figlio solo lo porterebbe a
         sinistra, e i comandi salterebbero da un lato all'altro fra il
@@ -379,9 +446,19 @@ export function ComandiWizard({
       {indietro !== null && (
         <button
           type="button"
-          onClick={indietro.onClick}
-          disabled={indietro.disabilitato}
-          className="flex items-center gap-2 rounded-pill px-4 py-3 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-sub transition-all hover:bg-kidville-green-soft hover:text-kidville-green disabled:cursor-not-allowed disabled:opacity-30"
+          /* «Indietro» si spegne SOLO mentre l'invio è in volo (è l'unico uso
+             che ne fanno i due moduli), cioè esattamente il caso in cui il
+             fuoco non va rubato: `aria-disabled` e guardia, mai `disabled`. */
+          onClick={() => {
+            if (indietroSpento) return
+            indietro.onClick()
+          }}
+          aria-disabled={indietroSpento || undefined}
+          className={`flex items-center gap-2 rounded-pill border px-4 py-3 font-barlow text-sm font-bold uppercase tracking-wide transition-all ${
+            indietroSpento
+              ? COMANDO_SPENTO
+              : 'border-transparent text-kidville-sub hover:bg-kidville-green-soft hover:text-kidville-green'
+          }`}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" /> {indietro.etichetta}
         </button>
@@ -389,15 +466,40 @@ export function ComandiWizard({
 
       <button
         type="button"
-        onClick={avanti.onClick}
-        disabled={avanti.disabilitato}
+        onClick={() => {
+          // La guardia è ciò che `aria-disabled` NON fa da solo: l'attributo
+          // dichiara lo stato, non impedisce il clic.
+          if (avantiSpento) return
+          avanti.onClick()
+        }}
+        /* `disabled` solo quando il comando è DAVVERO inerte e nessuno ha appena
+           premuto niente (passo «sede» senza elenco). In volo no: vedi il blocco
+           qui sopra. */
+        disabled={avantiSpento && !inVolo}
+        aria-disabled={avantiSpento || undefined}
+        /* `aria-busy` sul bottone che sta lavorando: è l'attributo che dice
+           «questa cosa sta cambiando», ed è la controparte del nome che nel
+           frattempo è diventato «Invio…». */
+        aria-busy={inVolo || undefined}
         /* `py-3` e non `py-2.5`: 24 px di riempimento + 20 px di riga =
            44 px, il bersaglio raccomandato per un pollice (WCAG 2.5.5
            AAA / 2.5.8 «Target Size Minimum» ne chiede 24, che questi
            comandi passavano già a 40 px — ma 40 px su un modulo pubblico
            che si compila dal telefono restano quattro sotto la misura
            che tutti raccomandano, e costano solo 4 px). */
-        className="ml-auto flex items-center gap-2 rounded-pill bg-kidville-green px-6 py-3 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-yellow-ink transition-all hover:bg-kidville-green-dark disabled:opacity-50"
+        /* TRE ASPETTI, non due — e il terzo è il motivo di tutto il blocco in
+           testa. IN VOLO il comando tiene il verde e l'inchiostro pieni
+           (4,78:1): «INVIO…» è l'unico segnale che il gesto sia partito, e
+           spegnerlo o sbiadirlo cancella proprio quello. Cambia solo il
+           puntatore, e sparisce l'`hover`, che su una cosa che sta già
+           lavorando prometterebbe un secondo clic. */
+        className={`ml-auto flex items-center gap-2 rounded-pill border px-6 py-3 font-barlow text-sm font-bold uppercase tracking-wide transition-all ${
+          inVolo
+            ? 'cursor-wait border-transparent bg-kidville-green text-kidville-yellow-ink'
+            : avantiSpento
+              ? COMANDO_SPENTO
+              : 'border-transparent bg-kidville-green text-kidville-yellow-ink hover:bg-kidville-green-dark'
+        }`}
       >
         {avanti.verso === 'inCorso' ? (
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -453,8 +555,20 @@ export function PannelloErroreInvio({
         <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
         {titolo}
       </p>
-      <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{corpo}</p>
-      <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{nota}</p>
+      {/* ── IL TETTO DI LARGHEZZA, E QUI VALE PIÙ CHE ALTROVE (12/08/2026) ────
+          MISURATE con un `Range` sui nodi di testo, carattere per carattere:
+          **107 · 108 · 111** caratteri per riga a 768 px e 96 · 104 · 104 a
+          1440. Sono righe da 12 px, e a un centinaio di caratteri l'occhio
+          perde il capo della riga successiva — su un testo che si legge quando
+          l'invio è appena stato rifiutato, cioè nel momento peggiore per
+          chiedere a qualcuno di rileggere due volte.
+          26rem = 416 px = 75 caratteri: la misura è quella già fatta sulla
+          stessa pagina per il banner «Ti serve il documento d'identità»
+          (384 → 70 · 400 → 70 · **416 → 75** · 432 → 78), e si scrive in rem
+          perché `ch` è la larghezza dello ZERO e dichiara un numero mentre ne
+          produce un altro. Il titolo non lo porta: è una riga corta e sola. */}
+      <p className="mt-1 max-w-[26rem] text-xs leading-relaxed text-kidville-ink">{corpo}</p>
+      <p className="mt-1 max-w-[26rem] text-xs leading-relaxed text-kidville-ink">{nota}</p>
     </div>
   )
 }
@@ -548,9 +662,20 @@ export function ColonnaContesto({ titolo, voci }: { titolo: string; voci: string
       <h2 className="font-barlow text-base font-bold uppercase tracking-wide text-kidville-green">
         {titolo}
       </h2>
+      {/* ── E ANCHE QUI IL TETTO, che da `lg` in su non serve e sotto sì ──────
+          Da `lg` la colonna è larga 256 px e le righe rientrano da sole; nella
+          fascia in cui il riquadro corre per tutta la larghezza no. MISURATE
+          sulla pagina viva: **96 · 101 · 98** caratteri a 640 px e **106 · 101
+          · 104** da 768 a 1023, in un riquadro largo 600-632 px. Non è testo
+          decorativo: dice che il modulo non crea nessun accesso e per quanto
+          tempo si conserva la copia del documento d'identità.
+          Il tetto sta sulla riga e non sul riquadro: il riquadro ha il suo
+          riempimento e il suo fondo, e stringerlo lascerebbe una colonna di
+          crema dentro il crema. 26rem = 416 px = 75 caratteri, la stessa misura
+          del banner del documento. */}
       <ul className="mt-2 space-y-2.5">
         {voci.map((riga) => (
-          <li key={riga} className="flex gap-2 text-xs leading-relaxed text-kidville-ink">
+          <li key={riga} className="flex max-w-[26rem] gap-2 text-xs leading-relaxed text-kidville-ink">
             <span
               aria-hidden="true"
               className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-pill bg-kidville-yellow ring-1 ring-kidville-green"

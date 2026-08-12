@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Info } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Info } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 
 import { Combobox, normalizzaTesto, type OpzioneCombobox, type TestiCombobox } from '@/components/ui/Combobox'
@@ -151,6 +151,22 @@ interface LuogoNascitaFieldsProps {
   disabled?: boolean
   mostraNazione?: boolean
   errori?: Partial<Record<'provincia' | 'comune', string>>
+  /**
+   * Quali dei due controlli sono OBBLIGATORI — asterisco e `aria-required`.
+   *
+   * ⚠️ Il default è «nessuno dei due», e non è pigrizia: cinque dei sei
+   * chiamanti sono pannelli d'amministrazione in cui il luogo di nascita si
+   * completa a pezzi su un archivio già scritto, e marcarlo obbligatorio là
+   * accenderebbe un obbligo che quei moduli non hanno.
+   *
+   * ⚠️ E `provincia: true` è vero anche quando il template dichiara
+   * `birth_province` `required: false` — perché l'obbligo qui non è del dato ma
+   * del PERCORSO: la tendina del comune resta spenta finché la provincia non è
+   * scelta, quindi senza provincia il codice catastale (che È obbligatorio) non
+   * si può produrre affatto. Un asterisco che manca proprio sul campo da cui
+   * dipende tutto il resto è il modo in cui il passo diventa un vicolo cieco.
+   */
+  obbligatori?: Partial<Record<'provincia' | 'comune', boolean>>
 }
 
 /** La sigla convenzionale dell'estero: è quella del dataset e della route. */
@@ -188,6 +204,23 @@ function idSicuro(prefisso: string): string {
 }
 
 /**
+ * Gli `id` dei due controlli, dato il prefisso — e sono ESPORTATI perché chi
+ * monta il campo deve poterci posare il FUOCO.
+ *
+ * I quattro campi del luogo di nascita non passano da `register`: `setFocus` di
+ * react-hook-form non li vede, e su un «Avanti» fallito il fuoco resterebbe dov'è
+ * (MISURATO il 12/08/2026 su `/anagrafica-personale`: con la sola provincia vuota
+ * il fuoco ripiegava sull'`h2` del passo, cioè la pagina sembrava non reagire).
+ * L'unica strada è il nodo vero, per `id` — e l'`id` lo costruisce questo file,
+ * non chi lo monta: due formule della stessa cosa divergono al primo prefisso con
+ * un punto dentro.
+ */
+export function idsLuogoNascita(idPrefisso: string): { provincia: string; comune: string } {
+  const radice = idSicuro(idPrefisso)
+  return { provincia: `${radice}-provincia`, comune: `${radice}-comune` }
+}
+
+/**
  * Gli `id` che DESCRIVONO un campo, uniti con uno spazio.
  *
  * `aria-describedby` accetta una LISTA di riferimenti, non uno solo: è questo che
@@ -201,6 +234,39 @@ function descrittori(...ids: (string | false | undefined)[]): string | undefined
   return usati.length > 0 ? usati.join(' ') : undefined
 }
 
+/**
+ * IL MESSAGGIO D'ERRORE DI UN CAMPO — e ha la stessa forma di tutti gli altri.
+ *
+ * ⚠️ MISURATO il 12/08/2026 sullo stesso passo, nello stesso istante: lo stesso
+ * identico testo, «Campo obbligatorio», usciva in due rese diverse. Sotto i campi
+ * di `FieldRenderer` era **12 px, peso 700, con icona**; sotto i due combobox di
+ * questo file era **13 px, peso 400, senza icona** — colore identico, 5,06:1.
+ *
+ * Non è una disomogeneità di stile: la regola di casa è che ogni stato porti
+ * ICONA + TESTO, perché il colore da solo non arriva a chi non distingue il
+ * rosso, a chi guarda lo schermo al sole o a chi stampa in bianco e nero. Qui il
+ * segnale era portato da colore e testo soltanto — e proprio sul campo che, senza
+ * la correzione del vicolo cieco, era già il più difficile da capire. Peggio
+ * ancora: l'incoerenza INSEGNA che «gli errori sono in grassetto con l'icona», e
+ * poi tradisce quella regola una volta sola, dove meno te lo aspetti.
+ *
+ * Le classi sono quelle di `FieldRenderer` (riga 628) e l'icona è la stessa
+ * (`AlertCircle` a 14 px). Il `-mt-2` resta: è la spaziatura di questa colonna
+ * (`gap-4`), non la tipografia del messaggio.
+ */
+function MessaggioErrore({ id, testo }: { id: string; testo: string }): React.ReactElement {
+  return (
+    <p
+      id={id}
+      role="alert"
+      className="-mt-2 flex items-center gap-1.5 text-xs font-bold text-kidville-error-strong"
+    >
+      <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      {testo}
+    </p>
+  )
+}
+
 export function LuogoNascitaFields({
   valore,
   onChange,
@@ -208,12 +274,12 @@ export function LuogoNascitaFields({
   disabled = false,
   mostraNazione = true,
   errori,
+  obbligatori,
 }: LuogoNascitaFieldsProps): React.ReactElement {
   const t = useTranslations('shared')
 
   const radice = idSicuro(idPrefisso)
-  const idProvincia = `${radice}-provincia`
-  const idComune = `${radice}-comune`
+  const { provincia: idProvincia, comune: idComune } = idsLuogoNascita(idPrefisso)
   const idErroreProvincia = `${idProvincia}-errore`
   const idErroreComune = `${idComune}-errore`
   const idAvviso = `${radice}-avviso-archivio`
@@ -438,11 +504,34 @@ export function LuogoNascitaFields({
   // ── TESTI DI SERVIZIO DEL COMBOBOX ───────────────────────────────────────────
   // Il Combobox non contiene testo: li traduce chi lo monta. Il conteggio è una
   // FUNZIONE perché il plurale lo decide l'ICU del catalogo, non un ternario.
-  const testi = (vuoto: string): TestiCombobox => ({
+  //
+  // ⚠️ IL NOME DEL COMANDO DICE ANCHE QUALE ELENCO APRE (12/08/2026).
+  // Le due tendine stanno una sotto l'altra e i loro due pulsanti portavano lo
+  // STESSO nome accessibile, «Mostra o nascondi l'elenco»: MISURATO al passo «I
+  // tuoi dati» di `/anagrafica-personale`, due `button` con nome identico nella
+  // stessa schermata. Sono i due controlli che producono il codice catastale —
+  // cioè la cosa che rende verificabile il codice fiscale — e il secondo è
+  // DISABILITATO finché il primo non è stato scelto: due comandi indistinguibili
+  // in fila, di cui uno spento per una ragione che il nome non spiega, sono un
+  // vicolo cieco per chi non vede quale dei due sta toccando. axe non lo vede: la
+  // sua regola sui nomi ripetuti copre i link, non i bottoni.
+  // Il rimedio sta QUI e non nel `Combobox`: quel componente NON contiene testo
+  // per contratto (lock «NIENTE testo cablato»), e il nome del campo lo conosce
+  // solo chi lo monta.
+  //
+  // ⚠️ TRE FRASI INTERE nel catalogo, e NON una con dentro `{campo}`. Due
+  // ragioni, e la seconda è una misura: in inglese «l'elenco delle province» e
+  // «l'elenco dei comuni» non si costruiscono incollando un'etichetta a una
+  // preposizione, e una frase intera è ciò che un traduttore può rendere; e il
+  // mock di next-intl dei test NON interpola i parametri — restituisce la
+  // stringa com'è — quindi un nome costruito con `{campo}` uscirebbe IDENTICO
+  // per i due comandi in ogni collaudo, cioè il difetto resterebbe
+  // indimostrabile proprio nel posto in cui va difeso.
+  const testi = (vuoto: string, commutaElenco: string): TestiCombobox => ({
     vuoto,
     caricamento: t('caricamentoInCorso'),
     conteggio: (n) => t('anagRisultatiPlurale', { n }),
-    commutaElenco: t('anagCommutaElenco'),
+    commutaElenco,
   })
 
   const avvisoArchivio = !caricamento && !erroreElenco && (fantasmaComune || provinciaFuoriElenco)
@@ -482,20 +571,17 @@ export function LuogoNascitaFields({
         onChange={scegliProvincia}
         options={opzioniProvincia}
         label={t('anagProvinciaEtichetta')}
-        testi={testi(t('anagNessunaProvincia'))}
+        testi={testi(t('anagNessunaProvincia'), t('anagCommutaElencoProvince'))}
         placeholder={t('anagProvinciaSegnaposto')}
         disabled={disabled}
+        richiesto={obbligatori?.provincia === true}
         invalido={errori?.provincia !== undefined}
         describedById={descrittori(
           errori?.provincia !== undefined && idErroreProvincia,
           avvisoSuProvincia && idAvviso,
         )}
       />
-      {errori?.provincia !== undefined && (
-        <p id={idErroreProvincia} role="alert" className="-mt-2 font-maven text-[13px] text-kidville-error-strong">
-          {errori.provincia}
-        </p>
-      )}
+      {errori?.provincia !== undefined && <MessaggioErrore id={idErroreProvincia} testo={errori.provincia} />}
 
       <Combobox
         id={idComune}
@@ -503,25 +589,42 @@ export function LuogoNascitaFields({
         onChange={scegliComune}
         options={opzioniComune}
         label={estero ? t('anagStatoEtichetta') : t('anagComuneEtichetta')}
-        testi={testi(t('anagNessunComune'))}
+        testi={testi(
+          t('anagNessunComune'),
+          estero ? t('anagCommutaElencoStati') : t('anagCommutaElencoComuni'),
+        )}
         placeholder={siglaValida ? (estero ? t('anagStatoSegnaposto') : t('anagComuneSegnaposto')) : t('anagPrimaLaProvincia')}
         disabled={disabled || !siglaValida}
         caricamento={caricamento}
+        richiesto={obbligatori?.comune === true}
         invalido={errori?.comune !== undefined}
         describedById={descrittori(errori?.comune !== undefined && idErroreComune, avvisoSuComune && idAvviso)}
       />
-      {errori?.comune !== undefined && (
-        <p id={idErroreComune} role="alert" className="-mt-2 font-maven text-[13px] text-kidville-error-strong">
-          {errori.comune}
-        </p>
-      )}
+      {errori?.comune !== undefined && <MessaggioErrore id={idErroreComune} testo={errori.comune} />}
 
       {/* La casella dei soppressi compare solo se ce ne sono davvero: un comando
           che non cambia niente è rumore, e in una schermata di anagrafica il
           rumore è ciò che fa smettere di leggere gli avvisi veri. */}
       {!estero && ciSonoSoppressi && (
-        <div className="-mt-1">
-          <label htmlFor={idSoppressi} className="flex items-start gap-2.5 font-maven text-[13.5px] text-kidville-ink">
+        <div className="-mt-2">
+          {/* ── IL BERSAGLIO È 44 PX, E QUI VALE PIÙ CHE ALTROVE (12/08/2026) ──
+              Era `328 × 20,3 px` a 360 px (`592 × 20` a 1440): l'etichetta
+              avvolge la casella ma non dichiarava nessuna altezza minima, e il
+              testo d'aiuto sta FUORI dall'etichetta — quindi non allarga niente.
+              Venti pixel accanto a una casella da sedici sono un bersaglio che
+              col pollice si manca, e sulla stessa schermata le tre card delle
+              fasce d'età misurano 592 × 50-51.
+              Il comando serve a una categoria precisa: chi è nato in un comune
+              che oggi non esiste più. Senza spuntarlo quel comune non compare,
+              il codice catastale non si sceglie e il modulo non si chiude — e
+              chi manca il bersaglio non ha modo di sapere che era quella la
+              strada. `min-h-[44px]` invece di un riempimento più grosso perché
+              a 360 px il testo va a capo e la riga cresce da sé: il minimo
+              garantisce il caso peggiore, non il migliore. */}
+          <label
+            htmlFor={idSoppressi}
+            className="flex min-h-[44px] items-start gap-2.5 py-2.5 font-maven text-[13.5px] text-kidville-ink"
+          >
             <input
               id={idSoppressi}
               type="checkbox"
@@ -533,7 +636,16 @@ export function LuogoNascitaFields({
             />
             <span>{t('anagMostraSoppressi')}</span>
           </label>
-          <p id={`${idSoppressi}-aiuto`} className="ml-[26px] mt-0.5 font-maven text-[12.5px] text-kidville-sub">
+          {/* ⚠️ IL TETTO DI LARGHEZZA (12/08/2026). MISURATE con un `Range` sui
+              nodi di testo, carattere per carattere: **101** caratteri per riga
+              a 640 px, **111** a 768, **101** a 1024/1280/1440. A 12,5 px una
+              riga di cento caratteri è la lunghezza su cui si perde il capo
+              della riga successiva, e questa spiega perché un comune che oggi
+              non esiste più compare lo stesso — cioè l'unica cosa che permette
+              a chi ci è nato di trovarsi. 26rem = 416 px = 75 caratteri: la
+              misura è quella fatta sul banner del modulo del personale, in rem
+              e non in `ch` (che è la larghezza dello ZERO). */}
+          <p id={`${idSoppressi}-aiuto`} className="ml-[26px] mt-0.5 max-w-[26rem] font-maven text-[12.5px] text-kidville-sub">
             {t('anagMostraSoppressiAiuto')}
           </p>
         </div>

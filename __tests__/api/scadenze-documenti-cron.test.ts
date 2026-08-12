@@ -554,7 +554,13 @@ describe('scadenze-documenti · chi viene avvisato, e con quale canale', () => {
       link: null,
     })
     expect(h.notifiche[1]).toMatchObject({ utenteIds: [SEGRETARIA] })
-    expect(h.notifiche[1].link).toBe('/admin/staff')
+    // Il pannello delle scadenze ORA ESISTE e legge `?tab=`/`?stato=`: il link
+    // torna a portare il filtro (il lock «il link PORTA da qualche parte», più
+    // sotto, verifica che la pagina li legga davvero e non solo che partano).
+    // ⚠️ E lo stato SEGUE LA SOGLIA: a 30 giorni è `entro30`, non `scaduto` —
+    // con `scaduto` si aprirebbe una tabella in cui la persona di cui parla
+    // l'avviso non c'è, che è peggio del nessun filtro.
+    expect(h.notifiche[1].link).toBe('/admin/staff?tab=scadenze&stato=entro30')
 
     // Una sola email, e va a lei: a 30 giorni la segreteria non ha ancora niente
     // da fare, e un'email che non chiede niente consuma l'attenzione che servirà

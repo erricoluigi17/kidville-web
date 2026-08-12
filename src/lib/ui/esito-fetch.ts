@@ -670,6 +670,107 @@ export const CODICI_ERRORE = {
      * sta fotografando una carta d'identità col telefono.
      */
     ALLEGATO_OLTRE_LIMITE_PIATTAFORMA: 'erroreAllegatoOltreLimitePiattaforma',
+
+    /* ── Cockpit delle PRATICHE del personale (`/admin/modulistica?tab=personale`) ──
+     *
+     * Cinque codici del lato SEGRETERIA, distinti dai due qui sopra — che sono della
+     * porta pubblica — e distinti da quelli delle CANDIDATURE, benché le due schermate
+     * si somiglino riga per riga. Non è simmetria: le frasi delle candidature dicono
+     * «candidatura», e qui non si sta valutando nessuna candidatura. Chiamare
+     * «candidatura» la scheda di una collega che lavora qui da anni non è un refuso
+     * di catalogo, è dirle che il sistema ha capito un'altra cosa di lei.
+     */
+
+    /**
+     * 404/403 — la pratica non esiste, **oppure** è di un'altra sede: un messaggio
+     * solo per due fatti, e non per pigrizia.
+     *
+     * Distinguerli direbbe a chi non ha titolo di vederla che quella pratica c'è, e da
+     * lì escono codice fiscale, residenza ed estremi di un documento d'identità. Lo
+     * stesso codice vale sul 403 dell'ALLEGATO: una scansione non si conferma
+     * rispondendo «esiste ma non è tua». La differenza vive nel log.
+     */
+    PRATICA_NON_TROVATA: 'errorePraticaPersonaleNonTrovata',
+    /**
+     * 503 — la lettura o la scrittura del COCKPIT non è riuscita.
+     *
+     * NON riusa `PRATICHE_NON_DISPONIBILI`, che è della porta pubblica: la sua frase
+     * («in questo momento non possiamo registrare i dati del personale… scrivi alla
+     * segreteria della scuola») è scritta per chi sta compilando, e mostrata qui
+     * manderebbe la segreteria a scrivere a sé stessa. Il fatto, qui, è un altro:
+     * l'elenco non si è letto, o l'approvazione non si è potuta completare.
+     */
+    PRATICHE_OPERAZIONE_NON_RIUSCITA: 'errorePratichePersonaleOperazioneNonRiuscita',
+    /**
+     * 409 — qualcun altro ha già deciso. È l'esito del claim atomico
+     * (`pending → in_approvazione`) che chiude la corsa fra due clic o due schede, ed è
+     * anche la risposta a chi prova a spostare di sede una pratica già valutata.
+     */
+    PRATICA_GIA_EVASA: 'errorePraticaPersonaleGiaEvasa',
+    /**
+     * 409 — quell'email è l'accesso di un GENITORE.
+     *
+     * È l'unica delle due porte di `ensureStaffIdentity` che qui resta chiusa: il riuso
+     * del profilo del PERSONALE è il caso normale di questo modulo (la maestra
+     * l'account ce l'ha), mentre dare il profilo docente all'uid di un genitore gli
+     * darebbe l'anagrafica di tutti i bambini — oppure gli toglierebbe l'accesso ai
+     * propri figli. È una decisione che prende una persona, non una route.
+     */
+    PRATICA_EMAIL_GIA_GENITORE: 'errorePraticaPersonaleEmailGiaGenitore',
+    /**
+     * 400 — la sede indicata per lo spostamento non è una sede della cooperativa.
+     *
+     * Vale anche per la sede fittizia su cui gira la CI, che `sediReali` esclude da
+     * ogni elenco: spostarci una pratica vera la farebbe sparire da tutte le
+     * scrivanie senza che nessuno possa più trovarla.
+     */
+    PRATICA_SEDE_NON_AMMESSA: 'errorePraticaPersonaleSedeNonAmmessa',
+    /**
+     * 403 — quell'email ha un account registrato su un plesso che questa postazione
+     * non gestisce, e il fascicolo NON è stato scritto.
+     *
+     * NON riusa `PRATICA_NON_TROVATA`, e non è una svista: lì il silenzio protegge
+     * (dire «esiste» rivelerebbe una pratica che chi guarda non ha titolo di vedere),
+     * qui la pratica chi guarda ce l'ha davanti — l'ha appena aperta — e ciò che
+     * manca è l'unica cosa che gli permette di rimediare: sapere che il muro è la
+     * SEDE DELLA PERSONA, non la pratica, e che l'approvazione va chiesta a chi quel
+     * plesso lo gestisce. Un 403 muto la manderebbe a ripremere.
+     */
+    PRATICA_ACCOUNT_ALTRA_SEDE: 'errorePraticaPersonaleAccountAltraSede',
+
+    /* ── Cruscotto «Scadenze documenti» in Segreteria (`/admin/staff?tab=scadenze`) ──
+     *
+     * Tre codici, e nessuno riusa i due della porta PUBBLICA qui sopra: quelli
+     * parlano a una maestra che sta compilando il modulo («non siamo riusciti a
+     * registrare i tuoi dati»), questi a chi sta in segreteria con la persona davanti
+     * al banco. La stessa frase, letta dai due posti, dice due cose diverse — e in
+     * uno dei due sarebbe falsa.
+     */
+
+    /**
+     * 503 — il cruscotto delle scadenze non si è potuto leggere: schema non ancora
+     * creato (è lo stato del database della CI), lettura fallita, storage muto.
+     *
+     * ⚠️ ESISTE PERCHÉ L'ALTERNATIVA È UN ELENCO VUOTO, che su questa pagina è la
+     * risposta più pericolosa possibile: «nessun documento in scadenza» si legge
+     * come «va tutto bene» ed è indistinguibile da «non abbiamo guardato». La
+     * segreteria smetterebbe di controllare proprio mentre il controllo è fermo.
+     */
+    ANAGRAFICA_PERSONALE_NON_DISPONIBILE: 'erroreAnagraficaPersonaleNonDisponibile',
+    /**
+     * 404/403 — quell'anagrafica non è accessibile: non esiste, oppure è di
+     * un'altra sede. Una frase sola per i due casi, ed è deliberato: distinguerli
+     * direbbe a chi non ha titolo che quella persona lavora qui.
+     */
+    ANAGRAFICA_PERSONALE_NON_TROVATA: 'erroreAnagraficaPersonaleNonTrovata',
+    /**
+     * 503 — la correzione allo sportello non è stata registrata.
+     *
+     * NON riusa `ANAGRAFICA_PERSONALE_NON_DISPONIBILE`: lì non si è letto niente,
+     * qui non si è SCRITTO — e chi ha la persona davanti deve sapere che la nuova
+     * scadenza non è in tabella, invece di congedarla credendo di averla salvata.
+     */
+    ANAGRAFICA_PERSONALE_NON_AGGIORNATA: 'erroreAnagraficaPersonaleNonAggiornata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

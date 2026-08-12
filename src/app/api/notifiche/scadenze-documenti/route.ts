@@ -152,14 +152,16 @@ function gateDelTipo(supabase: Awaited<ReturnType<typeof createAdminClient>>) {
 }
 
 /**
- * DOVE ATTERRA LA SEGRETERIA — e perché senza parametri.
+ * DOVE ATTERRA LA SEGRETERIA — sulla linguetta giusta, col filtro già applicato.
  *
- * Questa funzione restituiva `/admin/staff?tab=scadenze&stato=scaduto`, cioè
- * «il pannello col filtro già applicato». MISURATO: quel pannello non esiste.
- * `src/app/(dashboard)/admin/staff/page.tsx` (27 righe) monta `StaffPanel` e non
- * legge nessun `searchParams`; `StaffPanel.tsx` (185 righe) non contiene né
- * `useSearchParams`, né una scheda `scadenze`, né un filtro `stato`. I due
- * parametri erano INERTI: chi cliccava atterrava sull'elenco del personale.
+ * ─── LA STORIA, PERCHÉ SPIEGA LA FORMA ──────────────────────────────────────
+ *
+ * Questa funzione restituiva `/admin/staff?tab=scadenze&stato=scaduto` quando
+ * quel pannello NON ESISTEVA: `admin/staff/page.tsx` montava `StaffPanel` e non
+ * leggeva nessun `searchParams`. I due parametri erano INERTI — chi cliccava
+ * atterrava sull'elenco del personale — e allora si tolsero, lasciando
+ * `/admin/staff` nudo con l'impegno scritto qui: «quando il pannello arriverà,
+ * il filtro si rimette QUI».
  *
  * ⚠️ E NON POTEVA ACCORGERSENE NESSUN TEST DI QUESTA ROUTE. Un parametro che la
  * destinazione ignora è verde per costruzione: la stringa parte, la stringa
@@ -170,17 +172,26 @@ function gateDelTipo(supabase: Awaited<ReturnType<typeof createAdminClient>>) {
  * risolve il percorso su un `page.tsx` vero e, per ogni parametro di query,
  * pretende che la destinazione lo legga davvero (`.get('x')` o `searchParams.x`).
  *
- * `/admin/staff` NUDO invece che `link: null` (la scelta fatta per l'interessata,
- * che un pannello suo non ce l'ha): questa pagina esiste, il ruolo di chi riceve
- * l'avviso la può aprire, ed è l'anagrafica in cui quella persona sta. Il fatto —
- * chi, quale documento, quale data — è già nel corpo della notifica e dell'email:
- * la pagina serve per agire, non per sapere.
+ * ─── IL PANNELLO ORA C'È, E IL FILTRO TORNA ─────────────────────────────────
  *
- * Quando il pannello delle scadenze arriverà, il filtro si rimette QUI e il lock
- * lo lascerà passare da solo, perché a quel punto la pagina lo leggerà.
+ * `admin/staff/page.tsx` legge `?tab=` e `?stato=` (`searchParams.get`) e apre
+ * `ScadenzeDocumenti` col secchio già selezionato. Il filtro si rimette perciò
+ * adesso, ed è la riga che separa «arriva un avviso e so dov'è la riga» da «mi
+ * si apre l'elenco intero e devo ritrovarla»: una notifica che chiede di rifare
+ * a mano il lavoro che aveva già fatto si impara a ignorare.
+ *
+ * ⚠️ LO STATO SEGUE LA SOGLIA, non è fisso a `scaduto`. Un avviso a 60 giorni che
+ * atterrasse sul filtro «Scaduti» mostrerebbe una tabella in cui la persona di
+ * cui parla l'avviso NON C'È — che è peggio del nessun filtro. La traduzione è
+ * la stessa del pannello (`statoScadenza`): 0 ⇒ `scaduto`, fino a 30 ⇒
+ * `entro30`, oltre ⇒ `entro90`. Due mappe della stessa soglia divergerebbero al
+ * primo cambio, e a divergere sarebbe il filtro che si apre rispetto alla riga
+ * che l'ha causato: se un giorno questa riga e il pannello si allontanano, il
+ * posto giusto in cui unirli è `@/lib/anagrafica/scadenze`.
  */
-function linkPannello(): string {
-  return '/admin/staff'
+function linkPannello(soglia: number): string {
+  const stato = soglia === SOGLIA_SCADUTO ? 'scaduto' : soglia <= 30 ? 'entro30' : 'entro90'
+  return `/admin/staff?tab=scadenze&stato=${stato}`
 }
 
 /**
@@ -207,13 +218,13 @@ function linkPannello(): string {
  * regola 9). In quel caso si torna al percorso nudo, che è brutto ma innocuo —
  * mai `undefined/admin/staff`.
  */
-function linkAssoluto(request: Request): string {
+function linkAssoluto(request: Request, soglia: number): string {
   const base = process.env.NEXT_PUBLIC_APP_URL
-  if (base) return `${base}${linkPannello()}`
+  if (base) return `${base}${linkPannello(soglia)}`
   try {
-    return `${new URL(request.url).origin}${linkPannello()}`
+    return `${new URL(request.url).origin}${linkPannello(soglia)}`
   } catch {
-    return linkPannello()
+    return linkPannello(soglia)
   }
 }
 
@@ -289,7 +300,7 @@ function corpoSegreteria(
     'Finché il documento non viene aggiornato la persona non è identificabile per gli ' +
       'adempimenti obbligatori del datore di lavoro.',
     '',
-    `Anagrafica del personale: ${linkAssoluto(request)}`,
+    `Anagrafica del personale: ${linkAssoluto(request, soglia)}`,
   ].join('\n')
 }
 
@@ -697,7 +708,7 @@ export const POST = withRoute('notifiche/scadenze-documenti:POST', async (reques
               ? 'Documento del personale scaduto'
               : 'Documento del personale in scadenza',
           corpo: corpoSegreteria(request, persona, riga.document_type, scadenza, soglia).split('\n')[0],
-          link: linkPannello(),
+          link: linkPannello(soglia),
           entitaTipo: 'anagrafica_personale',
           entitaId: persona.id,
           bufferMin: 0,

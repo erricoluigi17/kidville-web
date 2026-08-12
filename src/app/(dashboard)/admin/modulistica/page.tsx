@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import {
-  FileText, Plus, UserCheck, Settings, Calendar, Users,
+  FileText, Plus, UserCheck, Settings, Calendar, Users, IdCard,
   Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
@@ -14,6 +14,7 @@ import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
 import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
+import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale';
 import { formattaIstante } from '@/i18n/config';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
@@ -101,7 +102,7 @@ interface PreInscription {
   created_at: string;
 }
 
-type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'moduli-genitori' | 'attesa' | 'odt';
+type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'moduli-genitori' | 'attesa' | 'odt';
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
@@ -112,8 +113,16 @@ function ModulisticaInner() {
   // `candidature` è nell'elenco perché è il bersaglio del collegamento della
   // notifica di una nuova candidatura (`/admin/modulistica?tab=candidature`):
   // senza, quel collegamento aprirebbe la linguetta sbagliata in silenzio.
+  //
+  // `personale` è nell'elenco per la STESSA ragione, e va detto perché è una riga che
+  // si dimentica: `iscrizione/personale:POST` manda alla Segreteria una notifica con
+  // link `/admin/modulistica?tab=personale`, e i collegamenti profondi del cockpit
+  // (`?tab=personale&pratica=<uuid>`) partono da lì. Senza questa parola, ogni avviso
+  // di anagrafica del personale aprirebbe «Moduli inviabili» — cioè la linguetta
+  // sbagliata, senza nessun errore da nessuna parte.
   const initialTab: ModulisticaTab =
-    tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'moduli-genitori' || tabParam === 'odt'
+    tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'personale'
+    || tabParam === 'moduli-genitori' || tabParam === 'odt'
       ? tabParam
       : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
@@ -525,13 +534,14 @@ function ModulisticaInner() {
           { id: 'inviabili', label: t('modTabInviabili'), icon: Send },
           { id: 'ricevuti', label: t('modTabRicevuti'), icon: Inbox },
           { id: 'candidature', label: t('modTabCandidature'), icon: UserCheck },
+          { id: 'personale', label: t('modTabPersonale'), icon: IdCard },
           { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
           { id: 'odt', label: t('modTabOdt'), icon: Settings },
         ]}
       />
 
-      {/* Moduli inviabili / ricevuti / candidature: operano multi-sede — leggono
-          e scrivono dichiarando le sedi attive con `x-sedi`, quindi non passano
+      {/* Moduli inviabili / ricevuti / candidature / personale: operano multi-sede —
+          leggono e scrivono dichiarando le sedi attive con `x-sedi`, quindi non passano
           dalla guardia di sede singola (che pretende UNA sede sola). */}
       {activeTab === 'inviabili' ? (
         <ModuliInviabili />
@@ -539,6 +549,8 @@ function ModulisticaInner() {
         <ModuliRicevuti />
       ) : activeTab === 'candidature' ? (
         <CandidatureInsegnanti />
+      ) : activeTab === 'personale' ? (
+        <PratichePersonale />
       ) : sediLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />

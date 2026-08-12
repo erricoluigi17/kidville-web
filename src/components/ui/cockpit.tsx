@@ -20,6 +20,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { TONE_HEX, TRACK } from '@/lib/ui/chart-colors';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { focusabiliIn } from '@/lib/accessibility/focus-dialogo';
 
 export type Tone = 'green' | 'info' | 'warn' | 'error' | 'success' | 'neutral' | 'yellow';
 
@@ -277,15 +278,35 @@ export const TROW = 'transition-colors hover:bg-kidville-cream';
  * NON PASSA DALLA PRIMITIVA `Modal`, ed è una scelta, non una dimenticanza:
  * `Modal` centra il proprio contenuto (`flex items-center justify-center p-4`) e
  * un pannello ancorato a destra e alto quanto lo schermo non ci entra senza
- * cambiare la primitiva stessa. Conseguenza da tenere presente: il Drawer NON ha
- * il focus-trap, l'inerzia dello sfondo né il tasto Indietro di Android che la
- * primitiva ha ricevuto il 2026-07-31. Chi unificherà le due cose deve lavorare
- * su `Modal`, non qui.
+ * cambiare la primitiva stessa. Conseguenze che RESTANO: il Drawer non ha il tasto
+ * Indietro di Android né l'inerzia dello sfondo che `Modal` ha ricevuto il
+ * 2026-07-31 (sull'inerzia, il perché sta nell'effetto del fuoco qui sotto: non è
+ * una dimenticanza, è una misura). Chi unificherà le due cose deve lavorare su
+ * `Modal`, non qui.
  *
  * Quello che si può avere senza la primitiva c'è: un NOME per il dialogo (il
  * titolo era un `<h2>` scollegato, e un `role="dialog"` senza nome non si
  * annuncia), la chiusura con Escape (prima si usciva solo col mouse) e lo scrim
  * fuori dall'albero di accessibilità.
+ *
+ * ── IL FUOCO (2026-08-12) ────────────────────────────────────────────────────
+ *
+ * `aria-modal="true"` DICE allo screen reader che tutto ciò che sta fuori è
+ * inerte. Fino a oggi il Tab del browser diceva il contrario: aprendo un pannello
+ * dall'elenco, `document.activeElement` restava il collegamento nell'elenco
+ * SOTTO lo scrim, e da lì il Tab girava sui comandi coperti — invisibili, ma
+ * attivabili con Invio. Misurato sul cockpit delle pratiche del personale:
+ * `dialog.contains(document.activeElement)` = `false` e 2 elementi ancora
+ * tabbabili fuori dal dialogo (WCAG 2.4.11; e 2.4.3 sul ritorno, che non c'era
+ * affatto). Su un pannello che mostra codice fiscale, residenza ed estremi di un
+ * documento d'identità.
+ *
+ * Adesso il fuoco ENTRA all'apertura, il Tab CICLA dentro e alla chiusura torna
+ * al comando che ha aperto. Il ciclo usa lo stesso pezzo di `Modal`
+ * (`@/lib/accessibility/focus-dialogo`, estratto per non averne due copie che
+ * divergono). Il fuoco va sul contenitore `role="dialog"`, cioè sul nodo che
+ * porta `aria-labelledby`: così lo screen reader annuncia il NOME del pannello,
+ * e non il primo bottone che gli capita.
  */
 export function Drawer({ open, onClose, title, subtitle, children, footer, width = 460 }: { open: boolean; onClose: () => void; title?: React.ReactNode; subtitle?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; width?: number }) {
   const t = useTranslations('shared');
@@ -315,13 +336,114 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  /**
+   * IL FUOCO ENTRA, CI RESTA, E ALLA CHIUSURA TORNA DA DOVE ERA PARTITO.
+   *
+   * Effetto SEPARATO da quello dell'Escape, e le deps sono il motivo: quello dipende
+   * da `onClose`, che i chiamanti passano come funzione inline (`onClose={() =>
+   * setSel(null)}`) e quindi cambia a OGNI render. Agganciando qui il fuoco, il
+   * contenitore se lo riprenderebbe a ogni battuta di tasto dentro il pannello. Con
+   * `[open]` l'ingresso avviene una volta sola, all'apertura.
+   *
+   * Il fuoco va sul contenitore `role="dialog"` — il nodo che porta `aria-labelledby`
+   * — e non sul primo controllo: così lo screen reader annuncia il NOME del pannello,
+   * e non il bottone che gli capita per primo.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const contenitore = contenitoreRef.current;
+    if (!contenitore) return;
+    // Chi aveva il fuoco PRIMA: nel cockpit è il collegamento dell'elenco che ha
+    // aperto il pannello, ed è il posto in cui va rimesso alla chiusura (WCAG 2.4.3).
+    // Senza, chi naviga da tastiera ricomincia dalla cima della pagina ogni volta.
+    const attivoPrima = (document.activeElement as HTMLElement | null) ?? null;
+    contenitore.focus();
+
+    // ── IL CICLO DI TAB ──────────────────────────────────────────────────────
+    // `aria-modal="true"` dice allo screen reader che fuori è tutto inerte; senza
+    // questo, il Tab diceva il contrario e portava sui comandi COPERTI dallo scrim,
+    // invisibili ma attivabili con Invio (WCAG 2.4.11). Su un pannello che mostra
+    // codice fiscale, residenza ed estremi di un documento d'identità.
+    //
+    // ⚠️ PERCHÉ UN CICLO E NON `rendiInerteFuoriDa`, che il repo ha già e che `Modal`
+    // usa. L'inerzia marca lo sfondo `inert` (e `aria-hidden` dove `inert` non
+    // esiste), e almeno un consumatore di QUESTO drawer tiene il pannello aperto
+    // MENTRE lo sfondo annuncia: `CodiciFiscaliDaVerificare` scrive il codice dal
+    // pannello e lascia che sia una regione `aria-live="polite"` fuori dal pannello a
+    // dire «Aggiornamento dell'elenco in corso…» — con lo sfondo inerte quell'annuncio
+    // non parte più, e il suo test resterebbe VERDE perché asserisce l'attributo, non
+    // l'annuncio. Scambiare un difetto AA con un altro, in silenzio, non è una
+    // correzione. L'inerzia va insieme all'unificazione con `Modal`, e va fatta con
+    // quel componente in mano.
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      // Come per l'Escape: reagisce solo il dialogo PIÙ INTERNO. Una modale aperta
+      // DAL drawer ha il suo trap, e due cicli sullo stesso `document` si
+      // contenderebbero il fuoco.
+      const sopra = Array.from(
+        document.querySelectorAll('[role="dialog"][aria-modal="true"]'),
+      ).filter((d) => d !== contenitore && !d.contains(contenitore));
+      if (sopra.length > 0) return;
+
+      const lista = focusabiliIn(contenitore);
+      if (lista.length === 0) {
+        // Un pannello senza controlli: il Tab non ha dove andare DENTRO, e lasciarlo
+        // uscire lo porterebbe sotto lo scrim.
+        e.preventDefault();
+        contenitore.focus();
+        return;
+      }
+      const primo = lista[0];
+      const ultimo = lista[lista.length - 1];
+      // Il fuoco può essere GIÀ uscito senza passare da un Tab: succede ogni volta che
+      // si preme un comando che si disabilita durante una POST, perché
+      // `document.activeElement` diventa `<body>`. Da lì nessuno dei due rami sotto
+      // scatterebbe e il Tab successivo portava sull'intestazione della pagina dietro.
+      if (!contenitore.contains(document.activeElement)) {
+        e.preventDefault();
+        primo.focus();
+        return;
+      }
+      if (e.shiftKey && document.activeElement === primo) {
+        e.preventDefault();
+        ultimo.focus();
+      } else if (!e.shiftKey && document.activeElement === ultimo) {
+        e.preventDefault();
+        primo.focus();
+      }
+    };
+    document.addEventListener('keydown', onTab);
+
+    return () => {
+      document.removeEventListener('keydown', onTab);
+      // Si restituisce solo se il fuoco è DAVVERO caduto sul `body` (il pannello è
+      // stato smontato) e se il comando di partenza è ancora nel documento: altrimenti
+      // riportarlo indietro sarebbe rubarlo a chi l'ha preso nel frattempo.
+      if (!attivoPrima || attivoPrima === document.body || !attivoPrima.isConnected) return;
+      const attivoOra = document.activeElement;
+      if (attivoOra && attivoOra !== document.body) return;
+      attivoPrima.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     // z-[115]: sopra tutto il chrome del cockpit (topbar e sidebar `z-[105]`,
     // foglio «Menu» `z-[110]`) e sotto i modali della primitiva (`z-[120]`), che
     // possono aprirsi DA dentro un drawer. A `z-[95]` la barra verde gli passava
     // davanti e restava cliccabile.
-    <div ref={contenitoreRef} className="fixed inset-0 z-[115]" role="dialog" aria-modal="true" aria-labelledby={title ? titoloId : undefined}>
+    <div
+      ref={contenitoreRef}
+      className="fixed inset-0 z-[115] outline-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={title ? titoloId : undefined}
+      // `-1`: il contenitore riceve il fuoco all'apertura ma NON entra nel giro del
+      // Tab — un dialogo non è un controllo, e ripassarci sopra a ogni ciclo sarebbe
+      // una tappa muta. Per lo stesso motivo non serve un anello di fuoco visibile:
+      // qui non ci si arriva da tastiera, ci si viene messi.
+      tabIndex={-1}
+    >
       <div aria-hidden="true" className="absolute inset-0 bg-kidville-ink/30 backdrop-blur-[1px]" onClick={onClose} />
       <div
         className="absolute inset-y-0 right-0 flex max-w-[92%] flex-col bg-kidville-white"

@@ -16,6 +16,7 @@ import {
   Plus,
   TrendingUp,
   GraduationCap,
+  IdCard,
   Settings,
   Wrench,
 } from 'lucide-react';
@@ -30,8 +31,14 @@ import { HeroCard } from '@/components/features/shell/HeroCard';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useDateFormat } from '@/lib/i18n/date';
+import { logClient } from '@/lib/logging/client';
+import {
+  statoScadenza,
+  type RigaScadenza,
+} from '@/components/features/admin/personale/ScadenzeDocumenti';
 import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
-import { formattaIstante } from '@/i18n/config';
+import { dataCivile, formattaIstante } from '@/i18n/config';
 
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
@@ -312,6 +319,14 @@ function AdminDashboardInner() {
         </div>
       )}
 
+      {/* La TERZA scheda: i documenti d'identità del personale già scaduti.
+          Sta FUORI dal `{data && …}` di proposito — non dipende da
+          `/api/admin/dashboard`, e un allarme che sparisce quando un'altra
+          chiamata fallisce è un allarme che tace proprio nel momento peggiore. */}
+      <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <DocumentiScadutiPanel userId={userId} />
+      </div>
+
       {/* Hub moduli */}
       <div className="mt-8">
         <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green mb-3">
@@ -461,6 +476,7 @@ function AlertPanel({
   href,
   rows,
   empty,
+  errore,
 }: {
   title: string;
   icon: typeof AlertTriangle;
@@ -469,6 +485,16 @@ function AlertPanel({
   href: string;
   rows: AlertRow[];
   empty: string;
+  /**
+   * L'elenco NON si è potuto leggere.
+   *
+   * Senza questa via d'uscita un riquadro d'allarme ha due soli aspetti: righe,
+   * oppure la frase «non c'è niente». La seconda, detta su una lettura fallita,
+   * è la bugia più pericolosa che una home di direzione possa raccontare —
+   * «nessun documento scaduto» si legge come «va tutto bene» ed è
+   * indistinguibile da «non abbiamo guardato».
+   */
+  errore?: string | null;
 }) {
   const t = useTranslations('adminNav');
   const toneCls = tone === 'red' ? 'bg-kidville-error' : 'bg-kidville-warn';
@@ -492,7 +518,11 @@ function AlertPanel({
           {t('alertApri')} <ArrowRight size={14} />
         </Link>
       </div>
-      {rows.length === 0 ? (
+      {errore ? (
+        <p role="alert" className="flex items-start gap-2 py-6 font-maven text-sm text-kidville-warn-strong">
+          <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" /> {errore}
+        </p>
+      ) : rows.length === 0 ? (
         <p className="font-maven text-sm text-kidville-muted py-6 text-center">{empty}</p>
       ) : (
         <motion.ul
@@ -517,6 +547,110 @@ function AlertPanel({
         </motion.ul>
       )}
     </div>
+  );
+}
+
+/**
+ * I DOCUMENTI D'IDENTITÀ DEL PERSONALE GIÀ SCADUTI — la terza scheda d'allarme.
+ *
+ * ─── PERCHÉ SULLA HOME, E NON SOLO NEL SUO PANNELLO ─────────────────────────
+ *
+ * Perché è l'unica non conformità di questo elenco che non se ne va da sola e
+ * che nessuno viene a segnalare: una retta scaduta la reclama una famiglia,
+ * un'iscrizione in attesa la sollecita chi l'ha mandata; un documento scaduto
+ * non lo dice nessuno, e intanto quella persona è in servizio senza un documento
+ * valido — cioè senza ciò che serve a identificarla per UNILAV, libro unico e
+ * denunce INPS/INAIL.
+ *
+ * ─── PERCHÉ «VEDI TUTTI» PORTA A `?tab=scadenze&stato=scaduto` ──────────────
+ *
+ * Perché il bersaglio di un allarme dev'essere la lista GIÀ filtrata. Atterrare
+ * sull'elenco completo e doverlo rifiltrare è il modo in cui un collegamento
+ * d'allarme smette di essere usato: la prima volta si cerca la riga, la seconda
+ * si rimanda, la terza non si apre più.
+ *
+ * ─── PERCHÉ LO STATO SI RICALCOLA QUI ───────────────────────────────────────
+ *
+ * La route manda le date, non uno stato: «scaduto» lo decide `statoScadenza`,
+ * la stessa funzione del pannello e — sotto — le stesse soglie del cron
+ * notturno. Un secondo posto che decide la stessa cosa è un secondo posto che
+ * può divergere, e a divergere sarebbe il numero rosso sulla home rispetto
+ * all'elenco che quel numero apre.
+ */
+function DocumentiScadutiPanel({ userId }: { userId: string | null }) {
+  const t = useTranslations('adminNav');
+  const f = useDateFormat();
+  const [righe, setRighe] = useState<RigaScadenza[]>([]);
+  const [oggi, setOggi] = useState<string | null>(null);
+  const [errore, setErrore] = useState<string | null>(null);
+  const [letto, setLetto] = useState(false);
+
+  /**
+   * ⚠️ `try/finally`, MAI `try/catch`, ed è una forma obbligata in questo repo.
+   *
+   * `react-hooks/set-state-in-effect` (il gate gira a zero warning) considera
+   * raggiungibile in modo SINCRONO un `setState` che stia dentro un `catch`: la
+   * `fetch` può lanciare prima del primo `await`, quindi quel ramo girerebbe
+   * dentro il corpo dell'effetto. Misurato su questo file — con `catch` è rosso,
+   * con `finally` è verde — ed è la stessa forma già in uso in
+   * `PresenzeRealtimeCard`, qui sopra. L'errore si cattura sulla PROMISE, con
+   * `.catch(() => null)`, e il fallimento si legge dal valore: `res === null` è
+   * «non ha risposto», `!res.ok` è «ha risposto male». Nessuno dei due tace.
+   */
+  const carica = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/admin/anagrafica-personale${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`,
+      ).catch(() => null);
+      const json = res?.ok ? await res.json().catch(() => null) : null;
+      if (!res || !res.ok || !Array.isArray(json?.data)) {
+        setErrore(t('alertDocumentiErrore'));
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: res
+            ? `home-documenti-scaduti-non-letti: http ${res.status}`
+            : 'home-documenti-scaduti-falliti: la richiesta non ha risposto',
+          route: '/admin',
+          ...(res ? { stato: res.status } : null),
+        });
+        return;
+      }
+      setRighe(json.data as RigaScadenza[]);
+      setOggi(typeof json.oggi === 'string' ? json.oggi : null);
+      setErrore(null);
+    } finally {
+      setLetto(true);
+    }
+  }, [userId, t]);
+
+  useEffect(() => { carica(); }, [carica]);
+
+  // `oggi` è quello del SERVER (`Europe/Rome`): un portatile avanti di un giorno
+  // sposterebbe una riga fra «scade oggi» e «scaduto», che è proprio il confine
+  // su cui questo riquadro non deve sbagliare.
+  const riferimento = oggi ?? dataCivile();
+  const scaduti = righe.filter((r) => statoScadenza(r.document_expiry, riferimento) === 'scaduto');
+
+  return (
+    <AlertPanel
+      title={t('alertDocumentiTitolo')}
+      icon={IdCard}
+      count={scaduti.length}
+      tone="red"
+      href={`/admin/staff?tab=scadenze&stato=scaduto${userId ? `&userId=${userId}` : ''}`}
+      // Finché la prima risposta non è arrivata non si afferma niente: «Nessun
+      // documento scaduto» è una constatazione, e dirla su una lettura che non
+      // è ancora tornata è la stessa bugia del riquadro vuoto su un guasto.
+      empty={letto ? t('alertDocumentiVuoto') : t('caricamento')}
+      errore={errore}
+      rows={scaduti.slice(0, 5).map((r) => ({
+        id: r.utente_id,
+        left: [r.cognome ?? '', r.nome ?? ''].map((s) => s.trim()).filter(Boolean).join(' '),
+        right: t('alertDocumentiScaduto'),
+        meta: r.document_expiry ? f.dataBreve(r.document_expiry) : '',
+      }))}
+    />
   );
 }
 

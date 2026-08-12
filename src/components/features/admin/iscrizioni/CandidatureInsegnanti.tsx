@@ -14,6 +14,7 @@ import { useSediAttive } from '@/lib/context/sede-context'
 import { useAdminIdentity } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
+import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato'
 
 /**
  * IL COCKPIT DELLE CANDIDATURE — lato segreteria del modulo `/lavora-con-noi`.
@@ -618,63 +619,31 @@ export function CandidatureInsegnanti() {
   /**
    * Il curriculum: la URL è firmata dal server e vive dieci minuti.
    *
-   * La finestra si apre PRIMA della fetch, dentro il gesto dell'utente: Safari e
-   * la WebView Capacitor (l'app è spedita nativa) bloccano una `window.open`
-   * chiamata in continuazione di promise, e il valore di ritorno non lo guardava
-   * nessuno — il pulsante non faceva niente e non diceva niente. Se la finestra
-   * non c'è, la URL firmata si mostra come link da aprire a mano.
+   * Il COME (finestra aperta dentro il gesto, `opener` a null, ripiego sul link
+   * quando il browser blocca) sta in `@/lib/ui/apri-documento-firmato`: era
+   * scritto qui e in `ModuliRicevuti`, in due versioni che avevano già smesso di
+   * coincidere — la seconda non apriva la finestra nel gesto e non guardava
+   * nemmeno lo stato della risposta. Qui resta ciò che solo questo pannello sa:
+   * quale frase mostrare.
+   *
+   * Si resta su `candErroreCv`, e non è una dimenticanza: i codici che la route
+   * manda su quel ramo (`CANDIDATURE_OPERAZIONE_NON_RIUSCITA`,
+   * `CANDIDATURA_NON_TROVATA`) parlano della CANDIDATURA, non del file, e il loro
+   * testo di catalogo («l'operazione non è riuscita») direbbe meno di questa
+   * frase — che è già tradotta e non è mai prosa del server.
    */
   async function apriCurriculum(path?: string | null) {
     if (!path) return
     setCvBloccato(null)
-    const finestra = typeof window !== 'undefined' ? window.open('', '_blank') : null
-    try {
-      const res = await fetch(`${API}?doc=${encodeURIComponent(path)}`, {
-        headers: { 'x-sedi': reFetchKey },
-      })
-      const json = await res.json().catch(() => null)
-      if (!res.ok || !json?.url) {
-        finestra?.close()
-        // Qui si resta su `candErroreCv`, e non è una dimenticanza: i codici che
-        // la route manda su questo ramo (`CANDIDATURE_OPERAZIONE_NON_RIUSCITA`,
-        // `CANDIDATURA_NON_TROVATA`) parlano della CANDIDATURA, non del file, e
-        // il loro testo di catalogo («l'operazione non è riuscita») direbbe meno
-        // di questa frase — che è già tradotta e non è mai prosa del server.
-        setErrore(t('candErroreCv'))
-        logClient({
-          livello: 'warn',
-          evento: 'react',
-          messaggio: `candidatura-cv-non-firmato: http ${res.status}`,
-          route: ROUTE_LOG,
-          stato: res.status,
-        })
-        return
-      }
-      const url = String(json.url)
-      if (finestra && !finestra.closed) {
-        // `opener` a null: la scheda del curriculum non deve poter toccare il
-        // cockpit da cui è nata.
-        try { finestra.opener = null } catch { /* alcune WebView la rendono non scrivibile: l'apertura vale comunque */ }
-        finestra.location.replace(url)
-        return
-      }
-      setCvBloccato(url)
-      logClient({
-        livello: 'warn',
-        evento: 'react',
-        messaggio: 'candidatura-cv-finestra-bloccata: window.open ha ritornato null',
-        route: ROUTE_LOG,
-      })
-    } catch (e) {
-      finestra?.close()
-      setErrore(t('candErroreCv'))
-      logClient({
-        livello: 'error',
-        evento: 'react',
-        messaggio: `candidatura-cv-fallito: ${nomeErrore(e)}`,
-        route: ROUTE_LOG,
-      })
-    }
+    const esito = await apriDocumentoFirmato({
+      endpoint: API,
+      path,
+      headers: { 'x-sedi': reFetchKey },
+      route: ROUTE_LOG,
+      etichetta: 'candidatura-cv',
+    })
+    if (esito.esito === 'bloccato') setCvBloccato(esito.url)
+    else if (esito.esito === 'errore') setErrore(t('candErroreCv'))
   }
 
   /** Approva o rifiuta. La conferma è già stata data nel pannello qui sotto. */
@@ -1273,10 +1242,7 @@ function PannelloDettaglio({
           <p className="font-maven text-sm text-kidville-sub">{t('candNessunCv')}</p>
         )}
         {cvBloccato && (
-          <p
-            role="alert"
-            className="mt-2 flex flex-wrap items-start gap-1.5 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong"
-          >
+          <p role="alert" className={AVVISO_FINESTRA_BLOCCATA}>
             <AlertTriangle size={13} className="mt-0.5 shrink-0" />
             {t('candCvBloccato')}{' '}
             <a

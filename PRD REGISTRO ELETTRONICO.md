@@ -92,6 +92,115 @@
 
 ---
 
+## 🧾 Changelog — Le maestre in servizio non erano nel sistema, e per farcele entrare bisognava far finta che si candidassero 2026-08-12 (branch `feat/anagrafica-personale`)
+
+Nasce **`/anagrafica-personale`**, il secondo modulo pubblico: un link solo, che la Segreteria manda
+alle insegnanti **già dipendenti** perché consegnino l'anagrafica completa fino alla scansione del
+documento d'identità. `/lavora-con-noi` resta dov'è e non cambia di una riga: quello è per chi si
+propone, questo per chi c'è già.
+
+**La misura che ha deciso tutto**, eseguita in produzione l'11/08 prima di scrivere una riga: in
+`utenti` ci sono **dieci** insegnanti — 8 a Giugliano, **una ad Aversa, una a Cesa**. Le altre non
+esistono nel sistema. E per farcele entrare l'unica strada dall'interfaccia era **approvare una
+candidatura**, cioè chiedere a una dipendente di fingere di candidarsi al posto in cui già lavora.
+`POST /api/admin/adults` sembrava la seconda strada, ma non era raggiungibile da nessuna pagina e
+comunque non funzionava (vedi la voce del 2026-08-11).
+
+### Perché qui il codice fiscale si chiede, e in `/lavora-con-noi` no
+
+`insegnanti-template.ts` argomenta che nella candidatura il codice fiscale non si chiede, e quel
+ragionamento poggia su **due gambe distinte**. Vanno separate, perché **solo una cade**:
+
+- **minimizzazione** (art. 5 §1 lett. c) — là la finalità è «valutare una proposta» e il codice
+  fiscale non serve fino al contratto. Qui il contratto c'è già: la base è l'**art. 6.1.b**
+  (esecuzione del rapporto di lavoro) insieme all'**art. 6.1.c** (comunicazione obbligatoria UNILAV,
+  libro unico, denunce INPS/INAIL, sostituto d'imposta), e senza codice fiscale nessuno di quegli
+  adempimenti è eseguibile. Questa gamba cade, e cade legittimamente;
+- **la circostanza** — «è un modulo pubblico e senza login, cioè un identificativo nazionale in una
+  tabella che chiunque può alimentare». Questa **non cade da sé**. Il titolare ha scelto l'11/08 il
+  link aperto, avendo davanti l'alternativa (codice di verifica via email prima dei campi sensibili)
+  e scartandola.
+
+Quindi la difesa non è la porta: è ciò che sta dietro, e va elencato perché nessuno ne tolga un
+pezzo per distrazione. Tetto di 3 invii l'ora per IP ed esca; la pratica **non è un account e non è
+l'anagrafica** (vive in `pratiche_personale`, RLS senza policy); le pratiche non approvate si
+cancellano a 90 giorni con la scansione; bucket privato **separato** da quello dei minori; nessun
+IBAN, nessuna firma, nessun dato sanitario o giudiziario (lista `CAMPI_VIETATI` con il suo test);
+ogni invio avvisa la Segreteria della sede; e l'approvazione **non scrive mai** `utenti.ruolo` né
+`utenti.scuola_id` — per costruzione, non per omissione.
+
+### Il difetto che nessun test avrebbe trovato, e che ha prodotto una tabella in più
+
+La scansione si carica al **terzo** passo del wizard; la pratica nasce al **quarto**. Chi caricava e
+poi chiudeva la pagina lasciava nel bucket la fotografia della propria carta d'identità **senza il
+nome del file** (che la rotta butta via apposta, perché si chiama `carta-identita-<cognome>.pdf`) e
+**senza nessuna riga che la nominasse**: invisibile alla conservazione — che parte dalle pratiche e
+quindi vede solo gli oggetti già referenziati — e nemmeno identificabile per cancellarla se quella
+persona lo chiedesse.
+
+Da qui **`caricamenti_personale`** (migrazione `20260811234334`), che dà a ogni oggetto una riga che
+lo nomina e impone davvero l'invariante «un oggetto, un proprietario»: era dichiarata in un commento
+di colonna e non imposta da nessuna parte, e senza chiave primaria sul percorso due pratiche potevano
+nominare lo stesso file — con la conservazione della prima che cancellava l'oggetto che la seconda
+stava ancora usando.
+
+### Che forma ha
+
+Sei passi — **sede · dati · residenza · documento · consensi · riepilogo** — e il passo della sede
+c'è sempre: il link è uno solo per tutte e tre le sedi, e la sceglie chi compila (decisione del
+titolare dell'11/08). Le card portano **nome del plesso e città**, perché Aversa e Cesa distano sei
+chilometri e il nome secco non basta; e siccome una pratica finita nel plesso sbagliato la vedrebbe
+**solo la segreteria sbagliata**, il cockpit ha un'azione di **spostamento di sede** — senza, l'unico
+rimedio sarebbe rifiutare e far ricompilare tutto.
+
+Il **codice fiscale si verifica da solo** riusando `LuogoNascitaFields` + `BadgeCoerenzaCf`: il
+comune di nascita si sceglie da una tendina e produce il codice catastale, che è ciò che rende la
+verifica esatta invece che per stringhe. Il badge **non blocca mai**. Il **sesso è obbligatorio** —
+senza, `verificaCoerenza` non può confrontare la cifra del giorno e tutta la funzione si degrada a un
+controllo di forma, cioè si perde proprio la cosa per cui la tendina esiste.
+
+Un **documento già scaduto è ammesso e non blocca l'invio**: chi ce l'ha scaduto è esattamente la
+persona per cui questo modulo esiste, e respingerla lascerebbe la Segreteria senza nemmeno il nome.
+Il modulo lo dice in rosso e va avanti. Lo stesso vale nel database, dove il vincolo è
+`document_expiry > '1990-01-01'` e **non** `>= current_date`: un controllo sul futuro rifiuterebbe
+proprio le righe per cui l'allarme di scadenza è stato costruito.
+
+### Dove atterrano i dati, e perché due tabelle
+
+`pratiche_personale` è ciò che entra dal modulo: **dato non fidato**, che non produce niente finché
+una persona non lo riconosce. `anagrafica_personale` è ciò che la Segreteria ha approvato: 1:1 con
+`utenti` per costruzione (la chiave primaria **è** `utente_id`, quindi «due anagrafiche per la stessa
+persona» non è uno stato che esiste). Non su `utenti`, perché quella è la tabella del **gate** —
+`loadAppUser` la interroga a ogni richiesta autenticata, e il codice fiscale di una dipendente non
+deve attraversare il percorso caldo dell'autenticazione.
+
+Due trappole del database schivate, entrambe già pagate da questo repo: `cardinality(gradi) >= 1` e
+non `array_length` (che su array vuoto vale NULL, **e un vincolo che vale NULL passa**:
+`candidature_insegnanti` porta ancora la forma sbagliata e accetta zero fasce in silenzio), e
+`varchar(16)` e non `character(16)` per il codice fiscale, che impagina con spazi e fa mentire ogni
+`length() = 16` scritto sopra.
+
+### Cosa vede la Segreteria
+
+Scheda **Personale** in `/admin/modulistica` per approvare (elenco povero: codice fiscale, residenza
+e numero di documento arrivano **solo** aprendo la singola pratica, altrimenti l'anagrafica completa
+di ogni dipendente viaggia verso il browser di ogni membro dello staff a ogni apertura di pagina);
+tab **Scadenze documenti** in `/admin/staff` con quattro riquadri filtranti — dove il più grande il
+primo giorno è **«Documento mancante»**, ed è anche il più azionabile, perché si risponde mandando il
+link; e la scheda di ogni persona con lo **stato del documento in testata**. Lo stato vuoto —
+l'anagrafica non ancora compilata, che il primo giorno è la norma per tutte e dieci — **è l'azione**:
+copia il link, invia per email.
+
+### Verifiche
+
+9987 test su 879 file, eslint e `tsc` puliti, build verde. Sei migrazioni applicate in produzione con
+`get_advisors` a 0 ERROR e nessun WARN nuovo. Collaudo dal vivo contro il database vero: corpo vuoto
+400, esca 400 **con codice esplicito e non un finto 201**, campi non validi 400 con l'elenco per
+campo, upload non-multipart 400 e non 500, ed elenco sedi che serve **le tre sedi reali escludendo la
+sede E2E**.
+
+---
+
 ## 🪪 Changelog — Il documento d'identità di una maestra scade e nessuno se ne accorge: l'allarme notturno, e l'interruttore che lo spegne davvero 2026-08-12 (branch `feat/anagrafica-personale`)
 
 L'anagrafica del personale raccoglie la **data di scadenza del documento d'identità**. Senza un
@@ -324,6 +433,86 @@ due migrazioni **si applicano insieme**)
 5. **Innescare il primo battito a mano** (`SELECT public.retention_personale_http();`) invece di
    aspettare le 05:17 della notte dopo: chiude il freddo d'avvio di ~24 h che sul gemello
    `candidature-retention` fu scambiato per un guasto.
+
+---
+
+## 🔑 Changelog — Il cockpit che approva le pratiche del personale, e il quinto modo di promuovere qualcuno da una porta anonima 2026-08-12 (branch `feat/anagrafica-personale`)
+
+Lato Segreteria di `/anagrafica-personale`: scheda **Personale** di `/admin/modulistica`
+(`PratichePersonale.tsx`) e `GET`/`PATCH /api/admin/pratiche-personale`. L'elenco è **povero** —
+sette colonne, e il codice fiscale, la residenza, gli estremi del documento e il contatto
+d'emergenza arrivano **solo** con `?id=`. `?doc=` firma la scansione per **300 s** (non i 600 del
+curriculum: quella è la fotografia di una carta d'identità) e **dopo** aver risolto il percorso
+alla pratica in scope, fail-closed. `PATCH` ammette la **Segreteria** — al contrario del gemello
+delle candidature, perché qui non si assume nessuno: il rapporto di lavoro esiste già — con tre
+azioni: `approva`, `rifiuta`, `sposta-sede` (la pratica arrivata nel plesso sbagliato la vede solo
+la segreteria sbagliata: senza questa azione l'unico rimedio sarebbe far ricompilare tutto).
+
+**Il patch di `utenti` è STRETTO, e da oggi le colonne sono TRE, non quattro.** `nome`, `cognome`,
+`cellulare`. Fuori — per costruzione, filtrando attraverso `COLONNE_UTENTI_AGGIORNABILI` — restano
+`ruolo`, `scuola_id`, `email`, `attivo` **e `gradi`**.
+
+Il quinto è quello che va raccontato, perché era **dentro** l'elenco degli ammessi e la testata
+della rotta ne dichiarava quattro. `utenti.gradi` non è una preferenza d'interfaccia: è uno **scope
+di autorizzazione letto lato server** — `loadGradoContext`, e `api/primaria/classi/route.ts:34`
+risponde **403** su `!ctx.gradi.includes('primaria')`. Il valore arrivava da una **casella di spunta
+di un modulo pubblico e anonimo** (`personale-template.ts:230`) e veniva applicato anche a un
+account **preesistente**. Misurato: account con `["infanzia"]`, pratica che dichiara `["primaria"]`
+⇒ **HTTP 200** e in tabella `["primaria"]` — cioè l'elenco delle classi di primaria, cioè i
+bambini. Non serviva malafede: bastava una spunta sbagliata sul telefono e una segretaria che
+quella riga non l'aveva guardata. E l'unico avviso restituito diceva «RUOLO e SEDE sono rimasti
+quelli che aveva», enumerando ciò che non era cambiato in modo da far credere che non fosse
+cambiato nient'altro.
+
+Adesso **le fasce si scrivono solo alla NASCITA dell'account**, dentro l'INSERT di
+`ensureStaffIdentity`, dove non c'è nessuno scope preesistente da allargare; su un'utenza che esiste
+non si toccano, e si cambiano dal pannello Personale. E si **dicono**, coi nomi presi dal catalogo
+(«Primaria (6-11)», non `primaria`): nel riquadro di conferma **prima** di premere, con accanto la
+regola che le governa, e nell'avviso **dopo**. Un avviso che non nomina la fascia non permette di
+decidere se andare a correggere qualcosa.
+
+**Un `UPDATE` su `utenti` fallito non si traveste più da riuscito.** `aggiornaUtente` distingueva
+«zero righe toccate» (⇒ `fuoriScope`, con avviso a schermo) ma **non** «l'istruzione non è passata»:
+su un errore che non fosse di colonna assente loggava e tornava la **stessa forma del successo**.
+Misurato con un `23514`: **200**, `success: true`, nessun avviso, e
+`logScrittura.campi_aggiornati: ["nome","cognome","cellulare"]` mentre in tabella il cellulare era
+quello di prima. La testata dice che quel campo è «l'unica informazione con cui, fra un anno, si può
+rispondere a *chi ha cambiato il cellulare di questa maestra?*»: **una risposta falsa è peggio di
+nessuna risposta**, perché manda a cercare la causa di una modifica che non esiste. Oggi
+`aggiornaUtente` ritorna anche `errore: boolean`, chi ha premuto legge che sull'account non è
+cambiato niente, e `campi_aggiornati` si svuota su **tutti e tre** i modi di non aver scritto —
+fuori scope, errore, colonne cadute.
+
+**Il file non si copia**: `anagrafica_personale.documento_path` punta allo stesso oggetto e la
+pratica lo rilascia con `documento_path = null` — un oggetto, un proprietario, ed è ciò che impedisce
+alla conservazione della pratica di cancellare il file che il fascicolo sta usando. Il rilascio
+avviene **solo** se il fascicolo ha davvero preso il percorso: col degrado su colonna assente,
+azzerarlo lascerebbe nel bucket un oggetto che nessuna riga nomina.
+
+### Il `Drawer` del cockpit: il fuoco entra, ci resta, e torna — e l'inerzia dello sfondo NO, di proposito
+
+`Drawer` (`src/components/ui/cockpit.tsx`, condiviso con `/admin/merchandise`,
+`/admin/protocolli` e «Codici fiscali») dichiarava `role="dialog" aria-modal="true"` mentre il Tab
+del browser diceva il contrario: aperto un pannello dall'elenco,
+`dialog.contains(document.activeElement)` era **`false`** — il fuoco restava sul collegamento
+**sotto** lo scrim — e **2** elementi restavano tabbabili fuori dal dialogo, coperti e attivabili
+con Invio (WCAG 2.4.11; e 2.4.3 sul ritorno, che non c'era affatto). Su un pannello che mostra
+codice fiscale, residenza ed estremi di un documento d'identità. Ora il fuoco entra sul contenitore
+`role="dialog"` (quello che porta `aria-labelledby`, così lo screen reader annuncia il **nome** del
+pannello), il Tab **cicla** dentro e alla chiusura torna al comando che ha aperto. Il selettore dei
+focusabili e il filtro di visibilità sono stati **estratti** da `Modal.tsx` in
+`src/lib/accessibility/focus-dialogo.ts`: due copie che divergono erano il modo di perdere la
+correzione sul ramo `display:none`.
+
+**Ciò che NON è stato fatto, e perché è una misura e non una dimenticanza**: l'inerzia dello
+sfondo (`rendiInerteFuoriDa`, che `Modal` usa). `CodiciFiscaliDaVerificare` scrive il codice **dal**
+pannello e lascia il pannello **aperto**, mentre a dire «Aggiornamento dell'elenco in corso…» è una
+regione `aria-live="polite"` che sta **fuori** dal pannello: con lo sfondo `inert` — o `aria-hidden`,
+il ripiego di `inerti.ts` dove `inert` non c'è — quell'annuncio non parte più, **e il suo test
+resterebbe verde**, perché asserisce l'attributo e non l'annuncio. Scambiare un difetto AA con un
+altro, in silenzio, non è una correzione: l'inerzia va insieme all'unificazione fra `Drawer` e
+`Modal`, con quel componente in mano. C'è un test che tiene ferma la decisione, col controllo
+positivo che dimostra che il meccanismo esiste e su quel nodo funzionerebbe.
 
 ---
 

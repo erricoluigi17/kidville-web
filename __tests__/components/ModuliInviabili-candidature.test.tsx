@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 
 import itAdminAltro from '../../messages/it/adminAltro.json'
 import enAdminAltro from '../../messages/en/adminAltro.json'
@@ -47,10 +47,16 @@ describe('ModuliInviabili — card delle candidature insegnanti', () => {
     render(<ModuliInviabili />)
     await waitFor(() => expect(screen.getByText('Candidature insegnanti')).toBeInTheDocument())
 
-    // Due card con «Copia link»: quella del modulo d'iscrizione e questa.
-    const copie = screen.getAllByText('Copia link')
-    expect(copie).toHaveLength(2)
-    fireEvent.click(copie[1])
+    // Il pulsante si prende DENTRO la sua card, non per posizione nell'elenco.
+    //
+    // ⚠️ Prima questa riga contava i «Copia link» a schermo e cliccava il SECONDO: una
+    // premessa sul numero di card, non sulla card. Il 12/08/2026 ne è nata una terza
+    // (l'anagrafica del personale) e il test è diventato rosso senza che il
+    // comportamento sorvegliato — «questa card copia `/lavora-con-noi`» — fosse
+    // cambiato di un carattere. Un controllo che si rompe quando qualcosa di
+    // ADIACENTE cambia non sta misurando ciò che dichiara.
+    const card = screen.getByText('Candidature insegnanti').closest('div.rounded-card') as HTMLElement
+    fireEvent.click(within(card).getByText('Copia link'))
 
     await waitFor(() => expect(scrivi).toHaveBeenCalledWith(`${window.location.origin}/lavora-con-noi`))
   })

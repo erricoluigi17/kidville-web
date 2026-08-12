@@ -262,9 +262,28 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (shouldRedirect(pathname, !!user)) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/auth/login';
-    url.searchParams.set('next', pathname);
+    /**
+     * `next` PORTA ANCHE LA QUERY, e la pagina di login non ne eredita nessun'altra.
+     *
+     * Prima qui c'era `url.searchParams.set('next', pathname)` su un `clone()`, e faceva
+     * due cose sbagliate insieme. MISURATO su `/admin/staff?tab=scadenze&stato=scaduto` —
+     * il bersaglio della notifica di scadenza documenti:
+     *   · `next` valeva `/admin/staff` NUDO, quindi chi rifaceva il login atterrava sulla
+     *     linguetta «Personale» senza filtro: la notifica arrivava, la sessione era
+     *     scaduta (è il caso NORMALE per un avviso notturno letto la mattina), e il gesto
+     *     che l'avviso prometteva si perdeva nel login. Una notifica che chiede di
+     *     ritrovare a mano la riga si impara a ignorare;
+     *   · il `clone()` si portava dietro la query ORIGINALE, e la pagina di login si
+     *     ritrovava addosso `?tab=scadenze` — parametri di un'altra pagina, sui quali un
+     *     domani il login potrebbe reagire per sbaglio.
+     *
+     * Perciò: URL costruita da zero (nessun parametro ereditato) e `next` col percorso
+     * COMPLETO. Resta relativo e comincia con `/`: `destinazione()` sul login lo passa
+     * comunque da `areaFromPath` + `isAreaAllowed`, che si fermano al pathname — un
+     * `//evil.com/admin/x` non è mai stato e non diventa un'area valida.
+     */
+    const url = new URL('/auth/login', request.nextUrl.origin);
+    url.searchParams.set('next', `${pathname}${request.nextUrl.search}`);
 
     // Il ramo di redirect è un vicolo cieco per l'osservabilità: non c'è nessuna route a
     // valle che possa loggarlo (la richiesta finisce qui), e "l'utente sbattuto fuori al

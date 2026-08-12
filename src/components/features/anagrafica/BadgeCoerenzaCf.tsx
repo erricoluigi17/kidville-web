@@ -337,7 +337,23 @@ export function BadgeCoerenzaCf({
             <button
               type="button"
               onClick={() => onUsaCalcolato(codiceProposto)}
-              className={btnClass('secondary', 'sm')}
+              /* ── IL BERSAGLIO È 44 PX, E NON PER SIMMETRIA (12/08/2026) ──────
+                 `btnClass(…, 'sm')` vale `h-9`: MISURATO **96,1 × 36 px** a
+                 1440 px, col pannello «Codice fiscale non coerente» aperto —
+                 il 18% sotto la soglia. Non è un comando secondario: è quello
+                 che RIPARA l'errore, compare solo quando il codice non torna, e
+                 chi lo tocca lo fa dal telefono. Ogni tocco mancato su un
+                 pannello rosso è un'occasione per chiudere il modulo.
+                 Sulla stessa pagina «Avanti» misura 111×46 e «Invia
+                 l'anagrafica» 181×46: qui non c'era una scelta di sistema, c'era
+                 una dimenticanza isolata.
+                 `min-h-[44px]` e non la taglia `md`: `h-9` resta nella stringa,
+                 e fra due `height` scritte sullo stesso elemento vince quella
+                 che sta più avanti nel FOGLIO — non quella scritta dopo. Il
+                 minimo, invece, è una proprietà DIVERSA da `height` e la batte
+                 per costruzione, senza toccare la famiglia `Btn` (che vale per
+                 tutta l'app). */
+              className={btnClass('secondary', 'sm', 'min-h-[44px]')}
             >
               {t('cfUsaQuesto')}
             </button>

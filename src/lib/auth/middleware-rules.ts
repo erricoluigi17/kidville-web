@@ -48,6 +48,30 @@ const PUBLIC_PREFIXES = [
   // oggi pretende (senza deroghe) che a questo prefisso corrisponda una pagina
   // vera: se `src/app/lavora-con-noi/` sparisce, il lock diventa rosso.
   '/lavora-con-noi',
+  // Modulo pubblico «La tua anagrafica» (`/anagrafica-personale`): lo compila chi il
+  // rapporto di lavoro ce l'ha GIÀ, e in quasi tutti i casi un account NON ce l'ha —
+  // misurato l'11/08/2026: dieci insegnanti su tutta la cooperativa hanno un accesso,
+  // otto delle quali a Giugliano. Il link lo manda la Segreteria; la pratica finisce
+  // in `pratiche_personale`, e diventa anagrafica vera solo quando una persona
+  // l'approva.
+  //
+  // ⚠️ NON è la stessa cosa di `/lavora-con-noi`, e la differenza va detta perché i
+  // due percorsi si somigliano: là si RACCOGLIE una proposta da chi la Scuola non
+  // conosce, qui si raccoglie l'anagrafica di chi ci lavora — codice fiscale,
+  // documento d'identità e la sua scansione. La porta è aperta uguale (decisione del
+  // titolare dell'11/08/2026, che ha valutato e scartato un OTP prima dei campi
+  // sensibili): ciò che difende quei dati sta DIETRO la porta — tetto per indirizzo
+  // IP, esca, bucket privato separato da quello dei minori, cancellazione a 90 giorni
+  // delle pratiche non approvate. Vedi `src/lib/forms/personale-template.ts`.
+  //
+  // Senza questa riga la pagina finirebbe dietro il login: un difetto che da server
+  // non si vede, perché si scopre solo aprendola da disconnessi — e a scoprirlo
+  // sarebbe una maestra a cui è stato appena mandato il link.
+  // `POST /api/iscrizione/personale` e la sua rotta di caricamento stanno sotto
+  // `/api/iscrizione`, che passa già da qui sopra. Il presidio è
+  // `__tests__/architecture/prefissi-pubblici.test.ts`: pretende che a questo
+  // prefisso corrisponda una pagina VERA, senza deroghe.
+  '/anagrafica-personale',
   '/privacy', // informativa GDPR pubblica (Privacy Policy URL per lo store)
   '/termini', // termini di servizio pubblici
   '/assistenza', // pagina di supporto pubblica (Support URL per lo store)

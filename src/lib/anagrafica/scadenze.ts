@@ -241,6 +241,63 @@ export function sogliaRaggiunta(giorni: number): Soglia | null {
 }
 
 /**
+ * CHE COSA DIRE, ADESSO, A CHI STA GUARDANDO UNA DATA DI SCADENZA.
+ *
+ * `sogliaRaggiunta` risponde a «quale preavviso va ANNUNCIATO stanotte», che è la
+ * domanda del cron; questa risponde a «che cosa mostro accanto al campo mentre la
+ * persona lo sta compilando», che è un'altra cosa. Stanno nello stesso file e sopra
+ * le STESSE due funzioni pure, così un confine spostato si sposta per tutt'e due.
+ *
+ * ─── PERCHÉ NON SI RIUSA `sogliaRaggiunta` E BASTA ──────────────────────────
+ *
+ * Perché quella collassa tre situazioni in due numeri, ed è giusto che lo faccia
+ * per il cron: a `giorni === 0` risponde `7` (il documento è valido FINO AL giorno
+ * di scadenza compreso), e a `giorni < 0` risponde `0` — che è anche il numero di
+ * giorni residui di un documento che scade oggi. Un riquadro che leggesse la
+ * soglia direbbe «scade fra 7 giorni» a chi ha appena scritto la data di oggi, e
+ * non saprebbe distinguere «scade oggi» da «è scaduto». Qui gli stati sono quattro
+ * e portano con sé i giorni veri, segno compreso.
+ *
+ * ─── I QUATTRO STATI ────────────────────────────────────────────────────────
+ *
+ *   `ignoto`      la data non c'è o non esiste sul calendario (campo vuoto,
+ *                 digitazione a metà, `31/02`). NON si segnala qui: il campo
+ *                 obbligatorio ha già il suo messaggio da `validateField`, e un
+ *                 secondo riquadro rosso sotto direbbe che i problemi sono due.
+ *   `scaduto`     `giorni < 0`, e `giorni` è NEGATIVO: il documento non è più
+ *                 valido. ⚠️ Non blocca nessun invio, mai — vedi
+ *                 `personale-template.ts`: chi ha il documento scaduto è
+ *                 esattamente la persona per cui quel modulo esiste, e respingerla
+ *                 lascerebbe la Segreteria senza nemmeno il nome.
+ *   `in-scadenza` `0 <= giorni <= SOGLIA_MAX`: dentro la finestra del preavviso
+ *                 più lontano, che è lo stesso numero che il cron interroga ogni
+ *                 notte. Scrivere «90» qui sarebbe una seconda finestra, che
+ *                 diverge alla prima modifica — e a divergere sarebbe ciò che una
+ *                 persona LEGGE rispetto a ciò per cui verrà avvisata.
+ *   `valido`      oltre la finestra: NIENTE da dire. Un pannello che segnala tutto
+ *                 non segnala niente, e una carta d'identità dura dieci anni.
+ *
+ * `oggi` è un parametro e non `new Date()`: vedi la regola 1 in testa al file, e il
+ * lock di forma che la sorveglia.
+ */
+export type StatoScadenza =
+    | { stato: 'ignoto' }
+    | { stato: 'scaduto'; giorni: number }
+    | { stato: 'in-scadenza'; giorni: number }
+    | { stato: 'valido'; giorni: number }
+
+export function statoScadenza(
+    scadenzaYMD: string | null | undefined,
+    oggiYMD: string,
+): StatoScadenza {
+    const giorni = giorniResidui(typeof scadenzaYMD === 'string' ? scadenzaYMD : '', oggiYMD)
+    if (!Number.isFinite(giorni)) return { stato: 'ignoto' }
+    if (giorni < 0) return { stato: 'scaduto', giorni }
+    if (giorni <= SOGLIA_MAX) return { stato: 'in-scadenza', giorni }
+    return { stato: 'valido', giorni }
+}
+
+/**
  * L'IDEMPOTENZA — la regola che decide se questa notte si manda qualcosa.
  *
  * Lo stato vive su due colonne di `anagrafica_personale`

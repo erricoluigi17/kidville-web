@@ -460,10 +460,44 @@ body {
    schermate che nessuno ha misurato. Qui si copre la classe di elementi che ha
    il problema, con lo stesso linguaggio del resto dell'Alto Contrasto: anello
    giallo #FFE500 più il separatore nero che lo stacca dai fondi chiari.
-   `focus:` e non `:focus-visible`: il fuoco ci arriva DA CODICE, e le euristiche
-   di `focus-visible` su un elemento non interattivo non lo mostrerebbero. */
+   `focus:` e non `:focus-visible`: il fuoco ci arriva DA CODICE, e su un
+   elemento non interattivo non c'è garanzia che le euristiche di
+   `focus-visible` lo mostrino.
+
+   ⚠️ 2026-08-12 — LE DUE BANDE GIALLE. Questa regola dichiarava SOLO
+   `box-shadow: 0 0 0 2px #FFE500, 0 0 0 4px #000000`, e la premessa scritta qui
+   sopra («`focus-visible` su un elemento non interattivo non lo mostrerebbe»)
+   era falsa in Chrome: su un `div` con `tabIndex={-1}` che riceve il fuoco DA
+   CODICE, `matches(':focus-visible')` torna `true`. Quindi le due regole si
+   applicavano INSIEME e non si escludevano a vicenda, perché toccano proprietà
+   diverse: dalla regola universale qui sopra restava l'`outline: 3px solid
+   #FFE500` (la sua `box-shadow` nera perdeva, (0,2,0) contro (0,3,0)), e da
+   questa arrivava la `box-shadow` gialla. Risultato misurato da tastiera sul
+   cruscotto delle scadenze — Tab fino a «Riprova», Invio — sul ricovero
+   `[data-ricovero="elenco"]`: outline `rgb(255,229,0) 3px offset 2px` PIÙ
+   `box-shadow 0 0 0 2px rgb(255,229,0), 0 0 0 4px rgb(0,0,0)`, cioè DUE bande
+   gialle di spessore diverso, mentre ogni altro comando della stessa schermata
+   (riquadri filtro, collegamento alla persona, «Apri documento») ne portava UNA.
+   In contrasto normale erano già tutti identici: il difetto viveva solo qui.
+
+   Un indicatore di fuoco di forma e spessore diversi sui soli punti in cui il
+   fuoco arriva da codice si legge come «qualcosa è andato storto» — ed è il
+   contrario del motivo per cui `fuoco.ts` esiste (non avere due linguaggi del
+   fuoco nella stessa pagina).
+
+   Il rimedio è dichiarare qui LO STESSO ANELLO della regola universale invece
+   di un secondo anello che le si somma. Così:
+   · quando `:focus-visible` scatta (Chrome), le due regole dicono la stessa
+     cosa e a schermo resta UNA banda, identica a quella di bottoni e link;
+   · quando NON scatta, questa regola da sola disegna comunque l'anello giallo —
+     che era la ragione per cui è nata, e resta valida.
+   Nessun `:not()` sulla regola universale, di proposito: alzerebbe la sua
+   specificità da (0,2,0) a (0,3,0) e cambierebbe chi vince altrove in un file
+   dove ci sono altre 30 rimappature d'Alto Contrasto per-superficie. */
 [data-contrast="high"] .kv-fuoco-esito:focus {
-  box-shadow: 0 0 0 2px #FFE500, 0 0 0 4px #000000;
+  outline: 3px solid #FFE500;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #000000;
 }
 
 /* News — testo posato direttamente sul body (back-link, stati vuoti), fuori
@@ -939,6 +973,83 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):hov
 [data-contrast="high"] input[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
 [data-contrast="high"] select[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus),
 [data-contrast="high"] textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not(:focus) {
+  border-color: #000000;
+}
+/* =============================================================================
+   …E UN BOTTONE CONTORNATO È UN CONTROLLO ANCHE LUI (collaudo 2026-08-12).
+
+   È la TERZA volta che questo repo chiude lo stesso difetto, e le prime due
+   l'hanno agganciato alla SUPERFICIE proprio per non doverlo riscrivere sul
+   componente successivo. Il componente successivo è arrivato — le pillole con
+   cui la Direzione assegna un'insegnante a una classe, in modalità Modifica
+   della scheda staff — e il rimedio non l'ha coperto: i tre blocchi qui sopra
+   elencano `input`, `select`, `textarea` e (dal blocco delle card di scelta)
+   `label`. Mai `button`. La prova che la cascata funzionava e che mancava solo
+   l'elemento sta due sezioni più su NELLA STESSA SCHERMATA: il `<select>` del
+   ruolo prende 6,46:1 da queste stesse regole, la pillola accanto no.
+
+   MISURATO nel browser vero, pannello reso a 1024 px, calcolo WCAG su
+   `getComputedStyle`: la pillola NON assegnata ha riempimento identico alla card
+   (`bg-kidville-white` su `bg-kidville-white` = **1,00:1**) e come unico confine
+   un bordo `#EFE7DC` da 1 px su bianco = **1,23:1**. Soglia WCAG 2.2 AA §1.4.11
+   = 3:1. La pillola assegnata, che è piena di verde, misura 6,51:1: il perimetro
+   serve solo a quella che NON lo è, cioè a metà del comando.
+
+   Perché è il caso peggiore in cui lasciarlo: sono i comandi che decidono in
+   quale classe entra un'insegnante, e questo stesso lavoro li aveva appena
+   rifatti (44 px, icona spunta/più, `aria-pressed`) proprio per non farli
+   dipendere dal solo colore. Con il perimetro invisibile, «＋ 2 ANNI» resta
+   testo che galleggia: la forma del bersaglio non c'è.
+
+   ⚠️ PERIMETRO STRETTO, E LE DUE ESCLUSIONI SONO DELIBERATE.
+     · Solo `border-kidville-line` (1,23:1) e `border-kidville-muted` (2,51:1),
+       cioè i due grigi che non si vedono. Le 20 righe `<button>` di `src/` che
+       li portano sono tutte controlli veri (i ±1 di merchandise, i «Annulla»
+       delle impostazioni, le frecce del mese, «Aggiorna»): un bordo su un
+       `<button>` È il confine del comando, per definizione.
+     · NON `border-kidville-green/<alfa>`, che sui bottoni non è un grigio
+       dimenticato ma il contorno di marchio di `CMD_SECONDARIO` — una decisione
+       di design, presa, con l'etichetta di testo a 6,51:1 a portare
+       l'affordance. Ribaltarla in grigio su ogni comando secondario dell'app
+       sarebbe un cambio di aspetto che nessuno ha chiesto, non un rimedio.
+     · NON gli `<span>`: le pillole dei gradi, due sezioni sopra, portano lo
+       stesso `border-kidville-line` e NON sono controlli. `1.4.11` parla di
+       componenti d'interfaccia; un'etichetta decorata non lo è.
+
+   Specificità, con la stessa aritmetica dei blocchi qui sopra e per le stesse
+   ragioni — le tre righe non sono intercambiabili:
+     · riposo (0,2,1);
+     · crema (0,3,1) — `neutral` su #FEF1E4 vale 2,79:1, sotto soglia: là serve
+       `sub` (5,82:1 sulla crema, 6,46:1 sul riempimento bianco);
+     · hover  (0,3,1) — deve stare SOPRA la utility `hover:border-*` del
+       componente (0,2,0), che altrimenti smetterebbe di rispondere: è
+       esattamente l'inciampo dei 19 select del cockpit raccontato più su, e la
+       pillola porta proprio `hover:border-kidville-green`. Sta DOPO la crema
+       perché a parità di peso vince l'ultima;
+     · Alto Contrasto — (0,3,1) a riposo, (0,4,1) in hover, e in fondo: in HC
+       `--color-kidville-green` diventa #FFFFFF e la pillola sta su fondo bianco,
+       quindi senza la riga dell'hover passarci sopra CANCELLEREBBE il contorno.
+   Lock: `__tests__/components/StaffDetailPanel-anagrafica.test.tsx`, «il
+   perimetro della pillola», che risolve la cascata su `globals.css` e misura il
+   rapporto invece di guardare le classi — col controllo negativo che rimette il
+   difetto e deve tornare a leggere 1,23:1.
+   ============================================================================= */
+button[class*="border-kidville-line"]:not(:focus),
+button[class*="border-kidville-muted"]:not(:focus) {
+  border-color: var(--color-kidville-neutral);
+}
+.bg-kidville-cream button[class*="border-kidville-line"]:not(:focus),
+.bg-kidville-cream button[class*="border-kidville-muted"]:not(:focus) {
+  border-color: var(--color-kidville-sub);
+}
+button[class*="border-kidville-line"]:hover:not(:focus),
+button[class*="border-kidville-muted"]:hover:not(:focus) {
+  border-color: var(--color-kidville-green);
+}
+[data-contrast="high"] button[class*="border-kidville-line"]:not(:focus),
+[data-contrast="high"] button[class*="border-kidville-muted"]:not(:focus),
+[data-contrast="high"] button[class*="border-kidville-line"]:hover:not(:focus),
+[data-contrast="high"] button[class*="border-kidville-muted"]:hover:not(:focus) {
   border-color: #000000;
 }
 

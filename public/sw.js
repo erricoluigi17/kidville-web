@@ -181,8 +181,26 @@
 // i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
 // questo file restano identici il browser non reinstalla niente. La copia
 // vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
-const VERSIONE = 'v8';
-// IMPRONTA-PAGINA-OFFLINE: 07d6b16d18049feec4170785d4533758cb2c134b1cd418855cca320655055b7a
+// 2026-08-12 — nasce `/anagrafica-personale`, il modulo pubblico con cui il
+// personale IN SERVIZIO consegna la propria anagrafica, e i due cataloghi di
+// /offline guadagnano la sua etichetta («La tua anagrafica» / «Your personal
+// details»). Senza, il lock `offline-etichette-rotte` è rosso e la pagina
+// renderebbe quella rotta capitalizzando l'URL — cioè «Anagrafica-personale»,
+// in italiano anche a interfaccia inglese.
+//
+// Qui la voce serve più che altrove, e vale la pena dire perché: è il modulo che
+// si compila DAL TELEFONO, spesso dentro la scuola, e chiede una FOTO del
+// documento d'identità — cioè il gesto in cui la rete mobile cade più
+// facilmente. Chi ci arriva col guscio nativo e perde la connessione vede
+// l'elenco di /offline: quella riga è l'unica cosa che gli dice quale pagina
+// stava compilando.
+//
+// `VERSIONE` sale a `v9` per la ragione di sempre, che è tutta di questo blocco:
+// i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
+// questo file restano identici il browser non reinstalla niente. La copia
+// vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
+const VERSIONE = 'v9';
+// IMPRONTA-PAGINA-OFFLINE: 676f9c023f6adfc90d9a5e395bd0a95e7fcd3ca9f5aa3f78c6dd99c6288c687e
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

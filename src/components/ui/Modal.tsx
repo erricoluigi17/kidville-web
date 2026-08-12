@@ -3,9 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro'
 import { rendiInerteFuoriDa } from '@/lib/accessibility/inerti'
-
-const FOCUSABLE =
-  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+import { focusabiliIn } from '@/lib/accessibility/focus-dialogo'
 
 // Stack degli id dei Modal aperti: SOLO il Modal in cima gestisce Escape e il
 // focus-trap. Senza questo, due dialoghi annidati (entrambi in ascolto su
@@ -27,25 +25,16 @@ const modalStack: symbol[] = []
  */
 
 /**
- * Un controllo entra nel giro del focus solo se è davvero a schermo.
+ * IL SELETTORE DEI FOCUSABILI E IL FILTRO DI VISIBILITÀ VIVONO IN
+ * `@/lib/accessibility/focus-dialogo`, non più qui.
  *
- * `querySelectorAll(FOCUSABLE)` restituisce anche i controlli di un ramo nascosto
- * (`display:none`, `visibility:hidden`, `[hidden]`): il focus-trap ci portava
- * sopra il fuoco e all'utente sembrava sparito. Si risale fino alla radice del
- * dialogo perché `display:none` NON si eredita: `getComputedStyle` sul figlio di
- * un ramo nascosto continua a rispondere `inline-block`.
+ * Erano privati di questo file. Il 2026-08-12 è servito lo stesso ciclo di Tab per il
+ * `Drawer` del cockpit, che non passa da questa primitiva e non può passarci (`Modal`
+ * centra il contenuto; uno slide-over alto quanto lo schermo non ci entra). Estratti,
+ * non riscritti: il comportamento di questo componente non cambia di una riga, e la
+ * correzione del filtro `visibile` — che esiste perché il fuoco finiva su controlli di
+ * un ramo `display:none` — resta scritta in un posto solo.
  */
-function visibile(el: HTMLElement, radice: HTMLElement): boolean {
-  let nodo: HTMLElement | null = el
-  while (nodo) {
-    if (nodo.hasAttribute('hidden')) return false
-    const stile = getComputedStyle(nodo)
-    if (stile.display === 'none' || stile.visibility === 'hidden') return false
-    if (nodo === radice) break
-    nodo = nodo.parentElement
-  }
-  return true
-}
 
 interface ModalProps {
   open: boolean
@@ -122,10 +111,7 @@ export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true
 
     const isTop = () => modalStack[modalStack.length - 1] === myId
     const radice = dialogRef.current
-    const focusables = () =>
-      Array.from(radice?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []).filter((el) =>
-        radice ? visibile(el, radice) : true,
-      )
+    const focusables = () => focusabiliIn(radice)
     focusables()[0]?.focus()
 
     function onKeyDown(e: KeyboardEvent) {

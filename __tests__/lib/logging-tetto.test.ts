@@ -256,6 +256,14 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/context/admin-identity.tsx',
         'BROWSER: contesto React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
         + 'motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/context/sede-context.tsx',
+        'BROWSER: contesto React su `/api/admin/sedi`, una nostra route. Stessa forma e stesso '
+        + 'motivo del gemello `admin-identity.tsx` qui sopra: il tetto sta nella route, non nel '
+        + 'chiamante. La `fetch` è PREESISTENTE a questo elenco. Ciò che è cambiato il 2026-08-12 '
+        + 'è che il guasto non passa più in silenzio: il ramo non-`ok` e il rigetto sono loggati '
+        + 'con `logClient`, e lo stato d\'errore è distinto dall\'elenco vuoto — prima un guasto '
+        + 'della route diceva all\'utente «scegli una sede dal menu» mentre quel menu non era '
+        + 'nemmeno montato.'],
     ['src/lib/diary/config-cache.ts',
         'BROWSER: `GET /api/diary/config`, una nostra route, con la cache di promesse che '
         + 'impedisce alle tre parti della pagina del diario di chiederla tre volte (sei con '

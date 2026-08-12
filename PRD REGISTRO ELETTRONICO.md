@@ -92,6 +92,1028 @@
 
 ---
 
+## 🧱 Changelog — L'avviso dell'oblio si portava dietro il database nel browser, e l'applicazione non compilava più 2026-08-13 (branch `test/e2e-moduli-pubblici`)
+
+Il pannello `AvvisoOblio` è un **componente client**, e importava le sue voci da
+`src/lib/gdpr/cosa-distrugge.ts`. Quel file conteneva due cose diverse sotto lo stesso tetto: le
+costanti dichiarative che il pannello legge (`OBLIO_DISTRUGGE`, `OBLIO_RESTA`) e le funzioni che
+*contano* (`contaCosaDistrugge`), le quali importano il logger — e il logger importa `app-log`, che
+importa `supabase/server-client`. Risultato: `npm run build` **falliva**, trascinando l'intera
+catena del server dentro il bundle del browser.
+
+**Non è stato un errore di distrazione, ed è la parte che vale la pena ricordare.** I due blocchi
+stavano insieme per una ragione buona — «l'elenco di ciò che l'oblio distrugge e il modo di contarlo
+sono la stessa idea, e separarli li farebbe divergere» — che è vera dal punto di vista del dominio e
+falsa dal punto di vista del bundler. Un modulo importato da un componente client non è solo un
+insieme di simboli: è la **radice di un grafo di dipendenze** che finisce nel browser per intero,
+anche le parti che quel componente non nomina. Un `import type` sarebbe stato cancellato dal
+compilatore; un `import` di valore no.
+
+**La separazione, e la regola che la tiene.** `src/lib/gdpr/cosa-distrugge-voci.ts` contiene ora
+**solo dati e tipi**, senza un import che tocchi Supabase, il logger o `next/headers`;
+`cosa-distrugge.ts` le ri-esporta, così le due route e il lock
+`__tests__/architecture/oblio-avviso-dichiarato.test.ts` continuano a importarle da un posto solo e
+non devono sapere che lo split esiste. La regola è scritta nella testata del file nuovo, al presente
+e con la misura accanto: chi aggiungerà una voce che ha bisogno di *leggere* qualcosa deve metterla
+nell'altro file.
+
+**Come è stato trovato.** Non da un test: `npx vitest run` era **verde su 10658 test** mentre la
+build era rotta. I test montano i componenti in jsdom, dove la catena del server si risolve senza
+proteste; è `next build`, e solo lui, a separare i due mondi. È il motivo per cui `npm run build`
+sta nel gate di `AGENTS.md` accanto a `vitest` e non al suo posto — e il 13/08 quella ridondanza ha
+pagato.
+
+**Nello stesso giro**: rimossa `src/components/features/parent/dashboard/` — sei file, 819 righe,
+**mai importati da nessuno** (`grep -rln "parent/dashboard" src __tests__ e2e` → vuoto) e duplicati
+di componenti che esistono già in `parent/home/`. Facevano fallire il lock `date-senza-fuso` con tre
+`toLocaleDateString('it-IT')` senza fuso esplicito: un gate rosso per codice che nessuno eseguiva.
+
+---
+
+## 🕳️ Changelog — Si confermava la distruzione delle pagelle di un bambino leggendo «file da rimuovere: 3» 2026-08-13 (branch `test/e2e-moduli-pubblici`)
+
+**Il difetto non è un dato non cancellato: è un consenso raccolto su un'informazione mancante.**
+Il pannello del diritto all'oblio (`/admin/gdpr`) faceva confermare un'anonimizzazione
+IRREVERSIBILE mostrando quattro righe, di cui una sola parlava di documenti: *«file da rimuovere:
+N»*. Dentro quel numero, e accanto a quel numero, se ne vanno le **pagelle** del bambino e i suoi
+**certificati medici** — è ciò che `REGISTRO_BUCKET_OBLIO` dichiara. Non erano nascosti:
+semplicemente non erano scritti in nessun punto che un operatore potesse leggere.
+
+**Che cosa vede adesso chi conferma** — elenco in `src/lib/gdpr/cosa-distrugge.ts`
+(`OBLIO_DISTRUGGE`), reso da `AvvisoOblio.tsx`, con i conteggi VERI del dry-run: pagelle,
+certificati medici, foto in cui è l'unico ritratto, articoli del sito pubblico, allegati di chat,
+documento d'identità e domanda d'iscrizione, PDF delle credenziali, notifiche, motivo dell'assenza.
+Accanto, `OBLIO_RESTA`: pagamenti (obbligo decennale), presenze, protocollo, registro delle
+scritture — perché un elenco di distruzioni senza il suo contrappeso è metà informazione.
+L'elenco **non è scritto nel pannello**: il lock
+`__tests__/architecture/oblio-avviso-dichiarato.test.ts` lo tiene agganciato al registro dei
+bucket, così un magazzino nuovo rende rosso l'avviso finché qualcuno non lo dice a chi conferma.
+
+**Sette cose che la prima stesura sbagliava, e la misura che le ha scoperte.**
+
+1. **L'ALTRO canale confermava ancora alla cieca**, sulla stessa pagina. `RichiesteCancellazionePanel`
+   evade la richiesta ex art. 17 presentata dalla famiglia — in **blocco**, su tutti i figli non più
+   iscritti, con una conferma sola — e mostrava quattro conteggi di persone e nemmeno una parola sui
+   bucket. Peggio: l'avviso stava sotto, legato alla selezione dell'altro pannello, quindi chi
+   confermava in alto poteva leggere numeri **di un bambino diverso**. Adesso il riquadro è **un
+   componente solo** (`AvvisoOblio`), montato da entrambi e alimentato dal dry-run di chi lo mostra;
+   `POST /api/admin/gdpr/richieste` in `dryrun` restituisce i conteggi **sommati sui figli**.
+2. **Se il dry-run falliva, l'avviso tornava muto e il bottone rosso restava attivo.** `if (res.ok)
+   setDry(j)` senza ramo `else`: la schermata era identica a «non ho ancora scelto nessuno», la
+   parola «non misurato» non compariva **proprio nel caso in cui nulla era stato misurato**, e
+   l'anonimizzazione partiva digitando il nominativo (che il fallback fornisce comunque). Adesso
+   `StatoMisuraOblio` ha un quarto valore, `fallita`: riquadro `role="alert"`, ogni voce a «non
+   misurato», **bottone spento** e un «Riprova la misura».
+3. **«Foto sul sito pubblico: N» non contava foto, contava articoli.** Un post porta `copertina_url`
+   più i media dentro `contenuto_json`: «1» poteva voler dire sette immagini. L'etichetta adesso
+   nomina l'unità che il numero misura.
+4. **Due numeri annunciati non erano quelli prodotti**, misurati su due materiali: `tag_students:
+   [' al-1 ']` → il conteggio diceva «foto sue: 1» e l'oblio ne toglieva solo il tag; un `file_url`
+   non mappabile → si prometteva una distruzione che non avveniva. La causa: la regola «in questa
+   foto c'è qualcun altro?» era scritta **due volte**. Adesso è una sola funzione
+   (`src/lib/gdpr/foto-partizione.ts`), condivisa da conteggio ed esecuzione. **Era anche un difetto
+   di prodotto**: con un tag di scarto (`'   '`) accanto al suo, la foto di un bambino
+   **sopravviveva al suo oblio**. Le foto il cui indirizzo non è riconoscibile hanno adesso un
+   numero loro (`foto_non_rimovibili`) e una riga rossa: restano nell'archivio, e va detto.
+5. **Un conteggio parziale sotto un'etichetta doppia, e lo stesso numero mostrato due volte.**
+   `file_da_rimuovere` copre i documenti d'identità, non gli allegati che solo la domanda
+   d'iscrizione conosce: la route lo chiamava «una STIMA» in un commento che nessun operatore legge.
+   Adesso si legge **«almeno N»**, e la riga duplicata («File personali rimossi: 3», lo stesso 3 con
+   un altro nome) è sparita.
+6. **La riga delle credenziali era sempre accesa.** `obliaPdfCredenziali` gira solo dentro
+   `anonimizzaParent`, cioè sui soli genitori orfani: con zero orfani si annunciava la distruzione di
+   file che restavano. Le voci del canale `genitore` adesso si mostrano solo se qualcuno verrà
+   anonimizzato.
+7. **Un commento dichiarava un presidio che per metà non esiste.** Diceva che pagelle e certificati
+   medici sono «gli unici due su cui il registro porta ancora una riserva scritta»; `grep -c 'DA
+   CONFERMARE DAL TITOLARE' src/lib/gdpr/esegui.ts` → **1**, nella sola voce `pagelle`. Corretto, e
+   adesso il lock lo **misura** invece di ripeterlo.
+
+**Contrasto** (`__tests__/a11y/oblio-avviso-contrasto.test.ts`): la riga delle foto di gruppo era
+`ink/70` su `error-soft` = **4,43:1**, sotto i 4,5:1 di WCAG 1.4.3 AA, proprio su una riga che porta
+un numero. Portata a `ink/80` = **5,88:1**. L'asserzione «nessuna violazione axe» non poteva vederlo:
+in jsdom la regola `color-contrast` **non gira**, quindi dava una rassicurazione che non aveva.
+
+**Log** (`AGENTS.md` §5): il dry-run scrive `esito: 'oblio-dryrun-cosa-distrugge'` su `gdpr`, che è
+un canale **persistito** — fra sei mesi è l'unica risposta alla domanda «vi era stato detto che se
+ne andavano le pagelle?». Solo conteggi e uuid: nessun nome, nessun percorso di file. Fino al 13/08
+quella riga **non aveva nessun test** (toglierla lasciava 61 test su 61 verdi); adesso ne ha tre,
+compreso quello che verifica che «non misurato» arrivi nel log come `null` e non come zero.
+
+Migrazioni: **nessuna**. Nessuna nuova variabile d'ambiente. Il dry-run fa **sole `SELECT`**, gira
+DOPO `assertAlunnoInScope` e degrada a zero sullo schema assente (`PGRST205`/`42P01`), come vuole il
+DB E2E della CI che non è migrato.
+
+---
+
+## 🪪 Changelog — Il modulo pubblico del personale impara le due facce, e il suo degrado smette di ingoiare la carta d'identità 2026-08-13 (branch `test/e2e-moduli-pubblici`)
+
+`POST /api/iscrizione/personale` è la porta **anonima** da cui una maestra in servizio consegna la
+propria anagrafica e la scansione del documento d'identità. Fino al 12/08 conosceva **una** faccia
+(`documento_path`); la migrazione `20260812194501` l'ha rinominata in `documento_fronte_path` e ne ha
+aggiunta una seconda, **in produzione**. Questa voce racconta il passaggio al plurale di quella rotta
+e — soprattutto — il difetto che il passaggio si era portato dietro.
+
+**Cosa è passato al plurale.** Il gate di FORMA (`percorsoDocumentoAmmesso`) gira su **ogni** faccia
+dichiarata dal template, non sulla prima; il reclamo e il collegamento sul registro dei caricamenti
+sono **plurali** (`caricamentiReclamabili` / `collegaCaricamenti`, una lettura e **un solo `update`**:
+con due `update` il fronte può collegarsi e il retro no, e la spazzata toglie il retro entro 24 ore
+mentre la pratica lo nomina ancora); il rifiuto nomina **tutte e due** le facce e mai una sola —
+contestare solo il retro direbbe a chi prova percorsi inventati che *il fronte è stato accettato*,
+cioè trasformerebbe la verifica in uno strumento per censire le scansioni caricate. Due facce
+**uguali** si rifiutano (`documento-facce-uguali`): allegare due volte la stessa foto è il modo più
+facile di «finire» il modulo lasciando la Segreteria senza il retro e senza una riga che lo dica.
+
+### 🔴 Il difetto che questo lavoro aveva introdotto, e che è durato meno di un giorno
+
+Il ramo di degrado dell'INSERT — quello che tollera un database indietro con le migrazioni — era
+stato allargato a un **ciclo** con `COLONNE_FACOLTATIVE = ['consents_log', ...COLONNE_DOCUMENTO]`.
+Cioè: *«una colonna che tiene la fotografia di una carta d'identità è una colonna che un database
+indietro può legittimamente non avere»*. La conseguenza, per intero:
+
+1. il ciclo toglieva `documento_fronte_path` e `documento_retro_path`, e la riga entrava: **201**;
+2. al punto 10-bis `collegaCaricamenti` girava lo stesso → le righe di `caricamenti_personale`
+   prendevano `pratica_id`;
+3. `spazzaCaricamentiSospesi` filtra `pratica_id is null and anagrafica_utente_id is null` → **non le
+   vedeva più**;
+4. `gdpr/retention-personale` scopre i file leggendo `documento_fronte_path`/`documento_retro_path`
+   **dalle righe** → in quella riga non c'erano.
+
+Risultato: una fotografia di documento d'identità nel bucket, **non spazzabile e non conservabile** —
+esattamente ciò che `personale-template.ts` chiama «conservata per sempre e irrintracciabile». E la
+migrazione scritta **nello stesso lavoro** prescriveva il contrario, testualmente: *«la scansione si
+perde in silenzio, che è il modo peggiore di perderla… migrazione prima del codice = 503 per il tempo
+del deploy. È l'errore giusto: rumoroso e reversibile.»* Prima di questo lavoro il secondo `PGRST204`
+cadeva nel ramo generico → 500, cioè l'errore rumoroso; il ciclo l'aveva trasformato in un 201 muto.
+Il test scritto insieme al codice **codificava la perdita** (asseriva `201` e
+`not.toHaveProperty('documento_fronte_path')`).
+
+**La correzione.** `COLONNE_INDEGRADABILI` si deriva da `COLONNE_DOCUMENTO`: se il database non ha
+una faccia, la rotta **non ritenta e non scrive** — risponde **503 `PRATICHE_NON_DISPONIBILI`** (lo
+stesso 503 della tabella assente) e logga a livello **`error`** nominando la colonna e la migrazione
+da applicare. Nessuna riga nasce, quindi gli oggetti restano senza proprietario e la spazzata li
+toglie entro 24 ore: meglio una scansione da rifare che una che nessuno può più né trovare né
+cancellare. ⚠️ La guardia si valuta **prima del tetto del ciclo**, e un test lo tiene fermo: con
+l'ordine opposto, `consents_log` mancante + fronte mancante uscirebbe per esaurimento nel ramo
+generico, cioè **500 `PRATICA_NON_INVIATA`** — un codice che invita a ritentare fra qualche minuto una
+cosa che non può riuscire, e senza nessuna riga che nomini la migrazione.
+
+### Le altre tre correzioni dello stesso giro
+
+- **Il tetto dei caricamenti torna a essere una misura per porta.** Il 12/08
+  `TETTO_UPLOAD_PUBBLICO` era passato **da 20 a 30** per il fabbisogno del personale (13 dipendenti ×
+  2 facce dietro un solo NAT = 26). Ma quella costante è **condivisa da tre porte**: `iscrizione/upload`
+  e `public/forms/[token]/upload` — anonime, sul bucket dei documenti dei **minori** — si erano
+  ritrovate il tetto allentato del 50% per un bisogno che non era il loro. I contatori erano già
+  separati per rotta: a essere condiviso era solo il numero, quindi l'allargamento non dava al
+  personale nulla che un numero suo non desse. Ora `TETTO_UPLOAD_PUBBLICO` è di nuovo **20** e nasce
+  `TETTO_UPLOAD_PERSONALE = 30` per la sola porta del personale. Il lock architetturale non pretende
+  più *il nome* `TETTO_UPLOAD_PUBBLICO` ma la *provenienza*: qualunque `TETTO_UPLOAD_*` usato in una
+  rotta pubblica dev'essere **importato** da `@/lib/upload/allegati-pubblici`, dove accanto c'è
+  l'aritmetica che lo giustifica — e ogni tetto ha ora le sue soglie, non una sola.
+- **Le colonne del documento hanno una sorgente sola, e adesso è un lock.**
+  `gdpr/retention-personale` conteneva una copia scritta a mano
+  (`const COLONNE_DOCUMENTO = ['documento_fronte_path', 'documento_retro_path'] as const`) con
+  accanto un commento che parlava di «un posto solo» riferendosi a sé stessa. **Misurato**:
+  aggiungendo un terzo campo `file` al template la suite dava **136 test rossi in 14 file** e la
+  conservazione restava **93/93 verde** — una terza faccia sarebbe entrata dal modulo pubblico, sarebbe
+  stata archiviata, e non sarebbe stata cancellata **mai**. Ora quel file importa `COLONNE_DOCUMENTO`,
+  e `__tests__/architecture/colonne-documento-un-posto-solo.test.ts` vieta la prossima copia —
+  distinguendo un *elenco di sole colonne del documento* (vietato) da una *proiezione* che le nomina
+  fra altre trenta (lecita) e dalla lista di redazione di `@/lib/audit/riassunto`, che deve continuare
+  a nominare anche il nome **storico** `documento_path`, ancora vero su `alunni` e `parents`.
+- **`documentiDiUnaPraticaViva` non si appoggia più all'indice unico.** Leggeva con `.maybeSingle()`,
+  giustificato dall'indice `unique (lower(email)) where stato in (…)`. Vero in produzione, falso
+  proprio sul database che questa rotta si sforza di tollerare: senza quell'indice due righe vive
+  fanno rispondere `PGRST116`, la funzione torna `false`, e chi rimanda **il proprio** modulo prende
+  un 400 sul campo del documento — il difetto che quella funzione esiste per chiudere, riaperto in un
+  caso più stretto. Ora legge con `.limit(5)` e confronta le facce di tutte le righe. La sicurezza
+  non si allarga: se le righe vive fossero davvero due, l'INSERT non collide, la riga nuova nasce, e
+  quel caso è già nominato e loggato `error` al punto 10-ter (`documento-condiviso-con-altra-pratica`).
+  Il ramo `23505` continua a usare `.maybeSingle()`, ed è corretto: là l'indice esiste per dimostrazione.
+
+**Tre commenti che descrivevano un prodotto diverso da quello che c'è** — in un file di sicurezza, ed
+è la stessa classe di difetto che il 12/08 aveva tolto alla Segreteria l'accesso a ogni scansione:
+il riquadro intitolato `documento_path` e scritto al singolare (promette un rifiuto «NOMINANDO il
+campo», mentre il codice nomina apposta tutte e due le facce); la citazione di un presidio cancellato
+lo stesso giorno («il tetto di 200 caratteri di `documento_path`», che non è più un controllo di
+`percorsoDocumentoAmmesso`); e l'elenco «CHI CHIAMA QUESTO MODULO, **verificabile con `grep -rn`**»
+che attribuiva a `DOC_PREFISSO` **un** chiamante quando erano **due**. Un elenco che invita alla
+verifica e non la supera è la forma di documentazione che questo repo ha già pagato.
+
+Copertura: `anagrafica-personale-post` (80 casi) · `personale-post-forma-documento` ·
+`percorso-documento` · `caricamenti-personale-plurale` · `estensione-archiviata` ·
+`upload-pubblico-con-tetto` · `anagrafica-personale-upload` · `iscrizione-upload-tetto-e-tipi` ·
+`gdpr-retention-personale` · **`colonne-documento-un-posto-solo` (nuovo)**. I casi che portano il
+peso, e sono tutti nuovi: fronte assente ⇒ 503 · retro assente ⇒ 503 · faccia assente **dopo** un
+degrado legittimo ⇒ 503 (non 500) · due righe vive per la stessa email ⇒ 201 e non 400. Mutazioni
+eseguite e ripristinate (md5 verificato): guardia sul documento spenta ⇒ **3 rossi**; lettura del
+proprietario ferma alla prima riga ⇒ **1 rosso**; copia a mano rimessa in `retention-personale` ⇒
+**2 rossi**.
+
+---
+
+## 🩹 Changelog — La porta nuova diceva all'operatore la frase di un'altra schermata, e due presidi erano promessi da un commento e da nessuna riga 2026-08-13 (branch `test/e2e-moduli-pubblici`)
+
+Revisione critica della porta di caricamento della scansione
+(`admin/anagrafica-personale/scansione:POST`) e dei due gate `?doc=`. Sei correzioni, e nessuna
+riguarda il perimetro: il gate di forma, l'isolamento fra sedi e il compare-and-swap reggevano.
+
+**1. Due codici d'errore presi in prestito, e nessuno se n'era accorto perché la prosa del server
+non arriva a schermo.** La rotta rispondeva `ANAGRAFICA_PERSONALE_NON_DISPONIBILE` e
+`ANAGRAFICA_PERSONALE_NON_AGGIORNATA`, che sono della rotta gemella. Il client
+(`StaffDetailPanel` → `messaggioDaCorpo`) mostra il testo di **catalogo** e butta il messaggio che
+la route scrive — solo i codici in `CODICI_CON_DETTAGLIO` lo conservano, e sono uno. Quindi chi
+premeva «Carica il fronte» e incappava nel 503 leggeva, parola per parola, *«le scadenze dei
+documenti non sono consultabili… qui sotto non compare nessuna riga»* — un elenco che sullo schermo
+non c'è, sotto un pulsante di caricamento — oppure *«la correzione non è stata registrata»* senza
+aver corretto niente, e in nessuno dei due casi la sola notizia che conta: **che il documento non è
+stato archiviato**. Ora ci sono `SCANSIONE_ARCHIVIO_NON_DISPONIBILE` e `SCANSIONE_NON_REGISTRATA`,
+tradotti it+en. È lo stesso argomento per cui `SCANSIONE_SOSTITUITA_ALTROVE` era già nato invece di
+riusare il codice della PATCH — scritto dodici righe più sotto nello stesso file, e non applicato ai
+due vicini.
+
+**2. Un rigo del PRD dichiarava aperto un difetto che questo stesso lavoro aveva chiuso.** Vedi il
+riquadro «✅ CHIUSO il 2026-08-13» nel changelog del 12/08 più sotto.
+
+**3. `DOC_MAX_LUNGHEZZA` agiva in un posto solo, e quel posto non era collaudato.**
+`percorso-documento.ts` dichiara «dove il tetto agisce DAVVERO: negli schemi `zod` di `?doc=` delle
+due rotte admin». Mutazione `.max(DOC_MAX_LUNGHEZZA)` → `.max(50000)` su entrambe: **39 test verdi**.
+Quattro prove nuove, in coppia su ciascuna rotta — 400 di validazione sopra il tetto (con `path:
+'doc'` nei `details`, e zero query alla tabella), 403 del gate di forma al limite esatto. La coppia
+inchioda il numero da entrambi i lati: un tetto più largo fa fallire la prima, uno più stretto la
+seconda.
+
+**4. Il log che distingue una fuga da un collegamento vecchio era cieco sul RETRO.** Verso il client
+«è di un'altra sede» e «non esiste» sono la stessa risposta — è il contratto, e non cambia — quindi
+la distinzione sopravvive **solo** in `app_log`, fra `documento-fuori-sede` e
+`documento-non-risolto`. Il ciclo diagnostico di `admin/pratiche-personale:GET` itera sulle due
+colonne apposta, e il commento lo promette; nessuna riga lo misurava. Mutazione
+`COLONNE_DOCUMENTO` → `.slice(0, 1)`: **44 test verdi**, e un tentativo cross-sede sul retro usciva
+in `app_log` come un link vecchio. Tre prove nuove (fronte, retro, e la guardia contro il ciclo che
+dicesse «fuori sede» sempre).
+
+**5. Un 409 permanente che accusava un collega inesistente.** `leggiStato` normalizzava a `null` una
+colonna contenente `''` o soli spazi — che il `check` della migrazione `20260812194501` **ammette**
+— lasciando però `esiste = true`. Il compare-and-swap diventava allora `.is(colonna, null)`, che in
+SQL **non matcha `''`**: zero righe toccate ⇒ `esito: 'perso'` ⇒ 409 *«questa scansione è stata
+sostituita da qualcun altro nel frattempo»*, **per sempre**, su una faccia che nessuno aveva toccato.
+Misurato in produzione: `documento_fronte_path = '' or documento_retro_path = ''` → **0 e 0** su
+entrambe le tabelle, quindi latente. Ora lo stato porta due valori distinti — `attuale` (il testimone
+grezzo, `''` compreso) e `vecchio` (il file da togliere, normalizzato) — perché **la normalizzazione
+e il predicato di compare-and-swap devono decidere «vuoto» allo stesso modo**.
+
+**6. L'orfano invisibile che il passo 11 dichiara di combattere, prodotto dal passo 12.** Il ramo
+«riga assente» faceva `upsert(…, { onConflict: 'utente_id' })`, e il commento archiviava la finestra
+fra lettura e scrittura come innocua («il gesto perdente non distrugge niente»). Vero per i dati,
+falso per l'archivio: se un altro operatore creava la riga con la STESSA faccia, l'upsert ne
+sovrascriveva il percorso, il passo 13 non faceva nulla (`vecchio` era `null`) e **il suo file
+restava nel bucket senza nessuna colonna che lo nominasse** — fuori anche dalla portata di
+`spazzaCaricamentiSospesi`, che raccoglie solo le righe senza proprietario, e quella ha
+`anagrafica_utente_id`. Ora è `INSERT` senza `onConflict`: il `23505` non è un guasto, è la notizia
+che la corsa c'è stata, e si ricade sull'UPDATE **con il testimone originale** («la colonna non aveva
+niente»). Le due corse finiscono come devono — 409 con l'oggetto ritirato se il collega ha riempito
+questa faccia, 200 se ha riempito l'altra — e senza un orfano in nessuna delle due. La mutazione che
+rimette l'upsert uccide tre prove, e una mostra un danno peggiore dell'orfano: l'upsert **cancellava
+anche l'altra faccia** del collega.
+
+Il conteggio del lock `isolamento-sede-coverage` era già stato aggiornato (285→289, 448→451,
+`handlerEsentati` fermo a 92) con la ragione scritta per esteso.
+
+Copertura: 253 test verdi sui sette file dell'elemento. Sei mutazioni eseguite in questo giro e sei
+uccise (`.max` largo · `.max` stretto · ciclo diagnostico su una colonna · normalizzazione di `''`
+nel testimone · `insert` → `upsert`, tre prove). Nessuna migrazione: il `check` che ammette `''`
+resta, perché a decidere «vuoto» in un posto solo è adesso il codice.
+
+### 🔁 Secondo giro (13/08/2026) — il titolo di questo changelog valeva anche per se stesso
+
+Una revisione successiva ha misurato che **due dei presidi corretti qui sopra erano a loro volta
+promessi da un commento e da nessuna riga**, e che il gate `tsc` era rosso. Quattro correzioni.
+
+**A. `tsc --noEmit` era ROSSO su un consumatore dichiarato di `COLONNE_DOCUMENTO`.**
+`src/app/api/gdpr/retention-personale/route.ts:517` — `TS7053`: `COLONNE_DOCUMENTO` è
+`readonly string[]` (si legge dal template a runtime, ed è il punto del modulo condiviso) mentre
+`ConDocumento` è chiuso a due chiavi. Il tipo largo vive ora su **una riga sola dentro
+`percorsiDi`**, e non sul tipo delle righe: allargare `ConDocumento` avrebbe fatto compilare
+`testoDi(r.origine_pratica_idX)` restituendo `null` per sempre, cioè avrebbe spezzato in silenzio
+il legame fascicolo→pratica che `legata` esiste per tenere.
+
+**B. Il compare-and-swap non era provato, perché il finto rendeva `.is` e `.eq` indistinguibili.**
+Mutazione `p.attuale === null ? base.is(colonna, null) : base.eq(…)` → `base.eq(colonna, p.attuale)`:
+**37 test su 37 verdi**. In produzione è un guasto totale — PostgREST serializza `.eq(col, null)` in
+`col = NULL`, che in SQL non è mai vero — e non su un caso di bordo: `anagrafica_personale` ha zero
+righe, quindi la prima faccia entra con l'INSERT e **la seconda trova sempre `attuale = null`**.
+Cioè *«carica il retro»* avrebbe smesso di funzionare per tutte e venti le persone, con un messaggio
+che manda a cercare un collega inesistente. La causa radice stava nel banco di prova: `b.eq` e `b.is`
+erano due lambda identiche. Ora il filtro porta il suo **operatore** (`op: 'eq' | 'is'`) e il finto
+lo **applica** con la semantica di PostgREST. La mutazione uccide **4 prove**, fra cui una nuova che
+misura il percorso più comune di tutti (la seconda faccia sulla riga appena nata).
+
+**C. Le tre guardie contro il doppio invio erano documentate due volte e provate da nessuna riga.**
+Misurato: togliere `inVolo || bloccato` dall'`onChange` di `BloccoFaccia` lascia **123 test verdi**,
+perché quella era una **copia** della guardia del gestore — `inVolo` in `caricaScansione` è lo stato
+(`null | 'fronte' | 'retro'`), quindi ferma già sia il secondo gesto sulla stessa faccia sia quello
+sull'altra. Una difesa che nessun test può distinguere dalla propria copia non è una seconda difesa:
+è una regola scritta due volte. La copia e la prop `bloccato` sono state **rimosse**; la regola vive
+in un posto solo, e ora **è misurata**: tre prove nuove (due `change` ravvicinati sulla stessa
+faccia; il retro che non parte mentre il fronte è in volo; l'azzeramento di `e.target.value`).
+Togliere l'unica guardia rimasta → **2 rossi**; togliere `e.target.value = ''` → **1 rosso**.
+
+**D. Due commenti stale, uno dei quali prescriveva il `grep` che lo smentiva.**
+`src/lib/personale/caricamenti.ts` affermava che `registraCaricamento` ha «un solo chiamante» e che
+la rotta della Segreteria «non ha ancora la rotta: sotto `admin/anagrafica-personale/` c'è solo
+`route.ts`» — mentre quella rotta era stata scritta **nello stesso lavoro** e passa
+`anagraficaUtenteId` a ogni caricamento. È lo stesso difetto che quel file rimprovera due volte alle
+proprie righe precedenti, ricommesso. (La testata gemella di `carica-file.ts` era invece già stata
+aggiornata: la disciplina c'era, applicata a un file e non all'altro.) Corretto con l'esito vero del
+comando. La nota su `documento_path` in `iscrizione/personale/upload/route.ts` risultava **già
+corretta** alla misura: nomina entrambe le facce e la migrazione che le ha rinominate.
+
+Copertura del secondo giro: **500 test verdi** sui 13 file dell'elemento (41 sulla porta, 123 sul
+pannello), `eslint --max-warnings 0` pulito sui file toccati, `tsc --noEmit` senza più nessun errore
+dell'elemento. Otto mutazioni eseguite: due uccise dalle prove nuove sulla porta, due sul pannello,
+e **due — le copie ridondanti della guardia — dichiarate non uccidibili e quindi rimosse invece che
+inseguite con un test finto**.
+
+---
+
+## 🩺 Changelog — Quattro commenti che dichiaravano il falso in un lavoro che si apriva vantandosi di averne rimosso uno 2026-08-13 (branch `test/e2e-moduli-pubblici`)
+
+Revisione critica del blocco «E2E dei moduli pubblici + tetto di tempo sull'upload». **Il codice
+reggeva** — perimetro verde, nove mutazioni tentate e nove uccise — e i due difetti veri erano
+altrove: nei commenti, e in un'asserzione che prometteva più di quanto potesse.
+
+**Le quattro affermazioni false, ognuna smentita col comando che la testata stessa indicava.**
+
+| Dove | Diceva | La misura |
+|---|---|---|
+| `src/lib/upload/carica-file.ts` (testata) | «`caricaFile` ha **un solo chiamante**», e prescriveva `grep -rn caricaFile src` | quel `grep` ne trova **due**: `FieldRenderer.tsx` e `StaffDetailPanel.tsx`. La frase cancellata perché «falsa» — *il tab Documento sta per avere due controlli* — era **quella vera**, arrivata nel frattempo |
+| `carica-file.ts` (il `?? init`) | «`conTetto` restituisce `undefined` quando l'`input` è una `Request`» | sonda vitest su `@/lib/logging/tetto`: restituisce **`init`**, identità compresa, con e senza signal del chiamante. `conTetto` torna `undefined` **solo** se `init` lo era già — quindi `?? init` era **codice morto** difeso da uno scenario impossibile |
+| `FieldRenderer.tsx` · `ScattaFotoButton.tsx` | «Nessun test unitario poteva vederlo»; «il presidio è `__tests__/i18n/scatta-foto-i18n.test.tsx`» | cancellata la prop `nomeAccessibile`, quel file resta **VERDE** (zero occorrenze di `scattaFotoDi`/`nomeAccessibile`/`etichettaCampo`). Il rosso arriva da `__tests__/a11y/scatta-foto-due-facce.test.tsx`, **un test unitario in jsdom** che il commento non nominava mai |
+| `carica-file.ts:70` vs `:167-190` | «l'unica stringa che attraversa il confine è `messaggioServer`» | il tipo `EsitoCaricamento` dichiara **anche `codice`** sessanta righe più sotto, e la sua doc contraddiceva la testata parola per parola. Il file affermava e negava lo stesso fatto |
+
+**Il difetto di sostanza: la porta ANONIMA mostrava italiano a chi ha l'interfaccia in inglese.**
+`FieldRenderer` faceva `esito.messaggioServer ?? t('caricamentoNonRiuscito')`, buttando via
+`esito.codice`. Le rotte di caricamento il codice lo mandano già
+(`ALLEGATO_PDF_O_IMMAGINE`, `TROPPE_RICHIESTE`, `ALLEGATO_OLTRE_LIMITE_PIATTAFORMA`) e il
+chiamante **gemello** della stessa primitiva — il tab «Documento» della scheda staff — lo
+traduceva. Due consumatori, e quello sui **wizard pubblici e i moduli delle famiglie** era l'unico
+a non farlo: testualmente il fallimento **F2** del collaudo del 31/07, riaperto dalla parte senza
+sessione. Ora passa da `messaggioDaCorpo`. **`messaggioDaCorpo` e non `soloCatalogoDaCorpo`**:
+`/api/forms/upload` non manda ancora nessun codice, e togliere la prosa sostituirebbe un messaggio
+utile con uno generico — un difetto scambiato con un altro. Il residuo si chiude **dichiarando il
+codice**, non nascondendo la frase.
+
+⚠️ **Nessun test lo copriva**, e il perché conta: l'unico caso esistente usava un corpo **senza
+`codice`**, quindi era verde sia col difetto sia senza. Cinque prove nuove in `FileField-413`
+stabiliscono `document.documentElement.lang` e pretendono la frase di catalogo — **e verificano che
+l'italiano del server NON compaia**. Rimessa la riga vecchia: **2 rosse**.
+
+**«Due nomi diversi» non poteva cogliere il guasto che diceva di cogliere.** Lo spec E2E pubblico
+sosteneva che con lo stesso nome «un prodotto che archiviasse due volte il fronte mostrerebbe la
+stessa schermata di uno sano». Ma il nome nel riquadro **non viene dal server**:
+`setFileName(file.name)` è chiamato sul `File` **locale** prima della fetch e non è mai riscritto
+dalla risposta. Ogni `FileField` ha il suo `useState`: l'asserzione poteva cadere solo per un
+incrocio di stato fra istanze isolate, cioè per niente. Aggiunta l'unica presa che guarda davvero
+il server — i **percorsi delle due risposte di caricamento devono essere diversi** — collezionata
+con `page.on` e **non** con due `waitForResponse` (due attese sullo stesso predicato si risolvono
+entrambe sulla **prima** risposta, e il test chiamerebbe «percorsi uguali» un prodotto sano).
+
+**Un'asserzione che misurava il DB della CI travestita da collaudo del prodotto.** In
+`admin-pratiche-personale` cadeva `expect(rilasciati.retro).toBe(rilasciati.fronte)`, chiamata
+«l'invariante che il prodotto promette»: **il prodotto non la promette**. La rotta calcola apposta
+`documento_rilasciato_a_meta: fronte !== retro` e il commento accanto descrive il disallineamento
+come conseguenza **normale** di un DB a cui manchi una sola colonna — «ogni faccia risponde per
+sé». Era vera perché rinomino e `add column` stanno nella **stessa transazione** di
+`20260812194501` (`begin;`…`commit;`, verificato), cioè per lo stato dello schema. Restano le due
+asserzioni che il prodotto promette davvero: le chiavi **devono esserci e essere booleane**, perché
+il pannello legge `?.fronte !== false` e un oggetto assente varrebbe come **rilascio**.
+
+Migrazioni: nessuna. Nessun cambiamento di schema, nessuna nuova variabile d'ambiente.
+
+---
+
+## 🪪 Changelog — L'archivio del personale era vuoto e l'unico modo di riempirlo era chiedere a venti persone di ricompilare un modulo 2026-08-12 (branch `test/e2e-moduli-pubblici`)
+
+**La misura da cui parte tutto**, sul database di produzione il 12/08:
+
+```sql
+select count(*) from anagrafica_personale;              -- 0
+select count(*) from utenti where ruolo <> 'genitore';  -- 20
+select count(*) from utenti where ruolo = 'educator';   -- 12
+```
+
+Zero fascicoli, venti persone in servizio. La scheda staff dichiarava in testata «QUI
+L'ANAGRAFICA È IN SOLA LETTURA», e la conseguenza era che una Segreteria con la fotocopia del
+documento **già in mano** non aveva nessun posto in cui metterla: doveva mandare il link del
+modulo pubblico e aspettare.
+
+**La porta.** Nasce `POST /api/admin/anagrafica-personale/scansione?utenteId=&lato=fronte|retro`
+— quella che il commento della rotta gemella prometteva già per iscritto («la scansione si
+sostituisce caricandone una nuova, che è un'altra porta e ha il suo gate»). Non è una breccia nel
+perimetro: `documento_fronte_path`/`documento_retro_path` restano fuori dalla whitelist della
+`PATCH`, e il percorso continua a **non arrivare mai dal client** — lo genera il server dopo aver
+ricevuto i byte, nella stessa forma della porta pubblica (`documenti/<uuid>/<uuid>.<ext>`), così
+il gate di forma e il `check (… like 'documenti/%')` valgono per entrambe senza una seconda regola.
+
+**Il gate include la SEGRETERIA** (`requireStaff` coi ruoli di default, non `['admin',
+'coordinator']`): è chi sta al banco quando la persona arriva col documento, e in produzione i tre
+account `segreteria` sono quelli che questo gesto lo faranno davvero. Nel pannello il controllo di
+caricamento **non sta dietro `canEdit`**, che è il gate del tab Incarico.
+
+**Cinque decisioni che l'ordine delle operazioni rende vere, e che nessun test formale coglierebbe:**
+
+- **gli identificativi in QUERY, non nel multipart** — con `utenteId` nel corpo,
+  `assertUtenteInScope` girerebbe solo dopo aver bufferizzato fino a 4 MB spediti da uno staff di
+  un'altra sede (lock `corpo-letto-dopo-il-gate`);
+- **lo stato attuale si legge PRIMA di toccare il bucket** — serve a conoscere il percorso
+  precedente e a rispondere 503 su un database non migrato **senza aver caricato niente**;
+- **la riga di registro nasce già di proprietà** (`anagrafica_utente_id`): senza,
+  `spazzaCaricamentiSospesi` toglierebbe entro 24 ore il documento di una dipendente in servizio
+  mentre il fascicolo lo nomina;
+- **la scrittura è un compare-and-swap**: zero righe toccate ⇒ **409
+  `SCANSIONE_SOSTITUITA_ALTROVE`** e ritiro del proprio oggetto. Sovrascrivere significherebbe
+  cancellare, al passo dopo, il file che un collega ha appena caricato;
+- **la copia precedente esce dall'archivio SOLO DOPO** che la colonna nomina la nuova — l'ordine
+  opposto a `retention-personale` («prima i file, poi le righe»), e per una ragione: là la riga
+  sparisce comunque, qui resta e deve poter nominare un file che esiste.
+
+La risposta è `{ success: true }` **senza il percorso**: la porta pubblica lo restituisce perché il
+client deve rimandarlo, qui lo scrive il server — e una chiave che apre un documento d'identità non
+viaggia senza motivo. Tetto **per utente** (40 in 10 minuti: 20 persone × 2 facce, più il margine),
+con una costante propria, perché `TETTO_UPLOAD_PUBBLICO` conta per IP e tre operatori nello stesso
+ufficio non devono rubarsi il tetto a vicenda.
+
+**Il tab «Documento» diventa due blocchi.** Fronte e Retro, ciascuno con «Apri» + «Carica»/
+«Sostituisci»; una riga `role="status"` (non `alert`: è un'incompletezza, non un guasto) dice quale
+faccia manca, da una funzione pura nuova `statoScansioni` — `statoDocumento` **non si tocca**, usa
+le stesse funzioni del cron notturno. «Sostituisci» chiede conferma **in pagina** (mai `confirm()`
+nativo) perché cancella irreversibilmente la copia precedente; il primo caricamento non chiede
+niente, non c'è nulla da distruggere. Dopo un caricamento riuscito la scheda **rilegge dal server**
+invece di indovinare, e il fuoco non cade su `<body>` quando «Carica» smonta se stesso.
+
+⚠️ **Un difetto già in produzione, chiuso qui**: la scheda leggeva `documento_path`, colonna che la
+migrazione `20260812194501` ha rinominato. `valoreTesto` su una chiave assente restituisce `null`,
+quindi il pulsante «Apri la scansione» era sparito **per tutti**, con «Nessuna scansione allegata»
+sotto — e nessun test poteva vederlo, perché `undefined` è indistinguibile da «vuoto».
+
+⚠️ **Nomi accessibili distinti fra le due facce**, misurato e non supposto: con lo spazio scritto nel
+JSX il nome del comando usciva «Apri la scansioneFronte», una parola sola letta così ad alta voce.
+
+Migrazioni: nessuna nuova (`20260812194501` già applicata). Nuovo codice d'errore
+`SCANSIONE_SOSTITUITA_ALTROVE`, tradotto it+en. Copertura: `anagrafica-personale-scansione`
+(33 prove) · `StaffDetailPanel-anagrafica` (118).
+
+---
+
+## 🗃️ Changelog — «Elimina Alunno (GDPR)» non poteva funzionare su 28 bambini su 33: si archivia, non si cancella 2026-08-12 (branch `test/e2e-moduli-pubblici`)
+
+**Il difetto, misurato in produzione.** Tre tentativi veri il 12/08 (11:17:24 · 11:17:53 ·
+11:18:07 UTC, ruolo admin, alunno `96399f3e-…`) → PostgREST `23503` su
+`valutazioni_alunno_id_fkey` → HTTP 409. `alunni` ha **28 chiavi esterne entranti** e **sette**
+non hanno `ON DELETE CASCADE` (valutazioni, pagamenti, legame_genitori_alunni, eventi_diario,
+armadietto, ticket_mensa, note_disciplinari). Sui dati veri: 33 alunni, di cui **28 con
+pagamenti, 28 con legami, 18 con ticket mensa, 11 con voci di diario, 6 con valutazioni, 5 con
+note** → **28 su 33 non erano cancellabili**. Il bottone era una promessa che il database non
+poteva mantenere.
+
+**E non deve mantenerla.** Registri didattici e pagamenti si conservano **dieci anni**, ma il
+nome del bambino esiste in **un posto solo** (`alunni.nome`/`cognome`): cancellare l'anagrafica
+rende illeggibili in un colpo i registri di *ogni* anno, passati compresi. Da qui il modello a
+due tempi deciso dal titolare:
+
+1. **ARCHIVIA** — l'anagrafica resta **intatta** (nome, cognome, codice fiscale). Il bambino esce
+   dagli elenchi operativi. **È reversibile.**
+2. **LIBERA SPAZIO**, solo da quell'elenco — foto, video e messaggi. Restano pagamenti, presenze,
+   voti, pagelle, note, diario e certificati medici.
+
+**Nessuna foreign key è stata toccata.** Non servivano.
+
+**La leva non è lo stato — la misura che ha riscritto il piano.** `from('alunni')` compare **181
+volte in 117 file** e solo **12** filtrano `.eq('stato','iscritto')`: contare sullo stato avrebbe
+lasciato l'app cieca in un centinaio di punti. La leva è lo **sganciamento dalla classe** —
+`section_id` e `classe_sezione` a NULL fanno sparire il bambino da tutte le query per sezione con
+un UPDATE solo. ⚠️ `section_id` va azzerato **esplicitamente**: il trigger `sync_alunno_section_id`
+agisce solo quando `classe_sezione IS NOT NULL`, quindi azzerare il nome **non** azzera l'id.
+
+> ⚠️ **Questo paragrafo è vero a metà, e da solo porta alla conclusione sbagliata.** Lo sganciamento
+> copre le query per *sezione*, non quelle per *sede intera* — ed erano proprio quelle a scrivere
+> alle famiglie. Vedi «👁️ Le query CIECHE», in fondo a questo changelog: è la correzione del 13/08,
+> e senza di essa questa misura si legge come «la classe copre tutto». Anche i due numeri qui sopra
+> sono una fotografia scritta a mano che è già invecchiata: quello che non invecchia è il test che
+> li rimisura.
+
+**Che cosa è stato costruito**
+- **`POST /api/admin/students/archivia`** — gate `requireStaff` (è un atto di segreteria),
+  `assertAlunnoInScope` prima di tutto, **un solo UPDATE** che sgancia *e* ricorda
+  (`archiviato_section_id`, `archiviato_classe_sezione`), audit via `logScrittura` — **mai**
+  `registro_modifiche`, **mai** un `select *`.
+- **`POST /api/admin/students/riattiva`** — il ritorno. La classe **non si ripristina alla cieca**:
+  `archiviato_classe_sezione` può essere stantia (classe rinominata o cancellata, bambino cresciuto
+  di un anno) e dal 29/07 il nome non è nemmeno una chiave. Si verifica con la stessa funzione del
+  PATCH (`classeEsisteInOgniSede`); se la classe non c'è più si riattiva **senza classe dicendolo**
+  (`classe_ripristinata: false`). Mai un `section_id` indovinato: *un bambino nella sezione
+  sbagliata è invisibile a chi lo cerca in quella giusta*. `gruppo_mensa_id` non torna indietro.
+- **Linguetta «Non più iscritti»** dentro `/admin/students` (nessuna rotta nuova: si usa
+  `GET /api/admin/students?stato=ritirato`, parametro già esistente e già applicato). Colonne:
+  cognome e nome, data di nascita, sede (solo con più d'una), «Era in», «Archiviato il», badge
+  «spazio liberato». **Niente codice fiscale e niente allergie**: vale la regola di proiezione
+  minima del 31/07.
+- **`POST /api/admin/students/libera-spazio`** — il secondo tempo. Riservata alla **Direzione**
+  (`admin`, `coordinator`): archiviare si annulla, questo no. Contratto identico a quello
+  dell'oblio — `{ alunno_id, mode: 'dryrun' | 'execute', confirm }` — perché davanti a un pulsante
+  senza annulla l'abitudine dell'operatore è una difesa. Motore in `@/lib/alunni/libera-spazio`,
+  con l'elenco **scritto** di ciò che non si tocca (19 tabelle e 4 bucket), che viaggia in
+  entrambe le risposte.
+- **`LiberaSpazioDialog`** — la conferma in due passi, **accanto all'elenco** (è da lì che il
+  modello dice che l'operazione comincia). Conta, mostra che cosa sparisce e che cosa resta, fa
+  digitare il nominativo, e distingue l'esito pieno da quello **parziale**. ⚠️ Questo pezzo è
+  arrivato il 13/08: vedi «Le tre cose che il 12/08 erano scritte e non erano vere», qui sotto.
+
+**Il degrado NON si fa, ed è la decisione più importante del lavoro.** Sul DB E2E della CI, che è
+un progetto separato e non migrato, il ciclo «togli la colonna e riprova» eseguirebbe lo
+sganciamento e **non** la memoria: il bambino uscirebbe dalla sua sezione e nessuna riga direbbe
+quale fosse. Perciò `42703`/`PGRST204` producono **503 `ARCHIVIO_NON_DISPONIBILE` e zero
+scritture**. Un'archiviazione a metà è irreversibile; un 503 si ripete domani.
+
+**Un fatto che l'interfaccia DICE invece di nascondere:** l'automa
+`presenze-giustificazioni-retention` (migrazione `20260807211157`) ogni notte alle 04:59 UTC azzera
+`presenze.giustificazione_testo` e `presenze.note_appello` di chi non è più iscritto. Archiviare fa
+quindi sparire **entro 24 ore** il motivo dell'assenza scritto dalle famiglie — le righe di presenza
+restano, il testo no. È una promessa già pubblicata in `/privacy`: non si cambia, si dichiara nel
+riquadro.
+
+Migrazione: `20260812194517_alunni_archiviazione` (già applicata). Sei codici d'errore nuovi,
+tradotti in italiano e inglese. 50 test nuovi (`admin-students-archivia`,
+`admin-students-riattiva`, `AlunniArchiviatiView`).
+
+### 🔴 Le tre cose che il 12/08 erano scritte e non erano vere (corrette il 13/08)
+
+**1. Il secondo tempo del modello non esisteva come prodotto.** `grep -rn "libera-spazio" src/` non
+trovava **una sola `fetch`**: la rotta, il motore, il dry-run e i loro 49 test non avevano nessun
+chiamante. Il bottone «Libera spazio» dell'elenco cadeva su `router.push('/admin/students/<id>')`,
+e su quella scheda non c'era niente. Tre bugie in fila, e ognuna rendeva l'altra credibile:
+un **commento** in testa al componente affermava che «quella schermata vive sulla scheda del
+bambino»; il **testo a schermo** (`arcSpiegazione`) prometteva all'operatore che «con «Libera
+spazio» se ne vanno foto, video e messaggi»; un **test** («senza delega porta alla scheda»)
+certificava il vicolo cieco come comportamento corretto. Il difetto vero era il punto di estensione:
+un `prop` opzionale `onLiberaSpazio` che nessuno passava, con un ripiego che sembrava un
+comportamento. Ora c'è `LiberaSpazioDialog`, il `prop` **non esiste più** — un'operazione
+irreversibile ha un gesto solo — e 19 test nuovi provano la chiamata (`mode: 'dryrun'` all'apertura,
+`mode: 'execute'` col nominativo digitato) e il testo che l'operatore legge.
+
+**2. Il registro immutabile della distruzione irreversibile attribuiva la sede SBAGLIATA.**
+`libera-spazio` scriveva `scuolaId: auth.user.scuola_id` — la sede dell'**operatore**, non quella
+dell'**alunno**. Il gemello `archivia` lo faceva già giusto (`prima.scuola_id`) e il suo test lo
+asseriva; qui la fixture dava all'operatore la stessa sede del bambino, quindi i due valori
+coincidevano e la riga sbagliata passava. Con tre sedi in produzione e `test.multisede.admin` che le
+vede tutte, è la riga che fra dieci anni dovrà rispondere a «chi ha deciso, e in quale plesso».
+Corretto, e il test ora usa un `admin` multi-plesso: la mutazione che rimette `auth.user.scuola_id`
+è **rossa**.
+
+**3. Sul DB non migrato rispondeva 500 generico invece del 503 dichiarato.** `libera-spazio` legge
+`spazio_liberato_il`, colonna della migrazione `20260812194517`: sul DB E2E della CI PostgREST
+risponde `42703` e la rotta usciva con **500 «Errore interno»**, che invita a riprovare una cosa che
+non può riuscire. I due gemelli chiamano `colonnaAssente()` e rispondono **503
+`ARCHIVIO_NON_DISPONIBILE`** — «il rimedio non è riprova fra un minuto: è applicare la migrazione»,
+che questo stesso changelog chiama «la decisione più importante del lavoro». La terza rotta, quella
+che cancella, era l'unica senza. Ora ce l'ha, con quattro test (42703, PGRST204, la riga di log, e
+il controllo negativo che un `42501` resta un 500).
+
+**E due presidi che erano dichiarati e non difesi da niente:**
+
+- `archivia` porta `.in('scuola_id', plessi)` **sull'UPDATE** e lo dichiara difesa indipendente dal
+  gate. Misurato: togliendolo, **15 test su 15 restavano verdi**. Il filtro sulla lettura non basta a
+  provarlo — nel finto database le due query vedono la stessa riga nello stesso istante — quindi il
+  test nuovo inscena la CORSA vera: la riga cambia plesso fra la lettura e l'UPDATE, e l'UPDATE non
+  colpisce niente. Con `.in(...)` tolto è rosso.
+- `libera-spazio` — l'unica operazione **senza annulla** — aveva UNA rete di sede (il gate), mentre i
+  due gesti reversibili ne avevano due. L'asimmetria era al contrario. La lettura ora porta
+  `.in('scuola_id', plessi)`, con il suo `warn` su `multi_sede` quando la riga esce dallo scope fra
+  il gate e la lettura.
+
+### 🕰️ E la negazione che `@/lib/alunni/stato` aveva abolito era ancora viva in SQL
+
+`presenze_giustificazioni_retention_tick` — l'automa che questa stessa schermata **cita
+all'operatore** come effetto dell'archiviazione — decideva «non più iscritto» con
+`NOT EXISTS (… AND COALESCE(a.stato,'iscritto') = 'iscritto')`, cioè con la negazione che quel
+modulo esiste per abolire. Misurato in produzione il 13/08, in sola lettura:
+
+| stato | azzerava il testo sanitario? | con l'allowlist |
+|---|---|---|
+| `iscritto` | no | no |
+| **`sospeso`** | **SÌ** — un bambino che frequenta | no |
+| `ritirato` | sì | sì |
+| **`trasferito`** (stato mai classificato) | **SÌ** | no |
+
+Le due righe in grassetto sono il difetto: ogni notte alle 04:59 UTC l'automa azzerava
+`giustificazione_testo` e `note_appello` — testo libero di natura **sanitaria** su un minore — anche
+per un bambino soltanto sospeso. ⚠️ E la migrazione che l'aveva scritto **dichiarava l'opposto**:
+*«davanti a uno stato che non si sa leggere si sceglie di NON cancellare»*. Il codice faceva il
+contrario del suo stesso commento, e nessun test poteva vederlo perché nessun test guardava dentro
+l'SQL.
+
+Migrazione `20260812224407_presenze_retention_allowlist_stato`, **applicata** e verificata su
+`pg_get_functiondef` (non dedotta dal «success»): l'allowlist vive in `public.stati_alunno_non_piu_iscritto()`
+— posto unico SQL, gemello di `STATI_NON_PIU_ISCRITTO` — e la riga orfana (alunno non più in
+anagrafica) diventa un ramo **dichiarato** invece di un effetto collaterale della negazione. Righe
+toccate dal cambiamento, misurate prima di applicarlo: **0 con il vecchio predicato e 0 col nuovo**.
+`get_advisors` (security): 0 ERROR. Il nuovo lock
+`__tests__/architecture/stati-alunno-anche-in-sql.test.ts` confronta le due copie e guarda **l'ultima**
+definizione dell'automa — i file di migrazione sono storia, e un lock che vietasse il passato sarebbe
+rosso per sempre, cioè andrebbe spento.
+
+### 👁️ Le query CIECHE: «la leva non è lo stato» era vero a metà, e la metà mancante scriveva alle famiglie
+
+**Correzione del 13/08 alla frase più citata di questo changelog.** Lo sganciamento dalla classe
+copre le query per **sezione**, che sono la maggioranza — ed è per questo che il piano è stato
+scritto così. Non copre le query che leggono `alunni` **per sede intera**: la classe non la nominano
+proprio. Sei di quelle erano cieche, e non erano elenchi qualunque: erano i **canali verso le
+famiglie**. La rubrica della segreteria e quella della maestra, gli avvisi di plesso, gli inviti
+d'agenda, il digest News e le News per grado. Un bambino archiviato continuava a portarci dentro la
+sua famiglia — che è il modo più visibile di dire a dei genitori che il sistema non si è accorto che
+se ne sono andati.
+
+**Il difetto che ha fatto rifare il lavoro** è il sesto: `genitoriDiGrado` (`src/lib/news/notifiche.ts`).
+È il terzo ramo dello stesso dispatcher di cui gli altri due erano già stati corretti, tre righe più
+sotto, e nessun lock poteva vederlo — quella query filtra `section_id`, quindi era esente **per
+costruzione**. L'esenzione «per sezione» del lock era motivata così: *«un archiviato non ha più né
+`section_id` né `classe_sezione`, quindi non torna comunque»*. La frase è **falsa**, e a smentirla
+era un file scritto lo stesso giorno: `alunni.stato` si porta a `'ritirato'` anche dalla **tendina**
+della scheda alunno, che la classe non la tocca — `stato` è fra gli `allowedFields` del PATCH e
+quell'UPDATE non azzera nulla. Due strade per lo stesso stato, e il lock ne guardava una.
+
+**Che cosa è cambiato**
+
+- **Un confine solo, e stavolta davvero in un posto solo.** `STATI_CON_CANALE_FAMIGLIA` in
+  `@/lib/alunni/stato`, **derivato** da `LATO_DEL_CONFINE` invece che scritto a mano. Il commento
+  che prometteva «si cambia qui, in un posto solo» era falso: la stessa regola era ribattuta in
+  sei punti. Ora ci sono **tre confini con tre nomi**: l'allowlist dell'oblio, gli elenchi
+  operativi (`iscritto` in senso stretto), i canali verso le famiglie.
+- **`'sospeso'` è DENTRO i canali** — cambiamento di comportamento, deciso e collaudato. Il modulo
+  lo classifica `'ancora-iscritto'`, cioè un bambino che frequenta; escluderlo significava che la
+  segreteria non poteva nemmeno **aprire** una conversazione con quella famiglia. Prima la scelta
+  viveva in due paragrafi di prosa e nessuna asserzione ne parlava.
+- **L'esenzione «per sezione» del lock non esiste più.** Le sei letture per sezione che restano
+  scoperte sono **decisioni scritte** in `AMMESSE`, non un ramo di regex: presenze del mese, diario
+  di una giornata, galleria di classe, stampa unione, modulistica — tutti **registri**, dove un
+  bambino uscito a metà anno deve restare leggibile per gli stessi dieci anni per cui
+  l'archiviazione non cancella l'anagrafica. La settima sarà rossa.
+- **`agenda:POST` buttava via l'`{ error }` di PostgREST** (regola 7) proprio sulla riga riscritta
+  il 12/08: lettura fallita → `data = null` → zero destinatari → il `catch` non scatta mai perché
+  PostgREST non lancia → **201, zero notifiche in coda, zero righe di log**. Era la «scrittura
+  persa» che il commento di quel `catch` dichiara di esistere per impedire.
+- **Il lock accettava la NEGAZIONE.** `.neq('stato','ritirato')` lo soddisfaceva — la forma che
+  questo stesso batch aveva appena tolto dalla produzione perché metteva un bambino *sospeso* fra i
+  candidati all'anonimizzazione. Ora conta solo il verso positivo (`eq`/`in`).
+- **`admin/students:GET` ha undici chiamanti, non uno.** L'esenzione era scritta come se la rotta
+  servisse solo l'anagrafica; **cinque** elenchi operativi non passavano `stato`, fra cui due
+  schermate **mensa** in cui la segreteria seleziona un bambino e gli inserisce un ticket o gli
+  vende un pacchetto. Un secondo lock ora pretende che ogni chiamante dichiari lo stato che vuole.
+- **I numeri non si scrivono più a mano.** Lo stesso rapporto era dichiarato con tre valori diversi
+  nello stesso lavoro (`182`/`181` letture, «dodici» filtri quando erano **undici**). Non erano
+  bugie: erano tre `grep` invecchiati in giorni. Ora un test li **rimisura** e li stampa. La
+  migrazione resta com'è: un file già applicato in produzione è il verbale di ciò che è stato
+  eseguito, non un documento da ritoccare.
+- **Un'esenzione non si eredita più.** Ogni voce dell'allowlist dichiara **quante** letture copre:
+  senza, una query cieca nuova scritta dentro un contenitore già esente nasceva esentata in
+  silenzio — e `admin/gdpr/candidates` ne contiene già due sotto la stessa chiave.
+
+Nuovo codice d'errore `RUBRICA_NON_DISPONIBILE` (it+en): anche la rubrica lato maestra ignorava
+l'`{ error }`, e per chi insegna «questa classe non ha genitori a sistema» e «la lettura è andata
+storta» erano la stessa schermata vuota.
+
+### 🚪 La seconda porta: il modello a due tempi ne aveva una sola chiusa
+
+**Correzione del 13/08.** Il modello ha una porta d'uscita (`archivia`) e una di ritorno
+(`riattiva`). Accanto a quella di ritorno ne era rimasta aperta una seconda, che nessuno aveva
+chiuso: la **tendina «Stato»** della scheda alunno. Misurato eseguendo davvero la rotta su una riga
+identica a quella che `archivia` lascia in tabella:
+
+```
+PATCH /api/admin/students { id, stato: 'iscritto' }  →  200
+riga risultante: { stato:'iscritto', archiviato_il:<valorizzato>,
+                   section_id:null, classe_sezione:null, archiviato_classe_sezione:'2 ANNI' }
+```
+
+Quel bambino è **iscritto e senza classe**: invisibile a registro, appello, mensa, diario e
+valutazioni — le query per sezione, che questo stesso changelog chiama «la maggioranza» — e sparito
+anche dalla linguetta «Non più iscritti», che filtra `stato=ritirato`. Restava nella sola anagrafica
+piatta. Nessun log, nessun avviso, **nessun test rosso**. Ed è il danno esatto che il modello
+dichiara di voler evitare («un bambino nella sezione sbagliata è invisibile a chi lo cerca in quella
+giusta»), raggiungibile dal bottone «Apri scheda» dell'elenco nuovo.
+
+- **Server** — `admin/students:PATCH` rifiuta il **cambio** di `stato` su una riga con
+  `archiviato_il` valorizzato: **409 `STATO_ALUNNO_ARCHIVIATO`** (it+en), con la frase che manda a
+  «Riporta fra gli iscritti». Si rifiuta il cambio e non il campo, perché la scheda salva il form
+  intero: chi corregge l'indirizzo di un archiviato rimanda lo stesso stato e deve poterlo fare. Su
+  DB non migrato (`archiviato_il` assente) la guardia non scatta.
+- **Scheda** — `Student` porta finalmente `archiviato_il`, `archiviato_classe_sezione` e
+  `spazio_liberato_il`. Su un archiviato la tendina è **spenta** con la spiegazione legata da
+  `aria-describedby`, il bottone «Sposta fra i non iscritti» **non compare** (gli avrebbe risposto
+  409 dopo la conferma) e al suo posto c'è **«Riporta fra gli iscritti»**, prop `onRiattiva`
+  **obbligatoria** — un prop opzionale che nessuno passa è il difetto appena rimosso da
+  `onLiberaSpazio`. Sopra il comando: da quando è fuori e da quale classe.
+
+### 🏷️ `riattiva` diceva «senza classe» a un bambino che la classe ce l'aveva
+
+`classe_ripristinata: boolean` non distingueva «non ho riscritto niente perché non c'era niente da
+riscrivere» da «non ho riscritto niente perché ce l'ha già». Sul **ritiro fatto a mano dalla
+tendina** — che la testata della rotta chiama «precisamente il caso in cui il ritorno serve» —
+rispondeva `{classe_ripristinata:false, classe_sezione:'2 ANNI'}`, l'elenco mostrava «Assegna una
+classe dalla sua scheda» e `app_log` registrava `riattivato-senza-classe`. **Un log che mente è
+peggio di un log che manca: al primo si crede.** Ora `esito_classe` ha quattro valori
+(`ripristinata` · `conservata` · `sparita` · `assente`), e lo stesso enumerato va nella risposta e
+nel battito. Il test che credeva di coprire il caso non lo montava: la fixture `archiviato()` nasce
+già con `section_id: null`, quindi misurava un archiviato senza memoria, non un ritiro a mano.
+
+### 🫀 Il battito di successo era argomentato per diciannove righe e difeso da niente
+
+Rimuovendo il blocco `logEvento('gdpr','info',{ azione:'alunno-archiviato', … })` restavano verdi
+**1011 test**, mentre la route argomenta che senza quel battito «nessun log» non distingue «non ha
+archiviato nessuno» da «l'archiviazione non parte più» (AGENTS.md, regola 5, la lezione delle email
+di credenziali). Nuovo file `admin-students-battito-archiviazione`: battito **comportamentale** —
+la route gira davvero e il battito si conta all'uscita — con il canale verificato contro
+`EVENTI_PERSISTITI`, il controllo che nel log non finisca nulla che nomini il bambino, e il
+controllo negativo che un **409 non conta come successo**.
+
+### E le altre quattro, tutte misurate con una mutazione
+
+- **Il lock degli stati aveva un buco della forma esatta che dichiarava di aver misurato.** La regex
+  pretendeva l'etichetta `{t('…')}` per riconoscere un'`<option>`, quindi
+  `<option value="trasferito">Trasferito</option>` era **verde** (6/6) e solo la variante con `t()`
+  era rossa. Il secondo `it`, che prometteva di prendere «un'etichetta scritta a mano», non poteva
+  scattare: il filtro scartava i suoi casi prima di consegnarglieli. Ora l'etichetta si cattura
+  grezza e si giudica dopo: **entrambe le forme sono rosse**.
+- **La proiezione da cui l'elenco prende i dati non era ancorata a niente**: togliendo
+  `'archiviato_il'` da `cols` restavano verdi 5441 test e la vista degradava in «Data non
+  registrata» — la stessa cella con cui si segnala il DB non migrato della CI. Il test nuovo è
+  comportamentale (il finto client non emula la proiezione): si inietta un `42703` che nomina la
+  colonna e si guarda il **ciclo di degrado**, governato da `cols.includes(col)` — 200 se la colonna
+  è in proiezione, 500 se non c'è. Con controllo negativo su una colonna inventata.
+- **La guardia contro il doppio invio** (`inVoloRef`) era descritta per sette righe e non provata:
+  due `fireEvent.click` nello **stesso `act`** (separarli renderebbe il test verde anche con la
+  guardia scritta sullo stato, cioè col difetto) e una sola POST.
+- **`.catch(() => null)` muto in un file nuovo** — AGENTS.md regola 6, e l'ESLint non lo prende
+  perché il selettore vuole un `BlockStatement` vuoto. Il motivo ora si logga
+  (`alunno-riattivato-corpo-inatteso`) e, soprattutto, un 200 con corpo illeggibile **non manda più
+  ad assegnare una classe** a un bambino di cui non si sa niente: si annuncia il rientro e sulla
+  classe si tace.
+
+**Due cose che il riquadro di conferma non diceva**, e che la testata di `riattiva` elenca sotto
+«COSA NON TORNA INDIETRO, **E VA DETTO**»: il **gruppo mensa** (azzerato di proposito, e nessuna
+colonna se lo ricorda — ora entra almeno nell'audit `valorePrima`, e la risposta di `riattiva` lo
+dichiara con `gruppo_mensa_da_riassegnare`) e il fatto che **la classe può non tornare**. Il riquadro
+dice sette fatti invece di cinque, e «è reversibile» non è più una frase assoluta.
+
+**Una correzione di rotta rispetto al collaudo:** il filtro di sede sull'UPDATE di `archivia`
+risultava «cerimoniale» in una misura del 12/08 — al 13/08 **non lo è più**: il test che inscena la
+corsa fra il gate e l'UPDATE lo prende (404 → 200 togliendolo), verificato rieseguendo la mutazione.
+
+---
+
+## 🔓 Changelog — La Segreteria non poteva più aprire NESSUN documento, e la risposta era quella di un tentativo abusivo 2026-08-12 (branch `test/e2e-moduli-pubblici`)
+
+Il 12/08 la migrazione `20260812194501` ha **rinominato** `documento_path` in
+`documento_fronte_path` (più `documento_retro_path`) su `pratiche_personale` e
+`anagrafica_personale`, **in produzione**. I due `assertDocumentoInScope` del pannello di Segreteria
+risolvevano il percorso di `?doc=` con `.eq('documento_path', …)`: da quel momento la lettura
+rispondeva `42703`, e quei gate sono **fail-CLOSED per scelta**. Un errore di lettura lì dentro vale
+«non firmo» — quindi **nessuna scansione di documento d'identità era più apribile, in nessuna delle
+tre sedi**, e chi ci provava riceveva *«non esiste, oppure appartiene a un'altra sede»*: la risposta
+di un tentativo abusivo. Nessun test era rosso, perché i finti tenevano in vita la colonna vecchia.
+
+**Come sono stati riparati, e la parte che conta è l'ORDINE.** Il percorso arriva dalla query string
+con uno schema `zod` che impone solo un tetto di lunghezza, e ora va confrontato con **due** colonne.
+La scrittura che viene naturale — `.or('documento_fronte_path.eq.<X>,documento_retro_path.eq.<X>')` —
+sarebbe stata la porta: in quella sintassi la virgola **separa** le condizioni, quindi un valore che
+ne contenga una non rompe il filtro, lo **riscrive**, e il gate direbbe «è della tua sede» di un
+documento che non lo è. Non è un'iniezione SQL (PostgREST non concatena SQL): è un'iniezione di
+**filtro**, e il danno è lo stesso. Perciò:
+
+1. **prima il gate di FORMA** (`percorsoDocumentoAmmesso`, `@/lib/personale/percorso-documento`), che
+   ammette solo `documenti/<uuid>/<uuid>.<ext>` con estensione in elenco — cioè esattamente ciò che
+   `iscrizione/personale/upload:POST` produce. Dopo di lui l'alfabeto non contiene virgole,
+   parentesi né apici;
+2. **poi** la risoluzione, con **due `.eq()` sequenziali** e non un `.or()`. Le due difese sono
+   indipendenti apposta: `.eq()` non interpola niente (la virgola esce percent-encodata —
+   `new URLSearchParams({a:'x,y'}).toString()` → `a=x%2Cy`, misurato), quindi regge da solo il
+   giorno in cui qualcuno allargasse la forma in un altro file. Con un `.or()` la sicurezza della
+   rotta dipenderebbe da una riga che non le appartiene. Costo: una seconda lettura solo quando la
+   prima non trova nulla.
+
+**Il rifiuto per forma è indistinguibile da «non esiste»** — stesso status, stesso codice, stessa
+frase: dire «malformato» confermerebbe a chi prova che le forme respinte in altro modo erano giuste.
+La differenza vive solo nel **log**, con un `esito` suo (`documento-forma-non-valida` accanto a
+`documento-non-risolto`), ed è ciò che permette di distinguere in SQL il collegamento vecchio di chi
+ha una scheda aperta da ieri da qualcuno che scrive percorsi a mano. Nel log **mai il percorso**: non
+porta il nome del file, ma è la chiave che apre il documento d'identità di una persona.
+
+**La misura prima della modifica**, perché un gate di forma può richiudere la porta che sta aprendo:
+in produzione i percorsi archiviati sulle quattro colonne sono **1 in tutto**, e ha già la forma
+canonica (87 caratteri). Nessun documento esistente viene escluso.
+
+**Altre due cose nello stesso lavoro:**
+- `COLONNE_DETTAGLIO` di `admin/anagrafica-personale:GET` nominava `documento_path`: una proiezione
+  esplicita che nomina una colonna assente non degrada e non torna vuota — rispondeva `42703`, cioè
+  **503 su ogni apertura di fascicolo**. Ora nomina le due colonne. `COLONNE_ELENCO` **non** cambia:
+  l'elenco resta povero, ed è voluto (mai un percorso di storage in lista);
+- il cruscotto **Scadenze documenti** leggeva `corpo.data.anagrafica.documento_path`, che la risposta
+  non contiene più: `undefined` a ogni clic, quindi il ramo «documento assente» — il pannello diceva
+  alla Segreteria che la scansione non c'è mentre nel bucket c'era, con `ok: true` e nessun errore.
+  Ora legge `documento_fronte_path`, e **solo il fronte**: quel cruscotto serve a sapere chi
+  richiamare, la coppia si legge nella scheda della persona. Ogni apertura firma un oggetto
+  scaricabile senza sessione e scrive una riga nel registro di sorveglianza: aprirne due dove ne
+  basta una raddoppia entrambe le cose.
+
+Copertura: `anagrafica-personale-admin-scope-sede` · `anagrafica-personale-admin-gate` ·
+`pratiche-personale-scope-sede` · `pratiche-personale-log-senza-pii` · `ScadenzeDocumenti` ·
+`scadenze-documenti-a11y`. I casi che portano il peso: retro della propria sede → firmato; fronte di
+un'altra sede → 403 **con la risposta identica** a quella di un percorso inesistente; percorso
+malformato → 403 e **zero query alla tabella** (asserzione sul contatore del finto Supabase: è la
+prova che il gate di forma viene prima, e lo status da solo non la darebbe); `42703` → 503 di
+indisponibilità e **mai una firma**. Più due guardie contro l'autoinganno: un gate che respingesse
+*tutto* renderebbe verdi tutte le altre asserzioni — ed è il difetto del 12/08 con un altro nome. La
+mutazione `percorsoDocumentoAmmesso → false` è stata eseguita: **12 test rossi**.
+
+✅ **CHIUSO il 2026-08-13** — e qui c'era scritto il contrario. Questo rigo diceva «⚠️ *Fuori da
+questo lavoro*: `StaffDetailPanel.tsx` legge ancora `documento_path` per la scansione della scheda
+staff», ed era **falso**: la scheda era già stata portata alle due colonne nello stesso lavoro.
+Misurato, non dedotto:
+
+```
+$ grep -n "documento_path" src/components/features/admin/StaffDetailPanel.tsx
+378: * ⚠️ QUI C'ERA `documento_path`, E QUELLA COLONNA NON ESISTE PIÙ: la migrazione
+1083:  // ⚠️ QUI SI LEGGEVA `documento_path`, e quella colonna non esiste più (migrazione
+```
+
+Due sole occorrenze, **entrambe dentro un commento** che racconta la correzione. Il pannello mappa
+`fronte → documento_fronte_path` e `retro → documento_retro_path` (righe 496-497) e ci arriva con
+`valoreTesto`.
+
+Vale la pena lasciarlo scritto invece di cancellare la riga e basta: **un rigo di PRD che dichiara
+aperto un difetto chiuso costa quanto uno che dichiara chiuso un difetto aperto.** Il PRD è il primo
+documento che il prossimo lettore consulta, e questo lo mandava a cercare un guasto inesistente —
+oppure, peggio, a credere rotto un pannello che funziona e a «ripararlo». È la stessa lezione che
+`CLAUDE.md` ha già pagato in produzione (*«un documento che descrive una protezione che non c'è più
+è peggio di nessun documento»*), letta al contrario.
+
+---
+
+## 🧨 Changelog — Chi riceve l'anonimizzazione irreversibile: da «tutti tranne gli iscritti» a un elenco chiuso 2026-08-12 (branch `test/e2e-moduli-pubblici`)
+
+Il diritto all'oblio (DL-034) sceglieva i suoi bersagli con una **negazione**:
+`admin/gdpr/candidates` faceva `.neq('stato','iscritto')` e `admin/gdpr/richieste` decideva con
+`f.stato !== 'iscritto'`. Una negazione dice «tutto tranne uno», e la tendina dello stato di
+`StudentDetailPanel` ne offre **tre**: bastava mettere un bambino su `sospeso` — che è iscritto a
+tutti gli effetti, e non ha niente a che vedere con la colonna booleana `alunni.sospeso` della
+morosità — perché comparisse fra i candidati a un'anonimizzazione **che non ha un annulla**. E ogni
+stato aggiunto in futuro sarebbe entrato da solo, senza che nessuno lo decidesse: `alunni.stato` è
+una `varchar` **senza vincolo `CHECK`** e la PATCH admin la valida con `z.unknown()`.
+
+Il confine vive ora in `@/lib/alunni/stato`, ed è un **elenco chiuso** (`STATI_NON_PIU_ISCRITTO`)
+derivato da una decisione scritta stato per stato (`LATO_DEL_CONFINE`): `iscritto` e `sospeso` stanno
+dalla parte protetta, `ritirato` è l'unico che autorizza. Misurato in produzione il 2026-08-12 prima
+di stringere: **33 alunni, tutti `iscritto`**, nessun `NULL`, nessuno stato fuori dalle tre voci della
+tendina — il passaggio all'elenco chiuso **non toglie a nessuna riga esistente** il diritto all'oblio.
+
+**Tre difetti chiusi nello stesso lavoro, e nessuno dei tre era visibile dai test:**
+
+| | Il difetto | Adesso |
+|---|---|---|
+| `lib/gdpr/orfano` | Le due letture PostgREST buttavano via l'`error`. **PostgREST non lancia**: `data: null` diventava «nessun altro figlio», cioè «genitore orfano», cioè **da anonimizzare** — nome, codice fiscale e documento d'identità di un adulto il cui bambino frequenta ancora | `leggiAltriFigliIscritti` ritorna `{ ok } `, non un booleano: il guasto non si può travestire da risposta, e `erase` esce **500** senza toccare nessuno |
+| La promessa del modulo | «se aggiungi uno stato il test diventa rosso» era **falsa**: aggiunta una quarta `<option>` alla tendina, **997 test restavano verdi** (misura del collaudo, riprodotta) | `__tests__/architecture/stati-alunno-classificati.test.ts` legge i `value=` delle due tendine; una voce nuova è rossa lì, e appena entra in `STATI_TENDINA` `tsc` pretende una riga in `LATO_DEL_CONFINE` |
+| L'osservabilità | Il log stava sul 409 di `erase`, **irraggiungibile dall'interfaccia** (il pannello manda solo gli `id` che l'elenco ha già ammesso), e mancava dove tutti inciampano: `candidates` non diceva quanti bambini l'elenco chiuso avesse escluso | `candidates` logga a ogni chiamata `n_candidati`, `n_esclusi` e gli stati esclusi — anche quando sono **zero**, perché «nessun log» non deve significare insieme «nessuno da escludere» e «la sonda non è mai partita» |
+
+Il 409 di `erase` diceva «Operazione consentita solo su alunni non iscritti»: dopo l'elenco chiuso era
+**ingannevole** — un bambino `trasferito` non è iscritto, e veniva rifiutato lo stesso. Ora nomina lo
+stato che serve (`ritirato`), che è l'unica informazione con cui chi legge può sbloccarsi.
+
+⚠️ **Ciò che il modulo NON governa, detto perché c'era scritto il falso.** Il commento sosteneva che
+gli elenchi operativi «restano `.eq('stato', STATO_ISCRITTO)`»: misurato, in `src/` ci sono ancora
+**11 filtri di lettura** con la stringa scritta a mano. Le **5 scritture** che mettono il valore in
+colonna passano invece dalla costante, e un lock impedisce alla sesta di nascere scollegata.
+
+⚠️ **`alunni.archiviato_il` non entra nella decisione, ed è deliberato.** La migrazione
+`20260812194517` ha aggiunto le sei colonne dell'archiviazione (verificate presenti in produzione,
+**0 righe valorizzate**). Autorizzare anche su `archiviato_il` sembrerebbe più completo e sarebbe
+pericoloso: un ritorno fra gli iscritti che dimentica di azzerarla lascerebbe un bambino che
+**frequenta** nell'elenco dell'anonimizzazione irreversibile, mentre `stato` il ritorno lo riporta a
+`iscritto` per forza. Chi scrive il flusso di archiviazione scriva **entrambe** le cose.
+
+---
+
+## 🪪 Changelog — Il registro dei caricamenti impara a contare DUE facce, e una faccia vuota smette di sparire dall'aritmetica 2026-08-12 (branch `test/e2e-moduli-pubblici`)
+
+Dal 12/08/2026 il documento d'identità del personale è **due scansioni** (fronte e retro, entrambe
+`required: true`; migrazione `20260812194501`, che **rinomina** `documento_path` in
+`documento_fronte_path` e aggiunge `documento_retro_path` su `pratiche_personale` e
+`anagrafica_personale`). `@/lib/personale/caricamenti` — il registro che dà un proprietario a ogni
+oggetto del bucket `documenti_personale` — nasceva per una faccia sola, e passa al plurale.
+
+**Perché il plurale non è una comodità.** Con una chiamata per faccia il fronte può collegarsi e il
+retro no: resta una pratica **mezza documentata** (la spazzata toglie il retro entro 24 ore mentre la
+pratica lo nomina ancora) e **due righe di log scoordinate** con lo stesso `entita_id`, una delle
+quali magari non c'è affatto perché quella chiamata era riuscita. Con un `.in(…)` solo il fallimento
+parziale smette di essere una race e diventa un'aritmetica: **una** riga di livello `error`, con
+`n_attesi` e `n_collegati`.
+
+**Il difetto che quell'aritmetica non vedeva, misurato e corretto nello stesso lavoro.** La
+normalizzazione scartava in silenzio i percorsi vuoti *prima* di contare: `[fronte, '']` diventava un
+array di uno, quindi `caricamentiReclamabili` rispondeva `ammesso: true` e `collegaCaricamenti` non
+emetteva **nemmeno una riga di log**. La faccia mancante spariva dall'aritmetica su cui poggia
+l'intero disegno — ed è la forma con cui il chiamante costruisce l'array, due campi `file` del modulo
+di cui uno può arrivare vuoto. Oggi `''` vale «il retro non c'è»: conta fra le attese, chiude la
+porta, e lascia una riga `faccia-senza-percorso` a livello `warn` (solo conteggi). Lo stesso difetto
+aveva fatto **regredire il gate singolare**, che di chiamanti in produzione ne ha: prima
+`caricamentoReclamabile(db, '', …)` rifiutava, poi ammetteva senza interrogare il database.
+
+**Cosa cambia nell'API pubblica del modulo:**
+
+| | Prima | Adesso |
+|---|---|---|
+| Verifica | `caricamentoReclamabile(db, percorso, op)` | `caricamentiReclamabili(db, percorsi[], op)` — una lettura sola per tutte le facce; la singolare resta e delega |
+| Collegamento | `collegaCaricamento(db, percorso, praticaId, op)` | `collegaCaricamenti(db, percorsi[], praticaId, op)` — un `update` solo; la singolare resta e delega |
+| Quale faccia è mancante | *(non esisteva)* | `EsitoReclamoMultiplo.mancanti`: **indici**, mai percorsi — chi risponde 400 li rimappa sui propri id di campo |
+| Normalizzazione | privata, e **ricopiata** in `admin/pratiche-personale` senza `trim()` | `facceChieste()` esportata: una definizione sola per le tre strade |
+
+**Proprietà di un oggetto nel bucket, e spazzata.** Un caricamento può appartenere a una **pratica**
+(`pratica_id`) oppure a un'**anagrafica** (`anagrafica_utente_id`, colonna nuova della stessa
+migrazione, con `check (num_nonnulls(…) <= 1)`). Reclamo, collegamento e `spazzaCaricamentiSospesi`
+filtrano ora su **entrambe** le colonne: guardarne una sola significherebbe togliere dal bucket entro
+24 ore il documento d'identità di una dipendente in servizio mentre `anagrafica_personale` lo nomina.
+Su un database che non conosce ancora la seconda colonna la spazzata **rinuncia e lo dichiara**
+(`42703`) invece di spazzare al buio: è il verso giusto in cui sbagliare.
+
+✅ **CHIUSO il 2026-08-13 — e questo riquadro diceva il contrario fino a quel giorno.** Il testo
+qui sotto era, testualmente: *«Resta aperto … `POST /api/iscrizione/personale` verifica e collega
+ancora un percorso solo (`normalizzati.documento_path`) … Finché la rotta non passa al plurale, il
+retro di ogni candidatura vera non è né verificato né collegato … Manca anche la rotta admin di
+caricamento dalla scheda anagrafica»*. Erano **due affermazioni, entrambe già false** quando le si
+leggeva: la rotta pubblica era passata al plurale nello stesso giro (vedi il changelog «Il modulo
+pubblico del personale…» più in alto) e la porta admin è
+`POST /api/admin/anagrafica-personale/scansione`, documentata nella prima voce di questo file. Chi
+avesse letto il PRD il 13/08 avrebbe corretto un difetto che non esisteva più, e — cosa peggiore —
+non avrebbe trovato scritto da nessuna parte ciò che invece esisteva. **La lezione, che vale oltre
+questa riga**: un «resta aperto» non è una nota, è un'istruzione per chi legge domani. Va riletto
+quando il lavoro si chiude, o mente con l'autorevolezza del documento che lo contiene.
+
+Copertura: `__tests__/lib/caricamenti-personale-plurale.test.ts` — 32 casi (una istruzione sola per
+tutte le facce, entrambi i proprietari, faccia vuota da tutti e due i lati, degrado `PGRST204`/`42703`
+con la forma vera dell'errore, `mancanti` senza percorsi, il messaggio che resta al singolare quando
+la faccia è una, e un lock che verifica che le migrazioni **nominate nel log** esistano su disco).
+
+---
+
+## 🧭 Changelog — Il cockpit chiedeva di scegliere una sede da un menu che non esisteva 2026-08-12 (branch `test/e2e-moduli-pubblici`)
+
+`SedeProvider` caricava le sedi accessibili con `try { … if (res.ok) … } finally { setSedi(list) }`:
+**nessun `catch`, nessun log**. Se `GET /api/admin/sedi` rispondeva non-`ok`, o se la rete lanciava,
+`list` restava `[]` — e in quel contesto `[]` significava **due cose opposte**: «non ho saputo quali
+sedi hai» e «non ne hai». Il codice le trattava come la stessa cosa.
+
+**Cosa vedeva l'utente.** Con `sedi = []` la sede corrente è `null`, quindi ogni pagina sotto
+`SedeRequired` — contabilità, news, mensa, modulistica, primaria, impostazioni, SIDI: almeno sette —
+mostrava `SedeNotice`. E `SedeNotice`, con una sede o nessuna, scrive *«Hai più sedi attive.
+Scegline una sola dal menu in alto»*: i bottoni per farlo li dipinge solo con `sedi.length > 1`,
+e quel «menu in alto» **non si monta affatto** quando le sedi sono zero o una
+(`SedeSelector`, `cockpit.tsx`). Cioè un guasto di rete si presentava come un'**istruzione
+impossibile da eseguire**, su sette pagine, senza una riga di log da nessuna parte — mentre a due
+passi, nello stesso `cockpit.tsx`, la **stessa** route veniva chiamata una seconda volta e il suo
+errore *veniva* loggato. Due chiamate alla stessa API: una parlava, l'altra taceva.
+
+**Ora sono tre stati distinti**, come già erano nel modulo pubblico dal 2026-08-02:
+
+| stato | cosa vede l'utente |
+|---|---|
+| una sede | la pagina si apre su quella, nessun avviso |
+| due o più sedi, nessuna scelta | «Seleziona una sede» **con un bottone per ciascuna** (invariato) |
+| elenco non arrivato | «Non è stato possibile leggere le tue sedi» + **Riprova**, con `role="alert"` |
+
+Nel contesto compare `errore: boolean` accanto a `sedi` — è ciò che separa le due letture di `[]` —
+e `ricarica()`, che è il «Riprova»: ritenta la richiesta invece di ricaricare la pagina alla cieca.
+
+**Tre correzioni minori nella stessa radice.** Il ramo d'errore ora **logga** (`logClient`, livello
+`error`, con lo `stato` HTTP quando c'è e il nome della classe d'errore quando la rete lancia:
+AGENTS.md §6 — un `catch` che non logga è un bug, e qui il `catch` non c'era proprio). Il rigetto di
+`run()` viene **raccolto**: `void run()` lo lasciava uscire come `unhandledrejection`
+(`TypeError: Failed to fetch`), e nella WebView quello diventa un `pageerror` che accusa la pagina
+invece della rete. E la potatura del cookie stantìo si fa **solo su un elenco attendibile**: potare
+su un `[]` da errore cancellava la sede che l'utente aveva scelto, così che a rete tornata si
+ritrovava l'avviso di scelta al posto della sua sede.
+
+La forma del blocco è vincolata da `react-hooks/set-state-in-effect` (vieta il `setState` dentro un
+`catch` di una async chiamata dall'effetto: è la ragione per cui il ramo d'errore era nato muto).
+Da qui `guasto = true` come punto di partenza, che diventa `false` solo a risposta buona: il
+`finally` gira prima che l'eccezione si propaghi, quindi lo stato d'errore è già scritto quando il
+rigetto esce, e al `.catch` del chiamante resta solo da loggare.
+
+Copertura: `__tests__/components/sede-contesto-errore.test.tsx` — 8 casi sui tre stati (una sede,
+due sedi, route 500, rete che lancia, «Riprova» che ricarica davvero, la selezione che sopravvive al
+guasto, e la prova che nessun rigetto resta non raccolto).
+
+---
+
 ## 🧾 Changelog — Le maestre in servizio non erano nel sistema, e per farcele entrare bisognava far finta che si candidassero 2026-08-12 (branch `feat/anagrafica-personale`)
 
 Nasce **`/anagrafica-personale`**, il secondo modulo pubblico: un link solo, che la Segreteria manda

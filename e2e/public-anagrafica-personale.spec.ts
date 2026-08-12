@@ -294,7 +294,14 @@ test.describe('modulo pubblico dell’anagrafica del personale @solo-chromium', 
  * qui costerebbe due minuti di CI per collaudare due volte la stessa pagina.
  */
 test.describe('la pratica inviata esiste davvero @solo-chromium', () => {
-  test.use({ storageState: STORAGE.admin });
+  /*
+   * `adminTutteLeSedi`: la pratica sta sul «Plesso di Collaudo», e `STORAGE.admin`
+   * porta il cookie `sedi_attive` con la sede principale — con cui
+   * `resolveScuoleAttive` terrebbe questa riga fuori scope, giustamente. Lo stato
+   * «Tutte le sedi» è quello in cui la posta di tutti i plessi si vede insieme.
+   * Vedi `auth.setup.ts` e `STORAGE.adminTutteLeSedi` in `fixtures.ts`.
+   */
+  test.use({ storageState: STORAGE.adminTutteLeSedi });
 
   test('la riga è in tabella, sulla sede giusta e in attesa', async ({ request }) => {
     expect(

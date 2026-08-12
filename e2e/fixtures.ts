@@ -98,8 +98,45 @@ export const IDS = {
   AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
 };
 
+/**
+ * I NOMI delle sedi del seed, come li mostra il cockpit.
+ *
+ * ⚠️ Ricopiati da `scripts/seed-e2e.mjs` (stessa duplicazione dichiarata in cima
+ * a questo file: gli spec Playwright non importano moduli `.mjs` del repo). Gli
+ * uuid qui sopra bastano per il DATO; il NOME serve quando lo spec deve toccare
+ * ciò che l'utente tocca — i bottoni dell'avviso «Seleziona una sede», che
+ * portano il nome della sede e nient'altro (`SedeNotice`, `sede-context.tsx`).
+ */
+export const NOMI_SEDI = {
+  /** `IDS.SCUOLA` — la sede principale del seed. */
+  scuola: 'Kidville E2E',
+  /** `IDS.SCUOLA_COLLAUDO` — la sede che i moduli pubblici vedono. */
+  collaudo: 'Plesso di Collaudo',
+};
+
 export const STORAGE = {
+  /**
+   * L'admin CON LA SUA SEDE DICHIARATA (cookie `sedi_attive` = `IDS.SCUOLA`).
+   *
+   * È lo stato in cui l'admin vero lavora quasi sempre — il perché, con la
+   * misura, sta in `auth.setup.ts`. Da qui il cockpit ha una sede corrente,
+   * quindi le pagine sotto `SedeRequired` (contabilità, news, mensa,
+   * modulistica, primaria, impostazioni) mostrano i propri pannelli.
+   */
   admin: path.join(__dirname, '.auth', 'admin.json'),
+  /**
+   * Lo stesso admin, ma SENZA sede dichiarata: cioè «Tutte le sedi», che è
+   * l'altro stato legittimo del selettore (cookie vuoto = nessun filtro).
+   *
+   * Serve agli spec che leggono dati di PIÙ plessi con una sola richiesta — le
+   * pratiche e le candidature dei moduli pubblici nascono sul «Plesso di
+   * Collaudo» (`IDS.SCUOLA_COLLAUDO`), non sulla sede principale, e
+   * `resolveScuoleAttive` scopa le letture con quel cookie: da `STORAGE.admin`
+   * quelle righe sarebbero legittimamente fuori scope. Non è una scorciatoia:
+   * è la stessa cosa che fa una Segreteria che vuole vedere la posta di tutti i
+   * plessi insieme.
+   */
+  adminTutteLeSedi: path.join(__dirname, '.auth', 'admin-tutte-le-sedi.json'),
   docente: path.join(__dirname, '.auth', 'docente.json'),
   genitore: path.join(__dirname, '.auth', 'genitore.json'),
 };

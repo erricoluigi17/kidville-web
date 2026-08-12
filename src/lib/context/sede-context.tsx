@@ -13,6 +13,11 @@
  *
  * Espone:
  *  - `sedi`         → sedi accessibili (id+nome) da /api/admin/sedi;
+ *  - `errore`       → l'elenco NON è arrivato (route non-ok o rete giù). È ciò
+ *                     che distingue «non so quali sedi hai» da «non ne hai»:
+ *                     senza, `[]` significava entrambe le cose e l'utente
+ *                     riceveva un'istruzione impossibile (vedi `SedeNotice`);
+ *  - `ricarica`     → ritenta il caricamento: è il «Riprova» dell'avviso;
  *  - `selezionate`  → subset scelto (vuoto = tutte);
  *  - `effettive`    → subset ∩ accessibili, o tutte: quello che il server scopa;
  *  - `sedeCorrente` → UNA sede per le pagine di configurazione (null se ambiguo,
@@ -29,6 +34,7 @@
 
 import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useAdminIdentity } from './admin-identity';
 
 const COOKIE = 'sedi_attive';
@@ -40,6 +46,21 @@ export interface Sede {
 
 export interface SediContextValue {
   sedi: Sede[];
+  /**
+   * L'ELENCO NON È ARRIVATO — che NON è «non hai sedi».
+   *
+   * Fino al 2026-08-12 i due casi erano lo stesso valore: `sedi = []`. Con la
+   * route non-`ok` o la rete giù, `[]` diceva contemporaneamente «non ho saputo
+   * quali sedi hai» e «non ne hai», e l'utente finiva su `SedeNotice` — cioè su
+   * un avviso che gli chiedeva di scegliere una sede dal menu in alto, mentre
+   * `SedeSelector` con `sedi.length <= 1` non si monta affatto (`cockpit.tsx`).
+   * Un'istruzione impossibile da eseguire, su almeno 7 pagine, senza una riga di
+   * log da nessuna parte.
+   *
+   * Questo flag è ciò che separa le due letture di `[]`: quando è vero lo si
+   * DICE all'utente e si offre `ricarica()`, invece di chiedergli una scelta.
+   */
+  errore: boolean;
   selezionate: string[];
   effettive: string[];
   sedeCorrente: string | null;
@@ -55,6 +76,13 @@ export interface SediContextValue {
   toggle: (id: string) => void;
   soloSede: (id: string) => void;
   tutte: () => void;
+  /**
+   * Ritenta il caricamento delle sedi accessibili. È il «Riprova» di
+   * `SedeNotice`: l'unico rimedio che abbia senso offrire quando l'elenco non è
+   * arrivato — e uno che RIPROVA per davvero, invece di ricaricare la pagina.
+   * NON tocca `epocaSede`: non è un cambio di sede, è lo stesso scope di prima.
+   */
+  ricarica: () => void;
 }
 
 const SediContext = createContext<SediContextValue | null>(null);
@@ -78,18 +106,42 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
   // userId dall'identità condivisa del cockpit (niente più lettura duplicata).
   const { userId } = useAdminIdentity();
   const [sedi, setSedi] = useState<Sede[]>([]);
+  const [errore, setErrore] = useState(false);
   const [selezionate, setSelezionate] = useState<string[]>(readCookie);
   const [loading, setLoading] = useState(true);
+  /** Avanza a ogni «Riprova»: è ciò che fa ripartire la fetch dell'elenco. */
+  const [tentativo, setTentativo] = useState(0);
   // Avanza SOLO nelle azioni dell'utente (persist/toggle), mai nel caricamento
   // iniziale delle sedi: vedi `epocaSede` in SediContextValue.
   const [epocaSede, setEpocaSede] = useState(0);
 
-  // Carica le sedi accessibili. try/finally (react-hooks 7): niente setState nel
-  // ramo di errore, un solo commit a fine risoluzione.
+  /**
+   * Carica le sedi accessibili — e dice quando NON ci è riuscito.
+   *
+   * ─── LA FORMA, E PERCHÉ È QUESTA ────────────────────────────────────────
+   *
+   * `guasto` parte da `true` e diventa `false` SOLO quando la risposta è
+   * arrivata ed era buona. Sembra al contrario, e invece è l'unico modo di
+   * tenere insieme due vincoli che si scontrano:
+   *
+   *  · `react-hooks/set-state-in-effect` (react-hooks 7, severità error) vieta
+   *    il `setState` dentro un `catch` di una async chiamata dall'effetto — è
+   *    la ragione per cui questo blocco era nato `try/finally` senza `catch`,
+   *    ed è la ragione per cui il ramo d'errore era muto;
+   *  · un guasto NON può passare per uno stato normale (AGENTS.md §6).
+   *
+   * Il `finally` gira PRIMA che l'eccezione si propaghi: quando la fetch lancia,
+   * lo stato d'errore è già committato quando il rigetto esce. Al `run()` resta
+   * solo da LOGGARE, e lo fa il `.catch` qui sotto — che è anche ciò che
+   * raccoglie il rigetto (`void run()` da solo lo lasciava uscire come
+   * `unhandledrejection`, misurato: `TypeError: Failed to fetch`; nella WebView
+   * quello diventa un `pageerror` che accusa la pagina invece della rete).
+   */
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       let list: Sede[] = [];
+      let guasto = true;
       try {
         const res = await fetch('/api/admin/sedi', {
           headers: userId ? { 'x-user-id': userId } : undefined,
@@ -98,22 +150,60 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
           const d = await res.json();
           const arr = Array.isArray(d) ? d : d?.data ?? [];
           list = (arr as Sede[]).filter((s) => s && s.id);
+          guasto = false;
+        } else {
+          // `!res.ok` NON è un'eccezione: nessun `catch` scatterebbe, e fin qui
+          // un 500 su questa route era indistinguibile da «non hai sedi».
+          // Niente `route`: `logClient` ripiega su `location.pathname`, che dice
+          // su QUALE pagina del cockpit l'utente è rimasto bloccato — l'unico
+          // che lo sappia è il client, e questo è l'ultimo punto in cui lo sa.
+          logClient({
+            livello: 'error',
+            evento: 'fetch',
+            messaggio: 'sedi-accessibili-non-caricate',
+            stato: res.status,
+          });
         }
       } finally {
         if (!cancelled) {
           setSedi(list);
-          // Scarta dal cookie sedi non più accessibili (cookie stantìo).
-          const accessibili = new Set(list.map((s) => s.id));
-          setSelezionate((prev) => prev.filter((id) => accessibili.has(id)));
+          setErrore(guasto);
+          // Scarta dal cookie sedi non più accessibili (cookie stantìo) — ma
+          // SOLO su un elenco attendibile. Potare su `[]` per errore
+          // significherebbe cancellare la sede che l'utente aveva scelto:
+          // tornata la rete si ritroverebbe l'avviso di scelta al posto della
+          // sua sede, e il guasto di rete avrebbe cambiato le sue preferenze.
+          if (!guasto) {
+            const accessibili = new Set(list.map((s) => s.id));
+            setSelezionate((prev) => prev.filter((id) => accessibili.has(id)));
+          }
           setLoading(false);
         }
       }
     };
-    void run();
+    void run().catch((e: unknown) => {
+      // La fetch ha lanciato (rete giù, DNS, CORS) o il corpo era illeggibile.
+      // Lo stato d'errore l'ha già scritto il `finally`; qui si LOGGA e si
+      // RACCOGLIE il rigetto. Un `catch` che non logga è un bug — e questo è il
+      // guasto che per mesi ha chiuso fuori la Direzione senza lasciare traccia.
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `sedi-accessibili-non-caricate: ${nomeErrore(e)}`,
+        stack: e instanceof Error ? e.stack : undefined,
+      });
+    });
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, tentativo]);
+
+  /** «Riprova»: rimette lo stato in caricamento e rifà la richiesta. */
+  const ricarica = useCallback(() => {
+    setLoading(true);
+    setErrore(false);
+    setTentativo((n) => n + 1);
+  }, []);
 
   const persist = useCallback((ids: string[]) => {
     // Se coincide con "tutte" le accessibili, memorizzo vuoto (= nessun filtro).
@@ -149,6 +239,7 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
     const sedeCorrente = effettive.length === 1 ? effettive[0] : null;
     return {
       sedi,
+      errore,
       selezionate: validSel,
       effettive,
       sedeCorrente,
@@ -158,8 +249,9 @@ export function SedeProvider({ children }: { children: React.ReactNode }) {
       toggle,
       soloSede,
       tutte,
+      ricarica,
     };
-  }, [sedi, selezionate, epocaSede, loading, toggle, soloSede, tutte]);
+  }, [sedi, errore, selezionate, epocaSede, loading, toggle, soloSede, tutte, ricarica]);
 
   return <SediContext.Provider value={value}>{children}</SediContext.Provider>;
 }
@@ -212,7 +304,42 @@ export function SedeScopeBoundary({ children }: { children: React.ReactNode }) {
  */
 export function SedeNotice({ cosa }: { cosa?: string }) {
   const t = useTranslations('shared');
-  const { sedi, soloSede } = useSediAttive();
+  const { sedi, errore, soloSede, ricarica } = useSediAttive();
+
+  /*
+   * L'ELENCO NON È ARRIVATO — e allora si dice quello, non «scegline una».
+   *
+   * Prima del 2026-08-12 questo caso finiva nel ramo `sedi.length <= 1` qui
+   * sotto: «Hai più sedi attive. Scegline una sola dal menu in alto», senza
+   * bottoni (li dipinge solo `sedi.length > 1`) e senza quel menu (con `sedi`
+   * vuoto `SedeSelector` non si monta). Tre frasi, tutte false, e nessuna
+   * eseguibile: chi le leggeva poteva solo ricaricare la pagina alla cieca.
+   *
+   * `role="alert"`: è un guasto sopraggiunto, e va annunciato anche a chi non
+   * guarda lo schermo. Gli altri due rami restano senza — lì non è successo
+   * niente di anomalo, c'è solo una scelta da fare.
+   */
+  if (errore) {
+    return (
+      <div role="alert" className="rounded-2xl border border-kidville-line bg-kidville-white p-8 text-center">
+        <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{t('sedeNoticeErroreTitolo')}</p>
+        {/* `sub` e non `muted`: il debito di `text-kidville-muted` si smaltisce e non
+            si rifinanzia (lock `__tests__/a11y/testo-muted-allowlist.test.ts`), e per un
+            testo che spiega un guasto il contrasto conta il doppio. */}
+        <p className="mt-2 font-maven text-[14px] text-kidville-sub">{t('sedeNoticeErroreCorpo')}.</p>
+        <div className="mt-4 flex justify-center">
+          <button
+            type="button"
+            onClick={ricarica}
+            className="min-h-[44px] rounded-full bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase text-kidville-white transition-colors hover:bg-kidville-green-dark"
+          >
+            {t('sedeNoticeRiprova')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-kidville-line bg-kidville-white p-8 text-center">
       <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{t('selezionaUnaSede')}</p>

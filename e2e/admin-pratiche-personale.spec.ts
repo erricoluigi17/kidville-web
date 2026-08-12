@@ -148,7 +148,15 @@ async function inviaPratica(request: APIRequestContext): Promise<string> {
 }
 
 test.describe('cockpit delle anagrafiche del personale @solo-chromium', () => {
-  test.use({ storageState: STORAGE.admin });
+  /*
+   * `adminTutteLeSedi` e non `admin`: la pratica nasce sul «Plesso di Collaudo»
+   * (è la sede che i moduli pubblici vedono), mentre `STORAGE.admin` dichiara la
+   * sede principale nel cookie `sedi_attive` — e `resolveScuoleAttive` scopa
+   * ogni lettura di questa route con quel cookie. Da lì la pratica sarebbe fuori
+   * scope, legittimamente. Qui serve lo stato «Tutte le sedi», che è quello di
+   * una Segreteria che guarda la posta di tutti i plessi. Vedi `auth.setup.ts`.
+   */
+  test.use({ storageState: STORAGE.adminTutteLeSedi });
 
   test('la Segreteria trova la pratica, la approva e l’anagrafica risulta registrata', async ({
     page,

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { IDS } from './fixtures';
+import { IDS, PERSONALE_E2E, attendiFineCaricamento } from './fixtures';
 import itPublic from '../messages/it/public.json';
 
 /**
@@ -7,74 +7,85 @@ import itPublic from '../messages/it/public.json';
  * ║  `/lavora-con-noi` — il modulo PUBBLICO di candidatura di un'insegnante  ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
- * ─── COSA C'È QUI DENTRO, E PERCHÉ NON È QUELLO CHE CI SI ASPETTA ───────────
+ * Tre blocchi, e tutti e tre girano: il modulo si apre senza account, il link
+ * targato vale solo se l'elenco delle sedi lo conferma, e il percorso vero —
+ * compila, scegli DUE fasce, spunta il consenso obbligatorio, invia, leggi la
+ * conferma — arriva fino al 201.
  *
- * Il percorso vero di questa pagina — apri, compila i passi, scegli PIÙ DI UNA
- * fascia, spunta il consenso obbligatorio, invia, leggi la conferma — sta nel
- * terzo blocco di questo file ed è in `test.fixme`: **oggi non può girare**, e
- * la ragione è misurata, non prudenziale. Il primo e il secondo blocco girano
- * da subito e collaudano l'unica cosa che su questo database è vera: che il
- * modulo NON comincia, e che lo dice.
+ * ─── ⚠️ QUESTA TESTATA DICEVA ALTRO, E OGGI NON È PIÙ VERO (12/08/2026) ────
  *
- * Un collaudo scritto per accettare due esiti opposti «per prudenza» — 201
- * oppure 503, conferma oppure errore — non prova niente ed è peggio di un
- * collaudo assente, perché sembra coprire. Quindi qui i due esiti stanno in due
- * test diversi, e quello che non può essere verde è dichiarato spento.
+ * Fino a questa data il percorso vero era in `test.fixme` e i primi due blocchi
+ * collaudavano l'esatto contrario di quello che collaudano adesso: che il modulo
+ * **non comincia** e che lo dice («Nessuna sede riceve candidature online»). Non
+ * era prudenza, era la misura di allora — e le due cause che la producevano sono
+ * state entrambe rimosse:
  *
- * ─── PERCHÉ IL PERCORSO VERO NON PUÒ GIRARE (due cause, non una) ────────────
+ * 1. **La tabella non esisteva sul database della CI.** Il progetto Supabase della
+ *    CI è separato dalla produzione e non era migrato: `candidature_insegnanti`
+ *    non c'era, PostgREST rispondeva `PGRST205`/`42P01` e la rotta traduceva quel
+ *    caso in un **503 dichiarato** (`CANDIDATURE_NON_DISPONIBILI`) invece di
+ *    fingere un 201. ✅ Il database della CI è stato **migrato il 12/08/2026** con
+ *    `candidature_insegnanti`, `codice_belfiore_nascita`, `anagrafica_personale`,
+ *    `anagrafica_personale_trigger_invoker` e `caricamenti_personale`.
  *
- * 1. **La tabella non esiste sul database della CI.** Il progetto Supabase della
- *    CI è separato dalla produzione e non è migrato: `candidature_insegnanti`
- *    non c'è, PostgREST risponde `PGRST205`/`42P01` e la rotta traduce quel caso
- *    in un **503 DICHIARATO** (`CANDIDATURE_NON_DISPONIBILI`,
- *    `src/app/api/iscrizione/insegnanti/route.ts`) invece di fingere un 201. La
- *    rotta si comporta bene; è il collaudo del percorso felice a non avere un
- *    posto dove atterrare.
+ * 2. **Non c'era nessuna sede a cui candidarsi.** Il seed creava due sedi
+ *    `e2e00000-…` e `isScuolaE2E` (`src/lib/scuole/reali.ts`) le esclude da ogni
+ *    elenco pubblico: `GET /api/iscrizione/sedi` rispondeva `{ data: [] }`, il
+ *    wizard non dipingeva un passo, e lo stesso predicato avrebbe rifiutato quelle
+ *    sedi anche all'invio (`400 SEDE_DA_SPECIFICARE`). ✅ Dal 12/08/2026 il seed
+ *    semina il **«Plesso di Collaudo»** (`IDS.SCUOLA_COLLAUDO`): id che non
+ *    comincia per `e2e00000` e nome che non contiene «e2e», quindi `sediReali` lo
+ *    accetta. È l'unica sede che i moduli pubblici mostrano in CI.
  *
- * 2. **Nessuna sede a cui candidarsi.** E questa, da sola, ferma il modulo PRIMA
- *    dell'invio. Il seed crea due sedi `e2e00000-…` (`scripts/seed-e2e.mjs`), e
- *    `isScuolaE2E` (`src/lib/scuole/reali.ts`) le esclude da ogni elenco
- *    pubblico: `GET /api/iscrizione/sedi` risponde `{ data: [] }`. Con l'elenco
- *    vuoto il wizard non dipinge nessun passo — dice «Nessuna sede riceve
- *    candidature online» — ed è la stessa esclusione che `POST
- *    /api/iscrizione/insegnanti` applica a `scuola_id` (valida contro `reali`,
- *    non contro `tutte`, a differenza della rotta sorella `/api/iscrizione`).
- *    Cioè: **anche a migrazione fatta, quel POST rifiuterebbe la sede di
- *    collaudo con `400 SEDE_DA_SPECIFICARE`.**
+ * La testata è stata riscritta e non ampliata: *un documento che descrive uno
+ * stato che non c'è più è peggio di nessun documento*, ed è una lezione scritta in
+ * `CLAUDE.md` — questo file l'avrebbe violata restando com'era, per giunta
+ * spiegando «come riaccendere» una cosa già accesa.
  *
- * ─── COSA SERVE PER RIACCENDERLO ───────────────────────────────────────────
+ * ─── UNA SOLA SEDE IN ELENCO, E SI VEDE ────────────────────────────────────
+ * Con un plesso solo `useSediPubbliche` lo decide da sé: il passo «Sede» non
+ * esiste (`mostraSede` è falso) e il primo passo è «I tuoi dati». Non è una
+ * scorciatoia del banco di prova — è il comportamento del prodotto quando i plessi
+ * che ricevono candidature sono uno. Se un domani il seed ne aggiungesse una
+ * seconda REALE, le asserzioni qui sotto diventano rosse: è giusto, andrà scelta.
+ * La sede si rilegge comunque nel RIEPILOGO, che è dove chi si candida la controlla.
  *
- * Due gesti, e vanno detti tutti e due perché fermarsi al primo lascerebbe qui
- * un test che si riaccende per fallire:
- *
- *  a. lanciare a mano il workflow **«DB migrate (CI)»**
- *     (`.github/workflows/migrate-ci.yml`, `workflow_dispatch`) con
- *     `20260810094610_candidature_insegnanti.sql` — è idempotente, la sua testata
- *     lo dichiara file per file;
- *  b. dare alla CI una sede che `sediReali` ACCETTI. Oggi non ne esiste
- *     nessuna: o il seed ne crea una che `isScuolaE2E` non riconosce (il
- *     database della CI è separato dalla produzione, quindi non apre niente
- *     là), oppure la rotta impara a indicare la sede di collaudo per altra
- *     via — che è esattamente ciò che il commento della rotta si riserva di
- *     fare («Quando la CI sarà migrata, la sede di collaudo si indicherà per
- *     altra via»).
- *
- * Fatti entrambi: togliere il `.fixme` dal terzo blocco. Nient'altro.
- *
- * ─── NOTA SUI DUE TETTI, per chi riaccenderà il terzo blocco ────────────────
- * `POST /api/iscrizione/insegnanti` ha un tetto di **3 richieste l'ora per IP**
- * e in CI i browser escono da un IP solo: con `retries: 2` un test che invia
- * consuma fino a tre gettoni: il quarto tentativo della giornata prenderebbe
- * 429. `GET /api/iscrizione/sedi` sta a 30 ogni 10 minuti, e i due test attivi
- * qui sotto ne consumano uno ciascuno.
+ * ─── I DUE TETTI ───────────────────────────────────────────────────────────
+ * `POST /api/iscrizione/insegnanti` ha un tetto di **3 richieste l'ora per IP** e
+ * in CI i browser escono da un IP solo: con `retries: 2` il terzo blocco consuma
+ * fino a tre gettoni, cioè tutti. Per questo porta `@solo-chromium` — il progetto
+ * `webkit` lo salta (`grepInvert` in `playwright.config.ts`) — e per questo i primi
+ * due blocchi NON inviano niente. `GET /api/iscrizione/sedi` sta a 30 ogni 10
+ * minuti, e qui se ne consumano quattro in tutto.
  */
 
-/** L'indirizzo del terzo blocco. Fisso di proposito: vedi il commento lì. */
-const EMAIL_CANDIDATURA = 'candidatura.e2e@kidville.test';
+/**
+ * L'indirizzo del terzo blocco. Fisso di proposito (vedi il commento lì) e preso
+ * da `PERSONALE_E2E`: è lo stesso che il seed ripulisce a ogni run, e ricopiarlo a
+ * mano qui sarebbe la copia che diverge — con l'effetto di lasciare in tabella una
+ * riga viva che al run successivo trasforma il 201 del primo invio in un 201 da
+ * doppione.
+ */
+const EMAIL_CANDIDATURA = PERSONALE_E2E.emailCandidatura;
+
+/** Il nome del plesso che il seed rende visibile ai moduli pubblici. */
+const SEDE_COLLAUDO = 'Plesso di Collaudo';
+
+/** «Candidatura per la sede X», composta DAL CATALOGO e non ricopiata a mano. */
+const rigaSedeDalLink = (sede: string) => itPublic.candSedeDalLinkTitolo.replace('{sede}', sede);
+/**
+ * Lo stesso testo senza il nome del plesso («Candidatura per la sede»).
+ *
+ * `getByText` cerca per sottostringa, quindi con questo si afferma che NON esiste
+ * nessuna riga di sede-dal-link, qualunque plesso nominasse — che è più forte del
+ * negare la sola riga del «Plesso di Collaudo».
+ */
+const PREFISSO_SEDE_DAL_LINK = itPublic.candSedeDalLinkTitolo.split('{')[0].trim();
 
 test.describe('modulo pubblico di candidatura', () => {
-  test('si apre senza account e dichiara che non si può cominciare', async ({ page }) => {
+  test('si apre senza account e il modulo comincia', async ({ page }) => {
     await page.goto('/lavora-con-noi');
+    await attendiFineCaricamento(page);
 
     // NESSUN LOGIN. `/lavora-con-noi` è in `PUBLIC_PREFIXES`
     // (`src/lib/auth/middleware-rules.ts`) e questo test gira senza
@@ -88,33 +99,29 @@ test.describe('modulo pubblico di candidatura', () => {
     await expect(page.getByRole('heading', { name: itPublic.candTitolo, level: 1 })).toBeVisible();
     await expect(page.getByText(itPublic.candSottotitolo)).toBeVisible();
 
-    // ── LO STATO CHE OGGI SI PUÒ COLLAUDARE DAVVERO ────────────────────────
-    // Elenco ARRIVATO e VUOTO (le due sedi del seed sono escluse dall'elenco
-    // pubblico): il modulo non comincia, e la frase distingue «non riusciamo a
-    // caricare le sedi» da «nessuna sede riceve candidature». Sono due cause
-    // diverse e due testi diversi: pretendere quello giusto è metà del valore di
-    // questo test, perché la confusione fra i due manderebbe una persona a
-    // controllare una connessione che non ha nessun problema.
-    const pannello = page.getByRole('alert').filter({ hasText: itPublic.candSediVuoteTitolo });
-    await expect(pannello).toBeVisible({ timeout: 15_000 });
-    await expect(pannello).toContainText(itPublic.candSediVuoteCorpo);
+    // ── L'AFFERMAZIONE POSITIVA VIENE PRIMA ────────────────────────────────
+    // L'elenco è arrivato e contiene un plesso, quindi il modulo COMINCIA: con
+    // una sede sola non c'è niente da scegliere e il primo passo è «I tuoi dati».
+    await expect(page.getByRole('heading', { name: itPublic.candDati, level: 2 })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator('#nome')).toBeVisible();
+    await expect(page.getByRole('button', { name: itPublic.candAvanti })).toBeVisible();
+
+    // …e solo dopo le negative, che sono le DUE schermate di rinuncia: «l'elenco
+    // non è arrivato» e «l'elenco è arrivato ed è vuoto». Sono due cause diverse
+    // con due testi diversi — confonderle manderebbe una persona a controllare una
+    // connessione che non ha nessun problema — e qui non deve esserci nessuna
+    // delle due.
+    await expect(page.getByText(itPublic.candSediVuoteTitolo)).toHaveCount(0);
     await expect(page.getByText(itPublic.candSediErroreTitolo)).toHaveCount(0);
 
-    // NIENTE «Riprova» su questo ramo: ricaricare darebbe la stessa risposta, e
-    // un pulsante che ripete la stessa risposta insegna a non fidarsi dei
-    // pulsanti. È una scelta esplicita del wizard, quindi si collauda.
-    await expect(page.getByRole('button', { name: itPublic.candSediRiprova })).toHaveCount(0);
-
-    // E non c'è nessun modulo da compilare: né passi, né comandi, né sede da
-    // scegliere. Un modulo che si lascia compilare e poi non si può inviare è
-    // precisamente il difetto che questa schermata esiste per evitare.
-    await expect(page.getByRole('button', { name: itPublic.candAvanti })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: itPublic.candInvia })).toHaveCount(0);
+    // Nessuna scelta di sede: con un plesso solo l'hook lo decide da sé, e un
+    // gruppo di radio con una voce sola sarebbe un passo che non decide niente.
     await expect(page.getByRole('radio')).toHaveCount(0);
-    await expect(page.locator('#nome')).toHaveCount(0);
   });
 
-  test('il link targato con la sede di collaudo non scavalca l’elenco', async ({ page }) => {
+  test('il link targato vale solo se l’elenco lo conferma', async ({ page }) => {
     /*
      * ⚠️ QUESTO TEST DICE IL CONTRARIO DI CIÒ CHE SEMBRA OVVIO, ED È IL PUNTO.
      *
@@ -122,38 +129,47 @@ test.describe('modulo pubblico di candidatura', () => {
      * l'E2E entra nel modulo: quel POST valida contro `tutte`, sede di collaudo
      * compresa. Qui no. Dall'11/08/2026 `CandidaturaInsegnanteWizard` chiede
      * SEMPRE l'elenco e lo tratta come l'unica autorità: `?sede=` è un
-     * suggerimento che vale solo se l'elenco lo conferma. L'elenco della CI è
-     * vuoto, quindi il link è SMENTITO e si finisce sulla stessa schermata del
-     * test qui sopra.
+     * suggerimento che vale solo se l'elenco lo conferma.
      *
-     * Non è un difetto: è la proprietà per cui quel ramo è stato scritto — un
-     * volantino vecchio non deve poter far compilare quattro passi per poi
-     * incassare un 400 sulla sede. Il collaudo la blocca in questa direzione:
-     * il giorno in cui qualcuno rimettesse la scorciatoia «col link non chiedo
-     * l'elenco», questo test diventerebbe rosso PRIMA che un uuid morto arrivi
-     * su un volantino stampato.
+     * Le due sedi `e2e00000-…` del seed non sono in elenco (`isScuolaE2E` le
+     * esclude), quindi un link che le indica viene ABBANDONATO prima che qualcuno
+     * abbia compilato alcunché — ed è la proprietà per cui quel ramo è stato
+     * scritto: un volantino vecchio non deve poter far compilare quattro passi per
+     * poi incassare un 400 sulla sede. Il giorno in cui qualcuno rimettesse la
+     * scorciatoia «col link non chiedo l'elenco», questo test diventerebbe rosso
+     * PRIMA che un uuid morto finisca su un volantino stampato.
+     *
+     * La differenza si osserva sulla riga «Candidatura per la sede X», che il
+     * wizard scrive sotto il titolo SOLO quando il link è ancora buono: stesso
+     * parametro, due esiti, e a decidere è l'elenco.
      */
+
+    // 1 · il link che l'elenco CONFERMA: la sede si nomina subito, così chi apre
+    //     il collegamento sa a quale plesso si sta proponendo senza arrivare al
+    //     riepilogo.
+    await page.goto(`/lavora-con-noi?sede=${IDS.SCUOLA_COLLAUDO}`);
+    await attendiFineCaricamento(page);
+    await expect(page.getByText(rigaSedeDalLink(SEDE_COLLAUDO))).toBeVisible({ timeout: 15_000 });
+
+    // 2 · il link che l'elenco SMENTISCE (una sede di collaudo esclusa da ogni
+    //     elenco pubblico): il modulo parte lo stesso — l'elenco ha una sede
+    //     buona — ma quella riga non c'è, perché quel link non vale più niente.
     await page.goto(`/lavora-con-noi?sede=${IDS.SCUOLA}`);
-
-    await expect(page.getByRole('heading', { name: itPublic.candTitolo, level: 1 })).toBeVisible();
-    await expect(
-      page.getByRole('alert').filter({ hasText: itPublic.candSediVuoteTitolo }),
-    ).toBeVisible({ timeout: 15_000 });
-
-    // Nessun passo dipinto: né la scelta della sede, né il primo passo
-    // compilabile. Col link il wizard NON parte, perché la sede indicata non è
-    // fra quelle che ricevono candidature.
-    await expect(page.getByText(itPublic.candSede, { exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: itPublic.candAvanti })).toHaveCount(0);
-    await expect(page.locator('#nome')).toHaveCount(0);
+    await attendiFineCaricamento(page);
+    await expect(page.getByRole('heading', { name: itPublic.candDati, level: 2 })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(PREFISSO_SEDE_DAL_LINK)).toHaveCount(0);
   });
 
   /**
-   * ⛔ SPENTO — vedi la testata di questo file, sezione «cosa serve per
-   * riaccenderlo». Non toccare il corpo: è il percorso vero, scritto per essere
-   * eseguito il giorno in cui (a) il workflow «DB migrate (CI)» avrà creato
-   * `candidature_insegnanti` sul database della CI e (b) la CI avrà una sede che
-   * `sediReali` accetta. Allora si toglie il `.fixme` e basta.
+   * ✅ ACCESO IL 12/08/2026 — era in `test.fixme` da quando è nato, per le due
+   * cause che la testata di questo file racconta e che oggi non ci sono più
+   * (database della CI migrato · «Plesso di Collaudo» nel seed). Il corpo è quello
+   * scritto allora, con due aggiunte: la sede si RILEGGE nel riepilogo — con un
+   * plesso solo non c'è nulla da scegliere, e senza quella riga il test non
+   * direbbe su quale sede sta candidando nessuno — e il blocco porta il tag che lo
+   * tiene fuori dal progetto `webkit`.
    *
    * Cosa collauda: il percorso completo di chi si candida — l'elenco delle sedi,
    * i tre passi compilabili, **due fasce d'età** (il campo è multi-valore, ed è
@@ -164,12 +180,14 @@ test.describe('modulo pubblico di candidatura', () => {
    * L'indirizzo è FISSO e non generato: l'indice unico
    * `candidature_insegnanti_email_viva` è globale sugli stati vivi, e la rotta
    * traduce il duplicato (`23505`) in **201, come al primo invio** — quindi una
-   * seconda esecuzione non diventa rossa per colpa della prima. Il seed NON
-   * ripulisce questa tabella: chi riaccende il test decida se aggiungercelo,
-   * sapendo che senza pulizia la riga resta una sola e le successive sono
-   * duplicati serviti come 201.
+   * seconda esecuzione non diventa rossa per colpa della prima. ✅ E dal 12/08/2026
+   * il seed RIPULISCE anche questa tabella (`ripulisciModuliPersonale`, sulle tre
+   * email di `PERSONALE_E2E`): ogni run parte da zero, quindi il 201 qui sotto è
+   * quello del PRIMO invio e non quello di un doppione.
    */
-  test.fixme('percorso vero: due fasce, consenso, 201 e pannello di conferma', async ({ page }) => {
+  test('percorso vero: due fasce, consenso, 201 e pannello di conferma @solo-chromium', async ({
+    page,
+  }) => {
     test.slow();
 
     // La risposta si ascolta PRIMA di premere: `waitForResponse` registrato dopo
@@ -179,17 +197,17 @@ test.describe('modulo pubblico di candidatura', () => {
     );
 
     await page.goto('/lavora-con-noi');
+    await attendiFineCaricamento(page);
     await expect(page.getByRole('heading', { name: itPublic.candTitolo, level: 1 })).toBeVisible();
 
-    // ── Passo «sede», se c'è ────────────────────────────────────────────────
-    // Con UNA sola sede il wizard la decide da sé e il passo non esiste; con più
-    // d'una si sceglie. Il test non pretende di sapere quante ne avrà la CI: si
-    // comporta come una persona davanti allo schermo che ha di fronte.
-    const sedi = page.getByRole('radio');
-    if ((await sedi.count()) > 0) {
-      await sedi.first().check();
-      await page.getByRole('button', { name: itPublic.candAvanti }).click();
-    }
+    // ── Nessun passo «sede» ─────────────────────────────────────────────────
+    // In CI il plesso che riceve candidature è UNO — il «Plesso di Collaudo» del
+    // seed — e con una sede sola il wizard la decide da sé: il passo di scelta non
+    // esiste. Non si scavalca il caso con un `if`: si afferma, così il giorno in
+    // cui la CI avrà due sedi reali questo test diventa rosso e chiede di
+    // scegliere, invece di spuntare in silenzio «la prima» e archiviare la
+    // candidatura in un plesso a caso. La sede si rilegge nel riepilogo.
+    await expect(page.getByRole('radio')).toHaveCount(0);
 
     // ── Passo «I tuoi dati» ─────────────────────────────────────────────────
     // Selettori per `id`: nel template gli `id` dei campi SONO i nomi delle
@@ -231,6 +249,13 @@ test.describe('modulo pubblico di candidatura', () => {
     await page.getByRole('button', { name: itPublic.candAvanti }).click();
 
     // ── Riepilogo ───────────────────────────────────────────────────────────
+    // LA SEDE, PRIMA DELLE FASCE. Il passo di scelta non c'è (plesso unico) e
+    // questo è l'unico punto in cui il modulo dichiara DOVE sta mandando la
+    // candidatura: senza questa riga il test attraverserebbe tutto senza mai
+    // guardare la cosa che una rotta pubblica può sbagliare in silenzio.
+    await expect(page.getByText(itPublic.candRiepilogoSede, { exact: true })).toBeVisible();
+    await expect(page.getByText(SEDE_COLLAUDO, { exact: true })).toBeVisible();
+
     // Le due fasce si RILEGGONO qui: il riepilogo è l'ultimo punto in cui chi si
     // candida può accorgersi che il modulo ha capito un'altra cosa.
     await expect(page.getByText(itPublic.candRiepilogoFasce)).toBeVisible();

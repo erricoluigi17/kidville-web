@@ -42,8 +42,42 @@ export const EMAILS = {
   genitore2: 'genitore2.e2e@kidville.test',
 };
 
+/**
+ * Le identità dei due moduli pubblici del PERSONALE.
+ *
+ * ⚠️ RICOPIATE da `PERSONALE_E2E` di `scripts/seed-e2e.mjs`, e devono restare
+ * allineate: quel file è `.mjs` e gli spec Playwright non importano moduli `.mjs`
+ * dello stesso repo (è la stessa duplicazione dichiarata in cima a questo file per
+ * la password). Se qui e là divergono, il seed ripulisce indirizzi che nessuno usa
+ * e gli spec partono da uno stato sporco: le due rotte traducono il doppione in
+ * **201, come al primo invio**, quindi il test resterebbe verde per il motivo
+ * sbagliato — senza che nessuna riga nuova nasca.
+ */
+export const PERSONALE_E2E = {
+  /** `/anagrafica-personale`: la pratica che il percorso felice invia. */
+  emailPratica: 'anagrafica.e2e@kidville.test',
+  /** `/anagrafica-personale`: la pratica che il cockpit approva (spec separato). */
+  emailApprovazione: 'approvazione.e2e@kidville.test',
+  /** `/lavora-con-noi`: la candidatura del percorso vero. */
+  emailCandidatura: 'candidatura.e2e@kidville.test',
+};
+
 export const IDS = {
   SCUOLA: 'e2e00000-0000-4000-8000-000000000001',
+  /**
+   * LA SEDE CHE I MODULI PUBBLICI VEDONO — e l'unica.
+   *
+   * ⚠️ Ricopiata da `IDS.SCUOLA_COLLAUDO` di `scripts/seed-e2e.mjs` (stessa
+   * duplicazione, stessa ragione: non si importa un `.mjs`). Nome «Plesso di
+   * Collaudo», città «Testville».
+   *
+   * Esiste perché `isScuolaE2E` (`src/lib/scuole/reali.ts`) esclude da ogni elenco
+   * pubblico le sedi il cui id comincia per `e2e00000` o il cui nome contiene
+   * «e2e» — cioè `SCUOLA` e `SCUOLA2` qui sopra. Senza una terza sede che il
+   * predicato NON riconosce, `GET /api/iscrizione/sedi` risponde `{data: []}` e i
+   * moduli pubblici del personale non cominciano nemmeno.
+   */
+  SCUOLA_COLLAUDO: 'c0110a0d-0000-4000-8000-000000000001',
   SEC_GIRASOLI: 'e2e00000-0000-4000-8000-000000000011',
   A1: 'e2e00000-0000-4000-8000-000000000101', // Aurora Arcobaleno-E2E
   A2: 'e2e00000-0000-4000-8000-000000000102', // Bruno Baleno-E2E

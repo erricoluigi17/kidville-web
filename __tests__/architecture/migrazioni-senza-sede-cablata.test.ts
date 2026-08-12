@@ -204,6 +204,40 @@ const REGOLE: Regola[] = [
       'vale parola per parola quanto scritto per la prima sede E2E: il predicato `isScuolaE2E` ' +
       'copre entrambe (stesso prefisso `e2e00000`), quindi nessuna riga di prodotto deve nominarle.',
   },
+  {
+    uuid: 'c0110a0d-0000-4000-8000-000000000001',
+    cosa: 'l’uuid del «Plesso di Collaudo», la sede della CI che i moduli PUBBLICI vedono',
+    /**
+     * ── PERCHÉ QUESTA REGOLA ESISTE (12/08/2026) ──────────────────────────────
+     * È la terza sede del seed, e a differenza delle due qui sopra `isScuolaE2E`
+     * NON la riconosce: l'id non comincia per `e2e00000` e il nome non contiene
+     * «e2e». È l'unico modo per cui `sediReali` la lasci passare, ed è il punto —
+     * senza una sede che l'elenco pubblico accetta, `GET /api/iscrizione/sedi`
+     * risponde `{data: []}` sul database della CI e i moduli pubblici del
+     * personale non cominciano nemmeno: `/lavora-con-noi` è rimasto in
+     * `test.fixme` per questo, e `/anagrafica-personale` non era collaudabile.
+     *
+     * Proprio perché il predicato non la copre, l'unica difesa che resta è questa
+     * regola: se quell'uuid finisse in `src/`, il PRODOTTO conoscerebbe per nome
+     * una sede della CI — che è il difetto contro cui è nato l'intero lock.
+     *
+     * Perimetri come le due gemelle, e per la stessa ragione: vietata in `src/` e
+     * nelle migrazioni, lecita nel seed che la CREA e in `e2e/`, che è la campagna
+     * che ci gira sopra (che infatti la nomina in `e2e/fixtures.ts`). `e2e` non è
+     * fra i perimetri, quindi lì non serve nessuna voce d'allowlist; e siccome
+     * l'uuid è ora GOVERNATO da una regola, l'euristica smette di segnalarlo — che
+     * è ciò che rende verde `scripts/seed-e2e.mjs:84`.
+     */
+    perimetri: ['src', 'scripts', 'migrazioni'],
+    allowlist: {
+      [join('scripts', 'seed-e2e.mjs')]:
+        'è il seed che CREA la sede di collaudo visibile ai moduli pubblici: quell’uuid è il suo oggetto, non un assunto',
+    },
+    invece:
+      'nessuna riga di prodotto deve nominare una sede della CI: il codice riceve la sede come ' +
+      'parametro (`scuola_id` del corpo, `resolveScuolaScrittura`) o la deriva dal dato, e ' +
+      'l’elenco pubblico lo decide `sediReali` — che per questa sede è appunto il verdetto atteso.',
+  },
 ]
 
 /**

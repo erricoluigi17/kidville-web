@@ -25,11 +25,34 @@
 // (`./privacy`), e viene DOPO. L'ordine non è un dettaglio d'ordine — è la
 // correzione: il Privacy Lock pronuncia nomi di minori, e non deve pronunciarli
 // su bambini che chi chiama non ha titolo di conoscere.
+//
+// ─── E DAL 2026-08-12 GUARDA ANCHE SE IL BAMBINO È ANCORA ISCRITTO ───────────
+// L'archiviazione toglie un alunno dagli elenchi sganciandolo dalla CLASSE. Un
+// tag però non passa da nessun elenco: arriva come un elenco di uuid scelti da
+// chi pubblica, e questa è l'unica strettoia che li vede tutti. Senza un
+// controllo qui, un bambino archiviato resta taggabile in una foto NUOVA — cioè
+// si continuerebbe a creare dato personale nuovo su un minore che non frequenta
+// più, mentre l'altra metà del modello («libera spazio») cancella le sue foto.
+//
+// ⚠️ E NON SI RIUSA IL 403 DELLA SEDE. Sarebbe stato più corto — basta un
+// `.eq('stato', …)` nella stessa query e il bambino «non torna», esattamente
+// come uno di un altro plesso. Ma il messaggio di quel rifiuto dice «non
+// appartengono ai tuoi plessi», e su un bambino della PROPRIA sede sarebbe
+// falso: manderebbe la maestra a cercare un errore di plesso che non esiste,
+// per un bambino che ha davanti agli occhi. Un rifiuto che mente sul motivo
+// costa più tempo di un rifiuto che manca.
+//
+// I due casi restano comunque ORDINATI, e l'ordine è la difesa: prima «non è
+// dei tuoi plessi» (che non dice quali), poi «non è più iscritto» — che si
+// pronuncia SOLO su uuid già dimostrati dentro le sedi di chi chiama. Così il
+// motivo più preciso non diventa un modo per sondare l'esistenza di minori
+// altrui.
 // =============================================================================
 
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
+import { eNonPiuIscritto } from '@/lib/alunni/stato'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 /** L'handler che sta chiedendo: finisce nel log, mai nella risposta. */
@@ -68,9 +91,12 @@ export async function assertTagStudentsInScope(
     return rifiuto()
   }
 
+  // `stato` nella proiezione: serve a distinguere «non è dei tuoi plessi» da
+  // «è dei tuoi plessi ma non frequenta più». Con la sola `id` i due casi
+  // sarebbero lo stesso silenzio, e il rifiuto direbbe la cosa sbagliata.
   let { data: inScope, error } = await supabase
     .from('alunni')
-    .select('id')
+    .select('id, stato')
     .in('id', ids)
     .in('scuola_id', sedi)
 
@@ -113,7 +139,7 @@ export async function assertTagStudentsInScope(
       esito: 'degrado-scuola-id-assente',
       taggati: ids.length,
     })
-    const rilettura = await supabase.from('alunni').select('id').in('id', ids)
+    const rilettura = await supabase.from('alunni').select('id, stato').in('id', ids)
     inScope = rilettura.data
     error = rilettura.error
   }
@@ -128,8 +154,9 @@ export async function assertTagStudentsInScope(
     )
   }
 
-  const ammessi = new Set(((inScope ?? []) as { id: string }[]).map((a) => a.id))
-  const fuoriSede = ids.filter((id) => !ammessi.has(id)).length
+  const righe = (inScope ?? []) as { id: string; stato?: string | null }[]
+  const statoDi = new Map(righe.map((a) => [a.id, a.stato ?? null]))
+  const fuoriSede = ids.filter((id) => !statoDi.has(id)).length
   if (fuoriSede > 0) {
     // Solo conteggi nel log, e NIENTE nel corpo: dire quali sono confermerebbe
     // l'esistenza di quei bambini a chi non ha titolo.
@@ -141,6 +168,33 @@ export async function assertTagStudentsInScope(
       fuoriSede,
     })
     return rifiuto()
+  }
+
+  // ─── SECONDO PASSO: dentro la sede, ma non più iscritto ────────────────────
+  // Si arriva qui solo con uuid già dimostrati dentro i plessi di chi chiama.
+  // Il predicato è `eNonPiuIscritto`, cioè l'ALLOWLIST di `@/lib/alunni/stato`:
+  // blocca esattamente gli stati dichiarati «non più iscritto» e nient'altro.
+  // Uno stato mai visto, un refuso o una colonna vuota NON bloccano — nella
+  // direzione «rifiuto un'operazione a una maestra» si sbaglia dalla parte di
+  // chi lascia lavorare, e il caso vero (l'archiviato) è dichiarato lì.
+  const nonIscritti = ids.filter((id) => eNonPiuIscritto(statoDi.get(id)))
+  if (nonIscritti.length > 0) {
+    logEvento('galleria', 'warn', {
+      operazione,
+      esito: 'tag-alunno-non-iscritto',
+      tipo: 'tag-alunno-non-iscritto',
+      // Conteggi, mai gli id: sono di minori.
+      taggati: ids.length,
+      nonIscritti: nonIscritti.length,
+    })
+    return NextResponse.json(
+      {
+        error:
+          'Uno o più bambini taggati non sono più iscritti: non si possono aggiungere a una foto nuova.',
+        codice: 'TAG_ALUNNO_NON_ISCRITTO',
+      },
+      { status: 403 },
+    )
   }
 
   return null

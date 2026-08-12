@@ -257,13 +257,10 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         'BROWSER: contesto React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
         + 'motivo: il tetto sta nella route, non nel chiamante.'],
     ['src/lib/context/sede-context.tsx',
-        'BROWSER: contesto React su `/api/admin/sedi`, una nostra route. Stessa forma e stesso '
-        + 'motivo del gemello `admin-identity.tsx` qui sopra: il tetto sta nella route, non nel '
-        + 'chiamante. La `fetch` è PREESISTENTE a questo elenco. Ciò che è cambiato il 2026-08-12 '
-        + 'è che il guasto non passa più in silenzio: il ramo non-`ok` e il rigetto sono loggati '
-        + 'con `logClient`, e lo stato d\'errore è distinto dall\'elenco vuoto — prima un guasto '
-        + 'della route diceva all\'utente «scegli una sede dal menu» mentre quel menu non era '
-        + 'nemmeno montato.'],
+        'BROWSER: contesto React su `/api/admin/sedi`, una nostra route. Stessa forma, stesso '
+        + 'motivo del gemello `admin-identity.tsx`: il tetto sta nella route, non nel chiamante. '
+        + 'Qui il guasto non passa comunque in silenzio — dal 2026-08-12 il ramo non-`ok` e il '
+        + 'rigetto sono loggati con `logClient`, e lo stato d\'errore è distinto dall\'elenco vuoto.'],
     ['src/lib/diary/config-cache.ts',
         'BROWSER: `GET /api/diary/config`, una nostra route, con la cache di promesse che '
         + 'impedisce alle tre parti della pagina del diario di chiederla tre volte (sei con '
@@ -297,6 +294,12 @@ const CONSUMATORI_DEL_TETTO = new Map<string, string>([
     ['src/lib/logging/external.ts', 'i 13 provider esterni'],
     ['src/lib/logging/supabase-fetch.ts', 'tutte le chiamate PostgREST/Storage/auth delle route'],
     ['src/middleware.ts', 'la porta da cui passa OGNI pagina e OGNI route API'],
+    ['src/lib/upload/carica-file.ts',
+        'il caricamento di un allegato dal BROWSER, ed è la prima voce di questo elenco che non '
+        + 'sta lato server: qui a restare appeso non è una lambda, è l\'interfaccia. `FileField` '
+        + 'mette `uploading = true` e lo rimette a `false` solo nel `finally`, e `handleFile` '
+        + 'comincia con `if (uploading) return`: senza tetto una richiesta che non si risolve mai '
+        + 'lascia la rotellina che gira per sempre, senza errore e senza ritentativo'],
     // ⚠️ `src/lib/utils/fiscalCodeApi.ts` era la quarta voce, ed è caduta l'11 agosto 2026
     // insieme al file: la sua `fetch` mandava nome, cognome, sesso, data e comune di nascita di
     // un bambino ad `api.codicefiscale.it`, e il titolare del trattamento ha deciso di toglierla
@@ -324,6 +327,19 @@ const TETTI_DICHIARATI = new Map<string, string>([
         'la sonda di rete della pagina `/offline` e l\'ultima attesa di React. È entrata '
         + 'nell\'inventario il 2026-08-03 non perché fosse nuova, ma perché la regola qui sotto '
         + 'pretendeva che una costante si chiamasse `TETTO…`: `TIMEOUT_SONDA_MS` non ci entrava.'],
+    ['src/lib/upload/carica-file.ts',
+        'quanto si aspetta un CARICAMENTO prima di dichiararlo perso (2026-08-12). È il tetto '
+        + 'più lungo del repo — 30 s, cioè il massimo che `MAI_OLTRE_MS` qui sotto ammette — e '
+        + 'il numero alto È la decisione: il tetto copre l\'INTERA chiamata, compreso il tempo di '
+        + 'spedire il corpo, e un file al massimo consentito (4 MB, vedi `limite-piattaforma`) su '
+        + 'un uplink da 1 Mbps impiega ~32 s solo a partire. Quindi questo tetto PUÒ interrompere '
+        + 'un caricamento che stava funzionando, e lo si accetta sapendolo: un\'interruzione '
+        + 'produce un errore visibile e un pulsante da premere di nuovo, l\'attesa infinita non '
+        + 'produce niente — e l\'attesa infinita è misurata, non temuta (`fetch` non scade da sé: '
+        + '150 s contro un bersaglio muto, testata di `tetto.ts`). Perché la taratura non resti '
+        + 'un\'opinione, la scadenza ha in `app_log` un messaggio suo col numero dentro '
+        + '(`modulo-allegato-upload-scaduto: 30000 ms`): se 30 s sono troppo pochi lo dice il '
+        + 'conteggio, non chi carica.'],
     ['src/lib/security/rate-limit.ts',
         'quanto il tetto per IP aspetta il contatore condiviso su Postgres prima di degradare al '
         + 'conteggio locale (2026-08-04). È il tetto più corto del repo — 250 ms — e il numero '

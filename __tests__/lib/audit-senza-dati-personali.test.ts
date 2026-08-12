@@ -132,6 +132,51 @@ describe('logScrittura — il registro non è una seconda copia dell’anagrafic
     }
   })
 
+  it('🔴 i percorsi delle DUE FACCE del documento del personale non entrano in chiaro', async () => {
+    // Il 12/08/2026 la migrazione `20260812194501` ha rinominato
+    // `pratiche_personale.documento_path` in `documento_fronte_path` e ne ha aggiunta
+    // una seconda, `documento_retro_path`. La lista nera conosceva il solo nome
+    // morto, e `norm()` è un confronto ESATTO (trim, minuscole, `-`→`_`): non
+    // intercetta un prefisso né una variante, quindi le due colonne nuove passavano
+    // in chiaro. Oggi non perde nulla — i tre `logScrittura` di
+    // `admin/pratiche-personale` passano oggetti costruiti a mano, mai la riga
+    // grezza — ma basta la prima `logScrittura` che passi una riga di
+    // `anagrafica_personale` perché il percorso di una carta d'identità finisca
+    // scritto nel registro delle modifiche, che è la tabella che l'oblio fatica di
+    // più a raggiungere.
+    //
+    // ⚠️ `documento_path` resta in lista: NON è un nome morto dappertutto. Misurato
+    // su `information_schema.columns` il 12/08/2026, la colonna esiste ancora su
+    // `alunni` e su `parents` — cioè sui MINORI. Toglierla sarebbe stato scambiare
+    // un rinomino su due tabelle per un rinomino globale.
+    await logScrittura(client() as never, {
+      attore: ATTORE,
+      entitaTipo: 'anagrafica_personale',
+      entitaId: ALUNNO,
+      azione: 'update',
+      valoreDopo: {
+        documento_fronte_path: 'documenti/aaaaaaaa-0000-4000-8000-000000000001/fronte-rossi.jpeg',
+        documento_retro_path: 'documenti/aaaaaaaa-0000-4000-8000-000000000001/retro-rossi.jpeg',
+        documento_path: 'documenti/aaaaaaaa-0000-4000-8000-000000000001/vecchio-rossi.jpeg',
+        cessato_il: '2026-01-31',
+      },
+    })
+
+    expect(h.inseriti).toHaveLength(1)
+    const scritto = JSON.stringify(h.inseriti[0])
+    for (const valore of ['fronte-rossi', 'retro-rossi', 'vecchio-rossi']) {
+      expect(
+        scritto,
+        `«${valore}» è la chiave che apre il documento d’identità di una persona`,
+      ).not.toContain(valore)
+    }
+    // CONTROLLO POSITIVO: il campo resta visibile, il valore no — altrimenti questa
+    // prova sarebbe verde anche con un audit che non scrive più niente.
+    expect(scritto).toContain('documento_fronte_path')
+    expect(scritto).toContain('documento_retro_path')
+    expect(scritto, 'una data di cessazione non è un dato da nascondere').toContain('2026-01-31')
+  })
+
   it('CONTROLLO POSITIVO — la riga esiste e dice ancora chi, cosa, quando e QUALI campi', async () => {
     // Senza questa prova, «non contiene il nome» sarebbe verde anche con un audit
     // che non scrive più niente — cioè con la tracciabilità spenta.

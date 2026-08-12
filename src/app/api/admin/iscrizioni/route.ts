@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { riassuntoCampi } from '@/lib/audit/riassunto'
@@ -1095,7 +1096,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           note_mediche: c.note_mediche ?? null,
           documento_path: c.documento_path ?? null,
           classe_sezione: classe,
-          stato: 'iscritto',
+          stato: STATO_ISCRITTO,
           // Liberatorie foto raccolte al momento dell'iscrizione, UNA PER CANALE.
           // Senza queste righe la famiglia acconsentiva e il bambino restava
           // comunque a `false`: il consenso c'era, ma non era mai arrivato dove

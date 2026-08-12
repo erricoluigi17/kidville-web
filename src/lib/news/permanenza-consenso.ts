@@ -1080,8 +1080,24 @@ export async function obliaFotoNewsAlunno(
   supabase: SupabaseClient,
   alunnoId: string,
   op: string,
-): Promise<{ ritirati: number; fileRimossi: number; fileNonRimossi: number; fileTrattenuti: number }> {
-  const conteggio = { ritirati: 0, fileRimossi: 0, fileNonRimossi: 0, fileTrattenuti: 0 }
+): Promise<{
+  ritirati: number
+  fileRimossi: number
+  fileNonRimossi: number
+  fileTrattenuti: number
+  /**
+   * ⚠️ «HO POTUTO GUARDARE `news_posts`?», e non è una sfumatura.
+   *
+   * Aggiunto il 2026-08-13. Con i soli conteggi, un `42501 permission denied` su
+   * questa SELECT era indistinguibile da «nessun articolo lo ritrae»: il
+   * chiamante dichiarava successo e l'articolo restava `stato = 'pubblicata'`
+   * sul sito PUBBLICO, cioè con la foto di un bambino a un indirizzo che
+   * conosce chiunque. Lo schema assente (DB della CI non migrato) resta `true`:
+   * lì il vuoto è la risposta giusta, non un guasto.
+   */
+  letto: boolean
+}> {
+  const conteggio = { ritirati: 0, fileRimossi: 0, fileNonRimossi: 0, fileTrattenuti: 0, letto: true }
   const id = (alunnoId ?? '').trim()
   if (!id) return conteggio
 
@@ -1092,6 +1108,7 @@ export async function obliaFotoNewsAlunno(
   if (error) {
     if (!schemaAssente(error)) {
       logEvento('news', 'error', { operazione: op, esito: 'oblio-news-post-non-letti' }, error)
+      return { ...conteggio, letto: false }
     }
     return conteggio
   }

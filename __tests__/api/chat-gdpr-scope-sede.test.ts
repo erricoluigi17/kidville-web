@@ -26,6 +26,9 @@ const SEDE_A = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const SEDE_B = 'bbbbbbbb-0000-4000-8000-00000000000b'
 const ALU_A = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
 const ALU_B = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
+/** I due ancora ISCRITTI, uno per sede: senza, la rubrica non ha nessuno da mostrare. */
+const ISC_A = 'a3a3a3a3-3333-4333-8333-aaaaaaaaaaaa'
+const ISC_B = 'b4b4b4b4-4444-4444-8444-bbbbbbbbbbbb'
 const THREAD_A = 'c1c1c1c1-1111-4111-8111-cccccccccccc'
 const THREAD_B = 'c2c2c2c2-2222-4222-8222-dddddddddddd'
 const RICH_B = 'e2e2e2e2-2222-4222-8222-eeeeeeeeeeee'
@@ -97,6 +100,15 @@ const dbBase = (): DBFinto => ({
   alunni: [
     { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, section_id: 'sec-a', scuola_id: SEDE_A, stato: 'ritirato', anonimizzato_il: null },
     { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, section_id: 'sec-b', scuola_id: SEDE_B, stato: 'ritirato', anonimizzato_il: null },
+    // I due ISCRITTI, aggiunti il 2026-08-12. Questo file guarda `alunni` da due
+    // parti opposte del confine: l'oblio vuole i NON più iscritti, la rubrica
+    // della chat vuole i soli iscritti. Con due sole righe `ritirato` la prova
+    // dell'isolamento fra sedi si sarebbe retta su una lista vuota — che passa
+    // sempre, e non prova niente. Nome e cognome sono gli stessi apposta: le
+    // asserzioni di questo file cercano «Alfa» e negano «Beta», ed è quella
+    // asimmetria — la SEDE — che devono continuare a misurare.
+    { id: ISC_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, section_id: 'sec-a', scuola_id: SEDE_A, stato: 'iscritto', anonimizzato_il: null },
+    { id: ISC_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, section_id: 'sec-b', scuola_id: SEDE_B, stato: 'iscritto', anonimizzato_il: null },
   ],
   utenti: [
     { id: GEN_A, nome: 'Genitore', cognome: 'DiAlfa', ruolo: 'genitore' },
@@ -123,8 +135,11 @@ beforeEach(() => {
   h.scritture.length = 0
   h.genitoreHasFiglio.mockResolvedValue(false)
   h.getGenitoriDiAlunni.mockImplementation(async (_c: unknown, ids: string[]) => {
+    // Per SEDE, non per singolo id: i due iscritti aggiunti il 2026-08-12 stanno
+    // negli stessi plessi dei ritirati, e `id === ALU_A` avrebbe attribuito alla
+    // sede A i figli della B.
     const m = new Map<string, string[]>()
-    for (const id of ids) m.set(id, id === ALU_A ? [GEN_A] : [GEN_B])
+    for (const id of ids) m.set(id, id === ALU_A || id === ISC_A ? [GEN_A] : [GEN_B])
     return m
   })
   // Segreteria della sede A: per progetto vede TUTTE le classi del proprio

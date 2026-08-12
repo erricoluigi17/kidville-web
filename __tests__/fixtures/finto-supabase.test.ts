@@ -28,8 +28,23 @@ const dbBase = (): DBFinto => ({
   ],
 })
 
+/** Due tabelle con righe collegate: serve alle scritture e all'errore per
+ *  operazione, dove il punto è che la LETTURA riesca e la scrittura no. */
+const dbScritture = (): DBFinto => ({
+  alunni: [
+    { id: 'a1', scuola_id: A, nome: 'Uno', archiviato_il: null },
+    { id: 'a2', scuola_id: A, nome: 'Due', archiviato_il: null },
+  ],
+  chat_messages: [{ id: 'm1', alunno_id: 'a1', testo: 'ciao' }],
+})
+
 const ids = (righe: unknown): string[] =>
   ((righe ?? []) as { id: string }[]).map((r) => r.id).sort()
+
+const codice = (e: unknown): string | undefined => (e as { code?: string } | null)?.code
+
+/** Il 23503 vero: `update or delete on table "alunni" violates foreign key constraint`. */
+const VIOLAZIONE_FK = { code: '23503', message: 'violates foreign key constraint' }
 
 describe('finto-supabase — i filtri di lettura si applicano davvero', () => {
   it('.eq() tiene solo le righe della colonna richiesta', async () => {
@@ -279,6 +294,41 @@ describe('finto-supabase — quello che non sa fare lo dice, non lo nasconde', (
     const s = creaFintoSupabase(dbBase())
     expect(() => s.storage.from('bucket')).toThrow(/storage/)
   })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Le chiavi di `errori`. Sono la superficie che più facilmente tace: un
+  // indirizzo che non colpisce niente non è un errore di sintassi, è un errore
+  // che NON VIENE INIETTATO — `error` resta `null`, la riga viene cancellata
+  // davvero, e il test che credeva di provare «respinta» prova il percorso
+  // felice. Questi quattro casi sono stati MISURATI su una sonda prima di essere
+  // chiusi: tutti e quattro passavano in silenzio.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('una chiave `errori` con l\'operazione SBAGLIATA lancia invece di non iniettare niente', () => {
+    for (const chiave of ['news:delele', 'news:DELETE', 'news:delete ', 'news: delete', 'news:']) {
+      expect(
+        () => creaFintoSupabase(dbBase(), [], { errori: { [chiave]: { code: '23503' } } }),
+        `"${chiave}" doveva lanciare`,
+      ).toThrow(/operazione non emulata/)
+    }
+  })
+
+  it('una chiave `errori` con la TABELLA sbagliata lancia (il refuso è muto quanto l\'altro)', () => {
+    expect(() => creaFintoSupabase(dbBase(), [], { errori: { new: { code: '42703' } } })).toThrow(
+      /tabella non presente/,
+    )
+    expect(() =>
+      creaFintoSupabase(dbBase(), [], { errori: { 'new:delete': { code: '23503' } } }),
+    ).toThrow(/tabella non presente/)
+  })
+
+  it('le cinque operazioni valide e la chiave nuda NON lanciano', () => {
+    for (const chiave of ['news', 'news:select', 'news:insert', 'news:update', 'news:upsert', 'news:delete']) {
+      expect(
+        () => creaFintoSupabase(dbBase(), [], { errori: { [chiave]: { code: '23503' } } }),
+        `"${chiave}" non doveva lanciare`,
+      ).not.toThrow()
+    }
+  })
 })
 
 describe('finto-supabase — errori PostgREST e count', () => {
@@ -312,5 +362,191 @@ describe('finto-supabase — errori PostgREST e count', () => {
     const { data, count } = await s.from('news').select('*', { count: 'exact', head: true })
     expect(data).toBeNull()
     expect(count).toBe(3)
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // L'errore indirizzato a `"<tabella>:<operazione>"`. Il perché sta tutto in un
+  // posto solo — il commento di `erroreDi()` in `finto-supabase.ts` — comprese
+  // la precedenza sulla chiave nuda, la misura del ramo che ha motivato la
+  // chiave e i tre iniettori scritti a mano che questa deve assorbire.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('la select RIESCE e la delete sulla STESSA tabella fallisce (la lettura prima della scrittura respinta)', async () => {
+    const db = dbScritture()
+    const scritture: Scrittura[] = []
+    const s = creaFintoSupabase(db, [], { scritture, errori: { 'alunni:delete': VIOLAZIONE_FK } })
+
+    // 1. la route legge l'alunno: deve trovarlo, o non arriva mai al ramo che ci interessa
+    const lettura = await s.from('alunni').select('*').eq('id', 'a1').maybeSingle()
+    expect(lettura.error).toBeNull()
+    expect((lettura.data as { id: string } | null)?.id).toBe('a1')
+
+    // 2. la route cancella: il DB rifiuta
+    const cancellazione = await s.from('alunni').delete().eq('id', 'a1')
+    expect(codice(cancellazione.error)).toBe('23503')
+
+    // 3. e la riga È ANCORA LÌ: un errore che non blocca la scrittura è peggio di nessun errore
+    expect(ids(db.alunni)).toEqual(['a1', 'a2'])
+    expect(scritture).toEqual([])
+  })
+
+  it('la forma VERA della route: .delete().eq().in().select("id") propaga l\'errore e non tocca la riga', async () => {
+    // `src/app/api/admin/students/route.ts` cancella così — filtro di sede
+    // compreso, e con la `.select('id')` che serve a distinguere «respinta» da
+    // «zero righe». È la forma che questa chiave esiste per rappresentare:
+    // provarla su `.delete().eq()` e basta lascerebbe scoperto proprio il pezzo
+    // in cui `selezionato` e `operazione` si incrociano.
+    const db = dbScritture()
+    const s = creaFintoSupabase(db, [], { errori: { 'alunni:delete': VIOLAZIONE_FK } })
+
+    const { data, error } = await s.from('alunni').delete().eq('id', 'a1').in('scuola_id', [A]).select('id')
+    expect(codice(error)).toBe('23503')
+    expect(data).toBeNull()
+    expect(ids(db.alunni)).toEqual(['a1', 'a2'])
+
+    // e senza iniezione la STESSA catena cancella davvero e restituisce l'id:
+    // il test sopra prova l'errore, questo prova che non è verde per inerzia.
+    const dbPulito = dbScritture()
+    const pulito = creaFintoSupabase(dbPulito, [])
+    const ok = await pulito.from('alunni').delete().eq('id', 'a1').in('scuola_id', [A]).select('id')
+    expect(ok.error).toBeNull()
+    expect(ids(ok.data)).toEqual(['a1'])
+    expect(ids(dbPulito.alunni)).toEqual(['a2'])
+  })
+
+  it('la chiave NUDA continua a valere per TUTTE le operazioni (retrocompatibilità)', async () => {
+    const db = dbScritture()
+    const s = creaFintoSupabase(db, [], { errori: { alunni: { code: '42703' } } })
+
+    expect(codice((await s.from('alunni').select('*')).error)).toBe('42703')
+    expect(codice((await s.from('alunni').insert({ id: 'a3' })).error)).toBe('42703')
+    expect(codice((await s.from('alunni').update({ nome: 'X' }).eq('id', 'a1')).error)).toBe('42703')
+    expect(codice((await s.from('alunni').upsert({ id: 'a1', nome: 'X' })).error)).toBe('42703')
+    expect(codice((await s.from('alunni').delete().eq('id', 'a1')).error)).toBe('42703')
+
+    expect(ids(db.alunni)).toEqual(['a1', 'a2'])
+  })
+
+  it('la chiave specifica non interferisce con le ALTRE operazioni della stessa tabella', async () => {
+    const db = dbScritture()
+    const s = creaFintoSupabase(db, [], { errori: { 'alunni:update': { code: 'PGRST204' } } })
+
+    expect(codice((await s.from('alunni').update({ nome: 'X' }).eq('id', 'a1')).error)).toBe('PGRST204')
+    // le altre passano, e passano DAVVERO: il DB cambia
+    expect((await s.from('alunni').select('*')).error).toBeNull()
+    expect((await s.from('alunni').insert({ id: 'a3', scuola_id: A }).select()).error).toBeNull()
+    expect((await s.from('alunni').delete().eq('id', 'a2')).error).toBeNull()
+    expect(ids(db.alunni)).toEqual(['a1', 'a3'])
+    // e l'update respinto non ha toccato la riga
+    expect((db.alunni.find((r) => r.id === 'a1') as { nome: string }).nome).toBe('Uno')
+  })
+
+  it('la chiave specifica non interferisce con le ALTRE TABELLE', async () => {
+    const db = dbScritture()
+    const s = creaFintoSupabase(db, [], { errori: { 'alunni:delete': VIOLAZIONE_FK } })
+
+    expect(codice((await s.from('alunni').delete().eq('id', 'a1')).error)).toBe('23503')
+    expect((await s.from('chat_messages').delete().eq('alunno_id', 'a1')).error).toBeNull()
+    expect(ids(db.chat_messages)).toEqual([])
+  })
+
+  it('con ENTRAMBE le chiavi vince la specifica, e la nuda copre il resto', async () => {
+    const s = creaFintoSupabase(dbScritture(), [], {
+      errori: { alunni: { code: '42703' }, 'alunni:delete': VIOLAZIONE_FK },
+    })
+
+    expect(codice((await s.from('alunni').delete().eq('id', 'a1')).error)).toBe('23503')
+    expect(codice((await s.from('alunni').select('*')).error)).toBe('42703')
+    expect(codice((await s.from('alunni').update({ nome: 'X' })).error)).toBe('42703')
+  })
+
+  it('ogni operazione ha la sua chiave: select · insert · update · upsert · delete', async () => {
+    const casi: [string, (s: ReturnType<typeof creaFintoSupabase>) => PromiseLike<unknown>][] = [
+      ['alunni:select', (s) => s.from('alunni').select('*')],
+      ['alunni:insert', (s) => s.from('alunni').insert({ id: 'a9' })],
+      ['alunni:update', (s) => s.from('alunni').update({ nome: 'X' })],
+      ['alunni:upsert', (s) => s.from('alunni').upsert({ id: 'a1', nome: 'X' })],
+      ['alunni:delete', (s) => s.from('alunni').delete().eq('id', 'a1')],
+    ]
+
+    for (let i = 0; i < casi.length; i++) {
+      const [chiave, esegui] = casi[i]
+      const s = creaFintoSupabase(dbScritture(), [], { errori: { [chiave]: { code: 'P0001' } } })
+      const esito = (await esegui(s)) as { error: unknown }
+      expect(codice(esito.error), `${chiave} doveva fallire`).toBe('P0001')
+
+      // e con la chiave di UN'ALTRA operazione VERA (la successiva, a giro) lo
+      // stesso comando passa: le cinque chiavi non si contaminano a vicenda.
+      const altra = casi[(i + 1) % casi.length][0]
+      const pulito = creaFintoSupabase(dbScritture(), [], { errori: { [altra]: { code: 'P0001' } } })
+      const passa = (await esegui(pulito)) as { error: unknown }
+      expect(passa.error, `${chiave} non doveva essere toccata da ${altra}`).toBeNull()
+    }
+  })
+
+  it('"<tabella>:select" copre lista, single(), maybeSingle() e il conteggio', async () => {
+    const s = creaFintoSupabase(dbScritture(), [], { errori: { 'alunni:select': { code: '42703' } } })
+
+    expect(codice((await s.from('alunni').select('*')).error)).toBe('42703')
+
+    const uno = await s.from('alunni').select('*').eq('id', 'a1').single()
+    expect(uno.data).toBeNull()
+    expect(codice(uno.error)).toBe('42703')
+
+    const forse = await s.from('alunni').select('*').eq('id', 'a1').maybeSingle()
+    expect(forse.data).toBeNull()
+    expect(codice(forse.error)).toBe('42703')
+
+    // anche il conteggio, che è la lettura che le route usano per i badge
+    const conta = await s.from('alunni').select('*', { count: 'exact', head: true })
+    expect(codice(conta.error)).toBe('42703')
+    expect(conta.count).toBeNull()
+  })
+
+  it('`await from(tabella)` senza select/insert/… LANCIA: il client vero non la esegue', async () => {
+    // `from()` restituisce un `PostgrestQueryBuilder`, che non è thenable —
+    // lo è solo il builder che tornano `.select()` e le scritture. Qui i due
+    // sono un oggetto solo: senza questo presidio il finto client eseguirebbe
+    // una query che in produzione non parte, e restituirebbe righe che nessuna
+    // route riceverebbe mai. È la trappola del mock che tace, al rovescio.
+    const s = creaFintoSupabase(dbScritture())
+    await expect(s.from('alunni') as unknown as Promise<unknown>).rejects.toThrow(/non è una query/)
+  })
+
+  it('la lettura RIESCE anche quando è la insert a essere zittita (il caso «carico e poi registro»)', async () => {
+    const db = dbScritture()
+    const s = creaFintoSupabase(db, [], { errori: { 'chat_messages:insert': { code: '42501' } } })
+
+    const letti = await s.from('chat_messages').select('*')
+    expect(ids(letti.data)).toEqual(['m1'])
+    expect(codice((await s.from('chat_messages').insert({ id: 'm2' })).error)).toBe('42501')
+    expect(ids(db.chat_messages)).toEqual(['m1'])
+  })
+
+  it('con throwOnError() l\'errore per operazione LANCIA invece di tornare in { error }', async () => {
+    const s = creaFintoSupabase(dbScritture(), [], { errori: { 'alunni:delete': VIOLAZIONE_FK } })
+    await expect(s.from('alunni').delete().eq('id', 'a1').throwOnError()).rejects.toMatchObject({
+      code: '23503',
+    })
+  })
+
+  it('lo status dell\'errore è quello che PostgREST servirebbe, non 400 per tutti', async () => {
+    // Una FK che respinge una DELETE è un 409 Conflict; il 400 è della colonna
+    // che non esiste. Rappresentare il primo con la faccia del secondo è
+    // insegnare il falso a chi legge il fixture per scrivere il test dopo.
+    const attesi: [string, number, string][] = [
+      ['23503', 409, 'Conflict'], // FK: lo storico si difende
+      ['23505', 409, 'Conflict'], // unique
+      ['42501', 403, 'Forbidden'], // permesso negato
+      ['42P01', 404, 'Not Found'], // tabella inesistente
+      ['42703', 400, 'Bad Request'], // colonna inesistente: qui il 400 è giusto
+      ['PGRST204', 400, 'Bad Request'], // colonna assente dalla cache: idem
+      ['08006', 503, 'Service Unavailable'], // connessione caduta
+    ]
+    for (const [code, status, statusText] of attesi) {
+      const s = creaFintoSupabase(dbScritture(), [], { errori: { alunni: { code } } })
+      const esito = await s.from('alunni').select('*')
+      expect(esito.status, `${code} → status`).toBe(status)
+      expect(esito.statusText, `${code} → statusText`).toBe(statusText)
+    }
   })
 })

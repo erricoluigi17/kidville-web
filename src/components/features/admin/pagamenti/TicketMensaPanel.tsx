@@ -71,7 +71,11 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     }, [userId, scuolaId]);
 
     useEffect(() => {
-        fetch(`/api/admin/students?scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).then(r => r.json())
+        // `stato=iscritto` (2026-08-13): si VENDE un pacchetto di ticket a una
+        // famiglia. Senza il parametro l'anagrafica risponde con la sede intera e
+        // un archiviato restava selezionabile — vedi la nota gemella in
+        // `PrenotazioneSegreteria`, stesso difetto e stessa riparazione.
+        fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).then(r => r.json())
             .then(d => { if (Array.isArray(d)) setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione }))); });
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) }).then(r => r.json())
             .then(d => { if (d.success) setPacchetti(d.data.ticket_pacchetti || []); });

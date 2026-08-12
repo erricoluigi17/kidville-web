@@ -333,7 +333,7 @@ export default function SezioneDetailPage() {
             setSezione(found);
             if (!found) return;
 
-            const stuRes = await fetch(`/api/admin/students?scuola_id=${found.scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`)
+            const stuRes = await fetch(`/api/admin/students?stato=iscritto&scuola_id=${found.scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`)
                 .catch(() => null);
             const stuData = stuRes?.ok ? await stuRes.json().catch(() => null) : null;
             if (Array.isArray(stuData)) {

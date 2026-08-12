@@ -122,7 +122,8 @@ function montaRecord(alunno: Record<string, unknown> & { id: string }) {
       student={alunno}
       onClose={vi.fn()}
       onSave={onSave}
-      onDelete={vi.fn()}
+      onArchive={vi.fn(async () => ({ ok: true }))}
+      onRiattiva={vi.fn(async () => ({ ok: true }))}
       variant="page"
     />,
   )

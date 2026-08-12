@@ -121,9 +121,9 @@ const dbBase = (): DBFinto => ({
   // ALU_B (altra sede) è PRIMO di proposito: il frammento storico chiude con
   // `.limit(1)`, quindi senza filtro di sede è la sua classe che vince.
   alunni: [
-    { id: ALU_B, nome: 'Bea', cognome: 'Beta', classe_sezione: CLASSE_OMONIMA, section_id: 'sec-b', scuola_id: SEDE_B },
-    { id: ALU_A, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE_A, section_id: 'sec-a', scuola_id: SEDE_A },
-    { id: ALU_SENZA_SEDE, nome: 'Nino', cognome: 'Senzasede', classe_sezione: CLASSE_A, section_id: null, scuola_id: null },
+    { id: ALU_B, nome: 'Bea', cognome: 'Beta', classe_sezione: CLASSE_OMONIMA, section_id: 'sec-b', scuola_id: SEDE_B, stato: 'iscritto' },
+    { id: ALU_A, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE_A, section_id: 'sec-a', scuola_id: SEDE_A, stato: 'iscritto' },
+    { id: ALU_SENZA_SEDE, nome: 'Nino', cognome: 'Senzasede', classe_sezione: CLASSE_A, section_id: null, scuola_id: null, stato: 'iscritto' },
   ],
   legame_genitori_alunni: [{ genitore_id: GEN_A, alunno_id: ALU_A }],
   student_parents: [],
@@ -324,6 +324,32 @@ describe('GET /api/chat/contacts — la sezione dedotta dai tag resta in sede', 
         scuola_id: SEDE_A,
       }),
     ])
+  })
+
+  it('la maestra NON può scrivere alla famiglia di un RITIRATO della sua sezione (2026-08-13)', async () => {
+    // Il gemello lato maestra della rubrica di segreteria, ed è rimasto cieco un
+    // giorno in più perché la sua query nomina la CLASSE: il lock la esentava per
+    // forma, con la motivazione «tanto un archiviato è sganciato dalla sezione».
+    // Vero per l'archiviazione, falso per la TENDINA della scheda alunno — che
+    // porta lo `stato` a `'ritirato'` senza toccare `classe_sezione`. Qui il
+    // bambino è esattamente così: stessa classe, stessa sede, stato ritirato.
+    h.db.alunni = [
+      { id: ALU_A, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE_A, section_id: 'sec-a', scuola_id: SEDE_A, stato: 'ritirato' },
+    ]
+    const res = await CONTACTS_GET(req(`/api/chat/contacts?userId=${ED_A}`))
+    expect(res.status).toBe(200)
+    const j = (await res.json()) as { contacts: unknown[] }
+    expect(j.contacts).toEqual([])
+  })
+
+  it('un SOSPESO della sezione resta contattabile: frequenta (2026-08-13)', async () => {
+    h.db.alunni = [
+      { id: ALU_A, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE_A, section_id: 'sec-a', scuola_id: SEDE_A, stato: 'sospeso' },
+    ]
+    const j = (await (await CONTACTS_GET(req(`/api/chat/contacts?userId=${ED_A}`))).json()) as {
+      contacts: { user_id: string }[]
+    }
+    expect(j.contacts.map((c) => c.user_id)).toEqual([GEN_A])
   })
 })
 

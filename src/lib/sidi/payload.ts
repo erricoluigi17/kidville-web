@@ -3,6 +3,7 @@
  * wire-format finale (quello vive nei serializer, adapter sottili e sostituibili).
  * Tutta la logica di selezione è qui, testabile e indipendente dal tracciato.
  */
+import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 
 // ---- Fase A: allineamento strutturale (sedi/sezioni/classi/tempo scuola) ----
 
@@ -48,7 +49,16 @@ export function buildFrequentanti(input: {
   const nomeBySezione = new Map(input.sezioni.map((s) => [s.id, s.name]))
   const perSezione = new Map<string, FrequentantiFlusso['perClasse'][number]>()
   for (const a of input.alunni) {
-    if (a.stato !== 'iscritto' || !a.section_id) continue
+    // ⚠️ QUI LA NEGAZIONE È GIUSTA, E RESTA — vale il confronto STRETTO con
+    // `STATO_ISCRITTO`, non `eAncoraIscritto`. È l'elenco dei frequentanti che
+    // si trasmette al Ministero: chi entra e chi no è una scelta di prodotto,
+    // reversibile, e oggi un `sospeso` non viene trasmesso. Sostituire il
+    // confronto con `eAncoraIscritto` (che accoglie tutto ciò che non è ritirato)
+    // cambierebbe in silenzio ciò che si dichiara al SIDI, sotto le mentite
+    // spoglie di un riordino. Il modulo `@/lib/alunni/stato` serve a decidere
+    // chi si ANONIMIZZA — lì il confine deve essere un elenco chiuso perché
+    // l'operazione non ha annulla. Qui serve solo il nome del valore.
+    if (a.stato !== STATO_ISCRITTO || !a.section_id) continue
     let g = perSezione.get(a.section_id)
     if (!g) {
       g = { sectionId: a.section_id, sezioneNome: nomeBySezione.get(a.section_id) ?? '', alunni: [] }

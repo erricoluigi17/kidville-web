@@ -29,6 +29,18 @@ const GEN_A = 'f1f1f1f1-1111-4111-8111-ffffffffffff'
 const GEN_B = 'f2f2f2f2-2222-4222-8222-999999999999'
 const PAR_A = '0a0a0a0a-1111-4111-8111-aaaaaaaaaaaa'
 const PAR_B = '0b0b0b0b-2222-4222-8222-bbbbbbbbbbbb'
+/**
+ * I due ISCRITTI, aggiunti il 2026-08-12 accanto ai due ritirati che c'erano.
+ *
+ * Le due liste di questo file guardano lo stesso `alunni` da parti opposte del
+ * confine: `gdpr/candidates` vuole i NON più iscritti (sono i candidati
+ * all'oblio), la rubrica della chat vuole i soli iscritti. Con due sole righe
+ * `ritirato` una delle due era per forza vuota — e prima che la rubrica
+ * filtrasse lo stato, la prova che «i contatti ci sono» si reggeva proprio su
+ * due bambini ritirati.
+ */
+const ISC_A = 'c3c3c3c3-3333-4333-8333-cccccccccccc'
+const ISC_B = 'd4d4d4d4-4444-4444-8444-dddddddddddd'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -98,6 +110,8 @@ const dbBase = (): DBFinto => ({
   alunni: [
     { id: ALU_A, nome: 'Alfa', cognome: 'DiAlfa', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'ritirato', anonimizzato_il: null },
     { id: ALU_B, nome: 'Beta', cognome: 'DiBeta', classe_sezione: '2 ANNI', scuola_id: SEDE_B, stato: 'ritirato', anonimizzato_il: null },
+    { id: ISC_A, nome: 'Gamma', cognome: 'DiGamma', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'iscritto', anonimizzato_il: null },
+    { id: ISC_B, nome: 'Delta', cognome: 'DiDelta', classe_sezione: '2 ANNI', scuola_id: SEDE_B, stato: 'iscritto', anonimizzato_il: null },
   ],
   utenti: [
     { id: GEN_A, nome: 'Genitore', cognome: 'DiAlfa', ruolo: 'genitore' },
@@ -131,8 +145,11 @@ beforeEach(() => {
   h.scritture.length = 0
   h.proiezioni.length = 0
   h.getGenitoriDiAlunni.mockImplementation(async (_c: unknown, ids: string[]) => {
+    // La mappa segue la SEDE, non il singolo id: i due iscritti aggiunti il
+    // 2026-08-12 stanno negli stessi plessi dei due ritirati, e un `id === ALU_A`
+    // avrebbe attribuito i figli della sede B al genitore della A.
     const m = new Map<string, string[]>()
-    for (const id of ids) m.set(id, id === ALU_A ? [GEN_A] : [GEN_B])
+    for (const id of ids) m.set(id, id === ALU_A || id === ISC_A ? [GEN_A] : [GEN_B])
     return m
   })
   // Direzione MULTI-SEDE: entrambe le sedi accessibili, nessun cookie di
@@ -149,7 +166,20 @@ describe('GET /api/admin/gdpr/candidates — ogni candidato porta la sua sede', 
   it('`scuola_id` è nella proiezione: senza, l\'oblio si conferma alla cieca', async () => {
     const res = await CANDIDATES(req('/api/admin/gdpr/candidates'))
     expect(res.status).toBe(200)
-    expect(colonneDi('alunni')).toEqual([expect.stringContaining('scuola_id')])
+
+    // DUE letture su `alunni` dal 12/08/2026, e sono due cose diverse. La prima è la
+    // PROIEZIONE che alimenta l'elenco dei candidati. La seconda è la SONDA che conta
+    // gli alunni con uno stato fuori dall'allowlist di `@/lib/alunni/stato`: da quando
+    // i candidati si scelgono per elenco (`.in`) e non per negazione (`.neq`), uno
+    // stato mai visto sparisce dall'elenco invece di comparirci, e senza la sonda
+    // sparirebbe in silenzio.
+    const [proiezione, ...altre] = colonneDi('alunni')
+    expect(proiezione).toEqual(expect.stringContaining('scuola_id'))
+    expect(
+      altre,
+      'la sonda conta gli stati: deve leggere `stato` e nient’altro, o diventa una ' +
+        'seconda lettura di anagrafica che si porta via nomi e codici fiscali',
+    ).toEqual(['stato'])
   })
 
   it('la sede esce nel corpo, accanto al candidato giusto', async () => {
@@ -173,8 +203,36 @@ describe('GET /api/admin/chat/contacts — la rubrica dice a quale plesso si scr
     const res = await CONTACTS(req('/api/admin/chat/contacts'))
     const j = (await res.json()) as { data: { studentId: string; scuolaId: string }[] }
     expect(j.data.map((c) => `${c.studentId}|${c.scuolaId}`).sort()).toEqual(
-      [`${ALU_A}|${SEDE_A}`, `${ALU_B}|${SEDE_B}`].sort(),
+      [`${ISC_A}|${SEDE_A}`, `${ISC_B}|${SEDE_B}`].sort(),
     )
+  })
+
+  it('un bambino ARCHIVIATO non è in rubrica, e nemmeno la sua famiglia (2026-08-12)', async () => {
+    // La rubrica legge la SEDE INTERA: la classe non la nomina, quindi lo
+    // sganciamento — la leva su cui si regge l'archiviazione — qui non arriva.
+    // Senza il filtro di stato la segreteria poteva aprire una conversazione
+    // NUOVA con i genitori di un bambino che non frequenta più.
+    const res = await CONTACTS(req('/api/admin/chat/contacts'))
+    const j = (await res.json()) as { data: { studentId: string; parentUserId: string }[] }
+    expect(j.data.map((c) => c.studentId)).not.toContain(ALU_A)
+    expect(j.data.map((c) => c.studentId)).not.toContain(ALU_B)
+    // …e i due iscritti ci sono: la prova non passa per una lista vuota.
+    expect(j.data).toHaveLength(2)
+  })
+
+  it('il genitore del SOLO archiviato sparisce; quello con un altro figlio iscritto resta', async () => {
+    // Il caso che distingue «filtro sull'alunno» da «filtro sul genitore»: i due
+    // figli di `GEN_A` sono uno ritirato e uno iscritto, e la famiglia deve
+    // restare raggiungibile — per il figlio che frequenta.
+    h.db.alunni = [
+      { id: ALU_A, nome: 'Alfa', cognome: 'DiAlfa', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'ritirato' },
+      { id: ISC_A, nome: 'Gamma', cognome: 'DiGamma', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'iscritto' },
+      { id: ALU_B, nome: 'Beta', cognome: 'DiBeta', classe_sezione: '2 ANNI', scuola_id: SEDE_B, stato: 'ritirato' },
+    ]
+    const j = (await (await CONTACTS(req('/api/admin/chat/contacts'))).json()) as {
+      data: { studentId: string; parentUserId: string }[]
+    }
+    expect(j.data.map((c) => `${c.parentUserId}|${c.studentId}`)).toEqual([`${GEN_A}|${ISC_A}`])
   })
 })
 

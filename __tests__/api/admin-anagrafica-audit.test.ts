@@ -91,6 +91,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => makeClient() }))
 
 import * as students from '@/app/api/admin/students/route'
+import * as archivia from '@/app/api/admin/students/archivia/route'
 import * as parents from '@/app/api/admin/parents/route'
 import * as sections from '@/app/api/admin/sections/route'
 
@@ -111,7 +112,12 @@ describe('P0 anagrafica — gate Segreteria+Direzione (DL-036)', () => {
   const cases: Array<[string, () => Promise<Response>]> = [
     ['students POST', () => students.POST(req(u('students'), { nome: 'A', cognome: 'B', data_nascita: '2020-01-01' }, 'POST') as never)],
     ['students PATCH', () => students.PATCH(req(u('students'), { id: 'al-1', stato: 'ritirato' }, 'PATCH') as never)],
-    ['students DELETE', () => students.DELETE(req(u('students'), { id: 'al-1' }, 'DELETE') as never)],
+    // ⚠️ QUI C'ERA `students DELETE`. La rotta è stata rimossa il 2026-08-12 (non
+    // funzionava per 28 alunni su 33, e per gli altri cinque metteva la
+    // cancellazione a cascata dietro un doppio clic). Il gate NON sparisce con
+    // lei: l'operazione che ha preso il suo posto è `students/archivia`, che è
+    // pur sempre una scrittura service-role sulla scheda di un minore.
+    ['students/archivia POST', () => archivia.POST(req(u('students/archivia'), { alunno_id: 'al-1' }, 'POST') as never)],
     ['parents POST', () => parents.POST(req(u('parents'), { action: 'create_parent', fiscal_code: 'RSSMRA', role: 'mother' }, 'POST') as never)],
     ['parents PATCH', () => parents.PATCH(req(u('parents'), { id: '99999999-9999-4999-8999-999999999991', emails: ['x@y.it'] }, 'PATCH') as never)],
     ['sections POST', () => sections.POST(req(u('sections'), { name: 'Girasoli' }, 'POST') as never)],
@@ -148,14 +154,20 @@ describe('P0 anagrafica — audit immutabile su ogni mutazione (DL-037)', () => 
     )
   })
 
-  it('students DELETE: audit delete(alunni)', async () => {
-    const res = await students.DELETE(req(u('students'), { id: 'al-1' }, 'DELETE') as never)
-    expect(res.status).toBe(200)
-    expect(h.logScrittura).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ entitaTipo: 'alunni', azione: 'delete', entitaId: 'al-1' }),
-    )
-  })
+  /**
+   * ⚠️ QUI C'ERA «students DELETE: audit delete(alunni)», e non è stato sostituito
+   * da un gemello: **l'audit di una cancellazione che non può più avvenire non ha
+   * niente da verificare**. La `DELETE` è stata rimossa il 2026-08-12, e con lei
+   * l'`azione: 'delete'` su `alunni` — che oltre a essere irraggiungibile per 28
+   * alunni su 33 aveva lasciato in `registro_modifiche` tre copie INTEGRALI
+   * dell'anagrafica di un minore sotto un'etichetta falsa.
+   *
+   * L'audit dell'operazione che ha preso il suo posto è un `update` e vive dove
+   * si può verificare davvero, cioè contro un finto database che filtra e scrive:
+   * `__tests__/api/admin-students-scope-sede.test.ts` (isolamento di sede) e le
+   * schede di `students/archivia`. Il builder finto di QUESTO file si ferma al
+   * primo terminatore e non saprebbe distinguere un audit scritto da uno saltato.
+   */
 
   it('parents POST create_parent: audit insert(genitori)', async () => {
     h.existing = null // forza creazione nuovo genitore

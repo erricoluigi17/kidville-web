@@ -61,7 +61,9 @@ function scomponi(p: string) {
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
-vi.mock('@/lib/gdpr/orfano', () => ({ parentHaAltriFigliIscritti: vi.fn(async () => false) }))
+vi.mock('@/lib/gdpr/orfano', () => ({
+  leggiAltriFigliIscritti: vi.fn(async () => ({ ok: true, haAltriFigli: false })),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -136,7 +138,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 'sc-1' } })
   h.alunno = {
-    id: 'al-1', nome: 'Bambino', cognome: 'DiProva', stato: 'non_iscritto', anonimizzato_il: null,
+    id: 'al-1', nome: 'Bambino', cognome: 'DiProva', stato: 'ritirato', anonimizzato_il: null,
     documento_path: null, codice_fiscale: null, fiscal_code: null, scuola_id: 'sc-1', section_id: null,
   }
   h.parents = [{ id: 'p-1', auth_user_id: 'auth-1', fiscal_code: null, documento_path: null }]

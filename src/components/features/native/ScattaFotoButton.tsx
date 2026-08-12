@@ -14,6 +14,40 @@ interface Props {
   /** Testo visibile accanto all'icona. Omesso → `shared.scattaFoto` (tradotto).
    *  Passalo solo per dire qualcosa di DIVERSO da «Scatta foto». */
   label?: string;
+  /**
+   * Il NOME ACCESSIBILE, quando «Scatta foto» non basta a distinguere due bottoni.
+   *
+   * ── PERCHÉ È UNA PROP A PARTE, E NON `label` ────────────────────────────────
+   *
+   * `label` è il testo che si VEDE; questo è il nome che si SENTE. Tenerli separati
+   * serve dove il testo visibile deve restare corto e il nome no: un elenco di
+   * bottoni pronunciati tutti «Scatta foto» è indistinguibile per chi naviga per
+   * intestazioni o per comandi, e leggerne il testo non aiuta perché è lo stesso.
+   *
+   * ⚠️ CHI LO PASSA DEVE INCLUDERCI IL TESTO VISIBILE (WCAG 2.5.3, «Label in Name»):
+   * chi comanda a voce pronuncia ciò che legge, e un nome accessibile che non
+   * contiene le parole visibili rende il bottone inattivabile. La forma giusta è
+   * «Scatta foto: <di che cosa>», non «<di che cosa>» da solo.
+   *
+   * ── IL DIFETTO CHE HA FATTO NASCERE QUESTA PROP (12/08/2026) ────────────────
+   *
+   * Il passo «Documento» di `/anagrafica-personale` chiede due scansioni — fronte e
+   * retro — e ogni `FileField` che ammette immagini rende questo bottone. Nell'app
+   * nativa quello è, per ammissione del commento accanto in `FieldRenderer`, «il modo
+   * normale di consegnare la scansione del documento»: erano DUE bottoni con lo
+   * stesso identico nome accessibile, uno sopra l'altro, e niente diceva quale fosse
+   * quale. Nessun test ESISTENTE lo vedeva — su web questo componente non rende nulla,
+   * quindi in jsdom di default non esiste — ed è la ragione per cui il rilievo è arrivato
+   * da una lettura e non da un rosso.
+   *
+   * ⚠️ QUI C'ERA SCRITTO «nessun test POTEVA vederlo», e non era vero: basta mockare
+   * `fotocameraNativaDisponibile` perché il bottone esista anche in jsdom. Lo fa
+   * `__tests__/a11y/scatta-foto-due-facce.test.tsx`, che monta le due facce del template
+   * e pretende due `aria-label` diversi. «Non c'era una prova» e «una prova non è
+   * possibile» sono due frasi diverse, e la seconda scoraggia proprio chi passerebbe a
+   * scriverla.
+   */
+  nomeAccessibile?: string;
   /** Bottone di sola icona (l'aria-label resta). Dove lo spazio è minimo. */
   soloIcona?: boolean;
   /** Dimensione icona lucide (px). Default 15. */
@@ -49,6 +83,7 @@ export function ScattaFotoButton({
   onFile,
   className,
   label,
+  nomeAccessibile,
   soloIcona = false,
   iconSize = 15,
   disabled = false,
@@ -60,6 +95,9 @@ export function ScattaFotoButton({
   if (!nativo) return null;
 
   const testo = soloIcona ? null : (label ?? t('scattaFoto'));
+  // Il default NON cambia: chi non passa `nomeAccessibile` continua a chiamarsi
+  // «Scatta foto» tradotto, che è ciò che gli otto host esistenti si aspettano.
+  const nome = nomeAccessibile ?? t('scattaFoto');
 
   const scatta = async () => {
     const files = await scegliFotoNativa({
@@ -78,8 +116,8 @@ export function ScattaFotoButton({
   return (
     <button
       type="button"
-      aria-label={t('scattaFoto')}
-      title={t('scattaFoto')}
+      aria-label={nome}
+      title={nome}
       disabled={disabled}
       onClick={() => { void scatta(); }}
       className={className}

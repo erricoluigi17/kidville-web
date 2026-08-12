@@ -8,7 +8,8 @@ import {
 } from '@/lib/gdpr/anonimizza'
 import { scrubProvaConsensi } from '@/lib/gdpr/consensi-oblio'
 import { schemaAssente } from '@/lib/news/schema-assente'
-import { BUCKET_GALLERIA, percorsoNelBucket } from '@/lib/gallery/storage'
+import { BUCKET_GALLERIA } from '@/lib/gallery/storage'
+import { sorteDellaFoto, type RigaMedia } from './foto-partizione'
 import { percorsoNelBucket as percorsoDelBucket } from '@/lib/allegati/storage'
 import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegati'
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
@@ -263,8 +264,10 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
       'famiglie: i due canali dell’oblio (`alunno`, `genitore`) non li raggiungono per costruzione. ' +
       'Li svuota `POST /api/gdpr/retention-personale` (`src/app/api/gdpr/retention-personale/route.ts`), ' +
       'con i termini di `PERSONALE_LIMITI` che `/privacy` dichiara: 90 giorni per la pratica non ' +
-      'approvata, 12 mesi dalla cessazione per la sola scansione (il file esce dal bucket e ' +
-      '`documento_path` torna NULL), 10 anni per il fascicolo. PRIMA il file e POI la riga, con ' +
+      'approvata, 12 mesi dalla cessazione per le sole scansioni (i file escono dal bucket e ' +
+      '`documento_fronte_path`/`documento_retro_path` tornano NULL — erano una colonna sola, ' +
+      '`documento_path`, fino al rinomino del 12/08/2026), 10 anni per il fascicolo. ' +
+      'PRIMA il file e POI la riga, con ' +
       'rinuncia per singola riga — la prova sta accanto al meccanismo, in ' +
       '`__tests__/api/gdpr-retention-personale.test.ts`, perché questo registro dichiara chi svuota ' +
       'un magazzino ma non verifica che lo svuoti davvero. ⚠️ La richiesta di cancellazione di una ' +
@@ -506,16 +509,36 @@ export async function obliaCertificatiMediciAlunno(
  * **e** il percorso, che non è un riferimento neutro: contiene l'uuid di chi ha
  * caricato e il nome del file scelto da chi l'ha mandato, che quasi sempre è il
  * nome di una persona o la parola «referto».
+ *
+ * ─── `fermi`: I MESSAGGI RIMASTI AGGANCIATI (aggiunto il 2026-08-12) ────────
+ *
+ * Il terzo campo del valore di ritorno esiste per un CHIAMANTE NUOVO che il
+ * diritto all'oblio non aveva: «libera spazio» (`@/lib/alunni/libera-spazio`),
+ * che dopo aver svuotato il bucket cancella i messaggi PER INTERO, testo
+ * compreso. Cancellare la riga di un messaggio il cui allegato è rimasto
+ * nell'archivio produrrebbe la forma di guasto peggiore descritta in testa a
+ * questo file — un file invisibile e non cancellato, senza più nessuna riga che
+ * lo nomini — quindi quel chiamante deve poter sapere QUALI messaggi non si
+ * possono toccare, e non solo quanti file non sono usciti.
+ *
+ * I due chiamanti storici (`anonimizzaAlunno`, `anonimizzaParent`) leggono solo
+ * `rimossi`/`nonRimossi` e non cambiano di una riga: il campo è additivo.
+ *
+ * ⚠️ UN ELENCO VUOTO NON DIMOSTRA CHE SIA USCITO TUTTO. Se la `select` qui sotto
+ * fallisce, `fermi` torna vuoto **per ignoranza**, non per successo. Chi cancella
+ * righe non può quindi fondarsi solo su questo elenco: il presidio che regge
+ * anche in quel caso è lo stato in tabella (`attachment_url` ancora scritto), ed
+ * è così che `libera-spazio` decide. Vedi il commento là.
  */
 export async function obliaAllegatiChat(
   supabase: SupabaseClient,
   threadIds: (string | null | undefined)[],
   op: string,
-): Promise<{ rimossi: number; nonRimossi: number }> {
+): Promise<{ rimossi: number; nonRimossi: number; fermi: string[] }> {
   const ids = [...new Set(threadIds.filter((v): v is string => typeof v === 'string' && v.length > 0))]
   // Nessun thread ⇒ nessuna scrittura: un `in` con lista vuota su PostgREST è un
   // filtro che non filtra, e qui svuoterebbe gli allegati dell'intera scuola.
-  if (ids.length === 0) return { rimossi: 0, nonRimossi: 0 }
+  if (ids.length === 0) return { rimossi: 0, nonRimossi: 0, fermi: [] }
 
   const { data, error } = await supabase
     .from('chat_messages')
@@ -524,13 +547,13 @@ export async function obliaAllegatiChat(
     .not('attachment_url', 'is', null)
   if (error) {
     if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_chat_allegati_select' }, error)
-    return { rimossi: 0, nonRimossi: 0 }
+    return { rimossi: 0, nonRimossi: 0, fermi: [] }
   }
 
   const righe = ((data ?? []) as { id: string; attachment_url?: string | null }[]).filter(
     (r) => (r.attachment_url ?? '').trim() !== '',
   )
-  if (righe.length === 0) return { rimossi: 0, nonRimossi: 0 }
+  if (righe.length === 0) return { rimossi: 0, nonRimossi: 0, fermi: [] }
 
   // `normalizzaAllegatoChat` legge sia il percorso (la forma di oggi) sia gli
   // indirizzi firmati delle righe storiche: la stessa funzione che usa la chat
@@ -562,7 +585,11 @@ export async function obliaAllegatiChat(
   // l'ha mandato, che quasi sempre è il nome di una persona o «referto».
   const azzerabili = mappa.filter((m) => m.percorso !== null && !esito.fermi.has(m.percorso))
   const nonRimossi = esito.nonRimossi + illeggibili
-  if (azzerabili.length === 0) return { rimossi: esito.rimossi, nonRimossi }
+  // Chi NON si è potuto sganciare: il percorso illeggibile (non si sa nemmeno
+  // dove guardare) e quello il cui file è ancora nell'archivio. Sono gli stessi
+  // messaggi che `libera-spazio` non deve cancellare.
+  const fermi = mappa.filter((m) => m.percorso === null || esito.fermi.has(m.percorso)).map((m) => m.id)
+  if (azzerabili.length === 0) return { rimossi: esito.rimossi, nonRimossi, fermi }
 
   const { error: errUpd } = await supabase
     .from('chat_messages')
@@ -572,7 +599,7 @@ export async function obliaAllegatiChat(
     if (!schemaAssente(errUpd)) logErrore({ operazione: op, evento: 'oblio_chat_allegati_update' }, errUpd)
   }
 
-  return { rimossi: esito.rimossi, nonRimossi }
+  return { rimossi: esito.rimossi, nonRimossi, fermi }
 }
 
 /**
@@ -893,56 +920,84 @@ async function rimuoviFileOblio(
  *  · foto di GRUPPO → si toglie soltanto il suo tag. Dentro c'è l'immagine di
  *    altri bambini, e l'oblio di uno non autorizza a cancellare il dato altrui;
  *    ciò che si rimuove è il collegamento identificante «questo è X».
+ *
+ * E un terzo caso, che non è una scelta ma un guasto: l'indirizzo del file non è
+ * riconoscibile in questo archivio. Allora non si tocca NIENTE — né il file né la
+ * riga — e si logga a livello `error`: è un oblio parziale, e chi lo ha chiesto
+ * ha diritto di saperlo. Chi conta per l'avviso lo dichiara a parte
+ * (`ConteggiOblio.foto_non_rimovibili`) invece di prometterne la distruzione.
+ *
+ * La partizione è UNA SOLA FUNZIONE, `sorteDellaFoto` in `./foto-partizione.ts`,
+ * condivisa con il conteggio del dry-run: due copie della stessa regola sono già
+ * divergute qui dentro, e la divergenza si vede solo sui dati veri.
+ *
+ * ⚠️ `letto` NON È UN DETTAGLIO DI CORTESIA, ed è stato aggiunto il 2026-08-13.
+ * Quando la SELECT fallisce per un motivo che non è «lo schema non c'è» (RLS,
+ * `42501 permission denied`), questa funzione tornava tre zeri — indistinguibili
+ * dai tre zeri di «questo bambino non ha foto». Il chiamante che poi scrive un
+ * marcatore di «fatto» leggeva quel silenzio come successo: misurato su
+ * `liberaSpazio`, che scriveva `alunni.spazio_liberato_il` mentre due righe di
+ * galleria e i loro file erano ancora al loro posto. `false` significa «non l'ho
+ * potuto guardare», e chi distrugge deve fermarsi lì.
  */
 export async function obliaFotoAlunno(
   supabase: SupabaseClient,
   alunnoId: string,
   op: string,
-): Promise<{ fotoRimosse: number; fotoSganciate: number; fileNonRimossi: number }> {
+): Promise<{ fotoRimosse: number; fotoSganciate: number; fileNonRimossi: number; letto: boolean }> {
   const { data, error } = await supabase
     .from('galleria_media_v2')
     .select('id, file_url, tag_students')
     .contains('tag_students', [alunnoId])
   if (error) {
-    if (!schemaAssente(error)) logErrore({ operazione: op, evento: 'oblio_galleria_select' }, error)
-    return { fotoRimosse: 0, fotoSganciate: 0, fileNonRimossi: 0 }
+    // Schema assente = DB E2E della CI non migrato: la tabella non c'è, quindi
+    // «nessuna foto» è la risposta VERA e la lettura si considera riuscita.
+    if (schemaAssente(error)) return { fotoRimosse: 0, fotoSganciate: 0, fileNonRimossi: 0, letto: true }
+    logErrore({ operazione: op, evento: 'oblio_galleria_select' }, error)
+    return { fotoRimosse: 0, fotoSganciate: 0, fileNonRimossi: 0, letto: false }
   }
 
-  const righe = (data ?? []) as { id: string; file_url?: string | null; tag_students?: unknown }[]
-  const daCancellare: { id: string; percorso: string | null; illeggibile: boolean }[] = []
+  const righe = (data ?? []) as RigaMedia[]
+  const daCancellare: { id: string; percorso: string | null }[] = []
+  const trattenute: string[] = []
   let fotoSganciate = 0
 
   for (const r of righe) {
-    const tags = Array.isArray(r.tag_students) ? (r.tag_students as string[]) : []
-    const altri = [...new Set(tags.filter((t) => t && t !== alunnoId))]
-    if (altri.length === 0) {
-      const testo = (r.file_url ?? '').trim()
-      const p = testo.length > 0 ? percorsoNelBucket(testo) : null
-      daCancellare.push({ id: r.id, percorso: p, illeggibile: testo.length > 0 && p === null })
+    // LA REGOLA STA IN UN POSTO SOLO (`./foto-partizione.ts`), ed è la stessa
+    // che `contaCosaDistrugge` annuncia alla Direzione prima della conferma.
+    // Finché era scritta due volte le due copie divergevano, e la divergenza
+    // cadeva sempre dalla parte peggiore: un tag di scarto (`'   '`) accanto al
+    // suo faceva sopravvivere all'oblio la foto di un bambino.
+    const sorte = sorteDellaFoto(r, alunnoId)
+    if (sorte.sorte === 'rimossa') {
+      daCancellare.push({ id: sorte.id, percorso: sorte.percorso })
+      continue
+    }
+    if (sorte.sorte === 'trattenuta') {
+      trattenute.push(sorte.id)
       continue
     }
     const { error: errU } = await supabase
       .from('galleria_media_v2')
-      .update({ tag_students: altri })
+      .update({ tag_students: sorte.altri })
       .eq('id', r.id)
     if (errU) logErrore({ operazione: op, evento: 'oblio_galleria_untag' }, errU)
     else fotoSganciate++
   }
 
   let fotoRimosse = 0
-  let fileNonRimossi = 0
-  if (daCancellare.length > 0) {
-    const illeggibili = daCancellare.filter((m) => m.illeggibile).length
-    if (illeggibili > 0) {
-      logEvento('gdpr', 'error', {
-        operazione: op,
-        esito: 'oblio-percorso-non-riconosciuto',
-        bucket: BUCKET_GALLERIA,
-        n_file: illeggibili,
-        msg: `${op}: ${illeggibili} media della galleria non sono riconoscibili in questo archivio: le righe NON sono state cancellate`,
-      })
-    }
+  let fileNonRimossi = trattenute.length
+  if (trattenute.length > 0) {
+    logEvento('gdpr', 'error', {
+      operazione: op,
+      esito: 'oblio-percorso-non-riconosciuto',
+      bucket: BUCKET_GALLERIA,
+      n_file: trattenute.length,
+      msg: `${op}: ${trattenute.length} media della galleria non sono riconoscibili in questo archivio: le righe NON sono state cancellate`,
+    })
+  }
 
+  if (daCancellare.length > 0) {
     // ── PRIMA IL FILE ── (dal 2026-08-02: era il contrario, e una riga cancellata
     // su una foto rimasta nell'archivio è la foto di un bambino che nessuno può
     // più ritrovare per toglierla).
@@ -952,11 +1007,11 @@ export async function obliaFotoAlunno(
       daCancellare.map((m) => m.percorso),
       op,
     )
-    fileNonRimossi = esito.nonRimossi + illeggibili
+    fileNonRimossi += esito.nonRimossi
 
     // ── POI LA RIGA ──
     const cancellabili = daCancellare.filter(
-      (m) => !m.illeggibile && !(m.percorso !== null && esito.fermi.has(m.percorso)),
+      (m) => !(m.percorso !== null && esito.fermi.has(m.percorso)),
     )
     if (cancellabili.length > 0) {
       const { error: errDel } = await supabase
@@ -967,7 +1022,7 @@ export async function obliaFotoAlunno(
       else fotoRimosse = cancellabili.length
     }
   }
-  return { fotoRimosse, fotoSganciate, fileNonRimossi }
+  return { fotoRimosse, fotoSganciate, fileNonRimossi, letto: true }
 }
 
 /**

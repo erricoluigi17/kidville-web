@@ -154,13 +154,102 @@ export function posterioriCheContengono(
  * Nel dubbio, largo: un falso positivo costa una rigenerazione della fotografia — che
  * è l'unico momento in cui qualcuno guarda davvero se repo e database dicono la stessa
  * cosa. Un falso negativo costa un lock verde su uno stato che non esiste più.
+ *
+ * ─── IL TERZO PUNTO CIECO (2026-08-12): SI GUARDA LO SQL, NON LA PROSA ────────
+ *
+ * «Nel dubbio, largo» vale sulle ISTRUZIONI, non sui commenti. Il 12/08/2026 tre
+ * migrazioni scritte lo stesso giorno sono risultate tutte «migrazioni che toccano le
+ * policy» per una riga sola, e in tutti e tre i casi era la riga in cui il file
+ * dichiarava di **non** toccarle: «NON accende RLS su niente … senza policy». Il guard
+ * misurava la spiegazione invece del prodotto, e l'unico modo di spegnerlo era
+ * cancellare la spiegazione — cioè un lock che paga chi commenta di meno.
+ *
+ * Perciò il riconoscimento gira su `senzaCommenti(sql)`. Non è un allargamento del
+ * confine: un commento non arriva a Postgres, quindi non può cambiare `pg_policies`.
+ * E non apre falsi negativi, perché una policy vera vive comunque in un'istruzione o
+ * in una stringa eseguita (`EXECUTE format('create policy …')`) — e le stringhe non si
+ * toccano.
  */
 export function toccaLaRls(sql: string): boolean {
+    const istruzioni = senzaCommenti(sql)
     return (
-        /\bpolicy\b/i.test(sql) ||
-        /\brow\s+level\s+security\b/i.test(sql) ||
-        /\bdrop\s+table\b/i.test(sql) ||
-        /\badd\s+column\s+(if\s+not\s+exists\s+)?scuola_id\b/i.test(sql) ||
-        /^\s*scuola_id\s+uuid\b/im.test(sql)
+        /\bpolicy\b/i.test(istruzioni) ||
+        /\brow\s+level\s+security\b/i.test(istruzioni) ||
+        /\bdrop\s+table\b/i.test(istruzioni) ||
+        /\badd\s+column\s+(if\s+not\s+exists\s+)?scuola_id\b/i.test(istruzioni) ||
+        /^\s*scuola_id\s+uuid\b/im.test(istruzioni)
     )
+}
+
+/**
+ * Lo stesso SQL senza i commenti `--` e `/* … *\/`, e con le STRINGHE intatte.
+ *
+ * Le stringhe restano perché sono codice: `EXECUTE format('create policy %I …')` è il
+ * modo in cui in questo repo si scrive una policy idempotente, ed è uno dei due punti
+ * ciechi chiusi il 2026-08-04. Togliere anche quelle riaprirebbe il buco che il guard
+ * esiste per coprire.
+ *
+ * Si riconoscono tre contesti, perché tre sono quelli in cui un `--` NON apre un
+ * commento: dentro `'…'` (dove `''` è un apice, non la fine), dentro un corpo
+ * `$tag$ … $tag$`, e dentro un blocco `/* … *\/` già aperto.
+ *
+ * Un commento a blocco ANNIDATO (Postgres li ammette) si chiude qui alla prima `*\/`
+ * invece che all'ultima: si toglie meno del dovuto, cioè si resta dal lato che fa
+ * scattare il guard. È la direzione giusta in cui sbagliare.
+ */
+function senzaCommenti(sql: string): string {
+    let fuori = ''
+    let i = 0
+    let dentro: 'sql' | 'apice' | 'dollaro' = 'sql'
+    let tag = ''
+
+    while (i < sql.length) {
+        if (dentro === 'apice') {
+            if (sql[i] === "'") dentro = 'sql'
+            fuori += sql[i++]
+            continue
+        }
+        if (dentro === 'dollaro') {
+            if (sql.startsWith(tag, i)) {
+                dentro = 'sql'
+                fuori += tag
+                i += tag.length
+                continue
+            }
+            fuori += sql[i++]
+            continue
+        }
+
+        const due = sql.slice(i, i + 2)
+        if (due === '--') {
+            // Si salta fino all'a capo ESCLUSO: la riga successiva deve restare una
+            // riga a sé, o `/^\s*scuola_id\s+uuid/m` perderebbe la sua àncora.
+            const fine = sql.indexOf('\n', i)
+            i = fine < 0 ? sql.length : fine
+            continue
+        }
+        if (due === '/*') {
+            const fine = sql.indexOf('*/', i + 2)
+            i = fine < 0 ? sql.length : fine + 2
+            // Uno spazio al posto del blocco: senza, `alter/* x */table` diventerebbe
+            // `altertable` e una parola vera sparirebbe dal riconoscimento.
+            fuori += ' '
+            continue
+        }
+        if (sql[i] === "'") {
+            dentro = 'apice'
+            fuori += sql[i++]
+            continue
+        }
+        const dollaro = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i))
+        if (dollaro) {
+            dentro = 'dollaro'
+            tag = dollaro[0]
+            fuori += tag
+            i += tag.length
+            continue
+        }
+        fuori += sql[i++]
+    }
+    return fuori
 }

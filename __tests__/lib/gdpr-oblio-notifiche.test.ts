@@ -72,7 +72,7 @@ function makeFake(cfg: Cfg) {
 }
 
 const AT = '2026-08-08T00:00:00Z'
-const ALUNNO = { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, scuola_id: 'sc-1', documento_path: null, codice_fiscale: null, fiscal_code: null }
+const ALUNNO = { id: 'al-1', stato: 'ritirato', anonimizzato_il: null, scuola_id: 'sc-1', documento_path: null, codice_fiscale: null, fiscal_code: null }
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('anonimizzaAlunno — le notifiche che nominano il bambino', () => {

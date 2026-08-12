@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaParent, anonimizzaAlunno, type AlunnoOblio } from '@/lib/gdpr/esegui'
+import { contaCosaDistrugge, sommaConteggiOblio } from '@/lib/gdpr/cosa-distrugge'
+import { eNonPiuIscritto, eAncoraIscritto } from '@/lib/alunni/stato'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -107,7 +109,11 @@ export const GET = withRoute('admin/gdpr/richieste:GET', async (request: NextReq
             fuoriScope++
             continue
           }
-          if (f.stato === 'iscritto') iscritti++
+          // Lo stesso confine dell'esecuzione (`eNonPiuIscritto` qui sotto): questo
+          // conteggio è ciò che la Direzione legge nell'elenco delle richieste,
+          // e se contasse i figli in un modo diverso da come poi li anonimizza,
+          // mostrerebbe un numero che non descrive l'operazione che sta per fare.
+          if (eAncoraIscritto(f.stato)) iscritti++
           else nonIscritti++
         }
       }
@@ -243,16 +249,68 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     const vivi = figli.filter((f) => !f.anonimizzato_il)
     const inScope = vivi.filter((f) => f.scuola_id && accessibili.includes(f.scuola_id))
     const fuoriScope = vivi.length - inScope.length
-    const nonIscritti = inScope.filter((f) => f.stato !== 'iscritto')
-    const iscrittiMantenuti = inScope.filter((f) => f.stato === 'iscritto').length
+    // ELENCO, non negazione — ed è l'istanza più grave, perché qui l'oblio è in
+    // BLOCCO e la Direzione conferma vedendo dei CONTEGGI, non dei nomi. Fino al
+    // 2026-08-12 era `f.stato !== 'iscritto'`: un fratello soltanto `sospeso`
+    // (iscritto a tutti gli effetti) veniva anonimizzato insieme agli altri, e
+    // nessuno l'avrebbe mai saputo. `eAncoraIscritto` è il complemento esatto di
+    // `eNonPiuIscritto`: i due numeri qui sotto non possono divergere.
+    const nonIscritti = inScope.filter((f) => eNonPiuIscritto(f.stato))
+    const iscrittiMantenuti = inScope.filter((f) => eAncoraIscritto(f.stato)).length
 
     if (mode === 'dryrun') {
+      // ⚠️ E QUI IL DRY-RUN SMETTE DI MOSTRARE SOLO DEI CONTEGGI DI PERSONE.
+      //
+      // Fino al 2026-08-13 rispondeva quattro numeri — genitore, figli non
+      // iscritti, figli mantenuti, figli fuori scope — e la Direzione digitava
+      // ANONIMIZZA senza che da nessuna parte fosse scritto che se ne vanno le
+      // PAGELLE dei bambini, i loro CERTIFICATI MEDICI, le foto, gli allegati di
+      // chat e il PDF delle credenziali del genitore. Il commento venti righe
+      // più su lo diceva («qui l'oblio è in BLOCCO e la Direzione conferma
+      // vedendo dei CONTEGGI»): un commento non è un avviso, e questo è il
+      // canale che evade la richiesta VERA di una famiglia, su più figli con una
+      // conferma sola.
+      //
+      // `contaCosaDistrugge` fa SOLE `SELECT`, gira per ciascun figlio che verrà
+      // anonimizzato e i totali si sommano con `sommaConteggiOblio`, dove un
+      // solo `null` annulla la somma: un totale che salta un bambino non
+      // misurato è più basso del vero e ha l'aria di una misura.
+      const conteggi = sommaConteggiOblio(
+        await Promise.all(nonIscritti.map((f) => contaCosaDistrugge(admin, f.id, 'admin/gdpr/richieste:POST'))),
+      )
+
+      // I documenti d'identità che escono dal bucket: quello di ogni figlio
+      // anonimizzato più quello del genitore, che qui è SEMPRE anonimizzato (la
+      // richiesta è sua). Come nella route sorella è un MINIMO — gli allegati
+      // che solo la domanda d'iscrizione conosce si trovano eseguendo — e il
+      // riquadro lo scrive: «almeno N».
+      const documenti = nonIscritti
+        .map((f) => f.documento_path)
+        .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+      let fileDaRimuovere: number | null = documenti.length
+      const { data: docParent, error: errDocParent } = await admin
+        .from('parents')
+        .select('documento_path')
+        .eq('id', parentId)
+        .maybeSingle()
+      if (errDocParent && !schemaAssente(errDocParent)) {
+        // PostgREST non lancia: senza questo controllo un guasto di lettura
+        // diventerebbe «nessun documento», cioè un numero più basso del vero
+        // presentato come misura. `null` ⇒ il riquadro dice «non misurato».
+        logErrore({ operazione: 'admin/gdpr/richieste:POST', evento: 'dryrun_documento_genitore' }, errDocParent)
+        fileDaRimuovere = null
+      } else if (typeof docParent?.documento_path === 'string' && docParent.documento_path.trim().length > 0) {
+        fileDaRimuovere = documenti.length + 1
+      }
+
       return NextResponse.json({
         dryrun: true,
         parent: 1,
         alunni_non_iscritti: nonIscritti.length,
         alunni_iscritti_mantenuti: iscrittiMantenuti,
         alunni_fuori_scope: fuoriScope,
+        ...conteggi,
+        file_da_rimuovere: fileDaRimuovere,
       })
     }
 

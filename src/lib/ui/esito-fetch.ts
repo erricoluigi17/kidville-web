@@ -156,6 +156,18 @@ export const CODICI_ERRORE = {
      */
     TAG_FUORI_SEDE: 'erroreTagFuoriSede',
     /**
+     * 403 — almeno uno dei bambini taggati è dei propri plessi ma NON È PIÙ
+     * ISCRITTO (archiviato, `src/lib/gallery/tag-scope.ts`).
+     *
+     * Codice distinto da `TAG_FUORI_SEDE` di proposito, e non per pignoleria:
+     * riusare quello avrebbe risposto «non appartengono ai tuoi plessi» su un
+     * bambino che alla maestra risulta della sua sede, mandandola a cercare un
+     * errore di plesso inesistente. Qui la prosa può dire il motivo perché si
+     * pronuncia solo su bambini già dimostrati dentro le sedi di chi chiede:
+     * non rivela nulla che chi guarda non potesse già vedere.
+     */
+    TAG_ALUNNO_NON_ISCRITTO: 'erroreTagAlunnoNonIscritto',
+    /**
      * 500 — non è stato possibile leggere l'anagrafica per verificare i bambini
      * taggati. Gemello di `VERIFICA_CLASSI_NON_RIUSCITA`, e per la stessa
      * ragione: un guasto di lettura non deve travestirsi da «non sono tuoi»,
@@ -771,6 +783,211 @@ export const CODICI_ERRORE = {
      * scadenza non è in tabella, invece di congedarla credendo di averla salvata.
      */
     ANAGRAFICA_PERSONALE_NON_AGGIORNATA: 'erroreAnagraficaPersonaleNonAggiornata',
+    /**
+     * 409 — fra la lettura e la scrittura qualcun ALTRO ha sostituito la stessa faccia
+     * del documento (`admin/anagrafica-personale/scansione:POST`).
+     *
+     * NON riusa `ANAGRAFICA_PERSONALE_NON_AGGIORNATA`, e la differenza è tutta nel
+     * rimedio: là non si è scritto per un guasto e la risposta giusta è «riprova»; qui
+     * la scrittura è stata RIFIUTATA di proposito, perché eseguirla avrebbe cancellato
+     * dall'archivio la scansione che un collega ha appena caricato — su un documento
+     * d'identità, senza possibilità di recupero. Chi legge deve ricaricare la scheda e
+     * guardare che cosa c'è adesso, non ripremere lo stesso pulsante.
+     */
+    SCANSIONE_SOSTITUITA_ALTROVE: 'erroreScansioneSostituitaAltrove',
+    /**
+     * 503 — il fascicolo non si è potuto LEGGERE, quindi la scansione non è stata
+     * caricata (`admin/anagrafica-personale/scansione:POST`, passo 5).
+     *
+     * ⚠️ NON riusa `ANAGRAFICA_PERSONALE_NON_DISPONIBILE`, e la ragione è che quella
+     * frase — l'unica che il client mostra, perché la prosa del server la butta chi
+     * non è in `CODICI_CON_DETTAGLIO` — dice «le scadenze dei documenti non sono
+     * consultabili… qui sotto non compare nessuna riga». È la frase giusta SOTTO IL
+     * CRUSCOTTO DELLE SCADENZE, dove l'elenco vuoto è la cosa da spiegare. Sotto un
+     * pulsante «Carica il fronte» parla di un elenco che non c'è sullo schermo, e non
+     * dice l'unica cosa che chi ha il documento in mano deve sapere: **che il file
+     * non è stato archiviato**, e che la persona davanti al banco non ha consegnato
+     * niente.
+     */
+    SCANSIONE_ARCHIVIO_NON_DISPONIBILE: 'erroreScansioneArchivioNonDisponibile',
+    /**
+     * 503 — la colonna del fascicolo non si è potuta SCRIVERE, e l'oggetto appena
+     * caricato è stato ritirato dal bucket
+     * (`admin/anagrafica-personale/scansione:POST`, passo 12).
+     *
+     * ⚠️ NON riusa `ANAGRAFICA_PERSONALE_NON_AGGIORNATA`, che dice «LA CORREZIONE non
+     * è stata registrata»: la correzione è il PATCH allo sportello — scadenza, tipo,
+     * numero del documento — e chi ha appena premuto «Carica il retro» non ha corretto
+     * niente. Peggio: quella frase tace sul fatto che pesa, cioè che la fotografia non
+     * è rimasta nemmeno nell'archivio. Qui la risposta utile è «rifallo», e per
+     * poterla dare bisogna prima dire che non è stato conservato niente.
+     */
+    SCANSIONE_NON_REGISTRATA: 'erroreScansioneNonRegistrata',
+    /**
+     * 404 — «libera spazio» non trova più quell'alunno in archivio
+     * (`admin/students/libera-spazio:POST`).
+     *
+     * NON riusa `ALUNNO_NON_TROVATO`, la cui frase dice «fra i TUOI figli» e parla
+     * a un genitore: qui davanti allo schermo c'è la Direzione, che ha scelto un
+     * nome da un elenco. La risposta utile è «ricarica l'elenco», non «contatta la
+     * segreteria» — la segreteria è chi sta leggendo.
+     */
+    SPAZIO_ALUNNO_NON_TROVATO: 'erroreSpazioAlunnoNonTrovato',
+    /**
+     * 409 — si libera spazio solo di chi è fra i «non più iscritti»
+     * (`admin/students/libera-spazio:POST`).
+     *
+     * È un rifiuto che protegge, non un guasto, e la frase deve dire COME si
+     * sblocca: prima si archivia il bambino, poi se ne liberano foto e messaggi.
+     * Un rifiuto che non dice il rimedio è un rifiuto che torna — la lezione già
+     * pagata sul 409 dell'oblio, che diceva «solo su alunni non iscritti» mentre
+     * rifiutava uno stato che non iscritto lo era davvero.
+     */
+    SPAZIO_ALUNNO_ANCORA_ISCRITTO: 'erroreSpazioAlunnoAncoraIscritto',
+    /**
+     * 400 — il nominativo digitato per confermare non combacia
+     * (`admin/students/libera-spazio:POST`).
+     *
+     * La conferma è una digitazione e non un secondo click perché qui non si torna
+     * indietro: foto, video e messaggi non si ripristinano. La frase ripete la
+     * forma attesa («Cognome Nome»), altrimenti «conferma non valida» non è
+     * un'istruzione.
+     */
+    SPAZIO_CONFERMA_NON_VALIDA: 'erroreSpazioConfermaNonValida',
+    /**
+     * 500 — non si è potuto liberare lo spazio: una delle letture che decidono
+     * l'operazione non è riuscita (`admin/students/libera-spazio:POST`).
+     *
+     * «Non c'è niente da togliere» e «non l'ho potuto leggere» qui portano a due
+     * gesti opposti — il primo autorizza a cancellare — quindi la seconda non si
+     * traveste mai da prima: si risponde 500 e non si scrive niente. La frase
+     * chiede di riprovare perché la riga resta azionabile: nulla è stato tolto a
+     * metà.
+     */
+    SPAZIO_NON_LIBERATO: 'erroreSpazioNonLiberato',
+
+    /* ── Archiviazione e ritorno di un alunno (`admin/students/archivia|riattiva`) ──
+     *
+     * Il primo tempo del modello a due tempi: il bambino esce dagli elenchi con
+     * l'anagrafica INTATTA, ed è reversibile. Chi legge queste frasi è la
+     * segreteria, con la famiglia davanti o al telefono — non un genitore: nessuna
+     * di queste può dire «contatta la segreteria», che è chi sta leggendo.
+     */
+
+    /**
+     * 409 — quel bambino è già fra i «non più iscritti»
+     * (`admin/students/archivia:POST`).
+     *
+     * È il rifiuto di due schede aperte sulla stessa riga, non un guasto: la frase
+     * dice di ricaricare, perché lo stato vero è già in tabella e ripremere non
+     * cambierebbe niente.
+     *
+     * ⚠️ Scatta su `archiviato_il`, non sullo stato: un bambino messo a «Ritirato»
+     * dalla tendina della scheda NON è archiviato — è ancora agganciato alla sua
+     * sezione — e archiviarlo è esattamente ciò che serve fare.
+     */
+    ALUNNO_GIA_ARCHIVIATO: 'erroreAlunnoGiaArchiviato',
+    /**
+     * 409 — quel bambino è già fra gli iscritti (`admin/students/riattiva:POST`).
+     *
+     * NON riusa `ALUNNO_GIA_ARCHIVIATO`: dice il contrario, e a chi ha appena
+     * premuto «Riporta fra gli iscritti» racconterebbe che il bambino è fuori
+     * mentre è dentro. I due rifiuti hanno lo stesso status e lo stesso rimedio
+     * (ricarica), ma direzioni opposte: un codice solo mentirebbe metà delle volte
+     * — la lezione già pagata su `ASSENZA_NON_ANNULLATA`.
+     */
+    ALUNNO_NON_ARCHIVIATO: 'erroreAlunnoNonArchiviato',
+    /**
+     * 404 — quel bambino non è più raggiungibile da questa postazione: non esiste
+     * più, oppure è uscito dalle sedi di chi guarda.
+     *
+     * Un solo codice per i due casi, come per `DOMANDA_NON_APRIBILE` e per la
+     * stessa ragione: distinguerli confermerebbe l'esistenza di un minore a chi non
+     * ha titolo di conoscerlo. La differenza vive nel log.
+     *
+     * NON riusa `ALUNNO_NON_TROVATO`, la cui frase dice «fra i TUOI figli» e parla
+     * a un genitore: qui davanti allo schermo c'è la segreteria, e il rimedio è
+     * ricaricare l'elenco.
+     */
+    ALUNNO_NON_APRIBILE: 'erroreAlunnoNonApribile',
+    /**
+     * 409 — su un bambino ARCHIVIATO la tendina «Stato» non decide più niente
+     * (`admin/students:PATCH`).
+     *
+     * ⚠️ CHIUDE UNA SECONDA PORTA, e la porta era aperta in produzione. La PATCH
+     * tiene `stato` in `allowedFields` e non tocca né `archiviato_*` né
+     * `classe_sezione`: un `PATCH` con `stato` = `'iscritto'` su una riga archiviata
+     * rispondeva **200** e lasciava un bambino ISCRITTO con `section_id` e
+     * `classe_sezione` a NULL — fuori da registro, appello, mensa, diario e
+     * valutazioni (le query per sezione, che sono la maggioranza) e fuori anche
+     * dalla linguetta «Non più iscritti», che filtra `stato=ritirato`. Restava
+     * nella sola anagrafica piatta, senza un log e senza un avviso: il danno
+     * esatto che il modello a due tempi esiste per evitare, raggiungibile dal
+     * bottone «Apri scheda» dell'elenco nuovo.
+     *
+     * Il rifiuto NON è un dispetto burocratico: il ritorno ha una rotta sua
+     * (`admin/students/riattiva:POST`) che rimette lo stato E ripristina la
+     * classe dopo averne verificato l'esistenza nella sede. La frase manda lì,
+     * perché un rifiuto che non dice dove andare è un vicolo cieco.
+     *
+     * Scatta su `archiviato_il`, come il 409 dell'archiviazione e per la stessa
+     * ragione: il ritiro fatto a mano dalla tendina (`stato='ritirato'`,
+     * `archiviato_il` NULL) è ancora agganciato alla sua sezione, e correggerlo
+     * dalla tendina non fa sparire nessuno.
+     */
+    STATO_ALUNNO_ARCHIVIATO: 'erroreStatoAlunnoArchiviato',
+    /**
+     * 503 — le colonne dell'archiviazione non esistono in questo database, e
+     * NIENTE è stato scritto (`archivia` e `riattiva`).
+     *
+     * ⚠️ È il rifiuto che sostituisce il degrado. Il resto del repo, davanti a
+     * `42703`/`PGRST204`, toglie la colonna e riprova — perché il DB E2E della CI
+     * è un progetto separato e non migrato, e un campo in più non deve portarsi via
+     * una funzionalità. Su questo UPDATE quella strada è vietata: eseguirebbe lo
+     * sganciamento dalla classe (`section_id` a NULL) e non la memoria di dov'era,
+     * cioè renderebbe il ritorno un indovinello. Un'archiviazione a metà è
+     * irreversibile; un 503 si ripete domani.
+     *
+     * NON riusa `ARCHIVIAZIONE_NON_RIUSCITA`, che invita a riprovare: qui riprovare
+     * non serve a niente finché la migrazione non è applicata, e mandare qualcuno a
+     * ritentare ogni cinque minuti una cosa che non può riuscire è peggio del
+     * silenzio.
+     */
+    ARCHIVIO_NON_DISPONIBILE: 'erroreArchivioNonDisponibile',
+    /**
+     * 500 — l'archiviazione non è stata registrata: la lettura della scheda o
+     * l'UPDATE non sono riusciti (`admin/students/archivia:POST`).
+     *
+     * La frase dice che la scheda è rimasta com'era, ed è l'informazione che serve:
+     * senza, chi ha premuto non sa se il bambino è uscito dagli elenchi a metà. Il
+     * `message` grezzo di PostgREST resta nel log — è prosa inglese con dentro nomi
+     * di colonne, e non è un'informazione per chi lavora in segreteria.
+     */
+    ARCHIVIAZIONE_NON_RIUSCITA: 'erroreArchiviazioneNonRiuscita',
+    /**
+     * 500 — il ritorno fra gli iscritti non è riuscito
+     * (`admin/students/riattiva:POST`).
+     *
+     * NON riusa `ARCHIVIAZIONE_NON_RIUSCITA`, per la stessa ragione della coppia di
+     * 409 qui sopra: quella frase dice «l'archiviazione non è stata registrata», e
+     * a chi stava riportando dentro un bambino racconterebbe il fallimento di
+     * un'operazione opposta a quella che ha chiesto.
+     */
+    RIATTIVAZIONE_NON_RIUSCITA: 'erroreRiattivazioneNonRiuscita',
+    /**
+     * 500 — la rubrica non si è potuta leggere (`chat/contacts:GET`, lato maestra).
+     *
+     * Nasce insieme al controllo dell'`{ error }` di quella query (2026-08-13):
+     * PostgREST non lancia, quindi una lettura fallita usciva come `data = null` e
+     * la rubrica mostrava «nessun contatto». Per la maestra «questa classe non ha
+     * genitori a sistema» e «la lettura è andata storta» sono la stessa schermata
+     * vuota, e la prima delle due la manda a cercare il problema nei legami.
+     *
+     * NON riusa un codice dei contatti di segreteria: quella rotta è un'altra, e
+     * chi legge un log o una schermata deve poter dire QUALE delle due rubriche
+     * non ha risposto.
+     */
+    RUBRICA_NON_DISPONIBILE: 'erroreRubricaNonDisponibile',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

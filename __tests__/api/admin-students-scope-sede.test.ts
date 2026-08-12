@@ -19,7 +19,13 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 //    azzerare `section_id` dal trigger (il bambino spariva da ogni elenco).
 //  · DELETE — hard delete GDPR a cascata, preceduto da una copia integrale
 //    della riga dentro `registro_modifiche`: senza scope, la copia avveniva
-//    comunque anche quando la cancellazione poi falliva.
+//    comunque anche quando la cancellazione poi falliva. ⚠️ Quella rotta NON
+//    ESISTE PIÙ (rimossa il 2026-08-12: non funzionava per 28 alunni su 33, e
+//    per gli altri cinque era la cosa più distruttiva dell'app dietro un doppio
+//    clic). I suoi due casi di sede sono stati spostati in fondo a questo file
+//    su `POST /api/admin/students/archivia`, che è l'operazione che ha preso il
+//    suo posto: reversibile, ma pur sempre una scrittura service-role che fa
+//    sparire un bambino dagli elenchi.
 //
 // I test asseriscono lo STATO ESATTO e l'EFFETTO SUL DATABASE (il finto client
 // filtra e scrive davvero, e registra ogni scrittura): mai `not.toBe(403)`.
@@ -38,30 +44,34 @@ const h = vi.hoisted(() => ({
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
   scritture: [] as unknown[],
+  /** Errori PostgREST iniettati, indirizzabili alla SINGOLA operazione
+   *  (`'alunni:delete'`): serve al ramo 23503, dove la lettura dell'alunno deve
+   *  riuscire e solo la cancellazione essere respinta. */
+  errori: {} as Record<string, { code: string; message?: string }>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
+  const opzioni = () => ({ scritture: h.scritture as Scrittura[], errori: h.errori })
   return {
-    createAdminClient: async () =>
-      creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture as Scrittura[] }),
-    createClient: async () =>
-      creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture as Scrittura[] }),
+    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, opzioni()),
+    createClient: async () => creaFintoSupabase(h.db, h.tabelle, opzioni()),
   }
 })
 
-import { GET, PATCH, DELETE } from '@/app/api/admin/students/route'
+import { GET, PATCH } from '@/app/api/admin/students/route'
+import { POST as ARCHIVIA } from '@/app/api/admin/students/archivia/route'
 
 const get = (qs: string) => new NextRequest(`http://localhost/api/admin/students${qs}`)
-const corpo = (metodo: string) => (body: unknown) =>
-  new NextRequest('http://localhost/api/admin/students', {
+const corpo = (metodo: string, percorso = '/api/admin/students') => (body: unknown) =>
+  new NextRequest(`http://localhost${percorso}`, {
     method: metodo,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
 const patch = corpo('PATCH')
-const del = corpo('DELETE')
+const archivia = corpo('POST', '/api/admin/students/archivia')
 
 const dbBase = (): DBFinto => ({
   utenti_scuole: [{ utente_id: 'adm-1', scuola_id: SEDE_A }, { utente_id: 'adm-1', scuola_id: SEDE_B }],
@@ -107,6 +117,7 @@ beforeEach(() => {
   h.db = dbBase()
   h.tabelle = []
   h.scritture = []
+  h.errori = {}
   // Segreteria di SEDE_A: per progetto (decisione 30/07) vede SOLO la sua sede.
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE_A } })
 })
@@ -252,24 +263,69 @@ describe('PATCH /api/admin/students — bulk gruppo mensa', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DELETE — hard delete GDPR
+// ARCHIVIA — il gemello di sede della `DELETE` che non esiste più
+//
+// ⚠️ QUI C'ERA L'ISOLAMENTO DI SEDE SULLA `DELETE` («hard delete GDPR»), e i due
+// casi erano 403 fuori sede / 200 in sede. La rotta è stata RIMOSSA il
+// 2026-08-12: non funzionava per 28 alunni su 33 (sette FK senza
+// `ON DELETE CASCADE`, e quasi ogni bambino ha pagamenti e un genitore
+// collegato), e per gli altri cinque metteva l'operazione più distruttiva
+// dell'applicazione dietro un doppio clic.
+//
+// I due casi NON sono stati cancellati: sono stati SPOSTATI sull'operazione che
+// ha preso il suo posto, perché la domanda che ponevano non è invecchiata di un
+// giorno. `POST /api/admin/students/archivia` è una scrittura su un service-role
+// client (la RLS non interviene) che fa sparire un bambino dagli elenchi: senza
+// gate di sede, la segreteria di un plesso potrebbe farlo su un minore di un
+// altro. Che l'operazione sia reversibile cambia il danno, non il permesso.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('DELETE /api/admin/students — hard delete GDPR', () => {
-  it('403 sull\'alunno di un\'altra sede: la riga resta, e NESSUNA copia in registro_modifiche', async () => {
-    const res = await DELETE(del({ id: ALU_B }))
+describe('POST /api/admin/students/archivia — isolamento di sede', () => {
+  it('403 sull\'alunno di un\'altra sede: resta iscritto, nella sua sezione, e nessuna scrittura', async () => {
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_B }))
+
     expect(res.status).toBe(403)
-    expect(riga(ALU_B)).toBeDefined()
-    expect(h.db.registro_modifiche).toHaveLength(0)
-    expect(scrittureSu('registro_modifiche')).toHaveLength(0)
+    // Lo stato ESATTO della riga, non `not.toBe(200)`: il bambino di SEDE_B
+    // deve essere ancora in elenco, ancora nella sua classe.
+    expect(riga(ALU_B)?.stato).toBe('iscritto')
+    expect(riga(ALU_B)?.section_id).toBe(SEC_B)
+    expect(riga(ALU_B)?.classe_sezione).toBe('2 ANNI')
+    expect(riga(ALU_B)?.archiviato_il ?? null).toBeNull()
     expect(scrittureSu('alunni')).toHaveLength(0)
+    // E nessun dato del minore nella risposta di un rifiuto.
+    const testo = await res.text()
+    expect(testo).not.toContain('NOTA-MEDICA-B')
+    expect(testo).not.toContain('CF-BETA-B')
   })
 
-  it('200 sull\'alunno della propria sede: riga rimossa e copia d\'audit scritta', async () => {
-    const res = await DELETE(del({ id: ALU_A }))
+  it('200 sull\'alunno della propria sede: sganciato dalla classe, anagrafica INTATTA', async () => {
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_A, motivo: 'ritiro' }))
+
     expect(res.status).toBe(200)
-    expect(riga(ALU_A)).toBeUndefined()
-    expect(h.db.registro_modifiche).toHaveLength(1)
-    expect(h.db.registro_modifiche[0].record_id).toBe(ALU_A)
+    const dopo = riga(ALU_A)!
+    // La leva vera: senza sezione il bambino sparisce dalle query per classe,
+    // che sono la maggioranza.
+    expect(dopo.section_id).toBeNull()
+    expect(dopo.classe_sezione).toBeNull()
+    expect(dopo.stato).toBe('ritirato')
+    expect(dopo.archiviato_il).toBeTruthy()
+    // Da dove veniva, altrimenti il ritorno fra gli iscritti è un indovinello.
+    expect(dopo.archiviato_section_id).toBe(SEC_A)
+    expect(dopo.archiviato_classe_sezione).toBe('2 ANNI')
+    // ⚠️ E L'ANAGRAFICA NON SI TOCCA: è il perno del modello. Senza il nome, i
+    // registri e i pagamenti di ogni anno — che si conservano dieci anni —
+    // diventerebbero illeggibili tutti insieme.
+    expect(dopo.nome).toBe('Alfa')
+    expect(dopo.cognome).toBe('AaaSedeA')
+    expect(dopo.codice_fiscale).toBe('CF-ALFA-A')
+  })
+
+  it('e la riga di SEDE_B non si muove quando si archivia quella di SEDE_A', async () => {
+    // Il filtro `.in('scuola_id', plessi)` affianca il gate: questo test è ciò
+    // che distingue «ha negato l'id altrui» da «ha aggiornato solo la riga
+    // giusta». Senza, un update senza `.eq('id', …)` sarebbe verde qui sopra.
+    await ARCHIVIA(archivia({ alunno_id: ALU_A }))
+    expect(riga(ALU_B)?.stato).toBe('iscritto')
+    expect(riga(ALU_A2)?.stato).toBe('iscritto')
   })
 })

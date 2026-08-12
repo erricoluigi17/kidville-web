@@ -4,22 +4,24 @@ import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck, Archive } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CodiciFiscaliDaVerificare, useCodiciFiscaliDaVerificare } from '@/components/features/admin/CodiciFiscaliDaVerificare';
+import { AlunniArchiviatiView, useAlunniArchiviati } from '@/components/features/admin/AlunniArchiviatiView';
 import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
+import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 
-type TipoVista = 'child' | 'adult' | 'sections' | 'staff' | 'codici';
+type TipoVista = 'child' | 'adult' | 'sections' | 'staff' | 'codici' | 'archiviati';
 
 /** La tab richiesta dall'URL (`?tab=sections` = back-link dal dettaglio sezione). */
 const tabDaQuery = (v: string | null): TipoVista =>
-  v === 'adult' || v === 'sections' || v === 'staff' || v === 'codici' ? v : 'child';
+  v === 'adult' || v === 'sections' || v === 'staff' || v === 'codici' || v === 'archiviati' ? v : 'child';
 
 /**
  * «Questa tab aspetta un elenco dal server?» — e quindi: lo spinner va acceso?
@@ -38,10 +40,12 @@ const tabDaQuery = (v: string | null): TipoVista =>
  * irripetibile: una tab senza elenco non può più accendere uno spinner che
  * nessuno spegnerà, perché è lo stesso predicato a fare entrambe le cose.
  *
- * Le tab che caricano da sé sono due: SEZIONI (`SectionsView`) e CODICI FISCALI
- * (`CodiciFiscaliDaVerificare`, che ha il suo hook e i suoi stati).
+ * Le tab che caricano da sé sono TRE: SEZIONI (`SectionsView`), CODICI FISCALI
+ * (`CodiciFiscaliDaVerificare`) e NON PIÙ ISCRITTI (`AlunniArchiviatiView`) —
+ * le ultime due hanno il loro hook e i loro stati, perché il numero sulla
+ * pillola va saputo prima che qualcuno apra la linguetta.
  */
-const attendeElenco = (v: TipoVista) => v !== 'sections' && v !== 'codici';
+const attendeElenco = (v: TipoVista) => v !== 'sections' && v !== 'codici' && v !== 'archiviati';
 
 interface Student {
   id: string;
@@ -99,6 +103,32 @@ function AdminStudentsInner() {
   // ottimizzerebbe 0,4 ms. Se un giorno il numero qui sopra cresce di due ordini
   // di grandezza, quella è la strada; la misura va rifatta, non ricordata.
   const codiciFiscali = useCodiciFiscaliDaVerificare();
+  /**
+   * «Non più iscritti»: stessa forma, e per lo stesso motivo — il CONTEGGIO va
+   * sulla pillola della linguetta, quindi la lettura non può aspettare che
+   * qualcuno la apra.
+   *
+   * Il costo è una `GET /api/admin/students?stato=ritirato` in più a ogni
+   * apertura della pagina. È la stessa tabella e lo stesso filtro di sede della
+   * lettura che questa pagina fa comunque, ristretta a uno stato: sui 33 alunni
+   * misurati in produzione il 2026-08-12 sono decine di righe e meno di un
+   * millisecondo di lavoro sul database (vedi la misura, con `EXPLAIN ANALYZE`,
+   * annotata qui sopra per i codici fiscali). Quando l'anagrafica crescerà di due
+   * ordini di grandezza la misura va rifatta, non ricordata.
+   */
+  const archiviati = useAlunniArchiviati();
+  /**
+   * Il ruolo di chi guarda, per la CORTESIA del comando «Libera spazio». Il gate
+   * vero è sul server: qui si evita solo di offrire a una segretaria un comando
+   * che riceverebbe 403. Finché la fetch dell'identità non risponde vale `''`, e
+   * il comando resta nascosto — si sbaglia verso il nascondere.
+   *
+   * ⚠️ `useRuoloCockpit` e non `useAdminIdentity`: il secondo LANCIA fuori dal
+   * provider, e questa pagina viene resa in isolamento da cinque file di test che
+   * di ruoli non parlano affatto. Una pagina che esplode per non saper decidere
+   * se disegnare un bottone è un difetto peggiore del bottone.
+   */
+  const ruolo = useRuoloCockpit();
   // Calcolata UNA volta: la vista iniziale e lo spinner iniziale sono due
   // decisioni che devono nascere dallo stesso valore, non da due letture.
   const tabIniziale = tabDaQuery(search.get('tab'));
@@ -494,7 +524,7 @@ function AdminStudentsInner() {
                 visitata prima — o un file vuoto se ci si arriva da `?tab=codici`.
                 Un comando che scarica i dati sbagliati è peggio di un comando
                 assente. */}
-            {viewType !== 'codici' && (
+            {viewType !== 'codici' && viewType !== 'archiviati' && (
               <button
                 onClick={handleExport}
                 className="inline-flex h-[46px] items-center gap-2 rounded-pill border border-kidville-line bg-kidville-white px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green"
@@ -562,12 +592,28 @@ function AdminStudentsInner() {
             // rimettere `totale`, o riscrivere il conteggio a mano, lo fa rosso.
             count: codiciFiscali.fase === 'pronto' ? codiciFiscali.azionabili : undefined,
           },
+          {
+            id: 'archiviati',
+            label: t('arcTab'),
+            icon: Archive,
+            // Come per i codici fiscali: il numero compare solo quando è STATO
+            // misurato. Uno zero mostrato mentre l'elenco è ancora in volo
+            // direbbe «non c'è nessun archiviato», che è l'unica cosa che non si
+            // sa ancora — e su questa linguetta quello zero significa anche «non
+            // c'è niente da riportare dentro».
+            //
+            // È il conteggio delle righe ARRIVATE e non `totale`: vedi il perché
+            // in testa a `AlunniArchiviatiView` — un badge che promette più righe
+            // di quante la tabella ne mostri dice una cosa falsa sul dato che
+            // l'utente ha davanti, e il totale ha già il suo posto (`arcParziale`).
+            count: archiviati.fase === 'pronto' ? archiviati.righe.length : undefined,
+          },
         ]}
       />
 
       {/* Toolbar / Filtri — nascosta per le tab che hanno i propri filtri
-          (Sezioni e Codici fiscali). */}
-      {viewType !== 'sections' && viewType !== 'codici' && (
+          (Sezioni, Codici fiscali e Non più iscritti). */}
+      {viewType !== 'sections' && viewType !== 'codici' && viewType !== 'archiviati' && (
       <div className="bg-kidville-white rounded-card p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
         {/* Search */}
         <div className="relative flex-1 w-full">
@@ -625,6 +671,12 @@ function AdminStudentsInner() {
            e mostrarlo qui vorrebbe dire raccontare il guasto di un'altra tab al
            posto del pannello che ha i suoi stati (e il suo «Riprova»). */
         <CodiciFiscaliDaVerificare esito={codiciFiscali} userId={userId} />
+      ) : viewType === 'archiviati' ? (
+        /* Prima del ramo `erroreElenco`, per la stessa ragione dei codici
+           fiscali: quello è l'errore dell'ELENCO alunni, e mostrarlo qui
+           racconterebbe il guasto di un'altra tab al posto di un pannello che
+           ha i suoi stati e il suo «Riprova». */
+        <AlunniArchiviatiView esito={archiviati} ruolo={ruolo} userId={userId} />
       ) : erroreElenco !== null ? (
         /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
            e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,

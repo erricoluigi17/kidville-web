@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
+import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -110,11 +111,32 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
             // Senza sezione risolta la lista resta vuota: niente default arbitrari.
             if (teacherSection) {
                 // 3 query batched: alunni della sezione → legami → genitori (niente N+1).
-                const { data: allStudents } = await supabase
+                //
+                // ⚠️ IL FILTRO DI STATO C'È ANCHE QUI, benché la query nomini la
+                // CLASSE (2026-08-13). È il gemello lato maestra della rubrica di
+                // segreteria, ed è una RUBRICA: decide con quali famiglie si può
+                // aprire una conversazione. L'esenzione «per sezione» del lock
+                // vale per la strada dell'ARCHIVIAZIONE — che sgancia dalla
+                // classe — non per la TENDINA della scheda alunno, che porta lo
+                // `stato` a `'ritirato'` lasciando il bambino agganciato: per
+                // quella strada la maestra poteva scrivere alla famiglia di un
+                // bambino che non frequenta più.
+                const { data: allStudents, error: errStudents } = await supabase
                     .from('alunni')
                     .select('id, nome, cognome, classe_sezione, scuola_id')
                     .eq('classe_sezione', teacherSection)
-                    .in('scuola_id', plessi);
+                    .in('scuola_id', plessi)
+                    .in('stato', [...STATI_CON_CANALE_FAMIGLIA]);
+                // PostgREST non lancia: senza questa riga una lettura rotta
+                // usciva come «questa classe non ha bambini» e la rubrica della
+                // maestra restava vuota senza che nessuna riga lo dicesse.
+                if (errStudents) {
+                    logErrore({ operazione: 'chat/contacts:GET', stato: 500, evento: 'db' }, errStudents);
+                    return NextResponse.json(
+                        { error: 'La rubrica non si è potuta caricare.', codice: 'RUBRICA_NON_DISPONIBILE' },
+                        { status: 500 },
+                    );
+                }
                 const students = allStudents ?? [];
                 const studentIds = students.map(s => s.id);
 

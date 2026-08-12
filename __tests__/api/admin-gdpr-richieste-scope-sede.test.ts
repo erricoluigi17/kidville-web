@@ -66,6 +66,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.order = () => b
+      // Le letture del dry-run che dicono CHE COSA distrugge (`contaCosaDistrugge`).
+      b.contains = () => b
+      b.not = () => b
       b.eq = (col: string, val: unknown) => { filtri.push({ col, vals: [val] }); return b }
       b.in = (col: string, vals: unknown[]) => { filtri.push({ col, vals }); return b }
       b.update = (v: Riga) => { patch = v; return b }
@@ -97,7 +100,7 @@ const post = (body: unknown, cookie?: string) =>
 const get = (cookie?: string) =>
   new NextRequest(URL_ROUTE, { headers: cookie ? { cookie: `sedi_attive=${cookie}` } : {} })
 
-const alunno = (id: string, sede: string | null, stato = 'non_iscritto'): Riga => ({
+const alunno = (id: string, sede: string | null, stato = 'ritirato'): Riga => ({
   id,
   stato,
   anonimizzato_il: null,

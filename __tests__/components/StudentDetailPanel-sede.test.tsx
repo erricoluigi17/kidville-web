@@ -61,7 +61,7 @@ const urlChiamate = () => fetchMock.mock.calls.map((c) => String(c[0]))
 
 describe('StudentDetailPanel — le classi offerte sono quelle della SEDE del bambino', () => {
   it('le sezioni si chiedono per la sede dell\'alunno, e le altre non compaiono', async () => {
-    render(<StudentDetailPanel student={ALUNNO_B} onClose={() => {}} onSave={() => {}} onDelete={() => {}} />)
+    render(<StudentDetailPanel student={ALUNNO_B} onClose={() => {}} onSave={() => {}} onArchive={async () => ({ ok: true })} onRiattiva={async () => ({ ok: true })} />)
 
     await waitFor(() => expect(opzioni()).toContain('LEONI (infanzia)'))
     expect(urlChiamate()).toContain(`/api/admin/sections?scuola_id=${SEDE_B}`)
@@ -74,7 +74,8 @@ describe('StudentDetailPanel — le classi offerte sono quelle della SEDE del ba
         student={{ id: 'al-x', nome: 'Ics', cognome: 'Ipsilon' }}
         onClose={() => {}}
         onSave={() => {}}
-        onDelete={() => {}}
+        onArchive={async () => ({ ok: true })}
+        onRiattiva={async () => ({ ok: true })}
       />,
     )
     await waitFor(() => expect(tendinaClasse()).toBeTruthy())
@@ -88,7 +89,8 @@ describe('StudentDetailPanel — le classi offerte sono quelle della SEDE del ba
         student={{ ...ALUNNO_B, classe_sezione: 'CLASSE STORICA' }}
         onClose={() => {}}
         onSave={() => {}}
-        onDelete={() => {}}
+        onArchive={async () => ({ ok: true })}
+        onRiattiva={async () => ({ ok: true })}
       />,
     )
     await waitFor(() => expect(opzioni()).toContain('LEONI (infanzia)'))

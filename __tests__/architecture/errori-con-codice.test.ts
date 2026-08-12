@@ -73,9 +73,18 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * stesso, perché lasciarlo a 1464 vorrebbe dire che quelle quattro risposte possono tornare —
  * dentro un file ancora vivo e gated — con questo lock verde. È il modo silenzioso in cui un
  * lock smette di misurare.
+ *
+ * 2026-08-12 · −5 (1460 → 1455). `DELETE /api/admin/students` è stata RIMOSSA: non funzionava
+ * per 28 alunni su 33 (sette FK senza `ON DELETE CASCADE`) e per gli altri cinque metteva
+ * l'operazione più distruttiva dell'app dietro un doppio clic. Con lei se ne vanno cinque
+ * risposte d'errore senza codice — un 404, un 409, due 500 e il ripiego del `catch`. Come per
+ * `admin/adults`, qui non è stato pagato un debito: è sparito il codice che lo portava. Il
+ * tetto scende lo stesso, perché lasciarlo a 1460 vorrebbe dire che quelle cinque risposte
+ * possono tornare — in un file vivo, gated e molto frequentato — con questo lock verde.
+ * `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero (21 risposte).
  */
 const MAX_FILE = 280;
-const MAX_OCCORRENZE = 1460;
+const MAX_OCCORRENZE = 1455;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

@@ -72,3 +72,28 @@ export function useAdminIdentity(): AdminIdentityValue {
   if (!ctx) throw new Error('useAdminIdentity deve essere usato dentro <AdminIdentityProvider>');
   return ctx;
 }
+
+/**
+ * Il RUOLO di chi guarda, senza pretendere il provider: fuori da
+ * <AdminIdentityProvider> vale `''`.
+ *
+ * ─── PERCHÉ ESISTE, invece di usare `useAdminIdentity` ───────────────────────
+ *
+ * Serve a decidere se MOSTRARE un comando — non se consentirlo: il gate vero è
+ * sempre sul server, che è l'unico che non si può aggirare dalla console del
+ * browser. Per quella domanda un'eccezione è la risposta sbagliata due volte:
+ *
+ *  · in PRODUZIONE farebbe esplodere una pagina intera per non saper decidere se
+ *    disegnare un bottone;
+ *  · nei TEST fa esplodere ogni pagina resa in isolamento — misurato il
+ *    2026-08-12: aggiungendo `useAdminIdentity()` a `/admin/students`, cinque
+ *    file di `__tests__/pages/` sono diventati rossi in blocco, e nessuno di
+ *    loro parlava di ruoli.
+ *
+ * `''` non è un ripiego permissivo: non è nessun ruolo, quindi non abilita
+ * niente. Vale anche mentre la fetch del provider è ancora in volo — si sbaglia
+ * verso il NASCONDERE, che sui comandi distruttivi è l'unico verso accettabile.
+ */
+export function useRuoloCockpit(): string {
+  return useContext(AdminIdentityContext)?.ruolo ?? '';
+}

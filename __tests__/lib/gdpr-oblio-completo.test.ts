@@ -387,7 +387,9 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
-vi.mock('@/lib/gdpr/orfano', () => ({ parentHaAltriFigliIscritti: vi.fn(async () => false) }))
+vi.mock('@/lib/gdpr/orfano', () => ({
+  leggiAltriFigliIscritti: vi.fn(async () => ({ ok: true, haAltriFigli: false })),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -453,7 +455,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 'sc-1' } })
   h.alunno = {
-    id: 'al-1', nome: 'Bambino', cognome: 'DiProva', stato: 'non_iscritto',
+    id: 'al-1', nome: 'Bambino', cognome: 'DiProva', stato: 'ritirato',
     anonimizzato_il: null, documento_path: 'anagrafica/doc-alunno.pdf',
     codice_fiscale: 'AAABBB10A01H501X', fiscal_code: null, scuola_id: 'sc-1', section_id: null,
   }

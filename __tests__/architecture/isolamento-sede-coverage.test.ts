@@ -1301,7 +1301,23 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    `handlerEsentati` è rimasto FERMO a 92 in questo passaggio, ed è la
             //    sola metà di questi tre numeri che misura una difesa invece di un
             //    inventario. Chi rilegge ricalcoli invece di fidarsi.
-            routeConServiceRole: 285,
+            //
+            // 285 → 289 il 2026-08-12 (secondo giro dello stesso branch): QUATTRO file
+            // nuovi, e uno solo lo CERTIFICA questa riga.
+            //
+            //  · `admin/anagrafica-personale/scansione` (POST) — la porta con cui la
+            //    Segreteria carica fronte e retro del documento dalla scheda della
+            //    persona. NON porta esenzioni. La sua difesa di sede è
+            //    `assertUtenteInScope` sul BERSAGLIO, chiamata prima del corpo della
+            //    richiesta: l'identificativo viaggia in query proprio perché il gate
+            //    possa girare senza aver bufferizzato 4 MB. `anagrafica_personale` e
+            //    `caricamenti_personale` non hanno `scuola_id` (la sede sta in
+            //    `utenti`), quindi non c'è nessun filtro di colonna da cercare qui.
+            //  · `admin/students/archivia`, `admin/students/libera-spazio`,
+            //    `admin/students/riattiva` — arrivano dalla corsia accanto e sono
+            //    contate qui, non certificate: chi le ha scritte dichiari le proprie
+            //    esenzioni.
+            routeConServiceRole: 289,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1329,7 +1345,19 @@ describe('coverage-lock isolamento fra sedi', () => {
             // qui) e i due di `admin/pratiche-personale` (contati, non certificati).
             // Il +2 di questa corsia è il cruscotto delle scadenze: nessuno dei due
             // handler è in allowlist, e `handlerEsentati` resta 92.
-            handlerControllati: 448,
+            //
+            // ⚠️ 448 → 451 il 2026-08-12, e il conto NON è «448 + 4»: i file nuovi sono
+            // quattro, con un handler ciascuno, ma nello stesso giro ne è USCITO uno
+            // (`admin/students:DELETE`, sostituito dall'archiviazione reversibile della
+            // corsia accanto). Il conto vero è **448 − 1 + 4 = 451**.
+            //
+            // È scritto per esteso perché è precisamente ciò che questo lock esiste per
+            // impedire: 448 + 3 quadra lo stesso, e quadrando nasconderebbe sia
+            // l'ingresso di un handler sia l'uscita di un altro. Chi rilegge ricalcoli
+            // invece di fidarsi. `handlerEsentati` NON si muove: nessuno dei quattro
+            // handler nuovi è in allowlist, che è la sola cosa che questo numero esiste
+            // per impedire in silenzio.
+            handlerControllati: 451,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

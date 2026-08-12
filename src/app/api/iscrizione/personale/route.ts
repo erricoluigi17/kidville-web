@@ -23,7 +23,8 @@ import { verificaCoerenza } from '@/lib/fiscale/coerenza'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni'
 import { sediReali } from '@/lib/scuole/reali'
-import { caricamentoReclamabile, collegaCaricamento } from '@/lib/personale/caricamenti'
+import { caricamentiReclamabili, collegaCaricamenti } from '@/lib/personale/caricamenti'
+import { COLONNE_DOCUMENTO, percorsoDocumentoAmmesso } from '@/lib/personale/percorso-documento'
 import type { FormPage } from '@/types/database.types'
 
 /**
@@ -355,6 +356,57 @@ function colonnaMancante(messaggio: string | undefined, colonne: string[]): stri
   return nome && colonne.includes(nome) ? nome : null
 }
 
+/** «Questa colonna qui non c'è»: PostgREST (`PGRST204`) e Postgres (`42703`). */
+const CODICI_COLONNA_ASSENTE = ['PGRST204', '42703']
+
+/**
+ * LE COLONNE CHE UN DATABASE INDIETRO PUÒ LEGITTIMAMENTE NON AVERE — e quindi quante
+ * volte al massimo il ramo di degrado può ritentare.
+ *
+ * ⚠️ LE FACCE DEL DOCUMENTO NON SONO QUI DENTRO, ED È IL PUNTO DI TUTTO IL BLOCCO.
+ * Per qualche ora, il 13/08/2026, questo elenco è stato `['consents_log',
+ * ...COLONNE_DOCUMENTO]`: cioè dichiarava che una colonna che tiene la fotografia di
+ * una carta d'identità è «una colonna che un database indietro può legittimamente non
+ * avere», e il ciclo la toglieva per far entrare la riga. Il risultato era un **201**
+ * su una pratica SENZA scansione — e il seguito è al punto 10-bis, dove gli oggetti
+ * vengono comunque collegati alla pratica: da quel momento `spazzaCaricamentiSospesi`
+ * non li vede più (filtra `pratica_id is null`) e `gdpr/retention-personale` nemmeno
+ * (scopre i file leggendo le colonne, che in quella riga non ci sono). Una fotografia
+ * di documento d'identità nel bucket, non spazzabile e non conservabile: esattamente
+ * ciò che `personale-template.ts` chiama «conservata per sempre e irrintracciabile».
+ *
+ * La migrazione `20260812194501` lo aveva scritto per esteso, nel riquadro «ORDINE DI
+ * RILASCIO VINCOLANTE», e prescriveva il contrario: *«il suo ramo di degrado TOGLIE la
+ * colonna sconosciuta e inserisce la pratica SENZA il percorso: la scansione si perde
+ * in silenzio, che è il modo peggiore di perderla… migrazione prima del codice = 503
+ * per il tempo del deploy. È l'errore giusto: rumoroso e reversibile.»*
+ *
+ * ⚠️ SERVE IL NUMERO, NON L'APPARTENENZA. Il degrado toglie la colonna che il DATABASE
+ * nomina, non una scelta da questo elenco: se un giorno mancasse `titolo_studio` la
+ * rotta toglierebbe quella, ed è giusto — una pratica persa perché il database è
+ * indietro di una colonna sarebbe peggio del degrado. Questo elenco misura solo quanto
+ * lontano ci si spinge prima di dire che il database è rotto in un modo che non
+ * sappiamo leggere. L'unica appartenenza che conta è quella NEGATIVA, e sta poco più
+ * in basso in `COLONNE_INDEGRADABILI`.
+ */
+const COLONNE_FACOLTATIVE = ['consents_log']
+
+/**
+ * LE COLONNE CHE NON SI TOLGONO MAI, nemmeno per far entrare la riga.
+ *
+ * Si DERIVA da `COLONNE_DOCUMENTO`, quindi una terza faccia dichiarata nel template
+ * entrerebbe qui da sola: il nome di una colonna che tiene un documento non si scrive
+ * due volte, e questo è uno dei posti in cui il costo di riscriverlo sarebbe una
+ * scansione persa.
+ *
+ * COSA SUCCEDE AGLI OGGETTI GIÀ CARICATI quando questo ramo scatta, detto invece che
+ * lasciato dedurre: nessuna riga nasce, quindi nessuno li reclama, quindi restano
+ * `pratica_id is null` e `spazzaCaricamentiSospesi` li toglie dal bucket entro 24 ore.
+ * È il verso giusto in cui sbagliare — meglio una scansione da rifare che una
+ * scansione che nessuno può più né trovare né cancellare.
+ */
+const COLONNE_INDEGRADABILI: readonly string[] = COLONNE_DOCUMENTO
+
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
  * ║  L'ERRORE COM'È SCRIVIBILE IN UN LOG: tutto, tranne `details`             ║
@@ -372,9 +424,11 @@ function colonnaMancante(messaggio: string | undefined, colonne: string[]): stri
  * `Failing row contains`. Eseguito su un dump di questa tabella, ecco cosa sopravvive
  * dentro il cap di 500 caratteri: mascherati `[email]` e `[cf]`; **in chiaro** nome,
  * cognome, sesso, data e comune di nascita, cittadinanza, indirizzo di casa con
- * civico CAP e provincia, telefono, tipo e NUMERO del documento d'identità, e
- * `documento_path` — che è la chiave con cui si firma la fotografia di quel
- * documento. In `app_log`, persistito 30 giorni e interrogabile in SQL.
+ * civico CAP e provincia, telefono, tipo e NUMERO del documento d'identità, e i
+ * percorsi delle DUE facce (`documento_fronte_path` e `documento_retro_path`, che il
+ * dump del 12/08 mostrava ancora come l'unica `documento_path`) — cioè le chiavi con
+ * cui si firmano le fotografie di quel documento. In `app_log`, persistito 30 giorni
+ * e interrogabile in SQL.
  *
  * Questa rotta dichiara TRE VOLTE che nel log il percorso non va mai. Il ramo
  * generico dei 500 la contraddiceva, da una porta senza login.
@@ -419,12 +473,20 @@ const PAGINA_CONSENSI: FormPage[] = [
 
 /*
  * ╔══════════════════════════════════════════════════════════════════════════╗
- * ║  `documento_path`: un campo ANONIMO che punta a un documento d'identità  ║
+ * ║  DUE CAMPI ANONIMI che puntano a un documento d'identità                 ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
- * Questo valore è la CHIAVE con cui il pannello di Segreteria farà firmare un
- * oggetto dello Storage. Chi compila non carica il file dentro questa richiesta:
- * manda una stringa che dice «l'ho già caricato là». Senza un gate, quella stringa è
+ * ⚠️ QUESTO RIQUADRO SI INTITOLAVA `documento_path` E PARLAVA AL SINGOLARE fino al
+ * 13/08/2026, cioè descriveva un prodotto che non esiste più da un giorno: la
+ * migrazione `20260812194501` ha rinominato quella colonna in `documento_fronte_path`
+ * e ne ha aggiunta una seconda, e il template ne dichiara DUE, entrambe `required`.
+ * Un commento che nomina una colonna cancellata, in un file di sicurezza, è la stessa
+ * classe di difetto che quel giorno ha tolto alla Segreteria l'accesso a ogni
+ * scansione: il codice era stato aggiornato, la frase che lo spiegava no.
+ *
+ * I valori sono le CHIAVI con cui il pannello di Segreteria farà firmare due oggetti
+ * dello Storage. Chi compila non carica i file dentro questa richiesta: manda due
+ * stringhe che dicono «li ho già caricati là». Senza un gate, quelle stringhe sono
  * testo libero di lunghezza arbitraria scritto da un anonimo dentro il database —
  * e `validateField` sul tipo `file` non applica né `pattern` né `max_length`
  * (`accept` e `max_size_mb` valgono per il SELETTORE DEL BROWSER, non per il server).
@@ -435,16 +497,28 @@ const PAGINA_CONSENSI: FormPage[] = [
  * risolve mai a una riga di iscrizione. Ma dentro lo stesso bucket la difesa deve
  * essere questa: si accetta SOLO la forma che `iscrizione/personale/upload:POST`
  * produce — prefisso dedicato, DUE uuid generati dal server, estensione decisa dal
- * gate — e si rifiuta tutto il resto NOMINANDO il campo.
+ * gate — e si rifiuta tutto il resto.
+ *
+ * ── ⚠️ E IL RIFIUTO NON DICE QUALE DELLE DUE FACCE È IL COLPEVOLE ──────────
+ *
+ * Qui c'era scritto «si rifiuta tutto il resto NOMINANDO il campo», ed era vero
+ * quando il campo era uno. Con due, nominare il colpevole sarebbe un ORACOLO:
+ * `rispostaDocumentoNonValido()` risponde deliberatamente su TUTTE E DUE le facce,
+ * perché contestare solo il retro direbbe a chi sta provando percorsi inventati che
+ * il fronte è stato ACCETTATO — cioè che quell'oggetto esiste nel registro dei
+ * caricamenti. Il ragionamento per esteso sta nella testata di quella funzione, ed è
+ * lo stesso con cui il doppione risponde 201 invece di 409. Il campo continua a
+ * essere nominato — il wizard ha due riquadri da colorare e li colora entrambi — ma
+ * il messaggio non distingue, e non deve.
  *
  * ⚠️ MA LA FORMA, DA SOLA, NON BASTA — e va detto invece di lasciarlo dedurre. Gli
  * uuid non sono indovinabili, ma sono anche l'unica cosa che questo gate guarda, e da
  * qui discendono due buchi che il gate NON chiude:
  *
- *  · l'oggetto potrebbe NON ESISTERE. Il campo è `required: true` nel template ed è
- *    la ragione per cui questo modulo esiste, ma si soddisferebbe con una stringa
- *    inventata `documenti/<uuid>/<uuid>.pdf` — e questa forma è documentata in un
- *    repository PUBBLICO. La Segreteria vedrebbe una pratica «completa» e lo
+ *  · l'oggetto potrebbe NON ESISTERE. I campi sono `required: true` nel template e
+ *    sono la ragione per cui questo modulo esiste, ma si soddisferebbero con due
+ *    stringhe inventate `documenti/<uuid>/<uuid>.pdf` — e questa forma è documentata
+ *    in un repository PUBBLICO. La Segreteria vedrebbe una pratica «completa» e lo
  *    scoprirebbe solo cliccando.
  *  · l'oggetto potrebbe essere GIÀ DI QUALCUN ALTRO. Un URL firmato contiene il
  *    percorso in chiaro: basta un link inoltrato per conoscerlo. Il gemello
@@ -459,45 +533,23 @@ const PAGINA_CONSENSI: FormPage[] = [
  * caricamenti (`@/lib/personale/caricamenti`), non qui: questo resta il gate di
  * forma, che è a costo zero e respinge il grosso prima di toccare il database.
  *
- * ⚠️ NEL LOG NON VA MAI IL PERCORSO. Non contiene il nome del file — la rotta di
- * caricamento lo butta via apposta — ma resta la chiave che apre il documento
- * d'identità di una persona, e `redact()` non ha `documento_path` in lista bianca. La
- * regola vale a monte: la privacy non si delega a chi redige. Si registra CHE è stato
- * respinto, non che cosa era.
+ * ⚠️ NEL LOG NON VA MAI NESSUNO DEI DUE PERCORSI. Non contengono il nome del file — la
+ * rotta di caricamento lo butta via apposta — ma restano le chiavi che aprono il
+ * documento d'identità di una persona, e `redact()` non ha quelle colonne in lista
+ * bianca. La regola vale a monte: la privacy non si delega a chi redige. Si registra
+ * CHE è stato respinto, non che cosa era.
  */
-const DOC_PREFISSO = 'documenti/'
-
-/**
- * Il tetto di lunghezza, e non è una scelta di questa rotta: la colonna dichiara
- * `check (documento_path is null or length(documento_path) <= 200)`. Scritto qui
- * perché il rifiuto arrivi sotto il campo invece che come un 500 del database.
+/*
+ * ⚠️ LA FORMA NON ABITA PIÙ QUI: sta in `@/lib/personale/percorso-documento` (12/08/2026).
+ *
+ * È rimasta in questo file finché il chiamante era uno solo. Col documento fronte/retro i
+ * chiamanti diventano quattro — questa rotta più i gate del pannello di Segreteria — e il
+ * modulo esiste soprattutto per LORO: là il percorso arriva dalla QUERY STRING e finisce
+ * dentro un filtro PostgREST che confronta due colonne, dove una virgola non rompe il filtro
+ * ma lo RISCRIVE. Copiare queste righe sarebbe stata la copia che diverge, e a divergere
+ * sarebbe stato un gate di sicurezza. Le prove, rifiuto per rifiuto, sono in
+ * `__tests__/lib/percorso-documento.test.ts`.
  */
-const DOC_MAX_LUNGHEZZA = 200
-
-/**
- * Le estensioni ammesse, LETTE dal template e non ribattute — è la stessa lista che
- * `personale-template.ts` tiene allineata a `ESTENSIONI_ALLEGATO_PUBBLICO` (e che un
- * test confronta con quella costante). Una copia in più qui dentro sarebbe la copia
- * che diverge.
- */
-const DOC_ESTENSIONI = String(
-  PERSONALE_FIELDS.find((f) => f.id === 'documento_path')?.accept ?? '',
-)
-  .split(',')
-  .map((e) => e.trim().replace(/^\./, '').toLowerCase())
-  .filter((e) => e !== '')
-
-/** `documenti/<uuid>/<uuid>.<ext>` — la stessa forma che costruisce la rotta di upload. */
-const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-const DOC_FORMA = new RegExp(`^${DOC_PREFISSO}${UUID}/${UUID}\\.[A-Za-z0-9]+$`)
-
-function percorsoDocumentoAmmesso(percorso: string): boolean {
-  if (percorso.length > DOC_MAX_LUNGHEZZA) return false
-  if (!DOC_FORMA.test(percorso)) return false
-  const punto = percorso.lastIndexOf('.')
-  if (punto < 0) return false
-  return DOC_ESTENSIONI.includes(percorso.slice(punto + 1).toLowerCase())
-}
 
 /**
  * IL RIFIUTO DEL PERCORSO, UNO SOLO PER TUTTI E QUATTRO I MOTIVI.
@@ -524,9 +576,28 @@ function rispostaDocumentoNonValido(): NextResponse {
     {
       error: 'Alcuni campi non sono validi. Controlla i dati e riprova.',
       codice: 'PRATICA_NON_INVIATA',
-      campi: {
-        documento_path: 'Allega di nuovo il documento dal modulo: questo riferimento non è valido.',
-      },
+      // I CAMPI SI DERIVANO, e sono SEMPRE TUTTI E DUE — qualunque delle due facce
+      // sia il colpevole. Non è pigrizia, ed è la parte da capire.
+      //
+      // Rispondere `campi: { documento_retro_path: … }` direbbe a chi sta provando
+      // percorsi inventati che **il fronte è stato accettato**, cioè che quell'oggetto
+      // esiste nel registro dei caricamenti. Chi tenta manda due percorsi per volta,
+      // legge quale dei due gli viene contestato, e in due richieste sa quale dei
+      // quattro esiste: la verifica diventerebbe uno strumento per CENSIRE le scansioni
+      // caricate, che è esattamente ciò che il registro esiste per proteggere. È lo
+      // stesso ragionamento con cui il doppione risponde 201 invece di 409, e con cui i
+      // quattro motivi di rifiuto condividono una risposta sola.
+      //
+      // La seconda ragione riguarda il rinomino: una chiave scritta a mano qui dentro
+      // sopravvive a un rinomino del campo puntando al nulla — il messaggio uscirebbe
+      // dal server e il wizard non avrebbe più nessun campo da colorare, quindi chi
+      // compila leggerebbe «alcuni campi non sono validi» senza vedere quali.
+      campi: Object.fromEntries(
+        COLONNE_DOCUMENTO.map((campo) => [
+          campo,
+          'Allega di nuovo il documento dal modulo: questo riferimento non è valido.',
+        ]),
+      ),
     },
     { status: 400 },
   )
@@ -543,7 +614,9 @@ function rispostaDocumentoNonValido(): NextResponse {
  * collegato — compreso quello della stessa persona che rimanda il proprio modulo — e
  * lo faceva PRIMA dell'INSERT, quindi il ramo `23505` non veniva mai raggiunto.
  * Misurato sul finto della suite: primo invio `201` con l'oggetto collegato; secondo
- * invio IDENTICO → `400 {"codice":"PRATICA_NON_INVIATA","campi":{"documento_path":…}}`,
+ * invio IDENTICO → `400 {"codice":"PRATICA_NON_INVIATA","campi":{"documento_path":…}}`
+ * (la misura è dell'11/08, quando la colonna era una e si chiamava così; oggi la stessa
+ * risposta nominerebbe le due facce),
  * ZERO tentativi di INSERT, nessun avviso alla Segreteria.
  *
  * È il difetto gemello di quello che `iscrizione/insegnanti:POST` ha già pagato, e
@@ -565,10 +638,26 @@ function rispostaDocumentoNonValido(): NextResponse {
  * ── LA DOMANDA GIUSTA, E PERCHÉ NON È «HA UNA PRATICA VIVA?» ────────────────
  *
  * Si chiede al database l'unica cosa che rende l'eccezione SICURA: esiste una pratica
- * VIVA, con QUESTA email, che nomina già QUESTO percorso? Se sì, la riga che possiede
- * l'oggetto è la stessa riga con cui l'INSERT sta per collidere: il `23505` è
- * garantito, nessuna riga nuova nascerà, e l'invariante «un oggetto, un proprietario»
- * non viene toccata. L'eccezione è legata alla propria garanzia, non a un'ipotesi.
+ * VIVA, con QUESTA email, che nomina già UNO dei percorsi presentati? Se sì, la riga
+ * che possiede l'oggetto è la stessa riga con cui l'INSERT sta per collidere: il
+ * `23505` è garantito, nessuna riga nuova nascerà, e l'invariante «un oggetto, un
+ * proprietario» non viene toccata. L'eccezione è legata alla propria garanzia, non a
+ * un'ipotesi.
+ *
+ * ── ⚠️ «UNO DEI DUE» E NON «TUTTI E DUE», ED È MISURATO ────────────────────
+ *
+ * Con due facce, il secondo invio dello stesso modulo NON ripresenta gli stessi due
+ * percorsi: il wizard ricarica ciò che la persona riallega, quindi tipicamente arriva
+ * un fronte già suo (la pratica viva lo nomina) e un retro NUOVO, appena caricato e
+ * ancora di nessuno. Pretendere che ENTRAMBI fossero già della pratica viva
+ * respingerebbe proprio quel caso — cioè rimetterebbe in piedi il difetto che questa
+ * funzione esiste per chiudere, dopo averlo riparato per il caso a una faccia sola.
+ *
+ * E non allarga la superficie, perché ciò che rende l'eccezione sicura resta intero:
+ * la riga viva con questa email c'è (l'ha appena trovata questa lettura), quindi
+ * l'INSERT collide e nessuna riga nuova nasce; e nel ramo dell'eccezione NON si
+ * collega niente, quindi nessun oggetto cambia proprietario. Le altre facce, qualunque
+ * cosa siano — appena caricate o di qualcun altro — restano dove sono.
  *
  * La versione più comoda — «questa email ha una pratica viva?», senza guardare il
  * percorso — sarebbe stata sbagliata in modo grave: rimetterebbe in piedi l'ORACOLO DI
@@ -592,21 +681,85 @@ function rispostaDocumentoNonValido(): NextResponse {
  * rifiuto in piedi — che è il comportamento di prima di questa funzione — e lascia
  * una riga per dire che il verdetto è stato dato senza la prova.
  */
-async function documentoDiUnaPraticaViva(
+const SELECT_PRATICA_VIVA = ['id', ...COLONNE_DOCUMENTO].join(', ')
+
+/**
+ * Quante righe vive per la stessa email si leggono al massimo.
+ *
+ * L'indice `unique (lower(email)) where stato in ('pending','in_approvazione')` ne
+ * garantisce UNA. Questo numero non serve al database che ce l'ha: serve a quello che
+ * NON ce l'ha — e questa rotta è scritta apposta per tollerare un database indietro
+ * con le migrazioni, il che rende «l'indice c'è di sicuro» esattamente il presupposto
+ * che non può darsi. Cinque è un tetto, non una previsione: chiude la lettura senza
+ * scansione illimitata, e se davvero l'oggetto appartenesse alla sesta riga viva la
+ * risposta sarebbe `false`, cioè il rifiuto — fail-closed, come tutto il resto qui.
+ */
+const MAX_PRATICHE_VIVE_LETTE = 5
+
+async function documentiDiUnaPraticaViva(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  percorso: string,
+  percorsi: readonly string[],
   email: string,
   scuolaId: string,
 ): Promise<boolean> {
+  // ── ⚠️ UN SOLO ROUND TRIP, E NESSUN `.or(…)` CON UN VALORE INTERPOLATO ─────
+  //
+  // Questa lettura era `.eq('documento_path', percorso)`, e col rinomino del 12/08/2026
+  // interrogava una colonna che non esiste più: rispondeva `42703`, la funzione tornava
+  // sempre `false`, e chi rimandava il PROPRIO modulo si vedeva un 400 sull'unico campo
+  // che non aveva niente di sbagliato. La riparazione immediata è stata un CICLO — una
+  // `.eq()` per colonna del documento — che però costa due viaggi al database su ogni
+  // secondo invio, e ne costerà tre alla faccia successiva.
+  //
+  // La forma che verrebbe naturale per farne uno solo è quella da NON usare:
+  //
+  //     .or(`documento_fronte_path.eq.${p},documento_retro_path.eq.${p}`)
+  //
+  // In quella sintassi la virgola SEPARA le condizioni e le parentesi le RAGGRUPPANO,
+  // e `p` qui è testo scritto da un anonimo: un percorso con una virgola non romperebbe
+  // il filtro, lo RISCRIVEREBBE. Non è un'iniezione SQL (PostgREST non concatena SQL) —
+  // è un'iniezione di FILTRO, e il danno è lo stesso: la funzione che decide se
+  // ammettere il documento di qualcun altro risponderebbe di sì. La ragione per esteso
+  // sta nella testata di `@/lib/personale/percorso-documento`.
+  //
+  // La terza strada — quella scritta qui — non filtra affatto sui percorsi: chiede le
+  // pratiche vive DI QUESTA EMAIL e confronta i percorsi IN MEMORIA. Un viaggio,
+  // nessun valore di fuori dentro un filtro, e il confronto lo fa JavaScript con
+  // `===`, dove una virgola è una virgola.
+  //
+  // ── ⚠️ PERCHÉ `.limit()` E NON `.maybeSingle()` ───────────────────────────
+  //
+  // Qui c'era `.maybeSingle()`, giustificato così: «l'indice `unique (lower(email))
+  // where stato in (…)` garantisce al massimo una riga, quindi `.maybeSingle()` è
+  // esatto e non un'approssimazione». La frase è vera sul database di produzione e
+  // FALSA proprio dove questa rotta si sforza di funzionare: su un database indietro
+  // con le migrazioni — che è il senso del ramo di degrado dell'INSERT, sessanta
+  // righe più in basso — l'indice può non esistere. Là due righe vive con la stessa
+  // email fanno rispondere `PGRST116` («multiple rows returned»), il ramo d'errore
+  // torna `false`, e chi rimanda in buona fede il PROPRIO modulo prende un 400 sul
+  // campo del documento: cioè esattamente il difetto che questa funzione esiste per
+  // chiudere, riaperto in un caso più stretto. Non era un buco di sicurezza (il verso
+  // dell'errore è quello giusto), ma era una difesa appoggiata a un presupposto che
+  // il resto del file dichiara di non poter dare per buono.
+  //
+  // Col tetto la funzione non dipende più dall'indice: legge fino a
+  // `MAX_PRATICHE_VIVE_LETTE` righe e guarda le facce di tutte. E la sicurezza
+  // dell'eccezione non si allarga di un millimetro — se le righe vive fossero
+  // davvero due, l'INSERT NON collide, quindi il `23505` non arriva e la riga nuova
+  // nasce: quel caso è già nominato e loggato `error` al punto 10-ter
+  // (`documento-condiviso-con-altra-pratica`), che è il presidio giusto per lui.
+  //
+  // ⚠️ IL RAMO `23505` CONTINUA A USARE `.maybeSingle()`, ed è corretto: là il
+  // `23505` è appena arrivato, cioè l'indice esiste per dimostrazione.
+  //
   // PostgREST NON lancia: ritorna `{ data, error }`, e un `try/catch` attorno non
   // scatterebbe mai (AGENTS §7).
   const { data, error } = await supabase
     .from('pratiche_personale')
-    .select('id')
+    .select(SELECT_PRATICA_VIVA)
     .eq('email', email)
-    .eq('documento_path', percorso)
     .in('stato', STATI_VIVI)
-    .maybeSingle()
+    .limit(MAX_PRATICHE_VIVE_LETTE)
 
   if (error) {
     // Nel log l'esito e il codice, MAI il percorso e MAI l'email. `warn` e non
@@ -614,7 +767,7 @@ async function documentoDiUnaPraticaViva(
     // cerca una ragione per AMMETTERE, e non trovarla lascia le cose come stavano.
     // ⚠️ Il grido, se il database è messo male, l'ha già emesso il reclamo: da quando
     // il registro assente non ammette più (12/08/2026) si arriva qui anche in quello
-    // stato, e lì `caricamentoReclamabile` ha già scritto un `error` che nomina la
+    // stato, e lì `caricamentiReclamabili` ha già scritto un `error` che nomina la
     // migrazione mancante. Due `error` per lo stesso guasto sarebbero rumore.
     logEvento('personale', 'warn', {
       operazione: OPERAZIONE,
@@ -625,7 +778,19 @@ async function documentoDiUnaPraticaViva(
     return false
   }
 
-  return data !== null
+  const vive = (data ?? []) as unknown as Record<string, unknown>[]
+  if (vive.length === 0) return false
+
+  // Le facce che le pratiche vive NOMINANO già. `testo()` e non il valore grezzo: una
+  // colonna vuota o assente non deve diventare una chiave dell'insieme, altrimenti una
+  // faccia arrivata vuota combacerebbe con una colonna vuota e l'eccezione si
+  // concederebbe da sola.
+  const sue = new Set(
+    vive
+      .flatMap((viva) => COLONNE_DOCUMENTO.map((colonna) => testo(viva[colonna])))
+      .filter((percorso): percorso is string => percorso !== null),
+  )
+  return percorsi.some((percorso) => sue.has(percorso))
 }
 
 /**
@@ -689,11 +854,20 @@ const MESSAGGIO_CF: Record<MotivoCfNonValido, string> = {
  *
  * ── DUE RIMEDI, E SERVONO ENTRAMBI ─────────────────────────────────────────
  *
- * Questo è il primo: il limite della tabella rispecchiato nella rotta, esattamente
- * come già si fa per il tetto di 200 caratteri di `documento_path` — «perché il
- * rifiuto arrivi sotto il campo invece che come un 500 del database». Il secondo è
+ * Questo è il primo: il limite della tabella rispecchiato nella rotta, perché il
+ * rifiuto arrivi sotto il campo invece che come un 500 del database. Il secondo è
  * `erroreSenzaLaRiga`: chiude la CLASSE invece del caso, per i CHECK che un domani
  * nessuno rispecchierà.
+ *
+ * ⚠️ QUI C'ERA UN PRECEDENTE CITATO CHE NON ESISTE PIÙ, ed è il motivo per cui la
+ * frase è stata riscritta: diceva «esattamente come già si fa per il tetto di 200
+ * caratteri di `documento_path`». Quel controllo è stato CANCELLATO lo stesso giorno,
+ * nello stesso lavoro (`percorso-documento.ts`, `DOC_MAX_LUNGHEZZA`: «NON È PIÙ UN
+ * CONTROLLO DI `percorsoDocumentoAmmesso` … una mutazione ha dimostrato che era codice
+ * morto»). Citare come precedente un presidio che si è appena tolto è il modo in cui
+ * un commento comincia a raccontare un prodotto diverso da quello che c'è —
+ * `DOC_MAX_LUNGHEZZA` oggi agisce negli schemi `zod` di `?doc=` delle due rotte admin,
+ * che è un'altra porta e un altro meccanismo.
  *
  * ── DOVE ANDREBBE LA VERSIONE GENERALE (segnalato, non fatto) ──────────────
  *
@@ -957,19 +1131,57 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
       )
     }
 
-    // ── 7. IL PERCORSO DELLA SCANSIONE ──────────────────────────────────────
+    // ── 7. I PERCORSI DELLE SCANSIONI — UNO PER FACCIA ──────────────────────
     //
     // Il gate sta QUI e non in `costruisciRiga`, perché è un rifiuto che deve arrivare
     // a chi compila SOTTO IL CAMPO, come gli altri, e non una riga scartata in
     // silenzio. La ragione per esteso è nella testata di `percorsoDocumentoAmmesso`.
     //
+    // ⚠️ I CAMPI SI LEGGONO DA `COLONNE_DOCUMENTO`, NON PER NOME. Si chiama «colonne»
+    // perché è di là che serve — nei gate che interrogano il database — ed è lo stesso
+    // elenco: in questo repo `PERSONALE_FIELDS[].id` È il nome della colonna, e la
+    // migrazione `20260812194501` lo dichiara come la ragione per cui ha rinominato
+    // invece di affiancare. Qui quegli id sono le chiavi del payload.
+    //
+    // È la correzione di un difetto vero: dal 12/08/2026 il documento è due facce, il
+    // campo del template non si chiama più `documento_path`, e questa riga leggeva
+    // ancora quel nome.
+    // `testo(normalizzati.documento_path)` restituiva `null` a ogni richiesta, quindi
+    // la condizione qui sotto era sempre falsa: il gate ESISTEVA e non girava mai.
+    // Misurato forzando la funzione a `return true` — porta spalancata a
+    // `documenti/../../etc/passwd` — e ottenendo dai test del chiamante gli stessi
+    // identici numeri del codice buono. Un elenco derivato dal template non può
+    // ripetere quell'errore: il rinomino lo segue da solo.
+    //
     // ⚠️ NEL LOG NON VA IL PERCORSO: è la chiave che apre il documento d'identità di
-    // una persona. Si registra che è stato respinto, non che cosa era.
-    const documentoPath = testo(normalizzati.documento_path)
-    if (documentoPath !== null && !percorsoDocumentoAmmesso(documentoPath)) {
+    // una persona. Si registra che è stato respinto, non che cosa era — e nemmeno
+    // QUALE faccia, che sarebbe già un frammento in più su un tentativo.
+    const percorsiDocumento = COLONNE_DOCUMENTO.map((campo) => testo(normalizzati[campo])).filter(
+      (percorso): percorso is string => percorso !== null,
+    )
+    for (const percorso of percorsiDocumento) {
+      if (!percorsoDocumentoAmmesso(percorso)) {
+        logEvento('personale', 'warn', {
+          operazione: OPERAZIONE,
+          esito: 'documento-path-non-ammesso',
+        })
+        return rispostaDocumentoNonValido()
+      }
+    }
+
+    // LE DUE FACCE NON POSSONO ESSERE LO STESSO OGGETTO.
+    //
+    // La migrazione `20260812194501` lo dichiara come un fatto — «I due percorsi non
+    // possono essere uguali — lo impone la route, non il database, perché il confronto
+    // serve PRIMA di scrivere» — e questa è la riga che lo impone. Senza, il modo più
+    // facile di «finire» il modulo sarebbe allegare due volte la stessa foto: la
+    // Segreteria si ritroverebbe una pratica completa con il retro mancante e nessuna
+    // riga che lo dica. Il database non può accorgersene (nessun vincolo lega due
+    // colonne di una riga sola) e il client non basta: qui si entra anche senza di lui.
+    if (new Set(percorsiDocumento).size !== percorsiDocumento.length) {
       logEvento('personale', 'warn', {
         operazione: OPERAZIONE,
-        esito: 'documento-path-non-ammesso',
+        esito: 'documento-facce-uguali',
       })
       return rispostaDocumentoNonValido()
     }
@@ -1023,18 +1235,29 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
       )
     }
 
-    // ── 9-bis. IL PERCORSO ESISTE, ED È ANCORA DI NESSUNO ───────────────────
+    // ── 9-bis. I PERCORSI ESISTONO, E SONO ANCORA DI NESSUNO ────────────────
     //
-    // Una lettura sola, l'ultima prima di scrivere, che risponde a due domande che il
-    // gate di FORMA (punto 7) non può porsi: l'oggetto è passato davvero dalla nostra
-    // porta di caricamento, e nessun'altra pratica lo nomina già.
+    // Una lettura sola PER TUTTE LE FACCE, l'ultima prima di scrivere, che risponde a
+    // due domande che il gate di FORMA (punto 7) non può porsi: gli oggetti sono
+    // passati davvero dalla nostra porta di caricamento, e nessun'altra pratica li
+    // nomina già.
+    //
+    // ⚠️ UNA CHIAMATA SOLA, E IL PLURALE NON È UNO STILE. Con una lettura per faccia,
+    // fra la prima e la seconda si apre una finestra in cui l'altra può essere reclamata
+    // da qualcun altro; e soprattutto **non esiste la pratica MEZZA documentata**: se
+    // anche una sola faccia non è reclamabile, la pratica si respinge tutta. Metterla in
+    // tabella con una faccia sola significherebbe una scheda che la Segreteria apre e
+    // trova incompleta senza sapere perché — e con l'altra scansione nel bucket senza
+    // nessuna riga che la nomini, cioè spazzata entro 24 ore.
     //
     // La seconda è l'invariante che la migrazione `20260811205643` dichiara come un
     // fatto — «Un oggetto, un proprietario: è ciò che impedisce alla retention della
     // pratica di cancellare il file che l'anagrafica sta ancora usando» — e che fino
-    // all'11/08/2026 nessuno imponeva: su `documento_path` non c'è nessun vincolo di
-    // unicità, e due righe con lo stesso percorso significano che la conservazione
-    // della prima cancella il documento che la seconda sta ancora usando.
+    // all'11/08/2026 nessuno imponeva: sulle colonne del documento non c'è nessun
+    // vincolo di unicità — non ce l'aveva `documento_path` e non ce l'hanno le due
+    // colonne che l'hanno sostituita — e due righe con lo stesso percorso significano
+    // che la conservazione della prima cancella il documento che la seconda sta ancora
+    // usando.
     //
     // ⚠️ STA DOPO IL GATE DI FORMA E DOPO LA SEDE, non prima: quelle due difese non
     // costano niente e respingono il grosso senza toccare il database. E sta PRIMA
@@ -1058,24 +1281,24 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
     // risponde 500. Accettare sulla sola forma non proteggeva nessuno e ammetteva un
     // percorso INVENTATO — la forma sta scritta in un repository pubblico — cioè una
     // pratica «completa» che punta a un oggetto inesistente. La ragione per esteso, e
-    // le due misure, stanno nella testata di `caricamentoReclamabile`.
+    // le due misure, stanno nella testata di `caricamentiReclamabili`.
     //
     // ⚠️ E HA UN'ECCEZIONE SOLA, che non è una comodità ma la riparazione di un
-    // difetto misurato: il percorso può essere già di una pratica VIVA DI QUESTA
+    // difetto misurato: uno dei percorsi può essere già di una pratica VIVA DI QUESTA
     // STESSA PERSONA, cioè può essere il secondo invio dello stesso modulo. Senza
     // l'eccezione quel caso usciva con un 400 sul campo del documento — l'unico campo
     // che non aveva niente di sbagliato — mentre la pratica era stata ricevuta, e il
     // ramo `23505` (che risponde 201 e avvisa la Segreteria) non veniva mai raggiunto.
     // La ragione per esteso, e il residuo che l'eccezione lascia leggibile, stanno
-    // nella testata di `documentoDiUnaPraticaViva`.
-    let caricamentoDaCollegare: string | null = null
+    // nella testata di `documentiDiUnaPraticaViva`.
+    let caricamentiDaCollegare: string[] = []
     let riusaIlProprioDocumento = false
-    if (documentoPath !== null) {
-      const reclamo = await caricamentoReclamabile(supabase, documentoPath, OPERAZIONE)
+    if (percorsiDocumento.length > 0) {
+      const reclamo = await caricamentiReclamabili(supabase, percorsiDocumento, OPERAZIONE)
       if (!reclamo.ammesso) {
-        riusaIlProprioDocumento = await documentoDiUnaPraticaViva(
+        riusaIlProprioDocumento = await documentiDiUnaPraticaViva(
           supabase,
-          documentoPath,
+          percorsiDocumento,
           emailNormalizzata,
           scuolaId,
         )
@@ -1096,6 +1319,12 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
             esito: 'documento-path-non-reclamabile',
             scuola_id: scuolaId,
             registro_assente: reclamo.assente,
+            // QUANTE facce sono cadute, mai QUALI e mai i loro percorsi: è un numero,
+            // quindi passa `redact()` per tipo, e distingue in `app_log` «una faccia
+            // inventata su due» da «tutte». Nella RISPOSTA quella distinzione non esce
+            // — sarebbe l'oracolo che `rispostaDocumentoNonValido` esiste per togliere —
+            // ma chi indaga alle tre di notte non è chi sta tentando.
+            n_mancanti: reclamo.mancanti.length,
           })
           return rispostaDocumentoNonValido()
         }
@@ -1126,10 +1355,14 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
         // `ammesso: false` — quindi l'unico modo di tentare un collegamento «al buio» è
         // un guasto TRANSITORIO della lettura, che è esattamente il caso in cui il
         // collegamento va tentato: la scrittura può riuscire dove la lettura ha fallito.
-        // Il log di `collegaCaricamento` porta l'`entita_id` che quello del reclamo non
+        // Il log di `collegaCaricamenti` porta l'`entita_id` che quello del reclamo non
         // ha — cioè non è la ripetizione dello stesso fatto, è il fatto detto per la
         // prima volta con dentro la pratica a cui si riferisce.
-        caricamentoDaCollegare = documentoPath
+        //
+        // ⚠️ TUTTE LE FACCE, non la prima: `reclamo.ammesso` è vero solo quando lo sono
+        // tutte, e lasciarne indietro una vorrebbe dire consegnarla alla spazzata entro
+        // 24 ore mentre la pratica la nomina ancora.
+        caricamentiDaCollegare = percorsiDocumento
       }
     }
 
@@ -1152,22 +1385,91 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
       .select('id')
       .single()
 
-    // ── COLONNA ASSENTE (`PGRST204`/`42703`) ────────────────────────────────
+    // ── COLONNE ASSENTI (`PGRST204`/`42703`) — UN CICLO, NON UN SOLO RITENTATIVO ──
     //
     // Il DB E2E della CI non è migrato: qui il degrado dev'essere DICHIARATO. Si
     // ritenta senza la colonna caduta — un'anagrafica persa perché manca una colonna
     // sarebbe peggio — ma NON in silenzio, e il `warn` la NOMINA: «si è degradato»
     // senza dire *cosa* è caduto è un log che non serve a nessuno il giorno in cui a
     // cadere è la prova del consenso.
-    if (error && ['PGRST204', '42703'].includes(codiceDi(error))) {
+    //
+    // ── ⛔ E IL DOCUMENTO NON SI DEGRADA MAI ──────────────────────────────────
+    //
+    // La prima guardia del ciclo non è il tetto: è `COLONNE_INDEGRADABILI`. Se a
+    // mancare è una faccia del documento, qui NON si toglie e NON si ritenta — si
+    // risponde **503 `PRATICHE_NON_DISPONIBILI`**, che è il 503 che la migrazione
+    // `20260812194501` prescrive per esteso («rumoroso e reversibile») e lo stesso
+    // che questa rotta già dà quando la tabella manca del tutto. Il perché sta nel
+    // riquadro di `COLONNE_FACOLTATIVE`; la conseguenza pratica è che nessuna riga
+    // nasce, quindi gli oggetti già caricati restano senza proprietario e la spazzata
+    // li toglie entro 24 ore, invece di restare per sempre in un bucket senza che
+    // nessuna riga li nomini.
+    //
+    // ── ⚠️ PERCHÉ UN CICLO, E COS'È SUCCESSO CON UN `if` SOLO ─────────────────
+    //
+    // Questo blocco toglieva UNA colonna e ritentava UNA volta. Con due colonne nuove
+    // il secondo `PGRST204` sopravviveva al ramo e cadeva nel generico: **500** su una
+    // rotta che dichiara di degradare. Il ciclo serve ancora — le colonne facoltative
+    // possono tornare a essere più d'una — ma il caso che l'aveva motivato (le due
+    // facce assenti sul DB della CI) adesso NON passa di qui: esce dal 503.
+    //
+    // Il tetto è il numero di colonne che su un database indietro possono
+    // legittimamente mancare — non un `while (true)`: un ciclo senza tetto, davanti a un
+    // database che risponde `PGRST204` per una ragione che non sappiamo leggere,
+    // martellerebbe la tabella una volta per colonna della riga. Il tetto si valuta
+    // DOPO la guardia sul documento, perché un tetto esaurito non deve poter
+    // trasformare una faccia mancante in un 500 muto che non nomina la migrazione.
+    //
+    // Si esce anche quando la colonna da togliere non c'è più nella riga ridotta: senza
+    // quella guardia, un messaggio irriconoscibile due volte di fila farebbe ripartire
+    // lo STESSO INSERT identico, cioè lo stesso errore, fino al tetto.
+    let ridotta = riga
+    let giro = 0
+    while (error && CODICI_COLONNA_ASSENTE.includes(codiceDi(error))) {
+      // L'elenco su cui si riconosce il nome è quello della riga RIDOTTA, non della
+      // riga di partenza: una colonna già caduta non deve poter essere nominata due
+      // volte da un messaggio che si ripete.
       const colonna =
-        colonnaMancante((error as { message?: string }).message, Object.keys(riga)) ?? 'consents_log'
+        colonnaMancante((error as { message?: string }).message, Object.keys(ridotta)) ??
+        'consents_log'
+
+      if (COLONNE_INDEGRADABILI.includes(colonna)) {
+        // `error` e non `warn`: è una configurazione mancante in produzione, cioè un
+        // incidente (AGENTS §4), ed è l'unica riga che dice PERCHÉ un modulo pubblico
+        // ha smesso di ricevere. Il nome della colonna e quello della migrazione
+        // bastano a ripararlo; il percorso della scansione non c'è, come ovunque qui.
+        logEvento('personale', 'error', {
+          operazione: OPERAZIONE,
+          esito: `colonna-documento-assente-${colonna}`,
+          error_code: codiceDi(error),
+          scuola_id: scuolaId,
+          msg:
+            `${OPERAZIONE}: il database non ha la colonna «${colonna}». La pratica NON è ` +
+            `stata scritta di proposito: inserirla senza quella colonna perderebbe la ` +
+            `scansione del documento d'identità in silenzio. Applicare la migrazione ` +
+            `20260812194501 (documento_fronte_retro) su questo database.`,
+        })
+        return NextResponse.json(
+          {
+            error: 'In questo momento non possiamo registrare i dati del personale.',
+            codice: 'PRATICHE_NON_DISPONIBILI',
+          },
+          { status: 503 },
+        )
+      }
+
+      if (giro >= COLONNE_FACOLTATIVE.length) break
+      if (!(colonna in ridotta)) break
+      giro++
+      // UNA RIGA DI LOG PER COLONNA CADUTA, col suo nome: due degradi in silenzio sono
+      // indistinguibili da uno, e il giorno in cui a cadere è la prova del consenso
+      // nessuno saprebbe che è successo due volte.
       logEvento('personale', 'warn', {
         operazione: OPERAZIONE,
         esito: `colonna-assente-${colonna}`,
         error_code: codiceDi(error),
       })
-      const ridotta = { ...riga }
+      ridotta = { ...ridotta }
       delete ridotta[colonna]
       const ritento = await supabase
         .from('pratiche_personale')
@@ -1358,13 +1660,19 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
       })
     }
 
-    // ── 10-bis. L'OGGETTO ADESSO HA UN PROPRIETARIO ─────────────────────────
+    // ── 10-bis. GLI OGGETTI ADESSO HANNO UN PROPRIETARIO ────────────────────
     //
-    // Da qui in poi quel percorso non è più reclamabile da nessun'altra pratica, e la
-    // spazzata degli orfani smette di vederlo — che è l'esito voluto: adesso c'è una
-    // riga che lo nomina, e la conservazione di QUELLA riga decide quando il file
-    // esce (90 giorni se la pratica non viene approvata, 12 mesi dalla cessazione se
+    // Da qui in poi quei percorsi non sono più reclamabili da nessun'altra pratica, e
+    // la spazzata degli orfani smette di vederli — che è l'esito voluto: adesso c'è una
+    // riga che li nomina, e la conservazione di QUELLA riga decide quando i file
+    // escono (90 giorni se la pratica non viene approvata, 12 mesi dalla cessazione se
     // diventa anagrafica).
+    //
+    // ⚠️ UNA CHIAMATA SOLA PER TUTTE LE FACCE, e non una per faccia: con due `update`
+    // il fronte può collegarsi e il retro no, e restano due righe di log scoordinate
+    // che nessuno sa ricomporre — mentre la spazzata toglie il retro entro 24 ore
+    // mentre la pratica lo nomina ancora. `collegaCaricamenti` fa un `update` solo e,
+    // quando il conto non torna, emette UNA riga con `n_attesi` e `n_collegati`.
     //
     // Si collega DOPO che la riga esiste, e non prima, perché il collegamento vuole
     // l'uuid della pratica. La conseguenza è dichiarata: fra il reclamo e questo
@@ -1376,11 +1684,11 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
     // risponde 201 come il primo, vedi sotto).
     //
     // ⚠️ Il ramo `23505` NON arriva qui, e non è una dimenticanza: là nessuna riga
-    // nuova è stata scritta, quindi non c'è nessun proprietario da registrare. Il
-    // percorso di quel secondo invio resta in sospeso e la spazzata lo toglie, che è
-    // giusto — è un oggetto che nessuna pratica nominerà mai.
-    if (caricamentoDaCollegare !== null && entitaId !== null) {
-      await collegaCaricamento(supabase, caricamentoDaCollegare, entitaId, OPERAZIONE)
+    // nuova è stata scritta, quindi non c'è nessun proprietario da registrare. I
+    // percorsi di quel secondo invio restano in sospeso e la spazzata li toglie, che è
+    // giusto — sono oggetti che nessuna pratica nominerà mai.
+    if (caricamentiDaCollegare.length > 0 && entitaId !== null) {
+      await collegaCaricamenti(supabase, caricamentiDaCollegare, entitaId, OPERAZIONE)
     }
 
     // ── 11. LA SEGRETERIA VA AVVISATA (best-effort) ─────────────────────────

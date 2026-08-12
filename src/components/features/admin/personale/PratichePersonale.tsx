@@ -107,7 +107,16 @@ interface Pratica extends RigaElenco {
   telefono?: string | null
   document_type?: string | null
   document_number?: string | null
-  documento_path?: string | null
+  /**
+   * LE DUE FACCE DEL DOCUMENTO, e sono due campi perché hanno due destini.
+   *
+   * Fino al 12/08/2026 era `documento_path`, una scansione sola. All'approvazione ogni
+   * faccia può passare al fascicolo per conto suo (il travaso degrada una colonna alla
+   * volta), quindi una pratica può restare con il retro e senza il fronte: due chiavi
+   * separate sono l'unico modo di disegnare quello stato senza mentire.
+   */
+  documento_fronte_path?: string | null
+  documento_retro_path?: string | null
   titolo_studio?: string | null
   titolo_dettaglio?: string | null
   gradi?: unknown
@@ -891,29 +900,46 @@ export function PratichePersonale() {
       setEsito(esitoDaRisposta(azione, statoNuovo, json))
       setAvvisi(avvisiDaRisposta(json))
       /**
-       * NON SOLO LO STATO: LA SCANSIONE HA CAMBIATO PROPRIETARIO.
+       * NON SOLO LO STATO: LE SCANSIONI HANNO CAMBIATO PROPRIETARIO.
        *
-       * All'approvazione la pratica RILASCIA `documento_path` (un oggetto, un
-       * proprietario: da lì in poi la scansione è del fascicolo). Tenendo qui il
-       * percorso vecchio, il pannello continuava a offrire «Apri la scansione» invece
-       * della frase «è passata al fascicolo» — che pure esiste, ed è scritta apposta
-       * per questo caso. Il pulsante risponde 403: chi ha appena approvato e vuole
-       * ricontrollare il documento riceve un diniego di SEDE su una pratica sua, che
-       * sembra un problema di permessi che non c'è. E ogni clic scrive un
+       * All'approvazione la pratica RILASCIA i percorsi delle due facce (un oggetto, un
+       * proprietario: da lì in poi la scansione è del fascicolo). Tenendo qui i percorsi
+       * vecchi, il pannello continuava a offrire il pulsante che apre quella faccia
+       * invece della frase «è passata al fascicolo» — che pure esiste, ed è scritta
+       * apposta per questo caso. Il pulsante risponde 403: chi ha appena approvato e
+       * vuole ricontrollare il documento riceve un diniego di SEDE su una pratica sua,
+       * che sembra un problema di permessi che non c'è. E ogni clic scrive un
        * `documento-non-risolto` in `multi_sede`: il registro di sorveglianza degli
        * accessi alle scansioni dei documenti d'identità si riempie di falsi positivi
        * generati dal percorso normale — l'allarme che si impara a ignorare.
        *
-       * La sorgente è il SERVER (`documentoRilasciato`), non l'inferenza: nel degrado
-       * su colonna assente la pratica il percorso se lo tiene, e lì il pulsante
-       * funziona ancora. Solo un `false` esplicito lo conserva: una route più vecchia
-       * della pagina non manda la chiave, e il caso normale resta il rilascio.
+       * ⚠️ UNA FACCIA ALLA VOLTA, perché il server risponde una faccia alla volta: nel
+       * degrado su colonna assente il fronte può passare e il retro no, e un unico
+       * booleano nasconderebbe anche il pulsante del retro — cioè l'unica strada
+       * rimasta verso l'unica copia raggiungibile di quel file.
+       *
+       * ⚠️ `!== false` E NON `=== true`, per ciascun lato, ed è la stessa difesa di
+       * prima: una route più VECCHIA di questa pagina non manda `documentiRilasciati`,
+       * e `undefined` non è `false`. Solo un rifiuto ESPLICITO del server conserva il
+       * percorso; il caso normale resta il rilascio. Al contrario, `=== true` farebbe
+       * sopravvivere il pulsante a ogni risposta che non conosce la chiave — cioè
+       * proprio durante un rilascio, quando una pagina in cache parla con la route
+       * nuova o viceversa.
        */
-      const documentoRilasciato =
-        azione === 'approva' && statoNuovo === 'approvata' && json?.documentoRilasciato !== false
+      const rilasciati = (json ?? {}) as { documentiRilasciati?: { fronte?: unknown; retro?: unknown } }
+      const approvazioneRiuscita = azione === 'approva' && statoNuovo === 'approvata'
+      const fronteRilasciato = approvazioneRiuscita && rilasciati.documentiRilasciati?.fronte !== false
+      const retroRilasciato = approvazioneRiuscita && rilasciati.documentiRilasciati?.retro !== false
       if (statoNuovo) {
         setSelezionata((s) =>
-          s ? { ...s, stato: statoNuovo, ...(documentoRilasciato ? { documento_path: null } : {}) } : s,
+          s
+            ? {
+                ...s,
+                stato: statoNuovo,
+                ...(fronteRilasciato ? { documento_fronte_path: null } : {}),
+                ...(retroRilasciato ? { documento_retro_path: null } : {}),
+              }
+            : s,
         )
       }
       await carica(reFetchKey)
@@ -1709,17 +1735,40 @@ function PannelloPratica({
           <ScadenzaDocumento scadenza={pratica.document_expiry} oggi={oggi} />
         </div>
         <div className="mt-3">
-          {pratica.documento_path ? (
-            <button
-              type="button"
-              onClick={() => onApriDocumento(pratica.documento_path)}
-              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-pill border border-kidville-green px-3.5 py-1.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
-            >
-              <FileText size={14} /> {t('pratApriDocumento')} <ExternalLink size={12} />
-            </button>
+          {/*
+            UN PULSANTE PER FACCIA, e ognuno compare solo se la SUA faccia è ancora
+            della pratica. Non è simmetria estetica: dopo un'approvazione degradata il
+            fronte può essere passato al fascicolo e il retro no, e un pulsante solo —
+            o due legati allo stesso percorso — aprirebbe la faccia sbagliata o
+            risponderebbe 403 su un percorso che questa pratica non nomina più.
+
+            Vale anche per le pratiche arrivate PRIMA del 12/08/2026, che hanno il solo
+            fronte: lì compare un pulsante solo, ed è esattamente ciò che c'è.
+          */}
+          {pratica.documento_fronte_path || pratica.documento_retro_path ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {pratica.documento_fronte_path && (
+                <button
+                  type="button"
+                  onClick={() => onApriDocumento(pratica.documento_fronte_path)}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-pill border border-kidville-green px-3.5 py-1.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
+                >
+                  <FileText size={14} /> {t('pratApriFronte')} <ExternalLink size={12} />
+                </button>
+              )}
+              {pratica.documento_retro_path && (
+                <button
+                  type="button"
+                  onClick={() => onApriDocumento(pratica.documento_retro_path)}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-pill border border-kidville-green px-3.5 py-1.5 font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft"
+                >
+                  <FileText size={14} /> {t('pratApriRetro')} <ExternalLink size={12} />
+                </button>
+              )}
+            </div>
           ) : pratica.stato === 'approvata' ? (
-            // La scansione NON è sparita: è passata al fascicolo, che ne è l'unico
-            // proprietario. Dirlo evita che qualcuno la cerchi come se fosse persa.
+            // Le scansioni NON sono sparite: sono passate al fascicolo, che ne è l'unico
+            // proprietario. Dirlo evita che qualcuno le cerchi come se fossero perse.
             <p className="font-maven text-sm text-kidville-sub">{t('pratDocumentoAlFascicolo')}</p>
           ) : (
             <p className="font-maven text-sm text-kidville-sub">{t('pratNessunDocumento')}</p>

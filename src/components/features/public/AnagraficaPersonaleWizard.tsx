@@ -968,12 +968,23 @@ export function AnagraficaPersonaleWizard({
    * vale `CI` in react-hook-form, e chi rilegge deve trovarci «Carta d'identità»,
    * cioè la stessa stringa che ha scelto.
    *
-   * ⚠️ Il ramo `file` NON mostra il percorso. Il valore di `documento_path` è la
-   * chiave con cui si firma un oggetto del bucket privato del personale, e i
-   * segmenti sono due uuid: a chi rilegge non dice niente, e metterlo a schermo
-   * significa metterlo in una schermata da fotografare, da leggere ad alta voce e
-   * — con un pizzico di sfortuna — in una segnalazione di guasto. Il riepilogo
-   * dice ciò che serve controllare: che la scansione c'è.
+   * ⚠️ Il ramo `file` NON mostra il percorso. Il valore di `documento_fronte_path`
+   * e di `documento_retro_path` è la chiave con cui si firma un oggetto del bucket
+   * privato del personale, e i segmenti sono due uuid: a chi rilegge non dice
+   * niente, e metterlo a schermo significa metterlo in una schermata da
+   * fotografare, da leggere ad alta voce e — con un pizzico di sfortuna — in una
+   * segnalazione di guasto. Il riepilogo dice ciò che serve controllare: che le
+   * DUE scansioni ci sono, una riga per faccia.
+   *
+   * ⚠️ I NOMI QUI SOPRA SONO STATI CORRETTI IL 12/08/2026, e la riga vale più della
+   * correzione: diceva «il valore di `documento_path`», cioè nominava una colonna
+   * che la migrazione `20260812194501` aveva già rinominato. Misurato sul database
+   * di produzione, non ricordato:
+   *     select table_name, column_name from information_schema.columns
+   *      where column_name like 'documento%';
+   *   → `documento_fronte_path` e `documento_retro_path` su `pratiche_personale` e
+   *     `anagrafica_personale`; `documento_path` sopravvive solo su `alunni` e
+   *     `parents`, che sono altre due tabelle e un altro documento.
    *
    * ⚠️ E le DATE si rileggono in `gg/mm/aaaa`, non in ISO. In react-hook-form
    * `birth_date` e `document_expiry` valgono `1985-06-12` e `2029-05-20`: senza
@@ -1254,7 +1265,12 @@ export function AnagraficaPersonaleWizard({
                 60 e ne rendeva 87 (`ch` è la larghezza dello ZERO). Provati
                 sulla stessa pagina: 384 px → 70 · 400 → 70 · **416 → 75** ·
                 432 → 78. 26rem = 416 px = 75 caratteri per riga, il limite
-                dichiarato. */}
+                dichiarato.
+                ⚠️ La misura qui sopra è di QUEL testo, lungo 122 caratteri. Dal
+                12/08/2026 la riga ne dichiara 139 — nomina due foto, fronte e
+                retro — e la misura non è stata rifatta: non serve, perché più
+                lungo può solo peggiorare ciò che il tetto ripara. Se un giorno
+                il tetto si toglie, si rimisura prima. */}
             <p className="max-w-[26rem] text-xs font-semibold leading-relaxed text-kidville-info-strong">
               {t('persDocumentoAPortata')}
             </p>

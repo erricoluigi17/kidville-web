@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import {
   X, Pencil, Check, KeyRound, Loader2, ShieldCheck, AlertTriangle, Clock,
   FileQuestion, FileText, ExternalLink, Copy, CheckCircle2, Mail, IdCard,
-  ClipboardList, UserCog, Plus,
+  ClipboardList, UserCog, Plus, Upload, RefreshCw,
 } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -13,7 +13,9 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { dataCivile } from '@/i18n/config';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Tabs } from '@/components/ui/cockpit';
-import { PERSONALE_FIELDS } from '@/lib/forms/personale-template';
+import { PERSONALE_FIELDS, PERSONALE_LIMITI } from '@/lib/forms/personale-template';
+import { caricaFile } from '@/lib/upload/carica-file';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { giorniResidui, sogliaRaggiunta } from '@/lib/anagrafica/scadenze';
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
@@ -25,24 +27,53 @@ import { logClient } from '@/lib/logging/client';
 // riservate alla Direzione (affordance nascoste, gate applicato dal server).
 //
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  IL PERIMETRO, DICHIARATO: QUI L'ANAGRAFICA È IN SOLA LETTURA           ║
+// ║  IL PERIMETRO, DICHIARATO: I DATI ANAGRAFICI NON SI DIGITANO DA QUI      ║
+// ║  — ma la SCANSIONE del documento si carica, ed è un'altra cosa           ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 //
-// Da qui non si CORREGGE nessun dato anagrafico, e non è una funzionalità
-// rimasta indietro: è il confine del modulo. La data di nascita, il codice
-// fiscale, la residenza e il documento d'identità entrano per una strada sola —
-// la persona compila `/anagrafica-personale`, la Segreteria APPROVA la pratica —
-// e si aggiornano dalla stessa, oppure dal cruscotto delle scadenze quando è la
-// scadenza a cambiare.
+// ⚠️ FINO AL 12/08/2026 QUESTA TESTATA DICEVA «QUI L'ANAGRAFICA È IN SOLA
+// LETTURA», e da quel giorno la frase sarebbe diventata FALSA per due colonne. È
+// riscritta invece che cancellata perché l'argomento che portava resta valido:
+// cambia il suo perimetro, non la sua sostanza.
 //
-// Perché è scritto qui e non lasciato all'evidenza: venti `<input>` aggiunti a
-// questa scheda sarebbero un SECONDO modulo di raccolta, con la propria
-// validazione da tenere allineata a `PERSONALE_FIELDS`, il proprio `consents_log`
-// da non scrivere e la propria strada per infilare in `anagrafica_personale` un
-// codice fiscale che nessuno ha verificato. Il costo non si vede il giorno in cui
-// si aggiungono: si vede il primo giorno in cui le due strade divergono, ed è la
-// lezione già pagata in questo repo — «una regola valida per due strade deve
-// vivere in un posto solo».
+// ── 1. I VENTI `<input>` NON ARRIVANO, E LA RAGIONE È QUELLA DI SEMPRE ──────
+//
+// Da qui non si CORREGGE nessun dato anagrafico. La data di nascita, il codice
+// fiscale e la residenza entrano per una strada sola — la persona compila
+// `/anagrafica-personale`, la Segreteria APPROVA la pratica — e si aggiornano
+// dalla stessa, oppure dal cruscotto delle scadenze quando è la scadenza a
+// cambiare. Venti `<input>` aggiunti a questa scheda sarebbero un SECONDO modulo
+// di raccolta, con la propria validazione da tenere allineata a
+// `PERSONALE_FIELDS`, il proprio `consents_log` da non scrivere e la propria
+// strada per infilare in `anagrafica_personale` un codice fiscale che nessuno ha
+// verificato. Il costo non si vede il giorno in cui si aggiungono: si vede il
+// primo giorno in cui le due strade divergono — «una regola valida per due strade
+// deve vivere in un posto solo».
+//
+// ── 2. LA SCANSIONE NON È UN DATO DIGITATO ─────────────────────────────────
+//
+// È un FILE, e il suo percorso lo scrive il SERVER: chi carica non digita niente,
+// non dichiara niente e non sceglie dove il file finisce. Non c'è nessuna
+// validazione da duplicare (i cinque tipi ammessi vivono già in
+// `@/lib/upload/allegati-pubblici`, che è il gate del bucket) e nessun consenso da
+// registrare (quello della copia del documento è già stato dato con la pratica, e
+// qui è la Scuola che archivia un documento che le è stato consegnato). Cioè
+// esattamente nessuno dei tre costi del punto 1.
+//
+// ── 3. È LA PORTA CHE LA ROUTE GEMELLA PROMETTEVA ──────────────────────────
+//
+// `admin/anagrafica-personale/route.ts:169-178` tiene `documento_fronte_path` e
+// `documento_retro_path` FUORI dalla whitelist della PATCH, e chiude così: «la
+// scansione si sostituisce caricandone una nuova, che è un'altra porta e ha il suo
+// gate». Quella porta è `admin/anagrafica-personale/scansione:POST`, e questo tab
+// è la sua interfaccia. Il percorso continua a non arrivare mai dal client.
+//
+// ⚠️ IL CONTROLLO DI CARICAMENTO NON STA DIETRO `canEdit`. `canEdit` è
+// `admin`/`coordinator` ed è il gate del tab INCARICO (ruolo, sede, classi: le
+// decide la Direzione). La scansione la consegna chi sta al banco, cioè la
+// SEGRETERIA — è la stessa ragione scritta nella testata della route gemella, e in
+// produzione i tre account `segreteria` sono quelli che questo gesto lo faranno
+// davvero. Il server, comunque, ha il suo gate e non si fida di questa riga.
 //
 // Il tab Incarico resta modificabile: ruolo, sede e classi NON sono anagrafica —
 // vivono in `utenti` e in `class_teachers`, li decide la Direzione, e il modulo
@@ -341,12 +372,26 @@ export const RIGHE_FUSE: Record<string, string> = {
 const CAMPI_DOCUMENTO: string[] =
   GRUPPI_ANAGRAFICA_PERSONALE.find((g) => g.titolo === 'staffAnaGruppoDocumento')?.campi ?? [];
 
-/** I campi del modulo che questa scheda mostra ALTROVE, non nei gruppi. */
+/**
+ * I campi del modulo che questa scheda mostra ALTROVE, non nei gruppi.
+ *
+ * ⚠️ QUI C'ERA `documento_path`, E QUELLA COLONNA NON ESISTE PIÙ: la migrazione
+ * `20260812194501` l'ha rinominata in `documento_fronte_path` e ne ha aggiunta una
+ * seconda. Le due voci non sono un raddoppio cosmetico — ciascuna dichiara il
+ * proprio POSTO, e sono due posti diversi nella stessa schermata, perché fronte e
+ * retro si aprono e si sostituiscono uno per volta.
+ *
+ * Il lock `StaffDetailPanel-anagrafica.test.tsx` pretende che ogni campo di
+ * `PERSONALE_FIELDS` stia in esattamente un gruppo o sia dichiarato qui: finché
+ * questa mappa nominava il vecchio nome, le due colonne nuove risultavano campi
+ * «che questa scheda non mostrerebbe da nessuna parte».
+ */
 export const CAMPI_MOSTRATI_FUORI_DAI_GRUPPI: Record<string, string> = {
   nome: 'testata della scheda',
   cognome: 'testata della scheda',
   gradi: 'tab Incarico',
-  documento_path: 'tab Documento, come «Apri la scansione»',
+  documento_fronte_path: 'tab Documento, blocco «Fronte»: apri, carica, sostituisci',
+  documento_retro_path: 'tab Documento, blocco «Retro»: apri, carica, sostituisci',
 };
 
 const CAMPO_PER_ID = new Map(PERSONALE_FIELDS.map((c) => [c.id, c]));
@@ -397,6 +442,68 @@ export function statoDocumento(
   if (sogliaRaggiunta(giorni) !== null) return { stato: 'inScadenza', giorni };
   return { stato: 'inRegola', giorni };
 }
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  QUANTE FACCE CI SONO — e perché NON è un ramo di `statoDocumento`       ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * `statoDocumento` risponde a «la SCADENZA è a posto?» e lo fa con le stesse due
+ * funzioni del cron notturno: due definizioni della parola «in scadenza» — una per
+ * il badge e una per l'email — darebbero a chi guarda la scheda una risposta e a
+ * chi riceve la notifica l'altra. Quella funzione quindi **non si tocca**, e non
+ * guadagna un quinto stato.
+ *
+ * Questa risponde a un'altra domanda, che nessuno stava facendo: «l'archivio ha
+ * tutte e due le facce?». È una domanda nuova dal 12/08/2026, quando il documento
+ * ha smesso di essere una scansione sola, e il caso che conta è quello di MEZZO —
+ * una faccia sola archiviata. Fino a ieri quel caso non esisteva; da oggi è quello
+ * che la Segreteria produce più spesso, perché carica una faccia per volta.
+ *
+ * ⚠️ NON È UN ALLARME, ED È PER QUESTO CHE LA RIGA È `role="status"` E NON
+ * `role="alert"`. «Manca il retro» è un'incompletezza da chiudere, non un guasto
+ * da interrompere: `alert` è assertivo, taglia la parola a uno screen reader e in
+ * questa scheda è già speso per le cose che sono davvero rotte (la fascia rossa,
+ * l'errore di apertura). Spenderlo anche qui significa insegnare a ignorarlo.
+ *
+ * PURA e ESPORTATA: la si prova con quattro chiamate, senza montare niente.
+ */
+export type StatoScansioni = 'complete' | 'soloFronte' | 'soloRetro' | 'assenti';
+
+export function statoScansioni(fronte: string | null, retro: string | null): StatoScansioni {
+  // La stringa vuota è «non c'è», non «c'è ed è vuota»: in colonna un percorso
+  // cancellato può restare `''` (il CHECK di lunghezza lo ammette), e trattarlo
+  // come presente farebbe dire alla scheda che la faccia è archiviata mentre il
+  // pulsante «Apri» chiederebbe la firma del nulla.
+  const c = (v: string | null) => typeof v === 'string' && v.trim() !== '';
+  if (c(fronte) && c(retro)) return 'complete';
+  if (c(fronte)) return 'soloFronte';
+  if (c(retro)) return 'soloRetro';
+  return 'assenti';
+}
+
+/** Le due facce, nell'ordine in cui si consegnano. */
+const LATI = ['fronte', 'retro'] as const;
+type LatoScansione = (typeof LATI)[number];
+
+/**
+ * La colonna che tiene ogni faccia — gli stessi due nomi che la rotta di
+ * caricamento conosce, e che il template dichiara (`PERSONALE_FIELDS[].id` **è** il
+ * nome della colonna). Scritti per esteso e non pescati per indice da un array: un
+ * riordino del template non deve poter scambiare fronte e retro in silenzio.
+ */
+const COLONNA_DI: Record<LatoScansione, string> = {
+  fronte: 'documento_fronte_path',
+  retro: 'documento_retro_path',
+};
+
+/** La chiave di catalogo dello stato delle due facce. */
+const CHIAVE_STATO_SCANSIONI: Record<StatoScansioni, string> = {
+  complete: 'staffDocScansioniComplete',
+  soloFronte: 'staffDocScansioniSoloFronte',
+  soloRetro: 'staffDocScansioniSoloRetro',
+  assenti: 'staffDocScansioniAssenti',
+};
 
 const TONO_DOCUMENTO: Record<StatoDocumento, BadgeTone> = {
   cessato: 'neutral',
@@ -468,6 +575,34 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   const [copiato, setCopiato] = useState(false);
   const [docBloccato, setDocBloccato] = useState<string | null>(null);
   const [erroreDoc, setErroreDoc] = useState<string | null>(null);
+  /** La faccia il cui caricamento è in volo: al massimo una per volta. */
+  const [inVolo, setInVolo] = useState<LatoScansione | null>(null);
+  /**
+   * La faccia per cui si sta CHIEDENDO conferma alla sostituzione.
+   *
+   * ⚠️ In pagina, mai `confirm()` nativo: in questo repo è vietato e per un motivo
+   * che qui morde davvero — dentro la WebView Capacitor una finestra di sistema
+   * interrompe il gesto e su iOS può non tornare mai. E il primo caricamento NON
+   * chiede niente: non c'è nessuna copia da distruggere.
+   */
+  const [conferma, setConferma] = useState<LatoScansione | null>(null);
+  /** L'esito dell'ultimo caricamento, per faccia. */
+  const [esitoCaricamento, setEsitoCaricamento] = useState<
+    { lato: LatoScansione; testo: string; guasto: boolean } | null
+  >(null);
+  /**
+   * IL RICOVERO DEL FUOCO DELLE DUE FACCE.
+   *
+   * Un caricamento riuscito SMONTA il comando che l'ha lanciato: «Carica» — che è
+   * una `<label>` con dentro l'`<input type="file">` — diventa «Apri» +
+   * «Sostituisci». Chi ha scelto il file da tastiera si ritroverebbe il fuoco su
+   * `<body>`, cioè all'inizio della scheda (WCAG 2.4.3). È lo stesso difetto già
+   * misurato su «Riprova», trenta righe più su, e si ripara allo stesso modo: il
+   * fuoco va sul blocco della faccia, che è l'unico nodo che sopravvive a tutte le
+   * transizioni.
+   */
+  const ricoveroFaccia = useRef<Record<LatoScansione, HTMLElement | null>>({ fronte: null, retro: null });
+  const facciaDaRicoverare = useRef<LatoScansione | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -795,6 +930,104 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
     }
   };
 
+  /**
+   * ╔══════════════════════════════════════════════════════════════════════════╗
+   * ║  IL CARICAMENTO DI UNA FACCIA — e le tre cose che NON si scrivono qui    ║
+   * ╚══════════════════════════════════════════════════════════════════════════╝
+   *
+   * `caricaFile` fa il controllo di taglia PRIMA di spedire (sopra il tetto della
+   * piattaforma la richiesta non arriva mai alla nostra route: Vercel risponde 413
+   * da sé, e nessun messaggio nostro può uscire), guarda `res.ok` PRIMA di
+   * `res.json()` (il corpo di quel 413 è `text/plain`: il parse LANCIA, e chi
+   * caricava leggeva «Riprova» — l'invito a rifare l'unica cosa che non poteva
+   * funzionare) e mette un tetto di tempo sulla richiesta. Sono tre guasti già
+   * pagati in produzione, e riscriverli a mano qui significherebbe ricrearli.
+   *
+   * ⚠️ NON SI INDOVINA LO STATO DOPO. Il percorso NON torna dalla risposta — il
+   * server lo scrive da sé nella colonna, e una chiave che apre un documento
+   * d'identità non viaggia senza motivo — quindi la scheda RILEGGE il fascicolo.
+   * Scrivere in stato un valore inventato farebbe apparire «Apri la scansione» su
+   * un percorso che il client non conosce, cioè un pulsante che non può funzionare.
+   */
+  const caricaScansione = async (lato: LatoScansione, file: File) => {
+    // ── UNA RICHIESTA PER VOLTA, E LA REGOLA VIVE QUI — in un posto solo ──────
+    //
+    // ⚠️ NON SU `disabled`: disabilitare un controllo che ha il fuoco lo fa cadere su
+    // `<body>`, e colpirebbe esattamente chi ha appena scelto il file da tastiera.
+    // Che stia lavorando lo dicono il testo, la rotellina e `aria-busy`.
+    //
+    // ⚠️ E NON ANCHE SULL'`onChange` DI `BloccoFaccia`, dove fino al 13/08/2026 stava
+    // una seconda copia (`if (!file || inVolo || bloccato) return`). Era una copia in
+    // senso stretto: `inVolo` qui è lo STATO (`null | 'fronte' | 'retro'`), quindi
+    // questa riga ferma già sia il secondo gesto sulla stessa faccia sia quello
+    // sull'altra — cioè tutto ciò che il `bloccato` del figlio prometteva. Misurato, e
+    // non dedotto: togliendo la copia dal figlio la suite resta **verde su 123 test**,
+    // togliendo QUESTA riga diventano **rossi due test** in
+    // `__tests__/components/StaffDetailPanel-anagrafica.test.tsx` («una richiesta per
+    // volta»). Una difesa che nessun test può distinguere dalla propria copia è una
+    // difesa scritta due volte, non due difese: e finché erano due, il commento che
+    // le annunciava descriveva un presidio che il codice non era tenuto ad avere.
+    //
+    // Sta nel GESTORE anche perché è il punto di passaggio OBBLIGATO: un domani un
+    // trascinamento o un pulsante «riprova» chiamerebbero questa funzione, non
+    // quell'`onChange`.
+    if (inVolo) return;
+    setInVolo(lato);
+    setConferma(null);
+    setEsitoCaricamento(null);
+    try {
+      const esito = await caricaFile({
+        // Gli identificativi stanno in QUERY e non nel multipart, e non è una
+        // preferenza: con `utenteId` nel corpo il server dovrebbe bufferizzare fino
+        // a 4 MB PRIMA di poter dire «questa persona non è della tua sede». Vedi la
+        // testata di `admin/anagrafica-personale/scansione:POST`.
+        endpoint: `${API_ANAGRAFICA}/scansione?utenteId=${encodeURIComponent(staffId)}&lato=${lato}`,
+        file,
+        maxSizeMb: PERSONALE_LIMITI.maxDocMb,
+        headers: userId ? { 'x-user-id': userId } : undefined,
+      });
+      if (esito.esito === 'ok') {
+        setEsitoCaricamento({ lato, testo: t('staffDocCaricata'), guasto: false });
+        facciaDaRicoverare.current = lato;
+        // Si RILEGGE: è il fascicolo la fonte di verità, non questa funzione.
+        await caricaAnagrafica();
+        return;
+      }
+      if (esito.esito === 'troppo-grande') {
+        setEsitoCaricamento({ lato, testo: t('staffDocTroppoGrande', { mb: esito.limiteMb }), guasto: true });
+        return;
+      }
+      // Il messaggio del SERVER quando c'è — è già tradotto dal catalogo tramite il
+      // codice, e dice cose che il ripiego non può sapere («questa scansione è stata
+      // sostituita da qualcun altro»). Il ripiego non è mai la stringa vuota, che a
+      // schermo è indistinguibile dal silenzio.
+      setEsitoCaricamento({
+        lato,
+        testo: messaggioDaCorpo(
+          { error: esito.messaggioServer, codice: esito.codice },
+          t('staffDocErroreCaricamento'),
+        ),
+        guasto: true,
+      });
+      logClient({
+        livello: 'warn',
+        evento: 'react',
+        messaggio: 'anagrafica-personale-scansione-non-caricata',
+        route: ROUTE_LOG,
+        stato: esito.stato ?? undefined,
+      });
+    } finally {
+      setInVolo(null);
+    }
+  };
+
+  useEffect(() => {
+    const lato = facciaDaRicoverare.current;
+    if (!lato) return;
+    facciaDaRicoverare.current = null;
+    ricoveroFaccia.current[lato]?.focus();
+  }, [lettura]);
+
   const apriScansione = async (path: string) => {
     setDocBloccato(null);
     setErroreDoc(null);
@@ -865,7 +1098,18 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
 
   const scadenza = anagrafica ? valoreTesto(anagrafica, 'document_expiry') : null;
   const cessatoIl = anagrafica ? valoreTesto(anagrafica, 'cessato_il') : null;
-  const scansione = anagrafica ? valoreTesto(anagrafica, 'documento_path') : null;
+  // ⚠️ QUI SI LEGGEVA `documento_path`, e quella colonna non esiste più (migrazione
+  // `20260812194501`, applicata in produzione). `valoreTesto` non lancia su una
+  // chiave assente: restituisce `null` — cioè il pulsante «Apri la scansione»
+  // sarebbe sparito per TUTTI, con la frase «Nessuna scansione allegata» sotto, e
+  // nessun test poteva vederlo perché `undefined` è indistinguibile da «vuoto».
+  const percorsoDi = (lato: LatoScansione) =>
+    anagrafica ? valoreTesto(anagrafica, COLONNA_DI[lato]) : null;
+  const scansioni: Record<LatoScansione, string | null> = {
+    fronte: percorsoDi('fronte'),
+    retro: percorsoDi('retro'),
+  };
+  const statoFacce = statoScansioni(scansioni.fronte, scansioni.retro);
   const { stato: statoDoc, giorni } = statoDocumento(scadenza, cessatoIl, dataCivile());
 
   const OPZIONI_TAB = [
@@ -1112,18 +1356,42 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                       leggere il numero che sta guardando. */}
                   <GruppoDati titolo={t('staffAnaGruppoDocumento')} campi={CAMPI_DOCUMENTO} valori={valori} />
 
-                  <section className="space-y-2">
-                    {scansione ? (
-                      <button
-                        type="button"
-                        onClick={() => void apriScansione(scansione)}
-                        className={CMD_SECONDARIO}
-                      >
-                        <FileText size={15} /> {t('staffDocApriScansione')} <ExternalLink size={12} />
-                      </button>
-                    ) : (
-                      <p className="font-maven text-sm text-kidville-sub">{t('staffDocNessunaScansione')}</p>
-                    )}
+                  <div className="space-y-3">
+                    {/* LA RIGA CHE DICE QUANTE FACCE CI SONO — `role="status"` e non
+                        `alert`: «manca il retro» è un'incompletezza da chiudere, non
+                        un guasto che deve interrompere chi ascolta. Vedi
+                        `statoScansioni`. Sta SOPRA i due blocchi perché è la sintesi
+                        che risponde alla domanda con cui si apre questo tab. */}
+                    <p
+                      role="status"
+                      className={`flex items-start gap-1.5 rounded-xl px-3 py-2 font-maven text-xs ${
+                        statoFacce === 'complete'
+                          ? 'bg-kidville-success-soft text-kidville-success-strong'
+                          : 'bg-kidville-cream text-kidville-sub'
+                      }`}
+                    >
+                      {statoFacce === 'complete'
+                        ? <ShieldCheck size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+                        : <FileQuestion size={13} className="mt-0.5 shrink-0" aria-hidden="true" />}
+                      <span className={MISURA_PROSA_XS}>{t(CHIAVE_STATO_SCANSIONI[statoFacce])}</span>
+                    </p>
+
+                    {LATI.map((lato) => (
+                      <BloccoFaccia
+                        key={lato}
+                        lato={lato}
+                        percorso={scansioni[lato]}
+                        inVolo={inVolo === lato}
+                        conferma={conferma === lato}
+                        esito={esitoCaricamento?.lato === lato ? esitoCaricamento : null}
+                        ricovero={(nodo) => { ricoveroFaccia.current[lato] = nodo; }}
+                        onApri={() => { if (scansioni[lato]) void apriScansione(scansioni[lato] as string); }}
+                        onChiediConferma={() => { setEsitoCaricamento(null); setConferma(lato); }}
+                        onAnnullaConferma={() => setConferma(null)}
+                        onFile={(file) => void caricaScansione(lato, file)}
+                      />
+                    ))}
+
                     {erroreDoc && (
                       <p role="alert" className="font-maven text-xs text-kidville-error-strong">{erroreDoc}</p>
                     )}
@@ -1136,7 +1404,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                         </a>
                       </p>
                     )}
-                  </section>
+                  </div>
 
                   <section className="rounded-card border border-kidville-line bg-kidville-cream/50 p-4">
                     <h3 className="font-barlow text-sm font-extrabold uppercase tracking-[0.02em] text-kidville-green">
@@ -1395,6 +1663,183 @@ function GruppoDati({ titolo, campi, valori }: { titolo: string; campi: string[]
           );
         })}
       </dl>
+    </section>
+  );
+}
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  UNA FACCIA DEL DOCUMENTO: aprila, caricala, sostituiscila               ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Due blocchi identici — Fronte e Retro — e non uno solo con due pulsanti dentro:
+ * le due facce si aprono una per volta, si caricano una per volta e si sostituiscono
+ * una per volta, quindi ognuna ha il proprio stato e il proprio esito. Un blocco
+ * solo costringerebbe chi carica il retro a leggere un messaggio che sta accanto al
+ * fronte.
+ *
+ * ── ⚠️ TRE COSE CHE SEMBRANO DETTAGLI E NON LO SONO ────────────────────────
+ *
+ *  1. **`<input type="file">` è `sr-only`, MAI `hidden`.** Con `display:none` non è
+ *     focalizzabile, non entra nel Tab e NON ESISTE nell'albero di accessibilità: la
+ *     `<label>` che lo avvolge sembra un bottone e non lo è, e il campo diventa
+ *     irraggiungibile senza mouse. `jest-axe` non lo vede (dà 0 violazioni). È la
+ *     lezione già scritta in `carica-file.ts`, e vale identica qui.
+ *  2. **La guardia contro il doppio invio NON sta qui**, e nemmeno su `disabled`.
+ *     Vive nel gestore `caricaScansione` del componente padre, in un posto solo, ed
+ *     è lì che la sua testata la spiega. Questo blocco ne mostra soltanto lo stato:
+ *     testo, rotellina e `aria-busy` quando `inVolo`. Fino al 13/08/2026 la stessa
+ *     guardia era ricopiata anche sull'`onChange` qui sotto (`inVolo || bloccato`) —
+ *     e la copia era invisibile a ogni test, perché non c'è comportamento che la
+ *     distingua dall'originale. Restava solo un commento che prometteva un presidio
+ *     che il codice non era tenuto ad avere.
+ *
+ *     ⚠️ `e.target.value = ''` invece RESTA e non è ridondante: senza, riscegliere lo
+ *     STESSO file dopo un errore non emette nessun `change` (il valore non cambia) e
+ *     il comando sembra rotto. È misurato: toglierlo rende rosso un test.
+ *  3. **I nomi dei comandi sono DISTINTI fra le due facce.** «Apri la scansione»
+ *     ripetuto due volte è, per chi ascolta, due comandi identici che fanno cose
+ *     diverse — e la cosa diversa è aprire il documento d'identità sbagliato. Il
+ *     `<span className="sr-only">` aggiunge la faccia al nome accessibile senza
+ *     toccare l'etichetta visibile, quindi il nome CONTIENE il testo visibile
+ *     (WCAG 2.5.3, «Label in Name») invece di sostituirlo come farebbe un
+ *     `aria-label`.
+ *
+ * ── PERCHÉ «SOSTITUISCI» CHIEDE CONFERMA E «CARICA» NO ─────────────────────
+ *
+ * Perché sostituire CANCELLA irreversibilmente la copia precedente dall'archivio
+ * (lo fa il server, al passo 13 della sua sequenza), e la copia precedente è la
+ * fotografia del documento d'identità di una persona. Il primo caricamento non
+ * distrugge niente, quindi non chiede niente: una conferma chiesta anche quando non
+ * serve è il modo più efficace di far premere «sì» senza leggere.
+ *
+ * La conferma è IN PAGINA e non `confirm()`: il repo lo vieta, e qui il divieto ha
+ * un morso — dentro la WebView Capacitor una finestra di sistema interrompe il
+ * gesto, e su iOS può non tornare mai.
+ */
+function BloccoFaccia({
+  lato, percorso, inVolo, conferma, esito, ricovero,
+  onApri, onChiediConferma, onAnnullaConferma, onFile,
+}: {
+  lato: LatoScansione;
+  percorso: string | null;
+  /** Questa faccia sta caricando: serve a MOSTRARLO, non a impedire il secondo gesto. */
+  inVolo: boolean;
+  conferma: boolean;
+  esito: { testo: string; guasto: boolean } | null;
+  ricovero: (nodo: HTMLElement | null) => void;
+  onApri: () => void;
+  onChiediConferma: () => void;
+  onAnnullaConferma: () => void;
+  onFile: (file: File) => void;
+}) {
+  const t = useTranslations('adminStudents');
+  const nomeLato = t(lato === 'fronte' ? 'staffDocFronte' : 'staffDocRetro');
+  const accetta = PERSONALE_FIELDS.find((c) => c.id === COLONNA_DI[lato])?.accept ?? undefined;
+
+  /**
+   * Il campo di scelta del file, vestito da comando. `key` sul valore di `conferma`
+   * NON serve: l'input si smonta comunque quando il blocco passa da «Carica» a
+   * «Sostituisci». Il `value = ''` in coda sì — senza, ricaricare DUE VOLTE lo
+   * stesso file non emette il secondo `change` (il valore non cambia), cioè il
+   * secondo tentativo dopo un errore non partirebbe e il pulsante sembrerebbe rotto.
+   * Non è una supposizione: toglierlo rende rosso «il campo si AZZERA a ogni scelta».
+   *
+   * `if (!file) return` è l'unica guardia rimasta qui, e non è quella del doppio
+   * invio: copre il caso in cui il selettore di sistema venga chiuso senza scegliere
+   * niente. La regola «una richiesta per volta» sta in `caricaScansione` (punto 2).
+   */
+  const scegliFile = (etichetta: string, classi: string, Icona: typeof Upload) => (
+    <label className={`${classi} cursor-pointer`} aria-busy={inVolo || undefined}>
+      {inVolo ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <Icona size={15} aria-hidden="true" />}
+      {inVolo ? t('staffDocCaricamentoInCorso') : etichetta}{' '}
+      {/* ⚠️ `{' '}` E NON UNO SPAZIO NEL JSX. Fra il testo visibile e questo
+          `<span>` ci vuole un NODO DI TESTO: JSX mangia lo spazio che contiene un
+          a capo, e il calcolo del nome accessibile non ne aggiunge uno suo fra due
+          figli. MISURATO su questo pannello: senza, il nome del comando è
+          «Apri la scansioneFronte» — una parola sola, letta così ad alta voce. È
+          la stessa correzione già scritta su `GruppoDati` («CampaniaCodice»). */}
+      <span className="sr-only">{nomeLato}</span>
+      <input
+        type="file"
+        className="sr-only"
+        accept={accetta}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file) return;
+          onFile(file);
+        }}
+      />
+    </label>
+  );
+
+  return (
+    <section
+      ref={ricovero}
+      tabIndex={-1}
+      className={`rounded-card border border-kidville-line p-4 ${FUOCO_ESITO}`}
+    >
+      <h4 className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{nomeLato}</h4>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {percorso ? (
+          <>
+            <button type="button" onClick={onApri} className={CMD_SECONDARIO}>
+              <FileText size={15} aria-hidden="true" /> {t('staffDocApriScansione')}{' '}
+              <span className="sr-only">{nomeLato}</span>
+              <ExternalLink size={12} aria-hidden="true" />
+            </button>
+            {!conferma && (
+              <button type="button" onClick={onChiediConferma} className={CMD_SECONDARIO}>
+                <RefreshCw size={15} aria-hidden="true" /> {t('staffDocSostituisci')}{' '}
+                <span className="sr-only">{nomeLato}</span>
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="font-maven text-sm text-kidville-sub">{t('staffDocNessunaScansione')}</p>
+            {scegliFile(t('staffDocCarica'), CMD_PRIMARIO, Upload)}
+          </>
+        )}
+      </div>
+
+      {conferma && percorso && (
+        /* La conferma è un `group`, non un `alertdialog`: non è modale, non
+           intrappola il fuoco e non promette una gestione dell'Esc che non c'è.
+           `aria-label` le dà un nome, così chi ascolta sa di che cosa sono i due
+           comandi che ci trova dentro. */
+        <div
+          role="group"
+          aria-label={`${t('staffDocSostituisci')} ${nomeLato}`}
+          className="mt-3 rounded-xl border border-kidville-warn/40 bg-kidville-warn-soft p-3"
+        >
+          <p className={`font-maven text-xs leading-relaxed text-kidville-warn-strong ${MISURA_PROSA_XS}`}>
+            {t('staffDocConfermaSostituzione')}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {scegliFile(t('staffDocConfermaScegli'), CMD_PRIMARIO, Upload)}
+            <button type="button" onClick={onAnnullaConferma} className={CMD_SECONDARIO}>
+              {t('annulla')}{' '}
+              <span className="sr-only">{nomeLato}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {esito && (
+        /* L'ERRORE si annuncia da solo (`alert`) perché dopo un guasto il fuoco NON
+           si sposta: resta dov'era, e senza `alert` il messaggio sarebbe muto. Il
+           SUCCESSO no: lì il fuoco viene portato su questo blocco (vedi
+           `ricoveroFaccia`), che lo legge insieme al resto — un `status` in più
+           farebbe annunciare due volte lo stesso fatto. */
+        <p
+          {...(esito.guasto ? { role: 'alert' as const } : {})}
+          className={`mt-2 font-maven text-xs ${esito.guasto ? 'text-kidville-error-strong' : 'text-kidville-success-strong'}`}
+        >
+          {esito.testo}
+        </p>
+      )}
     </section>
   );
 }

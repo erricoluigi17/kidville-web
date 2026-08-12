@@ -48,6 +48,28 @@ export interface StatoFinto {
    * la lettura fallirebbe per prima e la route uscirebbe a 503 molto prima di arrivarci.
    */
   erroriAggiornamento?: Record<string, { code?: string; message: string }>
+  /**
+   * Guasto dell'`update` MIRATO SUL PATCH, non sulla tabella: scatta solo quando la
+   * scrittura porta quella coppia colonna/valore.
+   *
+   * Serve all'unico stato che nessuno degli altri due strumenti sa costruire: la
+   * pratica è stata CLAIMATA — un `update` su `pratiche_personale` che ha scritto
+   * `stato: 'in_approvazione'`, e che deve RIUSCIRE — e poi la CHIUSURA, che è un
+   * secondo `update` sulla STESSA tabella, non passa. Con `erroriAggiornamento` quel
+   * percorso non è raggiungibile: fallirebbe già il claim e la route uscirebbe a 503
+   * molto prima di arrivare al rilascio delle scansioni.
+   *
+   * ⚠️ È lo stato in cui la risposta può DICHIARARE un rilascio mai avvenuto: il
+   * fascicolo ha preso i percorsi, ma la pratica non li ha azzerati perché l'istruzione
+   * non è passata. Senza questo strumento quel ramo non è collaudabile, e infatti non
+   * lo era.
+   */
+  erroreAggiornamentoSuPatch?: {
+    table: string
+    colonna: string
+    valore: unknown
+    error: { code?: string; message: string }
+  } | null
   /** Colonne che il database (finto) dichiara assenti, per tabella. */
   colonneAssenti: Record<string, string[]>
   /** `createSignedUrl` che non riesce: il gate è già passato, il guasto è dopo. */
@@ -67,6 +89,7 @@ export function statoVuoto(): StatoFinto {
     cancellazioniAuth: [],
     erroriTabella: {},
     erroriAggiornamento: {},
+    erroreAggiornamentoSuPatch: null,
     colonneAssenti: {},
     erroreStorage: null,
     urlFirmate: [],
@@ -141,6 +164,12 @@ export function costruisciClient(state: StatoFinto) {
           // esattamente ciò che il chiamante deve poter distinguere da «riuscito».
           const guastoScrittura = state.erroriAggiornamento?.[table]
           if (guastoScrittura) return { data: [] as Riga[], error: guastoScrittura, count: null }
+          // Il guasto MIRATO: dopo il degrado sulla colonna assente, perché anche in
+          // PostgREST l'errore di schema arriva prima di qualunque vincolo sui dati.
+          const mirato = state.erroreAggiornamentoSuPatch
+          if (mirato && mirato.table === table && (patch as Riga)[mirato.colonna] === mirato.valore) {
+            return { data: [] as Riga[], error: mirato.error, count: null }
+          }
           const trovate = righeDi(table).filter(corrisponde)
           for (const r of trovate) Object.assign(r, patch)
           // I FILTRI si registrano insieme al patch: la sede nell'istruzione che

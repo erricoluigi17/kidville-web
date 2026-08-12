@@ -17,7 +17,8 @@ import type { FormField } from '@/types/database.types'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { logClient, nomeErrore } from '@/lib/logging/client'
-import { limiteUploadByte, limiteUploadMb } from '@/lib/upload/limite-piattaforma'
+import { caricaFile } from '@/lib/upload/carica-file'
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch'
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 
 // ── La forma di un campo, in pezzi separabili ────────────────────────────────
@@ -710,6 +711,9 @@ export function FieldRenderer({
               // dell'errore, il `ref` di react-hook-form — senza il quale
               // `setFocus(id)` non ha niente da mettere a fuoco — e il `blur`.
               fieldId={field.id}
+              // L'etichetta umana, che il bottone «Scatta foto» usa per dire DI QUALE
+              // campo è: al passo «Documento» ce ne sono due, fronte e retro.
+              etichettaCampo={field.label}
               ariaProps={ariaProps}
               // …e il quinto: che il riquadro CAMBI ASPETTO quando è in errore.
               // Era l'unico campo del modulo che non lo faceva (vedi `nonValido`).
@@ -910,27 +914,6 @@ function RadioGroup({
 }
 
 /**
- * Il messaggio d'errore del SERVER, o `null` se non ce n'è uno leggibile.
- *
- * Tre strette, e ognuna ha un motivo:
- *  · si legge solo se il `content-type` è JSON — il corpo di un 413 di piattaforma è
- *    testo, e riversarlo in pagina mostrerebbe al genitore «FUNCTION_PAYLOAD_TOO_LARGE»;
- *  · si legge SOLO il campo `error`, che è quello che scriviamo noi nelle route;
- *  · si tronca. Non lancia mai: è il ramo che gestisce un errore, non il posto dove
- *    aprirne un secondo.
- */
-async function messaggioDelServer(res: Response): Promise<string | null> {
-  try {
-    if (!/application\/json/i.test(res.headers.get('content-type') ?? '')) return null
-    const body: unknown = await res.json()
-    const msg = (body as { error?: unknown } | null)?.error
-    return typeof msg === 'string' && msg !== '' ? msg.slice(0, 200) : null
-  } catch {
-    return null
-  }
-}
-
-/**
  * ── Upload allegato (bucket form_attachments) ────────────────────────────────
  *
  * ⚠️ IL CONTROLLO È NASCOSTO AGLI OCCHI, MAI ALLA TASTIERA (12/08/2026).
@@ -972,6 +955,7 @@ export function FileField({
   accept,
   maxSizeMb,
   fieldId,
+  etichettaCampo,
   ariaProps,
   nonValido = false,
   inputRef,
@@ -987,6 +971,35 @@ export function FileField({
   maxSizeMb?: number
   /** L'`id` del controllo: ciò che l'etichetta esterna punta con `htmlFor`. */
   fieldId?: string
+  /**
+   * L'ETICHETTA UMANA DEL CAMPO — serve al bottone «Scatta foto», non all'input.
+   *
+   * ⚠️ MISURATO IL 12/08/2026 sul passo «Documento» di `/anagrafica-personale`, che da
+   * quel giorno chiede DUE scansioni: ogni `FileField` che ammette immagini rende un
+   * `ScattaFotoButton`, e i due bottoni avevano lo stesso identico nome accessibile —
+   * «Scatta foto» — senza niente che dicesse quale fosse il fronte e quale il retro.
+   * Il controllo vero (`<input type=file>`) non aveva il problema: l'etichetta esterna
+   * lo nomina con `htmlFor`. Il bottone nativo no, perché sta FUORI dalla `<label>`
+   * (altrimenti riaprirebbe il selettore di file), quindi non eredita niente.
+   *
+   * NESSUN TEST ESISTENTE lo vedeva: `ScattaFotoButton` fa `if (!nativo) return null`,
+   * quindi in jsdom di default non esiste — e nell'app Capacitor quello è il modo normale
+   * di consegnare la scansione di un documento. Ecco perché il rilievo è arrivato da una
+   * lettura e non da un rosso.
+   *
+   * ⚠️ MA «nessun test POTEVA vederlo» era falso, ed è stato scritto qui: basta mockare
+   * `fotocameraNativaDisponibile` perché il bottone esista anche in jsdom. Il presidio è
+   * `__tests__/a11y/scatta-foto-due-facce.test.tsx`, che fa esattamente questo e monta le
+   * due facce del template. Misurato per mutazione il 13/08/2026: cancellata questa prop,
+   * quel file va ROSSO su «i due bottoni hanno nomi accessibili DIVERSI».
+   *
+   * NON è `__tests__/i18n/scatta-foto-i18n.test.tsx`, che qui era indicato come «l'unico
+   * posto da cui questa catena si può sorvegliare»: quel file non nomina `scattaFotoDi`,
+   * `nomeAccessibile` né `etichettaCampo` (grep: zero occorrenze) e con la stessa
+   * mutazione resta VERDE. Sorveglia un'altra cosa — che nessun host cabli «Scatta foto»
+   * in italiano — ed è utile, ma non questa.
+   */
+  etichettaCampo?: string
   /** `aria-invalid` e `aria-describedby` del campo in errore, come ogni altro tipo. */
   ariaProps?: React.AriaAttributes
   /**
@@ -1044,66 +1057,97 @@ export function FileField({
     setFileName(file.name)
 
     try {
-      // ── IL CONTROLLO DELLA TAGLIA STA QUI, PRIMA DI SPEDIRE. Non è una gentilezza
-      // verso la rete mobile del genitore: sopra il tetto della piattaforma la
-      // richiesta non arriva MAI alla nostra route (Vercel risponde 413
-      // `FUNCTION_PAYLOAD_TOO_LARGE` con un corpo di testo), quindi nessun controllo
-      // lato server potrebbe scattare e nessun messaggio nostro potrebbe uscire. Il
-      // 31 luglio 2026 sono stati 41 tentativi in un giorno sul modulo pubblico.
-      // Vedi `@/lib/upload/limite-piattaforma`.
-      const limite = limiteUploadByte(maxSizeMb)
-      if (file.size > limite) {
-        // Il NOME del file non si logga mai: «certificato-mario-rossi.pdf» è un dato.
-        // La dimensione sì: è un numero, ed è l'unica cosa che serve per sapere se il
-        // tetto è tarato bene o se i genitori caricano foto da 12 MB.
-        logClient({
-          livello: 'warn',
-          evento: 'fetch',
-          messaggio: `modulo-allegato-troppo-pesante: ${file.size} byte, limite ${limite}`,
-        })
-        setUploadError(t('fileTroppoPesante', { mb: limiteUploadMb(maxSizeMb) }))
-        onChange('')
+      // ── IL CARICAMENTO NON VIVE PIÙ QUI, ed è il motivo per cui questo blocco è
+      // corto. Il controllo della taglia PRIMA di spedire, `res.ok` letto PRIMA di
+      // `res.json()`, il `path` preso dal corpo, lo stato HTTP che non si perde e il
+      // tetto di tempo stanno in `@/lib/upload/carica-file`.
+      //
+      // ⚠️ QUESTA È UNA DELLE DUE CHIAMATE, non l'unica. Qui c'è stato scritto prima che
+      // il modulo «lo legge ANCHE il tab Documento» (allora non ancora vero), poi che
+      // «`caricaFile` ha un solo chiamante, ed è questa riga» — con `grep -rn caricaFile
+      // src` indicato come prova. Quel comando ne trova due: questa riga e
+      // `StaffDetailPanel.tsx`, cioè proprio il tab «Documento», che nel frattempo è
+      // arrivato. L'elenco aggiornato sta nella testata di `@/lib/upload/carica-file`, in
+      // un posto solo: qui non si ricontano i chiamanti, perché è ricontandoli in due
+      // posti che si è finito per sbagliarli in due modi opposti.
+      //
+      // Il fronte/retro della carta d'identità restano due ISTANZE di questo stesso
+      // componente su due campi `type: 'file'` del template — non una seconda copia di
+      // questa logica. E l'estrazione regge anche per il motivo più modesto: dentro un
+      // componente quei rami erano misurabili solo montando una `<label>`, un `<input>` e
+      // `useTranslations`; fuori si misurano da soli.
+      //
+      // Qui resta ciò che è di chi RENDE: le stringhe tradotte, lo stato del riquadro e
+      // la guardia sul fuoco (vedi `handleFile`).
+      const esito = await caricaFile({
+        // Upload SEMPRE via endpoint server (service-role, bucket privato deny-by-default).
+        // Pubblico: token-scoped; autenticato: `/api/forms/upload` (requireUser). Niente
+        // più scrittura diretta dal client anon (P0/DL-035).
+        endpoint: uploadEndpoint || '/api/forms/upload',
+        file,
+        maxSizeMb,
+        extra: { folder: modelId },
+      })
+
+      if (esito.esito === 'ok') {
+        onChange(esito.path)
         return
       }
 
-      // Upload SEMPRE via endpoint server (service-role, bucket privato deny-by-default).
-      // Pubblico: token-scoped; autenticato: `/api/forms/upload` (requireUser). Niente
-      // più scrittura diretta dal client anon (P0/DL-035).
-      const endpoint = uploadEndpoint || '/api/forms/upload'
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('folder', modelId)
-      if (maxSizeMb) fd.append('max_size_mb', String(maxSizeMb))
-      const res = await fetch(endpoint, { method: 'POST', body: fd })
-
-      // `res.ok` PRIMA di `res.json()`, ed è il difetto che questo ordine ripara: il 413
-      // della piattaforma ha `content-type: text/plain`, quindi il parse LANCIAVA
-      // `SyntaxError` e il genitore si vedeva «Caricamento non riuscito. Riprova.» —
-      // l'invito a rifare l'unica cosa che non poteva funzionare. In `app_log` restava
-      // `modulo-allegato-upload-fallito: SyntaxError`, che del 413 non diceva nulla.
-      // (Il 413 in tabella ci finisce comunque, una volta sola: lo registra il patch di
-      // `fetch` in `@/lib/logging/client`, che i 413 li tiene come anomalia.)
-      if (!res.ok) {
-        setUploadError(
-          res.status === 413
-            ? t('fileTroppoPesante', { mb: limiteUploadMb(maxSizeMb) })
-            : (await messaggioDelServer(res)) ?? t('caricamentoNonRiuscito'),
-        )
-        onChange('')
-        return
-      }
-
-      const json: unknown = await res.json()
-      const path = (json as { path?: unknown } | null)?.path
-      if (typeof path !== 'string' || path === '') throw new Error('risposta senza path')
-      onChange(path)
+      // `troppo-grande` copre due strade — il file respinto prima di partire e il 413
+      // della piattaforma — e le copre insieme di proposito: per chi carica sono lo
+      // stesso guasto, e il messaggio è uno solo. `limiteMb` arriva già calcolato col
+      // `Math.min` fra il tetto del campo e quello della piattaforma: ricalcolarlo qui
+      // da `maxSizeMb` è il modo di promettere 8 MB che nessuno può mantenere.
+      //
+      // ⚠️ IL `codice` NON SI BUTTA VIA — e fino al 13/08/2026 qui si buttava. Restava
+      // `esito.messaggioServer ?? t('caricamentoNonRiuscito')`: la prosa del server
+      // riversata in pagina così com'è. Quella prosa nasce sul server, dove il locale
+      // dell'interfaccia non esiste, ed è ITALIANA PER COSTRUZIONE — mentre questo
+      // componente sta sulla porta ANONIMA (i due wizard pubblici e i moduli delle
+      // famiglie), che ha il catalogo inglese completo. Le rotte di caricamento il
+      // codice lo mandano già (`ALLEGATO_PDF_O_IMMAGINE` e `TROPPE_RICHIESTE` da
+      // `@/lib/upload/allegati-pubblici`, `ALLEGATO_OLTRE_LIMITE_PIATTAFORMA` da
+      // `iscrizione/personale/upload`), e il chiamante GEMELLO di `caricaFile` — il tab
+      // «Documento» della scheda staff — lo traduceva già con questa stessa funzione:
+      // due consumatori della stessa primitiva, e quello sulla porta pubblica era
+      // l'unico a mostrare italiano a chi ha l'interfaccia in inglese. È testualmente il
+      // fallimento F2 del collaudo del 31/07/2026, lasciato aperto dalla parte anonima.
+      //
+      // `messaggioDaCorpo` e non `soloCatalogoDaCorpo`: il codice dichiarato vince
+      // sempre, ma dove il codice ANCORA non c'è (`/api/forms/upload` non ne manda
+      // nessuno) la prosa resta l'unica cosa che dice qualcosa, e toglierla
+      // sostituirebbe un messaggio italiano con un messaggio generico — un difetto
+      // scambiato con un altro. La strada per chiudere il residuo è dichiarare il
+      // codice in `CODICI_ERRORE`, non nascondere la frase.
+      setUploadError(
+        esito.esito === 'troppo-grande'
+          ? t('fileTroppoPesante', { mb: esito.limiteMb })
+          : messaggioDaCorpo(
+              { error: esito.messaggioServer, codice: esito.codice },
+              t('caricamentoNonRiuscito'),
+            ),
+      )
+      onChange('')
     } catch (err) {
-      // Un catch che non logga è un bug: l'upload fallito è invisibile a chi
-      // non ha in mano il dispositivo. `logClient` redige il path e non lancia.
+      // `caricaFile` non lancia MAI: questo ramo copre l'APPLICAZIONE dell'esito — un
+      // `onChange` del form che esplode — e resta perché `processaFile` è chiamata da
+      // `ScattaFotoButton` SENZA `await`: di lì una promise rifiutata diventerebbe un
+      // `unhandledrejection`, cioè un guasto che nessuno ricollega al caricamento.
+      // Un catch che non logga è un bug. `logClient` redige il path e non lancia.
+      //
+      // ⚠️ IL MESSAGGIO È DIVERSO DA QUELLO DI `caricaFile`, e non è una preferenza di
+      // stile. Entrambi i `catch` scrivevano `modulo-allegato-upload-fallito:
+      // ${nomeErrore(err)}` con lo stesso `evento` e senza `stato`: in `app_log` i due
+      // guasti erano la stessa riga — e visto che `nomeErrore` dà `Error` per quasi
+      // tutto, la chiave del throttle (`${evento}|${messaggio}|${stato ?? ''}`,
+      // `DEDUP_MS = 60_000`) coincideva e la SECONDA veniva scartata in silenzio. Un
+      // caricamento fallito e un form che esplode nell'applicare l'esito sono due
+      // riparazioni diverse: qui si dice quale dei due è.
       logClient({
         livello: 'error',
         evento: 'fetch',
-        messaggio: `modulo-allegato-upload-fallito: ${nomeErrore(err)}`,
+        messaggio: `modulo-allegato-esito-non-applicato: ${nomeErrore(err)}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
       setUploadError(t('caricamentoNonRiuscito'))
@@ -1188,6 +1232,14 @@ export function FileField({
         <ScattaFotoButton
           onFile={processaFile}
           label={t('scattaFoto')}
+          // ⚠️ IL TESTO VISIBILE RESTA CORTO, IL NOME NO. «Scatta foto: Retro del
+          // documento» dentro il bottone spezzerebbe la riga su 360 px; come nome
+          // accessibile è l'unica cosa che distingue due bottoni identici a un
+          // centimetro di distanza. E CONTIENE il testo visibile, che non è una
+          // formalità: WCAG 2.5.3 («Label in Name») esiste perché chi comanda a voce
+          // pronuncia ciò che legge, e un nome che non contiene le parole visibili
+          // rende il bottone inattivabile invece che più chiaro.
+          nomeAccessibile={etichettaCampo ? t('scattaFotoDi', { campo: etichettaCampo }) : undefined}
           disabled={uploading}
           className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-input border border-dashed border-kidville-green/30 text-sm font-medium text-kidville-green hover:border-kidville-green transition-colors disabled:cursor-not-allowed disabled:border-kidville-neutral disabled:bg-kidville-neutral-soft disabled:text-kidville-sub"
         />

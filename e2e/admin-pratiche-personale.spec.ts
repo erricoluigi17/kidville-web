@@ -55,7 +55,7 @@ const CODICE_FISCALE = 'PPRRTI79C44F839B';
 /** Il nome del plesso che il seed rende visibile ai moduli pubblici. */
 const SEDE_COLLAUDO = 'Plesso di Collaudo';
 
-/** La scansione: un PDF minimo costruito qui, mai un file su disco. */
+/** Le scansioni: un PDF minimo costruito qui, mai un file su disco. Vale per entrambe le facce. */
 const PDF_MINIMO = Buffer.from(
   '%PDF-1.4\n' +
     '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
@@ -75,26 +75,65 @@ const PDF_MINIMO = Buffer.from(
 const SCADENZA_ISO = `${new Date().getFullYear() + 5}-12-31`;
 
 /**
- * Manda una pratica dalla PORTA PUBBLICA e restituisce il suo id.
+ * Carica UNA faccia del documento e restituisce il percorso che la rotta le assegna.
  *
- * Due richieste, e l'ordine non è invertibile: la scansione va caricata PRIMA,
- * perché l'invio non porta un file ma un PERCORSO, e la rotta accetta solo un
- * percorso che trova nel registro dei caricamenti (`caricamenti_personale`). Un
- * percorso inventato — la forma è pubblica, sta in questo repository — prende un
- * 400 sul campo del documento.
+ * Il percorso nel bucket lo decide il server (`documenti/<uuid>/<uuid>.<ext>`): due
+ * chiamate danno due percorsi DIVERSI anche a parità di contenuto, ed è ciò che rende
+ * questa funzione riusabile per il fronte e per il retro.
  */
-async function inviaPratica(request: APIRequestContext): Promise<string> {
+async function caricaFaccia(request: APIRequestContext, faccia: string): Promise<string> {
   const upload = await request.post('/api/iscrizione/personale/upload', {
     // Il modulo manda anche `folder`; la rotta lo IGNORA di proposito (il percorso
     // nel bucket lo decide lei, ed è la ragione per cui un anonimo non può
     // scegliere dove finisce il file). Qui si manda il solo campo che conta.
     multipart: {
-      file: { name: 'documento.pdf', mimeType: 'application/pdf', buffer: PDF_MINIMO },
+      file: { name: `documento-${faccia}.pdf`, mimeType: 'application/pdf', buffer: PDF_MINIMO },
     },
   });
-  expect(upload.status(), 'la scansione non è stata accettata').toBe(200);
+  expect(upload.status(), `la scansione «${faccia}» non è stata accettata`).toBe(200);
   const percorso = ((await upload.json()) as { path?: unknown }).path;
-  expect(typeof percorso).toBe('string');
+  expect(typeof percorso, `la rotta di caricamento non ha restituito un percorso per «${faccia}»`)
+    .toBe('string');
+  return String(percorso);
+}
+
+/**
+ * Manda una pratica dalla PORTA PUBBLICA e restituisce il suo id.
+ *
+ * TRE richieste, e l'ordine non è invertibile: le scansioni vanno caricate PRIMA,
+ * perché l'invio non porta file ma PERCORSI, e la rotta accetta solo un percorso che
+ * trova nel registro dei caricamenti (`caricamenti_personale`). Un percorso inventato
+ * — la forma è pubblica, sta in questo repository — prende un 400 sul campo del
+ * documento.
+ *
+ * ─── DUE FACCE, E SONO DUE CARICAMENTI SEPARATI ────────────────────────────
+ * Dal 12/08/2026 il documento d'identità è fronte E retro: la migrazione
+ * `20260812194501` ha rinominato `documento_path` in `documento_fronte_path` e ha
+ * aggiunto `documento_retro_path`, e `PERSONALE_FIELDS` li dichiara ENTRAMBI
+ * `required: true`. Questo spec mandava ancora il nome vecchio e nessuno dei due
+ * nuovi: `validatePage` (`src/lib/forms/validate-fields.ts`) risponde «Campo
+ * obbligatorio» su un campo `required` vuoto, quindi il POST prendeva **400** dove
+ * questa funzione pretende 201 — cioè l'unico collaudo end-to-end dell'approvazione
+ * sarebbe andato in rosso in CI, e non per un difetto del prodotto.
+ *
+ * ⚠️ I DUE PERCORSI DEVONO ESSERE DIVERSI, e non è una raffinatezza del test: la
+ * rotta rifiuta due facce uguali (`documento-facce-uguali`) perché allegare due volte
+ * la stessa foto è il modo più facile di «finire» il modulo lasciando la Segreteria
+ * senza il retro e senza nessuna riga che lo dica. Due caricamenti separati bastano:
+ * il percorso lo costruisce il server con due uuid nuovi ogni volta.
+ *
+ * ⚠️ IL TETTO DEI CARICAMENTI. `POST …/upload` ammette 30 richieste ogni 10 minuti per
+ * IP — `TETTO_UPLOAD_PERSONALE`, che dal 13/08/2026 è il contatore di questa porta e non
+ * più il numero condiviso con le due porte delle famiglie (tornate a 20).
+ * In CI i browser escono da un IP solo: qui se ne consumano 2 per tentativo, cioè
+ * fino a 6 con `retries: 2`. Restano dentro anche sommandoci lo spec pubblico, che ne
+ * usa 2 per tentativo sulla stessa finestra.
+ */
+async function inviaPratica(request: APIRequestContext): Promise<string> {
+  const frontePath = await caricaFaccia(request, 'fronte');
+  const retroPath = await caricaFaccia(request, 'retro');
+  expect(retroPath, 'le due facce hanno lo stesso percorso: la rotta le rifiuterebbe')
+    .not.toBe(frontePath);
 
   const creazione = await request.post('/api/iscrizione/personale', {
     data: {
@@ -125,7 +164,11 @@ async function inviaPratica(request: APIRequestContext): Promise<string> {
         document_type: 'CI',
         document_number: 'CD7654321',
         document_expiry: SCADENZA_ISO,
-        documento_path: percorso,
+        // I due campi si chiamano come le due COLONNE: in questo repo
+        // `PERSONALE_FIELDS[].id` è il nome della colonna di destinazione, ed è la
+        // ragione per cui la migrazione ha rinominato invece di affiancare.
+        documento_fronte_path: frontePath,
+        documento_retro_path: retroPath,
         titolo_studio: 'laurea_magistrale',
         gradi: ['infanzia'],
         // Le tre prese visione sono OBBLIGATORIE: senza, la rotta risponde 400 con
@@ -212,6 +255,16 @@ test.describe('cockpit delle anagrafiche del personale @solo-chromium', () => {
     // «Contatti» del dettaglio e dentro la conferma, che dichiara con quale
     // indirizzo verrà aperto l'accesso.
     await expect(pannello.getByText(PERSONALE_E2E.emailApprovazione).first()).toBeVisible();
+
+    // La risposta si ascolta PRIMA di premere: registrata dopo il click,
+    // `waitForResponse` perde le risposte veloci. Il confronto è sul percorso INTERO e
+    // sul METODO: subito dopo l'approvazione la pagina rilegge l'elenco e la scheda con
+    // due GET sullo STESSO percorso, e un `includes` prenderebbe la prima che passa.
+    const approvazione = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === '/api/admin/pratiche-personale' &&
+        r.request().method() === 'PATCH',
+    );
     await pannello.getByRole('button', { name: itAdmin.pratConferma, exact: true }).click();
 
     // «Anagrafica registrata» e non «presa in carico»: il secondo è il titolo che
@@ -219,6 +272,59 @@ test.describe('cockpit delle anagrafiche del personale @solo-chromium', () => {
     // esattamente l'esito che questo test NON deve accettare.
     await expect(pannello.getByText(itAdmin.pratEsitoApprovata)).toBeVisible({ timeout: 30_000 });
     await expect(pannello.getByText(itAdmin.pratEsitoPresaInCarico)).toHaveCount(0);
+
+    // ── L'APPROVAZIONE DICHIARA IL RILASCIO, FACCIA PER FACCIA ──────────────
+    //
+    // Dal 12/08/2026 l'approvazione risponde `documentiRilasciati: {fronte, retro}` —
+    // DUE booleani e non uno, perché il travaso di una faccia può riuscire e quello
+    // dell'altra no, e il pannello deve poter nascondere un pulsante e tenere l'altro
+    // (che è l'unica strada rimasta verso l'unica copia raggiungibile di quel file). La
+    // rotta conta apposta `documento_rilasciato_a_meta`: è lo stato in cui una scansione
+    // resta nel bucket senza che nessuna riga la nomini più.
+    //
+    // Non si pretende `true`, ed è una scelta sullo stato del database della CI. Quel
+    // progetto è separato dalla produzione e si migra A MANO (`migrate-ci.yml`,
+    // `workflow_dispatch`): finché la migrazione `20260812194501` non ci è passata,
+    // `pratiche_personale` non ha le due colonne, l'INSERT del modulo pubblico degrada e
+    // la pratica nasce SENZA percorsi — quindi all'approvazione non c'è niente da
+    // travasare e `{fronte: false, retro: false}` è la risposta onesta. Pretendere `true`
+    // farebbe di questo blocco una misura dello stato di migrazione del DB della CI
+    // travestita da collaudo del prodotto: rossa, e per la ragione sbagliata.
+    const corpoApprovazione = (await (await approvazione).json()) as {
+      documentiRilasciati?: { fronte?: unknown; retro?: unknown };
+    };
+    const rilasciati = corpoApprovazione.documentiRilasciati;
+    // LA CHIAVE DEVE ESSERCI, e non è una formalità: il pannello legge
+    // `documentiRilasciati?.fronte !== false`, quindi un oggetto ASSENTE non vale come
+    // rifiuto ma come rilascio. Se la rotta smettesse di mandarlo, la pagina si
+    // comporterebbe come se le scansioni fossero passate al fascicolo e nessun `false`
+    // resterebbe a smentirla — un difetto che nessuna schermata mostra. QUESTA è la
+    // promessa del prodotto che questo blocco collauda.
+    expect(typeof rilasciati?.fronte, 'la risposta non dichiara il rilascio del fronte').toBe(
+      'boolean',
+    );
+    expect(typeof rilasciati?.retro, 'la risposta non dichiara il rilascio del retro').toBe(
+      'boolean',
+    );
+
+    // ⚠️ QUI C'ERA `expect(rilasciati.retro).toBe(rilasciati.fronte)`, chiamata
+    // «l'invariante che il prodotto promette». IL PRODOTTO NON LA PROMETTE, ed è scritto
+    // nella rotta: `pratiche-personale/route.ts` calcola apposta
+    // `documento_rilasciato_a_meta: fronte !== retro`, e il commento accanto descrive lo
+    // stato disallineato come la conseguenza NORMALE di un DB a cui manchi UNA sola delle
+    // due colonne — «ogni faccia risponde per sé», perché azzerarle insieme cancellerebbe
+    // il riferimento al file non travasato. Una rotta che conta un caso non lo vieta.
+    //
+    // In pratica quell'uguaglianza è vera perché il rinomino e i due `add column` stanno
+    // nella STESSA transazione di `20260812194501` (`begin;` … `commit;`, verificato): un
+    // database ha entrambe le colonne o nessuna. Cioè era vera per lo stato dello schema,
+    // non per una promessa del codice — esattamente il genere di misura sullo stato di
+    // migrazione della CI travestita da collaudo del prodotto che il commento due righe
+    // sopra dichiara di voler evitare pretendendo `true`.
+    //
+    // La difesa vera sul travaso a metà non è un'asserzione di uguaglianza: è
+    // `documento_rilasciato_a_meta` in `app_log`, che quel caso lo CONTA invece di
+    // negarlo, ed è ciò che permetterà di accorgersene su un DB reale disallineato.
 
     // ── L'EFFETTO, non il messaggio ─────────────────────────────────────────
     // Il riquadro d'esito è una schermata: la prova è la riga. Si rilegge dal

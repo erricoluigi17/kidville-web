@@ -4,6 +4,7 @@ import path from 'node:path'
 import {
   ESTENSIONI_ALLEGATO_PUBBLICO,
   MIME_ALLEGATO_PUBBLICO,
+  TETTO_UPLOAD_PERSONALE,
   TETTO_UPLOAD_PUBBLICO,
 } from '@/lib/upload/allegati-pubblici'
 
@@ -152,13 +153,38 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
         'dieci richieste di fila arrivano tutte all\'handler, e nel bucket ci finisce quello ' +
         'che vogliono. È il difetto misurato il 2026-08-02 su `iscrizione/upload`.',
     ).toBe(true)
+    // ⚠️ QUESTA PROVA È CAMBIATA IL 13/08/2026, e la differenza è precisa.
+    //
+    // Pretendeva il nome `TETTO_UPLOAD_PUBBLICO`, cioè UN numero per tutte le porte. Ma
+    // le porte non hanno la stessa aritmetica: le due delle famiglie scrivono in
+    // `form_attachments` (4,2 allegati a domanda, 5 domande per finestra), quella del
+    // personale in `documenti_personale` (13 dipendenti × 2 facce dietro un solo NAT).
+    // Chiamarle «la stessa regola» ha prodotto, il 12/08, un +50% sulle porte dei minori
+    // per un bisogno che era di un'altra porta.
+    //
+    // Ciò che il lock difende resta identico e non si è indebolito: **il numero non si
+    // scrive dentro la rotta**. Deve arrivare da `@/lib/upload/allegati-pubblici`, dove
+    // vive accanto alla misura che lo giustifica. È l'invariante di `gallery` (50 MB nel
+    // bucket, 200 nella route, per mesi), e vale per un numero scritto a mano ovunque —
+    // compresa una costante locale che si chiamasse `TETTO_UPLOAD_QUALCOSA`.
+    const usati = [...src.matchAll(/\bTETTO_UPLOAD_[A-Z_]+\b/g)].map((m) => m[0])
     expect(
-      /TETTO_UPLOAD_PUBBLICO/.test(src),
-      `${rel} usa un tetto scritto a mano invece di quello condiviso ` +
-        '(`TETTO_UPLOAD_PUBBLICO`, src/lib/upload/allegati-pubblici.ts). Due numeri per la ' +
-        'stessa regola divergono: è già successo su `gallery` (50 MB nel bucket, 200 nella ' +
-        'route) e nessuno se n\'è accorto per mesi.',
-    ).toBe(true)
+      usati.length,
+      `${rel} non usa nessun tetto condiviso: il numero è scritto a mano dentro la rotta ` +
+        '(o non c\'è). I tetti vivono in src/lib/upload/allegati-pubblici.ts, dove accanto ' +
+        'c\'è l\'aritmetica che li giustifica.',
+    ).toBeGreaterThan(0)
+    for (const nome of new Set(usati)) {
+      expect(
+        new RegExp(
+          `import\\s*\\{[^}]*\\b${nome}\\b[^}]*\\}\\s*from\\s*['"]@/lib/upload/allegati-pubblici['"]`,
+          's',
+        ).test(src),
+        `${rel} usa \`${nome}\` senza importarlo da @/lib/upload/allegati-pubblici: è un ` +
+          'numero locale travestito da costante condivisa, cioè il difetto di `gallery` con ' +
+          'un nome che lo nasconde meglio.',
+      ).toBe(true)
+    }
   })
 
   it.each(PUBBLICHE.map((r) => r.rel))('`%s` passa dal gate condiviso sui tipi', (rel) => {
@@ -176,12 +202,53 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
     ).toBe(true)
   })
 
-  it('il tetto può solo SCENDERE, e resta praticabile per una famiglia vera', () => {
-    // 961 allegati per 227 domande = 4,2 file a domanda; gli INVII sono 5/10 min per IP.
-    // Sotto i 20 si respinge una famiglia con quattro documenti; sopra i 30 il tetto non
-    // è più un tetto — ed è il numero della rotta gemella, che non deve crescere in silenzio.
-    expect(TETTO_UPLOAD_PUBBLICO).toBeGreaterThanOrEqual(20)
-    expect(TETTO_UPLOAD_PUBBLICO).toBeLessThanOrEqual(30)
+  it('ogni tetto regge l’aritmetica della SUA porta, e non cresce in silenzio', () => {
+    // ⚠️ QUESTA PROVA HA AVUTO TRE FORME IN DUE GIORNI, e le due sbagliate insegnano più
+    // di quella giusta.
+    //
+    //  · fino all'11/08 chiedeva `>= 20` a un numero solo: difendeva l'aritmetica delle
+    //    famiglie mentre le facce del documento del personale erano diventate due, cioè
+    //    difendeva un conto che nessuno rifaceva più;
+    //  · il 12/08 è diventata `>= 26` sullo STESSO numero solo — che ha portato a 30 il
+    //    tetto delle due porte dei minori per un fabbisogno che era della terza.
+    //
+    // La forma giusta è una prova PER PORTA, perché le aritmetiche sono due:
+    //
+    //  · FAMIGLIE (2026-08-02) — 961 allegati per 227 domande = 4,2 file a domanda, e gli
+    //    INVII sono 5 ogni 10 minuti per IP: cinque domande complete ≈ 21 file. Il valore
+    //    in vigore è 20 e resta quello finché nessuno misura i 429 di quella porta.
+    //  · PERSONALE (2026-08-12) — ogni persona consegna DUE scansioni, e quel modulo si
+    //    compila in gruppo dietro il NAT della sede: Giugliano ha 13 account di personale,
+    //    quindi 13 × 2 = 26.
+    expect(
+      TETTO_UPLOAD_PUBBLICO,
+      'il tetto delle porte delle famiglie è sceso sotto le cinque domande complete che ' +
+        "l'aritmetica del 02/08/2026 misura: dal tetto in poi la famiglia prende 429",
+    ).toBeGreaterThanOrEqual(20)
+    // Il soffitto delle porte delle famiglie NON è 30: quel numero è stato il segno del
+    // difetto, non una soglia. Sopra i 21 non c'è nessuna misura che lo giustifichi, e un
+    // tetto alzato «per sicurezza» su una porta anonima che scrive nel bucket dei minori è
+    // il contrario della sicurezza.
+    expect(
+      TETTO_UPLOAD_PUBBLICO,
+      'il tetto delle porte delle famiglie è cresciuto oltre la sua aritmetica: se serve ' +
+        'davvero, si misuri prima quanti 429 quella porta ha servito',
+    ).toBeLessThanOrEqual(21)
+
+    expect(
+      TETTO_UPLOAD_PERSONALE,
+      'sotto i 26 una sede intera del personale (13 persone × 2 facce) non riesce a ' +
+        'consegnare le scansioni nello stesso pomeriggio: dal tetto in poi prende 429',
+    ).toBeGreaterThanOrEqual(26)
+    // Sopra i 30 un tetto per IP smette di essere un tetto. Chi ha bisogno di più rifaccia
+    // il conto delle persone in servizio invece di aggiungere un margine al margine.
+    expect(TETTO_UPLOAD_PERSONALE).toBeLessThanOrEqual(30)
+
+    // E i due numeri NON devono coincidere per caso: se un giorno tornassero uguali, la
+    // prova per porta smetterebbe di distinguere e si tornerebbe al numero unico senza che
+    // nessuno lo decida. (Se un domani coincidessero per una ragione vera, questa riga va
+    // tolta CONSAPEVOLMENTE, che è appunto il punto.)
+    expect(TETTO_UPLOAD_PERSONALE).not.toBe(TETTO_UPLOAD_PUBBLICO)
   })
 
   it('la lista dei tipi non diventa «passa tutto» (controllo negativo)', () => {

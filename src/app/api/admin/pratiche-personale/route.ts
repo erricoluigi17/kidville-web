@@ -14,7 +14,16 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { GRADI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { PERSONALE_FIELDS } from '@/lib/forms/personale-template'
-import { BUCKET_DOCUMENTI_PERSONALE, collegaCaricamento } from '@/lib/personale/caricamenti'
+import {
+  BUCKET_DOCUMENTI_PERSONALE,
+  collegaCaricamenti,
+  facceChieste,
+} from '@/lib/personale/caricamenti'
+import {
+  COLONNE_DOCUMENTO,
+  DOC_MAX_LUNGHEZZA,
+  percorsoDocumentoAmmesso,
+} from '@/lib/personale/percorso-documento'
 import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 
 // =============================================================================
@@ -272,10 +281,12 @@ const interoClampato = (def: number, min: number, max: number) =>
   }, z.number())
 
 const getQuerySchema = z.object({
-  // Un percorso di storage non è lungo: il tetto è lo stesso del CHECK in tabella
-  // (`length(documento_path) <= 200`), e una stringa senza tetto è solo superficie
-  // d'attacco in più.
-  doc: z.string().max(500).optional(),
+  // Un percorso di storage non è lungo: il tetto è lo STESSO del CHECK in tabella, e
+  // adesso lo è davvero — `DOC_MAX_LUNGHEZZA` è la costante che le colonne dichiarano
+  // (`length(…) <= 200`). Prima qui c'era `.max(500)` con accanto questa stessa frase:
+  // il commento diceva 200, il codice ne ammetteva 500, e nessuno dei due mentiva per
+  // cattiveria — semplicemente il numero era ribattuto invece che importato.
+  doc: z.string().max(DOC_MAX_LUNGHEZZA).optional(),
   id: zUuid.optional(),
   limit: interoClampato(LIMITE_ISCRIZIONI_DEFAULT, 1, LIMITE_ISCRIZIONI_MAX),
   offset: interoClampato(0, 0, Number.MAX_SAFE_INTEGER),
@@ -614,6 +625,51 @@ function leggiFallita(operazione: string, esito: string, error: unknown): NextRe
  *    Da questo cockpit quella scansione non si firma più, ed è giusto: adesso è del
  *    fascicolo, e il fascicolo ha la sua schermata e i suoi termini;
  *  · un solo messaggio per «di un'altra sede» e «inesistente».
+ *
+ * ── ⚠️ LE COLONNE SI ITERANO, E NON SI SCRIVONO QUI ────────────────────────
+ *
+ * Fino al 12/08/2026 questa funzione interrogava `documento_path`. Quel giorno la
+ * migrazione `20260812194501` ha rinominato la colonna in `documento_fronte_path`, e
+ * l'ha fatto in produzione: la lettura è diventata un `42703` («column does not
+ * exist»), che su un gate fail-CLOSED significa «non firmo». Cioè la Segreteria di
+ * tutte e tre le sedi ha smesso di poter aprire QUALUNQUE documento d'identità,
+ * ricevendo la stessa risposta di un tentativo abusivo, senza che nessun test fosse
+ * rosso. Verificato sul database vero:
+ *
+ *     select id from pratiche_personale where documento_path = '…'
+ *     → ERROR 42703: column "documento_path" does not exist
+ *
+ * Da qui il ciclo su `COLONNE_DOCUMENTO` (`@/lib/personale/percorso-documento`), che è
+ * l'elenco derivato dal template: una faccia in più domani non tocca questa riga, e un
+ * rinomino la segue da solo.
+ *
+ * ── ⚠️ PRIMA LA FORMA, POI LA RISOLUZIONE — E PERCHÉ NON UN `.or(…)` SOLO ──
+ *
+ * `?doc=` è testo di query string e il suo schema `zod` impone SOLO un tetto di
+ * lunghezza: la forma non la vincola nessuno. Con due colonne da confrontare la
+ * scrittura che viene naturale è
+ * `.or('documento_fronte_path.eq.<X>,documento_retro_path.eq.<X>')`, che INTERPOLA
+ * `<X>` dentro la sintassi del filtro. Lì la virgola separa le condizioni: un valore
+ * che ne contenga una non rompe il filtro, lo RISCRIVE — e questo gate direbbe «è
+ * della tua sede» di un documento che non lo è. Non è un'iniezione SQL (PostgREST non
+ * concatena SQL): è un'iniezione di FILTRO, e qui il danno è lo stesso.
+ *
+ * Da qui l'ordine: `percorsoDocumentoAmmesso` decide la forma PRIMA che il valore
+ * incontri qualunque query, e dopo quel gate l'alfabeto ammesso non contiene virgole,
+ * parentesi né apici.
+ *
+ * E ANCHE DOPO IL GATE restano due `.eq()`, perché le due difese sono indipendenti:
+ * `.eq()` non interpola niente (la virgola esce percent-encodata — misurato,
+ * `new URLSearchParams({a:'x,y'}).toString()` → `a=x%2Cy`), quindi regge da solo anche
+ * il giorno in cui qualcuno allargasse la forma in un altro file per far passare un
+ * percorso legittimo. Con un `.or()` la sicurezza di questa funzione dipenderebbe da
+ * una riga che non sta qui. Il costo sono due letture invece di una, e solo quando la
+ * prima non trova nulla.
+ *
+ * Per chi lo riceve, il rifiuto per FORMA è indistinguibile da «quel percorso non
+ * esiste»: stessa risposta, stessa frase, stesso codice. Dire «malformato»
+ * confermerebbe a chi prova che le forme respinte in altro modo erano giuste. La
+ * differenza resta nel log, con un `esito` suo.
  */
 async function assertDocumentoInScope(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -621,24 +677,51 @@ async function assertDocumentoInScope(
   scuole: string[],
   docPath: string,
 ): Promise<NextResponse | null> {
-  const { data, error } = await supabase
-    .from(TABELLA)
-    .select('id, scuola_id')
-    .eq('documento_path', docPath)
-    .in('scuola_id', scuole)
-    .limit(1)
-    .maybeSingle()
-  if (error) {
-    logEvento('multi_sede', 'error', {
+  // ── IL GATE DI FORMA, prima di qualunque query. Vedi la testata.
+  if (!percorsoDocumentoAmmesso(docPath)) {
+    // MAI il percorso nel log: non porta il nome del file, ma è la chiave che apre la
+    // fotografia della carta d'identità di una persona, e `redact()` non lo ha in
+    // lista bianca. Si registra CHE è stato respinto, e da chi.
+    logEvento('multi_sede', 'warn', {
       operazione: 'admin/pratiche-personale:GET',
-      esito: 'documento-non-verificabile',
-      entita_tipo: TABELLA,
-      error_code: codiceDi(error),
-    }, error)
-    return nonDisponibile('Verifica della scansione non riuscita: riprovare fra poco.')
+      esito: 'documento-forma-non-valida',
+      azione: 'documento',
+      utente: user.id,
+      ruolo: user.role,
+      sedi_attive: scuole.length,
+    })
+    // `docNegato()` e non `nonTrovata()`: è la STESSA risposta che riceve chi chiede
+    // un percorso ben formato e inesistente (403, stesso messaggio, stesso codice).
+    // Basterebbe uno status diverso a dire a chi prova che la forma, quella volta, era
+    // giusta — cioè a trasformare il gate in un oracolo sulla forma dei percorsi.
+    return docNegato()
   }
-  if (data) {
-    const trovata = data as { id?: unknown; scuola_id?: unknown }
+
+  let trovataInScope: { id?: unknown; scuola_id?: unknown } | null = null
+  for (const colonna of COLONNE_DOCUMENTO) {
+    const { data, error } = await supabase
+      .from(TABELLA)
+      .select('id, scuola_id')
+      .eq(colonna, docPath)
+      .in('scuola_id', scuole)
+      .limit(1)
+      .maybeSingle()
+    if (error) {
+      logEvento('multi_sede', 'error', {
+        operazione: 'admin/pratiche-personale:GET',
+        esito: 'documento-non-verificabile',
+        entita_tipo: TABELLA,
+        error_code: codiceDi(error),
+      }, error)
+      return nonDisponibile('Verifica della scansione non riuscita: riprovare fra poco.')
+    }
+    if (data) {
+      trovataInScope = data as { id?: unknown; scuola_id?: unknown }
+      break
+    }
+  }
+  if (trovataInScope) {
+    const trovata = trovataInScope
     // IL REGISTRO DEGLI ACCESSI RIUSCITI. `multi_sede` è persistito: la riga resta in
     // `app_log` e sopravvive al deploy. Senza, «nessun log» non distingue «nessuno ha
     // guardato» da «la sorveglianza non è mai partita» — e da qui esce la copia di un
@@ -661,24 +744,31 @@ async function assertDocumentoInScope(
   // Diniego. Solo PER IL LOG si guarda se quel percorso esista in un'altra sede:
   // distingue un tentativo cross-sede da un percorso inventato, e senza quella
   // distinzione il log di una fuga non si legge. Best-effort: legge una riga e la sola
-  // `scuola_id`, e un errore qui non cambia l'esito.
+  // `scuola_id`, e un errore qui non cambia l'esito. Stesso ciclo sulle colonne del
+  // gate qui sopra: cercare il fronte e non il retro direbbe «inventato» di un
+  // documento che esiste, cioè renderebbe illeggibile proprio il log di una fuga.
   let sedeAltrove: string | null = null
-  const { data: altrove, error: errAltrove } = await supabase
-    .from(TABELLA)
-    .select('scuola_id')
-    .eq('documento_path', docPath)
-    .limit(1)
-    .maybeSingle()
-  if (errAltrove) {
-    logEvento('multi_sede', 'info', {
-      operazione: 'admin/pratiche-personale:GET',
-      esito: 'documento-origine-non-verificabile',
-      entita_tipo: TABELLA,
-      error_code: codiceDi(errAltrove),
-    }, errAltrove)
-  } else {
+  for (const colonna of COLONNE_DOCUMENTO) {
+    const { data: altrove, error: errAltrove } = await supabase
+      .from(TABELLA)
+      .select('scuola_id')
+      .eq(colonna, docPath)
+      .limit(1)
+      .maybeSingle()
+    if (errAltrove) {
+      logEvento('multi_sede', 'info', {
+        operazione: 'admin/pratiche-personale:GET',
+        esito: 'documento-origine-non-verificabile',
+        entita_tipo: TABELLA,
+        error_code: codiceDi(errAltrove),
+      }, errAltrove)
+      continue
+    }
     const sede = (altrove as { scuola_id?: unknown } | null)?.scuola_id
-    if (typeof sede === 'string') sedeAltrove = sede
+    if (typeof sede === 'string') {
+      sedeAltrove = sede
+      break
+    }
   }
 
   logEvento('multi_sede', 'warn', {
@@ -1033,30 +1123,63 @@ async function scriviFascicolo(
 }
 
 /**
- * L'OGGETTO HA UN PROPRIETARIO? — presidio, non scrittura di routine.
+ * GLI OGGETTI HANNO UN PROPRIETARIO? — presidio, non scrittura di routine.
  *
- * `iscrizione/personale:POST` collega già la riga di `caricamenti_personale` alla
+ * `iscrizione/personale:POST` collega già le righe di `caricamenti_personale` alla
  * pratica appena creata, ma quel collegamento è best-effort: se è saltato, l'oggetto
  * risulta «in sospeso» e la spazzata degli orfani lo toglie dal bucket entro poche ore
  * — cioè la Segreteria approverebbe una scheda il cui documento sta per sparire.
  *
- * ⚠️ NON si chiama `collegaCaricamento` a occhi chiusi: quella funzione logga `error`
+ * ⚠️ NON si chiama `collegaCaricamenti` a occhi chiusi: quella funzione logga `error`
  * quando non collega nessuna riga, e all'approvazione il caso NORMALE è proprio quello
  * (la riga è già collegata dalla porta pubblica). Un `error` a ogni approvazione è un
  * allarme che si impara a ignorare, ed è il modo in cui il guasto vero, quando arriva,
- * non lo vede nessuno. Quindi prima si guarda, poi si agisce.
+ * non lo vede nessuno. Quindi prima si guarda, poi si agisce — e la regola non cambia
+ * col plurale: cambia solo che adesso si guarda una volta sola per DUE facce.
+ *
+ * ⚠️ UNA LETTURA SOLA, E UNA RIGA DI LOG PER FATTO. Con una chiamata per faccia lo
+ * stesso guasto uscirebbe in due righe scoordinate, e nessuna delle due direbbe che la
+ * pratica è rimasta MEZZA documentata. Con `.in()` il fatto è un'aritmetica: quante
+ * facce erano attese, quante sono a posto.
  */
-async function assicuraCaricamentoCollegato(
+async function assicuraCaricamentiCollegati(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   operazione: string,
-  percorso: string,
+  percorsi: string[],
   praticaId: string,
 ): Promise<void> {
+  // ⚠️ LA NORMALIZZAZIONE NON SI RISCRIVE QUI, e la prima stesura di questa funzione lo
+  // aveva fatto: `[...new Set(percorsi)]`, senza `trim()`, cioè una copia già divergente
+  // dall'originale nel momento in cui è stata scritta. `facceChieste` deduplica (la PK è
+  // `percorso`: due facce uguali sono UNA riga, e contarle due volte griderebbe un guasto
+  // che non c'è) e soprattutto CONTA le facce arrivate vuote invece di scartarle.
+  const { distinti: attesi, attese } = facceChieste(percorsi)
+  // `.in('percorso', [])` è un viaggio al database per nulla.
+  if (attesi.length === 0) return
+
+  // ⚠️ SI GUARDANO ENTRAMBE LE COLONNE DI PROPRIETÀ, e non solo `pratica_id`.
+  //
+  // La migrazione `20260812194501` ha aggiunto `caricamenti_personale.anagrafica_utente_id`
+  // — il proprietario alternativo, per gli oggetti che la Segreteria carica dalla scheda
+  // della persona — con `check (num_nonnulls(pratica_id, anagrafica_utente_id) <= 1)`, e
+  // ha riscritto l'indice dei sospesi come `where pratica_id is null and
+  // anagrafica_utente_id is null`. Leggendo la sola `pratica_id`, un oggetto di
+  // proprietà di un'ANAGRAFICA risulta «in sospeso» — la sua `pratica_id` è NULL per
+  // costruzione — e finirebbe in `daCollegare`; `collegaCaricamenti` filtra anch'essa
+  // `.is('anagrafica_utente_id', null)` (stesso predicato del reclamo e della spazzata),
+  // quindi aggiornerebbe ZERO righe e lascerebbe un `error` in `app_log` su uno stato
+  // sano. È letteralmente l'allarme che si impara a ignorare di cui parla la testata di
+  // questa funzione.
+  //
+  // ⚠️ E SE LA COLONNA NON C'È SU QUESTO DATABASE, la lettura risponde `42703` e si esce
+  // dal ramo qui sotto — best-effort, con una riga di `warn` e nessun blocco. È lo stesso
+  // comportamento che `@/lib/personale/caricamenti` ha già scelto nominando quella colonna
+  // senza rete: una seconda regola di degrado, diversa, in un secondo file, è il modo in
+  // cui due strade che devono decidere la stessa cosa cominciano a decidere cose diverse.
   const { data, error } = await supabase
     .from('caricamenti_personale')
-    .select('percorso, pratica_id')
-    .eq('percorso', percorso)
-    .maybeSingle()
+    .select('percorso, pratica_id, anagrafica_utente_id')
+    .in('percorso', attesi)
   if (error) {
     // Best-effort: il registro non risponde. Non si blocca un'approvazione per questo,
     // ma tacere sarebbe peggio — è l'unica riga che dice perché, fra qualche ora, un
@@ -1066,42 +1189,106 @@ async function assicuraCaricamentoCollegato(
       esito: 'registro-caricamenti-non-letto',
       entita_tipo: 'caricamenti_personale',
       entita_id: praticaId,
+      n_attesi: attese,
       error_code: codiceDi(error),
     }, error)
     return
   }
-  const riga = data as { pratica_id?: unknown } | null
-  if (!riga) {
+
+  // MAI il percorso nei log: è la chiave con cui si firma la fotografia di un documento
+  // d'identità, e `app_log` è interrogabile in SQL per 30 giorni. Qui i percorsi vivono
+  // solo dentro questa mappa, e di fuori escono conteggi.
+  const proprietaria = new Map<string, { pratica: string | null; anagrafica: string | null }>()
+  for (const r of (data ?? []) as {
+    percorso?: unknown
+    pratica_id?: unknown
+    anagrafica_utente_id?: unknown
+  }[]) {
+    if (typeof r.percorso !== 'string') continue
+    proprietaria.set(r.percorso, {
+      pratica: typeof r.pratica_id === 'string' ? r.pratica_id : null,
+      anagrafica: typeof r.anagrafica_utente_id === 'string' ? r.anagrafica_utente_id : null,
+    })
+  }
+
+  const senzaRiga = attesi.filter((p) => !proprietaria.has(p))
+  // «In sospeso» è ciò che l'indice parziale della migrazione chiama così: NESSUNO dei
+  // due proprietari. È l'unico stato che vada riparato, ed è l'unico che la spazzata
+  // raccoglie — quindi l'unico in cui non riparare costa un documento.
+  const daCollegare = attesi.filter((p) => {
+    const chi = proprietaria.get(p)
+    return chi !== undefined && chi.pratica === null && chi.anagrafica === null
+  })
+  const diAltraPratica = attesi.filter((p) => {
+    const chi = proprietaria.get(p)?.pratica
+    return typeof chi === 'string' && chi !== praticaId
+  })
+  const diUnAnagrafica = attesi.filter((p) => proprietaria.get(p)?.anagrafica != null)
+
+  if (senzaRiga.length > 0) {
     logEvento('personale', 'warn', {
       operazione,
       esito: 'caricamento-non-registrato',
       entita_tipo: 'caricamenti_personale',
       entita_id: praticaId,
+      n_attesi: attese,
+      n_senza_riga: senzaRiga.length,
       msg:
-        `${operazione}: la scansione della pratica non ha una riga nel registro dei caricamenti, ` +
-        `quindi la conservazione non sa che esiste`,
+        `${operazione}: ${senzaRiga.length} scansioni su ${attese} non hanno una riga nel ` +
+        `registro dei caricamenti, quindi la conservazione non sa che esistono`,
     })
-    return
   }
-  const proprietaria = typeof riga.pratica_id === 'string' ? riga.pratica_id : null
-  if (proprietaria === praticaId) return
-  if (proprietaria === null) {
-    await collegaCaricamento(supabase, percorso, praticaId, operazione)
-    return
+
+  if (diAltraPratica.length > 0) {
+    // L'oggetto è di un'ALTRA pratica: due righe nominano lo stesso file, e la
+    // conservazione della prima cancellerebbe ciò che la seconda usa. Non si disfa qui
+    // (il fascicolo esiste già), ma si NOMINA: senza questa riga la cosa si scoprirebbe
+    // da un documento sparito, mesi dopo.
+    logEvento('personale', 'error', {
+      operazione,
+      esito: 'caricamento-di-altra-pratica',
+      entita_tipo: 'caricamenti_personale',
+      entita_id: praticaId,
+      n_attesi: attese,
+      n_di_altra_pratica: diAltraPratica.length,
+      msg:
+        `${operazione}: una scansione approvata risulta di un'altra pratica; la conservazione di ` +
+        `quella cancellerebbe il file che questo fascicolo sta usando`,
+    })
   }
-  // L'oggetto è di un'ALTRA pratica: due righe nominano lo stesso file, e la
-  // conservazione della prima cancellerebbe ciò che la seconda usa. Non si disfa qui
-  // (il fascicolo esiste già), ma si NOMINA: senza questa riga la cosa si scoprirebbe
-  // da un documento sparito, mesi dopo.
-  logEvento('personale', 'error', {
-    operazione,
-    esito: 'caricamento-di-altra-pratica',
-    entita_tipo: 'caricamenti_personale',
-    entita_id: praticaId,
-    msg:
-      `${operazione}: la scansione approvata risulta di un'altra pratica; la conservazione di ` +
-      `quella cancellerebbe il file che questo fascicolo sta usando`,
-  })
+
+  if (diUnAnagrafica.length > 0) {
+    // L'oggetto è già di un'ANAGRAFICA — l'ha caricato la Segreteria dalla scheda di
+    // una persona, non è mai passato da una pratica — e adesso una pratica lo nomina.
+    // È lo stesso danno del caso qui sopra, dall'altra parte: due righe per un file
+    // solo, e la conservazione della PRATICA (90 giorni) porterebbe via ciò che il
+    // fascicolo (dieci anni) sta usando.
+    //
+    // Esito PROPRIO e non appiccicato a `caricamento-di-altra-pratica`: sono due fatti
+    // diversi per chi legge `app_log`, hanno due rimedi diversi, e una frase che dicesse
+    // «di un'altra pratica» su un oggetto che nessuna pratica possiede manderebbe a
+    // cercare una pratica che non esiste.
+    logEvento('personale', 'error', {
+      operazione,
+      esito: 'caricamento-di-unanagrafica',
+      entita_tipo: 'caricamenti_personale',
+      entita_id: praticaId,
+      n_attesi: attese,
+      n_di_unanagrafica: diUnAnagrafica.length,
+      msg:
+        `${operazione}: una scansione approvata risulta già di un'anagrafica; la conservazione ` +
+        `della pratica cancellerebbe il file che quel fascicolo sta usando`,
+    })
+  }
+
+  // Si AGISCE solo su ciò che è davvero in sospeso, e con UNA istruzione sola.
+  // `collegaCaricamenti` al plurale non è comodità: con una chiamata per faccia lo
+  // stesso fallimento parziale uscirebbe in due righe scoordinate, e nessuna delle due
+  // direbbe che la pratica è rimasta MEZZA documentata. Là il fatto è un'aritmetica —
+  // `n_attesi` e `n_collegati` — e nessun percorso finisce nel registro.
+  if (daCollegare.length > 0) {
+    await collegaCaricamenti(supabase, daCollegare, praticaId, operazione)
+  }
 }
 
 /** L'avviso, best-effort: `notificaEvento` non lancia, ma un guasto lascia una riga. */
@@ -1400,7 +1587,14 @@ async function approva(
   }
 
   // ── 7. IL FASCICOLO ────────────────────────────────────────────────────────
-  const documentoPath = testo(riga.documento_path) || null
+  //
+  // DUE FACCE, DUE PERCORSI, DUE DESTINI SEPARATI. Fino al 12/08/2026 il documento
+  // d'identità era UNA scansione sola; dalla migrazione `20260812194501` sono il fronte
+  // e il retro, e da qui in avanti nessuna riga di questo file li tratta come una cosa
+  // sola — il travaso sa degradare una colonna alla volta, quindi possono avere esiti
+  // diversi nella stessa approvazione.
+  const frontePath = testo(riga.documento_fronte_path) || null
+  const retroPath = testo(riga.documento_retro_path) || null
   const fascicolo: Record<string, unknown> = {
     utente_id: identita.authUserId,
     // ⚠️ `origine_pratica_id` NON è un di più. Senza, il fascicolo nasce senza il
@@ -1505,21 +1699,54 @@ async function approva(
     warnings.push(avviso('accountColonneCadute', { colonne: anagraficaUtente.colonneCadute.join(', ') }))
   }
 
-  // ── 9. LA CHIUSURA — e la scansione cambia proprietario ───────────────────
+  // ── 9. LA CHIUSURA — e le scansioni cambiano proprietario ─────────────────
   //
-  // ⚠️ IL FILE NON SI COPIA. `anagrafica_personale.documento_path` punta allo STESSO
-  // oggetto e la pratica lo rilascia con `documento_path: null`: «un oggetto, un
-  // proprietario», che è il contratto della migrazione `20260811205643` ed è ciò che
-  // impedisce alla conservazione della PRATICA di cancellare il file che il FASCICOLO
-  // sta usando. Lasciandovi una copia del percorso, quella riga se la porterebbe per
-  // dieci anni mentre `/privacy` promette dodici mesi per la copia del documento
-  // d'identità: si sforerebbe proprio il termine con la base giuridica più fragile.
+  // ⚠️ I FILE NON SI COPIANO. `anagrafica_personale.documento_fronte_path` e
+  // `…_retro_path` puntano agli STESSI due oggetti, e la pratica li rilascia mettendo a
+  // NULL le proprie colonne: «un oggetto, un proprietario», che è il contratto della
+  // migrazione `20260811205643` — esteso alla seconda faccia da `20260812194501` — ed è
+  // ciò che impedisce alla conservazione della PRATICA di cancellare i file che il
+  // FASCICOLO sta usando. Lasciandovi una copia dei percorsi, quella riga se li
+  // porterebbe per dieci anni mentre `/privacy` promette dodici mesi per la copia del
+  // documento d'identità: si sforerebbe proprio il termine con la base giuridica più
+  // fragile.
   //
-  // E si rilascia SOLO se il fascicolo ha davvero preso il percorso: se il degrado ha
-  // tolto `documento_path` dall'upsert, azzerarlo qui lascerebbe nel bucket un oggetto
-  // che nessuna riga nomina — invisibile alla conservazione e non cancellabile
-  // nemmeno su richiesta dell'interessata.
-  const documentoPassato = documentoPath !== null && !scritto.colonneCadute.includes('documento_path')
+  // ⚠️ E IL RILASCIO È PER FACCIA, INDIPENDENTE. Con una scansione sola bastava un
+  // booleano; con due no, e non è una raffinatezza: `scriviFascicolo` degrada UNA
+  // colonna alla volta (`colonneCadute`), quindi su un database a cui manchi solo
+  // `documento_retro_path` il fronte passa e il retro NO. Azzerarle insieme
+  // cancellerebbe dalla pratica l'unico riferimento al file non passato — che nessuna
+  // altra riga nomina — e quell'oggetto resterebbe nel bucket per sempre: invisibile
+  // alla conservazione e non cancellabile nemmeno su richiesta dell'interessata. Ogni
+  // faccia risponde per sé.
+  //
+  // `colonna in fascicolo` risponde alla prima delle tre domande: «al travaso è stata
+  // CHIESTA questa colonna?». `colonneCadute` risponde soltanto a «gliel'hanno tolta»,
+  // e una colonna mai chiesta non cade mai: il giorno in cui `COLONNE_ANAGRAFICA`
+  // smettesse di nominarne una, il solo `colonneCadute` direbbe «passata» su un
+  // percorso che il fascicolo non ha mai visto.
+  //
+  // ⚠️ MA OGGI QUEL TERMINE È IMPLICATO DAGLI ALTRI DUE, e va detto invece di lasciar
+  // credere che sia lui a tenere la linea. Misurato il 12/08/2026, non dedotto:
+  //   · togliendolo, i 5 file del perimetro restano verdi 107/107 — nessun input di
+  //     questa rotta lo fa scattare, perché `percorso` si legge dalla STESSA `riga` da
+  //     cui il fascicolo si riempie e la proiezione (`COLONNE_LAVORO`) discende dallo
+  //     stesso `CAMPI_TEMPLATE` di `COLONNE_ANAGRAFICA`: una colonna assente da questa
+  //     è assente anche da quella, quindi `percorso` è già `null`;
+  //   · rompendo invece la PREMESSA — `CAMPI_DI_UTENTI` allargato a
+  //     `documento_retro_path`, cioè `COLONNE_ANAGRAFICA` che smette di nominarla
+  //     mentre la proiezione continua a leggerla — vanno in rosso 8 test di questo
+  //     file. È lo scenario che il termine difende, ed è già inchiodato.
+  //
+  // Resta scritto, e non è codice morto per finta: è la rete per il giorno in cui la
+  // proiezione smettesse di derivare dal template (un `select('*')`, un elenco scritto
+  // a mano). Costa un `in`, e la direzione in cui sbaglia è non rilasciare — che su una
+  // carta d'identità è l'unica parte giusta in cui sbagliare.
+  const passata = (colonna: string, percorso: string | null) =>
+    percorso !== null && colonna in fascicolo && !scritto.colonneCadute.includes(colonna)
+  const frontePassato = passata('documento_fronte_path', frontePath)
+  const retroPassato = passata('documento_retro_path', retroPath)
+
   const chiusura = await cambiaStato(supabase, operazione, {
     id: riga.id,
     scuole,
@@ -1530,7 +1757,8 @@ async function approva(
       evasa_da: user.id,
       utente_id: identita.authUserId,
       aggiornata_il: adesso,
-      ...(documentoPassato ? { documento_path: null } : {}),
+      ...(frontePassato ? { documento_fronte_path: null } : {}),
+      ...(retroPassato ? { documento_retro_path: null } : {}),
     },
   })
   const chiusuraRiuscita = !chiusura.error && chiusura.righe.length > 0
@@ -1543,26 +1771,34 @@ async function approva(
    */
   const utenteIdScritto = chiusuraRiuscita && !chiusura.colonneCadute.includes('utente_id')
   /**
-   * LA PRATICA HA DAVVERO RILASCIATO LA SCANSIONE? — tre condizioni, non una.
+   * LA PRATICA HA DAVVERO RILASCIATO LE SCANSIONI? — tre condizioni per faccia.
    *
-   * `documentoPassato` risponde solo a «il fascicolo l'ha presa»; il rilascio è
-   * l'altra metà, e vive nell'UPDATE qui sopra. Se la chiusura non è passata, o se il
-   * degrado ha tolto `documento_path` dal patch, la pratica il percorso ce l'ha ANCORA
-   * — e affermare il contrario è lo stesso difetto già chiuso per `campi_aggiornati`:
-   * un registro che dichiara una scrittura mai avvenuta manda a cercare, fra un anno,
-   * la causa di una modifica che nessuno ha fatto.
+   * `frontePassato`/`retroPassato` rispondono solo a «il fascicolo l'ha presa»; il
+   * rilascio è l'altra metà, e vive nell'UPDATE qui sopra. Se la chiusura non è passata,
+   * o se il degrado ha tolto QUELLA colonna dal patch, la pratica il percorso ce l'ha
+   * ANCORA — e affermare il contrario è lo stesso difetto già chiuso per
+   * `campi_aggiornati`: un registro che dichiara una scrittura mai avvenuta manda a
+   * cercare, fra un anno, la causa di una modifica che nessuno ha fatto.
    *
    * Esce anche nella RISPOSTA, e non solo nel log: è il pannello a doverlo sapere.
-   * Dopo un'approvazione riuscita il pulsante «Apri la scansione» punta a un percorso
+   * Dopo un'approvazione riuscita il pulsante che apre quella faccia punta a un percorso
    * che nessuna pratica nomina più, e riproporlo significa servire un 403 di SEDE su
    * una pratica appena approvata dalla persona che sta guardando — un diniego travestito
    * da guasto di permessi, esattamente ciò che il commento a `assertDocumentoInScope`
    * dice di voler evitare — più una riga `documento-non-risolto` in `multi_sede` a ogni
    * clic: il registro di sorveglianza degli accessi alle scansioni si riempirebbe di
    * falsi positivi generati dal percorso NORMALE.
+   *
+   * ⚠️ DUE BOOLEANI, NON UNO. Il pannello deve poter nascondere il fronte e tenere il
+   * retro: nel degrado parziale quel secondo pulsante è l'unica strada rimasta verso
+   * l'unica copia raggiungibile di una faccia del documento.
    */
-  const documentoRilasciato =
-    documentoPassato && chiusuraRiuscita && !chiusura.colonneCadute.includes('documento_path')
+  const rilasciata = (colonna: string, passato: boolean) =>
+    passato && chiusuraRiuscita && !chiusura.colonneCadute.includes(colonna)
+  const documentiRilasciati = {
+    fronte: rilasciata('documento_fronte_path', frontePassato),
+    retro: rilasciata('documento_retro_path', retroPassato),
+  }
   if (chiusura.colonneCadute.length > 0) {
     // DUE codici e non uno con la coda appiccicata: «manca una colonna» e «la pratica
     // non è legata all'account» sono due gravità diverse, e concatenarle in una frase
@@ -1585,10 +1821,19 @@ async function approva(
     warnings.push(avviso('approvazioneNonMarcata'))
   }
 
-  // La scansione ha ancora un proprietario nel registro dei caricamenti?
-  if (documentoPath !== null && documentoPassato) {
-    await assicuraCaricamentoCollegato(supabase, operazione, documentoPath, riga.id)
-  }
+  // Le scansioni hanno ancora un proprietario nel registro dei caricamenti?
+  //
+  // Si guardano SOLO le facce che il fascicolo ha davvero preso: quelle rimaste alla
+  // pratica hanno ancora lei come proprietaria nel registro, ed è giusto così — non c'è
+  // niente da riparare, e chiederselo produrrebbe un allarme su uno stato sano.
+  await assicuraCaricamentiCollegati(
+    supabase,
+    operazione,
+    [frontePassato ? frontePath : null, retroPassato ? retroPath : null].filter(
+      (p): p is string => p !== null,
+    ),
+    riga.id,
+  )
 
   // ── 10. L'AUDIT ─────────────────────────────────────────────────────────────
   //
@@ -1620,7 +1865,13 @@ async function approva(
       account_creato: utenzaNuova,
       campi_aggiornati: campiScrittiSuUtenti,
       account_non_aggiornato: anagraficaUtente.errore,
-      documento_rilasciato: documentoRilasciato,
+      // UNA VOCE PER FACCIA, e non un solo `documento_rilasciato` messo in AND: un
+      // registro che dicesse «no» su un'approvazione in cui il fronte è passato manda a
+      // cercare un file che sta esattamente dove deve stare, e — peggio — nasconde
+      // quale delle due facce sia rimasta indietro, che è l'unica cosa da sapere per
+      // rimediare.
+      documento_fronte_rilasciato: documentiRilasciati.fronte,
+      documento_retro_rilasciato: documentiRilasciati.retro,
       // DOVE È FINITO IL FASCICOLO, quando non è dove sta la pratica. `scuolaId` qui
       // sopra è la sede della PRATICA — giusto, perché l'entità dell'audit è la pratica
       // — ma l'`upsert` atterra sulla PERSONA, e finché questo campo non c'era il
@@ -1660,7 +1911,11 @@ async function approva(
     n_colonne_cadute: scritto.colonneCadute.length,
     chiusura_riuscita: chiusuraRiuscita,
     utente_id_scritto: utenteIdScritto,
-    documento_rilasciato: documentoRilasciato,
+    documento_fronte_rilasciato: documentiRilasciati.fronte,
+    documento_retro_rilasciato: documentiRilasciati.retro,
+    // La query che, fra mesi, dice quante pratiche hanno travasato una faccia sola:
+    // è lo stato in cui un oggetto rischia di restare senza nessuna riga che lo nomini.
+    documento_rilasciato_a_meta: documentiRilasciati.fronte !== documentiRilasciati.retro,
   }
   if (chiusuraRiuscita) {
     logEvento('personale', 'info', { ...battito, esito: 'pratica-approvata' })
@@ -1673,9 +1928,12 @@ async function approva(
     id: riga.id,
     stato: chiusuraRiuscita ? 'approvata' : 'in_approvazione',
     accountCreato: utenzaNuova,
-    // La scansione è passata al fascicolo e la pratica non la nomina più: il pannello
-    // deve smettere di offrire «Apri la scansione», che da adesso risponde 403.
-    documentoRilasciato,
+    // Le scansioni passate al fascicolo, faccia per faccia: la pratica non le nomina
+    // più, e il pannello deve smettere di offrire QUEL pulsante — da adesso risponde
+    // 403. Un booleano solo per tutte e due avrebbe nascosto anche il pulsante della
+    // faccia rimasta alla pratica, cioè l'unica strada verso l'unica copia
+    // raggiungibile di quel file.
+    documentiRilasciati,
     // La password si vede UNA volta sola, qui. Non è archiviata da nessuna parte: per
     // riaverla c'è «Rigenera credenziali», che la sostituisce e lascia traccia.
     credentials: identita.createdAuth && identita.password ? { email, password: identita.password } : null,

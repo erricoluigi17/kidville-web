@@ -6,6 +6,9 @@ import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { PERSONALE_LIMITI } from '@/lib/forms/personale-template'
+// Le colonne che tengono il documento si LEGGONO dal template, non si ribattono: il
+// riquadro che spiega perché sta più in basso, dove viveva la copia scritta a mano.
+import { COLONNE_DOCUMENTO } from '@/lib/personale/percorso-documento'
 
 /**
  * LA CONSERVAZIONE DELL'ANAGRAFICA DEL PERSONALE — scansione del documento
@@ -39,10 +42,36 @@ import { PERSONALE_LIMITI } from '@/lib/forms/personale-template'
  *    trattiene **la sua** riga, non l'intero lotto.
  *
  *    ⚠️ VALE ANCHE PER L'UPDATE, e qui è più facile sbagliarsi che nel gemello:
- *    azzerare `documento_path` NON è una cancellazione più mite di una `DELETE`,
- *    è la stessa perdita di riferimento. Se si azzerasse la colonna prima di
- *    togliere il file, resterebbe un oggetto nel bucket che nessuna riga nomina
- *    più — e la volta dopo questo lavoro non saprebbe nemmeno che esiste.
+ *    azzerare il percorso NON è una cancellazione più mite di una `DELETE`, è la
+ *    stessa perdita di riferimento. Se si azzerasse la colonna prima di togliere
+ *    il file, resterebbe un oggetto nel bucket che nessuna riga nomina più — e la
+ *    volta dopo questo lavoro non saprebbe nemmeno che esiste.
+ *
+ * ─── DUE FACCE, E LA RIGA SI CHIUDE SOLO QUANDO ESCONO ENTRAMBE ─────────────
+ *
+ * Dal 12/08/2026 il documento d'identità si conserva fronte E retro
+ * (`documento_fronte_path` e `documento_retro_path`, migrazione `20260812194501`;
+ * `documento_path` non esiste più). Per questo lavoro non è un campo in più: è
+ * l'unico posto del repo che toglie dal bucket la scansione di una persona dodici
+ * mesi dopo la cessazione, e una route rimasta a un percorso solo avrebbe lasciato
+ * il RETRO della carta d'identità di ogni dipendente cessata nell'archivio per
+ * sempre — dichiarando `ok` ogni notte, perché il fronte usciva.
+ *
+ * Da lì tre regole, e nessuna è di stile:
+ *
+ *   · **`every`, NON `some`.** La riga si chiude solo quando TUTTI i suoi percorsi
+ *     sono usciti (o erano già assenti). Con `some` basterebbe il fronte: le due
+ *     colonne andrebbero a NULL mentre il retro è ancora nel bucket, e da quel
+ *     momento nessuna riga lo nominerebbe più — nemmeno questo job, che parte
+ *     proprio da quelle colonne. È «invisibile, non cancellato» applicato a metà
+ *     documento, ed è peggio del caso a un file solo, perché l'altra metà DICHIARA
+ *     il successo. Resta vera l'altra metà della regola: la rinuncia è PER RIGA,
+ *     non per lotto.
+ *   · **L'`UPDATE` azzera ENTRAMBE le colonne**, e solo su una riga chiudibile: una
+ *     colonna azzerata e l'altra no è uno stato che nessuno ha deciso.
+ *   · **Se anche UNA SOLA delle due colonne non si legge, il documento è IGNOTO** e
+ *     non si tocca niente. Metà informazione non è informazione: il file che la
+ *     colonna assente nominava esiste comunque.
  *
  * 2. **IL CONTEGGIO SI SCRIVE SEMPRE, ANCHE A ZERO, E FUORI DAL RAMO CHE PUÒ
  *    FALLIRE.** Nella versione SQL del bisnonno l'`INSERT` in `app_log` stava
@@ -73,11 +102,21 @@ import { PERSONALE_LIMITI } from '@/lib/forms/personale-template'
  *          **non si cancella**: ripiegare sulla ricezione anticiperebbe il termine
  *          promesso di tutto il tempo che la Segreteria ci ha messo a decidere.
  *   anagrafica con `cessato_il` valorizzata
- *        → a 12 mesi via la SOLA scansione (file, poi `documento_path = null`);
+ *        → a 12 mesi via le SOLE scansioni (prima i due file, poi entrambe le
+ *          colonne a `null`);
  *        → a 10 anni via la riga intera, e CON LEI la pratica **approvata** che
  *          l'ha generata (`origine_pratica_id`).
  *   `cessato_il` NULL = rapporto in corso
  *        → non si cancella niente. Mai.
+ *
+ * E, dopo i file: **le righe di `caricamenti_personale` che li nominavano.** Quel
+ * registro ha per chiave primaria il percorso e dice CHI ha caricato l'oggetto
+ * (migrazione `20260811234334`, più `anagrafica_utente_id` da `20260812194501`).
+ * Le sue due cascate lo puliscono da sé quando muore il proprietario — `pratica_id`
+ * e `anagrafica_utente_id` sono entrambe `on delete cascade` — ma NON coprono il
+ * caso centrale di questo job: a dodici mesi la scansione esce e l'anagrafica
+ * RESTA, ancora nove anni. Senza la spazzata, quelle righe continuerebbero a
+ * nominare oggetti che non esistono più.
  *
  * ─── LA PRATICA APPROVATA, E PERCHÉ NON POTEVA RESTARE PER SEMPRE ───────────
  *
@@ -105,7 +144,7 @@ import { PERSONALE_LIMITI } from '@/lib/forms/personale-template'
  *     invisibile, non cancellato — applicato a una riga invece che a un oggetto.
  *   · **SE `origine_pratica_id` NON SI PUÒ LEGGERE, non si chiude nessun
  *     fascicolo.** «Non so quale pratica appartenga a questa anagrafica» vale «non
- *     toccare», per la stessa ragione per cui vale su `documento_path`.
+ *     toccare», per la stessa ragione per cui vale sui percorsi del documento.
  *
  * ⚠️ RESTA FUORI, e si dichiara invece di scoprirlo fra sei mesi: la pratica
  * approvata che NESSUNA anagrafica cita. Oggi non può esistere — MISURATO
@@ -245,16 +284,48 @@ const CODICI_TABELLA_ASSENTE = new Set(['PGRST205', 'PGRST202', '42P01'])
 const CODICI_COLONNA_ASSENTE = new Set(['PGRST204', '42703'])
 
 /**
+ * LE DUE FACCE DEL DOCUMENTO, in un posto solo.
+ *
+ * Sono la stessa lista in tre punti diversi — le colonne che si leggono, quelle la
+ * cui assenza rende il documento IGNOTO, quelle che l'`UPDATE` azzera — e in questo
+ * repo una lista scritta tre volte diverge alla prima modifica. Il giorno in cui
+ * qualcuno aggiungesse una terza faccia (il permesso di soggiorno ha due lati e un
+ * timbro), da qui discenderebbe tutto il resto: se il nome nuovo finisse solo nella
+ * `select`, il suo file uscirebbe dal bucket e la colonna continuerebbe a nominarlo.
+ *
+ * ⚠️ FINO AL 13/08/2026 QUESTA RIGA ERA UNA COPIA SCRITTA A MANO, e il commento qui
+ * sopra la difendeva parlando di «un posto solo» che non era questo. La misura che
+ * l'ha smentita: aggiunto un terzo campo `file` a `PERSONALE_FIELDS`, la suite dava
+ * **136 test rossi in 14 file** e `gdpr-retention-personale` restava **93/93 verde**
+ * — cioè una terza faccia sarebbe entrata dal modulo pubblico, sarebbe stata
+ * archiviata, e la conservazione non l'avrebbe cancellata MAI, senza che un solo test
+ * lo dicesse. Ora l'elenco si legge da `PERSONALE_FIELDS` come ovunque, e il lock
+ * `__tests__/architecture/colonne-documento-un-posto-solo.test.ts` vieta la prossima
+ * copia. L'ordine (fronte, poi retro) è quello del template, che è la stessa cosa
+ * scritta una volta invece che due.
+ *
+ * ⚠️ L'ORDINE CONTA per una cosa sola, ed è la leggibilità dei percorsi passati a
+ * `remove()`: fronte prima, retro poi. Non è un'invariante — nessun codice ci
+ * poggia sopra — ma un lotto ordinato è un lotto che si legge in un log di Storage.
+ *
+ * L'import sta in cima al file, con gli altri: `COLONNE_DOCUMENTO` da
+ * `@/lib/personale/percorso-documento`.
+ */
+
+/**
  * Le colonne che possono mancare su un database non migrato, tabella per
  * tabella. Nessuna di queste assenze autorizza a cancellare di più: quando
  * un'informazione non c'è si sceglie sempre il verso che CONSERVA.
  */
-const COLONNE_PRATICA_FACOLTATIVE = ['evasa_il', 'documento_path'] as const
+const COLONNE_PRATICA_FACOLTATIVE = [
+    'evasa_il',
+    ...COLONNE_DOCUMENTO,
+] as const
 const COLONNE_PRATICA_SEMPRE = ['id', 'stato', 'creata_il'] as const
 
 const COLONNE_ANAGRAFICA_FACOLTATIVE = [
     'cessato_il',
-    'documento_path',
+    ...COLONNE_DOCUMENTO,
     // Il legame col modulo d'origine. È FACOLTATIVA come le altre due — un
     // database non migrato non ce l'ha — ma la sua assenza costa più delle altre:
     // senza, un fascicolo che scade porterebbe via l'anagrafica e lascerebbe in
@@ -277,31 +348,69 @@ const COLONNE_ANAGRAFICA_SEMPRE = ['utente_id'] as const
  */
 const TETTO_LOTTO = 500
 
-type Pratica = {
+/**
+ * QUANTI PERCORSI ENTRANO IN UNA SOLA `DELETE … .in('percorso', …)`.
+ *
+ * PostgREST mette i filtri nella QUERY STRING anche per la `DELETE`, e i percorsi
+ * di questo job non hanno un tetto proprio: derivano dal lotto, che con due facce
+ * arriva a ~3000 (500 pratiche×2 + 500 fascicoli×2 + 500 anagrafiche×2). Misurato
+ * con `new URLSearchParams({percorso: 'in.("…","…")'})`, sui percorsi VERI
+ * (`documenti/<uuid>/<uuid>.jpeg`, 88 caratteri) e al tetto del CHECK di colonna
+ * (200 caratteri):
+ *
+ *   |  percorsi | reali (88 car.) | al CHECK (200 car.) |
+ *   |-----------|-----------------|---------------------|
+ *   |        25 |       2.540 byte|          5.340 byte |
+ *   |        50 |       5.065 byte|         10.665 byte |
+ *   |      3000 |     303.015 byte|        639.015 byte |
+ *
+ * Kong e nginx tagliano molto prima — 8 KB è il default del buffer di richiesta —
+ * e la risposta è un 414 o un 400, cioè un errore di TRASPORTO che questo codice
+ * vedrebbe come «registro non ripulito». Siccome quel guasto è un `warn` che non
+ * ferma il giro (scelta dichiarata più sotto, e giusta), su un lotto pieno il
+ * registro non si sarebbe ripulito MAI, in silenzio: l'esito esatto che la FASE 4
+ * esiste per impedire.
+ *
+ * 25 tiene la riga di richiesta sotto gli 8 KB anche nel caso peggiore consentito
+ * dal CHECK. È lo stesso numero di `TETTO_SPAZZATA` in `@/lib/personale/caricamenti`
+ * — che spazza lo stesso registro — e la coincidenza è voluta: due tetti diversi
+ * sulla stessa tabella sarebbero due numeri da rispiegare ogni volta.
+ */
+const TETTO_REGISTRO = 25
+
+/** Le due facce, come arrivano da PostgREST: assenti se la colonna non c'è. */
+type ConDocumento = {
+    documento_fronte_path?: string | null
+    documento_retro_path?: string | null
+}
+
+type Pratica = ConDocumento & {
     id: string
     stato?: string | null
     creata_il?: string | null
     evasa_il?: string | null
-    documento_path?: string | null
 }
 
-type Anagrafica = {
+type Anagrafica = ConDocumento & {
     utente_id: string
     cessato_il?: string | null
-    documento_path?: string | null
     origine_pratica_id?: string | null
 }
 
 /**
- * Una riga da chiudere, tenuta legata al SUO file fino alla fine.
+ * Una riga da chiudere, tenuta legata ai SUOI file fino alla fine.
+ *
+ * `percorsi` è un ELENCO e non un percorso solo, ed è la modifica strutturale del
+ * 12/08/2026: da qui discende che la riga si chiuda con `every` e non con `some`.
+ * Può essere vuoto — una riga senza scansioni non ha niente da attendere.
  *
  * `legata` è l'id di un'ALTRA riga che deve sparire per prima: la usa la sola
  * anagrafica, e vi mette la pratica che l'ha generata. Serve perché il legame
  * `origine_pratica_id` muore con l'anagrafica: cancellare quest'ultima mentre la
- * sua pratica resta indietro — trattenuta dal proprio file — lascerebbe in
+ * sua pratica resta indietro — trattenuta dai propri file — lascerebbe in
  * `pratiche_personale` una copia integrale che nessuna riga nomina più.
  */
-type RigaConFile = { chiave: string; percorso: string | null; legata?: string | null }
+type RigaConFile = { chiave: string; percorsi: string[]; legata?: string | null }
 
 const NIENTE_DA_TOGLIERE: EsitoRimozione = {
     rimossi: [],
@@ -375,6 +484,59 @@ function testoDi(v: unknown): string | null {
     return typeof v === 'string' && v.trim() !== '' ? v.trim() : null
 }
 
+/**
+ * I percorsi che una riga nomina davvero: fronte, retro, o nessuno dei due.
+ *
+ * Il `Set` è igiene, e si dichiara per quello che è invece di farsi passare per una
+ * difesa: nessuna delle due colonne è unica in tabella, e l'invariante «i due
+ * percorsi non possono essere uguali» NON la impone il database. La impone una riga
+ * sola, in un altro file, e si chiama per nome perché una difesa citata senza
+ * indirizzo è una difesa che nessuno può verificare:
+ *
+ *     src/app/api/iscrizione/personale/route.ts
+ *     if (new Set(percorsiDocumento).size !== percorsiDocumento.length) → 400
+ *
+ * cioè la route del modulo pubblico, PRIMA di inserire (`esito:
+ * 'documento-facce-uguali'`). Una riga scritta a mano in SQL non ci passa, e può
+ * quindi nominare due volte lo stesso oggetto.
+ *
+ * ⚠️ Fino al 12/08/2026 questa nota affermava la stessa cosa mentre il confronto
+ * NON esisteva in tutto `src/`: descriveva una difesa immaginaria, che è la cosa
+ * che CLAUDE.md chiama «peggio di nessun documento». Il confronto è stato scritto
+ * quel giorno; se un domani sparisse, questa nota va riscritta prima — non dopo.
+ *
+ * Oggi la duplicazione non farebbe comunque danni qui (`tuttiIPercorsi` deduplica a
+ * sua volta prima di chiamare `remove()`, e `every` su due elementi uguali risponde
+ * come su uno), ma `percorsi` è l'elenco che risponde alla domanda «quanti file
+ * nomina questa riga»: lasciarcene due identici lo renderebbe una risposta falsa
+ * per il prossimo che se ne servirà.
+ */
+function percorsiDi(riga: ConDocumento): string[] {
+    // ⚠️ LA LETTURA È PER CHIAVE DINAMICA, e il tipo largo vive QUI — su una riga sola,
+    // dentro la funzione — invece di allargare `ConDocumento`.
+    //
+    // `COLONNE_DOCUMENTO` si legge da `PERSONALE_FIELDS` a runtime (è il punto del
+    // modulo condiviso: il nome della colonna sta scritto in un posto solo), quindi per
+    // TypeScript è `readonly string[]` e non l'unione delle due chiavi: `riga[c]` su un
+    // tipo chiuso è `TS7053`, ed è stato un gate rosso il 13/08/2026.
+    //
+    // Allargare `ConDocumento` a un tipo con index signature avrebbe tolto il rosso in
+    // un modo che costa caro altrove: `Pratica` e `Anagrafica` lo intersecano, e con una
+    // chiave libera `testoDi(r.origine_pratica_idX)` compilerebbe restituendo `null` per
+    // sempre — cioè il legame fascicolo→pratica si spezzerebbe in silenzio, che è
+    // esattamente il guasto che `legata` esiste per impedire. I tipi restano chiusi; è
+    // questa funzione a dichiarare che sta leggendo per chiave calcolata.
+    //
+    // Stessa forma già adottata in `src/app/api/iscrizione/personale/route.ts`, che
+    // itera sulle stesse colonne su righe lette da PostgREST.
+    const campi: Record<string, unknown> = riga
+    return [
+        ...new Set(
+            COLONNE_DOCUMENTO.map((c) => testoDi(campi[c])).filter((p): p is string => p !== null),
+        ),
+    ]
+}
+
 // POST /api/gdpr/retention-personale
 // Auth: header `x-cron-secret` (cron) OPPURE staff (lancio manuale).
 export const POST = withRoute('gdpr/retention-personale:POST', async (request: NextRequest) => {
@@ -395,6 +557,30 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
     let nAnagraficheScadute = 0
     let nScansioniScadute = 0
     let nTrattenute = 0
+    /**
+     * Le righe del REGISTRO dei caricamenti tolte in questo giro. `null` quando il
+     * numero NON È STATO MISURATO: «non l'ho misurato» e «erano zero» sono due
+     * fatti diversi, ed è la distinzione che tutto questo file difende.
+     *
+     * Non misurato vuol dire due cose, ed entrambe scrivono `null`:
+     *   · PostgREST non ha restituito il conteggio;
+     *   · la spazzata è FALLITA, quindi non è mai arrivata in fondo.
+     *
+     * ⚠️ Il secondo caso è stato un difetto vero, ed è il motivo per cui questa nota
+     * è così lunga. Il ramo d'errore della FASE 4 non toccava questa variabile: il
+     * battito scriveva `n_registro: 0` sia quando la spazzata era riuscita senza
+     * trovare nulla, sia quando era esplosa — indistinguibili proprio nell'unico
+     * ramo in cui la distinzione serve, perché sul DB della CI (non migrato) e sulla
+     * produzione fino all'11/08/2026 la tabella non c'è e l'errore è la norma. Chi
+     * avesse letto `app_log` filtrando `esito = 'ok'` non avrebbe avuto modo di
+     * sapere che la spazzata non era mai partita: la stessa classe di guasto del
+     * `403` senza corpo (AGENTS §5), dentro il file che si vanta di averla evitata.
+     *
+     * `0` resta il valore di partenza, e ci resta a ragione: se dal bucket non è
+     * uscito nessun file la spazzata non ha nulla da fare, e «zero righe tolte» è
+     * una misura certa, non un'assenza di misura.
+     */
+    let nRegistro: number | null = 0
     let esito: EsitoRimozione = NIENTE_DA_TOGLIERE
     let nBloccanti = 0
     let documentoIgnoto = false
@@ -464,7 +650,11 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
 
         if (erroreP && CODICI_COLONNA_ASSENTE.has(codiceDi(erroreP))) {
             const mancanti = colonneMancanti(erroreP, COLONNE_PRATICA_FACOLTATIVE)
-            if (mancanti.includes('documento_path')) documentoIgnoto = true
+            // ANCHE UNA SOLA basta: metà informazione non è informazione. Se manca il
+            // retro, il fronte si legge benissimo — e cancellare la riga lascerebbe
+            // nel bucket la seconda faccia di una carta d'identità che quella riga era
+            // l'unica a nominare.
+            if (COLONNE_DOCUMENTO.some((c) => mancanti.includes(c))) documentoIgnoto = true
             colonnePratica = [
                 ...COLONNE_PRATICA_SEMPRE,
                 ...COLONNE_PRATICA_FACOLTATIVE.filter((c) => !mancanti.includes(c)),
@@ -539,7 +729,7 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
 
         if (erroreA && CODICI_COLONNA_ASSENTE.has(codiceDi(erroreA))) {
             const mancanti = colonneMancanti(erroreA, COLONNE_ANAGRAFICA_FACOLTATIVE)
-            if (mancanti.includes('documento_path')) documentoIgnoto = true
+            if (COLONNE_DOCUMENTO.some((c) => mancanti.includes(c))) documentoIgnoto = true
             if (mancanti.includes('cessato_il')) cessazioneIgnota = true
             if (mancanti.includes('origine_pratica_id')) origineIgnota = true
             colonneAnagrafica = [
@@ -693,7 +883,12 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
             .filter(
                 (x) =>
                     !daCancellare.has(x.riga.utente_id) &&
-                    testoDi(x.riga.documento_path) !== null &&
+                    // «Ne nomina ALMENO UNO»: la riga col solo fronte (scritta prima
+                    // del 12/08/2026 e portata lì dal `rename column`) e quella col
+                    // solo retro sono entrambe da lavorare. Zero percorsi vuol dire
+                    // che il giro precedente l'ha già sbiancata, e un `update` a
+                    // vuoto gonfierebbe il conteggio dichiarato.
+                    percorsiDi(x.riga).length > 0 &&
                     piuMesi(x.cessato, MESI_DOCUMENTO).getTime() <= adesso.getTime(),
             )
             .map((x) => x.riga)
@@ -715,15 +910,21 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
             })
         }
 
-        // ── SENZA `documento_path` NON SI CANCELLA NIENTE ──
+        // ── SENZA I PERCORSI DEL DOCUMENTO NON SI CANCELLA NIENTE ──
         //
         // Il difetto che questo blocco chiude, e che il gemello ha pagato per
-        // davvero: se `documento_path` finisce fra le colonne assenti, la seconda
-        // `select` la esclude, `percorso` è `undefined`, nessuna `remove()` parte —
-        // e senza questo `return` le righe si cancellerebbero LO STESSO. Risultato:
-        // scansioni di documenti d'identità nel bucket senza più nessuna riga che le
-        // nomini, cioè «invisibili, non cancellate», il modo peggiore di conservare
-        // un dato personale.
+        // davvero: se una delle colonne del documento finisce fra quelle assenti, la
+        // seconda `select` la esclude, il suo valore è `undefined`, nessuna
+        // `remove()` parte per quel file — e senza questo `return` le righe si
+        // cancellerebbero LO STESSO. Risultato: scansioni di documenti d'identità nel
+        // bucket senza più nessuna riga che le nomini, cioè «invisibili, non
+        // cancellate», il modo peggiore di conservare un dato personale.
+        //
+        // ⚠️ BASTA UNA DELLE DUE, e da quando le facce sono due è il caso PROBABILE:
+        // un database fermo a prima del 12/08/2026 ha il fronte (sotto il vecchio
+        // nome) e non ha il retro. Leggere il solo fronte e cancellare vorrebbe dire
+        // togliere la riga lasciando dentro il retro — che quella riga era l'unica a
+        // nominare. Metà informazione non è informazione.
         //
         // Vale ANCHE per il ripiego di `colonneMancanti`, che quando non riconosce
         // nessun nome rinuncia a TUTTE le colonne facoltative: qualunque
@@ -743,7 +944,10 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
         // cancellazione delle pratiche a 90 giorni per un motivo che non le riguarda.
         const legameIgnoto = origineIgnota && nAnagraficheScadute > 0
         if (documentoIgnoto || legameIgnoto) {
-            esitoBattito = documentoIgnoto ? 'documento-path-ignoto' : 'origine-pratica-ignota'
+            // `documento-ignoto` e non più `documento-path-ignoto`: la colonna
+            // `documento_path` non esiste più, e un esito che la nomina manderebbe a
+            // cercare in `information_schema` una colonna caduta il 12/08/2026.
+            esitoBattito = documentoIgnoto ? 'documento-ignoto' : 'origine-pratica-ignota'
             logEvento('cron', 'error', {
                 operazione: JOB,
                 esito: esitoBattito,
@@ -752,9 +956,9 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
                 n_anagrafiche_scadute: nAnagraficheScadute,
                 ms: Date.now() - t0,
                 msg: documentoIgnoto
-                    ? `${JOB}: la colonna documento_path non esiste su questo database, quindi non si sa ` +
-                      `quali scansioni ogni riga nomini: NESSUNA riga viene toccata. Cancellarle ` +
-                      `lascerebbe i file nell'archivio senza più nulla che li nomini`
+                    ? `${JOB}: almeno una fra ${COLONNE_DOCUMENTO.join(' e ')} non esiste su questo ` +
+                      `database, quindi non si sa quali scansioni ogni riga nomini: NESSUNA riga viene ` +
+                      `toccata. Cancellarle lascerebbe i file nell'archivio senza più nulla che li nomini`
                     : `${JOB}: la colonna origine_pratica_id non esiste su questo database, quindi non si sa ` +
                       `quale pratica abbia generato ciascun fascicolo: NESSUNA riga viene toccata. ` +
                       `Chiudere il fascicolo lascerebbe la sua pratica in tabella senza più nulla che la nomini`,
@@ -792,7 +996,7 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
         if (idPraticheFascicolo.length > 0) {
             const { data, error } = await supabase
                 .from('pratiche_personale')
-                .select('id, documento_path')
+                .select(['id', ...COLONNE_DOCUMENTO].join(', '))
                 .in('id', idPraticheFascicolo)
             if (error) {
                 const codice = codiceDi(error)
@@ -821,31 +1025,39 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
             )
         }
 
-        // Ogni riga resta legata al SUO file fino alla fine: è ciò che permette di
+        // Ogni riga resta legata ai SUOI file fino alla fine: è ciò che permette di
         // trattenere una riga sola invece dell'intero lotto.
         const praticheConFile: RigaConFile[] = praticheScadute.map((r) => ({
             chiave: r.id,
-            percorso: testoDi(r.documento_path),
+            percorsi: percorsiDi(r),
         }))
         const fascicoloConFile: RigaConFile[] = praticheFascicolo.map((r) => ({
             chiave: r.id,
-            percorso: testoDi(r.documento_path),
+            percorsi: percorsiDi(r),
         }))
         const anagraficheConFile: RigaConFile[] = anagraficheScadute.map((r) => ({
             chiave: r.utente_id,
-            percorso: testoDi(r.documento_path),
+            percorsi: percorsiDi(r),
             legata: testoDi(r.origine_pratica_id),
         }))
         const scansioniConFile: RigaConFile[] = scansioniScadute.map((r) => ({
             chiave: r.utente_id,
-            percorso: testoDi(r.documento_path),
+            percorsi: percorsiDi(r),
         }))
 
+        // UNA CHIAMATA SOLA allo Storage, con dentro tutti i percorsi del lotto — e
+        // deduplicata, perché due righe possono legittimamente nominare lo stesso
+        // oggetto (la pratica approvata e il fascicolo che l'ha ereditata puntano
+        // allo stesso file: «un oggetto, un proprietario» dice chi lo POSSIEDE, non
+        // che nessun altro lo nomini durante il travaso).
         const tuttiIPercorsi = [
             ...new Set(
-                [...praticheConFile, ...fascicoloConFile, ...anagraficheConFile, ...scansioniConFile]
-                    .map((r) => r.percorso)
-                    .filter((p): p is string => p !== null),
+                [
+                    ...praticheConFile,
+                    ...fascicoloConFile,
+                    ...anagraficheConFile,
+                    ...scansioniConFile,
+                ].flatMap((r) => r.percorsi),
             ),
         ]
 
@@ -888,10 +1100,22 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
 
         // Una scansione ancora nell'archivio — o che non si è potuto verificare —
         // trattiene la SUA riga, e soltanto quella.
+        //
+        // ⚠️ `every`, NON `some`, ed è la riga più importante di questo file. Con due
+        // facce, la riga si chiude solo se sono usciti ENTRAMBI i file (o se erano
+        // già assenti: `bloccanti` non comprende i `giaAssenti`, per i quali l'esito
+        // voluto è raggiunto). Con `some` il fronte uscito basterebbe ad azzerare
+        // tutt'e due le colonne, e il retro rimasto nel bucket non sarebbe più
+        // nominato da nessuna riga — nemmeno dal giro successivo, che parte proprio
+        // da quelle colonne. La fotografia della seconda faccia di una carta
+        // d'identità resterebbe lì per sempre, dichiarata cancellata.
+        //
+        // `[].every(...)` è `true`: la riga senza scansioni è chiudibile, che è
+        // esattamente ciò che diceva il vecchio `percorso === null ||`.
         const daNonToccare = new Set(bloccanti(esito))
         nBloccanti = daNonToccare.size
         const chiudibili = (righe: RigaConFile[]) =>
-            righe.filter((r) => r.percorso === null || !daNonToccare.has(r.percorso))
+            righe.filter((r) => r.percorsi.every((p) => !daNonToccare.has(p)))
 
         const praticheChiudibili = chiudibili(praticheConFile)
         const fascicoloChiudibili = chiudibili(fascicoloConFile)
@@ -1037,12 +1261,20 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
         }
 
         if (scansioniChiudibili.length > 0) {
-            // L'UPDATE che DIMENTICA il file, e viene DOPO la sua rimozione. Il
+            // L'UPDATE che DIMENTICA i file, e viene DOPO la loro rimozione. Il
             // rapporto di lavoro è finito da un anno ma il fascicolo resta ancora
             // nove: si toglie la sola copia del documento, e la riga sopravvive.
+            //
+            // ⚠️ ENTRAMBE LE COLONNE, sempre, anche quando la riga ne portava una
+            // sola. Azzerare il solo campo che era valorizzato costerebbe uguale e
+            // lascerebbe due stati diversi per lo stesso fatto — «documento
+            // conservato» scritto in due modi — che è il genere di differenza che
+            // fra un anno qualcuno interpreterà come significativa. E la riga arriva
+            // qui solo se è CHIUDIBILE: entrambi i suoi file sono fuori dal bucket.
+            const azzeraDocumento = Object.fromEntries(COLONNE_DOCUMENTO.map((c) => [c, null]))
             const { error, count } = await supabase
                 .from('anagrafica_personale')
-                .update({ documento_path: null }, { count: 'exact' })
+                .update(azzeraDocumento, { count: 'exact' })
                 .in('utente_id', scansioniChiudibili.map((r) => r.chiave))
             if (error) {
                 // Le scansioni sono USCITE e la colonna le nomina ancora: è il caso
@@ -1059,7 +1291,7 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
                     n_scansioni: scansioniChiudibili.length,
                     n_file: esito.rimossi.length,
                     ms: Date.now() - t0,
-                    msg: `${JOB}: scansioni rimosse dall'archivio ma documento_path NON azzerato`,
+                    msg: `${JOB}: scansioni rimosse dall'archivio ma i percorsi del documento NON azzerati`,
                 })
                 return NextResponse.json(
                     { ok: false, motivo: 'scansioni-non-azzerate', file: esito.rimossi.length },
@@ -1067,6 +1299,111 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
                 )
             }
             nScansioni = registraConteggio(count ?? null, scansioniChiudibili.length)
+        }
+
+        // ═══ FASE 4 · IL REGISTRO DEI CARICAMENTI ════════════════════════════
+        //
+        // `caricamenti_personale` ha per chiave primaria il PERCORSO e dice chi ha
+        // caricato quell'oggetto. Le sue due cascate lo ripuliscono da sole quando il
+        // proprietario muore (`pratica_id` e `anagrafica_utente_id`, entrambe
+        // `on delete cascade`), ma il caso centrale di questo job non è una
+        // cancellazione: a DODICI MESI la scansione esce dal bucket e l'anagrafica
+        // resta in tabella ancora nove anni. Senza questo blocco, il registro
+        // continuerebbe a nominare oggetti che non esistono più — e chi lo interroga
+        // per rispondere a una richiesta di accesso leggerebbe l'elenco di file che
+        // la Scuola custodisce di una persona, con dentro due che ha già cancellato.
+        //
+        // ── SI CANCELLA PER PERCORSO, E SOLO PER I FILE DAVVERO USCITI ──
+        //
+        // `rimossi` più `giaAssenti`: sono i due esiti in cui l'oggetto NON è più
+        // nell'archivio (il secondo perché non c'era già). I `bloccanti` restano
+        // fuori, ed è la stessa regola di sempre letta al contrario: finché il file è
+        // lì dentro, la sua riga di registro è l'unica cosa che lo nomina per chiave,
+        // e toglierla lo renderebbe irraggiungibile perfino alla spazzata degli
+        // orfani. Per percorso e non per proprietario, così la regola vale identica
+        // per le righe della pratica, per quelle dell'anagrafica e per quelle che un
+        // travaso ha lasciato con il proprietario vecchio.
+        //
+        // ── E UN GUASTO QUI NON FERMA IL GIRO, al contrario di tutto il resto ──
+        //
+        // Il verso conservativo si sceglie sempre guardando QUALE dato resta
+        // indietro. Ovunque in questo file il dato in ballo è una fotografia di carta
+        // d'identità, e allora si trattiene tutto. Qui no: qui resta indietro una
+        // riga che nomina un file GIÀ CANCELLATO. Rispondere 500 farebbe fallire ogni
+        // notte un lavoro che ha appena tolto le scansioni dal bucket — e su un
+        // database senza questa tabella (la CI, e la produzione fino a ieri) le
+        // toglierebbe smettendo di dichiararlo. Perciò: `warn`, conteggio nel battito,
+        // e il giro prosegue.
+        const percorsiUsciti = [...esito.rimossi, ...esito.giaAssenti]
+        if (percorsiUsciti.length > 0) {
+            // A GRUPPI DI `TETTO_REGISTRO`, e non in una `.in()` sola: la ragione, con
+            // i byte misurati, sta nella testata di quella costante.
+            let tolte = 0
+            let misurate = true
+            let erroreRegistro: unknown = null
+            let nonSpazzati = 0
+
+            for (let i = 0; i < percorsiUsciti.length; i += TETTO_REGISTRO) {
+                const gruppo = percorsiUsciti.slice(i, i + TETTO_REGISTRO)
+                const { error, count } = await supabase
+                    .from('caricamenti_personale')
+                    .delete({ count: 'exact' })
+                    .in('percorso', gruppo)
+                if (error) {
+                    // CI SI FERMA AL PRIMO ERRORE. Il caso che si presenta davvero è la
+                    // tabella assente (la CI, che non è migrata): lì nessun gruppo
+                    // successivo potrebbe riuscire, e insistere sarebbe una richiesta
+                    // dietro l'altra verso lo stesso `PGRST205` — rumore nei log e
+                    // tempo di funzione bruciato dentro un job che ha già fatto la
+                    // parte che conta.
+                    erroreRegistro = error
+                    nonSpazzati = percorsiUsciti.length - i
+                    break
+                }
+                // `count` assente non è `0`: è «non l'ho misurato», e basta un gruppo
+                // muto perché la SOMMA smetta di essere una misura.
+                if (typeof count === 'number') tolte += count
+                else misurate = false
+            }
+
+            if (erroreRegistro) {
+                const codice = codiceDi(erroreRegistro)
+                // ⚠️ `null`, NON il parziale dei gruppi riusciti. La domanda a cui
+                // `n_registro` risponde è «quante righe di registro sono state tolte in
+                // questo giro», e con la spazzata interrotta a metà quella risposta non
+                // si conosce. Il parziale non si butta però via: sta nel `warn` qui
+                // sotto, dove è un dettaglio del guasto e non una misura del giro.
+                nRegistro = null
+                logEvento('cron', 'warn', {
+                    operazione: JOB,
+                    esito: 'registro-non-ripulito',
+                    canale,
+                    entita_tipo: 'caricamenti_personale',
+                    error_code: codice,
+                    n_file: percorsiUsciti.length,
+                    // Quanti percorsi non sono stati nemmeno tentati: è il numero da cui
+                    // si riparte per rimediare a mano, e senza di lui il `warn` dice che
+                    // qualcosa è andato storto senza dire quanto.
+                    n_percorsi_non_spazzati: nonSpazzati,
+                    n_registro_parziale: tolte,
+                    msg:
+                        `${JOB}: le scansioni sono uscite dall'archivio ma le righe di ` +
+                        `caricamenti_personale che le nominavano non sono state cancellate ` +
+                        `(${codice || 'senza codice'}). Restano righe che nominano oggetti inesistenti: ` +
+                        `è un difetto reversibile, e non ferma la conservazione — che ha già fatto la ` +
+                        `parte irreversibile`,
+                })
+            } else {
+                // `null` e non `0` quando PostgREST il conteggio non lo dà: qui non si
+                // può ripiegare sul numero dei percorsi nominati — come fanno le altre
+                // scritture — perché lo scarto è NORMALE, non anomalo. Un percorso
+                // scritto prima che il registro esistesse (la produzione fino
+                // all'11/08/2026) non ha nessuna riga da cancellare, quindi
+                // «percorsi usciti» e «righe di registro tolte» sono due numeri che
+                // non devono coincidere. Dichiarare l'intenzione al posto della misura
+                // farebbe credere a una pulizia mai avvenuta.
+                nRegistro = misurate ? tolte : null
+            }
         }
 
         conteggioVerificato = conteggiChiesti > 0 && conteggiOttenuti === conteggiChiesti
@@ -1142,6 +1479,7 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
             scansioni: nScansioni,
             file: esito.rimossi.length,
             file_gia_assenti: esito.giaAssenti.length,
+            registro: nRegistro,
             // Il lotto tagliato si dichiara anche qui: chi lancia il giro a mano
             // deve sapere se richiamarlo, e non deve dedurlo da un conteggio.
             lotto_pieno: lottoPieno,
@@ -1198,10 +1536,14 @@ export const POST = withRoute('gdpr/retention-personale:POST', async (request: N
             n_file: esito.rimossi.length,
             n_file_gia_assenti: esito.giaAssenti.length,
             n_file_bloccanti: nBloccanti,
+            // Le righe del registro dei caricamenti che nominavano i file usciti. Sta
+            // accanto ai conteggi dei file e non a quelli delle righe perché risponde
+            // a una domanda sui FILE: «di quanti oggetti spariti è rimasto il nome?».
+            n_registro: nRegistro,
             giorni_pratica: GIORNI_PRATICA,
             mesi_documento: MESI_DOCUMENTO,
             anni_fascicolo: ANNI_FASCICOLO,
-            documento_path_ignoto: documentoIgnoto,
+            documento_ignoto: documentoIgnoto,
             cessazione_ignota: cessazioneIgnota,
             // La colonna del LEGAME fra fascicolo e modulo d'origine. Si dichiara
             // anche quando non ha fermato niente (nessun fascicolo scaduto in questo

@@ -512,7 +512,7 @@ describe('ScadenzeDocumenti · «Apri documento», il comando che si preme una v
     const dettaglioOk = (id: string) => ({
       ok: true,
       status: 200,
-      json: async () => ({ data: { anagrafica: { documento_path: `personale/${id}/ci.pdf` } } }),
+      json: async () => ({ data: { anagrafica: { documento_fronte_path: `personale/${id}/ci.pdf` } } }),
     })
     const firmaOk = () => ({ ok: true, status: 200, json: async () => ({ url: 'https://esempio.invalid/firmata' }) })
     fetchMock.mockImplementation((url: unknown) => {
@@ -541,6 +541,92 @@ describe('ScadenzeDocumenti · «Apri documento», il comando che si preme una v
     within(screen.getByText(persona).closest('tr') as HTMLElement).getByRole('button')
 
   afterEach(() => { vi.unstubAllGlobals() })
+
+  it('🔴 il percorso si legge da `documento_fronte_path`: la colonna vecchia NON esiste più', async () => {
+    /**
+     * IL DIFETTO, misurato sul database vero il 12/08/2026. La migrazione
+     * `20260812194501` ha rinominato `documento_path` in `documento_fronte_path` e ha
+     * aggiunto `documento_retro_path`; il pannello leggeva ancora il nome vecchio, che
+     * la risposta del dettaglio non contiene più. `percorso` valeva `undefined` a ogni
+     * clic, quindi il ramo che scattava era «documento assente» — cioè il cruscotto
+     * diceva alla Segreteria che la scansione non c'è mentre nel bucket c'era, con un
+     * `dett.ok` a `true` e nessun errore da nessuna parte.
+     *
+     * ⚠️ È lo stesso difetto che la suite non vedeva perché il FINTO rispondeva col
+     * nome vecchio: un finto allineato al codice invece che al database rende invisibile
+     * proprio ciò che il database ha già cambiato.
+     */
+    const finestre: Array<ReturnType<typeof finestraFinta>> = []
+    vi.stubGlobal('open', vi.fn(() => { const w = finestraFinta(); finestre.push(w); return w }))
+    // La risposta di OGGI: le due facce, coi nomi di oggi.
+    instrada({
+      dettaglio: () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            anagrafica: {
+              documento_fronte_path: 'documenti/aaaa/fronte.pdf',
+              documento_retro_path: 'documenti/aaaa/retro.pdf',
+            },
+          },
+        }),
+      }),
+    })
+    render(<ScadenzeDocumenti userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Alfa Anna')).toBeInTheDocument())
+
+    fireEvent.click(comandoDi('Alfa Anna'))
+    await waitFor(() => expect(finestre.at(-1)!.location.replace).toHaveBeenCalledWith('https://esempio.invalid/firmata'))
+
+    const firma = fetchMock.mock.calls.map(([u]) => String(u)).find((u) => u.includes('doc='))
+    expect(firma, 'nessuna richiesta di firma è partita: il percorso non è stato letto').toBeTruthy()
+    expect(decodeURIComponent(firma!)).toContain('documenti/aaaa/fronte.pdf')
+    // …e nessun avviso: «documento assente» era proprio l'esito del difetto.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('🔴 SOLO il fronte: questo cruscotto serve a sapere chi richiamare, non a leggere il documento', async () => {
+    /**
+     * LA DECISIONE, scritta perché non si intuisce: il cruscotto delle scadenze
+     * risponde a una domanda sola — «chi va richiamato, e entro quando» — e per
+     * rispondere basta una faccia. La coppia fronte/retro vive nella SCHEDA della
+     * persona, che è la schermata in cui il documento si legge davvero.
+     *
+     * Non è una rifinitura: ogni apertura firma un oggetto dello Storage e scrive una
+     * riga nel registro di sorveglianza degli accessi ai documenti d'identità.
+     * Aprirne due dove ne basta una raddoppia le URL firmate in circolazione — e
+     * ognuna è scaricabile SENZA sessione da chiunque ce l'abbia in mano.
+     */
+    const finestre: Array<ReturnType<typeof finestraFinta>> = []
+    vi.stubGlobal('open', vi.fn(() => { const w = finestraFinta(); finestre.push(w); return w }))
+    instrada({
+      dettaglio: () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            anagrafica: {
+              documento_fronte_path: 'documenti/aaaa/fronte.pdf',
+              documento_retro_path: 'documenti/aaaa/retro.pdf',
+            },
+          },
+        }),
+      }),
+    })
+    render(<ScadenzeDocumenti userId="u1" />)
+    await waitFor(() => expect(screen.getByText('Alfa Anna')).toBeInTheDocument())
+
+    fireEvent.click(comandoDi('Alfa Anna'))
+    await waitFor(() => expect(finestre.at(-1)!.location.replace).toHaveBeenCalled())
+
+    const firme = fetchMock.mock.calls.map(([u]) => decodeURIComponent(String(u))).filter((u) => u.includes('doc='))
+    expect(firme, 'una firma per faccia: il cruscotto ne ha chieste due dove ne basta una').toHaveLength(1)
+    expect(firme[0]).not.toContain('documenti/aaaa/retro.pdf')
+    // …e a schermo non è comparso un secondo comando: un pulsante per faccia qui
+    // sarebbe una colonna in più su una tabella che si legge di corsa.
+    expect(comandi()).toHaveLength(RIGHE.length)
+  })
 
   /**
    * ⚠️ COSA MISURA DAVVERO QUESTO TEST, E COSA NO.
@@ -585,7 +671,7 @@ describe('ScadenzeDocumenti · «Apri documento», il comando che si preme una v
     // segnale che il gesto è partito (`Btn.tsx`, stessa lezione).
     expect(/opacity-\d+/.test(bottone.className)).toBe(false)
 
-    sblocca({ ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_path: 'p/ci.pdf' } } }) })
+    sblocca({ ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_fronte_path: 'p/ci.pdf' } } }) })
     await waitFor(() => expect(bottone).not.toHaveAttribute('aria-busy'))
     // Riattivato, il fuoco è ANCORA lì: era il secondo pezzo della misura.
     expect(document.activeElement).toBe(bottone)
@@ -672,7 +758,7 @@ describe('ScadenzeDocumenti · «Apri documento», il comando che si preme una v
       dettaglio: (id) =>
         id === SCADUTA
           ? { ok: false, status: 503, json: async () => ({ error: 'giù' }) }
-          : { ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_path: `p/${id}.pdf` } } }) },
+          : { ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_fronte_path: `p/${id}.pdf` } } }) },
     })
     render(<ScadenzeDocumenti userId="u1" />)
     await waitFor(() => expect(screen.getByText('Alfa Anna')).toBeInTheDocument())
@@ -979,7 +1065,7 @@ describe('ScadenzeDocumenti · la riga di prosa si misura in battute', () => {
     // 5 e 6. LE DUE FASCE D'ESITO, che stanno a un tetto diverso (68ch) e non
     // comparirebbero in nessuno degli stati qui sopra: senza premere il comando
     // resterebbero l'unica prosa del pannello mai misurata.
-    const percorso = { ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_path: 'personale/x/ci.pdf' } } }) }
+    const percorso = { ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_fronte_path: 'personale/x/ci.pdf' } } }) }
     const instrada = (firma: unknown) =>
       fetchMock.mockImplementation((url: unknown) => {
         const u = String(url)

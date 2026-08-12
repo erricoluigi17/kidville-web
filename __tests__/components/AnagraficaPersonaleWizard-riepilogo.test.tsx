@@ -3,8 +3,8 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import itPublic from '../../messages/it/public.json'
 import { PERSONALE_FIELDS, CONSENSI_PERSONALE_FIELDS } from '@/lib/forms/personale-template'
 import {
-  ALFA, OGGI, PERCORSO_SCANSIONE, compilaFinoAlRiepilogo, indietro, reteFinta,
-  valoreNelRiepilogo,
+  ALFA, OGGI, PERCORSO_SCANSIONE, PERCORSO_SCANSIONE_RETRO, compilaFinoAlRiepilogo,
+  indietro, reteFinta, valoreNelRiepilogo,
 } from '../fixtures/anagrafica-personale'
 
 /**
@@ -205,13 +205,25 @@ describe('AnagraficaPersonaleWizard — che cosa si legge, e come', () => {
     }
   })
 
-  it('⚠️ della scansione si dice che c’è, MAI dove sta', async () => {
+  it('⚠️ delle DUE scansioni si dice che ci sono, MAI dove stanno', async () => {
     await montaEArrivaAlRiepilogo()
     // Il percorso è la chiave con cui si firma un oggetto del bucket del
     // personale: a schermo non dice niente, e a schermo si fotografa.
-    expect(valoreNelRiepilogo('Scansione o foto del documento')).toBe('Allegato caricato')
+    //
+    // ⚠️ E le righe sono DUE, distinte, dal 12/08/2026. Una riga sola per due
+    // allegati rimetterebbe chi rilegge nella condizione da cui il riepilogo esiste
+    // per toglierlo: «Allegato caricato» al singolare è vero anche quando il retro
+    // manca — ed è il campo che costa più fatica di tutti, quindi il primo che ci si
+    // convince di aver fatto.
+    expect(valoreNelRiepilogo('Fronte del documento (foto o scansione)')).toBe('Allegato caricato')
+    expect(valoreNelRiepilogo('Retro del documento')).toBe('Allegato caricato')
+
     const riepilogo = document.body.textContent ?? ''
     expect(riepilogo).not.toContain(PERCORSO_SCANSIONE)
+    expect(riepilogo).not.toContain(PERCORSO_SCANSIONE_RETRO)
+    // Nessun frammento di percorso: `documenti/` è il prefisso di entrambi, e una
+    // riga troncata è comunque una riga che porta il percorso a schermo.
+    expect(riepilogo).not.toContain('documenti/')
   })
 
   it('la riga che invita a rileggere codice fiscale e scadenza sta SOPRA il bottone', async () => {

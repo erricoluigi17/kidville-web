@@ -51,5 +51,6 @@
   "selezionaFile": "Seleziona un file (PDF, JPG…)",
   "caricamentoNonRiuscito": "Caricamento non riuscito. Riprova.",
   "fileTroppoPesante": "Il file è troppo pesante (massimo {mb} MB). Scegli un file più leggero, oppure scatta di nuovo la foto a qualità più bassa.",
-  "scattaFoto": "Scatta foto"
+  "scattaFoto": "Scatta foto",
+  "scattaFotoDi": "Scatta foto: {campo}"
 }

@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { IDS, PERSONALE_E2E, STORAGE, attendiFineCaricamento } from './fixtures';
 import itPublic from '../messages/it/public.json';
+// Il riepilogo rende i campi `file` con una frase del catalogo `parentForms`
+// (`allegatoCaricato`), non di `public`: il wizard tiene due `useTranslations`.
+import itCampi from '../messages/it/parentForms.json';
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -26,8 +29,12 @@ import itPublic from '../messages/it/public.json';
  *
  * ─── I DUE TETTI, per chi tocca questo file ────────────────────────────────
  * `POST /api/iscrizione/personale` ammette **20 invii l'ora per IP** e in CI tutti
- * i browser escono da un IP solo; `POST …/upload` sta a 20 ogni 10 minuti. Con
- * `retries: 2` il percorso qui sotto ne consuma fino a 3 per gettone. Ogni blocco
+ * i browser escono da un IP solo; `POST …/upload` sta a **30 ogni 10 minuti**
+ * (`TETTO_UPLOAD_PERSONALE` — dal 13/08/2026 questa porta ha un contatore SUO, e la
+ * costante condivisa `TETTO_UPLOAD_PUBBLICO` è tornata ai 20 delle porte delle
+ * famiglie). ⚠️ Dal 12/08/2026 il documento è **due facce**, quindi
+ * un giro di questo percorso consuma **1 invio e 2 caricamenti**, non 1 e 1: con
+ * `retries: 2` sono fino a 3 invii e **6 caricamenti** per gettone. Ogni blocco
  * che SCRIVE porta `@solo-chromium`, così il progetto `webkit` non lo ripete
  * (`grepInvert` in `playwright.config.ts`) — e questo file non rientra comunque in
  * `SPEC_CRITICI_WEBKIT`, che nomina quattro percorsi e non questo.
@@ -81,7 +88,38 @@ const PDF_MINIMO = Buffer.from(
     'trailer<</Root 1 0 R>>\n%%EOF\n',
   'utf8',
 );
-const NOME_FILE = 'documento.pdf';
+/**
+ * DUE NOMI DIVERSI — e qui sta scritto ONESTAMENTE che cosa comprano, perché prima no.
+ *
+ * Il riquadro di un campo caricato mostra il NOME del file, ed è la sola conferma a
+ * schermo che la scansione sia arrivata (il percorso nel bucket non si stampa mai, di
+ * proposito). Nomi diversi rendono quindi le due asserzioni SPECIFICHE: il riquadro del
+ * retro deve contenere il nome del retro, non «un nome qualsiasi».
+ *
+ * ⚠️ MA QUI C'ERA SCRITTO CHE SERVIVANO A COGLIERE «un prodotto che archiviasse due volte
+ * il fronte», ed è FALSO — misurato sul sorgente il 13/08/2026. Il nome mostrato NON viene
+ * dal server: `FieldRenderer.tsx` fa `setFileName(file.name)` sul `File` LOCALE prima
+ * della fetch, e non lo riscrive mai con la risposta (unica lettura: `fileName ||
+ * t('allegatoCaricato')`). Quindi `toContainText(NOME_FILE_RETRO)` sul riquadro del retro
+ * è vero anche se `caricaFile` ha restituito il percorso del FRONTE, o se il server ha
+ * archiviato due volte la stessa faccia. Ogni `FileField` ha il suo `useState`: quelle
+ * asserzioni potrebbero cadere solo per un incrocio di stato fra due istanze isolate,
+ * cioè per niente.
+ *
+ * Ciò che il riquadro prova DAVVERO — ed è la ragione per cui resta — è che il campo abbia
+ * un `value` non vuoto, perché il nome si rende solo dentro `value ? …`: un percorso è
+ * tornato ed è finito nel form. Che siano DUE percorsi DIVERSI lo prova l'asserzione qui
+ * sotto, sui corpi delle due risposte di caricamento (`PERCORSI DIVERSI`), che è la sola
+ * cosa in questo spec che guardi ciò che il server ha risposto.
+ *
+ * Le difese sull'uguaglianza delle due facce vivono comunque altrove, e nessuna è qui:
+ * `__tests__/components/AnagraficaPersonaleWizard-documento.test.tsx`
+ * (`documento_fronte_path` !== `documento_retro_path` nel corpo dell'invio),
+ * `e2e/admin-pratiche-personale.spec.ts` sul percorso API, e il rifiuto
+ * `documento-facce-uguali` della rotta.
+ */
+const NOME_FILE_FRONTE = 'documento-fronte.pdf';
+const NOME_FILE_RETRO = 'documento-retro.pdf';
 
 /**
  * La scadenza del documento, CALCOLATA e non cablata.
@@ -208,17 +246,119 @@ test.describe('modulo pubblico dell’anagrafica del personale @solo-chromium', 
     // mese scambiati non producono una data valida e sbagliata.
     await page.locator('#pers-documento-scadenza').fill(SCADENZA_DOCUMENTO);
 
-    // La scansione passa dalla rotta di caricamento e finisce nel bucket privato
-    // `documenti_personale`: l'invio manda solo il PERCORSO, e la rotta lo
-    // riconosce perché lo trova nel registro dei caricamenti. Un percorso
+    // Le scansioni passano dalla rotta di caricamento e finiscono nel bucket privato
+    // `documenti_personale`: l'invio manda solo i PERCORSI, e la rotta li
+    // riconosce perché li trova nel registro dei caricamenti. Un percorso
     // inventato prende 400 sul campo del documento.
-    await page
-      .locator('input[type="file"]')
-      .setInputFiles({ name: NOME_FILE, mimeType: 'application/pdf', buffer: PDF_MINIMO });
+    //
+    // ⚠️ SI PRENDE OGNI CAMPO PER `id`, MAI CON `input[type="file"]`.
+    // Dal 12/08/2026 le facce sono DUE, quindi quel selettore risolve a due elementi:
+    // in Playwright è una violazione dello strict mode, cioè il test muore prima di
+    // misurare qualcosa — e se anche passasse caricherebbe una faccia sola, e «Avanti»
+    // non potrebbe superare il passo perché il retro è `required: true`. Gli `id` sono
+    // i nomi delle colonne di destinazione (`documento_fronte_path`,
+    // `documento_retro_path`), come per tutti gli altri campi di questo modulo.
+    const fronte = page.locator('#documento_fronte_path');
+    const retro = page.locator('#documento_retro_path');
+    await expect(fronte, 'il passo del documento non chiede due facce').toHaveCount(1);
+    await expect(retro).toHaveCount(1);
+
+    // ── I DUE PERCORSI SI ASCOLTANO SUL FILO, e non è ridondante coi riquadri qui
+    // sotto: il nome che il riquadro mostra è quello del `File` LOCALE (vedi la nota su
+    // `NOME_FILE_FRONTE`), quindi a schermo non c'è NIENTE che venga dal server. Questa è
+    // l'unica presa che vede ciò che la rotta ha davvero archiviato.
+    //
+    // ⚠️ SI COLLEZIONA CON `page.on`, NON con due `waitForResponse`. Due attese
+    // registrate insieme sullo stesso predicato si risolvono ENTRAMBE sulla PRIMA
+    // risposta che passa: il test leggerebbe due volte lo stesso corpo e chiamerebbe
+    // «percorsi uguali» un prodotto sano. L'ascoltatore accumula, e si registra prima di
+    // `setInputFiles` perché una presa agganciata dopo perde le risposte veloci.
+    const percorsiCaricati: (string | undefined)[] = [];
+    const attese: Promise<void>[] = [];
+    const ascoltaCaricamenti = (r: import('@playwright/test').Response) => {
+      if (new URL(r.url()).pathname !== '/api/iscrizione/personale/upload') return;
+      if (r.status() !== 200) return;
+      // Il corpo si legge in modo asincrono: si accoda la promessa, non il valore.
+      attese.push(
+        r
+          .json()
+          .then((c: { path?: string }) => {
+            percorsiCaricati.push(c?.path);
+          })
+          .catch(() => {
+            // Un corpo illeggibile non è «nessun caricamento»: si annota `undefined`, e
+            // l'asserzione sul tipo qui sotto lo dirà. Ingoiarlo e basta farebbe passare
+            // la prova per il motivo sbagliato.
+            percorsiCaricati.push(undefined);
+          }),
+      );
+    };
+    page.on('response', ascoltaCaricamenti);
+
+    await fronte.setInputFiles({
+      name: NOME_FILE_FRONTE,
+      mimeType: 'application/pdf',
+      buffer: PDF_MINIMO,
+    });
+    await retro.setInputFiles({
+      name: NOME_FILE_RETRO,
+      mimeType: 'application/pdf',
+      buffer: PDF_MINIMO,
+    });
+
     // Il caricamento sostituisce il testo del campo col NOME del file: è la sola
     // conferma che la scansione sia arrivata (il percorso nel bucket non si stampa
     // mai a schermo, di proposito).
-    await expect(page.getByText(NOME_FILE).first()).toBeVisible({ timeout: 20_000 });
+    //
+    // ⚠️ LA CONFERMA SI CERCA DENTRO IL RIQUADRO DELLA SUA FACCIA, non nella pagina:
+    // due `getByText(...).first()` sarebbero verdi anche se il nome comparisse due
+    // volte nello stesso riquadro e mai nell'altro. Il riquadro è la `<label>` che
+    // AVVOLGE l'`input`, e si prende risalendo da lui: `ancestor::label[1]` è unica per
+    // costruzione, mentre un `label:has(#id)` scritto sulla pagina tornerebbe a essere
+    // un selettore che può risolvere a più di un elemento — cioè lo stesso genere di
+    // strict mode che questa correzione esiste per togliere.
+    const riquadro = (id: string) => page.locator(`#${id}`).locator('xpath=ancestor::label[1]');
+    await expect(riquadro('documento_fronte_path')).toContainText(NOME_FILE_FRONTE, {
+      timeout: 20_000,
+    });
+    await expect(riquadro('documento_retro_path')).toContainText(NOME_FILE_RETRO, {
+      timeout: 20_000,
+    });
+
+    // ── ⚠️ PERCORSI DIVERSI — l'unica asserzione di questo passo che guardi il SERVER.
+    //
+    // Si legge QUI e non subito dopo `setInputFiles`: i due riquadri qui sopra sono il
+    // punto di sincronizzazione: finché non mostrano il nome, il `value` del campo è
+    // vuoto e le risposte possono non essere ancora arrivate.
+    //
+    // Il percorso lo compone il server (uuid + estensione derivata dal MIME, mai dal nome
+    // del file): due caricamenti che tornassero lo STESSO valore vorrebbero dire che una
+    // faccia ha sovrascritto l'altra nel bucket, e da lì in poi la pratica porterebbe due
+    // volte lo stesso documento senza che nessuna schermata lo dica. È esattamente il
+    // guasto che la nota sui «due nomi diversi» si attribuiva e non poteva cogliere,
+    // perché il nome a schermo non viene dalla risposta.
+    // Si ASPETTA che le due risposte siano state viste, invece di darlo per scontato
+    // perché i riquadri si sono aggiornati: il DOM cambia in conseguenza della risposta,
+    // ma l'ordine con cui l'evento `response` arriva a Node non è qualcosa che questo
+    // test debba assumere. Un `toBe(2)` secco su un contatore alimentato da un evento è
+    // il modo classico di scrivere una prova che passa quasi sempre.
+    await expect
+      .poll(() => attese.length, {
+        message: 'il passo non ha prodotto due caricamenti riusciti',
+        timeout: 20_000,
+      })
+      .toBe(2);
+    page.off('response', ascoltaCaricamenti);
+    await Promise.all(attese);
+    for (const p of percorsiCaricati) {
+      expect(typeof p, 'una risposta di caricamento non porta il percorso').toBe('string');
+    }
+    expect(
+      new Set(percorsiCaricati).size,
+      'le due scansioni sono state archiviate sullo STESSO percorso: una faccia ha ' +
+        'sovrascritto l’altra nel bucket',
+    ).toBe(2);
+
     await page.getByRole('button', { name: itPublic.persAvanti }).click();
 
     // ── Passo 5 · «Informativa e dichiarazioni» ─────────────────────────────
@@ -256,6 +396,24 @@ test.describe('modulo pubblico dell’anagrafica del personale @solo-chromium', 
     await expect(page.getByText(itPublic.persRiepilogoSede, { exact: true })).toBeVisible();
     await expect(page.getByText(SEDE_COLLAUDO, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(CODICE_FISCALE, { exact: true })).toBeVisible();
+
+    // ── E LE SCANSIONI SONO DUE ANCHE QUI ───────────────────────────────────
+    //
+    // Il riepilogo elenca i campi `file` con «Allegato caricato» quando il valore c'è e
+    // «Non indicato» quando manca, quindi DUE è il conteggio di un documento completo e
+    // UNO è quello di una faccia persa fra il passo 4 e l'ultima schermata. Non è un
+    // caso di scuola: fino al 12/08/2026 il passo del documento aveva un campo solo, e
+    // il modo più facile di sbagliare il raddoppio è tenere due caselle a schermo che
+    // scrivono nello stesso valore — due riquadri con due nomi di file diversi (che
+    // questo test verifica sopra) e una riga sola qui sotto.
+    //
+    // Si conta il VALORE e non l'etichetta: l'etichetta è resa in maiuscolo dal foglio
+    // di stile, e un'asserzione sul testo di quel `<p>` dipenderebbe da come il motore
+    // dei selettori tratta `text-transform` invece che dal prodotto.
+    await expect(
+      page.getByText(itCampi.allegatoCaricato, { exact: true }),
+      'il riepilogo non elenca due scansioni: una delle due facce non è arrivata fin qui',
+    ).toHaveCount(2);
     await invia.click();
 
     // IL 201, non «una risposta qualunque»: il 503 del database non migrato, il

@@ -40,7 +40,19 @@ const SEGRETI = {
   indirizzo: 'Via Riservata',
   emergenza: 'Persona Terza',
   telefono: '+39 333 1234567',
-  percorso: 'documenti/aaaa/carta-identita.jpg',
+  // ⚠️ LA FORMA CANONICA, `documenti/<uuid>/<uuid>.<ext>`. Qui c'era
+  // `documenti/aaaa/carta-identita.jpg`, e da quando `assertDocumentoInScope` ha un
+  // gate di FORMA quel valore non arriva più alla risoluzione: verrebbe respinto
+  // prima, e le due prove sull'accesso alla scansione — quella che firma e quella del
+  // diniego cross-sede — misurerebbero un ramo che non è quello che dichiarano. Un
+  // percorso di prova che il prodotto non potrebbe produrre rende verdi le asserzioni
+  // sbagliate.
+  percorso: 'documenti/0f2b1c4e-9a3d-4f61-8b2c-7d5e6a1b0c9d/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d.jpg',
+  // La SECONDA faccia. Non è un doppione del segreto precedente: il percorso del retro
+  // passa per rami diversi — il travaso nel fascicolo, il rilascio nella chiusura, il
+  // conteggio del registro dei caricamenti — e una prova che ne guarda uno solo
+  // lascerebbe scoperti proprio quelli aggiunti per ultimi.
+  percorsoRetro: 'documenti/0f2b1c4e-9a3d-4f61-8b2c-7d5e6a1b0c9d/b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e.jpg',
 }
 
 const h = vi.hoisted(() => ({
@@ -122,12 +134,27 @@ beforeEach(() => {
       document_type: 'CI', document_number: SEGRETI.documento, document_expiry: '2030-01-01',
       address: SEGRETI.indirizzo, residence_city: 'Comune', residence_province: 'NA', zip_code: '80014',
       emergenza_nome: SEGRETI.emergenza, emergenza_telefono: SEGRETI.telefono,
-      documento_path: SEGRETI.percorso, gradi: ['nido'], creata_il: '2026-08-11T08:00:00.000Z',
+      // LE COLONNE DI OGGI, E SOLO QUELLE (migrazione `20260812194501`).
+      //
+      // Qui c'era anche `documento_path: SEGRETI.percorso`, con un commento che diceva
+      // «resta nella riga finta perché il gate di `?doc=` la interroga ancora». Non è
+      // più vero, ed era la cosa peggiore che potesse restare scritta: il gate adesso
+      // itera `CAMPI_DOCUMENTO` (`route.ts`, `assertDocumentoInScope`), e su
+      // `pratiche_personale` quella colonna NON esiste più — misurato su produzione,
+      // `information_schema.columns` restituisce solo `documento_fronte_path` e
+      // `documento_retro_path`. Una riga finta più ricca del database tiene in vita una
+      // query rotta e manda il prossimo lettore a cercare un gate che non c'è.
+      documento_fronte_path: SEGRETI.percorso,
+      documento_retro_path: SEGRETI.percorsoRetro,
+      gradi: ['nido'], creata_il: '2026-08-11T08:00:00.000Z',
     }],
     schools: [{ id: SEDE_A, nome: 'Kidville Alfa' }, { id: SEDE_B, nome: 'Kidville Beta' }],
     scuole: [{ id: SEDE_A, attiva: true }, { id: SEDE_B, attiva: true }],
     utenti: [], parents: [], anagrafica_personale: [],
-    caricamenti_personale: [{ percorso: SEGRETI.percorso, pratica_id: PRATICA_ID }],
+    caricamenti_personale: [
+      { percorso: SEGRETI.percorso, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+      { percorso: SEGRETI.percorsoRetro, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+    ],
   }
   h.staffScuola.mockResolvedValue(['direzione-1'])
   h.notificaEvento.mockResolvedValue(undefined)
@@ -244,7 +271,16 @@ describe('pratiche personale · nessun dato personale nei log', () => {
     // una riga.
     expect(dati.n_gradi).toBe(1)
     expect(dati.account_creato).toBe(true)
-    expect(dati.documento_rilasciato).toBe(true)
+    // Una voce per faccia: il battito dice QUALE scansione è passata al fascicolo, e
+    // «una sola» è uno stato che va potuto interrogare in SQL. Qui la pratica porta
+    // ENTRAMBE le facce, e le rilascia entrambe.
+    expect(dati.documento_fronte_rilasciato).toBe(true)
+    expect(dati.documento_retro_rilasciato).toBe(true)
+    // …quindi la pratica NON è rimasta a metà. Il campo esiste per la query che, fra
+    // mesi, conta le approvazioni che hanno travasato una faccia sola: qui si tiene
+    // ferma la sua risposta negativa, che è quella che deve valere sul caso normale —
+    // un campo di diagnosi sempre vero smette di distinguere qualcosa.
+    expect(dati.documento_rilasciato_a_meta).toBe(false)
     expect(dati.sede_id).toBe(SEDE_B)
     nessunSegretoNeiLog()
   })

@@ -195,7 +195,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { POST } from '@/app/api/iscrizione/personale/upload/route'
 import { resetRateLimit } from '@/lib/security/rate-limit'
-import { TETTO_UPLOAD_PUBBLICO } from '@/lib/upload/allegati-pubblici'
+import { TETTO_UPLOAD_PERSONALE } from '@/lib/upload/allegati-pubblici'
 import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 
 /** Un file di byte VERI: la richiesta viaggia in multipart e una taglia finta si perderebbe. */
@@ -332,8 +332,13 @@ describe('POST /api/iscrizione/personale/upload · il percorso felice', () => {
 })
 
 describe('POST /api/iscrizione/personale/upload · il tetto per IP', () => {
+  // ⚠️ `TETTO_UPLOAD_PERSONALE` e non `TETTO_UPLOAD_PUBBLICO`: dal 13/08/2026 questa
+  // porta ha un contatore SUO con la sua aritmetica (13 dipendenti × 2 facce dietro un
+  // solo NAT = 26, più quattro slot di margine). Le due porte delle famiglie sono
+  // tornate a 20, che è il numero misurato per loro il 02/08/2026. Se qui tornasse il
+  // nome condiviso, il test misurerebbe la porta sbagliata e resterebbe verde.
   it('oltre il tetto risponde 429 con Retry-After, e il file non parte', async () => {
-    for (let i = 0; i < TETTO_UPLOAD_PUBBLICO; i++) {
+    for (let i = 0; i < TETTO_UPLOAD_PERSONALE; i++) {
       const ok = await POST(richiesta(documento()) as never)
       expect(ok.status, `il caricamento ${i + 1} doveva passare`).toBe(200)
     }
@@ -351,7 +356,7 @@ describe('POST /api/iscrizione/personale/upload · il tetto per IP', () => {
   })
 
   it('il tetto è PER IP: un altro indirizzo riparte da zero (controllo positivo)', async () => {
-    for (let i = 0; i < TETTO_UPLOAD_PUBBLICO; i++) {
+    for (let i = 0; i < TETTO_UPLOAD_PERSONALE; i++) {
       await POST(richiesta(documento(), '10.0.0.1') as never)
     }
     expect((await POST(richiesta(documento(), '10.0.0.1') as never)).status).toBe(429)

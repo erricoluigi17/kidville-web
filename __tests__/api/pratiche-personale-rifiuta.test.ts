@@ -26,6 +26,25 @@ const SEGRETERIA = { id: 'ffffffff-1111-4000-8000-000000000001', role: 'segreter
 const PRATICA_ID = 'dddddddd-0000-4000-8000-00000000000a'
 const EMAIL = 'maestra.prova@example.test'
 const MOTIVO = 'Il codice fiscale non corrisponde al documento consegnato in segreteria.'
+/**
+ * LE DUE FACCE DEL DOCUMENTO, con i NOMI DI COLONNA CHE ESISTONO DAVVERO.
+ *
+ * Fino a questa correzione la riga finta portava `documento_path`, e la prova «la
+ * scansione resta dov'è» asseriva su quel nome. Quella colonna NON esiste più: la
+ * migrazione `20260812194501` l'ha rinominata in `documento_fronte_path` e ha aggiunto
+ * `documento_retro_path`. Misurato sul database di produzione, non dedotto:
+ *
+ *     select column_name from information_schema.columns
+ *      where table_name = 'pratiche_personale' and column_name like 'documento%'
+ *     → documento_fronte_path, documento_retro_path
+ *
+ * Un'asserzione su una colonna che non c'è è un'asserzione VUOTA: se il rifiuto un
+ * giorno azzerasse per errore i due percorsi veri, questo file resterebbe verde e
+ * l'unica prova che «il rifiuto non rilascia la scansione» sarebbe una prova su un
+ * fantasma.
+ */
+const DOC_FRONTE = 'documenti/aaaa/bbbb.jpg'
+const DOC_RETRO = 'documenti/aaaa/cccc.jpg'
 
 const h = vi.hoisted(() => ({
   state: {
@@ -87,7 +106,8 @@ beforeEach(() => {
       id: PRATICA_ID, scuola_id: SEDE_B, stato: 'pending',
       nome: 'Prova', cognome: 'Cognome', email: EMAIL, telefono: '+39 000 0000000',
       fiscal_code: 'RSSMRA90A41H501U', gradi: ['nido'],
-      documento_path: 'documenti/aaaa/bbbb.jpg', creata_il: '2026-08-11T08:00:00.000Z',
+      documento_fronte_path: DOC_FRONTE, documento_retro_path: DOC_RETRO,
+      creata_il: '2026-08-11T08:00:00.000Z',
     }],
     schools: [{ id: SEDE_A, nome: 'Kidville Alfa' }, { id: SEDE_B, nome: 'Kidville Beta' }],
     utenti: [{ id: 'utente-1', email: EMAIL, ruolo: 'educator', scuola_id: SEDE_B, nome: 'X', cognome: 'Y' }],
@@ -118,9 +138,20 @@ describe('pratiche personale · rifiuto', () => {
     expect(h.state.upserts).toEqual([])
     expect(h.state.aggiornamenti.filter((a) => a.table === 'utenti')).toEqual([])
     expect(h.state.creazioniAuth).toEqual([])
-    // La scansione resta dov'è: la pratica rifiutata la conserva finché la
-    // conservazione a 90 giorni non porta via riga e file insieme.
-    expect(pratica().documento_path).toBe('documenti/aaaa/bbbb.jpg')
+    // LE DUE SCANSIONI restano dove sono: la pratica rifiutata le conserva finché la
+    // conservazione a 90 giorni non porta via riga e file insieme. Il rilascio dei
+    // percorsi è un gesto dell'APPROVAZIONE («un oggetto, un proprietario»), e un
+    // rifiuto che li azzerasse lascerebbe nel bucket due oggetti che nessuna riga
+    // nomina — invisibili alla conservazione e non cancellabili nemmeno su richiesta
+    // dell'interessata. Si guardano ENTRAMBE: con una faccia sola questa prova non
+    // vedrebbe il caso in cui il rifiuto ne rilascia una e si tiene l'altra.
+    expect(pratica().documento_fronte_path).toBe(DOC_FRONTE)
+    expect(pratica().documento_retro_path).toBe(DOC_RETRO)
+    // E l'istruzione di rifiuto non le ha nemmeno NOMINATE: non è «le ha riscritte col
+    // valore giusto», è «non gliele ha proprio chieste».
+    const scrittura = h.state.aggiornamenti.filter((a) => a.table === 'pratiche_personale').at(-1)!
+    expect('documento_fronte_path' in scrittura.patch).toBe(false)
+    expect('documento_retro_path' in scrittura.patch).toBe(false)
   })
 
   it('il MOTIVO non esce da `pratiche_personale`: niente audit, niente log, niente email', async () => {

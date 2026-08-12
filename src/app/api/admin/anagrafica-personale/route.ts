@@ -11,6 +11,11 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { verificaCoerenza } from '@/lib/fiscale/coerenza'
 import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
 import { TIPI_DOCUMENTO } from '@/lib/forms/personale-template'
+import {
+  COLONNE_DOCUMENTO,
+  DOC_MAX_LUNGHEZZA,
+  percorsoDocumentoAmmesso,
+} from '@/lib/personale/percorso-documento'
 import { SOGLIA_MAX, giorniResidui } from '@/lib/anagrafica/scadenze'
 import { dataCivile } from '@/i18n/config'
 
@@ -147,9 +152,11 @@ const interoClampato = (def: number, min: number, max: number) =>
   }, z.number())
 
 const getQuerySchema = z.object({
-  // Un percorso di storage non è lungo: una stringa senza tetto è solo
-  // superficie d'attacco in più (stesso tetto di `admin/candidature-insegnanti`).
-  doc: z.string().max(500).optional(),
+  // Un percorso di storage non è lungo: una stringa senza tetto è solo superficie
+  // d'attacco in più. Il tetto è quello che le COLONNE dichiarano
+  // (`check (… length(…) <= 200)`), importato invece che ribattuto: qui c'era 500,
+  // cioè un valore che il database non potrebbe nemmeno aver scritto.
+  doc: z.string().max(DOC_MAX_LUNGHEZZA).optional(),
   utenteId: zUuid.optional(),
   scadenza: interoClampato(SOGLIA_MAX, 0, 365),
 })
@@ -166,7 +173,8 @@ const TIPI_AMMESSI = TIPI_DOCUMENTO.map((o) => String(o.value))
  * lavoro che lo richieda: si corregge il documento di una persona, non la
  * persona di un documento.
  *
- * ⚠️ `documento_path` NON è modificabile per la ragione gemella. Il percorso è la
+ * ⚠️ `documento_fronte_path` e `documento_retro_path` NON sono modificabili per la
+ * ragione gemella. Il percorso è la
  * chiave con cui `?doc=` firma un oggetto del bucket: chi potesse scriverlo a
  * mano potrebbe puntare l'anagrafica di una collega a un file qualunque e poi
  * chiederne la firma passando dal gate — che verificherebbe la SEDE, e la
@@ -213,9 +221,22 @@ const COLONNE_ELENCO = 'utente_id, document_type, document_expiry, cessato_il'
 /**
  * IL DETTAGLIO: proiezione ESPLICITA (mai `select('*')`), una persona alla volta.
  *
- * `documento_path` c'è perché è ciò che il pulsante «Apri documento» rimanda al
- * server per farsi firmare l'oggetto; non è un dato da mostrare, ed è il motivo
- * per cui il cruscotto non lo riceve in elenco.
+ * I due percorsi ci sono perché sono ciò che il pulsante «Apri documento» rimanda
+ * al server per farsi firmare l'oggetto; non sono dati da mostrare, ed è il motivo
+ * per cui il cruscotto non li riceve in elenco.
+ *
+ * ⚠️ QUI C'ERA `documento_path`, E QUELLA COLONNA NON ESISTE PIÙ. La migrazione
+ * `20260812194501` l'ha rinominata in `documento_fronte_path` aggiungendo
+ * `documento_retro_path`, ed è stata applicata in PRODUZIONE. Una proiezione
+ * esplicita che nomina una colonna assente non degrada e non torna vuota: risponde
+ * `42703`, che qui sotto finisce in `COLONNA_ASSENTE` e diventa un **503 su OGNI
+ * apertura del fascicolo di una persona**, in tutte e tre le sedi, con il messaggio
+ * «lo schema non è ancora stato creato». Misurato sul database vero:
+ *
+ *     select documento_path from public.anagrafica_personale limit 1
+ *     → ERROR 42703: column "documento_path" does not exist
+ *
+ * Nessun test era rosso: le prove di questa rotta seminano le righe che leggono.
  */
 const COLONNE_DETTAGLIO = [
   'utente_id', 'gender', 'birth_date', 'birth_place', 'birth_province', 'birth_nation',
@@ -223,7 +244,8 @@ const COLONNE_DETTAGLIO = [
   'address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code',
   'domicilio_address', 'domicilio_street_number', 'domicilio_city', 'domicilio_province',
   'domicilio_zip_code',
-  'document_type', 'document_number', 'document_expiry', 'documento_path',
+  'document_type', 'document_number', 'document_expiry',
+  'documento_fronte_path', 'documento_retro_path',
   'titolo_studio', 'titolo_dettaglio',
   'emergenza_nome', 'emergenza_telefono', 'emergenza_relazione',
   'scadenza_soglia_avvisata', 'scadenza_avvisata_il', 'cessato_il',
@@ -679,9 +701,10 @@ async function dettaglio(
   // `anagrafica: null`, e chi legge sa che non c'è niente invece di ricevere un
   // 404 che direbbe «questa persona non esiste».
   //
-  // `documento_path` viaggia dentro `riga` come tutte le altre colonne, e serve
-  // a una cosa sola: rimandarlo a `?doc=` per farsi firmare l'oggetto. Non è un
-  // dato da mostrare, e in elenco non compare mai.
+  // `documento_fronte_path` e `documento_retro_path` viaggiano dentro `riga` come
+  // tutte le altre colonne, e servono a una cosa sola: rimandarli a `?doc=` per
+  // farsi firmare l'oggetto — una faccia per volta, perché una faccia per volta si
+  // apre. Non sono dati da mostrare, e in elenco non compaiono mai.
   const a = (riga ?? {}) as Record<string, unknown>
   const anagrafica = (riga ?? null) as Record<string, unknown> | null
 
@@ -740,6 +763,44 @@ async function dettaglio(
  *    anagrafica non ha una persona da verificare, quindi nessuno può dire che sia
  *    suo (ed è anche il caso del percorso INVENTATO, che è come si prova una fuga);
  *  · un solo messaggio per «di un'altra sede» e «inesistente».
+ *
+ * ── ⚠️ L'ORDINE: PRIMA LA FORMA, POI LA RISOLUZIONE ────────────────────────
+ *
+ * `?doc=` è testo di query string, e il suo schema `zod` impone SOLO un tetto di
+ * lunghezza: la forma non la vincola nessuno. Quel testo va confrontato con DUE
+ * colonne, e con due colonne la scrittura che viene naturale è
+ *
+ *     .or(`documento_fronte_path.eq.${doc},documento_retro_path.eq.${doc}`)
+ *
+ * che sarebbe la cosa sbagliata da fare: in quella sintassi la virgola SEPARA le
+ * condizioni e le parentesi le RAGGRUPPANO, quindi un valore che ne contenga una
+ * non rompe il filtro — lo RISCRIVE, e questo gate direbbe «è della tua sede» di
+ * un documento che non lo è. Non è un'iniezione SQL (PostgREST non concatena
+ * SQL): è un'iniezione di FILTRO, e qui produce lo stesso danno.
+ *
+ * Perciò la forma si decide PRIMA che il valore incontri qualunque query. Dopo il
+ * gate l'alfabeto ammesso è `documenti/`, esadecimali, trattini, barre, punto e
+ * `[A-Za-z0-9]+` di estensione: nessuna virgola, nessuna parentesi, nessun apice.
+ *
+ * ── …E PERCHÉ, ANCHE DOPO IL GATE, RESTANO DUE `.eq()` E NON UN `.or()` ────
+ *
+ * Perché le due difese sono indipendenti, e questa è la seconda. `.eq()` non
+ * interpola niente — il valore viaggia come parametro e la virgola esce
+ * percent-encodata (`new URLSearchParams({a:'x,y'}).toString()` → `a=x%2Cy`,
+ * misurato) — quindi regge da solo anche il giorno in cui qualcuno allargasse la
+ * forma per far passare un percorso legittimo che oggi non passa. Con un `.or()`
+ * la sicurezza di questa riga dipenderebbe da una funzione che sta in un altro
+ * file: un allentamento là dentro diventerebbe un buco qui, senza che nessuna
+ * riga di questo file cambi. Il costo è una seconda lettura solo quando la prima
+ * non trova nulla; il guadagno è che non esiste, in questo repo, un solo posto in
+ * cui del testo di provenienza esterna entri in un filtro composto.
+ *
+ * Il rifiuto per forma è indistinguibile, per chi lo riceve, da «quel percorso
+ * non esiste»: stessa risposta, stesso codice, stessa frase. Dire «malformato»
+ * confermerebbe a chi prova che le forme rifiutate in un altro modo erano giuste.
+ * La differenza sopravvive nel LOG, con un `esito` suo — ed è ciò che permette di
+ * distinguere in SQL il collegamento vecchio di chi ha una scheda aperta da ieri
+ * da qualcuno che scrive a mano percorsi che il prodotto non produce.
  */
 async function assertDocumentoInScope(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -748,22 +809,57 @@ async function assertDocumentoInScope(
   docPath: string,
 ): Promise<NextResponse | null> {
   const operazione = 'admin/anagrafica-personale:GET'
-  const { data, error } = await supabase
-    .from(TABELLA)
-    .select('utente_id')
-    .eq('documento_path', docPath)
-    .limit(1)
-    .maybeSingle()
-  if (error) {
-    logEvento('multi_sede', 'error', {
+
+  // ── IL GATE DI FORMA, prima di qualunque query. Vedi la testata.
+  if (!percorsoDocumentoAmmesso(docPath)) {
+    // MAI il percorso nel log: non porta il nome del file (la rotta di caricamento
+    // lo butta via), ma resta la chiave che apre il documento d'identità di una
+    // persona, e `redact()` non lo ha in lista bianca. Si registra CHE un percorso
+    // è stato respinto, e da chi; mai che cosa era.
+    logEvento('multi_sede', 'warn', {
       operazione,
-      esito: 'documento-non-verificabile',
-      entita_tipo: TABELLA,
-      error_code: codiceDi(error),
-    }, error)
-    return nonDisponibile('Verifica del documento non riuscita: riprovare fra poco.')
+      esito: 'documento-forma-non-valida',
+      azione: 'documento',
+      utente: user.id,
+      ruolo: user.role,
+      sedi_attive: scuole.length,
+    })
+    return nonTrovata(403)
   }
-  const utenteId = (data as { utente_id?: string } | null)?.utente_id ?? null
+
+  // ⚠️ SI CERCA IN OGNI COLONNA DEL DOCUMENTO, E L'ELENCO NON SI SCRIVE QUI.
+  //
+  // Questa riga interrogava `documento_path` fino al 12/08/2026, e quel giorno la
+  // migrazione `20260812194501` ha rinominato la colonna in `documento_fronte_path`
+  // aggiungendo `documento_retro_path`. Applicata in produzione, la lettura è diventata
+  // un `42703` — e su un gate fail-CLOSED un errore di lettura vale «non firmo». Cioè
+  // il fascicolo del personale ha smesso di consegnare qualunque scansione, con la
+  // stessa risposta che riceve un tentativo abusivo, e nessun test era rosso.
+  // `COLONNE_DOCUMENTO` è l'elenco derivato dal template (`@/lib/personale/percorso-documento`):
+  // il retro entra da solo, e un rinomino futuro lo segue senza passare di qui.
+  let utenteId: string | null = null
+  for (const colonna of COLONNE_DOCUMENTO) {
+    const { data, error } = await supabase
+      .from(TABELLA)
+      .select('utente_id')
+      .eq(colonna, docPath)
+      .limit(1)
+      .maybeSingle()
+    if (error) {
+      logEvento('multi_sede', 'error', {
+        operazione,
+        esito: 'documento-non-verificabile',
+        entita_tipo: TABELLA,
+        error_code: codiceDi(error),
+      }, error)
+      return nonDisponibile('Verifica del documento non riuscita: riprovare fra poco.')
+    }
+    const trovato = (data as { utente_id?: string } | null)?.utente_id ?? null
+    if (trovato) {
+      utenteId = trovato
+      break
+    }
+  }
   if (utenteId) {
     // La sede si legge da `utenti`, che è dove vive: il filtro sta NELLA query,
     // non in un `includes` a valle. Zero righe ⇒ quella persona non è in scope.

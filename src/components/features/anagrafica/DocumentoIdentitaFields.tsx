@@ -19,16 +19,21 @@ import type { FormField } from '@/types/database.types'
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
- * ║  IL DOCUMENTO D'IDENTITÀ — quattro campi che stanno insieme per forza    ║
+ * ║  IL DOCUMENTO D'IDENTITÀ — cinque campi che stanno insieme per forza     ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
  * Fratello di `LuogoNascitaFields`: quello tiene insieme i quattro campi da cui
- * si ricava il codice fiscale, questo i quattro che descrivono il documento —
- * tipo, numero, SCADENZA e la scansione. Stanno in un componente solo perché uno
- * di essi (`document_expiry`) cambia ciò che si legge accanto agli altri, e
- * perché la data di scadenza è l'unica colonna che il cron notturno interroga:
- * un modulo che la raccoglie senza dire niente a chi la scrive è un modulo che
- * manda un allarme a una persona che non sapeva di averlo acceso.
+ * si ricava il codice fiscale, questo i cinque che descrivono il documento —
+ * tipo, numero, SCADENZA e le DUE facce (fronte e retro, dal 12/08/2026: prima
+ * era una scansione sola). Stanno in un componente solo perché uno di essi
+ * (`document_expiry`) cambia ciò che si legge accanto agli altri, e perché la
+ * data di scadenza è l'unica colonna che il cron notturno interroga: un modulo
+ * che la raccoglie senza dire niente a chi la scrive è un modulo che manda un
+ * allarme a una persona che non sapeva di averlo acceso.
+ *
+ * Il numero è cambiato, la ragione dello stare insieme no — e il retro è
+ * obbligatorio per TUTTI E TRE i tipi di documento: il perché, per esteso, è
+ * accanto ai due campi in `personale-template.ts`.
  *
  * ── ⚠️ DEBITO DICHIARATO: PERCHÉ LA SCADENZA NON PASSA DA `FieldRenderer` ────
  *
@@ -51,6 +56,23 @@ import type { FormField } from '@/types/database.types'
  * altri. Finché non si fa, la deroga vale per il campo su cui il danno è
  * misurabile, non per tutti.
  *
+ * ── ⚠️ DEBITO DICHIARATO: LE TRE RIGHE DI AIUTO SONO TESTO, NON DESCRIZIONI ──
+ *
+ * La nota comune e le due righe per lato sono `<p>` visibili e basta: nessuna è
+ * agganciata al proprio campo con `aria-describedby`, quindi chi usa uno screen
+ * reader sente «Retro del documento, campo file» e non sente qual è la pagina da
+ * fotografare. Non è un difetto introdotto qui — la nota era già così quando la
+ * scansione era una sola — ma con due campi la distanza fra ciò che si vede e ciò
+ * che si sente raddoppia, e va scritto invece che taciuto.
+ *
+ * Non si chiude da questo file: `FieldRenderer` costruisce `aria-describedby` per
+ * conto suo e lo valorizza SOLO in errore, senza accettare descrittori aggiuntivi
+ * (è la stessa ragione per cui il codice fiscale, nel wizard, non passa da lì). Si
+ * chiude aggiungendo quel prop a `FieldRenderer` una volta sola, e da lì lo
+ * useranno anche gli altri campi che oggi hanno un aiuto scritto e muto. La
+ * scadenza qui accanto ce l'ha, perché è l'unico campo che non passa da
+ * `FieldRenderer`: è la prova che la strada funziona, non un'incoerenza.
+ *
  * ── ⚠️ E LA SCADENZA PASSATA NON BLOCCA NIENTE ──────────────────────────────
  *
  * Il riquadro rosso è `role="status"` e non `role="alert"`, e non è una
@@ -62,11 +84,12 @@ import type { FormField } from '@/types/database.types'
  * bottone d'invio, e va avanti.
  */
 
-/** Gli `id` dei quattro campi, come li dichiara il template. */
+/** Gli `id` dei cinque campi, come li dichiara il template. */
 const ID_TIPO = 'document_type'
 const ID_NUMERO = 'document_number'
 const ID_SCADENZA = 'document_expiry'
-const ID_ALLEGATO = 'documento_path'
+const ID_ALLEGATO_FRONTE = 'documento_fronte_path'
+const ID_ALLEGATO_RETRO = 'documento_retro_path'
 
 /**
  * Il campo del template, oppure un'eccezione ALL'IMPORT.
@@ -94,14 +117,29 @@ function campoDelTemplate(id: string): FormField {
 const CAMPO_TIPO = campoDelTemplate(ID_TIPO)
 const CAMPO_NUMERO = campoDelTemplate(ID_NUMERO)
 const CAMPO_SCADENZA = campoDelTemplate(ID_SCADENZA)
-const CAMPO_ALLEGATO = campoDelTemplate(ID_ALLEGATO)
+// ⚠️ DUE chiamate, non una: il lancio all'import vale per ENTRAMBE le facce. Un
+// rinomino del solo retro nel template lascerebbe altrimenti in pagina un campo
+// obbligatorio non reso — cioè un modulo che il server rifiuta a ogni invio, in
+// silenzio. Con questa riga si rompe il build, che è il posto giusto.
+const CAMPO_ALLEGATO_FRONTE = campoDelTemplate(ID_ALLEGATO_FRONTE)
+const CAMPO_ALLEGATO_RETRO = campoDelTemplate(ID_ALLEGATO_RETRO)
 
-/** I quattro campi nell'ordine in cui si compilano: serve al wizard per validarli. */
+/**
+ * I cinque campi nell'ordine in cui si compilano.
+ *
+ * ⚠️ NON è solo l'ordine a schermo: da questa lista il wizard deriva `IDS_DOCUMENTO`,
+ * i campi che il passo valida, quelli che finiscono nel corpo del POST e le righe del
+ * riepilogo — nessuno dei quattro è scritto a mano da nessuna parte. Aggiungere una
+ * voce qui la fa comparire in tutti e quattro; l'ORDINE conta perché è anche quello in
+ * cui il wizard cerca «il primo campo mancante» per portarci il fuoco, e quel primo
+ * dev'essere il primo che si incontra scendendo.
+ */
 export const CAMPI_DOCUMENTO: FormField[] = [
   CAMPO_TIPO,
   CAMPO_NUMERO,
   CAMPO_SCADENZA,
-  CAMPO_ALLEGATO,
+  CAMPO_ALLEGATO_FRONTE,
+  CAMPO_ALLEGATO_RETRO,
 ]
 
 /**
@@ -328,31 +366,61 @@ export function DocumentoIdentitaFields({
         <AvvisoScadenzaDocumento scadenzaISO={scadenzaISO} oggi={oggi} id={idAvviso} />
       </div>
 
-      {/* La SCANSIONE. `uploadEndpoint` la manda alla rotta del personale, che
-          scrive nel bucket privato `documenti_personale` — separato da
+      {/* LE DUE SCANSIONI. `uploadEndpoint` le manda alla rotta del personale,
+          che scrive nel bucket privato `documenti_personale` — separato da
           `form_attachments`, che custodisce i documenti dei minori. `accept` e
           tetto arrivano dal TEMPLATE attraverso `FieldRenderer`: scriverli qui
-          sarebbe la seconda lista da tenere allineata al bucket. */}
-      <div className="space-y-2">
-        <FieldRenderer
-          field={CAMPO_ALLEGATO}
-          modelId={modelId}
-          register={register}
-          control={control}
-          error={errori[ID_ALLEGATO]}
-          uploadEndpoint={uploadEndpoint}
-        />
-        {/* ⚠️ IL TETTO DI LARGHEZZA — MISURATO, non stimato (12/08/2026).
-            Senza, «Va bene un PDF oppure una foto…» stava su **92 caratteri per
-            riga, costanti da 640 a 1440 px** (`Range` sui nodi di testo,
-            carattere per carattere). È la riga che dice cosa caricare a chi ha
-            in mano un telefono e un documento, e a 12 px una riga da 92
-            caratteri è oltre il punto in cui l'occhio ritrova il capo della
-            successiva. 26rem = 416 px = 75 caratteri, la stessa misura già
-            fatta su questa pagina per il banner del documento — e in rem,
-            perché `ch` è la larghezza dello ZERO e prometterebbe un numero
-            diverso da quello che rende. */}
+          sarebbe la seconda lista da tenere allineata al bucket.
+
+          ⚠️ LA NOTA STA SOPRA LA COPPIA, E UNA VOLTA SOLA. Vale identica per le
+          due facce (è la stessa `accept`, lo stesso tetto, lo stesso bucket):
+          ripeterla sotto ciascuna raddoppierebbe novantadue caratteri di prosa
+          senza aggiungere un'informazione, e su un passo che si compila col
+          telefono in mano la seconda copia non si legge — si scavalca, e con lei
+          si scavalca la prima. Ciò che invece CAMBIA fra fronte e retro è che
+          cosa si deve vedere nella foto, e quello sta sotto il campo giusto. */}
+      <div className="space-y-6">
         <p className="max-w-[26rem] text-xs text-kidville-sub">{t('persDocAllegatoNota')}</p>
+
+        <div className="space-y-2">
+          <FieldRenderer
+            field={CAMPO_ALLEGATO_FRONTE}
+            modelId={modelId}
+            register={register}
+            control={control}
+            error={errori[ID_ALLEGATO_FRONTE]}
+            uploadEndpoint={uploadEndpoint}
+          />
+          {/* ⚠️ IL TETTO DI LARGHEZZA — MISURATO, non stimato (12/08/2026).
+              Senza, «Va bene un PDF oppure una foto…» stava su **92 caratteri
+              per riga, costanti da 640 a 1440 px** (`Range` sui nodi di testo,
+              carattere per carattere). È la riga che dice cosa caricare a chi ha
+              in mano un telefono e un documento, e a 12 px una riga da 92
+              caratteri è oltre il punto in cui l'occhio ritrova il capo della
+              successiva. 26rem = 416 px = 75 caratteri, la stessa misura già
+              fatta su questa pagina per il banner del documento — e in rem,
+              perché `ch` è la larghezza dello ZERO e prometterebbe un numero
+              diverso da quello che rende. Le righe di aiuto per lato sono più
+              corte, e portano lo stesso tetto per non introdurre una seconda
+              colonna di testo accanto alla prima. */}
+          <p className="max-w-[26rem] text-xs text-kidville-sub">{t('persDocFronteAiuto')}</p>
+        </div>
+
+        <div className="space-y-2">
+          <FieldRenderer
+            field={CAMPO_ALLEGATO_RETRO}
+            modelId={modelId}
+            register={register}
+            control={control}
+            error={errori[ID_ALLEGATO_RETRO]}
+            uploadEndpoint={uploadEndpoint}
+          />
+          {/* Il retro è obbligatorio anche sul passaporto, e chi ha in mano un
+              passaporto è la persona che ha più motivo di credere il contrario:
+              questa riga dice quale pagina fotografare invece di lasciarglielo
+              indovinare davanti a un campo che non passa. */}
+          <p className="max-w-[26rem] text-xs text-kidville-sub">{t('persDocRetroAiuto')}</p>
+        </div>
       </div>
     </div>
   )

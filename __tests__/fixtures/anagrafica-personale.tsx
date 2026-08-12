@@ -49,9 +49,20 @@ export const COMUNI_NA = {
   ],
 }
 
-/** Il percorso che la rotta di caricamento restituisce: due uuid, nessun nome di file. */
+/**
+ * I percorsi che la rotta di caricamento restituisce: due uuid, nessun nome di file.
+ *
+ * ⚠️ SONO DUE E SONO DIVERSI, e non è un vezzo. Dal 12/08/2026 le facce del documento
+ * sono due: con un percorso solo per entrambe, un modulo che scrivesse il fronte anche
+ * dentro `documento_retro_path` — o che perdesse il retro e ricopiasse il fronte —
+ * supererebbe ogni asserzione, perché il valore atteso e quello sbagliato sarebbero la
+ * stessa stringa. Il collaudo di ciò che parta davvero verso il server si regge su
+ * questa differenza.
+ */
 export const PERCORSO_SCANSIONE =
   'documenti/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222.pdf'
+export const PERCORSO_SCANSIONE_RETRO =
+  'documenti/11111111-1111-4111-8111-111111111111/33333333-3333-4333-8333-333333333333.pdf'
 
 /** Come risponde `GET /api/iscrizione/sedi` a un tentativo. */
 export type RispostaSedi =
@@ -126,9 +137,11 @@ export function reteFinta({
     if (url.includes('/api/anagrafiche/comuni')) return risposta(comuni)
 
     if (url.includes('/api/iscrizione/personale/upload')) {
-      return caricamentoOk
-        ? risposta({ path: PERCORSO_SCANSIONE })
-        : risposta({ error: 'no', codice: 'ALLEGATO_NON_CARICATO' }, 500)
+      if (!caricamentoOk) return risposta({ error: 'no', codice: 'ALLEGATO_NON_CARICATO' }, 500)
+      // La risposta dipende dal FILE SPEDITO, non dall'ordine delle chiamate: un
+      // contatore renderebbe verde anche un modulo che carica due volte la stessa
+      // faccia, ed è proprio l'errore da riconoscere.
+      return risposta({ path: percorsoPerIlFile(init?.body) })
     }
 
     if (url.includes('/api/iscrizione/personale') && init?.method === 'POST') {
@@ -145,6 +158,21 @@ export function reteFinta({
   return { fetch: finta, inviati, chiamate }
 }
 
+/**
+ * Il percorso che la rotta finta restituisce per il file appena spedito.
+ *
+ * `caricaFile` impacchetta il file in un `FormData` sotto la chiave `file`: si legge da
+ * lì il nome, e il nome dice quale faccia è. Un caricamento con un corpo che non è un
+ * `FormData` — o senza `file` — ricade sul fronte, che è il caso dei collaudi che
+ * avvolgono la rotta con una risposta loro e del nome non si curano.
+ */
+function percorsoPerIlFile(corpo: BodyInit | null | undefined): string {
+  if (!(corpo instanceof FormData)) return PERCORSO_SCANSIONE
+  const file = corpo.get('file')
+  const nome = file instanceof File ? file.name : ''
+  return nome === NOME_SCANSIONE_RETRO ? PERCORSO_SCANSIONE_RETRO : PERCORSO_SCANSIONE
+}
+
 // ── I comandi della schermata ────────────────────────────────────────────────
 
 export const avanti = () => fireEvent.click(screen.getByRole('button', { name: itPublic.persAvanti }))
@@ -158,19 +186,26 @@ export function apriTendina(campo: HTMLElement): void {
   fireEvent.click(within(contenitore).getByRole('button', { name: /^Mostra o nascondi l’elenco/ }))
 }
 
+/** Le due facce del documento, come le nomina il template (`id` = colonna). */
+export const LATI = { fronte: 'documento_fronte_path', retro: 'documento_retro_path' } as const
+export type Lato = keyof typeof LATI
+
 /**
- * Il campo della scansione.
+ * Il campo della scansione di UNA faccia.
  *
  * ⚠️ Dal 12/08/2026 è un controllo VERO e raggiungibile: `sr-only` invece di
  * `hidden`, con `id`, etichetta e `ref` (prima era `display:none`, cioè fuori
- * dalla tastiera e fuori dall'albero di accessibilità — vedi `FileField`). Qui
- * resta preso per selettore perché è il gesto di CARICAMENTO che serve a
- * dodici collaudi; che sia raggiungibile e nominato lo asserisce
- * `anagrafica-personale-a11y`, che è il posto in cui quella proprietà si difende.
+ * dalla tastiera e fuori dall'albero di accessibilità — vedi `FileField`). Che sia
+ * raggiungibile e nominato lo asserisce `anagrafica-personale-a11y`, che è il posto in
+ * cui quella proprietà si difende.
+ *
+ * ⚠️ E si prende per `id`, non più con `querySelector('input[type=file]')`: da quando
+ * le facce sono due, quel selettore restituirebbe SEMPRE il fronte — cioè un collaudo
+ * che crede di caricare il retro e carica due volte la stessa foto, e resta verde.
  */
-export function campoFile(): HTMLInputElement {
-  const el = document.querySelector('input[type="file"]')
-  if (el === null) throw new Error('il campo della scansione non è in pagina')
+export function campoFile(lato: Lato = 'fronte'): HTMLInputElement {
+  const el = document.getElementById(LATI[lato])
+  if (el === null) throw new Error(`il campo della scansione «${lato}» non è in pagina`)
   return el as HTMLInputElement
 }
 
@@ -245,13 +280,28 @@ export async function passoDocumento({
   if (prosegui) avanti()
 }
 
-/** Il nome del file finto: è anche il segnale che il caricamento è FINITO. */
-export const NOME_SCANSIONE = 'documento.pdf'
+/**
+ * I nomi dei file finti: sono anche il segnale che il caricamento è FINITO.
+ *
+ * ⚠️ DIVERSI FRA LORO, per due ragioni che valgono entrambe. La prima è che il segnale
+ * d'attesa è `getByText`, e due nomi uguali in pagina lo farebbero esplodere su «found
+ * multiple elements» invece di misurare qualcosa. La seconda è che è il nome a
+ * decidere quale percorso la rotta finta restituisce: due nomi uguali renderebbero
+ * indistinguibile un modulo che archivia il fronte al posto del retro.
+ */
+export const NOME_SCANSIONE = 'documento-fronte.pdf'
+export const NOME_SCANSIONE_RETRO = 'documento-retro.pdf'
 
-/** Carica la scansione: il file è un PDF finto di tre byte. */
-export async function caricaScansione(): Promise<void> {
-  const file = new File(['%PD'], NOME_SCANSIONE, { type: 'application/pdf' })
-  fireEvent.change(campoFile(), { target: { files: [file] } })
+/** Il nome del file finto di una faccia. */
+export const nomeScansione = (lato: Lato): string =>
+  lato === 'retro' ? NOME_SCANSIONE_RETRO : NOME_SCANSIONE
+
+/** Carica UNA faccia: il file è un PDF finto di tre byte. */
+export async function caricaLato(lato: Lato): Promise<void> {
+  const nome = nomeScansione(lato)
+  fireEvent.change(campoFile(lato), {
+    target: { files: [new File(['%PD'], nome, { type: 'application/pdf' })] },
+  })
   // ⚠️ Si aspetta il NOME DEL FILE, non il percorso nel bucket — che dal
   // 12/08/2026 non si stampa più in pagina (era un doppio uuid del bucket
   // privato, illeggibile e da non far uscire: vedi `FileField`).
@@ -259,7 +309,20 @@ export async function caricaScansione(): Promise<void> {
   // «Caricamento…» finché la richiesta è in volo e «Seleziona un file» se
   // fallisce — il nome del file compare SOLO quando il valore è arrivato nel
   // modulo.
-  await waitFor(() => expect(screen.getByText(NOME_SCANSIONE)).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText(nome)).toBeInTheDocument())
+}
+
+/**
+ * Carica ENTRAMBE le facce, che è ciò che serve per superare il passo.
+ *
+ * Il nome resta quello che aveva quando la scansione era una sola: i collaudi che la
+ * chiamano non vogliono «un file caricato», vogliono «il documento allegato», e quel
+ * significato non è cambiato — è cambiato quanti file ci vogliono per ottenerlo. Chi
+ * deve invece caricarne una sola (per misurare che «Avanti» non passa) usa `caricaLato`.
+ */
+export async function caricaScansione(): Promise<void> {
+  await caricaLato('fronte')
+  await caricaLato('retro')
 }
 
 /** Spunta le tre prese visione obbligatorie e prosegue. */

@@ -51,5 +51,6 @@
   "selezionaFile": "Choose a file (PDF, JPG…)",
   "caricamentoNonRiuscito": "Upload failed. Please try again.",
   "fileTroppoPesante": "This file is too large (maximum {mb} MB). Choose a smaller file, or take the photo again at a lower quality.",
-  "scattaFoto": "Take photo"
+  "scattaFoto": "Take photo",
+  "scattaFotoDi": "Take photo: {campo}"
 }

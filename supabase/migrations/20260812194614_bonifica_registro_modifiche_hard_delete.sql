@@ -75,20 +75,32 @@ begin
   --    Vale la pena saperlo perché è il motivo per cui i lavori SQL di questo repo si
   --    presentano come 'server': chi li distingue è il `fingerprint` (prefisso `sql:`) e
   --    l'`operazione` nel contesto, non questa colonna.
-  insert into public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
-  values (
-    case when v_righe > 0 then 'warn' else 'info' end,
-    'gdpr',
-    'server',
-    'bonifica registro_modifiche: rimosse le righe hard_delete_gdpr che dichiaravano '
-      || 'eliminato un alunno ancora presente',
-    'sql:bonifica-registro-modifiche-hard-delete',
-    jsonb_build_object(
-      'esito', 'registro-modifiche-hard-delete-bonificate',
-      'n_righe', v_righe,
-      'operazione', 'migrazione/bonifica_registro_modifiche_hard_delete'
-    )
-  );
+  --
+  -- ⚠️ E IL BATTITO SI SCRIVE SOLO SE `app_log` C'È.
+  --    Sul database della CI quella tabella NON esiste (misurato il 13/08: la migrazione
+  --    è caduta lì con `relation "public.app_log" does not exist`, e ha portato con sé
+  --    la successiva, saltata). La bonifica però deve poter girare comunque: il suo
+  --    lavoro è togliere righe false da `registro_modifiche`, e non può dipendere dalla
+  --    presenza del registro dei log — che è osservabilità, non prodotto.
+  --    Il verso è quello di AGENTS.md §9: «il logger non deve mai rompere l'app». Qui
+  --    vale per un lavoro SQL, e la conseguenza è la stessa — se il posto dove scrivere
+  --    non c'è, si fa il lavoro e non lo si annuncia, invece di non farlo.
+  if to_regclass('public.app_log') is not null then
+    insert into public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+    values (
+      case when v_righe > 0 then 'warn' else 'info' end,
+      'gdpr',
+      'server',
+      'bonifica registro_modifiche: rimosse le righe hard_delete_gdpr che dichiaravano '
+        || 'eliminato un alunno ancora presente',
+      'sql:bonifica-registro-modifiche-hard-delete',
+      jsonb_build_object(
+        'esito', 'registro-modifiche-hard-delete-bonificate',
+        'n_righe', v_righe,
+        'operazione', 'migrazione/bonifica_registro_modifiche_hard_delete'
+      )
+    );
+  end if;
 
 end $$;
 

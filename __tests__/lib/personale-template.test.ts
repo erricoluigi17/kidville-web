@@ -247,7 +247,16 @@ describe('personale-template · le DUE facce del documento', () => {
     expect(sql).toContain('rename column documento_path to documento_fronte_path')
     for (const tabella of ['pratiche_personale', 'anagrafica_personale']) {
       expect(
-        new RegExp(`alter table public\\.${tabella}\\s+add column documento_retro_path`).test(sql),
+        // `if not exists` è FACOLTATIVO nel confronto, e la ragione va detta perché
+        // questo lock ha già sbagliato una volta proprio qui: legge il TESTO della
+        // migrazione, quindi diventa rosso su una riscrittura che non cambia lo schema.
+        // Il 13/08 la migrazione è stata resa idempotente — `add column if not exists` —
+        // perché `.github/workflows/migrate-ci.yml` riapplica gli stessi file al database
+        // della CI senza storico, e un file non idempotente fallisce al secondo lancio.
+        // Lo schema prodotto è identico; a cambiare era solo la forma.
+        new RegExp(
+          `alter table public\\.${tabella}\\s+add column (if not exists )?documento_retro_path`,
+        ).test(sql),
         `la migrazione non aggiunge «documento_retro_path» a ${tabella}`,
       ).toBe(true)
     }

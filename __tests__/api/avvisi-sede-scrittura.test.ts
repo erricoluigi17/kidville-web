@@ -97,9 +97,12 @@ const dbBase = (): DBFinto => ({
   // L'educator insegna nella «2 ANNI» della SUA sede (A).
   utenti_sezioni: [{ utente_id: EDUCATOR, section_id: 'sec-a', sections: { name: OMONIMA } }],
   alunni: [
-    { id: ALU_A, scuola_id: SEDE_A, classe_sezione: OMONIMA, section_id: 'sec-a' },
-    { id: ALU_B, scuola_id: SEDE_B, classe_sezione: OMONIMA, section_id: 'sec-b' },
-    { id: ALU_B3, scuola_id: SEDE_B, classe_sezione: SOLO_B, section_id: 'sec-b3' },
+    // `stato` esplicito su ogni riga: i risolutori di destinatari leggono i soli
+    // iscritti dal 2026-08-12, e senza questo campo la fixture descrive tre
+    // bambini che nessun avviso raggiunge — cioè non descrive il caso in esame.
+    { id: ALU_A, scuola_id: SEDE_A, classe_sezione: OMONIMA, section_id: 'sec-a', stato: 'iscritto' },
+    { id: ALU_B, scuola_id: SEDE_B, classe_sezione: OMONIMA, section_id: 'sec-b', stato: 'iscritto' },
+    { id: ALU_B3, scuola_id: SEDE_B, classe_sezione: SOLO_B, section_id: 'sec-b3', stato: 'iscritto' },
   ],
   legame_genitori_alunni: [
     { alunno_id: ALU_A, genitore_id: GEN_A },

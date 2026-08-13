@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { STATO_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, resolveScuolaScrittura } from '@/lib/auth/scope';
@@ -176,7 +177,7 @@ export const POST = withRoute('admin/import/anagrafiche:POST', async (request: N
             zip_code: fam.alunno.cap || null,
             // Il trigger DB sincronizza section_id da classe_sezione.
             classe_sezione: fam.alunno.classe_sezione || null,
-            stato: 'iscritto',
+            stato: STATO_ISCRITTO,
           };
           const { data: created, error } = await supabase
             .from('alunni')

@@ -32,6 +32,19 @@ interface Filtro { col: string; vals: unknown[] }
 const ADMIN = { id: 'aaaaaaaa-1111-4000-8000-000000000001', role: 'admin', scuola_id: SEDE_A }
 const MAESTRA = 'dddddddd-0000-4000-8000-00000000000a'
 
+/**
+ * IL PERCORSO NELLA FORMA CANONICA — `documenti/<uuid>/<uuid>.<ext>`, quella che
+ * `iscrizione/personale/upload:POST` produce.
+ *
+ * ⚠️ Qui c'era `documenti/mio.pdf`, e da quando i due gate admin hanno un gate di
+ * FORMA quel valore non arriva più alla risoluzione: verrebbe respinto prima, e la
+ * prova qui sotto — «nel log non finisce mai il percorso» — resterebbe verde senza
+ * aver mai attraversato il ramo che la firma. Un test che passa per la ragione
+ * sbagliata è peggio di un test che manca: dichiara verificata una cosa che non ha
+ * visto.
+ */
+const DOC_MAESTRA = 'documenti/0f2b1c4e-9a3d-4f61-8b2c-7d5e6a1b0c9d/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d.pdf'
+
 const h = vi.hoisted(() => {
   const state = {
     utente: null as { id: string; role: string; scuola_id: string } | null,
@@ -143,7 +156,11 @@ beforeEach(() => {
   h.state.tabelle = {
     utenti: [{ id: MAESTRA, nome: 'Prova', cognome: 'Prova', ruolo: 'educator', scuola_id: SEDE_A, email: 'p@example.test' }],
     anagrafica_personale: [
-      { utente_id: MAESTRA, document_type: 'CI', document_number: 'AB0000000', document_expiry: '2027-01-01', documento_path: 'documenti/mio.pdf', cessato_il: null },
+      // `documento_fronte_path`, non `documento_path`: la colonna è stata rinominata
+      // dalla migrazione `20260812194501` e in produzione la vecchia non esiste più.
+      // Un finto che la tenesse in vita farebbe passare per verde un gate che sul
+      // database vero risponde `42703`, cioè nega ogni documento.
+      { utente_id: MAESTRA, document_type: 'CI', document_number: 'AB0000000', document_expiry: '2027-01-01', documento_fronte_path: DOC_MAESTRA, cessato_il: null },
     ],
   }
   h.assertUtenteInScope.mockImplementation(async () => null)
@@ -256,10 +273,18 @@ describe('cruscotto scadenze documenti · il gate', () => {
 
   it('nessun log porta il numero del documento o il percorso della scansione', async () => {
     await PATCH(patch({ utenteId: MAESTRA, document_number: 'CA98765XY', document_expiry: '2030-06-30' }))
+    // Il percorso VERO, quello che arriva fino alla firma: è il ramo in cui il log
+    // scrive di più (`documento-personale-firmato`) ed è quello che va guardato.
+    const firmato = await GET(get(`?doc=${encodeURIComponent(DOC_MAESTRA)}`))
+    expect(firmato.status, 'il percorso non è arrivato alla firma: la prova non misura il ramo giusto').toBe(200)
+    // …e il ramo del rifiuto per FORMA, che è l'altro posto in cui un percorso passa
+    // di qui: quello che viene respinto è testo scritto da qualcun altro, e loggarlo
+    // sarebbe il modo più diretto di mettere in `app_log` una stringa arbitraria.
     await GET(get('?doc=documenti%2Fmio.pdf'))
     const scritto = JSON.stringify([...h.logEvento.mock.calls, ...h.logErrore.mock.calls])
     expect(scritto).not.toContain('CA98765XY')
-    expect(scritto, 'il percorso è la chiave che apre un documento d’identità').not.toContain('documenti/mio.pdf')
+    expect(scritto, 'il percorso è la chiave che apre un documento d’identità').not.toContain(DOC_MAESTRA)
+    expect(scritto, 'il percorso RESPINTO è finito nel log: è testo che scrive chi bussa').not.toContain('documenti/mio.pdf')
   })
 
   it('il SUCCESSO della correzione lascia un battito: senza, «nessun log» non distingue niente', async () => {

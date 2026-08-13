@@ -7,6 +7,7 @@ import { SedeIcon } from '@/components/ui/SedeIcon';
 import { cx } from '@/lib/ui/cx';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { AvvisoOblio, type ContiOblio, type StatoMisuraOblio } from './AvvisoOblio';
 
 interface Candidato {
   id: string;
@@ -20,7 +21,7 @@ interface Candidato {
   genitori: { id: string; nome: string }[];
 }
 
-interface DryRun {
+interface DryRun extends ContiOblio {
   alunno: number;
   parents: number;
   parents_non_anonimizzati: number;
@@ -46,6 +47,9 @@ export function OblioPanel({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState<Candidato | null>(null);
   const [dry, setDry] = useState<DryRun | null>(null);
+  // A che punto è la misura di «che cosa distrugge». Vale come GATE della
+  // conferma: finché non è `ok` il bottone rosso resta spento. Vedi `apri()`.
+  const [misura, setMisura] = useState<StatoMisuraOblio>('assente');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -65,18 +69,56 @@ export function OblioPanel({ userId }: { userId: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const apri = async (c: Candidato) => {
-    setTarget(c);
-    setConfirm('');
+  // LA MISURA CHE FALLISCE NON PUÒ ESSERE MUTA.
+  //
+  // Fino al 2026-08-13 questa funzione faceva `if (res.ok) setDry(j)` e basta:
+  // niente ramo `else`, niente messaggio. Con il dry-run in errore la schermata
+  // restava identica a «non ho ancora scelto nessuno» — le stesse etichette con
+  // i due punti e il vuoto dopo — la parola «non misurato» non compariva PROPRIO
+  // nel caso in cui nulla era stato misurato, e il bottone rosso restava
+  // premibile (il nominativo da digitare arriva comunque dal fallback qui
+  // sotto). Cioè: la conferma alla cieca tornava esattamente com'era, in
+  // silenzio, e per giunta nel ramo più probabile.
+  //
+  // ⚠️ QUI NON SI CHIAMA `logClient`, E NON È UNA DIMENTICANZA. Il patch di
+  // `fetch` installato da `installaLoggerClient` (`src/instrumentation-client.ts`)
+  // logga già OGNI `!res.ok` e ogni rete caduta, con la politica dei livelli in
+  // un posto solo (`livelloFetch`): un 500 esce `error`, un 401 non esce affatto
+  // perché il server lo ha già registrato. Aggiungere una riga qui sarebbe la
+  // terza copia di quella regola — che è esattamente ciò che la testata di
+  // `logging/client.ts` vieta, e il modo in cui le copie divergono.
+  //
+  // Ciò che il log NON può fare, e che manca, è FERMARE la conferma:
+  // `misura = 'fallita'` fa comparire il riquadro rosso e SPEGNE il bottone.
+  const misuraDi = useCallback(async (c: Candidato) => {
     setDry(null);
+    setMisura('in-corso');
     setBusy(true);
     try {
       const res = await fetch('/api/admin/gdpr/erase', { method: 'POST', headers: hdr, body: JSON.stringify({ alunno_id: c.id, mode: 'dryrun' }) });
-      const j = await res.json();
-      if (res.ok) setDry(j);
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j || typeof j !== 'object') { setMisura('fallita'); return; }
+      setDry(j);
+      setMisura('ok');
+    } catch {
+      // Rete caduta: stessa conseguenza di un 500, e per la stessa ragione. Il
+      // `catch` non è muto (AGENTS.md, regola 6) — il patch di `fetch` ha già
+      // scritto la riga `POST /api/admin/gdpr/erase — <errore>` prima di
+      // rilanciare; qui si aggiunge la sola cosa che manca al log, cioè fermare
+      // la conferma.
+      setMisura('fallita');
     } finally {
       setBusy(false);
     }
+    // `hdr` è ricostruito a ogni render (oggetto letterale): entrarci in
+    // dipendenza rifarebbe la misura a ogni giro. Dipende solo da `userId`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  const apri = async (c: Candidato) => {
+    setTarget(c);
+    setConfirm('');
+    await misuraDi(c);
   };
 
   const esegui = async () => {
@@ -87,6 +129,7 @@ export function OblioPanel({ userId }: { userId: string }) {
       const j = await res.json();
       if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
       setTarget(null);
+      setMisura('assente');
       await load();
     } finally {
       setBusy(false);
@@ -106,6 +149,21 @@ export function OblioPanel({ userId }: { userId: string }) {
           {t.rich('oblioBanner', { strong: (c) => <strong>{c}</strong> })}
         </p>
       </div>
+
+      {/* CHE COSA SI DISTRUGGE, DETTO PRIMA.
+          Fino al 2026-08-12 questo riquadro non esisteva e la Direzione confermava
+          un'anonimizzazione IRREVERSIBILE leggendo «file da rimuovere: 3». Dentro
+          quel numero ci sono le PAGELLE del bambino e i suoi CERTIFICATI MEDICI.
+          Il riquadro è lo STESSO componente del pannello delle richieste (che
+          fino al 2026-08-13 confermava alla cieca): uno solo, alimentato dal
+          dry-run di chi lo mostra — così l'operatore non legge mai numeri che
+          appartengono a un altro bambino. */}
+      <AvvisoOblio
+        stato={misura}
+        conti={dry}
+        genitoriAnonimizzati={dry ? dry.parents : null}
+        onRiprova={target ? () => { void misuraDi(target); } : undefined}
+      />
 
       {list.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
@@ -165,14 +223,19 @@ export function OblioPanel({ userId }: { userId: string }) {
                   </p>
                 )}
 
-                {busy && !dry ? (
+                {/* Lo stesso numero non si mostra due volte con due nomi diversi.
+                    Qui c'era anche «File personali rimossi: 3», che è
+                    ESATTAMENTE il valore mostrato sopra come «Documento
+                    d'identità e domanda d'iscrizione: 3»: chi legge non aveva
+                    modo di sapere che era lo stesso 3 e non 6. Il numero resta
+                    dov'è nominato per quello che è. */}
+                {misura === 'in-corso' ? (
                   <div className="flex items-center gap-2 py-3 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={14} /> {t('oblioDryRun')}</div>
                 ) : dry ? (
                   <div className="mb-4 space-y-1 rounded-xl bg-kidville-cream p-3.5 font-maven text-xs text-kidville-ink/80">
                     <div>{t('oblioAnagrafica')} <strong>{dry.alunno}</strong></div>
                     <div>{t('oblioGenitoriAnon')} <strong>{dry.parents}</strong></div>
                     {dry.parents_non_anonimizzati > 0 && <div className="text-kidville-warn">{t('oblioGenitoriMantenuti', { n: dry.parents_non_anonimizzati })}</div>}
-                    <div>{t('oblioFileRimossi')} <strong>{dry.file_da_rimuovere}</strong></div>
                   </div>
                 ) : null}
 
@@ -187,9 +250,15 @@ export function OblioPanel({ userId }: { userId: string }) {
                 />
 
                 <div className="flex justify-end gap-3">
-                  <button onClick={() => setTarget(null)} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                  <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                  {/* `misura !== 'ok'` È IL GATE, non un dettaglio di stato:
+                      un'anonimizzazione irreversibile non si conferma su numeri
+                      che nessuno ha letto. Prima bastava digitare il nominativo
+                      — che il fallback fornisce comunque — e il bottone partiva
+                      anche col dry-run caduto. Chi vuole procedere ha il
+                      «Riprova la misura» nel riquadro rosso qui sopra. */}
                   <button
-                    disabled={busy || !confirm.trim()}
+                    disabled={busy || !confirm.trim() || misura !== 'ok'}
                     onClick={esegui}
                     className="rounded-pill bg-kidville-error px-5 py-2 font-barlow text-sm font-black uppercase tracking-wider text-kidville-white hover:opacity-90 disabled:opacity-50"
                   >

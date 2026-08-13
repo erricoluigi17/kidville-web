@@ -21,7 +21,14 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/admin/students?scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).then(r => r.json())
+    // `stato=iscritto` (2026-08-13). `GET /api/admin/students` è un'ANAGRAFICA e
+    // senza questo parametro risponde con la sede intera, archiviati compresi:
+    // qui la segreteria sceglie un bambino e gli inserisce un ticket mensa, cioè
+    // è un elenco OPERATIVO. «Tuo figlio archiviato è ancora prenotabile a
+    // mensa» non è difendibile davanti a un genitore, e non era un'ipotesi: il
+    // parametro esiste da sempre e tre schermate accanto lo passavano già
+    // (`PaymentsDashboard`, `GeneratoreCategoria`, `FiscalePanel`).
+    fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).then(r => r.json())
       .then(d => { if (Array.isArray(d)) setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione }))); });
   }, [scuolaId]);
 

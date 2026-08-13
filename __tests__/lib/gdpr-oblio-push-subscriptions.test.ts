@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { anonimizzaParent } from '@/lib/gdpr/esegui'
 
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
-vi.mock('@/lib/gdpr/orfano', () => ({ parentHaAltriFigliIscritti: vi.fn(async () => false) }))
+vi.mock('@/lib/gdpr/orfano', () => ({
+  leggiAltriFigliIscritti: vi.fn(async () => ({ ok: true, haAltriFigli: false })),
+}))
 
 const AT = '2026-08-03T09:00:00Z'
 const AUTH = 'auth-1'

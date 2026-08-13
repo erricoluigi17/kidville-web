@@ -9,8 +9,8 @@ import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piatta
 import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import {
   FINESTRA_UPLOAD_PUBBLICO_MS,
-  MIME_ALLEGATO_PUBBLICO,
-  TETTO_UPLOAD_PUBBLICO,
+  TETTO_UPLOAD_PERSONALE,
+  estensioneArchiviata,
   rispostaTroppiCaricamenti,
   verificaAllegatoPubblico,
 } from '@/lib/upload/allegati-pubblici'
@@ -19,6 +19,7 @@ import {
   registraCaricamento,
   spazzaCaricamentiSospesi,
 } from '@/lib/personale/caricamenti'
+import { DOC_PREFISSO } from '@/lib/personale/percorso-documento'
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -27,8 +28,12 @@ import {
  *
  * La riceve il modulo pubblico `/anagrafica-personale`: una maestra in servizio
  * fotografa la propria carta d'identità e la manda da qui, senza login. La rotta
- * risponde con il PERCORSO, che il modulo mette poi in `documento_path` quando
- * invia l'anagrafica a `iscrizione/personale:POST`.
+ * risponde con il PERCORSO, che il modulo mette poi in `documento_fronte_path` o in
+ * `documento_retro_path` quando invia l'anagrafica a `iscrizione/personale:POST`.
+ * ⚠️ Qui c'era scritto `documento_path`, al singolare: quel campo non esiste più dal
+ * 12/08/2026 (migrazione `20260812194501`), e il documento si consegna a due facce —
+ * cioè questa rotta viene chiamata DUE VOLTE per persona, che è anche l'aritmetica da
+ * cui discende il suo tetto per IP.
  *
  * È la copia strutturale di `iscrizione/upload:POST` — tetto per IP, limite di
  * dimensione, gate condiviso sui tipi — con tre differenze, e nessuna delle tre è
@@ -115,31 +120,16 @@ const postFormSchema = z.object({
  */
 const OPERAZIONE = 'iscrizione/personale/upload:POST'
 
-/**
- * L'ESTENSIONE DEL FILE ARCHIVIATO, decisa dal TIPO e non dal nome.
- *
- * ⚠️ Il tipo del `Record` è ancorato a `MIME_ALLEGATO_PUBBLICO`: se un domani quella
- * lista guadagnasse un sesto tipo, questo file non compilerebbe più. È voluto — un
- * `?? 'bin'` silenzioso avrebbe archiviato un file valido con un'estensione che
- * nessun visualizzatore riconosce, e il difetto si sarebbe visto solo aprendo la
- * scheda di una persona.
- *
- * `image/jpeg` → `jpg` (e non `jpeg`): un tipo, un'estensione canonica. Il bucket non
- * deve contenere lo stesso formato scritto in due modi.
- */
-const ESTENSIONE_PER_MIME: Record<(typeof MIME_ALLEGATO_PUBBLICO)[number], string> = {
-  'application/pdf': 'pdf',
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/heic': 'heic',
-}
-
 export const POST = withRoute('iscrizione/personale/upload:POST', async (request: NextRequest) => {
   // IL TETTO PRIMA DI TUTTO, anche prima di leggere il corpo: un allegato costa molto
   // più di un JSON, e la difesa che si paga dopo aver letto 4 MB non ha difeso niente.
+  // ⚠️ `TETTO_UPLOAD_PERSONALE` e NON `TETTO_UPLOAD_PUBBLICO`: questa porta ha un
+  // fabbisogno suo (13 dipendenti × 2 facce dietro un solo NAT), e per un giorno —
+  // il 12/08/2026 — quel fabbisogno è stato soddisfatto alzando il numero CONDIVISO,
+  // cioè allentando anche le due porte delle famiglie. L'aritmetica sta accanto alla
+  // costante.
   const rl = await rateLimit(`personale-upload:${clientIp(request)}`, {
-    limit: TETTO_UPLOAD_PUBBLICO,
+    limit: TETTO_UPLOAD_PERSONALE,
     windowMs: FINESTRA_UPLOAD_PUBBLICO_MS,
   })
   if (!rl.ok) {
@@ -202,8 +192,12 @@ export const POST = withRoute('iscrizione/personale/upload:POST', async (request
     })
     if (!gate.ok) return gate.risposta
 
-    const estensione =
-      ESTENSIONE_PER_MIME[gate.contentType as (typeof MIME_ALLEGATO_PUBBLICO)[number]]
+    // L'estensione la decide il TIPO (già normalizzato dal gate), mai il nome del file:
+    // qui il nome è «carta-identita-<cognome>.pdf», e non deve sopravvivere alla
+    // richiesta. La mappa sta in `@/lib/upload/allegati-pubblici` perché la rotta di
+    // caricamento del pannello admin scrive nello STESSO bucket e deve archiviare allo
+    // stesso modo: due mappe per un bucket solo sono due mappe che divergono.
+    const estensione = estensioneArchiviata(gate.contentType)
     if (!estensione) {
       // FAIL-CLOSED, e non è un ramo teorico: è ciò che accadrebbe il giorno in cui il
       // gate condiviso ammettesse un tipo che questa mappa non conosce. Meglio un
@@ -221,7 +215,12 @@ export const POST = withRoute('iscrizione/personale/upload:POST', async (request
     // dall'altro (così due invii della stessa persona non si sovrascrivono nemmeno per
     // errore), il secondo è il nome dell'oggetto. `upsert: false`: un percorso
     // generato dal server non deve poterne sostituire un altro.
-    const path = `documenti/${crypto.randomUUID()}/${crypto.randomUUID()}.${estensione}`
+    //
+    // ⚠️ IL PREFISSO SI IMPORTA, non si riscrive: `percorsoDocumentoAmmesso` respinge
+    // qualunque percorso non cominci per `DOC_PREFISSO`, quindi il giorno in cui questa
+    // riga cambiasse cartella il modulo pubblico rifiuterebbe i percorsi che ha appena
+    // prodotto lui stesso. Con l'import quella divergenza non è esprimibile.
+    const path = `${DOC_PREFISSO}${crypto.randomUUID()}/${crypto.randomUUID()}.${estensione}`
 
     const supabase = await createAdminClient()
     const arrayBuffer = await file.arrayBuffer()

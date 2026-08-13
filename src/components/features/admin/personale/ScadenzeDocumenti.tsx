@@ -665,7 +665,26 @@ export function ScadenzeDocumenti({ userId, statoIniziale = null, oggi }: Props)
         headers: { 'x-sedi': reFetchKey },
       })
       const corpo = await dett.json().catch(() => null)
-      const percorso = corpo?.data?.anagrafica?.documento_path as string | null | undefined
+      // ⚠️ `documento_fronte_path`, E SOLO IL FRONTE. Due decisioni in una riga, e
+      // nessuna delle due si intuisce leggendola.
+      //
+      // 1. IL NOME. Fino al 12/08/2026 qui c'era `documento_path`, e quel giorno la
+      //    migrazione `20260812194501` ha rinominato la colonna aggiungendone una
+      //    seconda per il retro. Il dettaglio non porta più il nome vecchio, quindi
+      //    `percorso` valeva `undefined` a ogni clic e scattava il ramo «documento
+      //    assente»: il cruscotto diceva alla Segreteria che la scansione non c'è
+      //    mentre nel bucket c'era, con `dett.ok` a `true` e nessun errore da nessuna
+      //    parte. Un `undefined` non fa rumore — è il motivo per cui questo commento
+      //    esiste invece di essere un `?.` in più.
+      // 2. LA FACCIA. Questo cruscotto risponde a UNA domanda: chi va richiamato, e
+      //    entro quando. Per rispondere basta una faccia; la coppia fronte/retro vive
+      //    nella SCHEDA della persona, che è la schermata in cui il documento si legge
+      //    davvero. Non è economia di pixel: ogni apertura firma un oggetto dello
+      //    Storage — una URL scaricabile SENZA sessione da chiunque ce l'abbia in
+      //    mano — e scrive una riga nel registro di sorveglianza degli accessi ai
+      //    documenti d'identità. Aprirne due dove ne basta una raddoppia entrambe le
+      //    cose su un pannello che si scorre di corsa.
+      const percorso = corpo?.data?.anagrafica?.documento_fronte_path as string | null | undefined
       if (!dett.ok || !percorso) {
         finestra?.close()
         setErrore(dett.ok ? t('scadDocumentoAssente') : t('scadErroreDocumento'))

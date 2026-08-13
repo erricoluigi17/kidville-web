@@ -56,6 +56,32 @@ const db = createClient(URL_, SERVICE_KEY, { auth: { persistSession: false } });
 // ── UUID fissi (prefisso e2e00000 = non-demo, esadecimale valido) ───────────
 export const IDS = {
   SCUOLA: 'e2e00000-0000-4000-8000-000000000001',
+  /**
+   * ⚠️ LA SEDE CHE NON SI DICHIARA DI COLLAUDO — e il perché è tutto qui.
+   *
+   * `isScuolaE2E` (src/lib/scuole/reali.ts) riconosce una sede se l'id comincia
+   * per `e2e00000` OPPURE se il nome contiene «e2e», e `sediReali` la toglie da
+   * ogni elenco pubblico. Le due sedi qui sopra cadono in ENTRAMBI i criteri: è
+   * voluto, perché una scrittura anonima su un plesso finto che in produzione
+   * ESISTE non deve essere possibile.
+   *
+   * Conseguenza misurata: sul database della CI `sediReali` restituisce l'elenco
+   * VUOTO, `GET /api/iscrizione/sedi` risponde `{data: []}`, e i due moduli
+   * pubblici (`/iscrizione` a parte, che valida su `tutte`) non dipingono nemmeno
+   * il primo passo. Il percorso felice di `/lavora-con-noi` è stato per questo in
+   * `test.fixme` da quando è nato, e `/anagrafica-personale` non era collaudabile
+   * affatto.
+   *
+   * Questa terza sede esiste per quello, e per niente altro: id che NON comincia
+   * per `e2e00000` e nome che NON contiene «e2e», così `sediReali` la accetta e i
+   * moduli pubblici hanno dove atterrare. È sicura perché **il progetto Supabase
+   * della CI è separato dalla produzione**: questa riga non apre niente là.
+   *
+   * Il nome è esplicito («Plesso di Collaudo») perché chi la vedesse in un elenco
+   * senza spiegazione la scambierebbe per una sede vera — ma NON contiene «e2e»,
+   * altrimenti il criterio la riprenderebbe e non servirebbe a niente.
+   */
+  SCUOLA_COLLAUDO: 'c0110a0d-0000-4000-8000-000000000001',
   SEC_GIRASOLI: 'e2e00000-0000-4000-8000-000000000011',
   SEC_TULIPANI: 'e2e00000-0000-4000-8000-000000000012',
   // Sezione DEDICATA agli alunni importati dal flusso pubblico d'iscrizione:
@@ -128,6 +154,28 @@ export const ISCRIZIONE_E2E = {
   cfChild: 'TSTBNE20A01H501X',
   cfAdult: 'TSTDLT80A01H501Y',
   email: 'iscrizione.e2e@kidville.test',
+};
+
+/**
+ * Le identità dei due moduli pubblici del PERSONALE — `/lavora-con-noi`
+ * (candidatura) e `/anagrafica-personale` (anagrafica di chi è già assunto).
+ *
+ * ⚠️ FISSE E NON GENERATE, di proposito. Su entrambe le tabelle esiste un indice
+ * unico PARZIALE su `lower(email)` limitato agli stati vivi, e le due rotte
+ * pubbliche traducono il duplicato `23505` in **201, come al primo invio** (per
+ * non fare da oracolo su chi lavora qui). Con un'email generata a ogni run il
+ * duplicato non si verificherebbe mai e quel ramo resterebbe non collaudato; con
+ * un'email fissa si verifica — ed è per questo che il reset qui sotto deve
+ * cancellare ESATTAMENTE questi indirizzi. Se uno spec ne usa un altro, il run
+ * successivo parte da uno stato sporco e passa per il motivo sbagliato.
+ */
+export const PERSONALE_E2E = {
+  /** `/anagrafica-personale`: la pratica che il percorso felice invia. */
+  emailPratica: 'anagrafica.e2e@kidville.test',
+  /** `/anagrafica-personale`: la pratica che il cockpit approva (spec separato). */
+  emailApprovazione: 'approvazione.e2e@kidville.test',
+  /** `/lavora-con-noi`: la candidatura, già usata dallo spec esistente. */
+  emailCandidatura: 'candidatura.e2e@kidville.test',
 };
 
 // Perimetri di reset: TUTTI gli alunni e TUTTI gli utenti E2E, sede 2 inclusa —
@@ -205,8 +253,59 @@ async function ensureBuckets() {
   }
 }
 
+/**
+ * Ripulisce ciò che i moduli pubblici del personale lasciano dietro.
+ *
+ * Tollera la TABELLA ASSENTE (`PGRST205`/`42P01`) invece di far morire il seed:
+ * vedi il commento nel punto in cui viene chiamata. Ogni altro errore si stampa
+ * ma non ferma — una pulizia che non riesce produce al massimo un test rosso
+ * leggibile, mentre un `throw` qui spegne l'intera suite.
+ *
+ * L'ORDINE È QUELLO DELLE CHIAVI ESTERNE, e non è intercambiabile:
+ *   `caricamenti_personale.pratica_id → pratiche_personale.id` (on delete cascade)
+ *   `pratiche_personale.utente_id`/`evasa_da` → `utenti.id`
+ *   `anagrafica_personale.utente_id → utenti.id` (on delete cascade)
+ * Quindi: prima le pratiche e le candidature (che si portano via il registro per
+ * cascata e liberano i riferimenti a `utenti`), poi gli account che
+ * l'approvazione ha creato — e con loro l'anagrafica, di nuovo per cascata.
+ */
+async function ripulisciModuliPersonale() {
+  const emails = [
+    PERSONALE_E2E.emailPratica,
+    PERSONALE_E2E.emailApprovazione,
+    PERSONALE_E2E.emailCandidatura,
+  ];
+  const assente = (e) => /PGRST205|42P01|does not exist|schema cache/i.test(
+    `${e?.code ?? ''} ${e?.message ?? ''}`,
+  );
+
+  for (const tabella of ['pratiche_personale', 'candidature_insegnanti']) {
+    const { error } = await db.from(tabella).delete().in('email', emails);
+    if (error) {
+      if (assente(error)) console.warn(`↷ reset saltato: la tabella ${tabella} non esiste su questo database`);
+      else console.error(`reset ${tabella}:`, error.message);
+    }
+  }
+
+  // Gli account che l'approvazione ha creato. `anagrafica_personale` se ne va per
+  // cascata; l'utente `auth` va tolto a parte, o al run successivo
+  // `ensureStaffIdentity` troverebbe un'identità orfana e riuserebbe quella.
+  const { data: creati, error: erroreLettura } = await db
+    .from('utenti').select('id').in('email', emails);
+  if (erroreLettura) {
+    if (!assente(erroreLettura)) console.error('lettura utenti dei moduli personale:', erroreLettura.message);
+    return;
+  }
+  for (const u of creati ?? []) {
+    const { error } = await db.from('utenti').delete().eq('id', u.id);
+    if (error) console.error('reset utenti dei moduli personale:', error.message);
+    await db.auth.admin.deleteUser(u.id).catch(() => {});
+  }
+}
+
 async function main() {
-  console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2);
+  console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2,
+    '· sede visibile ai moduli pubblici', IDS.SCUOLA_COLLAUDO);
   const oggi = ymdRoma(0);
   await ensureBuckets();
 
@@ -214,10 +313,18 @@ async function main() {
   must('schools', await db.from('schools').upsert([
     { id: IDS.SCUOLA, nome: 'Kidville E2E', citta: 'Testville' },
     { id: IDS.SCUOLA2, nome: 'Kidville E2E Due', citta: 'Testville Due' },
+    // La sede che i moduli pubblici possono vedere: vedi il commento su
+    // `IDS.SCUOLA_COLLAUDO`. Senza di lei `sediReali` è vuoto e nessun wizard
+    // pubblico comincia.
+    { id: IDS.SCUOLA_COLLAUDO, nome: 'Plesso di Collaudo', citta: 'Testville' },
   ], { onConflict: 'id' }));
   must('scuole', await db.from('scuole').upsert([
     { id: IDS.SCUOLA, nome: 'Kidville E2E', citta: 'Testville', attiva: true },
     { id: IDS.SCUOLA2, nome: 'Kidville E2E Due', citta: 'Testville Due', attiva: true },
+    // `attiva: true` è necessario quanto la riga in `schools`: `sediReali` scarta
+    // le sedi con `scuole.attiva = false`, e una sede presente ma spenta
+    // riprodurrebbe esattamente il difetto che questa riga esiste per togliere.
+    { id: IDS.SCUOLA_COLLAUDO, nome: 'Plesso di Collaudo', citta: 'Testville', attiva: true },
   ], { onConflict: 'id' }));
 
   // 2. Config moduli delle SOLE scuole E2E: umore attivo nel diario docente,
@@ -266,8 +373,9 @@ async function main() {
   await ensureAuthUser(IDS.GENITORE2, CREDENZIALI.genitore2);
 
   // NB: live `utenti.role` è colonna GENERATA da `ruolo` → mai scriverla.
-  // Nessun ponte `utenti_scuole`: ogni account ha UNA sede, come in produzione
-  // per segreteria ed educator. Il multi-sede è della Direzione, e qui non serve.
+  // Ogni account ha UNA sede primaria, come in produzione per segreteria ed
+  // educator. Il multi-sede è della Direzione — e serve in un caso solo, più
+  // sotto: il ponte dell'admin verso il «Plesso di Collaudo».
   must('utenti', await db.from('utenti').upsert([
     { id: IDS.ADMIN, email: CREDENZIALI.admin, nome: 'Alba', cognome: 'Admin-E2E', ruolo: 'admin', scuola_id: IDS.SCUOLA, gradi: [], attivo: true },
     { id: IDS.DOCENTE, email: CREDENZIALI.docente, nome: 'Dora', cognome: 'Docente-E2E', ruolo: 'educator', scuola_id: IDS.SCUOLA, gradi: ['infanzia'], attivo: true },
@@ -278,6 +386,29 @@ async function main() {
     { id: IDS.DOCENTE2, email: CREDENZIALI.docente2, nome: 'Diana', cognome: 'Docente2-E2E', ruolo: 'educator', scuola_id: IDS.SCUOLA2, gradi: ['infanzia'], attivo: true },
     { id: IDS.GENITORE2, email: CREDENZIALI.genitore2, nome: 'Gilda', cognome: 'Genitore2-E2E', ruolo: 'genitore', scuola_id: IDS.SCUOLA2, gradi: [], attivo: true },
   ], { onConflict: 'id' }));
+
+  // ── Il ponte dell'admin verso il «Plesso di Collaudo» ──────────────────────
+  //
+  // Le pratiche inviate dai moduli pubblici nascono su `SCUOLA_COLLAUDO` (è
+  // l'unica sede che `sediReali` accetta). I cockpit di approvazione filtrano per
+  // `resolveScuoleAttive`, che per un admin è `utenti.scuola_id` PIÙ le righe di
+  // questo ponte: senza, l'admin E2E non vedrebbe le proprie pratiche e ogni
+  // PATCH risponderebbe 404 — un 404 indistinguibile da «non esiste», cioè un
+  // test rosso che sembra un difetto del prodotto.
+  //
+  // ⚠️ PERCHÉ IL PONTE E NON `utenti.scuola_id`. Spostare la sede PRIMARIA
+  // dell'admin sembrerebbe più semplice ed è la cosa da non fare:
+  // `isUtenteCollaudo` (src/lib/scuole/reali.ts) riconosce un account di
+  // collaudo dalla sede primaria, e con una sede non-e2e l'admin diventerebbe
+  // «un utente vero» — rientrando nelle liste di candidati di `admin/schools:POST`.
+  // È il vettore dell'incidente del 2026-07-29 (`admin.e2e@kidville.test`
+  // collegato alla Direzione di Aversa e Cesa, con la password in chiaro in un
+  // repo pubblico). Col ponte le due proprietà convivono: `isUtenteCollaudo`
+  // resta true perché guarda la primaria, e `scuoleDiUtente` include comunque la
+  // sede di collaudo nello scope.
+  must('utenti_scuole', await db.from('utenti_scuole').upsert([
+    { utente_id: IDS.ADMIN, scuola_id: IDS.SCUOLA_COLLAUDO },
+  ], { onConflict: 'utente_id,scuola_id' }));
 
   // Docente SOLO su Girasoli (activeSection deterministica); doppio su Tulipani.
   // La docente della sede 2 è assegnata alla Girasoli OMONIMA: le due maestre
@@ -377,6 +508,25 @@ async function main() {
   }
   must('reset enrollment_submissions', await db.from('enrollment_submissions').delete()
     .contains('data', { children: [{ codice_fiscale: ISCRIZIONE_E2E.cfChild }] }));
+
+  // ── Artefatti dei DUE moduli pubblici del personale ────────────────────────
+  //
+  // Perché serve, e perché prima non serviva: finché il percorso felice era in
+  // `test.fixme` nessuno inviava niente, e queste tabelle restavano vuote da sé.
+  // Ora un test INVIA e un altro APPROVA, e l'approvazione lascia dietro cinque
+  // cose: la pratica in stato `approvata`, la riga di `anagrafica_personale`, la
+  // riga di `caricamenti_personale`, il file nel bucket e — la più fastidiosa —
+  // un account `utenti` appena creato. Senza reset, al run successivo il secondo
+  // invio non sarebbe più un duplicato e l'account resterebbe: il test
+  // passerebbe per il motivo sbagliato.
+  //
+  // ⚠️ QUESTO BLOCCO NON USA `must()`, ed è l'unica eccezione deliberata del
+  // seed insieme a `ensureBuckets`. `must()` fa `throw` su qualunque errore
+  // PostgREST e `global-setup` lo propaga: su un ambiente dove queste tabelle
+  // non sono ancora state migrate (`PGRST205`/`42P01`) l'INTERA suite morirebbe
+  // prima di eseguire un test — per la pulizia di una funzionalità che lì non
+  // esiste. Si avvisa NOMINANDO la tabella saltata, e si prosegue.
+  await ripulisciModuliPersonale();
 
   // 7. Presenze di oggi: SOLO Tulipani (Girasoli resta "appello mancante")
   must('presenze', await db.from('presenze').insert([

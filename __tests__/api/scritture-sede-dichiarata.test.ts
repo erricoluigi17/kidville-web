@@ -114,8 +114,9 @@ const dbBase = (): DBFinto => ({
     { id: GEN_B, ruolo: 'genitore', scuola_id: SEDE_B, nome: 'Gina', cognome: 'Beta' },
   ],
   alunni: [
-    { id: ALU_A, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE, section_id: 'sec-a', scuola_id: SEDE_A, consenso_privacy: true },
-    { id: ALU_B, nome: 'Bea', cognome: 'Beta', classe_sezione: CLASSE, section_id: 'sec-b', scuola_id: SEDE_B, consenso_privacy: true },
+    // `stato` esplicito: i destinatari di un avviso sono i soli iscritti (2026-08-12).
+    { id: ALU_A, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE, section_id: 'sec-a', scuola_id: SEDE_A, consenso_privacy: true, stato: 'iscritto' },
+    { id: ALU_B, nome: 'Bea', cognome: 'Beta', classe_sezione: CLASSE, section_id: 'sec-b', scuola_id: SEDE_B, consenso_privacy: true, stato: 'iscritto' },
   ],
   legame_genitori_alunni: [
     { genitore_id: GEN_A, alunno_id: ALU_A },

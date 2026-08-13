@@ -31,9 +31,20 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //    COSA è finito nel DB e con quale `scuola_id`;
 //  · `select('*', { count: 'exact' })` → `count`, e `{ head: true }`;
 //  · iniezione di un errore PostgREST per tabella (`{ errori: { alunni: { code: '42703' } } }`),
-//    che è il modo per provare il ramo di degradazione su DB non migrato;
+//    che è il modo per provare il ramo di degradazione su DB non migrato, e per
+//    SINGOLA OPERAZIONE (`{ errori: { 'alunni:delete': { code: '23503' } } }`),
+//    con cui una scrittura viene respinta DOPO una lettura riuscita — la forma
+//    di guasto più comune in produzione. Le chiavi di `errori` sono VALIDATE
+//    all'ingresso: un refuso non è un'iniezione che non parte, è un'eccezione;
+//  · lo status HTTP dell'errore iniettato, che segue la tabella di PostgREST
+//    (un `23503` è un 409, non un 400): vedi `statoDiPostgrest`;
 //  · `rpc()` e `storage`, che senza configurazione LANCIANO invece di produrre
 //    un TypeError catturato dal `catch` della route e travestito da 500.
+//
+// La regola vale anche AL ROVESCIO — un finto client che sa fare più del vero
+// mente quanto uno che tace: `await from('alunni')` senza select/insert/… qui
+// LANCIA, perché il `PostgrestQueryBuilder` del client vero non è thenable e in
+// produzione quella query non partirebbe (misurato in `@supabase/postgrest-js`).
 //
 // Semantica SQL rispettata dove conta per l'isolamento:
 //  · `neq`/`not.eq` NON restituiscono le righe con valore NULL (in SQL
@@ -66,6 +77,21 @@ export interface ErrorePostgrest {
 
 export type OperazioneScrittura = 'insert' | 'update' | 'upsert' | 'delete'
 
+/** Le operazioni indirizzabili da una chiave `"<tabella>:<operazione>"` di `errori`.
+ *  La lettura si chiama `select` perché è l'unica delle cinque a non avere un
+ *  metodo che la dichiari: `.select()` sceglie la proiezione, non l'operazione,
+ *  e i terminatori (`single()`, `maybeSingle()`, l'await della lista) restano
+ *  letture. */
+export type OperazioneFinta = OperazioneScrittura | 'select'
+
+export const OPERAZIONI_FINTE: readonly OperazioneFinta[] = [
+  'select',
+  'insert',
+  'update',
+  'upsert',
+  'delete',
+]
+
 export interface Scrittura {
   tabella: string
   operazione: OperazioneScrittura
@@ -81,7 +107,14 @@ export interface RispostaRpc {
 }
 
 export interface OpzioniFinto {
-  /** tabella → errore PostgREST restituito da OGNI operazione su quella tabella. */
+  /**
+   * Errore PostgREST da restituire, indirizzato con una di due chiavi:
+   *  · `"<tabella>"` → OGNI operazione su quella tabella (forma storica);
+   *  · `"<tabella>:<operazione>"` → solo quell'operazione
+   *    (`'alunni:delete'`, `'anagrafica_personale:update'`, `'chat_messages:insert'`,
+   *    `'alunni:select'`, `'…:upsert'`).
+   * Le due forme convivono: vedi `erroreDi()` per la precedenza e il perché.
+   */
   errori?: Record<string, ErrorePostgrest>
   /** Accumulatore delle scritture, come `tabelleLette` lo è delle letture. */
   scritture?: Scrittura[]
@@ -374,6 +407,101 @@ interface Risultato {
 }
 
 /**
+ * Lo status HTTP con cui PostgREST serve un dato SQLSTATE (porta della tabella
+ * di `Error.hs`; il ripiego è 400, come là).
+ *
+ * Perché non basta rispondere sempre 400, che è ciò che questo fixture faceva
+ * fino al 12/08: il senso della chiave per operazione è rappresentare FEDELMENTE
+ * una scrittura respinta, e una violazione di chiave esterna è un 409 Conflict —
+ * il 400 è di `PGRST204`/`42703`, cioè della COLONNA CHE NON ESISTE, che è
+ * un'altra cosa e ha un altro rimedio. Nessuna route in `src/` legge oggi lo
+ * status di una risposta PostgREST (misurato il 12/08: le route guardano
+ * `error.code`), quindi questo non cambia nessun esito; conta perché un fixture
+ * che rappresenta il guasto A con la faccia del guasto B insegna il falso a chi
+ * lo legge per scrivere il test successivo.
+ */
+function statoDiPostgrest(codice: string): { status: number; statusText: string } {
+  const s = (status: number, statusText: string) => ({ status, statusText })
+  switch (codice) {
+    case '23503': // foreign_key_violation — la FK difende lo storico
+    case '23505': // unique_violation
+      return s(409, 'Conflict')
+    case '42501': // insufficient_privilege (il finto client è sempre autenticato: 403, non 401)
+      return s(403, 'Forbidden')
+    case '42P01': // undefined_table
+    case '42883': // undefined_function
+    case 'PGRST202': // funzione non trovata nella cache dello schema
+    case 'PGRST205': // tabella non trovata nella cache dello schema
+      return s(404, 'Not Found')
+    case '25006': // read_only_sql_transaction
+      return s(405, 'Method Not Allowed')
+    case 'PGRST116': // 0 righe (o più d'una) dove ne serviva una
+      return s(406, 'Not Acceptable')
+    case 'PGRST301': // JWT scaduto
+      return s(401, 'Unauthorized')
+    case 'P0001': // `raise` senza codice: resta un 400
+      return s(400, 'Bad Request')
+    case '57P01':
+    case '57P02':
+    case '57P03': // intervento dell'operatore: il server torna
+      return s(503, 'Service Unavailable')
+    default:
+      break
+  }
+  const classe = codice.slice(0, 2)
+  if (classe === '08' || classe === '53') return s(503, 'Service Unavailable')
+  if (classe === '0L' || classe === '0P' || classe === '28') return s(403, 'Forbidden')
+  if (['09', '25', '2D', '38', '39', '3B', '40', '54', '55', '57', '58', 'F0', 'HV', 'P0', 'XX'].includes(classe)) {
+    return s(500, 'Internal Server Error')
+  }
+  return s(400, 'Bad Request')
+}
+
+/**
+ * Le chiavi di `errori`, controllate UNA VOLTA all'ingresso.
+ *
+ * Perché esiste questa funzione, ed è la regola fondativa del file applicata
+ * alla superficie più nuova: `{ 'alunni:delele': … }` (refuso), `'alunni:DELETE'`
+ * (maiuscolo), `'alunni:delete '` (spazio finale) e `'alunno:delete'` (refuso sul
+ * nome della tabella) sono tutti indirizzi che non colpiscono niente. Senza
+ * questo controllo l'iniezione non parte, `error` resta `null`, la riga viene
+ * cancellata DAVVERO — e il test che credeva di provare «la scrittura viene
+ * respinta» prova il percorso felice, in verde. È esattamente il difetto che
+ * questo file condanna in testa («un mock che tace è peggio di un mock che
+ * manca») e contro cui lancia ovunque: operatore ignoto, metodo ignoto,
+ * `referencedTable`, `rpc` non configurata, `storage`.
+ *
+ * Anche la TABELLA si controlla, e non solo il suffisso: un refuso lì è muto
+ * allo stesso modo. Costa una riga (`db.tabella = []`) quando la tabella nasce
+ * dalla scrittura, ed è un costo misurato: al 12/08 nessuna delle iniezioni già
+ * scritte nel repo nomina una tabella assente da `db` (sonda su 10133 test).
+ */
+function validaChiaviErrori(errori: Record<string, ErrorePostgrest> | undefined, db: DBFinto): void {
+  const aiuto =
+    'Le chiavi di `errori` sono `"<tabella>"` oppure `"<tabella>:<operazione>"` con ' +
+    `operazione in {${OPERAZIONI_FINTE.join(', ')}}.`
+  for (const chiave of Object.keys(errori ?? {})) {
+    const taglio = chiave.indexOf(':')
+    const tabella = taglio < 0 ? chiave : chiave.slice(0, taglio)
+    if (taglio >= 0) {
+      const operazione = chiave.slice(taglio + 1)
+      if (!(OPERAZIONI_FINTE as readonly string[]).includes(operazione)) {
+        throw new Error(
+          `finto-supabase: operazione non emulata dal finto client: "${operazione}" nella chiave "${chiave}" di \`errori\`. ` +
+            `${aiuto} Correggi il test — un'iniezione che non colpisce niente rende verde il test che dovrebbe essere rosso.`,
+        )
+      }
+    }
+    if (!Object.prototype.hasOwnProperty.call(db, tabella)) {
+      throw new Error(
+        `finto-supabase: tabella non presente nel finto database: "${tabella}" nella chiave "${chiave}" di \`errori\`. ` +
+          `Aggiungila a \`db\` (anche vuota: \`${tabella}: []\`) oppure correggi il nome. ${aiuto}`,
+      )
+    }
+  }
+}
+
+/**
  * @param db           tabella → righe (mutabile dal test fra un caso e l'altro,
  *                     e mutata DAVVERO dalle scritture)
  * @param tabelleLette accumulatore dei `from(<tabella>)` eseguiti: serve a
@@ -385,6 +513,8 @@ export function creaFintoSupabase(
   tabelleLette: string[] = [],
   opzioni: OpzioniFinto = {},
 ): SupabaseClient {
+  validaChiaviErrori(opzioni.errori, db)
+
   let contatore = 0
   const nuovoId = () => `finto-${++contatore}`
 
@@ -404,7 +534,47 @@ export function creaFintoSupabase(
     let lanciaSuErrore = false
     let calcolato: Risultato | null = null
 
-    const errore = opzioni.errori?.[tabella] ?? null
+    /**
+     * L'errore iniettato per QUESTA chiamata. Si risolve tardi, dentro `esegui()`,
+     * perché a `from()` l'operazione non è ancora nota: la decide `.delete()` /
+     * `.update()` / `.insert()` più avanti nella catena.
+     *
+     * Precedenza: prima `"<tabella>:<operazione>"`, poi la chiave nuda `"<tabella>"`.
+     *
+     * Il perché di quest'ordine, e non del suo contrario: chi scrive la chiave
+     * specifica sta descrivendo UN guasto — «la delete la respinge la chiave
+     * esterna» — e ha bisogno che tutto il resto continui a funzionare, la lettura
+     * che la precede per prima. Se vincesse la chiave nuda, la specifica sarebbe
+     * inservibile proprio nel caso per cui esiste. La chiave nuda resta il ripiego
+     * e continua a valere per ogni operazione: le iniezioni già scritte nel repo
+     * restano verdi senza toccarne una.
+     *
+     * Cosa sblocca: una scrittura respinta DOPO una lettura riuscita, che con la
+     * sola chiave nuda non era rappresentabile — zittendo l'intera tabella la route
+     * non arriva nemmeno a leggere l'alunno, e il test finisce per provare il ramo
+     * «non trovato» credendo di provare il ramo «respinta». È il motivo per cui il
+     * ramo `23503` di `admin/students:DELETE` è rimasto scoperto fino al 12/08
+     * (`__tests__/api/admin-students-scope-sede.test.ts`, dove ora c'è).
+     *
+     * Quanto pesa quel ramo in produzione NON si scrive qui: si misura, perché un
+     * numero in un commento invecchia da solo mentre il commento resta. Il 12/08
+     * erano 33 alunni su 33 (29 su 29 togliendo la sede E2E), e la query che lo dice
+     * è: `SELECT count(*) FROM alunni a WHERE a.id IN (SELECT alunno_id FROM
+     * legame_genitori_alunni UNION SELECT alunno_id FROM pagamenti UNION …)` sulle
+     * 7 tabelle con FK `NO ACTION` verso `alunni` (armadietto, eventi_diario,
+     * legame_genitori_alunni, note_disciplinari, pagamenti, ticket_mensa,
+     * valutazioni — l'elenco si rilegge da `pg_constraint` con `confdeltype = 'a'`).
+     *
+     * NON è il primo iniettore per operazione del repo, ed è bene saperlo prima di
+     * scriverne un quinto: `__tests__/api/forms-send-otp-identita-firmatario.test.ts`
+     * ha `erroriUpdate`/`erroriInsert`, `__tests__/api/avvisi-orfani-cancellazione.test.ts`
+     * ha `erroreDeleteAvviso`/`erroreDeleteNotifiche`, `__tests__/api/avvisi-scope-postgrest.test.ts`
+     * ha `erroreScrittura` — tre dialetti della stessa idea, ciascuno con un finto
+     * client proprio scritto a mano. Questa chiave esiste per assorbirli: chi tocca
+     * uno di quei tre file lo porti qui invece di allargarlo.
+     */
+    const erroreDi = (op: OperazioneFinta): ErrorePostgrest | null =>
+      opzioni.errori?.[`${tabella}:${op}`] ?? opzioni.errori?.[tabella] ?? null
 
     const tabellaScrivibile = (): Riga[] => {
       if (!Array.isArray(db[tabella])) db[tabella] = []
@@ -459,13 +629,13 @@ export function creaFintoSupabase(
 
     const esegui = (): Risultato => {
       if (calcolato) return calcolato
+      const errore = erroreDi(operazione ?? 'select')
       if (errore) {
         calcolato = {
           data: null,
           error: { details: null, hint: null, message: '', ...errore },
           count: null,
-          status: 400,
-          statusText: 'Bad Request',
+          ...statoDiPostgrest(errore.code),
         }
         return calcolato
       }
@@ -674,6 +844,20 @@ export function creaFintoSupabase(
     }
     // Thenable: `await query` senza terminatore (liste e scritture «nude»).
     b.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
+      // `await supabase.from('alunni')` senza nessuna delle cinque: il client
+      // VERO non esegue niente: `from()` restituisce un `PostgrestQueryBuilder`,
+      // che NON ha `then` — ce l'ha solo il `PostgrestBuilder` che tornano
+      // `.select()`/`.insert()`/… (misurato il 12/08 in
+      // `node_modules/@supabase/postgrest-js/src/`). Qui i due builder sono un
+      // oggetto solo, quindi quell'await «funzionerebbe» e restituirebbe righe
+      // che in produzione non arriverebbero mai: è un finto client che sa fare
+      // PIÙ del vero, cioè la stessa trappola del mock che tace, al rovescio.
+      if (!selezionato && operazione === null) {
+        throw new Error(
+          `finto-supabase: \`await from("${tabella}")\` senza select/insert/update/upsert/delete non è una query. ` +
+            'Il client vero non la esegue (`from()` non è thenable): aggiungi `.select(...)` al test.',
+        )
+      }
       let r: Risultato
       try {
         r = conLancio(esegui())

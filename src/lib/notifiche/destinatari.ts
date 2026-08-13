@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { isScuolaE2E } from '@/lib/scuole/reali'
+import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
 import { logEvento } from '@/lib/logging/logger'
 
 /** Codici PostgREST/Postgres di «schema non ancora migrato» (DB E2E della CI). */
@@ -67,6 +68,23 @@ export interface OpzioniDestinatari {
  * a Giugliano, ad Aversa e a Cesa — e una sede mancante significava notificare
  * i genitori di TUTTI i plessi. La gemella `genitoriDiScuola` negava già: due
  * significati opposti dello stesso `null` nello stesso file.
+ *
+ * ⚠️ IL FILTRO DI STATO C'È ANCHE QUI, e non è simmetria decorativa (2026-08-12).
+ * L'archiviazione sgancia il bambino dalla classe (`classe_sezione` a NULL),
+ * quindi «i genitori della 2 ANNI» un archiviato non lo prende comunque. Ma
+ * `alunni.stato` si può portare a `'ritirato'` anche dalla TENDINA della scheda
+ * alunno (`StudentDetailPanel.tsx`), che la classe non la tocca: per quella
+ * strada il bambino resta agganciato alla sezione e la sua famiglia continua a
+ * ricevere gli avvisi di classe. Due strade per lo stesso stato, un filtro solo
+ * su una: è la forma di difetto che questo file ha già pagato una volta.
+ *
+ * ⚠️ QUESTA FRASE VALE ANCHE PER IL LOCK, ed è il motivo per cui il lock non può
+ * esentare le query per sezione «perché tanto lo sganciamento le copre»: la
+ * tendina esiste oggi, e `admin/students:PATCH` la applica senza toccare né
+ * `section_id` né `classe_sezione` (misurato: `stato` è in `allowedFields` e
+ * l'UPDATE non azzera nulla). Vedi la testata di
+ * `__tests__/architecture/elenchi-operativi-solo-iscritti.test.ts`, dove
+ * l'esenzione è diventata un elenco di decisioni scritte invece di una regex.
  */
 export async function genitoriDiClassi(
   supabase: SupabaseClient,
@@ -84,7 +102,11 @@ export async function genitoriDiClassi(
     return []
   }
   try {
-    let q = supabase.from('alunni').select('id').in('classe_sezione', classi)
+    let q = supabase
+      .from('alunni')
+      .select('id')
+      .in('classe_sezione', classi)
+      .in('stato', [...STATI_CON_CANALE_FAMIGLIA])
     if (scuolaId) q = q.eq('scuola_id', scuolaId)
     const { data, error } = await q
     // PostgREST NON lancia: ritorna `{ error }`. Senza questo controllo una query
@@ -108,7 +130,31 @@ export async function genitoriDiClassi(
   }
 }
 
-/** Genitori di tutti gli alunni della scuola (avvisi a scope globale). */
+/**
+ * Genitori degli alunni ISCRITTI della scuola (avvisi a scope globale).
+ *
+ * ⚠️ «DELLA SCUOLA» VUOL DIRE SEDE INTERA, e per questo il filtro di stato qui
+ * è indispensabile (2026-08-12). L'archiviazione fa sparire il bambino dagli
+ * elenchi sganciandolo dalla CLASSE: è la leva giusta e copre la maggioranza
+ * delle query, ma non tocca questa — che la classe non la nomina proprio.
+ * Senza `.eq('stato', …)` un avviso «a tutta la sede» sarebbe arrivato per
+ * sempre anche ai genitori di chi non frequenta più, che è il modo più visibile
+ * di dire a una famiglia che il sistema non si è accorto che se n'è andata.
+ *
+ * Il confine è `STATI_CON_CANALE_FAMIGLIA` (`@/lib/alunni/stato`), e non è più
+ * una stringa scritta qui. ⚠️ Fino al 2026-08-13 questo paragrafo diceva «se
+ * domani la scelta cambia si cambia qui, in un posto solo»: era **falso**, e la
+ * misura è banale — lo stesso confine era ribattuto in sei punti
+ * (`admin/chat/contacts:65`, `agenda:POST`, qui, `genitoriDiClassi`,
+ * `news/digest`, `genitoriDiGrado`), nessuno dei quali passava da un predicato
+ * condiviso. Un commento che promette un presidio inesistente vale meno di
+ * nessun commento.
+ *
+ * Il confine include ora anche `'sospeso'` — un bambino che frequenta, la cui
+ * famiglia deve restare raggiungibile — perché la costante deriva dallo stesso
+ * `LATO_DEL_CONFINE` che decide chi è protetto dall'anonimizzazione. Le due
+ * domande hanno una risposta sola.
+ */
 export async function genitoriDiScuola(
   supabase: SupabaseClient,
   scuolaId: string | null | undefined,
@@ -122,7 +168,11 @@ export async function genitoriDiScuola(
     return []
   }
   try {
-    const { data, error } = await supabase.from('alunni').select('id').eq('scuola_id', scuolaId)
+    const { data, error } = await supabase
+      .from('alunni')
+      .select('id')
+      .eq('scuola_id', scuolaId)
+      .in('stato', [...STATI_CON_CANALE_FAMIGLIA])
     if (error) {
       logEvento('notifica', 'error', { operazione, esito: 'alunni-non-letti', sede_id: scuolaId }, error)
       return []

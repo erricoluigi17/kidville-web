@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { logEvento } from '@/lib/logging/logger'
 import type { SidiDomandaRecord } from './zip-parser'
 
@@ -109,7 +110,7 @@ export async function applySidiRecords(
         birth_city: rec.alunno.comune_nascita ?? null,
         birth_province: rec.alunno.provincia_nascita ?? null,
         numero_domanda_sidi: rec.numero_domanda,
-        stato: 'iscritto',
+        stato: STATO_ISCRITTO,
       }
       const { data: newChild, error } = await supabase.from('alunni').insert(childRecord).select('id').single()
       if (error || !newChild) {

@@ -87,9 +87,9 @@ const ID_ANNA = '11111111-1111-4111-8111-111111111111'
 const ID_BRUNO = '22222222-2222-4222-8222-222222222222'
 
 /**
- * L'elenco che il finto server manda porta ANCHE `email`, `fiscal_code` e
- * `documento_path`: la route vera non li proietta in lista, ma questo test non è lì
- * per collaudare la route — è lì per verificare che il PANNELLO non li disegni
+ * L'elenco che il finto server manda porta ANCHE `email`, `fiscal_code` e i due
+ * percorsi delle scansioni: la route vera non li proietta in lista, ma questo test non
+ * è lì per collaudare la route — è lì per verificare che il PANNELLO non li disegni
  * comunque.
  */
 const ELENCO = [
@@ -103,7 +103,8 @@ const ELENCO = [
     creata_il: '2026-08-11T09:00:00Z',
     email: 'recapito.da.non.mostrare@example.test',
     fiscal_code: 'BNCNNA90A41H501U',
-    documento_path: 'documenti/aaaa/DA-NON-MOSTRARE.jpg',
+    documento_fronte_path: 'documenti/aaaa/DA-NON-MOSTRARE.jpg',
+    documento_retro_path: 'documenti/aaaa/DA-NON-MOSTRARE-2.jpg',
   },
   {
     id: ID_BRUNO,
@@ -694,11 +695,13 @@ describe('PratichePersonale — pannello', () => {
      */
     await apriAnna()
 
-    // I tre comandi dell'elenco delle azioni, e il comando che apre la scansione.
+    // I tre comandi dell'elenco delle azioni, e i DUE comandi che aprono le scansioni
+    // (fronte e retro: sono due pulsanti veri, e il secondo è nato dopo il primo — un
+    // comando nuovo che non dichiara i 44 px riapre il difetto su metà dei casi).
     // (Il riquadro di conferma SOSTITUISCE i primi tre: vanno guardati prima.)
     for (const nome of [
       itAdminAltro.pratApprova, itAdminAltro.pratRifiuta, itAdminAltro.pratSposta,
-      itAdminAltro.pratApriDocumento,
+      itAdminAltro.pratApriFronte, itAdminAltro.pratApriRetro,
     ]) {
       const el = screen.getAllByRole('button', { name: new RegExp(nome, 'i') })[0]
       expect(el.className, `«${nome}» non dichiara 44 px`).toContain('min-h-[44px]')
@@ -829,10 +832,47 @@ describe('PratichePersonale — pannello', () => {
     expect(screen.getByRole('button', { name: itAdminAltro.pratConferma })).not.toBeDisabled()
   })
 
-  it('la SCANSIONE di una pratica APPROVATA non è persa: si dice dov’è andata', async () => {
+  it('DUE facce, DUE pulsanti: ognuno apre il SUO percorso', async () => {
+    /**
+     * Dal 12/08/2026 il documento d'identità è due scansioni: il fronte porta la foto e
+     * gli estremi, il retro la residenza e la firma (su una patente, le categorie). Un
+     * pulsante solo non è una semplificazione: è metà del documento che la Segreteria
+     * non vede, e una telefonata per il pezzo mancante.
+     *
+     * Qui si guarda la cosa che un pulsante duplicato per copincolla sbaglierebbe senza
+     * fare rumore: che il secondo comando chieda il percorso del RETRO e non di nuovo
+     * quello del fronte.
+     */
+    await apriAnna()
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itAdminAltro.pratApriFronte, 'i') }))
+    await waitFor(() => expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('doc='))).toBe(true))
+    const primo = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('doc=')).at(-1)!
+    expect(primo).toContain(encodeURIComponent(String(DETTAGLIO_ANNA.documento_fronte_path)))
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itAdminAltro.pratApriRetro, 'i') }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('doc=')),
+      ).toHaveLength(2),
+    )
+    const secondo = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('doc=')).at(-1)!
+    expect(
+      secondo,
+      'il pulsante del retro chiede il percorso del fronte: metà documento resta irraggiungibile',
+    ).toContain(encodeURIComponent(String(DETTAGLIO_ANNA.documento_retro_path)))
+  })
+
+  it('le SCANSIONI di una pratica APPROVATA non sono perse: si dice dove sono andate', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (String(url).includes('id=')) {
-        return ok({ data: { ...DETTAGLIO_ANNA, stato: 'approvata', documento_path: null } })
+        return ok({
+          data: {
+            ...DETTAGLIO_ANNA,
+            stato: 'approvata',
+            documento_fronte_path: null,
+            documento_retro_path: null,
+          },
+        })
       }
       return ok({ data: [{ ...ELENCO[0], stato: 'approvata' }], total: 1 })
     })
@@ -844,20 +884,20 @@ describe('PratichePersonale — pannello', () => {
   it('la finestra della scansione bloccata dal browser NON è un pulsante muto', async () => {
     vi.stubGlobal('open', vi.fn(() => null))
     await apriAnna()
-    fireEvent.click(screen.getByRole('button', { name: /Apri la scansione/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Apri il fronte/ }))
     await waitFor(() => expect(screen.getByText(itAdminAltro.pratDocApriManuale)).toBeInTheDocument())
     expect(screen.getByRole('link', { name: itAdminAltro.pratDocApriManuale }).getAttribute('href'))
       .toBe('https://storage.example.test/firmata')
   })
 
-  it('🔴 APPROVATA: il pulsante della scansione SPARISCE, invece di rispondere 403', async () => {
+  it('🔴 APPROVATA: i pulsanti delle scansioni SPARISCONO, invece di rispondere 403', async () => {
     /**
-     * All'approvazione la pratica RILASCIA `documento_path`: da lì in poi la scansione
-     * è del fascicolo, e la riga della pratica non la nomina più (`route.ts`, punto 9 —
-     * «un oggetto, un proprietario»). Il pannello però si aggiornava SOLO nello stato e
-     * si teneva il percorso vecchio, quindi continuava a offrire «Apri la scansione»
-     * invece della frase «è passata al fascicolo», che pure esiste ed è scritta apposta
-     * per questo caso.
+     * All'approvazione la pratica RILASCIA i due percorsi: da lì in poi le scansioni
+     * sono del fascicolo, e la riga della pratica non le nomina più (`route.ts`, punto 9
+     * — «un oggetto, un proprietario»). Il pannello però si aggiornava SOLO nello stato e
+     * si teneva i percorsi vecchi, quindi continuava a offrire i pulsanti invece della
+     * frase «sono passate al fascicolo», che pure esiste ed è scritta apposta per questo
+     * caso.
      *
      * Due danni, e nessuno dei due è estetico:
      *  · `assertDocumentoInScope` risolve il percorso sulle sole sedi attive e non trova
@@ -874,40 +914,115 @@ describe('PratichePersonale — pannello', () => {
       if (opts?.method === 'PATCH') {
         return ok({
           success: true, stato: 'approvata', accountCreato: false,
-          documentoRilasciato: true, credentials: null, warnings: [],
+          documentiRilasciati: { fronte: true, retro: true },
+          credentials: null, warnings: [],
         })
       }
       return ok(rispostaPredefinita(url))
     })
     await apriAnna()
-    // Prima: la pratica è `pending` e la scansione è ancora sua.
-    expect(screen.getByRole('button', { name: /Apri la scansione/ })).toBeInTheDocument()
+    // Prima: la pratica è `pending` e le due scansioni sono ancora sue.
+    expect(screen.getByRole('button', { name: /Apri il fronte/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Apri il retro/ })).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratConferma }))
+    await waitFor(() => expect(screen.getByText(itAdminAltro.pratEsitoApprovata)).toBeInTheDocument())
+
+    for (const nome of [/Apri il fronte/, /Apri il retro/]) {
+      expect(
+        screen.queryByRole('button', { name: nome }),
+        'il pulsante sopravvive all’approvazione: da adesso risponde 403 e sporca `multi_sede`',
+      ).not.toBeInTheDocument()
+    }
+    expect(screen.getByText(itAdminAltro.pratDocumentoAlFascicolo)).toBeInTheDocument()
+    // …e non si scrive «nessun documento»: le scansioni non sono mancanti, sono altrove.
+    expect(screen.queryByText(itAdminAltro.pratNessunDocumento)).not.toBeInTheDocument()
+  })
+
+  it('…ma se il server dice che NON le ha rilasciate, i pulsanti RESTANO', async () => {
+    // Il degrado su colonna assente (DB della CI non migrato) toglie i percorsi
+    // dall'upsert del fascicolo, e allora la pratica se li TIENE: lì i pulsanti
+    // funzionano ancora, e nasconderli nasconderebbe l'unica copia raggiungibile del
+    // documento. La sorgente è il server, non l'inferenza «stato = approvata».
+    fetchMock.mockImplementation((url: string, opts?: { method?: string }) => {
+      if (opts?.method === 'PATCH') {
+        return ok({
+          success: true, stato: 'approvata', accountCreato: false,
+          documentiRilasciati: { fronte: false, retro: false },
+          credentials: null,
+          warnings: [{
+            codice: 'fascicoloParziale',
+            parametri: { colonne: 'documento_fronte_path, documento_retro_path' },
+          }],
+        })
+      }
+      return ok(rispostaPredefinita(url))
+    })
+    await apriAnna()
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratConferma }))
+    await waitFor(() => expect(screen.getByText(itAdminAltro.pratEsitoApprovata)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Apri il fronte/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Apri il retro/ })).toBeInTheDocument()
+  })
+
+  it('🔴 RILASCIO A METÀ: sparisce il pulsante del FRONTE, quello del RETRO resta', async () => {
+    /**
+     * È lo stato normale di un database migrato a metà, e con un booleano solo sarebbe
+     * stato indicibile. Il travaso al fascicolo degrada UNA COLONNA ALLA VOLTA: se
+     * manca `documento_retro_path` su `anagrafica_personale`, il fronte passa e il retro
+     * no — la pratica rilascia il primo e si tiene il secondo.
+     *
+     * Se il pannello nascondesse tutti e due i pulsanti, toglierebbe dallo schermo
+     * l'UNICA strada verso l'unica copia raggiungibile del retro: quel file esiste, la
+     * pratica lo nomina ancora, e il suo pulsante risponde 200. Se invece li tenesse
+     * tutti e due, il primo servirebbe un 403 di sede su una pratica appena approvata da
+     * chi sta guardando. Le due facce si guardano una per una perché il server risponde
+     * una per una.
+     */
+    fetchMock.mockImplementation((url: string, opts?: { method?: string }) => {
+      if (opts?.method === 'PATCH') {
+        return ok({
+          success: true, stato: 'approvata', accountCreato: false,
+          documentiRilasciati: { fronte: true, retro: false },
+          credentials: null,
+          warnings: [{ codice: 'fascicoloParziale', parametri: { colonne: 'documento_retro_path' } }],
+        })
+      }
+      return ok(rispostaPredefinita(url))
+    })
+    await apriAnna()
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratConferma }))
     await waitFor(() => expect(screen.getByText(itAdminAltro.pratEsitoApprovata)).toBeInTheDocument())
 
     expect(
-      screen.queryByRole('button', { name: /Apri la scansione/ }),
-      'il pulsante sopravvive all’approvazione: da adesso risponde 403 e sporca `multi_sede`',
+      screen.queryByRole('button', { name: /Apri il fronte/ }),
+      'il fronte è passato al fascicolo: il suo pulsante da adesso risponde 403',
     ).not.toBeInTheDocument()
-    expect(screen.getByText(itAdminAltro.pratDocumentoAlFascicolo)).toBeInTheDocument()
-    // …e non si scrive «nessun documento»: la scansione non è mancante, è altrove.
-    expect(screen.queryByText(itAdminAltro.pratNessunDocumento)).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Apri il retro/ }),
+      'il retro è ancora della pratica: nasconderlo toglie l’unica strada verso quel file',
+    ).toBeInTheDocument()
+    // E non si dice «sono passate al fascicolo»: una c'è ancora.
+    expect(screen.queryByText(itAdminAltro.pratDocumentoAlFascicolo)).not.toBeInTheDocument()
   })
 
-  it('…ma se il server dice che NON l’ha rilasciata, il pulsante RESTA', async () => {
-    // Il degrado su colonna assente (DB della CI non migrato) toglie `documento_path`
-    // dall'upsert del fascicolo, e allora la pratica il percorso se lo TIENE: lì il
-    // pulsante funziona ancora, e nasconderlo nasconderebbe l'unica copia raggiungibile
-    // del documento. La sorgente è il server, non l'inferenza «stato = approvata».
+  it('una route più VECCHIA della pagina non fa sparire i pulsanti per sbaglio… al contrario', async () => {
+    /**
+     * `!== false` e non `=== true`, per ciascun lato. Durante un rilascio una pagina in
+     * cache può parlare con la route nuova e viceversa: se la chiave non arriva,
+     * `undefined` non è un rifiuto. Il caso NORMALE è il rilascio, quindi si comporta
+     * come tale — e il ricarico dell'elenco subito dopo rimette comunque la verità.
+     *
+     * Il senso della difesa è tenuto fermo qui perché è invisibile: nessuna schermata
+     * mostra la differenza finché un giorno un deploy non la mostra tutta insieme.
+     */
     fetchMock.mockImplementation((url: string, opts?: { method?: string }) => {
       if (opts?.method === 'PATCH') {
-        return ok({
-          success: true, stato: 'approvata', accountCreato: false,
-          documentoRilasciato: false, credentials: null,
-          warnings: [{ codice: 'fascicoloParziale', parametri: { colonne: 'documento_path' } }],
-        })
+        // Nessun `documentiRilasciati`: è la risposta di una route che non lo conosce.
+        return ok({ success: true, stato: 'approvata', accountCreato: false, credentials: null, warnings: [] })
       }
       return ok(rispostaPredefinita(url))
     })
@@ -915,7 +1030,8 @@ describe('PratichePersonale — pannello', () => {
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratConferma }))
     await waitFor(() => expect(screen.getByText(itAdminAltro.pratEsitoApprovata)).toBeInTheDocument())
-    expect(screen.getByRole('button', { name: /Apri la scansione/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Apri il fronte/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Apri il retro/ })).not.toBeInTheDocument()
   })
 
   it('🔴 l’email è quella di un GENITORE: il riquadro dice che verrà RIFIUTATA, non «riscritta»', async () => {
@@ -998,7 +1114,7 @@ describe('PratichePersonale — pannello', () => {
       if (opts?.method === 'PATCH') {
         return ok({
           success: true, stato: 'approvata', accountCreato: true,
-          documentoRilasciato: true,
+          documentiRilasciati: { fronte: true, retro: true },
           credentials: { email: EMAIL_LUNGA, password: 'PasswordMonouso1!' },
           warnings: [],
         })

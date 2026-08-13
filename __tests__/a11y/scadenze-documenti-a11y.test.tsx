@@ -355,7 +355,7 @@ describe('a11y · cruscotto scadenze documenti', () => {
           return Promise.resolve(
             dettaglio
               ? dettaglio()
-              : { ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_path: 'personale/ci.pdf' } } }) },
+              : { ok: true, status: 200, json: async () => ({ data: { anagrafica: { documento_fronte_path: 'personale/ci.pdf' } } }) },
           )
         }
         if (u.includes('doc=')) {

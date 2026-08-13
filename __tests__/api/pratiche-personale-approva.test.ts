@@ -26,11 +26,19 @@ import { costruisciClient, type StatoFinto } from '../fixtures/pratiche-personal
 //     gesto viene spento, e allora il giorno in cui conta non lo legge nessuno.
 //  4. IL CLAIM ATOMICO: due «Approva» concorrenti danno un 200 e un 409, e nasce UN
 //     account solo.
-//  5. IL FASCICOLO PORTA `origine_pratica_id` e la pratica RILASCIA `documento_path`:
-//     un oggetto, un proprietario. Senza il primo, `retention-personale` a dieci anni
-//     lascerebbe in tabella una pratica orfana con dentro un codice fiscale; senza il
-//     secondo, la copia del documento d'identità resterebbe legata a una riga che se
-//     la porta per dieci anni, mentre /privacy ne promette dodici mesi.
+//  5. IL FASCICOLO PORTA `origine_pratica_id` e la pratica RILASCIA i due percorsi
+//     (fronte e retro): un oggetto, un proprietario. Senza il primo,
+//     `retention-personale` a dieci anni lascerebbe in tabella una pratica orfana con
+//     dentro un codice fiscale; senza il secondo, la copia del documento d'identità
+//     resterebbe legata a una riga che se la porta per dieci anni, mentre /privacy ne
+//     promette dodici mesi.
+//  5bis. …E IL RILASCIO È PER FACCIA. Dal 12/08/2026 le scansioni sono DUE, e il
+//     travaso degrada una colonna alla volta: su un database a cui manchi solo
+//     `documento_retro_path` il fronte passa e il retro no. Azzerarli insieme
+//     cancellerebbe dalla pratica l'unico riferimento a un file che nessun'altra riga
+//     nomina, e quell'oggetto resterebbe nel bucket per sempre — invisibile alla
+//     conservazione e non cancellabile nemmeno su richiesta dell'interessata. È il caso
+//     che questo file tiene fermo per primo, perché è quello che nessuno guarderebbe.
 //  6. IL FASCICOLO NON SCRITTO NON DIVENTA UN'APPROVAZIONE: la pratica torna
 //     `pending`, perché una pratica `approvata` che nessuna anagrafica cita è lo stato
 //     che la conservazione dichiara di non saper trattare.
@@ -53,7 +61,9 @@ import { costruisciClient, type StatoFinto } from '../fixtures/pratiche-personal
 const SEGRETERIA = { id: 'ffffffff-1111-4000-8000-000000000001', role: 'segreteria', scuola_id: SEDE_A }
 const PRATICA_ID = 'dddddddd-0000-4000-8000-00000000000a'
 const EMAIL = 'maestra.prova@example.test'
-const DOC = 'documenti/aaaa/bbbb.jpg'
+/** Le DUE facce del documento d'identità: due oggetti distinti, due righe di registro. */
+const DOC_FRONTE = 'documenti/aaaa/bbbb.jpg'
+const DOC_RETRO = 'documenti/aaaa/cccc.jpg'
 
 const h = vi.hoisted(() => ({
   state: {
@@ -66,6 +76,13 @@ const h = vi.hoisted(() => ({
     cancellazioniAuth: [] as string[],
     erroriTabella: {} as Record<string, { code?: string; message: string }>,
     erroriAggiornamento: {} as Record<string, { code?: string; message: string }>,
+    /** Il guasto della SOLA chiusura: vedi la testata di `StatoFinto`. */
+    erroreAggiornamentoSuPatch: null as null | {
+      table: string
+      colonna: string
+      valore: unknown
+      error: { code?: string; message: string }
+    },
     colonneAssenti: {} as Record<string, string[]>,
     erroreStorage: null as null | { message: string },
     urlFirmate: [] as { path: string; secondi: number }[],
@@ -131,6 +148,7 @@ beforeEach(() => {
   Object.assign(h.state, {
     inserimenti: [], aggiornamenti: [], upserts: [], authUsers: [], creazioniAuth: [],
     cancellazioniAuth: [], erroriTabella: {}, erroriAggiornamento: {}, colonneAssenti: {},
+    erroreAggiornamentoSuPatch: null,
     erroreStorage: null, urlFirmate: [], erroreCreazioneAuth: null,
   })
   h.state.tabelle = {
@@ -156,7 +174,8 @@ beforeEach(() => {
         document_type: 'CI',
         document_number: 'AB1234567',
         document_expiry: '2030-01-01',
-        documento_path: DOC,
+        documento_fronte_path: DOC_FRONTE,
+        documento_retro_path: DOC_RETRO,
         titolo_studio: 'laurea_magistrale',
         gradi: ['nido', 'infanzia'],
         emergenza_nome: 'Persona Terza',
@@ -171,7 +190,14 @@ beforeEach(() => {
     utenti: [],
     parents: [],
     anagrafica_personale: [],
-    caricamenti_personale: [{ percorso: DOC, pratica_id: PRATICA_ID }],
+    // `anagrafica_utente_id` c'è ed è NULL, come in tabella dalla migrazione
+    // `20260812194501`: `collegaCaricamenti` filtra su quella colonna — «un oggetto, un
+    // proprietario» — e una riga che non la porta affatto non è la riga che il registro
+    // vero contiene.
+    caricamenti_personale: [
+      { percorso: DOC_FRONTE, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+      { percorso: DOC_RETRO, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+    ],
   }
   h.staffScuola.mockResolvedValue(['direzione-1'])
   h.notificaEvento.mockResolvedValue(undefined)
@@ -470,8 +496,9 @@ describe('pratiche personale · approvazione', () => {
     expect(h.state.upserts.filter((u) => u.table === 'anagrafica_personale')).toHaveLength(1)
   })
 
-  it('il FASCICOLO nasce con `origine_pratica_id`, e la pratica RILASCIA la scansione', async () => {
-    await approva()
+  it('il FASCICOLO nasce con `origine_pratica_id`, e la pratica RILASCIA le DUE scansioni', async () => {
+    const res = await approva()
+    const body = await res.json()
     const f = fascicolo()
     expect(f, 'nessun upsert su `anagrafica_personale`').toBeTruthy()
     // `onConflict` sulla chiave primaria: chi ricompila il modulo l'anno dopo aggiorna
@@ -479,10 +506,22 @@ describe('pratiche personale · approvazione', () => {
     expect(f!.onConflict).toBe('utente_id')
     expect(f!.row.utente_id).toBe('auth-1')
     expect(f!.row.origine_pratica_id).toBe(PRATICA_ID)
-    // Il file NON si copia: il fascicolo punta allo STESSO oggetto…
-    expect(f!.row.documento_path).toBe(DOC)
-    // …e la pratica lo rilascia.
-    expect(praticaInTabella().documento_path).toBeNull()
+    // I file NON si copiano: il fascicolo punta agli STESSI due oggetti…
+    //
+    // ⚠️ QUESTE DUE RIGHE SONO ANCHE IL LOCK DELLA PREMESSA del terzo guard del
+    // rilascio (`colonna in fascicolo`, vedi il commento al punto 9 della route): il
+    // giorno in cui `COLONNE_ANAGRAFICA` smettesse di nominare una colonna del
+    // documento, il fascicolo non la riceverebbe e queste asserzioni sarebbero le prime
+    // a cadere. Misurato allargando `CAMPI_DI_UTENTI` a `documento_retro_path`: 8 test
+    // di questo file diventano rossi.
+    expect(f!.row.documento_fronte_path).toBe(DOC_FRONTE)
+    expect(f!.row.documento_retro_path).toBe(DOC_RETRO)
+    // …e la pratica li rilascia tutti e due.
+    expect(praticaInTabella().documento_fronte_path).toBeNull()
+    expect(praticaInTabella().documento_retro_path).toBeNull()
+    // Ed è ciò che la risposta dichiara, faccia per faccia: il pannello smette di
+    // offrire ENTRAMBI i pulsanti, che da adesso rispondono 403.
+    expect(body.documentiRilasciati).toEqual({ fronte: true, retro: true })
     expect(praticaInTabella().utente_id).toBe('auth-1')
     expect(praticaInTabella().evasa_da).toBe(SEGRETERIA.id)
 
@@ -493,18 +532,324 @@ describe('pratiche personale · approvazione', () => {
     }
   })
 
-  it('la scansione NON si rilascia se il fascicolo non l’ha presa (colonna assente)', async () => {
-    // Se il degrado toglie `documento_path` dall'upsert, azzerarlo sulla pratica
-    // lascerebbe nel bucket un oggetto che nessuna riga nomina: invisibile alla
-    // conservazione e non cancellabile nemmeno su richiesta dell'interessata.
-    h.state.colonneAssenti = { anagrafica_personale: ['documento_path'] }
+  it('nessuna scansione si rilascia se il fascicolo non le ha prese (colonne assenti)', async () => {
+    // Se il degrado toglie i percorsi dall'upsert, azzerarli sulla pratica lascerebbe
+    // nel bucket due oggetti che nessuna riga nomina: invisibili alla conservazione e
+    // non cancellabili nemmeno su richiesta dell'interessata.
+    h.state.colonneAssenti = {
+      anagrafica_personale: ['documento_fronte_path', 'documento_retro_path'],
+    }
     const res = await approva()
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(codici(body)).toContain('fascicoloParziale')
-    expect(parametri(body)).toContain('documento_path')
-    expect(praticaInTabella().documento_path, 'la scansione è rimasta senza proprietario').toBe(DOC)
+    expect(parametri(body)).toContain('documento_fronte_path')
+    expect(parametri(body)).toContain('documento_retro_path')
+    expect(praticaInTabella().documento_fronte_path, 'il fronte è rimasto senza proprietario').toBe(DOC_FRONTE)
+    expect(praticaInTabella().documento_retro_path, 'il retro è rimasto senza proprietario').toBe(DOC_RETRO)
+    expect(body.documentiRilasciati).toEqual({ fronte: false, retro: false })
     expect(praticaInTabella().stato).toBe('approvata')
+  })
+
+  it('🔴 manca SOLO `documento_retro_path`: il fronte si rilascia, il retro NO', async () => {
+    /**
+     * IL CASO CHE IL BOOLEANO SOLO NON SAPEVA DIRE, ed è quello che costa un documento.
+     *
+     * Fino al 12/08/2026 il rilascio era una variabile sola (`documentoPassato`) perché
+     * la scansione era una sola. Con due facce e un travaso che degrada UNA COLONNA
+     * ALLA VOLTA, lo stato normale di un database non ancora migrato è misto: il
+     * fascicolo prende il fronte e non il retro. Con un booleano solo le strade erano
+     * due, ed erano sbagliate tutte e due:
+     *
+     *  · in AND («rilascia solo se sono passate entrambe») la pratica si terrebbe anche
+     *    il fronte, che il fascicolo ha davvero preso: due righe nominerebbero lo stesso
+     *    oggetto, e la conservazione della pratica lo cancellerebbe da sotto
+     *    l'anagrafica — a dieci anni contro dodici mesi;
+     *  · in OR («ne è passata almeno una») la pratica azzererebbe anche il retro, che
+     *    NESSUNO ha preso: quell'oggetto resterebbe nel bucket senza nessuna riga che lo
+     *    nomini, quindi invisibile alla conservazione e non cancellabile nemmeno se
+     *    l'interessata lo chiedesse. È il difetto peggiore dei due, ed è quello silenzioso.
+     *
+     * Qui la colonna manca SOLO su `anagrafica_personale`: `pratiche_personale` ce l'ha
+     * (è la riga che porta il percorso), ed è esattamente lo stato di un ambiente in cui
+     * la migrazione è stata applicata a metà.
+     */
+    h.state.colonneAssenti = { anagrafica_personale: ['documento_retro_path'] }
+
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+
+    // Il fascicolo ha preso il fronte, e SOLO il fronte.
+    const f = fascicolo()
+    expect(f!.row.documento_fronte_path).toBe(DOC_FRONTE)
+    expect('documento_retro_path' in f!.row).toBe(false)
+
+    // La pratica ha rilasciato il fronte…
+    expect(praticaInTabella().documento_fronte_path).toBeNull()
+    // …e si è TENUTA il retro: è l'unica riga che ancora lo nomini.
+    expect(
+      praticaInTabella().documento_retro_path,
+      'il retro è stato azzerato: quel file non è più nominato da nessuna riga',
+    ).toBe(DOC_RETRO)
+
+    // E l'istruzione di chiusura non ha nemmeno NOMINATO la colonna del retro: non è
+    // «l'ha scritta col valore giusto», è «non gliel'ha proprio chiesto».
+    const chiusura = h.state.aggiornamenti
+      .filter((a) => a.table === 'pratiche_personale')
+      .at(-1)!
+    expect(chiusura.patch.documento_fronte_path).toBeNull()
+    expect('documento_retro_path' in chiusura.patch).toBe(false)
+
+    // La risposta lo dice al pannello faccia per faccia: il pulsante del fronte sparisce
+    // (da adesso risponde 403), quello del retro RESTA — è l'unica strada verso l'unica
+    // copia raggiungibile di quel file.
+    expect(body.documentiRilasciati).toEqual({ fronte: true, retro: false })
+
+    // E chi ha premuto lo vede a schermo: il fascicolo è parziale, e si dice quale
+    // colonna è caduta.
+    expect(codici(body)).toContain('fascicoloParziale')
+    expect(parametri(body)).toContain('documento_retro_path')
+    expect(parametri(body), 'il fronte non è caduto: dirlo manderebbe a cercare un guasto che non c’è')
+      .not.toContain('documento_fronte_path')
+    expect(praticaInTabella().stato).toBe('approvata')
+  })
+
+  it('la pratica VECCHIA senza retro: si rilascia il fronte, e non si grida per il resto', async () => {
+    // Le pratiche arrivate PRIMA del 12/08/2026 hanno il solo fronte (la migrazione ha
+    // rinominato `documento_path`). Un retro che non c'è non è un guasto, e non deve
+    // produrre né un avviso né una riga di allarme nel registro dei caricamenti.
+    delete h.state.tabelle.pratiche_personale[0].documento_retro_path
+    h.state.tabelle.caricamenti_personale = [
+      { percorso: DOC_FRONTE, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+    ]
+
+    const res = await approva()
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.documentiRilasciati).toEqual({ fronte: true, retro: false })
+    expect(praticaInTabella().documento_fronte_path).toBeNull()
+    expect(codici(body)).toEqual([])
+    const allarmi = h.logEvento.mock.calls.filter(
+      (c) => c[1] === 'error' || (c[2] as { esito?: string })?.esito === 'caricamento-non-registrato',
+    )
+    expect(allarmi, 'un retro che non è mai esistito ha fatto suonare un allarme').toEqual([])
+  })
+
+  it('il REGISTRO dei caricamenti si guarda UNA volta sola, e non grida sul caso normale', async () => {
+    // «Prima si guarda, poi si agisce»: le due righe sono già collegate dalla porta
+    // pubblica, quindi non c'è niente da scrivere. Un `error` a ogni approvazione è
+    // l'allarme che si impara a ignorare — ed è così che il guasto vero, quando arriva,
+    // non lo vede nessuno.
+    await approva()
+    const scritture = h.state.aggiornamenti.filter((a) => a.table === 'caricamenti_personale')
+    expect(scritture, 'il registro è stato riscritto senza motivo').toEqual([])
+    const rumore = h.logEvento.mock.calls.filter((c) =>
+      ['caricamento-non-registrato', 'caricamento-di-altra-pratica', 'caricamento-non-collegato']
+        .includes(String((c[2] as { esito?: string })?.esito)),
+    )
+    expect(rumore).toEqual([])
+  })
+
+  it('la riga del RETRO è rimasta in sospeso: si collega, e senza nominare il percorso', async () => {
+    // Il collegamento della porta pubblica è best-effort: se è saltato su una faccia,
+    // quell'oggetto risulta «in sospeso» e la spazzata degli orfani lo toglie dal bucket
+    // entro poche ore — cioè la Segreteria approverebbe una scheda il cui retro sta per
+    // sparire, mentre l'anagrafica lo nomina.
+    h.state.tabelle.caricamenti_personale = [
+      { percorso: DOC_FRONTE, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+      { percorso: DOC_RETRO, pratica_id: null, anagrafica_utente_id: null },
+    ]
+
+    await approva()
+
+    const collegata = h.state.tabelle.caricamenti_personale.find((r) => r.percorso === DOC_RETRO)
+    expect(collegata!.pratica_id, 'il retro è rimasto in sospeso: la spazzata lo toglierà').toBe(PRATICA_ID)
+    // …e una sola riga è stata toccata: il fronte era già a posto.
+    const scritture = h.state.aggiornamenti.filter((a) => a.table === 'caricamenti_personale')
+    expect(scritture).toHaveLength(1)
+    // MAI il percorso nei log: è la chiave con cui si firma la fotografia di un
+    // documento d'identità, e `app_log` è interrogabile in SQL per 30 giorni.
+    const log = JSON.stringify(h.logEvento.mock.calls)
+    expect(log).not.toContain(DOC_FRONTE)
+    expect(log).not.toContain(DOC_RETRO)
+  })
+
+  it('🔴 la riga è già di un’ANAGRAFICA: non si tenta di collegarla, e il fatto si NOMINA', async () => {
+    /**
+     * IL FALSO ALLARME CHE QUESTA FUNZIONE DICHIARA DI VOLER EVITARE.
+     *
+     * La migrazione `20260812194501` ha dato a `caricamenti_personale` un SECONDO
+     * proprietario — `anagrafica_utente_id`, per gli oggetti che la Segreteria carica
+     * dalla scheda della persona — con `check (num_nonnulls(pratica_id,
+     * anagrafica_utente_id) <= 1)`: se c'è quello, `pratica_id` è NULL per costruzione.
+     *
+     * `assicuraCaricamentiCollegati` leggeva la sola `pratica_id`, quindi classificava
+     * quell'oggetto come «in sospeso» e chiamava `collegaCaricamenti`, che filtra
+     * `.is('anagrafica_utente_id', null)`: zero righe aggiornate e una riga di livello
+     * `error` in `app_log` a ogni approvazione, su uno stato perfettamente sano. È
+     * «l'allarme che si impara a ignorare, ed è il modo in cui il guasto vero, quando
+     * arriva, non lo vede nessuno» — la frase che sta nel doc-block di questa stessa
+     * funzione, e che il codice contraddiceva.
+     *
+     * Quello che invece va detto: due righe nominano lo stesso file, la conservazione
+     * della PRATICA (90 giorni) porterebbe via ciò che il FASCICOLO (dieci anni) usa. È
+     * un fatto proprio, con un esito proprio — non «di un'altra pratica», che manderebbe
+     * a cercare una pratica che non esiste.
+     */
+    h.state.tabelle.caricamenti_personale = [
+      { percorso: DOC_FRONTE, pratica_id: PRATICA_ID, anagrafica_utente_id: null },
+      { percorso: DOC_RETRO, pratica_id: null, anagrafica_utente_id: 'auth-di-un-altra' },
+    ]
+
+    await approva()
+
+    // NON si è tentato nessun collegamento: l'oggetto un proprietario ce l'ha.
+    expect(
+      h.state.aggiornamenti.filter((a) => a.table === 'caricamenti_personale'),
+      'si è provato a collegare una riga che è già di un’anagrafica',
+    ).toEqual([])
+    const esiti = h.logEvento.mock.calls.map((c) => String((c[2] as { esito?: string })?.esito))
+    expect(esiti, 'il falso allarme è ancora lì').not.toContain('caricamento-non-collegato')
+    expect(esiti).not.toContain('caricamento-non-registrato')
+
+    // …ma il fatto si registra, e con l'aritmetica: quante facce attese, quante già di
+    // un'anagrafica. Mai il percorso.
+    const riga = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'caricamento-di-unanagrafica',
+    )
+    expect(riga, 'due righe nominano lo stesso file e nessuno lo dice').toBeTruthy()
+    expect(riga![1]).toBe('error')
+    const dati = riga![2] as Record<string, unknown>
+    expect(dati.n_attesi).toBe(2)
+    expect(dati.n_di_unanagrafica).toBe(1)
+    expect(dati.entita_id).toBe(PRATICA_ID)
+    const log = JSON.stringify(h.logEvento.mock.calls)
+    expect(log).not.toContain(DOC_RETRO)
+    expect(log).not.toContain('auth-di-un-altra')
+  })
+
+  it('🔴 la CHIUSURA non passa: NESSUNA scansione si dichiara rilasciata', async () => {
+    /**
+     * IL RILASCIO NON È IL TRAVASO, e questa è la prova che li separa.
+     *
+     * `frontePassato`/`retroPassato` rispondono a «il fascicolo l'ha presa»; il rilascio
+     * è l'altra metà, e vive nell'UPDATE di chiusura. Qui il fascicolo prende ENTRAMBE
+     * le facce e poi la chiusura non passa — un `CHECK`, un trigger, un permesso sulla
+     * singola istruzione, dopo un claim riuscito pochi millisecondi prima.
+     *
+     * Se la risposta dicesse `documentiRilasciati.fronte = true`, il pannello azzererebbe
+     * il percorso in locale e NASCONDEREBBE il pulsante, mentre la pratica quel file lo
+     * nomina ancora: la Segreteria perderebbe l'unica strada raggiungibile verso una
+     * carta d'identità, e l'audit registrerebbe un rilascio che non è avvenuto. È lo
+     * stesso difetto già chiuso per `campi_aggiornati` — «un registro che dichiara una
+     * scrittura mai avvenuta manda a cercare, fra un anno, la causa di una modifica che
+     * nessuno ha fatto».
+     */
+    h.state.erroreAggiornamentoSuPatch = {
+      table: 'pratiche_personale',
+      // Solo la CHIUSURA scrive questo valore: il claim scrive `in_approvazione` e il
+      // ripristino `pending`, quindi passano.
+      colonna: 'stato',
+      valore: 'approvata',
+      error: { code: '23514', message: 'violates check constraint' },
+    }
+
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+
+    // Il fascicolo le ha prese tutte e due…
+    const f = fascicolo()
+    expect(f!.row.documento_fronte_path).toBe(DOC_FRONTE)
+    expect(f!.row.documento_retro_path).toBe(DOC_RETRO)
+    // …ma la pratica non ha rilasciato niente, perché l'istruzione non è passata.
+    expect(praticaInTabella().stato, 'la chiusura è fallita e la pratica risulta approvata').toBe('in_approvazione')
+    expect(praticaInTabella().documento_fronte_path).toBe(DOC_FRONTE)
+    expect(praticaInTabella().documento_retro_path).toBe(DOC_RETRO)
+
+    // ED È QUELLO CHE LA RISPOSTA DEVE DIRE: entrambi i pulsanti restano.
+    expect(body.documentiRilasciati).toEqual({ fronte: false, retro: false })
+    expect(body.stato).toBe('in_approvazione')
+    expect(codici(body)).toContain('approvazioneNonMarcata')
+
+    // L'audit non dichiara scritture mai avvenute, e il battito esce a `warn`.
+    const dopo = (h.logScrittura.mock.calls[0][1] as Record<string, unknown>).valoreDopo as Record<string, unknown>
+    expect(dopo.chiusura_riuscita).toBe(false)
+    expect(dopo.documento_fronte_rilasciato).toBe(false)
+    expect(dopo.documento_retro_rilasciato).toBe(false)
+    const battito = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'pratica-approvata-non-marcata',
+    )
+    expect(battito, 'una chiusura fallita non lascia il suo battito').toBeTruthy()
+    expect(battito![1]).toBe('warn')
+    const dati = battito![2] as Record<string, unknown>
+    expect(dati.documento_fronte_rilasciato).toBe(false)
+    expect(dati.documento_retro_rilasciato).toBe(false)
+    // Nessuna faccia è passata: «a metà» sarebbe una risposta sbagliata a una domanda
+    // giusta, e manderebbe a cercare un oggetto rimasto senza righe che non c'è.
+    expect(dati.documento_rilasciato_a_meta).toBe(false)
+    // E la riga `pratica-approvata` — il conteggio delle approvazioni VERE — non esiste.
+    expect(
+      h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string })?.esito === 'pratica-approvata'),
+      'una chiusura fallita ha gonfiato il conteggio delle approvazioni riuscite',
+    ).toEqual([])
+  })
+
+  it('🔴 la CHIUSURA degrada sul FRONTE: si rilascia il retro, e il fronte NON si dichiara', async () => {
+    /**
+     * LA SECONDA METÀ DELLO STESSO PRESIDIO, e l'unica che distingue le due facce.
+     *
+     * Qui `pratiche_personale` non ha `documento_fronte_path` — lo stato di un ambiente
+     * migrato a metà — quindi `cambiaStato` degrada, TOGLIE quella colonna dal patch e
+     * riprova: la chiusura riesce, ma il fronte non è stato azzerato. Il fascicolo però
+     * l'ha preso (su `anagrafica_personale` la colonna c'è).
+     *
+     * Il rilascio va dichiarato PER FACCIA: `retro` sì, `fronte` no. Un booleano solo, o
+     * un `rilasciata` che guardasse il solo travaso, direbbe «fronte rilasciato» e il
+     * pannello nasconderebbe il pulsante dell'unica copia che la pratica nomina ancora.
+     */
+    h.state.colonneAssenti = { pratiche_personale: ['documento_fronte_path'] }
+
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+
+    // La chiusura è passata, dopo aver lasciato per strada la colonna del fronte.
+    expect(praticaInTabella().stato).toBe('approvata')
+    expect(praticaInTabella().documento_fronte_path, 'il fronte risulta azzerato: l’UPDATE non lo ha nemmeno chiesto').toBe(DOC_FRONTE)
+    expect(praticaInTabella().documento_retro_path).toBeNull()
+
+    // UNA FACCIA SÌ E UNA NO: è l'unica risposta che permette al pannello di nascondere
+    // il pulsante giusto e tenere l'altro.
+    expect(body.documentiRilasciati).toEqual({ fronte: false, retro: true })
+    expect(codici(body)).toContain('chiusuraParziale')
+    expect(parametri(body)).toContain('documento_fronte_path')
+
+    const dopo = (h.logScrittura.mock.calls[0][1] as Record<string, unknown>).valoreDopo as Record<string, unknown>
+    expect(dopo.chiusura_riuscita).toBe(true)
+    expect(dopo.documento_fronte_rilasciato).toBe(false)
+    expect(dopo.documento_retro_rilasciato).toBe(true)
+
+    // ED È ESATTAMENTE LA QUERY PER CUI `documento_rilasciato_a_meta` esiste: «quante
+    // pratiche hanno travasato una faccia sola», cioè lo stato in cui un oggetto rischia
+    // di restare senza nessuna riga che lo nomini. Se il campo sparisse dal battito,
+    // quella domanda non avrebbe più risposta e nessuno se ne accorgerebbe fino al
+    // giorno in cui serve.
+    const battito = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'pratica-approvata',
+    )
+    expect(battito).toBeTruthy()
+    const dati = battito![2] as Record<string, unknown>
+    expect(dati.documento_fronte_rilasciato).toBe(false)
+    expect(dati.documento_retro_rilasciato).toBe(true)
+    expect(dati.documento_rilasciato_a_meta).toBe(true)
+
+    // E il registro dei caricamenti si guarda SOLO sulle facce davvero rilasciate…
+    // niente: quella del fronte è ancora della pratica, e non c'è niente da riparare.
+    const log = JSON.stringify(h.logEvento.mock.calls)
+    expect(log).not.toContain(DOC_FRONTE)
+    expect(log).not.toContain(DOC_RETRO)
   })
 
   it('il FASCICOLO non scritto NON diventa un’approvazione: la pratica torna `pending`', async () => {
@@ -575,7 +920,11 @@ describe('pratiche personale · approvazione', () => {
     const dopo = voce.valoreDopo as Record<string, unknown>
     expect(dopo.stato).toBe('approvata')
     expect(dopo.account_creato).toBe(true)
-    expect(dopo.documento_rilasciato).toBe(true)
+    // UNA VOCE PER FACCIA: un solo `documento_rilasciato` messo in AND direbbe «no» su
+    // un'approvazione in cui il fronte è passato, e non direbbe MAI quale delle due è
+    // rimasta indietro — che è l'unica cosa da sapere per rimediare.
+    expect(dopo.documento_fronte_rilasciato).toBe(true)
+    expect(dopo.documento_retro_rilasciato).toBe(true)
     // I NOMI delle colonne toccate, mai i valori. `gradi` non c'è più: non è più una
     // colonna che questa route scriva.
     expect(dopo.campi_aggiornati).toEqual(['nome', 'cognome', 'cellulare'])
@@ -583,7 +932,8 @@ describe('pratiche personale · approvazione', () => {
     const serializzato = JSON.stringify(dopo)
     expect(serializzato).not.toContain(EMAIL)
     expect(serializzato).not.toContain('RSSMRA90A41H501U')
-    expect(serializzato).not.toContain(DOC)
+    expect(serializzato).not.toContain(DOC_FRONTE)
+    expect(serializzato).not.toContain(DOC_RETRO)
   })
 
   it('l’UPDATE su `utenti` FALLISCE: lo si DICE, e l’audit non dichiara scritture mai avvenute', async () => {

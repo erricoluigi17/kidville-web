@@ -50,10 +50,29 @@ const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   requireUser: vi.fn(),
   enqueue: vi.fn(),
+  logEvento: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
   scritture: [] as Scrittura[],
+  /**
+   * Errori PostgREST iniettati per tabella (chiavi validate dal finto client).
+   *
+   * ⚠️ `code` è OBBLIGATORIO, e non è pignoleria: `ErrorePostgrest`
+   * (`__tests__/fixtures/finto-supabase.ts`) lo dichiara richiesto perché il finto ci
+   * costruisce sopra lo stato HTTP (`statoDiPostgrest(errore.code)`). Con `code?` qui,
+   * `npx tsc --noEmit` era ROSSO su questa riga — e `tsc` è un gate dichiarato che la
+   * CI esegue anche sui `__tests__`.
+   */
+  erroriTabella: {} as Record<string, { code: string; message?: string }>,
 }))
+
+// Solo `logEvento` è sostituito: il resto del modulo resta REALE, perché
+// `withRoute` ne usa altri pezzi e un mock totale collauderebbe l'impalcatura
+// invece della route.
+vi.mock('@/lib/logging/logger', async (originale) => {
+  const reale = await originale<typeof import('@/lib/logging/logger')>()
+  return { ...reale, logEvento: (...a: unknown[]) => h.logEvento(...a) }
+})
 
 vi.mock('@/lib/auth/require-staff', () => ({
   requireDocente: h.requireDocente,
@@ -69,7 +88,8 @@ vi.mock('@/lib/security/rate-limit', () => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   return {
-    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture }),
+    createAdminClient: async () =>
+      creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture, errori: h.erroriTabella }),
   }
 })
 
@@ -125,6 +145,7 @@ beforeEach(() => {
   h.db = dbBase()
   h.tabelle = []
   h.scritture = []
+  h.erroriTabella = {}
   h.enqueue.mockResolvedValue(undefined)
   const utente = { id: ID_ADMIN, role: 'admin', scuola_id: SEDE_A }
   h.requireDocente.mockResolvedValue({ user: utente })
@@ -192,6 +213,63 @@ describe('POST /api/agenda — evento di PLESSO: la sede si dichiara', () => {
       scuola_id: SEDE_B,
       section_id: null,
     })
+  })
+
+  it('l’evento di PLESSO non arriva alle famiglie degli ARCHIVIATI (2026-08-12)', async () => {
+    // Senza `sectionId` questa è una lettura di SEDE INTERA: la classe non la
+    // nomina, quindi lo sganciamento — la leva su cui si regge l'archiviazione —
+    // qui non arriva. Il finto client FILTRA davvero, quindi «l'archiviato resta
+    // fuori» è una proprietà verificata e non asserita: togliendo
+    // `.eq('stato', …)` dalla route questo test diventa rosso.
+    h.db.alunni = [
+      { id: 'al-isc', scuola_id: SEDE_A, stato: 'iscritto' },
+      { id: 'al-rit', scuola_id: SEDE_A, stato: 'ritirato' },
+      { id: 'al-altra-sede', scuola_id: SEDE_B, stato: 'iscritto' },
+    ]
+    const res = await POST(postReq(evento({ scuola_id: SEDE_A, visibile_genitori: true })))
+    expect(res.status).toBe(201)
+    expect(h.enqueue).toHaveBeenCalledTimes(1)
+    expect((h.enqueue.mock.calls[0][1] as { alunnoIds: string[] }).alunnoIds).toEqual(['al-isc'])
+  })
+
+  it('l’evento di PLESSO raggiunge anche un SOSPESO: frequenta (2026-08-13)', async () => {
+    h.db.alunni = [
+      { id: 'al-isc', scuola_id: SEDE_A, stato: 'iscritto' },
+      { id: 'al-sos', scuola_id: SEDE_A, stato: 'sospeso' },
+      { id: 'al-rit', scuola_id: SEDE_A, stato: 'ritirato' },
+    ]
+    const res = await POST(postReq(evento({ scuola_id: SEDE_A, visibile_genitori: true })))
+    expect(res.status).toBe(201)
+    expect((h.enqueue.mock.calls[0][1] as { alunnoIds: string[] }).alunnoIds).toEqual(['al-isc', 'al-sos'])
+  })
+
+  it('lettura alunni FALLITA ⇒ 201 ma una riga `error`: la scrittura persa si vede (2026-08-13)', async () => {
+    // REGOLA 7 DI AGENTS.md, sulla riga che il lavoro del 12/08 aveva riscritto
+    // senza toccare il difetto. `const { data: alunni } = await alunniQuery`
+    // buttava via l'`{ error }`, e PostgREST NON lancia: la catena era
+    // `data = null` → `(alunni ?? [])` = `[]` → `enqueueNotifichePerAlunni` esce
+    // alla prima riga → il `catch` sotto non scatta mai → **201, zero notifiche
+    // in coda, ZERO righe di log**. Cioè esattamente lo scenario che il commento
+    // di quel `catch` dichiara di esistere per impedire: «non è saltato un
+    // dettaglio, è una SCRITTURA PERSA».
+    //
+    // L'evento resta salvo e la risposta resta 201 — la creazione è andata a
+    // buon fine davvero — ma l'annuncio mancato smette di essere invisibile.
+    h.db.alunni = [{ id: 'al-isc', scuola_id: SEDE_A, stato: 'iscritto' }]
+    h.erroriTabella.alunni = { code: '42703', message: 'column alunni.stato does not exist' }
+    const res = await POST(postReq(evento({ scuola_id: SEDE_A, visibile_genitori: true })))
+
+    expect(res.status).toBe(201)
+    // `.mock.calls.length` e non `not.toHaveBeenCalled()`: in caso di rosso
+    // vitest stampa gli argomenti, e fra questi c'è il finto client — il cui
+    // proxy solleva su ogni membro che non emula, sostituendo il fallimento vero
+    // con un errore del formattatore.
+    expect(h.enqueue.mock.calls.length).toBe(0)
+    const riga = h.logEvento.mock.calls.find(
+      (c: unknown[]) => (c[2] as { esito?: string })?.esito === 'destinatari-non-letti',
+    )
+    expect(riga?.[1]).toBe('error')
+    expect((riga?.[2] as { operazione?: string })?.operazione).toBe('agenda:POST')
   })
 
   it('SedeSelector su una sola sede ⇒ 201 in quella sede', async () => {

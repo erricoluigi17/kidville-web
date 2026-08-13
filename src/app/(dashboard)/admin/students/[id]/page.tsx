@@ -8,6 +8,7 @@ import { CockpitPage } from '@/components/ui/cockpit';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
 import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
 import { StaffDetailPanel } from '@/components/features/admin/StaffDetailPanel';
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Scheda anagrafica a TUTTA AREA (sidebar + TopBar del cockpit restano). Sostituisce
 // il pannello laterale (drawer) che si apriva sopra la lista: apertura full-screen,
@@ -78,13 +79,78 @@ function AnagraficaDetailInner() {
         flash(res?.ok ? `✅ ${t('detailPageSalvaOk')}` : `❌ ${t('erroreSalvataggio')}`);
     };
 
-    const handleDeleteStudent = async (delId: string) => {
-        const res = await fetch('/api/admin/students', {
-            method: 'DELETE',
+    /**
+     * ⚠️ QUESTA FUNZIONE ERA `handleDeleteStudent`, ED ERA IL DIFETTO DESCRITTO
+     * NEL COMMENTO QUI SOTTO, LASCIATO INTATTO SU QUESTO RAMO.
+     *
+     * Chiamava `DELETE /api/admin/students` e **non leggeva mai `res.json()`**:
+     * qualunque cosa il server avesse da dire — «l'alunno ha ancora dati
+     * collegati», che il 12 agosto era la risposta per 28 alunni su 33 — finiva
+     * in un `❌ Errore nell'eliminazione` senza causa. E `flash` fa
+     * `setTimeout(goBack, 900)` **anche sul fallimento**: l'operatore veniva
+     * sbattuto fuori dalla scheda 0,9 secondi dopo, con l'errore in mano e
+     * niente da farci.
+     *
+     * La forma giusta esisteva già in questo stesso file, dodici righe più sotto
+     * (`handleSaveParent`), dove la correzione era stata capita e mai propagata a
+     * questo ramo: il corpo si legge UNA volta sola (`res.json()` consuma lo
+     * stream), sul successo si annuncia e si torna alla lista, sul fallimento
+     * **non si naviga** e l'esito torna alla scheda, che lo mostra in un
+     * `role="alert"` dove chi ha premuto lo sta ancora guardando.
+     */
+    const handleArchiveStudent = async (alunnoId: string) => {
+        const res = await fetch('/api/admin/students/archivia', {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: delId }),
+            body: JSON.stringify({ alunno_id: alunnoId }),
         }).catch(() => null);
-        flash(res?.ok ? `✅ ${t('detailPageEliminato')}` : `❌ ${t('detailPageEliminaErr')}`);
+        if (res?.ok) {
+            // Il nome nel messaggio non è decorazione: la segreteria lavora su più
+            // schede aperte, e «alunno spostato» non dice QUALE.
+            flash(`✅ ${t('detailPageArchiviato', { nome: [student?.nome, student?.cognome].filter(Boolean).join(' ') })}`);
+            return { ok: true as const };
+        }
+        // Il corpo si legge una volta sola, e il `codice` che la rotta manda vale
+        // più della sua prosa: `messaggioDaCorpo` traduce il codice dichiarato e
+        // ricade sulla frase del server solo quando non lo riconosce. Senza,
+        // un'interfaccia in inglese leggerebbe il rifiuto in italiano.
+        const corpo = res ? await res.json().catch(() => null) : null;
+        return { ok: false as const, errore: messaggioDaCorpo(corpo, t('detailArchiviaErrore')) };
+    };
+
+    /**
+     * IL RITORNO — la metà del modello che a questa scheda mancava.
+     *
+     * Ha la stessa forma dell'archiviazione (esito letto una volta sola, sul
+     * fallimento NON si naviga) e una cosa in più: l'annuncio distingue il caso in
+     * cui il bambino è rientrato SENZA classe, perché è l'unico che lascia qualcosa
+     * da fare. `esito_classe` ha quattro valori (`riattiva/route.ts`) e solo
+     * `sparita` e `assente` significano «va assegnata»: `conservata` è il ritiro
+     * fatto a mano dalla tendina, dove la classe non è mai stata tolta — ed è il
+     * caso su cui, fino al 2026-08-13, l'elenco diceva ugualmente «Assegna una
+     * classe» a un bambino che era in «2 ANNI».
+     */
+    const handleRiattivaStudent = async (alunnoId: string) => {
+        const res = await fetch('/api/admin/students/riattiva', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ alunno_id: alunnoId }),
+        }).catch(() => null);
+        // ⚠️ Il corpo si legge UNA volta sola e serve a ENTRAMBI i rami: `res.json()`
+        // consuma lo stream, quindi leggerlo dentro l'`if` e poi di nuovo fuori
+        // darebbe una promise già risolta a vuoto sul secondo tentativo.
+        const corpo = res ? await res.json().catch(() => null) : null;
+        if (res?.ok) {
+            const nome = [student?.nome, student?.cognome].filter(Boolean).join(' ');
+            const senzaClasse = (corpo as { esito_classe?: unknown } | null)?.esito_classe;
+            flash(
+                senzaClasse === 'sparita' || senzaClasse === 'assente'
+                    ? `✅ ${t('detailPageRiattivatoSenzaClasse', { nome })}`
+                    : `✅ ${t('detailPageRiattivato', { nome })}`,
+            );
+            return { ok: true as const };
+        }
+        return { ok: false as const, errore: messaggioDaCorpo(corpo, t('detailRiattivaErrore')) };
     };
 
     /**
@@ -176,7 +242,8 @@ function AnagraficaDetailInner() {
                     student={student as never}
                     onClose={goBack}
                     onSave={handleSaveStudent}
-                    onDelete={handleDeleteStudent}
+                    onArchive={handleArchiveStudent}
+                    onRiattiva={handleRiattivaStudent}
                 />
             )}
 

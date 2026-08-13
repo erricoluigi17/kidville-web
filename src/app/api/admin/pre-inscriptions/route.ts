@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { STATO_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -280,7 +281,7 @@ export const PATCH = withRoute('admin/pre-inscriptions:PATCH', async (request: N
           data_nascita: child.data_nascita,
           codice_fiscale: child.codice_fiscale || null,
           classe_sezione: assigned_class,
-          stato: 'iscritto',
+          stato: STATO_ISCRITTO,
           note_mediche: child.note_mediche || null,
           consenso_privacy: false
         };

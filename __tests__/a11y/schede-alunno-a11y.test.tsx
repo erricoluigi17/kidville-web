@@ -270,7 +270,8 @@ describe('axe · le tre schede dell’alunno, zero violazioni', () => {
         student={ALUNNA}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        onDelete={vi.fn()}
+        onArchive={vi.fn(async () => ({ ok: true }))}
+        onRiattiva={vi.fn(async () => ({ ok: true }))}
         variant="page"
       />,
     )
@@ -350,7 +351,8 @@ describe('ogni campo ha un nome, e ogni `htmlFor` un bersaglio', () => {
         student={ALUNNA}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        onDelete={vi.fn()}
+        onArchive={vi.fn(async () => ({ ok: true }))}
+        onRiattiva={vi.fn(async () => ({ ok: true }))}
         variant="page"
       />,
     )
@@ -404,7 +406,8 @@ describe('ogni `aria-describedby` punta a un elemento che esiste', () => {
         student={ALUNNA_SENZA_CF}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        onDelete={vi.fn()}
+        onArchive={vi.fn(async () => ({ ok: true }))}
+        onRiattiva={vi.fn(async () => ({ ok: true }))}
         variant="page"
       />,
     )
@@ -425,7 +428,8 @@ describe('ogni `aria-describedby` punta a un elemento che esiste', () => {
         student={ALUNNA}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        onDelete={vi.fn()}
+        onArchive={vi.fn(async () => ({ ok: true }))}
+        onRiattiva={vi.fn(async () => ({ ok: true }))}
         variant="page"
       />,
     )

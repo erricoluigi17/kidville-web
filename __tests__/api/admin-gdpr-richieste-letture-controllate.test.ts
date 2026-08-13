@@ -79,6 +79,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = () => b
       b.in = () => b
       b.order = () => b
+      // Le letture del dry-run che dicono CHE COSA distrugge (`contaCosaDistrugge`).
+      b.contains = () => b
+      b.not = () => b
       b.update = (v: Record<string, unknown>) => { patch = v; return b }
       b.maybeSingle = async () =>
         table === 'richieste_cancellazione'
@@ -169,7 +172,7 @@ describe('T15 — il percorso sano non cambia', () => {
   it('nessun errore: l’oblio procede e la richiesta si chiude', async () => {
     h.state.links = [{ student_id: 'al-1' }]
     h.state.alunni = [
-      { id: 'al-1', stato: 'non_iscritto', anonimizzato_il: null, scuola_id: SEDE_A, documento_path: null, codice_fiscale: null, fiscal_code: null },
+      { id: 'al-1', stato: 'ritirato', anonimizzato_il: null, scuola_id: SEDE_A, documento_path: null, codice_fiscale: null, fiscal_code: null },
     ]
     const res = await POST(req({ id: 'req-1', mode: 'execute', confirm: 'ANONIMIZZA' }))
     expect(res.status).toBe(200)

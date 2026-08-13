@@ -4,8 +4,8 @@ import itPublic from '../../messages/it/public.json'
 import itShared from '../../messages/it/shared.json'
 import { PERSONALE_FIELDS, CONSENSI_PERSONALE_FIELDS } from '@/lib/forms/personale-template'
 import {
-  ALFA, BETA, OGGI, PERCORSO_SCANSIONE, compilaFinoAlRiepilogo, invia, reteFinta,
-  type FintaFetch,
+  ALFA, BETA, OGGI, PERCORSO_SCANSIONE, PERCORSO_SCANSIONE_RETRO, compilaFinoAlRiepilogo,
+  invia, reteFinta, type FintaFetch,
 } from '../fixtures/anagrafica-personale'
 
 /**
@@ -114,9 +114,13 @@ describe('AnagraficaPersonaleWizard — il corpo del POST', () => {
     expect(d.birth_nation).toBe('Italia')
     // Le fasce sono un array, come le vuole il `check (cardinality(gradi) >= 1)`.
     expect(d.gradi).toEqual(['infanzia'])
-    // Il percorso della scansione è quello che la rotta di caricamento ha
-    // restituito: il modulo non lo costruisce e non lo ritocca.
-    expect(d.documento_path).toBe(PERCORSO_SCANSIONE)
+    // I percorsi delle DUE scansioni sono quelli che la rotta di caricamento ha
+    // restituito: il modulo non li costruisce e non li ritocca. Sono due chiavi
+    // distinte dal 12/08/2026 (migrazione `20260812194501`), e vanno asserite
+    // entrambe: una sola direbbe che il documento è partito quando ne è partita
+    // metà — e metà documento è una pratica che la Segreteria rimanda indietro.
+    expect(d.documento_fronte_path).toBe(PERCORSO_SCANSIONE)
+    expect(d.documento_retro_path).toBe(PERCORSO_SCANSIONE_RETRO)
     // I facoltativi non compilati partono vuoti, non spariscono.
     expect(Object.keys(d)).toContain('emergenza_nome')
   })

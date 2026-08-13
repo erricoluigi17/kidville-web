@@ -9,6 +9,7 @@ import {
   scuoleDiUtente,
 } from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 import { rateLimit } from '@/lib/security/rate-limit'
@@ -346,9 +347,37 @@ export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
     // Notifiche best-effort ai genitori (sezione, o intero plesso se evento di plesso).
     if (body.visibile_genitori) {
       try {
-        let alunniQuery = supabase.from('alunni').select('id').eq('scuola_id', scuolaId)
+        // Filtro di stato INCONDIZIONATO, mentre la sezione è facoltativa: quando
+        // `sectionId` è nullo l'evento è di PLESSO e questa query legge la sede
+        // intera. L'archiviazione sgancia il bambino dalla sezione, non dalla sede,
+        // quindi senza il filtro di stato l'invito alla recita continuerebbe ad
+        // arrivare alla famiglia di chi non frequenta più.
+        let alunniQuery = supabase
+          .from('alunni')
+          .select('id')
+          .eq('scuola_id', scuolaId)
+          .in('stato', [...STATI_CON_CANALE_FAMIGLIA])
         if (sectionId) alunniQuery = alunniQuery.eq('section_id', sectionId)
-        const { data: alunni } = await alunniQuery
+        const { data: alunni, error: erroreAlunni } = await alunniQuery
+        // ⚠️ REGOLA 7, e per due settimane questa riga l'ha violata proprio mentre
+        // il `catch` qui sotto dichiarava di esistere per impedirlo. Era
+        // `const { data: alunni } = await alunniQuery`: PostgREST **non lancia**,
+        // quindi una lettura rotta dava `data = null` → `(alunni ?? [])` = `[]` →
+        // `enqueueNotifichePerAlunni` usciva alla prima riga (`if (!alunnoIds ||
+        // alunnoIds.length === 0) return`) → il `catch` non scattava mai. Esito:
+        // **201, zero notifiche in coda, zero righe di log**. Cioè la SCRITTURA
+        // PERSA che il commento del `catch` chiama per nome, resa invisibile.
+        // Si logga e si esce: l'evento è creato e la risposta resta 201 — è vero —
+        // ma il suo annuncio mancato ha una riga che lo dice.
+        if (erroreAlunni) {
+          logEvento('notifica', 'error', {
+            operazione: 'agenda:POST',
+            esito: 'destinatari-non-letti',
+            sede_id: scuolaId,
+            tipo: body.tipo,
+          }, erroreAlunni)
+          return NextResponse.json({ success: true, data: evento }, { status: 201 })
+        }
         await enqueueNotifichePerAlunni(supabase, {
           alunnoIds: (alunni ?? []).map((a) => a.id as string),
           tipo: 'agenda_evento',

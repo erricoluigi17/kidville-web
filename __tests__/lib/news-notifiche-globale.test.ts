@@ -63,9 +63,12 @@ function dbBase(): DBFinto {
       { id: 'sez-e2e', name: '2 ANNI', scuola_id: SEDE_E2E, school_type: 'nido' },
     ],
     alunni: [
-      { id: 'al-a', classe_sezione: '2 ANNI', section_id: 'sez-a', scuola_id: SEDE_A },
-      { id: 'al-b', classe_sezione: '2 ANNI', section_id: 'sez-b', scuola_id: SEDE_B },
-      { id: 'al-e2e', classe_sezione: '2 ANNI', section_id: 'sez-e2e', scuola_id: SEDE_E2E },
+      // `stato` esplicito su ogni riga: dal 2026-08-12 i risolutori di destinatari
+      // filtrano gli iscritti, e una fixture che tace lo stato non descrive più un
+      // bambino che frequenta — descrive una riga che nessun avviso raggiunge.
+      { id: 'al-a', classe_sezione: '2 ANNI', section_id: 'sez-a', scuola_id: SEDE_A, stato: 'iscritto' },
+      { id: 'al-b', classe_sezione: '2 ANNI', section_id: 'sez-b', scuola_id: SEDE_B, stato: 'iscritto' },
+      { id: 'al-e2e', classe_sezione: '2 ANNI', section_id: 'sez-e2e', scuola_id: SEDE_E2E, stato: 'iscritto' },
     ],
     news_posts: [{ id: POST_ID, notifica_inviata_il: null }],
   }
@@ -125,6 +128,80 @@ describe('notificaNewsPubblicata — post «tutte le sedi»', () => {
       post({ target_scope: 'grado', target_gradi: ['nido'] }),
     )
     expect(destinatariInviati()).toEqual(['gen-al-a', 'gen-al-b'])
+  })
+
+  it('scope per GRADO ⇒ un RITIRATO della sezione NON riceve la news (2026-08-13)', async () => {
+    // IL TERZO RAMO DELLO STESSO DISPATCHER, e l'unico rimasto cieco fino al
+    // 2026-08-13. `destinatariDiSede` smista su tre strade — `classi`, `grado`,
+    // `scuola`: le altre due hanno preso il filtro di stato il 12/08, questa no.
+    //
+    // Perché il lock non poteva vederla: `genitoriDiGrado` risolve prima le
+    // sezioni del grado e poi filtra `.in('section_id', …)`, quindi per
+    // `elenchi-operativi-solo-iscritti` è una query «per sezione» ed è esente
+    // per costruzione. L'esenzione vale per la strada dell'ARCHIVIAZIONE, che la
+    // classe la sgancia; non vale per la TENDINA della scheda alunno, che porta
+    // lo `stato` a `'ritirato'` lasciando il bambino agganciato alla sezione.
+    // È quella la riga che questo test mette: `al-a-rit` ha `section_id` valido.
+    const db = dbBase()
+    db.alunni.push({
+      id: 'al-a-rit', classe_sezione: '2 ANNI', section_id: 'sez-a', scuola_id: SEDE_A, stato: 'ritirato',
+    })
+    await notificaNewsPubblicata(
+      creaFintoSupabase(db),
+      post({ target_scope: 'grado', target_gradi: ['nido'] }),
+    )
+    expect(destinatariInviati()).toEqual(['gen-al-a', 'gen-al-b'])
+    expect(destinatariInviati()).not.toContain('gen-al-a-rit')
+  })
+
+  it('scope per GRADO ⇒ un SOSPESO la riceve: frequenta ancora (2026-08-13)', async () => {
+    // Il confine dei canali verso le famiglie è `STATI_CON_CANALE_FAMIGLIA`, e
+    // `'sospeso'` ci sta dentro perché `LATO_DEL_CONFINE` lo classifica
+    // «ancora-iscritto»: è un bambino che frequenta, la cui pratica è ferma.
+    // Con `.eq('stato', STATO_ISCRITTO)` in senso stretto questa famiglia
+    // sparirebbe da news, agenda, rubrica e digest tutta insieme.
+    const db = dbBase()
+    db.alunni.push({
+      id: 'al-a-sos', classe_sezione: '2 ANNI', section_id: 'sez-a', scuola_id: SEDE_A, stato: 'sospeso',
+    })
+    await notificaNewsPubblicata(
+      creaFintoSupabase(db),
+      post({ target_scope: 'grado', target_gradi: ['nido'] }),
+    )
+    expect(destinatariInviati()).toEqual(['gen-al-a', 'gen-al-a-sos', 'gen-al-b'])
+  })
+
+  it('scope per GRADO ⇒ lettura alunni fallita: [] MA una riga `error` (non «zero destinatari»)', async () => {
+    // `genitoriDiGrado` controllava `{ error }` e tornava `[]` SENZA loggare: la
+    // news finiva sul ramo «nessun-destinatario» e nei log una query rotta si
+    // leggeva identica a una sede senza bambini. PostgREST non lancia, quindi
+    // nessun `catch` di nessun chiamante avrebbe mai potuto dirlo.
+    const db = dbBase()
+    await notificaNewsPubblicata(
+      creaFintoSupabase(db, [], { errori: { alunni: { code: '42703' } } }),
+      post({ scuola_id: SEDE_A, target_scope: 'grado', target_gradi: ['nido'] }),
+    )
+    expect(notificaEvento).not.toHaveBeenCalled()
+    const riga = logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'alunni-non-letti',
+    )
+    expect(riga?.[1]).toBe('error')
+    expect((riga?.[2] as { operazione?: string })?.operazione).toBe('news/notifiche:genitoriDiGrado')
+  })
+
+  it('scope per GRADO ⇒ lettura SEZIONI fallita: [] MA una riga `error`', async () => {
+    // L'altra metà della stessa funzione: senza le sezioni del grado non si sa
+    // quali bambini siano, e il ramo taceva allo stesso modo.
+    const db = dbBase()
+    await notificaNewsPubblicata(
+      creaFintoSupabase(db, [], { errori: { sections: { code: '42703' } } }),
+      post({ scuola_id: SEDE_A, target_scope: 'grado', target_gradi: ['nido'] }),
+    )
+    expect(notificaEvento).not.toHaveBeenCalled()
+    const riga = logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'sezioni-non-lette',
+    )
+    expect(riga?.[1]).toBe('error')
   })
 
   it('ZERO destinatari ⇒ NON si marca inviata, e resta una riga di log', async () => {

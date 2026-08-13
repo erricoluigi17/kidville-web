@@ -32,9 +32,13 @@ import { SEDE_A, SEDE_B, SEDE_E2E, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_E2E } fro
 //  4. IL CODICE FISCALE INCOERENTE CHE BLOCCA. L'errore opposto, e altrettanto
 //     reale: bloccare respingerebbe omocodie e comuni soppressi, cioè persone vere
 //     a cui si direbbe che il proprio codice fiscale non esiste.
-//  5. IL PERCORSO DI UN ALTRO BUCKET. `documento_path` è la chiave con cui la
-//     Segreteria farà firmare un oggetto dello Storage: senza gate, un anonimo ci
-//     scrive quello che vuole. E il percorso NON deve comparire in nessun log.
+//  5. IL PERCORSO DI UN ALTRO BUCKET. `documento_fronte_path` e `documento_retro_path`
+//     sono le chiavi con cui la Segreteria farà firmare un oggetto dello Storage:
+//     senza gate, un anonimo ci scrive quello che vuole. E i percorsi NON devono
+//     comparire in nessun log. ⚠️ Erano UNA colonna sola (`documento_path`) fino alla
+//     migrazione `20260812194501`: da lì in poi ogni prova di questo file che parlava
+//     al singolare misurava un campo che il template non ha più — cioè un `validatePage`
+//     che risponde 400 su un payload che nessuno aveva sbagliato.
 //  6. IL 409 SUL DOPPIONE. Direbbe a chiunque digiti l'indirizzo di una maestra se
 //     quella persona LAVORA qui. Si risponde 201, con la STESSA FORMA del primo
 //     invio — perché una risposta di forma diversa è essa stessa l'oracolo.
@@ -92,7 +96,7 @@ const h = vi.hoisted(() => ({
    * lasciato passare per un giro intero il difetto peggiore di questa rotta: sul ramo
    * generico dei 500 le andava l'oggetto PostgREST GREZZO, e il `details` di una
    * violazione di CHECK è `Failing row contains (…)` — la riga di una persona
-   * ricopiata per intero, `documento_path` compreso. Un finto che scarta l'argomento
+   * ricopiata per intero, i percorsi delle DUE scansioni compresi. Un finto che scarta l'argomento
    * non può accorgersi di cosa c'era dentro.
    */
   errori: [] as { campi: Record<string, unknown>; err: unknown }[],
@@ -109,21 +113,78 @@ const h = vi.hoisted(() => ({
   registroCaricamenti: new Map<string, string | null>(),
   /** L'errore che la lettura del registro deve restituire (PostgREST non lancia). */
   erroreRegistro: null as { code?: string; message?: string } | null,
+  /**
+   * Ogni LETTURA del registro, con i percorsi che ha chiesto: una voce per query.
+   *
+   * ⚠️ SERVE A CONTARE LE LETTURE, e il conteggio è la proprietà portante del reclamo
+   * al plurale. Con una lettura per faccia, fra la prima e la seconda si apre una
+   * finestra in cui l'altra può essere reclamata da qualcun altro; e il verdetto
+   * smetterebbe di essere un'aritmetica su una risposta sola. Senza questo elenco,
+   * «una lettura per due facce» e «due letture» sono indistinguibili — cioè il difetto
+   * si potrebbe reintrodurre col verde davanti.
+   */
+  lettureRegistro: [] as string[][],
   /** L'errore che il COLLEGAMENTO alla pratica deve restituire. */
   erroreCollegamento: null as { code?: string; message?: string } | null,
-  /** Ogni tentativo di collegare un oggetto a una pratica, riuscito o no. */
-  collegamenti: [] as { percorso: string | null; praticaId: unknown; riuscito: boolean }[],
+  /**
+   * Ogni tentativo di collegare oggetti a una pratica, riuscito o no.
+   *
+   * ⚠️ UNA VOCE PER CHIAMATA, CON L'ELENCO DEI PERCORSI — non una per percorso. Dal
+   * 12/08/2026 le facce sono due e `collegaCaricamenti` le collega con UN SOLO
+   * `update … .in('percorso', …)`: è la sua proprietà portante, perché con una
+   * chiamata per faccia il fronte può collegarsi e il retro no, e restano due righe di
+   * log scoordinate che nessuno sa ricomporre. Un finto che contasse una voce per
+   * percorso non potrebbe distinguere «una chiamata per due facce» da «due chiamate»,
+   * cioè renderebbe invisibile proprio la differenza che quel plurale esiste per fare.
+   */
+  collegamenti: [] as {
+    percorsi: string[]
+    praticaId: unknown
+    /** Quante righe l'`update` ha toccato DAVVERO: è lo stato, non l'intenzione. */
+    collegati: number
+    riuscito: boolean
+  }[],
 
   /**
-   * Le pratiche che NOMINANO già un percorso: percorso → email e stato della riga.
+   * LA PRATICA DI QUELL'EMAIL, con le facce che NOMINA: email → riga.
    *
    * È lo stato che il SECONDO invio della stessa persona incontra davvero, e il finto
    * lo mantiene da solo a ogni INSERT riuscito invece di farlo scrivere ai test: la
-   * riga appena creata nomina quell'oggetto ed è `pending`, e un test che dovesse
+   * riga appena creata nomina quegli oggetti ed è `pending`, e un test che dovesse
    * armare a mano quella conseguenza finirebbe per collaudare la propria messinscena
    * invece della sequenza vera.
+   *
+   * ⚠️ LA CHIAVE È L'EMAIL, e non è una comodità: è ciò che il database garantisce.
+   * L'indice `unique (lower(email)) where stato in ('pending','in_approvazione')` dice
+   * che di righe VIVE per una email ce n'è al massimo UNA, ed è la ragione per cui la
+   * rotta legge il proprietario con un `.maybeSingle()` senza filtrare sui percorsi.
+   * Un finto indicizzato per PERCORSO poteva restituire due proprietari diversi per la
+   * stessa email — cioè uno stato che il database non può produrre — e con quello si
+   * sarebbe potuta collaudare come «giusta» una query che nel mondo vero non regge.
    */
-  pratichePerDocumento: new Map<string, { email: string; stato: string }>(),
+  praticaPerEmail: new Map<
+    string,
+    { id: string; stato: string; documenti: Record<string, string> }
+  >(),
+  /**
+   * LE RIGHE VIVE IN PIÙ per la stessa email — cioè un database SENZA l'indice
+   * `pratiche_personale_email_viva`.
+   *
+   * Non è un caso di scuola: questa rotta è scritta per tollerare un database
+   * indietro con le migrazioni (è il senso del suo ramo di degrado sull'INSERT), e
+   * su quel database l'indice unico può non esserci. Con `.maybeSingle()` due righe
+   * vive facevano rispondere `PGRST116` a `documentiDiUnaPraticaViva`, che tornava
+   * `false`: 400 sul documento a chi rimandava il PROPRIO modulo. Vuoto per difetto,
+   * quindi ogni altro test continua a descrivere il database sano.
+   */
+  viveAggiuntive: [] as {
+    email: string
+    id: string
+    stato: string
+    documenti: Record<string, string>
+  }[],
+  /** I tetti (`.limit(n)`) che le letture su `pratiche_personale` hanno dichiarato. */
+  limitiChiesti: [] as number[],
   /**
    * L'errore che la lettura del PROPRIETARIO del percorso deve restituire.
    *
@@ -200,7 +261,18 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // questo registro esiste per chiudere.
       if (tabella === 'caricamenti_personale') {
         let modo: 'select' | 'update' = 'select'
-        let percorsoChiesto: string | null = null
+        /**
+         * I percorsi chiesti da QUESTA query.
+         *
+         * ⚠️ SI ACCETTANO SIA `.eq('percorso', x)` SIA `.in('percorso', [...])`, ed è
+         * voluto: il registro parla al plurale dal 12/08/2026 (`caricamentiReclamabili`
+         * e `collegaCaricamenti` fanno una lettura e una scrittura sole per tutte le
+         * facce), ma le due forme singolari continuano a esistere come scorciatoie che
+         * delegano. Un finto che ne conoscesse una sola risponderebbe «nessuna riga» a
+         * una query perfettamente legittima — cioè un 400 sul documento di chi non ha
+         * sbagliato niente, che è precisamente il difetto misurato il 12/08/2026.
+         */
+        let chiesti: string[] = []
         let soloSospesi = false
         let patch: Record<string, unknown> = {}
         const c: Record<string, unknown> = {}
@@ -211,42 +283,73 @@ vi.mock('@/lib/supabase/server-client', () => ({
           return c
         }
         c.eq = (colonna: string, valore: unknown) => {
-          if (colonna === 'percorso') percorsoChiesto = String(valore)
+          if (colonna === 'percorso') chiesti = [String(valore)]
           return c
         }
+        c.in = (colonna: string, valori: unknown[]) => {
+          if (colonna === 'percorso') chiesti = valori.map(String)
+          return c
+        }
+        // ⚠️ ANCHE `anagrafica_utente_id`, non solo `pratica_id`. Dal 12/08/2026 un
+        // oggetto ha DUE proprietari possibili (migrazione `20260812194501`), e un finto
+        // che ignorasse il secondo predicato lascerebbe verde una pratica pubblica che
+        // reclama la scansione già appesa all'anagrafica di una collega.
         c.is = (colonna: string, valore: unknown) => {
-          if (colonna === 'pratica_id' && valore === null) soloSospesi = true
+          if ((colonna === 'pratica_id' || colonna === 'anagrafica_utente_id') && valore === null) {
+            soloSospesi = true
+          }
           return c
         }
         /** Il percorso è nel registro E (se richiesto) non è ancora di nessuno. */
-        const reclamabile = () => {
-          const chiave = percorsoChiesto ?? ''
-          if (!h.registroCaricamenti.has(chiave)) return false
-          return !soloSospesi || h.registroCaricamenti.get(chiave) === null
+        const reclamabile = (percorso: string) => {
+          if (!h.registroCaricamenti.has(percorso)) return false
+          return !soloSospesi || h.registroCaricamenti.get(percorso) === null
         }
+        const trovati = () => chiesti.filter(reclamabile).map((percorso) => ({ percorso }))
         c.maybeSingle = async () =>
           h.erroreRegistro
             ? { data: null, error: h.erroreRegistro }
-            : { data: reclamabile() ? { percorso: percorsoChiesto } : null, error: null }
+            : { data: trovati()[0] ?? null, error: null }
         c.then = (res: (v: unknown) => unknown) => {
-          if (modo !== 'update') return Promise.resolve({ data: [], error: null }).then(res)
+          if (modo !== 'update') {
+            // LA LETTURA DEL RECLAMO, che ora è un `await` sul costruttore e non più un
+            // `maybeSingle`: `caricamentiReclamabili` conta le righe tornate e ne ricava
+            // il verdetto. Restituire sempre `[]`, com'era prima, significava dire «non
+            // esiste nessuno di questi percorsi» a ogni richiesta.
+            //
+            // La lettura si REGISTRA anche quando fallisce: contare solo quelle riuscite
+            // renderebbe invisibile un ciclo che ritenta faccia per faccia sul guasto.
+            h.lettureRegistro.push([...chiesti])
+            return Promise.resolve(
+              h.erroreRegistro
+                ? { data: null, error: h.erroreRegistro }
+                : { data: trovati(), error: null },
+            ).then(res)
+          }
           if (h.erroreCollegamento) {
             h.collegamenti.push({
-              percorso: percorsoChiesto,
+              percorsi: [...chiesti],
               praticaId: patch.pratica_id,
+              collegati: 0,
               riuscito: false,
             })
             return Promise.resolve({ data: null, error: h.erroreCollegamento }).then(res)
           }
-          const puo = reclamabile()
-          if (puo) h.registroCaricamenti.set(percorsoChiesto ?? '', String(patch.pratica_id))
+          const toccati = chiesti.filter(reclamabile)
+          for (const percorso of toccati) {
+            h.registroCaricamenti.set(percorso, String(patch.pratica_id))
+          }
           h.collegamenti.push({
-            percorso: percorsoChiesto,
+            percorsi: [...chiesti],
             praticaId: patch.pratica_id,
-            riuscito: puo,
+            collegati: toccati.length,
+            // «Riuscito» è TUTTE, non ALCUNE: una pratica con una faccia collegata e
+            // l'altra no è una pratica mezza documentata, e la spazzata toglie l'altra
+            // entro 24 ore mentre la riga la nomina ancora.
+            riuscito: toccati.length === chiesti.length && chiesti.length > 0,
           })
           return Promise.resolve({
-            data: puo ? [{ percorso: percorsoChiesto }] : [],
+            data: toccati.map((percorso) => ({ percorso })),
             error: null,
           }).then(res)
         }
@@ -264,12 +367,28 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // `h.filtriIn` restano, e restano globali, ma servono alle ASSERZIONI.
       const eqLocali = new Map<string, unknown>()
       const inLocali = new Map<string, unknown[]>()
+      /**
+       * LE COLONNE CHIESTE, ed è ciò che ora distingue le due letture.
+       *
+       * Fino al 12/08/2026 la lettura del PROPRIETARIO si riconosceva dal filtro
+       * `.eq('documento_*_path', …)`. Quel filtro non c'è più: la rotta fa UN solo
+       * round trip — `select('id, documento_fronte_path, documento_retro_path')` per
+       * email — e confronta i percorsi in memoria, perché un `.or(…)` con dentro il
+       * testo di un anonimo non si scrive (la virgola RISCRIVE il filtro invece di
+       * romperlo). Le due letture su `pratiche_personale` si distinguono quindi per la
+       * PROIEZIONE, ed è giusto che il finto guardi quella: è l'unica cosa che le
+       * differenzia anche nel client vero.
+       */
+      let colonneChieste = ''
       b.insert = (row: Record<string, unknown>) => {
         scrittura = true
         h.inserts.push(row)
         return b
       }
-      b.select = () => b
+      b.select = (colonne?: string) => {
+        colonneChieste = String(colonne ?? '')
+        return b
+      }
       // Il filtro si MEMORIZZA, non si ignora: un `eq` no-op restituirebbe la riga
       // viva qualunque cosa la route chiedesse, e il ramo del doppio invio resterebbe
       // verde anche con un predicato sbagliato.
@@ -294,38 +413,107 @@ vi.mock('@/lib/supabase/server-client', () => ({
         // questa riga il finto direbbe che l'oggetto non è di nessuno un istante dopo
         // averlo assegnato, e il difetto del doppio invio resterebbe non misurabile.
         const scritta = h.inserts[h.inserts.length - 1] ?? {}
-        const percorso = scritta.documento_path
-        if (typeof percorso === 'string' && percorso !== '') {
-          h.pratichePerDocumento.set(percorso, {
-            email: String(scritta.email ?? ''),
-            stato: 'pending',
-          })
+        // ⚠️ TUTTE LE FACCE, e si riconoscono dalla FORMA del nome invece che da un
+        // elenco scritto qui: `documento_*_path`. Un elenco a mano dentro una fabbrica
+        // `vi.mock` non può importare il template (è issata sopra gli import), e il
+        // giorno del rinomino resterebbe indietro in silenzio — cioè il finto direbbe
+        // che nessuna pratica nomina quell'oggetto un istante dopo averlo scritto.
+        const documenti: Record<string, string> = {}
+        for (const [colonna, valore] of Object.entries(scritta)) {
+          if (!/^documento_.+_path$/.test(colonna)) continue
+          if (typeof valore !== 'string' || valore === '') continue
+          documenti[colonna] = valore
         }
+        // La riga VIVA di quella email diventa questa: l'indice unico non ne ammette
+        // due, quindi si SOSTITUISCE invece di accumulare — un finto che accumulasse
+        // descriverebbe un database in cui la stessa persona ha due pratiche vive, che
+        // è lo stato che l'indice esiste per rendere impossibile.
+        h.praticaPerEmail.set(String(scritta.email ?? ''), {
+          id: 'pratica-nuova',
+          stato: 'pending',
+          documenti,
+        })
         return { data: { id: 'pratica-nuova' }, error: null }
       }
+      /**
+       * LE COLONNE DEL DOCUMENTO CHIESTE DA QUESTA `select`, o `[]`.
+       *
+       * ⚠️ SI GUARDA LA FORMA DEL NOME (`documento_*_path`), non un elenco battuto
+       * qui: una fabbrica `vi.mock` è issata sopra gli import e non può leggere il
+       * template, quindi un elenco a mano resterebbe indietro in silenzio al prossimo
+       * rinomino — cioè il finto risponderebbe «nessuna riga» a ogni ricerca del
+       * proprietario, e l'eccezione del secondo invio risulterebbe verde per il motivo
+       * sbagliato. È già successo, il 12/08/2026, con `documento_path`.
+       */
+      const colonneDocumentoChieste = () =>
+        colonneChieste
+          .split(',')
+          .map((c) => c.trim())
+          .filter((c) => /^documento_.+_path$/.test(c))
+
+      /**
+       * LE RIGHE VIVE di questa email, proiettate come le chiede la `select`.
+       *
+       * ⚠️ RESTITUISCE UN ELENCO, e non una riga sola: dal 13/08/2026 la rotta legge
+       * con `.limit()` invece che con `.maybeSingle()` proprio perché su un database
+       * senza l'indice unico le righe vive possono essere più d'una. Un finto che ne
+       * sapesse rendere una sola non potrebbe mai far scattare quel caso, cioè
+       * lascerebbe non collaudato il ramo per cui il cambiamento è stato fatto.
+       */
+      const vivePerEmail = (colonneDocumento: string[]) => {
+        const chiesta = String(eqLocali.get('email') ?? '')
+        const stati = inLocali.get('stato') as string[] | undefined
+        const prima = h.praticaPerEmail.get(chiesta)
+        const tutte = [
+          ...(prima === undefined ? [] : [prima]),
+          // Le righe vive IN PIÙ, che esistono solo se un test le semina: è lo stato di
+          // un database a cui manca `pratiche_personale_email_viva`.
+          ...h.viveAggiuntive.filter((v) => v.email === chiesta),
+        ]
+        // Tutti e due i predicati contano, e un finto che ne ignorasse uno solo
+        // lascerebbe verde l'eccezione più larga di com'è: senza l'email ammetterebbe
+        // chiunque conosca un percorso, senza gli stati ammetterebbe anche una pratica
+        // già evasa — cioè il caso in cui il `23505` NON scatta e due righe finirebbero
+        // per nominare lo stesso oggetto.
+        return tutte
+          .filter((v) => stati === undefined || stati.includes(v.stato))
+          // ⚠️ SI RESTITUISCE SOLO CIÒ CHE È STATO CHIESTO. Il client vero proietta: una
+          // riga che portasse indietro anche le colonne non selezionate lascerebbe verde
+          // una rotta che legge una faccia senza averla nominata nel `select`, cioè
+          // proprio il giorno in cui il template ne aggiunge una terza.
+          .map((v) => ({
+            id: v.id,
+            ...Object.fromEntries(
+              colonneDocumento.map((colonna) => [colonna, v.documenti[colonna] ?? null]),
+            ),
+          }))
+      }
+
+      // `.limit()` non filtra niente qui: MEMORIZZA il tetto, così una prova può
+      // pretendere che la rotta ne dichiari uno. Una lettura senza tetto su un
+      // database senza indice è una scansione, ed è la ragione per cui esiste.
+      b.limit = (n: number) => {
+        h.limitiChiesti.push(n)
+        return b
+      }
+
+      // ── LA DOMANDA DEL 9-bis: «quali pratiche VIVE ha QUESTA email, e quali facce
+      //    nominano?». Si riconosce dalla PROIEZIONE — è l'unica lettura che chiede le
+      //    colonne del documento — ed è l'unica che si `await`a sul costruttore.
+      b.then = (res: (v: unknown) => unknown) => {
+        const colonneDocumento = colonneDocumentoChieste()
+        if (h.erroreProprietario) {
+          return Promise.resolve({ data: null, error: h.erroreProprietario }).then(res)
+        }
+        const righe = vivePerEmail(colonneDocumento)
+        // Il tetto lo applica il DATABASE, non il chiamante: se la rotta ne chiede
+        // cinque e le righe fossero sei, la sesta non arriverebbe mai.
+        const tetto = h.limitiChiesti[h.limitiChiesti.length - 1] ?? righe.length
+        return Promise.resolve({ data: righe.slice(0, tetto), error: null }).then(res)
+      }
+
       b.maybeSingle = async () => {
         if (scrittura) return { data: { id: 'pratica-nuova' }, error: null }
-
-        // ── LA DOMANDA DEL 9-bis: «questo percorso è già di una pratica VIVA con
-        //    QUESTA email?». Si riconosce dal filtro su `documento_path`, che è
-        //    l'unica lettura che lo porta.
-        if (eqLocali.has('documento_path')) {
-          if (h.erroreProprietario) return { data: null, error: h.erroreProprietario }
-          const percorso = String(eqLocali.get('documento_path'))
-          const chiesta = eqLocali.get('email')
-          const stati = inLocali.get('stato') as string[] | undefined
-          const proprietaria = h.pratichePerDocumento.get(percorso)
-          // Tutti e tre i predicati contano, e un finto che ne ignorasse uno solo
-          // lascerebbe verde l'eccezione più larga di com'è: senza l'email
-          // ammetterebbe chiunque conosca il percorso, senza gli stati ammetterebbe
-          // anche una pratica già evasa — cioè il caso in cui il `23505` NON scatta e
-          // due righe finirebbero per nominare lo stesso oggetto.
-          const combacia =
-            proprietaria !== undefined &&
-            proprietaria.email === chiesta &&
-            (stati === undefined || stati.includes(proprietaria.stato))
-          return { data: combacia ? { id: 'pratica-che-possiede-il-file' } : null, error: null }
-        }
 
         if (h.erroreRilettura) return { data: null, error: h.erroreRilettura }
         // `.eq` È SENSIBILE ALLE MAIUSCOLE, e qui si comporta come tale: il confronto
@@ -386,6 +574,17 @@ import { descriviErrore } from '@/lib/logging/serialize'
  * sbagliata.
  */
 const COLONNE_AMMESSE = [...PERSONALE_FIELDS.map((f) => f.id), 'scuola_id', 'consents_log'].sort()
+
+/**
+ * GLI ID DEI CAMPI CHE PORTANO UN PERCORSO DI DOCUMENTO, letti dal TEMPLATE.
+ *
+ * È lo stesso elenco che `rispostaDocumentoNonValido` usa per costruire la mappa dei
+ * campi in errore, e per la stessa ragione: una chiave scritta a mano qui dentro
+ * sopravviverebbe a un rinomino puntando al nulla, e la prova resterebbe verde su un
+ * campo che il modulo non ha più. È esattamente com'è andata il 12/08/2026, quando
+ * `documento_path` è diventato `documento_fronte_path` + `documento_retro_path`.
+ */
+const CAMPI_DOCUMENTO = PERSONALE_FIELDS.filter((f) => f.type === 'file').map((f) => f.id)
 
 /**
  * I CODICI FISCALI SI CALCOLANO, NON SI INCOLLANO.
@@ -479,6 +678,26 @@ function attendiCorpo(corpo: unknown, quale: keyof typeof FRAMMENTO_AVVISO): voi
   }
 }
 
+/**
+ * LE DUE FACCE DEL DOCUMENTO, con due percorsi DISTINTI e davvero caricati.
+ *
+ * ⚠️ DISTINTI NON È UN DETTAGLIO: la rotta rifiuta due facce che puntano allo stesso
+ * oggetto (`documento-facce-uguali`), perché il modo più facile di «finire» il modulo
+ * sarebbe allegare due volte la stessa foto e la Segreteria si ritroverebbe una pratica
+ * completa col retro mancante. Un payload di prova che ripetesse lo stesso percorso
+ * prenderebbe 400 su ogni singolo test di questo file, e la causa non si leggerebbe da
+ * nessuna parte.
+ *
+ * ⚠️ E SONO DUE DAL 12/08/2026: prima ce n'era una sola (`documento_path`). Le prove
+ * che devono parlare di UNA faccia passano `{ documento_fronte_path: … }` e lasciano al
+ * retro il suo percorso buono — così ciò che si misura è la faccia che il test nomina,
+ * e non un secondo campo caduto per sbaglio.
+ */
+const facce = () => ({
+  documento_fronte_path: caricato(),
+  documento_retro_path: caricato(),
+})
+
 /** Un'anagrafica valida e completa: da qui si toglie o si sposta un pezzo per volta. */
 const pratica = (extra: Record<string, unknown> = {}) => ({
   nome: PERSONA.nome,
@@ -501,7 +720,7 @@ const pratica = (extra: Record<string, unknown> = {}) => ({
   document_type: 'CI',
   document_number: 'AB1234567',
   document_expiry: '2030-01-01',
-  documento_path: caricato(),
+  ...facce(),
   titolo_studio: 'laurea_triennale',
   gradi: ['nido', 'infanzia'],
   presa_visione_informativa_personale: true,
@@ -544,9 +763,12 @@ beforeEach(() => {
   h.notifiche = []
   h.registroCaricamenti = new Map()
   h.erroreRegistro = null
+  h.lettureRegistro = []
   h.erroreCollegamento = null
   h.collegamenti = []
-  h.pratichePerDocumento = new Map()
+  h.praticaPerEmail = new Map()
+  h.viveAggiuntive = []
+  h.limitiChiesti = []
   h.erroreProprietario = null
 })
 
@@ -810,8 +1032,9 @@ describe('POST /api/iscrizione/personale · le due date, e il dossier che finiva
   // Cosa sopravvive a `sanificaMessaggio` su quel testo, misurato eseguendo le regex
   // vere: mascherati `[email]` e `[cf]`; in chiaro nome, cognome, sesso, nascita,
   // residenza completa, telefono, tipo e NUMERO del documento d'identità, e
-  // `documento_path`. In `app_log`, 30 giorni, interrogabile in SQL — da un modulo
-  // senza login, scrivendo nella «Scadenza del documento» una data di due secoli fa.
+  // i PERCORSI DELLE DUE SCANSIONI. In `app_log`, 30 giorni, interrogabile in SQL — da
+  // un modulo senza login, scrivendo nella «Scadenza del documento» una data di due
+  // secoli fa.
 
   it('la scadenza di due secoli fa è respinta SOTTO IL CAMPO, e non arriva al database', async () => {
     const res = await inviaValida({ document_expiry: '1899-01-01' })
@@ -913,7 +1136,7 @@ describe('POST /api/iscrizione/personale · le due date, e il dossier che finiva
         `1899-01-01, ${percorso}, laurea_triennale, {nido,infanzia}).`,
     }
 
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({ documento_fronte_path: percorso })
     expect(res.status).toBe(500)
 
     expect(h.errori, 'un 500 del database non ha lasciato nessuna riga di log').toHaveLength(1)
@@ -1097,11 +1320,11 @@ describe('POST /api/iscrizione/personale · il percorso della scansione', () => 
     // custodisce i documenti d'iscrizione dei MINORI. Se quel valore entrasse in
     // tabella, il pannello di Segreteria lo userebbe per farsi firmare un URL.
     const altrui = 'iscrizioni/modulo/00000000-0000-4000-8000-000000000000-carta.pdf'
-    const res = await inviaValida({ documento_path: altrui })
+    const res = await inviaValida({ documento_fronte_path: altrui })
 
     expect(res.status).toBe(400)
     const corpo = await res.json()
-    expect(Object.keys(corpo.campi)).toEqual(['documento_path'])
+    expect(Object.keys(corpo.campi)).toEqual(CAMPI_DOCUMENTO)
     expect(h.inserts).toHaveLength(0)
 
     // ⚠️ IL PERCORSO NON SI LOGGA: è la chiave che apre il documento d'identità di
@@ -1113,25 +1336,116 @@ describe('POST /api/iscrizione/personale · il percorso della scansione', () => 
     )
   })
 
+  // ⚠️ QUESTI CINQUE CASI ASSERIVANO IL SOLO `status`, ED È TROPPO POCO — un rilievo
+  // misurato e non un gusto. Un 400 su questa rotta può arrivare da sei posti diversi
+  // (`validatePage`, le date, il codice fiscale, i consensi, la sede, il gate del
+  // percorso), e finché l'asserzione è «400» il test resta verde anche quando il 400
+  // arriva da un campo obbligatorio mancante nel payload di prova — cioè anche
+  // CANCELLANDO il gate che dice di misurare. È esattamente com'è andata il
+  // 12/08/2026: il campo si chiamava ancora `documento_path`, il gate non girava mai, e
+  // questi cinque restavano verdi perché `validatePage` respingeva le due facce nuove
+  // che il payload non portava.
+  //
+  // Perciò ognuno asserisce ORA tre cose che solo il gate può produrre: il `codice`, i
+  // `campi` (tutte e due le facce, derivate dal template) e la riga di log
+  // `documento-path-non-ammesso`.
   it.each([
     ['una risalita nel percorso', 'documenti/../../etc/passwd'],
     ['un uuid inventato a mano', 'documenti/non-un-uuid/anche-questo.pdf'],
     ['un’estensione fuori elenco', `documenti/${crypto.randomUUID()}/${crypto.randomUUID()}.exe`],
     ['il nome del file al posto dell’uuid', `documenti/${crypto.randomUUID()}/carta-identita.pdf`],
     ['un percorso lunghissimo', `documenti/${'a'.repeat(300)}/x.pdf`],
-  ])('%s è respinto', async (_caso, percorso) => {
-    const res = await inviaValida({ documento_path: percorso })
+  ])('%s è respinto DAL GATE, non da un campo obbligatorio', async (_caso, percorso) => {
+    const res = await inviaValida({ documento_fronte_path: percorso })
+
     expect(res.status).toBe(400)
+    const corpo = await res.json()
+    expect(corpo.codice).toBe('PRATICA_NON_INVIATA')
+    expect(Object.keys(corpo.campi).sort()).toEqual([...CAMPI_DOCUMENTO].sort())
     expect(h.inserts).toHaveLength(0)
+
+    const rifiuto = h.eventi.find((e) => e.campi.esito === 'documento-path-non-ammesso')
+    expect(rifiuto, 'il 400 non viene dal gate di forma: arriva da un altro controllo').toBeDefined()
+    expect(rifiuto?.livello).toBe('warn')
+    // ⚠️ E IL REGISTRO NON È STATO NEMMENO INTERROGATO: il gate di forma costa zero e
+    // sta davanti: un percorso malformato non deve arrivare a una query.
+    expect(h.lettureRegistro, 'un percorso malformato è arrivato fino al database').toHaveLength(0)
+    expect(JSON.stringify(h.eventi), 'il percorso respinto è finito nei log').not.toContain(percorso)
   })
+
+  // ⚠️ IL CICLO È SU `CAMPI_DOCUMENTO`: ogni faccia è una porta, e una porta che nessuno
+  // prova è una porta aperta. Finché il caso esisteva solo sul fronte, un gate che
+  // guardasse la prima faccia e basta sarebbe rimasto verde — ed è precisamente la forma
+  // del difetto che questo giro ripara (la rotta reclamava `percorsiDocumento[0]`).
+  it.each(CAMPI_DOCUMENTO)(
+    'la faccia «%s» col traversal è respinta, e la risposta non dice QUALE',
+    async (campo) => {
+      const res = await inviaValida({ [campo]: 'documenti/../../etc/passwd' })
+
+      expect(res.status).toBe(400)
+      const corpo = await res.json()
+      // ⚠️ TUTTE E DUE LE CHIAVI, QUALUNQUE FACCIA SIA IL COLPEVOLE. Nominare solo
+      // quella caduta direbbe a chi tenta che l'ALTRA è stata accettata — cioè che
+      // quell'oggetto esiste nel registro — e in due richieste si saprebbe quali
+      // scansioni sono state caricate.
+      expect(Object.keys(corpo.campi).sort()).toEqual([...CAMPI_DOCUMENTO].sort())
+      expect(h.inserts).toHaveLength(0)
+    },
+  )
 
   it('il percorso che la rotta di upload produce davvero è accettato (controllo positivo)', async () => {
     // Senza questo, il gate potrebbe rifiutare TUTTO e i test sopra resterebbero
     // verdi: un modulo che non accetta nessun documento passerebbe per sicuro.
     const buono = caricato(percorsoValido('heic'))
-    const res = await inviaValida({ documento_path: buono })
+    const res = await inviaValida({ documento_fronte_path: buono })
     expect(res.status).toBe(201)
-    expect(h.inserts[0].documento_path).toBe(buono)
+    expect(h.inserts[0].documento_fronte_path).toBe(buono)
+  })
+
+  it('le due facce NON possono essere lo stesso oggetto, e la pratica non entra', async () => {
+    // ⚠️ IL DANNO NON È «UN DATO SCRITTO DUE VOLTE»: due colonne che nominano lo stesso
+    // oggetto significano che la conservazione di UN LATO cancella il file che l'altro
+    // sta ancora usando — cioè l'invariante «un oggetto, un proprietario» rotta dentro
+    // una riga sola. E il modo più facile di «finire» il modulo sarebbe allegare due
+    // volte la stessa foto: la Segreteria aprirebbe una scheda «completa» col retro
+    // mancante, senza nessuna riga che lo dica. Il database non può accorgersene
+    // (nessun vincolo lega due colonne della stessa riga) e il client non basta: qui si
+    // entra anche senza di lui.
+    const stesso = caricato()
+    const res = await inviaValida(
+      Object.fromEntries(CAMPI_DOCUMENTO.map((campo) => [campo, stesso])),
+    )
+
+    expect(res.status).toBe(400)
+    expect(h.inserts, 'una pratica con due facce identiche è entrata').toHaveLength(0)
+    // Il registro non c'entra e non va nemmeno interrogato: il confronto costa zero.
+    expect(h.lettureRegistro).toHaveLength(0)
+    // L'esito è SUO — «le due facce sono lo stesso oggetto» non è «la forma è
+    // sbagliata» né «non esiste»: chi legge `app_log` deve poterli separare.
+    const rifiuto = h.eventi.find((e) => e.campi.esito === 'documento-facce-uguali')
+    expect(rifiuto, 'due facce identiche sono passate senza lasciare traccia').toBeDefined()
+    expect(rifiuto?.livello).toBe('warn')
+    expect(JSON.stringify(h.eventi), 'il percorso è finito nei log').not.toContain(stesso)
+  })
+
+  it('la risposta alle facce uguali è IDENTICA a quella della forma sbagliata', async () => {
+    // L'esito nel log è distinto (test qui sopra); la RISPOSTA no, ed è la stessa
+    // regola dei quattro motivi di rifiuto: una risposta che dicesse «questi due sono
+    // lo stesso oggetto» confermerebbe a chi tenta che quel percorso è stato
+    // riconosciuto — cioè che esiste.
+    const formaSbagliata = await inviaValida({
+      documento_fronte_path: 'documenti/non-un-uuid/x.pdf',
+    })
+    const corpoForma = await formaSbagliata.json()
+
+    h.colpi.clear()
+    const stesso = caricato()
+    const duplicate = await inviaValida(
+      Object.fromEntries(CAMPI_DOCUMENTO.map((campo) => [campo, stesso])),
+    )
+
+    expect(duplicate.status).toBe(formaSbagliata.status)
+    expect(await duplicate.json()).toEqual(corpoForma)
   })
 })
 
@@ -1139,8 +1453,9 @@ describe('POST /api/iscrizione/personale · il percorso della scansione', () => 
 // IL PERCORSO ESISTE, ED È ANCORA DI NESSUNO — i due difetti che il gate di sola
 // FORMA lasciava aperti, e che nessun test coglieva perché la forma era giusta.
 //
-//  · L'OGGETTO CHE NON ESISTE. `documento_path` è `required: true` nel template ed
-//    è la ragione per cui questo modulo esiste, ma si soddisfaceva con una stringa
+//  · L'OGGETTO CHE NON ESISTE. `documento_fronte_path` e `documento_retro_path` sono
+//    `required: true` nel template e sono la ragione per cui questo modulo esiste, ma
+//    il gate di forma si soddisfaceva con una stringa
 //    inventata `documenti/<uuid>/<uuid>.pdf` — e quella forma è documentata in un
 //    repository PUBBLICO. La Segreteria avrebbe visto una pratica «completa» e lo
 //    avrebbe scoperto solo cliccando.
@@ -1158,10 +1473,10 @@ describe('POST /api/iscrizione/personale · il percorso della scansione', () => 
 describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => {
   it('un percorso MAI CARICATO è respinto, anche se la forma è perfetta', async () => {
     const inventato = percorsoValido() // forma giusta, ma nessuno l'ha mai caricato
-    const res = await inviaValida({ documento_path: inventato })
+    const res = await inviaValida({ documento_fronte_path: inventato })
 
     expect(res.status).toBe(400)
-    expect(Object.keys((await res.json()).campi)).toEqual(['documento_path'])
+    expect(Object.keys((await res.json()).campi)).toEqual(CAMPI_DOCUMENTO)
     expect(h.inserts, 'una pratica «completa» è entrata senza nessun documento dietro').toHaveLength(0)
 
     const rifiuto = h.eventi.find((e) => e.campi.esito === 'documento-path-non-reclamabile')
@@ -1174,13 +1489,83 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     )
   })
 
+  it('il reclamo è UNA lettura sola, con dentro TUTTE E DUE le facce', async () => {
+    // ⚠️ NON È UN CONTEGGIO PER ELEGANZA. Con una lettura per faccia, fra la prima e la
+    // seconda si apre una finestra in cui l'altra può essere reclamata da qualcun
+    // altro: il verdetto smette di essere un'aritmetica su una risposta sola e diventa
+    // una race. `caricamentiReclamabili` fa un `.in('percorso', […])` solo, e questa è
+    // l'unica prova che la rotta la usa così invece di ciclare.
+    const fronte = caricato()
+    const retro = caricato()
+
+    const res = await inviaValida({
+      documento_fronte_path: fronte,
+      documento_retro_path: retro,
+    })
+
+    expect(res.status).toBe(201)
+    expect(
+      h.lettureRegistro,
+      'il registro è stato interrogato una volta per faccia: fra le due letture c’è una finestra',
+    ).toHaveLength(1)
+    expect([...h.lettureRegistro[0]].sort()).toEqual([fronte, retro].sort())
+  })
+
+  it.each(CAMPI_DOCUMENTO)(
+    'basta che la faccia «%s» non sia reclamabile perché la pratica NON entri',
+    async (campo) => {
+      // ⚠️ NON ESISTE LA PRATICA MEZZA DOCUMENTATA, ed è il cuore del plurale. Se si
+      // accettasse la riga con la sola faccia buona, la Segreteria aprirebbe una scheda
+      // che nomina due scansioni e ne trova una — senza sapere perché — e l'altra
+      // sarebbe una stringa inventata che non apre niente. Accettare «quasi tutto» qui
+      // significa spostare il problema sulla scrivania di chi deve approvare.
+      //
+      // L'altra faccia è REGOLARE e davvero caricata: se il rifiuto arrivasse da lei, o
+      // dalla forma, questo test misurerebbe un'altra difesa.
+      const res = await inviaValida({ [campo]: percorsoValido() })
+
+      expect(res.status).toBe(400)
+      expect(Object.keys((await res.json()).campi).sort()).toEqual([...CAMPI_DOCUMENTO].sort())
+      expect(
+        h.inserts,
+        'una pratica con una faccia sola verificata è entrata in tabella',
+      ).toHaveLength(0)
+      // E il verdetto viene dal REGISTRO, non dalla forma: il percorso inventato ha la
+      // forma perfetta, quindi il gate del punto 7 non lo tocca.
+      const esiti = h.eventi.map((e) => e.campi.esito)
+      expect(esiti).toContain('documento-path-non-reclamabile')
+      expect(esiti).not.toContain('documento-path-non-ammesso')
+      // Una faccia caduta su due: il numero sta nel log, e nella risposta no.
+      expect(
+        h.eventi.find((e) => e.campi.esito === 'documento-path-non-reclamabile')?.campi.n_mancanti,
+      ).toBe(1)
+    },
+  )
+
+  it('la faccia buona NON viene collegata quando l’altra cade: niente resta a metà', async () => {
+    // Il rifiuto sta PRIMA dell'INSERT, quindi non c'è nessuna pratica a cui collegare
+    // niente. Ma la prova serve lo stesso: un collegamento tentato qui lascerebbe la
+    // faccia buona appesa a una pratica che non esiste — e la spazzata, che guarda
+    // `pratica_id is null`, non la raccoglierebbe MAI più.
+    const fronte = caricato()
+
+    const res = await inviaValida({
+      documento_fronte_path: fronte,
+      documento_retro_path: percorsoValido(),
+    })
+
+    expect(res.status).toBe(400)
+    expect(h.collegamenti, 'si è collegato un oggetto a una pratica mai nata').toHaveLength(0)
+    expect(h.registroCaricamenti.get(fronte), 'la faccia buona ha cambiato proprietario').toBe(null)
+  })
+
   it('un percorso GIÀ DI UN’ALTRA PRATICA è respinto: un oggetto, un proprietario', async () => {
     // La riga di registro esiste, ma `pratica_id` è valorizzato. È il percorso
     // trapelato da un URL firmato e riusato per una pratica di un'altra sede.
     const altrui = percorsoValido()
     h.registroCaricamenti.set(altrui, 'pratica-di-qualcun-altro')
 
-    const res = await inviaValida({ documento_path: altrui })
+    const res = await inviaValida({ documento_fronte_path: altrui })
 
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
@@ -1193,11 +1578,11 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     // RISPOSTA quando ne ha indovinato uno vero — cioè la verifica diventerebbe uno
     // strumento per censire le scansioni caricate. È lo stesso ragionamento con cui
     // il doppione risponde 201 invece di 409.
-    const formaSbagliata = await inviaValida({ documento_path: 'documenti/non-un-uuid/x.pdf' })
+    const formaSbagliata = await inviaValida({ documento_fronte_path: 'documenti/non-un-uuid/x.pdf' })
     const corpoForma = await formaSbagliata.json()
 
     h.colpi.clear()
-    const nonEsiste = await inviaValida({ documento_path: percorsoValido() })
+    const nonEsiste = await inviaValida({ documento_fronte_path: percorsoValido() })
     const corpoEsistenza = await nonEsiste.json()
 
     expect(nonEsiste.status).toBe(formaSbagliata.status)
@@ -1209,18 +1594,38 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     expect(esiti).toContain('documento-path-non-reclamabile')
   })
 
-  it('la pratica creata DIVENTA la proprietaria dell’oggetto', async () => {
-    const percorso = caricato()
-    const res = await inviaValida({ documento_path: percorso })
+  it('la pratica creata DIVENTA la proprietaria di TUTTE E DUE le facce', async () => {
+    // ⚠️ È LA PROVA CHE HA MORSO PER PRIMA DOPO IL RINOMINO, e il difetto che chiude è
+    // il peggiore di questa corsia: fino al 12/08/2026 la rotta reclamava e collegava UN
+    // oggetto solo — il fronte — mentre `pratiche_personale` nominava anche il retro.
+    // Il retro restava con `pratica_id is null`, cioè «in sospeso», e
+    // `spazzaCaricamentiSospesi` lo toglie dal bucket entro 24 ore: la Segreteria
+    // avrebbe aperto una scheda con metà del documento d'identità mancante, senza
+    // nessuna riga di log che lo dicesse. Asserire solo sul fronte lasciava quel buco
+    // verde, perché il fronte si collega benissimo.
+    const fronte = caricato()
+    const retro = caricato()
+    const res = await inviaValida({
+      documento_fronte_path: fronte,
+      documento_retro_path: retro,
+    })
 
     expect(res.status).toBe(201)
-    expect(h.collegamenti, 'l’oggetto è rimasto in sospeso: la spazzata lo toglierà').toHaveLength(1)
-    expect(h.collegamenti[0].percorso).toBe(percorso)
-    // L'uuid della riga appena scritta, non uno qualunque: è ciò che lega il file
-    // alla pratica di cui condivide il destino (90 giorni se non viene approvata).
+    // UNA chiamata sola per DUE facce: con una per faccia il fronte può collegarsi e il
+    // retro no, e restano due righe di log scoordinate che nessuno sa ricomporre.
+    expect(h.collegamenti, 'gli oggetti sono rimasti in sospeso: la spazzata li toglierà').toHaveLength(1)
+    expect(
+      [...h.collegamenti[0].percorsi].sort(),
+      'una faccia non è stata nemmeno chiesta al registro: quella la spazzata la toglie entro 24 ore mentre la pratica la nomina',
+    ).toEqual([fronte, retro].sort())
+    // L'uuid della riga appena scritta, non uno qualunque: è ciò che lega i file
+    // alla pratica di cui condividono il destino (90 giorni se non viene approvata).
     expect(h.collegamenti[0].praticaId).toBe('pratica-nuova')
+    expect(h.collegamenti[0].collegati).toBe(2)
     expect(h.collegamenti[0].riuscito).toBe(true)
-    expect(h.registroCaricamenti.get(percorso)).toBe('pratica-nuova')
+    // Lo STATO, non l'intenzione: le due righe di registro adesso nominano la pratica.
+    expect(h.registroCaricamenti.get(fronte)).toBe('pratica-nuova')
+    expect(h.registroCaricamenti.get(retro)).toBe('pratica-nuova')
   })
 
   it('il collegamento sta DOPO la riga: se fallisce la pratica resta, e lo si GRIDA', async () => {
@@ -1254,7 +1659,7 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     }
     const percorso = caricato()
 
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({ documento_fronte_path: percorso })
 
     expect(res.status).toBe(201)
     expect(h.collegamenti).toHaveLength(0)
@@ -1296,14 +1701,14 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     // costruire, ed è l'unico che in questo stato del database possa esistere.
     const inventato = percorsoValido()
 
-    const res = await inviaValida({ documento_path: inventato })
+    const res = await inviaValida({ documento_fronte_path: inventato })
 
     expect(
       res.status,
       'il registro non c’è e la pratica è entrata: la Segreteria vedrà una scheda «completa» che punta al nulla',
     ).toBe(400)
     expect(h.inserts).toHaveLength(0)
-    expect(Object.keys((await res.json()).campi)).toEqual(['documento_path'])
+    expect(Object.keys((await res.json()).campi)).toEqual(CAMPI_DOCUMENTO)
 
     // ── IL GRIDO, e perché adesso è `error` e non più `warn` ────────────────
     // Una tabella che manca in produzione è configurazione mancante (AGENTS §4) e da
@@ -1330,7 +1735,7 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     const percorso = caricato()
     h.erroreRegistro = { code: 'PGRST205', message: 'Could not find the table' }
 
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({ documento_fronte_path: percorso })
 
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
@@ -1344,7 +1749,7 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     // c'era) e ripreme «Invia» deve leggere 201, non un errore sull'unico campo che non
     // ha niente di sbagliato — mentre la sua pratica è stata ricevuta.
     const percorso = caricato()
-    expect((await inviaValida({ documento_path: percorso })).status).toBe(201)
+    expect((await inviaValida({ documento_fronte_path: percorso })).status).toBe(201)
 
     // Da qui in avanti il database è quello di oggi: la tabella non c'è più (o non c'è
     // ancora). La pratica viva, invece, sì — ed è lei a rendere l'eccezione sicura,
@@ -1360,7 +1765,7 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     }
     h.colpi.clear()
 
-    const secondo = await inviaValida({ documento_path: percorso })
+    const secondo = await inviaValida({ documento_fronte_path: percorso })
 
     expect(
       secondo.status,
@@ -1377,23 +1782,28 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
     // proprio qui: c'era `if (!reclamo.degradato) caricamentoDaCollegare = …`, quindi
     // un guasto TRANSITORIO della lettura (tabella presente, query in errore) faceva
     // accettare la pratica senza tentare MAI il collegamento. Misurato con `57014`:
-    // 201, `documento_path` scritto nella riga, ZERO tentativi di collegamento, riga
+    // 201, i percorsi scritti nella riga, ZERO tentativi di collegamento, righe
     // di registro ancora `pratica_id = null`.
     //
     // La conseguenza non è un log mancante: il predicato della spazzata è esattamente
-    // `pratica_id is null` + `caricato_il` oltre soglia, quindi quella scansione esce
-    // dal bucket entro 24 ore mentre `pratiche_personale.documento_path` — e, dopo
-    // l'approvazione, `anagrafica_personale.documento_path` — continuano a nominarla.
-    // La Segreteria apre una scheda con l'allegato mancante, e nessuna riga di log dice
-    // QUALE pratica ha perso il proprio documento: l'unico log che porta l'`entita_id`
-    // è proprio quello che non veniva emesso.
+    // `pratica_id is null` (e, dal 12/08/2026, `anagrafica_utente_id is null`) +
+    // `caricato_il` oltre soglia, quindi quelle scansioni escono dal bucket entro 24 ore
+    // mentre `pratiche_personale.documento_fronte_path` e `documento_retro_path` — e,
+    // dopo l'approvazione, le due colonne gemelle di `anagrafica_personale` — continuano
+    // a nominarle. La Segreteria apre una scheda con l'allegato mancante, e nessuna riga
+    // di log dice QUALE pratica ha perso il proprio documento: l'unico log che porta
+    // l'`entita_id` è proprio quello che non veniva emesso.
     //
     // La versione precedente di questo test verificava il 201 e il livello del log ma
     // non asseriva niente su `h.collegamenti`: il buco restava verde.
     h.erroreRegistro = { code: '57014', message: 'statement timeout' }
-    const percorso = caricato()
+    const fronte = caricato()
+    const retro = caricato()
 
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({
+      documento_fronte_path: fronte,
+      documento_retro_path: retro,
+    })
 
     expect(res.status).toBe(201)
     // ⚠️ QUI SI SEPARA IL GUASTO TRANSITORIO DALLA TABELLA CHE NON C'È, e la
@@ -1409,14 +1819,17 @@ describe('POST /api/iscrizione/personale · il registro dei caricamenti', () => 
       'un guasto transitorio è stato scambiato per la tabella assente: il verdetto cambia',
     ).not.toContain('registro-caricamenti-assente')
 
-    // E IL COLLEGAMENTO SI TENTA: la lettura è fallita, la scrittura no.
+    // E IL COLLEGAMENTO SI TENTA: la lettura è fallita, la scrittura no. E si tenta per
+    // TUTTE le facce, non per la prima: un guasto di lettura non è una ragione per
+    // lasciare indietro il retro, che è proprio l'oggetto che la spazzata raccoglie.
     expect(h.collegamenti, 'il collegamento non è stato nemmeno tentato').toHaveLength(1)
-    expect(h.collegamenti[0].percorso).toBe(percorso)
+    expect([...h.collegamenti[0].percorsi].sort()).toEqual([fronte, retro].sort())
     expect(h.collegamenti[0].praticaId).toBe('pratica-nuova')
     expect(h.collegamenti[0].riuscito).toBe(true)
-    // Lo STATO, non l'intenzione: la riga di registro adesso nomina la pratica, quindi
-    // la spazzata non vedrà più quell'oggetto.
-    expect(h.registroCaricamenti.get(percorso)).toBe('pratica-nuova')
+    // Lo STATO, non l'intenzione: le righe di registro adesso nominano la pratica,
+    // quindi la spazzata non vedrà più quegli oggetti.
+    expect(h.registroCaricamenti.get(fronte)).toBe('pratica-nuova')
+    expect(h.registroCaricamenti.get(retro)).toBe('pratica-nuova')
   })
 })
 
@@ -1424,7 +1837,7 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
   /**
    * IL DIFETTO, RIPRODOTTO COME SUCCEDE: due invii IDENTICI, uno dopo l'altro.
    *
-   * Il reclamo del percorso respingeva con 400 ogni `documento_path` già collegato —
+   * Il reclamo del percorso respingeva con 400 ogni percorso già collegato —
    * compreso quello della stessa persona che rimanda il proprio modulo — e lo faceva
    * PRIMA dell'INSERT, quindi il ramo `23505` non veniva mai raggiunto. Chi preme
    * «Invia» due volte (connessione lenta, retry del browser, un campo corretto dopo il
@@ -1447,12 +1860,12 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
       scuola_id: SEDE_A,
     }
     h.colpi.clear()
-    return inviaValida({ documento_path: percorso })
+    return inviaValida({ documento_fronte_path: percorso })
   }
 
   it('il secondo invio risponde 201 come il primo, NON un 400 sul documento', async () => {
     const percorso = caricato()
-    const primo = await inviaValida({ documento_path: percorso })
+    const primo = await inviaValida({ documento_fronte_path: percorso })
     expect(primo.status).toBe(201)
     const formaPrimo = Object.keys(await primo.json()).sort()
     // Il primo invio si è preso l'oggetto: da qui in poi quel percorso NON è più
@@ -1481,7 +1894,7 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
     // per riparare, ed è la stessa forma di difetto che `iscrizione/insegnanti:POST` ha
     // già pagato («il ramo del doppio invio usciva con `return` PRIMA di arrivarci»).
     const percorso = caricato()
-    await inviaValida({ documento_path: percorso })
+    await inviaValida({ documento_fronte_path: percorso })
     h.notifiche = []
     h.destinatariChiesti = []
 
@@ -1497,7 +1910,7 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
 
   it('il riuso del PROPRIO documento lascia una riga, e non porta il percorso nei log', async () => {
     const percorso = caricato()
-    await inviaValida({ documento_path: percorso })
+    await inviaValida({ documento_fronte_path: percorso })
     h.eventi = []
 
     await secondoInvioIdentico(percorso)
@@ -1516,7 +1929,7 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
 
   it('l’oggetto NON viene ricollegato: è già suo, e un secondo `update` sarebbe un falso guasto', async () => {
     const percorso = caricato()
-    await inviaValida({ documento_path: percorso })
+    await inviaValida({ documento_fronte_path: percorso })
     h.collegamenti = []
 
     await secondoInvioIdentico(percorso)
@@ -1534,20 +1947,68 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
     // d'attacco che il registro chiude: un percorso trapelato da un URL firmato
     // inoltrato, riusato per una pratica di un'altra persona (magari in un'altra sede).
     const percorso = caricato()
-    await inviaValida({ documento_path: percorso })
+    await inviaValida({ documento_fronte_path: percorso })
 
     h.inserts = []
     h.colpi.clear()
     const res = await invia({
       scuola_id: SEDE_B,
-      data: pratica({ documento_path: percorso, email: 'altra.persona@example.invalid' }),
+      data: pratica({ documento_fronte_path: percorso, email: 'altra.persona@example.invalid' }),
     })
 
     expect(res.status).toBe(400)
-    expect(Object.keys((await res.json()).campi)).toEqual(['documento_path'])
+    expect(Object.keys((await res.json()).campi)).toEqual(CAMPI_DOCUMENTO)
     expect(h.inserts, 'una pratica ha nominato il documento d’identità di un’altra persona').toHaveLength(0)
     expect(h.registroCaricamenti.get(percorso)).toBe('pratica-nuova')
     expect(h.eventi.map((e) => e.campi.esito)).toContain('documento-path-non-reclamabile')
+  })
+
+  it('l’eccezione NON diventa un oracolo: email vera + percorsi INVENTATI resta 400', async () => {
+    // ⚠️ QUESTO TEST CHIUDE UN BUCO CHE ERA APERTO, e il buco è quello che il commento
+    // di `documentiDiUnaPraticaViva` descrive come «la versione più comoda»: rispondere
+    // di sì appena si trova una pratica viva per quella email, senza guardare se i
+    // percorsi presentati sono davvero suoi.
+    //
+    // Misurato il 12/08/2026 sostituendo `percorsi.some(p => sue.has(p))` con un
+    // `return true`: la suite restava VERDE, 76 su 76. Nessuno dei test dell'eccezione
+    // se ne accorgeva, perché tutti provano email SENZA pratica viva — e senza pratica
+    // viva la lettura non trova niente e il rifiuto arriva per un'altra ragione.
+    //
+    // Il danno di quella versione: chiunque digiti l'indirizzo di una maestra e alleghi
+    // due percorsi INVENTATI (la forma sta scritta in un repository pubblico) legge dalla
+    // risposta se quella persona lavora qui — 201 se ha una pratica viva, 400 se no. È
+    // ESATTAMENTE l'oracolo di enumerazione che il ramo `23505` esiste per togliere,
+    // rimesso in piedi dalla porta accanto.
+    const legittimo = caricato()
+    expect((await inviaValida({ documento_fronte_path: legittimo })).status).toBe(201)
+
+    // Ora la pratica viva di `ines.prova` esiste. Chi tenta ha la sua email — che si
+    // indovina — ma NON un suo percorso: allega due stringhe nella forma giusta.
+    h.inserts = []
+    h.colpi.clear()
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint' }
+    h.vivaPerEmail = {
+      id: 'pratica-viva',
+      email: 'ines.prova@example.invalid',
+      stato: 'pending',
+      scuola_id: SEDE_A,
+    }
+
+    const res = await inviaValida({
+      documento_fronte_path: percorsoValido(),
+      documento_retro_path: percorsoValido(),
+    })
+
+    expect(
+      res.status,
+      'con due percorsi inventati e l’email giusta la rotta ha risposto 201: dalla risposta si legge chi lavora qui',
+    ).toBe(400)
+    expect(Object.keys((await res.json()).campi).sort()).toEqual([...CAMPI_DOCUMENTO].sort())
+    expect(h.inserts, 'l’INSERT è stato tentato con due percorsi inventati').toHaveLength(0)
+    expect(h.eventi.map((e) => e.campi.esito)).toContain('documento-path-non-reclamabile')
+    expect(h.eventi.map((e) => e.campi.esito)).not.toContain(
+      'documento-path-della-propria-pratica',
+    )
   })
 
   it('la pratica che possiede il file è già EVASA: si respinge, il `23505` non scatterebbe', async () => {
@@ -1559,12 +2020,13 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
     // cancellerebbe il file che la seconda sta ancora usando.
     const percorso = caricato()
     h.registroCaricamenti.set(percorso, 'pratica-evasa')
-    h.pratichePerDocumento.set(percorso, {
-      email: 'ines.prova@example.invalid',
+    h.praticaPerEmail.set('ines.prova@example.invalid', {
+      id: 'pratica-evasa',
       stato: 'approvata',
+      documenti: { documento_fronte_path: percorso },
     })
 
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({ documento_fronte_path: percorso })
 
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
@@ -1579,7 +2041,7 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
     h.registroCaricamenti.set(percorso, 'pratica-di-qualcun-altro')
     h.erroreProprietario = { code: '57014', message: 'statement timeout' }
 
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({ documento_fronte_path: percorso })
 
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
@@ -1587,6 +2049,60 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
     expect(nota?.livello).toBe('warn')
     expect(nota?.campi.error_code).toBe('57014')
     expect(JSON.stringify(h.eventi)).not.toContain('documenti/')
+  })
+
+  it('DUE righe vive per la stessa email (database senza indice) non riaprono il 400', async () => {
+    // ⚠️ IL CASO CHE `.maybeSingle()` NON SAPEVA REGGERE, ed è il motivo per cui non
+    // c'è più. La giustificazione scritta accanto a quella chiamata era: «l'indice
+    // `unique (lower(email)) where stato in (…)` garantisce al massimo una riga, quindi
+    // `.maybeSingle()` è esatto e non un'approssimazione». Vera in produzione, falsa
+    // proprio dove questa rotta si sforza di funzionare: su un database indietro con le
+    // migrazioni — quello per cui esiste tutto il ramo di degrado dell'INSERT —
+    // l'indice può non esserci. Due righe vive ⇒ PostgREST risponde `PGRST116`, il
+    // ramo d'errore torna `false`, e chi rimanda IL PROPRIO modulo si vede un 400 sul
+    // campo del documento: cioè il difetto che questa funzione esiste per chiudere,
+    // riaperto in un caso più stretto.
+    //
+    // Qui la seconda riga viva è quella che POSSIEDE il percorso: se la lettura si
+    // fermasse alla prima, l'eccezione non scatterebbe e la risposta tornerebbe 400.
+    const percorso = caricato()
+    h.registroCaricamenti.set(percorso, 'pratica-vecchia')
+    h.praticaPerEmail.set('ines.prova@example.invalid', {
+      id: 'pratica-senza-documento',
+      stato: 'pending',
+      documenti: {},
+    })
+    h.viveAggiuntive = [
+      {
+        email: 'ines.prova@example.invalid',
+        id: 'pratica-vecchia',
+        stato: 'pending',
+        documenti: { documento_fronte_path: percorso },
+      },
+    ]
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint' }
+    h.vivaPerEmail = {
+      id: 'pratica-vecchia',
+      email: 'ines.prova@example.invalid',
+      stato: 'pending',
+      scuola_id: SEDE_A,
+    }
+
+    const res = await inviaValida({ documento_fronte_path: percorso })
+
+    expect(
+      res.status,
+      'con due righe vive la ricerca del proprietario si è fermata alla prima: 400 sul ' +
+        'documento di chi non ha sbagliato niente',
+    ).toBe(201)
+    // E l'INSERT è stato TENTATO: se il 400 fosse tornato, la rotta sarebbe uscita
+    // prima di scrivere, ed è la differenza fra «respinta» e «duplicata».
+    expect(h.inserts).toHaveLength(1)
+    expect(h.eventi.map((e) => e.campi.esito)).toContain('documento-path-della-propria-pratica')
+    // La lettura DICHIARA un tetto: senza, su un database senza indice sarebbe una
+    // scansione di tutte le pratiche vive con quella email.
+    expect(h.limitiChiesti, 'la lettura del proprietario non dichiara nessun tetto').not.toHaveLength(0)
+    expect(h.limitiChiesti[0]).toBeGreaterThanOrEqual(2)
   })
 
   it('se il `23505` NON scatta, le due righe che nominano lo stesso file si GRIDANO', async () => {
@@ -1597,13 +2113,13 @@ describe('POST /api/iscrizione/personale · lo STESSO modulo mandato due volte',
     // l'anagrafica di una persona vera), ma senza questa riga di log la si scoprirebbe
     // fra 90 giorni da un documento sparito.
     const percorso = caricato()
-    await inviaValida({ documento_path: percorso })
+    await inviaValida({ documento_fronte_path: percorso })
 
     h.inserts = []
     h.colpi.clear()
     h.eventi = []
     // Nessun `erroreInsert`: la scrittura RIESCE, cioè l'indice non ha morso.
-    const res = await inviaValida({ documento_path: percorso })
+    const res = await inviaValida({ documento_fronte_path: percorso })
 
     expect(res.status).toBe(201)
     const guasto = h.eventi.find(
@@ -1685,6 +2201,107 @@ describe('POST /api/iscrizione/personale · il database che non collabora', () =
     expect(degrado?.campi.error_code).toBe('PGRST204')
   })
 
+  /*
+   * ╔══════════════════════════════════════════════════════════════════════════╗
+   * ║  LA FACCIA DEL DOCUMENTO NON SI DEGRADA: 503, non un 201 senza scansione  ║
+   * ╚══════════════════════════════════════════════════════════════════════════╝
+   *
+   * ⚠️ QUI, FINO AL 13/08/2026, C'ERA IL TEST CHE CODIFICAVA LA PERDITA. Si chiamava
+   * «DUE colonne assenti ⇒ si ritenta finché la riga entra», asseriva `201` e
+   * `not.toHaveProperty('documento_fronte_path')`, e non chiedeva né un log `error` né
+   * la rinuncia al collegamento: cioè scriveva come esito ATTESO che una fotografia di
+   * carta d'identità finisse nel bucket senza nessuna riga che la nominasse.
+   *
+   * La catena, per intero, perché è la ragione per cui questi test esistono in questa
+   * forma:
+   *   1. il ciclo toglie `documento_fronte_path` e `documento_retro_path` e la riga entra;
+   *   2. al punto 10-bis `collegaCaricamenti` gira lo stesso: le righe di
+   *      `caricamenti_personale` prendono `pratica_id`;
+   *   3. `spazzaCaricamentiSospesi` filtra `pratica_id is null and anagrafica_utente_id
+   *      is null` → non le vede più;
+   *   4. `gdpr/retention-personale` scopre i file leggendo `documento_fronte_path` /
+   *      `documento_retro_path` DALLE RIGHE → in quella riga non ci sono.
+   * Risultato: un documento d'identità nel bucket, non spazzabile e non conservabile.
+   *
+   * La migrazione `20260812194501` prescriveva il contrario, e con queste parole: «la
+   * scansione si perde in silenzio, che è il modo peggiore di perderla… migrazione
+   * prima del codice = 503 per il tempo del deploy. È l'errore giusto: rumoroso e
+   * reversibile.»
+   */
+  const mancante = (colonna: string) => ({
+    code: 'PGRST204' as const,
+    message: `Could not find the '${colonna}' column of 'pratiche_personale' in the schema cache`,
+  })
+
+  it.each(['documento_fronte_path', 'documento_retro_path'])(
+    '`%s` assente ⇒ 503 rumoroso, e NESSUNA riga senza scansione',
+    async (colonna) => {
+      h.erroreInsert = mancante(colonna)
+      // La coda dice che se la rotta ritentasse, il ritento RIUSCIREBBE: senza questa
+      // riga un 503 potrebbe arrivare per il motivo sbagliato (un secondo errore), e
+      // il test sarebbe verde su un prodotto rotto in un altro modo.
+      h.erroriSuccessivi = [null]
+
+      const res = await inviaValida()
+
+      expect(
+        res.status,
+        'la rotta ha degradato una colonna che tiene un documento: 201 su una pratica senza scansione',
+      ).toBe(503)
+      expect((await res.json()).codice).toBe('PRATICHE_NON_DISPONIBILI')
+      // UN SOLO INSERT: non si ritenta senza la colonna. Se qui ce ne fossero due, la
+      // riga ridotta sarebbe nata e il 503 sarebbe una bugia.
+      expect(h.inserts, 'la riga è stata riscritta senza il documento').toHaveLength(1)
+      // E NESSUN COLLEGAMENTO: gli oggetti restano `pratica_id is null`, quindi
+      // `spazzaCaricamentiSospesi` li toglie dal bucket entro 24 ore. È il verso
+      // giusto in cui sbagliare — meglio una scansione da rifare che una scansione
+      // che nessuno può più né trovare né cancellare.
+      expect(
+        h.collegamenti,
+        'gli oggetti sono stati collegati a una pratica che non è nata: da lì non li vede più nessuno',
+      ).toHaveLength(0)
+      // Il log è di livello `error` (configurazione mancante = incidente, AGENTS §4),
+      // NOMINA la colonna e NOMINA la migrazione da applicare: senza quest'ultima, chi
+      // legge il log alle tre di notte sa che qualcosa manca e non sa cosa applicare.
+      const grido = h.eventi.find(
+        (e) => e.campi.esito === `colonna-documento-assente-${colonna}`,
+      )
+      expect(grido, 'nessuna riga di log dice perché il modulo ha smesso di ricevere').toBeTruthy()
+      expect(grido?.livello).toBe('error')
+      expect(String(grido?.campi.msg)).toContain('20260812194501')
+      // Nessun degrado silenzioso è stato registrato: `warn` + `colonna-assente-…` qui
+      // significherebbe che il ciclo ci ha provato lo stesso.
+      expect(
+        h.eventi.filter((e) => String(e.campi.esito).startsWith('colonna-assente-')),
+      ).toHaveLength(0)
+      // ⚠️ NEL LOG MAI IL PERCORSO: è la chiave che apre il documento di una persona.
+      expect(JSON.stringify(h.eventi)).not.toContain('documenti/')
+    },
+  )
+
+  it('la faccia assente vince sul tetto del ciclo: 503 anche DOPO un degrado legittimo', async () => {
+    // Il caso che un tetto messo davanti alla guardia avrebbe sbagliato: `consents_log`
+    // manca (degrado legittimo, un giro) e SUBITO DOPO manca il fronte. Con la guardia
+    // valutata dopo il tetto, il secondo errore uscirebbe dal ciclo per esaurimento e
+    // finirebbe nel ramo generico — **500 `PRATICA_NON_INVIATA`**, cioè un codice che
+    // invita a ritentare fra qualche minuto una cosa che non può riuscire, e nessuna
+    // riga che nomini la migrazione mancante.
+    h.erroreInsert = mancante('consents_log')
+    h.erroriSuccessivi = [mancante('documento_fronte_path'), null]
+
+    const res = await inviaValida()
+
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('PRATICHE_NON_DISPONIBILI')
+    // Due INSERT: quello di partenza e il ritento senza `consents_log`. Il terzo — la
+    // riga senza il documento — non esiste.
+    expect(h.inserts).toHaveLength(2)
+    expect(h.collegamenti).toHaveLength(0)
+    expect(
+      h.eventi.map((e) => e.campi.esito).filter((e) => String(e).includes('colonna')),
+    ).toEqual(['colonna-assente-consents_log', 'colonna-documento-assente-documento_fronte_path'])
+  })
+
   it('un messaggio di degrado irriconoscibile non fa cadere una colonna a caso', async () => {
     // Il nome si accetta SOLO se è davvero una colonna che stiamo scrivendo: un
     // messaggio che cambia forma non deve poter togliere `fiscal_code` dalla riga.
@@ -1693,6 +2310,33 @@ describe('POST /api/iscrizione/personale · il database che non collabora', () =
     expect(h.inserts).toHaveLength(2)
     expect(h.inserts[1]).not.toHaveProperty('consents_log')
     expect(h.inserts[1]).toHaveProperty('fiscal_code')
+  })
+
+  it('un database che dice sempre «colonna assente» non fa martellare il ciclo', async () => {
+    // ⚠️ È IL PREZZO DEL CICLO, e va misurato: un `while` che ritenta finché il
+    // database si lamenta, davanti a un `PGRST204` che non sappiamo leggere,
+    // rifarebbe l'INSERT una volta per colonna della riga — su una porta ANONIMA, cioè
+    // un amplificatore che chiunque può innescare con un modulo compilato bene.
+    //
+    // Il ciclo si ferma per due ragioni, e questo test le tiene ferme entrambe: il
+    // tetto (le colonne che un database indietro può legittimamente non avere) e la
+    // guardia sulla colonna già caduta — senza la seconda, un messaggio
+    // irriconoscibile due volte di fila rifarebbe lo STESSO INSERT identico.
+    const opaco = { code: 'PGRST204' as const, message: 'un messaggio che non sappiamo leggere' }
+    h.erroreInsert = opaco
+    h.erroriSuccessivi = [opaco, opaco, opaco, opaco, opaco]
+
+    const res = await inviaValida()
+
+    // Un solo giro: cade `consents_log` (il ripiego), poi il ripiego non è più nella
+    // riga e si smette. Il 500 è l'esito onesto — il database è rotto in un modo che
+    // questa rotta non sa aggirare — e chi ha compilato legge «non siamo riusciti».
+    expect(h.inserts, 'il ciclo ha continuato a ritentare su un errore che non sa leggere').toHaveLength(2)
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('PRATICA_NON_INVIATA')
+    // La coda degli errori non è stata consumata: è la prova che i giri sono finiti
+    // prima, e non che il finto ha smesso di rispondere.
+    expect(h.erroriSuccessivi).toHaveLength(4)
   })
 })
 

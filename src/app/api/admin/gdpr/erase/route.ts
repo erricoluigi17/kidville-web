@@ -6,7 +6,9 @@ import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { confermaValida } from '@/lib/gdpr/anonimizza'
 import { anonimizzaAlunno, anonimizzaParent } from '@/lib/gdpr/esegui'
-import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
+import { contaCosaDistrugge } from '@/lib/gdpr/cosa-distrugge'
+import { leggiAltriFigliIscritti } from '@/lib/gdpr/orfano'
+import { eNonPiuIscritto, STATO_RITIRATO } from '@/lib/alunni/stato'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -92,10 +94,44 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id)
     if (fuoriScope) return fuoriScope
 
-    // Si cancella SOLO un alunno non iscritto (diritto all'oblio post-uscita).
-    if (alunno.stato === 'iscritto') {
+    // Si cancella SOLO un alunno non più iscritto (diritto all'oblio post-uscita).
+    //
+    // Il permesso arriva da un ELENCO (`STATI_NON_PIU_ISCRITTO`), non dalla
+    // negazione `stato === 'iscritto'` che stava qui fino al 2026-08-12: quella
+    // lasciava passare `sospeso` — un bambino iscritto a tutti gli effetti — e
+    // ogni stato che qualcuno avrebbe aggiunto in futuro alla tendina. La colonna
+    // non ha vincolo `CHECK` e la PATCH admin la valida con `z.unknown()`: senza
+    // elenco chiuso, un refuso nello stato autorizzava un'anonimizzazione
+    // irreversibile. Rifiutare un oblio si ripete; eseguirlo per sbaglio no.
+    if (!eNonPiuIscritto(alunno.stato)) {
+      // Il rifiuto LASCIA TRACCIA, e con `tipo` si sa da QUALE stato è stato
+      // rifiutato, senza doverlo indovinare. `tipo` è nella lista bianca della
+      // redazione e `alunni.stato` non è un dato personale: è un valore fra
+      // pochi, non un testo scritto da qualcuno.
+      //
+      // ⚠️ MA QUESTA PORTA È QUASI SEMPRE CHIUSA, e prima qui c'era scritto il
+      // contrario («è il solo modo in cui l'elenco chiuso può crescere quando
+      // serve davvero»). Misurato: `OblioPanel` prende la lista da
+      // `gdpr/candidates` e manda a `erase` solo gli `id` di QUELLA lista, cioè
+      // solo alunni che l'allowlist ha già ammesso — dall'interfaccia questo 409
+      // non si raggiunge. Il punto in cui un bambino sparisce in silenzio è
+      // l'elenco, ed è lì che ora si logga (`candidates`, `esito:
+      // 'candidati-esclusi-fuori-elenco'`). Questa riga resta perché la route è
+      // chiamabile anche fuori dal pannello, e un rifiuto non deve mai essere muto.
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'oblio-rifiutato-ancora-iscritto',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: alunno.stato ?? 'assente',
+      })
+      // Il messaggio dice lo stato CHE SERVE, non quello che basterebbe: dopo il
+      // passaggio all'elenco chiuso «alunni non iscritti» era diventato
+      // ingannevole, perché un bambino `trasferito` non è iscritto e veniva
+      // comunque rifiutato — e chi leggeva non aveva modo di capire che cosa
+      // fare. Un rifiuto che non dice come si sblocca è un rifiuto che torna.
       return NextResponse.json(
-        { error: 'Operazione consentita solo su alunni non iscritti' },
+        { error: `Operazione consentita solo su alunni con stato «${STATO_RITIRATO}»` },
         { status: 409 }
       )
     }
@@ -121,10 +157,23 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     const parentIds = (links ?? []).map((l: { parent_id: string }) => l.parent_id)
 
     // Genitori "orfani" (nessun altro figlio iscritto) → anonimizzabili.
+    //
+    // ⚠️ IL GUASTO DI LETTURA SI FERMA QUI COME SI FERMA DODICI RIGHE SOPRA, e
+    // per la stessa ragione detta in un verso peggiore: se la lettura dei
+    // fratelli fallisce, «nessun altro figlio» e «non sono riuscito a chiederlo»
+    // sono la stessa risposta — e la prima manda all'anonimizzazione
+    // irreversibile un adulto il cui bambino frequenta ancora.
+    // `leggiAltriFigliIscritti` non ritorna più un booleano proprio per rendere
+    // impossibile la confusione: senza guardare `ok` non si arriva a
+    // `haAltriFigli`.
     const parentiOrfani: string[] = []
     for (const pid of parentIds) {
-      const altri = await parentHaAltriFigliIscritti(supabase, pid, alunno_id)
-      if (!altri) parentiOrfani.push(pid)
+      const esito = await leggiAltriFigliIscritti(supabase, pid, alunno_id)
+      if (!esito.ok) {
+        logErrore({ operazione: OP, stato: 500, evento: 'db' }, esito.errore)
+        return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_ERASE_NON_RIUSCITO' }, { status: 500 })
+      }
+      if (!esito.haAltriFigli) parentiOrfani.push(pid)
     }
 
     if (mode === 'dryrun') {
@@ -152,12 +201,27 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         ...docOrfani,
       ].filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
 
+      // ⚠️ E QUI IL DRY-RUN SMETTE DI DIRE SOLO «file da rimuovere: N».
+      //
+      // Quel numero c'è ancora — sono i documenti d'identità in `form_attachments`
+      // — ma da solo faceva confermare un'operazione IRREVERSIBILE senza dire che
+      // se ne vanno le PAGELLE del bambino e i suoi CERTIFICATI MEDICI. Non erano
+      // nascosti: semplicemente non erano scritti in nessun punto che un operatore
+      // potesse leggere prima di digitare il nominativo.
+      //
+      // `contaCosaDistrugge` fa SOLE `SELECT`: siamo prima della conferma, su
+      // un'operazione che non ha un annulla. E dove non riesce a leggere risponde
+      // `null`, non `0`: un dry-run che rassicura su un numero mai misurato è
+      // peggio di un dry-run che ammette di non sapere.
+      const conteggi = await contaCosaDistrugge(supabase, alunno_id, OP)
+
       return NextResponse.json({
         dryrun: true,
         alunno: 1,
         parents: parentiOrfani.length,
         parents_non_anonimizzati: parentIds.length - parentiOrfani.length,
         file_da_rimuovere: fileAnagrafica.length,
+        ...conteggi,
         nominativo_conferma: `${(alunno.cognome ?? '').trim()} ${(alunno.nome ?? '').trim()}`.trim().toUpperCase(),
       })
     }

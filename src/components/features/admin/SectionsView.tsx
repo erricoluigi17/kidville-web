@@ -78,7 +78,7 @@ export function SectionsView() {
 
             const perScuola = await Promise.all(
                 groups.map(async (g) => {
-                    const r = await fetch(`/api/admin/students?scuola_id=${g.scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).catch(() => null);
+                    const r = await fetch(`/api/admin/students?stato=iscritto&scuola_id=${g.scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`).catch(() => null);
                     const d = r?.ok ? await r.json().catch(() => null) : null;
                     return Array.isArray(d) ? (d as Student[]) : [];
                 })

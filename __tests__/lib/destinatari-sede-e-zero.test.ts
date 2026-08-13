@@ -53,8 +53,11 @@ const RUOLI = ['admin', 'coordinator', 'segreteria']
 function dbConDueSedi(): DBFinto {
   return {
     alunni: [
-      { id: 'al-a', classe_sezione: '2 ANNI', scuola_id: SEDE_A },
-      { id: 'al-b', classe_sezione: '2 ANNI', scuola_id: SEDE_B },
+      // `stato` esplicito: dal 2026-08-12 i due risolutori leggono i soli
+      // iscritti, e una fixture che tacesse lo stato descriverebbe due bambini
+      // che nessun avviso raggiunge — cioè non il caso in esame.
+      { id: 'al-a', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'iscritto' },
+      { id: 'al-b', classe_sezione: '2 ANNI', scuola_id: SEDE_B, stato: 'iscritto' },
     ],
     utenti: [
       { id: 'segr-a', ruolo: 'segreteria', role: 'segreteria', scuola_id: SEDE_A },
@@ -127,6 +130,37 @@ describe('genitoriDiClassi — scope vuoto ⇒ nega', () => {
     expect(logDi('sede-non-risolta')).toBeUndefined()
   })
 
+  it('un ARCHIVIATO nella classe non entra fra i destinatari (2026-08-12)', async () => {
+    // La strada normale dell'archiviazione stacca il bambino dalla classe, e
+    // allora questa query non lo vedrebbe comunque. Qui si prova l'ALTRA strada,
+    // quella che restava scoperta: `stato` portato a `'ritirato'` dalla tendina
+    // della scheda alunno, che `classe_sezione` non la tocca. Senza il filtro di
+    // stato quel bambino resta agganciato alla sezione e la sua famiglia continua
+    // a ricevere gli avvisi di classe.
+    const db = dbConDueSedi()
+    db.alunni.push({ id: 'al-a-rit', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'ritirato' })
+    const out = await genitoriDiClassi(creaFintoSupabase(db), SEDE_A, ['2 ANNI'])
+    expect(out).toEqual(['gen-al-a'])
+    expect(out).not.toContain('gen-al-a-rit')
+  })
+
+  it('un SOSPESO nella classe RESTA fra i destinatari: frequenta (2026-08-13)', async () => {
+    // ⚠️ QUESTO TEST È LA DECISIONE, non il suo commento. Fino al 2026-08-13 i
+    // filtri erano `.eq('stato', STATO_ISCRITTO)` in senso stretto: escludevano
+    // `'sospeso'`, che `LATO_DEL_CONFINE` classifica «ancora-iscritto». Nessuna
+    // asserzione ne parlava, quindi la scelta viveva in due paragrafi di prosa e
+    // si poteva ribaltare senza far diventare rosso niente.
+    //
+    // Il confine è ora `STATI_CON_CANALE_FAMIGLIA`, derivato dallo STESSO
+    // `LATO_DEL_CONFINE` che protegge dall'oblio: un bambino che il modulo
+    // dichiara «a scuola» non può essere irraggiungibile dai canali del prodotto
+    // e insieme protetto dall'anonimizzazione. Un confine solo, non due.
+    const db = dbConDueSedi()
+    db.alunni.push({ id: 'al-a-sos', classe_sezione: '2 ANNI', scuola_id: SEDE_A, stato: 'sospeso' })
+    const out = await genitoriDiClassi(creaFintoSupabase(db), SEDE_A, ['2 ANNI'])
+    expect([...out].sort()).toEqual(['gen-al-a', 'gen-al-a-sos'])
+  })
+
   it('query fallita ⇒ [] + error: una lettura rotta non si traveste da «zero destinatari»', async () => {
     const out = await genitoriDiClassi(
       creaFintoSupabase(dbConDueSedi(), [], { errori: { alunni: { code: '42703' } } }),
@@ -149,6 +183,47 @@ describe('genitoriDiScuola — la gemella, stessa semantica', () => {
     const out = await genitoriDiScuola(creaFintoSupabase(dbConDueSedi()), null)
     expect(out).toEqual([])
     expect(logDi('sede-non-risolta')?.[1]).toBe('warn')
+  })
+
+  it('un ARCHIVIATO della sede non riceve gli avvisi di plesso (2026-08-12)', async () => {
+    // È il difetto per cui il filtro è nato. Questa query la CLASSE non la nomina
+    // proprio, quindi lo sganciamento — la leva su cui l'archiviazione si regge —
+    // qui non arriva: senza `.eq('stato', …)` un avviso «a tutta la sede» sarebbe
+    // continuato ad arrivare per sempre ai genitori di chi non frequenta più.
+    const db = dbConDueSedi()
+    db.alunni.push({ id: 'al-b-rit', classe_sezione: null, scuola_id: SEDE_B, stato: 'ritirato' })
+    const out = await genitoriDiScuola(creaFintoSupabase(db), SEDE_B)
+    expect(out).toEqual(['gen-al-b'])
+  })
+
+  it('un SOSPESO della sede RICEVE gli avvisi di plesso (2026-08-13)', async () => {
+    // La gemella del test di `genitoriDiClassi`: la stessa decisione presa una
+    // volta sola in `STATI_CON_CANALE_FAMIGLIA` deve valere su tutte e tre le
+    // strade, altrimenti «un posto solo» è di nuovo una frase e non un fatto.
+    const db = dbConDueSedi()
+    db.alunni.push({ id: 'al-b-sos', classe_sezione: null, scuola_id: SEDE_B, stato: 'sospeso' })
+    const out = await genitoriDiScuola(creaFintoSupabase(db), SEDE_B)
+    expect([...out].sort()).toEqual(['gen-al-b', 'gen-al-b-sos'])
+  })
+
+  it('⚠️ lo stato NULL ESCLUDE, e il test è qui per dirlo invece di farlo scoprire', async () => {
+    // Questo NON è il comportamento desiderabile: è quello vero, e va nominato.
+    // `alunni.stato` è `nullable` con `DEFAULT 'iscritto'` (misurato su
+    // `information_schema` il 2026-08-12), e in SQL `NULL = 'iscritto'` non è
+    // vero: una riga con lo stato vuoto non torna da questa query, quindi la sua
+    // famiglia non riceverebbe gli avvisi di plesso. Il `DEFAULT` protegge gli
+    // INSERT, non un `UPDATE ... SET stato = NULL` — e la PATCH di
+    // `admin/students` valida quel campo con `z.unknown()`.
+    //
+    // Perché si lascia così: oggi in produzione le righe con stato NULL sono
+    // ZERO (33 alunni, tutti `iscritto`, misurato lo stesso giorno), e nella
+    // direzione «chi riceve una comunicazione» un elenco che sbaglia per difetto
+    // è meno grave di uno che scrive alla famiglia di un bambino archiviato.
+    // Se un giorno comparissero righe NULL, la riparazione è qui e in
+    // `genitoriDiClassi`: `.or('stato.eq.iscritto,stato.is.null')`.
+    const db = dbConDueSedi()
+    db.alunni = [{ id: 'al-muto', classe_sezione: '2 ANNI', scuola_id: SEDE_A }]
+    expect(await genitoriDiScuola(creaFintoSupabase(db), SEDE_A)).toEqual([])
   })
 
   it('query fallita ⇒ [] + error', async () => {

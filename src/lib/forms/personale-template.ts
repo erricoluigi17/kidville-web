@@ -60,10 +60,10 @@ import { GRADI_OPTIONS, TITOLI_STUDIO } from '@/lib/forms/insegnanti-template'
  *   2. la pratica NON è un account e NON è l'anagrafica: vive in
  *      `pratiche_personale`, RLS senza policy, e non produce niente finché una
  *      persona non la riconosce;
- *   3. le pratiche non approvate si cancellano a 90 giorni, scansione compresa;
- *   4. la scansione va nel bucket privato `documenti_personale`, separato da
- *      `form_attachments` (che custodisce i documenti dei minori), e il NOME del
- *      file non si conserva;
+ *   3. le pratiche non approvate si cancellano a 90 giorni, scansioni comprese;
+ *   4. le scansioni — dal 12/08/2026 sono DUE, fronte e retro — vanno nel bucket
+ *      privato `documenti_personale`, separato da `form_attachments` (che custodisce
+ *      i documenti dei minori), e il NOME dei file non si conserva;
  *   5. i campi vietati qui sotto non si aggiungono mai (`CAMPI_VIETATI`);
  *   6. ogni invio avvisa la Segreteria della sede, così una pratica falsa si vede
  *      il giorno stesso;
@@ -95,7 +95,17 @@ const CAP_PATTERN = '^[0-9]{5}$'
  * perché `validateField` vuole un `pattern` testuale.
  *
  * Ed è la stessa forma del CHECK in tabella (migrazione `20260811205643`): tre
- * dichiarazioni che devono coincidere, e `personale-template.test.ts` le confronta.
+ * dichiarazioni che devono coincidere, e `__tests__/lib/personale-template.test.ts` le
+ * confronta — la stringa contro il CHECK (due volte: `pratiche_personale` e
+ * `anagrafica_personale`), il VERDETTO contro `FORMA_CF`, perché le due `source`
+ * DEVONO differire sulle minuscole e confrontarle sarebbe il lock sbagliato.
+ *
+ * ⚠️ QUELLA CITAZIONE È DIVENTATA VERA IL 12/08/2026, e fino a quel giorno non lo era:
+ * il file non esisteva (`find __tests__ -name "*personale-template*"` → nessun
+ * risultato). Vale la pena saperlo perché è la seconda volta che questo template
+ * nomina al presente un collaudo mai scritto — l'altra sta sopra `CAMPI_VIETATI` — e
+ * in questo repo un documento che descrive una protezione che non c'è è peggio di
+ * nessun documento.
  */
 const CF_PATTERN =
   '^[A-Z]{6}[0-9LMNPQRSTUV]{2}[ABCDEHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$'
@@ -118,11 +128,11 @@ export const TIPI_DOCUMENTO: FormFieldOption[] = [
  * INTERPOLA questi numeri invece di ribatterli.
  */
 export const PERSONALE_LIMITI = {
-  /** Tetto della scansione, in MB: il tetto della PIATTAFORMA, non una scelta. */
+  /** Tetto di OGNI scansione, in MB: il tetto della PIATTAFORMA, non una scelta. */
   maxDocMb: LIMITE_UPLOAD_MB,
-  /** Giorni di conservazione di una pratica NON approvata (scansione compresa). */
+  /** Giorni di conservazione di una pratica NON approvata (scansioni comprese). */
   giorniPraticaNonApprovata: 90,
-  /** Mesi di conservazione della SCANSIONE dopo la cessazione del rapporto. */
+  /** Mesi di conservazione delle SCANSIONI dopo la cessazione del rapporto. */
   mesiDocumentoDopoCessazione: 12,
   /** Anni di conservazione del fascicolo anagrafico dopo la cessazione. */
   anniFascicoloDopoCessazione: 10,
@@ -211,13 +221,38 @@ export const PERSONALE_FIELDS: FormField[] = [
   // è esattamente la persona per cui questo modulo esiste, e respingerla lascerebbe
   // la Segreteria senza nemmeno il nome. Il modulo lo segnala in rosso e va avanti.
   { id: 'document_expiry', type: 'date', label: 'Scadenza del documento', required: true, db_mapping: 'pratiche_personale.document_expiry' },
-  // L'`accept` è ESATTAMENTE `ESTENSIONI_ALLEGATO_PUBBLICO` (@/lib/upload/allegati-pubblici),
-  // e `personale-template.test.ts` lo confronta con quella costante: ribatterlo è il
-  // modo in cui le due liste divergono in silenzio. Non è importato perché quel
-  // modulo tira dentro `next/server`, e questo template lo carica anche il browser.
-  // `.heic` è in elenco perché è ciò che produce un iPhone fotografando una carta
-  // d'identità, cioè il modo in cui questo allegato arriverà quasi sempre.
-  { id: 'documento_path', type: 'file', label: 'Scansione o foto del documento', required: true, db_mapping: 'pratiche_personale.documento_path', accept: '.pdf,.jpg,.jpeg,.png,.webp,.heic', max_size_mb: PERSONALE_LIMITI.maxDocMb },
+  // ── LE DUE FACCE DEL DOCUMENTO ──────────────────────────────────────────────
+  //
+  // Fino al 12/08/2026 qui c'era UN campo solo (`documento_path`). Le due colonne
+  // sono `documento_fronte_path` e `documento_retro_path` dalla migrazione
+  // `20260812194501`: l'`id` di un campo di questo template **è** il nome della
+  // colonna, quindi rinominare è l'unico modo di non avere un'etichetta che mente.
+  //
+  // ⚠️ IL RETRO È OBBLIGATORIO PER TUTTI E TRE I TIPI (CI · PP · DL), e NON è una
+  // svista da raffinare con un «obbligatorio solo se CI o DL».
+  //
+  //  · **La ragione tecnica, che è la prima.** Una regola condizionale vivrebbe in
+  //    TRE posti: il client che valida il passo, il server che ri-valida il corpo, e
+  //    questo template che dichiara `required`. Tre copie della stessa regola
+  //    divergono alla prima modifica — è già successo in questo repo sul tetto degli
+  //    invii orari, ribattuto in due file — e a divergere sarebbe la differenza fra
+  //    un modulo che si può compilare e uno che il server rifiuta per sempre.
+  //  · **La ragione di merito, che la rende anche giusta.** Sul passaporto il retro
+  //    è la PAGINA DEI DATI; sulla carta d'identità cartacea è dove stanno residenza
+  //    e firma; sulla patente sono le categorie. Non esiste il tipo di documento a
+  //    cui la seconda faccia non serva.
+  //  · **Il conto di chi compila.** Due foto invece di una costano trenta secondi a
+  //    chi ha il documento in mano; una faccia mancante costa alla Segreteria una
+  //    telefonata a una persona che credeva di aver finito.
+  //
+  // L'`accept` è ESATTAMENTE `ESTENSIONI_ALLEGATO_PUBBLICO` (@/lib/upload/allegati-pubblici)
+  // e vale IDENTICO per le due facce: due liste diverse per lo stesso documento
+  // sarebbero un fronte accettato e un retro respinto dallo stesso telefono. Non è
+  // importato perché quel modulo tira dentro `next/server`, e questo template lo
+  // carica anche il browser. `.heic` è in elenco perché è ciò che produce un iPhone
+  // fotografando una carta d'identità, cioè il modo in cui arriveranno quasi sempre.
+  { id: 'documento_fronte_path', type: 'file', label: 'Fronte del documento (foto o scansione)', required: true, db_mapping: 'pratiche_personale.documento_fronte_path', accept: '.pdf,.jpg,.jpeg,.png,.webp,.heic', max_size_mb: PERSONALE_LIMITI.maxDocMb },
+  { id: 'documento_retro_path', type: 'file', label: 'Retro del documento', required: true, db_mapping: 'pratiche_personale.documento_retro_path', accept: '.pdf,.jpg,.jpeg,.png,.webp,.heic', max_size_mb: PERSONALE_LIMITI.maxDocMb },
 
   // ── Profilo professionale ───────────────────────────────────────────────────
   { id: 'titolo_studio', type: 'select', label: 'Titolo di studio', required: true, db_mapping: 'pratiche_personale.titolo_studio', options: TITOLI_STUDIO },
@@ -241,9 +276,20 @@ export const PERSONALE_FIELDS: FormField[] = [
 
 /**
  * I campi che NON si chiedono, e che non si aggiungono nemmeno «perché sarebbe
- * comodo averli». `personale-template.test.ts` confronta questa lista con gli `id` e
- * i `db_mapping` di `PERSONALE_FIELDS`: chi ne aggiunge uno lo scopre il giorno in
- * cui lo aggiunge, non sei mesi dopo.
+ * comodo averli». `__tests__/lib/personale-template.test.ts` confronta questa lista con
+ * gli `id`, i `db_mapping` e gli id dei consensi di `PERSONALE_FIELDS`: chi ne aggiunge
+ * uno lo scopre il giorno in cui lo aggiunge, non sei mesi dopo.
+ *
+ * ⚠️ IL CONFRONTO È PER RADICE (`includes`), NON PER NOME ESATTO, ed è il motivo per cui
+ * le voci qui sotto sono tronche (`allerg`, `contratto`): nessuno aggiunge una colonna
+ * che si chiama `iban` e basta — si aggiunge `iban_accredito`, ed è così che un campo
+ * vietato entra davvero. Provato con una mutazione il 12/08/2026: inserito
+ * `iban_accredito` nel template, due prove diventano rosse e lo nominano.
+ *
+ * ⚠️ E FINO AL 12/08/2026 QUESTO PARAGRAFO DICEVA IL FALSO: il collaudo che cita non
+ * esisteva (`grep -rn CAMPI_VIETATI __tests__/` → nessun risultato), cioè il presidio su
+ * IBAN, firma autografa e dati sanitari del modulo del PERSONALE era dichiarato e mai
+ * scritto. È stato scritto quel giorno, insieme ai due campi delle facce del documento.
  *
  * Le ragioni, che sono diverse fra loro e vanno lette una per una:
  *
@@ -371,6 +417,12 @@ export const CONSENSI_PERSONALE_FIELDS: FormField[] = [
     // file precedente resterà nel bucket senza più nessuna riga che lo nomini, e
     // `retention-personale` non lo troverà mai: una fotografia di carta d'identità
     // conservata per sempre e irrintracciabile.
+    // ⚠️ NOTA DI LETTURA (12/08/2026): la colonna misurata quel giorno si chiamava
+    // `documento_path` e oggi si chiama `documento_fronte_path`, con una sorella
+    // `documento_retro_path` (migrazione `20260812194501`). Chi rifà la misura cerchi
+    // i due nomi nuovi. Il ragionamento non cambia — vale identico per due file invece
+    // che per uno — ma il conto sì: un percorso sovrascritto senza cancellare lascia
+    // adesso DUE fotografie orfane, non una.
     // Qui pesa il doppio che in `/privacy`: questo testo viene CONGELATO in
     // `pratiche_personale.consents_log` e resta la prova, fra dieci anni, di ciò che
     // alla persona è stato dichiarato. Una promessa non mantenuta è un documento
@@ -384,6 +436,20 @@ export const CONSENSI_PERSONALE_FIELDS: FormField[] = [
     // decidere: da quel momento la versione va alzata.
     // Il divieto di rimetterla senza il meccanismo non è affidato alla memoria: la
     // prova sta in `__tests__/api/gdpr-retention-personale.test.ts`.
+    //
+    // ⚠️ IL TESTO PARLA DI «LA COPIA» AL SINGOLARE, E DAL 12/08/2026 LE COPIE SONO DUE
+    // (fronte e retro). NON è stato riscritto, e la ragione è la query che quel
+    // paragrafo qui sopra ordina di rifare invece di fidarsi della data:
+    //     select count(*) from pratiche_personale;  → 1  (misurato il 12/08/2026)
+    //     …di cui con `consents_log` valorizzato    → 1
+    // Cioè una presa visione è GIÀ ARCHIVIATA con questa formulazione e con la
+    // versione `2026-08-11`: toccare il testo adesso obbliga ad alzare
+    // `CONSENSI_PERSONALE_VERSIONE`, altrimenti due formulazioni diverse restano
+    // indistinguibili in `consents_log` — che è esattamente ciò che la versione esiste
+    // per impedire. Nel merito la promessa regge: ciò che è dichiarato — finalità,
+    // conservazione separata, i due termini di cancellazione — vale identico per due
+    // immagini dello stesso documento, e il cron le tratta insieme. Chi lo riscriverà
+    // («la copia» → «le copie») lo faccia in un lavoro suo, alzando la versione.
     text:
       'Ho letto perché mi viene chiesta la copia del documento d’identità: serve a identificarmi ' +
       'per gli adempimenti obbligatori del datore di lavoro. La copia è conservata separatamente ' +

@@ -66,7 +66,7 @@ describe('Dettaglio sezione — l\'elenco è quello della classe, non degli omon
     render(<SezioneDetailPage />)
     await waitFor(() => expect(screen.getByText('Rossi Ada')).toBeInTheDocument())
     expect(fetchMock.mock.calls.map((c) => String(c[0])))
-      .toContain(`/api/admin/students?scuola_id=${SEDE_A}&limit=1000`)
+      .toContain(`/api/admin/students?stato=iscritto&scuola_id=${SEDE_A}&limit=1000`)
   })
 
   it('chi è assegnato a un\'ALTRA sezione non compare, anche se il nome-classe coincide', async () => {

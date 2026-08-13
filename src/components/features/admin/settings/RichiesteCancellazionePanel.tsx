@@ -5,11 +5,29 @@ import { useTranslations } from 'next-intl';
 import { Loader2, UserX, Trash2, AlertTriangle, MailWarning } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { AvvisoOblio, type ContiOblio, type StatoMisuraOblio } from './AvvisoOblio';
 
 // Pannello «Richieste di cancellazione account» (App Store 5.1.1(v) + GDPR art. 17).
 // Il genitore avvia la richiesta dall'app; qui la Direzione la evade: anonimizza il
 // genitore e i figli NON iscritti (gli iscritti restano, scuola titolare). Riservato
 // alla Direzione dal gate server; l'anonimizzazione è IRREVERSIBILE (audit preservato).
+//
+// ─── QUESTO PANNELLO CONFERMAVA ALLA CIECA, E ERA IL PIÙ PERICOLOSO DEI DUE ──
+//
+// Fino al 2026-08-13 il dry-run mostrava quattro conteggi — genitore, figli non
+// iscritti, figli mantenuti, figli fuori scope — e nemmeno una parola su ciò che
+// l'operazione DISTRUGGE: pagelle, certificati medici, foto, allegati di chat,
+// PDF delle credenziali. Il commento della route lo diceva («qui l'oblio è in
+// BLOCCO e la Direzione conferma vedendo dei CONTEGGI»), ma un commento non lo
+// legge chi digita ANONIMIZZA.
+//
+// È il canale che evade la richiesta VERA di una famiglia, e agisce su PIÙ
+// bambini con una conferma sola: se un avviso serviva da qualche parte, serviva
+// prima qui. Nello stesso rilascio in cui `OblioPanel` riceveva il suo, questo
+// pannello — sulla stessa pagina, dieci pixel più su — restava com'era; e
+// l'operatore che confermava qui poteva leggere sotto, nel riquadro dell'altro
+// pannello, dei numeri che appartenevano a un bambino diverso. Adesso il
+// riquadro è lo stesso componente, ma alimentato dal dry-run di QUESTA richiesta.
 const CONFERMA = 'ANONIMIZZA';
 
 interface Richiesta {
@@ -22,7 +40,7 @@ interface Richiesta {
   alunni_fuori_scope?: number;
 }
 
-interface DryRun {
+interface DryRun extends ContiOblio {
   parent: number;
   alunni_non_iscritti: number;
   alunni_iscritti_mantenuti: number;
@@ -35,6 +53,9 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState<Richiesta | null>(null);
   const [dry, setDry] = useState<DryRun | null>(null);
+  // Vale come GATE della conferma, esattamente come in `OblioPanel`: finché la
+  // misura non è `ok` il bottone rosso resta spento.
+  const [misura, setMisura] = useState<StatoMisuraOblio>('assente');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -52,18 +73,35 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const apri = async (r: Richiesta) => {
-    setTarget(r);
-    setConfirm('');
+  // Una misura fallita non è una misura a zero: il riquadro lo dice e il bottone
+  // resta spento. Stessa regola dell'altro canale, per la stessa ragione — con
+  // l'aggravante che qui l'operazione tocca più bambini in un colpo solo.
+  //
+  // Nessun `logClient` qui: il patch di `fetch` di `installaLoggerClient` logga
+  // già ogni `!res.ok` con la politica dei livelli in un posto solo. Quello che
+  // il log non sa fare è fermare la conferma, ed è ciò che si aggiunge.
+  const misuraDi = useCallback(async (r: Richiesta) => {
     setDry(null);
+    setMisura('in-corso');
     setBusy(true);
     try {
       const res = await fetch('/api/admin/gdpr/richieste', { method: 'POST', headers: hdr, body: JSON.stringify({ id: r.id, mode: 'dryrun' }) });
-      const j = await res.json();
-      if (res.ok) setDry(j);
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j || typeof j !== 'object') { setMisura('fallita'); return; }
+      setDry(j);
+      setMisura('ok');
+    } catch {
+      setMisura('fallita');
     } finally {
       setBusy(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  const apri = async (r: Richiesta) => {
+    setTarget(r);
+    setConfirm('');
+    await misuraDi(r);
   };
 
   const esegui = async () => {
@@ -74,6 +112,7 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
       const j = await res.json();
       if (!res.ok) { alert(messaggioDaCorpo(j, t('errore'))); return; }
       setTarget(null);
+      setMisura('assente');
       await load();
     } finally {
       setBusy(false);
@@ -96,6 +135,18 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
           {t.rich('richiesteBanner', { strong: (c) => <strong>{c}</strong> })}
         </p>
       </div>
+
+      {/* CHE COSA SI DISTRUGGE, DETTO PRIMA — e qui su TUTTI i figli non più
+          iscritti insieme, perché è quello che fa una conferma sola. I conteggi
+          sono la somma dei loro: se anche uno solo non è misurabile il totale
+          non esiste e si legge «non misurato», perché un totale parziale
+          dall'aria misurata è la conferma inventata che questo riquadro abolisce. */}
+      <AvvisoOblio
+        stato={misura}
+        conti={dry}
+        genitoriAnonimizzati={dry ? dry.parent : null}
+        onRiprova={target ? () => { void misuraDi(target); } : undefined}
+      />
 
       {list.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
@@ -137,7 +188,7 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
                   {t.rich('richiesteAvviso', { nome: target.parent_nome, strong: (c) => <strong>{c}</strong> })}
                 </p>
 
-                {busy && !dry ? (
+                {misura === 'in-corso' ? (
                   <div className="flex items-center gap-2 py-3 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={14} /> {t('richiesteDryRun')}</div>
                 ) : dry ? (
                   <div className="mb-4 space-y-1 rounded-xl bg-kidville-cream p-3.5 font-maven text-xs text-kidville-ink/80">
@@ -165,9 +216,12 @@ export function RichiesteCancellazionePanel({ userId }: { userId: string }) {
                 />
 
                 <div className="flex justify-end gap-3">
-                  <button onClick={() => setTarget(null)} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                  <button onClick={() => { setTarget(null); setMisura('assente'); }} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">{t('annulla')}</button>
+                  {/* `misura !== 'ok'` è il GATE: qui l'oblio è in BLOCCO su più
+                      bambini, e una parola digitata non può valere più dei
+                      numeri che nessuno ha potuto leggere. */}
                   <button
-                    disabled={busy || confirm.trim().toUpperCase() !== CONFERMA}
+                    disabled={busy || confirm.trim().toUpperCase() !== CONFERMA || misura !== 'ok'}
                     onClick={esegui}
                     className="rounded-pill bg-kidville-error px-5 py-2 font-barlow text-sm font-black uppercase tracking-wider text-kidville-white hover:opacity-90 disabled:opacity-50"
                   >

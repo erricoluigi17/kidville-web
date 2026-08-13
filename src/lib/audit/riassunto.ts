@@ -57,8 +57,16 @@ const CAMPI_RIDOTTI = new Set(
     // categorie particolari (art. 9): salute
     'allergies', 'allergie', 'allergeni', 'note_mediche', 'note_bes', 'bes',
     'is_bes_dsa', 'diagnosi', 'certificato', 'terapia', 'patologie',
-    // documenti d'identità
-    'documento_path', 'document_number', 'document_type', 'documento',
+    // documenti d'identità — il PERCORSO è la chiave che apre la scansione.
+    // ⚠️ Tre nomi e non uno, perché il rinomino del 12/08/2026 (`20260812194501`)
+    // ha toccato DUE tabelle su quattro: `pratiche_personale` e
+    // `anagrafica_personale` hanno ora `documento_fronte_path`/`documento_retro_path`,
+    // mentre `alunni` e `parents` — cioè i MINORI — hanno ancora `documento_path`
+    // (misurato su `information_schema.columns` lo stesso giorno). `norm()` è un
+    // confronto esatto: non intercetta prefissi né varianti, quindi ogni nome va
+    // scritto per intero.
+    'documento_path', 'documento_fronte_path', 'documento_retro_path',
+    'document_number', 'document_type', 'documento',
     // credenziali e firme
     'password', 'token', 'otp', 'firma', 'signature', 'iban',
   ].map(norm),

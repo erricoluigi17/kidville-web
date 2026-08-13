@@ -169,7 +169,14 @@ function anagraficaCompleta(sovrascritture: Record<string, unknown> = {}) {
     document_type: 'CI',
     document_number: 'AB1234567',
     document_expiry: '2030-01-31',
-    documento_path: 'personale/doc-1.pdf',
+    // ⚠️ DUE FACCE DAL 12/08/2026. Qui c'era `documento_path`, e quella colonna non
+    // esiste più: la migrazione `20260812194501` l'ha rinominata in
+    // `documento_fronte_path` e ne ha aggiunta una seconda. Un banco di prova che
+    // continua a seminare il nome vecchio non diventa rosso — `valoreTesto` su una
+    // chiave assente restituisce `null` — diventa VERDE su una scheda che dichiara
+    // «Nessuna scansione allegata» a tutti.
+    documento_fronte_path: 'documenti/aaaaaaaa-0000-4000-8000-00000000000a/fronte.pdf',
+    documento_retro_path: 'documenti/aaaaaaaa-0000-4000-8000-00000000000a/retro.pdf',
     titolo_studio: 'laurea_magistrale',
     titolo_dettaglio: null,
     emergenza_nome: null,
@@ -255,7 +262,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-import { StaffDetailPanel, GRUPPI_ANAGRAFICA_PERSONALE, CAMPI_MOSTRATI_FUORI_DAI_GRUPPI, RIGHE_FUSE, statoDocumento } from '@/components/features/admin/StaffDetailPanel'
+import { StaffDetailPanel, GRUPPI_ANAGRAFICA_PERSONALE, CAMPI_MOSTRATI_FUORI_DAI_GRUPPI, RIGHE_FUSE, statoDocumento, statoScansioni } from '@/components/features/admin/StaffDetailPanel'
 import { logClient } from '@/lib/logging/client'
 
 /** Monta la scheda e aspetta che la testata ci sia. */
@@ -270,6 +277,35 @@ async function apriTab(nome: string) {
   fireEvent.click(screen.getByRole('button', { name: nome }))
   await waitFor(() => expect(screen.getByRole('button', { name: nome })).toHaveAttribute('aria-pressed', 'true'))
 }
+
+/**
+ * I comandi di UNA faccia. Il nome accessibile porta la faccia in coda (`sr-only`),
+ * che è ciò che rende distinguibili due bottoni con la stessa etichetta visibile.
+ */
+const apriFaccia = (faccia: 'Fronte' | 'Retro') =>
+  screen.getByRole('button', { name: new RegExp(`Apri la scansione\\s+${faccia}`) })
+/**
+ * Il controllo di caricamento è una `<label>` con dentro l'`<input type="file">`,
+ * quindi lo si trova dal NOME del campo — che è ciò che uno screen reader annuncia,
+ * ed è anche il modo di verificare che quel nome esista davvero.
+ */
+const caricaFaccia = (faccia: 'Fronte' | 'Retro') =>
+  screen.getByLabelText(new RegExp(`Carica la scansione\\s+${faccia}`)).closest('label') as HTMLLabelElement
+const sostituisciFaccia = (faccia: 'Fronte' | 'Retro') =>
+  screen.getByRole('button', { name: new RegExp(`Sostituisci la scansione\\s+${faccia}`) })
+
+/** L'`<input type="file">` dentro un controllo di caricamento. */
+const campoFile = (dentro: HTMLElement) => dentro.querySelector('input[type="file"]') as HTMLInputElement
+
+/** Sceglie un file su un controllo di caricamento, come farebbe il browser. */
+function scegli(controllo: HTMLElement, file: File) {
+  const input = campoFile(controllo)
+  Object.defineProperty(input, 'files', { value: [file], configurable: true })
+  fireEvent.change(input)
+}
+
+const fileFinto = (nome = 'ci-fronte.jpg', tipo = 'image/jpeg', byte = 64) =>
+  new File([new Uint8Array(byte)], nome, { type: tipo })
 
 describe('scheda staff · lo stato del documento in TESTATA', () => {
   it('documento scaduto: badge «Scaduto», e si vede senza aprire nessun tab', async () => {
@@ -559,7 +595,7 @@ describe('scheda staff · il tab Documento', () => {
     await apriTab('Documento')
     openMock.mockClear()
 
-    fireEvent.click(screen.getByRole('button', { name: /Apri la scansione/ }))
+    fireEvent.click(apriFaccia('Fronte'))
     // Sincrono: se l'apertura fosse in continuazione di promise, qui `open` non
     // sarebbe ancora stata chiamata — ed è esattamente il caso che Safari e la
     // WebView Capacitor bloccano.
@@ -586,15 +622,37 @@ describe('scheda staff · il tab Documento', () => {
     await apriTab('Documento')
     openMock.mockImplementation(() => null)
 
-    fireEvent.click(screen.getByRole('button', { name: /Apri la scansione/ }))
+    fireEvent.click(apriFaccia('Fronte'))
     await waitFor(() => expect(screen.getByRole('link', { name: 'Aprilo a mano' })).toHaveAttribute('href', 'https://storage.example.test/firmata'))
   })
 
-  it('senza scansione il pulsante non c’è, e si dice perché', async () => {
-    rispostaAnagrafica = anagraficaCompleta({ documento_path: null })
+  /**
+   * ⚠️ I DUE COMANDI «APRI» HANNO NOMI DIVERSI, e non è una finezza: per chi
+   * ascolta, due bottoni chiamati entrambi «Apri la scansione» sono due comandi
+   * identici che fanno cose diverse — e la cosa diversa è aprire la faccia
+   * sbagliata del documento d'identità di una persona (WCAG 2.4.4/2.5.3). Il nome
+   * accessibile CONTIENE l'etichetta visibile, così la regola «Label in Name»
+   * regge: si aggiunge la faccia, non la si sostituisce.
+   */
+  it('ogni faccia ha il suo «Apri», e ognuno chiede il PROPRIO percorso', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
     await montaScheda()
     await apriTab('Documento')
-    expect(screen.queryByRole('button', { name: /Apri la scansione/ })).not.toBeInTheDocument()
+
+    fireEvent.click(apriFaccia('Retro'))
+    await waitFor(() => expect(fetchMock.mock.calls.some((a: unknown[]) => String(a[0]).includes('doc='))).toBe(true))
+    const chiesto = fetchMock.mock.calls.map((a: unknown[]) => String(a[0])).filter((u) => u.includes('doc='))
+    expect(chiesto.at(-1), 'il pulsante del retro ha chiesto la firma del FRONTE').toContain(
+      encodeURIComponent('documenti/aaaaaaaa-0000-4000-8000-00000000000a/retro.pdf'),
+    )
+  })
+
+  it('senza una faccia il suo pulsante non c’è, e si dice perché — l’altra resta apribile', async () => {
+    rispostaAnagrafica = anagraficaCompleta({ documento_retro_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+    expect(apriFaccia('Fronte')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Apri la scansione.*Retro/ })).not.toBeInTheDocument()
     expect(screen.getByText('Nessuna scansione allegata.')).toBeInTheDocument()
   })
 
@@ -604,6 +662,468 @@ describe('scheda staff · il tab Documento', () => {
     await apriTab('Documento')
     fireEvent.click(screen.getByRole('button', { name: /Copia il link del modulo/ }))
     await waitFor(() => expect(scriviAppunti).toHaveBeenCalledWith(`${window.location.origin}/anagrafica-personale`))
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IL TAB «DOCUMENTO» A DUE FACCE — e la porta di caricamento
+ *
+ * Dal 12/08/2026 il documento d'identità si conserva fronte E retro (migrazione
+ * `20260812194501`), e la Segreteria può caricare le scansioni da qui invece di
+ * chiedere a ogni dipendente di ricompilare il modulo pubblico. Il perché è una
+ * misura, non un'opinione: in produzione `anagrafica_personale` ha ZERO righe e
+ * gli account non-genitore sono VENTI.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('scheda staff · `statoScansioni` — la funzione pura, quattro casi', () => {
+  /**
+   * ⚠️ È UNA FUNZIONE NUOVA E NON UN QUINTO STATO DI `statoDocumento`, che invece
+   * NON si tocca: quella usa le stesse due funzioni del cron notturno, e due
+   * definizioni della parola «in scadenza» darebbero a chi guarda la scheda una
+   * risposta e a chi riceve la notifica l'altra.
+   */
+  it('risponde a «quante facce ci sono», e la stringa vuota vale «non c’è»', () => {
+    expect(statoScansioni('documenti/a/f.pdf', 'documenti/a/r.pdf')).toBe('complete')
+    expect(statoScansioni('documenti/a/f.pdf', null)).toBe('soloFronte')
+    expect(statoScansioni(null, 'documenti/a/r.pdf')).toBe('soloRetro')
+    expect(statoScansioni(null, null)).toBe('assenti')
+    // Un percorso azzerato può restare `''` in colonna: trattarlo come presente
+    // farebbe dire «archiviata» a una faccia che «Apri» non potrebbe firmare.
+    expect(statoScansioni('   ', '')).toBe('assenti')
+  })
+})
+
+describe('scheda staff · il tab Documento dice quante facce ci sono', () => {
+  const RIGA_STATO = () => screen.getByRole('status')
+
+  it.each([
+    ['complete', {}, /Fronte e retro del documento sono archiviati/],
+    ['soloFronte', { documento_retro_path: null }, /Manca il RETRO/],
+    ['soloRetro', { documento_fronte_path: null }, /Manca il FRONTE/],
+    ['assenti', { documento_fronte_path: null, documento_retro_path: null }, /Nessuna delle due facce/],
+  ] as const)('%s: la riga lo dice a parole', async (_nome, sovrascritture, atteso) => {
+    rispostaAnagrafica = anagraficaCompleta(sovrascritture)
+    await montaScheda()
+    await apriTab('Documento')
+    expect(RIGA_STATO().textContent).toMatch(atteso)
+  })
+
+  it('è `role="status"` e NON `role="alert"`: un’incompletezza non è un guasto', async () => {
+    // `alert` è assertivo: taglia la parola a uno screen reader. In questa scheda è
+    // già speso per le cose davvero rotte (la fascia rossa, l'errore di apertura);
+    // spenderlo anche qui insegna a ignorarlo.
+    rispostaAnagrafica = anagraficaCompleta({ documento_retro_path: null })
+    const { container } = await montaScheda()
+    await apriTab('Documento')
+    const riga = RIGA_STATO()
+    expect(riga.getAttribute('role')).toBe('status')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+})
+
+describe('scheda staff · caricare e sostituire una scansione', () => {
+  /** Le chiamate al POST della porta di caricamento. */
+  const invii = () => fetchMock.mock.calls.filter((a: unknown[]) => String(a[0]).includes('/scansione?'))
+
+  it('la SEGRETERIA vede il comando: non sta dietro `canEdit` (che è il gate dell’Incarico)', async () => {
+    // È la stessa ragione scritta nella testata della route gemella: la scansione la
+    // consegna chi sta al banco. Un pannello che la nasconde alla segreteria
+    // costringe a girare il documento a qualcun altro il giorno dopo.
+    ruoloCorrente = 'segreteria'
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null, documento_retro_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+    expect(caricaFaccia('Fronte')).toBeInTheDocument()
+    expect(caricaFaccia('Retro')).toBeInTheDocument()
+    // …e resta vero che l'INCARICO non lo tocca.
+    expect(screen.queryByRole('button', { name: /^Modifica$/ })).not.toBeInTheDocument()
+  })
+
+  it('il primo caricamento NON chiede conferma: non c’è niente da distruggere', async () => {
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+
+    scegli(caricaFaccia('Fronte'), fileFinto())
+    await waitFor(() => expect(invii()).toHaveLength(1))
+    expect(screen.queryByText(/verrà cancellata definitivamente/)).not.toBeInTheDocument()
+  })
+
+  it('la richiesta porta utenteId e lato in QUERY, e nel corpo il solo file', async () => {
+    // Gli identificativi in query sono ciò che permette al server di negare PRIMA di
+    // bufferizzare 4 MB (lock `corpo-letto-dopo-il-gate`).
+    rispostaAnagrafica = anagraficaCompleta({ documento_retro_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+
+    scegli(caricaFaccia('Retro'), fileFinto('retro.jpg'))
+    await waitFor(() => expect(invii()).toHaveLength(1))
+
+    const [url, init] = invii()[0] as [string, RequestInit]
+    expect(String(url)).toContain(`utenteId=${STAFF_ID}`)
+    expect(String(url)).toContain('lato=retro')
+    expect(init.method).toBe('POST')
+    const corpo = init.body as FormData
+    expect(corpo.get('file')).toBeInstanceOf(File)
+    expect(corpo.get('utenteId'), 'l’identificativo viaggia nel multipart: il gate di sede girerebbe DOPO').toBeNull()
+    // L'identità dell'operatore viaggia come sempre nel cockpit.
+    expect((init.headers as Record<string, string>)['x-user-id']).toBe('u-admin')
+  })
+
+  it('dopo un caricamento riuscito la scheda RILEGGE dal server, non indovina', async () => {
+    // Il percorso NON torna dalla risposta — è la chiave che apre un documento
+    // d'identità — quindi inventarlo in stato produrrebbe un «Apri» che non funziona.
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+    const lettureIniziali = fetchMock.mock.calls.filter((a: unknown[]) => String(a[0]).includes('utenteId=') && !String(a[0]).includes('/scansione?')).length
+
+    scegli(caricaFaccia('Fronte'), fileFinto())
+    await waitFor(() => expect(invii()).toHaveLength(1))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter((a: unknown[]) => String(a[0]).includes('utenteId=') && !String(a[0]).includes('/scansione?')).length,
+        'il fascicolo non è stato riletto: la scheda sta mostrando uno stato indovinato',
+      ).toBeGreaterThan(lettureIniziali),
+    )
+  })
+
+  it('«Sostituisci» chiede conferma IN PAGINA, e `confirm()` nativo non si usa mai', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Documento')
+
+    fireEvent.click(sostituisciFaccia('Fronte'))
+    expect(screen.getByText(/verrà cancellata definitivamente/)).toBeInTheDocument()
+    expect(window.confirm, 'la conferma è passata dalla finestra di sistema: nella WebView interrompe il gesto').not.toHaveBeenCalled()
+    // Finché non si conferma, niente parte.
+    expect(invii()).toHaveLength(0)
+  })
+
+  it('la conferma si può ANNULLARE, e allora non parte niente', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Documento')
+
+    fireEvent.click(sostituisciFaccia('Fronte'))
+    fireEvent.click(screen.getByRole('button', { name: /Annulla\s+Fronte/ }))
+    await waitFor(() => expect(screen.queryByText(/verrà cancellata definitivamente/)).not.toBeInTheDocument())
+    expect(invii()).toHaveLength(0)
+  })
+
+  it('confermata, la sostituzione parte con il lato giusto', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    await apriTab('Documento')
+
+    fireEvent.click(sostituisciFaccia('Retro'))
+    const conferma = screen.getByRole('group', { name: /Sostituisci la scansione\s+Retro/ })
+    scegli(conferma.querySelector('label') as HTMLElement, fileFinto('retro.jpg'))
+
+    await waitFor(() => expect(invii()).toHaveLength(1))
+    expect(String(invii()[0][0])).toContain('lato=retro')
+  })
+
+  it('il 409 del server si legge dal CATALOGO, non nella prosa cruda', async () => {
+    // Il codice `SCANSIONE_SOSTITUITA_ALTROVE` esiste perché quella frase, nata sul
+    // server dove il locale non c'è, sarebbe italiana per costruzione: mostrarla a
+    // chi ha l'interfaccia in inglese è il fallimento F2 del collaudo del 31/07.
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/scansione?')) {
+        return Promise.resolve({
+          ok: false,
+          status: 409,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ error: 'prosa del server', codice: 'SCANSIONE_SOSTITUITA_ALTROVE' }),
+        })
+      }
+      return serverPredefinito(url)
+    })
+    await montaScheda()
+    await apriTab('Documento')
+
+    scegli(caricaFaccia('Fronte'), fileFinto())
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/sostituita da qualcun altro/))
+    expect(screen.queryByText('prosa del server')).not.toBeInTheDocument()
+  })
+
+  // ── I DUE 503 DICONO LA FRASE DI QUESTA SCHERMATA, non quella di un'altra ─────
+  //
+  // Fino al 13/08/2026 questa porta rispondeva con i codici della rotta gemella, e
+  // il difetto era invisibile da parte server: `messaggioDaCorpo` mostra il testo di
+  // CATALOGO e BUTTA la prosa che la route scrive (solo i codici in
+  // `CODICI_CON_DETTAGLIO` la conservano, e sono uno). Quindi chi premeva «Carica il
+  // fronte» e incappava nel 503 leggeva, parola per parola, «le scadenze dei
+  // documenti non sono consultabili… qui sotto non compare nessuna riga» — un elenco
+  // che sullo schermo non c'è — oppure «la correzione non è stata registrata», senza
+  // aver corretto niente.
+  //
+  // Le asserzioni NEGATIVE sono il cuore del collaudo: senza, rimettere il codice
+  // vecchio resterebbe verde, perché anche quello un testo lo produce.
+  it.each([
+    [
+      503,
+      'SCANSIONE_ARCHIVIO_NON_DISPONIBILE',
+      /non è stata caricata|non riusciamo a leggere/i,
+      /scadenz|nessuna riga|correzione/i,
+    ],
+    [
+      503,
+      'SCANSIONE_NON_REGISTRATA',
+      /non è stata archiviata|non è stato conservato/i,
+      /scadenz|nessuna riga|correzione/i,
+    ],
+  ])(
+    'il %i con codice %s dice che il file NON è stato archiviato, e non parla di elenchi né di correzioni',
+    async (stato, codice, attesa, vietata) => {
+      rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+      fetchMock.mockImplementation((url: string) => {
+        if (String(url).includes('/scansione?')) {
+          return Promise.resolve({
+            ok: false,
+            status: stato,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: async () => ({ error: 'prosa del server', codice }),
+          })
+        }
+        return serverPredefinito(url)
+      })
+      await montaScheda()
+      await apriTab('Documento')
+
+      scegli(caricaFaccia('Fronte'), fileFinto())
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(attesa))
+      // La frase di un'ALTRA schermata: è precisamente ciò che i due codici propri
+      // esistono per non far leggere.
+      expect(screen.getByRole('alert').textContent).not.toMatch(vietata)
+      expect(screen.queryByText('prosa del server')).not.toBeInTheDocument()
+    },
+  )
+
+  it('un guasto senza codice non lascia la scheda muta: c’è un ripiego, e un log', async () => {
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/scansione?')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          headers: new Headers({ 'content-type': 'text/plain' }),
+          json: async () => { throw new Error('non è json') },
+        })
+      }
+      return serverPredefinito(url)
+    })
+    await montaScheda()
+    await apriTab('Documento')
+
+    scegli(caricaFaccia('Fronte'), fileFinto())
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Non è stato possibile caricare/))
+    expect(logClient).toHaveBeenCalledWith(
+      expect.objectContaining({ messaggio: 'anagrafica-personale-scansione-non-caricata' }),
+    )
+  })
+
+  it('il fuoco non cade su `<body>` quando «Carica» smonta se stesso', async () => {
+    // Un caricamento riuscito trasforma «Carica» in «Apri»+«Sostituisci»: la
+    // `<label>` con dentro l'`<input>` sparisce, e chi ha scelto il file da tastiera
+    // ripartirebbe dall'inizio della scheda (WCAG 2.4.3). È lo stesso difetto già
+    // misurato su «Riprova», trenta righe più su nel sorgente.
+    let caricata = false
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/scansione?')) {
+        caricata = true
+        return Promise.resolve({ ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ success: true, path: 'x' }) })
+      }
+      if (String(url).includes('utenteId=') && caricata) {
+        rispostaAnagrafica = anagraficaCompleta()
+      }
+      return serverPredefinito(url)
+    })
+    await montaScheda()
+    await apriTab('Documento')
+
+    const controllo = caricaFaccia('Fronte')
+    campoFile(controllo).focus()
+    scegli(controllo, fileFinto())
+
+    await waitFor(() => expect(apriFaccia('Fronte')).toBeInTheDocument())
+    expect(document.activeElement?.tagName, 'il fuoco è finito su <body>').not.toBe('BODY')
+    expect(document.activeElement?.textContent).toMatch(/Fronte/)
+  })
+
+  it('nessuna violazione axe sul tab Documento, conferma aperta compresa', async () => {
+    rispostaAnagrafica = anagraficaCompleta()
+    const { container } = await montaScheda()
+    await apriTab('Documento')
+    expect(await axe(container)).toHaveNoViolations()
+
+    fireEvent.click(sostituisciFaccia('Fronte'))
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('l’`<input type="file">` è `sr-only` e MAI `hidden`: senza mouse resta raggiungibile', async () => {
+    // Con `display:none` l'input non è focalizzabile, non entra nel Tab e NON ESISTE
+    // nell'albero di accessibilità: la `<label>` sembra un bottone e non lo è.
+    // `jest-axe` non lo vede — dà 0 violazioni — quindi va misurato qui.
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+    const input = campoFile(caricaFaccia('Fronte'))
+    expect(input.className).toContain('sr-only')
+    expect(input.hasAttribute('hidden')).toBe(false)
+    // …e non è `disabled`: la guardia contro il doppio invio sta nel GESTORE,
+    // perché disabilitare un elemento che ha il fuoco lo fa cadere su `<body>`.
+    // ⚠️ QUESTA RIGA MISURA L'ASSENZA DELL'ALTERNATIVA, non la presenza della
+    // difesa — ed è esattamente il rilievo del 13/08/2026. La difesa vera si misura
+    // nel blocco «una richiesta per volta» qui sotto; qui resta solo la metà
+    // negativa, che senza l'altra sarebbe un commento che promette un presidio.
+    expect(input.disabled).toBe(false)
+  })
+
+  /**
+   * ╔══════════════════════════════════════════════════════════════════════════╗
+   * ║  UNA RICHIESTA PER VOLTA — misurata, non promessa da un commento         ║
+   * ╚══════════════════════════════════════════════════════════════════════════╝
+   *
+   * ── PERCHÉ ESISTE QUESTO BLOCCO, e la misura che l'ha reso necessario ──────
+   *
+   * Il 13/08/2026 la guardia contro il doppio invio era documentata DUE VOLTE e per
+   * esteso — nella testata di `caricaScansione` e nel punto 2 della testata di
+   * `BloccoFaccia` — e **provata da nessuna riga**. Le mutazioni, sul file finale:
+   *
+   *   · `if (!file || inVolo || bloccato) return` → `if (!file) return`  → 135/135 VERDI
+   *   · tolta la sola guardia `bloccato`                                  → 135/135 VERDI
+   *   · tolto anche `if (inVolo) return` da `caricaScansione`             → 135/135 VERDI
+   *   · tolto `e.target.value = ''`                                       → 135/135 VERDI
+   *
+   * L'unico test che sfiorava l'argomento asseriva `input.disabled === false` e poi
+   * COMMENTAVA «la guardia sta sull'`onChange`»: cioè misurava l'assenza
+   * dell'alternativa e non la presenza della difesa. In un repo la cui regola scritta
+   * è che «un documento che descrive una protezione che non c'è è peggio di nessun
+   * documento», quel commento era il difetto.
+   *
+   * ── COSA COSTA IL DOPPIO INVIO, in concreto ────────────────────────────────
+   *
+   * Due `change` ravvicinati sulla stessa faccia mandano due POST. Il primo scrive la
+   * colonna; il SECONDO trova il compare-and-swap (`.eq(colonna, attuale)`) già
+   * scaduto, non tocca nessuna riga e risponde **409 «questa scansione è stata
+   * sostituita da qualcun altro nel frattempo»**. Cioè l'operatore viene accusato di
+   * una corsa che ha corso da solo, contro se stesso — e il suo file resta nel bucket
+   * finché il ritiro non lo toglie.
+   *
+   * ── PERCHÉ IL POST RESTA APPESO, e non si sblocca ──────────────────────────
+   *
+   * La finestra «in volo» esiste solo fra la partenza e la risposta: con un finto che
+   * risponde subito, `inVolo` torna `null` prima che il secondo gesto arrivi, e il
+   * test sarebbe verde anche senza nessuna guardia. È lo stesso motivo per cui il
+   * finto della rotta gemella tiene una cronologia invece dello stato finale.
+   */
+  describe('una richiesta per volta', () => {
+    /** Il POST non risponde mai: è l'unico modo di tenere aperta la finestra «in volo». */
+    function postAppeso() {
+      fetchMock.mockImplementation((url: string) => {
+        if (String(url).includes('/scansione?')) return new Promise<never>(() => {})
+        return serverPredefinito(url)
+      })
+    }
+
+    /**
+     * Sceglie un file su un `<input>` GIÀ TROVATO, e non sul controllo.
+     *
+     * ⚠️ Non si può riusare `caricaFaccia()` per il secondo gesto: appena la prima
+     * richiesta parte, l'etichetta visibile diventa «Caricamento in corso», quindi
+     * `getByLabelText(/Carica la scansione Fronte/)` non troverebbe più niente e il
+     * test morirebbe di ricerca fallita invece di misurare la guardia. Il nodo DOM è
+     * lo stesso: React aggiorna le props dell'input, non lo rimonta.
+     */
+    const scegliSu = (input: HTMLInputElement, file: File) => {
+      Object.defineProperty(input, 'files', { value: [file], configurable: true })
+      fireEvent.change(input)
+    }
+
+    /**
+     * Lascia girare microtask E un giro di macrotask.
+     *
+     * Serve perché qui si asserisce un NEGATIVO: un `waitFor(() => expect(…).toBe(1))`
+     * passerebbe al primo giro senza dare al secondo POST il tempo di partire, cioè
+     * sarebbe verde anche a guardia rimossa. I timer finti fingono solo `Date`
+     * (`toFake: ['Date']`), quindi `setTimeout` qui è quello vero.
+     */
+    const lasciaPartire = () => new Promise<void>((r) => setTimeout(r, 0))
+
+    it('🔴 due `change` ravvicinati sulla STESSA faccia: parte UN SOLO POST', async () => {
+      rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+      postAppeso()
+      await montaScheda()
+      await apriTab('Documento')
+
+      const input = campoFile(caricaFaccia('Fronte'))
+      scegliSu(input, fileFinto())
+      await waitFor(() => expect(invii()).toHaveLength(1))
+
+      // Il secondo gesto, mentre il primo è ancora in volo.
+      scegliSu(input, fileFinto('ci-fronte-bis.jpg'))
+      await lasciaPartire()
+
+      expect(
+        invii(),
+        'due POST sulla stessa faccia: il secondo perde il compare-and-swap e l’operatore ' +
+          'legge un 409 che accusa un collega — che è lui stesso, un istante prima',
+      ).toHaveLength(1)
+    })
+
+    it('🔴 mentre il FRONTE è in volo, il RETRO non parte: la regola vale fra le due facce', async () => {
+      // Non è simmetria per eleganza: le due facce scrivono righe della STESSA
+      // tabella e il server serializza col compare-and-swap sulla propria colonna.
+      // Due POST insieme non si corrompono a vicenda, ma il secondo arriverebbe con
+      // un testimone letto prima del primo — ed è la classe di corsa che la rotta
+      // gemella chiude a costo di un 409. Meglio non aprirla dal client.
+      rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null, documento_retro_path: null })
+      postAppeso()
+      await montaScheda()
+      await apriTab('Documento')
+
+      const retro = campoFile(caricaFaccia('Retro'))
+      scegliSu(campoFile(caricaFaccia('Fronte')), fileFinto())
+      await waitFor(() => expect(invii()).toHaveLength(1))
+
+      scegliSu(retro, fileFinto('ci-retro.jpg'))
+      await lasciaPartire()
+
+      expect(invii(), 'due caricamenti in volo insieme sulla stessa persona').toHaveLength(1)
+      expect(String(invii()[0][0]), 'è partito il retro invece del fronte').toContain('lato=fronte')
+    })
+
+    it('🔴 il campo si AZZERA a ogni scelta: senza, il secondo tentativo dopo un errore non partirebbe', async () => {
+      // Il browser emette `change` solo se il valore CAMBIA: riscegliere lo stesso
+      // file dopo un errore non emetterebbe niente, e il comando sembrerebbe rotto.
+      // jsdom non riproduce quella regola — `fireEvent.change` parte comunque — quindi
+      // l'unica misura possibile è l'AZZERAMENTO stesso: si spia la scrittura su
+      // `value`, che è ciò che il gestore fa e che il browser vero usa.
+      rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null })
+      postAppeso()
+      await montaScheda()
+      await apriTab('Documento')
+
+      const input = campoFile(caricaFaccia('Fronte'))
+      const azzeramenti: string[] = []
+      Object.defineProperty(input, 'value', {
+        get: () => '',
+        set: (v: string) => { azzeramenti.push(v) },
+        configurable: true,
+      })
+
+      scegliSu(input, fileFinto())
+      await waitFor(() => expect(invii()).toHaveLength(1))
+
+      expect(
+        azzeramenti,
+        'il gestore non azzera il campo: riscegliere lo STESSO file non emetterebbe nessun ' +
+          '`change`, e dopo un errore il pulsante sembrerebbe rotto',
+      ).toContain('')
+    })
   })
 })
 
@@ -744,9 +1264,20 @@ describe('scheda staff · i comandi nuovi arrivano a 44px', () => {
     rispostaAnagrafica = anagraficaCompleta()
     await montaScheda()
     await apriTab('Documento')
-    expect(screen.getByRole('button', { name: /Apri la scansione/ }).className).toContain(BERSAGLIO)
+    expect(apriFaccia('Fronte').className).toContain(BERSAGLIO)
+    expect(apriFaccia('Retro').className).toContain(BERSAGLIO)
+    expect(sostituisciFaccia('Fronte').className).toContain(BERSAGLIO)
     expect(screen.getByRole('button', { name: /Copia il link del modulo/ }).className).toContain(BERSAGLIO)
     expect(screen.getByRole('link', { name: /Invia per email/ }).className).toContain(BERSAGLIO)
+  })
+
+  it('anche il comando di CARICAMENTO, che è una `<label>` e non un `<button>`', async () => {
+    // Su un telefono è il bersaglio con cui la segreteria popola l'archivio da zero:
+    // 20 persone × 2 facce. 39 px su 44 sono l'11% di bersaglio in meno.
+    rispostaAnagrafica = anagraficaCompleta({ documento_fronte_path: null, documento_retro_path: null })
+    await montaScheda()
+    await apriTab('Documento')
+    expect(caricaFaccia('Fronte').className).toContain(BERSAGLIO)
   })
 
   it('pannello d’errore: «Riprova»', async () => {

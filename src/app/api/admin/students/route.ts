@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
+import { STATO_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
@@ -18,6 +19,47 @@ import { HEADER_TOTALE } from '@/lib/api/paginazione';
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
 // immutabile su ogni mutazione (DL-037, `logScrittura`/`audit_scritture_docente`).
 // ============================================================
+//
+// ─── QUI NON C'È PIÙ NESSUNA `DELETE`, ed è una decisione. ───────────────────
+//
+// Fino al 2026-08-12 questo file esportava `DELETE` («Hard Delete GDPR»): la
+// cancellazione a cascata della riga di un minore, dietro il pulsante «Elimina
+// Alunno (GDPR)» della scheda anagrafica. È stata TOLTA, non spostata altrove né
+// resa più prudente, e le ragioni sono tre — in ordine di quanto pesano.
+//
+//  1. NON FUNZIONAVA, e non per un caso limite. `alunni` ha 28 foreign key
+//     entranti e SETTE senza `ON DELETE CASCADE` (valutazioni, pagamenti,
+//     legame_genitori_alunni, eventi_diario, armadietto, ticket_mensa,
+//     note_disciplinari). Misurato in produzione il 2026-08-12: su 33 alunni
+//     veri, 28 hanno pagamenti e 28 hanno un legame con un genitore — cioè
+//     **28 su 33 non erano cancellabili** e ricevevano un `23503` → 409. Tre
+//     tentativi reali alle 11:17:24, 11:17:53 e 11:18:07 UTC sullo stesso
+//     bambino, tutti respinti. Il pulsante era una promessa che il database non
+//     poteva mantenere.
+//  2. PER GLI ALTRI CINQUE FACEVA LA COSA PIÙ DISTRUTTIVA DELL'APPLICAZIONE
+//     DIETRO LA CONFERMA PIÙ DEBOLE: un doppio clic, senza digitare nessun
+//     nominativo. E tenerla «solo per gli alunni senza dati collegati» sarebbe
+//     stata la trappola peggiore di tutte — **lo stesso bottone, nella stessa
+//     posizione, avrebbe archiviato o annientato a seconda di uno stato
+//     invisibile a chi lo preme**. Un comando che cambia significato in base a
+//     una condizione che l'operatore non può vedere non è un comando: è una
+//     roulette con l'anagrafica di un minore.
+//  3. ESTIRPA ALLA RADICE IL DIFETTO DELL'AUDIT invece di compensarlo. L'audit
+//     `hard_delete_gdpr` veniva scritto PRIMA della cancellazione: quando poi la
+//     FK la respingeva, in `registro_modifiche` restava una copia integrale della
+//     riga (note mediche comprese) sotto un'etichetta che dichiarava cancellato un
+//     bambino ancora iscritto — tre righe false in produzione, bonificate dalla
+//     migrazione `20260812194614`. Senza questa route nessun codice può più
+//     scriverne una: il lock `registro-modifiche-senza-hard-delete` vieta il
+//     letterale in `src/`.
+//
+// AL SUO POSTO, il modello a due tempi deciso dal titolare il 2026-08-12:
+// `POST /api/admin/students/archivia` sposta l'alunno fra i «non più iscritti»
+// lasciando INTATTA l'anagrafica (registri e pagamenti si conservano dieci anni)
+// ed è REVERSIBILE; la liberazione dello spazio — foto, video, messaggi — è un
+// secondo gesto, che si fa solo da quell'elenco. Il diritto all'oblio vero, quello
+// che la famiglia può chiedere ex art. 17, resta dov'era: `admin/gdpr/erase`,
+// dietro una richiesta registrata e non dietro un bottone in fondo a una scheda.
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
@@ -148,10 +190,6 @@ const patchBodySchema = z.object({
     intestatario_fatture: z.unknown().optional(),
 });
 
-const deleteBodySchema = z.object({
-    id: z.string({ error: 'Campo id obbligatorio' }).min(1, 'Campo id obbligatorio'),
-});
-
 // ─── Scope di sede sulle MUTAZIONI ───────────────────────────────────────────
 // `requireStaff` dice che RUOLO hai, non su QUALE SEDE. Su una route
 // service-role (la RLS non interviene) il solo gate di ruolo lasciava alla
@@ -221,7 +259,7 @@ async function bersagliInScope(
  * `section_id`, e il bambino sparisce da registro, appello e mensa in silenzio.
  * Meglio un 400 esplicito.
  */
-async function classeEsisteInOgniSede(
+export async function classeEsisteInOgniSede(
     supabase: SupabaseClient,
     nome: string,
     sedi: string[],
@@ -325,7 +363,7 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             classe_sezione: body.classe_sezione || null,
             data_iscrizione: body.data_iscrizione || null,
             giorno_scadenza_pagamenti: body.giorno_scadenza_pagamenti ?? null,
-            stato: 'iscritto',
+            stato: STATO_ISCRITTO,
         };
 
         let { data, error } = await supabase
@@ -457,9 +495,28 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         //
         // Il ciclo 42703 qui sotto resta indispensabile: il DB E2E della CI non è
         // migrato e una colonna assente va tolta, non trasformata in un 500.
+        //
+        // ─── LE TRE COLONNE DELL'ARCHIVIAZIONE (2026-08-12) ──────────────────
+        // Servono all'elenco dei «non più iscritti», e nessuna delle tre porta
+        // un dato di persona: due date e il NOME della classe da cui il bambino
+        // è uscito. Escono di qui perché un elenco che non sa QUANDO qualcuno è
+        // stato archiviato può solo ordinarlo per cognome, e `archiviato_il` è
+        // anche l'unico modo di distinguere «archiviato» da «`stato` messo a
+        // mano dalla tendina» (migrazione `20260812194517`: lo stato dice COSA,
+        // la data dice QUANDO). `archiviato_classe_sezione` dice da dove veniva
+        // — senza, il ritorno fra gli iscritti sarebbe un indovinello — e
+        // `spazio_liberato_il` distingue una scheda ancora completa da una a cui
+        // sono già stati tolti foto, video e messaggi: due righe identiche a
+        // schermo per due situazioni che non si possono confondere.
+        //
+        // Sul DB E2E della CI, che non è migrato, il ciclo `42703` qui sotto le
+        // toglie una per una e l'elenco continua a rispondere: `archiviato_il`
+        // assente vale «nessuno è archiviato», che è la lettura giusta su un
+        // database dove l'archiviazione non esiste ancora.
         let cols = [
             'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale',
             'classe_sezione', 'stato', 'section_id', 'note_mediche',
+            'archiviato_il', 'archiviato_classe_sezione', 'spazio_liberato_il',
         ];
         // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
         const scuole = await resolveScuoleAttive(request, supabase, auth.user);
@@ -674,6 +731,56 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 const { data: prima } = await supabase.from('alunni').select('*').eq('id', id).maybeSingle();
                 if (!prima) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
 
+                /**
+                 * ⚠️ LA SECONDA PORTA DEL RITORNO, E PERCHÉ È CHIUSA QUI.
+                 *
+                 * `archivia` sgancia dalla classe (`section_id` e `classe_sezione`
+                 * a NULL) perché è QUELLA la leva: `from('alunni')` compare 181
+                 * volte in 117 file e solo 12 filtrano lo stato. Il ritorno deve
+                 * quindi riagganciare, e sa farlo solo `riattiva`, che verifica che
+                 * la classe ricordata esista ancora NELLA SEDE prima di riscriverla.
+                 *
+                 * Questa PATCH non fa niente di tutto ciò: tiene `stato` in
+                 * `allowedFields` e non tocca né `archiviato_*` né `classe_sezione`.
+                 * Misurato eseguendo la rotta: `PATCH` con `stato` = `'iscritto'` su una riga
+                 * archiviata rispondeva **200** e lasciava
+                 * `{ stato = 'iscritto', archiviato_il = <valorizzato>, section_id = null,
+                 * classe_sezione:null}` — un bambino ISCRITTO e senza classe, cioè
+                 * invisibile a registro, appello, mensa, diario e valutazioni, e
+                 * sparito anche dalla linguetta «Non più iscritti» che filtra
+                 * `stato=ritirato`. Restava nella sola anagrafica piatta. Nessun log,
+                 * nessun avviso: il danno che tutto il modello dichiara di voler
+                 * evitare, a un clic dalla scheda su cui l'elenco stesso manda.
+                 *
+                 * Si rifiuta solo il CAMBIO: la scheda salva il form intero, quindi
+                 * chi corregge un indirizzo su un archiviato rimanda lo stesso
+                 * `stato` che c'era e deve poterlo fare. E il confronto è su
+                 * `archiviato_il`, non sullo stato: il ritiro a mano dalla tendina
+                 * (`stato='ritirato'`, `archiviato_il` NULL) è ancora agganciato alla
+                 * sua sezione, e correggerlo da qui non fa sparire nessuno.
+                 *
+                 * ⚠️ Su un DB senza la colonna — il DB E2E della CI non è migrato —
+                 * `prima.archiviato_il` è `undefined` e la guardia non scatta: è la
+                 * lettura giusta là dove l'archiviazione non esiste ancora.
+                 */
+                const statoChiesto = updates.stato;
+                if (statoChiesto !== undefined && prima.archiviato_il != null && statoChiesto !== prima.stato) {
+                    logEvento('gdpr', 'warn', {
+                        operazione: 'admin/students:PATCH',
+                        azione: 'stato-su-archiviato-rifiutato',
+                        esito: 'rifiutato',
+                        alunno: id,
+                        ruolo: auth.user.role,
+                    });
+                    return NextResponse.json(
+                        {
+                            error: 'Questo bambino è fra i «non più iscritti»: lo stato non si cambia da qui. Usa «Riporta fra gli iscritti», che gli restituisce anche la classe.',
+                            codice: 'STATO_ALUNNO_ARCHIVIATO',
+                        },
+                        { status: 409 },
+                    );
+                }
+
                 // Riassegnazioni di classe: la destinazione deve stare NELLA
                 // SEDE dell'alunno. `section_id` è in allowlist e il trigger DB
                 // non lo corregge (risolve solo su INSERT, su cambio del nome o
@@ -807,101 +914,5 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
     } catch (err) {
         logErrore({ operazione: 'admin/students:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
-    }
-});
-
-// ============================================================
-// DELETE /api/admin/students — Hard Delete GDPR
-// ============================================================
-export const DELETE = withRoute('admin/students:DELETE', async (request: NextRequest) => {
-    const auth = await requireStaff(request);
-    if (auth.response) return auth.response;
-
-    const b = await parseBody(request, deleteBodySchema);
-    if ('response' in b) return b.response;
-    const { id } = b.data;
-
-    try {
-        const supabase = await createAdminClient();
-        const plessi = await scuoleDiUtente(supabase, auth.user);
-
-        // Gate di tenant PRIMA di tutto il resto — e in particolare prima della
-        // copia d'audit qui sotto, che è un `select *` (note mediche, codice
-        // fiscale) riversato in `registro_modifiche`: senza questo controllo la
-        // copia avveniva comunque, anche quando la cancellazione poi falliva.
-        const scopeErr = await assertAlunnoInScope(supabase, auth.user, id);
-        if (scopeErr) return scopeErr;
-
-        // Stato prima della cancellazione (audit).
-        const { data: alunno } = await supabase
-            .from('alunni')
-            .select('*')
-            .eq('id', id)
-            .maybeSingle();
-
-        if (!alunno) {
-            return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
-        }
-
-        // Registro modifiche (audit trail GDPR storico).
-        await supabase.from('registro_modifiche').insert({
-            azione: 'hard_delete_gdpr',
-            tabella_interessata: 'alunni',
-            record_id: id,
-            vecchio_valore: alunno,
-            nuovo_valore: null,
-        });
-
-        // Cancellazione a cascata, vincolata ai plessi dell'utente: il gate
-        // impedisce di NOMINARE la riga altrui, il filtro impedisce che una
-        // corsa fra la lettura e la cancellazione la faccia rientrare.
-        const { data: rimosse, error } = await supabase
-            .from('alunni')
-            .delete()
-            .eq('id', id)
-            .in('scuola_id', plessi)
-            .select('id');
-
-        if (error) {
-            // 23503: l'alunno ha ancora righe collegate in una delle 7 tabelle
-            // con FK NO ACTION (genitori, diario, valutazioni, armadietto,
-            // ticket mensa, pagamenti, note disciplinari). Non è un guasto del
-            // server: è il database che difende lo storico. 409 col motivo,
-            // invece del messaggio grezzo di Postgres dentro un 500.
-            if ((error as { code?: string }).code === '23503') {
-                logEvento('gdpr', 'warn', {
-                    operazione: 'admin/students:DELETE', esito: 'cancellazione-bloccata-da-riferimenti',
-                    alunno: id,
-                });
-                return NextResponse.json(
-                    { error: 'Impossibile cancellare: l\'alunno ha ancora dati collegati (genitori, pagamenti, diario). Rimuoverli prima.' },
-                    { status: 409 },
-                );
-            }
-            logErrore({ operazione: 'admin/students:DELETE', stato: 500 }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-        if ((rimosse ?? []).length === 0) {
-            // Zero righe toccate con il gate già passato: la riga è sparita fra
-            // la lettura e la cancellazione. Meglio un 404 onesto di un 200 che
-            // dichiara una cancellazione mai avvenuta.
-            logEvento('gdpr', 'warn', { operazione: 'admin/students:DELETE', esito: 'nessuna-riga-cancellata', alunno: id });
-            return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
-        }
-
-        await logScrittura(supabase, {
-            attore: auth.user,
-            entitaTipo: 'alunni',
-            entitaId: id,
-            azione: 'delete',
-            scuolaId: (alunno.scuola_id as string) ?? null,
-            sectionId: (alunno.section_id as string) ?? null,
-            valorePrima: alunno,
-        });
-
-        return NextResponse.json({ success: true, message: 'Alunno eliminato definitivamente (GDPR)' });
-    } catch (err) {
-        logErrore({ operazione: 'admin/students:DELETE', stato: 500 }, err);
-        return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
 });

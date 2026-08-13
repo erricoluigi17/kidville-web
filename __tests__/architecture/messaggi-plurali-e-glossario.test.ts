@@ -474,6 +474,9 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminAltro.protDocSostituito', 'numero di protocollo: identificativo, non quantità'],
         ['adminAltro.protEmergenzaEvento', 'data e ora'],
         ['adminComunicazioni.editorRitrattiRimuovi', 'nome del bambino'],
+        ['adminStudents.detailPageArchiviato', 'nome e cognome del bambino appena archiviato'],
+        ['adminStudents.detailPageRiattivato', 'nome e cognome del bambino appena riportato fra gli iscritti'],
+        ['adminStudents.detailPageRiattivatoSenzaClasse', 'nome e cognome del bambino, che rientra senza classe'],
         ['adminModulistica.modConfermaApprovazioneTesto', 'cognome della famiglia'],
         ['adminModulistica.modFamiglia', 'cognome della famiglia'],
         ['adminModulistica.modOdtCaricato', 'nome del file'],
@@ -492,6 +495,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminAltro.protFileTroppoGrande', 'unità di misura (MB)'],
         ['adminAltro.protUploadHint', 'unità di misura (MB)'],
         ['parentForms.fileTroppoPesante', 'unità di misura (MB)'],
+        ['adminStudents.staffDocTroppoGrande', 'unità di misura (MB)'],
         ['teacherServizi.galleryAlertVideoTroppoGrande', 'unità di misura (MB)'],
         ['adminComunicazioni.avvisiAdesioniSiNo', '«sì»/«no»: avverbi, invarianti'],
         ['teacherNav.adesioniSiNo', '«sì»/«no»: avverbi, invarianti'],
@@ -558,7 +562,39 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // Il tetto è il numero di oggi. Chi aggiunge una riga a NON_CONTATORI
         // deve abbassarlo o spiegarsi: senza questo, l'elenco delle eccezioni
         // diventa il posto dove i contatori sbagliati vanno a nascondersi.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(37)
+        //
+        // 2026-08-12 · 37 → 38, e la spiegazione. `adminStudents.detailPageArchiviato`
+        // annuncia alla segreteria QUALE bambino è appena stato spostato fra i «non
+        // più iscritti»: `{nome}` è un nome e un cognome, non un conteggio, e in
+        // inglese («{nome} has been moved…») cade sotto il riconoscitore di forma
+        // solo perché la parola che segue è lunga più di una lettera — in italiano
+        // («{nome} è stato spostato…») lo stesso messaggio non viene nemmeno visto.
+        // La via alternativa era riscrivere la frase inglese per schivare la regexp:
+        // sarebbe stato piegare un messaggio a un lock invece di dichiarare
+        // un'eccezione vera.
+        //
+        // 2026-08-12 · 38 → 39. `adminStudents.staffDocTroppoGrande` è il rifiuto che
+        // legge la Segreteria quando la fotografia di un documento supera il tetto
+        // della piattaforma: «al massimo {mb} MB». Cade nella categoria (b), che di
+        // voci ne conta già quattro — MB è un'unità di misura e non va mai al plurale.
+        // Il numero, per giunta, NON è cablato nella frase: arriva da
+        // `limiteUploadMb`, che è la stessa costante che decide il rifiuto. L'altra
+        // strada era passare «4 MB» come UN valore già composto, e sarebbe stata
+        // peggio: l'unità smetterebbe di essere traducibile per schivare una regexp.
+        //
+        // 2026-08-13 · 39 → 41, e sono le due GEMELLE della riga del 12/08.
+        // `detailPageRiattivato` e `detailPageRiattivatoSenzaClasse` annunciano
+        // QUALE bambino è appena tornato fra gli iscritti — l'altra metà del
+        // modello a due tempi, che fino a oggi la scheda alunno non sapeva fare.
+        // `{nome}` è lo stesso nome e cognome di `detailPageArchiviato`, cade sotto
+        // il riconoscitore per la stessa ragione (in inglese la parola che segue è
+        // lunga più di una lettera, in italiano il messaggio non viene nemmeno
+        // visto), e la strada alternativa è la stessa già scartata due righe più
+        // su: riscrivere la frase inglese per schivare la regexp sarebbe piegare
+        // un messaggio a un lock invece di dichiarare un'eccezione vera. Due
+        // messaggi nuovi, due eccezioni dichiarate: il tetto sale di due e non di
+        // più, ed è questo che rende leggibile la crescita di questo elenco.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(41)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiScuola } from '@/lib/notifiche/destinatari'
+import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { isScuolaE2E } from '@/lib/scuole/reali'
 import { sendEmailDetailed } from '@/lib/email/send'
@@ -180,10 +181,17 @@ interface Destinatari {
 async function emailFamiglie(supabase: SupabaseClient, scuolaId: string): Promise<Destinatari> {
   const genitori = await genitoriDiScuola(supabase, scuolaId)
   if (genitori.length === 0) {
+    // `.eq('stato', …)` NON è una precauzione in più: è la condizione perché i
+    // due numeri siano CONFRONTABILI. `genitoriDiScuola` conta i genitori dei
+    // soli ISCRITTI (dal 2026-08-12); se qui si contassero anche gli archiviati,
+    // una sede rimasta senza bambini in corso produrrebbe «alunni ce ne sono,
+    // genitori collegati no» — un warn che accusa i legami di un guasto che non
+    // c'è, e manda a cercare il difetto dalla parte sbagliata.
     const { count, error } = await supabase
       .from('alunni')
       .select('id', { count: 'exact', head: true })
       .eq('scuola_id', scuolaId)
+      .in('stato', [...STATI_CON_CANALE_FAMIGLIA])
     if (error) {
       logEvento('news', 'error', {
         operazione: 'news/digest:destinatari', esito: 'alunni-non-letti', scuola_id: scuolaId,

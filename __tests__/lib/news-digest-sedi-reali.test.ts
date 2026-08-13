@@ -55,9 +55,10 @@ function dbBase(): DBFinto {
     ],
     news_digest_edizioni: [],
     alunni: [
-      { id: 'al-a', scuola_id: SEDE_A },
-      { id: 'al-b', scuola_id: SEDE_B },
-      { id: 'al-e', scuola_id: SEDE_E2E },
+      // `stato` esplicito: `genitoriDiScuola` legge i soli iscritti dal 2026-08-12.
+      { id: 'al-a', scuola_id: SEDE_A, stato: 'iscritto' },
+      { id: 'al-b', scuola_id: SEDE_B, stato: 'iscritto' },
+      { id: 'al-e', scuola_id: SEDE_E2E, stato: 'iscritto' },
     ],
     utenti: [
       { id: 'gen-al-a', email: 'a@example.test' },

@@ -60,8 +60,11 @@ const dbBase = (): DBFinto => ({
     { id: 'gen-B', nome: 'Genitore', cognome: 'Sede-B', first_name: null, last_name: null },
   ],
   alunni: [
-    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, scuola_id: SEDE_A },
-    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, scuola_id: SEDE_B },
+    // `stato` esplicito: dal 2026-08-13 la rubrica lato maestra legge i soli
+    // bambini ancora a scuola, e una fixture che lo tace non descrive più due
+    // bambini in classe — descrive due righe che nessuna rubrica raggiunge.
+    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, scuola_id: SEDE_A, stato: 'iscritto' },
+    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, scuola_id: SEDE_B, stato: 'iscritto' },
   ],
   legame_genitori_alunni: [
     { alunno_id: ALU_A, genitore_id: 'gen-A' },

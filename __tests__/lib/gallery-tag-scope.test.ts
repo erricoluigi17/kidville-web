@@ -43,6 +43,12 @@ import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 
 const MINORE_A = '66666666-6666-4666-8666-666666666666'
 const MINORE_B = '44444444-4444-4444-8444-444444444444'
+/** Della sede A come `MINORE_A`, ma ARCHIVIATO: non frequenta più. */
+const ARCHIVIATO_A = '11111111-1111-4111-8111-111111111111'
+/** Della sede B e archiviato: serve a provare QUALE dei due rifiuti arriva prima. */
+const ARCHIVIATO_B = '22222222-2222-4222-8222-222222222222'
+/** `'sospeso'` è un bambino che FREQUENTA: la sua pratica è ferma, lui no. */
+const SOSPESO_A = '33333333-3333-4333-8333-333333333333'
 /** Un uuid ben formato che non corrisponde a nessun bambino. */
 const NESSUNO = '77777777-7777-4777-8777-777777777777'
 
@@ -64,8 +70,17 @@ beforeEach(() => {
   lette = []
   db = {
     alunni: [
+      // ⚠️ Le due righe storiche restano SENZA `stato`, ed è una scelta: provano
+      // che il gate è fail-open sullo stato mancante. `eNonPiuIscritto` è
+      // un'allowlist — blocca solo ciò che riconosce — e nella direzione «rifiuto
+      // un'operazione a una maestra» si sbaglia dalla parte di chi lascia
+      // lavorare. Se un giorno questo diventasse un blocco, questi due test
+      // diventerebbero rossi ed è esattamente quello che devono fare.
       { id: MINORE_A, nome: 'Nome', cognome: 'Cognome A', scuola_id: SEDE_A },
       { id: MINORE_B, nome: 'Nome', cognome: 'Cognome B', scuola_id: SEDE_B },
+      { id: ARCHIVIATO_A, nome: 'Nome', cognome: 'Archiviato A', scuola_id: SEDE_A, stato: 'ritirato' },
+      { id: ARCHIVIATO_B, nome: 'Nome', cognome: 'Archiviato B', scuola_id: SEDE_B, stato: 'ritirato' },
+      { id: SOSPESO_A, nome: 'Nome', cognome: 'Sospeso A', scuola_id: SEDE_A, stato: 'sospeso' },
     ],
   }
 })
@@ -259,5 +274,96 @@ describe('assertTagStudentsInScope — colonna `scuola_id` assente (DB non migra
       'error',
       expect.objectContaining({ esito: 'colonna-sede-assente-degrado-negato' }),
     )
+  })
+})
+
+// =============================================================================
+// UN ARCHIVIATO NON SI TAGGA IN UNA FOTO NUOVA (2026-08-12)
+//
+// L'archiviazione toglie un alunno dagli elenchi sganciandolo dalla CLASSE. Un
+// tag però non passa da nessun elenco: arriva come un elenco di uuid scelti da
+// chi pubblica, e questa primitiva è l'unica strettoia che li vede tutti. Senza
+// un controllo qui si continuerebbe a creare dato personale NUOVO su un minore
+// che non frequenta più, mentre l'altra metà del modello — «libera spazio» —
+// cancella le sue foto: le due parti si contraddirebbero a vicenda.
+// =============================================================================
+describe('assertTagStudentsInScope — l’alunno archiviato', () => {
+  it('archiviato della PROPRIA sede ⇒ 403 con un codice suo, non quello della sede', async () => {
+    const res = await assertTagStudentsInScope(client(), [ARCHIVIATO_A], [SEDE_A], 'gallery:POST')
+    expect(res?.status).toBe(403)
+    const corpo = (await res!.json()) as { codice?: string; error?: string }
+    // ⚠️ Il punto del test è il CODICE, non il rifiuto. Sarebbe bastato un
+    // `.eq('stato', …)` nella stessa query per far sparire il bambino come uno di
+    // un altro plesso — e la maestra avrebbe letto «non appartengono ai tuoi
+    // plessi» su un bambino della sua sede, cercando un errore che non esiste.
+    expect(corpo.codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
+    expect(corpo.codice).not.toBe('TAG_FUORI_SEDE')
+  })
+
+  it('un archiviato in mezzo a tag legittimi basta a fermare tutto', async () => {
+    const res = await assertTagStudentsInScope(
+      client(),
+      [MINORE_A, ARCHIVIATO_A],
+      [SEDE_A],
+      'gallery:PATCH',
+    )
+    expect((await res!.json()).codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
+  })
+
+  it('la SEDE viene prima: su un archiviato di un ALTRO plesso il motivo resta muto', async () => {
+    // È la difesa che tiene insieme le due risposte. Il motivo preciso («non è
+    // più iscritto») si pronuncia SOLO su uuid già dimostrati dentro le sedi di
+    // chi chiede: altrimenti diventerebbe un modo per sondare l'esistenza — e lo
+    // stato — di minori altrui, che è il difetto T05-F1 con un'altra faccia.
+    const res = await assertTagStudentsInScope(client(), [ARCHIVIATO_B], [SEDE_A], 'gallery:POST')
+    expect(res?.status).toBe(403)
+    const corpo = JSON.stringify(await res!.json())
+    expect(corpo).toContain('TAG_FUORI_SEDE')
+    expect(corpo).not.toContain('NON_ISCRITTO')
+    expect(corpo).not.toContain(ARCHIVIATO_B)
+  })
+
+  it('`sospeso` NON è archiviato: quel bambino frequenta e si tagga', async () => {
+    // `@/lib/alunni/stato` mette `'sospeso'` dalla parte di chi frequenta, per
+    // decisione scritta. Il gate usa l'allowlist `eNonPiuIscritto`, quindi qui
+    // deve passare — se un giorno qualcuno spostasse quello stato di lato, questo
+    // test lo direbbe prima che una maestra si veda rifiutare una foto.
+    expect(await assertTagStudentsInScope(client(), [SOSPESO_A], [SEDE_A], 'gallery:POST')).toBeNull()
+  })
+
+  it('stato ASSENTE ⇒ si passa: l’allowlist blocca ciò che riconosce, non ciò che non capisce', async () => {
+    expect(await assertTagStudentsInScope(client(), [MINORE_A], [SEDE_A], 'gallery:POST')).toBeNull()
+  })
+
+  it('il log porta SOLO conteggi: gli id sono di minori', async () => {
+    await assertTagStudentsInScope(client(), [MINORE_A, ARCHIVIATO_A], [SEDE_A], 'gallery:POST')
+    const scritto = JSON.stringify(h.logEvento.mock.calls)
+    expect(scritto).not.toContain(ARCHIVIATO_A)
+    expect(scritto).not.toContain('Archiviato')
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'galleria',
+      'warn',
+      expect.objectContaining({
+        operazione: 'gallery:POST',
+        esito: 'tag-alunno-non-iscritto',
+        taggati: 2,
+        nonIscritti: 1,
+      }),
+    )
+  })
+
+  it('anche col degrado su DB non migrato lo stato continua a bloccare', async () => {
+    // La rilettura del degrado toglie il vincolo di SEDE, non il controllo: se
+    // avesse perso `stato` dalla proiezione, il blocco sarebbe sparito proprio
+    // sull'ambiente dove nessuno lo guarda.
+    conSedi(SEDE_A)
+    const res = await assertTagStudentsInScope(
+      clientSenzaColonnaSede(),
+      [ARCHIVIATO_A],
+      [SEDE_A],
+      'gallery:PATCH',
+    )
+    expect(res?.status).toBe(403)
+    expect((await res!.json()).codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
   })
 })

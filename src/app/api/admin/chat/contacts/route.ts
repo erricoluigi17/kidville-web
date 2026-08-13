@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive } from '@/lib/auth/scope';
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
+import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -39,10 +40,30 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
     // `scuola_id` nella proiezione: la rubrica lo MOSTRA quando le sedi attive
     // sono più d'una. Con «2 ANNI» presente in due plessi, `nome · classe` non
     // dice a quale famiglia si sta per scrivere.
+    //
+    // ─── SOLO ISCRITTI, ED È QUI CHE VA DETTO PERCHÉ ─────────────────────────
+    // L'archiviazione di un alunno lo fa sparire dagli elenchi SGANCIANDOLO
+    // dalla classe (`section_id` e `classe_sezione` a NULL), e quel gesto copre
+    // le query per sezione — la maggioranza. Questa NON è una di quelle: legge
+    // la SEDE INTERA, quindi un bambino archiviato continuerebbe a comparire in
+    // rubrica con la sua famiglia, e la segreteria potrebbe aprire una chat
+    // nuova con genitori che non hanno più un figlio iscritto.
+    //
+    // Il confine è `STATI_CON_CANALE_FAMIGLIA` (`@/lib/alunni/stato`), e non è
+    // scritto qui: ⚠️ fino al 2026-08-13 questo commento diceva «si cambia
+    // questa riga» mentre il gemello di `notifiche/destinatari.ts` diceva «si
+    // cambia lì, in un posto solo». Non potevano essere veri entrambi, ed erano
+    // sei copie della stessa regola.
+    // ⚠️ Conseguenza CAMBIATA lo stesso giorno: `'sospeso'` è ora DENTRO il
+    // confine. Escluderlo significava che la segreteria non poteva nemmeno
+    // aprire una conversazione con la famiglia di un bambino che frequenta —
+    // perché `LATO_DEL_CONFINE` lo classifica «ancora-iscritto», ed era l'unico
+    // punto del prodotto a non crederci.
     const { data: alunni, error } = await supabase
       .from('alunni')
       .select('id, nome, cognome, classe_sezione, scuola_id')
-      .in('scuola_id', plessi);
+      .in('scuola_id', plessi)
+      .in('stato', [...STATI_CON_CANALE_FAMIGLIA]);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const righeAlunni = alunni ?? [];

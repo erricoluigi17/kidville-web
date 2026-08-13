@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
+  logEvento: vi.fn(),
   alunno: null as Record<string, unknown> | null,
   links: [] as { parent_id: string }[],
   parentChildren: {} as Record<string, { stato: string; anonimizzato_il: string | null }[]>,
@@ -27,10 +28,33 @@ const h = vi.hoisted(() => ({
   // Errori PostgREST iniettati sulle due letture che decidono l'oblio.
   alunnoError: null as { code: string; message: string } | null,
   linksError: null as { code: string; message: string } | null,
+  // Guasto sulla TERZA lettura che decide l'oblio: «questo genitore ha altri
+  // figli?». Con l'errore ignorato la risposta era «no» — cioè «orfano».
+  orfanoGuasto: false,
+  // ── Ciò che il DRY-RUN deve saper contare (2026-08-12) ────────────────────
+  // Il dry-run diceva «file da rimuovere: N» e faceva confermare così la
+  // distruzione delle pagelle e dei certificati medici del bambino. Da qui in
+  // avanti li conta e li NOMINA: queste sono le sorgenti che legge.
+  pagelle: [] as { id: string }[],
+  certificati: [] as { id: string }[],
+  mediaGalleria: [] as { id: string; tag_students: string[] }[],
+  newsPosts: [] as { id: string; bambini_ritratti: unknown }[],
+  threadChat: [] as { id: string }[],
+  messaggiConAllegato: [] as { id: string }[],
+  // Errore PostgREST per tabella: serve a dimostrare che una lettura fallita
+  // diventa «non misurato» (`null`) e non «zero».
+  erroriTabella: {} as Record<string, { code: string; message: string }>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
+// `logEvento` è spiato, non silenziato: il rifiuto dell'oblio è un evento che
+// deve restare visibile, e senza un'asserzione «loggato» è indistinguibile da
+// «non è mai stato tentato».
+vi.mock('@/lib/logging/logger', async (originale) => {
+  const vero = await originale<typeof import('@/lib/logging/logger')>()
+  return { ...vero, logEvento: h.logEvento }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -44,6 +68,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'parents') return h.parentsAuth
         if (table === 'news_visualizzazioni') return h.newsVisDeleted
         if (table === 'consensi_accettazioni') return h.consensi
+        if (table === 'pagelle') return h.pagelle
+        if (table === 'certificati_medici') return h.certificati
+        if (table === 'galleria_media_v2') return h.mediaGalleria
+        if (table === 'news_posts') return h.newsPosts
+        if (table === 'chat_threads') return h.threadChat
+        if (table === 'chat_messages') return h.messaggiConAllegato
         if (table === 'riconciliazione_movimenti') {
           if (state.stato === 'confermato') return h.movConfermati
           if (state.neqStato === 'confermato') return h.movCfMatch
@@ -65,6 +95,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // ogni caso qui sotto cadeva con un 500 «contains is not a function».
       // I dati restano quelli di prima (nessuna asserzione cambia).
       b.contains = () => b
+      // Il conteggio degli allegati di chat filtra i messaggi che ne hanno uno
+      // davvero (`.not('attachment_url','is',null)`): senza questo metodo il
+      // doppio non è più un doppio del client Supabase e il dry-run cadrebbe con
+      // un 500 «not is not a function».
+      b.not = () => b
       b.delete = () => { h.deletedTables.push(table); return b }
       // `parents` risponde anche in forma singola: da quando la route passa da
       // `anonimizzaParent`, l'`auth_user_id` del genitore orfano si legge con
@@ -85,6 +120,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'news_visualizzazioni' && h.newsVisError) {
           return Promise.resolve({ data: null, error: h.newsVisError }).then(res)
         }
+        // PostgREST non lancia: l'errore torna NEL VALORE. È così che si dimostra
+        // che una lettura fallita non diventa uno zero rassicurante.
+        if (h.erroriTabella[table]) {
+          return Promise.resolve({ data: null, error: h.erroriTabella[table] }).then(res)
+        }
         return Promise.resolve({ data: dataFor(), error: null }).then(res)
       }
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
@@ -102,10 +142,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 // Conta i figli iscritti di un parent (per la regola "orfano").
+//
+// L'esito NON è un booleano, ed è il punto: la funzione vera deve poter dire
+// «non sono riuscito a leggere» senza che diventi «questo genitore non ha altri
+// figli». `h.orfanoGuasto` accende quel ramo (vedi il test del 500).
 vi.mock('@/lib/gdpr/orfano', () => ({
-  parentHaAltriFigliIscritti: vi.fn(async (_s: unknown, parentId: string) => {
+  leggiAltriFigliIscritti: vi.fn(async (_s: unknown, parentId: string) => {
+    if (h.orfanoGuasto) return { ok: false, errore: { code: 'PGRST301', message: 'letto male' } }
     const kids = h.parentChildren[parentId] ?? []
-    return kids.some((k) => k.stato === 'iscritto' && !k.anonimizzato_il)
+    return { ok: true, haAltriFigli: kids.some((k) => k.stato === 'iscritto' && !k.anonimizzato_il) }
   }),
 }))
 
@@ -123,7 +168,7 @@ beforeEach(() => {
   // scope di sede prima di anonimizzare, un alunno senza sede è (correttamente)
   // un 403. L'oggetto di questo file resta l'anonimizzazione, non il gate: quello
   // sta in `__tests__/api/gdpr-scope-sede.test.ts`.
-  h.alunno = { id: 'al-1', nome: 'Marco', cognome: 'Rossi', stato: 'non_iscritto', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null, scuola_id: 'sc-1', section_id: 'sez-1' }
+  h.alunno = { id: 'al-1', nome: 'Marco', cognome: 'Rossi', stato: 'ritirato', anonimizzato_il: null, documento_path: null, codice_fiscale: null, fiscal_code: null, scuola_id: 'sc-1', section_id: 'sez-1' }
   h.links = [{ parent_id: 'p-1' }]
   h.parentChildren = { 'p-1': [] } // orfano
   h.updates = []; h.removed = []
@@ -132,7 +177,10 @@ beforeEach(() => {
   h.parentsAuth = []; h.newsVisDeleted = []; h.newsVisError = null
   h.newsVisDeleteFilter = null; h.deletedTables = []
   h.consensi = []
-  h.alunnoError = null; h.linksError = null
+  h.alunnoError = null; h.linksError = null; h.orfanoGuasto = false
+  h.pagelle = []; h.certificati = []; h.mediaGalleria = []
+  h.newsPosts = []; h.threadChat = []; h.messaggiConAllegato = []
+  h.erroriTabella = {}
 })
 
 describe('POST /api/admin/gdpr/erase', () => {
@@ -151,6 +199,61 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect((await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))).status).toBe(409)
   })
 
+  // ⬇︎ REGRESSIONE — il difetto era in produzione.
+  // Il gate era `alunno.stato === 'iscritto'`, cioè una negazione: passava
+  // qualunque altro stato. La tendina di `StudentDetailPanel` ne offre un terzo,
+  // `sospeso`, che è un bambino iscritto a tutti gli effetti (da non confondere
+  // con la colonna booleana `alunni.sospeso` della morosità). Ora il permesso
+  // arriva da un'allowlist: solo gli stati di `STATI_NON_PIU_ISCRITTO` passano.
+  it('rifiuta un alunno SOSPESO (409): è iscritto a tutti gli effetti', async () => {
+    h.alunno = { ...h.alunno, stato: 'sospeso' }
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    expect(res.status).toBe(409)
+    expect(h.updates).toHaveLength(0)
+  })
+
+  it('rifiuta uno stato mai visto prima (409)', async () => {
+    // `alunni.stato` è varchar senza `CHECK` e la PATCH admin la valida con
+    // `z.unknown()`: un refuso non può autorizzare un'operazione irreversibile.
+    h.alunno = { ...h.alunno, stato: 'trasferito' }
+    expect((await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))).status).toBe(409)
+    expect(h.updates).toHaveLength(0)
+  })
+
+  it('accetta un alunno RITIRATO: è lo stato che l\'archiviazione produce', async () => {
+    h.alunno = { ...h.alunno, stato: 'ritirato' }
+    expect((await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))).status).toBe(200)
+  })
+
+  it('il rifiuto dice QUALE stato serve, non «non iscritti»', async () => {
+    // Il messaggio era «Operazione consentita solo su alunni non iscritti», e
+    // dopo il passaggio all'elenco chiuso è diventato ingannevole: un bambino
+    // `trasferito` NON è iscritto, quindi la frase dichiarava consentito ciò che
+    // la riga sopra aveva appena rifiutato. Chi legge deve poter capire che cosa
+    // fare — portare lo stato a `ritirato` — senza aprire il codice.
+    h.alunno = { ...h.alunno, stato: 'trasferito' }
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    expect(res.status).toBe(409)
+    const messaggio = String((await res.json()).error ?? '')
+    expect(messaggio).toContain('ritirato')
+    expect(messaggio).not.toMatch(/non iscritt/i)
+  })
+
+  it('il rifiuto lascia una traccia, con lo stato che l\'ha causato', async () => {
+    // Un elenco chiuso può diventare troppo stretto — il giorno che la
+    // segreteria introduce uno stato nuovo, una Direzione verrà fermata mentre
+    // esercita un oblio legittimo. Senza questa riga di log non lo saprebbe
+    // nessuno: si vedrebbe solo un 409 che il codice considera «corretto».
+    h.alunno = { ...h.alunno, stato: 'trasferito' }
+    await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    const riga = h.logEvento.mock.calls.find((c) => c[0] === 'gdpr')
+    expect(riga, 'nessun log sul rifiuto dell\'oblio').toBeTruthy()
+    expect(riga![1]).toBe('warn')
+    expect(riga![2]).toMatchObject({ esito: 'oblio-rifiutato-ancora-iscritto', entita_id: 'al-1', tipo: 'trasferito' })
+    // Nessun nome, nessun cognome: `gdpr` è un evento PERSISTITO.
+    expect(JSON.stringify(riga![2])).not.toMatch(/Marco|Rossi/)
+  })
+
   it('dryrun: ritorna conteggi senza scrivere', async () => {
     const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
     expect(res.status).toBe(200)
@@ -159,6 +262,116 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect(json.alunno).toBe(1)
     expect(json.parents).toBe(1)
     expect(h.updates).toHaveLength(0)
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // IL DRY-RUN CHE NON DICEVA CHE COSA DISTRUGGE (2026-08-12).
+  //
+  // Rispondeva `file_da_rimuovere: 3` e la Direzione confermava
+  // un'anonimizzazione IRREVERSIBILE senza sapere che dentro quel numero, e
+  // accanto a quel numero, se ne vanno le PAGELLE del bambino e i suoi
+  // CERTIFICATI MEDICI — che è precisamente ciò che `REGISTRO_BUCKET_OBLIO`
+  // dichiara alla voce `pagelle`. Il difetto non era un dato non cancellato: era
+  // un consenso raccolto su un'informazione mancante.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('dryrun: dice quante PAGELLE e quanti CERTIFICATI MEDICI se ne vanno', async () => {
+    h.pagelle = [{ id: 'pg-1' }, { id: 'pg-2' }]
+    h.certificati = [{ id: 'cm-1' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.pagelle).toBe(2)
+    expect(json.certificati_medici).toBe(1)
+    // Resta un dry-run: SOLE SELECT. Nessuna scrittura, nessuna cancellazione,
+    // nessun file tolto dall'archivio — è il passo che PRECEDE la conferma.
+    expect(h.updates).toHaveLength(0)
+    expect(h.deletedTables).toHaveLength(0)
+    expect(h.removed).toHaveLength(0)
+  })
+
+  it('dryrun: foto sue e foto di GRUPPO restano due numeri diversi', async () => {
+    // Le foto di gruppo non se ne vanno: dentro c'è l'immagine di altri bambini e
+    // si toglie solo il tag. Sommarle alle altre gonfierebbe l'annuncio di una
+    // distruzione che non avviene.
+    h.mediaGalleria = [
+      { id: 'md-1', tag_students: ['al-1'] },
+      { id: 'md-2', tag_students: ['al-1', 'al-2'] },
+    ]
+    const json = await (await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))).json()
+    expect(json.foto_solo_sue).toBe(1)
+    expect(json.foto_di_gruppo).toBe(1)
+  })
+
+  it('dryrun: conta gli articoli pubblici che lo ritraggono e gli allegati di chat', async () => {
+    h.newsPosts = [
+      { id: 'np-1', bambini_ritratti: ['al-1'] },
+      { id: 'np-2', bambini_ritratti: ['al-2'] },
+    ]
+    h.threadChat = [{ id: 'th-1' }]
+    h.messaggiConAllegato = [{ id: 'ms-1' }, { id: 'ms-2' }]
+    const json = await (await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))).json()
+    expect(json.articoli_pubblici).toBe(1)
+    expect(json.allegati_chat).toBe(2)
+  })
+
+  it('dryrun: una lettura FALLITA si annuncia «non misurato» (null), mai zero', async () => {
+    // PostgREST non lancia: ritorna `{ error }`. Se questo ramo rispondesse `0`,
+    // il riquadro direbbe «Pagelle: 0» a chi sta per distruggerne due — la stessa
+    // rassicurazione falsa per cui il dry-run era stato reso onesto.
+    h.pagelle = [{ id: 'pg-1' }, { id: 'pg-2' }]
+    h.erroriTabella = { pagelle: { code: '42501', message: 'permission denied for table pagelle' } }
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.pagelle).toBeNull()
+    // Un magazzino illeggibile non spegne l'avviso: le altre voci restano misurate.
+    expect(json.certificati_medici).toBe(0)
+  })
+
+  it('dryrun: lo schema assente (DB E2E della CI non migrato) vale zero, non un 500', async () => {
+    h.erroriTabella = {
+      pagelle: { code: 'PGRST205', message: 'table not found' },
+      certificati_medici: { code: 'PGRST205', message: 'table not found' },
+      galleria_media_v2: { code: '42P01', message: 'relation does not exist' },
+      news_posts: { code: 'PGRST205', message: 'table not found' },
+      chat_threads: { code: 'PGRST205', message: 'table not found' },
+    }
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.pagelle).toBe(0)
+    expect(json.foto_solo_sue).toBe(0)
+    expect(json.allegati_chat).toBe(0)
+  })
+
+  it('execute: il corpo della risposta è INVARIATO (i conteggi sono roba del dry-run)', async () => {
+    // Il ramo che ESEGUE non è stato toccato, e questa riga lo tiene fermo: se un
+    // giorno i conteggi del dry-run comparissero anche qui, sarebbero numeri
+    // misurati PRIMA dell'operazione presentati come il suo esito.
+    h.pagelle = [{ id: 'pg-1' }]
+    h.certificati = [{ id: 'cm-1' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    expect(Object.keys(await res.json()).sort()).toEqual(
+      [
+        'ok',
+        'alunno',
+        'parents',
+        'file_rimossi',
+        'n_file_non_rimossi',
+        'iscrizioni_scrubbate',
+        'foto_rimosse',
+        'foto_sganciate',
+        'riconciliazione_bonificati',
+        'incassi_bonificati',
+        'cassa_bonificati',
+        'presenze_bonificate',
+        'news_visualizzazioni_rimosse',
+        'consensi_prova_bonificati',
+        'push_subscriptions_rimosse',
+        'notifiche_rimosse',
+      ].sort(),
+    )
   })
 
   it('execute con conferma errata → 400', async () => {
@@ -373,6 +586,30 @@ describe('POST /api/admin/gdpr/erase — «non c’è» e «non l’ho potuto le
     // Il punto non è lo status: è che il bambino NON è stato anonimizzato da
     // solo, lasciando i suoi genitori in chiaro e la richiesta chiusa.
     expect(h.updates.some((u) => u.table === 'alunni')).toBe(false)
+  })
+
+  // (c) LA TERZA LETTURA, quella che il 2026-08-12 era rimasta indietro: «questo
+  //     genitore ha altri figli iscritti?». `@/lib/gdpr/orfano` buttava via
+  //     l'`error` di DUE query, e un guasto rispondeva `false` — cioè «orfano»,
+  //     cioè da anonimizzare. È il verso peggiore in cui si possa sbagliare qui:
+  //     nome, codice fiscale e documento d'identità di un adulto il cui bambino
+  //     frequenta ancora, cancellati senza un annulla e senza una riga di log.
+  it('«ha altri figli?» senza risposta → 500, MAI un genitore anonimizzato per un guasto', async () => {
+    h.orfanoGuasto = true
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'Rossi Marco' }))
+    expect(res.status).toBe(500)
+    // Né l'adulto né il bambino: l'operazione non è cominciata.
+    expect(h.updates.some((u) => u.table === 'parents')).toBe(false)
+    expect(h.updates.some((u) => u.table === 'alunni')).toBe(false)
+  })
+
+  it('anche il dry-run si ferma: un conteggio inventato è una conferma inventata', async () => {
+    // Il dry-run è ciò che la Direzione LEGGE prima di digitare il nominativo.
+    // Con l'errore ignorato annunciava «1 genitore da anonimizzare» quando la
+    // risposta vera era «non lo so»: la conferma sarebbe stata data su un numero
+    // che nessuno aveva misurato.
+    h.orfanoGuasto = true
+    expect((await POST(req({ alunno_id: 'al-1', mode: 'dryrun' }))).status).toBe(500)
   })
 
   it('nessun errore: il 404 di sempre resta al suo posto', async () => {

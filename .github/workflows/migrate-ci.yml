@@ -195,6 +195,40 @@ jobs:
       #     Il criterio che discrimina davvero è il suo complementare: quante sedi
       #     NON sono e2e. In produzione sono 3. Sul progetto CI devono essere 0.
       #
+      #     ⚠️  IL CRITERIO È CAMBIATO DI FORMA IL 2026-08-12 — non di forza, e il
+      #     conto sta qui sotto perché chiunque possa rifarlo.
+      #
+      #     PERCHÉ. I due moduli pubblici (`/iscrizione`, `/lavora-con-noi`,
+      #     `/anagrafica-personale`) mostrano solo le sedi che `sediReali`
+      #     ACCETTA, cioè quelle che `isScuolaE2E` NON riconosce. Sul progetto CI
+      #     esistevano solo sedi `e2e00000-*`: l'elenco pubblico era vuoto, i
+      #     wizard non dipingevano nemmeno il primo passo, e il percorso felice
+      #     non era collaudabile. Il seed ora semina una terza sede — «Plesso di
+      #     Collaudo», `c0110a0d-…0001` — che serve esattamente a quello.
+      #
+      #     Quella sede, per costruzione, NON comincia per `e2e00000`: col
+      #     criterio precedente avrebbe fatto scattare questa guardia a ogni
+      #     lancio, come falso allarme, bloccando ogni futura migrazione della CI.
+      #     Le due condizioni sono l'una il complementare dell'altra: una sede
+      #     utilizzabile dai moduli pubblici è, per definizione, una sede che
+      #     questa guardia contava.
+      #
+      #     COSA CAMBIA: si conta «zero sedi FUORI DALL'ELENCO AMMESSO» invece di
+      #     «zero sedi non-e2e». L'elenco ammesso è: le sedi `e2e00000-*` più
+      #     l'uuid ESATTO della sede di collaudo — un solo uuid, scritto per
+      #     esteso, non un prefisso e non un pattern sul nome.
+      #
+      #     COSA NON CAMBIA, ed è il punto: in produzione le sedi fuori
+      #     dall'elenco sono le stesse TRE di prima (Giugliano, Aversa, Cesa), e
+      #     `c0110a0d-…0001` là non esiste. Quindi se questo workflow venisse
+      #     puntato per errore alla produzione, la guardia scatterebbe
+      #     esattamente come scattava ieri. La deroga vale per UN uuid che esiste
+      #     solo sul progetto CI: allargarla a un prefisso o al nome della sede
+      #     rimetterebbe in gioco proprio ciò che la riga sopra dichiara falso.
+      #
+      #     Autorizzata dal titolare il 2026-08-12, dopo che la modifica era stata
+      #     rifiutata quando un agente aveva provato a farla di propria iniziativa.
+      #
       #     Numeri misurati sulla PRODUZIONE il 2026-08-10, come riferimento di
       #     ciò che questa guardia deve rifiutare:
       #         sedi non-e2e 3 · sedi e2e 1 · alunni 33 · genitori 50 ·
@@ -269,7 +303,9 @@ jobs:
           # `enrollment_submissions`, e se una mancasse il seed sarebbe rosso.
           righe=$(psql -d "$PGURL" -v ON_ERROR_STOP=1 -At -c "
             select
-              (select count(*) from public.schools where id::text not like 'e2e00000%'),
+              (select count(*) from public.schools
+                where id::text not like 'e2e00000%'
+                  and id <> 'c0110a0d-0000-4000-8000-000000000001'),
               (select count(*) from public.schools where id::text like 'e2e00000%'),
               (select count(*) from public.alunni),
               (select count(*) from public.parents),
@@ -278,7 +314,7 @@ jobs:
           IFS='|' read -r sedi_reali sedi_e2e alunni genitori iscrizioni <<< "$righe"
 
           echo "misurato sul database collegato:"
-          echo "  sedi NON e2e ............ $sedi_reali   (produzione: 3 — atteso qui: 0)"
+          echo "  sedi fuori elenco ....... $sedi_reali   (produzione: 3 — atteso qui: 0)"
           echo "  sedi e2e00000-* ......... $sedi_e2e    (non discrimina: la produzione ne ha 1)"
           echo "  alunni .................. $alunni   (produzione: 33 — soglia: 20)"
           echo "  genitori ................ $genitori   (produzione: 50 — soglia: 20)"
@@ -289,7 +325,7 @@ jobs:
             echo ""
             echo "| grandezza | misurato | produzione (2026-08-10) | limite |"
             echo "|---|---:|---:|---|"
-            echo "| sedi NON e2e | $sedi_reali | 3 | deve essere 0 |"
+            echo "| sedi fuori dall'elenco ammesso | $sedi_reali | 3 | deve essere 0 |"
             echo "| sedi \`e2e00000-*\` | $sedi_e2e | 1 | almeno 1 |"
             echo "| alunni | $alunni | 33 | max 20 |"
             echo "| genitori | $genitori | 50 | max 20 |"
@@ -299,7 +335,7 @@ jobs:
 
           fermati=0
           if [ "$sedi_reali" -ne 0 ]; then
-            echo "::error::ci sono $sedi_reali sedi NON e2e: questo database ha sedi reali dentro"
+            echo "::error::ci sono $sedi_reali sedi FUORI DALL'ELENCO AMMESSO (e2e00000-* più il Plesso di Collaudo): questo database ha sedi reali dentro"
             fermati=1
           fi
           if [ "$sedi_e2e" -lt 1 ]; then

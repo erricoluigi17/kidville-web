@@ -450,8 +450,9 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 dato che ne ha uno breve.
                 CHI LE FA SCADERE: il job `retention-personale`, che chiama
                 `POST /api/gdpr/retention-personale` — toglie PRIMA il file dal bucket
-                `documenti_personale` e POI la riga (o azzera `documento_path`, che è la
-                stessa perdita di riferimento), e lascia il proprio battito in `app_log`.
+                `documenti_personale` e POI la riga (o azzera `documento_fronte_path` e
+                `documento_retro_path` — entrambe sempre, mai una sola — che è la stessa
+                perdita di riferimento), e lascia il proprio battito in `app_log`.
                 ⚠️ L'ULTIMA FRASE DELLA TERZA VOCE È STATA SCRITTA L'11/08/2026, e dice ciò
                 che prima nessuno faceva. La voce diceva già che la richiesta approvata
                 «segue i termini indicati ai due punti precedenti», ma MISURATO: in tutto
@@ -477,13 +478,16 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 Questa voce e il paragrafo della sezione sul personale dicevano che la copia
                 del documento «viene sostituita, con cancellazione della precedente, appena
                 l'interessata ne consegna una nuova». MISURATO: in tutto `src/` non esiste una
-                sola riga che scriva `anagrafica_personale.documento_path` (l'unica scrittura
-                su quella colonna è l'azzeramento di `retention-personale`), e nessuna
-                `remove()` sul bucket `documenti_personale` vive fuori da quel job. Il giorno
-                in cui la route di approvazione sovrascriverà il percorso con la seconda
-                scansione di una persona, il file precedente resterà nel bucket senza più
-                nessuna riga che lo nomini: `retention-personale` legge `documento_path`, e
-                quello punta ormai al nuovo. Una fotografia di carta d'identità conservata per
+                sola riga che scriva le colonne del documento di `anagrafica_personale`
+                (l'unica scrittura su quelle colonne è l'azzeramento di `retention-personale`),
+                e nessuna `remove()` sul bucket `documenti_personale` vive fuori da quel job.
+                ⚠️ Dal 12/08/2026 le colonne sono DUE — `documento_fronte_path` e
+                `documento_retro_path`, prima era la sola `documento_path` — e questo raddoppia
+                il numero di file che una sostituzione lascerebbe indietro, non lo dimezza.
+                Il giorno in cui la route di approvazione sovrascriverà un percorso con la
+                scansione nuova di una persona, il file precedente resterà nel bucket senza più
+                nessuna riga che lo nomini: `retention-personale` legge quelle due colonne, e
+                puntano ormai ai nuovi. Una fotografia di carta d'identità conservata per
                 sempre e irrintracciabile — «invisibile, non cancellata», che è la definizione
                 di guasto peggiore secondo la testata di quella route. Era per giunta il termine
                 a base giuridica più fragile: nessuna norma impone al datore di custodire una

@@ -42,8 +42,42 @@ export const EMAILS = {
   genitore2: 'genitore2.e2e@kidville.test',
 };
 
+/**
+ * Le identità dei due moduli pubblici del PERSONALE.
+ *
+ * ⚠️ RICOPIATE da `PERSONALE_E2E` di `scripts/seed-e2e.mjs`, e devono restare
+ * allineate: quel file è `.mjs` e gli spec Playwright non importano moduli `.mjs`
+ * dello stesso repo (è la stessa duplicazione dichiarata in cima a questo file per
+ * la password). Se qui e là divergono, il seed ripulisce indirizzi che nessuno usa
+ * e gli spec partono da uno stato sporco: le due rotte traducono il doppione in
+ * **201, come al primo invio**, quindi il test resterebbe verde per il motivo
+ * sbagliato — senza che nessuna riga nuova nasca.
+ */
+export const PERSONALE_E2E = {
+  /** `/anagrafica-personale`: la pratica che il percorso felice invia. */
+  emailPratica: 'anagrafica.e2e@kidville.test',
+  /** `/anagrafica-personale`: la pratica che il cockpit approva (spec separato). */
+  emailApprovazione: 'approvazione.e2e@kidville.test',
+  /** `/lavora-con-noi`: la candidatura del percorso vero. */
+  emailCandidatura: 'candidatura.e2e@kidville.test',
+};
+
 export const IDS = {
   SCUOLA: 'e2e00000-0000-4000-8000-000000000001',
+  /**
+   * LA SEDE CHE I MODULI PUBBLICI VEDONO — e l'unica.
+   *
+   * ⚠️ Ricopiata da `IDS.SCUOLA_COLLAUDO` di `scripts/seed-e2e.mjs` (stessa
+   * duplicazione, stessa ragione: non si importa un `.mjs`). Nome «Plesso di
+   * Collaudo», città «Testville».
+   *
+   * Esiste perché `isScuolaE2E` (`src/lib/scuole/reali.ts`) esclude da ogni elenco
+   * pubblico le sedi il cui id comincia per `e2e00000` o il cui nome contiene
+   * «e2e» — cioè `SCUOLA` e `SCUOLA2` qui sopra. Senza una terza sede che il
+   * predicato NON riconosce, `GET /api/iscrizione/sedi` risponde `{data: []}` e i
+   * moduli pubblici del personale non cominciano nemmeno.
+   */
+  SCUOLA_COLLAUDO: 'c0110a0d-0000-4000-8000-000000000001',
   SEC_GIRASOLI: 'e2e00000-0000-4000-8000-000000000011',
   A1: 'e2e00000-0000-4000-8000-000000000101', // Aurora Arcobaleno-E2E
   A2: 'e2e00000-0000-4000-8000-000000000102', // Bruno Baleno-E2E
@@ -64,8 +98,45 @@ export const IDS = {
   AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
 };
 
+/**
+ * I NOMI delle sedi del seed, come li mostra il cockpit.
+ *
+ * ⚠️ Ricopiati da `scripts/seed-e2e.mjs` (stessa duplicazione dichiarata in cima
+ * a questo file: gli spec Playwright non importano moduli `.mjs` del repo). Gli
+ * uuid qui sopra bastano per il DATO; il NOME serve quando lo spec deve toccare
+ * ciò che l'utente tocca — i bottoni dell'avviso «Seleziona una sede», che
+ * portano il nome della sede e nient'altro (`SedeNotice`, `sede-context.tsx`).
+ */
+export const NOMI_SEDI = {
+  /** `IDS.SCUOLA` — la sede principale del seed. */
+  scuola: 'Kidville E2E',
+  /** `IDS.SCUOLA_COLLAUDO` — la sede che i moduli pubblici vedono. */
+  collaudo: 'Plesso di Collaudo',
+};
+
 export const STORAGE = {
+  /**
+   * L'admin CON LA SUA SEDE DICHIARATA (cookie `sedi_attive` = `IDS.SCUOLA`).
+   *
+   * È lo stato in cui l'admin vero lavora quasi sempre — il perché, con la
+   * misura, sta in `auth.setup.ts`. Da qui il cockpit ha una sede corrente,
+   * quindi le pagine sotto `SedeRequired` (contabilità, news, mensa,
+   * modulistica, primaria, impostazioni) mostrano i propri pannelli.
+   */
   admin: path.join(__dirname, '.auth', 'admin.json'),
+  /**
+   * Lo stesso admin, ma SENZA sede dichiarata: cioè «Tutte le sedi», che è
+   * l'altro stato legittimo del selettore (cookie vuoto = nessun filtro).
+   *
+   * Serve agli spec che leggono dati di PIÙ plessi con una sola richiesta — le
+   * pratiche e le candidature dei moduli pubblici nascono sul «Plesso di
+   * Collaudo» (`IDS.SCUOLA_COLLAUDO`), non sulla sede principale, e
+   * `resolveScuoleAttive` scopa le letture con quel cookie: da `STORAGE.admin`
+   * quelle righe sarebbero legittimamente fuori scope. Non è una scorciatoia:
+   * è la stessa cosa che fa una Segreteria che vuole vedere la posta di tutti i
+   * plessi insieme.
+   */
+  adminTutteLeSedi: path.join(__dirname, '.auth', 'admin-tutte-le-sedi.json'),
   docente: path.join(__dirname, '.auth', 'docente.json'),
   genitore: path.join(__dirname, '.auth', 'genitore.json'),
 };

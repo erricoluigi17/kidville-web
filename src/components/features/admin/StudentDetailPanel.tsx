@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
+import { X, Archive, Save, AlertTriangle, Undo2, Users, Baby } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
 import { Task } from '../teacher/tasks/TaskCard';
@@ -45,6 +45,29 @@ interface Student {
     // dalla `select *` di GET /api/admin/students/[id].
     scuola_id?: string | null;
     stato?: string;
+    /**
+     * LE TRE COLONNE DELL'ARCHIVIAZIONE (migrazione `20260812194517`), e perché
+     * questa scheda deve leggerle invece di ignorarle come faceva fino al
+     * 2026-08-13.
+     *
+     * Senza `archiviato_il` il pannello non sa se ha davanti un bambino
+     * archiviato, e da lì discendevano due difetti che si sommavano:
+     *  · offriva «Sposta fra i non iscritti» anche a chi era già fuori — e chi lo
+     *    premeva riceveva un 409 DOPO aver letto il riquadro con le promesse e
+     *    aver confermato;
+     *  · l'unico comando di ciclo di vita che gli funzionava era la tendina
+     *    «Stato», che è la strada sbagliata: rimette `iscritto` senza restituire
+     *    la classe, e il bambino sparisce da ogni elenco per sezione.
+     * È la scheda a cui manda il bottone «Apri scheda» dell'elenco dei «non più
+     * iscritti»: chi ci arriva ci arriva apposta.
+     *
+     * `undefined` su un ambiente non ancora migrato — il DB E2E della CI risponde
+     * `42703` — e in quel caso la scheda si comporta come prima: `!= null` è
+     * falso, quindi nessun banner e nessun blocco. Assente non è archiviato.
+     */
+    archiviato_il?: string | null;
+    archiviato_classe_sezione?: string | null;
+    spazio_liberato_il?: string | null;
     data_iscrizione?: string | null;
     giorno_scadenza_pagamenti?: number | null;
     note_mediche?: string | null;
@@ -91,19 +114,53 @@ interface Props {
     student: Student | null;
     onClose: () => void;
     onSave: (data: Partial<Student> & { id: string }) => void;
-    onDelete: (id: string) => void;
+    /**
+     * Sposta l'alunno fra i «non più iscritti» (`POST /api/admin/students/archivia`).
+     *
+     * ⚠️ RESTITUISCE L'ESITO, e non è un dettaglio di firma: fino al 2026-08-12 qui
+     * c'era `onDelete: (id: string) => void`, cioè una funzione che non poteva dire
+     * com'era andata. Il chiamante mostrava un «❌ Errore» generico e riportava
+     * comunque l'operatore alla lista dopo 900 ms — con il messaggio del server già
+     * letto e buttato via. La stessa correzione era GIÀ stata fatta sul ramo dei
+     * genitori (`onSave` di `ParentDetailPanel`) e non era mai stata propagata qui.
+     */
+    onArchive: (id: string) => Promise<{ ok: boolean; errore?: string | null }>;
+    /**
+     * Riporta l'alunno fra gli iscritti (`POST /api/admin/students/riattiva`).
+     *
+     * ⚠️ È OBBLIGATORIA, e la scelta è deliberata. Un `prop` opzionale che nessuno
+     * passa è il difetto che questo stesso lavoro ha già prodotto una volta
+     * (`onLiberaSpazio`, rimosso): compila, non rompe niente, e lascia in piedi un
+     * comando che non funziona. Qui il compilatore obbliga ogni punto di montaggio
+     * a dichiarare la strada del ritorno — che è l'unica strada giusta, perché
+     * `riattiva` rimette lo stato E ripristina la classe dopo averne verificato
+     * l'esistenza nella sede, mentre la tendina «Stato» rimetteva solo lo stato.
+     */
+    onRiattiva: (id: string) => Promise<{ ok: boolean; errore?: string | null }>;
     // 'page' = scheda a tutta area (route /admin/students/[id]); 'drawer' = pannello
     // laterale storico. Il default resta 'drawer' per retro-compatibilità.
     variant?: 'drawer' | 'page';
 }
 
-export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant = 'drawer' }: Props) {
+export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiattiva, variant = 'drawer' }: Props) {
     const t = useTranslations('adminStudents');
     const locale = useLocale();
     // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
     // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
     const [form, setForm] = useState<Partial<Student>>(() => (student ? { ...student } : {}));
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    /** Primo clic: si chiede conferma. Secondo clic: si archivia. */
+    const [confermaArchiviazione, setConfermaArchiviazione] = useState(false);
+    const [archiviazioneInCorso, setArchiviazioneInCorso] = useState(false);
+    /**
+     * Il messaggio DEL SERVER, quando l'archiviazione è stata rifiutata.
+     *
+     * Vive qui e non in un toast della pagina perché la scheda NON si smonta sul
+     * fallimento: l'operatore deve poter leggere il motivo e riprovare, invece di
+     * ritrovarsi nella lista con un «❌ Errore» che sta sparendo.
+     */
+    const [erroreArchiviazione, setErroreArchiviazione] = useState<string | null>(null);
+    /** Il ritorno è in volo: serve solo all'etichetta del comando. */
+    const [riattivazioneInCorso, setRiattivazioneInCorso] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [activeAdultTab, setActiveAdultTab] = useState<string | null>(null);
     const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
@@ -305,12 +362,69 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
         }
     };
 
-    const handleDelete = () => {
-        if (showDeleteConfirm) {
-            onDelete(student.id);
-            setShowDeleteConfirm(false);
-        } else {
-            setShowDeleteConfirm(true);
+    /**
+     * IL DOPPIO CLIC RESTA, IL ROSSO NO.
+     *
+     * La conferma in due tempi era l'unica protezione di una cancellazione
+     * irreversibile, ed era troppo poca; per un'operazione REVERSIBILE è invece la
+     * misura giusta — ferma il clic distratto senza chiedere a una segretaria di
+     * digitare il nome di un bambino per spostarlo di elenco. Cambia il TONO:
+     * `warn`, non `error`, perché qui non si distrugge niente.
+     *
+     * Sull'esito: si sta dentro la scheda. `ok` lascia la parola al chiamante (che
+     * mostra il messaggio e torna alla lista); il rifiuto resta qui, sotto gli occhi
+     * di chi ha premuto, con la frase che il server ha mandato.
+     */
+    const handleArchive = async () => {
+        if (!confermaArchiviazione) {
+            setConfermaArchiviazione(true);
+            return;
+        }
+        setArchiviazioneInCorso(true);
+        setErroreArchiviazione(null);
+        try {
+            const esito = await onArchive(student.id);
+            if (esito?.ok) {
+                setConfermaArchiviazione(false);
+                return;
+            }
+            // `errore` assente (rete caduta, corpo non JSON) non vale silenzio: una
+            // frase generica è comunque un fatto, «niente» è indistinguibile dal
+            // successo — che è il difetto da cui nasce tutta questa correzione.
+            setErroreArchiviazione(esito?.errore || t('detailArchiviaErrore'));
+        } finally {
+            setArchiviazioneInCorso(false);
+        }
+    };
+
+    /**
+     * IL RITORNO, DALLA SCHEDA — il comando che a questa scheda mancava.
+     *
+     * Chi apre la scheda di un archiviato ci arriva quasi sempre dal bottone
+     * «Apri scheda» dell'elenco dei «non più iscritti», cioè con in testa una
+     * domanda su QUEL bambino. Fino al 2026-08-13 qui trovava soltanto «Sposta fra
+     * i non iscritti» — che gli rispondeva 409 dopo la conferma — e la tendina
+     * «Stato», che è la strada che rompe la riga. Adesso trova il comando giusto.
+     *
+     * ⚠️ NIENTE DOPPIO CLIC, e non è una dimenticanza: la conferma in due tempi
+     * dell'archiviazione esiste perché quella operazione toglie un bambino da
+     * tutti gli elenchi. Questa fa l'opposto — lo rimette dov'era — ed è a sua
+     * volta annullabile con un gesto solo. Chiedere una conferma per rimettere
+     * dentro un bambino sarebbe cerimonia, non prudenza.
+     *
+     * L'esito segue la stessa regola dell'archiviazione: il successo è del
+     * chiamante (annuncia e torna alla lista), il rifiuto resta qui sotto gli
+     * occhi di chi ha premuto.
+     */
+    const handleRiattiva = async () => {
+        setRiattivazioneInCorso(true);
+        setErroreArchiviazione(null);
+        try {
+            const esito = await onRiattiva(student.id);
+            if (esito?.ok) return;
+            setErroreArchiviazione(esito?.errore || t('detailRiattivaErrore'));
+        } finally {
+            setRiattivazioneInCorso(false);
         }
     };
 
@@ -388,6 +502,25 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
     const classeCorrente = (form.classe_sezione as string) ?? '';
     const classeFuoriElenco =
         classeCorrente && !sections.some(s => s.name === classeCorrente) ? classeCorrente : null;
+
+    /**
+     * ⚠️ SI LEGGE DA `student`, NON DA `form`, ed è una differenza che conta.
+     *
+     * `form` è la copia modificabile: `archiviato_il` non è un campo che si
+     * modifica, e prenderlo da lì vorrebbe dire far dipendere il blocco della
+     * tendina da uno stato che l'interfaccia può cambiare sotto i piedi. Qui il
+     * fatto è del server e non si negozia.
+     *
+     * `!= null` e non `Boolean(...)`: su un ambiente non migrato la proprietà è
+     * `undefined` e la scheda torna a comportarsi come prima. Assente ≠ archiviato.
+     */
+    const archiviato = student.archiviato_il != null;
+    const archiviatoIl = typeof student.archiviato_il === 'string'
+        ? formattaIstante(student.archiviato_il, locale, { day: '2-digit', month: '2-digit', year: 'numeric' })
+        : '';
+    const eraIn = typeof student.archiviato_classe_sezione === 'string' && student.archiviato_classe_sezione !== ''
+        ? student.archiviato_classe_sezione
+        : null;
 
     const isPage = variant === 'page';
     const shellCls = isPage
@@ -629,16 +762,40 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                             </div>
                             <div>
                                 <label htmlFor="dettaglio-stato" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoStato')}</label>
+                                {/* ⚠️ SU UN ARCHIVIATO QUESTA TENDINA È SPENTA, ed è la
+                                    correzione di un difetto MISURATO: `PATCH` con `stato` = `'iscritto'`
+                                    su una riga archiviata rispondeva 200 e lasciava un bambino
+                                    ISCRITTO con `section_id` e `classe_sezione` a NULL — fuori
+                                    da registro, appello, mensa, diario e valutazioni, e fuori
+                                    anche dalla linguetta «Non più iscritti», che filtra
+                                    `stato=ritirato`. Il ritorno ha una rotta sua, che la classe
+                                    la verifica e la rimette.
+
+                                    `disabled` e non «l'opzione `iscritto` nascosta»: nascondere
+                                    una voce lascia credere che le altre siano innocue, mentre
+                                    anche `sospeso` sta dalla parte «ancora iscritto» del confine
+                                    e farebbe lo stesso danno. E il gate VERO è comunque sul
+                                    server (409 `STATO_ALUNNO_ARCHIVIATO`): questo è cortesia,
+                                    non protezione — dalla console del browser si aggira. */}
                                 <select
                                     id="dettaglio-stato"
                                     value={(form.stato as string) ?? 'iscritto'}
                                     onChange={e => updateForm('stato', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
+                                    disabled={archiviato}
+                                    aria-describedby={archiviato ? 'dettaglio-stato-bloccato' : undefined}
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green disabled:cursor-not-allowed disabled:bg-kidville-cream disabled:text-kidville-sub"
                                 >
                                     <option value="iscritto">{t('statoIscritto')}</option>
                                     <option value="ritirato">{t('statoRitirato')}</option>
                                     <option value="sospeso">{t('statoSospeso')}</option>
                                 </select>
+                                {/* Un comando spento senza una ragione scritta è un guasto agli
+                                    occhi di chi lo preme: qui si dice perché, e dove si va. */}
+                                {archiviato && (
+                                    <p id="dettaglio-stato-bloccato" className="font-maven text-[11px] text-kidville-sub mt-1">
+                                        {t('detailStatoBloccato')}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label htmlFor="dettaglio-data-iscrizione" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataIscrizione')}</label>
@@ -972,33 +1129,140 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         )}
                     </button>
 
-                    {/* Hard Delete GDPR */}
-                    <button
-                        onClick={handleDelete}
-                        className={`w-full h-10 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm transition-all flex items-center justify-center gap-2 ${
-                            showDeleteConfirm
-                                ? 'bg-kidville-error text-kidville-white hover:bg-kidville-error'
-                                : 'bg-kidville-error-soft text-kidville-error border-2 border-kidville-error-soft hover:bg-kidville-error-soft'
-                        }`}
-                    >
-                        <Trash2 size={14} />
-                        {showDeleteConfirm
-                            ? `⚠️ ${t('detailConfermaEliminazione')}`
-                            : t('detailEliminaAlunno')
-                        }
-                    </button>
+                    {/* ══════════════════════════════════════════════════════════════
+                        UN SOLO COMANDO DI CICLO DI VITA, E DIPENDE DA DOVE STA IL BAMBINO.
 
-                    {showDeleteConfirm && (
-                        <div className="bg-kidville-error-soft border border-kidville-error-soft rounded-xl p-3">
-                            <p className="font-maven text-xs text-kidville-error">
-                                <strong>{t('detailAttenzioneLabel')}</strong> {t('detailAttenzionePre')} <strong>{t('detailAttenzioneIrrev')}</strong> {t('detailAttenzionePost')}
-                            </p>
+                        ⚠️ Fino al 2026-08-13 la scheda offriva «Sposta fra i non
+                        iscritti» SEMPRE, archiviati compresi: premuto su chi era già
+                        fuori rispondeva 409 `ALUNNO_GIA_ARCHIVIATO` — dopo che
+                        l'operatore aveva letto il riquadro con le promesse e aveva
+                        confermato. E il ritorno, sulla scheda, non c'era proprio:
+                        l'unica cosa che «funzionava» era la tendina «Stato», cioè la
+                        strada che rimette `iscritto` senza restituire la classe.
+                        Questa scheda è dove porta il bottone «Apri scheda» dell'elenco
+                        dei «non più iscritti».
+
+                        I due comandi non convivono mai: uno dei due sarebbe sempre
+                        quello che risponde 409. È lo stesso principio per cui la
+                        `DELETE` è stata tolta invece che resa condizionale — «lo stesso
+                        bottone, nella stessa posizione, che fa due cose diverse a
+                        seconda di uno stato invisibile a chi lo preme» è una roulette.
+                        Qui lo stato è VISIBILE: sopra il comando c'è scritto da quando
+                        il bambino è fuori e da quale classe. */}
+                    {archiviato ? (
+                        <>
+                            <div className="rounded-xl border border-kidville-line bg-kidville-cream p-3">
+                                <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">
+                                    {t('detailArchiviatoTitolo')}
+                                </p>
+                                {/* ETICHETTA E VALORE, non una frase con dentro un
+                                    segnaposto: la data e il nome della classe sono i due
+                                    dati che l'operatore cerca, e una coppia
+                                    «etichetta: valore» non ha problemi di ordine delle
+                                    parole fra le due lingue (una frase interpolata sì).
+                                    «Data non registrata» invece della stringa vuota: a
+                                    schermo il vuoto è indistinguibile da un dato che non
+                                    è mai stato scritto. */}
+                                <p className="font-maven text-xs text-kidville-ink mt-1">
+                                    <span className="text-kidville-sub">{t('detailArchiviatoDalLabel')}: </span>
+                                    <span>{archiviatoIl || t('detailArchiviatoSenzaData')}</span>
+                                </p>
+                                {eraIn && (
+                                    <p className="font-maven text-xs text-kidville-ink">
+                                        <span className="text-kidville-sub">{t('detailArchiviatoEraInLabel')}: </span>
+                                        <span>{eraIn}</span>
+                                    </p>
+                                )}
+                                {/* Il fatto IRREVERSIBILE si dice in parole: chi ha la
+                                    famiglia davanti deve poterlo dire senza scoprirlo dopo. */}
+                                {student.spazio_liberato_il != null && (
+                                    <p className="font-maven text-xs text-kidville-warn-strong mt-1">
+                                        {t('detailArchiviatoSpazioLiberato')}
+                                    </p>
+                                )}
+                            </div>
                             <button
-                                onClick={() => setShowDeleteConfirm(false)}
+                                onClick={handleRiattiva}
+                                disabled={riattivazioneInCorso}
+                                className="w-full h-10 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 bg-kidville-green text-kidville-yellow"
+                            >
+                                <Undo2 size={14} />
+                                {riattivazioneInCorso ? t('detailRiattivaInCorso') : t('detailRiattivaAlunno')}
+                            </button>
+                        </>
+                    ) : (
+                        <button
+                            onClick={handleArchive}
+                            disabled={archiviazioneInCorso}
+                            className={`w-full h-10 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 ${
+                                confermaArchiviazione
+                                    ? 'bg-kidville-warn-strong text-kidville-white'
+                                    : 'bg-kidville-warn-soft text-kidville-warn-strong border-2 border-kidville-warn/40'
+                            }`}
+                        >
+                            <Archive size={14} />
+                            {confermaArchiviazione
+                                ? `⚠️ ${t('detailConfermaArchiviazione')}`
+                                : t('detailArchiviaAlunno')
+                            }
+                        </button>
+                    )}
+
+                    {/* ⚠️ IL RIQUADRO CHE PRIMA MENTIVA.
+                        Diceva «questa azione è irreversibile e cancellerà tutti i dati
+                        dell'alunno dal sistema»: della cancellazione che descriveva,
+                        28 alunni su 33 non erano nemmeno candidati, e per gli altri
+                        cinque avrebbe reso illeggibili registri e pagamenti che si
+                        conservano dieci anni. Adesso elenca CINQUE fatti, e il quarto
+                        è quello che nessuno si aspetta: archiviare fa scattare, entro
+                        24 ore, la retention che azzera il motivo delle assenze scritto
+                        dalle famiglie (`presenze-giustificazioni-retention`, ogni notte
+                        alle 04:59 UTC su chi non è più iscritto). Non è un difetto ed è
+                        già promesso nell'informativa — ma va detto PRIMA, qui, perché è
+                        l'unico effetto di questa operazione che non si può annullare
+                        tornando indietro.
+
+                        ⚠️ E DAL 2026-08-13 LE VOCI SONO SETTE, non cinque. La testata di
+                        `riattiva` intitola un blocco «COSA NON TORNA INDIETRO, E VA
+                        DETTO» ed elenca TRE cose; questo riquadro ne diceva UNA (il
+                        motivo delle assenze) e chiudeva con «è reversibile», che è
+                        parzialmente falso. Mancavano: il GRUPPO MENSA, che `archivia`
+                        azzera di proposito e che nessuna colonna ricorda, e la CLASSE,
+                        che al rientro torna solo se esiste ancora. Il criterio è
+                        «l'operatore sa PRIMA che cosa perde»: due perdite su tre non
+                        gliele diceva nessuno, né prima né dopo. */}
+                    {confermaArchiviazione && (
+                        <div className="rounded-xl border border-kidville-warn/40 bg-kidville-warn-soft p-3">
+                            <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-warn-strong">
+                                {t('detailArchiviaCosaSuccede')}
+                            </p>
+                            <ul className="mt-1.5 list-disc space-y-1 pl-4 font-maven text-xs text-kidville-warn-strong">
+                                <li>{t('detailArchiviaAnagrafica')}</li>
+                                <li>{t('detailArchiviaStorico')}</li>
+                                <li>{t('detailArchiviaEsceDa')}</li>
+                                <li>{t('detailArchiviaMotivoAssenze')}</li>
+                                <li>{t('detailArchiviaMensa')}</li>
+                                <li>{t('detailArchiviaClasse')}</li>
+                                <li>{t('detailArchiviaReversibile')}</li>
+                            </ul>
+                            <button
+                                onClick={() => { setConfermaArchiviazione(false); setErroreArchiviazione(null); }}
                                 className="mt-2 text-xs font-maven font-bold text-kidville-muted hover:text-kidville-ink"
                             >
                                 {t('annulla')}
                             </button>
+                        </div>
+                    )}
+
+                    {/* Il rifiuto del server, IN PAGINA. Non un toast che sparisce
+                        mentre la scheda si smonta: `role="alert"` perché chi legge con
+                        uno screen reader deve sentirlo senza andarlo a cercare. */}
+                    {erroreArchiviazione && (
+                        <div
+                            role="alert"
+                            className="rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-3 font-maven text-xs text-kidville-error"
+                        >
+                            {erroreArchiviazione}
                         </div>
                     )}
                 </div>

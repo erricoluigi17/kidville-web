@@ -149,4 +149,47 @@ describe('riconoscitore · una migrazione che cambia ciò che la fotografia dell
     it('NON si accende per una migrazione che non c\'entra niente', () => {
         expect(toccaLaRls('CREATE INDEX idx_a ON public.a (b);\nANALYZE public.a;')).toBe(false)
     })
+
+    it('NON si accende per la parola «policy» scritta dentro un COMMENTO', () => {
+        // ⟵ IL TERZO PUNTO CIECO, misurato il 2026-08-12 e non dedotto: tre migrazioni
+        // scritte quel giorno finivano tutte con una riga che diceva, con parole loro,
+        // «NON accende RLS e non crea policy» — ed era PROPRIO quella riga a farle
+        // risultare «migrazioni che toccano le policy». Il guard leggeva la PROSA
+        // invece dello SQL: il file si autoincriminava con la frase con cui dichiarava
+        // di non toccare niente, e l'unico modo di spegnere il rosso era cancellare la
+        // spiegazione. Un lock che si spegne togliendo un commento insegna a scrivere
+        // meno commenti — che in questo repo è il danno più caro di tutti.
+        const sql = `-- NON accende RLS su niente: le due tabelle ce l'hanno già, senza policy.
+                     /* nemmeno qui dentro: nessuna policy, nessun row level security */
+                     ALTER TABLE public.t RENAME COLUMN a TO b;`
+        expect(toccaLaRls(sql)).toBe(false)
+    })
+
+    it('vede la policy VERA anche quando un commento la precede', () => {
+        // Il controllo positivo accanto al rifiuto: senza, uno stripper che si mangiasse
+        // tutto il file passerebbe il test qui sopra e spegnerebbe il guard per sempre.
+        const sql = `-- questa invece la tocca davvero
+                     create policy p on public.t for select using (true);`
+        expect(toccaLaRls(sql)).toBe(true)
+    })
+
+    it('non scambia per commento un `--` che sta DENTRO una stringa', () => {
+        // `comment on column … is '…'` è prosa dentro una stringa SQL, e un trattino
+        // doppio là dentro non apre nessun commento. Uno stripper che lo credesse si
+        // mangerebbe tutto il resto della riga — cioè anche lo SQL vero che segue.
+        const sql = `comment on column public.t.a is 'un trattino -- in mezzo alla frase';
+                     create policy p on public.t for select using (true);`
+        expect(toccaLaRls(sql)).toBe(true)
+    })
+
+    it('non scambia per commento un `--` dentro un corpo `$$ … $$`', () => {
+        // Il corpo dollaro-quotato è codice eseguito, non prosa: `EXECUTE format('create
+        // policy …')` è la forma con cui si scrive una policy idempotente, ed è già uno
+        // dei due punti ciechi chiusi il 2026-08-04. Perderlo qui li riaprirebbe.
+        const sql = `DO $$ BEGIN
+                       -- niente da vedere
+                       EXECUTE format('create policy %I on public.t for select using (true)', 'p');
+                     END $$;`
+        expect(toccaLaRls(sql)).toBe(true)
+    })
 })

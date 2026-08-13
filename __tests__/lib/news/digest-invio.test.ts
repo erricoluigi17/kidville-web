@@ -64,7 +64,8 @@ function dbBase(): DBFinto {
       },
     ],
     news_digest_edizioni: [],
-    alunni: [{ id: 'al-a', scuola_id: SEDE_A }],
+    // `stato` esplicito: `genitoriDiScuola` legge i soli iscritti dal 2026-08-12.
+    alunni: [{ id: 'al-a', scuola_id: SEDE_A, stato: 'iscritto' }],
     utenti: [{ id: 'gen-al-a', email: 'a@example.test' }],
     admin_settings: [],
   }
@@ -172,6 +173,54 @@ describe('T17-F4 — destinatari illeggibili: si RIMANDA, non si mente', () => {
     expect(updatesEdizioni(scritture)).toEqual([])
     expect(edizioni[0].inviata).toBe(false)
     expect(db.news_digest_edizioni[0]?.inviata_il ?? null).toBeNull()
+  })
+})
+
+// =============================================================================
+// LA SONDA DEI DESTINATARI CONTA GLI STESSI BAMBINI CHE `genitoriDiScuola` LEGGE
+//
+// Quando i genitori sono zero, `emailFamiglie` RILEGGE il numero di alunni della
+// sede per distinguere «questa sede non ha famiglie» da «non ho potuto leggere».
+// Dal 2026-08-12 `genitoriDiScuola` legge i soli ISCRITTI: se la sonda contasse
+// anche gli archiviati, i due numeri smetterebbero di essere confrontabili e una
+// sede rimasta senza bambini in corso produrrebbe «alunni ce ne sono, genitori
+// collegati no» — un warn che accusa i legami di un guasto inesistente e manda a
+// cercare il difetto dalla parte sbagliata.
+// =============================================================================
+describe('destinatari — la sonda conta gli ISCRITTI, come chi risolve i genitori', () => {
+  const logConEsitoLocale = (esito: string) =>
+    logEvento.mock.calls.filter((c) => (c[2] as { esito?: string })?.esito === esito)
+
+  it('sede con SOLI archiviati ⇒ nessuna email e NESSUN allarme sui legami', async () => {
+    const db = dbBase()
+    db.alunni = [{ id: 'al-rit', scuola_id: SEDE_A, stato: 'ritirato' }]
+    db.utenti = []
+    await generaEInviaDigest(creaFintoSupabase(db, []), { anno: 2026, mese: 6, scuolaId: SEDE_A })
+
+    expect(sendEmailDetailed).not.toHaveBeenCalled()
+    expect(logConEsitoLocale('nessun-genitore-collegato')).toEqual([])
+  })
+
+  it('CONTROLLO OPPOSTO — bambini iscritti e legami VUOTI ⇒ il warn c’è davvero', async () => {
+    // Senza questo, il test qui sopra sarebbe verde anche se il ramo del warn
+    // fosse stato cancellato del tutto — ed è il ramo che dice a chi guarda i log
+    // «i bambini ci sono, i tutori a sistema no».
+    //
+    // Il caso si costruisce svuotando la risoluzione dei LEGAMI, non l'anagrafica:
+    // con le due query ora coerenti (leggono entrambe i soli iscritti) è rimasto
+    // l'unico modo di avere zero genitori con alunni presenti — che è poi il solo
+    // significato che quel warn ha mai avuto.
+    const legami = await import('@/lib/anagrafiche/legami')
+    vi.mocked(legami.getGenitoriDiAlunni).mockResolvedValueOnce(new Map())
+    const db = dbBase()
+    db.alunni = [{ id: 'al-solo', scuola_id: SEDE_A, stato: 'iscritto' }]
+    await generaEInviaDigest(creaFintoSupabase(db, []), { anno: 2026, mese: 6, scuolaId: SEDE_A })
+
+    const righe = logConEsitoLocale('nessun-genitore-collegato')
+    expect(righe).toHaveLength(1)
+    // Il conteggio che finisce nel log è quello degli ISCRITTI: è il numero su cui
+    // qualcuno deciderà se cercare un guasto o alzare le spalle.
+    expect((righe[0][2] as { alunni?: number }).alunni).toBe(1)
   })
 })
 

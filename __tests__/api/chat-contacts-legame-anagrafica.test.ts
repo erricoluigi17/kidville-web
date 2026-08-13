@@ -45,7 +45,7 @@ describe('GET /api/chat/contacts — unione runtime+anagrafica', () => {
         { id: 'gen1', nome: 'Anna', cognome: 'Bianchi', first_name: null, last_name: null },
       ],
       utenti_sezioni: [{ sections: { name: 'Girasoli' } }],
-      alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli' }],
+      alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', stato: 'iscritto' }],
       legame_genitori_alunni: [],
       student_parents: [{ student_id: ALUNNO, parent_id: 'p1' }],
       parents: [{ id: 'p1', auth_user_id: 'gen1' }],
@@ -63,7 +63,7 @@ describe('GET /api/chat/contacts — unione runtime+anagrafica', () => {
     h.righe = {
       utenti: [{ id: 'doc1', ruolo: 'maestra', role: 'educator' }],
       utenti_sezioni: [{ sections: { name: 'Girasoli' } }],
-      alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli' }],
+      alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', stato: 'iscritto' }],
       legame_genitori_alunni: [],
       student_parents: [{ student_id: ALUNNO, parent_id: 'p1' }],
       parents: [{ id: 'p1', auth_user_id: null }],
@@ -83,7 +83,7 @@ describe('GET /api/chat/contacts — unione runtime+anagrafica', () => {
       legame_genitori_alunni: [],
       parents: [{ id: 'p1', auth_user_id: 'gen1' }],
       student_parents: [{ student_id: ALUNNO, parent_id: 'p1' }],
-      alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', section_id: 'sec1' }],
+      alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', section_id: 'sec1', stato: 'iscritto' }],
       utenti_sezioni: [{ section_id: 'sec1', utente_id: 'doc1' }],
       chat_threads: [],
     }

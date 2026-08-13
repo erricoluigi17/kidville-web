@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
 import { sediReali } from '@/lib/scuole/reali'
 import { logEvento, logErrore } from '@/lib/logging/logger'
 import type { NewsGrado, NewsScope } from '@/lib/news/tipi'
@@ -20,7 +21,28 @@ import type { NewsGrado, NewsScope } from '@/lib/news/tipi'
 // significare tanto «tutto ok» quanto «non è mai partito niente».
 // =============================================================================
 
-/** Genitori dei bambini di uno o più GRADI (school_type della sezione) nella sede. */
+/**
+ * Genitori dei bambini di uno o più GRADI (school_type della sezione) nella sede.
+ *
+ * ⚠️ ERA IL TERZO RAMO, ED ERA L'UNICO RIMASTO CIECO (corretto il 2026-08-13).
+ * `destinatariDiSede`, venti righe più sotto, smista su tre strade: `classi` →
+ * `genitoriDiClassi`, `scuola` → `genitoriDiScuola`, `grado` → questa. Il
+ * 2026-08-12 le prime due hanno preso il filtro di stato e questa no, quindi una
+ * News «per il nido» continuava ad arrivare alla famiglia di un bambino
+ * ritirato: «il modo più visibile di dire a una famiglia che il sistema non si è
+ * accorto che se n'è andata», scritto nel file accanto mentre qui succedeva.
+ *
+ * E NON POTEVA ACCORGERSENE NESSUN LOCK: questa query filtra `.in('section_id',
+ * …)`, quindi per `elenchi-operativi-solo-iscritti` era esente per costruzione.
+ * L'esenzione «per sezione» copre la strada dell'ARCHIVIAZIONE — che la classe
+ * la sgancia — non quella della TENDINA della scheda alunno, che porta lo `stato`
+ * a `'ritirato'` lasciando il bambino agganciato alla sezione. Le due strade
+ * esistono entrambe oggi: da qui il filtro, anche dove «la sezione c'è già».
+ *
+ * I due rami di errore LOGGANO: PostgREST non lancia, quindi una lettura rotta
+ * usciva da qui come `[]` e la news finiva sul ramo «nessun-destinatario» —
+ * indistinguibile, nei log, da un grado senza bambini.
+ */
 export async function genitoriDiGrado(
   supabase: SupabaseClient,
   scuolaId: string | null | undefined,
@@ -32,14 +54,32 @@ export async function genitoriDiGrado(
     .select('id')
     .eq('scuola_id', scuolaId)
     .in('school_type', gradi)
-  if (sezErr || !sez || sez.length === 0) return []
+  if (sezErr) {
+    logEvento('notifica', 'error', {
+      operazione: 'news/notifiche:genitoriDiGrado',
+      esito: 'sezioni-non-lette',
+      sede_id: scuolaId,
+      n: gradi.length,
+    }, sezErr)
+    return []
+  }
+  if (!sez || sez.length === 0) return []
   const sezIds = (sez as { id: string }[]).map((s) => s.id)
   const { data: al, error } = await supabase
     .from('alunni')
     .select('id')
     .eq('scuola_id', scuolaId)
     .in('section_id', sezIds)
-  if (error || !al) return []
+    .in('stato', [...STATI_CON_CANALE_FAMIGLIA])
+  if (error) {
+    logEvento('notifica', 'error', {
+      operazione: 'news/notifiche:genitoriDiGrado',
+      esito: 'alunni-non-letti',
+      sede_id: scuolaId,
+    }, error)
+    return []
+  }
+  if (!al) return []
   return genitoriDiAlunni(supabase, (al as { id: string }[]).map((a) => a.id))
 }
 

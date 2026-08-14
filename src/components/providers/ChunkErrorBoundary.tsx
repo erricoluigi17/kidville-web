@@ -22,7 +22,7 @@ import { logClient, flush, nomeErrore } from '@/lib/logging/client'
  * vede nemmeno: l'errore di una RISORSA non fa bubbling — si propaga solo in
  * discesa, nella fase di cattura. È la ragione per cui questa rete si installa
  * con `{ capture: true }`, e il test che lo dimostra è
- * `__tests__/providers/chunk-error-boundary.test.tsx`: togliendo quella sola
+ * `__tests__/components/ChunkErrorBoundary.test.tsx`: togliendo quella sola
  * opzione, il test torna rosso.
  *
  * ─── COSA FA, E COSA NON FA ────────────────────────────────────────────────

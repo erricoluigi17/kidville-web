@@ -1,0 +1,28 @@
+{
+  "_perche": [
+    "Il METRO con cui `scripts/verifica-shell-nativa.py` giudica il capacitor.config.json",
+    "sincronizzato dentro ios/App/App e android/app/src/main/assets prima di ogni build di",
+    "RILASCIO. Quei due file sono gitignorati — non esistono in un clone pulito e nessuna CI",
+    "può guardarli — quindi il metro sta qui, tracciato, e il cancello gira sulla macchina che",
+    "costruisce.",
+    "Ogni chiave elencata sotto è stata SBAGLIATA almeno una volta in produzione fra il",
+    "2026-07-31 e il 2026-08-14: non è un elenco di buone intenzioni, è la lista dei danni.",
+    "Se cambi capacitor.config.ts, cambia anche questo file: il lock",
+    "__tests__/architecture/gate-shell-nativa.test.ts diventa rosso finché i due non coincidono."
+  ],
+  "regole": {
+    "server.url": "https://app.kidville.it",
+    "server.cleartext": false,
+    "server.errorPath": "offline.html",
+    "server.allowNavigation": ["app.kidville.it"],
+    "loggingBehavior": "none",
+    "ios.limitsNavigationsToAppBoundDomains": true
+  },
+  "_note": {
+    "server.url": "Il 2026-08-08 valeva http://localhost:3100. Una build fatta in quel momento apre un indirizzo che sul telefono non esiste: schermata d'errore per sempre, e rigetto Apple 2.1.",
+    "server.cleartext": "Vero solo quando l'URL è http://. In rilascio l'URL è https, quindi qui è falso: se è vero, l'artefatto è stato sincronizzato verso un ambiente di sviluppo.",
+    "server.allowNavigation": "Rilievo T14-F2 del collaudo 2026-08-03: senza questo host, «Riprova» sulla pagina offline usciva dall'app aprendo il browser di sistema, e l'utente perdeva la sessione nativa.",
+    "loggingBehavior": "Con il default `debug` il bridge stampa nei log di sistema il payload intero di ogni risposta nativa — in logcat è finito il base64 di una foto scattata. `none` è l'unico valore che chiude il canale; `production` NON lo chiude, lo peggiora.",
+    "ios.limitsNavigationsToAppBoundDomains": "Segue l'URL: con un sync di sviluppo si spegne, e con lui WKWebView smette di registrare il Service Worker. È il motivo per cui l'offline su iOS non si collauda in dev."
+  }
+}

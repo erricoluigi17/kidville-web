@@ -81,6 +81,10 @@ APNs separate lato server Kidville.
 npm install
 
 # 2. Sincronizza la config e i plugin nei progetti nativi
+# ⚠️ Questo sync AVVELENA la shell nativa: `capacitor.config.json` è gitignorato,
+#    quindi né `git status`, né una revisione, né la CI vedranno che punta a un indirizzo
+#    di sviluppo. Dal 2026-08-08 al 2026-08-14 è rimasto così per sei giorni.
+#    QUANDO HAI FINITO, rimettila a posto:  npm run rilascio:sync
 CAP_SERVER_URL="http://<ip-locale>:3000" npx cap sync
 
 # 3. Diagnostica ambiente Capacitor

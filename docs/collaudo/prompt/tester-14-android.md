@@ -37,6 +37,10 @@ da `CAP_SERVER_URL`, fissata **al momento del build**. Se non è raggiungibile, 
 bianca e nessun errore. Dall'emulatore Android l'host della macchina è **`10.0.2.2`**, non `localhost`.
 
 ```bash
+# ⚠️ Questo sync AVVELENA la shell nativa: `capacitor.config.json` è gitignorato,
+#    quindi né `git status`, né una revisione, né la CI vedranno che punta a un indirizzo
+#    di sviluppo. Dal 2026-08-08 al 2026-08-14 è rimasto così per sei giorni.
+#    QUANDO HAI FINITO, rimettila a posto:  npm run rilascio:sync
 CAP_SERVER_URL="http://10.0.2.2:3100" npx cap sync android
 (cd android && ./gradlew assembleDebug)
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk

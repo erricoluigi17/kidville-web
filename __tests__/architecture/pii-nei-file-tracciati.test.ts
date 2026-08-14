@@ -283,6 +283,26 @@ const VALORI_INVENTATI: { file: string; colonna: string; valore: string; perche:
 const eInventato = (r: RiscontroPii) =>
   VALORI_INVENTATI.some((v) => v.file === r.file && v.colonna === r.colonna && v.valore === r.valore)
 
+/**
+ * Il valore è un SEGNAPOSTO, cioè il buco dove un valore andrà a finire — non un valore.
+ *
+ * Le due forme sono la convenzione dichiarata in `docs/prestampati/README.md`, e valgono in
+ * tutti e diciassette i modelli: `{{campo}}` è ciò che l'app precompila da sé, `[CAMPO: tipo]`
+ * è ciò che il form chiede alla persona. Un modello di documento è fatto di buchi: dire
+ * «Telefono: `{{genitore.padre.telefono}}`» è la definizione del modulo, non l'output di una
+ * query incollato.
+ *
+ * ⚠️ QUESTO NON ALLARGA LA MAGLIA, LA STRINGE. Il riconoscimento è ancorato — `^…$` sull'intero
+ * valore — quindi un numero vero continua a far scattare il lock, e lo fa scattare anche
+ * dentro un modello: `Telefono: \`{{genitore.telefono}} (081 5551234)\`` non è un segnaposto e
+ * viene preso. L'alternativa era dichiarare sette righe in `VALORI_INVENTATI`, che ne avrebbe
+ * chiesta un'altra a ogni prestampato nuovo con un campo telefono: una lista che cresce a ogni
+ * lavoro è una lista che qualcuno, un giorno, smette di curare — e il modo in cui i lock
+ * muoiono non è che vengono spenti, è che diventano un fastidio da aggirare.
+ */
+const eSegnaposto = (r: RiscontroPii) =>
+  /^\{\{[^{}]+\}\}$/.test(r.valore.trim()) || /^\[[A-Z0-9_]+:[^\]]*\]$/.test(r.valore.trim())
+
 describe('lock architettura · dati personali nei file tracciati', () => {
   it('P0 · lo scanner sta davvero leggendo i file (controllo positivo)', () => {
     // Senza questo, un errore dello strumento si legge «zero riscontri» e il lock diventa
@@ -301,6 +321,25 @@ describe('lock architettura · dati personali nei file tracciati', () => {
     expect([...prova.matchAll(VALORE_ACCANTO_ALLA_COLONNA)].map((m) => m[3])).toEqual([
       'sedano e senape',
     ])
+  })
+
+  it('P0b · il riconoscimento dei segnaposto non apre una porta ai valori veri', () => {
+    // `eSegnaposto` è l'unica deroga che non passa da `VALORI_INVENTATI`, quindi è l'unica
+    // che nessuno rilegge riga per riga: va provata da tutt'e due i lati, o è una maglia
+    // larga travestita da precisione.
+    const riga = (v: string): RiscontroPii => ({ file: 'x.md', riga: 1, colonna: 'telefono', valore: v })
+
+    // Passano SOLO le due forme documentate, e per intero.
+    expect(eSegnaposto(riga('{{genitore.padre.telefono}}'))).toBe(true)
+    expect(eSegnaposto(riga('[PEDIATRA_TELEFONO: telefono]'))).toBe(true)
+    expect(eSegnaposto(riga('  {{genitore.telefono}}  '))).toBe(true)
+
+    // Non passa un numero vero, né un numero NASCOSTO accanto a un segnaposto — che è il
+    // modo in cui un dato reale entrerebbe davvero: copiando un modello e riempiendone uno.
+    expect(eSegnaposto(riga('081 5551234'))).toBe(false)
+    expect(eSegnaposto(riga('{{genitore.telefono}} (081 5551234)'))).toBe(false)
+    expect(eSegnaposto(riga('[PEDIATRA_TELEFONO: telefono] 3331234567'))).toBe(false)
+    expect(eSegnaposto(riga('{{a}} {{b}}'))).toBe(false)
   })
 
   it('P1 · ogni strada da cui escono esiti di collaudo è chiusa da .gitignore', () => {
@@ -341,6 +380,7 @@ describe('lock architettura · dati personali nei file tracciati', () => {
 
   it('P3 · nessun documento tracciato porta un valore accanto a una colonna di dati personali', () => {
     const colpevoli = riscontriNeiDocumenti(TRACCIATI)
+      .filter((r) => !eSegnaposto(r))
       .filter((r) => !eInventato(r))
       .map((r) => `${r.file}:${r.riga} → ${r.colonna} = ${JSON.stringify(r.valore)}`)
     expect(

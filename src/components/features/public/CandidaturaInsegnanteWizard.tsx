@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslations } from 'next-intl'
-import { useForm, type FieldValues } from 'react-hook-form'
+import { useForm, useWatch, type FieldValues } from 'react-hook-form'
 import {
   AlertCircle, AlertTriangle, Check, GraduationCap, Loader2, MapPin, RefreshCw,
   ShieldCheck, UserRound,
@@ -20,6 +20,7 @@ import {
   INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS,
 } from '@/lib/forms/insegnanti-template'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
+import { campiVisibili } from '@/lib/forms/conditional'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch'
 import { logClient, nomeErrore } from '@/lib/logging/client'
@@ -64,21 +65,39 @@ import type { FormField } from '@/types/database.types'
  * all'invio con i dati vuoti. Un'animazione non può decidere se un modulo
  * funziona: qui non ce n'è nessuna che monti o smonti un passo.
  *
- * ── PERCHÉ IL CURRICULUM NON SI CHIEDE (ANCORA) ────────────────────────────
+ * ── IL CURRICULUM ADESSO SI ALLEGA (2026-08-15) ────────────────────────────
  *
- * Il template dichiara un campo `cv_path` facoltativo, e questo modulo NON lo
- * rende. Non è una dimenticanza: `POST /api/iscrizione/insegnanti` accetta solo
- * percorsi della forma `candidature/<uuid>-<nome>` (vedi `percorsoCvAmmesso`,
- * e la ragione per esteso lì: quel valore è la chiave con cui il cockpit fa
- * firmare un oggetto del bucket dei documenti dei minori). Al 2026-08-11 NESSUNA
- * rotta di caricamento produce quel prefisso — l'unica pubblica,
- * `iscrizione/upload:POST`, scrive sotto `iscrizioni/…`. Renderlo qui vorrebbe
- * dire far caricare un curriculum e poi respingerlo all'invio, dopo che tutto il
- * resto è stato compilato: è il difetto «bucket più stretto del gate» che questo
- * repo ha già pagato una volta. Il campo torna il giorno in cui nasce la rotta
- * di caricamento delle candidature — e allora basterà toglierlo da
- * `IDS_NON_RESI`, perché tutto il resto (`accept`, tetto, validazione) è già nel
- * template.
+ * Fino al 2026-08-14 questo blocco spiegava perché il campo `cv_path` esisteva
+ * nel template e NON veniva reso: `POST /api/iscrizione/insegnanti` accetta solo
+ * percorsi della forma `candidature/<uuid>-cv.<est>` (quel valore è la chiave con
+ * cui il cockpit fa firmare un oggetto del bucket che contiene anche i documenti
+ * dei minori), e nessuna rotta di caricamento produceva quel prefisso — l'unica
+ * pubblica, `iscrizione/upload:POST`, scrive sotto `iscrizioni/…`. Renderlo
+ * allora avrebbe voluto dire far caricare un curriculum e poi respingerlo
+ * all'invio, dopo che tutto il resto era stato compilato: il difetto «bucket più
+ * stretto del gate» che questo repo ha già pagato una volta.
+ *
+ * La metà che mancava è arrivata: `POST /api/iscrizione/insegnanti/upload`.
+ * Il campo è uscito da `IDS_NON_RESI` — che infatti adesso è VUOTO — e non è
+ * servito toccare nient'altro del template: `accept`, tetto e validazione erano
+ * già lì, come quel blocco prometteva. L'unica riga di collegamento è
+ * `uploadEndpoint`, e la ragione per cui non è facoltativa sta accanto a
+ * `ROTTA_CARICAMENTO_CV`.
+ *
+ * ── LE POSIZIONI HANNO PRESO IL POSTO DELLE FASCE (2026-08-15) ─────────────
+ *
+ * La domanda «per quali fasce ti proponi» non esiste più: al suo posto c'è
+ * «per quali posizioni», che le fasce le contiene già spezzate una per una
+ * («Insegnante — Nido (0-3)», …) insieme a collaboratrice, cuoca, segreteria e
+ * un «Altro» scritto a mano. `gradi` non viaggia più nel corpo dell'invio: lo
+ * DERIVA il server. Il perché sta in `insegnanti-template.ts`, che è il file che
+ * si apre per cambiare l'elenco.
+ *
+ * Da qui nasce la prima LOGICA CONDIZIONALE di questo modulo: «Quale posizione»
+ * è `required` ma compare solo con «Altro» spuntato. Il motore è quello di
+ * `@/lib/forms/conditional`, lo stesso che applica il server, e in questo file
+ * passa da `campiDelPasso()` — che è la funzione da cui dipendono insieme il
+ * disegno, la validazione del passo e il riepilogo.
  *
  * ── IL RIEPILOGO RIEPILOGA, E NON È UN DETTAGLIO ESTETICO ──────────────────
  *
@@ -98,9 +117,10 @@ import type { FormField } from '@/types/database.types'
  * disegnano i passi, quindi un campo aggiunto domani al template compare nel
  * riepilogo da solo. Ribatterlo a mano sarebbe la seconda lista da mantenere, ed
  * è precisamente il modo in cui la prima è rimasta indietro di undici campi.
- * (Vale anche per `cv_path`: oggi non è reso — vedi il blocco qui sopra — e per
- * questo non ha una riga; il giorno in cui torna in `CAMPI_RESI`, il riepilogo lo
- * nomina senza che si tocchi niente qui.)
+ * (Ed è successo davvero: il 2026-08-15 `cv_path` è entrato in `CAMPI_RESI` e il
+ * riepilogo lo nomina senza che nessuno abbia toccato `gruppiRiepilogo`. Con
+ * l'elenco scritto a mano che c'era prima, il curriculum sarebbe stato l'unica
+ * cosa allegata e non ricontrollabile.)
  *
  * ⚠️ I CAMPI FACOLTATIVI LASCIATI VUOTI SI MOSTRANO, come «Non indicato», e non
  * si omettono. È una scelta, non un'inerzia: omettere una riga rende l'omissione
@@ -129,12 +149,19 @@ import type { FormField } from '@/types/database.types'
  *
  * ── ⚠️ LIMITE NOTO: CON L'INTERFACCIA IN INGLESE LA PAGINA È TRADOTTA A METÀ ─
  *
- * Il GUSCIO di questa schermata è bilingue e lo è per davvero (50 chiavi `cand*`
- * in `messages/it` e `messages/en`, sorvegliate dal lock di parità): titoli dei
- * passi, bottoni, errori, conferma. Le ETICHETTE DEI CAMPI no: arrivano da
+ * Il GUSCIO di questa schermata è bilingue e lo è per davvero (tutte le chiavi
+ * `cand*` di `messages/{it,en}/public.json`, sorvegliate dal lock di parità):
+ * titoli dei passi, bottoni, errori, conferma.
+ *
+ * ⚠️ Qui c'era un NUMERO — «50 chiavi» — ed era scaduto: misurate il 2026-08-15
+ * erano 55, e nessuno l'aveva aggiornato dopo il riepilogo completo dell'11/08.
+ * Un commento che conta cose è un commento che mente entro un rilascio; il lock
+ * di parità, che le conta davvero, non invecchia. Le ETICHETTE DEI CAMPI no: arrivano da
  * `INSEGNANTE_FIELDS` e sono cablate in italiano — «Per quali fasce ti proponi»,
  * «Titolo di studio», «Presentati in poche righe», i sette `TITOLI_STUDIO`, le
- * cinque `DISPONIBILITA` e i tre gradi.
+ * cinque `DISPONIBILITA` e le sette `POSIZIONI_OPTIONS` — che dal 2026-08-15
+ * sono la DOMANDA PRINCIPALE del modulo, non più tre caselle in fondo a un
+ * passo: il debito non è cambiato di natura, è cresciuto di peso.
  *
  * ⚠️ E dal 2026-08-11 quel debito PESA DI PIÙ, il che è il prezzo dichiarato del
  * riepilogo completo: prima le etichette italiane si vedevano una volta sola, nel
@@ -189,12 +216,25 @@ const IDS_DATI = new Set([
 /**
  * I campi del template che questo modulo NON rende, con la ragione.
  *
+ * ⚠️ ADESSO È VUOTO, e la riga che conteneva era `cv_path`. Lo è dal 2026-08-15,
+ * il giorno in cui è nata `POST /api/iscrizione/insegnanti/upload`: il campo non
+ * si rendeva perché nessuna rotta di caricamento produceva il prefisso
+ * `candidature/` che il server pretende, quindi renderlo avrebbe significato far
+ * caricare un curriculum e poi respingerlo all'invio, dopo che tutto il resto era
+ * stato compilato. Adesso quella rotta c'è, e il campo si rende.
+ *
+ * L'insieme resta — vuoto — invece di sparire insieme al suo unico membro:
+ * `CAMPI_PROFILO` si costruisce per ESCLUSIONE, ed è quella forma a garantire che
+ * un campo aggiunto domani al template venga reso comunque, in un passo o
+ * nell'altro, invece di sparire in silenzio. Togliendolo, la prima volta che
+ * servirà di nuovo qualcuno lo riscriverà senza la regola qui sotto.
+ *
  * ⚠️ Qui può entrare SOLO un campo `required: false`. Un campo obbligatorio non
- * reso non è «un campo in meno»: è `validatePage` che sul server lo trova vuoto
- * a ogni invio, cioè un modulo che non si può compilare. Il collaudo
- * `CandidaturaInsegnanteWizard-gradi.test.tsx` lo verifica campo per campo.
+ * reso non è «un campo in meno»: è `validatePage` che sul server lo trova vuoto a
+ * ogni invio, cioè un modulo che non si può compilare. Il collaudo
+ * `CandidaturaInsegnanteWizard-posizioni.test.tsx` lo verifica campo per campo.
  */
-const IDS_NON_RESI = new Set(['cv_path'])
+const IDS_NON_RESI = new Set<string>()
 
 const CAMPI_DATI: FormField[] = INSEGNANTE_FIELDS.filter((f) => IDS_DATI.has(f.id))
 const CAMPI_PROFILO: FormField[] = INSEGNANTE_FIELDS.filter(
@@ -203,6 +243,60 @@ const CAMPI_PROFILO: FormField[] = INSEGNANTE_FIELDS.filter(
 
 /** Tutti i campi che il modulo rende, nell'ordine in cui si compilano. */
 const CAMPI_RESI: FormField[] = [...CAMPI_DATI, ...CAMPI_PROFILO]
+
+/**
+ * DOVE SI CARICA IL CURRICULUM.
+ *
+ * ⚠️ VA PASSATA A `FieldRenderer`, e non è un dettaglio di configurazione:
+ * `FileField` ripiega su `'/api/forms/upload'` quando `uploadEndpoint` manca
+ * (`FieldRenderer.tsx`, `endpoint: uploadEndpoint || '/api/forms/upload'`), e
+ * quella rotta è dietro `requireUser`. Su un modulo che si compila SENZA account
+ * il ripiego risponde 401 — un caricamento che non riesce mai, su una porta
+ * anonima, e un difetto che nessun test di route vede: si vede solo aprendo la
+ * pagina da disconnessi.
+ */
+const ROTTA_CARICAMENTO_CV = '/api/iscrizione/insegnanti/upload'
+
+/**
+ * I campi da cui DIPENDE la visibilità di qualcun altro — letti dal template, non
+ * elencati a mano.
+ *
+ * Servono a `useWatch`: la casella «Quale posizione» compare quando fra le
+ * posizioni c'è «altro», e per accorgersene bisogna guardare il valore di
+ * `posizioni` a ogni render. Guardarli TUTTI (`useWatch({ control })`) costerebbe
+ * un ri-render dell'intero wizard a ogni carattere digitato nella presentazione
+ * libera; guardarne uno cablato («posizioni») smetterebbe di funzionare il giorno
+ * in cui una seconda condizione punta a un altro campo, e lo farebbe in silenzio:
+ * il campo condizionato resterebbe fermo alla sua visibilità iniziale.
+ */
+const CAMPI_CONDIZIONANTI: string[] = [
+  ...new Set(
+    INSEGNANTE_FIELDS.map((f) => f.condition?.field_id).filter(
+      (id): id is string => typeof id === 'string' && id !== '',
+    ),
+  ),
+]
+
+/**
+ * Le note sotto un campo: id del campo → chiave di messaggio.
+ *
+ * Sono due, e dicono cose che l'etichetta da sola non può dire: che il curriculum
+ * è facoltativo e che va bene anche una fotografia (senza, chi non ha il PDF
+ * sottomano abbandona), e che nella casella «Altro» ci va il nome del mestiere e
+ * non un racconto.
+ *
+ * ⚠️ Sono `<p>` accanto al campo e NON un `aria-describedby`: `FieldRenderer` non
+ * accetta una descrizione dall'esterno — il suo `aria-describedby` è già occupato
+ * dal messaggio d'errore, che è ciò che deve essere annunciato quando c'è. È lo
+ * stesso limite, e la stessa forma, del modulo del personale
+ * (`DocumentoIdentitaFields.tsx`, `persDocAllegatoNota`). Il debito è dichiarato
+ * qui perché la nota resta comunque leggibile nell'ordine del documento, subito
+ * dopo il campo che descrive.
+ */
+const NOTE_DEI_CAMPI: Record<string, string> = {
+  posizioni: 'candPosizioniAiuto',
+  cv_path: 'candCvNota',
+}
 
 /**
  * Il nome dell'ESCA (honeypot). La rotta accetta `sito_web` e `honeypot` come
@@ -266,9 +360,14 @@ interface GruppoRiepilogo {
  * scelto. Mostrare il valore d'enum vorrebbe dire chiedere di controllare una
  * cosa che nessuno ha mai visto scritta così.
  *
- * Il ramo `file` non ha oggi nessun campo che lo raggiunga (`cv_path` sta in
- * `IDS_NON_RESI`): esiste perché il giorno in cui il curriculum torna, il
- * riepilogo ne dica almeno il nome invece di stampare il percorso del bucket.
+ * ⚠️ QUI NON C'È PIÙ NESSUN RAMO PER IL TIPO `file`, ed è una rimozione voluta.
+ * Ce n'era uno che restituiva l'ultimo segmento del percorso, scritto quando
+ * `cv_path` non era ancora reso e con la motivazione «del curriculum interessa il
+ * NOME del file». Quella premessa è decaduta il 2026-08-15: il nome scelto dal
+ * browser non entra più nel percorso (la rotta di caricamento lo butta via
+ * apposta — su quella porta è `cv-<cognome>.pdf`), quindi l'ultimo segmento oggi
+ * è `<uuid>-cv.pdf` e non dice niente a nessuno. Il curriculum si riepiloga in
+ * `rigaDelCampo`, che risponde alla sola domanda sensata: allegato o no.
  */
 function testoDelValore(f: FormField, grezzo: unknown): string | null {
   if (f.type === 'select' || f.type === 'radio') {
@@ -279,9 +378,6 @@ function testoDelValore(f: FormField, grezzo: unknown): string | null {
   if (typeof grezzo !== 'string') return null
   const testo = grezzo.trim()
   if (testo === '') return null
-  // Un percorso di Storage (`candidature/<uuid>-<nome>`) non dice niente a chi
-  // lo legge: del curriculum interessa il NOME del file, cioè l'ultimo segmento.
-  if (f.type === 'file') return testo.split('/').pop() || testo
   return testo
 }
 
@@ -431,6 +527,33 @@ export function CandidaturaInsegnanteWizard({
     formState: { errors },
   } = useForm<FieldValues>({ mode: 'onTouched' })
 
+  /**
+   * I VALORI DA CUI DIPENDONO LE CONDIZIONI, sorvegliati — e sono la ragione per
+   * cui questo componente ha un `useWatch`.
+   *
+   * `getValues()` non fa ri-renderizzare niente: con quello la casella «Quale
+   * posizione» comparirebbe solo al render successivo, cioè al carattere dopo o
+   * alla spunta dopo, e a chi compila sembrerebbe che il modulo non risponda.
+   * `useWatch` sui SOLI campi condizionanti (uno oggi) tiene il costo dove deve
+   * stare: digitare nella presentazione libera non ridisegna il passo.
+   *
+   * `defaultValue` è un array della stessa lunghezza dei nomi: senza,
+   * `useWatch` con `name: string[]` restituisce `undefined` al primo render e
+   * `campiVisibili` valuterebbe la condizione contro un valore assente — che per
+   * `contains` è comunque falso, ma per una condizione `neq` sarebbe VERO, cioè
+   * un campo che lampeggia al primo render.
+   */
+  const valoriCondizionanti = useWatch({
+    control,
+    name: CAMPI_CONDIZIONANTI,
+    defaultValue: CAMPI_CONDIZIONANTI.map(() => undefined),
+  })
+  /** Gli stessi valori nella forma `{ idCampo: valore }` che `campiVisibili` legge. */
+  const contestoCondizioni = useMemo(
+    () => Object.fromEntries(CAMPI_CONDIZIONANTI.map((id, i) => [id, valoriCondizionanti?.[i]])),
+    [valoriCondizionanti],
+  )
+
   const passi: Passo[] = useMemo(
     () => (mostraSede ? ['sede', 'dati', 'profilo', 'consensi', 'riepilogo'] : ['dati', 'profilo', 'consensi', 'riepilogo']),
     [mostraSede],
@@ -550,10 +673,27 @@ export function CandidaturaInsegnanteWizard({
     titoloPassoRef.current?.focus()
   }, [indice, erroreSede, erroreInvio])
 
-  /** I campi del modulo che vivono nel passo corrente (il riepilogo non ne ha). */
+  /**
+   * I campi del modulo che vivono nel passo corrente (il riepilogo non ne ha) —
+   * e VISIBILI, cioè al netto della logica condizionale.
+   *
+   * ⚠️ Il filtro non serve solo a disegnare: questa funzione è la stessa che
+   * `passoAvanti()` usa per decidere che cosa validare e `prosegui()` per
+   * decidere se un passo scavalcato è completo. Senza, «Quale posizione» —
+   * `required: true` con la sua `condition` — sarebbe obbligatoria per tutti, e
+   * il modulo non si potrebbe inviare senza spuntare «Altro».
+   *
+   * È lo STESSO motore che applica il server (`campiVisibili` da
+   * `@/lib/forms/conditional`, chiamato in `iscrizione/insegnanti:POST` prima di
+   * `validatePage`): due valutazioni della stessa condizione con la stessa
+   * funzione, che è l'unico modo in cui client e server non divergono su cosa
+   * sia obbligatorio.
+   */
   function campiDelPasso(p: Passo): FormField[] {
-    if (p === 'dati') return CAMPI_DATI
-    if (p === 'profilo') return CAMPI_PROFILO
+    if (p === 'dati') return campiVisibili(CAMPI_DATI, contestoCondizioni)
+    if (p === 'profilo') return campiVisibili(CAMPI_PROFILO, contestoCondizioni)
+    // I consensi non hanno condizioni (e non devono averne: una spunta che
+    // compare e sparisce è una prova che non si sa più a che cosa si riferisca).
     if (p === 'consensi') return CONSENSI_INSEGNANTI_FIELDS
     return []
   }
@@ -787,7 +927,16 @@ export function CandidaturaInsegnanteWizard({
     try {
       const valori = getValues()
       const dati: Record<string, unknown> = {}
-      for (const f of CAMPI_RESI) dati[f.id] = valori[f.id]
+      // ⚠️ SOLO I CAMPI VISIBILI. Chi spunta «Altro», scrive «psicomotricista» e
+      // poi toglie la spunta lascia il valore in react-hook-form (i campi
+      // smontati conservano il loro valore: `shouldUnregister` è false, ed è
+      // voluto — è ciò che permette di tornare indietro senza perdere quello che
+      // si è scritto). Spedirlo lo farebbe arrivare a una tabella dove il
+      // `CHECK` di coerenza pretende che «altro» e il testo ci siano o manchino
+      // INSIEME. Il server ripulisce comunque — `costruisciRiga` scrive `null`
+      // per i campi nascosti — ma mandare un dato che si è deciso di non dare è
+      // sbagliato qui, prima che là.
+      for (const f of campiVisibili(CAMPI_RESI, valori)) dati[f.id] = valori[f.id]
       // I CONSENSI VANNO NEL PAYLOAD, e questa riga è la ragione per cui il
       // collaudo dei consensi esiste: sul wizard fratello ogni pezzo funzionava
       // — la casella, la validazione, la prova archiviata — e il collegamento
@@ -798,8 +947,13 @@ export function CandidaturaInsegnanteWizard({
       // Anche i consensi NON spuntati viaggiano, come `false`: «non gliel'ho
       // chiesto» e «ha detto no» non sono la stessa cosa dentro `consents_log`.
       for (const f of CONSENSI_INSEGNANTI_FIELDS) dati[f.id] = valori[f.id] === true
-      // I gradi sono già un array (il `type: 'checkbox'` del template lo è per
-      // costruzione): si passa così com'è, senza validazione nuova.
+      // Le posizioni sono già un array (il `type: 'checkbox'` del template lo è
+      // per costruzione): si passano così come sono, senza validazione nuova.
+      //
+      // ⚠️ `gradi` NON viaggia più nel corpo, e non perché sia stato dimenticato:
+      // non è più un campo del modulo. Le fasce le DERIVA il server dalle
+      // posizioni docenti (`gradiDallePosizioni`), quindi in quella colonna non
+      // entra più niente che arrivi da qui.
 
       const res = await fetch(ROTTA_INVIO, {
         method: 'POST',
@@ -938,18 +1092,52 @@ export function CandidaturaInsegnanteWizard({
    * Una riga di riepilogo per un campo del template.
    *
    * Le etichette sono quelle del template — le stesse che si sono lette
-   * compilando — con UNA eccezione dichiarata: `gradi`, che nel riepilogo si
-   * chiama «Fasce per cui ti proponi» (`candRiepilogoFasce`) invece che «Per
-   * quali fasce ti proponi». È l'unica etichetta del modulo scritta come una
-   * DOMANDA, e una domanda in un elenco di fatti si legge male; la chiave esiste
-   * già, è tradotta in entrambe le lingue, e il vuoto ha la sua frase dedicata
-   * («Nessuna fascia selezionata»), che dice molto più di «Non indicato» su un
-   * campo obbligatorio.
+   * compilando — con DUE eccezioni dichiarate, e sono entrambe qui sotto:
+   *
+   *  · `posizioni`, che nel riepilogo si chiama «Posizioni per cui ti proponi»
+   *    (`candRiepilogoPosizioni`) invece che «Per quali posizioni ti proponi».
+   *    È l'unica etichetta del modulo scritta come una DOMANDA, e una domanda in
+   *    un elenco di fatti si legge male; il vuoto ha la sua frase dedicata
+   *    («Nessuna posizione selezionata»), che dice molto più di «Non indicato»
+   *    su un campo obbligatorio;
+   *  · il curriculum, che non si riepiloga col suo valore — quel valore è un
+   *    percorso di bucket. Il perché per esteso sta nel ramo `file` qui sotto.
+   *
+   * ⚠️ Fino al 2026-08-15 questo blocco descriveva `gradi` e nominava
+   * `candRiepilogoFasce`/`candRiepilogoNessunaFascia`: un campo che non esiste più
+   * e due chiavi che sono state RIMOSSE dai cataloghi. Era ancora qui perché la
+   * riga di codice accanto era stata cambiata e il commento no — cioè la forma di
+   * documentazione che questo repo si è impegnato a non lasciare in giro.
    */
   function rigaDelCampo(f: FormField): RigaRiepilogo {
     const grezzo = getValues(f.id)
-    const etichetta = f.id === 'gradi' ? t('candRiepilogoFasce') : String(f.label)
+    const etichetta = f.id === 'posizioni' ? t('candRiepilogoPosizioni') : String(f.label)
     const obbligatorio = f.required === true
+
+    // ── IL CURRICULUM NON SI RIEPILOGA COL SUO PERCORSO ─────────────────────
+    //
+    // Il valore di questo campo è `candidature/<uuid>-cv.pdf`: un identificativo
+    // che non dice niente a chi lo legge, e che è la CHIAVE con cui si firma un
+    // oggetto di un bucket privato. La riga dice l'unica cosa che chi controlla
+    // prima di inviare ha bisogno di sapere — il curriculum è allegato oppure no
+    // — e per quella non serve nessun percorso.
+    //
+    // ⚠️ E NON SI STAMPA NEMMENO IL NOME DEL FILE, che pure il browser conosce:
+    // dal 2026-08-15 quel nome non entra più nel percorso (la rotta di
+    // caricamento lo butta via apposta, perché è `cv-<cognome>.pdf`), quindi qui
+    // non c'è più niente da cui ricavarlo. Il riquadro del campo, un passo più
+    // su, lo mostra ancora finché la pagina è aperta: è lì che si controlla di
+    // aver scelto il file giusto.
+    if (f.type === 'file') {
+      const allegato = typeof grezzo === 'string' && grezzo.trim() !== ''
+      return {
+        id: f.id,
+        etichetta,
+        valore: allegato ? t('candRiepilogoCvAllegato') : t('candRiepilogoNonIndicato'),
+        vuoto: !allegato,
+        mancante: obbligatorio && !allegato,
+      }
+    }
 
     if (f.type === 'checkbox') {
       const scelti: unknown[] = Array.isArray(grezzo) ? grezzo : []
@@ -962,7 +1150,8 @@ export function CandidaturaInsegnanteWizard({
       return {
         id: f.id,
         etichetta,
-        valore: f.id === 'gradi' ? t('candRiepilogoNessunaFascia') : t('candRiepilogoNonIndicato'),
+        valore:
+          f.id === 'posizioni' ? t('candRiepilogoNessunaPosizione') : t('candRiepilogoNonIndicato'),
         vuoto: true,
         mancante: obbligatorio,
       }
@@ -1021,7 +1210,16 @@ export function CandidaturaInsegnanteWizard({
         ],
       },
       { passo: 'dati', titolo: t('candDati'), modificabile: true, righe: CAMPI_DATI.map(rigaDelCampo) },
-      { passo: 'profilo', titolo: t('candProfilo'), modificabile: true, righe: CAMPI_PROFILO.map(rigaDelCampo) },
+      {
+        passo: 'profilo',
+        titolo: t('candProfilo'),
+        modificabile: true,
+        // VISIBILI, come nel passo che li ha raccolti: senza il filtro, chi non
+        // ha spuntato «Altro» leggerebbe nel riepilogo «Quale posizione: Non
+        // indicato» in rosso — un campo obbligatorio mancante, per una domanda
+        // che non gli è mai stata fatta.
+        righe: campiVisibili(CAMPI_PROFILO, contestoCondizioni).map(rigaDelCampo),
+      },
       {
         passo: 'consensi',
         titolo: t('candConsensiTitolo'),
@@ -1488,14 +1686,29 @@ export function CandidaturaInsegnanteWizard({
                 {(passo === 'dati' || passo === 'profilo' || passo === 'consensi') && (
                   <div className={passo === 'consensi' ? 'space-y-3' : 'space-y-6'}>
                     {campiDelPasso(passo).map((f) => (
-                      <FieldRenderer
-                        key={f.id}
-                        field={f}
-                        modelId="candidature"
-                        register={register}
-                        control={control}
-                        error={errors[f.id]}
-                      />
+                      <div key={f.id}>
+                        <FieldRenderer
+                          field={f}
+                          modelId="candidature"
+                          register={register}
+                          control={control}
+                          error={errors[f.id]}
+                          // ⚠️ SEMPRE, non solo sul campo `file`: passarla in
+                          // modo condizionale sarebbe una riga in più che dice
+                          // la stessa cosa, e il giorno in cui nasce un secondo
+                          // allegato sarebbe la riga che nessuno aggiorna.
+                          // `FieldRenderer` la ignora per ogni tipo che non sia
+                          // `file`. Senza, `FileField` ripiega su
+                          // `/api/forms/upload`, che è dietro `requireUser`: su
+                          // un modulo anonimo, un 401 a ogni caricamento.
+                          uploadEndpoint={ROTTA_CARICAMENTO_CV}
+                        />
+                        {NOTE_DEI_CAMPI[f.id] && (
+                          <p className="mt-1.5 text-xs text-kidville-sub">
+                            {t(NOTE_DEI_CAMPI[f.id])}
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}

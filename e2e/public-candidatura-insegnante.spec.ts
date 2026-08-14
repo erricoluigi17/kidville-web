@@ -9,8 +9,20 @@ import itPublic from '../messages/it/public.json';
  *
  * Tre blocchi, e tutti e tre girano: il modulo si apre senza account, il link
  * targato vale solo se l'elenco delle sedi lo conferma, e il percorso vero —
- * compila, scegli DUE fasce, spunta il consenso obbligatorio, invia, leggi la
+ * compila, scegli DUE posizioni, spunta il consenso obbligatorio, invia, leggi la
  * conferma — arriva fino al 201.
+ *
+ * ─── DAL 15/08/2026 IL MODULO NON CHIEDE PIÙ LE FASCE ──────────────────────
+ *
+ * `/lavora-con-noi` non raccoglie più solo candidature da insegnante: la domanda
+ * «per quali fasce ti proponi» è sparita e al suo posto c'è «per quali POSIZIONI»
+ * — sette caselle, le tre docenti col nome della fascia dentro
+ * («Insegnante — Nido (0-3)») più collaboratrice, cuoca, segreteria e altro. Le
+ * fasce (`gradi`) non viaggiano più nel payload: le DERIVA il server dalle
+ * posizioni, e per una candidatura non docente restano un array vuoto.
+ * Qui sotto cambiano di conseguenza le caselle spuntate e le due chiavi del
+ * riepilogo (`candRiepilogoPosizioni`, `candRiepilogoNessunaPosizione`), che
+ * hanno sostituito `candRiepilogoFasce`/`candRiepilogoNessunaFascia`.
  *
  * ─── ⚠️ QUESTA TESTATA DICEVA ALTRO, E OGGI NON È PIÙ VERO (12/08/2026) ────
  *
@@ -70,6 +82,26 @@ const EMAIL_CANDIDATURA = PERSONALE_E2E.emailCandidatura;
 
 /** Il nome del plesso che il seed rende visibile ai moduli pubblici. */
 const SEDE_COLLAUDO = 'Plesso di Collaudo';
+
+/**
+ * Le caselle delle POSIZIONI toccate da questo percorso.
+ *
+ * ⚠️ IL TRATTINO DELLE VOCI DOCENTI È UN EM DASH — «—», U+2014, misurato nel
+ * sorgente — e non un trattino corto: `POSIZIONI_OPTIONS` le compone come
+ * `Insegnante — <etichetta della fascia>` (`insegnanti-template.ts`), cioè dalle
+ * stesse `GRADI_OPTIONS` di prima col prefisso `insegnante_`. Con un trattino
+ * qualunque il nome accessibile non combacia e la casella non si trova: il test
+ * morirebbe dicendo «elemento non trovato», che è il modo peggiore di segnalare
+ * un'etichetta cambiata.
+ *
+ * Sono ribattute qui e non importate perché nessun file di `e2e/` importa da
+ * `src/` (le etichette del template sono cablate in italiano, debito dichiarato
+ * lì): il giorno in cui cambiassero, questo blocco diventa rosso — ed è giusto,
+ * perché è il testo che una persona legge prima di candidarsi.
+ */
+const POSIZIONE_DOCENTE = 'Insegnante — Nido (0-3)';
+const POSIZIONE_NON_DOCENTE = 'Cuoca / aiuto cucina';
+const POSIZIONE_ALTRO = 'Altro (specifica qui sotto)';
 
 /** «Candidatura per la sede X», composta DAL CATALOGO e non ricopiata a mano. */
 const rigaSedeDalLink = (sede: string) => itPublic.candSedeDalLinkTitolo.replace('{sede}', sede);
@@ -172,10 +204,11 @@ test.describe('modulo pubblico di candidatura', () => {
    * tiene fuori dal progetto `webkit`.
    *
    * Cosa collauda: il percorso completo di chi si candida — l'elenco delle sedi,
-   * i tre passi compilabili, **due fasce d'età** (il campo è multi-valore, ed è
-   * l'informazione con cui la segreteria smista), il consenso OBBLIGATORIO
-   * spuntato come lo spunterebbe una persona, il `201` della rotta e il pannello
-   * di conferma annunciato.
+   * i tre passi compilabili, **due posizioni** (il campo è multi-valore, ed è
+   * l'informazione con cui la segreteria smista), la casella condizionale che
+   * compare e sparisce con «Altro», il consenso OBBLIGATORIO spuntato come lo
+   * spunterebbe una persona, il `201` della rotta e il pannello di conferma
+   * annunciato.
    *
    * L'indirizzo è FISSO e non generato: l'indice unico
    * `candidature_insegnanti_email_viva` è globale sugli stati vivi, e la rotta
@@ -185,7 +218,7 @@ test.describe('modulo pubblico di candidatura', () => {
    * email di `PERSONALE_E2E`): ogni run parte da zero, quindi il 201 qui sotto è
    * quello del PRIMO invio e non quello di un doppione.
    */
-  test('percorso vero: due fasce, consenso, 201 e pannello di conferma @solo-chromium', async ({
+  test('percorso vero: due posizioni, consenso, 201 e pannello di conferma @solo-chromium', async ({
     page,
   }) => {
     test.slow();
@@ -224,12 +257,48 @@ test.describe('modulo pubblico di candidatura', () => {
     await expect(page.getByText(itPublic.candProfilo, { exact: true })).toBeVisible();
     await page.locator('#titolo_studio').selectOption('laurea_magistrale');
 
-    // PIÙ DI UNA FASCIA. È il punto del passo: `gradi` è una `checkbox`
-    // multi-valore (colonna `school_type_enum[]`), e un test che ne spunta una
-    // sola non distinguerebbe un array da uno scalare. Le etichette sono quelle
-    // di `GRADI_OPTIONS`, cablate in italiano nel template (debito dichiarato lì).
-    await page.getByRole('checkbox', { name: 'Nido (0-3)' }).check();
-    await page.getByRole('checkbox', { name: 'Infanzia (3-6)' }).check();
+    // ── LA CASELLA CHE ESISTE SOLO SE UN'ALTRA È SPUNTATA ───────────────────
+    // «Quale posizione» (`posizione_altro`) è la PRIMA logica condizionale di
+    // questo modulo: `required: true` con una `condition` su «altro», e la
+    // filtrano sia il client sia il server (`campiVisibili`). Si guarda in tutte
+    // e due le direzioni — assente prima, presente dopo la spunta — perché la
+    // sola asserzione negativa sarebbe vera anche per un campo che il wizard non
+    // rende mai, cioè per il difetto opposto.
+    await expect(page.locator('#posizione_altro')).toHaveCount(0);
+    const altro = page.getByRole('checkbox', { name: POSIZIONE_ALTRO });
+    await altro.check();
+    await expect(page.locator('#posizione_altro')).toBeVisible();
+    // E si torna indietro: questa candidatura non è «altro», e lasciando la
+    // casella spuntata resterebbe un campo OBBLIGATORIO vuoto che ferma il passo.
+    await altro.uncheck();
+    await expect(page.locator('#posizione_altro')).toHaveCount(0);
+
+    // PIÙ DI UNA POSIZIONE, e di due famiglie diverse. È il punto del passo:
+    // `posizioni` è una `checkbox` multi-valore (colonna `text[]` con `CHECK` di
+    // appartenenza), e un test che ne spunta una sola non distinguerebbe un array
+    // da uno scalare. La coppia è scelta: una docente e una NON docente — il caso
+    // che prima del 15/08/2026 il modulo non poteva nemmeno esprimere, e quello
+    // da cui il server deriva `gradi` (qui: la sola fascia «nido») senza che il
+    // client gliela mandi.
+    await page.getByRole('checkbox', { name: POSIZIONE_DOCENTE }).check();
+    await page.getByRole('checkbox', { name: POSIZIONE_NON_DOCENTE }).check();
+
+    // IL CURRICULUM SI PUÒ ALLEGARE, ed è facoltativo: il campo `cv_path` è reso
+    // da questo passo dal 15/08/2026 (prima il wizard lo teneva fuori, perché
+    // nessuna rotta di caricamento produceva il prefisso che il server pretende).
+    // L'`input[type=file]` è `sr-only` — fuori dalla vista, dentro l'albero di
+    // accessibilità — quindi si afferma che è ATTACCATO, non che è visibile; e la
+    // nota accanto è ciò che dice a chi non ha il PDF sottomano che può fotografare
+    // il foglio invece di abbandonare il modulo.
+    await expect(page.locator('#cv_path')).toBeAttached();
+    await expect(page.getByText(itPublic.candCvNota)).toBeVisible();
+
+    // Nessun file allegato: si invia lo stesso. È l'unica prova che il curriculum
+    // sia davvero facoltativo — e un caricamento vero non si fa qui, perché la
+    // rotta di upload sta a 6 caricamenti ogni 10 minuti per IP
+    // (`TETTO_UPLOAD_CANDIDATURE`) e in CI i browser escono da un IP solo: con
+    // `retries: 2` sarebbe la stessa aritmetica che tiene questo blocco fuori dal
+    // progetto `webkit`.
     await page.getByRole('button', { name: itPublic.candAvanti }).click();
 
     // ── Passo «Consensi e informativa» ──────────────────────────────────────
@@ -249,19 +318,24 @@ test.describe('modulo pubblico di candidatura', () => {
     await page.getByRole('button', { name: itPublic.candAvanti }).click();
 
     // ── Riepilogo ───────────────────────────────────────────────────────────
-    // LA SEDE, PRIMA DELLE FASCE. Il passo di scelta non c'è (plesso unico) e
+    // LA SEDE, PRIMA DELLE POSIZIONI. Il passo di scelta non c'è (plesso unico) e
     // questo è l'unico punto in cui il modulo dichiara DOVE sta mandando la
     // candidatura: senza questa riga il test attraverserebbe tutto senza mai
     // guardare la cosa che una rotta pubblica può sbagliare in silenzio.
     await expect(page.getByText(itPublic.candRiepilogoSede, { exact: true })).toBeVisible();
     await expect(page.getByText(SEDE_COLLAUDO, { exact: true })).toBeVisible();
 
-    // Le due fasce si RILEGGONO qui: il riepilogo è l'ultimo punto in cui chi si
-    // candida può accorgersi che il modulo ha capito un'altra cosa.
-    await expect(page.getByText(itPublic.candRiepilogoFasce)).toBeVisible();
-    await expect(page.getByRole('listitem').filter({ hasText: 'Nido (0-3)' })).toBeVisible();
-    await expect(page.getByRole('listitem').filter({ hasText: 'Infanzia (3-6)' })).toBeVisible();
-    await expect(page.getByText(itPublic.candRiepilogoNessunaFascia)).toHaveCount(0);
+    // Le due posizioni si RILEGGONO qui: il riepilogo è l'ultimo punto in cui chi
+    // si candida può accorgersi che il modulo ha capito un'altra cosa. Le voci
+    // sono una per riga (`<li>`), non una stringa unita da virgole, quindi
+    // ciascuna etichetta si può cercare intera.
+    await expect(page.getByText(itPublic.candRiepilogoPosizioni)).toBeVisible();
+    await expect(page.getByRole('listitem').filter({ hasText: POSIZIONE_DOCENTE })).toBeVisible();
+    await expect(page.getByRole('listitem').filter({ hasText: POSIZIONE_NON_DOCENTE })).toBeVisible();
+    await expect(page.getByText(itPublic.candRiepilogoNessunaPosizione)).toHaveCount(0);
+    // «Altro» è stato spuntato e poi tolto: non deve comparire fra le posizioni
+    // riepilogate, o quello che il server riceve non è quello che si è scelto.
+    await expect(page.getByRole('listitem').filter({ hasText: POSIZIONE_ALTRO })).toHaveCount(0);
 
     await page.getByRole('button', { name: itPublic.candInvia }).click();
 

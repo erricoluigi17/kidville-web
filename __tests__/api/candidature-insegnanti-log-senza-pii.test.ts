@@ -101,6 +101,17 @@ import { descriviErrore } from '@/lib/logging/serialize'
 import { INSEGNANTE_FIELDS } from '@/lib/forms/insegnanti-template'
 
 /**
+ * L'uuid dentro il percorso del curriculum.
+ *
+ * Sta in una costante perché è la parte del percorso che va cercata nei log da
+ * sola: dal 2026-08-15 il nome del file non sopravvive più al caricamento
+ * (`candidature/<uuid>-cv.<est>`), quindi l'unica cosa che identifica il
+ * curriculum di una persona è l'uuid — ed è anche la chiave con cui il cockpit
+ * lo fa firmare.
+ */
+const UUID_CV = '0f5f1f2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f'
+
+/**
  * I dati personali che il modulo raccoglie, ognuno con un valore RICONOSCIBILE.
  * Sono inventati: il repository è pubblico.
  */
@@ -111,22 +122,33 @@ const PII = {
   telefono: '+39 333 1112223',
   residence_city: 'Comunericonoscibile',
   note: 'Ho lavorato dieci anni in un nido e vorrei tornare a insegnare.',
-  // ⚠️ IL PERCORSO È NELLA FORMA CHE LA ROUTE AMMETTE, e la forma conta.
+  // ⚠️ IL PERCORSO È NELLA FORMA CHE LA ROUTE AMMETTE, e la forma è cambiata due
+  // volte in cinque giorni.
   //
   // Qui c'era `form_attachments/curriculum-cognomericonoscibile.pdf`, cioè un
   // valore che dal 2026-08-10 la route RESPINGE con 400: `cv_path` arriva da una
   // richiesta anonima ed è la chiave con cui il cockpit fa firmare un oggetto
-  // dello Storage, perciò si accetta solo `candidature/<uuid>-<nome>` con
-  // un'estensione ammessa dal bucket. Lasciato com'era, questo file avrebbe
-  // continuato a «passare» misurando i log del ramo di RIFIUTO invece di quelli
-  // dei rami che dice di misurare — un collaudo verde su un percorso che il
-  // prodotto non esegue più.
+  // dello Storage. Poi c'è stato `candidature/<uuid>-curriculum-<cognome>.pdf`,
+  // respinto a sua volta dal 2026-08-15: `costruisciPercorsoCv` non conserva più
+  // niente del nome mandato dal browser, e la forma ammessa è
+  // `candidature/<uuid>-cv.<estensione>` e nient'altro. Ogni volta che questo
+  // valore resta indietro, il file continua a «passare» misurando i log del ramo
+  // di RIFIUTO invece di quelli dei rami che dice di misurare — un collaudo verde
+  // su un percorso che il prodotto non esegue più.
   //
-  // Il cognome resta dentro il nome del file, che è il punto: il percorso di un
-  // curriculum contiene quasi sempre il nome di una persona, e non deve
-  // comparire in nessun log NEMMENO quando il valore è legittimo.
-  cv_path: 'candidature/0f5f1f2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f-curriculum-cognomericonoscibile.pdf',
+  // Il cognome adesso nel percorso non c'è (è la ragione per cui il nome è stato
+  // buttato via: su questa porta il file si chiama `cv-<cognome>.pdf`), e il
+  // percorso resta comunque una cosa da tenere fuori dai log — è la chiave con
+  // cui si firma il curriculum di una persona, e `redact()` non la ha in lista
+  // bianca.
+  cv_path: `candidature/${UUID_CV}-cv.pdf`,
   titolo_dettaglio: 'Scienze dell’educazione, Istituto Riconoscibile',
+  // Il campo nato il 2026-08-15, e l'unico testo LIBERO che questo modulo abbia
+  // guadagnato: la casella accanto ad «Altro». Qui viaggia sempre — la
+  // candidatura di prova non spunta «Altro», quindi il campo è nascosto e in
+  // tabella entra `null` — ma nel CORPO GREZZO c'è, ed è da lì che `parseBody`
+  // lo deposita nel contesto prima che zod l'abbia guardato.
+  posizione_altro: 'Mestierericonoscibile',
 }
 
 const candidatura = (extra: Record<string, unknown> = {}) => ({
@@ -134,7 +156,9 @@ const candidatura = (extra: Record<string, unknown> = {}) => ({
   residence_province: 'NA',
   titolo_studio: 'laurea_triennale',
   anni_esperienza: 10,
-  gradi: ['nido'],
+  // `posizioni` e non più `gradi`: dal 2026-08-15 lo zod della rotta pretende
+  // questo campo, e le fasce le deriva la route da qui.
+  posizioni: ['insegnante_nido'],
   disponibilita: 'tempo_pieno',
   presa_visione_informativa: true,
   ...extra,
@@ -185,8 +209,10 @@ function nessunaPii(dove: string): void {
     // I valori sono scelti apposta perché non compaiano per caso.
     expect(testo, `${dove}: il log contiene il campo «${campo}»`).not.toContain(String(valore))
   }
-  // E nemmeno frammenti: il cognome e il percorso del curriculum.
-  for (const frammento of ['Cognomericonoscibile', 'Comunericonoscibile', 'curriculum-', '333 111']) {
+  // E nemmeno frammenti: il cognome, il comune, l'uuid del curriculum (che dopo
+  // la rimozione del nome dal percorso è l'unica cosa che quel file identifica, e
+  // basta da solo a farlo firmare) e le cifre centrali del telefono.
+  for (const frammento of ['Cognomericonoscibile', 'Comunericonoscibile', UUID_CV, '333 111']) {
     expect(testo, `${dove}: il log contiene «${frammento}»`).not.toContain(frammento)
   }
 }
@@ -344,12 +370,17 @@ describe('i log della candidatura non portano fuori la persona', () => {
     // Otto campi respinti: i quattro obbligatori lasciati vuoti più quattro
     // facoltativi compilati male. I soli obbligatori sarebbero quattro, cioè
     // sotto il tetto — e un test che si fermasse lì misurerebbe il caso comodo.
+    //
+    // ⚠️ `posizioni` NON può restare fra i vuoti: è un array e lo zod lo pretende
+    // con almeno un elemento, quindi una stringa vuota farebbe uscire la
+    // richiesta con un 400 di zod PRIMA di arrivare alla ri-validazione dei
+    // campi — cioè questo caso misurerebbe un ramo che non è il suo.
     const vuoti = Object.fromEntries(INSEGNANTE_FIELDS.map((f) => [f.id, '']))
     await invia({
       scuola_id: SEDE_A,
       data: {
         ...vuoti,
-        gradi: ['nido'],
+        posizioni: ['insegnante_nido'],
         presa_visione_informativa: true,
         residence_province: 'XY',
         residence_city: 'x'.repeat(101),
@@ -373,7 +404,21 @@ describe('i log della candidatura non portano fuori la persona', () => {
 
   it('nessuna chiamata a `logEvento` porta una chiave che nomina un dato personale', async () => {
     await invia({ scuola_id: SEDE_A, data: candidatura() })
-    const vietate = ['nome', 'cognome', 'email', 'telefono', 'note', 'cv_path', 'residence_city']
+    // `posizioni` e `posizione_altro` sono nell'elenco dal 2026-08-15: la prima
+    // dice che lavoro sta cercando una persona, la seconda è testo libero scritto
+    // da un anonimo. Il log ne porta il CONTEGGIO (`n_posizioni`) e un booleano
+    // (`docente`), che è tutto ciò che serve a chi interroga `app_log`.
+    const vietate = [
+      'nome',
+      'cognome',
+      'email',
+      'telefono',
+      'note',
+      'cv_path',
+      'residence_city',
+      'posizioni',
+      'posizione_altro',
+    ]
     for (const e of h.eventi) {
       for (const chiave of Object.keys(e.campi)) {
         expect(vietate, `chiave «${chiave}» in un log di ${e.evento}`).not.toContain(chiave)

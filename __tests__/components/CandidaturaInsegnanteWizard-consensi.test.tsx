@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
 import itCampi from '../../messages/it/parentForms.json'
-import { CONSENSI_INSEGNANTI_FIELDS } from '@/lib/forms/insegnanti-template'
+import { CONSENSI_INSEGNANTI_FIELDS, POSIZIONI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { SEDE_A } from '../fixtures/sedi'
 
 /**
@@ -49,6 +49,21 @@ import { CandidaturaInsegnanteWizard } from '@/components/features/public/Candid
 const OBBLIGATORIO = /informativa sulla privacy/i
 const FACOLTATIVO = /Conservate la mia candidatura/i
 
+/**
+ * L'etichetta della posizione con quel `value`, LETTA dal template.
+ *
+ * Dal 2026-08-15 il passo «profilo» non chiede più le fasce d'età: chiede le
+ * POSIZIONI, e la casella che qui serve per proseguire non si chiama più «Nido
+ * (0-3)» ma «Insegnante — Nido (0-3)». ⚠️ Quel trattino è un EM DASH (U+2014):
+ * ribattuto a mano con un trattino corto dà un selettore che non trova niente, e
+ * il rosso che ne esce parla del wizard invece che di questa riga.
+ */
+function posizione(valore: string): string {
+  const o = POSIZIONI_OPTIONS.find((x) => x.value === valore)
+  if (!o) throw new Error(`posizione «${valore}» assente da POSIZIONI_OPTIONS`)
+  return String(o.label)
+}
+
 const fetchMock = vi.fn()
 const corpiInviati: unknown[] = []
 
@@ -82,7 +97,7 @@ async function vaiAiConsensi(): Promise<void> {
 
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Nido (0-3)' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: posizione('insegnante_nido') }))
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() => expect(screen.getByRole('checkbox', { name: OBBLIGATORIO })).toBeInTheDocument())

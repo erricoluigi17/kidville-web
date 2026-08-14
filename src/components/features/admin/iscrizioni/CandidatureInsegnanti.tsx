@@ -8,7 +8,9 @@ import {
   KeyRound, Loader2, Mail, MapPin, UserCheck, Users, XCircle,
 } from 'lucide-react'
 import { StatCard } from '@/components/ui/cockpit'
-import { GRADI_OPTIONS } from '@/lib/forms/insegnanti-template'
+import {
+  GRADI_OPTIONS, POSIZIONI_OPTIONS, comprendeInsegnamento,
+} from '@/lib/forms/insegnanti-template'
 import { LIMITE_ISCRIZIONI_DEFAULT } from '@/lib/api/paginazione'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { useAdminIdentity } from '@/lib/context/admin-identity'
@@ -114,12 +116,23 @@ interface RigaElenco {
   stato: string
   nome?: string | null
   cognome?: string | null
+  /**
+   * Le POSIZIONI stanno in elenco e le fasce no, dal 2026-08-15, ed è una
+   * sostituzione e non un'aggiunta: sono loro il dato che RICONOSCE una
+   * candidatura a colpo d'occhio (una cuoca da una maestra), mentre le fasce sono
+   * ormai un valore DERIVATO da esse. Mostrarle entrambe farebbe della riga un
+   * muro di etichette che dicono due volte la stessa cosa per le insegnanti e una
+   * cosa vuota per tutti gli altri. Le fasce restano nel dettaglio.
+   */
+  posizioni?: unknown
   gradi?: unknown
   creata_il?: string | null
 }
 
 /** La candidatura APERTA: la riga d'elenco più tutto ciò che arriva da `?id=`. */
 interface Candidatura extends RigaElenco {
+  /** Il mestiere scritto a mano: c'è se e solo se fra le posizioni c'è «altro». */
+  posizione_altro?: string | null
   email?: string | null
   telefono?: string | null
   residence_city?: string | null
@@ -145,6 +158,23 @@ interface Esito {
   credentials?: { email: string; password: string } | null
   credentialsEmailSent?: boolean
   esitoEmailInviato?: boolean
+  /**
+   * QUALE DELLE TRE STORIE raccontare dopo un'approvazione, letto dal server e
+   * non dedotto.
+   *
+   * Fino al 2026-08-15 le storie erano due e si distinguevano da
+   * `credentials === null`: password mostrata (account nuovo) oppure «Nessuna
+   * password generata: esisteva già un accesso con questa email». Dal giorno in
+   * cui il modulo pubblico accoglie cuoche, collaboratrici e segretarie ce n'è
+   * una terza — nessun account affatto — e `credentials === null` ne coprirebbe
+   * due: la Segreteria leggerebbe che esiste un accesso con quella email, cioè
+   * il contrario di quello che è successo, e andrebbe a cercarlo.
+   *
+   * `undefined` vale `riusato` solo per il rifiuto e per le risposte di un
+   * server più vecchio di questo client (un deploy a metà): mai `nessuno`, che è
+   * l'unica delle tre a dire «non c'è niente da cercare».
+   */
+  esitoAccount?: 'creato' | 'riusato' | 'nessuno'
 }
 
 /**
@@ -212,6 +242,12 @@ const CHIAVE_GRADO: Record<string, string> = {
  * Un valore FUORI enum resta grezzo: nasconderlo direbbe che il campo è vuoto.
  */
 const CHIAVE_TITOLO: Record<string, string> = {
+  // Aggiunta il 2026-08-15 insieme alla voce nel template: l'elenco cominciava
+  // dal diploma perché l'unica candidatura possibile era quella di
+  // un'insegnante. Senza questa riga il valore uscirebbe grezzo — con
+  // l'underscore — proprio sulle candidature non docenti che il modulo ha appena
+  // cominciato ad accogliere.
+  licenza_media: 'candTitoloLicenzaMedia',
   diploma: 'candTitoloDiploma',
   magistrale: 'candTitoloMagistrale',
   laurea_triennale: 'candTitoloLaureaTriennale',
@@ -229,22 +265,56 @@ const CHIAVE_DISPONIBILITA: Record<string, string> = {
   tirocinio: 'candDispTirocinio',
 }
 
+/**
+ * Le POSIZIONI, con la chiave i18n di ciascuna: l'ordine è quello del template.
+ *
+ * ⚠️ Le etichette del template (`POSIZIONI_OPTIONS`) sono italiane per
+ * costruzione — servono al modulo pubblico, non a un cockpit bilingue — e i loro
+ * `value` sono token con l'underscore (`insegnante_nido`). Senza queste chiavi la
+ * Segreteria leggerebbe a schermo il valore di database, che è precisamente il
+ * difetto corretto l'11/08/2026 per titolo di studio e disponibilità. Il lock in
+ * coda al test del pannello verifica che OGNI valore dell'enum abbia la sua
+ * chiave, in italiano e in inglese: una posizione aggiunta al modulo pubblico e
+ * dimenticata qui è un test rosso, non una scoperta a schermo.
+ */
+const CHIAVE_POSIZIONE: Record<string, string> = {
+  insegnante_nido: 'candPosInsegnanteNido',
+  insegnante_infanzia: 'candPosInsegnanteInfanzia',
+  insegnante_primaria: 'candPosInsegnantePrimaria',
+  collaboratrice: 'candPosCollaboratrice',
+  cuoca: 'candPosCuoca',
+  segreteria: 'candPosSegreteria',
+  altro: 'candPosAltro',
+}
+
 const ORDINE_GRADI = GRADI_OPTIONS.map((o) => String(o.value))
+const ORDINE_POSIZIONI = POSIZIONI_OPTIONS.map((o) => String(o.value))
 
 /**
- * Le fasce della candidatura, ordinate come nel modulo pubblico e senza
- * doppioni. Un valore FUORI dall'enum non si butta: si mostra grezzo, perché
- * nasconderlo direbbe alla Direzione che quella candidatura non ha fasce
- * mentre in tabella ce n'è una che il pannello Personale dovrà sistemare.
+ * Un elenco che arriva grezzo dal database, ordinato come nel modulo pubblico e
+ * senza doppioni.
+ *
+ * Un valore FUORI dall'elenco noto non si butta: si mostra in coda, perché
+ * nasconderlo direbbe alla Direzione che quella candidatura non ha quel dato
+ * mentre in tabella c'è un valore che qualcuno dovrà sistemare.
+ *
+ * ⚠️ È una funzione sola con l'ordine come parametro, e non due copie: fasce e
+ * posizioni hanno la stessa identica regola, e in questo repo la stessa regola
+ * scritta due volte diverge alla prima modifica. La differenza fra le due sta
+ * tutta nell'elenco che si passa.
  */
-function gradiOrdinati(grezzi: unknown): string[] {
+function ordinatiComeIlModulo(grezzi: unknown, ordine: string[]): string[] {
   if (!Array.isArray(grezzi)) return []
   const presenti = [...new Set(grezzi.map((g) => String(g)).filter((g) => g !== ''))]
   return [
-    ...ORDINE_GRADI.filter((g) => presenti.includes(g)),
-    ...presenti.filter((g) => !ORDINE_GRADI.includes(g)),
+    ...ordine.filter((v) => presenti.includes(v)),
+    ...presenti.filter((v) => !ordine.includes(v)),
   ]
 }
+
+const gradiOrdinati = (grezzi: unknown): string[] => ordinatiComeIlModulo(grezzi, ORDINE_GRADI)
+const posizioniOrdinate = (grezzi: unknown): string[] =>
+  ordinatiComeIlModulo(grezzi, ORDINE_POSIZIONI)
 
 /**
  * L'esito e gli avvisi, letti dal corpo della PATCH.
@@ -265,6 +335,12 @@ function esitoDaRisposta(
     credentials: (corpo.credentials as Esito['credentials']) ?? null,
     credentialsEmailSent: corpo.credentialsEmailSent === true,
     esitoEmailInviato: corpo.esitoEmailInviato === true,
+    // Solo i tre valori dichiarati: una stringa qualunque arrivata da un corpo
+    // inatteso non deve poter scegliere quale storia si racconta.
+    esitoAccount:
+      corpo.esitoAccount === 'creato' || corpo.esitoAccount === 'riusato' || corpo.esitoAccount === 'nessuno'
+        ? corpo.esitoAccount
+        : undefined,
   }
 }
 
@@ -380,6 +456,7 @@ export function CandidatureInsegnanti() {
     sedi.find((s) => s.id === scuolaId)?.nome ?? t('candSedeSconosciuta')
 
   const etichettaGrado = (g: string) => (CHIAVE_GRADO[g] ? t(CHIAVE_GRADO[g]) : g)
+  const etichettaPosizione = (p: string) => (CHIAVE_POSIZIONE[p] ? t(CHIAVE_POSIZIONE[p]) : p)
 
   /** L'etichetta di un enum, o il valore grezzo se è fuori dall'elenco chiuso. */
   const daCatalogo = (mappa: Record<string, string>, valore?: string | null) => {
@@ -864,9 +941,14 @@ export function CandidatureInsegnanti() {
                   <BadgeStato stato={riga.stato} />
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
-                  {gradiOrdinati(riga.gradi).map((g) => (
-                    <span key={g} className="rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wider text-kidville-green">
-                      {etichettaGrado(g)}
+                  {/* LE POSIZIONI, non le fasce: sono loro a dire a colpo d'occhio
+                      se questa candidatura è di una maestra o di una cuoca — cioè
+                      l'unica cosa che serve per riconoscere una riga in un elenco.
+                      Le fasce sono un dato DERIVATO da queste, e stanno nel
+                      dettaglio. */}
+                  {posizioniOrdinate(riga.posizioni).map((p) => (
+                    <span key={p} className="rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wider text-kidville-green">
+                      {etichettaPosizione(p)}
                     </span>
                   ))}
                 </span>
@@ -909,6 +991,8 @@ export function CandidatureInsegnanti() {
                 cand={selezionata}
                 nomeSede={nomeSede(selezionata.scuola_id)}
                 nomeCompleto={nomeCompleto(selezionata)}
+                posizioni={posizioniOrdinate(selezionata.posizioni)}
+                etichettaPosizione={etichettaPosizione}
                 gradi={gradiOrdinati(selezionata.gradi)}
                 etichettaGrado={etichettaGrado}
                 titoloStudio={daCatalogo(CHIAVE_TITOLO, selezionata.titolo_studio)}
@@ -988,10 +1072,16 @@ function AvvisoEsitiScartati({ voci, onCongeda }: { voci: EsitoScartato[]; onCon
 
             {v.esito?.azione === 'approva' && (
               <>
+                {/* ⚠️ ANCHE QUI LE STORIE SONO TRE, e questa è la strada che si
+                    percorre quando l'esito è andato perso: è l'unica copia di ciò
+                    che è successo. Dire «l'account docente È STATO CREATO» dopo
+                    l'approvazione di una cuoca manderebbe a cercarlo per sempre. */}
                 <p className="font-semibold">
-                  {v.esito.stato === 'in_approvazione'
-                    ? t('candScartatoAccountCreatoAMeta')
-                    : t('candScartatoAccountCreato')}
+                  {v.esito.esitoAccount === 'nessuno'
+                    ? t('candEsitoApprovataSenzaAccount')
+                    : v.esito.stato === 'in_approvazione'
+                      ? t('candScartatoAccountCreatoAMeta')
+                      : t('candScartatoAccountCreato')}
                 </p>
                 {v.esito.credentials ? (
                   <>
@@ -1007,7 +1097,7 @@ function AvvisoEsitiScartati({ voci, onCongeda }: { voci: EsitoScartato[]; onCon
                       <p className="text-xs font-semibold">{t('candCredNonInviate')}</p>
                     )}
                   </>
-                ) : (
+                ) : v.esito.esitoAccount === 'nessuno' ? null : (
                   <p className="text-xs">{t('candNessunaCredenziale')}</p>
                 )}
               </>
@@ -1072,7 +1162,8 @@ function Voce({ etichetta, valore }: { etichetta: string; valore?: string | numb
 }
 
 function PannelloDettaglio({
-  cand, nomeSede, nomeCompleto, gradi, etichettaGrado, titoloStudio, disponibilita,
+  cand, nomeSede, nomeCompleto, posizioni, etichettaPosizione, gradi, etichettaGrado,
+  titoloStudio, disponibilita,
   isDirezione, motivoBlocco, conferma, setConferma, motivo, setMotivo, avvisaEmail,
   setAvvisaEmail, lavorando, esito, avvisi, cvBloccato, onChiudiEsito, onEsegui,
   onApriCv, onIndietro,
@@ -1080,6 +1171,8 @@ function PannelloDettaglio({
   cand: Candidatura
   nomeSede: string
   nomeCompleto: string
+  posizioni: string[]
+  etichettaPosizione: (p: string) => string
   gradi: string[]
   etichettaGrado: (g: string) => string
   titoloStudio: string | null
@@ -1104,6 +1197,18 @@ function PannelloDettaglio({
   const t = useTranslations('adminAltro')
   const f = useDateFormat()
   const decisa = cand.stato === 'approvata' || cand.stato === 'rifiutata'
+  /**
+   * Questa approvazione farà nascere un account?
+   *
+   * Si calcola dalle POSIZIONI con lo STESSO predicato del server
+   * (`comprendeInsegnamento`, che vive nel template). Scriverne uno qui — anche
+   * solo un `posizioni.some(p => p.startsWith('insegnante_'))` — vorrebbe dire
+   * che la conferma e la PATCH possono un giorno rispondere in modo diverso alla
+   * stessa domanda, e la conferma è la frase su cui la Direzione preme
+   * «Conferma»: se descrive un'altra operazione, il consenso che raccoglie non
+   * vale niente.
+   */
+  const creeraAccount = comprendeInsegnamento(posizioni)
   /**
    * `in_approvazione` = l'account docente ESISTE e la riga non è chiusa. Non è
    * uno stato azionabile da questa schermata: «Approva» ricreerebbe (la route lo
@@ -1206,11 +1311,41 @@ function PannelloDettaglio({
           <Voce etichetta={t('candAnni')} valore={cand.anni_esperienza} />
           <Voce etichetta={t('candDisponibilita')} valore={disponibilita} />
         </div>
+        {/* LE POSIZIONI VENGONO PRIMA DELLE FASCE, ed è l'ordine della domanda:
+            «per quale lavoro si è proposta» precede «per quali fasce d'età». È
+            anche l'unico blocco che una candidatura non docente ha davvero. */}
+        <div className="mt-3">
+          <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-sub">{t('candPosizioni')}</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {posizioni.length === 0 ? (
+              <span className="font-maven text-sm text-kidville-ink">{t('candNonIndicato')}</span>
+            ) : (
+              posizioni.map((p) => (
+                <span key={p} className="rounded-pill bg-kidville-green-soft px-2.5 py-1 font-barlow text-[11px] font-bold uppercase tracking-wider text-kidville-green">
+                  {etichettaPosizione(p)}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+        {/* Il mestiere scritto a mano: c'è se e solo se fra le posizioni c'è
+            «altro» (in tabella lo impone un `CHECK` di coerenza nei due versi).
+            Senza questa riga, «Altro» sarebbe un'etichetta che non dice niente. */}
+        {cand.posizione_altro && (
+          <div className="mt-3">
+            <Voce etichetta={t('candPosizioneAltro')} valore={cand.posizione_altro} />
+          </div>
+        )}
         <div className="mt-3">
           <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-sub">{t('candFasce')}</p>
           <div className="mt-1 flex flex-wrap gap-2">
+            {/* ⚠️ «Nessuna» e non «Non indicato»: dal 2026-08-15 le fasce si
+                DERIVANO dalle posizioni e non si chiedono più, quindi un elenco
+                vuoto non è un dato che manca — è ciò che ha una cuoca. «Non
+                indicato» manderebbe la Direzione a cercare un'omissione che non
+                c'è, sulla schermata da cui si decide un'assunzione. */}
             {gradi.length === 0 ? (
-              <span className="font-maven text-sm text-kidville-ink">{t('candNonIndicato')}</span>
+              <span className="font-maven text-sm text-kidville-ink">{t('candNessunaFascia')}</span>
             ) : (
               gradi.map((g) => (
                 <span key={g} className="rounded-pill bg-kidville-green-soft px-2.5 py-1 font-barlow text-[11px] font-bold uppercase tracking-wider text-kidville-green">
@@ -1328,6 +1463,12 @@ function PannelloDettaglio({
                   </p>
                 )}
               </>
+            ) : esito.esitoAccount === 'nessuno' ? (
+              // LA TERZA STORIA. Prima esistevano solo «password mostrata» e
+              // «nessuna password: esisteva già un accesso»: quest'ultima, su una
+              // candidatura non docente, manderebbe la Segreteria a cercare un
+              // account che non è mai stato creato.
+              <p className="font-maven text-xs text-kidville-sub">{t('candEsitoApprovataSenzaAccount')}</p>
             ) : (
               <p className="font-maven text-xs text-kidville-sub">{t('candNessunaCredenziale')}</p>
             )
@@ -1391,23 +1532,43 @@ function PannelloDettaglio({
               <p className="font-barlow text-sm font-bold uppercase tracking-[0.02em] text-kidville-green">
                 {t('candConfermaApprovaTitolo')}
               </p>
-              <p className="font-maven text-sm text-kidville-ink">
-                {t('candConfermaApprovaAccount')} <strong>{nomeCompleto}</strong>{' '}
-                {t('candConfermaApprovaSede')} <strong>{nomeSede}</strong>
-                {gradi.length > 0 && (
-                  <>
-                    {', '}
-                    {t('candConfermaApprovaFasce')}{' '}
-                    <strong>{gradi.map(etichettaGrado).join(', ')}</strong>
-                  </>
-                )}
-                {'. '}
-                {t('candConfermaApprovaCredenziali')}{' '}
-                <strong>{(cand.email ?? '').trim() || t('candNonIndicato')}</strong>.
-              </p>
-              {gradi.length === 0 && (
-                <p className="flex items-start gap-1.5 font-maven text-xs text-kidville-warn-strong">
-                  <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {t('candConfermaApprovaFasceMancanti')}
+              {/* ⚠️ LA CONFERMA DEVE DESCRIVERE CIÒ CHE VERRÀ ESEGUITO, e dal
+                  2026-08-15 sono due cose diverse: chiedere conferma di una
+                  creazione di account per una candidatura da cuoca significa
+                  farsi dire di sì a una domanda che non è quella. Il predicato è
+                  lo STESSO del server (`comprendeInsegnamento`, dal template),
+                  perché una seconda regola qui direbbe una cosa e la PATCH ne
+                  farebbe un'altra. */}
+              {creeraAccount ? (
+                <>
+                  <p className="font-maven text-sm text-kidville-ink">
+                    {t('candConfermaApprovaAccount')} <strong>{nomeCompleto}</strong>{' '}
+                    {t('candConfermaApprovaSede')} <strong>{nomeSede}</strong>
+                    {gradi.length > 0 && (
+                      <>
+                        {', '}
+                        {t('candConfermaApprovaFasce')}{' '}
+                        <strong>{gradi.map(etichettaGrado).join(', ')}</strong>
+                      </>
+                    )}
+                    {'. '}
+                    {t('candConfermaApprovaCredenziali')}{' '}
+                    <strong>{(cand.email ?? '').trim() || t('candNonIndicato')}</strong>.
+                  </p>
+                  {/* L'avviso «nessuna fascia» vale SOLO qui: su una candidatura
+                      docente un elenco vuoto è un'anomalia da sistemare a mano.
+                      Sul ramo senza account sarebbe un allarme giallo che
+                      descrive un problema inesistente — e un avviso che grida
+                      sempre smette di essere letto quando dice qualcosa di vero. */}
+                  {gradi.length === 0 && (
+                    <p className="flex items-start gap-1.5 font-maven text-xs text-kidville-warn-strong">
+                      <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {t('candConfermaApprovaFasceMancanti')}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="font-maven text-sm text-kidville-ink">
+                  {t('candConfermaApprovaSenzaAccount')}
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-2 pt-1">

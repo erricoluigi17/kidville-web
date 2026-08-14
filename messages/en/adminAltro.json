@@ -6,10 +6,8 @@
   "chiudi": "Close",
   "errore": "Error",
   "eyebrowAmministrazione": "Administration",
-
   "gdprTitle": "Privacy & Right to Erasure",
   "gdprSubtitle": "Deletion (anonymization) of the personal data of unenrolled pupils. Restricted to Management.",
-
   "oblioBanner": "Only <strong>unenrolled</strong> pupils and their parents. Permanent deletion <strong>anonymizes</strong> personal data (irreversible): audit logs and tax documents (invoices) are kept as required by law.",
   "oblioVuoto": "No unenrolled pupils to anonymize.",
   "oblioStatoNonIscritto": "unenrolled",
@@ -48,7 +46,6 @@
   "oblioPlaceholderNome": "Surname Name",
   "oblioBtnAnonimizza": "Anonymize permanently",
   "oblioBtnAnonimizzando": "Anonymizing…",
-
   "richiesteLoading": "Loading requests…",
   "richiesteBanner": "Requests started by <strong>parents</strong> from the app (Profile and delegates). Fulfilling them <strong>anonymizes</strong> the parent and their <strong>unenrolled</strong> children (irreversible); children still enrolled and tax documents remain. To be fulfilled <strong>within 30 days</strong> (GDPR).",
   "richiesteVuoto": "No pending deletion requests.",
@@ -62,7 +59,6 @@
   "richiesteFigliMantenuti": "Enrolled children kept: {n}",
   "richiesteFigliFuoriScope": "Children in another location, not affected here: {n}. The competent management must handle their part.",
   "richiesteConfermaDigita": "To confirm, type",
-
   "diaryEyebrow": "Learning",
   "diaryTitle": "0-6 Diary",
   "diarySubtitle": "View today’s attendance (roll call stays with the teachers) and fill in/update the class diary.",
@@ -82,7 +78,6 @@
   "diaryVuotoTutti": "No pupils in this section.",
   "diaryVuotoPresenti": "No attendance recorded today: roll call hasn’t been done yet (switch to \"All\" to see the section anyway).",
   "diaryCaricamentoAlunni": "Loading pupils…",
-
   "compitiEyebrow": "Communication",
   "compitiTitle": "Tasks",
   "compitiSubtitle": "Internal staff tasks · {nome}",
@@ -104,7 +99,6 @@
   "compitiEmptyDaControllare": "No tasks awaiting review.",
   "compitiEmptyTutti": "No active tasks in your locations.",
   "compitiEmptyArchivio": "There are no completed tasks in the archive.",
-
   "ricevutiIntro": "Enrollment requests received from the standard form. Review them and import them into the records.",
   "ricevutiSidi": "SIDI interoperability",
   "ricevutiStatTotale": "Total requests",
@@ -143,7 +137,6 @@
   "ricevutiMostrate": "{n, plural, one {Showing # request out of {totale}} other {Showing # requests out of {totale}}}",
   "ricevutiMostraAltre": "Show more requests",
   "ricevutiDettaglioNonAperto": "Request cannot be opened: reload the page or check the selected location.",
-
   "inviabiliIntro": "Customizable forms to send to parents via a link. Edit them in the builder and publish them to get the shareable link.",
   "inviabiliNuovoModulo": "New form",
   "inviabiliStandardTitolo": "Standard enrollment form",
@@ -162,7 +155,6 @@
   "inviabiliResetConferma": "Reset the standard enrollment form to its default values? Any changes made will be discarded.",
   "inviabiliResetSuccess": "Standard enrollment form restored to its default values.",
   "inviabiliStandardSediNota": "One link for all locations: the parent chooses the location in the first step of the form.",
-
   "protTitle": "Protocol register",
   "protSubtitle": "Incoming and outgoing correspondence and internal records — numbering compliant with Presidential Decree 445/2000",
   "protBtnExcel": "Excel",
@@ -335,7 +327,6 @@
   "protMezzoPostaOrdinaria": "Standard mail",
   "protMezzoPostaRaccomandata": "Registered mail",
   "protMezzoAltro": "Other",
-
   "modTitle": "Moderation",
   "modSubtitle": "Queue of reports received from parents and staff. Triage and handling reserved to the Management.",
   "modFiltroStato": "Status",
@@ -369,11 +360,10 @@
   "modCat_informazione_falsa": "False information",
   "modCat_spam": "Spam",
   "modCat_altro": "Other",
-
   "inviabiliCandidatureTitolo": "Teacher applications",
   "inviabiliCandidatureDesc": "Public «Work with us» form: applications arrive in the «Applications» tab. It does not go through the form builder and cannot be reset, because its fields end up in typed columns and in a closed list of age ranges in the database, not in free-form JSON.",
   "inviabiliCandidatureSediNota": "One link for all locations: applicants choose the location inside the form.",
-  "candIntro": "Applications received from the public «Work with us» form. Management approves or rejects them: approving one creates the teacher account and sends the credentials.",
+  "candIntro": "Applications received from the public «Work with us» form. Management approves or rejects them: approving a TEACHING one creates the teacher account and sends the credentials, the others are closed without creating any access.",
   "candVuoto": "No applications received.",
   "candListaHeader": "Applications received",
   "candSelezionaDettagli": "Select an application to see its details.",
@@ -418,6 +408,19 @@
   "candAnni": "Years of experience",
   "candDisponibilita": "Availability",
   "candFasce": "Age ranges",
+  "candPosizioni": "Positions",
+  "candPosizioneAltro": "Position given",
+  "candNessunaFascia": "None (this is not a teaching application)",
+  "candPosInsegnanteNido": "Teacher — Nursery (0-3)",
+  "candPosInsegnanteInfanzia": "Teacher — Preschool (3-6)",
+  "candPosInsegnantePrimaria": "Teacher — Primary (6-11)",
+  "candPosCollaboratrice": "Cleaning and support staff",
+  "candPosCuoca": "Cook / kitchen assistant",
+  "candPosSegreteria": "Office / administration",
+  "candPosAltro": "Other",
+  "candTitoloLicenzaMedia": "Lower secondary school certificate",
+  "candConfermaApprovaSenzaAccount": "This application includes no teaching position: NO account will be created and no credentials email will be sent. The application is closed as approved. If access is needed, create it from the Staff panel.",
+  "candEsitoApprovataSenzaAccount": "Application approved without creating any account: there is no password to hand over and no access to look for.",
   "candPresentazione": "Introduction",
   "candApriCv": "Open the CV",
   "candNessunCv": "No CV attached.",
@@ -428,7 +431,7 @@
   "candRifiuta": "Reject",
   "candConferma": "Confirm",
   "candAnnulla": "Cancel",
-  "candSoloDirezione": "Only Management can approve or reject: approving creates a teacher account, which can read the children’s records.",
+  "candSoloDirezione": "Only Management can approve or reject: approving a teaching application creates a teacher account, which can read the children’s records.",
   "candRuoloInCorso": "Checking your role: in a moment we will know whether this account can decide.",
   "candSospesaTitolo": "Approval left half-done",
   "candSospesaTesto": "The teacher account WAS CREATED and the credentials have already been generated, but the application is not marked as approved. Do not press “Approve” again and do not reject it: report it to support.",

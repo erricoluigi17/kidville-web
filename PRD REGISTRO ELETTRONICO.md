@@ -32,7 +32,7 @@
 > | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `segnalazioni` | Coda di triage UGC (C5, Google Play): segnalazione **contenuto** (chat/galleria/diario, discriminante `tipo_oggetto`+`oggetto_id` polimorfico) o **utente** (`segnalato_id`), categoria, motivo libero, stato/gestione. Nessuna FK utente: la riga sopravvive a un'eventuale anonimizzazione | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
-> | `candidature_insegnanti` | Candidature spontanee di personale docente dal modulo **pubblico** `/lavora-con-noi` (base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `candidature_insegnanti` | Candidature spontanee di personale dal modulo **pubblico** `/lavora-con-noi` — dal 15/08/2026 **non più solo docente**: `posizioni text[]` (sette valori, almeno uno, `CHECK cardinality(...) >= 1`) porta anche collaboratrice, cucina, segreteria e un «altro» scritto a mano in `posizione_altro`; `gradi` non si chiede più e si **deriva** dalle posizioni docenti (vuoto è legittimo). Base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo; `cv_path` **unico** (`candidature_insegnanti_cv_unico`). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
 > ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
@@ -75,7 +75,7 @@
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
-> | **«Lavora con noi» — candidature insegnanti** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione** (`candidature_insegnanti`: 0 righe all'11/08; la migrazione e il cron sono già là, la route no) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede e fasce d'età scelte da elenco), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione`), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi). **La candidatura non è un account**: l'utenza `educator` nasce solo all'approvazione |
+> | **«Lavora con noi» — candidature di personale** | ✅ In produzione · **aperto a tutte le posizioni dal 15/08/2026** (non più solo insegnanti) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede ed elenco unico delle **sette posizioni** — le tre docenti portano la fascia nel nome — più «Altro» con casella condizionale e **curriculum allegabile**), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `POST /api/iscrizione/insegnanti/upload` (anonima, 6/10 min per IP, bucket `form_attachments` sotto `candidature/`), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione` **solo per le candidature docenti**), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi + spazzata dei curriculum orfani a 24 h). ⚠️ **L'account nasce SOLO per le posizioni da insegnante**: un account `educator` legge l'anagrafica dei bambini, e cuoca/collaboratrice/segreteria si approvano senza crearne nessuno (`esitoAccount: nessuno`) |
 >
 > ### 🎓 Moduli Normativi Scuola Primaria (gap da colmare)
 > Requisiti derivati da L. 150/2024, O.M. 3 del 9/1/2025 (All. A), note MIM 5274/2024 e 2773/2025,
@@ -91,6 +91,246 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## ✉️ Changelog — Dodici email escono dal testo semplice, e due che non esistevano cominciano a partire 2026-08-15 (branch `feat/documenti-firmati`)
+
+Fino a oggi le email di Kidville erano **undici corpi in testo semplice scritti a mano in undici
+posti diversi**: registri incoerenti (`tu` alle famiglie, `lei` al personale, `voi` nei solleciti),
+tre firme, oggetti disallineati — «Le tue credenziali di accesso — Kidville» in tre punti e «Le tue
+credenziali Kidville» nel quarto — e nessun HTML, tranne il digest news. Che poi scriveva il nome
+della sede in giallo `#FDC400` sul verde `#006A5F`: **4,05:1**, sotto lo standard di contrasto, nel
+solo template che c'era.
+
+E due email **non esistevano affatto**. Una famiglia compilava il modulo pubblico, firmava con un
+codice e non riceveva niente: nessuna conferma, nessun riepilogo, nessuna idea di cosa sarebbe
+successo. Misurato il 2026-08-15: **387 domande d'iscrizione registrate, 381 con un indirizzo email
+valorizzato**. Trecentottantuno ricevute che si potevano mandare e non sono partite. Lo stesso per
+chi si candidava a lavorare.
+
+### Cosa c'è adesso
+
+Un modulo unico in `src/lib/email/` — token, componenti table-based con i ripieghi VML per Outlook,
+layout master, e **dodici generatori puri** che ritornano oggetto, HTML e gemello in testo semplice.
+Sedici punti d'invio hanno smesso di comporre testo a mano e chiedono l'email al modulo.
+
+| # | Email | Prima | Adesso |
+|---|---|---|---|
+| 01 | Credenziali di accesso | **due** corpi (genitore «tu», staff «lei»), **tre** oggetti | uno solo, **impersonale**, quattro occasioni |
+| 02 | Codice di verifica | sei oggetti, «valido per pochi minuti» | uno solo, i minuti dal TTL vero, codice nel preheader |
+| 03·04·05 | Promemoria e solleciti | testo della sede, nessun IBAN | impaginazione nuova **con le parole della sede**, riquadro bonifico |
+| 06·07 | Documento del personale | «Il **tuo** documento» col corpo al «lei» | registro allineato, quattro combinazioni |
+| 08 | Esito di una candidatura | testo semplice | la più sobria: niente tab, niente mascotte, niente bottone |
+| 09 | Cancellazione account | bilingue inline | bilingue in colonna singola, validità dal TTL |
+| 10 | Digest news | HTML con un contrasto 4,05:1 | layout comune, contrasto corretto |
+| 11 | **Ricevuta d'iscrizione** | **non esisteva** | parte a ogni domanda, con riferimento e linea del tempo |
+| 12 | **Conferma di candidatura** | **non esisteva** | parte a ogni candidatura, con i tempi di risposta |
+
+### Le cose che si sono scoperte guardando, non deducendo
+
+- **`schools.indirizzo` di Kidville Giugliano era «Via Roma 1»**, un segnaposto mai corretto. Il piè
+  di pagina lo avrebbe stampato in fondo a ogni email del plesso più grande. Migrazione
+  `20260815010000`: indirizzi veri e casella per plesso (`giugliano@`, `aversa@`, `cesa@kidville.it`),
+  **selezionando per nome e non per uuid**, come impone il lock `migrazioni-senza-sede-cablata`.
+- **Il telefono di sede non esiste** in nessuna tabella né in nessun documento dell'archivio. Non è
+  stato inventato: il piè di pagina omette la riga, e il campo è pronto in Impostazioni.
+- **Riscrivere i testi di fabbrica dei solleciti non avrebbe cambiato una parola.** Giugliano è
+  l'unica sede coi solleciti accesi e ha i tre livelli **salvati per intero** in tabella: il default
+  del codice non li tocca. Perciò il modulo dà la struttura e la configurazione dà la prosa — e
+  Giugliano ha ricevuto l'impaginazione nuova con le proprie parole.
+- **La mascotte pesava 715 KB per un francobollo di 86 px.** `scripts/mascotte-email.mjs` ne genera
+  una copia da **18,5 KB** (−97,4%), con un tetto dichiarato che ferma lo script se cresce.
+- **Il `<link>` a Google Fonts è stato tolto.** Un riferimento remoto dentro un'email lo carica il
+  client del destinatario: sarebbe l'IP di ogni famiglia che arriva a un terzo, all'apertura di un
+  messaggio che parla di un minore, senza comparire in nessuna informativa.
+- **Il link di disiscrizione del digest resta fuori**: punta a `/parent/news/preferenze`, che non
+  esiste — e non come file mancante, ma come funzione mai decisa. Il piè di pagina lo supporta già
+  come opzione: si accende il giorno che la pagina esiste.
+- **Otto file di test mockavano solo `sendEmail`.** Passando a `sendEmailDetailed` sono diventati
+  rossi insieme, con un messaggio che non nomina la causa — e nella cancellazione account il difetto
+  era invisibile da fuori, perché l'anti-enumerazione risponde 200 comunque.
+
+### Cosa il codice adesso impedisce
+
+- **`Html` è un tipo marchiato** e il tag template `h` accetta solo `Html | number`: interpolare una
+  stringa non scappata **non compila**. L'escaping smette di essere una cosa da ricordare.
+- Un test passa `<script>alert(1)</script>"><img src=x onerror=1>` in **ogni parametro di ogni
+  generatore**, con controllo positivo — senza, un campo semplicemente non stampato renderebbe il
+  test verde per il motivo sbagliato.
+- Il gemello testuale nasce dagli stessi dati dell'HTML: un test verifica che **ogni marcatore
+  presente nell'HTML sia presente anche nel testo**. Nell'unico posto dove i due corpi già
+  convivevano — il digest — avevano già divergiuto: l'HTML portava categoria, estratto e link, il
+  testo i soli titoli.
+- `iscrizione` entra in `EVENTI_PERSISTITI`: senza, «nessuna riga» significherebbe insieme «non si
+  iscrive nessuno» e «la ricevuta non parte più».
+- `credentialsEmailBody` è uscita da `src/lib/email/send.ts`, che torna a essere **solo trasporto**.
+
+### Da fare
+
+- Mettere l'**IBAN** in Impostazioni → Dati fiscali: finché è vuoto il riquadro bonifico mostra
+  importo, causale e intestatario, cioè quello che il sollecito manda oggi.
+- Il bottone **Google Play** punta all'indirizzo definitivo, che al 2026-08-15 risponde **404**
+  perché l'app è ancora nel canale di test chiuso. Scelta esplicita del titolare, che conosceva il
+  404 quando ha scelto.
+- Provare un invio reale per famiglia di email su una casella propria, con `OTP_FROM_EMAIL` su
+  `@mail.kidville.it`, e leggerle in Gmail e in Apple Mail.
+
+---
+
+## 🧑‍🍳 Changelog — «Lavora con noi» smette di essere un modulo per sole maestre, e il curriculum si può finalmente allegare 2026-08-15 (branch `feat/candidature-posizioni-cv`)
+
+Il modulo pubblico di candidatura faceva **una domanda sola** su che lavoro si venisse a fare — «per
+quali fasce ti proponi», tre caselle obbligatorie — e dava per scontato il resto: l'unica
+candidatura esprimibile era quella di un'insegnante. Da oggi si candidano anche **collaboratrici
+scolastiche, cucina, segreteria** e un «altro» scritto a mano. E il **curriculum**, che il template
+dichiarava dal 10/08 come campo facoltativo, si può davvero allegare.
+
+### Le fasce non sono state rese facoltative: sono diventate posizioni
+
+Il rimedio ovvio — `gradi` da obbligatorio a facoltativo — era quello sbagliato: sarebbe diventato
+la casella che le insegnanti dimenticano di spuntare, e la Segreteria l'avrebbe scoperto aprendo una
+candidatura senza fascia. Cioè lo stesso difetto, spostato dal modulo alla scrivania. Le due domande
+sono state **fuse**: un elenco solo, sette voci, e le tre docenti portano la fascia nel nome.
+
+| | prima | dopo |
+|---|---|---|
+| domande sul mestiere | 1 (le fasce) | 1 (le posizioni) |
+| voci selezionabili | 3 | **7** |
+| chi può candidarsi | insegnanti | insegnanti · collaboratrici · cucina · segreteria · altro |
+| `gradi` | campo del modulo, obbligatorio | **derivato dal server**, vuoto è legittimo |
+
+Le tre voci docenti **si costruiscono** da `GRADI_OPTIONS` col prefisso `insegnante_`, non si
+ribattono: una quarta fascia diventerebbe una quarta posizione da sola, con la sua etichetta già
+scritta, e `gradiDallePosizioni()` la conoscerebbe senza che nessuno tocchi una riga.
+
+**`gradi` non arriva più dal client affatto.** È l'effetto collaterale che vale più della
+funzionalità: quella colonna è `school_type_enum[]`, e un valore fuori enum non faceva un 400 —
+arrivava all'INSERT e prendeva `22P02`, cioè un 500 opaco davanti a chi non ha nessuno a cui
+chiedere. La route ora la **costruisce** da valori che uno `z.enum` ha già filtrato: il difetto
+diventa *inesprimibile* invece che difeso.
+
+### ⚠️ `cardinality()` e non `array_length()`
+
+Il `CHECK` di `gradi` è `array_length(gradi, 1) >= 1` e **non fa quello che dice**: su un array vuoto
+`array_length` vale `NULL`, e un CHECK che vale NULL **passa**. Misurato in produzione:
+
+```sql
+select (array_length('{}'::text[], 1) >= 1);   -- NULL, quindi passa
+select (cardinality('{}'::text[]) >= 1);       -- false, quindi blocca
+```
+
+Il vincolo di `gradi` **non è stato corretto**, e non è una dimenticanza: da oggi `gradi` vuoto è il
+valore legittimo di una cuoca, e stringerlo respingerebbe proprio le candidature che questo lavoro
+esiste per accogliere. Il presidio «almeno una» si è spostato su `posizioni`, dove è scritto con
+`cardinality` — cioè dove è vero.
+
+### 🔴 Il curriculum: un campo che esisteva e una porta che non c'era
+
+`cv_path` stava nel template dal 10/08 con il suo gate di forma, e il wizard **non lo rendeva**:
+`POST /api/iscrizione/insegnanti` accetta solo percorsi sotto `candidature/`, e nessuna rotta di
+caricamento produceva quel prefisso. Per cinque giorni il modulo ha avuto un curriculum facoltativo
+che non si poteva allegare — dichiarato, non taciuto, nel commento del wizard.
+
+Adesso la metà mancante c'è: **`POST /api/iscrizione/insegnanti/upload`**, copia strutturale della
+porta del personale. Misurato prima di scrivere: **0 candidature con curriculum, 0 oggetti sotto
+`candidature/`** — cioè la forma del percorso si poteva decidere senza migrare niente. È stata decisa
+così:
+
+```
+candidature/<uuid generato dal server>-cv.<estensione derivata dal TIPO>
+```
+
+**Il nome del file non sopravvive alla richiesta.** Su questa porta si chiama `cv-<cognome>.pdf`: è
+il cognome di chi si è candidato, e un percorso finisce in una colonna, dentro un URL firmato che lo
+porta in chiaro e — se qualcuno si distrae — dentro un log. Forma, prefisso, bucket e costruttore
+vivono in un posto solo (`src/lib/candidature/percorso-cv.ts`), perché quella regola vale per
+**quattro** strade: chi carica, chi accetta il percorso, chi lo firma e chi lo cancella. Fino a ieri
+le ultime due si ribattevano il nome del bucket a mano, con **due nomi diversi** (`BUCKET_CV` e
+`BUCKET_ALLEGATI`) per lo stesso archivio — in due file dove uno firma ciò che l'altro cancella.
+
+### 🔴 Un curriculum, una candidatura — e il gate che non falliva
+
+Il pannello di Segreteria firma il curriculum risolvendo `cv_path → riga`, fra le sole sedi di chi
+guarda. Con due righe che dichiarano lo stesso percorso **non falliva niente**: ne usciva una a caso.
+Misurato nel sorgente installato (`@supabase/postgrest-js/dist/index.cjs:471`), `maybeSingle()`
+sintetizza `PGRST116` solo quando `data.length > 1`, e quella query aveva `.limit(1)` **prima**:
+il ramo era irraggiungibile per costruzione.
+
+Il percorso d'attacco è corto: un URL firmato porta il percorso in chiaro, basta un link inoltrato.
+Si invia una candidatura anonima sulla **propria** sede dichiarando il `cv_path` di una candidatura
+di un'altra, e da quel momento la Segreteria della prima riceve un URL firmato per il curriculum di
+chi si era proposto alla seconda — con la riga di sorveglianza che attribuisce la lettura alla
+candidatura sbagliata. Chiuso da due parti: **indice unico** `candidature_insegnanti_cv_unico` (la
+riga non nasce), e `.limit(1)` **tolto** dal gate (una collisione arrivata per altra via — una
+`INSERT` scritta a mano, che su questo database non chiede conferma — diventa un `PGRST116` che il
+gate tratta come diniego e **logga**, invece di una firma silenziosa).
+
+La rotta pubblica distingue i due `23505` dal **nome del vincolo**: quello dell'email risponde `201`
+come al primo invio (un 409 su un modulo anonimo direbbe a chiunque digiti l'indirizzo di una maestra
+se quella persona si è candidata), quello del curriculum risponde `400` sul campo. Confonderli
+avrebbe significato rispondere «ricevuta» a una candidatura che non è stata scritta.
+
+### 🔴 L'orfano: il file caricato e mai inviato
+
+Il curriculum si carica **prima** che la candidatura esista, e fra i due gesti c'è una persona che
+può chiudere la pagina. Il cron di conservazione parte dalle **righe**: un file che nessuna riga
+nomina non lo vedrebbe mai — invisibile, non cancellato, e nemmeno identificabile per cancellarlo su
+richiesta. È lo stato che il modulo del personale ha pagato l'11/08 e ha chiuso con una tabella
+registro.
+
+Qui è bastato meno, e per una ragione misurabile: sotto `candidature/` scrive **una rotta sola**,
+quindi «elencato sotto il prefisso e non nominato da nessuna riga» è già la definizione esatta di
+orfano. `spazzaCurriculumOrfani()` gira dentro lo stesso job notturno, tocca solo ciò che è più
+vecchio di **24 ore**, chiede al database quali percorsi siano reclamati (a lotti di 100) e rimuove
+il resto. Fail-closed su ogni errore: se non si sa che cosa sia reclamato, non si cancella niente.
+
+⚠️ **L'informativa lo dichiara** (`VERSIONE_PRIVACY` alzata a `2026-08-15`): quel file è un dato
+personale trattato e l'art. 13 §2 lett. a pretende il suo termine. I dodici mesi della candidatura
+non lo coprivano — quel file una valutazione non ce l'ha.
+
+### ⚠️ Approvare una cuoca non crea più un account docente
+
+È la conseguenza che la funzionalità si portava dietro, ed è la parte che tocca i **dati dei
+minori**: l'unico account che il cockpit sapeva creare è `ruolo: 'educator'`, e un account educator
+**legge l'anagrafica dei bambini**. Approvare una cuoca creandole un profilo docente le avrebbe dato
+nomi, allergie e note mediche, per un lavoro che in quell'anagrafica non entra mai.
+
+Decisione del titolare del 15/08: **l'account nasce solo per le posizioni da insegnante**. Le altre
+si chiudono come `approvata` senza account, senza credenziali e senza email; se un accesso serve, lo
+crea la Direzione dal pannello Personale, guardando la persona.
+
+Il ramo senza account **non passa dal claim in due tempi**, e non è un'ottimizzazione:
+`in_approvazione` esiste per chiudere la corsa fra due clic *mentre si crea un account e si spedisce
+una password*. Qui non si crea e non si spedisce niente, e un guasto a metà lascerebbe la candidatura
+in uno stato che l'interfaccia racconta testualmente come «l'account docente È STATO CREATO», con
+entrambi i pulsanti spenti per sempre. Un `cambiaStato` unico `da: ['pending'] → 'approvata'` è già
+atomico e chiude la stessa corsa.
+
+Il cockpit ora racconta **tre storie** invece di due, e le legge da un campo (`esitoAccount`) invece
+di dedurle: `creato` · `riusato` · `nessuno`. Prima si distingueva da `credentials === null`, che con
+la terza storia avrebbe scritto «esisteva già un accesso con questa email» a chi non ne ha nessuno —
+mandando la Segreteria a cercare per sempre un account che non è mai stato creato.
+
+### Il resto, in breve
+
+- **`posizione_altro`** è la prima logica condizionale di questo modulo: `required`, ma solo quando
+  «Altro» è spuntato. Il motore (`campiVisibili`) è lo **stesso** sul client e sul server — e la
+  riga di `validatePage` che diceva «sul server si passa il template completo» smette di valere:
+  con quel filtro mancante, la route avrebbe rifiutato con «Campo obbligatorio» ogni candidatura che
+  non ha spuntato «Altro», cioè quasi tutte.
+- Un `CHECK` di **coerenza nei due versi** (`('altro' = any(posizioni)) = (posizione_altro is not
+  null)`) e la pulizia dei campi nascosti prima dell'INSERT: chi spunta «Altro», scrive, e poi toglie
+  la spunta non lascia in tabella un mestiere che non ha dichiarato.
+- **«Licenza media»** entra fra i titoli di studio: l'elenco cominciava dal diploma perché l'unica
+  candidatura possibile era quella di un'insegnante. Per una collaboratrice scolastica l'unica
+  risposta vera sarebbe stata «Altro titolo».
+- Il tetto della porta di caricamento è **6 ogni 10 minuti** e non 20: gli invii sono già limitati a
+  3 l'ora, quindi oltre il sesto caricamento non c'è nessuna candidatura in più da raccogliere —
+  solo oggetti in più dentro il bucket che custodisce i documenti dei minori.
+- Il riepilogo del wizard **non stampa il percorso** del curriculum: dice «Allegato» oppure «Non
+  indicato». Un percorso è la chiave con cui si firma un oggetto di un bucket privato, e una
+  schermata si fotografa e si legge ad alta voce.
 
 ---
 

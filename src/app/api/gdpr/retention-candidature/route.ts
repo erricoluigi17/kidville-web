@@ -6,6 +6,7 @@ import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { CANDIDATURA_LIMITI } from '@/lib/forms/insegnanti-template'
+import { BUCKET_CURRICULUM, CV_PREFISSO } from '@/lib/candidature/percorso-cv'
 
 /**
  * LA CONSERVAZIONE DELLE CANDIDATURE SPONTANEE — curriculum compreso.
@@ -126,11 +127,47 @@ const MESI_CON_CONSENSO = CANDIDATURA_LIMITI.mesiConservazione
 const ID_CONSENSO_CONSERVAZIONE = 'consenso_conservazione_candidatura'
 
 /**
- * Il bucket dei curriculum. È `form_attachments` e non un bucket nuovo: è l'unica
- * strada pubblica di caricamento del repo, ed è quella che il campo `cv_path` del
- * modulo dichiara (vedi la prescrizione in testa a `insegnanti-template.ts`).
+ * Il bucket dei curriculum, e il prefisso sotto cui vivono.
+ *
+ * ⚠️ SI IMPORTANO, non si ribattono. Fino al 2026-08-15 qui c'era
+ * `const BUCKET_ALLEGATI = 'form_attachments'` e nel pannello di Segreteria
+ * `const BUCKET_CV = 'form_attachments'`: due nomi diversi per lo stesso
+ * archivio, in due file che DEVONO puntare allo stesso posto — uno firma ciò
+ * che l'altro cancella. Adesso li dichiara `@/lib/candidature/percorso-cv`, che
+ * è anche il file dove vive la forma del percorso.
  */
-const BUCKET_ALLEGATI = 'form_attachments'
+const BUCKET_ALLEGATI = BUCKET_CURRICULUM
+
+/**
+ * Da quante ore un curriculum che nessuna candidatura nomina è un ORFANO.
+ *
+ * Ventiquattro, come `ORE_CARICAMENTO_IN_SOSPESO` del modulo del personale, e per
+ * la stessa ragione: il margine deve coprire abbondantemente una compilazione
+ * interrotta e ripresa. Chi carica il curriculum e poi finisce di compilare il
+ * modulo mezz'ora dopo non deve trovarsi il file portato via da sotto le mani.
+ */
+const ORE_CURRICULUM_ORFANO = 24
+
+/**
+ * Quanti oggetti si guardano per giro.
+ *
+ * Mille è il numero del precedente (`obliaPdfCredenziali`), ed è il massimo che
+ * la Storage API serve in una pagina. Con ~3 candidature l'ora possibili per IP
+ * questo prefisso non ci arriva vicino; il tetto c'è perché una pagina piena è
+ * un elenco TRONCATO, cioè oggetti che nessuno ha nemmeno guardato, e un
+ * troncamento silenzioso qui varrebbe una pulizia dichiarata e non fatta.
+ */
+const TETTO_ELENCO_ORFANI = 1000
+
+/**
+ * A quanti percorsi per volta si chiede al database «questo lo nomina qualcuno?».
+ *
+ * `.in()` finisce nella query string di PostgREST, e una `IN` con mille valori
+ * produce un URL che nessuno garantisce venga accettato per intero. Cento è la
+ * misura prudente: dieci andate e ritorni nel caso peggiore, su un lavoro che
+ * gira una volta a notte.
+ */
+const LOTTO_VERIFICA_ORFANI = 100
 
 /**
  * Gli stati in cui la candidatura NON è stata accolta: **lì, e solo lì**, il
@@ -287,6 +324,238 @@ function termine(
     return { riferimento: Number.isNaN(t) ? null : new Date(t), mesi }
 }
 
+/** Quello che la spazzata degli orfani ha fatto, per il battito e per la risposta. */
+interface EsitoSpazzata {
+    /** Oggetti sotto il prefisso, più vecchi della soglia, effettivamente guardati. */
+    esaminati: number
+    /** …di cui nessuna candidatura nomina. */
+    orfani: number
+    /** …e che sono davvero usciti dall'archivio. */
+    rimossi: number
+    /** La pagina era piena: là sotto c'è dell'altro che nessuno ha guardato. */
+    troncato: boolean
+    /**
+     * ⚠️ `non-eseguita` NON è `ok`, ed è la correzione di un difetto che questo
+     * file predicava di evitare due schermate più su.
+     *
+     * La spazzata gira in coda al PERCORSO FELICE: se il lotto principale
+     * trattiene delle candidature la route esce prima, e la spazzata non parte
+     * affatto. Con un valore iniziale `'ok'` il battito nel `finally` avrebbe
+     * scritto `orfani_esito: 'ok'` e `n_orfani_esaminati: 0` — cioè «guardato,
+     * niente da fare» — su un giro in cui nessuno ha guardato niente. È
+     * esattamente l'ambiguità che l'intero file esiste per togliere: «tutto a
+     * posto» e «non è mai partito niente» devono restare due fatti diversi.
+     */
+    esito:
+        | 'ok'
+        | 'non-eseguita'
+        | 'elenco-non-letto'
+        | 'verifica-non-riuscita'
+        | 'rimozione-non-riuscita'
+}
+
+/** Il valore prima che la spazzata parta: dice che NON è partita. */
+const SPAZZATA_NON_ESEGUITA: EsitoSpazzata = {
+    esaminati: 0,
+    orfani: 0,
+    rimossi: 0,
+    troncato: false,
+    esito: 'non-eseguita',
+}
+
+/** …e questo è «è partita e non c'era niente da togliere», che è un altro fatto. */
+const SPAZZATA_SENZA_ORFANI: EsitoSpazzata = { ...SPAZZATA_NON_ESEGUITA, esito: 'ok' }
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  GLI ORFANI DEL PREFISSO `candidature/`                                  ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * ── IL DIFETTO, che non è il caso dell'abuso ma quello normale ─────────────
+ *
+ * Il curriculum si carica PRIMA che la candidatura esista: la rotta di
+ * caricamento scrive subito nel bucket e restituisce il percorso, e l'invio del
+ * modulo viene dopo. Fra i due gesti c'è una persona che può chiudere la pagina.
+ * Chi lo fa lascia il proprio curriculum nell'archivio a tempo indeterminato,
+ * senza nessuna riga che lo nomini — e tutto ciò che sta sopra in questo file
+ * NON può vederlo: la conservazione parte dalle RIGHE, quindi guarda solo i
+ * curriculum già reclamati.
+ *
+ * È esattamente lo stato che questo file chiama, con parole sue, «il modo
+ * peggiore di conservare un dato personale»: invisibile, non cancellato, e
+ * nemmeno identificabile per cancellarlo se quella persona lo chiedesse. Il
+ * modulo del personale l'ha pagato l'11/08/2026 e l'ha chiuso con un registro
+ * (`caricamenti_personale`): una tabella, una migrazione, un secondo
+ * proprietario.
+ *
+ * ── PERCHÉ QUI BASTA UNA SPAZZATA PER PREFISSO ─────────────────────────────
+ *
+ * Perché sotto `candidature/` scrive UNA rotta sola e non ci scrive nient'altro
+ * (`iscrizione/insegnanti/upload:POST` — l'altra porta pubblica sullo stesso
+ * bucket usa `iscrizioni/…`). Quindi «elencato sotto il prefisso e non nominato
+ * da nessuna riga» È già la definizione esatta di orfano: non serve una tabella
+ * per ricostruirla, serve una lettura. Il registro del personale doveva fare
+ * anche un'altra cosa che qui è già fatta altrove — dimostrare che l'oggetto
+ * ESISTE, e imporre «un oggetto, un proprietario» — e quella metà, dal
+ * 2026-08-15, la impone l'indice unico su `cv_path`.
+ *
+ * ── LE QUATTRO PRUDENZE ────────────────────────────────────────────────────
+ *
+ *  1. **Solo ciò che è vecchio.** Un curriculum caricato dieci minuti fa è di
+ *     qualcuno che sta ancora compilando: la soglia è di 24 ore.
+ *  2. **Prima si chiede al database, poi si cancella.** Se la lettura di
+ *     `cv_path` fallisce non si tocca NIENTE: «non so quali file siano reclamati»
+ *     vale «sono tutti reclamati». È lo stesso verso di `rimuoviEVerifica`, dove
+ *     «non so se il file c'è ancora» vale «c'è».
+ *  3. **Il troncamento si dichiara.** Una pagina piena significa oggetti mai
+ *     guardati, e un elenco tagliato in silenzio racconta una pulizia completa.
+ *  4. **Non lancia mai.** Un guasto della spazzata non può diventare un giro di
+ *     conservazione fallito: le due cose sono indipendenti, e la seconda è quella
+ *     che risponde a una promessa scritta nel consenso.
+ *
+ * ⚠️ NEI LOG NON VA NESSUN PERCORSO, come in tutto il resto di questo file:
+ * conteggi ed esiti. Il nome del file non c'è più per costruzione (la rotta di
+ * caricamento lo butta via), ma il percorso resta la chiave con cui si firma il
+ * curriculum di una persona.
+ */
+async function spazzaCurriculumOrfani(
+    supabase: Awaited<ReturnType<typeof createAdminClient>>,
+    adesso: Date,
+): Promise<EsitoSpazzata> {
+    // `list()` vuole il prefisso SENZA la barra finale, e restituisce nomi
+    // RELATIVI a quel prefisso: il percorso pieno si ricompone qui.
+    const cartella = CV_PREFISSO.replace(/\/+$/, '')
+    const soglia = new Date(adesso.getTime() - ORE_CURRICULUM_ORFANO * 60 * 60 * 1000)
+
+    let elenco: { name?: string | null; id?: string | null; created_at?: string | null }[]
+    try {
+        const { data, error } = await supabase.storage.from(BUCKET_ALLEGATI).list(cartella, {
+            limit: TETTO_ELENCO_ORFANI,
+            // I più vecchi per primi: se la pagina taglia, taglia i meno in ritardo.
+            sortBy: { column: 'created_at', order: 'asc' },
+        })
+        if (error) {
+            logEvento('cron', 'error', {
+                operazione: JOB,
+                esito: 'orfani-elenco-non-letto',
+                bucket: BUCKET_ALLEGATI,
+                msg: `${JOB}: elenco degli oggetti sotto il prefisso dei curriculum non letto: nessun orfano rimosso`,
+            }, error)
+            return { ...SPAZZATA_NON_ESEGUITA, esito: 'elenco-non-letto' }
+        }
+        elenco = (data ?? []) as typeof elenco
+    } catch (e) {
+        // La Storage API può lanciare (rete, JSON malformato): qui si assorbe, e
+        // si dice che si è assorbito. Un `catch` muto è un bug.
+        logEvento('cron', 'error', {
+            operazione: JOB,
+            esito: 'orfani-elenco-non-letto',
+            bucket: BUCKET_ALLEGATI,
+            msg: `${JOB}: eccezione elencando gli oggetti sotto il prefisso dei curriculum`,
+        }, e)
+        return { ...SPAZZATA_NON_ESEGUITA, esito: 'elenco-non-letto' }
+    }
+
+    const troncato = elenco.length >= TETTO_ELENCO_ORFANI
+    if (troncato) {
+        logEvento('cron', 'warn', {
+            operazione: JOB,
+            esito: 'orfani-elenco-troncato',
+            bucket: BUCKET_ALLEGATI,
+            n_file: elenco.length,
+            msg: `${JOB}: pagina piena a ${TETTO_ELENCO_ORFANI} oggetti, sotto il prefisso ce n'è dell'altro che questo giro non ha guardato`,
+        })
+    }
+
+    // ⚠️ Le VOCI-CARTELLA hanno `id === null` e non sono oggetti: cancellarle non
+    // si può, e trattarle come percorsi farebbe cercare al database righe che non
+    // esistono. `.emptyFolderPlaceholder` è il segnaposto che lo Storage crea da
+    // sé quando una cartella resta vuota: toglierlo farebbe sparire la cartella.
+    const candidati = elenco
+        .filter((o) => typeof o?.id === 'string' && o.id !== '')
+        .filter((o) => (o.name ?? '') !== '' && o.name !== '.emptyFolderPlaceholder')
+        .filter((o) => {
+            const nato = Date.parse(o.created_at ?? '')
+            // Data illeggibile ⇒ non si tocca: su un'operazione irreversibile «non
+            // verificabile» vale «non toccare».
+            return !Number.isNaN(nato) && nato <= soglia.getTime()
+        })
+        .map((o) => `${cartella}/${o.name}`)
+
+    if (candidati.length === 0) return { ...SPAZZATA_SENZA_ORFANI, troncato }
+
+    // ── CHI È RECLAMATO DA UNA RIGA? ────────────────────────────────────────
+    const reclamati = new Set<string>()
+    for (let i = 0; i < candidati.length; i += LOTTO_VERIFICA_ORFANI) {
+        const lotto = candidati.slice(i, i + LOTTO_VERIFICA_ORFANI)
+        const { data, error } = await supabase
+            .from('candidature_insegnanti')
+            .select('cv_path')
+            .in('cv_path', lotto)
+        if (error) {
+            // FAIL-CLOSED, e vale per l'INTERA spazzata e non per il solo lotto: con
+            // una parte dei reclami sconosciuta, gli orfani calcolati sui lotti
+            // riusciti comprenderebbero file che una riga nomina davvero.
+            logEvento('cron', 'error', {
+                operazione: JOB,
+                esito: 'orfani-verifica-non-riuscita',
+                bucket: BUCKET_ALLEGATI,
+                error_code: codiceDi(error),
+                n_file: candidati.length,
+                msg: `${JOB}: non si è potuto sapere quali curriculum siano reclamati da una riga: NESSUN orfano rimosso`,
+            }, error)
+            return { esaminati: candidati.length, orfani: 0, rimossi: 0, troncato, esito: 'verifica-non-riuscita' }
+        }
+        for (const r of (data ?? []) as { cv_path?: unknown }[]) {
+            if (typeof r.cv_path === 'string' && r.cv_path !== '') reclamati.add(r.cv_path)
+        }
+    }
+
+    const orfani = candidati.filter((p) => !reclamati.has(p))
+    if (orfani.length === 0) {
+        return { esaminati: candidati.length, orfani: 0, rimossi: 0, troncato, esito: 'ok' }
+    }
+
+    const rimozione = await rimuoviEVerifica(supabase, BUCKET_ALLEGATI, orfani, JOB)
+    const bloccati = bloccanti(rimozione)
+    if (rimozione.erroreRimozione || bloccati.length > 0) {
+        logEvento('cron', 'error', {
+            operazione: JOB,
+            esito: 'orfani-non-rimossi',
+            bucket: BUCKET_ALLEGATI,
+            n_file: orfani.length,
+            n_file_bloccanti: bloccati.length,
+            msg: `${JOB}: curriculum orfani non rimossi (o non verificabili): restano nell'archivio senza nessuna riga che li nomini`,
+        })
+        return {
+            esaminati: candidati.length,
+            orfani: orfani.length,
+            rimossi: rimozione.rimossi.length,
+            troncato,
+            esito: 'rimozione-non-riuscita',
+        }
+    }
+
+    // Il SUCCESSO si logga, e qui più che altrove: questa pulizia non ha nessuna
+    // schermata che si riempie a vista e nessuno che telefoni se smette di girare.
+    logEvento('cron', 'info', {
+        operazione: JOB,
+        esito: 'orfani-rimossi',
+        bucket: BUCKET_ALLEGATI,
+        n_file: rimozione.rimossi.length,
+        n_file_gia_assenti: rimozione.giaAssenti.length,
+        ore: ORE_CURRICULUM_ORFANO,
+        msg: `${JOB}: ${rimozione.rimossi.length} curriculum caricati e mai inviati, più vecchi di ${ORE_CURRICULUM_ORFANO} ore, tolti dall'archivio`,
+    })
+    return {
+        esaminati: candidati.length,
+        orfani: orfani.length,
+        rimossi: rimozione.rimossi.length,
+        troncato,
+        esito: 'ok',
+    }
+}
+
 // POST /api/gdpr/retention-candidature
 // Auth: header `x-cron-secret` (cron) OPPURE staff (lancio manuale).
 export const POST = withRoute('gdpr/retention-candidature:POST', async (request: NextRequest) => {
@@ -307,6 +576,14 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
     let cvIgnoto = false
     let lottoPieno = false
     let conteggioVerificato = false
+    /**
+     * La spazzata degli orfani vive nei contatori del battito come tutto il
+     * resto: se non lasciasse una riga anche quando non trova niente, «nessun
+     * log» non distinguerebbe «non ci sono curriculum abbandonati» da «la
+     * pulizia non parte più» — che è l'ambiguità contro cui è scritto l'intero
+     * file.
+     */
+    let spazzata: EsitoSpazzata = SPAZZATA_NON_ESEGUITA
 
     try {
         const secret = request.headers.get('x-cron-secret')
@@ -613,6 +890,19 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
             )
         }
 
+        // ── GLI ORFANI, dopo il lavoro sulle righe ──────────────────────────
+        //
+        // Sta QUI, in coda al percorso felice, e non prima: la conservazione
+        // delle candidature scadute è una promessa scritta nel consenso, la
+        // spazzata è manutenzione. Se il lotto principale ha trattenuto qualcosa
+        // si esce prima e la spazzata salta un giro — che va benissimo: gira ogni
+        // notte, e ciò che oggi è orfano lo sarà anche domani.
+        //
+        // Non lancia mai (ogni suo ramo cattura e riferisce), quindi non serve un
+        // `try` attorno: un guasto della pulizia non può diventare un giro di
+        // conservazione fallito.
+        spazzata = await spazzaCurriculumOrfani(supabase, adesso)
+
         return NextResponse.json({
             ok: true,
             candidature: nCancellate,
@@ -623,6 +913,15 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
             lotto_pieno: lottoPieno,
             mesi_senza_consenso: MESI_SENZA_CONSENSO,
             mesi_con_consenso: MESI_CON_CONSENSO,
+            // Chi lancia il giro a mano deve poter vedere che cosa ha fatto la
+            // pulizia, senza andarla a cercare nei log.
+            orfani_esaminati: spazzata.esaminati,
+            orfani_rimossi: spazzata.rimossi,
+            orfani_esito: spazzata.esito,
+            // Il troncamento si dichiara anche QUI, come `lotto_pieno` per le
+            // righe: chi lancia il giro a mano deve sapere se richiamarlo, e non
+            // deve dedurlo da un conteggio.
+            orfani_elenco_troncato: spazzata.troncato,
         })
     } catch (error) {
         esitoBattito = 'eccezione'
@@ -659,6 +958,14 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
             consenso_ignoto: consensoIgnoto,
             cv_path_ignoto: cvIgnoto,
             lotto_pieno: lottoPieno,
+            // La spazzata degli orfani, nello stesso battito: `orfani_esito` è
+            // l'unico modo di sapere in SQL se quella pulizia è arrivata in fondo
+            // o si è fermata su una lettura che non ha potuto fare.
+            n_orfani_esaminati: spazzata.esaminati,
+            n_orfani: spazzata.orfani,
+            n_orfani_rimossi: spazzata.rimossi,
+            orfani_esito: spazzata.esito,
+            orfani_elenco_troncato: spazzata.troncato,
             // `false` non vuol dire «il conteggio è sbagliato»: vuol dire che
             // PostgREST non l'ha restituito e il numero qui accanto è l'intenzione,
             // non la misura. Distinguere le due cose è tutto il punto di questo file.

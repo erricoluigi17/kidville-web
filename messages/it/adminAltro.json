@@ -6,10 +6,8 @@
   "chiudi": "Chiudi",
   "errore": "Errore",
   "eyebrowAmministrazione": "Amministrazione",
-
   "gdprTitle": "Privacy & Diritto all’Oblio",
   "gdprSubtitle": "Cancellazione (anonimizzazione) dei dati personali degli alunni non iscritti. Azione riservata alla Direzione.",
-
   "oblioBanner": "Solo alunni <strong>non iscritti</strong> e relativi genitori. La cancellazione definitiva <strong>anonimizza</strong> i dati personali (irreversibile): i registri di audit e i documenti fiscali (fatture) restano conservati per obbligo di legge.",
   "oblioVuoto": "Nessun alunno non iscritto da anonimizzare.",
   "oblioStatoNonIscritto": "non iscritto",
@@ -48,7 +46,6 @@
   "oblioPlaceholderNome": "Cognome Nome",
   "oblioBtnAnonimizza": "Anonimizza definitivamente",
   "oblioBtnAnonimizzando": "Anonimizzazione…",
-
   "richiesteLoading": "Caricamento richieste…",
   "richiesteBanner": "Richieste avviate dai <strong>genitori</strong> dall’app (Profilo e deleghe). Evaderle <strong>anonimizza</strong> il genitore e i figli <strong>non iscritti</strong> (irreversibile); i figli ancora iscritti e i documenti fiscali restano. Da evadere <strong>entro 30 giorni</strong> (GDPR).",
   "richiesteVuoto": "Nessuna richiesta di cancellazione in attesa.",
@@ -62,7 +59,6 @@
   "richiesteFigliMantenuti": "Figli iscritti mantenuti: {n}",
   "richiesteFigliFuoriScope": "Figli in un altro plesso, non toccati da qui: {n}. La Direzione competente deve evadere la sua parte.",
   "richiesteConfermaDigita": "Per confermare, digita",
-
   "diaryEyebrow": "Didattica",
   "diaryTitle": "Diario 0-6",
   "diarySubtitle": "Presenze del giorno in consultazione (l’appello resta alle maestre) e compilazione/aggiornamento del diario di sezione.",
@@ -82,7 +78,6 @@
   "diaryVuotoTutti": "Nessun alunno in questa sezione.",
   "diaryVuotoPresenti": "Nessuna presenza registrata oggi: l’appello non è ancora stato fatto (passa a \"Tutti\" per vedere comunque la sezione).",
   "diaryCaricamentoAlunni": "Caricamento alunni…",
-
   "compitiEyebrow": "Comunicazione",
   "compitiTitle": "Attività",
   "compitiSubtitle": "Task interni dello staff · {nome}",
@@ -104,7 +99,6 @@
   "compitiEmptyDaControllare": "Nessun task in attesa di controllo.",
   "compitiEmptyTutti": "Nessun task attivo nei tuoi plessi.",
   "compitiEmptyArchivio": "Non ci sono task completati in archivio.",
-
   "ricevutiIntro": "Richieste d’iscrizione ricevute dal modulo standard. Verificale e importale nelle anagrafiche.",
   "ricevutiSidi": "Interoperabilità SIDI",
   "ricevutiStatTotale": "Totale richieste",
@@ -143,7 +137,6 @@
   "ricevutiMostrate": "{n, plural, one {Mostrata # domanda su {totale}} other {Mostrate # domande su {totale}}}",
   "ricevutiMostraAltre": "Mostra altre domande",
   "ricevutiDettaglioNonAperto": "Domanda non apribile: ricarica la pagina o controlla la sede selezionata.",
-
   "inviabiliIntro": "Moduli personalizzabili da inviare ai genitori tramite link. Modificali nel builder e pubblicali per ottenere il link condivisibile.",
   "inviabiliNuovoModulo": "Nuovo modulo",
   "inviabiliStandardTitolo": "Modulo d’iscrizione standard",
@@ -162,7 +155,6 @@
   "inviabiliResetConferma": "Reimpostare il Modulo d’iscrizione standard ai valori di base? Le modifiche fatte verranno annullate.",
   "inviabiliResetSuccess": "Modulo d’iscrizione standard ripristinato ai valori di base.",
   "inviabiliStandardSediNota": "Link unico per tutte le sedi: è il genitore a scegliere il plesso nel primo passo del modulo.",
-
   "protTitle": "Registro protocolli",
   "protSubtitle": "Corrispondenza in arrivo, in partenza e atti interni — numerazione a norma DPR 445/2000",
   "protBtnExcel": "Excel",
@@ -335,7 +327,6 @@
   "protMezzoPostaOrdinaria": "Posta ordinaria",
   "protMezzoPostaRaccomandata": "Posta raccomandata",
   "protMezzoAltro": "Altro",
-
   "modTitle": "Moderazione",
   "modSubtitle": "Coda delle segnalazioni ricevute da genitori e staff. Triage e gestione riservati alla Direzione.",
   "modFiltroStato": "Stato",
@@ -369,11 +360,10 @@
   "modCat_informazione_falsa": "Informazione falsa",
   "modCat_spam": "Spam",
   "modCat_altro": "Altro",
-
   "inviabiliCandidatureTitolo": "Candidature insegnanti",
   "inviabiliCandidatureDesc": "Modulo pubblico «Lavora con noi»: le candidature arrivano nella linguetta «Candidature». Non passa dal costruttore di moduli e non si reimposta, perché i suoi campi finiscono in colonne tipizzate e in un elenco chiuso di fasce del database, non in un JSON libero.",
   "inviabiliCandidatureSediNota": "Link unico per tutte le sedi: è chi si candida a scegliere il plesso dentro il modulo.",
-  "candIntro": "Candidature ricevute dal modulo pubblico «Lavora con noi». La Direzione le approva o le rifiuta: approvarne una crea l’account docente e manda le credenziali.",
+  "candIntro": "Candidature ricevute dal modulo pubblico «Lavora con noi». La Direzione le approva o le rifiuta: approvarne una da INSEGNANTE crea l’account docente e manda le credenziali, le altre si chiudono senza creare nessun accesso.",
   "candVuoto": "Nessuna candidatura ricevuta.",
   "candListaHeader": "Candidature ricevute",
   "candSelezionaDettagli": "Seleziona una candidatura per vederne i dettagli.",
@@ -418,6 +408,19 @@
   "candAnni": "Anni di esperienza",
   "candDisponibilita": "Disponibilità",
   "candFasce": "Fasce d’età",
+  "candPosizioni": "Posizioni",
+  "candPosizioneAltro": "Posizione indicata",
+  "candNessunaFascia": "Nessuna (non è una candidatura da insegnante)",
+  "candPosInsegnanteNido": "Insegnante — Nido (0-3)",
+  "candPosInsegnanteInfanzia": "Insegnante — Infanzia (3-6)",
+  "candPosInsegnantePrimaria": "Insegnante — Primaria (6-11)",
+  "candPosCollaboratrice": "Collaboratrice scolastica",
+  "candPosCuoca": "Cuoca / aiuto cucina",
+  "candPosSegreteria": "Segreteria / amministrazione",
+  "candPosAltro": "Altro",
+  "candTitoloLicenzaMedia": "Licenza media",
+  "candConfermaApprovaSenzaAccount": "Questa candidatura non comprende posizioni da insegnante: NON verrà creato nessun account e non partirà nessuna email di credenziali. La candidatura si chiude come approvata. Se serve un accesso, va creato dal pannello Personale.",
+  "candEsitoApprovataSenzaAccount": "Candidatura approvata senza creare nessun account: non c’è nessuna password da consegnare e non c’è nessun accesso da cercare.",
   "candPresentazione": "Presentazione",
   "candApriCv": "Apri il curriculum",
   "candNessunCv": "Nessun curriculum allegato.",
@@ -428,7 +431,7 @@
   "candRifiuta": "Rifiuta",
   "candConferma": "Confermo",
   "candAnnulla": "Annulla",
-  "candSoloDirezione": "Solo la Direzione può approvare o rifiutare: approvare crea un account docente, che legge l’anagrafica dei bambini.",
+  "candSoloDirezione": "Solo la Direzione può approvare o rifiutare: approvare una candidatura da insegnante crea un account docente, che legge l’anagrafica dei bambini.",
   "candRuoloInCorso": "Verifica del ruolo in corso: fra un istante si saprà se questa postazione può decidere.",
   "candSospesaTitolo": "Approvazione rimasta a metà",
   "candSospesaTesto": "L’account docente È STATO CREATO e le credenziali sono già state generate, ma la candidatura non risulta marcata come approvata. Non ripremere «Approva» e non rifiutarla: segnalalo all’assistenza.",

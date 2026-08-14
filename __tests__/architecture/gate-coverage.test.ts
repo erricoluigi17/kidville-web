@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { mascheraSorgente, fineParentesi, fileSorgente, riga } from '../fixtures/sorgente'
+// Il tetto della porta dei curriculum, letto dalla costante e non ribattuto: serve
+// all'ultimo test di questo file, che confronta il numero DICHIARATO nella motivazione
+// di `PUBBLICHE` con quello che la rotta applica davvero.
+import { TETTO_UPLOAD_CANDIDATURE } from '@/lib/upload/allegati-pubblici'
 
 /**
  * COVERAGE-LOCK dei GATE DI AUTENTICAZIONE — per HANDLER e per RAMO.
@@ -373,6 +377,50 @@ const PUBBLICHE: Record<string, string> = {
     'iscrizione/insegnanti:POST':
         "modulo pubblico «Lavora con noi»: chi si candida non ha un account, e non può averlo — l'account nasce solo se la Direzione approva, e `utenti.attivo` non è letto da nessun gate (vedi la migrazione della tabella). L'anonimo che passa può solo SCRIVERE una candidatura: non legge nulla, la risposta è un id. Perimetro: tetto 3 invii/ora per IP + honeypot + ri-validazione server-side dei campi + consensi obbligatori verificati qui + `scuola_id` valido solo se è una sede nota (nessun default silenzioso)",
 
+    // ── Il CURRICULUM della candidatura (2026-08-15) ─────────────────────────
+    // La porta gemella di quella qui sopra, e l'anonimo che passa è lo stesso: chi
+    // si candida da `/lavora-con-noi`, che un account non ce l'ha e non può averlo.
+    // Il gate manca per la stessa ragione, che qui non si ripete — si ripete invece
+    // la domanda che decide, perché la risposta NON è la stessa.
+    //
+    // COSA OTTIENE UN ANONIMO CHE PASSA: SCRIVERE un oggetto nel bucket
+    // `form_attachments`, e nient'altro. Non legge niente — l'handler non ha una
+    // sola SELECT, e la risposta è `{ path }`, cioè una stringa che il server ha
+    // appena costruito con un uuid suo. Non scrive nessuna riga di database (la
+    // candidatura nasce dall'altra porta), non crea nessun account, e non può
+    // sovrascrivere un oggetto altrui: `upsert: false` su un percorso che contiene
+    // un uuid generato qui.
+    //
+    // ⚠️ CIÒ CHE VA DETTO E NON NASCOSTO, perché è la differenza con la porta del
+    // personale: questo bucket NON è separato. `form_attachments` custodisce gli
+    // allegati delle domande d'iscrizione — carte d'identità di genitori e
+    // fotografie di bambini, 1389 oggetti misurati il 15/08/2026 — e il curriculum
+    // ci convive, separato dal solo PREFISSO `candidature/`. La scelta è deliberata
+    // (la ragione per esteso sta in `@/lib/candidature/percorso-cv`) e regge su un
+    // fatto verificabile: i gate di forma delle due famiglie di percorsi non si
+    // risolvono a vicenda, quindi da una candidatura non si può indicare un
+    // documento di un minore. Ma «prefisso» e «bucket separato» non sono la stessa
+    // cosa, e chi rilegge questa voce deve trovarci quale delle due è.
+    //
+    // IL PERIMETRO, che è quello che resta quando la sessione non c'è: tetto di 6
+    // caricamenti ogni 10 minuti per IP — il più stretto delle quattro porte, perché
+    // discende dagli invii ammessi (3/ora × 2 tentativi), e c'è un'asserzione qui
+    // sotto che confronta questo numero col valore vero — + `verificaAllegatoPubblico`
+    // (tipo E estensione, che devono concordare: il `.docx` cade qui con un 415) +
+    // il limite di dimensione della piattaforma (413 a ~4,5 MB, servito con un corpo
+    // JSON invece che con la pagina di testo di Vercel). Il nome scelto dal browser
+    // non sopravvive di un byte: il percorso è `candidature/<uuid>-cv.<ext>`, con
+    // l'estensione derivata dal TIPO e non dal nome — e su questa porta quel nome è
+    // `cv-<cognome>.pdf`, cioè il cognome di chi si è candidato.
+    //
+    // L'ORFANO È DICHIARATO: il file si carica PRIMA che la candidatura esista, quindi
+    // chi chiude la pagina lascia nel bucket un oggetto che nessuna riga nomina. Non
+    // resta lì: `gdpr/retention-candidature:POST` spazza il prefisso ogni notte, e
+    // tocca solo ciò che ha più di 24 ore — così un curriculum caricato dieci minuti
+    // fa non viene portato via da sotto le mani di chi sta ancora compilando.
+    'iscrizione/insegnanti/upload:POST':
+        "modulo pubblico «Lavora con noi»: il curriculum di chi si candida, caricato prima che la candidatura esista e quindi prima che esista chiunque a cui chiedere una sessione. L'anonimo che passa può solo SCRIVERE un oggetto in `form_attachments`: non legge nulla (l'handler non ha una SELECT), non scrive nessuna riga, non crea nessun account, e la risposta è il percorso che il server ha appena costruito. ⚠️ Il bucket NON è separato da quello dei documenti dei minori: la separazione è il prefisso `candidature/`, e regge perché i gate di forma delle due famiglie di percorsi non si risolvono a vicenda. Perimetro: tetto 6 caricamenti/10 min per IP (il più stretto delle quattro porte: discende dai 3 invii/ora ammessi × 2 tentativi) + `verificaAllegatoPubblico` su tipo ed estensione, che devono concordare + limite di dimensione della piattaforma (413) + percorso `candidature/<uuid>-cv.<ext>` con `upsert: false`, dove del nome scelto dal browser non sopravvive un byte",
+
     // ── Modulo pubblico «Anagrafica del personale» ───────────────────────────
     // La porta è ANONIMA per decisione del titolare dell'11/08/2026: il link si manda
     // alle maestre in servizio e si condivide, e l'alternativa (un codice OTP prima dei
@@ -666,12 +714,92 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // che la rotta passa davvero a `rateLimit` c'è un'asserzione, e sta in
         // `anagrafica-personale-post.test.ts` («la motivazione di gate-coverage dichiara
         // il tetto VERO»): il numero non si tocca più da un lato solo.
+        //
+        // 20 dal 15/08/2026, quinta SALITA: `iscrizione/insegnanti/upload:POST`, la porta
+        // da cui chi si candida allega il proprio curriculum. Mi sono fermato, come chiede
+        // la riga in cima, e la domanda l'ho fatta.
+        //
+        // «Cosa ottiene un anonimo che passa?» — SCRIVERE un oggetto nel bucket
+        // `form_attachments`. Non è «niente» come per `health` e `comuni`, e non è nemmeno
+        // il caso del personale (un codice fiscale dentro una riga di database): qui non
+        // nasce nessuna riga e non si legge niente, l'handler non ha una sola SELECT. Ciò
+        // che nasce è un file, con un nome che decide interamente il server.
+        //
+        // ⚠️ E IL BUCKET NON È SEPARATO. È la sola cosa che rende questa voce più pesante
+        // della sua gemella `iscrizione/personale/upload:POST`, e va scritta qui invece che
+        // dedotta: quella porta ha un bucket suo (`documenti_personale`), questa scrive
+        // dentro l'archivio che custodisce gli allegati delle domande d'iscrizione — carte
+        // d'identità di genitori e fotografie di bambini, 1389 oggetti misurati il 15/08. La
+        // separazione è il PREFISSO `candidature/`, non una parete. Regge perché i gate di
+        // forma delle due famiglie di percorsi non si risolvono a vicenda (`percorso-cv.ts`
+        // rifiuta tutto ciò che non comincia col suo prefisso, e il gemello fa lo stesso col
+        // proprio), ed è una difesa di codice: il giorno in cui una di quelle due regex si
+        // allargasse, questa voce non sarebbe più difendibile.
+        //
+        // Perché il gate qui non è dimenticato ma IMPOSSIBILE: il curriculum si carica PRIMA
+        // che la candidatura esista — è il passo 3 di un modulo che crea la riga al passo 4
+        // — quindi al momento del caricamento non c'è nessuno a cui chiedere una sessione, e
+        // non ci sarà finché la Direzione non approva. È lo stesso vuoto della porta accanto
+        // (`iscrizione/insegnanti:POST`), con in più il fatto che il file arriva prima della
+        // riga: da qui l'ORFANO, che non si nasconde ma si spazza — `gdpr/retention-candidature:POST`
+        // passa il prefisso ogni notte e toglie ciò che ha più di 24 ore e che nessuna riga
+        // nomina.
+        //
+        // ⚠️ CHE COSA TIENE FERME QUESTE AFFERMAZIONI, misurato e non supposto. Le altre
+        // quattro voci di questo elenco rimandano a un test DI ROTTA
+        // (`candidature-insegnanti-post.test.ts`, `anagrafica-personale-post.test.ts`,
+        // `health.test.ts`, `anagrafiche-comuni.test.ts`). Questa non può: al 15/08/2026 un
+        // test di rotta per `iscrizione/insegnanti/upload:POST` NON ESISTE — cercato,
+        // `__tests__/api/` non ne contiene nessuno che importi quell'handler. Nessuno esercita
+        // il 429 del tetto, il 413 della taglia, il 415 del `.docx`, né il percorso costruito
+        // dal server, su una porta ANONIMA che scrive nel bucket dei documenti dei minori.
+        //
+        // Sta scritto invece che rimandato a un nome plausibile perché è esattamente il modo
+        // in cui una voce di questo elenco smette di essere vera restando verde.
+        //
+        // ⚠️ QUESTA NOTA CITAVA UN ESEMPIO CHE NEL FRATTEMPO È DECADUTO, e va detto invece
+        // che corretto in silenzio: diceva che «`percorso-cv.ts` afferma che
+        // `__tests__/lib/percorso-cv.test.ts` … e quel file non esiste». Quel file ESISTE —
+        // è stato scritto lo stesso 2026-08-15, poche ore dopo, e copre le estensioni una
+        // per una. La misura era vera nell'istante in cui è stata presa e falsa un'ora
+        // dopo: è la stessa lezione dell'elenco qui accanto, applicata a chi la scriveva.
+        //
+        // Ciò che c'è, e che non è poco, sono due lock d'architettura:
+        // `upload-pubblico-con-tetto.test.ts` pretende da OGNI porta di caricamento senza
+        // sessione il tetto per IP (preso da una costante condivisa, non scritto dentro la
+        // rotta), `verificaAllegatoPubblico` e il `contentType` che viene dal gate — la rotta
+        // è entrata in quell'elenco il giorno in cui è nata — e `logging-coverage.test.ts`
+        // pretende il `withRoute`. Sono presidi di FORMA: dicono che i controlli ci sono
+        // scritti, non che rispondano 429 e 415 quando devono. Finché quel test di rotta non
+        // esiste, questa voce è la meno sorvegliata delle venti.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(19)
+        ).toBe(20)
+    })
+
+    it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {
+        // LA LEZIONE È QUELLA SCRITTA QUI SOPRA, applicata prima che costi: una motivazione
+        // di questa mappa è PROSA, e una prosa può mentire restando verde. È già successo —
+        // la voce del personale ha dichiarato «tetto 3 invii/ora» per un giro intero dopo
+        // che la rotta era passata a 20, e chi legge questo elenco «con più sospetto», come
+        // il commento in testa chiede di fare, concludeva che il contro-presidio fosse sette
+        // volte più stretto del vero.
+        //
+        // Qui il numero dichiarato si confronta con la costante che la rotta usa davvero.
+        // Non con quella che la rotta *dovrebbe* usare: che il tetto arrivi da
+        // `@/lib/upload/allegati-pubblici` e non da un numero scritto dentro l'handler lo
+        // verifica `upload-pubblico-con-tetto.test.ts`, e i due lock insieme chiudono il
+        // giro — prosa ⇄ costante ⇄ rotta.
+        expect(
+            PUBBLICHE['iscrizione/insegnanti/upload:POST'],
+            `La motivazione non dichiara più il tetto vero (${TETTO_UPLOAD_CANDIDATURE} caricamenti ` +
+            'ogni 10 minuti). Se il tetto è cambiato, si aggiorna la frase; se la frase è ' +
+            'cambiata, si rimette il numero. Una voce di allowlist che descrive un perimetro ' +
+            'che non esiste è peggio di nessuna voce: spegne il sospetto su una porta anonima.',
+        ).toContain(`tetto ${TETTO_UPLOAD_CANDIDATURE} caricamenti/10 min per IP`)
     })
 })
 

@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
 import {
-  INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS, TITOLI_STUDIO,
+  INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS, TITOLI_STUDIO, POSIZIONI_OPTIONS,
 } from '@/lib/forms/insegnanti-template'
+import { CV_PREFISSO } from '@/lib/candidature/percorso-cv'
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 import type { FormField } from '@/types/database.types'
 
@@ -53,10 +54,46 @@ const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
 const fetchMock = vi.fn()
 const corpiInviati: unknown[] = []
 
+/**
+ * Il percorso che `POST /api/iscrizione/insegnanti/upload` restituisce.
+ *
+ * ⚠️ È la CHIAVE con cui si firma un oggetto di un bucket privato — lo stesso che
+ * custodisce le carte d'identità dei genitori e le fotografie dei bambini
+ * (`form_attachments`). Il prefisso è letto da `@/lib/candidature/percorso-cv` e
+ * non ribattuto qui: è quello che il riepilogo NON deve stampare, e cercarlo con
+ * una stringa scritta a mano vorrebbe dire cercare una cosa diversa da quella che
+ * il prodotto produce.
+ */
+const PERCORSO_CV = `${CV_PREFISSO}11111111-2222-4333-8444-555555555555-cv.pdf`
+
+/**
+ * L'etichetta della posizione con quel `value`, LETTA dal template.
+ *
+ * Dal 2026-08-15 il passo «profilo» non chiede più le fasce d'età: chiede le
+ * POSIZIONI, e le tre voci docenti portano la fascia nel nome — «Insegnante —
+ * Infanzia (3-6)». ⚠️ Quel trattino è un EM DASH (U+2014): ribattuto a mano con un
+ * trattino corto dà un selettore che non trova niente.
+ */
+function posizione(valore: string): string {
+  const o = POSIZIONI_OPTIONS.find((x) => x.value === valore)
+  if (!o) throw new Error(`posizione «${valore}» assente da POSIZIONI_OPTIONS`)
+  return String(o.label)
+}
+
+/** La posizione che `compilaTutto` spunta. */
+const POSIZIONE_SCELTA = posizione('insegnante_infanzia')
+/** Una posizione NON spuntata: serve a provare che il riepilogo non le stampa tutte. */
+const POSIZIONE_NON_SCELTA = posizione('insegnante_nido')
+
 function mockRete(sedi: { id: string; nome: string }[] = [ALFA]): void {
   fetchMock.mockImplementation((url: string, init?: RequestInit) => {
     if (url.includes('/api/iscrizione/sedi')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: sedi }) })
+    }
+    // La rotta di caricamento del curriculum: risponde con il percorso, che è ciò
+    // che finisce nel valore del campo `cv_path`.
+    if (url.includes('/api/iscrizione/insegnanti/upload')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
     }
     if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
       corpiInviati.push(JSON.parse(String(init.body)))
@@ -121,10 +158,32 @@ const SCRITTI: Record<string, string> = {
 const TITOLO = TITOLI_STUDIO[2] // «Laurea triennale»
 
 /**
- * Compila TUTTI i campi del modulo e si ferma sul riepilogo.
- * `vuoti` sono gli id da lasciare in bianco (per il collaudo del «Non indicato»).
+ * Allega un curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *
+ * ⚠️ Il nome del file scelto qui NON sopravvive: la rotta di caricamento lo butta
+ * via e restituisce `candidature/<uuid>-cv.<est>` (vedi `costruisciPercorsoCv`).
+ * Perciò il nome qui sotto è un cognome finto e riconoscibile — è la forma vera
+ * di quel nome in produzione, `cv-<cognome>.pdf` — e serve a provare che nemmeno
+ * LUI compare nel riepilogo.
  */
-async function compilaTutto(vuoti: string[] = []): Promise<void> {
+const NOME_FILE_CV = 'cv-diprova.pdf'
+
+async function allegaCurriculum(): Promise<void> {
+  const controllo = document.getElementById('cv_path') as HTMLInputElement | null
+  expect(controllo, 'il campo del curriculum non è reso dal modulo').not.toBeNull()
+  const file = new File(['%PDF-1.4 finto'], NOME_FILE_CV, { type: 'application/pdf' })
+  fireEvent.change(controllo!, { target: { files: [file] } })
+  // Il caricamento è asincrono: si aspetta che il campo abbia preso il percorso,
+  // che è la sola prova che la rotta ha risposto e il valore è entrato nel modulo.
+  await waitFor(() => expect(screen.getByText(NOME_FILE_CV)).toBeInTheDocument())
+}
+
+/**
+ * Compila TUTTI i campi del modulo e si ferma sul riepilogo.
+ * `vuoti` sono gli id da lasciare in bianco (per il collaudo del «Non indicato»);
+ * `allegaCv` fa passare anche dal caricamento del curriculum.
+ */
+async function compilaTutto(vuoti: string[] = [], allegaCv = false): Promise<void> {
   await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('nome'))).toBeInTheDocument())
   for (const [id, valore] of Object.entries(SCRITTI)) {
     if (vuoti.includes(id)) continue
@@ -140,10 +199,11 @@ async function compilaTutto(vuoti: string[] = []): Promise<void> {
     if (vuoti.includes(id)) continue
     scrivi(id, SCRITTI[id])
   }
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
   if (!vuoti.includes('disponibilita')) {
     fireEvent.change(screen.getByLabelText(/Disponibilità/), { target: { value: 'part_time_mattina' } })
   }
+  if (allegaCv) await allegaCurriculum()
   avanti()
 
   await waitFor(() =>
@@ -177,18 +237,72 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
     await compilaTutto()
 
-    // `cv_path` è l'unico campo che il modulo non rende (`IDS_NON_RESI`), ed è
-    // facoltativo: il giorno in cui torna, questa riga lo pretende nel riepilogo
-    // senza che nessuno debba ricordarsene.
-    const resi = INSEGNANTE_FIELDS.filter((f) => f.id !== 'cv_path')
-    const mancanti = [...resi, ...CONSENSI_INSEGNANTI_FIELDS]
-      .map((f) => (f.id === 'gradi' ? itPublic.candRiepilogoFasce : String(f.label)))
+    /*
+     * ⚠️ L'ELENCO DEI CAMPI ATTESI È CAMBIATO DUE VOLTE IL 2026-08-15, E VALE LA
+     * PENA DIRE COME.
+     *
+     * 1. `cv_path` NON è più l'eccezione. Era escluso perché il modulo non lo
+     *    rendeva (`IDS_NON_RESI`, che oggi è VUOTO): nessuna rotta di caricamento
+     *    produceva il prefisso `candidature/` che il server pretende. Adesso quella
+     *    rotta c'è, il campo si rende, e la riga del curriculum è pretesa qui come
+     *    ogni altra — senza che nessuno abbia dovuto ricordarsene, perché
+     *    `gruppiRiepilogo()` costruisce il riepilogo dalle stesse liste che
+     *    disegnano i passi. Era la promessa scritta nel componente, ed è mantenuta.
+     * 2. `posizione_altro` è il primo campo CONDIZIONALE del modulo: esiste solo
+     *    con «Altro» spuntato, e qui non lo è. Va escluso dai campi attesi ed è
+     *    l'unico — controllato qui sotto leggendo la `condition` dal template
+     *    invece che ribattendo un id: un secondo campo condizionale aggiunto domani
+     *    non passerebbe di nascosto.
+     */
+    const condizionali = INSEGNANTE_FIELDS.filter((f) => f.condition)
+    expect(condizionali.map((f) => f.id)).toEqual(['posizione_altro'])
+
+    const attesi = INSEGNANTE_FIELDS.filter((f) => !f.condition)
+    const mancanti = [...attesi, ...CONSENSI_INSEGNANTI_FIELDS]
+      // ⚠️ `posizioni` è l'unica etichetta riscritta: nel passo è una DOMANDA
+      // («Per quali posizioni ti proponi»), e una domanda in un elenco di fatti si
+      // legge male. La chiave esiste già ed è tradotta in entrambe le lingue.
+      .map((f) => (f.id === 'posizioni' ? itPublic.candRiepilogoPosizioni : String(f.label)))
       .filter((etichetta) => screen.queryByText(etichetta) === null)
 
     expect(mancanti, `campi assenti dal riepilogo: ${mancanti.join(' · ')}`).toEqual([])
+    // Il campo condizionale NON compare: chi non ha spuntato «Altro» leggerebbe
+    // «Quale posizione: Non indicato» in rosso — un campo obbligatorio mancante,
+    // per una domanda che non gli è mai stata fatta.
+    for (const f of condizionali) {
+      expect(screen.queryByText(String(f.label)), `«${f.id}» non doveva comparire`).toBeNull()
+    }
     // E la sede, che non è un campo del template ma è il primo fatto della
     // schermata.
     expect(sotto(itPublic.candRiepilogoSede)).toBe(NOME_SEDE_A)
+  })
+
+  it('spuntando «Altro», la posizione scritta a mano ENTRA nel riepilogo', async () => {
+    // L'altra metà della regola qui sopra: un campo condizionale che non si mostra
+    // quando la sua condizione è vera sarebbe un dato raccolto e mai ricontrollato
+    // — e questo va in una colonna che il database pretende coerente con
+    // `posizioni` (il `CHECK` di `20260814225302`).
+    render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
+    await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('nome'))).toBeInTheDocument())
+    for (const id of ['nome', 'cognome', 'email']) scrivi(id, SCRITTI[id])
+    avanti()
+
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: TITOLO.value } })
+    fireEvent.click(screen.getByRole('checkbox', { name: posizione('altro') }))
+    await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('posizione_altro'))).toBeInTheDocument())
+    scrivi('posizione_altro', 'psicomotricista')
+    avanti()
+
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole('checkbox', { name: /informativa sulla privacy/i }))
+    avanti()
+
+    await waitFor(() => expect(screen.getByText(itPublic.candRiepilogoSede)).toBeInTheDocument())
+    expect(sotto(String(campo('posizione_altro').label))).toBe('psicomotricista')
+    expect(screen.getByText(posizione('altro'))).toBeInTheDocument()
   })
 
   it('L’EMAIL SI RILEGGE — è il motivo per cui questo riepilogo esiste', async () => {
@@ -215,13 +329,18 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     expect(sotto(String(campo('titolo_studio').label))).toBe(String(TITOLO.label))
     expect(screen.queryByText(String(TITOLO.value))).not.toBeInTheDocument()
     expect(sotto(String(campo('disponibilita').label))).toBe('Part-time mattina')
-    // Le fasce restano un elenco, una per riga, con l'etichetta spuntata.
-    expect(screen.getByText('Infanzia (3-6)')).toBeInTheDocument()
-    expect(screen.queryByText('Nido (0-3)')).not.toBeInTheDocument()
+    // Le posizioni restano un elenco, una per riga, con l'etichetta spuntata —
+    // che dal 2026-08-15 porta anche la fascia dentro il nome del mestiere.
+    expect(screen.getByText(POSIZIONE_SCELTA)).toBeInTheDocument()
+    expect(screen.queryByText(POSIZIONE_NON_SCELTA)).not.toBeInTheDocument()
   })
 
   it('i facoltativi lasciati VUOTI si vedono come «Non indicato»: l’omissione resta visibile', async () => {
-    const vuoti = ['telefono', 'residence_city', 'residence_province', 'titolo_dettaglio', 'anni_esperienza', 'note', 'disponibilita']
+    // ⚠️ `cv_path` è in elenco dal 2026-08-15, e non perché `compilaTutto` lo
+    // salti: non ha mai avuto un valore da scrivere. Il curriculum è facoltativo,
+    // e senza questa riga il conteggio più sotto direbbe uno in meno di quello che
+    // si legge a schermo — cioè misurerebbe l'omissione mentre la lascia passare.
+    const vuoti = ['telefono', 'residence_city', 'residence_province', 'titolo_dettaglio', 'anni_esperienza', 'note', 'disponibilita', 'cv_path']
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
     await compilaTutto(vuoti)
 
@@ -282,6 +401,55 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     tornaAlRiepilogo()
     await waitFor(() => expect(screen.getByText(itPublic.candRiepilogoSede)).toBeInTheDocument())
     expect(sotto(String(campo('email').label))).toBe('corretto@example.test')
+  })
+
+  /*
+   * ─── IL CURRICULUM SI RIEPILOGA, IL SUO PERCORSO NO ────────────────────────
+   *
+   * `cv_path` vale `candidature/<uuid>-cv.pdf`, ed è la CHIAVE con cui si firma un
+   * oggetto di `form_attachments` — il bucket privato che al 2026-08-15 custodisce
+   * 1389 allegati delle domande d'iscrizione: carte d'identità di genitori e
+   * fotografie di bambini. Una schermata si fotografa, si legge ad alta voce e
+   * finisce dentro le segnalazioni di guasto: stampare lì una chiave d'archivio è
+   * il difetto che questo repo ha già chiuso due volte — nel riquadro del campo di
+   * `FieldRenderer` (12/08) e nel riepilogo del modulo del personale — e la terza
+   * volta sarebbe su un modulo PUBBLICO, che chiunque apre senza account.
+   *
+   * La riga dice l'unica cosa che serve a chi controlla prima di inviare: allegato
+   * oppure no. Nemmeno il NOME del file: in produzione quel nome è
+   * `cv-<cognome>.pdf`, cioè il cognome di chi si è candidato, e comunque non
+   * sopravvive alla rotta di caricamento.
+   */
+  it('il curriculum allegato si dice «Allegato», e il suo PERCORSO non compare da nessuna parte', async () => {
+    render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
+    await compilaTutto([], true)
+
+    // 1 · La riga c'è, e dice che il curriculum è arrivato.
+    expect(sotto(String(campo('cv_path').label))).toBe(itPublic.candRiepilogoCvAllegato)
+
+    // 2 · ⚠️ IL CONTROLLO CHE CONTA: nel testo della schermata non c'è né il
+    //     percorso, né il prefisso del bucket, né l'uuid che lo compone, né il
+    //     nome del file scelto dal browser.
+    const testo = document.body.textContent ?? ''
+    // Il controllo POSITIVO viene prima: una sonda che legge il documento
+    // sbagliato — o un riepilogo che non è stato dipinto — supererebbe da sola
+    // tutte le righe qui sotto senza guardare niente.
+    expect(testo).toContain(itPublic.candRiepilogoCvAllegato)
+    expect(testo).not.toContain(PERCORSO_CV)
+    expect(testo).not.toContain(CV_PREFISSO)
+    expect(testo).not.toContain('11111111-2222-4333-8444-555555555555')
+    expect(testo).not.toContain(NOME_FILE_CV)
+    // …e nemmeno dentro un attributo (un `title`, un `value`, un `href` firmato).
+    expect(document.body.innerHTML).not.toContain(PERCORSO_CV)
+
+    // 3 · Il valore però è partito davvero: la riga «Allegato» non è un'etichetta
+    //     scollegata dal dato. Senza questo, un `cv_path` buttato via prima
+    //     dell'invio darebbe lo stesso riepilogo — ed è la forma esatta del difetto
+    //     dei consensi sul wizard fratello.
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
+    await waitFor(() => expect(corpiInviati).toHaveLength(1))
+    const dati = (corpiInviati[0] as { data?: Record<string, unknown> }).data ?? {}
+    expect(dati.cv_path).toBe(PERCORSO_CV)
   })
 
   it('il gruppo «Sede» ha il suo «Modifica» solo quando quel passo esiste davvero', async () => {
@@ -379,8 +547,9 @@ describe('CandidaturaInsegnanteWizard — dal riepilogo si torna al riepilogo', 
 
   it('se la modifica lascia incompleto un passo SCAVALCATO, il ritorno si ferma lì — e lo dice', async () => {
     // Il percorso è reale, non costruito: dal riepilogo si apre «Il tuo profilo»,
-    // si toglie l'unica fascia d'età selezionata (`gradi` è obbligatorio, e
-    // «nessuna fascia» è ciò che la rotta rifiuta), si dà un'occhiata al passo
+    // si toglie l'unica posizione selezionata (`posizioni` è obbligatorio, e
+    // «nessuna posizione» è ciò che la rotta rifiuta — e con lei il `CHECK`
+    // `cardinality(posizioni) >= 1` della tabella), si dà un'occhiata al passo
     // accanto con «Indietro» e da lì si preme il biglietto di ritorno. Il salto
     // scavalcherebbe il profilo, che nel frattempo è incompleto: il riepilogo
     // direbbe che va tutto bene su un modulo che il server rifiuterà.
@@ -393,10 +562,10 @@ describe('CandidaturaInsegnanteWizard — dal riepilogo si torna al riepilogo', 
 
     modifica(itPublic.candProfilo)
     await waitFor(() =>
-      expect(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' })).toBeInTheDocument(),
+      expect(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA })).toBeInTheDocument(),
     )
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' }))
-    expect(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
+    expect(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA })).not.toBeChecked()
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candIndietro }))
     await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('nome'))).toBeInTheDocument())
@@ -426,7 +595,7 @@ describe('CandidaturaInsegnanteWizard — dal riepilogo si torna al riepilogo', 
 
     // Rimesso il dato, il percorso lineare arriva al riepilogo passo per passo —
     // e il riquadro si spegne alla prima pressione, comunque vada.
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Nido (0-3)' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_NON_SCELTA }))
     avanti()
     await waitFor(() =>
       expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
@@ -434,8 +603,8 @@ describe('CandidaturaInsegnanteWizard — dal riepilogo si torna al riepilogo', 
     expect(screen.queryByText(itPublic.candRitornoInterrottoTitolo)).not.toBeInTheDocument()
     avanti()
     await waitFor(() => expect(sulRiepilogo()).toBe(true))
-    expect(screen.getByText('Nido (0-3)')).toBeInTheDocument()
-    expect(screen.queryByText(itPublic.candRiepilogoNessunaFascia)).not.toBeInTheDocument()
+    expect(screen.getByText(POSIZIONE_NON_SCELTA)).toBeInTheDocument()
+    expect(screen.queryByText(itPublic.candRiepilogoNessunaPosizione)).not.toBeInTheDocument()
   })
 })
 

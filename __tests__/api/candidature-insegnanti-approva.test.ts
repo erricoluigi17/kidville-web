@@ -1,16 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
+// Le posizioni si LEGGONO dall'unico elenco che le dichiara, invece di fidarsi di
+// quattro stringhe scritte qui: `candidature_insegnanti.posizioni` ha un `CHECK` di
+// appartenenza (migrazione `20260814225302_candidature_posizioni_cv`), quindi un
+// valore fuori elenco è una riga che in tabella non può esistere — e un ramo
+// collaudato su una riga impossibile non è collaudato.
+import { POSIZIONI_AMMESSE } from '@/lib/forms/insegnanti-template'
 
 // =============================================================================
-// «APPROVA»: il gesto che crea un ACCOUNT DOCENTE e manda le credenziali.
+// «APPROVA»: il gesto che PUÒ creare un ACCOUNT DOCENTE e mandare le credenziali.
 //
 // Qui `ensureStaffIdentity` gira DAVVERO (non è mockata): è metà dell'oggetto del
 // test, e mockarla lascerebbe verde proprio ciò che si vuole provare — che l'INSERT
 // non tocchi le colonne generate, che la sede scritta sia quella della candidatura e
 // che nessuna email già in uso produca un secondo account.
 //
-// Le sei cose che questo file tiene ferme:
+// Le sette cose che questo file tiene ferme:
 //  1. account `auth.users` + riga `utenti` con RUOLO, SEDE e GRADI giusti;
 //  2. MAI `role`/`first_name`/`last_name`: sono colonne GENERATE, scriverle fa fallire
 //     l'INSERT (e il fallimento sarebbe silenzioso per chi guarda la UI);
@@ -20,6 +26,19 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 //  5. email già di uno STAFF o già legata a un GENITORE: 409 e ZERO scritture;
 //  6. `gradi` respinta dal DB della CI e email non partita: l'account nasce comunque,
 //     e l'operatore lo viene a sapere dai `warnings` — mai in silenzio.
+//  7. ⚠️ dal 2026-08-15 le strade sono DUE, e a sceglierle sono le `posizioni` della
+//     candidatura: con almeno una `insegnante_*` si passa di qui e l'account nasce
+//     (`esitoAccount: 'creato' | 'riusato'`); con `cuoca`, `collaboratrice`,
+//     `segreteria` o `altro` la candidatura si chiude `approvata` e non nasce
+//     NIENTE — nessun `createUser`, nessuna riga `utenti`, nessuna email
+//     (`esitoAccount: 'nessuno'`). Su una riga SENZA `posizioni` — la colonna che
+//     il DB della CI non ha — la risposta è «nessun account»: un profilo
+//     `educator` legge l'anagrafica dei bambini, e «non so per quale posizione si
+//     è candidata» non è un permesso.
+//
+// Il fixture porta due posizioni DOCENTI (`insegnante_nido`, `insegnante_infanzia`),
+// coerenti con i suoi `gradi`: senza, ogni caso di questo file finirebbe nel ramo
+// «nessun account» e proverebbe un'altra cosa da quella che dichiara.
 // =============================================================================
 
 type Riga = Record<string, unknown>
@@ -54,6 +73,30 @@ const h = vi.hoisted(() => {
      * la colonna della candidatura e il test avrebbe provato due cose insieme.
      */
     colonneAssentiUpdate: [] as string[],
+    /**
+     * Colonne che il DB (finto) dichiara assenti sulla LETTURA — il terzo knob, e
+     * il primo che serve a una SELECT.
+     *
+     * La lettura pre-PATCH non chiede più una stringa fissa: passa da
+     * `conResilienza` con `COLONNE_DECISIONE`, cioè `COLONNE_LAVORO` più
+     * `posizioni`. Su un database che quella colonna non ce l'ha, PostgREST
+     * risponde `42703 column <tabella>.<colonna> does not exist` e la route toglie
+     * la colonna e RIPROVA. Senza questo knob quel ciclo non sarebbe misurabile da
+     * qui, e con esso si misura anche il verso in cui degrada: senza `posizioni`,
+     * nessun account.
+     */
+    colonneAssentiSelect: [] as string[],
+    /**
+     * Ogni LETTURA tentata, con le colonne chieste. Serve a due domande che le
+     * altre spie non sanno rispondere: «la proiezione chiede davvero `posizioni`?»
+     * (toglierla renderebbe ogni approvazione «senza account», in silenzio) e
+     * «`ensureStaffIdentity` è partita?» — la sua prima istruzione è una SELECT su
+     * `utenti`, quindi zero letture di `utenti` vuol dire che non è mai stata
+     * chiamata.
+     */
+    letture: [] as { table: string; cols: string }[],
+    /** Quante volte GoTrue è stato interrogato: `ensureStaffIdentity` ci passa sempre. */
+    chiamateListUsers: 0,
     /** `listUsers` che non riesce: `findAuthUserIdByEmail` LANCIA, e lancia in inglese. */
     erroreListUsers: null as null | { message: string; status?: number },
     /** Un'eccezione VERA dentro il corpo di `ensureStaffIdentity` (non un `{ error }`). */
@@ -98,8 +141,29 @@ function finto() {
       let inserimento: Riga | null = null
       const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
       const esegui = () => {
+        // La LETTURA si registra prima di qualunque guasto: la domanda a cui
+        // risponde è «questa query è stata fatta?», non «com'è andata».
+        const lettura = !patch && !inserimento
+        if (lettura) h.state.letture.push({ table, cols })
         const guasto = h.state.erroriTabella[table]
         if (guasto) return { data: [] as Riga[], error: guasto, count: null as number | null }
+        if (lettura) {
+          const assente = h.state.colonneAssentiSelect.find((c) =>
+            cols.split(',').map((s) => s.trim()).includes(c),
+          )
+          // La forma dell'errore è quella VERA di PostgREST su una proiezione
+          // esplicita («column candidature_insegnanti.posizioni does not exist»,
+          // codice `42703`): è la prima delle tre alternative del `colonnaMancante`
+          // della route, e con un'altra formulazione il ciclo di degrado non
+          // riconoscerebbe la colonna e questo test proverebbe un'altra cosa.
+          if (assente) {
+            return {
+              data: [] as Riga[],
+              error: { code: '42703', message: `column ${table}.${assente} does not exist` },
+              count: null as number | null,
+            }
+          }
+        }
         if (patch && (patch as Riga).stato === 'approvata' && h.state.erroreChiusura) {
           return { data: [] as Riga[], error: h.state.erroreChiusura, count: null as number | null }
         }
@@ -156,6 +220,7 @@ function finto() {
     auth: {
       admin: {
         listUsers: async () => {
+          h.state.chiamateListUsers++
           if (h.state.erroreListUsers) return { data: null, error: h.state.erroreListUsers }
           return { data: { users: h.state.authUsers }, error: null }
         },
@@ -210,6 +275,9 @@ beforeEach(() => {
   h.state.erroreCreazioneAuth = null
   h.state.colonneAssenti = []
   h.state.colonneAssentiUpdate = []
+  h.state.colonneAssentiSelect = []
+  h.state.letture = []
+  h.state.chiamateListUsers = 0
   h.state.erroreListUsers = null
   h.state.eccezioneCreazioneAuth = null
   h.state.erroriTabella = {}
@@ -224,6 +292,12 @@ beforeEach(() => {
         cognome: 'Cognome',
         email: EMAIL,
         telefono: '+39 000 0000000',
+        // Due posizioni DOCENTI, e i `gradi` che ne discendono: è la coppia che
+        // `gradiDallePosizioni` produce alla ricezione del modulo, quindi una riga
+        // di questa forma è una riga che esiste davvero in tabella. Sono anche ciò
+        // che manda la PATCH nel ramo con account: senza, ogni caso qui sotto
+        // finirebbe in `approvaSenzaAccount`.
+        posizioni: ['insegnante_nido', 'insegnante_infanzia'],
         gradi: ['nido', 'infanzia'],
         cv_path: 'candidature/cv.pdf',
         creata_il: '2026-08-10T08:00:00.000Z',
@@ -827,5 +901,248 @@ describe('candidature insegnanti · approvazione', () => {
     expect(h.state.creazioniAuth).toEqual([])
     expect(h.state.inserimenti).toEqual([])
     expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
+  })
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LE CANDIDATURE CHE NON FANNO NASCERE NESSUN ACCOUNT
+  //
+  // Dal 2026-08-15 `/lavora-con-noi` non raccoglie più soltanto insegnanti:
+  // l'elenco delle posizioni ne porta sette, e quattro (`collaboratrice`, `cuoca`,
+  // `segreteria`, `altro`) non insegnano. L'unico account che questa rotta sa
+  // creare è `ruolo: 'educator'`, che legge l'anagrafica dei bambini — nomi,
+  // allergie, note mediche — quindi per quelle quattro non se ne crea nessuno.
+  //
+  // Ciò che segue misura le due metà di quella frase: che il ramo faccia ciò che
+  // dice (una sola scrittura di stato, niente account, niente email) e che il
+  // DUBBIO cada dalla parte giusta — una riga di cui non si conoscono le posizioni
+  // non autorizza un accesso all'anagrafica dei minori.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Le posizioni della candidatura di lavoro, per il caso in esame. */
+  const conPosizioni = (...posizioni: string[]) => {
+    h.state.tabelle.candidature_insegnanti[0].posizioni = posizioni
+  }
+  /** Le scritture di stato sulla candidatura: quante sono, e con quale `WHERE`. */
+  const scrittureStato = () => h.state.aggiornamenti.filter((a) => a.table === 'candidature_insegnanti')
+  /** `ensureStaffIdentity` comincia SEMPRE con una SELECT su `utenti`: zero letture = mai chiamata. */
+  const lettureUtenti = () => h.state.letture.filter((l) => l.table === 'utenti')
+
+  it('le posizioni usate da questi test esistono nell’elenco del modulo (e quindi in tabella)', () => {
+    for (const posizione of ['insegnante_nido', 'insegnante_infanzia', 'cuoca', 'collaboratrice']) {
+      expect(
+        POSIZIONI_AMMESSE,
+        `«${posizione}» non è fra le posizioni ammesse: il CHECK della colonna rifiuterebbe questa riga`,
+      ).toContain(posizione)
+    }
+  })
+
+  it('posizione NON docente (`cuoca`): approvata, e non nasce NIENTE', async () => {
+    conPosizioni('cuoca')
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.success).toBe(true)
+    expect(body.stato).toBe('approvata')
+    // La terza storia si LEGGE, non si deduce: `credentials === null` da solo
+    // manderebbe la segreteria a cercare l'accesso preesistente del ramo «riusato».
+    expect(body.esitoAccount).toBe('nessuno')
+    expect(body.credentials).toBeNull()
+    expect(body.credentialsEmailSent).toBe(false)
+
+    // In tabella la riga è approvata per davvero.
+    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('approvata')
+
+    // …e non è nato nessun accesso all'anagrafica dei bambini, in nessuna delle
+    // tre forme in cui potrebbe nascere.
+    expect(h.state.creazioniAuth, 'creato un account per una candidatura non docente').toEqual([])
+    expect(h.state.authUsers).toEqual([])
+    expect(h.state.inserimenti, 'scritta una riga `utenti` per una candidatura non docente').toEqual([])
+    // `ensureStaffIdentity` non è stata nemmeno chiamata: le sue due prime
+    // istruzioni sono una SELECT su `utenti` e una `listUsers`.
+    expect(lettureUtenti(), '`ensureStaffIdentity` è partita: ha letto `utenti`').toEqual([])
+    expect(h.state.chiamateListUsers).toBe(0)
+    // Nessuna password generata ⇒ niente da spedire. Un'email di credenziali con
+    // dentro una password vuota partirebbe verso una persona vera.
+    expect(h.sendEmail, 'email delle credenziali partita senza account e senza password').not.toHaveBeenCalled()
+  })
+
+  it('posizioni MISTE (`cuoca` + `insegnante_nido`): una sola posizione docente basta, e l’account nasce', async () => {
+    // Chi cerca lavoro in una scuola dell'infanzia si propone spesso per più cose
+    // insieme. La domanda del ramo non è «è SOLO un'insegnante?» ma «insegna anche?»:
+    // rispondere «no» qui vorrebbe dire approvare una maestra senza darle l'accesso
+    // che le serve per lavorare, e nessun avviso lo direbbe.
+    conPosizioni('cuoca', 'insegnante_nido')
+    h.state.tabelle.candidature_insegnanti[0].gradi = ['nido']
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.esitoAccount).toBe('creato')
+    expect(h.state.creazioniAuth).toHaveLength(1)
+    expect(rigaUtenti()!.ruolo).toBe('educator')
+    expect(rigaUtenti()!.gradi).toEqual(['nido'])
+    expect(body.credentials.password).toBeTruthy()
+  })
+
+  it('senza account: UNA sola scrittura di stato, `pending → approvata`, mai `in_approvazione`', async () => {
+    // Il claim in due tempi esiste per chiudere la corsa fra due clic MENTRE si
+    // crea un account e si spedisce una password. Qui non si crea e non si
+    // spedisce niente: quel doppio passo non proteggerebbe nulla e costerebbe una
+    // riga bloccata in `in_approvazione` — stato che l'interfaccia racconta come
+    // «l'account docente È STATO CREATO» e che spegne per sempre i due pulsanti,
+    // perché il claim pretende `pending`.
+    conPosizioni('collaboratrice')
+    expect((await approva()).status).toBe(200)
+
+    const scritture = scrittureStato()
+    expect(scritture, 'più di una scrittura di stato: il ramo passa ancora dal claim').toHaveLength(1)
+    expect(scritture[0].patch.stato).toBe('approvata')
+    // L'atomicità sta nel `WHERE`, non in un lock: lo stato di partenza è nella
+    // stessa istruzione che scrive.
+    expect(scritture[0].filtri.find((f) => f.col === 'stato')?.vals).toEqual(['pending'])
+    // …e la sede pure: un UPDATE senza filtro di sede scrive nel plesso sbagliato.
+    expect(
+      scritture[0].filtri.some((f) => f.col === 'scuola_id'),
+      'la scrittura senza account non porta il filtro di sede',
+    ).toBe(true)
+    // `utente_id` non è nemmeno NOMINATA nel patch: nominarla la esporrebbe al
+    // ciclo di degrado, che la conterebbe fra le colonne cadute e produrrebbe un
+    // avviso all'operatore su una colonna che non si voleva scrivere.
+    expect('utente_id' in scritture[0].patch, '`utente_id` nel patch del ramo senza account').toBe(false)
+    expect(h.state.tabelle.candidature_insegnanti[0].utente_id).toBeUndefined()
+  })
+
+  it('senza account, seconda «Approva»: zero righe ⇒ 409, e la prima resta l’unica', async () => {
+    conPosizioni('cuoca')
+    expect((await approva()).status).toBe(200)
+    const res = await approva()
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('CANDIDATURA_GIA_EVASA')
+    // La seconda istruzione parte (è il `WHERE` a non trovare niente, ed è così
+    // che si chiude la corsa) ma non riscrive `evasa_da`/`evasa_il` di nessuno.
+    expect(h.state.tabelle.candidature_insegnanti[0].evasa_da).toBe(ADMIN.id)
+    expect(h.state.creazioniAuth).toEqual([])
+    expect(h.state.inserimenti).toEqual([])
+  })
+
+  it('senza account: l’AUDIT dice `utente_id: null`, `account_uid: null`, `account_creato: false`', async () => {
+    conPosizioni('segreteria')
+    await approva()
+    expect(h.logScrittura, 'il gesto non è nell’audit').toHaveBeenCalledTimes(1)
+    const arg = h.logScrittura.mock.calls[0][1] as Record<string, unknown>
+    expect(arg.entitaTipo).toBe('candidatura')
+    expect(arg.entitaId).toBe(CANDIDATURA_ID)
+    expect(arg.scuolaId, 'l’audit archivia il gesto nella sede sbagliata').toBe(SEDE_B)
+
+    const dopo = arg.valoreDopo as Record<string, unknown>
+    expect(dopo.stato).toBe('approvata')
+    expect(dopo.chiusura_riuscita).toBe(true)
+    expect(dopo.account_creato).toBe(false)
+    // ESPLICITI, non omessi: la domanda che qualcuno farà a questo registro fra
+    // mesi è «a quale account è legata questa candidatura?», e «la chiave non
+    // c'era» si legge diverso da «la chiave valeva null». La risposta vera è «a
+    // nessuno, e apposta».
+    expect(dopo).toHaveProperty('utente_id', null)
+    expect(dopo).toHaveProperty('account_uid', null)
+  })
+
+  it('senza account: il battito è `candidatura-approvata-senza-account`, e non gonfia le assunzioni', async () => {
+    conPosizioni('cuoca', 'altro')
+    await approva()
+
+    // `candidatura-approvata` è il conteggio delle assunzioni VERE («quante
+    // insegnanti sono state assunte questo mese?»): una riga emessa qui lo
+    // gonfierebbe con approvazioni che non hanno prodotto nessun account.
+    const assunzione = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'candidatura-approvata',
+    )
+    expect(assunzione, 'battito `candidatura-approvata` su un’approvazione SENZA account').toBeFalsy()
+
+    const battito = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'candidatura-approvata-senza-account',
+    )
+    expect(battito, 'nessun battito del ramo senza account: «nessun log» non direbbe niente').toBeTruthy()
+    expect(battito![0]).toBe('candidatura')
+    expect(battito![1]).toBe('info')
+    const payload = battito![2] as Record<string, unknown>
+    expect(payload.sede_id).toBe(SEDE_B)
+    expect(payload.account_creato).toBe(false)
+    // QUANTE posizioni, mai QUALI: a chi interroga `app_log` serve sapere che il
+    // ramo è stato preso, non che lavoro cercava quella persona.
+    expect(payload.n_posizioni).toBe(2)
+    expect(
+      JSON.stringify(payload),
+      'nel battito finisce il MESTIERE per cui una persona si è candidata',
+    ).not.toMatch(/cuoca|altro|insegnante_/)
+  })
+
+  it('ramo docente: `esitoAccount: \'creato\'`, e la lettura pre-PATCH chiede davvero `posizioni`', async () => {
+    const body = await (await approva()).json()
+    expect(body.esitoAccount).toBe('creato')
+
+    // La colonna su cui si DECIDE deve stare nella proiezione: toglierla da
+    // `COLONNE_DECISIONE` non farebbe rossa nessuna query — farebbe rispondere
+    // «nessun account» a OGNI approvazione, in silenzio e per tutte.
+    const preLettura = h.state.letture.find((l) => l.table === 'candidature_insegnanti')
+    expect(preLettura, 'nessuna lettura della candidatura prima della PATCH').toBeTruthy()
+    expect(preLettura!.cols.split(',').map((c) => c.trim())).toContain('posizioni')
+  })
+
+  it('ramo docente: `esitoAccount: \'riusato\'` quando quell’email aveva già un accesso', async () => {
+    h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
+    const body = await (await approva()).json()
+    expect(body.esitoAccount).toBe('riusato')
+    // …che è una storia diversa da «nessuno», e le due si distinguono proprio qui:
+    // `credentials: null` vale per entrambe.
+    expect(body.credentials).toBeNull()
+    expect(h.state.creazioniAuth).toEqual([])
+    expect(rigaUtenti()!.id).toBe('auth-preesistente')
+  })
+
+  it('riga SENZA `posizioni`: nessun account — il dubbio cade dalla parte dei bambini', async () => {
+    // È la riga che arriva da un database in cui quella colonna non esiste, e la
+    // domanda a cui si risponde è «va creato un account che legge l'anagrafica dei
+    // minori?». Su quella domanda «non lo so» vale «no».
+    delete h.state.tabelle.candidature_insegnanti[0].posizioni
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.stato).toBe('approvata')
+    expect(body.esitoAccount, 'account docente creato su una riga di cui non si conosce la posizione').toBe('nessuno')
+    expect(h.state.creazioniAuth).toEqual([])
+    expect(h.state.inserimenti).toEqual([])
+    expect(lettureUtenti()).toEqual([])
+    expect(h.sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('colonna `posizioni` assente sul database: la proiezione degrada, e degrada verso «nessun account»', async () => {
+    // Il DB E2E della CI non è migrato: una proiezione esplicita che chiede
+    // `posizioni` prende `42703`. `conResilienza` toglie la colonna e riprova —
+    // quindi la PATCH non muore — ma ciò che rilegge è una riga senza posizioni, e
+    // da lì l'account non nasce. Il degrado è silenzioso sull'esito HTTP e RUMOROSO
+    // nel log: è l'unico posto in cui il nome della colonna caduta si legge.
+    h.state.colonneAssentiSelect = ['posizioni']
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.esitoAccount).toBe('nessuno')
+    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('approvata')
+    expect(h.state.creazioniAuth).toEqual([])
+    expect(h.state.inserimenti).toEqual([])
+
+    // Il secondo tentativo è partito senza la colonna: senza questa riga il test
+    // non distinguerebbe «degradato» da «mai chiesta».
+    const lettureCandidatura = h.state.letture.filter((l) => l.table === 'candidature_insegnanti')
+    expect(lettureCandidatura.length, 'la lettura non è stata ritentata').toBeGreaterThan(1)
+    expect(lettureCandidatura[0].cols).toMatch(/posizioni/)
+    expect(lettureCandidatura[lettureCandidatura.length - 1].cols).not.toMatch(/posizioni/)
+
+    const caduta = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'colonna-assente-rimossa',
+    )
+    expect(caduta, 'la colonna caduta non è stata loggata: il degrado sarebbe invisibile').toBeTruthy()
+    expect(caduta![0]).toBe('candidatura')
+    expect(caduta![1]).toBe('warn')
+    expect((caduta![2] as { msg?: string }).msg).toMatch(/proiezione: posizioni/)
+    expect((caduta![2] as { error_code?: string }).error_code).toBe('42703')
   })
 })

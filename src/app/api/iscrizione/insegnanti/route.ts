@@ -11,14 +11,21 @@ import {
   INSEGNANTE_FIELDS,
   CONSENSI_INSEGNANTI_FIELDS,
   CONSENSI_INSEGNANTI_VERSIONE,
-  GRADI_OPTIONS,
+  POSIZIONI_AMMESSE,
+  gradiDallePosizioni,
 } from '@/lib/forms/insegnanti-template'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { validatePage, isProvinceField } from '@/lib/forms/validate-fields'
+import { percorsoCvAmmesso } from '@/lib/candidature/percorso-cv'
+import { campiVisibili } from '@/lib/forms/conditional'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni'
 import { sediReali } from '@/lib/scuole/reali'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede } from '@/lib/email/contesto'
+import { messaggioConfermaCandidatura } from '@/lib/email/messaggi/conferma-candidatura'
+import { formattaIstante } from '@/i18n/config'
 import type { FormPage } from '@/types/database.types'
 
 /**
@@ -158,20 +165,27 @@ async function avvisaSegreteria(
 }
 
 /**
- * Le fasce ammesse, LETTE dal template e non ribattute.
+ * Le posizioni ammesse, LETTE dal template e non ribattute.
  *
- * Non è pignoleria: `candidature_insegnanti.gradi` è di tipo `school_type_enum[]`,
- * e un valore fuori enum non fa un 400 — arriva all'INSERT e prende `22P02`, cioè
- * un 500 opaco davanti a una persona che non ha nessuno a cui chiedere. Il
- * template (`insegnanti-template.ts`) prescrive alla route di FILTRARE contro
- * `GRADI_OPTIONS`, ed è quello che fa lo `z.enum` qui sotto: il rifiuto arriva
- * sotto il campo, prima di toccare il database.
+ * Non è pignoleria: `candidature_insegnanti.posizioni` ha un `CHECK` di
+ * appartenenza (migrazione `20260814225302`), e un valore fuori elenco non fa un
+ * 400 — arriva all'INSERT e prende `23514`, cioè un 500 opaco davanti a una
+ * persona che non ha nessuno a cui chiedere. Il template prescrive alla route di
+ * FILTRARE contro `POSIZIONI_AMMESSE`, ed è quello che fa lo `z.enum` qui sotto:
+ * il rifiuto arriva sotto il campo, prima di toccare il database.
  *
  * Derivato invece che scritto a mano di proposito: se un domani si aggiunge una
- * quarta fascia (qui E nell'enum, con una migrazione), un letterale in questa
- * rotta la respingerebbe in silenzio.
+ * posizione (qui E nel `CHECK`, con una migrazione), un letterale in questa rotta
+ * la respingerebbe in silenzio.
+ *
+ * ⚠️ QUI NON C'È PIÙ NESSUN `GRADI_AMMESSI`, e non è una semplificazione: le
+ * fasce non arrivano più dal client affatto. Prima erano un campo del modulo e
+ * questa costante era la difesa contro il `22P02` dell'enum `school_type_enum`;
+ * adesso `gradi` lo COSTRUISCE la route con `gradiDallePosizioni()` a partire da
+ * valori che questo `z.enum` ha già filtrato. Un'enumerazione in più
+ * sorveglierebbe un ingresso che non esiste.
  */
-const GRADI_AMMESSI = GRADI_OPTIONS.map((o) => String(o.value)) as [string, ...string[]]
+const POSIZIONI_ZOD = POSIZIONI_AMMESSE as [string, ...string[]]
 
 /**
  * Lo schema d'ingresso.
@@ -190,9 +204,9 @@ const postBodySchema = z.object({
   data: z
     .object(
       {
-        gradi: z
-          .array(z.enum(GRADI_AMMESSI), { error: 'Indica almeno una fascia d’età' })
-          .min(1, 'Indica almeno una fascia d’età'),
+        posizioni: z
+          .array(z.enum(POSIZIONI_ZOD), { error: 'Indica almeno una posizione' })
+          .min(1, 'Indica almeno una posizione'),
       },
       { error: 'Dati della candidatura non validi' },
     )
@@ -310,10 +324,28 @@ function normalizzaRecord(dati: Record<string, unknown>): Record<string, unknown
  * peggio, scrivere in una colonna che nessuno aveva deciso di far scrivere a un
  * anonimo.
  */
-function costruisciRiga(dati: Record<string, unknown>, gradi: string[]): Record<string, unknown> {
+function costruisciRiga(
+  dati: Record<string, unknown>,
+  posizioni: string[],
+): Record<string, unknown> {
   const riga: Record<string, unknown> = {}
+  // I campi VISIBILI dato ciò che è stato scelto. Vedi il blocco al punto 4:
+  // `posizione_altro` esiste solo quando «Altro» è spuntato.
+  const visibili = new Set(campiVisibili(INSEGNANTE_FIELDS, dati).map((f) => f.id))
   for (const f of INSEGNANTE_FIELDS) {
-    if (f.id === 'gradi') continue
+    if (f.id === 'posizioni') continue
+    // ⚠️ UN CAMPO NASCOSTO SCRIVE `null`, NON IL SUO VALORE. Chi spunta «Altro»,
+    // scrive «psicomotricista», poi cambia idea e toglie la spunta lascerebbe
+    // altrimenti in tabella un mestiere che non ha dichiarato — e la riga
+    // verrebbe respinta dal `CHECK` di coerenza
+    // (`candidature_insegnanti_posizione_altro_coerente`), cioè un 500 opaco
+    // sull'ultimo tocco di un modulo compilato per intero. `null` esplicito e
+    // non `undefined`: PostgREST omette le chiavi `undefined`, e su un `UPDATE`
+    // — che qui non c'è, ma la funzione non lo sa — omettere non è azzerare.
+    if (!visibili.has(f.id)) {
+      riga[f.id] = null
+      continue
+    }
     if (f.type === 'number') {
       const n = Number(String(dati[f.id] ?? '').replace(',', '.'))
       riga[f.id] = testo(dati[f.id]) === null || !Number.isFinite(n) ? null : n
@@ -321,11 +353,24 @@ function costruisciRiga(dati: Record<string, unknown>, gradi: string[]): Record<
     }
     riga[f.id] = testo(dati[f.id])
   }
-  // `gradi` SEMPRE esplicito, e mai vuoto. Il CHECK in tabella
-  // (`array_length(gradi, 1) >= 1`) vale NULL su un array vuoto, e un CHECK che
-  // vale NULL PASSA: senza questa riga una candidatura senza nessuna fascia
-  // entrerebbe in silenzio, e la segreteria non saprebbe a chi smistarla.
-  riga.gradi = gradi
+  // `posizioni` SEMPRE esplicito, e mai vuoto: il `CHECK` in tabella è
+  // `cardinality(posizioni) >= 1`, che su un array vuoto vale FALSO (a
+  // differenza di `array_length`, che vale NULL e quindi PASSA — è il difetto
+  // che `gradi` ha avuto per mesi, misurato in produzione il 2026-08-10).
+  riga.posizioni = posizioni
+  // ── `gradi` NON ARRIVA PIÙ DAL CLIENT: SI DERIVA ──────────────────────────
+  //
+  // È la colonna che `admin/candidature-insegnanti:PATCH` travasa in
+  // `utenti.gradi` all'approvazione, quindi deve restare popolata; ma il suo
+  // valore adesso discende dalle posizioni docenti, che lo `z.enum` ha già
+  // filtrato. Due conseguenze, e vanno dette:
+  //   · il `22P02` dell'enum `school_type_enum` diventa INESPRIMIBILE invece che
+  //     difeso — nessuna stringa esterna raggiunge più quella colonna;
+  //   · per una candidatura non docente (cuoca, segreteria, collaboratrice,
+  //     altro) l'array è VUOTO, e va bene così: una cuoca non ha una fascia
+  //     d'età. Il `CHECK` di `gradi` non è stato stretto proprio per questo —
+  //     stringerlo respingerebbe le candidature che questo lavoro accoglie.
+  riga.gradi = gradiDallePosizioni(posizioni)
   return riga
 }
 
@@ -392,13 +437,34 @@ const PAGINA_CONSENSI: FormPage[] = [
  * cioè tutto ciò che l'altra porta pubblica ha scritto in quel bucket, non
  * combacia e non può più essere indicato da qui.
  *
- * ⚠️ OGGI NON ESISTE ANCORA UNA ROTTA DI CARICAMENTO PER LE CANDIDATURE
- * (misurato il 2026-08-10: in `src/app/api` non c'è nulla che produca
- * `candidature/…`). Quindi oggi NESSUN valore legittimo di questo campo esiste,
- * e questo gate lo rifiuta in blocco — che è esattamente il comportamento
- * voluto: l'unico che potrebbe riempirlo adesso è chi se lo inventa. Quando la
- * rotta di caricamento nascerà, dovrà produrre questa forma; ed è scritto qui
- * perché il vincolo si veda da entrambe le parti.
+ * ⚠️ DAL 2026-08-15 LA ROTTA DI CARICAMENTO ESISTE, ed è `POST
+ * /api/iscrizione/insegnanti/upload`. Fino a quel giorno non ce n'era nessuna
+ * (misurato il 2026-08-10: in `src/app/api` non c'era nulla che producesse
+ * `candidature/…`), quindi nessun valore legittimo di questo campo poteva
+ * esistere e questo gate lo rifiutava in blocco — l'unico che potesse riempirlo
+ * era chi se lo inventava. La prescrizione scritta allora («quando la rotta di
+ * caricamento nascerà, dovrà produrre questa forma») è stata mantenuta alla
+ * lettera: quella rotta importa `CV_PREFISSO` da qui e costruisce il percorso
+ * con la stessa `crypto.randomUUID()` e la stessa sanificazione del nome, così
+ * la forma che si accetta e la forma che si produce non possono divergere.
+ *
+ * ⚠️ E DAL 2026-08-15 IL PERCORSO È ANCHE UNICO IN TABELLA
+ * (`candidature_insegnanti_cv_unico`). Non è ridondanza con questo gate: la
+ * forma dice «questo percorso qualcuno POTREBBE averlo prodotto», l'indice dice
+ * «e nessun'altra candidatura l'ha già dichiarato».
+ *
+ * Serve la seconda perché il gate di firma del cockpit risolve percorso ⇒ riga
+ * e, con due righe che dichiarano lo stesso percorso, non fallisce: ne prende
+ * UNA A CASO. Misurato, e non supposto: `assertCurriculumInScope` chiamava
+ * `.limit(1)` PRIMA di `.maybeSingle()`, e `maybeSingle()` sintetizza `PGRST116`
+ * solo quando `data.length > 1`
+ * (`node_modules/@supabase/postgrest-js/dist/index.cjs:471`) — quindi quel ramo
+ * era irraggiungibile per costruzione. Senza l'indice, chi conosce un percorso
+ * (un URL firmato lo porta IN CHIARO: basta un link inoltrato) invia una
+ * candidatura anonima sulla PROPRIA sede dichiarando il `cv_path` di una
+ * candidatura di un'altra, e da lì la Segreteria della prima riceve un URL
+ * firmato per il curriculum di chi si era proposto alla seconda — con la riga di
+ * sorveglianza che attribuisce la lettura alla candidatura sbagliata.
  *
  * La difesa NON sostituisce quella dell'altra parte: `assertCurriculumInScope`
  * fa bene a restare fail-closed. Due porte chiuse non sono una ridondanza quando
@@ -429,51 +495,54 @@ const PAGINA_CONSENSI: FormPage[] = [
  * solo qui si può fare: rifiutare un riferimento che nessuna rotta di
  * caricamento potrebbe aver prodotto.
  */
-const CV_PREFISSO = 'candidature/'
-
 /**
- * Il tetto di lunghezza. Non è la lunghezza della colonna (`text`): è il punto
- * oltre il quale un «percorso» non è più un percorso ma un campo di testo libero
- * scritto da un anonimo dentro il database. Il nome del file lo sanifica e lo
- * accorcia chi carica; qui si mette il confine.
- */
-const CV_MAX_LUNGHEZZA = 200
-
-/**
- * Le estensioni ammesse, LETTE dal template e non ribattute — è la stessa lista
- * che `insegnanti-template.ts` tiene allineata a `ESTENSIONI_ALLEGATO_PUBBLICO`
- * (e che un test confronta con quella costante). Una quarta copia qui dentro
- * sarebbe la copia che diverge: quando il bucket cambierà i tipi ammessi, questa
- * riga non va toccata.
- */
-const CV_ESTENSIONI = String(INSEGNANTE_FIELDS.find((f) => f.id === 'cv_path')?.accept ?? '')
-  .split(',')
-  .map((e) => e.trim().replace(/^\./, '').toLowerCase())
-  .filter((e) => e !== '')
-
-/**
- * La forma: `candidature/<uuid>-<nome sanificato>`.
+ * ⚠️ LE COSTANTI E IL GATE DEL PERCORSO NON VIVONO PIÙ QUI: stanno in
+ * `@/lib/candidature/percorso-cv`, dal 2026-08-15.
  *
- * È la stessa costruzione di `iscrizione/upload:POST`
- * (`${cartella}/${crypto.randomUUID()}-${safeName}`, con `safeName` ridotto a
- * `[A-Za-z0-9._-]`), cambiata solo nel prefisso. L'uuid deve stare nella forma
- * che genera il server: è la parte del percorso che chi invia il modulo non può
- * scegliere, ed è ciò che impedisce di indicare un oggetto altrui anche il
- * giorno in cui il prefisso `candidature/` conterrà davvero qualcosa.
+ * Non è un riordino. Quella regola vale per QUATTRO strade — questa, la rotta di
+ * caricamento che i percorsi li costruisce, il pannello di Segreteria che li
+ * firma e il cron che li cancella — e finché è vissuta qui dentro le altre due
+ * si ribattevano a mano il nome del bucket, con due nomi diversi (`BUCKET_CV` e
+ * `BUCKET_ALLEGATI`) per lo stesso archivio: uno firma ciò che l'altro cancella.
+ * In questo repo una regola in quattro posti diverge alla prima modifica, ed è
+ * la lezione già pagata su `@/lib/allegati/mime` e su `gallery` (50 MB nel
+ * bucket, 200 nella route, per mesi).
  *
- * Nessuna barra dopo il prefisso, quindi nessuna risalita: `..` può comparire
- * solo dentro il nome, dove non attraversa niente.
+ * Quel modulo porta anche la ragione per cui il nome del file NON sopravvive più
+ * alla richiesta: su questa porta si chiama `cv-<cognome>.pdf`, e un percorso
+ * finisce in una colonna, dentro un URL firmato in chiaro e — se qualcuno si
+ * distrae — dentro un log.
  */
-const CV_FORMA = new RegExp(
-  `^${CV_PREFISSO}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[A-Za-z0-9._-]+$`,
-)
 
-function percorsoCvAmmesso(percorso: string): boolean {
-  if (percorso.length > CV_MAX_LUNGHEZZA) return false
-  if (!CV_FORMA.test(percorso)) return false
-  const punto = percorso.lastIndexOf('.')
-  if (punto < 0) return false
-  return CV_ESTENSIONI.includes(percorso.slice(punto + 1).toLowerCase())
+/**
+ * Il nome dell'indice unico su `cv_path` (migrazione `20260814225302`).
+ *
+ * Sta QUI e non nel modulo condiviso perché serve a una cosa sola, e solo a
+ * questa rotta: su di essa i `23505` sono DUE fatti diversi e si distinguono
+ * unicamente per nome — l'indice sull'email (doppio invio della stessa persona
+ * ⇒ 201, per non fare da oracolo) e questo (un curriculum già dichiarato da
+ * un'altra candidatura ⇒ 400 sul campo). Nessun altro file inserisce in questa
+ * tabella, quindi nessun altro può incontrare quel conflitto.
+ */
+const INDICE_CV_UNICO = 'candidature_insegnanti_cv_unico'
+
+/**
+ * Il `23505` riguarda il curriculum e non l'email?
+ *
+ * Si guarda in `message`, `details` e `hint` insieme: Postgres mette il nome del
+ * vincolo nel messaggio («duplicate key value violates unique constraint "…"»),
+ * ma PostgREST non garantisce quale dei tre campi lo porti, e cercare in uno
+ * solo è il modo in cui questa distinzione smetterebbe di funzionare senza che
+ * nessun test se ne accorga. Il confronto è su un nome che conosciamo NOI: non
+ * si legge testo di un terzo per decidere, si cerca dentro di esso una stringa
+ * chiusa.
+ */
+function violaIndiceCv(errore: unknown): boolean {
+  const e = errore as { message?: unknown; details?: unknown; hint?: unknown } | null
+  return [e?.message, e?.details, e?.hint]
+    .map((v) => (typeof v === 'string' ? v : ''))
+    .join(' ')
+    .includes(INDICE_CV_UNICO)
 }
 
 export const POST = withRoute('iscrizione/insegnanti:POST', async (request: NextRequest) => {
@@ -537,7 +606,21 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // arrivi al database (una provincia per esteso in una `varchar(2)` è già
     // successa, sull'altro modulo pubblico).
     const normalizzati = normalizzaRecord(dati)
-    const campi = validatePage(INSEGNANTE_FIELDS, normalizzati)
+    // ⚠️ I CAMPI **VISIBILI**, non il template intero — ed è un cambiamento del
+    // 2026-08-15, non una sfumatura. `validatePage` documenta di sé che «sul
+    // client si passano i soli campi VISIBILI (logica condizionale); sul server
+    // si passa il template completo»: era vero finché nessun campo di questo
+    // modulo aveva una `condition`. Da oggi `posizione_altro` ne ha una
+    // (`posizioni contains 'altro'`) ed è `required`, quindi passare il template
+    // completo rifiuterebbe con «Campo obbligatorio» OGNI candidatura che non ha
+    // spuntato «Altro» — cioè quasi tutte, e per un campo che chi compila non ha
+    // nemmeno visto.
+    //
+    // `campiVisibili` legge da `@/lib/forms/conditional`, che è lo STESSO motore
+    // del wizard: le due parti valutano la stessa condizione con la stessa
+    // funzione, che è l'unico modo in cui client e server non divergono su cosa
+    // sia obbligatorio.
+    const campi = validatePage(campiVisibili(INSEGNANTE_FIELDS, normalizzati), normalizzati)
     if (Object.keys(campi).length > 0) {
       // Nel log SOLO gli id dei campi, mai i valori: `campi_ko` è una chiave
       // fuori dalla lista bianca di `redact()`, quindi anche questo verrebbe
@@ -712,11 +795,17 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
 
     // ── 8. L'INSERIMENTO ────────────────────────────────────────────────────
     //
-    // `gradi` deduplicato: due volte «nido» nell'array non è un errore per il
-    // database, ma è rumore in una colonna che la segreteria legge per smistare.
-    const gradi = [...new Set((dati.gradi as string[]) ?? [])]
+    // Le posizioni si deduplicano E si RIORDINANO, e il riordino non è vezzo:
+    // filtrando `POSIZIONI_AMMESSE` (che è l'ordine del template) invece di
+    // ricopiare l'array ricevuto, due candidature identiche producono lo stesso
+    // valore in tabella anche se le caselle sono state spuntate in ordine
+    // diverso. Con `[...new Set(ricevute)]` l'ordine sarebbe quello dei clic, e
+    // ogni conteggio o confronto su quella colonna dipenderebbe da come una
+    // persona ha mosso il dito.
+    const scelte = new Set((dati.posizioni as unknown[] | undefined ?? []).map((p) => String(p)))
+    const posizioni = POSIZIONI_AMMESSE.filter((p) => scelte.has(p))
     const riga: Record<string, unknown> = {
-      ...costruisciRiga(normalizzati, gradi),
+      ...costruisciRiga(normalizzati, posizioni),
       scuola_id: scuolaId,
       consents_log: consentsLog,
     }
@@ -832,6 +921,50 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
       // l'uuid della riga già viva e `error_code` — mai l'email, che nel
       // `message` di Postgres c'è per costruzione.
       if (codice === '23505') {
+        // ── PRIMA DI TUTTO: QUALE DEI DUE INDICI UNICI? ──────────────────────
+        //
+        // Dal 2026-08-15 su questa tabella ce ne sono DUE, e il ramo qui sotto
+        // — quello che risponde 201 — è scritto per uno solo di essi. Se un
+        // `23505` del curriculum finisse lì, la rotta risponderebbe «ricevuta»
+        // a una candidatura che NON è stata scritta da nessuna parte: la bugia
+        // più costosa che questo file possa dire, perché chi la legge non
+        // riprova.
+        //
+        // Il caso: `candidature_insegnanti_cv_unico` scatta quando il
+        // `cv_path` dichiarato è GIÀ di un'altra candidatura. Non succede a chi
+        // usa il modulo — ogni caricamento genera un uuid nuovo — e infatti
+        // l'indice esiste per l'altro caso: qualcuno che riusa un percorso
+        // altrui, e con ciò fa firmare alla Segreteria della PROPRIA sede il
+        // curriculum di chi si era proposto a un'altra. La ragione per esteso, e
+        // la misura che smentisce la prima stesura di questa nota, stanno nella
+        // migrazione `20260814225302`.
+        //
+        // Qui la risposta è un 400 SUL CAMPO, e non il 201 del doppio invio:
+        // non c'è nessun oracolo da chiudere — un percorso contiene un uuid
+        // generato dal server, quindi chi lo possiede o l'ha caricato lui (e
+        // allora non collide) o l'ha avuto da qualcun altro. E la frase dice
+        // l'unica cosa azionabile: riallega.
+        if (violaIndiceCv(error)) {
+          // NEL LOG NON VA IL PERCORSO: contiene il nome del file, che su questa
+          // porta è quasi sempre il nome di una persona. Si registra il fatto.
+          logEvento('candidatura', 'warn', {
+            operazione: OPERAZIONE,
+            esito: 'cv-path-gia-dichiarato',
+            scuola_id: scuolaId,
+            error_code: '23505',
+          })
+          return NextResponse.json(
+            {
+              error: 'Alcuni campi non sono validi. Controlla i dati e riprova.',
+              codice: 'CANDIDATURA_NON_INVIATA',
+              campi: {
+                cv_path: 'Allega di nuovo il curriculum dal modulo: questo riferimento non è valido.',
+              },
+            },
+            { status: 400 },
+          )
+        }
+
         // ⚠️ SI RILEGGE CON LO STESSO VALORE CHE SI È PROVATO A SCRIVERE, non con
         // una seconda normalizzazione che gli somiglia.
         //
@@ -986,8 +1119,70 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
       // torna vuota. Passano tutti e due da `redact()` come uuid: il costo non è
       // in tabella, è di chi legge.
       scuola_id: scuolaId,
-      n_gradi: gradi.length,
+      // `n_posizioni` e non più `n_gradi`: le fasce sono derivate, quindi il
+      // loro conteggio non dice più niente che le posizioni non dicano già — e
+      // per una cuoca varrebbe zero, che si leggerebbe come «candidatura senza
+      // fasce», cioè il difetto che il numero serviva a scoprire. Numeri e basta,
+      // niente quali: `redact()` li lascia passare per tipo, e a chi interroga
+      // `app_log` serve sapere se il modulo raccoglie, non chi cerca che lavoro.
+      n_posizioni: posizioni.length,
+      // Booleano, quindi passa `redact()` per tipo. È la sola cosa che distingue
+      // una candidatura che all'approvazione farà nascere un account docente da
+      // una che non ne farà nascere nessuno: senza, quel bivio non è contabile.
+      docente: gradiDallePosizioni(posizioni).length > 0,
+      // Il modulo raccoglie curriculum, oppure li perde? Prima di oggi la
+      // domanda non aveva senso — nessuna rotta di caricamento esisteva — e da
+      // oggi è la misura che dice se la funzione appena aperta funziona.
+      con_cv: cvPath !== null,
     })
+
+    // ─── LA CONFERMA ALLA CANDIDATA ─────────────────────────────────────────
+    // Best-effort: la candidatura è già registrata, e un'email che non parte non
+    // deve trasformare un 201 in un 500. Ma non tace: ogni esito lascia una riga,
+    // perché «nessun log» non distingua «tutte partite» da «non è mai partito
+    // niente».
+    //
+    // ⚠️ NON sta nel ramo del duplicato: dire «abbiamo ricevuto la sua
+    // candidatura» a chi è stato respinto perché ne ha già una aperta sarebbe
+    // falso, e le farebbe credere di averne due in corsa.
+    if (typeof riga.email === 'string' && riga.email.includes('@')) {
+      try {
+        const sede = await risolviContestoSede(supabase, scuolaId, OPERAZIONE)
+        const messaggio = messaggioConfermaCandidatura({
+          nome: typeof riga.nome === 'string' ? riga.nome : null,
+          inviataIl: formattaIstante(new Date(), 'it', {
+            day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+          }),
+          // Le posizioni scelte, come testo: è quello che la persona ha indicato.
+          ruolo: posizioni.length > 0 ? posizioni.join(', ') : null,
+          // Un CONTEGGIO, mai i nomi dei file: un nome di file può contenere di
+          // tutto — il codice fiscale, la data di nascita, il datore precedente —
+          // e questa email non ha nessun motivo di ripeterlo a chi l'ha caricato.
+          numeroAllegati: cvPath !== null ? 1 : 0,
+          giorniRisposta: 30,
+        }, sede)
+        const invio = await sendEmailDetailed({
+          to: riga.email,
+          subject: messaggio.oggetto,
+          text: messaggio.testo,
+          html: messaggio.html,
+        })
+        logEvento('candidatura', invio.ok ? 'info' : 'warn', {
+          operazione: OPERAZIONE,
+          esito: invio.ok ? 'conferma-inviata' : 'conferma-non-inviata',
+          canale: 'email',
+          entita_id: entitaId,
+          scuola_id: scuolaId,
+        }, invio.ok ? undefined : new Error(invio.error ?? 'motivo sconosciuto'))
+      } catch (e) {
+        logEvento('candidatura', 'warn', {
+          operazione: OPERAZIONE,
+          esito: 'conferma-non-inviata',
+          entita_id: entitaId,
+          scuola_id: scuolaId,
+        }, e)
+      }
+    }
 
     return NextResponse.json({ id: entitaId }, { status: 201 })
   } catch (err) {

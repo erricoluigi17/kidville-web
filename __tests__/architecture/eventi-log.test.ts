@@ -236,6 +236,13 @@ const DEROGHE_INFO_NON_PERSISTITI = new Map<string, string>([
     ['diary', 'degrado di colonna sulle voci di diario: il dato sta in tabella, il log è diagnostica.'],
     ['protocolli', 'note sulle categorie di protocollo (schema assente): nessun successo di dominio.'],
     ['sidi', 'note di sincronizzazione dello store SIDI: l\'esito dell\'import è `warn`/`error`.'],
+    // `fascicolo` (2026-08-13): gli `info` sono le letture dell'archivio documenti —
+    // quante righe, quanti alunni, quale fonte è caduta. L'accesso che conta davvero,
+    // quello a un documento sanitario di un minore, NON passa di qui: sta in
+    // `fascicolo_accessi_audit`, tabella dedicata e immodificabile, con alunno,
+    // documento, azione, ip e user-agent. Persistere anche su `app_log` produrrebbe
+    // un doppione più povero della riga che l'audit ha già. I dinieghi restano `warn`.
+    ['fascicolo', "gli `info` sono letture di elenco (conteggi e uuid). L'accesso a un documento sanitario è registrato in `fascicolo_accessi_audit`, non qui: su `app_log` sarebbe un doppione più povero. I dinieghi sono `warn`."],
 ]);
 
 describe('vocabolario chiuso degli eventi di log', () => {

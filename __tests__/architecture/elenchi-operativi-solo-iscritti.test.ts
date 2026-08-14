@@ -379,6 +379,23 @@ const AMMESSE: Record<string, Esenzione> = {
       "anagrafica: l'elenco completo della sede è il suo scopo, e lo stato è una tendina — `?stato=ritirato` È la vista «non più iscritti». Gli undici chiamanti dichiarano il loro (lock a fondo file)",
   },
 
+  // ── ARCHIVIO DOCUMENTI: dieci anni di conservazione, e la ragione è la stessa
+  // dell'anagrafica. Il filtro di stato ESISTE ed è il default: si vedono gli
+  // iscritti, e solo la segreteria — non l'insegnante — può chiedere
+  // `includiNonIscritti=1`. Non conta come presidio perché è facoltativo, ed è
+  // giusto che sia facoltativo: il fascicolo di un bambino ritirato non si
+  // cancella con lui, e cercare il suo nulla osta o la sua ultima ricevuta è
+  // esattamente ciò per cui quei documenti si conservano.
+  //
+  // Non è la trappola della mensa citata qui sopra: da questa schermata non si
+  // prenota, non si vende e non si inserisce niente. Si legge, e ogni lettura di
+  // un documento sanitario è registrata in `fascicolo_accessi_audit`.
+  'src/app/api/documenti-firmati/route.ts::documenti-firmati:GET': {
+    scoperte: 1,
+    ragione:
+      "archivio documenti: gli iscritti sono il default, `includiNonIscritti=1` è riservato alla segreteria e serve perché i documenti si conservano dieci anni — un fascicolo irraggiungibile è il peggio dei due mondi",
+  },
+
   'src/app/api/admin/search/route.ts::admin/search:GET': {
     scoperte: 1,
     ragione:
@@ -698,6 +715,23 @@ const CHIAMANTI_SENZA_STATO: Record<string, Esenzione> = {
     scoperte: 1,
     ragione:
       'Registro dei protocolli DPR 445: si protocolla soprattutto per chi è USCITO (nulla osta, trasferimenti, certificati chiesti dopo), quindi togliere gli archiviati toglierebbe il caso d’uso principale',
+  },
+  // ⚠️ QUESTA VOCE NON DICE «voglio anche chi non frequenta più»: dice che il confine
+  // giusto qui è PIÙ LARGO di `stato=iscritto` e più stretto della sede intera. Il banco
+  // dei prestampati sceglie il bambino a cui rilasciare un certificato, e il gate che
+  // conta è quello del SERVER: `alunnoNonStampabile` (`src/lib/prestampati/prefill.ts`)
+  // rifiuta con 409 solo chi è `eNonPiuIscritto`, cioè il RITIRATO — il `sospeso` no,
+  // perché «è un bambino che frequenta» (`src/lib/alunni/stato.ts`, dove quel confine è
+  // deciso una volta sola). Passare `stato=iscritto` renderebbe impossibile emettere il
+  // certificato per il Bonus Asilo Nido a una famiglia sospesa per morosità — che è
+  // proprio la famiglia che quel certificato lo chiede — e sarebbe una scelta di prodotto
+  // presa da un filtro di interfaccia invece che da una persona. Il pannello legge quindi
+  // l'elenco della classe e lo filtra con `eAncoraIscritto`, la STESSA funzione del
+  // rifiuto del server: due strade, una regola sola.
+  'src/components/features/prestampati/PrestampatiSegreteria.tsx': {
+    scoperte: 1,
+    ragione:
+      'Banco dei prestampati: il confine è quello del server (`alunnoNonStampabile` rifiuta solo `eNonPiuIscritto`, quindi il sospeso resta), e il pannello filtra con `eAncoraIscritto` — `stato=iscritto` escluderebbe i sospesi, cioè bambini che frequentano e a cui il certificato si rilascia',
   },
 }
 

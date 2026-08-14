@@ -1029,6 +1029,18 @@ const AMMESSE: Record<string, string> = {
     'mensa/prenotazioni:<modulo>': "helper: disdetta+riaccredito sull'alunno indicato dal chiamante (RPC atomica)",
     'tasks:<modulo>': 'helper: risolve nome e ruolo di un utente per id, per mostrarli nella bacheca',
     'fea/receipt:<modulo>': 'helper: risolve la ricevuta di firma per id; il gate è il token della ricevuta',
+    // Archivio dei documenti firmati (2026-08-13). Due letture per id, entrambe
+    // seguite dal gate vero:
+    //  · `documenti-firmati/dettaglio` legge la submission/il documento PER RISOLVERE
+    //    a quale alunno appartiene — non si può filtrare per una sede che si scopre
+    //    solo dopo aver letto la riga. Subito dopo passa da `assertAlunnoInScope` e,
+    //    se il documento è sanitario, da `puoAccedereFascicolo`.
+    //  · `documenti-firmati:GET` legge i TITOLI dei modelli il cui id compare nelle
+    //    submission di alunni già filtrati per sede. Un filtro di sede qui
+    //    escluderebbe i modelli globali (`forms_templates.scuola_id = null`), che
+    //    valgono per tutte e tre le sedi: lascerebbe le righe senza nome.
+    'documenti-firmati/dettaglio:<modulo>': "helper: risolve l'alunno del documento indicato; il gate (assertAlunnoInScope + puoAccedereFascicolo) gira subito dopo, sull'alunno risolto",
+    'documenti-firmati:GET': 'titoli dei modelli citati dalle submission di alunni già filtrati per sede; i modelli globali hanno scuola_id nullo',
 
     // ── Merch: le righe appena create, e il loro rollback ────────────────────
     'pagamenti/rate:POST': "piano rate: il `delete` è il rollback del pagamento padre appena creato in QUESTA richiesta (le rate figlie non sono state scritte), e la sede di ogni riga viene dall'alunno verificato",
@@ -1317,7 +1329,25 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    `admin/students/riattiva` — arrivano dalla corsia accanto e sono
             //    contate qui, non certificate: chi le ha scritte dichiari le proprie
             //    esenzioni.
-            routeConServiceRole: 289,
+            // 289 → 291 il 2026-08-13: l'archivio dei documenti firmati porta due
+            // route nuove (`documenti-firmati:GET`, `documenti-firmati/dettaglio:GET`).
+            // 291 → 295 il 2026-08-14: la modulistica prestampata, e le quattro route
+            // vanno nominate una per una — un +4 senza attribuzione è il modo in cui una
+            // route entra in questo inventario senza che nessuno l'abbia guardata:
+            //
+            //  · `prestampati:GET` e `prestampati/genera:POST` — lo sportello della
+            //    segreteria. NON portano esenzioni: sull'ALUNNO il gate è
+            //    `caricaPrefillAlunno` (che chiama `requireParentOfStudent`) più
+            //    `resolveScuoleAttive`, sulla SEZIONE è `assertSezioneInScope` più le sedi
+            //    attive passate a `caricaSezione`, e la generazione dichiara la sede con
+            //    `resolveScuolaScrittura` prima di leggere qualunque cosa. La query dei
+            //    bambini di una sezione filtra per `scuola_id` oltre che per `section_id`,
+            //    perché da quando le sedi sono tre il nome di una classe non è più una
+            //    chiave univoca.
+            //  · `parent/prestampati:GET` e `parent/prestampati/firma` — il flusso della
+            //    famiglia, che arriva dalla corsia accanto: contate qui, non certificate.
+            //    Chi le ha scritte dichiari le proprie esenzioni.
+            routeConServiceRole: 295,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1357,7 +1387,26 @@ describe('coverage-lock isolamento fra sedi', () => {
             // invece di fidarsi. `handlerEsentati` NON si muove: nessuno dei quattro
             // handler nuovi è in allowlist, che è la sola cosa che questo numero esiste
             // per impedire in silenzio.
-            handlerControllati: 451,
+            // 451 → 453 il 2026-08-13: i due handler dell'archivio documenti.
+            // 453 → 458 il 2026-08-14, e il conto è **453 + 5** su QUATTRO route: i due
+            // dello sportello (`prestampati:GET`, `prestampati/genera:POST`) e i tre della
+            // famiglia (`parent/prestampati:GET`, `parent/prestampati/firma:POST` e
+            // `:PATCH`) — la route della firma ne porta due, ed è il motivo per cui i due
+            // numeri di questa riga non crescono dello stesso passo di quello sopra.
+            // `handlerEsentati` non si muove: nessuno dei cinque è in allowlist.
+            // 458 → 459 il 2026-08-14: è nato `teacher/uscite:POST`, la creazione
+            // dell'uscita didattica che genera da sé l'autorizzazione della famiglia
+            // (prestampato n. 10). `routeConServiceRole` NON cambia — quel file è già
+            // contato, il `createAdminClient()` del GET c'era da prima — e
+            // `handlerEsentati` resta 94, che è il punto da guardare: l'handler NON è in
+            // allowlist. Dichiara la sede con `resolveScuolaScrittura` e la scrive su
+            // entrambi gli INSERT (`eventi_agenda`, `forms_templates`); le tre letture
+            // (`sections`, le uscite già create, i moduli già scritti) portano
+            // `.eq('scuola_id', …)` dentro la query, e le sezioni passano una per una da
+            // `assertSezioneInScope`. Una gita archiviata nel plesso sbagliato si
+            // porterebbe dietro l'autorizzazione, cioè manderebbe il modulo da firmare
+            // alle famiglie di un'altra scuola.
+            handlerControllati: 459,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1408,7 +1457,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `admin/candidature-insegnanti`, `admin/anagrafiche/codici-fiscali:GET`)
             // restano a zero esenzioni: sono contate nei due numeri sopra e
             // basta.
-            handlerEsentati: 92,
+            // 92 → 94 il 2026-08-13, ed è un numero che SALE: due letture per id
+            // dell'archivio documenti (vedi le ragioni in AMMESSE). Non è un presidio
+            // tolto — le due route filtrano per sede la query che conta, quella degli
+            // alunni, e chiamano `assertAlunnoInScope` prima di restituire un byte —
+            // ma è comunque una decisione, e questo numero esiste perché passi sotto
+            // gli occhi di qualcuno invece che in silenzio.
+            handlerEsentati: 94,
         })
     })
 })

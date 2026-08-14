@@ -67,6 +67,8 @@
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
+> | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
+> | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
 > | **Anagrafiche — il codice fiscale certo** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione**: le due migrazioni sono applicate, il codice attende il merge | `/admin/students` → **quinta linguetta «Codici fiscali»** (`CodiciFiscaliDaVerificare`); la cascata **provincia → comune** (`LuogoNascitaFields`) e il badge di coerenza (`BadgeCoerenzaCf`) sulle sei schede di alunno e genitore | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde. Scrittura con `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**. `GET /api/anagrafiche/comuni` serve la sola provincia scelta: le 13.656 righe della tabella Belfiore **non escono mai** verso il browser (lock `dataset-comuni-fuori-dal-bundle`). Il calcolo è locale e sincrono (`src/lib/fiscale/`): **nessuna chiamata a terzi**, `api.codicefiscale.it` è al bando |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
@@ -91,6 +93,285 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🚪 Changelog — L'app iOS è uscita sullo store, e il file che decide dove punta non lo guardava nessuno 2026-08-14 (branch `feat/documenti-firmati`)
+
+**iOS è PUBBLICATA.** Misurato oggi contro le misure del 09/08, con lo strumento tarato in
+entrambi i versi (WhatsApp risponde ovunque, un id inventato dà 404 di 2512 byte):
+
+| | 2026-08-09 | 2026-08-14 |
+|---|---|---|
+| `itunes.apple.com/lookup?id=6794883055&country=it` | `resultCount: 0` | **`resultCount: 1`** |
+| pagina prodotto IT | **404** | **301 → 200**, 249 KB |
+| ricerca `term=kidville` in IT | — | **posizione 1** |
+| territori con `TRADER_STATUS_*` | **27** | **0 su 175** |
+| ITA in `territoryAvailabilities` | `TRADER_STATUS_NOT_PROVIDED` | **`AVAILABLE`** |
+
+Che la verifica DSA di Apple si sia conclusa resta una **deduzione**: ne è misurato l'effetto, non
+lo stato. La pagina *Conformità* non è leggibile — `appstoreconnect.apple.com` non è fra i domini
+autorizzati nell'estensione Chrome. Il modello scritto qui il 06/08 («la dichiarazione toglie
+`TRADER_STATUS`, la verifica toglie `CANNOT_SELL`») **resta smentito**: `CANNOT_SELL` è su 174
+territori e sono semplicemente quelli non selezionati.
+
+**Android: il traguardo è il 19, non il 20.** Letto in Play Console: *«Al momento partecipano 12
+tester per **8 giorni** di fila»*. Con 8 giorni al 13/08 il giorno 1 è il **06/08** — che è ciò che
+questo documento registrava alla riga «12 tester per 1 giorno» del 06/08 — e il quattordicesimo
+cade il **19 agosto**. È la lettura del 09/08 («3 giorni») a essere fuori linea di uno, e con lei
+cade la conclusione di quel giorno che dava torto alla memoria. Sul canale alpha c'è ancora il
+bundle `1 (1.0)` del 05/08: il `versionCode 2` ricostruito il 09/08 **non è mai stato caricato**, e
+non serve caricarlo — il contatore corre lo stesso. Fino al 19/08 non si tocca niente. Nessuna
+modifica non pubblicata, nessun problema normativo, nessun modulo in sospeso, 29 in mailing list /
+18 installazioni / **12 che contano** (margine zero).
+
+### 🔴 Il difetto: `ios/App/App/capacitor.config.json` puntava a `http://localhost:3100`
+
+Il file che finisce **dentro** il bundle iOS e che il runtime legge davvero portava
+`server.url = http://localhost:3100`, `cleartext: true`,
+`limitsNavigationsToAppBoundDomains: false` — quest'ultimo spegne anche il Service Worker su
+WKWebView. Una build fatta in quel momento apre un indirizzo che sul telefono non esiste:
+schermata d'errore per sempre, e rigetto 2.1.
+
+**È lo stesso difetto corretto per Android il 09/08** (`0bba518`) e mai chiuso per iOS, perché
+`npx cap sync android` riscrive **un solo** file: le mtime lo dicono (Android 09/08 12:05, iOS
+fermo all'08/08 03:05). È la **quinta** volta fra il 31/07 e il 14/08.
+
+⚠️ **Ciò che NON si può affermare, e che il 14/08 era stato affermato per sbaglio**: che la build
+già sullo store sia stata costruita prima del guasto. Il ragionamento poggiava su una mtime, che è
+l'**ultima** scrittura e non la prima; e `offline-html-nativo.test.ts:48-51` registra quel file già
+a `localhost:3100` il **2026-08-03**, cioè *prima* dell'invio della `1.0 (4)`. La prova che regge è
+un'altra, indiretta ma solida: il 04/08 il titolare ha installato la `1.0 (3)` da TestFlight e ha
+segnalato *«rimane per dei secondi schermo bianco»* — schermo bianco **per dei secondi**, poi il
+sito. Con `localhost` l'HTML non sarebbe mai arrivato. La `(4)` è stata caricata 47 minuti dopo la
+`(3)`. **Prova definitiva mancante**: installare l'app dall'App Store su un iPhone e aprirla.
+
+### Il cancello, e perché non è un test
+
+I due `capacitor.config.json` sincronizzati sono **gitignorati**: in un clone pulito non esistono,
+quindi nessun test di CI può guardarli senza essere rosso su ogni PR — è già stato provato e
+scartato (gli `it.skipIf` di `offline-html-nativo.test.ts`). Il controllo vive perciò **dove si
+costruisce**, e in CI resta ciò che in CI si può fare davvero.
+
+- **`scripts/verifica-shell-nativa.py`** — confronta il config sincronizzato con
+  `mobile/profilo-rilascio.json` (6 chiavi, tutte sbagliate almeno una volta) ed esce 1 con
+  l'elenco delle divergenze e il rimedio. Provato in entrambi i versi il 14/08: verde sul config
+  giusto, e rosso sulle **tre** chiavi esatte dopo aver riprodotto il difetto di proposito.
+- **Run Script Phase di Xcode** (`KV28B0F0000000000003`, prima di `Sources`) e **task Gradle**
+  `verificaShellNativa` agganciato a `preReleaseBuild`. Solo su Release: chi collauda su
+  simulatore o emulatore **deve** poter puntare a un indirizzo di sviluppo, e un cancello che dà
+  torto a chi lavora viene tolto entro una settimana.
+- **`npm run rilascio:sync`** — sincronizza **entrambe** le piattaforme e verifica. `cap sync ios`
+  da solo è esattamente il comando che ha lasciato Android a posto e iOS indietro.
+- **`__tests__/architecture/gate-shell-nativa.test.ts`** (10 test) — sorveglia il *cancello*, non
+  l'artefatto: che il profilo non si scolli da `capacitor.config.ts`, che discrimini davvero (con
+  un URL di sviluppo deve divergere), e che la phase e il task siano ancora **agganciati**. I punti
+  d'aggancio stanno in file tracciati, quindi sganciarli è un diff visibile e un test rosso.
+- **La causa a monte**: il comando che avvelena la shell era committato in **otto** file
+  (`.claude/agents`, `.claude/maestro-flows/README.md` — che contiene il valore identico a quello
+  trovato guasto — `.codex/agents`, `docs/collaudo/prompt`, `docs/mobile.md`) e **nessuno diceva
+  come si torna indietro**. Ora ognuno porta il contrordine, e il lock lo pretende.
+
+### 🔴 `ChunkErrorBoundary`: 11 test verdi su un componente che l'app non montava
+
+Esisteva dal 03/08, nato dal rilievo T07-F2, documentato, con 11 test. **Non era importato da
+nessun file di `src/`**: i test lo istanziavano da soli (`render(<ChunkErrorBoundary />)`) e
+passavano, mentre in produzione un pezzo di bundle mancante lasciava l'utente su «Caricamento…»
+per sempre, senza messaggio e senza bottone. Ora è montato in `RootProviders` accanto al
+`GlobalLoader` — che è precisamente ciò che senza di lui resta bloccato — e il lock qui sopra
+pretende sia l'`import` sia il `<ChunkErrorBoundary />`. *Un test che monta il proprio soggetto non
+dimostra che il soggetto sia montato.*
+
+### Come si propaga un deploy alle app native (misurato, perché non era scritto da nessuna parte)
+
+Un deploy **arriva da solo, senza passare dagli store**: le pagine sono servite `no-store` (sempre
+dalla rete), i chunk hanno nome con hash e `immutable` (nessuna mescolanza fra vecchio e nuovo), e
+`/sw.js` è `max-age=0, must-revalidate` con `skipWaiting()` + `clients.claim()`, quindi il service
+worker nuovo prende il comando senza ricariche. La novità arriva alla **prima navigazione**: in un
+guscio Capacitor il risveglio dal background *non* lo è (l'unico ascoltatore sul `resume` è il gate
+biometrico), quindi un'app tenuta aperta resta indietro fino al riavvio a freddo.
+
+Serve invece una **nuova versione sullo store** solo per ciò che `cap sync` copia nel binario:
+config Capacitor, `Info.plist`, `AndroidManifest.xml`, `build.gradle`, icone e splash,
+`offline.html` di `errorPath`, `google-services.json`/`GoogleService-Info.plist`, e il **codice
+nativo** dei plugin — il cui JavaScript invece arriva dalla rete. Da qui un rischio da conoscere:
+se il sito chiama un metodo che il binario installato non ha, su iOS la promise **resta appesa in
+silenzio** (e `loggingBehavior: 'none'` spegne pure il messaggio), mentre Android rifiuta. Quando si
+aggiunge un plugin, deploy e nuova build vanno insieme.
+
+### Altro misurato e non corretto qui
+
+🔴 L'account demo del revisore (`test.inf.genitore1@kidville.test`) ha **3 conversazioni**, e in una
+la controparte è un'utenza **reale** su gmail.com (ruolo admin, nome e cognome veri, ultimo accesso
+11/08) — mentre le note ad Apple promettono *«fictional children only — no real personal data»*. I
+suoi dati sono inoltre fermi al **04/08**, e le note ordinano al revisore di guardare «today's
+summary». Da chiudere **prima del prossimo invio**. · `piattaforma()` in
+`src/lib/logging/client.ts` restituisce **sempre `'web'`** (Capacitor non tocca lo user-agent senza
+`appendUserAgent`/`overrideUserAgent`, non configurate): un guasto dentro le app native è
+indistinguibile da uno del browser. · `controlloConfig` stampa «7 variabili presenti» ma ne
+interroga **6**: `ARUBA_PASSWORD` non è controllata, cioè proprio quella che manca su Vercel. ·
+Nessuna dichiarazione di accessibilità e `accessibilityUrl` null, visibile sulla scheda pubblica. ·
+Screenshot 5 in vetrina mostra «Codice fiscale non disponibile», screenshot 1 mostra «Domenica 26
+Luglio». · `enrollment_submissions` oggi: **386** domande.
+
+**Smentite dagli scettici, da non riaprire**: «Vico» contro «Via» Silvio Pellico non è un refuso
+(residenza della persona fisica dal documento *vs* sede legale della cooperativa da visura, due
+soggetti diversi); il PRD non «dichiara l'app invisibile» (quelle righe stanno in voci datate); non
+ci sono famiglie reali su Aversa e Cesa (3 alunni su 3 sono seed); il sito non risponde 200 a ogni
+rotta inesistente (307 verso il login — era `curl -L`); i «31 giorni» del cron `locker_requests`
+sono il fondo della retention, non l'inizio del guasto; e il modulo del personale non «rifiuta in
+silenzio» — la pratica è stata ricevuta 22 minuti dopo, invisibile a una query filtrata su
+`error|warn`.
+
+---
+
+## 🖨️ Changelog — Diciassette moduli di carta entrano in app, e la firma diventa una dicitura invece di un tratto 2026-08-14 (branch `feat/documenti-firmati`)
+
+**Cosa c'è adesso.** I diciassette prestampati di `docs/prestampati/` sono generabili dall'app:
+otto dalla famiglia (scheda sanitaria, farmaci, dieta, delega al ritiro, permesso d'orario,
+autorizzazione all'uscita, certificato di iscrizione/frequenza, certificato per il Bonus Asilo
+Nido) e nove dalla segreteria (nulla osta, richiesta di disponibilità, solleciti, verbale
+d'infortunio, valutazione dell'infanzia, certificato delle competenze, certificato di servizio,
+stampe di sezione, registro presenze). Dieci sono **trascritti dai `.docx` reali** dell'archivio
+della scuola, cinque scritti sulla stessa linea.
+
+**Due porte, una regola.** La famiglia li trova in *Certificati self-service* e li firma con
+l'OTP già collaudato; la segreteria in *Modulistica → Prestampati*, che chiede **prima la sede,
+poi la classe, poi l'alunno**, e solo dopo apre il modulo. In entrambe l'app precompila ciò che
+ha già — nome, nascita, codice fiscale, sezione, dati di sede e di scuola — e **chiede solo il
+resto**: la differenza fra digitalizzare un modulo e digitalizzare la segreteria.
+
+**Nessuna migrazione.** Vincolo del titolare, e ha una conseguenza che va detta invece che
+scoperta: i quattro dati che il database non ha (pediatra, ASL, contatti d'emergenza, stato
+vaccinale) **il form li richiede ogni volta**. Finché non nascono quelle colonne, la scheda
+sanitaria si ricompila a ogni figlio e a ogni anno.
+
+**La firma del legale rappresentante non è un'immagine, ed è una scelta.** Il blocco è
+tipografico — qualifica, nominativo da `scuole.config.anagrafica`, e la dicitura *«Firma
+autografa sostituita a mezzo stampa ai sensi dell'art. 3, c. 2 D.Lgs n. 39/93»*. Quella formula
+**è** ciò che sostituisce il tratto autografo: stampare anche uno scarabocchio sarebbe una
+contraddizione nei termini. E una firma scansionata dentro PDF che escono a centinaia di
+famiglie si estrae in secondi e si riusa su qualunque altro foglio. Regge il certificato una
+terna: la formula, il **numero di protocollo**, l'**impronta SHA-256** registrata in
+`protocolli.impronta_sha256`. Mai «firmato digitalmente» accanto alla dicitura: le due formule si
+escludono. ⚠️ Alla lettera l'art. 3 c. 2 parla dei sistemi **delle pubbliche amministrazioni**;
+la cooperativa è un privato in servizio pubblico e la prassi è diffusissima, ma se un ente la
+contestasse la risposta è la firma qualificata (Aruba, con cui il rapporto esiste già), non una
+dicitura diversa.
+
+**L'impronta non si stampa dentro il foglio**, e il commento nel motore lo spiega perché è la
+trappola che chiunque rifarebbe: scriverla cambierebbe i byte di cui è l'impronta. Il PDF porta
+numero e indirizzo di verifica; l'impronta vive nel registro, come già fa `applicaSegnatura`.
+
+**Il n. 06 si ferma prima del fascicolo, e nemmeno nel bucket.** L'autorizzazione ai farmaci è
+«OTP + accettazione della Direzione»: firmata, non archiviata — lo stato non esiste e sarebbe una
+migrazione. Non sale **neppure nel bucket**, ed è la parte che conta: se `student_documents` non
+si scrive, nessuna riga durevole nominerebbe quel percorso (`firme_documenti` non ha una colonna
+di percorso, `app_log` dura trenta giorni). Passati quelli, un PDF con farmaco, dosaggio e
+prescrizione di un minore — art. 9 — resterebbe nel bucket del fascicolo **irraggiungibile e
+incancellabile**: l'oblio non arriva a ciò che non sa di esistere. Non è il caso raro: è il 100%
+delle firme di quel modulo. La copia della famiglia arriva dentro la risposta.
+
+**La gita genera la sua autorizzazione.** `teacher/uscite:POST` crea il modulo per le **sole
+classi scoperte** — non per modulo, non per gita: allargare l'uscita a una sezione nuova non deve
+lasciarla senza autorizzazione, né mandarne due identiche a chi ce l'ha già. Se l'automatismo si
+guasta, **la gita nasce lo stesso** e il guasto si logga col corpo dell'errore; il successo si
+logga anch'esso, perché senza «nessun log» non distingue «partono» da «non ne è mai partita una»
+— l'ambiguità che qui ha nascosto per mesi il guasto delle email.
+
+**Il selettore del figlio, finalmente.** Il tab *Certificati* usava sempre `children[0]`
+(follow-up dichiarato nel changelog del 2026-07): con due figli il genitore firmava per il
+bambino sbagliato. Ora sceglie.
+
+**Un confine di prodotto tolto da un filtro di interfaccia.** Il banco della segreteria non
+filtra `stato=iscritto` ma usa `eAncoraIscritto`, la stessa funzione del rifiuto del server
+(`alunnoNonStampabile` respinge solo chi è ritirato, non chi è sospeso). Altrimenti il
+certificato per il Bonus Nido sarebbe diventato irrilasciabile proprio alla famiglia sospesa per
+morosità — che è la famiglia che lo chiede.
+
+**Come è stato costruito, perché è la prima volta.** Ventisette agenti in due pipeline, ciascun
+esecutore seguito da un critico che rieseguiva i comandi invece di credere al resoconto: oltre
+200 rilievi, e correzioni che nessun test avrebbe chiesto (un `dataIt()` che leggeva in UTC
+mentre il prodotto vive in `Europe/Rome`). Due lezioni pagate: il tetto di 8 cicli serve, perché
+un critico severo trova sempre qualcosa; e **un rilievo su un file che l'esecutore non possiede
+non deve contare contro di lui**, o il lavoro si incaglia su un difetto che non ha il permesso di
+riparare — è successo, per tre ore.
+
+**Rimasto fuori, e dichiarato.** Le *etichette dei campi* arrivano dal server in italiano e
+compaiono tali e quali anche in schermata inglese: serve una chiave per campo nel registro, come
+già esiste per i modelli. E il certificato Bonus Nido lato famiglia oggi non ha strada di
+rilascio (è firma della scuola): o passa dalla segreteria, che la porta ce l'ha, o serve una
+strada lato server.
+
+**Gate**: eslint 0 · `tsc --noEmit` 0 · vitest **11 135 test** su 921 file · build ok · 1032 lock
+d'architettura verdi.
+
+---
+
+## 🗂️ Changelog — I documenti firmati esistevano, ma non c'era nessun posto dove guardarli 2026-08-13 (branch `feat/documenti-firmati`)
+
+**Il punto di partenza è una misura, non un'idea.** Al 13/08/2026, in produzione:
+`student_documents` **0 righe**, `forms_submissions` **0**, `certificati_medici` **0**,
+`firme_documenti` **0**. Le tabelle dei documenti dell'alunno ci sono tutte da mesi e sono
+**tutte vuote**: nessun modulo è mai stato firmato in app, nessuna carta è mai stata caricata in
+un fascicolo. La schermata nuova, quindi, oggi si apre vuota — e va detto invece che scoperto.
+Non è un difetto: è il contenitore dove atterreranno i diciassette prestampati di
+`docs/prestampati/`, ed è meglio che esista prima di loro, perché è la prova che «firmato» ha
+un posto dove finire.
+
+**Nessuna modifica al database.** Richiesta esplicita del titolare. La sezione è una LETTURA di
+tre tabelle esistenti, normalizzate in un elenco solo da `src/lib/documenti/registro.ts` (logica
+pura, 26 test): moduli firmati dal genitore, fascicolo personale, certificati medici.
+`firme_documenti` resta FUORI, ed è una decisione: quel registro lega la firma all'UTENTE, non
+all'alunno, e attribuirla a uno dei figli sarebbe indovinare.
+
+**Il gate è a due strati, e il secondo è più stretto del primo.**
+
+| Strato | Cosa delimita | Come |
+|---|---|---|
+| Scope ordinario | quali bambini si vedono | sede attiva (`resolveScuoleAttive`) + per l'educator le sezioni assegnate (`sezioniVisibili`) |
+| Gate sanitario | di quei bambini, se si vedono anche i documenti sanitari | `puoAccedereFascicolo`: segreteria del plesso, o insegnante **contitolare** della sezione |
+
+I due non coincidono, ed è voluto: `sezioniVisibili` legge `utenti_sezioni`, il gate del fascicolo
+anche `utenti_sezioni_materie` — un docente assegnato per sola materia passa il secondo e non il
+primo. Per gli elenchi è nata `sezioniContitolari()`, che raccoglie in blocco ciò che
+`puoAccedereFascicolo` verifica una sezione alla volta: chiedere il gate per ognuno dei
+trentatré alunni sarebbe sessantasei query per disegnare una pagina. **Le due funzioni devono
+restare d'accordo**, e il commento in `fascicolo-rbac.ts` dice cosa succede se divergono.
+
+**La riga che questo lavoro ricorda di non ripetere.** Il collaudo aveva già trovato che
+`GET /api/parent/medical-certificates/file` autorizzava **il solo ruolo**: un docente poteva
+scaricare il certificato medico di un minore di un'altra sede conoscendo l'id del file. Qui
+l'apertura di un documento passa da tre controlli in fila — ruolo, `assertAlunnoInScope`,
+e per i sanitari `puoAccedereFascicolo` — e **l'audit si scrive prima** di restituire il
+contenuto, non dopo.
+
+**Cinque cose che il gate del repo ha imposto, e che sono migliorie vere:**
+
+1. **`logEvento('documenti', …)` era un sinonimo.** Il canale giusto esisteva già e si chiama
+   `fascicolo`. Un nome nuovo per un dominio che ne ha già uno spezza le query in silenzio.
+2. **«Sede non accessibile» scritta a mano viaggiava senza codice**, e per chi usa l'app in
+   inglese sarebbe tornata italiana: ora è `rifiutoSede('SEDE_NON_ACCESSIBILE')`. Con lei sono
+   nati tre codici nuovi (`DOCUMENTI_ELENCO_NON_LETTO`, `DOCUMENTO_NON_TROVATO`,
+   `DOCUMENTO_SANITARIO_NEGATO`), tradotti in entrambi i cataloghi.
+3. **L'elenco senza filtro di stato** avrebbe mostrato anche gli archiviati senza dirlo. Ora il
+   default sono gli iscritti, e `includiNonIscritti=1` è **riservato alla segreteria** — perché
+   il fascicolo di un bambino ritirato si conserva dieci anni e cercarlo è una cosa che capita.
+4. **Undici `text-kidville-muted`**: 2,51:1 su bianco, sotto la soglia WCAG AA. Sostituiti con
+   `text-kidville-sub` (6,46:1).
+5. **L'uuid REALE di Kidville Giugliano era finito nel file di test.** Il repo è pubblico.
+
+**Un difetto trovato da un test che avevo scritto io.** La query degli alunni si costruiva
+PRIMA del controllo sulle sezioni: un educator senza sezioni assegnate usciva con l'elenco
+vuoto — comportamento giusto — ma lasciando in mezzo al codice un oggetto query pronto per
+essere eseguito. Riordinato: ora si esce prima di comporlo.
+
+**`forms_submissions.pdf_path` è un percorso SIMULATO.** Nessun byte è mai stato caricato per i
+moduli firmati (`persist-submission.ts` lo dice in un commento). La schermata quindi non offre un
+link che darebbe 404: per un modulo mostra la compilazione e la traccia di firma, e lo scrive.
+L'hash dell'OTP, l'email e l'ip **non escono** dalla traccia — c'è un test che lo verifica.
+
+**Gate**: eslint 0, `tsc --noEmit` pulito, **10700 test verdi**, build ok. Service Worker
+`v9 → v10` (le etichette di `/offline` sono cambiate: senza il bump, sui telefoni già installati
+la pagina resta quella vecchia per sempre).
 
 ## 🧱 Changelog — L'avviso dell'oblio si portava dietro il database nel browser, e l'applicazione non compilava più 2026-08-13 (branch `test/e2e-moduli-pubblici`)
 

@@ -140,6 +140,23 @@ export const CODICI_ERRORE = {
      */
     VERIFICA_CLASSI_NON_RIUSCITA: 'erroreVerificaClassiNonRiuscita',
     /**
+     * I quattro rifiuti dell'uscita didattica (`teacher/uscite:POST`) che restavano
+     * senza codice: creare una gita fa fan-out di un modulo da firmare su un'intera
+     * sezione, quindi ogni rifiuto deve dire QUALE porta si è chiusa. Gli altri tre
+     * — `USCITA_CLASSE_FUORI_SEDE`, `USCITA_NON_CREATA`,
+     * `AUTORIZZAZIONI_USCITA_NON_LETTE` — stanno più in basso in questo stesso file:
+     * cercali lì prima di aggiungerne di nuovi, perché il primo tentativo di questo
+     * blocco li aveva ridefiniti con un altro nome.
+     */
+    /** 400 — il rientro non è successivo alla partenza (confronto fra stringhe `HH:MM`). */
+    USCITA_ORARI_NON_VALIDI: 'erroreUscitaOrariNonValidi',
+    /** 400 — il termine per autorizzare cade dopo il giorno dell'uscita. */
+    USCITA_TERMINE_NON_VALIDO: 'erroreUscitaTermineNonValido',
+    /** 500 — non è stato possibile verificare le sezioni destinatarie: guasto nostro. */
+    USCITA_SEZIONI_NON_VERIFICATE: 'erroreUscitaSezioniNonVerificate',
+    /** 500 — non è stato possibile rileggere l'uscita per capire se esisteva già. */
+    USCITA_NON_VERIFICATA: 'erroreUscitaNonVerificata',
+    /**
      * 403 — almeno uno dei bambini taggati in una foto non è nei plessi di chi
      * pubblica o modifica (`src/lib/gallery/tag-scope.ts`).
      *
@@ -988,6 +1005,187 @@ export const CODICI_ERRORE = {
      * non ha risposto.
      */
     RUBRICA_NON_DISPONIBILE: 'erroreRubricaNonDisponibile',
+    /**
+     * 500 — l'archivio dei documenti non ha potuto leggere gli alunni
+     * (`documenti-firmati:GET`). Senza questo codice la schermata direbbe
+     * «nessun documento», che è un'affermazione di fatto — e falsa: la
+     * differenza fra «questo bambino non ha documenti» e «non ho potuto
+     * guardare» è tutta la differenza che conta per chi cerca un nulla osta.
+     */
+    DOCUMENTI_ELENCO_NON_LETTO: 'erroreDocumentiElencoNonLetto',
+    /** 404 — il documento chiesto non esiste, o non appartiene a nessun fascicolo. */
+    DOCUMENTO_NON_TROVATO: 'erroreDocumentoNonTrovato',
+    /**
+     * 403 — documento SANITARIO chiesto da chi non è né la segreteria del plesso
+     * né un'insegnante contitolare della sezione dell'alunno
+     * (`puoAccedereFascicolo`). Codice proprio, distinto dal diniego di sede:
+     * chi legge un log deve poter contare quante volte è stato chiesto un
+     * documento sanitario da fuori — è un segnale, non rumore.
+     */
+    DOCUMENTO_SANITARIO_NEGATO: 'erroreDocumentoSanitarioNegato',
+
+    /* ── I diciassette PRESTAMPATI (`src/lib/prestampati/`) ──────────────────
+     *
+     * Otto codici per la modulistica prestampata: il pannello della segreteria, la
+     * generazione self-service del genitore, il render del PDF. Li legge sia chi sta
+     * allo sportello sia una famiglia dal telefono — cioè, di nuovo, una platea in
+     * cui l'italiano non è garantito.
+     *
+     * ⚠️ DUE CODICI CHE NON SONO STATI CREATI, e vale la pena dire perché:
+     *
+     *  · «SEDE NON DICHIARATA» non esiste qui. Quel rifiuto ce l'ha già
+     *    `SEDE_DA_SPECIFICARE`, che nasce dentro `resolveScuolaScrittura` e passa da
+     *    `rifiutoSede()` — l'unica sorgente consentita dal lock `errori-con-codice`.
+     *    Un secondo codice con la stessa frase e lo stesso rimedio («scegli una sede»)
+     *    sarebbe la trappola del codice DUPLICATO, gemella di quella del codice
+     *    RIUSATO che questo file documenta su `NEWS_FILE_SOSTITUITI_NON_RIMOSSI`:
+     *    dichiarato, tradotto, e sbagliato.
+     *  · «ALUNNO FUORI PORTATA» non esiste qui: è `ALUNNO_NON_APRIBILE`, dichiarato
+     *    più su, la cui frase dice esattamente questo («non è più nell'elenco di
+     *    questa postazione: ricarica la pagina o controlla la sede selezionata»). Il
+     *    prefill dei prestampati usa quello.
+     */
+
+    /**
+     * 503 — l'elenco da cui si sceglie il bambino (classi → alunni) non si è letto,
+     * e il pannello dei prestampati non ha niente da mostrare.
+     *
+     * ⚠️ NON riusa `DOCUMENTI_ELENCO_NON_LETTO`, che è l'archivio dei documenti GIÀ
+     * firmati: quella frase dice «l'elenco dei documenti non si è potuto caricare» e
+     * qui di documenti non ce n'è ancora nessuno — chi legge starebbe cercando un
+     * bambino, non un file. Il motivo per cui esiste è lo stesso: un elenco vuoto si
+     * legge come «questa classe non ha bambini» ed è indistinguibile da «non ho
+     * potuto guardare».
+     */
+    PRESTAMPATI_ELENCO_NON_LETTO: 'errorePrestampatiElencoNonLetto',
+    /**
+     * 404 — lo slug chiesto non è fra i diciassette del registro
+     * (`src/lib/prestampati/registro.ts`).
+     *
+     * È il rifiuto del cancello, e non è un caso di scuola: `document_type` finisce
+     * dentro `student_documents`, dentro il nome del file nel bucket e dentro
+     * l'oggetto del protocollo. Una stringa scelta da chi chiama diventerebbe una
+     * riga d'archivio che nessun elenco della segreteria saprà più mostrare.
+     */
+    PRESTAMPATO_SCONOSCIUTO: 'errorePrestampatoSconosciuto',
+    /**
+     * 503 — i dati del bambino (anagrafica, sezione, sede, genitori) non si sono
+     * potuti leggere, quindi NON è stato generato niente.
+     *
+     * ⚠️ NON riusa `ALUNNO_NON_APRIBILE`, ed è la distinzione che questo repo ha già
+     * pagato tre volte: «non c'è» e «non l'ho potuto leggere» hanno rimedi opposti.
+     * PostgREST non lancia — ritorna `{ error }` — quindi senza un codice suo una
+     * lettura fallita uscirebbe dalla porta del 404, dicendo a una segretaria che il
+     * bambino che ha davanti non esiste.
+     */
+    PRESTAMPATO_ANAGRAFICA_NON_LETTA: 'errorePrestampatoAnagraficaNonLetta',
+    /**
+     * 404 — il bambino che la FAMIGLIA ha chiesto non è più in anagrafica.
+     *
+     * Il ramo del banco resta `ALUNNO_NON_APRIBILE`, la cui frase parla di postazione e
+     * di sede selezionata: è giusta allo sportello, dove una sede si sceglie davvero, e
+     * non vuol dire niente per una madre col telefono in mano — che una postazione non
+     * ce l'ha e una sede non la seleziona. Non è un doppione: due platee, due rimedi
+     * (ricaricare l'elenco della segreteria · scrivere alla segreteria), due frasi.
+     */
+    PRESTAMPATO_ALUNNO_NON_TROVATO: 'errorePrestampatoAlunnoNonTrovato',
+    /**
+     * 409 — su un bambino archiviato (o comunque non più iscritto) il prestampato non
+     * si genera: uscirebbe con la sezione vuota e l'anno scolastico in corso addosso a
+     * chi quest'anno non frequenta, cioè una dichiarazione falsa su carta intestata.
+     *
+     * La frase dice il rimedio — riportarlo fra gli iscritti — perché un rifiuto che
+     * non dice come si sblocca è un rifiuto che torna. NON riusa
+     * `SPAZIO_ALUNNO_ANCORA_ISCRITTO`, che dice l'esatto contrario e appartiene a
+     * «libera spazio».
+     */
+    PRESTAMPATO_ALUNNO_NON_ISCRITTO: 'errorePrestampatoAlunnoNonIscritto',
+    /**
+     * 409 — l'anagrafica è stata anonimizzata (art. 17): nome e cognome in tabella
+     * sono un segnaposto, e stamparli su un certificato sarebbe il modo peggiore di
+     * rispettare una richiesta di cancellazione.
+     *
+     * Codice suo e non `PRESTAMPATO_ALUNNO_NON_ISCRITTO`, benché lo status coincida:
+     * lì il rimedio esiste ed è a un click, qui non esiste e non esisterà mai. Mandare
+     * qualcuno a «riportare fra gli iscritti» un bambino cancellato è mandarlo a
+     * cercare un bottone che non c'è.
+     */
+    PRESTAMPATO_ALUNNO_ANONIMIZZATO: 'errorePrestampatoAlunnoAnonimizzato',
+    /**
+     * 422 — manca un dato che quel foglio deve riportare per avere valore: la sede del
+     * bambino, gli estremi dell'autorizzazione comunale sul certificato per il Bonus
+     * Asilo Nido, il livello scolastico su un certificato diretto a un ente.
+     *
+     * È l'unico punto in cui l'assenza di un dato NON degrada in una riga omessa, e la
+     * ragione è nella specifica del n. 28: un modulo INPS con «N. ______ del ______»
+     * viene respinto allo sportello, e la famiglia lo scopre in coda.
+     */
+    PRESTAMPATO_DATI_MANCANTI: 'errorePrestampatoDatiMancanti',
+    /**
+     * 500 — la composizione del PDF è fallita e NON è stato archiviato niente.
+     *
+     * La frase lo dice, perché è ciò che chi ha premuto deve sapere: non è rimasto un
+     * documento a metà nel fascicolo del bambino. Il motivo tecnico resta nel log.
+     */
+    PRESTAMPATO_NON_GENERATO: 'errorePrestampatoNonGenerato',
+    /**
+     * 409 — il documento non si genera perché la firma non c'è o non è valida: la
+     * firma OTP della famiglia non è stata raccolta, oppure manca il nome del legale
+     * rappresentante che il §3b della specifica pretende sotto la dicitura del
+     * D.Lgs 39/93.
+     *
+     * Un solo codice per i due casi, e non per pigrizia: a schermo il fatto è lo
+     * stesso — «questo foglio non può uscire senza una firma» — e la differenza sta in
+     * chi deve intervenire, che il log dice e la frase no. Senza questo rifiuto
+     * uscirebbe un certificato con «Firma autografa sostituita a mezzo stampa» sopra
+     * il vuoto, cioè un atto firmato da nessuno.
+     */
+    PRESTAMPATO_FIRMA_NON_VALIDA: 'errorePrestampatoFirmaNonValida',
+    /**
+     * 409 — un foglio che ESCE dalla scuola non ha detto che cos'è: né numero di
+     * protocollo né dicitura «Copia a uso della famiglia», oppure tutte e due insieme,
+     * oppure un numero su un modulo che dalla scuola non esce affatto.
+     *
+     * ⚠️ NON è `PRESTAMPATO_DATI_MANCANTI`, che pure avrebbe lo status vicino: quello
+     * manda a completare l'anagrafica, e qui in anagrafica non manca niente — manca la
+     * dichiarazione di chi genera. I due fogli si somigliano e valgono cose diverse
+     * (§4.1 di `00-impaginazione.md`): senza questo rifiuto la copia che il genitore si
+     * scarica da sé finisce a un ente al posto del certificato protocollato.
+     */
+    PRESTAMPATO_PROTOCOLLO_DA_DICHIARARE: 'errorePrestampatoProtocolloDaDichiarare',
+    /**
+     * 403 — una delle sezioni indicate per l'uscita non appartiene alla sede
+     * dichiarata (`teacher/uscite:POST`).
+     *
+     * ⚠️ NON riusa `CLASSI_FUORI_SEDE`, benché il fatto si somigli: quella frase
+     * parla della «sede dell'avviso» — è nata per la bacheca — e mostrata a chi sta
+     * programmando una gita manderebbe a cercare un avviso che non esiste. Il costo
+     * di un codice in più è una riga; il costo di una frase che nomina la cosa
+     * sbagliata lo paga chi la legge.
+     */
+    USCITA_CLASSE_FUORI_SEDE: 'erroreUscitaClasseFuoriSede',
+    /**
+     * 500 — l'uscita didattica non è stata creata, e non è rimasto niente a metà:
+     * o non è riuscita la verifica di ciò che esiste già, o non è riuscita la
+     * scrittura (`teacher/uscite:POST`).
+     *
+     * Un codice solo per i due casi, e non per pigrizia: a schermo il fatto è lo
+     * stesso — la gita non c'è e il rimedio è riprovare — mentre la differenza sta
+     * nel log, che dice quale delle due query è caduta e col corpo dell'errore.
+     * L'operazione è idempotente, quindi «riprova» è un consiglio che non può
+     * generare un doppione.
+     */
+    USCITA_NON_CREATA: 'erroreUscitaNonCreata',
+    /**
+     * 500 — non si è riusciti a leggere chi ha firmato l'autorizzazione della gita
+     * (`teacher/uscite:GET` con `form_id`).
+     *
+     * Esiste perché il silenzio qui è peggio dell'errore: senza questo rifiuto la
+     * lettura caduta darebbe «nessuno ha firmato», e il giorno dell'uscita
+     * l'insegnante lascerebbe a scuola dei bambini autorizzati leggendo un elenco
+     * che sembra completo.
+     */
+    AUTORIZZAZIONI_USCITA_NON_LETTE: 'erroreAutorizzazioniUscitaNonLette',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -1,0 +1,126 @@
+{
+  "titolo": "Moduli da compilare",
+  "sottotitolo": "Compila e firma dal telefono: i dati che la scuola ha già non te li richiede nessuno.",
+
+  "scegliFiglio": "Per chi",
+  "scegliFiglioSegnaposto": "Scegli tuo figlio…",
+  "scegliModulo": "Che modulo ti serve",
+  "scegliSegnaposto": "Scegli…",
+  "cambiaModulo": "Cambia modulo",
+
+  "modelli": {
+    "schedaSanitaria": "Scheda sanitaria",
+    "autorizzazioneFarmaci": "Autorizzazione somministrazione farmaci",
+    "dietaSpeciale": "Richiesta dieta speciale",
+    "delegaRitiro": "Delega al ritiro",
+    "permessoOrario": "Permesso entrata posticipata / uscita anticipata",
+    "autorizzazioneUscita": "Autorizzazione uscita didattica / gita",
+    "certificatoIscrizioneFrequenza": "Certificato di iscrizione e frequenza",
+    "certificatoBonusNido": "Certificato per il Bonus Asilo Nido INPS"
+  },
+
+  "descrizioni": {
+    "schedaSanitaria": "Pediatra, contatti d’emergenza e cosa fare se tuo figlio non sta bene.",
+    "autorizzazioneFarmaci": "Serve quando un farmaco va dato durante l’orario scolastico: senza, le insegnanti non possono somministrarlo.",
+    "dietaSpeciale": "Per allergie, intolleranze o scelte alimentari: la cucina prepara un pasto diverso.",
+    "delegaRitiro": "Chi può venire a prendere tuo figlio oltre a te.",
+    "permessoOrario": "Per entrare più tardi o uscire prima, una volta o per un periodo.",
+    "autorizzazioneUscita": "Per uscite didattiche, gite e attività fuori dalla struttura.",
+    "certificatoIscrizioneFrequenza": "Attesta che tuo figlio è iscritto e frequenta: lo chiedono il datore di lavoro e molti uffici.",
+    "certificatoBonusNido": "Il certificato che l’INPS chiede per il Bonus Asilo Nido, con gli estremi dell’autorizzazione della struttura."
+  },
+
+  "nonFirmabileFirmaDellaScuola": "Questo documento non si firma con il tuo codice: lo sottoscrive il legale rappresentante della Scuola.",
+  "nonFirmabileUscitaNonCreata": "L’autorizzazione si firma quando la scuola ha pubblicato l’uscita: destinazione, data e orari non ci sono ancora. Aspetta la comunicazione della sezione.",
+  "nonFirmabileSecondaFirmaMancante": "La delega al ritiro la firmano entrambi i genitori o tutori, e la raccolta della seconda firma non è ancora attiva: per ora la delega si consegna in segreteria.",
+  "nonFirmabileAllegatoNonCaricabile": "La delega al ritiro chiede la scansione del documento di ogni persona delegata, e dall’app non si può ancora caricare: consegnala in segreteria.",
+
+  "campiTitolo": "Quello che serve",
+  "campiSottotitolo": "Nome, data di nascita, codice fiscale e sezione li mette l’app.",
+  "campoObbligatorio": "Campo obbligatorio",
+  "indietro": "Indietro",
+  "rivedi": "Rivedi e firma",
+
+  "datiApp": {
+    "titolo": "Quello che l’app mette da sé",
+    "bambino": "Bambino",
+    "nascita": "Data e luogo di nascita",
+    "codiceFiscale": "Codice fiscale",
+    "sezione": "Sezione",
+    "sede": "Sede",
+    "annoScolastico": "Anno scolastico"
+  },
+  "nonIndicato": "Non indicato",
+
+  "si": "Sì",
+  "no": "No",
+  "riga": "Riga {n}",
+  "aggiungiRiga": "Aggiungi una riga",
+  "rimuoviRiga": "Togli questa riga",
+
+  "accompagnatoreIoStesso": "Io stesso",
+  "delegatiVuoti": "Per questo bambino non risulta nessuna persona delegata: puoi indicare solo te stesso. Le deleghe si registrano in segreteria.",
+  "delegatiNonLetti": "L’elenco delle persone delegate non si è caricato, quindi qui puoi indicare solo te stesso. Ricarica la pagina fra qualche minuto: un nome scritto a mano la scuola non potrebbe verificarlo, e il modulo verrebbe rifiutato.",
+
+  "allegatoAiuto": "Il file si carica una volta sola dalla scheda «Certificati Medici»: qui lo colleghi al modulo.",
+  "allegatoScegli": "Scegli un certificato già caricato…",
+  "allegatoVoce": "Certificato caricato il {data}",
+  "allegatoVuoto": "Per questo bambino non risulta nessun certificato caricato: caricalo dalla scheda «Certificati Medici» e torna qui.",
+  "allegatoNonLetto": "L’elenco dei certificati caricati non si è aperto: riprova fra qualche minuto.",
+  "allegatoNonCaricabile": "Questo allegato non si può ancora caricare dall’app: il modulo va consegnato in segreteria.",
+
+  "riepilogoTitolo": "Rivedi prima di firmare",
+  "riepilogoSottotitolo": "Dopo la firma il modulo non si modifica più: se qualcosa non torna, torna indietro adesso.",
+
+  "otpTitolo": "Firma con un codice",
+  "otpSottotitolo": "Ti mandiamo un codice usa e getta: inserendolo firmi il modulo.",
+  "otpInvia": "Mandami il codice",
+  "otpCodice": "Codice ricevuto",
+  "otpCodiceSegnaposto": "6 cifre",
+  "otpConferma": "Firma il modulo",
+  "otpRinvia": "Non è arrivato: rimandamelo",
+  "otpAttesa": "Puoi chiederne un altro fra {n, plural, one {# secondo} other {# secondi}}.",
+  "otpInviato": "Codice inviato.",
+  "otpInviatoA": "Codice inviato a {email}",
+  "otpNonConsegnato": "Il codice non risulta consegnato: se non arriva, scrivi alla segreteria.",
+  "otpNonInviato": "Il codice non è stato inviato: riprova fra qualche minuto.",
+  "otpErrato": "Codice non valido: controlla le cifre e riprova.",
+  "otpScaduto": "Il codice è scaduto: chiedine un altro.",
+  "otpGiaUsato": "Questo codice è già stato usato: chiedine un altro.",
+  "otpTroppiTentativi": "Troppi tentativi: aspetta qualche minuto e riprova.",
+  "invioInCorso": "Invio in corso…",
+  "firmaInCorso": "Firma in corso…",
+
+  "firmaDueGenitori": "Questo modulo lo firmano entrambi i genitori: all’altro arriva un codice suo.",
+  "firmaInAttesa": "Manca ancora una firma.",
+
+  "confermaTitolo": "Modulo firmato",
+  "confermaTesto": "È già in archivio: la scuola lo vede senza che tu debba consegnare niente.",
+  "inAttesaDirezioneTitolo": "Firmato, aspetta la Direzione",
+  "inAttesaDirezioneTesto": "L’autorizzazione è firmata, ma finché la Direzione non l’accetta nessuno può somministrare il farmaco. Scarica il PDF e portalo in segreteria: è l’unica copia che ti resta.",
+  "mancatoArchivioTitolo": "Firmato, ma non archiviato",
+  "mancatoArchivioTipoDocumentoNonAmmesso": "La firma è valida e il PDF è tuo, ma l’archivio della scuola non accetta ancora questo tipo di documento: scaricalo adesso e conservalo.",
+  "mancatoArchivioSchemaNonPronto": "La firma è valida e il PDF è tuo, ma l’archivio non è ancora pronto a riceverlo: scaricalo adesso e conservalo.",
+  "mancatoArchivioArchivioNonScritto": "La firma è valida e il PDF è tuo, ma il documento non è entrato in archivio: scaricalo adesso, conservalo e avvisa la segreteria.",
+  "firmaDettaglio": "Dati della firma",
+  "firmaRiferimento": "Riferimento",
+  "firmaIstante": "Firmato il",
+  "scarica": "Scarica il PDF",
+  "scaricaRicevuta": "Scarica la ricevuta della firma",
+  "nuovoModulo": "Compila un altro modulo",
+  "riprova": "Riprova",
+
+  "caricamento": "Caricamento…",
+  "vuotoFigli": "Non risulta nessun bambino collegato a questo accesso: scrivi alla segreteria.",
+  "vuotoModuli": "Non c’è nessun modulo da compilare in questo momento.",
+
+  "erroreElenco": "L’elenco non si è caricato: riprova fra qualche minuto.",
+  "erroreModulo": "Il modulo non si è aperto: riprova fra qualche minuto.",
+  "erroreGenerazione": "Il modulo non è stato generato: riprova fra qualche minuto.",
+  "erroreFirma": "La firma non è andata a buon fine: il modulo non è stato inviato.",
+  "erroreDatiMancanti": "Mancano dei dati che il modulo deve riportare: scrivi alla segreteria della scuola.",
+
+  "copiaFamiglia": "Copia a uso della famiglia — non protocollata",
+  "certificatoAvviso": "Quello che scarichi qui è una copia a uso della famiglia: se un ente lo vuole protocollato, chiedilo in segreteria.",
+  "avvisoSanitario": "Quello che scrivi qui riguarda la salute di tuo figlio: lo leggono la segreteria e le insegnanti della sua sezione, nessun altro."
+}

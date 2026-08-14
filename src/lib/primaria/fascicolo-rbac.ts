@@ -70,6 +70,38 @@ export async function puoAccedereFascicolo(
   return { consentito: false, ruolo, motivo: 'negato' }
 }
 
+/**
+ * Le sezioni di cui l'utente è CONTITOLARE — assegnazione diretta
+ * (`utenti_sezioni`) o per materia (`utenti_sezioni_materie`).
+ *
+ * È la stessa condizione che `puoAccedereFascicolo` verifica una sezione alla
+ * volta, qui raccolta in blocco: serve agli ELENCHI, dove chiedere il gate per
+ * ognuno dei trentatré alunni significherebbe sessantasei query per disegnare
+ * una pagina.
+ *
+ * ⚠️ Le due funzioni devono restare d'accordo. Se un giorno nasce una terza
+ * tabella di assegnazione, va aggiunta in entrambe — un elenco più generoso del
+ * gate mostrerebbe righe che poi non si aprono; più severo, nasconderebbe
+ * documenti a chi ha diritto di vederli e nessuno se ne accorgerebbe.
+ * Il lock `__tests__/lib/documenti-registro-rbac.test.ts` verifica che leggano
+ * le stesse due tabelle.
+ */
+export async function sezioniContitolari(
+  supabase: SupabaseClient,
+  utenteId: string,
+): Promise<string[]> {
+  const [{ data: perMateria }, { data: dirette }] = await Promise.all([
+    supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', utenteId),
+    supabase.from('utenti_sezioni').select('section_id').eq('utente_id', utenteId),
+  ])
+  const sezioni = new Set<string>()
+  for (const riga of [...(perMateria ?? []), ...(dirette ?? [])]) {
+    const id = (riga as { section_id?: string | null }).section_id
+    if (id) sezioni.add(id)
+  }
+  return [...sezioni]
+}
+
 export type AzioneFascicolo = 'list' | 'view' | 'download' | 'upload' | 'delete'
 
 /** Registra un accesso al fascicolo nel log immodificabile. Best-effort. */

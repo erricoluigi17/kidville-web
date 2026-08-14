@@ -1,0 +1,126 @@
+{
+  "titolo": "Forms to fill in",
+  "sottotitolo": "Fill in and sign from your phone: nobody will ask you again for the data the school already has.",
+
+  "scegliFiglio": "Who it is for",
+  "scegliFiglioSegnaposto": "Pick your child…",
+  "scegliModulo": "Which form you need",
+  "scegliSegnaposto": "Pick one…",
+  "cambiaModulo": "Change form",
+
+  "modelli": {
+    "schedaSanitaria": "Health record",
+    "autorizzazioneFarmaci": "Authorisation to administer medicines",
+    "dietaSpeciale": "Special diet request",
+    "delegaRitiro": "Pick-up authorisation",
+    "permessoOrario": "Late arrival / early pick-up permission",
+    "autorizzazioneUscita": "School trip authorisation",
+    "certificatoIscrizioneFrequenza": "Certificate of enrolment and attendance",
+    "certificatoBonusNido": "Certificate for the INPS nursery allowance"
+  },
+
+  "descrizioni": {
+    "schedaSanitaria": "Paediatrician, emergency contacts and what to do if your child feels unwell.",
+    "autorizzazioneFarmaci": "Needed when a medicine has to be given during school hours: without it, teachers cannot administer anything.",
+    "dietaSpeciale": "For allergies, intolerances or dietary choices: the kitchen prepares a different meal.",
+    "delegaRitiro": "Who else, besides you, may come and pick your child up.",
+    "permessoOrario": "To arrive later or leave earlier, once or for a period.",
+    "autorizzazioneUscita": "For school trips and activities outside the building.",
+    "certificatoIscrizioneFrequenza": "States that your child is enrolled and attending: employers and many offices ask for it.",
+    "certificatoBonusNido": "The certificate INPS asks for the nursery allowance, with the details of the building’s authorisation."
+  },
+
+  "nonFirmabileFirmaDellaScuola": "This document is not signed with your own code: the legal representative of the school signs it.",
+  "nonFirmabileUscitaNonCreata": "The authorisation can be signed once the school has published the trip: destination, date and times are not available yet. Wait for the class announcement.",
+  "nonFirmabileSecondaFirmaMancante": "The pick-up authorisation is signed by both parents or guardians, and collecting the second signature is not available yet: for now, hand the authorisation in at the school office.",
+  "nonFirmabileAllegatoNonCaricabile": "The pick-up authorisation asks for a scan of the ID of every authorised person, and it cannot be uploaded from the app yet: hand it in at the school office.",
+
+  "campiTitolo": "What is needed",
+  "campiSottotitolo": "Name, date of birth, tax code and class are added by the app.",
+  "campoObbligatorio": "Required field",
+  "indietro": "Back",
+  "rivedi": "Review and sign",
+
+  "datiApp": {
+    "titolo": "What the app fills in on its own",
+    "bambino": "Child",
+    "nascita": "Date and place of birth",
+    "codiceFiscale": "Tax code",
+    "sezione": "Class",
+    "sede": "Location",
+    "annoScolastico": "School year"
+  },
+  "nonIndicato": "Not provided",
+
+  "si": "Yes",
+  "no": "No",
+  "riga": "Row {n}",
+  "aggiungiRiga": "Add a row",
+  "rimuoviRiga": "Remove this row",
+
+  "accompagnatoreIoStesso": "Myself",
+  "delegatiVuoti": "No authorised person is on file for this child: you can only name yourself here. Pick-up authorisations are registered at the school office.",
+  "delegatiNonLetti": "The list of authorised people did not load, so here you can only name yourself. Reload the page in a few minutes: a name typed by hand could not be checked by the school, and the form would be rejected.",
+
+  "allegatoAiuto": "The file is uploaded once from the «Medical certificates» tab: here you just link it to the form.",
+  "allegatoScegli": "Pick a certificate you already uploaded…",
+  "allegatoVoce": "Certificate uploaded on {data}",
+  "allegatoVuoto": "No uploaded certificate is on file for this child: upload it from the «Medical certificates» tab and come back here.",
+  "allegatoNonLetto": "The list of uploaded certificates did not open: please try again in a few minutes.",
+  "allegatoNonCaricabile": "This attachment cannot be uploaded from the app yet: the form has to be handed in at the school office.",
+
+  "riepilogoTitolo": "Review before signing",
+  "riepilogoSottotitolo": "Once signed, the form can no longer be changed: if something is not right, go back now.",
+
+  "otpTitolo": "Sign with a code",
+  "otpSottotitolo": "We send you a one-time code: entering it signs the form.",
+  "otpInvia": "Send me the code",
+  "otpCodice": "Code received",
+  "otpCodiceSegnaposto": "6 digits",
+  "otpConferma": "Sign the form",
+  "otpRinvia": "It did not arrive: send it again",
+  "otpAttesa": "You can ask for another one in {n, plural, one {# second} other {# seconds}}.",
+  "otpInviato": "Code sent.",
+  "otpInviatoA": "Code sent to {email}",
+  "otpNonConsegnato": "The code does not appear to have been delivered: if it does not arrive, write to the school office.",
+  "otpNonInviato": "The code was not sent: please try again in a few minutes.",
+  "otpErrato": "Invalid code: check the digits and try again.",
+  "otpScaduto": "The code has expired: ask for another one.",
+  "otpGiaUsato": "This code has already been used: ask for another one.",
+  "otpTroppiTentativi": "Too many attempts: wait a few minutes and try again.",
+  "invioInCorso": "Sending…",
+  "firmaInCorso": "Signing…",
+
+  "firmaDueGenitori": "This form is signed by both parents: the other one gets a code of their own.",
+  "firmaInAttesa": "One signature is still missing.",
+
+  "confermaTitolo": "Form signed",
+  "confermaTesto": "It is already on file: the school can see it without you handing in anything.",
+  "inAttesaDirezioneTitolo": "Signed, waiting for the head office",
+  "inAttesaDirezioneTesto": "The authorisation is signed, but until the head office accepts it nobody may administer the medicine. Download the PDF and take it to the school office: it is the only copy you keep.",
+  "mancatoArchivioTitolo": "Signed, but not filed",
+  "mancatoArchivioTipoDocumentoNonAmmesso": "The signature is valid and the PDF is yours, but the school archive does not accept this kind of document yet: download it now and keep it.",
+  "mancatoArchivioSchemaNonPronto": "The signature is valid and the PDF is yours, but the archive is not ready to receive it yet: download it now and keep it.",
+  "mancatoArchivioArchivioNonScritto": "The signature is valid and the PDF is yours, but the document did not reach the archive: download it now, keep it and tell the school office.",
+  "firmaDettaglio": "Signature details",
+  "firmaRiferimento": "Reference",
+  "firmaIstante": "Signed on",
+  "scarica": "Download the PDF",
+  "scaricaRicevuta": "Download the signature receipt",
+  "nuovoModulo": "Fill in another form",
+  "riprova": "Try again",
+
+  "caricamento": "Loading…",
+  "vuotoFigli": "No child appears to be linked to this account: please write to the school office.",
+  "vuotoModuli": "There is no form to fill in right now.",
+
+  "erroreElenco": "The list did not load: please try again in a few minutes.",
+  "erroreModulo": "The form did not open: please try again in a few minutes.",
+  "erroreGenerazione": "The form was not generated: please try again in a few minutes.",
+  "erroreFirma": "The signature did not go through: the form was not sent.",
+  "erroreDatiMancanti": "Some data the form must carry is missing: please write to the school office.",
+
+  "copiaFamiglia": "Copy for the family — not recorded in the protocol register",
+  "certificatoAvviso": "What you download here is a copy for the family: if an office wants it recorded in the protocol register, ask the school office for it.",
+  "avvisoSanitario": "What you write here concerns your child’s health: it is read by the school office and by the teachers of their class, and by nobody else."
+}

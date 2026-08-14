@@ -5,7 +5,6 @@
   "ruolo_coordinator": "Management",
   "ruolo_admin": "Administrator",
   "ruolo_genitore": "Parent",
-
   "allergene_glutine": "Gluten",
   "allergene_crostacei": "Crustaceans",
   "allergene_uova": "Eggs",
@@ -20,7 +19,6 @@
   "allergene_solfiti": "Sulphites",
   "allergene_lupini": "Lupin",
   "allergene_molluschi": "Molluscs",
-
   "evento_attivita": "Activity",
   "evento_merenda": "Snack",
   "evento_pranzo": "Lunch",
@@ -30,25 +28,21 @@
   "evento_umore": "Mood",
   "evento_entrata": "Arrival",
   "evento_legacy": "Event",
-
   "umore_felice": "Happy",
   "umore_sereno": "Calm",
   "umore_cosi_cosi": "So-so",
   "umore_triste": "Sad",
   "umore_agitato": "Restless",
-
   "aging_scaduti_oltre_30": "Overdue over 30 days",
   "aging_scaduti_entro_30": "Overdue up to 30 days",
   "aging_settimana": "This week",
   "aging_mese": "Next 30 days",
-
   "navgruppo_anagrafica": "Records",
   "navgruppo_didattica": "Teaching",
   "navgruppo_operativo": "Operations",
   "navgruppo_amministrazione": "Administration",
   "navgruppo_comunicazione": "Communication",
   "navgruppo_sistema": "System",
-
   "nav_dashboard": "Dashboard",
   "nav_students": "Records",
   "nav_primaria": "Primary",
@@ -61,6 +55,7 @@
   "nav_pagamenti": "Accounting",
   "nav_protocolli": "Protocol",
   "nav_modulistica": "Forms",
+  "nav_documenti_firmati": "Signed documents",
   "nav_gdpr": "Privacy & GDPR",
   "nav_moderazione": "Moderation",
   "nav_messaggi": "Messages",
@@ -69,7 +64,6 @@
   "nav_compiti": "Homework",
   "nav_impostazioni": "Settings",
   "nav_tools": "Tools",
-
   "notifica_avviso_label": "Notices and circulars",
   "notifica_avviso_desc": "When the school publishes a notice for the family",
   "notifica_consenso_uscita_label": "Trip and outing consents",
@@ -164,7 +158,6 @@
   "notifica_cassa_soglia_desc": "When the expected cash in the till exceeds the set threshold",
   "notifica_cassa_uscita_label": "Cash: expense recorded by the office",
   "notifica_cassa_uscita_desc": "When a non-administrator staff member records an expense",
-
   "campoPersonale_gender": "Gender",
   "campoPersonale_birth_date": "Date of birth",
   "campoPersonale_codice_belfiore_nascita": "Town of birth",

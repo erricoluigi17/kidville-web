@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Home, NotebookPen, MessageCircle, BookOpen, LayoutGrid,
-  Image, Package, FileText, ClipboardCheck, Users, Megaphone,
+  Image, Package, FileText, FileSignature, ClipboardCheck, Users, Megaphone,
   ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper,
 } from 'lucide-react';
 import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
@@ -116,6 +116,9 @@ export default function TeacherBottomNav() {
         { id: 'attivita', label: t('voceAttivitaLabel'), sub: t('voceAttivitaSub'), icon: ListTodo, href: '/teacher/tasks', tint: tintaFunzione('attivita'), grado: 'comune' },
         { id: 'armadietto', label: t('voceArmadiettoLabel'), sub: t('voceArmadiettoSub'), icon: Package, href: '/teacher/locker', tint: tintaFunzione('armadietto'), grado: 'infanzia' },
         { id: 'moduli', label: t('voceModuliLabel'), sub: t('voceModuliSub'), icon: FileText, href: '/teacher/modulistica', tint: tintaFunzione('moduli'), grado: 'comune' },
+        // Archivio documenti: l'insegnante vede i bambini delle proprie sezioni,
+        // e i documenti sanitari solo di quelli di cui è contitolare (gate in API).
+        { id: 'documenti', label: t('voceDocumentiLabel'), sub: t('voceDocumentiSub'), icon: FileSignature, href: '/teacher/documenti-firmati', tint: tintaFunzione('moduli'), grado: 'comune' },
         { id: 'messaggi', label: t('voceMessaggiLabel'), sub: t('voceMessaggiSub'), icon: MessageCircle, href: '/teacher/chat', tint: tintaFunzione('messaggi'), grado: 'comune' },
         { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: User, href: null, tint: tintaFunzione('profilo'), grado: 'comune', soon: true },
       ],

@@ -38,6 +38,7 @@ export default getRequestConfig(async () => {
     adminPrimaria: (await import(`../../messages/${locale}/adminPrimaria.json`)).default,
     adminSettings: (await import(`../../messages/${locale}/adminSettings.json`)).default,
     adminAltro: (await import(`../../messages/${locale}/adminAltro.json`)).default,
+    documenti: (await import(`../../messages/${locale}/documenti.json`)).default,
     shared: (await import(`../../messages/${locale}/shared.json`)).default,
     etichette: (await import(`../../messages/${locale}/etichette.json`)).default,
     parentNews: (await import(`../../messages/${locale}/parentNews.json`)).default,
@@ -52,6 +53,14 @@ export default getRequestConfig(async () => {
     // cui nasce questo lavoro: le due schermate divergevano in 5 stringhe su 7.
     parentAssenze: (await import(`../../messages/${locale}/parentAssenze.json`)).default,
     parentForms: (await import(`../../messages/${locale}/parentForms.json`)).default,
+    // I diciassette prestampati (`src/lib/prestampati/`), in DUE namespace e non in
+    // uno: la famiglia ne vede otto e li compila dal telefono, la segreteria li vede
+    // tutti e li genera dal banco. Le stesse etichette compaiono da entrambe le parti
+    // (`modelli.*`) e sono le sole voci ripetute: il resto sono due schermate diverse,
+    // e tenerle in un file solo avrebbe mandato alla famiglia il vocabolario del
+    // protocollo e alla segreteria quello del codice usa e getta.
+    prestampatiGenitore: (await import(`../../messages/${locale}/prestampatiGenitore.json`)).default,
+    prestampatiSegreteria: (await import(`../../messages/${locale}/prestampatiSegreteria.json`)).default,
     public: (await import(`../../messages/${locale}/public.json`)).default,
   };
 

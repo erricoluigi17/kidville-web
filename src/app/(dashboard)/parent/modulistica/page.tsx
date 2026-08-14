@@ -8,6 +8,7 @@ import {
   ArrowRight, Download, CheckCircle2, Upload, Mail
 } from 'lucide-react';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
+import { PrestampatiGenitore } from '@/components/features/prestampati/PrestampatiGenitore';
 import { DateField } from '@/components/ui/DateField';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
@@ -91,6 +92,35 @@ interface SignedArchiveItem {
   };
 }
 
+/**
+ * «Copia a uso della famiglia — non protocollata», sui due riquadri da cui il certificato
+ * esce davvero.
+ *
+ * La dicitura stava soltanto sulle schede SPENTE del pannello dei prestampati — quelle che un
+ * PDF non lo producono affatto — mentre i due pulsanti «Scarica PDF» qui sotto sono l'unica
+ * strada da cui una famiglia ottiene un certificato, e non dicevano niente. Nemmeno il foglio
+ * lo dice: `generateSelfServiceCertificate` (jsPDF, più su in questo file) non stampa la
+ * dicitura da nessuna parte, verificato riga per riga. Chi portava quel PDF a un ente lo
+ * scopriva allo sportello.
+ *
+ * Le due frasi vengono dal catalogo dei prestampati e non da `parentServizi`: sono le stesse
+ * parole del pannello che sta sopra, nella stessa scheda. Una dicitura che compare in due
+ * punti si scrive una volta sola, o al primo ritocco i due punti divergono — ed è la §4.1 di
+ * `docs/prestampati/00-impaginazione.md`, cioè una regola sola con due luoghi d'uso.
+ */
+function NotaCopiaFamiglia() {
+  const t = useTranslations('prestampatiGenitore');
+  return (
+    <>
+      {/* Niente `mt-*`: la spaziatura la mette lo `space-y-2` del riquadro che le ospita. */}
+      <p className="inline-flex rounded-pill bg-kidville-yellow-light px-2.5 py-1 font-maven text-[11px] font-bold text-kidville-green">
+        {t('copiaFamiglia')}
+      </p>
+      <p className="font-maven text-xs leading-relaxed text-kidville-sub">{t('certificatoAvviso')}</p>
+    </>
+  );
+}
+
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function ParentModulisticaPage() {
   const t = useTranslations('parentServizi');
@@ -117,6 +147,23 @@ export default function ParentModulisticaPage() {
   // Firma OTP via email (FES)
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpSession, setOtpSession] = useState<{ email: string | null; expiry: number; ticket: string; devCode?: string } | null>(null);
+
+  /**
+   * Il figlio scelto nella scheda «Certificati Self-Service», e il difetto che chiude.
+   *
+   * Quella scheda ha sempre lavorato su `children[0]`: il primo figlio dell'elenco, mai
+   * chiesto a nessuno. Su un certificato scaricato era un fastidio — il PDF sbagliato si
+   * vede e si rifà — ma da oggi in quella stessa scheda si FIRMA: scheda sanitaria,
+   * autorizzazione a somministrare un farmaco, richiesta di dieta. Con due figli il genitore
+   * avrebbe firmato le allergie di uno sul fascicolo dell'altro, e se ne sarebbe accorto —
+   * ammesso che se ne accorgesse — a documento già archiviato, quando non si modifica più.
+   *
+   * Il selettore vero vive dentro `PrestampatiGenitore` (che con un figlio solo non chiede
+   * niente e da due in su non preseleziona nessuno); qui si tiene la sua scelta, così anche
+   * i due certificati scaricabili qui sotto smettono di indovinare. Vuoto = nessuna scelta
+   * ancora fatta: si ricade sul primo, che è il comportamento di prima.
+   */
+  const [certificatiChildId, setCertificatiChildId] = useState('');
 
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
@@ -409,9 +456,10 @@ export default function ParentModulisticaPage() {
     setTimeout(async () => {
       const { jsPDF } = await import('jspdf');
       const doc = new jsPDF();
-      // NB: sempre children[0] — il tab Certificati non ha selettore figlio
-      // (semantica esistente, fuori scope del de-hardcode).
-      const currentStudent = children[0];
+      // Il figlio scelto nel pannello dei prestampati, che è il selettore di questa scheda.
+      // `children[0]` resta solo come ripiego per chi non ha ancora scelto — vedi
+      // `certificatiChildId`.
+      const currentStudent = children.find(c => c.id === certificatiChildId) ?? children[0];
       const anno = annoScolasticoCorrente();
 
       // Header Letterhead
@@ -792,43 +840,52 @@ export default function ParentModulisticaPage() {
 
           {/* TAB 3: Certificati Self-Service */}
           {activeTab === 'certificati' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Certificato Frequenza */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
-                <div className="space-y-2">
-                  <Award className="text-kidville-green/20 mb-2" size={32} />
-                  <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertFrequenzaTitolo')}</h3>
-                  <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                    {t('modulisticaCertFrequenzaTesto')}
-                  </p>
-                </div>
-                <Btn
-                  variant="primary"
-                  size="md"
-                  onClick={() => generateSelfServiceCertificate('frequenza')}
-                  className="mt-6 w-full"
-                >
-                  <Download size={16} /> {t('modulisticaScaricaPdf')}
-                </Btn>
-              </div>
+            <div className="space-y-8">
+              {/* I prestampati della famiglia: si compilano, si firmano con l'OTP e si
+                  scaricano. Il selettore del figlio è suo, e la sua scelta arriva ai due
+                  certificati qui sotto — vedi `certificatiChildId`. */}
+              <PrestampatiGenitore figli={children} onAlunnoScelto={setCertificatiChildId} />
 
-              {/* Certificato Iscrizione */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
-                <div className="space-y-2">
-                  <Award className="text-kidville-green/20 mb-2" size={32} />
-                  <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertIscrizioneTitolo')}</h3>
-                  <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                    {t('modulisticaCertIscrizioneTesto')}
-                  </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Certificato Frequenza */}
+                <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <Award className="text-kidville-green/20 mb-2" size={32} />
+                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertFrequenzaTitolo')}</h3>
+                    <p className="font-maven text-xs text-kidville-muted leading-relaxed">
+                      {t('modulisticaCertFrequenzaTesto')}
+                    </p>
+                    <NotaCopiaFamiglia />
+                  </div>
+                  <Btn
+                    variant="primary"
+                    size="md"
+                    onClick={() => generateSelfServiceCertificate('frequenza')}
+                    className="mt-6 w-full"
+                  >
+                    <Download size={16} /> {t('modulisticaScaricaPdf')}
+                  </Btn>
                 </div>
-                <Btn
-                  variant="primary"
-                  size="md"
-                  onClick={() => generateSelfServiceCertificate('iscrizione')}
-                  className="mt-6 w-full"
-                >
-                  <Download size={16} /> {t('modulisticaScaricaPdf')}
-                </Btn>
+
+                {/* Certificato Iscrizione */}
+                <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <Award className="text-kidville-green/20 mb-2" size={32} />
+                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertIscrizioneTitolo')}</h3>
+                    <p className="font-maven text-xs text-kidville-muted leading-relaxed">
+                      {t('modulisticaCertIscrizioneTesto')}
+                    </p>
+                    <NotaCopiaFamiglia />
+                  </div>
+                  <Btn
+                    variant="primary"
+                    size="md"
+                    onClick={() => generateSelfServiceCertificate('iscrizione')}
+                    className="mt-6 w-full"
+                  >
+                    <Download size={16} /> {t('modulisticaScaricaPdf')}
+                  </Btn>
+                </div>
               </div>
             </div>
           )}

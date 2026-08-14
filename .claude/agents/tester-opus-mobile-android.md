@@ -55,6 +55,10 @@ npm run dev            # porta 3000; MAI con una pipe tipo `| head`: il SIGPIPE 
 
 # 4. Build dell'APK che punta all'host
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"  # Gradle 8.14 vuole JDK 21, non la 25 di sistema
+# ⚠️ Questo sync AVVELENA la shell nativa: `capacitor.config.json` è gitignorato,
+#    quindi né `git status`, né una revisione, né la CI vedranno che punta a un indirizzo
+#    di sviluppo. Dal 2026-08-08 al 2026-08-14 è rimasto così per sei giorni.
+#    QUANDO HAI FINITO, rimettila a posto:  npm run rilascio:sync
 CAP_SERVER_URL="http://10.0.2.2:3000" npx cap sync android
 cd android && ./gradlew assembleDebug && cd ..
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk

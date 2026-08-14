@@ -1,11 +1,9 @@
 {
   "caricamento": "Caricamento…",
-
   "heroSottotitoloClasse": "Classe {sezione} · {count, plural, one {# alunno} other {# alunni}}",
   "heroSottotitoloSezione": "Sezione {sezione} · {count, plural, one {# bambino} other {# bambini}}",
   "heroVuotoClasse": "La tua giornata in classe",
   "heroVuotoSezione": "La tua giornata in sezione",
-
   "comunicazioniTitolo": "Comunicazioni",
   "comunicazioniSottotitolo": "Avvisi pubblicati in bacheca · letture",
   "badgeAdesione": "Adesione",
@@ -13,13 +11,11 @@
   "letture": "{count, plural, one {# lettura} other {# letture}}",
   "adesioniSiNo": "{si} sì · {no} no",
   "apriBacheca": "Apri la bacheca",
-
   "allergieTitolo": "Allergie e note mediche",
   "allergieDaSeguireClasse": "{count, plural, one {# alunno} other {# alunni}} da seguire · classe {sezione}",
   "allergieDaSeguireSezione": "{count, plural, one {# bambino} other {# bambini}} da seguire · sezione {sezione}",
   "allergieCtaRegistro": "Vai al registro",
   "allergieCtaDiario": "Vedi nel diario",
-
   "appelloTitolo": "Appello del giorno",
   "appelloPresentiAssenti": "{presenti, plural, one {# presente} other {# presenti}} · {assenti, plural, one {# assente} other {# assenti}}",
   "appelloNonRegistratoClasse": "Non ancora registrato · {count, plural, one {# alunno} other {# alunni}}",
@@ -28,7 +24,6 @@
   "appelloBadgeDaFare": "Da fare",
   "appelloCtaModifica": "Modifica appello",
   "appelloCtaFai": "Fai l'appello ora",
-
   "scorciatoieEyebrow": "Azioni rapide",
   "scorciatoieTitolo": "Scorciatoie",
   "shortcut_appello_eyebrow": "Presenze",
@@ -50,20 +45,16 @@
   "shortcut_attivita_eyebrow": "Staff",
   "shortcut_attivita_title": "Attività",
   "shortcut_attivita_detail": "Task e bacheca interna",
-
   "agendaEyebrow": "Agenda",
   "agendaTitoloClasse": "La giornata in classe",
   "agendaTitoloSezione": "La giornata in sezione",
-
   "footerVista": "Vista insegnante",
   "gradoInfanzia": "Infanzia",
   "gradoNido": "Nido",
   "gradoPrimaria": "Primaria",
-
   "gruppoInClasse": "In classe",
   "gruppoVitaScolastica": "Vita scolastica",
   "gruppoStrumenti": "Strumenti",
-
   "voceAppelloLabel": "Appello",
   "voceAppelloSub": "Presenze del giorno",
   "voceDiarioLabel": "Diario",
@@ -88,23 +79,22 @@
   "voceArmadiettoSub": "Scorte e richieste",
   "voceModuliLabel": "Moduli",
   "voceModuliSub": "Form da gestire",
+  "voceDocumentiLabel": "Documenti",
+  "voceDocumentiSub": "Moduli firmati e certificati dei tuoi bambini",
   "voceMessaggiLabel": "Messaggi",
   "voceMessaggiSub": "Chat con le famiglie",
   "voceProfiloLabel": "Profilo",
   "voceProfiloSub": "Account e impostazioni",
-
   "tabDashboard": "Dashboard",
   "tabMessaggi": "Messaggi",
   "tabFoto": "Foto",
   "tabMenu": "Menu",
-
   "ariaNavigazionePrincipale": "Navigazione principale",
   "ariaMenu": "Menu · tutte le sezioni",
   "menuEyebrow": "Tutte le sezioni",
   "menuTitolo": "Menu",
   "ariaChiudi": "Chiudi",
   "badgeInArrivo": "In arrivo",
-
   "agendaNessunaAssegnataClasse": "Nessuna classe assegnata: l’agenda apparirà qui.",
   "agendaNessunaAssegnataSezione": "Nessuna sezione assegnata: l’agenda apparirà qui.",
   "agendaNessunEventoClasse": "Nessun evento in programma per la classe.",

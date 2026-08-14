@@ -15,6 +15,7 @@ import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliIn
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
 import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
 import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale';
+import { PrestampatiSegreteria } from '@/components/features/prestampati/PrestampatiSegreteria';
 import { formattaIstante } from '@/i18n/config';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
@@ -102,10 +103,15 @@ interface PreInscription {
   created_at: string;
 }
 
-type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'moduli-genitori' | 'attesa' | 'odt';
+type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'prestampati' | 'moduli-genitori' | 'attesa' | 'odt';
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
+  // L'etichetta della linguetta «Prestampati» viene dal catalogo del PANNELLO e non da
+  // `adminModulistica`: è lo stesso nome che il pannello si dà in cima a sé stesso, e due
+  // chiavi per la stessa cosa nella stessa schermata sono il difetto che il lock
+  // `messaggi-plurali-e-glossario` sorveglia («Presa visione» chiamata in due modi).
+  const tPrestampati = useTranslations('prestampatiSegreteria');
   const f = useDateFormat();
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
@@ -120,9 +126,15 @@ function ModulisticaInner() {
   // (`?tab=personale&pratica=<uuid>`) partono da lì. Senza questa parola, ogni avviso
   // di anagrafica del personale aprirebbe «Moduli inviabili» — cioè la linguetta
   // sbagliata, senza nessun errore da nessuna parte.
+  //
+  // `prestampati` oggi non è il bersaglio di nessuna notifica, e ci sta lo stesso: la
+  // parola della linguetta vive in QUATTRO punti di questo file — il tipo, la barra, lo
+  // switch e questa riga — e le prime tre senza la quarta fanno un `?tab=prestampati` che
+  // atterra su «Moduli inviabili» in silenzio. È la riga che si dimentica, e la si
+  // dimentica proprio perché finché nessuno manda quel link il difetto non si vede.
   const initialTab: ModulisticaTab =
     tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'personale'
-    || tabParam === 'moduli-genitori' || tabParam === 'odt'
+    || tabParam === 'prestampati' || tabParam === 'moduli-genitori' || tabParam === 'odt'
       ? tabParam
       : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
@@ -535,6 +547,7 @@ function ModulisticaInner() {
           { id: 'ricevuti', label: t('modTabRicevuti'), icon: Inbox },
           { id: 'candidature', label: t('modTabCandidature'), icon: UserCheck },
           { id: 'personale', label: t('modTabPersonale'), icon: IdCard },
+          { id: 'prestampati', label: tPrestampati('titolo'), icon: Stamp },
           { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
           { id: 'odt', label: t('modTabOdt'), icon: Settings },
         ]}
@@ -542,7 +555,14 @@ function ModulisticaInner() {
 
       {/* Moduli inviabili / ricevuti / candidature / personale: operano multi-sede —
           leggono e scrivono dichiarando le sedi attive con `x-sedi`, quindi non passano
-          dalla guardia di sede singola (che pretende UNA sede sola). */}
+          dalla guardia di sede singola (che pretende UNA sede sola).
+
+          `prestampati` sta in questa stessa catena, e non per comodità: la sede se la
+          sceglie DENTRO, come primo passo, perché è quella che dichiara alla generazione
+          (`resolveScuolaScrittura` risponde 400 a chi ne ha più d'una e non la indica).
+          Passarlo dalla guardia di sede singola vorrebbe dire chiedere due volte la stessa
+          cosa — una qui e una nel pannello — e mostrare `SedeNotice` a un admin di tre
+          plessi che sta per scegliere il plesso alla riga dopo. */}
       {activeTab === 'inviabili' ? (
         <ModuliInviabili />
       ) : activeTab === 'ricevuti' ? (
@@ -551,6 +571,8 @@ function ModulisticaInner() {
         <CandidatureInsegnanti />
       ) : activeTab === 'personale' ? (
         <PratichePersonale />
+      ) : activeTab === 'prestampati' ? (
+        <PrestampatiSegreteria />
       ) : sediLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />

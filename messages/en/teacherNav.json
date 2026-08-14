@@ -1,11 +1,9 @@
 {
   "caricamento": "Loading…",
-
   "heroSottotitoloClasse": "Class {sezione} · {count, plural, one {# pupil} other {# pupils}}",
   "heroSottotitoloSezione": "Section {sezione} · {count, plural, one {# child} other {# children}}",
   "heroVuotoClasse": "Your day in class",
   "heroVuotoSezione": "Your day in the section",
-
   "comunicazioniTitolo": "Announcements",
   "comunicazioniSottotitolo": "Notices posted on the board · reads",
   "badgeAdesione": "RSVP",
@@ -13,13 +11,11 @@
   "letture": "{count, plural, one {# read} other {# reads}}",
   "adesioniSiNo": "{si} yes · {no} no",
   "apriBacheca": "Open the board",
-
   "allergieTitolo": "Allergies and medical notes",
   "allergieDaSeguireClasse": "{count, plural, one {# pupil} other {# pupils}} to keep an eye on · class {sezione}",
   "allergieDaSeguireSezione": "{count, plural, one {# child} other {# children}} to keep an eye on · section {sezione}",
   "allergieCtaRegistro": "Go to the register",
   "allergieCtaDiario": "See in the diary",
-
   "appelloTitolo": "Today’s attendance",
   "appelloPresentiAssenti": "{presenti, plural, one {# present} other {# present}} · {assenti, plural, one {# absent} other {# absent}}",
   "appelloNonRegistratoClasse": "Not recorded yet · {count, plural, one {# pupil} other {# pupils}}",
@@ -28,7 +24,6 @@
   "appelloBadgeDaFare": "To do",
   "appelloCtaModifica": "Edit attendance",
   "appelloCtaFai": "Take attendance now",
-
   "scorciatoieEyebrow": "Quick actions",
   "scorciatoieTitolo": "Shortcuts",
   "shortcut_appello_eyebrow": "Attendance",
@@ -50,20 +45,16 @@
   "shortcut_attivita_eyebrow": "Staff",
   "shortcut_attivita_title": "Tasks",
   "shortcut_attivita_detail": "Tasks and internal board",
-
   "agendaEyebrow": "Agenda",
   "agendaTitoloClasse": "The day in class",
   "agendaTitoloSezione": "The day in the section",
-
   "footerVista": "Teacher view",
   "gradoInfanzia": "Preschool",
   "gradoNido": "Nursery",
   "gradoPrimaria": "Primary",
-
   "gruppoInClasse": "In class",
   "gruppoVitaScolastica": "School life",
   "gruppoStrumenti": "Tools",
-
   "voceAppelloLabel": "Attendance",
   "voceAppelloSub": "Today’s roll call",
   "voceDiarioLabel": "Diary",
@@ -88,23 +79,22 @@
   "voceArmadiettoSub": "Supplies and requests",
   "voceModuliLabel": "Forms",
   "voceModuliSub": "Forms to handle",
+  "voceDocumentiLabel": "Documents",
+  "voceDocumentiSub": "Signed forms and certificates of your children",
   "voceMessaggiLabel": "Messages",
   "voceMessaggiSub": "Chat with families",
   "voceProfiloLabel": "Profile",
   "voceProfiloSub": "Account and settings",
-
   "tabDashboard": "Dashboard",
   "tabMessaggi": "Messages",
   "tabFoto": "Photos",
   "tabMenu": "Menu",
-
   "ariaNavigazionePrincipale": "Main navigation",
   "ariaMenu": "Menu · all sections",
   "menuEyebrow": "All sections",
   "menuTitolo": "Menu",
   "ariaChiudi": "Close",
   "badgeInArrivo": "Coming soon",
-
   "agendaNessunaAssegnataClasse": "No class assigned: the agenda will appear here.",
   "agendaNessunaAssegnataSezione": "No section assigned: the agenda will appear here.",
   "agendaNessunEventoClasse": "No events scheduled for the class.",

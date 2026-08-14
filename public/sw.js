@@ -199,8 +199,8 @@
 // i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
 // questo file restano identici il browser non reinstalla niente. La copia
 // vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
-const VERSIONE = 'v9';
-// IMPRONTA-PAGINA-OFFLINE: 676f9c023f6adfc90d9a5e395bd0a95e7fcd3ca9f5aa3f78c6dd99c6288c687e
+const VERSIONE = 'v10';
+// IMPRONTA-PAGINA-OFFLINE: a00babfd13e18f7958698e68743660c64f2c73dd44cb2af091f2c13f4211efbc
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

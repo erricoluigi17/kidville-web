@@ -50,6 +50,25 @@ android {
     }
 }
 
+// ─── IL CANCELLO SULLA SHELL NATIVA ────────────────────────────────────────────
+// `src/main/assets/capacitor.config.json` è GITIGNORATO e lo riscrive `npx cap sync`
+// con la CAP_SERVER_URL del momento — tipicamente quella di un collaudo su emulatore
+// rimasta lì. Fra il 2026-07-31 e il 2026-08-14 è successo cinque volte, e il 2026-08-05
+// un .aab che puntava a `10.0.2.2:3100` è stato scoperto solo quattro giorni dopo.
+// Né git, né la CI, né il gate possono vederlo: quel file in un clone pulito non esiste.
+// Quindi il controllo va qui, nell'unico momento in cui l'informazione c'è davvero.
+//
+// SOLO sul ramo di RELEASE: `assembleDebug` e l'emulatore devono continuare a puntare
+// a un indirizzo di sviluppo senza che nessuno protesti. Un cancello che dà torto a chi
+// lavora viene tolto entro una settimana, e allora non protegge più niente.
+tasks.register('verificaShellNativa', Exec) {
+    description = 'Verifica che capacitor.config.json punti alla produzione prima di una build di rilascio.'
+    group = 'verification'
+    workingDir = rootProject.file('..')
+    commandLine 'python3', 'scripts/verifica-shell-nativa.py', '--piattaforma', 'android'
+}
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach { dependsOn 'verificaShellNativa' }
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'

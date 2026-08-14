@@ -1,0 +1,899 @@
+/**
+ * Motore di impaginazione dei prestampati (`docs/prestampati/00-impaginazione.md`).
+ *
+ * Generalizza la carta intestata di `src/lib/protocolli/documento-pdf.ts` — che ha un
+ * solo blocco di corpo — a sezioni, righe-campo, caselle, elenchi, tabelle, riquadri
+ * «RISERVATO A…» e PIÙ PAGINE. Le misure non si scelgono qui: si leggono dalla
+ * specifica e vivono in un posto solo, perché diciassette moduli impaginati ognuno a
+ * modo suo sono diciassette fogli che fra sei mesi non si riconoscono più.
+ *
+ * Una regola vale per ogni blocco e conviene dirla una volta: **nessun contenuto si
+ * perde per strada**. Se un blocco non ci sta dov'è arrivato, va a pagina nuova; se non
+ * ci sta nemmeno in una pagina vuota, cede riga per riga — paragrafo, elenco, campi,
+ * tabella e riquadro fanno tutti così. Una guardia che esce e butta via i dati sarebbe
+ * qui la stessa cosa che il progetto chiama incidente quando succede in un log.
+ *
+ * A valle passa `applicaSegnatura()` di `src/lib/protocolli/timbro.ts`, che riscala la
+ * prima pagina invece di coprirla: nessuna riga di questo motore viene mai nascosta.
+ *
+ * Testato in `__tests__/lib/prestampati-impaginazione.test.ts`.
+ */
+
+import { jsPDF } from 'jspdf'
+import { LOGO_LIGHT_PNG_BASE64 } from '@/lib/protocolli/assets'
+import type {
+  BloccoPrestampato,
+  CampoPrestampato,
+  CasellaPrestampato,
+  DocumentoPrestampato,
+  FirmaPrestampato,
+  VerificaPrestampato,
+} from './tipi'
+
+// ─── Colori (§1) ────────────────────────────────────────────────────────────────
+const VERDE: [number, number, number] = [0, 106, 95] // #006A5F
+const INCHIOSTRO: [number, number, number] = [45, 45, 45] // #2D2D2D
+const GRIGIO: [number, number, number] = [100, 100, 100] // #646464
+const FONDO_TABELLA: [number, number, number] = [245, 241, 234] // #F5F1EA
+
+// ─── Misure, in millimetri (§1 e §2) ────────────────────────────────────────────
+const LARGHEZZA_PAGINA = 210
+const CENTRO_PAGINA = 105
+const MARGINE_SX = 22
+const LARGHEZZA_UTILE = 166
+const MARGINE_DX = MARGINE_SX + LARGHEZZA_UTILE // 188
+const COLONNA_DX = 110
+const LARGHEZZA_COLONNA = 78
+
+const BANDA_ALTEZZA = 30
+const LOGO_X = 14
+const LOGO_Y = 7.5
+const LOGO_LARGHEZZA = 44 // asset 620×209 → 44 × 14,8 mm
+const LOGO_ALTEZZA = 14.8
+
+const Y_INTESTAZIONE = 38
+const PASSO_INTESTAZIONE = 4.5
+const Y_PROTOCOLLO = 52
+const Y_TITOLO_MIN = 58
+const PASSO_TITOLO = 7
+
+const INTERLINEA = 6.2 // corpo 12 pt
+const PASSO_CAMPO = 6.5
+const SPAZIO_PRIMA_SEZIONE = 10
+const SPAZIO_DOPO_FILETTO = 5
+const LATO_CASELLA = 3.5
+const RIENTRO_ELENCO = 5
+
+/**
+ * Spaziatura fra le lettere dei titoletti (§2: «spaziatura lettere +0,4»): 0,4 PUNTI,
+ * convertiti qui in millimetri perché jsPDF misura `charSpace` nell'unità del documento.
+ *
+ * La specifica non porta l'unità su questa riga — è l'unica misura della tabella §2 che
+ * non ce l'ha — e la disambiguazione è stata presa qui, con una misura invece che con una
+ * preferenza. Non 0,4 mm: PDF.js infila uno spazio nel testo estratto quando la spaziatura
+ * supera 0,102 × il corpo — a 10 pt fanno 1,02 pt, cioè 0,36 mm. Con 0,4 mm il titolo di
+ * sezione esce «D A T I  D E L L ' A L U N N O / A»: il PDF diventa non cercabile, e
+ * soprattutto `suggerisciCampi()` di `src/lib/protocolli/estrai.ts` — che sui documenti
+ * protocollati legge proprio quel testo per precompilare la registrazione — smette di
+ * riconoscere qualunque riga. Un difetto che nessuno vedrebbe guardando il foglio
+ * stampato, che è il modo peggiore di averne uno.
+ */
+const SPAZIATURA_TITOLI = 0.4 * (25.4 / 72)
+
+const ALTEZZA_RIGA_TABELLA = 7
+const INTERLINEA_TABELLA = 4.2
+const PADDING_TABELLA = 2
+
+const PADDING_RIQUADRO = 4
+/** Dal bordo alto del riquadro alla prima riga-campo: ci sta il titoletto in 9 pt. */
+const TESTATA_RIQUADRO = 6
+
+const SPAZIO_SOTTO_TITOLO = 16
+const LIMITE_CONTENUTO = 272
+const Y_PIEDE = 287
+
+// Testata delle pagine successive alla prima (§2): niente banda verde, tutto in 8 pt.
+const Y_TESTATA_COMPATTA = 14
+const PASSO_TESTATA_COMPATTA = 4
+const SPAZIO_SOTTO_TESTATA_COMPATTA = 6.5
+
+const FIRMA_Y_MIN = 150
+const FIRMA_Y_MAX = 240
+const CENTRO_COLONNA_FIRMA = 152 // colonna destra 128→176, come in documento-pdf.ts
+const X_RIQUADRO_FIRMA = 118
+const LARGHEZZA_RIQUADRO_FIRMA = MARGINE_DX - X_RIQUADRO_FIRMA // 70
+const STACCO_RIQUADRO_FIRMA = 2.5 // dalla linea di scrittura al bordo alto del riquadro
+const Y_RIQUADRO_VERIFICA = 262
+const DISTANZA_FIRMA_VERIFICA = 6
+
+const PIEDE_PREDEFINITO = 'Documento generato dal registro elettronico Kidville'
+
+/**
+ * Costante di legge, non un testo di prodotto: cambia solo se cambia la norma (§3b).
+ * Sta nel codice — a differenza del nome del legale rappresentante, che sta in
+ * configurazione — proprio perché è l'unica parte del blocco firma che NON dipende da
+ * chi firma. E va da sola: «firma autografa sostituita a mezzo stampa» e «firmato
+ * digitalmente» si escludono, mai entrambe (§4.4).
+ */
+const DICITURA_FIRMA_SOSTITUITA = [
+  'Firma autografa sostituita a mezzo stampa',
+  "ai sensi dell'art. 3, c. 2 D.Lgs n. 39/93",
+]
+
+/** Righe e quota della testata compatta: si compongono una volta e non cambiano più. */
+interface TestataCompatta {
+  righeSede: string[]
+  righeTitolo: string[]
+  /** Quota a cui riparte il corpo sulle pagine successive alla prima. */
+  quotaCorpo: number
+}
+
+/** Stato dell'impaginazione: la pagina corrente la tiene jsPDF, la quota la teniamo qui. */
+interface Stato {
+  doc: jsPDF
+  documento: DocumentoPrestampato
+  /** Linea di scrittura corrente (baseline), in millimetri dal bordo alto. */
+  y: number
+  testata: TestataCompatta
+}
+
+/** Il documento composto, pronto per `applicaSegnatura()` o per lo storage. */
+export function buildPrestampatoPdf(documento: DocumentoPrestampato): Uint8Array {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  // La testata compatta si compone PRIMA di disegnare: la sua altezza decide quanto
+  // contenuto ci sta in una pagina vuota, e quel numero serve già al primo salto.
+  const s: Stato = { doc, documento, y: 0, testata: componiTestataCompatta(doc, documento) }
+
+  s.y = testataPrimaPagina(doc, documento)
+  for (const blocco of documento.blocchi) disegnaBlocco(s, blocco)
+  disegnaFirma(s)
+  // Il riquadro di verifica va in fondo all'ULTIMA pagina, che dopo la firma è quella
+  // corrente: si disegna a quota fissa e non tocca il flusso.
+  if (documento.verifica) disegnaVerifica(doc, documento.verifica)
+
+  // I piedi si scrivono per ultimi: «Pagina n di m» pretende di sapere quante sono,
+  // e prima di aver impaginato tutto non lo sa nessuno.
+  disegnaPiedi(doc, documento.piePagina?.trim() || PIEDE_PREDEFINITO)
+
+  return new Uint8Array(doc.output('arraybuffer'))
+}
+
+// ─── Testate ────────────────────────────────────────────────────────────────────
+
+/** Banda verde, logo, intestazione di sede, protocollo e titolo. Ritorna la quota del corpo. */
+function testataPrimaPagina(doc: jsPDF, d: DocumentoPrestampato): number {
+  doc.setFillColor(...VERDE)
+  doc.rect(0, 0, LARGHEZZA_PAGINA, BANDA_ALTEZZA, 'F')
+  doc.addImage(LOGO_LIGHT_PNG_BASE64, 'PNG', LOGO_X, LOGO_Y, LOGO_LARGHEZZA, LOGO_ALTEZZA)
+
+  let y = Y_INTESTAZIONE
+  if (d.intestazione.length > 0) {
+    doc.setTextColor(...GRIGIO)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    for (const riga of d.intestazione) {
+      doc.text(riga, CENTRO_PAGINA, y, { align: 'center' })
+      y += PASSO_INTESTAZIONE
+    }
+  }
+
+  // Riga di protocollo (§4.1): a y=52 con l'intestazione consueta di tre righe, più in
+  // basso quando la sede ne ha di più. Il massimo non è pignoleria: una sede con cinque
+  // righe si stamperebbe il protocollo sopra il proprio indirizzo.
+  const protocollo = d.protocollo?.trim()
+  if (protocollo) {
+    const yProtocollo = Math.max(y, Y_PROTOCOLLO)
+    doc.setTextColor(...INCHIOSTRO)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text(protocollo, MARGINE_SX, yProtocollo)
+    y = yProtocollo + 6
+  }
+
+  let yTitolo = Math.max(y, Y_TITOLO_MIN)
+  doc.setTextColor(...VERDE)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  // I titoli veri sono lunghi («RICHIESTA DI PERMESSO — ENTRATA POSTICIPATA / USCITA
+  // ANTICIPATA»): a 16 pt non ci stanno su una riga e vanno mandati a capo, o escono
+  // dai margini senza che nessuno se ne accorga finché non lo stampa una segretaria.
+  const righeTitolo = doc.splitTextToSize(d.titolo, LARGHEZZA_UTILE) as string[]
+  for (const riga of righeTitolo) {
+    doc.text(riga, CENTRO_PAGINA, yTitolo, { align: 'center' })
+    yTitolo += PASSO_TITOLO
+  }
+  yTitolo -= PASSO_TITOLO
+  doc.setDrawColor(...VERDE)
+  doc.setLineWidth(0.4)
+  doc.line(40, yTitolo + 4, 170, yTitolo + 4)
+
+  return yTitolo + SPAZIO_SOTTO_TITOLO
+}
+
+/**
+ * Le righe della testata delle pagine successive alla prima (§2): niente banda verde, ma
+ * l'intestazione della sede PER INTERO in 8 pt e il titolo in corsivo.
+ *
+ * Per intero, e non solo il nome: la seconda riga è l'indirizzo, la terza il codice
+ * meccanografico, e su un modulo che esce verso un ente sono proprio quelle a dire da
+ * quale delle tre sedi arriva il foglio che si sta sfogliando. La quota del corpo scende
+ * di conseguenza — si calcola qui e non è una costante — perché un'intestazione di cinque
+ * righe altrimenti finirebbe sotto il primo capoverso della pagina.
+ */
+function componiTestataCompatta(doc: jsPDF, d: DocumentoPrestampato): TestataCompatta {
+  doc.setFont('helvetica', 'italic')
+  doc.setFontSize(8)
+  const righeTitolo = doc.splitTextToSize(d.titolo, LARGHEZZA_UTILE) as string[]
+  const righeSede = d.intestazione.filter((riga) => riga.trim().length > 0)
+  const righe = righeSede.length + righeTitolo.length
+  const ultimaBase = Y_TESTATA_COMPATTA + Math.max(righe - 1, 0) * PASSO_TESTATA_COMPATTA
+  return { righeSede, righeTitolo, quotaCorpo: ultimaBase + 3 + SPAZIO_SOTTO_TESTATA_COMPATTA }
+}
+
+function disegnaTestataCompatta(doc: jsPDF, testata: TestataCompatta): void {
+  doc.setTextColor(...GRIGIO)
+  doc.setFontSize(8)
+  let y = Y_TESTATA_COMPATTA
+  doc.setFont('helvetica', 'normal')
+  for (const riga of testata.righeSede) {
+    doc.text(riga, CENTRO_PAGINA, y, { align: 'center' })
+    y += PASSO_TESTATA_COMPATTA
+  }
+  doc.setFont('helvetica', 'italic')
+  for (const riga of testata.righeTitolo) {
+    doc.text(riga, CENTRO_PAGINA, y, { align: 'center' })
+    y += PASSO_TESTATA_COMPATTA
+  }
+  doc.setDrawColor(...GRIGIO)
+  doc.setLineWidth(0.2)
+  const yFiletto = y - PASSO_TESTATA_COMPATTA + 3
+  doc.line(MARGINE_SX, yFiletto, MARGINE_DX, yFiletto)
+}
+
+function disegnaPiedi(doc: jsPDF, piede: string): void {
+  const pagine = doc.getNumberOfPages()
+  for (let p = 1; p <= pagine; p++) {
+    doc.setPage(p)
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(8)
+    doc.setTextColor(...GRIGIO)
+    doc.text(piede, CENTRO_PAGINA, Y_PIEDE, { align: 'center' })
+    if (pagine > 1) {
+      doc.text(`Pagina ${p} di ${pagine}`, MARGINE_DX, Y_PIEDE, { align: 'right' })
+    }
+  }
+}
+
+// ─── Salti di pagina ────────────────────────────────────────────────────────────
+
+function nuovaPagina(s: Stato): void {
+  s.doc.addPage()
+  disegnaTestataCompatta(s.doc, s.testata)
+  s.y = s.testata.quotaCorpo
+}
+
+/**
+ * Manda a pagina nuova se `altezza` non ci sta più. Ritorna `true` quando ha cambiato
+ * pagina: chi disegna deve riapplicare font e colori, perché la testata compatta li ha
+ * cambiati sotto i piedi.
+ */
+function cambioPagina(s: Stato, altezza: number): boolean {
+  if (s.y + altezza <= LIMITE_CONTENUTO) return false
+  nuovaPagina(s)
+  return true
+}
+
+/**
+ * Salto per BLOCCHI INTERI (§2): se il blocco non ci sta qui ma ci starebbe tutto in una
+ * pagina vuota, si va a capo pagina prima di cominciare. Se non ci sta nemmeno lì — un
+ * paragrafo lunghissimo, una tabella di cinquanta righe — si torna `false` e il blocco si
+ * spezza comunque riga per riga: spezzato è brutto, troncato è un dato che sparisce.
+ */
+function preferisciBloccoIntero(s: Stato, altezza: number): boolean {
+  if (altezza <= LIMITE_CONTENUTO - s.y) return false
+  if (altezza > LIMITE_CONTENUTO - s.testata.quotaCorpo) return false
+  nuovaPagina(s)
+  return true
+}
+
+// ─── Blocchi ────────────────────────────────────────────────────────────────────
+
+function disegnaBlocco(s: Stato, blocco: BloccoPrestampato): void {
+  switch (blocco.tipo) {
+    case 'paragrafo':
+      return disegnaParagrafo(s, blocco.testo, blocco.stile ?? 'normale')
+    case 'sezione':
+      return disegnaSezione(s, blocco.titolo)
+    case 'campi':
+      return disegnaCampi(s, blocco.campi, blocco.colonne ?? 1)
+    case 'caselle':
+      return disegnaCaselle(s, blocco.caselle)
+    case 'elenco':
+      return disegnaElenco(s, blocco.voci)
+    case 'tabella':
+      return disegnaTabella(s, blocco.intestazioni, blocco.righe, blocco.larghezze, blocco.righeVuote ?? 0)
+    case 'riquadro':
+      return disegnaRiquadro(s, blocco.titolo, blocco.campi)
+    case 'spazio':
+      // Lo spazio non provoca mai un salto: uno spazio in cima a una pagina nuova è
+      // un buco, e il blocco che segue il salto se lo farà da sé.
+      s.y += Math.max(blocco.mm, 0)
+      return
+    default: {
+      // Esaustività verificata dal compilatore: aggiungere un blocco in `tipi.ts` senza
+      // gestirlo qui è un errore di tipo, non un blocco che sparisce dalla stampa.
+      const nonGestito: never = blocco
+      return nonGestito
+    }
+  }
+}
+
+function disegnaParagrafo(s: Stato, testo: string, stile: 'normale' | 'corsivo' | 'grassetto'): void {
+  const { doc } = s
+  const applica = () => {
+    doc.setFont('helvetica', stile === 'corsivo' ? 'italic' : stile === 'grassetto' ? 'bold' : 'normal')
+    doc.setFontSize(12)
+    doc.setTextColor(...INCHIOSTRO)
+  }
+  applica()
+  const righe = doc.splitTextToSize(testo, LARGHEZZA_UTILE) as string[]
+  preferisciBloccoIntero(s, righe.length * INTERLINEA)
+  applica()
+  for (const riga of righe) {
+    if (cambioPagina(s, INTERLINEA)) applica()
+    // Riga per riga e non `doc.text(righe, …)`: la versione ad array usa il
+    // `lineHeightFactor` di jsPDF (a 12 pt sono 4,87 mm) e l'interlinea della specifica
+    // — 6,2 mm — resterebbe scritta solo nell'avanzamento della quota, cioè da nessuna
+    // parte. Due prestampati si riconoscono per questo passo, non per il font.
+    doc.text(riga, MARGINE_SX, s.y)
+    s.y += INTERLINEA
+  }
+}
+
+function disegnaSezione(s: Stato, titolo: string): void {
+  const { doc } = s
+  const altezza = SPAZIO_PRIMA_SEZIONE + 2 + SPAZIO_DOPO_FILETTO
+  // Il titolo chiede spazio anche per le due righe che lo seguono: un titolo di sezione
+  // orfano in fondo alla pagina è peggio di una pagina che finisce prima.
+  const saltato = preferisciBloccoIntero(s, altezza + INTERLINEA * 2)
+  if (!saltato) s.y += SPAZIO_PRIMA_SEZIONE
+
+  doc.setTextColor(...VERDE)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.text(titolo.toUpperCase(), MARGINE_SX, s.y, { charSpace: SPAZIATURA_TITOLI })
+  doc.setDrawColor(...GRIGIO)
+  doc.setLineWidth(0.2)
+  doc.line(MARGINE_SX, s.y + 2, MARGINE_DX, s.y + 2)
+  s.y += 2 + SPAZIO_DOPO_FILETTO
+}
+
+interface CellaCampo {
+  etichetta: string
+  larghezzaEtichetta: number
+  righeValore: string[]
+}
+
+/**
+ * L'etichetta esce sempre con i due punti, che il modello li abbia scritti o no: così
+ * `Cognome` e `Cognome:` danno lo stesso foglio, e nessuno deve ricordarsi la convenzione
+ * mentre trascrive diciassette moduli.
+ */
+function preparaCella(doc: jsPDF, campo: CampoPrestampato, larghezza: number): CellaCampo {
+  const grezza = campo.etichetta.trim().replace(/:+$/, '')
+  const etichetta = grezza ? `${grezza}:` : ''
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  const larghezzaEtichetta = etichetta ? doc.getTextWidth(etichetta) : 0
+
+  const valore = campo.valore?.trim()
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  const disponibile = Math.max(larghezza - larghezzaEtichetta - 2, 12)
+  const righeValore = valore ? (doc.splitTextToSize(valore, disponibile) as string[]) : []
+  return { etichetta, larghezzaEtichetta, righeValore }
+}
+
+/** Quanto scende una riga-campo: il valore lungo si prende le righe che gli servono. */
+function altezzaCella(cella: CellaCampo): number {
+  return Math.max(cella.righeValore.length, 1) * PASSO_CAMPO
+}
+
+function disegnaCella(doc: jsPDF, cella: CellaCampo, x: number, y: number, larghezza: number): void {
+  doc.setTextColor(...GRIGIO)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  if (cella.etichetta) doc.text(cella.etichetta, x, y)
+
+  const xValore = x + (cella.etichetta ? cella.larghezzaEtichetta + 2 : 0)
+  if (cella.righeValore.length === 0) {
+    // Riga da compilare a penna: filetto 0,2 mm fino a fine colonna (§2).
+    doc.setDrawColor(...GRIGIO)
+    doc.setLineWidth(0.2)
+    doc.line(xValore, y + 1, x + larghezza, y + 1)
+    return
+  }
+  doc.setTextColor(...INCHIOSTRO)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  cella.righeValore.forEach((riga, i) => doc.text(riga, xValore, y + i * PASSO_CAMPO))
+}
+
+function disegnaCampi(s: Stato, campi: CampoPrestampato[], colonne: 1 | 2): void {
+  const { doc } = s
+  const larghezza = colonne === 2 ? LARGHEZZA_COLONNA : LARGHEZZA_UTILE
+  const x = [MARGINE_SX, COLONNA_DX]
+
+  // Le altezze si misurano coi font veri, non a stima: un valore lungo che va a capo
+  // deve prendersi le righe che gli servono, o si stampa sopra a quello dopo.
+  const righe: { celle: CellaCampo[]; altezza: number }[] = []
+  for (let i = 0; i < campi.length; i += colonne) {
+    const celle = campi.slice(i, i + colonne).map((campo) => preparaCella(doc, campo, larghezza))
+    // Anche le righe di continuazione avanzano di 6,5 mm: il passo della specifica vale
+    // per tutto il modulo, non solo per la prima riga di ogni campo.
+    righe.push({ celle, altezza: Math.max(...celle.map(altezzaCella)) })
+  }
+
+  preferisciBloccoIntero(
+    s,
+    righe.reduce((somma, riga) => somma + riga.altezza, 0)
+  )
+  for (const riga of righe) {
+    cambioPagina(s, riga.altezza)
+    riga.celle.forEach((cella, i) => disegnaCella(doc, cella, x[i], s.y, larghezza))
+    s.y += riga.altezza
+  }
+}
+
+function disegnaCasella(doc: jsPDF, x: number, y: number, casella: CasellaPrestampato): void {
+  doc.setDrawColor(...GRIGIO)
+  doc.setLineWidth(0.3)
+  doc.rect(x, y - LATO_CASELLA, LATO_CASELLA, LATO_CASELLA) // base allineata alla riga di scrittura
+  if (casella.spuntata) {
+    doc.setDrawColor(...VERDE)
+    doc.setLineWidth(0.5)
+    doc.line(x + 0.7, y - 1.9, x + 1.4, y - 0.9)
+    doc.line(x + 1.4, y - 0.9, x + 2.9, y - 2.9)
+  }
+  doc.setTextColor(...INCHIOSTRO)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text(casella.testo, x + LATO_CASELLA + 1.5, y)
+}
+
+function disegnaCaselle(s: Stato, caselle: CasellaPrestampato[]): void {
+  const { doc } = s
+  const applica = () => {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(...INCHIOSTRO)
+  }
+  applica()
+
+  const larghezzaCasella = (casella: CasellaPrestampato) =>
+    LATO_CASELLA + 1.5 + doc.getTextWidth(casella.testo) + 6
+
+  const righe: CasellaPrestampato[][] = []
+  let corrente: CasellaPrestampato[] = []
+  let occupata = 0
+  for (const casella of caselle) {
+    const larghezza = larghezzaCasella(casella)
+    if (corrente.length > 0 && occupata + larghezza > LARGHEZZA_UTILE) {
+      righe.push(corrente)
+      corrente = []
+      occupata = 0
+    }
+    corrente.push(casella)
+    occupata += larghezza
+  }
+  if (corrente.length > 0) righe.push(corrente)
+
+  preferisciBloccoIntero(s, righe.length * PASSO_CAMPO)
+  applica()
+  for (const riga of righe) {
+    if (cambioPagina(s, PASSO_CAMPO)) applica()
+    let x = MARGINE_SX
+    for (const casella of riga) {
+      disegnaCasella(doc, x, s.y, casella)
+      applica() // `disegnaCasella` lascia dietro di sé colori e spessori suoi
+      x += larghezzaCasella(casella)
+    }
+    s.y += PASSO_CAMPO
+  }
+}
+
+function disegnaElenco(s: Stato, voci: string[]): void {
+  const { doc } = s
+  const applica = () => {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(12)
+    doc.setTextColor(...INCHIOSTRO)
+  }
+  applica()
+  const preparate = voci.map((voce) => doc.splitTextToSize(voce, LARGHEZZA_UTILE - RIENTRO_ELENCO) as string[])
+
+  preferisciBloccoIntero(
+    s,
+    preparate.reduce((somma, righe) => somma + righe.length * INTERLINEA, 0)
+  )
+  applica()
+  for (const righe of preparate) {
+    // Prima si prova a tenere insieme la singola voce, poi si cede riga per riga.
+    if (preferisciBloccoIntero(s, righe.length * INTERLINEA)) applica()
+    righe.forEach((riga, i) => {
+      if (cambioPagina(s, INTERLINEA)) applica()
+      if (i === 0) doc.text('•', MARGINE_SX, s.y)
+      doc.text(riga, MARGINE_SX + RIENTRO_ELENCO, s.y)
+      s.y += INTERLINEA
+    })
+  }
+}
+
+/** Le larghezze sono proporzioni: la larghezza utile è fissa e la somma la fa il motore. */
+function normalizzaLarghezze(larghezze: number[] | undefined, colonne: number): number[] {
+  if (colonne <= 0) return []
+  const valide = larghezze && larghezze.length === colonne && larghezze.every((l) => l > 0) ? larghezze : null
+  if (!valide) return new Array<number>(colonne).fill(LARGHEZZA_UTILE / colonne)
+  const somma = valide.reduce((a, l) => a + l, 0)
+  return valide.map((l) => (l / somma) * LARGHEZZA_UTILE)
+}
+
+interface RigaTabella {
+  celle: string[][]
+  altezza: number
+}
+
+/** Imposta il font della riga, che sia quella di testata o una riga di dati. */
+function fontRigaTabella(doc: jsPDF, intestazione: boolean): void {
+  doc.setFont('helvetica', intestazione ? 'bold' : 'normal')
+  doc.setFontSize(intestazione ? 9 : 9.5)
+}
+
+/**
+ * Una riga con le sue celle già mandate a capo e la sua altezza vera.
+ *
+ * L'altezza si misura anche per l'INTESTAZIONE, e non è un dettaglio: il certificato di
+ * servizio (n. 47) ha sette colonne su 166 mm, cioè 23 mm l'una, e «ORDINE DI SCUOLA» a
+ * 9 pt non ci sta su una riga. Con un'altezza fissa di 7 mm la seconda riga del titolo
+ * finirebbe sopra il primo dato, e il difetto si vedrebbe solo su quel modulo lì.
+ */
+function preparaRigaTabella(
+  doc: jsPDF,
+  valori: string[],
+  larghezze: number[],
+  intestazione: boolean
+): RigaTabella {
+  fontRigaTabella(doc, intestazione)
+  const celle = larghezze.map(
+    (larghezza, i) => doc.splitTextToSize(valori[i] ?? '', larghezza - PADDING_TABELLA * 2) as string[]
+  )
+  const linee = Math.max(...celle.map((c) => Math.max(c.length, 1)))
+  return { celle, altezza: Math.max(ALTEZZA_RIGA_TABELLA, linee * INTERLINEA_TABELLA + 3) }
+}
+
+/**
+ * Dentro la tabella `s.y` è il BORDO SUPERIORE della riga, non la linea di scrittura:
+ * i fondini e i filetti si disegnano dal bordo, e tenere due convenzioni in una funzione
+ * sola è il modo più rapido di sbagliare di 4,6 mm ogni riga.
+ */
+function disegnaRigaTabella(
+  s: Stato,
+  riga: RigaTabella,
+  larghezze: number[],
+  intestazione: boolean
+): void {
+  const { doc } = s
+  if (intestazione) {
+    doc.setFillColor(...FONDO_TABELLA)
+    doc.rect(MARGINE_SX, s.y, LARGHEZZA_UTILE, riga.altezza, 'F')
+  }
+  fontRigaTabella(doc, intestazione)
+  doc.setTextColor(...(intestazione ? GRIGIO : INCHIOSTRO))
+  let x = MARGINE_SX
+  riga.celle.forEach((linee, i) => {
+    linee.forEach((linea, j) => doc.text(linea, x + PADDING_TABELLA, s.y + 4.5 + j * INTERLINEA_TABELLA))
+    x += larghezze[i]
+  })
+  s.y += riga.altezza
+  // Filetto fra una riga e l'altra, nessun bordo verticale (§2).
+  doc.setDrawColor(...GRIGIO)
+  doc.setLineWidth(0.2)
+  doc.line(MARGINE_SX, s.y, MARGINE_DX, s.y)
+}
+
+function disegnaTabella(
+  s: Stato,
+  intestazioni: string[],
+  righe: string[][],
+  larghezze: number[] | undefined,
+  righeVuote: number
+): void {
+  const { doc } = s
+  // Le intestazioni possono mancare (una tabella già titolata dalla sezione che la
+  // precede): allora il numero di colonne lo dettano i dati. Uscire qui perché manca la
+  // testata butterebbe via righe intere senza lasciare traccia — sul foglio non c'è
+  // nemmeno lo spazio bianco a dire che mancano.
+  const colonne = intestazioni.length || righe.find((riga) => riga.length > 0)?.length || 0
+  if (colonne === 0) return
+  const misure = normalizzaLarghezze(larghezze, colonne)
+
+  const testata = intestazioni.length
+    ? preparaRigaTabella(
+        doc,
+        intestazioni.map((titolo) => titolo.toUpperCase()),
+        misure,
+        true
+      )
+    : null
+  const preparate = righe.map((riga) => preparaRigaTabella(doc, riga, misure, false))
+  const vuote = Math.max(Math.trunc(righeVuote), 0)
+  const vuota: RigaTabella = { celle: misure.map(() => []), altezza: ALTEZZA_RIGA_TABELLA }
+
+  preferisciBloccoIntero(
+    s,
+    (testata?.altezza ?? 0) +
+      preparate.reduce((somma, riga) => somma + riga.altezza, 0) +
+      vuote * ALTEZZA_RIGA_TABELLA
+  )
+  if (testata) disegnaRigaTabella(s, testata, misure, true)
+
+  // Una tabella lunga si spezza riga per riga, ma le intestazioni si ripetono: una
+  // pagina di celle senza il nome delle colonne non si legge (§2).
+  for (const riga of preparate) {
+    if (cambioPagina(s, riga.altezza) && testata) disegnaRigaTabella(s, testata, misure, true)
+    disegnaRigaTabella(s, riga, misure, false)
+  }
+  // Righe libere in coda: un modulo consegnato deve poter essere completato a penna.
+  for (let i = 0; i < vuote; i++) {
+    if (cambioPagina(s, vuota.altezza) && testata) disegnaRigaTabella(s, testata, misure, true)
+    disegnaRigaTabella(s, vuota, misure, false)
+  }
+
+  s.y += 4 // respiro sotto l'ultimo filetto
+}
+
+/**
+ * Riquadro «RISERVATO A…».
+ *
+ * Si spezza su più pagine come tutti gli altri blocchi: chiude la cornice a fine pagina,
+ * ne riapre una sulla successiva e ripete il titoletto — la stessa disciplina delle
+ * intestazioni di tabella. Prima non lo faceva, e un riquadro da più di ~35 campi usciva
+ * dal foglio: gli ultimi campi non comparivano affatto nel PDF e quelli appena prima
+ * finivano a cavallo del piè di pagina. Fuori dall'inviluppo dei diciassette modelli, sì,
+ * ma un motore che perde un campo in silenzio non lo si lascia in giro perché «tanto
+ * nessuno ci arriva».
+ */
+function disegnaRiquadro(s: Stato, titolo: string, campi: CampoPrestampato[]): void {
+  const { doc } = s
+  const larghezzaInterna = LARGHEZZA_UTILE - PADDING_RIQUADRO * 2
+  const celle = campi.map((campo) => preparaCella(doc, campo, larghezzaInterna))
+  const altezze = celle.map(altezzaCella)
+  const altezza = TESTATA_RIQUADRO + altezze.reduce((somma, a) => somma + a, 0) + PADDING_RIQUADRO
+
+  preferisciBloccoIntero(s, altezza + 4)
+  s.y += 4
+  // Una cornice non si apre in fondo alla pagina per chiudersi subito sotto: se lì non ci
+  // sta nemmeno il primo campo si comincia dalla pagina nuova. Serve ai soli riquadri più
+  // alti di una pagina intera — gli altri li ha già spostati `preferisciBloccoIntero`, che
+  // però su quelli si arrende e lascia la quota dov'è.
+  if (s.y + TESTATA_RIQUADRO + (altezze[0] ?? 0) + PADDING_RIQUADRO > LIMITE_CONTENUTO) nuovaPagina(s)
+
+  const intestazione = (bordoAlto: number) => {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.setTextColor(...GRIGIO)
+    doc.text(titolo.toUpperCase(), MARGINE_SX + PADDING_RIQUADRO, bordoAlto + TESTATA_RIQUADRO, {
+      charSpace: SPAZIATURA_TITOLI,
+    })
+  }
+  const cornice = (bordoAlto: number, bordoBasso: number) => {
+    doc.setDrawColor(...GRIGIO)
+    doc.setLineWidth(0.3)
+    doc.rect(MARGINE_SX, bordoAlto, LARGHEZZA_UTILE, bordoBasso - bordoAlto)
+  }
+
+  let bordoAlto = s.y
+  intestazione(bordoAlto)
+  // `cursore` è l'ultima linea di scrittura usata: la cella successiva comincia un passo
+  // più sotto, e la cornice si chiude un padding sotto l'ultima.
+  let cursore = bordoAlto + TESTATA_RIQUADRO
+  celle.forEach((cella, i) => {
+    if (cursore + altezze[i] + PADDING_RIQUADRO > LIMITE_CONTENUTO) {
+      cornice(bordoAlto, cursore + PADDING_RIQUADRO)
+      nuovaPagina(s)
+      bordoAlto = s.y
+      intestazione(bordoAlto)
+      cursore = bordoAlto + TESTATA_RIQUADRO
+    }
+    // Il campo si disegna sempre subito dopo il controllo, mai «al giro dopo»: è ciò che
+    // impedisce a un campo altissimo di aprire una cornice vuota dietro l'altra.
+    disegnaCella(doc, cella, MARGINE_SX + PADDING_RIQUADRO, cursore + PASSO_CAMPO, larghezzaInterna)
+    cursore += altezze[i]
+  })
+  cornice(bordoAlto, cursore + PADDING_RIQUADRO)
+  s.y = cursore + PADDING_RIQUADRO + 2
+}
+
+// ─── Firma ──────────────────────────────────────────────────────────────────────
+
+const ALTEZZA_FIRMA_LEGALE = 20
+const ALTEZZA_SOLO_LUOGO_DATA = 8
+
+type FirmaGenitore = Extract<FirmaPrestampato, { tipo: 'genitore' }>
+
+/**
+ * jsPDF calcola la larghezza per `align: 'center'` SENZA tener conto di `charSpace`, e
+ * quindi centra la stringa come se non fosse spaziata: su «IL LEGALE RAPPRESENTANTE», 24
+ * caratteri, la qualifica scivolerebbe di un paio di millimetri rispetto al nome che sta
+ * sotto — poco, ma visibile proprio perché i due sono incolonnati. Qui il centro si fa a mano.
+ */
+function testoCentratoSpaziato(doc: jsPDF, testo: string, centro: number, y: number, charSpace: number): void {
+  const larghezza = doc.getTextWidth(testo) + charSpace * Math.max(testo.length - 1, 0)
+  doc.text(testo, centro - larghezza / 2, y, { charSpace })
+}
+
+/**
+ * Rete di sicurezza sul riquadro di attestazione (§3a): nel PDF non finiscono MAI email
+ * né indirizzo IP — stanno nella ricevuta FEA, che è un altro documento e si scarica a
+ * parte. Non è teoria: `buildReceiptPdf()` formatta il firmatario come «Nome <email>», e
+ * un chiamante che riusa quella stringa qui infilerebbe l'email in un foglio che la
+ * famiglia stampa e consegna a un ente. Meglio toglierla che fidarsi della convenzione.
+ *
+ * L'IPv6 si riconosce da quattro gruppi in su, non da tre: `10:24:33` è un orario, e una
+ * regola più larga cancellerebbe l'istante della firma dal riquadro che serve ad attestarla.
+ */
+function senzaContattiPersonali(riga: string): string {
+  return riga
+    .replace(/<[^<>]*@[^<>]*>/g, '')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '')
+    .replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+/**
+ * Righe e ALTEZZA VERA del riquadro di attestazione della firma elettronica.
+ *
+ * Si compone prima di decidere dove cade la firma, e non è un giro inutile: l'altezza
+ * dipende da quante righe vengono fuori dopo il capo automatico, e un firmatario con due
+ * nomi o un metodo scritto per esteso ne producono due in più di quante ne immaginerebbe
+ * una costante. Finché l'altezza era stimata a 30 mm, un certificato con firma del
+ * genitore E riquadro di verifica poteva farli accavallare di qualche millimetro: la
+ * guardia calcolava il tetto su un numero, il disegno usava l'altro.
+ */
+function componiAttestazione(doc: jsPDF, firma: FirmaGenitore): { righe: string[]; altezza: number } {
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
+  // Si ripuliscono i CAMPI e poi si compone, non il contrario: ripulendo la riga già
+  // composta, un firmatario che fosse solo un'email lascerebbe sul foglio un mozzicone
+  // «Firmato da» senza nessuno dopo.
+  const firmatario = senzaContattiPersonali(firma.firmatario)
+  const metodo = senzaContattiPersonali(firma.metodo)
+  const istante = senzaContattiPersonali(firma.istante)
+  const riferimento = senzaContattiPersonali(firma.riferimento)
+  const righe = [
+    firmatario ? `Firmato da ${firmatario}` : '',
+    [metodo, istante].filter(Boolean).join(' — '),
+    riferimento ? `Riferimento firma: ${riferimento}` : '',
+  ]
+    .filter((riga) => riga.length > 0)
+    .flatMap((riga) => doc.splitTextToSize(riga, LARGHEZZA_RIQUADRO_FIRMA - 6) as string[])
+
+  return { righe, altezza: 4 + righe.length * 4 + 2 }
+}
+
+function disegnaFirma(s: Stato): void {
+  const { doc, documento } = s
+  const firma = documento.firma
+  const attestazione = firma.tipo === 'genitore' ? componiAttestazione(doc, firma) : null
+  // Quanto scende il blocco sotto la propria linea di scrittura. Per il genitore è
+  // l'ingombro MISURATO del riquadro, non una stima: è l'unico numero che il disegno poi
+  // rispetta davvero.
+  const altezza = attestazione
+    ? STACCO_RIQUADRO_FIRMA + attestazione.altezza
+    : firma.tipo === 'legaleRappresentante'
+      ? ALTEZZA_FIRMA_LEGALE
+      : ALTEZZA_SOLO_LUOGO_DATA
+
+  // Mai sopra y=150, mai sotto y=240 (§2), e mai a cavallo del piè di pagina. Col
+  // riquadro di verifica il fondo utile non è più il limite del contenuto ma il bordo
+  // alto di quella cornice, sei millimetri più su: è ciò che garantisce che le DUE
+  // CORNICI non si tocchino, non solo che l'ultima riga di testo stia più in alto.
+  const fondo = documento.verifica ? Y_RIQUADRO_VERIFICA - DISTANZA_FIRMA_VERIFICA : LIMITE_CONTENUTO
+  const tetto = Math.min(FIRMA_Y_MAX, fondo - altezza)
+  let y = Math.max(s.y + 12, FIRMA_Y_MIN)
+  if (y > tetto) {
+    nuovaPagina(s)
+    // Sulla pagina nuova il contenuto non pesa più, ma il tetto sì: un'attestazione
+    // altissima può costringere la firma sopra y=150, e fra le due regole vince quella
+    // che non fa accavallare due cornici — una firma un po' più in alto si legge, due
+    // riquadri sovrapposti no.
+    y = Math.max(Math.min(FIRMA_Y_MIN, tetto), s.y)
+  }
+  s.y = y
+
+  doc.setTextColor(...GRIGIO)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.text('Luogo e data', MARGINE_SX, y)
+  doc.setTextColor(...INCHIOSTRO)
+  doc.setFontSize(11)
+  doc.text(documento.luogoData, MARGINE_SX, y + 6)
+
+  if (firma.tipo === 'legaleRappresentante') {
+    doc.setTextColor(...GRIGIO)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    testoCentratoSpaziato(doc, 'IL LEGALE RAPPRESENTANTE', CENTRO_COLONNA_FIRMA, y, SPAZIATURA_TITOLI)
+
+    // Nome assente: si lascia il vuoto invece di stampare una riga bianca che sembri un
+    // nome. Il rifiuto vero sta a monte — un certificato senza legale rappresentante in
+    // configurazione non si emette — ma qui almeno il difetto si vede a colpo d'occhio.
+    const nome = firma.nome.trim()
+    if (nome) {
+      doc.setTextColor(...INCHIOSTRO)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(12)
+      doc.text(nome, CENTRO_COLONNA_FIRMA, y + 6, { align: 'center' })
+    }
+
+    doc.setTextColor(...GRIGIO)
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(8)
+    doc.text(DICITURA_FIRMA_SOSTITUITA[0], CENTRO_COLONNA_FIRMA, y + 12, { align: 'center' })
+    doc.text(DICITURA_FIRMA_SOSTITUITA[1], CENTRO_COLONNA_FIRMA, y + 15.5, { align: 'center' })
+    return
+  }
+
+  if (attestazione) {
+    doc.setTextColor(...GRIGIO)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.text('Firma del genitore/tutore', CENTRO_COLONNA_FIRMA, y, { align: 'center' })
+
+    // Nessuna riga vuota da firmare a penna: il documento È GIÀ firmato, e il riquadro
+    // lo attesta (§3a). Una riga da firmare sotto una firma elettronica dice al genitore
+    // che qualcosa manca — e la prima volta che qualcuno la firma davvero, il PDF
+    // archiviato smette di coincidere con quello che ha in mano la famiglia.
+    doc.setDrawColor(...GRIGIO)
+    doc.setLineWidth(0.3)
+    doc.rect(X_RIQUADRO_FIRMA, y + STACCO_RIQUADRO_FIRMA, LARGHEZZA_RIQUADRO_FIRMA, attestazione.altezza)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(...INCHIOSTRO)
+    attestazione.righe.forEach((riga, i) => doc.text(riga, X_RIQUADRO_FIRMA + 3, y + 8 + i * 4))
+  }
+}
+
+// ─── Riquadro di verifica (§4.3) ────────────────────────────────────────────────
+
+/**
+ * Protocollo e indirizzo di verifica, sopra il piede dell'ultima pagina.
+ *
+ * ⚠️ L'IMPRONTA SHA-256 NON SI STAMPA QUI, e non è una svista: l'impronta si calcola sui
+ * byte del PDF, quindi scriverla dentro il PDF cambierebbe i byte di cui è l'impronta —
+ * è circolare, e non tornerebbe mai a chi prova a verificarla. `protocolli.impronta_sha256`
+ * contiene infatti l'impronta dei byte PRECEDENTI alla banda di segnatura (`applicaSegnatura()`
+ * passa dopo). Sul foglio si dichiara che l'impronta è registrata al protocollo e si rimanda
+ * alla pagina pubblica, dove chi ha ricevuto il documento confronta il file che ha in mano
+ * con quella registrata. È la trappola che chi legge dopo rifarebbe, perché la specifica
+ * disegna il riquadro con l'impronta dentro.
+ */
+function disegnaVerifica(doc: jsPDF, verifica: VerificaPrestampato): void {
+  const PADDING = 3
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
+  const righe = [
+    `Documento emesso dal registro elettronico e registrato al protocollo n. ${verifica.numeroProtocollo} del ${verifica.dataProtocollo}.`,
+    `L'impronta SHA-256 di questo documento è registrata nel registro di protocollo.`,
+    `Verificabile su ${verifica.indirizzoVerifica} indicando il numero di protocollo.`,
+  ].flatMap((riga) => doc.splitTextToSize(riga, LARGHEZZA_UTILE - PADDING * 2) as string[])
+
+  const altezza = PADDING * 2 + righe.length * 3.6
+  doc.setDrawColor(...GRIGIO)
+  doc.setLineWidth(0.2)
+  doc.rect(MARGINE_SX, Y_RIQUADRO_VERIFICA, LARGHEZZA_UTILE, altezza)
+  doc.setTextColor(...GRIGIO)
+  righe.forEach((riga, i) => doc.text(riga, MARGINE_SX + PADDING, Y_RIQUADRO_VERIFICA + 5 + i * 3.6))
+}

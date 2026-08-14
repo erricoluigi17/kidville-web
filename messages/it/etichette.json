@@ -5,7 +5,6 @@
   "ruolo_coordinator": "Direzione",
   "ruolo_admin": "Amministratore",
   "ruolo_genitore": "Genitore",
-
   "allergene_glutine": "Glutine",
   "allergene_crostacei": "Crostacei",
   "allergene_uova": "Uova",
@@ -20,7 +19,6 @@
   "allergene_solfiti": "Solfiti",
   "allergene_lupini": "Lupini",
   "allergene_molluschi": "Molluschi",
-
   "evento_attivita": "Attività",
   "evento_merenda": "Merenda",
   "evento_pranzo": "Pranzo",
@@ -30,25 +28,21 @@
   "evento_umore": "Umore",
   "evento_entrata": "Entrata",
   "evento_legacy": "Evento",
-
   "umore_felice": "Felice",
   "umore_sereno": "Sereno",
   "umore_cosi_cosi": "Così così",
   "umore_triste": "Triste",
   "umore_agitato": "Agitato",
-
   "aging_scaduti_oltre_30": "Scaduti oltre 30gg",
   "aging_scaduti_entro_30": "Scaduti fino a 30gg",
   "aging_settimana": "Questa settimana",
   "aging_mese": "Prossimi 30gg",
-
   "navgruppo_anagrafica": "Anagrafica",
   "navgruppo_didattica": "Didattica",
   "navgruppo_operativo": "Operativo",
   "navgruppo_amministrazione": "Amministrazione",
   "navgruppo_comunicazione": "Comunicazione",
   "navgruppo_sistema": "Sistema",
-
   "nav_dashboard": "Dashboard",
   "nav_students": "Anagrafica",
   "nav_primaria": "Primaria",
@@ -61,6 +55,7 @@
   "nav_pagamenti": "Contabilità",
   "nav_protocolli": "Protocollo",
   "nav_modulistica": "Modulistica",
+  "nav_documenti_firmati": "Documenti firmati",
   "nav_gdpr": "Privacy & GDPR",
   "nav_moderazione": "Moderazione",
   "nav_messaggi": "Messaggi",
@@ -69,7 +64,6 @@
   "nav_compiti": "Compiti",
   "nav_impostazioni": "Impostazioni",
   "nav_tools": "Strumenti",
-
   "notifica_avviso_label": "Avvisi e circolari",
   "notifica_avviso_desc": "Quando la scuola pubblica un avviso destinato alla famiglia",
   "notifica_consenso_uscita_label": "Consensi uscite e gite",
@@ -164,7 +158,6 @@
   "notifica_cassa_soglia_desc": "Quando il contante atteso in cassa supera la soglia impostata",
   "notifica_cassa_uscita_label": "Cassa: uscita registrata dalla segreteria",
   "notifica_cassa_uscita_desc": "Quando un membro dello staff non amministratore registra una spesa",
-
   "campoPersonale_gender": "Sesso",
   "campoPersonale_birth_date": "Data di nascita",
   "campoPersonale_codice_belfiore_nascita": "Comune di nascita",

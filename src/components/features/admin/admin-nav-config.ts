@@ -5,6 +5,7 @@ import {
   UtensilsCrossed,
   GraduationCap,
   FileText,
+  FileSignature,
   Settings,
   Wrench,
   Bell,
@@ -92,6 +93,9 @@ export const NAV_GROUPS: NavGroup[] = [
       // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
       { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
       { href: '/admin/modulistica', label: 'Modulistica', labelKey: 'nav_modulistica', icon: FileText },
+      // Archivio dei documenti firmati di ogni alunno (moduli, fascicolo,
+      // certificati). Il gate dei documenti sanitari è nelle API, non qui.
+      { href: '/admin/documenti-firmati', label: 'Documenti firmati', labelKey: 'nav_documenti_firmati', icon: FileSignature },
       { href: '/admin/gdpr', label: 'Privacy & GDPR', labelKey: 'nav_gdpr', icon: ShieldCheck },
       // Moderazione UGC (C5 §2): coda segnalazioni. Riservata alla Direzione
       // (admin/coordinator); il gate vero è nelle API admin/segnalazioni.

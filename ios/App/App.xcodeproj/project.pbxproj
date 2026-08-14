@@ -97,6 +97,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
 			buildPhases = (
+				KV28B0F0000000000003 /* Verifica shell nativa */,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
@@ -169,6 +170,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		KV28B0F0000000000003 /* Verifica shell nativa */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/App/capacitor.config.json",
+				"$(SRCROOT)/../../mobile/profilo-rilascio.json",
+			);
+			name = "Verifica shell nativa";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Il cancello fra un `cap sync` sbagliato e un .ipa da spedire.\n#\n# App/capacitor.config.json e GITIGNORATO, e lo riscrive `npx cap sync` con la\n# CAP_SERVER_URL del momento - tipicamente quella di un collaudo su simulatore\n# rimasta li. Dal 2026-08-08 al 2026-08-14 ha tenuto http://localhost:3100 senza\n# che se ne accorgesse nessuno: git non lo mostra, la CI non lo vede (in un clone\n# pulito non esiste), il gate non lo apre. Questo e l'unico punto in cui\n# l'informazione esiste nel momento in cui conta.\n#\n# SOLO in Release: chi builda per il simulatore DEVE poter puntare a localhost.\nif [ \"$CONFIGURATION\" != \"Release\" ]; then\n  echo \"note: shell nativa non verificata ($CONFIGURATION non e Release)\"\n  exit 0\nfi\ncd \"$SRCROOT/../..\" || exit 1\npython3 scripts/verifica-shell-nativa.py --piattaforma ios\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		504EC3001FED79650016851F /* Sources */ = {

@@ -26,7 +26,20 @@ export const zAutorizzazioneNido = z.object({
 
 export const zAnagraficaSede = z.object({
   denominazione: z.string().max(160).nullish(), // denominazione ufficiale/ragione sociale
-  codice_meccanografico: z.string().max(20).nullish(),
+  /**
+   * UNO O PIÙ codici meccanografici, separati da ` · `.
+   *
+   * Il tetto era 20, cioè su misura per un codice solo (ne sono 10 esatti), e ha
+   * respinto con un 400 il primo salvataggio vero: Giugliano e Cesa ne hanno DUE
+   * a testa — nido/infanzia e primaria sono due plessi distinti per il MIM — e
+   * «NA1A079004 · NA1E094004» sono 23 caratteri. La decisione presa in intervista
+   * è di stamparli in un campo solo, separati da ` · `, così come escono sulla
+   * testata del certificato.
+   *
+   * 60 e non «senza limite»: quattro codici uniti stanno in 49, e un campo di
+   * testa che nessuno delimita finisce prima o poi per contenere una frase.
+   */
+  codice_meccanografico: z.string().max(60).nullish(),
   cap: z.string().max(10).nullish(),
   provincia: z.string().max(4).nullish(), // sigla, es. NA
   telefono: z.string().max(30).nullish(),

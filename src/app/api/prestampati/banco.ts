@@ -144,6 +144,15 @@ const testo = (v: unknown): string | null => {
  * con `config->'anagrafica' ? 'legale_rappresentante'` → **0**. Per tutte e tre le sedi
  * vere, quindi, quel rifiuto non è il caso raro: è l'unico che accade.
  *
+ * ⚠️ E FINO AL 2026-08-15 NON ERA RIPARABILE. Il messaggio diceva «aggiungilo nelle
+ * impostazioni della sede», ma quel campo non esisteva in nessun form del prodotto:
+ * `zAnagraficaSede` non conosceva la chiave, e siccome `normalizzaAnagraficaSede`
+ * RICOSTRUISCE l'oggetto dai soli campi noti, scriverla a mano nel database non
+ * serviva — il primo salvataggio dell'anagrafica la cancellava. Ora la chiave sta
+ * nello schema e il campo sta in Impostazioni → Sede & Intestazione; questo motivo
+ * torna a essere ciò che dichiara di essere: una configurazione da completare, non un
+ * vicolo cieco.
+ *
  * E arrivava a schermo con la frase sbagliata. Il rifiuto del render porta
  * `PRESTAMPATO_FIRMA_NON_VALIDA`, la cui frase di catalogo è «La firma non risulta raccolta
  * o non è valida: il documento non si genera prima della firma» (`messages/it/shared.json`):
@@ -281,7 +290,7 @@ export const SPIEGAZIONE_NON_GENERABILE: Record<MotivoNonGenerabile, string> = {
   // impostazioni della sede, e senza questa frase la stessa persona cerca la firma di un
   // genitore che nessuno ha mai chiesto.
   legale_rappresentante_assente:
-    'Questo documento lo firma il legale rappresentante, e il suo nome non è indicato nella configurazione della sede: aggiungilo nelle impostazioni della sede e riprova.',
+    'Questo documento lo firma il legale rappresentante, e il suo nome non è indicato nella configurazione della sede: aggiungilo in Impostazioni → Sede & Intestazione e riprova.',
 }
 
 /** Una voce dell'elenco che il pannello disegna. */

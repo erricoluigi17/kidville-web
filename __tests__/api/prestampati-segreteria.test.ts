@@ -723,8 +723,10 @@ describe('GET /api/prestampati — elenco e precompilato', () => {
     })
     expect(json.data.motivo).toBe('legale_rappresentante_assente')
     // La frase di ripiego dice DOVE si ripara, e non nomina la firma di un genitore: il
-    // rimedio sono due minuti nelle impostazioni della sede.
-    expect(json.data.spiegazione).toContain('impostazioni della sede')
+    // rimedio sono due minuti nelle impostazioni della sede. Dal 2026-08-15 nomina la
+    // schermata per intero — prima diceva «nelle impostazioni della sede» e mandava in
+    // un posto che non esisteva, perché quel campo non stava in nessun form.
+    expect(json.data.spiegazione).toContain('Impostazioni → Sede & Intestazione')
     expect(json.data.spiegazione).not.toContain('firma elettronica del genitore')
     // Il precompilato resta: l'anagrafica è già stata letta — è il solo modo di scoprire
     // questo motivo — e nasconderla dopo non la rimette dov'era. Ciò che si spegne è il
@@ -1004,7 +1006,7 @@ describe('POST /api/prestampati/genera — i rifiuti', () => {
     // Il motivo enumerato è ciò che il pannello traduce nella lingua in cui sta lavorando:
     // `error` è la prosa del server, ed è il ripiego, non il canale principale.
     expect(json.motivo).toBe('legale_rappresentante_assente')
-    expect(json.error).toContain('impostazioni della sede')
+    expect(json.error).toContain('Impostazioni → Sede & Intestazione')
 
     // E nessun numero di protocollo consumato, nessuna riga di registro. ⚠️ Questa parte
     // NON è ciò che il rifiuto ha riparato — misurato togliendo il ramo: la risposta

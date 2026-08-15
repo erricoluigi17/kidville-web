@@ -94,6 +94,69 @@
 
 ---
 
+## 🏛️ Changelog — «Aggiungilo nelle impostazioni della sede»: un campo che il prodotto prometteva e non aveva 2026-08-15 (branch `feat/anagrafica-sede-legale-rappresentante`)
+
+Provando a stampare un prestampato, la Segreteria riceveva questo rifiuto: *«Questo documento lo
+firma il legale rappresentante, e il suo nome non è indicato nella configurazione della sede:
+aggiungilo nelle impostazioni della sede e riprova»*. **Nelle impostazioni non c'era niente da
+aggiungere.** Il campo non esisteva in nessuna schermata del prodotto.
+
+### Non era un campo dimenticato: era un campo impossibile
+
+Il nome si legge da `scuole.config.anagrafica.legale_rappresentante` (`lib/prestampati/prefill.ts`),
+ma quella chiave non era dichiarata in `zAnagraficaSede` (`lib/scuole/anagrafica.ts`). E lo schema
+lì non è solo un filtro in lettura: **`normalizzaAnagraficaSede` non modifica l'oggetto, lo
+RICOSTRUISCE dai soli campi che conosce**, e il `PATCH /api/admin/schools` scrive quel nuovo oggetto
+al posto del precedente. Conseguenza che nessuno aveva messo per iscritto: scrivere la chiave a mano
+nel database non serviva a niente — **il primo salvataggio dell'anagrafica la cancellava**.
+
+Stessa sorte per `autorizzazione_nido` (numero, data, Comune), letta dal modello del Bonus Asilo
+Nido INPS e mai scrivibile: quel certificato era bloccato per la stessa ragione.
+
+E il pannello dove l'anagrafica di sede si compilava — `/admin/schools` — **non compare in nessuna
+voce di menu**: ci si arriva solo digitando l'URL.
+
+Misurato in sola lettura il 2026-08-15 sulle quattro righe di `scuole`: in `config.anagrafica` c'è
+**la sola chiave `email`** per Giugliano, Aversa e Cesa. Niente denominazione, niente P.IVA, niente
+CAP, niente legale rappresentante.
+
+### Cosa c'è adesso
+
+- `legale_rappresentante` e `autorizzazione_nido` **in `zAnagraficaSede`**, con la normalizzazione
+  dell'oggetto annidato (tre campi vuoti → `null`, non un oggetto di `null`).
+- Una sezione nuova **Impostazioni → Sede & Intestazione**, sulla sede selezionata dal cockpit
+  (dentro `SedeRequired`, come tutti gli altri pannelli: una sede alla volta, dichiarata).
+- I campi vivono in **un componente solo** (`CampiAnagraficaSede`), usato sia lì sia dal pannello
+  Multi-sede: due form per lo stesso oggetto è esattamente il modo in cui un campo resta fuori.
+- La data dell'autorizzazione si raccoglie con `input type="date"` → sempre ISO, che è ciò che il
+  modello INPS pretende (`autorizzazioneNidoCompleta` rifiuta una data che non sa rileggere).
+- Il messaggio di rifiuto ora **nomina la schermata**: «aggiungilo in Impostazioni → Sede &
+  Intestazione».
+- In lettura, `parseAnagraficaSede` pota un `autorizzazione_nido` mal formato invece di lasciar
+  fallire l'intero `safeParse`: un fallimento lì non è parziale, e una sola chiave scritta male
+  farebbe sparire dalla schermata anche denominazione e legale rappresentante. In scrittura lo
+  schema resta severo (400).
+
+### Il difetto che il collaudo ha preso, e che valeva la pena prendere
+
+La prima versione del pannello ricaricava dal server **a ogni render**: la funzione di caricamento
+dipendeva da `t` di `next-intl`, che non promette identità stabile. In una schermata che si compila
+a mano è il guasto peggiore — riscrive sopra ciò che l'operatore sta digitando, senza dire niente.
+La stessa lezione era già scritta in `useAdminSettings` e non era stata riletta: nello stato va un
+**codice** d'errore, mai una frase già tradotta.
+
+### Da fare, e non è codice
+
+I tre valori **vanno compilati sede per sede** dalla Direzione: sono tre legali rappresentanti da
+confermare e **tre autorizzazioni comunali diverse** (numero, data e Comune diversi per Giugliano,
+Aversa e Cesa). Finché non lo si fa, il rifiuto resta — ed è quello giusto: un modulo INPS con
+«N. ______ del ______» viene respinto allo sportello, e la famiglia lo scopre in coda.
+
+Gate: `eslint` 0 · `tsc --noEmit` 0 · **11395 test verdi** · `npm run build` ok. Nessuna migrazione:
+`scuole.config` è già JSONB.
+
+---
+
 ## ✉️ Changelog — Dodici email escono dal testo semplice, e due che non esistevano cominciano a partire 2026-08-15 (branch `feat/documenti-firmati`)
 
 Fino a oggi le email di Kidville erano **undici corpi in testo semplice scritti a mano in undici

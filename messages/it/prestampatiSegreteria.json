@@ -51,7 +51,7 @@
   "motivoFirmaDaRaccogliere": "Si genera dal flusso di firma della famiglia: qui attesterebbe una firma che nessuno ha apposto.",
   "motivoFirmaSenzaFlusso": "Si chiude con la firma elettronica del genitore, e oggi non c’è ancora una schermata che la raccolga.",
   "motivoFonteDatiAssente": "I dati che questo documento deve riportare non sono ancora disponibili in anagrafica.",
-  "motivoLegaleRappresentanteAssente": "Manca il nome del legale rappresentante nelle impostazioni della sede: aggiungilo e riprova.",
+  "motivoLegaleRappresentanteAssente": "Manca il nome del legale rappresentante: aggiungilo in Impostazioni → Sede & Intestazione e riprova.",
 
   "giaInArchivio": "Quello che l’app ha già",
   "datoNascita": "Data di nascita",

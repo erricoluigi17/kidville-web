@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Settings, CreditCard, GraduationCap, LayoutGrid, NotebookPen, CalendarCheck,
     StickyNote, Megaphone, MessageCircle, Images, Package, FileSignature,
-    UtensilsCrossed, BookOpenCheck, BellRing, Percent,
+    UtensilsCrossed, BookOpenCheck, BellRing, Percent, Building2,
 } from 'lucide-react';
 import { SettingsPanel } from '@/components/features/admin/settings/SettingsPanel';
 import { RetteSettings } from '@/components/features/admin/settings/RetteSettings';
@@ -23,13 +23,14 @@ import { GalleriaSettings } from '@/components/features/admin/settings/GalleriaS
 import { ArmadiettoSettings } from '@/components/features/admin/settings/ArmadiettoSettings';
 import { ModulisticaSettings } from '@/components/features/admin/settings/ModulisticaSettings';
 import { NotificheSettings } from '@/components/features/admin/settings/NotificheSettings';
+import { AnagraficaSedeSettings } from '@/components/features/admin/settings/AnagraficaSedeSettings';
 import { SedeCorrente } from '@/components/features/admin/settings/SedeCorrente';
 import { PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
 
 type Sezione =
-    | 'moduli'
+    | 'moduli' | 'sede'
     | 'pagamenti' | 'rette' | 'modulistica'
     | 'didattica' | 'pagelle' | 'diario' | 'presenze' | 'note'
     | 'mensa' | 'armadietto'
@@ -43,7 +44,12 @@ interface Gruppo { gruppoKey: string; voci: Voce[] }
 const GRUPPI: Gruppo[] = [
     {
         gruppoKey: 'gruppoGenerale',
-        voci: [{ id: 'moduli', labelKey: 'voceFunzioniModuli', icon: <LayoutGrid size={15} /> }],
+        voci: [
+            { id: 'moduli', labelKey: 'voceFunzioniModuli', icon: <LayoutGrid size={15} /> },
+            // Prima voce nata da un messaggio d'errore: i prestampati rimandavano
+            // «nelle impostazioni della sede» a una schermata che non esisteva.
+            { id: 'sede', labelKey: 'voceSede', icon: <Building2 size={15} /> },
+        ],
     },
     {
         gruppoKey: 'gruppoAmministrazione',
@@ -201,6 +207,7 @@ function Inner() {
                             {voceAttiva?.icon} {voceAttiva ? t(voceAttiva.labelKey) : null}
                         </h2>
                         {userId && sezione === 'moduli' && conSede(t('sedeRequiredModuli'), (sid) => <FunzioniMatricePanel userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'sede' && conSede(t('sedeRequiredSede'), (sid) => <AnagraficaSedeSettings userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'pagamenti' && conSede(t('sedeRequiredPagamenti'), (sid) => <SettingsPanel userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'rette' && conSede(t('sedeRequiredRette'), (sid) => <RetteSettings userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'modulistica' && conSede(t('sedeRequiredModulistica'), (sid) => <ModulisticaSettings userId={userId} scuolaId={sid} />)}

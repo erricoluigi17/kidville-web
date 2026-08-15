@@ -1274,7 +1274,10 @@ function SchedaModello({
       )}
 
       {/* La gita che si sta autorizzando, prima di aprire il modulo: dove si va e quando.
-          Un'autorizzazione che non dice la destinazione si firma alla cieca. */}
+          Un'autorizzazione che non dice la destinazione si firma alla cieca.
+          I due orari non sono mai vuoti quando `uscita` c'è: `datiUscitaDaEvento()` (server)
+          restituisce `null` se ne manca uno, ed è la stessa condizione per cui il modulo non
+          comparirebbe affatto. I `?? ''` sono solo per il tipo, non un ramo che si percorre. */}
       {uscita && (
         <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-ink">
           {t('uscitaRiga', {

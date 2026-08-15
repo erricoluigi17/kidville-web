@@ -5,7 +5,8 @@ import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { isScuolaE2E } from '@/lib/scuole/reali'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { logEvento, logErrore } from '@/lib/logging/logger'
-import { costruisciDigestHtml } from '@/lib/news/digest-email'
+import { messaggioDigestNews } from '@/lib/email/messaggi/digest-news'
+import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { MESI_IT } from '@/lib/news/tipi'
 
@@ -44,11 +45,21 @@ export interface ComponiDigestParams {
   scuolaId: string
   anno: number
   mese: number
-  nomeSede: string
+  /**
+   * L'identità della sede che scrive: nome, indirizzo, casella, informativa.
+   *
+   * Prima qui c'era il solo `nomeSede`, e il piè di pagina si limitava a una
+   * riga generica. Dal 2026-08-15 il digest usa il layout comune delle email
+   * transazionali, che nomina il plesso e ne porta i recapiti: con tre sedi,
+   * una famiglia di Aversa deve leggere l'indirizzo di Aversa.
+   */
+  sede: ContestoSede
 }
 
 export interface DigestComposto {
   titolo: string
+  /** Il gemello in testo semplice, generato dagli stessi articoli dell'HTML. */
+  testo: string
   post_ids: string[]
   html: string
 }
@@ -60,8 +71,20 @@ function nelMese(pubblicataIl: string | null, anno: number, mese: number): boole
   return d.getUTCFullYear() === anno && d.getUTCMonth() + 1 === mese
 }
 
+/**
+ * L'estratto di un articolo: una riga sola, tagliata a 160 caratteri con i
+ * puntini. È il taglio che il design prevede per la scheda, e vale identico
+ * nell'HTML e nel gemello testuale perché lo fa una volta sola, qui.
+ */
+function estratto(testo: string | null | undefined, max = 160): string | null {
+  const t = (testo ?? '').replace(/\s+/g, ' ').trim()
+  if (t === '') return null
+  if (t.length <= max) return t
+  return `${t.slice(0, max - 1).trimEnd()}…`
+}
+
 export function componiDigest(posts: PostDigest[], params: ComponiDigestParams): DigestComposto | null {
-  const { anno, mese, nomeSede } = params
+  const { anno, mese, sede } = params
   const delMese = (posts ?? []).filter((p) => p.stato === 'pubblicata' && nelMese(p.pubblicata_il, anno, mese))
   if (delMese.length === 0) return null
 
@@ -72,19 +95,28 @@ export function componiDigest(posts: PostDigest[], params: ComponiDigestParams):
     return db - da
   })
 
-  const titolo = `Kidville News — ${MESI_IT[mese - 1] ?? ''} ${anno}`.trim()
-  const html = costruisciDigestHtml({
-    titolo,
-    nomeSede,
-    posts: ordinati.map((p) => ({
-      id: p.id,
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? null
+  const messaggio = messaggioDigestNews({
+    mese: MESI_IT[mese - 1] ?? '',
+    anno,
+    articoli: ordinati.map((p) => ({
+      categoria: p.categoria_nome ?? null,
       titolo: p.titolo,
-      categoria_nome: p.categoria_nome ?? null,
-      contenuto_testo: p.contenuto_testo ?? null,
+      estratto: estratto(p.contenuto_testo),
+      url: baseUrl ? `${baseUrl}/parent/news/${encodeURIComponent(p.id)}` : null,
     })),
-  })
+  }, sede)
 
-  return { titolo, post_ids: ordinati.map((p) => p.id), html }
+  return {
+    titolo: messaggio.oggetto,
+    post_ids: ordinati.map((p) => p.id),
+    html: messaggio.html,
+    // Il gemello testuale nasce dagli STESSI articoli, non da una seconda
+    // scrittura. Prima era `testoFallback`, che stampava i soli titoli mentre
+    // l'HTML portava categoria, estratto e link: nell'unico posto del repo dove
+    // i due corpi convivevano, avevano già divergiuto.
+    testo: messaggio.testo,
+  }
 }
 
 // ── Orchestratore ────────────────────────────────────────────────────────────
@@ -223,11 +255,6 @@ async function emailFamiglie(supabase: SupabaseClient, scuolaId: string): Promis
   return { ok: true, emails: [...new Set(emails)] }
 }
 
-function testoFallback(titolo: string, posts: PostDigest[]): string {
-  const righe = posts.map((p) => `• ${p.titolo}`).join('\n')
-  return `${titolo}\n\n${righe}\n\nApri l'app Kidville per leggere le novità.`
-}
-
 /**
  * Genera e invia il digest del mese per una o tutte le sedi. Idempotente:
  * un'edizione già inviata non viene re-inviata. Ritorna l'esito per sede.
@@ -263,8 +290,9 @@ export async function generaEInviaDigest(
       continue
     }
 
+    const contestoSede = await risolviContestoSede(supabase, sede.id, 'news/digest')
     const composto = componiDigest((postRows ?? []) as PostDigest[], {
-      scuolaId: sede.id, anno, mese, nomeSede: sede.nome,
+      scuolaId: sede.id, anno, mese, sede: contestoSede,
     })
     if (!composto) {
       edizioni.push(esito) // nessun post: niente edizione
@@ -357,10 +385,9 @@ export async function generaEInviaDigest(
       edizioni.push(esito)
       continue
     }
-    const testo = testoFallback(composto.titolo, (postRows ?? []) as PostDigest[])
     let errori = 0
     for (let i = 0; i < destinatari.length; i++) {
-      const res = await sendEmailDetailed({ to: destinatari[i], subject: composto.titolo, text: testo, html: composto.html })
+      const res = await sendEmailDetailed({ to: destinatari[i], subject: composto.titolo, text: composto.testo, html: composto.html })
       if (!res.ok) errori++
       if (i < destinatari.length - 1) await new Promise((r) => setTimeout(r, 500)) // throttle ~2/s
     }

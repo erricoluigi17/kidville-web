@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
 import itShared from '../../messages/it/shared.json'
+import { INSEGNANTE_FIELDS, POSIZIONI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { SEDE_A } from '../fixtures/sedi'
 
 /**
@@ -49,6 +50,24 @@ import { CandidaturaInsegnanteWizard } from '@/components/features/public/Candid
 /** La prosa che il server manda, e che NON deve comparire né a schermo né nei log. */
 const PROSA_DEL_SERVER = 'Non siamo riusciti a registrare la candidatura.'
 
+/**
+ * L'etichetta della posizione con quel `value`, LETTA dal template.
+ *
+ * Dal 2026-08-15 il passo «profilo» non chiede più le fasce d'età: chiede le
+ * POSIZIONI, e la casella che questo file spunta per attraversare il modulo non
+ * si chiama più «Nido (0-3)» ma «Insegnante — Nido (0-3)». ⚠️ Quel trattino è un
+ * EM DASH (U+2014): ribattuto a mano con un trattino corto dà un selettore che
+ * non trova niente.
+ */
+function posizione(valore: string): string {
+  const o = POSIZIONI_OPTIONS.find((x) => x.value === valore)
+  if (!o) throw new Error(`posizione «${valore}» assente da POSIZIONI_OPTIONS`)
+  return String(o.label)
+}
+
+/** La posizione che si spunta per attraversare il passo «profilo». */
+const POSIZIONE_SCELTA = posizione('insegnante_nido')
+
 const fetchMock = vi.fn()
 
 type EsitoPost =
@@ -84,7 +103,7 @@ async function compilaFinoAlRiepilogo(): Promise<void> {
 
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Nido (0-3)' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() =>
@@ -178,7 +197,7 @@ describe('CandidaturaInsegnanteWizard — l’invio fallisce', () => {
     expect(screen.queryByText(itPublic.candErroreInvioTitolo)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candIndietro }))
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Nido (0-3)' })).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA })).toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: itPublic.candIndietro }))
     await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toHaveValue('Ines'))
     expect(screen.getByPlaceholderText('Es. mario.rossi@email.com')).toHaveValue('aspirante@example.test')
@@ -288,10 +307,28 @@ describe('CandidaturaInsegnanteWizard — l’invio fallisce', () => {
   })
 
   it('400 su un campo che questo modulo NON rende: non si resta muti, compare il pannello', async () => {
-    // `cv_path` non è reso (nessuna rotta di caricamento produce oggi il
-    // prefisso che il server pretende). Se il server lo respingesse comunque,
-    // riportare «al passo del campo» sarebbe impossibile — e restare senza dire
-    // niente sarebbe la schermata che non risponde al bottone.
+    /*
+     * ⚠️ IL CAMPO DI QUESTO CASO È CAMBIATO IL 2026-08-15, E LA RAGIONE CONTA.
+     *
+     * Qui c'era `cv_path`, scelto perché il wizard non lo rendeva: nessuna rotta
+     * di caricamento produceva il prefisso `candidature/` che il server pretende.
+     * Quella premessa è decaduta — `POST /api/iscrizione/insegnanti/upload` esiste,
+     * il campo è uscito da `IDS_NON_RESI` (che è VUOTO) e il curriculum si allega
+     * dal passo «profilo». Con `cv_path` questo caso misurerebbe l'opposto di ciò
+     * per cui è scritto: `mappaErroriServer` lo mapperebbe eccome, il messaggio
+     * comparirebbe sotto il campo e il pannello generico non nascerebbe mai.
+     *
+     * `gradi` è il campo giusto adesso, e non è un espediente: era una domanda del
+     * modulo fino al 14/08 e oggi il server lo DERIVA dalle posizioni. È
+     * esattamente la forma del guasto che questo caso difende — un id che il server
+     * conosce e che a schermo non ha nessun posto dove portare chi compila.
+     */
+    const IGNOTO = 'gradi'
+    expect(
+      INSEGNANTE_FIELDS.some((f) => f.id === IGNOTO),
+      `«${IGNOTO}» è tornato nel template: questo caso non misura più un campo non reso`,
+    ).toBe(false)
+
     mockRete([
       {
         tipo: 'http',
@@ -299,7 +336,7 @@ describe('CandidaturaInsegnanteWizard — l’invio fallisce', () => {
         corpo: {
           error: 'Alcuni campi non sono validi.',
           codice: 'CANDIDATURA_NON_INVIATA',
-          campi: { cv_path: 'Allega di nuovo il curriculum dal modulo.' },
+          campi: { [IGNOTO]: 'Indica almeno una fascia d’età.' },
         },
       },
     ])

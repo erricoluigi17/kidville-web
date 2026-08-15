@@ -143,41 +143,16 @@ export async function sendEmail(params: SendEmailParams): Promise<boolean> {
   return (await sendEmailDetailed(params)).ok
 }
 
-/**
- * Corpo dell'email con le credenziali di accesso all'area genitori.
+/*
+ * ─── QUI NON C'È PIÙ NESSUN CORPO DI EMAIL, ED È UNA SCELTA ──────────────────
  *
- * `sedeNome` — dal 2026-07-29 «Kidville» non è il nome di una scuola, è il nome
- * di tre (Giugliano, Aversa, Cesa). «La tua iscrizione a Kidville è stata
- * registrata» era una frase completa con una sede sola; oggi il genitore non sa
- * a quale plesso sia stato iscritto suo figlio, e non ha modo di accorgersi se
- * lo hanno registrato nella sede sbagliata.
+ * Fino al 2026-08-15 questo file ospitava anche `credentialsEmailBody`, cioè il
+ * TESTO dell'email delle credenziali. Due mestieri nello stesso posto: il
+ * trasporto (parlare con Resend, leggere il corpo di un rifiuto, non far mai
+ * uscire il destinatario in chiaro) e la scrittura (cosa si dice a una famiglia).
  *
- * Il nome NON si indovina: lo passa chi manda l'email, dopo averlo risolto
- * dalla sede del genitore (che a sua volta viene dai FIGLI). Se non è
- * risolvibile la frase resta quella generica — vaga è meglio di falsa.
+ * Il testo vive adesso in `@/lib/email/messaggi/`, dove ogni email è una funzione
+ * pura che ritorna oggetto, HTML e gemello testuale. Questo file resta il solo a
+ * conoscere Resend — ed è anche ciò che il lock `provider-esterni-osservati`
+ * dichiara: `src/lib/email/send.ts` è l'unico chiamante di `api.resend.com`.
  */
-export function credentialsEmailBody(
-  nome: string | null | undefined,
-  email: string,
-  password: string,
-  sedeNome?: string | null,
-): string {
-  const saluto = nome ? `Gentile ${nome},` : 'Gentile genitore,'
-  const sede = (sedeNome ?? '').trim()
-  const loginUrl = process.env.NEXT_PUBLIC_APP_URL
-    ? `${process.env.NEXT_PUBLIC_APP_URL}/auth/login`
-    : 'la pagina di accesso all\'area genitori'
-  return [
-    saluto,
-    '',
-    `la tua iscrizione a ${sede || 'Kidville'} è stata registrata. Di seguito le credenziali per accedere all'area genitori:`,
-    '',
-    `  Email: ${email}`,
-    `  Password temporanea: ${password}`,
-    '',
-    `Accedi da ${loginUrl} e, per la tua sicurezza, modifica la password al primo accesso.`,
-    '',
-    'A presto,',
-    sede ? `Lo staff di ${sede}` : 'Lo staff Kidville',
-  ].join('\n')
-}

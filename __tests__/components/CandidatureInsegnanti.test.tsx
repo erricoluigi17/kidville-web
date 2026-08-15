@@ -8,7 +8,7 @@ import itAdminModulistica from '../../messages/it/adminModulistica.json'
 import enAdminModulistica from '../../messages/en/adminModulistica.json'
 import itShared from '../../messages/it/shared.json'
 import enShared from '../../messages/en/shared.json'
-import { INSEGNANTE_FIELDS } from '@/lib/forms/insegnanti-template'
+import { INSEGNANTE_FIELDS, POSIZIONI_AMMESSE } from '@/lib/forms/insegnanti-template'
 
 expect.extend(toHaveNoViolations)
 
@@ -53,6 +53,20 @@ expect.extend(toHaveNoViolations)
  *    arrivano i cinque codici `CANDIDATURA_*`: finché il `codice` veniva buttato
  *    via, le loro traduzioni inglesi erano irraggiungibili e a schermo usciva
  *    l'italiano scritto a mano nella route.
+ *
+ *  · L'ELENCO DICE IL MESTIERE, NON LA FASCIA. Dal 2026-08-15 il modulo pubblico
+ *    accoglie anche collaboratrici, cuoche, segretarie e un «altro» scritto a
+ *    mano: in lista si leggono le POSIZIONI, e le fasce — che da quelle si
+ *    DERIVANO (`gradiDallePosizioni`) — restano nel pannello. I `value` delle
+ *    posizioni sono token con l'underscore (`insegnante_nido`), quindi il lock
+ *    che vieta i token a schermo li copre insieme agli altri due enum.
+ *
+ *  · DOPO UN'APPROVAZIONE LE STORIE SONO TRE, NON DUE. `credentials: null`
+ *    voleva dire una cosa sola — «esisteva già un accesso con questa email» — e
+ *    su una candidatura non docente nessun account viene creato affatto
+ *    (`approvaSenzaAccount`). Raccontarla con la frase vecchia manda la
+ *    Segreteria a cercare un accesso che non esiste: la terza storia arriva dal
+ *    server (`esitoAccount: 'nessuno'`) e non si deduce.
  */
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'Error' }))
@@ -101,6 +115,14 @@ const ELENCO = [
     stato: 'pending',
     nome: 'Anna',
     cognome: 'Bianchi',
+    /**
+     * DUE colonne, e non una ripetuta: `posizioni` è ciò che la persona ha
+     * spuntato, `gradi` è ciò che il server ne ha DERIVATO
+     * (`gradiDallePosizioni`) e ha scritto in tabella. Il pannello le stampa
+     * tutte e due, l'elenco solo le posizioni. Anna è una candidatura docente:
+     * due posizioni con il prefisso `insegnante_`, due fasce.
+     */
+    posizioni: ['insegnante_infanzia', 'insegnante_nido'],
     gradi: ['infanzia', 'nido'],
     creata_il: '2026-08-05T09:00:00Z',
     email: 'recapito.da.non.mostrare@example.test',
@@ -112,6 +134,10 @@ const ELENCO = [
     stato: 'rifiutata',
     nome: 'Bruno',
     cognome: 'Neri',
+    // Una candidatura NON docente, con `gradi` vuoto: dal 2026-08-15 è un valore
+    // legittimo (una collaboratrice scolastica non ha una fascia d'età), non una
+    // riga a metà.
+    posizioni: ['collaboratrice'],
     gradi: [],
     creata_il: '2026-08-04T09:00:00Z',
   },
@@ -127,6 +153,26 @@ const DETTAGLIO = {
   anni_esperienza: 4,
   disponibilita: 'tempo_pieno',
   cv_path: 'candidature/cv-anna.pdf',
+}
+
+/**
+ * Una candidatura di SOLA CUOCA — cioè il caso che il modulo ha cominciato ad
+ * accogliere il 2026-08-15, e che prima non era nemmeno esprimibile.
+ *
+ * Nessuna posizione col prefisso `insegnante_`, quindi: `gradi` vuoto,
+ * `comprendeInsegnamento` falso, nessun account alla fine dell'approvazione.
+ * `posizione_altro` è `null` perché «altro» non è fra le posizioni, e in tabella
+ * un `CHECK` di coerenza lega le due colonne nei DUE versi (migrazione
+ * `20260814225302`): questa riga è una riga che il database accetta.
+ */
+const CUOCA = {
+  ...DETTAGLIO,
+  id: '55555555-5555-4555-8555-555555555555',
+  nome: 'Carmela',
+  cognome: 'Esposito',
+  posizioni: ['cuoca'],
+  posizione_altro: null,
+  gradi: [],
 }
 
 const fetchMock = vi.fn()
@@ -190,6 +236,41 @@ async function apriPrima() {
   await waitFor(() => expect(screen.getByText('Apri il curriculum')).toBeInTheDocument())
   return utils
 }
+
+/** Un finto server con UNA sola candidatura: elenco e dettaglio la stessa riga. */
+function serverConUnaSola(riga: Record<string, unknown>, corpoPatch?: unknown) {
+  fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+    if (init?.method === 'PATCH') return ok(corpoPatch ?? { success: true, stato: 'approvata', warnings: [] })
+    const u = String(url)
+    if (u.includes('id=')) return ok({ data: riga })
+    return ok({ data: [riga], total: 1 })
+  })
+}
+
+/**
+ * Apre l'unica candidatura a schermo. Il segnale di «pannello aperto» è
+ * l'INTESTAZIONE e non «Apri il curriculum», perché il curriculum è facoltativo
+ * e una candidatura senza allegato non lo disegna affatto.
+ */
+async function apriLaSola(nome: string) {
+  const utils = render(<CandidatureInsegnanti />)
+  await waitFor(() => expect(screen.getByText(nome)).toBeInTheDocument())
+  fireEvent.click(screen.getByText(nome))
+  await waitFor(() =>
+    expect(screen.getByRole('heading', { name: nome, level: 2 })).toBeInTheDocument(),
+  )
+  return utils
+}
+
+/**
+ * La RIGA d'elenco di una persona: il PULSANTE, non la prima occorrenza del nome.
+ *
+ * Il nome compare in più punti della stessa schermata — la riga, l'intestazione
+ * del pannello, l'avviso dell'esito scartato che nomina la persona — e
+ * `getAllByText(nome)[0]` può pescare il testo dell'avviso, che non è cliccabile.
+ */
+const rigaElencoDi = (nome: string) =>
+  screen.getAllByText(nome).map((n) => n.closest('button')).find(Boolean) as HTMLElement
 
 /** Una pausa vera: serve a far ATTERRARE una risposta lenta e guardare cosa fa. */
 const attendi = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -260,31 +341,44 @@ describe('CandidatureInsegnanti — elenco', () => {
     expect(screen.queryByText('Rifiutate')).not.toBeInTheDocument()
   })
 
-  it('un GRADO fuori enum non sparisce: si legge grezzo in elenco e nel pannello', async () => {
-    // La riga d'archivio che non sta nella tendina è proprio il caso per cui la
-    // difesa esiste: nasconderla direbbe alla Direzione che quella candidatura
-    // non ha fasce, mentre in tabella ce n'è una che il pannello Personale dovrà
-    // sistemare. Senza questa fixture la riga che lo realizza si può cancellare
-    // e il file resta verde (misurato: 21/21 col filtro tolto).
-    const CON_FASCIA_IGNOTA = {
+  it('un valore fuori elenco non sparisce: la POSIZIONE ignota in lista, la FASCIA ignota nel pannello', async () => {
+    // La riga d'archivio che non sta nell'elenco chiuso è proprio il caso per cui
+    // la difesa esiste: nasconderla direbbe alla Direzione che quella candidatura
+    // non ha quel dato, mentre in tabella c'è un valore che qualcuno dovrà
+    // sistemare. Senza questa fixture la riga che lo realizza si può cancellare e
+    // il file resta verde (misurato: 21/21 col filtro tolto).
+    //
+    // Dal 2026-08-15 i due elenchi sono due: in lista si disegnano le POSIZIONI,
+    // nel pannello le posizioni E le fasce. La regola è la stessa funzione
+    // (`ordinatiComeIlModulo`), e questo test la esercita da entrambi i lati.
+    const IGNOTI = {
       ...ELENCO[0],
+      posizioni: ['psicomotricista', 'collaboratrice'],
       gradi: ['sezione_primavera', 'infanzia'],
     }
     fetchMock.mockImplementation((url: string) => {
-      if (String(url).includes('id=')) return ok({ data: { ...DETTAGLIO, gradi: ['sezione_primavera', 'infanzia'] } })
-      return ok({ data: [CON_FASCIA_IGNOTA], total: 1 })
+      if (String(url).includes('id=')) return ok({ data: { ...DETTAGLIO, ...IGNOTI } })
+      return ok({ data: [IGNOTI], total: 1 })
     })
 
     render(<CandidatureInsegnanti />)
     await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
-    // In elenco: quella dell'enum tradotta, quella ignota grezza — e in coda,
-    // perché l'ordine è quello del modulo pubblico.
-    expect(screen.getByText('Infanzia (3-6)')).toBeInTheDocument()
-    expect(screen.getByText('sezione_primavera')).toBeInTheDocument()
+    // In elenco: quella dell'elenco chiuso tradotta, quella ignota grezza — e in
+    // coda, perché l'ordine è quello del modulo pubblico e non quello d'arrivo.
+    const riga = rigaElencoDi('Anna Bianchi')
+    expect(within(riga).getByText('Collaboratrice scolastica')).toBeInTheDocument()
+    expect(within(riga).getByText('psicomotricista')).toBeInTheDocument()
+    const testoRiga = riga.textContent ?? ''
+    expect(testoRiga.indexOf('Collaboratrice scolastica')).toBeLessThan(testoRiga.indexOf('psicomotricista'))
 
     fireEvent.click(screen.getByText('Anna Bianchi'))
     await waitFor(() => expect(screen.getByText('Apri il curriculum')).toBeInTheDocument())
-    expect(screen.getAllByText('sezione_primavera').length).toBe(2)
+    // Nel pannello: la fascia dell'enum tradotta, quella ignota grezza…
+    expect(screen.getByText('Infanzia (3-6)')).toBeInTheDocument()
+    expect(screen.getByText('sezione_primavera')).toBeInTheDocument()
+    // …e la posizione ignota compare due volte, perché il pannello ristampa le
+    // posizioni accanto alle fasce.
+    expect(screen.getAllByText('psicomotricista').length).toBe(2)
   })
 
   it('PAGINAZIONE: «Mostra altre» chiede la pagina successiva con l’offset giusto e accoda', async () => {
@@ -401,6 +495,32 @@ describe('CandidatureInsegnanti — elenco', () => {
     await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
     expect(screen.getAllByText(/Kidville Aversa/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/sc-aversa/)).not.toBeInTheDocument()
+  })
+
+  it('le chip di RIGA dicono le POSIZIONI tradotte, e le fasce non sono più in elenco', async () => {
+    // Dal 2026-08-15 la riga porta il MESTIERE: è l'unico dato che distingue a
+    // colpo d'occhio una maestra da una cuoca, ed è una sostituzione e non
+    // un'aggiunta — le fasce sono ormai derivate dalle posizioni, e mostrarle
+    // accanto direbbe due volte la stessa cosa alle insegnanti e niente a tutti
+    // gli altri.
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+
+    const riga = rigaElencoDi('Anna Bianchi')
+    expect(within(riga).getByText('Insegnante — Nido (0-3)')).toBeInTheDocument()
+    expect(within(riga).getByText('Insegnante — Infanzia (3-6)')).toBeInTheDocument()
+    // Il token della colonna non arriva a schermo: l'etichetta viene dal catalogo.
+    expect(within(riga).queryByText('insegnante_nido')).not.toBeInTheDocument()
+    // Le due chip delle FASCE non ci sono: «Nido (0-3)» da solo non è più in riga.
+    expect(within(riga).queryByText('Nido (0-3)')).not.toBeInTheDocument()
+    expect(within(riga).queryByText('Infanzia (3-6)')).not.toBeInTheDocument()
+    // L'ordine è quello del modulo pubblico (nido, infanzia), non quello in cui
+    // le posizioni sono arrivate dal database (infanzia, nido).
+    const testoRiga = riga.textContent ?? ''
+    expect(testoRiga.indexOf('Nido (0-3)')).toBeLessThan(testoRiga.indexOf('Infanzia (3-6)'))
+
+    // E la riga di una candidatura NON docente porta il suo mestiere, non il vuoto.
+    expect(within(rigaElencoDi('Bruno Neri')).getByText('Collaboratrice scolastica')).toBeInTheDocument()
   })
 })
 
@@ -723,6 +843,132 @@ describe('CandidatureInsegnanti — approvazione', () => {
   })
 })
 
+/**
+ * LA CANDIDATURA CHE NON È DI UN'INSEGNANTE.
+ *
+ * Dal 2026-08-15 il modulo pubblico accoglie anche collaboratrici, cuoche,
+ * segretarie e un mestiere scritto a mano. Nella stessa schermata la Segreteria
+ * legge tre cose diverse da prima, e qui si misurano una per una: che lavoro fa
+ * (le posizioni, più il testo libero quando c'è «altro»), che fasce ha (nessuna,
+ * ed è legittimo, non un dato mancante) e che cosa succede premendo «Approva»
+ * (niente account, niente email, nessuna password — né prima nella conferma, né
+ * dopo nel riquadro dell'esito).
+ */
+describe('CandidatureInsegnanti — le posizioni non docenti', () => {
+  /** «Altro» spuntato e il mestiere scritto accanto: le due colonne insieme. */
+  const ALTRO = {
+    ...DETTAGLIO,
+    id: '66666666-6666-4666-8666-666666666666',
+    nome: 'Dina',
+    cognome: 'Ferro',
+    posizioni: ['altro'],
+    posizione_altro: 'Psicomotricista',
+    gradi: [],
+  }
+
+  it('il mestiere scritto a mano si legge nel dettaglio quando fra le posizioni c’è «altro»', async () => {
+    // La chip dice «Altro», che da sola non dice niente: la voce accanto è
+    // l'unico posto in cui la Direzione legge per quale lavoro questa persona si
+    // è proposta. In tabella le due colonne sono legate da un `CHECK` di
+    // coerenza nei DUE versi (`('altro' = any(posizioni)) = (posizione_altro is
+    // not null)`, migrazione `20260814225302`): «altro» senza testo non entra, e
+    // testo senza «altro» nemmeno.
+    serverConUnaSola(ALTRO)
+    const { container } = await apriLaSola('Dina Ferro')
+    const pannello = container.querySelector('[aria-busy]') as HTMLElement
+
+    expect(within(pannello).getByText('Altro')).toBeInTheDocument()
+    expect(within(pannello).getByText(itAdminAltro.candPosizioneAltro)).toBeInTheDocument()
+    expect(within(pannello).getByText('Psicomotricista')).toBeInTheDocument()
+  })
+
+  it('senza «altro» fra le posizioni, quella voce non compare affatto — nemmeno come dato mancante', async () => {
+    // Una voce vuota si legge come un'omissione: «Posizione indicata: Non
+    // indicato» direbbe che manca qualcosa a una candidatura che è completa.
+    serverConUnaSola(CUOCA)
+    const { container } = await apriLaSola('Carmela Esposito')
+    const pannello = container.querySelector('[aria-busy]') as HTMLElement
+
+    expect(within(pannello).getByText('Cuoca / aiuto cucina')).toBeInTheDocument()
+    expect(screen.queryByText(itAdminAltro.candPosizioneAltro)).not.toBeInTheDocument()
+  })
+
+  it('fasce VUOTE: il pannello dice «Nessuna», non «Non indicato»', async () => {
+    // «Non indicato» manderebbe la Direzione a cercare un'omissione che non c'è,
+    // sulla schermata da cui si decide un'assunzione: una cuoca non ha una fascia
+    // d'età, e `gradiDallePosizioni` ritorna `[]` di proposito.
+    serverConUnaSola(CUOCA)
+    await apriLaSola('Carmela Esposito')
+
+    const bloccoFasce = screen.getByText(itAdminAltro.candFasce).parentElement as HTMLElement
+    expect(within(bloccoFasce).getByText(itAdminAltro.candNessunaFascia)).toBeInTheDocument()
+    expect(within(bloccoFasce).queryByText('Non indicato')).not.toBeInTheDocument()
+  })
+
+  it('la CONFERMA di una candidatura di sola cuoca descrive l’operazione che parte davvero', async () => {
+    // La conferma è la frase su cui la Direzione preme «Confermo»: se descrive
+    // un'operazione diversa da quella che parte, il consenso che raccoglie non
+    // vale niente. Qui la PATCH andrà in `approvaSenzaAccount` — niente utenza,
+    // niente email, `credentials: null` — e la conferma deve dirlo.
+    serverConUnaSola(CUOCA)
+    await apriLaSola('Carmela Esposito')
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+
+    expect(await screen.findByText(itAdminAltro.candConfermaApprovaSenzaAccount)).toBeInTheDocument()
+    expect(screen.queryByText(/Verrà creato un account docente per/)).not.toBeInTheDocument()
+    // E NIENTE avviso «nessuna fascia»: qui l'elenco vuoto non è un'anomalia da
+    // sistemare a mano, è ciò che ha una cuoca. Un allarme che grida sempre
+    // smette di essere letto quando dice qualcosa di vero.
+    expect(screen.queryByText(itAdminAltro.candConfermaApprovaFasceMancanti)).not.toBeInTheDocument()
+    // L'approvazione senza account resta un'operazione vera: il pulsante c'è.
+    expect(screen.getByRole('button', { name: 'Confermo' })).toBeEnabled()
+  })
+
+  it('l’avviso «fasce mancanti» è dell’ALTRO ramo: candidatura docente con `gradi` vuoto', async () => {
+    // È la controprova del test qui sopra: senza, «non mostra l'avviso» resterebbe
+    // verde anche se quell'avviso non fosse più disegnato da nessuna parte. Su una
+    // candidatura docente `gradi` vuoto è una riga incoerente — la route le DERIVA
+    // dalle posizioni — ed è esattamente ciò che l'avviso manda a sistemare a mano.
+    serverConUnaSola({ ...DETTAGLIO, gradi: [] })
+    await apriLaSola('Anna Bianchi')
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+
+    expect(await screen.findByText(/Verrà creato un account docente per/)).toBeInTheDocument()
+    expect(screen.getByText(itAdminAltro.candConfermaApprovaFasceMancanti)).toBeInTheDocument()
+  })
+
+  it('`esitoAccount: nessuno`: il pannello non manda a cercare un accesso che non esiste', async () => {
+    // `credentials: null` significava una cosa sola — «esisteva già un accesso
+    // con questa email» — e dal 2026-08-15 ne può significare due. Con la frase
+    // vecchia, dopo l'approvazione di una cuoca la Segreteria andrebbe a cercare
+    // in `utenti` un account che non è mai stato creato.
+    serverConUnaSola(CUOCA, {
+      success: true,
+      id: CUOCA.id,
+      stato: 'approvata',
+      credentials: null,
+      credentialsEmailSent: false,
+      esitoAccount: 'nessuno',
+      warnings: [],
+    })
+    await apriLaSola('Carmela Esposito')
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confermo' }))
+
+    const riquadro = (await screen.findByText('Candidatura approvata')).parentElement as HTMLElement
+    expect(within(riquadro).getByText(itAdminAltro.candEsitoApprovataSenzaAccount)).toBeInTheDocument()
+    expect(within(riquadro).queryByText(itAdminAltro.candNessunaCredenziale)).not.toBeInTheDocument()
+    // E nessuna credenziale a schermo: non ce n'è nessuna da consegnare.
+    // ⚠️ Sul `textContent` e sul `code`, non su `queryByText`: l'etichetta
+    // «Credenziali:» vive dentro lo stesso `span` di email e password, quindi
+    // `queryByText('Credenziali:')` ritorna `null` ANCHE quando le credenziali
+    // sono a schermo — misurato. Un'asserzione così sarebbe verde per costruzione.
+    expect(riquadro.textContent ?? '').not.toContain(itAdminAltro.candCredenziali)
+    expect(riquadro.querySelector('code')).toBeNull()
+    expect(within(riquadro).queryByText(itAdminAltro.candCredNonInviate)).not.toBeInTheDocument()
+  })
+})
+
 describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra candidatura', () => {
   /**
    * È la stessa gara delle due aperture, ma sul ramo che CREA UN ACCOUNT DOCENTE.
@@ -734,14 +980,6 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
    * pulsanti di Bruno spariti perché `decisa` era diventato vero.
    */
   const BRUNO_IN_ATTESA = { ...ELENCO[1], stato: 'pending' }
-
-  /**
-   * La RIGA d'elenco di una persona, non la prima occorrenza del suo nome:
-   * l'avviso dell'esito scartato nomina la persona, quindi `getAllByText(nome)[0]`
-   * può pescare il testo dell'avviso — che non è cliccabile.
-   */
-  const rigaDi = (nome: string) =>
-    screen.getAllByText(nome).map((n) => n.closest('button')).find(Boolean) as HTMLElement
 
   function serverConPatchLenta(ritardoMs: number) {
     let approvata = false
@@ -828,8 +1066,8 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
     // E la ricarica dell'elenco è avvenuta lo stesso: la riga di Anna dice il
     // suo stato NUOVO, quella di Bruno il suo di sempre.
     // Il nome compare due volte (nell'avviso e in elenco): qui serve la RIGA.
-    const rigaAnna = rigaDi('Anna Bianchi')
-    const rigaBruno = rigaDi('Bruno Neri')
+    const rigaAnna = rigaElencoDi('Anna Bianchi')
+    const rigaBruno = rigaElencoDi('Bruno Neri')
     await waitFor(() => expect(within(rigaAnna).getByText('Approvata')).toBeInTheDocument())
     expect(within(rigaBruno).getByText('In attesa')).toBeInTheDocument()
 
@@ -939,7 +1177,7 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
     expect(within(avviso).getByText('PW-DI-ANNA')).toBeInTheDocument()
 
     // Seconda apertura, e terza: l'avviso è ancora lì, con tutto quello che dice.
-    fireEvent.click(rigaDi('Anna Bianchi'))
+    fireEvent.click(rigaElencoDi('Anna Bianchi'))
     await waitFor(() => expect(screen.getByText('Apri il curriculum')).toBeInTheDocument())
     fireEvent.click(screen.getByText('Bruno Neri'))
     await waitFor(() => expect(screen.getByText('bruno@example.test')).toBeInTheDocument())
@@ -985,6 +1223,47 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
     expect(avviso).not.toHaveTextContent(itAdminAltro.candScartatoAccountCreato)
   })
 
+  it('l’esito scartato di un’approvazione SENZA ACCOUNT non racconta un account creato', async () => {
+    // Stesso avviso, terza storia. Qui è l'UNICA copia di ciò che è successo —
+    // il pannello è stato chiuso e non c'è nessun posto in cui andare a
+    // rileggere — quindi una frase sbagliata non la corregge nessuno: dire
+    // «l'account docente È STATO CREATO» dopo l'approvazione di una cuoca
+    // manderebbe la Segreteria a cercarlo in `utenti` per sempre.
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') {
+        return new Promise((risolvi) => setTimeout(() => risolvi({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            id: CUOCA.id,
+            stato: 'approvata',
+            credentials: null,
+            credentialsEmailSent: false,
+            esitoAccount: 'nessuno',
+            warnings: [],
+          }),
+        }), 120))
+      }
+      const u = String(url)
+      if (u.includes('id=')) return ok({ data: CUOCA })
+      return ok({ data: [CUOCA], total: 1 })
+    })
+
+    await apriLaSola('Carmela Esposito')
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confermo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Indietro' }))
+
+    const avviso = await screen.findByRole('alert', {}, { timeout: 2000 })
+    expect(avviso).toHaveTextContent('Carmela Esposito')
+    expect(within(avviso).getByText(itAdminAltro.candEsitoApprovataSenzaAccount)).toBeInTheDocument()
+    expect(avviso).not.toHaveTextContent(itAdminAltro.candScartatoAccountCreato)
+    // E nemmeno «esisteva già un accesso con questa email», che è l'altra frase
+    // che manda a cercare: `credentials === null` non basta più a scegliere.
+    expect(within(avviso).queryByText(itAdminAltro.candNessunaCredenziale)).not.toBeInTheDocument()
+  })
+
   it('durante la PATCH su Anna i pulsanti di BRUNO sono accesi; quelli di Anna spenti CON il motivo', async () => {
     // `lavorando` era condiviso: dentro la finestra della PATCH (secondi veri) il
     // pannello di Bruno aveva i due pulsanti spenti, senza `title` e senza una
@@ -1009,7 +1288,7 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
     // Riaprendo ANNA, invece, i pulsanti restano spenti — e adesso si legge
     // perché, a schermo e nel `title`: ripremerli farebbe partire due volte la
     // creazione dello stesso account.
-    fireEvent.click(rigaDi('Anna Bianchi'))
+    fireEvent.click(rigaElencoDi('Anna Bianchi'))
     await waitFor(() => expect(screen.getByText('Apri il curriculum')).toBeInTheDocument())
     const approva = screen.getByRole('button', { name: 'Approva' })
     expect(approva).toBeDisabled()
@@ -1179,32 +1458,93 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
     expect(screen.getAllByText('Non indicato').length).toBeGreaterThan(0)
   })
 
-  it('ogni valore dei DUE enum del modulo ha la sua etichetta in italiano e in inglese', () => {
+  it('TUTTE le posizioni del modulo si leggono tradotte, non solo quelle delle fixture', async () => {
+    // Il lock qui sotto verifica che il CATALOGO abbia una voce per ogni valore.
+    // Questo verifica l'altro anello, che nessun catalogo può dare: che il
+    // pannello sappia RISOLVERLA. Fra i due c'è la mappa interna del componente,
+    // che non è esportata — una posizione aggiunta al template, tradotta nei due
+    // cataloghi e dimenticata lì tornerebbe a schermo come `insegnante_nido`,
+    // cioè il difetto corretto l'11/08/2026 per titolo di studio e disponibilità.
+    //
+    // Le sette si spuntano tutte insieme: `posizioni` è multi-valore, quindi una
+    // candidatura sola le esercita tutte. `posizione_altro` è valorizzato perché
+    // fra quelle c'è «altro» e il `CHECK` di coerenza in tabella lo pretende.
+    serverConUnaSola({
+      ...DETTAGLIO,
+      posizioni: [...POSIZIONI_AMMESSE],
+      posizione_altro: 'Psicomotricista',
+    })
+    const { container } = await apriLaSola('Anna Bianchi')
+
+    const conUnderscore = (container.textContent ?? '').match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []
+    expect(conUnderscore, `token di database a schermo: ${conUnderscore.join(', ')}`).toEqual([])
+
+    // …e le sette sono disegnate davvero: un pannello che non ne mostrasse
+    // NESSUNA passerebbe il controllo qui sopra senza dire niente.
+    const bloccoPosizioni = screen.getByText(itAdminAltro.candPosizioni).parentElement as HTMLElement
+    const chip = [...bloccoPosizioni.querySelectorAll('span')].map((s) => s.textContent ?? '')
+    expect(chip).toHaveLength(POSIZIONI_AMMESSE.length)
+    expect(chip.filter((testo) => POSIZIONI_AMMESSE.includes(testo))).toEqual([])
+  })
+
+  it('ogni valore dei TRE enum del modulo ha la sua etichetta in italiano e in inglese', () => {
     // Il perimetro si legge dal template, non si ricopia: una voce aggiunta lì e
     // dimenticata qui tornerebbe a schermo con l'underscore.
+    //
+    // Dal 2026-08-15 gli enum sono TRE: `posizioni` è entrato nel modulo con
+    // sette valori che sono token di database (`insegnante_nido`), e a
+    // differenza degli altri due si legge anche in ELENCO, cioè sulla prima
+    // schermata che la Segreteria apre.
+    //
+    // ⚠️ La mappa è per CAMPO e non per valore: `altro` sta in due enum diversi
+    // («Altro titolo» e la posizione «Altro») e vuole due chiavi diverse. Con una
+    // mappa piatta una delle due sparirebbe, e il lock guarderebbe l'altra
+    // credendo di averle controllate entrambe.
     const opzioni = (id: string) =>
       (INSEGNANTE_FIELDS.find((f) => f.id === id)?.options ?? []).map((o) => String(o.value))
-    const attese: Record<string, string> = {
-      diploma: 'candTitoloDiploma',
-      magistrale: 'candTitoloMagistrale',
-      laurea_triennale: 'candTitoloLaureaTriennale',
-      laurea_magistrale: 'candTitoloLaureaMagistrale',
-      formazione_primaria: 'candTitoloFormazionePrimaria',
-      master: 'candTitoloMaster',
-      altro: 'candTitoloAltro',
-      tempo_pieno: 'candDispTempoPieno',
-      part_time_mattina: 'candDispPartTimeMattina',
-      part_time_pomeriggio: 'candDispPartTimePomeriggio',
-      supplenze: 'candDispSupplenze',
-      tirocinio: 'candDispTirocinio',
+    const attese: Record<string, Record<string, string>> = {
+      titolo_studio: {
+        licenza_media: 'candTitoloLicenzaMedia',
+        diploma: 'candTitoloDiploma',
+        magistrale: 'candTitoloMagistrale',
+        laurea_triennale: 'candTitoloLaureaTriennale',
+        laurea_magistrale: 'candTitoloLaureaMagistrale',
+        formazione_primaria: 'candTitoloFormazionePrimaria',
+        master: 'candTitoloMaster',
+        altro: 'candTitoloAltro',
+      },
+      disponibilita: {
+        tempo_pieno: 'candDispTempoPieno',
+        part_time_mattina: 'candDispPartTimeMattina',
+        part_time_pomeriggio: 'candDispPartTimePomeriggio',
+        supplenze: 'candDispSupplenze',
+        tirocinio: 'candDispTirocinio',
+      },
+      posizioni: {
+        insegnante_nido: 'candPosInsegnanteNido',
+        insegnante_infanzia: 'candPosInsegnanteInfanzia',
+        insegnante_primaria: 'candPosInsegnantePrimaria',
+        collaboratrice: 'candPosCollaboratrice',
+        cuoca: 'candPosCuoca',
+        segreteria: 'candPosSegreteria',
+        altro: 'candPosAltro',
+      },
     }
-    const valori = [...opzioni('titolo_studio'), ...opzioni('disponibilita')]
-    expect(valori.length, 'il template non espone più le opzioni: il lock non guarda niente').toBe(12)
-    for (const valore of valori) {
-      const chiave = attese[valore]
-      expect(chiave, `nessuna chiave i18n per «${valore}»`).toBeTruthy()
-      expect(itAdminAltro, `it/adminAltro.json → ${chiave}`).toHaveProperty(chiave)
-      expect(enAdminAltro, `en/adminAltro.json → ${chiave}`).toHaveProperty(chiave)
+    const campi = Object.keys(attese)
+    const valori = campi.flatMap((campo) => opzioni(campo))
+    expect(valori.length, 'il template non espone più le opzioni: il lock non guarda niente').toBe(20)
+    // Le posizioni del CAMPO sono le stesse che la route filtra con lo `z.enum`:
+    // se un giorno divergessero, questo lock sorveglierebbe una lista e a schermo
+    // ne arriverebbe un'altra.
+    expect(opzioni('posizioni')).toEqual(POSIZIONI_AMMESSE)
+
+    for (const campo of campi) {
+      for (const valore of opzioni(campo)) {
+        const chiave = attese[campo][valore]
+        expect(chiave, `nessuna chiave i18n per «${campo} → ${valore}»`).toBeTruthy()
+        expect(itAdminAltro, `it/adminAltro.json → ${chiave}`).toHaveProperty(chiave)
+        expect(enAdminAltro, `en/adminAltro.json → ${chiave}`).toHaveProperty(chiave)
+      }
     }
   })
 })

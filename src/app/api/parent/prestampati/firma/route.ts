@@ -513,9 +513,12 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
     })
     if (sospeso) return sospeso
 
+    // L'etichetta del prestampato è un DATO scelto dalla segreteria, non una
+    // delle cinque operazioni note: passa come stringa libera e viene scappata.
+    // Collassarla su «firmare il modulo» perderebbe QUALE modulo si sta
+    // firmando, e con tre prestampati aperti quella riga non aiuterebbe nessuno.
     const res = await sendOtp(supabase, parentId, {
-      subject: `Codice di firma — ${voce.etichetta}`,
-      intro: `Il tuo codice per firmare «${voce.etichetta}» è`,
+      operazione: { libera: `firmare «${voce.etichetta}»` },
     })
     if ('error' in res) return emailMancante()
 

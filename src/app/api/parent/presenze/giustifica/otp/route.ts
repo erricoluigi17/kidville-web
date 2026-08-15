@@ -36,10 +36,7 @@ export const POST = withRoute('parent/presenze/giustifica/otp:POST', async (requ
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const res = await sendOtp(supabase, userId, {
-      subject: 'Codice di conferma giustifica — Kidville',
-      intro: 'Il tuo codice per confermare la giustifica è',
-    })
+    const res = await sendOtp(supabase, userId, { operazione: 'confermare la giustifica dell\'assenza' })
     if ('error' in res) return NextResponse.json({ error: res.error }, { status: 400 })
 
     const { ip, userAgent } = extractRequestMeta(request)

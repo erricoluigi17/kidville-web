@@ -41,8 +41,19 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
+// Dal 2026-08-15 la route manda anche l'HTML, quindi passa da
+// `sendEmailDetailed` e non più da `sendEmail`. Il mock DEVE esporre entrambe:
+// `vi.mock` sostituisce il modulo INTERO, e una funzione dimenticata qui non
+// diventa un errore di tipo — diventa un `undefined is not a function` dentro il
+// `try` della route, cioè una 200 generica identica a quella giusta e zero email.
+// È il difetto che questa riga ha appena avuto, ed è invisibile dall'esterno
+// proprio perché l'anti-enumerazione nasconde ogni differenza.
 const sendEmail = vi.fn().mockResolvedValue(true)
-vi.mock('@/lib/email/send', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }))
+const sendEmailDetailed = vi.fn().mockResolvedValue({ ok: true, error: null })
+vi.mock('@/lib/email/send', () => ({
+  sendEmail: (...a: unknown[]) => sendEmail(...a),
+  sendEmailDetailed: (...a: unknown[]) => sendEmailDetailed(...a),
+}))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn().mockResolvedValue(undefined) }))
 // `scuolaUnicaReale` risponde `null` — ed è la VERITÀ di produzione dal
 // 2026-07-29: con tre sedi reali la funzione è deprecata e ritorna sempre null.
@@ -96,7 +107,7 @@ describe('POST /api/public/cancellazione-account — risposta generica (anti-enu
     const res = await POST_INIT(req('/api/public/cancellazione-account', { email: 'genitore@example.com' }))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
-    expect(sendEmail).toHaveBeenCalledTimes(1)
+    expect(sendEmailDetailed).toHaveBeenCalledTimes(1)
   })
 
   it('email NON associata → STESSA risposta 200 generica, nessuna email inviata', async () => {
@@ -104,7 +115,7 @@ describe('POST /api/public/cancellazione-account — risposta generica (anti-enu
     const res = await POST_INIT(req('/api/public/cancellazione-account', { email: 'ignoto@example.com' }))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
-    expect(sendEmail).not.toHaveBeenCalled()
+    expect(sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('non registra MAI una richiesta al POST iniziale (solo dopo conferma)', async () => {
@@ -116,7 +127,7 @@ describe('POST /api/public/cancellazione-account — risposta generica (anti-enu
   it('email non valida → 400 (zod)', async () => {
     const res = await POST_INIT(req('/api/public/cancellazione-account', { email: 'non-una-email' }))
     expect(res.status).toBe(400)
-    expect(sendEmail).not.toHaveBeenCalled()
+    expect(sendEmailDetailed).not.toHaveBeenCalled()
   })
 })
 
@@ -157,13 +168,13 @@ describe('POST /api/public/cancellazione-account — rate-limit anti email-bombi
     // Azzera i contatori DOPO aver esaurito il budget: quello che segue deve
     // dimostrare che la richiesta in eccesso non esegue NESSUNA logica.
     vi.mocked(createAdminClient).mockClear()
-    sendEmail.mockClear()
+    sendEmailDetailed.mockClear()
 
     const res = await POST_INIT(req(PATH, { email: 'ignoto@example.com' }, IP_A))
     expect(res.status).toBe(429)
     expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(0)
     expect(createAdminClient).not.toHaveBeenCalled() // → né risolviGenitorePerEmail
-    expect(sendEmail).not.toHaveBeenCalled()
+    expect(sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('il limite vale anche per un’email ESISTENTE (è il caso che fa male alla famiglia)', async () => {
@@ -171,10 +182,10 @@ describe('POST /api/public/cancellazione-account — rate-limit anti email-bombi
     for (let i = 0; i < LIMITE_POST; i++) {
       await POST_INIT(req(PATH, { email: 'genitore@example.com' }, IP_A))
     }
-    sendEmail.mockClear()
+    sendEmailDetailed.mockClear()
     const res = await POST_INIT(req(PATH, { email: 'genitore@example.com' }, IP_A))
     expect(res.status).toBe(429)
-    expect(sendEmail).not.toHaveBeenCalled()
+    expect(sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('IP diversi non condividono il contatore', async () => {

@@ -272,6 +272,22 @@ describe('lock — pagine legali', () => {
      * propone come alternativa comoda.
      */
     const IMPRONTE_PRIVACY: Record<string, string> = {
+        // 2026-08-15 — aggiunta la voce di conservazione «curriculum caricato e mai
+        // inviato»: ventiquattro ore.
+        //
+        // È un termine per un trattamento che fino al 14/08 non poteva ESISTERE: il
+        // campo del curriculum era nel template ma il modulo non lo rendeva, perché
+        // nessuna rotta di caricamento produceva un percorso che il server
+        // accettasse (misurato in produzione: 0 candidature con curriculum, 0 oggetti
+        // sotto il prefisso `candidature/`). Dal 15/08 il file si carica davvero, e
+        // si carica PRIMA che la candidatura esista: esiste quindi un dato personale
+        // trattato che nessuna riga nomina, e i dodici mesi della candidatura non lo
+        // coprono — quel file una valutazione non ce l'ha.
+        //
+        // Le voci del 10 e dell'11 restano dove sono: sono i testi che le persone
+        // hanno letto fino a ieri, e sono citati nelle righe di `consents_log` già
+        // scritte.
+        '2026-08-15': '6609363f6fbb6e00101b640912299f32ecdbc0e04b9bf98f57551769be0e6cbf',
         // 2026-08-10 — aggiunta la voce «candidature spontanee di personale».
         '2026-08-10': 'f073aa87b1cfcd1e879ebe1ef9166383868d263a45fab4167dcf31e1c69a1143',
         // 2026-08-11 — aggiunta la sezione «Personale della Scuola (dipendenti e

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { useForm, type FieldValues } from 'react-hook-form'
 import itPublic from '../../messages/it/public.json'
+import { POSIZIONI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 import type { FormField } from '@/types/database.types'
 
@@ -164,6 +165,25 @@ const CAMPO_RADIO: FormField = {
 }
 
 /**
+ * L'etichetta della posizione con quel `value`, LETTA dal template.
+ *
+ * Dal 2026-08-15 il passo «profilo» non chiede più le fasce d'età: chiede le
+ * POSIZIONI, e la casella che questo file spunta per arrivare al riepilogo non si
+ * chiama più «Infanzia (3-6)» ma «Insegnante — Infanzia (3-6)». ⚠️ Quel trattino
+ * è un EM DASH (U+2014). `CAMPO_RADIO` qui sopra resta con le sue etichette
+ * corte: è un campo INVENTATO per avere una card di `FieldRenderer` da
+ * confrontare, e non ha niente a che vedere con il template.
+ */
+function posizione(valore: string): string {
+  const o = POSIZIONI_OPTIONS.find((x) => x.value === valore)
+  if (!o) throw new Error(`posizione «${valore}» assente da POSIZIONI_OPTIONS`)
+  return String(o.label)
+}
+
+/** La posizione che si spunta per attraversare il passo «profilo». */
+const POSIZIONE_SCELTA = posizione('insegnante_infanzia')
+
+/**
  * Dalla scelta della sede fino al riepilogo, compilando il minimo che i passi
  * pretendono. Il wizard dev'essere già reso e l'elenco già arrivato.
  */
@@ -181,7 +201,7 @@ async function compilaFinoAlRiepilogo(): Promise<void> {
 
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'laurea_triennale' } })
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() =>
@@ -374,6 +394,68 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
     // Da `lg` in su accompagna lo scorrimento invece di restare in cima a una
     // colonna vuota per 1022 px su 1362 (misurato al riepilogo, a 1456 px).
     expect(contesto.getAttribute('class')).toContain('lg:sticky')
+  })
+
+  /*
+   * ─── LE DUE NOTE DEL PASSO «PROFILO» STANNO DOPO IL CAMPO CHE DESCRIVONO ────
+   *
+   * Dal 2026-08-15 il passo «profilo» porta due righe di aiuto che l'etichetta da
+   * sola non può dire: che le posizioni si possono spuntare in più d'una, e che il
+   * curriculum va bene anche come fotografia ed è facoltativo (senza quella riga,
+   * chi non ha il PDF sottomano abbandona il modulo).
+   *
+   * ⚠️ Il componente le rende come `<p>` accanto al campo e NON come
+   * `aria-describedby`: `FieldRenderer` non accetta una descrizione dall'esterno —
+   * il suo `aria-describedby` è già occupato dal messaggio d'errore, che è ciò che
+   * dev'essere annunciato quando c'è. Il debito è dichiarato in
+   * `CandidaturaInsegnanteWizard.tsx` (`NOTE_DEI_CAMPI`), e la ragione per cui è
+   * tollerabile è UNA sola: la nota resta comunque leggibile nell'ordine del
+   * documento, subito dopo il campo che descrive. Quella ragione è una misura, non
+   * una promessa — e questo è il posto in cui si misura. Se un domani la nota
+   * finisse sopra il campo, o in fondo al passo, il debito smetterebbe di essere
+   * tollerabile senza che nessun altro controllo lo dica.
+   */
+  it('le note di «posizioni» e del curriculum vengono DOPO il loro campo, nella stessa scatola', async () => {
+    mockSedi({ ok: true, sedi: [ALFA, BETA] })
+    render(<CandidaturaInsegnanteWizard />)
+    fireEvent.click(await screen.findByRole('radio', { name: NOME_SEDE_A }))
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Es. Maria'), { target: { value: 'Ines' } })
+    fireEvent.change(screen.getByPlaceholderText('Es. Rossi'), { target: { value: 'Di Prova' } })
+    fireEvent.change(screen.getByPlaceholderText('Es. mario.rossi@email.com'), {
+      target: { value: 'aspirante@example.test' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    const coppie: [string, string][] = [
+      // La prima casella del gruppo delle posizioni, e la nota che lo riguarda.
+      [POSIZIONE_SCELTA, itPublic.candPosizioniAiuto],
+      // Il controllo del curriculum, e la nota che dice che è facoltativo.
+      ['cv_path', itPublic.candCvNota],
+    ]
+    for (const [ancora, testoNota] of coppie) {
+      const campo =
+        ancora === 'cv_path'
+          ? (document.getElementById('cv_path') as HTMLElement)
+          : screen.getByRole('checkbox', { name: ancora })
+      expect(campo, `il campo di «${ancora}» non è reso`).not.toBeNull()
+      const nota = screen.getByText(testoNota)
+      // 1 · DOPO il campo nell'ordine del documento, che è l'ordine in cui uno
+      //     screen reader legge e in cui la pagina si scorre col dito.
+      expect(
+        campo.compareDocumentPosition(nota) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `la nota di «${ancora}» non viene dopo il suo campo`,
+      ).toBeTruthy()
+      // 2 · E nella STESSA scatola del campo — cioè il contenitore della nota
+      //     contiene anche il controllo: non è appesa in fondo al passo, dove
+      //     descriverebbe qualcosa che nel frattempo è scorso via.
+      expect(
+        nota.parentElement?.contains(campo),
+        `la nota di «${ancora}» non sta nella stessa scatola del campo`,
+      ).toBe(true)
+    }
   })
 
   it('i comandi «Modifica» del riepilogo sono alti quanto gli altri comandi della pagina', async () => {

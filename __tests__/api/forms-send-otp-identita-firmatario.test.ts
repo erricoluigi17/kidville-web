@@ -114,6 +114,11 @@ vi.mock('@/lib/supabase/server-client', () => {
 
 vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(async (m: { to: string; text: string }) => { h.email.push(m); return true }),
+  // Dal 2026-08-15 l'OTP manda anche l'HTML: la route passa da qui.
+  sendEmailDetailed: vi.fn(async (m: { to: string; text: string }) => {
+    h.email.push(m)
+    return { ok: true, error: null }
+  }),
 }))
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: () => ({ ok: true, remaining: 7, retryAfterMs: 0 }),

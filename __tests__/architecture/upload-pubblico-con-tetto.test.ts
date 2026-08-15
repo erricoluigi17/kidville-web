@@ -4,6 +4,7 @@ import path from 'node:path'
 import {
   ESTENSIONI_ALLEGATO_PUBBLICO,
   MIME_ALLEGATO_PUBBLICO,
+  TETTO_UPLOAD_CANDIDATURE,
   TETTO_UPLOAD_PERSONALE,
   TETTO_UPLOAD_PUBBLICO,
 } from '@/lib/upload/allegati-pubblici'
@@ -124,12 +125,34 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
     // `documenti_personale`. È entrata in questo elenco senza che nessuno la
     // aggiungesse a mano — è il punto del lock, che ricava le rotte dal codice — e
     // passa le prove qui sotto perché è stata scritta copiando la sorella.
+    //
+    // La QUARTA è arrivata il 15/08/2026: `iscrizione/insegnanti/upload` riceve il
+    // curriculum di chi si candida da `/lavora-con-noi`. Scrive in `form_attachments`
+    // — lo STESSO bucket delle due porte delle famiglie, cioè quello dei documenti
+    // d'iscrizione dei minori — sotto il prefisso `candidature/`, e il suo tetto è
+    // `TETTO_UPLOAD_CANDIDATURE` (la prova sta più in basso, con la sua aritmetica).
+    //
+    // ⚠️ IL MESSAGGIO DI QUESTA ASSERZIONE DICEVA IL FALSO, e la quarta rotta lo ha
+    // misurato. Diceva: «Se ne compare una in più va bene: deve solo passare le prove
+    // qui sotto». Non è ciò che il codice fa: l'asserzione è un `toEqual` su un elenco
+    // ESATTO, quindi il 15/08 la rotta nuova ha reso rosso proprio questo punto, e non
+    // per un difetto suo — passa tutte le prove qui sotto. Chi legge un messaggio che
+    // promette il contrario di ciò che l'asserzione fa conclude che il rosso sia un
+    // guasto del lock, e la reazione più rapida a un lock che «sbaglia» è spegnerlo.
+    //
+    // Il messaggio adesso dice il contratto vero, che è anche quello che si vuole: una
+    // porta di caricamento ANONIMA in più è una decisione, e passa da qui perché
+    // qualcuno la veda — insieme al tetto che le si dà, che va dichiarato accanto alla
+    // sua costante e provato nel test dell'aritmetica in fondo a questo file.
     expect(
       PUBBLICHE.map((r) => r.rel).sort(),
-      'Le rotte di upload senza sessione sono queste. Se ne compare una in più va bene: ' +
-        'deve solo passare le prove qui sotto. Se ne SPARISCONO, il rilevatore non riconosce ' +
-        'più i gate e questo lock ha smesso di controllare qualcosa.',
+      'Le rotte di upload senza sessione sono queste, ESATTAMENTE queste. Se ne compare ' +
+        'una in più questo punto diventa rosso apposta: una porta anonima che scrive nello ' +
+        'Storage è una decisione, e va aggiunta qui A MANO insieme alla prova del suo tetto ' +
+        '(il test dell’aritmetica, in fondo al file). Se ne SPARISCONO, il rilevatore non ' +
+        'riconosce più i gate e questo lock ha smesso di controllare qualcosa.',
     ).toEqual([
+      'src/app/api/iscrizione/insegnanti/upload/route.ts',
       'src/app/api/iscrizione/personale/upload/route.ts',
       'src/app/api/iscrizione/upload/route.ts',
       'src/app/api/public/forms/[token]/upload/route.ts',
@@ -220,6 +243,19 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
     //  · PERSONALE (2026-08-12) — ogni persona consegna DUE scansioni, e quel modulo si
     //    compila in gruppo dietro il NAT della sede: Giugliano ha 13 account di personale,
     //    quindi 13 × 2 = 26.
+    //
+    // Dal 15/08/2026 le aritmetiche sono TRE, e la terza è la più stretta:
+    //
+    //  · CANDIDATURE (2026-08-15) — `/lavora-con-noi` ha UN campo file, cioè un
+    //    curriculum per candidatura: non 4,2 allegati e non due facce. E gli INVII di
+    //    quella porta sono già chiusi a 3 all'ora per IP (`iscrizione/insegnanti:POST`),
+    //    quindi al massimo 3 nella finestra di dieci minuti di questo contatore:
+    //
+    //        1 curriculum × 3 invii ammessi × 2 tentativi a testa = 6
+    //
+    //    I due tentativi sono i due modi in cui il primo caricamento fallisce davvero —
+    //    413 (oltre il limite della piattaforma) e 415 (il `.docx`, che è il formato in
+    //    cui la maggioranza dei curriculum viaggia e che questo bucket non ammette).
     expect(
       TETTO_UPLOAD_PUBBLICO,
       'il tetto delle porte delle famiglie è sceso sotto le cinque domande complete che ' +
@@ -244,11 +280,68 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
     // il conto delle persone in servizio invece di aggiungere un margine al margine.
     expect(TETTO_UPLOAD_PERSONALE).toBeLessThanOrEqual(30)
 
-    // E i due numeri NON devono coincidere per caso: se un giorno tornassero uguali, la
+    expect(
+      TETTO_UPLOAD_CANDIDATURE,
+      'sotto i 6 chi si candida non ha nemmeno un secondo tentativo: il primo caricamento ' +
+        'che cade su un 413 o su un 415 (il `.docx`) consuma uno slot, e la candidatura ' +
+        'resta ferma con un 429 indistinguibile da un servizio rotto',
+    ).toBeGreaterThanOrEqual(6)
+    // ⚠️ QUI IL SOFFITTO COINCIDE COL PAVIMENTO, e a differenza delle altre due porte non
+    // è una svista: è l'unica delle tre che NON ha un margine, e la ragione sta accanto
+    // alla costante. Un caricamento oltre il sesto non può diventare una candidatura —
+    // l'INVIO è già chiuso a 3 all'ora — quindi sarebbe soltanto un oggetto in più dentro
+    // `form_attachments`, cioè dentro il bucket che custodisce i documenti d'iscrizione
+    // dei minori. Su una porta ANONIMA che scrive lì, un tetto che eccede il numero di
+    // invii possibili è spazio regalato e nient'altro.
+    expect(
+      TETTO_UPLOAD_CANDIDATURE,
+      'il tetto dei curriculum è cresciuto oltre gli invii che quella porta ammette: ogni ' +
+        'slot in più non produce una candidatura, produce un oggetto in più nel bucket dei ' +
+        'minori. Si alza PRIMA il tetto degli invii (`limit` in `iscrizione/insegnanti:POST`), ' +
+        'e questo dopo',
+    ).toBeLessThanOrEqual(6)
+
+    // ⚠️ E LA DERIVAZIONE SI MISURA, non si racconta. Il commento qui sopra dice che 6
+    // discende dal tetto degli INVII (3 all'ora) moltiplicato per due tentativi; scritto
+    // solo in prosa, quel «3» invecchia da solo — è già successo in `gate-coverage`, dove
+    // una motivazione ha dichiarato «tetto 3 invii/ora» per un giro intero dopo che la
+    // rotta era passata a 20, restando verde. Qui il numero si legge dal CODICE della
+    // rotta degli invii: se qualcuno lo cambia senza rifare questo conto, il lock lo dice.
+    const SRC_INVII = path.join(RADICE, 'src', 'app', 'api', 'iscrizione', 'insegnanti', 'route.ts')
+    const invii = Number(
+      /rateLimit\s*\(\s*`candidature-insegnanti:[^`]*`\s*,\s*\{[^}]*\blimit:\s*(\d+)/.exec(
+        senzaCommenti(fs.readFileSync(SRC_INVII, 'utf8')),
+      )?.[1],
+    )
+    expect(
+      Number.isFinite(invii),
+      'Il tetto degli INVII di `iscrizione/insegnanti:POST` non si legge più: la chiave del ' +
+        'contatore o la forma della chiamata sono cambiate. Senza quel numero la prova qui ' +
+        'sotto non misura niente — sistemare la lettura, non toglierla.',
+    ).toBe(true)
+    expect(
+      TETTO_UPLOAD_CANDIDATURE,
+      `il tetto dei caricamenti (${TETTO_UPLOAD_CANDIDATURE}) non è più il doppio degli invii ` +
+        `ammessi (${invii}): uno dei due è stato mosso da solo. L'aritmetica sta accanto alla ` +
+        'costante in src/lib/upload/allegati-pubblici.ts — si rifà lì, non si aggiusta qui.',
+    ).toBe(invii * 2)
+
+    // E i tre numeri NON devono coincidere per caso: se un giorno due tornassero uguali, la
     // prova per porta smetterebbe di distinguere e si tornerebbe al numero unico senza che
     // nessuno lo decida. (Se un domani coincidessero per una ragione vera, questa riga va
     // tolta CONSAPEVOLMENTE, che è appunto il punto.)
-    expect(TETTO_UPLOAD_PERSONALE).not.toBe(TETTO_UPLOAD_PUBBLICO)
+    //
+    // La riga era una sola coppia fino al 14/08/2026 (`PERSONALE ≠ PUBBLICO`): con la terza
+    // porta le coppie sono tre, e controllarne una su tre sarebbe stato il modo esatto in cui
+    // questo lock si allarga in silenzio — la stessa forma del difetto che il file racconta
+    // in testa, una regola giusta e una porta accanto.
+    const tetti = [TETTO_UPLOAD_PUBBLICO, TETTO_UPLOAD_PERSONALE, TETTO_UPLOAD_CANDIDATURE]
+    expect(
+      new Set(tetti).size,
+      'Due tetti di porte diverse sono tornati allo stesso numero: da qui a riunirli in una ' +
+        'costante sola il passo è corto, ed è il difetto del 12/08/2026 (il fabbisogno di una ' +
+        'porta che allenta le altre). Le aritmetiche sono tre e restano tre.',
+    ).toBe(tetti.length)
   })
 
   it('la lista dei tipi non diventa «passa tutto» (controllo negativo)', () => {

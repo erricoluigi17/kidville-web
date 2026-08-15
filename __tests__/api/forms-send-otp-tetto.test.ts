@@ -70,7 +70,7 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true), sendEmailDetailed: vi.fn().mockResolvedValue({ ok: true, error: null }) }))
 vi.mock('@/lib/auth/require-staff', () => ({
   // Gate d'identità della route (2026-08-02): il chiamante è l'intestatario
   // della domanda. Il caso anonimo/estraneo sta nel test dedicato.

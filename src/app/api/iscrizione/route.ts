@@ -19,11 +19,109 @@ import {
 } from '@/lib/forms/enrollment-default-schema'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { sediReali } from '@/lib/scuole/reali'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede } from '@/lib/email/contesto'
+import { messaggioRicevutaIscrizione } from '@/lib/email/messaggi/ricevuta-iscrizione'
+import { formattaIstante } from '@/i18n/config'
 import type {
   EnrollmentSubmissionData,
   FormField,
   FormSchemaConfig,
 } from '@/types/database.types'
+
+const OPERAZIONE = 'iscrizione:POST'
+
+/**
+ * La ricevuta alla famiglia, subito dopo l'invio del modulo pubblico.
+ *
+ * ─── PERCHÉ È BEST-EFFORT, E PERCHÉ NON TACE ────────────────────────────────
+ * La domanda è già registrata quando questa funzione parte: un'email che non
+ * riesce non deve MAI trasformare un 201 in un 500 — la famiglia ha compilato
+ * venti campi e la riga c'è. Ma non deve nemmeno sparire in silenzio: fino a
+ * oggi nessuna ricevuta partiva affatto, e nessuno se n'era accorto perché non
+ * c'era niente da guardare. Ogni esito, compreso quello buono, lascia una riga.
+ *
+ * ─── L'INDIRIZZO PUÒ MANCARE ────────────────────────────────────────────────
+ * Il campo email degli adulti è `required: false` nel template. Misurato il
+ * 2026-08-15: 381 domande su 387 ce l'hanno, cioè sei non ce l'hanno. Per quelle
+ * sei non si manda niente e lo si scrive: «nessuna ricevuta» e «ricevuta
+ * fallita» sono due fatti diversi e vanno distinti nei log.
+ *
+ * ─── IL RIFERIMENTO ─────────────────────────────────────────────────────────
+ * `enrollment_submissions.id` è un uuid: illeggibile al telefono e inutile
+ * fotografato. Se ne mostra il primo blocco in maiuscolo, e si chiama
+ * «riferimento» e non «protocollo» — un protocollo vero in questo prodotto
+ * esiste già ed è un'altra cosa.
+ */
+async function inviaRicevutaIscrizione(
+  supabase: SupabaseClient,
+  dati: {
+    id: string
+    scuolaId: string
+    children: Record<string, unknown>[]
+    adults: Record<string, unknown>[]
+  },
+): Promise<void> {
+  try {
+    const stringa = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+
+    // Il referente è il primo adulto con un indirizzo: è lo stesso criterio con
+    // cui l'approvazione poi manda le credenziali.
+    const referente = dati.adults.find((a) => stringa(a.email).includes('@'))
+    const destinatario = stringa(referente?.email)
+    if (destinatario === '') {
+      logEvento('iscrizione', 'info', {
+        operazione: OPERAZIONE,
+        esito: 'ricevuta-non-inviata-senza-email',
+        entita_tipo: 'iscrizione',
+        entita_id: dati.id,
+        sede_id: dati.scuolaId,
+      })
+      return
+    }
+
+    const bambino = dati.children[0] ?? {}
+    const nomeBambino = [stringa(bambino.nome), stringa(bambino.cognome)].filter((v) => v !== '').join(' ')
+    if (nomeBambino === '') return
+
+    const sede = await risolviContestoSede(supabase, dati.scuolaId, OPERAZIONE)
+    const messaggio = messaggioRicevutaIscrizione({
+      riferimento: `ISC-${dati.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+      inviataIl: formattaIstante(new Date(), 'it', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      }),
+      nomeBambino,
+      // Nessuna sezione: il modulo pubblico non la chiede, la assegna la
+      // segreteria all'importazione. La riga si omette invece di inventarla.
+      genitore: [stringa(referente?.nome), stringa(referente?.cognome)].filter((v) => v !== '').join(' ') || null,
+    }, sede)
+
+    const invio = await sendEmailDetailed({
+      to: destinatario,
+      subject: messaggio.oggetto,
+      text: messaggio.testo,
+      html: messaggio.html,
+    })
+
+    logEvento('iscrizione', invio.ok ? 'info' : 'warn', {
+      operazione: OPERAZIONE,
+      esito: invio.ok ? 'ricevuta-inviata' : 'ricevuta-non-inviata',
+      canale: 'email',
+      entita_tipo: 'iscrizione',
+      entita_id: dati.id,
+      sede_id: dati.scuolaId,
+    }, invio.ok ? undefined : new Error(invio.error ?? 'motivo sconosciuto'))
+  } catch (e) {
+    // La domanda è registrata: qui si logga e si tira dritto. Un catch muto
+    // sarebbe un bug — e in questo repo lo è per regola scritta.
+    logEvento('iscrizione', 'warn', {
+      operazione: OPERAZIONE,
+      esito: 'ricevuta-non-inviata',
+      entita_tipo: 'iscrizione',
+      entita_id: dati.id,
+    }, e)
+  }
+}
 
 // Carica i template child/adult del "Modulo d'iscrizione standard" dal DB, così
 // la validazione server segue lo schema che la segreteria può aver modificato nel
@@ -275,6 +373,11 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         if (retry.error) {
           return NextResponse.json({ error: retry.error.message }, { status: 500 })
         }
+        // La ricevuta parte ANCHE su questa strada. È il ramo che gira sul DB
+        // non migrato della CI, ed è esattamente il tipo di posto dove una
+        // funzione nuova si dimentica: la domanda è registrata, la famiglia ha
+        // diritto alla sua conferma qualunque colonna manchi.
+        await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults })
         return NextResponse.json({ id: retry.data.id }, { status: 201 })
       }
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -303,6 +406,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         esito: 'notifica-segreteria-non-accodata',
       }, e)
     }
+
+    await inviaRicevutaIscrizione(supabase, { id: row.id, scuolaId, children, adults })
 
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (err) {

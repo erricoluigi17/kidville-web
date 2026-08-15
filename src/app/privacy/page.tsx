@@ -433,6 +433,37 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 allegato viene cancellato insieme alla candidatura;
               </li>
               {/*
+                IL CURRICULUM CHE NON È DIVENTATO UNA CANDIDATURA — voce nuova del
+                2026-08-15, ed è nuova perché fino a quel giorno non poteva esistere:
+                nessuna rotta di caricamento produceva un curriculum, e il campo del
+                modulo non veniva nemmeno reso.
+                Adesso il file si carica PRIMA che la candidatura esista, quindi fra i
+                due gesti c'è una persona che può chiudere la pagina. Quel file è un
+                dato personale trattato, e l'art. 13 §2 lett. a pretende che il suo
+                termine sia dichiarato: non ha una valutazione da cui far decorrere
+                dodici mesi, perché una valutazione non c'è.
+                ⚠️ VOCE SEPARATA di proposito, e non una frase in coda a quella qui
+                sopra: il lock `gdpr-retention-candidature.test.ts` isola il <li> che
+                nomina «Lavora con noi» e ne confronta i termini con le due costanti
+                del codice. Infilarci dentro un terzo numero — «ventiquattro ore» —
+                significherebbe far leggere a quel confronto una durata che non è un
+                termine di conservazione della candidatura.
+                CHI LA FA SCADERE: `spazzaCurriculumOrfani` in
+                `gdpr/retention-candidature/route.ts`, che gira dentro lo stesso job
+                notturno `candidature-retention`.
+                Anche questa riga NON dice «automaticamente», per la stessa ragione
+                scritta sopra: il lock `informativa-conservazione-dichiarata` lega
+                quella parola a una voce in `AUTOMI_DICHIARATI`, e ciò che la persona
+                ha diritto di sapere è il TERMINE, non il meccanismo.
+              */}
+              <li>
+                <strong>curriculum caricato e mai inviato</strong> (il modulo è stato
+                abbandonato prima della conferma finale): <strong>ventiquattro ore</strong>.
+                Non essendo collegato a nessuna candidatura non ha una valutazione da cui
+                far decorrere un termine, e viene rimosso dall&rsquo;archivio con la
+                pulizia notturna;
+              </li>
+              {/*
                 I TRE TERMINI DEL PERSONALE, E DA DOVE VENGONO I NUMERI.
                 Non sono scritti qui e non sono scritti nel codice: sono `PERSONALE_LIMITI`
                 (src/lib/forms/personale-template.ts), gli stessi che il TESTO del consenso

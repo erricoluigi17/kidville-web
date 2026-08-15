@@ -3,8 +3,9 @@ import type { AppUser } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
-import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
-import { nomeSede } from '@/lib/scuole/reali';
+import { sendEmailDetailed } from '@/lib/email/send';
+import { risolviContestoSede } from '@/lib/email/contesto';
+import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali';
 import { logEvento } from '@/lib/logging/logger';
 
 // =============================================================================
@@ -284,11 +285,18 @@ export async function linkOrCreateParent(
         // quale scuola sia stato iscritto il figlio, e il genitore non ha modo
         // di accorgersi di un plesso sbagliato. La sede è quella che
         // `ensureParentIdentity` ha risolto dai FIGLI, non quella di chi salva.
-        const sedeNome = await nomeSede(supabase, identita.scuolaId, 'anagrafiche/parents:credenziali');
+        const sede = await risolviContestoSede(supabase, identita.scuolaId, 'anagrafiche/parents:credenziali');
+        const messaggio = messaggioCredenziali({
+          nome: identityInput.first_name,
+          email: identita.email,
+          password: identita.password,
+          occasione: 'inserimento-anagrafica',
+        }, sede);
         const invio = await sendEmailDetailed({
           to: identita.email,
-          subject: 'Le tue credenziali di accesso — Kidville',
-          text: credentialsEmailBody(identityInput.first_name, identita.email, identita.password, sedeNome),
+          subject: messaggio.oggetto,
+          text: messaggio.testo,
+          html: messaggio.html,
         });
         emailed = invio.ok;
         emailError = invio.error;

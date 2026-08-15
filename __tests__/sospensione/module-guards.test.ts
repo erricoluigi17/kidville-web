@@ -23,7 +23,7 @@ vi.mock('@/lib/pagamenti/sospensione', () => ({
     return h.sospeso ? NextResponse.json({ motivo: 'account_sospeso' }, { status: 403 }) : null
   }),
 }))
-vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn().mockResolvedValue(true), sendEmailDetailed: vi.fn().mockResolvedValue({ ok: true, error: null }) }))
 vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: () => ({ ok: true }), clientIp: () => 'ip' }))
 vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: vi.fn().mockResolvedValue({ user: { id: 'g1', role: 'genitore', scuola_id: null } }),

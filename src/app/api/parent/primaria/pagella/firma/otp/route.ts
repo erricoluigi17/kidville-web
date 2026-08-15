@@ -34,10 +34,7 @@ export const POST = withRoute('parent/primaria/pagella/firma/otp:POST', async (r
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const res = await sendOtp(supabase, userId, {
-      subject: 'Codice di conferma ricezione pagella — Kidville',
-      intro: 'Il tuo codice per confermare la ricezione della pagella è',
-    })
+    const res = await sendOtp(supabase, userId, { operazione: 'confermare la ricezione della pagella' })
     if ('error' in res) return NextResponse.json({ error: res.error }, { status: 400 })
 
     const { ip, userAgent } = extractRequestMeta(request)

@@ -14,6 +14,8 @@
     "e2e:seed": "node scripts/seed-e2e.mjs",
     "rilascio:sync": "CAP_SERVER_URL=\"https://app.kidville.it\" npx cap sync && npm run rilascio:verifica",
     "rilascio:verifica": "python3 scripts/verifica-shell-nativa.py",
+    "email:anteprima": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/anteprima-email.mjs",
+    "email:mascotte": "node scripts/mascotte-email.mjs",
     "icone": "node scripts/genera-icone.mjs",
     "icone:native": "node scripts/genera-icone.mjs && capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#FEF1E4' --splashBackgroundColorDark '#FEF1E4' && rm -rf icons public/manifest.webmanifest",
     "postbuild": "node scripts/verifica-artefatto.mjs"

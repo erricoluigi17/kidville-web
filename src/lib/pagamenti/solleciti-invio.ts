@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { sendEmail } from '@/lib/email/send'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
+import { messaggioSollecito, type LivelloSollecito } from '@/lib/email/messaggi/sollecito'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
@@ -7,7 +9,7 @@ import { logErrore } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
-import { DEFAULT_CAUSALE_TEMPLATE, modelloCausale, rigaCausaleSollecito } from './causale'
+import { DEFAULT_CAUSALE_TEMPLATE, causaleBonifico, modelloCausale, rigaCausaleSollecito } from './causale'
 import { meseAnnoDaPeriodo } from './periodo'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from './fiscale'
 import {
@@ -92,7 +94,14 @@ export async function sollecitaPagamenti(
         // registro assente: nessuno storico livelli
     }
 
-    const cfgCache = new Map<string, { cfg: SollecitiConfig; scuolaNome: string; sedeNome: string; causaliCfg: Partial<Record<string, string>> }>()
+    const cfgCache = new Map<string, {
+        cfg: SollecitiConfig
+        scuolaNome: string
+        sedeNome: string
+        causaliCfg: Partial<Record<string, string>>
+        iban: string | null
+        contestoSede: ContestoSede
+    }>()
     const esiti: EsitoSollecito[] = []
     const adesso = Date.now()
 
@@ -126,10 +135,17 @@ export async function sollecitaPagamenti(
                     }).denominazione || 'La Segreteria',
                 sedeNome: ((sede?.nome as string | null | undefined) ?? '') || '',
                 causaliCfg,
+                // L'IBAN del riquadro «Dati per il bonifico». Vuoto finché
+                // qualcuno non lo compila in Impostazioni: allora il riquadro
+                // mostra importo, causale e intestatario — cioè esattamente ciò
+                // che questo sollecito manda da sempre. Nessuna regressione.
+                iban: (fiscale?.iban ?? null),
+                // L'identità della sede per il piè di pagina dell'email.
+                contestoSede: await risolviContestoSede(supabase, pag.scuola_id, 'solleciti-invio'),
             }
             cfgCache.set(pag.scuola_id, scuolaCtx)
         }
-        const { cfg, scuolaNome, sedeNome, causaliCfg } = scuolaCtx
+        const { cfg, scuolaNome, sedeNome, causaliCfg, iban, contestoSede } = scuolaCtx
 
         const cadenza = cfg.cadenza_min_giorni ?? DEFAULT_SOLLECITI_CONFIG.cadenza_min_giorni
         if (pag.ultimo_sollecito_il && adesso - Date.parse(pag.ultimo_sollecito_il) < cadenza * MS_GIORNO) {
@@ -207,9 +223,47 @@ export async function sollecitaPagamenti(
             continue
         }
 
+        // ─── L'EMAIL: la STRUTTURA la dà il design, la PROSA la dà la sede ───
+        // `corpo` resta ciò che è sempre stato — testo semplice — perché è tre
+        // cose insieme: il gemello testuale dell'email, l'anteprima che
+        // l'operatore legge prima di inviare, e la colonna `solleciti.corpo`
+        // che è l'audit di ciò che è partito. Metterci dentro l'HTML renderebbe
+        // illeggibile l'audit e romperebbe l'anteprima.
+        //
+        // L'HTML si compone a parte, dagli stessi dati strutturati: la prosa
+        // configurata entra nella scheda bianca, i riquadri (voci, totale,
+        // bonifico) li mette il modulo.
+        const messaggio = messaggioSollecito({
+            livello: livello as LivelloSollecito,
+            oggetto,
+            prosa: renderTemplate(liv.testo, ctx),
+            alunno: ctx.alunno,
+            voci: [{
+                descrizione: pag.descrizione ?? '—',
+                scadenza: ctx.scadenza,
+                giorniRitardo,
+                importo: residuo,
+            }],
+            causale: causaleBonifico({
+                descrizione: pag.descrizione,
+                nome: pag.alunni?.nome,
+                cognome: pag.alunni?.cognome,
+                codiceFiscale: pag.alunni?.codice_fiscale,
+                sede: sedeNome,
+                mese,
+                anno,
+                importo: formatEuro(pag.importo),
+                scadenza: isoToIt(pag.scadenza ?? ''),
+            }, templateCausale),
+            intestatario: scuolaNome !== 'La Segreteria' ? scuolaNome : null,
+            iban,
+        }, contestoSede)
+
         const esitiInvio: { id: string; email?: string | null; inviata: boolean }[] = []
         for (const d of destinatari) {
-            const inviata = d.email ? await sendEmail({ to: d.email, subject: oggetto, text: corpo }) : false
+            const inviata = d.email
+                ? (await sendEmailDetailed({ to: d.email, subject: oggetto, text: corpo, html: messaggio.html })).ok
+                : false
             esitiInvio.push({ id: d.id, email: d.email, inviata })
         }
         try {

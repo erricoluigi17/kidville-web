@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/candidature-schema-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-10",
-  "generato_alle": "2026-08-10T18:43:06Z",
-  "sha256": "7c5c4b60e016252523433567e4981eadb3154af1170df18fd8c8e0efe6f0d838",
+  "generato_il": "2026-08-14",
+  "generato_alle": "2026-08-14T23:22:57Z",
+  "sha256": "0c8acca91aa23aa334ecaae0ac363975cc6b187e4c9d468b14df8b318fcc8a41",
   "tabella": "candidature_insegnanti",
   "colonne": [
     {
@@ -165,6 +165,20 @@
       "udt": "text",
       "nullable": true,
       "default": null
+    },
+    {
+      "posizione": 24,
+      "nome": "posizioni",
+      "udt": "_text",
+      "nullable": false,
+      "default": "'{}'::text[]"
+    },
+    {
+      "posizione": 25,
+      "nome": "posizione_altro",
+      "udt": "text",
+      "nullable": true,
+      "default": null
     }
   ],
   "enum_school_type": [
@@ -180,6 +194,22 @@
     {
       "nome": "candidature_insegnanti_gradi_check",
       "definizione": "CHECK ((array_length(gradi, 1) >= 1))"
+    },
+    {
+      "nome": "candidature_insegnanti_posizione_altro_coerente",
+      "definizione": "CHECK ((('altro'::text = ANY (posizioni)) = (posizione_altro IS NOT NULL)))"
+    },
+    {
+      "nome": "candidature_insegnanti_posizione_altro_lunghezza",
+      "definizione": "CHECK (((posizione_altro IS NULL) OR (length(posizione_altro) <= 100)))"
+    },
+    {
+      "nome": "candidature_insegnanti_posizioni_almeno_una",
+      "definizione": "CHECK ((cardinality(posizioni) >= 1))"
+    },
+    {
+      "nome": "candidature_insegnanti_posizioni_note",
+      "definizione": "CHECK ((posizioni <@ ARRAY['insegnante_nido'::text, 'insegnante_infanzia'::text, 'insegnante_primaria'::text, 'collaboratrice'::text, 'cuoca'::text, 'segreteria'::text, 'altro'::text]))"
     },
     {
       "nome": "candidature_insegnanti_stato_check",

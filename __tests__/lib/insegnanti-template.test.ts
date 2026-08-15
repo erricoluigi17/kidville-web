@@ -4,10 +4,16 @@ import {
   CONSENSI_INSEGNANTI_FIELDS,
   CONSENSI_INSEGNANTI_VERSIONE,
   GRADI_OPTIONS,
+  POSIZIONI_OPTIONS,
+  POSIZIONI_AMMESSE,
+  GRADO_DELLA_POSIZIONE,
+  gradiDallePosizioni,
+  comprendeInsegnamento,
   TITOLI_STUDIO,
   CANDIDATURA_LIMITI,
 } from '@/lib/forms/insegnanti-template'
 import { validateField } from '@/lib/forms/validate-fields'
+import { campiVisibili, campoVisibile } from '@/lib/forms/conditional'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 import { EVENTI_NOTI, EVENTI_PERSISTITI } from '@/lib/logging/logger'
 import { ESTENSIONI_ALLEGATO_PUBBLICO } from '@/lib/upload/allegati-pubblici'
@@ -39,6 +45,15 @@ import enShared from '../../messages/en/shared.json'
  * scattato dal DB di produzione con `candidature-schema-fotografia.mjs` (stessa
  * forma dei fixture già in uso per migrazioni, RLS e FK di sede). Il lock gira
  * offline: in CI le credenziali di produzione non ci sono e non devono esserci.
+ *
+ * ── E DAL 2026-08-15 SI LEGGE ANCHE LA MIGRAZIONE ────────────────────────────
+ *
+ * L'elenco chiuso delle POSIZIONI è scritto in tre posti — il template (ciò che
+ * si offre), la migrazione (ciò che si è scritto) e la fotografia (ciò che in
+ * produzione è stato applicato) — e ognuno dei tre può restare indietro da solo.
+ * Il blocco «l'elenco chiuso, letto dalla MIGRAZIONE» li confronta tutti e tre, e
+ * la sua ragione d'essere è scritta lì: fino a quel giorno due documenti di
+ * prodotto AFFERMAVANO che questo confronto esisteva, e non esisteva.
  */
 
 const campo = (id: string) => INSEGNANTE_FIELDS.find((f) => f.id === id)
@@ -61,6 +76,51 @@ const COME_RIGENERARE =
   'Rigenera la fotografia: `node __tests__/fixtures/candidature-schema-fotografia.mjs --sql` → ' +
   'esegui la query sul DB di produzione (sola lettura) → ' +
   '`node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json`.'
+
+/** Il nome del `CHECK` di appartenenza delle posizioni, in migrazione e in tabella. */
+const VINCOLO_POSIZIONI = 'candidature_insegnanti_posizioni_note'
+
+/**
+ * I letterali fra apici singoli del PRIMO `array[...]`/`ARRAY[...]` che compare
+ * DOPO il nome del vincolo. Legge i due dialetti in cui l'elenco è scritto —
+ * `array['x', 'y']::text[]` nel file di migrazione e `ARRAY['x'::text, 'y'::text]`
+ * come Postgres lo ristampa nella fotografia — perché i cast stanno FUORI dagli
+ * apici e non entrano nella cattura.
+ *
+ * Si parte dal nome del vincolo, quando c'è, e non dall'inizio del frammento:
+ * il file di migrazione contiene un altro `array['altro']` prima — quello del
+ * backfill — e leggere il primo array del file darebbe una lista di UN elemento,
+ * cioè un confronto che fallisce per il motivo sbagliato.
+ *
+ * Quando il nome NON c'è si legge dall'inizio, ed è il caso della fotografia: là
+ * il frammento È già la sola definizione del `CHECK`, che il nome non lo ripete.
+ */
+function elencoDelVincolo(sql: string): string[] {
+  const inizio = sql.indexOf(VINCOLO_POSIZIONI)
+  const frammento = inizio < 0 ? sql : sql.slice(inizio)
+  const dentro = /\barray\s*\[([\s\S]*?)\]/i.exec(frammento)
+  if (!dentro) return []
+  return [...dentro[1].matchAll(/'([^']*)'/g)].map((m) => m[1])
+}
+
+/**
+ * Il file di migrazione che dichiara per ULTIMO il `CHECK` di appartenenza delle
+ * posizioni.
+ *
+ * Si cerca per nome del VINCOLO e non per nome del file: se un domani una seconda
+ * migrazione allarga l'elenco (una fascia nuova, un mestiere nuovo), è quella che
+ * va confrontata col template — un percorso ribattuto qui continuerebbe a leggere
+ * la prima e resterebbe verde su una lista superata.
+ */
+function migrazioneDellePosizioni(): { nome: string; sql: string } | null {
+  const dir = join(process.cwd(), 'supabase', 'migrations')
+  const trovate = readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .map((nome) => ({ nome, sql: readFileSync(join(dir, nome), 'utf8') }))
+    .filter((f) => new RegExp(`add\\s+constraint\\s+${VINCOLO_POSIZIONI}`, 'i').test(f.sql))
+  return trovate.length > 0 ? trovate[trovate.length - 1] : null
+}
 
 describe('template di candidatura insegnanti · il legame con lo schema vero', () => {
   it('la fotografia dello schema non è stata addomesticata a mano (sha256)', () => {
@@ -137,22 +197,36 @@ describe('template di candidatura insegnanti · il legame con lo schema vero', (
   it('l’ordine dei campi è quello di COMPILAZIONE, non quello delle colonne', () => {
     // Detto qui perché la prima stesura di questo file dichiarava l'elenco
     // «misurato su `information_schema.columns`» e poi lo scriveva in un ordine che
-    // NON era quello di `ordinal_position`: in produzione `gradi` è la colonna 10,
-    // PRIMA di `titolo_studio`, mentre nel modulo viene dopo `anni_esperienza`.
-    // I due ordini sono diversi di proposito — si chiede il titolo di studio e poi
-    // le fasce, che è come la conversazione va — ma allora l'ordine del modulo non
-    // va spacciato per una misura del database.
-    const posizioni = INSEGNANTE_FIELDS.map((f) => COLONNE.get(f.id)!.posizione)
-    const ordinate = [...posizioni].sort((a, b) => a - b)
+    // NON era quello di `ordinal_position`. I due ordini sono diversi di proposito
+    // — il modulo segue la conversazione, la tabella segue la storia delle
+    // migrazioni — ma allora l'ordine del modulo non va spacciato per una misura
+    // del database.
+    const ordinali = INSEGNANTE_FIELDS.map((f) => COLONNE.get(f.id)!.posizione)
+    const ordinate = [...ordinali].sort((a, b) => a - b)
     expect(
-      posizioni,
+      ordinali,
       'se un giorno i due ordini coincidessero questa prova andrebbe tolta, non "aggiustata"',
     ).not.toEqual(ordinate)
-    // E la divergenza è esattamente quella misurata: `gradi` sta prima di
-    // `titolo_studio` in tabella e dopo nel modulo.
-    expect(COLONNE.get('gradi')!.posizione).toBeLessThan(COLONNE.get('titolo_studio')!.posizione)
+
+    // ⚠️ LA COPPIA CHE MOSTRA LA DIVERGENZA È CAMBIATA IL 2026-08-15, E IL VERSO
+    // SI È ROVESCIATO. Prima era `gradi`/`titolo_studio`: colonna 10 contro 11 in
+    // tabella, e nel modulo `gradi` veniva dopo. Ora `gradi` non è più un campo del
+    // modulo (la fascia si deriva dalle posizioni), quindi quella coppia non è più
+    // esprimibile qui — l'invariante resta, cambia dove si misura.
+    //
+    // La coppia di oggi è `posizioni`/`titolo_studio`, ed è la stessa domanda vista
+    // dai due lati: «che lavoro vengo a fare» PRIMA di «che titolo ho» nel modulo,
+    // mentre in tabella `posizioni` è la colonna 24 — aggiunta in fondo dalla
+    // migrazione del 2026-08-15 — e `titolo_studio` la 11. Un `alter table` non
+    // riordina niente: è proprio il motivo per cui i due ordini non possono
+    // coincidere per costruzione.
+    expect(
+      COLONNE.get('posizioni')!.posizione,
+      `\`posizioni\` non è più in coda alla tabella. ${COME_RIGENERARE}`,
+    ).toBeGreaterThan(COLONNE.get('titolo_studio')!.posizione)
     const idsModulo = INSEGNANTE_FIELDS.map((f) => f.id)
-    expect(idsModulo.indexOf('gradi')).toBeGreaterThan(idsModulo.indexOf('titolo_studio'))
+    expect(idsModulo.indexOf('posizioni')).toBeGreaterThanOrEqual(0)
+    expect(idsModulo.indexOf('posizioni')).toBeLessThan(idsModulo.indexOf('titolo_studio'))
   })
 })
 
@@ -217,6 +291,24 @@ describe('template di candidatura insegnanti · i campi', () => {
     expect(validateField(titolo, TITOLI_STUDIO[0].value)).toBeNull()
     expect(campo('disponibilita')?.type).toBe('select')
     expect((campo('disponibilita')?.options ?? []).length).toBeGreaterThan(1)
+  })
+
+  it('l’elenco dei titoli comincia dalla LICENZA MEDIA, perché il campo è obbligatorio', () => {
+    // Non è una voce in più: è la conseguenza dell'apertura del modulo alle
+    // posizioni non docenti. `titolo_studio` è `required: true`, e prima del
+    // 2026-08-15 l'elenco cominciava dal diploma — che per un'insegnante è il
+    // minimo di legge e per una collaboratrice scolastica o per chi lavora in
+    // cucina non lo è. Con quell'elenco l'unica risposta vera per loro era «Altro
+    // titolo», cioè dichiarare il proprio titolo come un'eccezione.
+    expect(campo('titolo_studio')?.required, 'se diventasse facoltativo questa prova cambia senso').toBe(true)
+    const valori = TITOLI_STUDIO.map((t) => String(t.value))
+    expect(valori, 'la licenza media è uscita dall’elenco: il modulo torna a chiedere ' +
+      'a una collaboratrice di dichiararsi «Altro titolo»').toContain('licenza_media')
+    // In TESTA, e l'ordine è l'informazione: l'elenco sale per livello di studio,
+    // e un titolo più basso in fondo si legge come un ripensamento.
+    expect(valori[0]).toBe('licenza_media')
+    expect(validateField(campo('titolo_studio')!, 'licenza_media')).toBeNull()
+    expect(new Set(valori).size, 'due titoli con lo stesso `value`').toBe(valori.length)
   })
 })
 
@@ -303,7 +395,7 @@ describe('template di candidatura insegnanti · il CV allegato', () => {
     expect(campo('cv_path')?.max_size_mb).toBe(mb)
   })
 
-  it('il template PRESCRIVE alla route il bucket e il gate, come ha fatto per i `gradi`', () => {
+  it('il template PRESCRIVE alla route il bucket e il gate, come fa per le `posizioni`', () => {
     // Un commento è una prescrizione solo se qualcuno si accorge quando sparisce.
     // Qui la prescrizione è: nessun bucket nuovo (in produzione non ce n'è uno per
     // i curriculum) e nessun gate inventato — `form_attachments` +
@@ -316,96 +408,462 @@ describe('template di candidatura insegnanti · il CV allegato', () => {
   })
 })
 
-describe('template di candidatura insegnanti · i gradi (multi-valore obbligatorio)', () => {
-  it('sono una checkbox obbligatoria, e i `value` sono LE ETICHETTE DELL’ENUM', () => {
-    const gradi = campo('gradi')!
-    expect(gradi.type).toBe('checkbox')
-    expect(gradi.required).toBe(true)
-    expect(gradi.options).toEqual(GRADI_OPTIONS)
+describe('template di candidatura insegnanti · le posizioni (multi-valore obbligatorio)', () => {
+  /*
+   * ── QUI FINO AL 2026-08-15 C'ERANO «I GRADI», ED È STATO UN CAMBIO DI DOMANDA ──
+   *
+   * Il modulo chiedeva «per quali FASCE ti proponi» (tre caselle obbligatorie) e
+   * dava per scontato che chi compila sia un'insegnante. Con l'apertura a
+   * collaboratrici, cuoche e segretarie quella domanda diventava insensata per
+   * metà di chi la legge — una cuoca non ha una fascia d'età — e un campo
+   * obbligatorio che non ti riguarda è un modulo che non si può inviare.
+   *
+   * Il campo `gradi` NON è stato reso facoltativo: è SPARITO. La fascia è dentro
+   * la posizione («Insegnante — Nido (0-3)») e `gradi` si deriva sul server. Le
+   * prove di questo blocco sono le stesse di prima, riscritte sul campo che c'è:
+   * cambia il nome della colonna e cambia il codice d'errore dell'ultima rete
+   * (`23514` del CHECK invece del `22P02` dell'enum), non cambia cosa si sorveglia.
+   */
 
-    // È il confronto che conta, e la prima stesura non lo faceva: ricopiava le tre
-    // coppie label/value dal sorgente, cioè si confrontava con se stessa. La colonna
-    // `gradi` è di tipo `school_type_enum[]` (fotografia: udt `_school_type_enum`),
-    // quindi un `value` che non sia un'etichetta dell'enum NON entra in tabella:
-    // Postgres lo rifiuta con `22P02`, e su un modulo pubblico quel rifiuto grezzo
-    // diventerebbe un 500 opaco.
-    expect(COLONNE.get('gradi')!.udt, 'la colonna `gradi` non è più un array di enum').toBe('_school_type_enum')
+  const posizioni = () => campo('posizioni')!
+
+  it('il campo `gradi` è USCITO dal modulo, mentre la colonna `gradi` è rimasta', () => {
+    // Le due metà di questa riga vanno lette insieme, perché la seconda è la
+    // ragione per cui la prima non è una perdita: la colonna resta popolata — è
+    // ciò che `admin/candidature-insegnanti:PATCH` travasa in `utenti.gradi` — ma
+    // il valore non arriva più da fuori. Cambia CHI la scrive.
+    expect(campo('gradi'), 'il campo `gradi` è tornato nel modulo: la fascia si chiederebbe ' +
+      'due volte, una come mestiere e una come fascia').toBeUndefined()
     expect(
-      GRADI_OPTIONS.map((o) => o.value).sort(),
-      `i valori del modulo non coincidono con le etichette di \`school_type_enum\`. ${COME_RIGENERARE}`,
-    ).toEqual([...schemaSnapshot.enum_school_type].sort())
-
-    // Le etichette a schermo restano una scelta redazionale (l'età fra parentesi):
-    // si controlla che ci siano e che nominino la fascia, non che siano una stringa
-    // ribattuta qui dentro.
-    for (const o of GRADI_OPTIONS) {
-      expect(o.label.toLowerCase(), `l’etichetta di ${o.value} non nomina la fascia`).toContain(
-        o.value === 'nido' ? 'nido' : o.value === 'infanzia' ? 'infanzia' : 'primaria',
-      )
-      expect(o.label, `l’etichetta di ${o.value} non dichiara l’età`).toMatch(/\(\d+-\d+\)/)
-    }
+      INSEGNANTE_FIELDS.filter((f) => String(f.db_mapping).endsWith('.gradi')).map((f) => f.id),
+      'un campo del modulo punta di nuovo alla colonna `gradi`',
+    ).toEqual([])
+    expect(COLONNE.has('gradi'), `la colonna \`gradi\` non c’è più. ${COME_RIGENERARE}`).toBe(true)
   })
 
-  it('«almeno un grado» lo garantisce `validateField`, NON il vincolo del database', () => {
+  it('sono una checkbox obbligatoria, e i `value` sono un elenco CHIUSO in tabella', () => {
+    expect(posizioni().type).toBe('checkbox')
+    expect(posizioni().required).toBe(true)
+    expect(posizioni().options).toEqual(POSIZIONI_OPTIONS)
+
+    // `POSIZIONI_AMMESSE` è ciò che la route dà in pasto allo `z.enum`: se
+    // divergesse dalle opzioni mostrate, il modulo offrirebbe una casella che il
+    // server rifiuta.
+    expect(POSIZIONI_AMMESSE).toEqual(POSIZIONI_OPTIONS.map((o) => String(o.value)))
+    expect(new Set(POSIZIONI_AMMESSE).size, 'due posizioni con lo stesso `value`').toBe(POSIZIONI_AMMESSE.length)
+    expect(POSIZIONI_AMMESSE).toHaveLength(7)
+
+    // ⚠️ E LA COLONNA NON È UN ENUM, di proposito: `text[]` con un `CHECK` di
+    // appartenenza (fotografia: udt `_text`). L'elenco è di PRODOTTO e cambierà
+    // più spesso dello schema, e un enum obbligherebbe a un `alter type` per ogni
+    // voce. La garanzia è la stessa; cambia solo il codice del rifiuto — `23514`
+    // invece di `22P02` — ed è il motivo per cui la lista va confrontata con la
+    // migrazione, non con l'enum (blocco qui sotto).
+    expect(COLONNE.get('posizioni')!.udt, `la colonna \`posizioni\` ha cambiato tipo. ${COME_RIGENERARE}`).toBe('_text')
+  })
+
+  it('le tre voci docenti si COSTRUISCONO da `GRADI_OPTIONS`, non si ribattono', () => {
+    // Ribattere «Insegnante — Nido (0-3)» a mano avrebbe creato la seconda lista da
+    // mantenere: una fascia aggiunta domani a `GRADI_OPTIONS` deve diventare una
+    // posizione da sola, con la sua etichetta già scritta.
+    const docenti = POSIZIONI_OPTIONS.filter((o) => String(o.value).startsWith('insegnante_'))
+    expect(docenti, 'le posizioni docenti non sono più una per fascia').toHaveLength(GRADI_OPTIONS.length)
+
+    for (const g of GRADI_OPTIONS) {
+      const voce = POSIZIONI_OPTIONS.find((o) => o.value === `insegnante_${String(g.value)}`)
+      expect(voce, `manca la posizione docente per la fascia ${g.value}`).toBeDefined()
+      // Il trattino è un EM DASH (U+2014), non un trattino corto: è la stessa
+      // stringa che il riepilogo di `/lavora-con-noi` e il cockpit di Segreteria
+      // ristampano così com'è, e le tre etichette contengono già un trattino corto
+      // dentro l'età («0-3»). Distinguerli qui è il modo di accorgersi di una
+      // riscrittura che li confonde.
+      expect(voce!.label).toBe(`Insegnante — ${g.label}`)
+      expect(voce!.label, 'il separatore non è più un em dash').toContain('—')
+      expect(voce!.label, `l’etichetta di ${voce!.value} non dichiara l’età`).toMatch(/\(\d+-\d+\)/)
+      // La mappa che la route usa per derivare le fasce conosce la voce senza che
+      // nessuno l'abbia scritta a parte.
+      expect(GRADO_DELLA_POSIZIONE[`insegnante_${String(g.value)}`]).toBe(String(g.value))
+    }
+    expect(Object.keys(GRADO_DELLA_POSIZIONE)).toHaveLength(GRADI_OPTIONS.length)
+
+    // I `value` delle fasce restano LE ETICHETTE DELL'ENUM, e la riga non si è
+    // spostata per caso: `gradi` è ancora `school_type_enum[]` (fotografia: udt
+    // `_school_type_enum`) e ora ci scrive la route, derivando da qui. Un `value`
+    // fuori dall'enum non produrrebbe più un `22P02` sul valore mandato dal
+    // client — che non esiste più — ma su un valore COSTRUITO dal server, cioè un
+    // 500 su una candidatura valida.
+    expect(COLONNE.get('gradi')!.udt, 'la colonna `gradi` non è più un array di enum').toBe('_school_type_enum')
+    expect(
+      GRADI_OPTIONS.map((o) => String(o.value)).sort(),
+      `i valori delle fasce non coincidono con le etichette di \`school_type_enum\`. ${COME_RIGENERARE}`,
+    ).toEqual([...schemaSnapshot.enum_school_type].sort())
+  })
+
+  it('«almeno una posizione» lo dicono il modulo E il database, e stavolta dicono la stessa cosa', () => {
     // Il modulo tiene: `eVuoto()` tratta una checkbox come vuota quando il valore
     // non è un array o è un array vuoto, e `required` fa il resto.
-    const gradi = campo('gradi')!
-    expect(validateField(gradi, [])).toBe('Campo obbligatorio')
-    expect(validateField(gradi, undefined)).toBe('Campo obbligatorio')
-    expect(validateField(gradi, null)).toBe('Campo obbligatorio')
-    expect(validateField(gradi, ['nido'])).toBeNull()
-    expect(validateField(gradi, ['nido', 'primaria'])).toBeNull()
+    expect(validateField(posizioni(), [])).toBe('Campo obbligatorio')
+    expect(validateField(posizioni(), undefined)).toBe('Campo obbligatorio')
+    expect(validateField(posizioni(), null)).toBe('Campo obbligatorio')
+    expect(validateField(posizioni(), ['cuoca'])).toBeNull()
+    expect(validateField(posizioni(), ['insegnante_nido', 'segreteria'])).toBeNull()
 
-    // MA IL DATABASE NON RIPETE QUESTO CONFINE, e per due settimane questo file ha
-    // scritto il contrario. Il CHECK in tabella è `array_length(gradi, 1) >= 1`, e
-    // su un array vuoto `array_length` vale NULL: un CHECK che vale NULL PASSA.
-    // Misurato in produzione il 2026-08-10:
-    //   select (array_length('{}'::text[],1) >= 1)  →  NULL
-    //   create temp table t (g text[] not null default '{}' check (array_length(g,1) >= 1));
-    //   insert into t default values;                →  1 riga scritta, con `{}`
-    // Sommato al `not null default '{}'` della colonna, una route che semplicemente
-    // NON manda `gradi` archivia una candidatura con zero fasce, in silenzio.
-    const vincolo = schemaSnapshot.check.find((k) => k.nome.includes('gradi'))
-    expect(vincolo, 'il CHECK sui gradi è sparito dalla fotografia').toBeDefined()
+    // E IL DATABASE RIPETE LO STESSO CONFINE — cosa che con `gradi` non accadeva.
+    // Il `CHECK` di `gradi` è `array_length(gradi, 1) >= 1`, e su un array vuoto
+    // `array_length` vale NULL: un CHECK che vale NULL PASSA (misurato in
+    // produzione il 2026-08-10). Quello di `posizioni` usa `cardinality()`, che su
+    // un array vuoto vale `0`, e `0 >= 1` è FALSO.
+    const almenoUna = schemaSnapshot.check.find((k) => k.nome === 'candidature_insegnanti_posizioni_almeno_una')
+    expect(almenoUna, `il CHECK «almeno una posizione» non è in tabella. ${COME_RIGENERARE}`).toBeDefined()
+    expect(almenoUna!.definizione).toContain('cardinality(posizioni) >= 1')
     expect(
-      vincolo!.definizione,
-      'il vincolo è cambiato: se ora copre l’array vuoto (es. `cardinality(gradi) >= 1`), ' +
-      'aggiorna il commento del template — non limitarti a rendere verde questa riga',
+      almenoUna!.definizione,
+      'il vincolo è tornato ad `array_length`: su un array vuoto vale NULL e PASSA, ' +
+      'quindi una candidatura senza nessuna posizione entrerebbe in silenzio',
+    ).not.toContain('array_length')
+    expect(COLONNE.get('posizioni')!.nullable, 'la colonna è NOT NULL: il default `{}` la riempie da sé').toBe(false)
+    expect(COLONNE.get('posizioni')!.default).toBe("'{}'::text[]")
+
+    // ⚠️ E IL `CHECK` DI `gradi` NON VA «CORRETTO», benché sia quello sbagliato dei
+    // due: dal 2026-08-15 `gradi` VUOTO è un valore LEGITTIMO — è ciò che ha una
+    // cuoca — e stringerlo a `cardinality` respingerebbe esattamente le candidature
+    // che questo lavoro esiste per accogliere. Il presidio si è spostato di
+    // colonna, non è stato tolto.
+    const vincoloGradi = schemaSnapshot.check.find((k) => k.nome.includes('gradi'))
+    expect(vincoloGradi, 'il CHECK sui gradi è sparito dalla fotografia').toBeDefined()
+    expect(
+      vincoloGradi!.definizione,
+      'il CHECK di `gradi` è stato stretto: da oggi `gradi` vuoto è legittimo (una cuoca), ' +
+      'e un vincolo che scatta davvero respingerebbe ogni candidatura non docente',
     ).toContain('array_length(gradi, 1) >= 1')
-    expect(COLONNE.get('gradi')!.nullable, 'la colonna è NOT NULL: il default `{}` la riempie da sé').toBe(false)
-    expect(COLONNE.get('gradi')!.default).toBe("'{}'::school_type_enum[]")
   })
 
   it('`validateField` NON controlla l’appartenenza sulla checkbox: filtra la route', () => {
     // Il controllo «Selezione non valida» in `validate-fields.ts` è scritto per
     // `select` e `radio`, non per `checkbox`: un valore inventato passa la
-    // validazione del modulo e arriva all'INSERT, dove prende `22P02`.
-    // Questa riga è il motivo per cui il template PRESCRIVE alla route di filtrare
-    // contro `GRADI_OPTIONS`. Se un domani `validateField` imparasse a controllare
-    // anche le checkbox, questa prova diventa rossa: è il momento di togliere la
-    // prescrizione dal template, non di cancellare il test.
-    const gradi = campo('gradi')!
+    // validazione del modulo e arriva all'INSERT, dove prende `23514` dal CHECK di
+    // appartenenza. Questa riga è il motivo per cui il template PRESCRIVE alla
+    // route di filtrare contro `POSIZIONI_AMMESSE`. Se un domani `validateField`
+    // imparasse a controllare anche le checkbox, questa prova diventa rossa: è il
+    // momento di togliere la prescrizione dal template, non di cancellare il test.
     expect(
-      validateField(gradi, ['fascia_inventata']),
+      validateField(posizioni(), ['posizione_inventata']),
       'la checkbox ora controlla l’appartenenza: aggiorna il template',
     ).toBeNull()
     // Il confronto: sul `select` lo stesso valore inventato viene respinto.
     expect(validateField(campo('titolo_studio')!, 'inventato')).toBe('Selezione non valida')
+    // …e l'ultima rete esiste davvero in tabella, cioè il `23514` non è un timore
+    // scritto in un commento.
+    expect(
+      schemaSnapshot.check.map((k) => k.nome),
+      `il CHECK di appartenenza non è in tabella. ${COME_RIGENERARE}`,
+    ).toContain(VINCOLO_POSIZIONI)
   })
 
-  it('il template PRESCRIVE alla route le due difese che il database non dà', () => {
+  it('il template PRESCRIVE alla route la difesa che il database dà solo come ultima rete', () => {
     // Un commento è una prescrizione solo se qualcuno si accorge quando sparisce.
-    // Le due difese sono: `gradi` sempre esplicito nell'INSERT (contro l'array
-    // vuoto che il CHECK lascia passare) e filtro contro `GRADI_OPTIONS` (contro il
-    // 22P02). Chi riscrive quel commento deve riscrivere anche questa riga.
+    // La difesa è una: filtrare contro `POSIZIONI_AMMESSE` prima di scrivere,
+    // perché il `23514` che arriva dall'INSERT diventa un 500 opaco davanti a chi
+    // si candida. Chi riscrive quel commento deve riscrivere anche questa riga.
     const sorgente = readFileSync(
       join(process.cwd(), 'src', 'lib', 'forms', 'insegnanti-template.ts'), 'utf8',
     )
     // `[\s\S]` invece del flag `s`: il target di questo tsconfig è precedente a
     // es2018 e `dotAll` non è disponibile.
-    expect(sorgente, 'il template non prescrive più `gradi` esplicito').toMatch(/gradi[\s\S]{0,80}ESPLICITO/i)
-    expect(sorgente, 'il template non prescrive più il filtro contro GRADI_OPTIONS').toContain('22P02')
-    expect(sorgente, 'il template non nomina più il buco dell’array vuoto').toMatch(/array_length/i)
+    expect(sorgente, 'il template non prescrive più il filtro contro POSIZIONI_AMMESSE')
+      .toMatch(/POSIZIONI_AMMESSE[\s\S]{0,400}23514|23514[\s\S]{0,400}POSIZIONI_AMMESSE/)
+    expect(sorgente, 'il template non nomina più il `cardinality` che rende vero «almeno una»')
+      .toMatch(/cardinality\(posizioni\)/)
+    expect(sorgente, 'il template non spiega più perché il CHECK di `gradi` non si stringe')
+      .toMatch(/array_length/i)
+  })
+})
+
+describe('template di candidatura insegnanti · l’elenco chiuso, letto dalla MIGRAZIONE', () => {
+  /*
+   * ⚠️ QUESTO BLOCCO CHIUDE UNA PROSA CHE DESCRIVEVA UN PRESIDIO INESISTENTE.
+   *
+   * Due documenti affermavano, testualmente, che questo file leggeva la migrazione:
+   *   · `supabase/migrations/20260814225302_candidature_posizioni_cv.sql:55-60` —
+   *     «Non è affidato alla buona volontà: `__tests__/lib/insegnanti-template.test.ts`
+   *      LEGGE questo file e confronta le due liste. Divergere è un test rosso, non
+   *      una scoperta in produzione.»
+   *   · `src/lib/forms/insegnanti-template.ts:150-157` — «Per questo
+   *     `__tests__/lib/insegnanti-template.test.ts` legge il file della migrazione e
+   *     confronta le due liste: divergere non è una svista possibile, è un test rosso.»
+   *
+   * Fino al 2026-08-15 questo file non apriva nessuna migrazione. Le due liste
+   * potevano divergere in silenzio, e — questo è il punto — erano proprio i due
+   * documenti che promettevano il contrario a impedire a chiunque di andare a
+   * controllare. In questo repo una prosa che descrive un presidio che non c'è è
+   * peggio di nessuna prosa: toglie a chi legge la ragione di guardare.
+   *
+   * Il confronto è a TRE liste, perché i posti in cui l'elenco è scritto sono tre e
+   * ognuno può restare indietro da solo: il template (ciò che si offre), la
+   * migrazione (ciò che si è applicato) e la fotografia dello schema (ciò che in
+   * produzione c'è davvero).
+   */
+
+  it('la migrazione che dichiara il CHECK esiste, e questo file la trova per NOME DEL VINCOLO', () => {
+    // Si cerca il vincolo, non il file: una seconda migrazione che allarghi
+    // l'elenco diventa automaticamente quella confrontata. Un percorso ribattuto
+    // qui continuerebbe a leggere la prima, e resterebbe verde su una lista
+    // superata — cioè il difetto che questo blocco esiste per chiudere, spostato
+    // di un file.
+    const migrazione = migrazioneDellePosizioni()
+    expect(
+      migrazione?.nome,
+      `nessuna migrazione dichiara \`${VINCOLO_POSIZIONI}\`: o il vincolo è stato rinominato ` +
+      '(e allora va rinominato anche qui), oppure il file è sparito e questo confronto sta ' +
+      'girando a vuoto.',
+    ).toBeDefined()
+    // La lettura è arrivata a destinazione: un'estrazione vuota renderebbe il
+    // confronto qui sotto un `[] === []`, cioè verde per il motivo peggiore.
+    expect(
+      elencoDelVincolo(migrazione!.sql).length,
+      'il `CHECK` è stato trovato ma l’`array[...]` no: la forma del vincolo è cambiata e ' +
+      'l’estrattore va aggiornato, non tolto.',
+    ).toBeGreaterThan(1)
+    // E il vincolo che stiamo leggendo per nome esiste anche in tabella: leggerlo
+    // solo nel file direbbe che cosa è stato SCRITTO, non che cosa è stato applicato.
+    expect(
+      schemaSnapshot.check.map((k) => k.nome),
+      `il vincolo non risulta applicato in produzione. ${COME_RIGENERARE}`,
+    ).toContain(VINCOLO_POSIZIONI)
+  })
+
+  it('l’elenco del `CHECK` in migrazione è ESATTAMENTE `POSIZIONI_AMMESSE`', () => {
+    const migrazione = migrazioneDellePosizioni()!
+    expect(
+      elencoDelVincolo(migrazione.sql).sort(),
+      `le posizioni offerte dal modulo e quelle ammesse dal \`CHECK\` di ${migrazione.nome} ` +
+      'non coincidono. Una voce che sta solo nel template prende `23514` dall’INSERT, cioè un ' +
+      '500 opaco davanti a chi si candida; una che sta solo nel CHECK è una casella che nessuno ' +
+      'può spuntare. Chi aggiunge una posizione la aggiunge in TRE posti: `POSIZIONI_OPTIONS`, ' +
+      'una nuova migrazione che rifà questo CHECK, e — se è una fascia — `GRADI_OPTIONS` più ' +
+      'l’enum `school_type_enum`.',
+    ).toEqual([...POSIZIONI_AMMESSE].sort())
+  })
+
+  it('e in PRODUZIONE il vincolo porta la stessa lista (fotografia dello schema)', () => {
+    // La terza lista, e non è ridondante: la migrazione dice che cosa è stato
+    // scritto, questa dice che cosa è stato APPLICATO. In questo repo le due cose
+    // hanno già divergito — `migrate.yml` è in attesa del baseline dello storico, e
+    // le migrazioni si applicano a mano con `apply_migration`.
+    const vincolo = schemaSnapshot.check.find((k) => k.nome === VINCOLO_POSIZIONI)!
+    expect(
+      elencoDelVincolo(vincolo.definizione).sort(),
+      `il \`CHECK\` applicato in produzione ammette posizioni diverse da quelle del modulo. ${COME_RIGENERARE}`,
+    ).toEqual([...POSIZIONI_AMMESSE].sort())
+  })
+})
+
+describe('candidature · da posizione a fascia (`gradiDallePosizioni`)', () => {
+  /** Le tre posizioni docenti, costruite come le costruisce il template. */
+  const docenti = GRADI_OPTIONS.map((g) => `insegnante_${String(g.value)}`)
+  const fasce = GRADI_OPTIONS.map((g) => String(g.value))
+
+  it('una posizione docente porta la sua fascia, una per una', () => {
+    for (const g of GRADI_OPTIONS) {
+      expect(gradiDallePosizioni([`insegnante_${String(g.value)}`])).toEqual([String(g.value)])
+    }
+    expect(gradiDallePosizioni(docenti)).toEqual(fasce)
+  })
+
+  it('l’ordine è quello di `GRADI_OPTIONS`, non quello dei clic', () => {
+    // Due candidature identiche devono produrre lo stesso array: `utenti.gradi` non
+    // può dipendere dall'ordine in cui si sono spuntate le caselle — è la colonna
+    // da cui poi si legge a quali sezioni una maestra può accedere.
+    expect(gradiDallePosizioni([...docenti].reverse())).toEqual(fasce)
+    expect(gradiDallePosizioni(['insegnante_primaria', 'insegnante_nido'])).toEqual(['nido', 'primaria'])
+    // E senza doppioni, anche se la stessa posizione arrivasse due volte (il client
+    // non lo fa; una `INSERT` scritta a mano sì).
+    expect(gradiDallePosizioni(['insegnante_nido', 'insegnante_nido'])).toEqual(['nido'])
+  })
+
+  it('una candidatura NON docente ha zero fasce, ed è il caso VOLUTO', () => {
+    // Non è un caso limite dimenticato: una cuoca non ha una fascia d'età. La
+    // colonna `gradi` è `not null default '{}'` e il suo CHECK su un array vuoto
+    // vale NULL, quindi il vuoto entra — e da oggi è la porta attraverso cui passa
+    // una candidatura non docente, non più una crepa.
+    expect(gradiDallePosizioni(['cuoca'])).toEqual([])
+    expect(gradiDallePosizioni(['collaboratrice', 'cuoca', 'segreteria', 'altro'])).toEqual([])
+    expect(gradiDallePosizioni([])).toEqual([])
+  })
+
+  it('ciò che non è un array vale ELENCO VUOTO, senza lanciare', () => {
+    // Il parametro è `unknown` perché il valore arriva GREZZO da PostgREST — e da
+    // un database senza quella colonna non arriva affatto. Su questa domanda «non
+    // lo so» deve valere «nessuna fascia», non un'eccezione dentro il cockpit.
+    for (const strano of [undefined, null, 'insegnante_nido', 42, {}, { 0: 'insegnante_nido' }, true]) {
+      expect(gradiDallePosizioni(strano), `valore ${JSON.stringify(strano) ?? 'undefined'}`).toEqual([])
+    }
+  })
+
+  it('una posizione fuori elenco NON produce una fascia: il `22P02` resta inesprimibile', () => {
+    // È la ragione per cui `gradi` non arriva più dal client. Anche se una stringa
+    // inventata scavalcasse lo `z.enum` della route, di qui non esce niente che
+    // l'enum `school_type_enum` non conosca già.
+    expect(gradiDallePosizioni(['insegnante_sostegno'])).toEqual([])
+    expect(gradiDallePosizioni(['insegnante_'])).toEqual([])
+    expect(gradiDallePosizioni(['nido'])).toEqual([])
+    const derivate = new Set(gradiDallePosizioni([...POSIZIONI_AMMESSE, 'insegnante_sostegno', 'nido']))
+    for (const d of derivate) {
+      expect(schemaSnapshot.enum_school_type, `\`${d}\` non è un’etichetta di school_type_enum`).toContain(d)
+    }
+  })
+})
+
+describe('candidature · chi fa nascere un account (`comprendeInsegnamento`)', () => {
+  /*
+   * È il predicato da cui dipende l'unica conseguenza pesante di questo modulo:
+   * `admin/candidature-insegnanti:PATCH` crea un account `educator` — che legge
+   * l'anagrafica dei bambini — SOLO quando risponde `true`. Il verso dell'errore,
+   * qui, non è simmetrico: un falso negativo è una segretaria che resta senza
+   * account, un falso positivo è un accesso all'anagrafica dei minori dato a chi
+   * si era proposto per la cucina.
+   */
+
+  it('basta UNA posizione docente in mezzo alle altre', () => {
+    expect(comprendeInsegnamento(['cuoca', 'insegnante_infanzia', 'altro'])).toBe(true)
+    for (const g of GRADI_OPTIONS) {
+      expect(comprendeInsegnamento([`insegnante_${String(g.value)}`])).toBe(true)
+    }
+  })
+
+  it('nessuna posizione NON docente lo fa scattare', () => {
+    for (const p of ['collaboratrice', 'cuoca', 'segreteria', 'altro']) {
+      expect(comprendeInsegnamento([p]), `\`${p}\` fa nascere un account educator`).toBe(false)
+    }
+    expect(comprendeInsegnamento(['collaboratrice', 'cuoca', 'segreteria', 'altro'])).toBe(false)
+    expect(comprendeInsegnamento([])).toBe(false)
+  })
+
+  it('su «non lo so» risponde NO: undefined, null e ciò che non è un array', () => {
+    // Il caso concreto: una riga letta da un database senza la colonna `posizioni`
+    // (è lo stato del DB della CI, non migrato) arriva con `posizioni` undefined.
+    // Lì la risposta giusta non è «nel dubbio creiamo l'account».
+    for (const strano of [undefined, null, 'insegnante_nido', 42, {}, true]) {
+      expect(comprendeInsegnamento(strano), `valore ${JSON.stringify(strano) ?? 'undefined'}`).toBe(false)
+    }
+  })
+
+  it('coincide con «ha almeno una fascia», su TUTTE le combinazioni possibili', () => {
+    /*
+     * Le due domande sono poste in due posti diversi e con due funzioni diverse:
+     * il cockpit chiede `comprendeInsegnamento(riga.posizioni)` per decidere se
+     * creare l'account, la route pubblica scrive `docente: gradiDallePosizioni(
+     * posizioni).length > 0` nel proprio log (`iscrizione/insegnanti/route.ts:1128`).
+     * Sono la stessa domanda, e finché il prefisso docente e `GRADI_OPTIONS` si
+     * corrispondono uno a uno danno la stessa risposta.
+     *
+     * Il giorno in cui una posizione col prefisso `insegnante_` non avesse una
+     * fascia corrispondente, le due divergerebbero: si creerebbe un account
+     * `educator` con `utenti.gradi` vuoto — cioè una maestra che accede al
+     * registro e non vede nessuna sezione. Le 128 combinazioni delle sette
+     * posizioni costano meno di un millisecondo e lo dicono per intero.
+     */
+    for (let maschera = 0; maschera < (1 << POSIZIONI_AMMESSE.length); maschera++) {
+      const scelte = POSIZIONI_AMMESSE.filter((_, i) => (maschera & (1 << i)) !== 0)
+      expect(
+        comprendeInsegnamento(scelte),
+        `divergono su [${scelte.join(', ')}]: una crea un account educator, l’altra gli lascia ` +
+        '`utenti.gradi` vuoto',
+      ).toBe(gradiDallePosizioni(scelte).length > 0)
+    }
+  })
+})
+
+describe('template di candidatura insegnanti · «Altro», e la casella che compare solo quando serve', () => {
+  const altro = () => campo('posizione_altro')!
+
+  it('è la PRIMA logica condizionale di questo modulo, e la condizione è quella', () => {
+    expect(altro().type).toBe('text')
+    expect(altro().condition).toEqual({ field_id: 'posizioni', operator: 'contains', value: 'altro' })
+    // La condizione punta a un campo che esiste e a un valore che è davvero una
+    // delle sue opzioni: un refuso («altri») lascerebbe la casella invisibile per
+    // sempre, e il modulo non se ne accorgerebbe — semplicemente non chiederebbe
+    // mai il mestiere a chi ha spuntato «Altro».
+    const condizionati = INSEGNANTE_FIELDS.filter((f) => f.condition)
+    expect(condizionati.map((f) => f.id), 'i campi condizionali sono cambiati').toEqual(['posizione_altro'])
+    for (const f of condizionati) {
+      const riferito = campo(f.condition!.field_id)
+      expect(riferito, `${f.id} dipende da un campo che non esiste`).toBeDefined()
+      expect(
+        (riferito!.options ?? []).map((o) => String(o.value)),
+        `${f.id} dipende da un valore che non è fra le opzioni di ${riferito!.id}`,
+      ).toContain(String(f.condition!.value))
+    }
+  })
+
+  it('compare solo quando «altro» è spuntato — e `contains` su un array confronta gli elementi', () => {
+    expect(campoVisibile(altro(), { posizioni: ['altro'] })).toBe(true)
+    expect(campoVisibile(altro(), { posizioni: ['insegnante_nido', 'altro'] })).toBe(true)
+    expect(campoVisibile(altro(), { posizioni: ['cuoca'] })).toBe(false)
+    expect(campoVisibile(altro(), { posizioni: [] })).toBe(false)
+    expect(campoVisibile(altro(), {})).toBe(false)
+    // ⚠️ Il ramo `contains` di `valutaCondizione` su un valore NON array cade sulla
+    // sottostringa. Vale la pena scriverlo: se un domani il campo `posizioni`
+    // diventasse un `select` a valore singolo, `'collaboratrice'` NON contiene
+    // «altro», ma una voce chiamata `altro_personale` sì — e la casella
+    // comparirebbe da sola.
+    expect(campoVisibile(altro(), { posizioni: 'un altro qualsiasi' })).toBe(true)
+  })
+
+  it('`required: true` vuol dire «obbligatorio QUANDO è visibile»: chi valida filtra prima', () => {
+    // Senza il filtro, `iscrizione/insegnanti:POST` rifiuterebbe con «Campo
+    // obbligatorio» ogni candidatura che non ha spuntato «Altro» — cioè quasi
+    // tutte. La riga qui sotto è la prova che il campo, da solo, dice davvero
+    // «obbligatorio».
+    expect(altro().required).toBe(true)
+    expect(validateField(altro(), undefined)).toBe('Campo obbligatorio')
+    expect(validateField(altro(), '')).toBe('Campo obbligatorio')
+
+    // E la prova che il filtro toglie il problema invece di spostarlo: si valida
+    // ciò che è VISIBILE, sul client e sul server, con la stessa funzione.
+    const senzaAltro = campiVisibili(INSEGNANTE_FIELDS, { posizioni: ['cuoca'] }).map((f) => f.id)
+    expect(senzaAltro).toContain('posizioni')
+    expect(senzaAltro, 'la casella del mestiere è visibile a chi non ha spuntato «Altro»').not.toContain('posizione_altro')
+    const conAltro = campiVisibili(INSEGNANTE_FIELDS, { posizioni: ['altro'] }).map((f) => f.id)
+    expect(conAltro).toContain('posizione_altro')
+    // Il resto del modulo non dipende da niente: nessun altro campo sparisce.
+    expect(senzaAltro).toEqual(INSEGNANTE_FIELDS.map((f) => f.id).filter((id) => id !== 'posizione_altro'))
+  })
+
+  it('cento caratteri, e sono gli stessi del `CHECK` in tabella', () => {
+    // Due tetti indipendenti per lo stesso campo divergono, e a divergere sarebbe
+    // il confine fra un rifiuto sotto il campo e un `23514` che diventa un 500.
+    expect(CANDIDATURA_LIMITI.maxPosizioneAltro).toBe(100)
+    expect(altro().validation?.max_length).toBe(CANDIDATURA_LIMITI.maxPosizioneAltro)
+    expect(validateField(altro(), 'a'.repeat(CANDIDATURA_LIMITI.maxPosizioneAltro))).toBeNull()
+    expect(validateField(altro(), 'a'.repeat(CANDIDATURA_LIMITI.maxPosizioneAltro + 1))).not.toBeNull()
+    expect(validateField(altro(), 'psicomotricista')).toBeNull()
+
+    const lunghezza = schemaSnapshot.check.find((k) => k.nome === 'candidature_insegnanti_posizione_altro_lunghezza')
+    expect(lunghezza, `il CHECK di lunghezza non è in tabella. ${COME_RIGENERARE}`).toBeDefined()
+    expect(
+      lunghezza!.definizione,
+      `il tetto del modulo (${CANDIDATURA_LIMITI.maxPosizioneAltro}) non è più quello della tabella`,
+    ).toContain(`<= ${CANDIDATURA_LIMITI.maxPosizioneAltro}`)
+  })
+
+  it('la coerenza fra la casella e il testo vale nei DUE versi, e il valore è lo stesso', () => {
+    // Il CHECK è un'uguaglianza fra due predicati: «altro» spuntato senza testo è
+    // una candidatura che non dice che lavoro cerca; testo senza «altro» spuntato è
+    // un residuo di chi ha scritto e poi ha cambiato idea. Il modulo pulisce
+    // (`pulisciNascosti`), ma il modulo è una delle due porte.
+    const coerenza = schemaSnapshot.check.find((k) => k.nome === 'candidature_insegnanti_posizione_altro_coerente')
+    expect(coerenza, `il CHECK di coerenza non è in tabella. ${COME_RIGENERARE}`).toBeDefined()
+    expect(coerenza!.definizione).toContain('= ANY (posizioni)')
+    expect(coerenza!.definizione).toContain('posizione_altro IS NOT NULL')
+    // ⚠️ E IL LETTERALE DEL VINCOLO È LO STESSO DELLA CONDIZIONE DEL MODULO.
+    // Rinominare l'opzione «altro» nel solo template — senza migrazione — darebbe
+    // un modulo che mostra la casella e una tabella che rifiuta la riga con
+    // `23514`: il rifiuto arriverebbe DOPO l'invio, su un modulo pubblico.
+    const letterale = /'([^']*)'/.exec(coerenza!.definizione)?.[1]
+    expect(letterale, 'il CHECK di coerenza non nomina più nessun valore').toBeDefined()
+    expect(letterale).toBe(String(altro().condition!.value))
+    expect(POSIZIONI_AMMESSE).toContain(letterale)
   })
 })
 
@@ -587,9 +1045,27 @@ describe('candidature · vocabolario dei log e codici d’errore', () => {
     ).toBe(emette)
   })
 
-  it('i sette codici della candidatura sono dichiarati e tradotti in entrambe le lingue', () => {
+  it('OGNI codice della candidatura è dichiarato e tradotto in entrambe le lingue', () => {
+    /*
+     * ⚠️ QUI C'ERA UN ELENCO DI SETTE NOMI RIBATTUTO A MANO, E I CODICI ERANO OTTO.
+     * Misurato il 2026-08-15 sulle chiavi di `CODICI_ERRORE`: mancava
+     * `CANDIDATURE_OPERAZIONE_NON_RIUSCITA`, cioè il 503 del COCKPIT di Segreteria
+     * — l'unico codice della famiglia che nessuno stava controllando.
+     *
+     * È lo stesso difetto che la testata di questo file racconta per gli id dei
+     * campi: un elenco scritto a mano verifica ciò che qualcuno si è ricordato di
+     * scriverci, e un codice aggiunto DOPO non fa rosso da nessuna parte. Quando
+     * accade, a schermo non arriva una frase ma la chiave grezza — cioè
+     * `erroreCandidatureOperazioneNonRiuscita` davanti a chi sta lavorando.
+     *
+     * Perciò l'elenco si DERIVA dal catalogo. I nomi restano scritti sotto come
+     * PAVIMENTO, non come elenco: servono a far diventare rossa una rinomina
+     * silenziosa, che la derivazione da sola non vedrebbe.
+     */
     const it = itShared as Record<string, string>
     const en = enShared as Record<string, string>
+    const codici = Object.keys(CODICI_ERRORE).filter((k) => /^CANDIDATUR/.test(k))
+
     const attesi = [
       'CANDIDATURA_NON_INVIATA',
       'CANDIDATURA_GIA_INVIATA',
@@ -598,14 +1074,24 @@ describe('candidature · vocabolario dei log e codici d’errore', () => {
       'CANDIDATURA_GIA_EVASA',
       'CANDIDATURA_EMAIL_GIA_STAFF',
       'CANDIDATURA_EMAIL_GIA_GENITORE',
+      'CANDIDATURE_OPERAZIONE_NON_RIUSCITA',
     ]
-    const mancanti: string[] = []
     for (const codice of attesi) {
+      expect(codici, `\`${codice}\` non è più dichiarato in CODICI_ERRORE: se è stato rinominato, ` +
+        'rinominalo anche qui e in chi lo emette').toContain(codice)
+    }
+
+    const mancanti: string[] = []
+    for (const codice of codici) {
       const chiave = (CODICI_ERRORE as Record<string, string>)[codice]
       if (!chiave) { mancanti.push(`${codice}: non dichiarato in CODICI_ERRORE`); continue }
       if (!it[chiave]?.trim()) mancanti.push(`${codice} → messages/it/shared.json:${chiave}`)
       if (!en[chiave]?.trim()) mancanti.push(`${codice} → messages/en/shared.json:${chiave}`)
     }
-    expect(mancanti).toEqual([])
+    expect(
+      mancanti,
+      'il modulo è PUBBLICO e si compila senza login: un codice senza frase arriva a schermo ' +
+      'come chiave grezza, e in inglese non arriva affatto.',
+    ).toEqual([])
   })
 })

@@ -995,6 +995,34 @@ const AMMESSE: Record<string, string> = {
     // e la loro cancellazione. La sede la porta comunque la riga (`scuola_id NOT NULL`
     // con FK a `schools`): non si perde nulla, semplicemente non si filtra.
     'gdpr/retention-candidature:POST': 'conservazione delle candidature spontanee (12 mesi, 24 col consenso), curriculum compreso: come l\'oblio, il termine deve valere su TUTTE le sedi — un curriculum scade allo stesso giorno a Giugliano, Aversa e Cesa, e un filtro di sede qui lascerebbe scoperti in silenzio i plessi che il job non conosce. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.',
+    // ── La SPAZZATA DEGLI ORFANI, che sta FUORI dall'handler (2026-08-15) ─────
+    //
+    // Perché è una voce a sé e non l'ha coperta quella qui sopra: `spazzaCurriculumOrfani`
+    // è una funzione di modulo, e questo lock tratta il codice fuori da ogni handler come
+    // uno span suo (`<modulo>`). È il progetto, non un incidente — un'esenzione data al
+    // `POST` non deve estendersi in silenzio a un helper che qualcuno scriverà dopo — ed è
+    // il motivo per cui questa riga esiste invece di essere già inclusa.
+    //
+    // COSA SEGNALA IL LOCK: `.from('candidature_insegnanti').select('cv_path').in('cv_path',
+    // lotto)`, una lettura d'elenco su una tabella che `scuola_id` ce l'ha, senza filtro di
+    // sede. La forma è quella giusta da segnalare; qui la risposta è che il filtro non ci
+    // deve stare, e la ragione è più forte di «serve su tutte le sedi».
+    //
+    // ⚠️ UN FILTRO DI SEDE QUI NON PROTEGGEREBBE: CANCELLEREBBE. L'elenco di partenza non
+    // viene dal database — viene dallo STORAGE, `list('candidature')`, e un oggetto in un
+    // bucket non ha una sede. La domanda che questa query pone è «quale di questi percorsi
+    // è reclamato da UNA QUALUNQUE riga?», e il job cancella tutto ciò che nessuna riga
+    // nomina. Restringere la domanda a un plesso significa rispondere «nessuno» per i
+    // curriculum reclamati dagli altri due, cioè dichiararli orfani e RIMUOVERLI: la
+    // candidatura di Aversa resterebbe viva con un `cv_path` che punta a un file che non
+    // c'è più. È il caso in cui il filtro di sede è esattamente il difetto, non il presidio.
+    //
+    // COSA NON LEGGE, che è la metà che rende la voce difendibile: una sola colonna,
+    // `cv_path`, e solo per i percorsi che ha già in mano. Nessun nome, nessun recapito,
+    // nessun conteggio: la risposta è un sottoinsieme dell'input, e a leggerla è un cron.
+    // Nessun utente da cui derivare uno scope — la chiama pg_net con `x-cron-secret`, e il
+    // lancio manuale dello staff passa da `requireStaff` ma fa lo stesso identico lavoro.
+    'gdpr/retention-candidature:<modulo>': "helper `spazzaCurriculumOrfani`: chiede quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i curriculum reclamati dalle altre due sedi e li cancellerebbe, lasciando quelle candidature con un `cv_path` che punta al nulla. Legge una sola colonna (`cv_path`) e solo per i percorsi che ha già in mano: la risposta è un sottoinsieme dell'input. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
     // fa il gate (`assertAlunnoInScope`, che il confine di sede lo verifica eccome,
@@ -1347,7 +1375,27 @@ describe('coverage-lock isolamento fra sedi', () => {
             //  · `parent/prestampati:GET` e `parent/prestampati/firma` — il flusso della
             //    famiglia, che arriva dalla corsia accanto: contate qui, non certificate.
             //    Chi le ha scritte dichiari le proprie esenzioni.
-            routeConServiceRole: 295,
+            //
+            // 295 → 296 il 2026-08-15: è nata `iscrizione/insegnanti/upload:POST`, la porta
+            // pubblica da cui chi si candida allega il curriculum. Apre il client con il
+            // service role perché deve scrivere nello Storage senza nessuna sessione — chi
+            // carica non ha un account e non può averlo, l'account nasce semmai quando la
+            // Direzione approva.
+            //
+            // ⚠️ IL +1 È MISURATO, NON DEDOTTO, e vale la pena dire come — perché due righe
+            // più in basso questo stesso file racconta di un +4 che quadrava per caso e
+            // nascondeva l'uscita di un handler. Ricontando l'intero repo con quel solo file
+            // ESCLUSO si ottengono esattamente 295 e 459, cioè i due valori precedenti: il
+            // resto dell'albero non si è mosso, e il delta è tutto di questa rotta. (Resta
+            // fuori dalla portata di questa misura un +1 e un −1 che si annullino altrove:
+            // questo lock CONTA, non fa la differenza con ieri.)
+            //
+            // NON porta esenzioni, ed è il punto da guardare: la rotta non tocca nessuna
+            // tabella. Scrive un oggetto in `form_attachments` e restituisce il percorso —
+            // nessun `.from(`, nessun `.rpc(` — quindi qui non c'è nessuna sede da dichiarare
+            // perché non c'è nessuna riga. La riga che nominerà quel file nasce dall'altra
+            // porta (`iscrizione/insegnanti:POST`), e QUELLA la sede la dichiara.
+            routeConServiceRole: 296,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1406,7 +1454,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `assertSezioneInScope`. Una gita archiviata nel plesso sbagliato si
             // porterebbe dietro l'autorizzazione, cioè manderebbe il modulo da firmare
             // alle famiglie di un'altra scuola.
-            handlerControllati: 459,
+            // 459 → 460 il 2026-08-15: l'unico handler della rotta nuova nominata sopra
+            // (`iscrizione/insegnanti/upload:POST`). Qui il +1 e il +1 del numero sopra
+            // coincidono perché quel file ha un metodo solo, non per una regola — è la
+            // stessa coincidenza già dichiarata il 2026-08-11, e va ridichiarata ogni volta
+            // o al giro dopo diventa un'aspettativa.
+            handlerControllati: 460,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1463,7 +1516,40 @@ describe('coverage-lock isolamento fra sedi', () => {
             // alunni, e chiamano `assertAlunnoInScope` prima di restituire un byte —
             // ma è comunque una decisione, e questo numero esiste perché passi sotto
             // gli occhi di qualcuno invece che in silenzio.
-            handlerEsentati: 94,
+            //
+            // 🔻 94 → 95 il 2026-08-15, ed è un numero che SALE: `gdpr/retention-candidature:<modulo>`,
+            // cioè l'helper `spazzaCurriculumOrfani` nato con la porta del curriculum. Il
+            // commento in testa a questo numero dice che sale solo quando qualcuno toglie
+            // un pezzo di questo lock, e la frase va presa sul serio anche quando non è il
+            // caso — quindi va scritto perché questa passa.
+            //
+            // ⚠️ E VA SCRITTO ANCHE CHE NON ERA PREVISTA. Il lavoro che porta la rotta nuova
+            // dava per fermo questo numero a 94: la misura dice di no, la spazzata degli
+            // orfani legge `candidature_insegnanti` senza filtro di sede e questo lock la
+            // vede. Non è un +1 concordato prima e ratificato dopo — è un rosso trovato
+            // eseguendo il test, che è la sola ragione per cui il test esiste.
+            //
+            // Perché passa: qui il filtro di sede non sarebbe un presidio, sarebbe il
+            // difetto. L'elenco di partenza viene dallo Storage, dove un oggetto non ha una
+            // sede, e il job CANCELLA ciò che nessuna riga reclama: restringere la domanda a
+            // un plesso dichiarerebbe orfani i curriculum reclamati dagli altri due e li
+            // porterebbe via, lasciando quelle candidature con un `cv_path` che punta al
+            // nulla. La ragione per esteso — compreso il perché è uno span `<modulo>` e non
+            // l'esenzione del `POST` che gli sta accanto — sta in AMMESSE.
+            //
+            // La differenza si misura: dando alla query un `.eq('scuola_id', …)` questa voce
+            // diventerebbe MORTA (il test «l'allowlist non contiene voci morte» la
+            // respingerebbe) e il cron comincerebbe a cancellare curriculum vivi. Cioè: qui
+            // l'esenzione è la difesa, non il buco nella difesa.
+            //
+            // Ciò che tiene ferma l'affermazione non sta qui ma in
+            // `__tests__/api/gdpr-retention-candidature.test.ts`, che la spazzata la esercita
+            // per davvero: elenca il prefisso, distingue «sotto il prefisso» da «orfano» —
+            // che è la distinzione che questa query calcola — e verifica il fail-closed
+            // quando la `select('cv_path')` fallisce (nessun orfano rimosso). Se un giorno
+            // quel file smettesse di coprire la spazzata, questa voce resterebbe verde
+            // sull'esenzione e cieca sul comportamento.
+            handlerEsentati: 95,
         })
     })
 })

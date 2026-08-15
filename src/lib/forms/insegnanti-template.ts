@@ -46,14 +46,23 @@ import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
  *
  * ── ⚠️ DEBITO DICHIARATO: LE ETICHETTE QUI SOTTO SONO SOLO IN ITALIANO ───────
  *
- * Tutto ciò che si legge a schermo di questo template — le `label` dei campi, i
- * sette `TITOLI_STUDIO`, le cinque `DISPONIBILITA`, i tre `GRADI_OPTIONS` (che
- * il riepilogo di `/lavora-con-noi` ristampa così come sono) e i testi dei
- * consensi — è cablato in italiano. Il guscio della pagina è bilingue per
- * davvero (36 chiavi `cand*` in `messages/it` e `messages/en`, con lock di
- * parità), quindi con l'interfaccia in inglese la schermata esce TRADOTTA A
- * METÀ: è il difetto R13, quello che `PublicPageHeader` è nato per chiudere,
- * ricomparso un livello più sotto.
+ * Tutto ciò che si legge a schermo di questo template — le `label` dei campi,
+ * `TITOLI_STUDIO`, `DISPONIBILITA`, `POSIZIONI_OPTIONS` (che il riepilogo di
+ * `/lavora-con-noi` ristampa così come sono) e i testi dei consensi — è cablato
+ * in italiano. Il guscio della pagina è bilingue per davvero (tutte le chiavi
+ * `cand*` di `messages/{it,en}/public.json`, con lock di parità), quindi con
+ * l'interfaccia in inglese la schermata esce TRADOTTA A METÀ: è il difetto R13,
+ * quello che `PublicPageHeader` è nato per chiudere, ricomparso un livello più
+ * sotto.
+ *
+ * ⚠️ QUI NON CI SONO PIÙ NUMERI, e la ragione è che questa frase li ha sbagliati
+ * DUE VOLTE NELLO STESSO GIORNO. Diceva «36 chiavi `cand*`» quando erano 55; il
+ * 2026-08-15 il numero è stato corretto in «55» — dentro un inciso che spiegava
+ * che «un commento che conta cose mente entro un rilascio» — e nello stesso
+ * lavoro le chiavi sono diventate 58. Nella stessa frase «i sette
+ * `TITOLI_STUDIO`» era diventato falso appena sopra, con l'aggiunta della licenza
+ * media. Un conteggio in un commento non si aggiorna: si toglie, e si lascia
+ * contare a chi conta davvero — che qui è il lock di parità.
  *
  * Non è un difetto introdotto qui — è la forma di `enrollment-template.ts`, e
  * vale identico per `/iscrizione` — ma è scritto perché nessuno lo scambi per
@@ -67,9 +76,19 @@ import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 const PROV_PATTERN = '^[A-Z]{2}$'
 
 /**
- * Le fasce d'età per cui ci si può proporre. Multi-valore: chi ha lavorato al
- * nido e all'infanzia si candida per tutte e due, e costringerla a scegliere
- * farebbe perdere alla segreteria l'informazione che serve a smistarla.
+ * Le fasce d'età della Scuola.
+ *
+ * ⚠️ DAL 2026-08-15 QUESTO ELENCO NON È PIÙ UNA DOMANDA DEL MODULO. Nessun campo
+ * chiede più «per quali fasce ti proponi»: le fasce si DERIVANO dalle posizioni
+ * (`gradiDallePosizioni`), perché l'elenco delle posizioni le contiene già
+ * spezzate una per una — «Insegnante — Nido (0-3)», «Insegnante — Infanzia
+ * (3-6)», «Insegnante — Primaria (6-11)». Chiederle due volte, una come mestiere
+ * e una come fascia, era la stessa informazione raccolta in due schermate.
+ *
+ * Questa costante resta, e serve a tre cose che non sono sparite: è la SORGENTE
+ * da cui si costruiscono le posizioni docenti qui sotto, è ciò che il cockpit di
+ * segreteria usa per stampare le fasce di una candidatura, ed è ciò che
+ * `admin/candidature-insegnanti:PATCH` filtra prima di scrivere `utenti.gradi`.
  *
  * ⚠️ Questi tre `value` NON sono un'invenzione di questo file: sono le etichette
  * dell'enum `school_type_enum`, perché la colonna `gradi` è di tipo
@@ -81,11 +100,11 @@ const PROV_PATTERN = '^[A-Z]{2}$'
  *
  * Il che sposta il problema, invece di toglierlo: `22P02` arriva dall'INSERT come
  * errore PostgREST, e su un modulo PUBBLICO diventerebbe un 500 opaco davanti a
- * una persona che non ha nessuno a cui chiedere. Per questo la route deve
- * FILTRARE i valori contro `GRADI_OPTIONS` prima di scrivere (vedi la
- * prescrizione sul campo `gradi`, più sotto). Chi aggiunge una fascia la aggiunge
- * qui E nell'enum, con una migrazione, e rigenera
- * `__tests__/fixtures/candidature-schema-snapshot.json`.
+ * una persona che non ha nessuno a cui chiedere. Per questo `gradi` non arriva
+ * più dal client affatto: la route lo COSTRUISCE dalle posizioni, che sono a loro
+ * volta un elenco chiuso filtrato da uno `z.enum`. Chi aggiunge una fascia la
+ * aggiunge qui E nell'enum E nel `CHECK` di `posizioni`, con una migrazione, e
+ * rigenera `__tests__/fixtures/candidature-schema-snapshot.json`.
  */
 export const GRADI_OPTIONS: FormFieldOption[] = [
   { label: 'Nido (0-3)', value: 'nido' },
@@ -93,8 +112,172 @@ export const GRADI_OPTIONS: FormFieldOption[] = [
   { label: 'Primaria (6-11)', value: 'primaria' },
 ]
 
-/** Titolo di studio: elenco chiuso, il dettaglio libero sta nel campo accanto. */
+/**
+ * Il prefisso delle posizioni da INSEGNANTE. Sta in una costante perché lo
+ * leggono in tre: la costruzione delle opzioni, la derivazione delle fasce e il
+ * predicato che decide se una candidatura fa nascere un account docente.
+ */
+const PREFISSO_DOCENTE = 'insegnante_'
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  LE POSIZIONI — l'unica domanda su «che lavoro vieni a fare»             ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Multi-valore, e almeno una: chi cerca lavoro in una scuola dell'infanzia si
+ * propone spesso per più cose insieme («insegnante, ma anche in cucina»), e
+ * costringerla a sceglierne una sola farebbe perdere alla segreteria proprio
+ * l'informazione che le serve per smistarla.
+ *
+ * ── PERCHÉ LE FASCE SONO POSIZIONI, E NON UNA SECONDA DOMANDA ───────────────
+ *
+ * Fino al 2026-08-15 il modulo faceva due domande — «per quali fasce ti proponi»
+ * (obbligatoria, tre caselle) e nient'altro — e dava per scontato il mestiere:
+ * l'unica candidatura esprimibile era quella di un'insegnante. Con l'apertura a
+ * collaboratrici, cuoche e segretarie quella domanda diventava di colpo
+ * insensata per metà di chi compila: una cuoca non ha una fascia d'età, e un
+ * campo obbligatorio che non la riguarda è un modulo che non si può inviare.
+ *
+ * La soluzione NON è stata rendere le fasce facoltative — sarebbero diventate
+ * una casella che le insegnanti dimenticano di spuntare, e la segreteria
+ * l'avrebbe scoperto leggendo una candidatura senza fascia. È stata fonderle:
+ * l'elenco è uno solo, le tre voci docenti portano la fascia nel nome, e
+ * `gradi` si DERIVA da ciò che è stato spuntato. Chi spunta «Insegnante —
+ * Nido (0-3)» ha già detto tutte e due le cose, in un tocco invece che in due
+ * schermate.
+ *
+ * ── LE TRE VOCI DOCENTI SI COSTRUISCONO, NON SI RIBATTONO ──────────────────
+ *
+ * Sono `GRADI_OPTIONS` con un prefisso: una fascia aggiunta domani diventa una
+ * posizione da sola, con la sua etichetta già scritta, e `GRADO_DELLA_POSIZIONE`
+ * la conosce senza che nessuno tocchi una riga. Ribattere «Insegnante — Nido
+ * (0-3)» a mano avrebbe creato la seconda lista da mantenere — ed è esattamente
+ * il modo in cui, in questo stesso repo, il riepilogo del wizard era rimasto
+ * indietro di undici campi.
+ *
+ * ⚠️ IL `value` DI OGNI VOCE È UN VALORE IN TABELLA, e la tabella lo verifica:
+ * `candidature_insegnanti.posizioni` è `text[]` con un `CHECK` di appartenenza
+ * (migrazione `20260814225302_candidature_posizioni_cv`). Un valore aggiunto QUI e non
+ * là prende `23514` dall'INSERT, cioè un 500 opaco davanti a chi si candida —
+ * la stessa forma del `22P02` che l'enum delle fasce ha già insegnato. Per
+ * questo `__tests__/lib/insegnanti-template.test.ts` legge il file della
+ * migrazione e confronta le due liste: divergere non è una svista possibile, è
+ * un test rosso.
+ *
+ * ⚠️ E NON È UN `enum` POSTGRES, di proposito: un enum obbliga a una migrazione
+ * con `alter type` per ogni voce nuova (e in Postgres, fino alla 12, nemmeno
+ * dentro una transazione), mentre qui l'elenco è di prodotto e cambierà più
+ * spesso dello schema. Il `CHECK` dà la stessa garanzia con un `alter table`.
+ */
+export const POSIZIONI_OPTIONS: FormFieldOption[] = [
+  ...GRADI_OPTIONS.map((g) => ({
+    label: `Insegnante — ${g.label}`,
+    value: `${PREFISSO_DOCENTE}${g.value}`,
+  })),
+  { label: 'Collaboratrice scolastica', value: 'collaboratrice' },
+  { label: 'Cuoca / aiuto cucina', value: 'cuoca' },
+  { label: 'Segreteria / amministrazione', value: 'segreteria' },
+  // Ultima, e con la parola «specifica» nell'etichetta: la casella accanto
+  // (`posizione_altro`) diventa obbligatoria appena questa viene spuntata, e
+  // l'etichetta è l'unico posto in cui dirlo PRIMA che l'errore compaia.
+  { label: 'Altro (specifica qui sotto)', value: 'altro' },
+]
+
+/** I soli `value`, per gli `z.enum` e i `CHECK`. */
+export const POSIZIONI_AMMESSE: string[] = POSIZIONI_OPTIONS.map((o) => String(o.value))
+
+/**
+ * Da posizione a fascia d'età — la mappa che sostituisce una domanda.
+ *
+ * Costruita dalle stesse `GRADI_OPTIONS` che generano le voci docenti: le due
+ * cose non possono divergere perché sono la stessa iterazione.
+ */
+export const GRADO_DELLA_POSIZIONE: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    GRADI_OPTIONS.map((g) => [`${PREFISSO_DOCENTE}${g.value}`, String(g.value)]),
+  ),
+)
+
+/**
+ * Le fasce d'età che discendono dalle posizioni scelte — in ordine di
+ * `GRADI_OPTIONS` e senza doppioni.
+ *
+ * ⚠️ RITORNA UN ARRAY VUOTO PER UNA CANDIDATURA NON DOCENTE, ed è il
+ * comportamento voluto, non un caso limite dimenticato: una cuoca non ha una
+ * fascia d'età. La colonna `gradi` è `not null default '{}'` e il suo `CHECK`
+ * (`array_length(gradi, 1) >= 1`) su un array vuoto vale NULL, e un CHECK che
+ * vale NULL PASSA — misurato in produzione il 2026-08-10. Fino a quel giorno
+ * quella era una CREPA (una candidatura senza fasce entrava in silenzio e la
+ * segreteria non sapeva a chi smistarla); da oggi è la porta attraverso cui
+ * passa una cuoca, e la crepa è chiusa dall'altra parte — da `posizioni`, che ha
+ * un `CHECK` su `cardinality()` e non su `array_length()`, cioè uno che su un
+ * array vuoto vale FALSO invece che NULL.
+ *
+ * L'ordine è quello di `GRADI_OPTIONS` e non quello in cui si è spuntato: due
+ * candidature identiche devono produrre lo stesso array, altrimenti `utenti.gradi`
+ * dipende dall'ordine dei clic.
+ */
+export function gradiDallePosizioni(posizioni: unknown): string[] {
+  const scelte = new Set(elencoPosizioni(posizioni))
+  return GRADI_OPTIONS.map((g) => String(g.value)).filter((grado) =>
+    scelte.has(`${PREFISSO_DOCENTE}${grado}`),
+  )
+}
+
+/**
+ * Le posizioni come elenco di stringhe, da un valore di cui non si sa niente.
+ *
+ * ⚠️ Il parametro è `unknown` e NON `string[]`, e non è pigrizia di tipi: il
+ * chiamante che conta è il cockpit di Segreteria, dove questo valore arriva
+ * GREZZO da PostgREST — che restituisce un array Postgres come JSON e, su un
+ * database senza quella colonna, non lo restituisce affatto. Un tipo che
+ * promettesse `string[]` sarebbe una promessa fatta dal linguaggio a nome di un
+ * database, cioè la forma di bugia che in questo repo ha già fatto firmare
+ * documenti sbagliati.
+ *
+ * Tutto ciò che non è un array vale ELENCO VUOTO, e da lì
+ * `comprendeInsegnamento` risponde «no»: sulla domanda «va creato un account che
+ * legge l'anagrafica dei bambini?», «non lo so» deve valere «no».
+ */
+function elencoPosizioni(posizioni: unknown): string[] {
+  return Array.isArray(posizioni) ? posizioni.map((p) => String(p)) : []
+}
+
+/**
+ * La candidatura comprende almeno una posizione da insegnante?
+ *
+ * È il predicato da cui dipende l'unica conseguenza pesante di questo modulo:
+ * `admin/candidature-insegnanti:PATCH` crea un account `educator` — che legge
+ * l'anagrafica dei bambini — SOLO quando questo risponde `true`. Vive qui, e non
+ * in quella route, perché la regola è del MODULO: è l'elenco delle posizioni a
+ * dire quali sono docenti, e un secondo elenco dentro la route sarebbe quello
+ * che un giorno resta indietro di una voce — con la differenza che il verso
+ * dell'errore, lì, è un accesso concesso a chi non doveva averlo.
+ *
+ * Si guarda il PREFISSO e non un elenco di tre stringhe: una quarta fascia
+ * aggiunta a `GRADI_OPTIONS` diventa docente da sola.
+ */
+export function comprendeInsegnamento(posizioni: unknown): boolean {
+  return elencoPosizioni(posizioni).some((p) => p.startsWith(PREFISSO_DOCENTE))
+}
+
+/**
+ * Titolo di studio: elenco chiuso, il dettaglio libero sta nel campo accanto.
+ *
+ * ⚠️ «Licenza media» è stata aggiunta il 2026-08-15, ed è una conseguenza diretta
+ * dell'apertura del modulo alle posizioni non docenti. L'elenco cominciava dal
+ * diploma di scuola superiore perché l'unica candidatura possibile era quella di
+ * un'insegnante, per cui il diploma è il minimo di legge; per una collaboratrice
+ * scolastica o per chi lavora in cucina non lo è, e il campo è OBBLIGATORIO.
+ * Senza questa voce l'unica risposta vera sarebbe stata «Altro titolo», cioè
+ * chiedere a una persona di dichiarare il proprio titolo come un'eccezione.
+ *
+ * La colonna `titolo_studio` è `text` senza vincoli (misurato in produzione il
+ * 2026-08-15): aggiungere una voce non richiede nessuna migrazione, e i valori
+ * già archiviati non cambiano.
+ */
 export const TITOLI_STUDIO: FormFieldOption[] = [
+  { label: 'Licenza media', value: 'licenza_media' },
   { label: 'Diploma di scuola superiore', value: 'diploma' },
   { label: 'Diploma magistrale / Liceo socio-psico-pedagogico', value: 'magistrale' },
   { label: 'Laurea triennale', value: 'laurea_triennale' },
@@ -154,6 +337,18 @@ export const CANDIDATURA_LIMITI = {
   maxCvMb: LIMITE_UPLOAD_MB,
   /** Caratteri della presentazione libera. */
   maxPresentazione: 1000,
+  /**
+   * Caratteri della posizione scritta a mano (la casella accanto ad «Altro»).
+   *
+   * Cento, e non mille: qui non ci si racconta — per quello c'è la
+   * presentazione libera qui sopra — si nomina un mestiere. «Psicomotricista»
+   * ne misura 15, «tirocinio curricolare in scienze della formazione» 44. Il
+   * numero è ANCHE il `CHECK` della colonna
+   * (`length(posizione_altro) <= 100`): due tetti indipendenti per lo stesso
+   * campo divergono, e a divergere sarebbe il confine fra un rifiuto sotto il
+   * campo e un `23514` che diventa un 500 opaco.
+   */
+  maxPosizioneAltro: 100,
   /** Mesi di conservazione della candidatura NON accolta, se acconsentito. */
   mesiConservazione: 24,
 } as const
@@ -175,6 +370,53 @@ export const INSEGNANTE_FIELDS: FormField[] = [
   // `provincia_residenza` avrebbe spento tutte e tre le cose senza un rosso.
   { id: 'residence_province', type: 'text', label: 'Provincia di residenza', required: false, autocomplete: 'address-level1', db_mapping: 'candidature_insegnanti.residence_province', placeholder: 'Es. NA', validation: { pattern: PROV_PATTERN, min_length: 2, max_length: 2 } },
 
+  // ── LE POSIZIONI, prima domanda del profilo ────────────────────────────────
+  //
+  // Sta PRIMA del titolo di studio, e l'ordine è la domanda che viene prima
+  // nella testa di chi compila: «che lavoro vengo a fare» precede «che titolo
+  // ho». È anche l'ordine che rende leggibile il campo qui sotto — «Altro» non
+  // si capisce se non si è appena letto di che elenco fa parte.
+  //
+  // `type: 'checkbox'` è GIÀ multi-valore: `FieldRenderer` lo rende con un
+  // `Controller` il cui valore è un array di `value` (default `[]`), e
+  // `validateField` — tramite `eVuoto()` — considera vuota una checkbox il cui
+  // valore non è un array o è un array vuoto. Quindi `required: true` significa
+  // già «almeno una posizione», sul client e sul server, con la STESSA funzione.
+  //
+  // ⚠️ E QUI IL DATABASE È D'ACCORDO, a differenza di quanto accadeva con
+  // `gradi`. Il `CHECK` della colonna è `cardinality(posizioni) >= 1`, non
+  // `array_length(posizioni, 1) >= 1`: su un array vuoto `array_length` vale
+  // NULL e un CHECK che vale NULL PASSA (misurato in produzione il 2026-08-10),
+  // mentre `cardinality('{}')` vale `0` e il CHECK FALLISCE. È la stessa regola
+  // scritta due volte, ma stavolta le due scritture coincidono davvero: il
+  // modulo tiene e la tabella pure.
+  //
+  // Resta comunque alla route una difesa che il template non può dare: FILTRARE
+  // i valori ricevuti contro `POSIZIONI_AMMESSE` prima di scrivere.
+  // `validateField` sulla checkbox controlla solo il VUOTO, non l'appartenenza
+  // (il ramo «Selezione non valida» di `validate-fields.ts` è scritto per
+  // `select` e `radio`), e un valore fuori elenco arriverebbe all'INSERT e
+  // prenderebbe `23514`: su un modulo pubblico, un 500 opaco. Lo fa lo `z.enum`
+  // di `POSIZIONI_AMMESSE` in `iscrizione/insegnanti:POST`.
+  { id: 'posizioni', type: 'checkbox', label: 'Per quali posizioni ti proponi', required: true, db_mapping: 'candidature_insegnanti.posizioni', options: POSIZIONI_OPTIONS },
+
+  // ── «ALTRO», e la casella che compare solo quando serve ────────────────────
+  //
+  // `condition` è il motore di `@/lib/forms/conditional.ts`, che esiste da
+  // DL-024 e che fino a oggi in questo template non era mai stato usato:
+  // `operator: 'contains'` su un valore che è un ARRAY confronta elemento per
+  // elemento (`valutaCondizione`, ramo `contains`), quindi la casella compare
+  // esattamente quando «Altro» è spuntato.
+  //
+  // ⚠️ `required: true` NON vuol dire «obbligatorio sempre»: vuol dire
+  // «obbligatorio quando è visibile». Chi valida deve perciò passare i campi
+  // VISIBILI e non l'intero template — sul client E SUL SERVER. È la riga di
+  // `validatePage` che diceva «sul server si passa il template completo»: valeva
+  // finché nessun campo aveva una condizione, e da oggi non vale più. Senza quel
+  // filtro, `iscrizione/insegnanti:POST` rifiuterebbe con «Campo obbligatorio»
+  // OGNI candidatura che non ha spuntato «Altro» — cioè quasi tutte.
+  { id: 'posizione_altro', type: 'text', label: 'Quale posizione', required: true, condition: { field_id: 'posizioni', operator: 'contains', value: 'altro' }, db_mapping: 'candidature_insegnanti.posizione_altro', placeholder: 'Es. psicomotricista', validation: { min_length: 2, max_length: CANDIDATURA_LIMITI.maxPosizioneAltro } },
+
   { id: 'titolo_studio', type: 'select', label: 'Titolo di studio', required: true, db_mapping: 'candidature_insegnanti.titolo_studio', options: TITOLI_STUDIO },
   { id: 'titolo_dettaglio', type: 'text', label: 'Dettaglio del titolo (indirizzo, istituto)', required: false, db_mapping: 'candidature_insegnanti.titolo_dettaglio', placeholder: 'Es. Scienze dell’educazione', validation: { max_length: 200 } },
   // 0-60 sono gli stessi estremi del CHECK in tabella
@@ -182,37 +424,27 @@ export const INSEGNANTE_FIELDS: FormField[] = [
   // qui il rifiuto arriva sotto il campo, lì è l'ultima rete.
   { id: 'anni_esperienza', type: 'number', label: 'Anni di esperienza', required: false, db_mapping: 'candidature_insegnanti.anni_esperienza', placeholder: 'Es. 3', validation: { min: 0, max: 60 } },
 
-  // ── I GRADI, e le DUE difese che tocca alla route ──────────────────────────
+  // ── ⚠️ QUI C'ERA IL CAMPO `gradi`, E NON È STATO RESO FACOLTATIVO: È SPARITO ─
   //
-  // Quello che il modulo fa da sé. `type: 'checkbox'` è GIÀ multi-valore:
-  // `FieldRenderer` lo rende con un `Controller` il cui valore è un array di
-  // `value` (default `[]`), e `validateField` — tramite `eVuoto()` — considera
-  // vuota una checkbox il cui valore non è un array o è un array vuoto. Quindi
-  // `required: true` significa già «almeno una fascia», sul client e sul server,
-  // con la STESSA funzione, senza una riga di validazione nuova.
+  // Chiedeva «Per quali fasce ti proponi» con tre caselle obbligatorie, e dava
+  // per scontato che chi compila sia un'insegnante. Dal 2026-08-15 non lo è più:
+  // il modulo accoglie anche collaboratrici, cuoche, segretarie e un «Altro»
+  // scritto a mano. Per tutte quelle una fascia d'età non esiste, e un campo
+  // obbligatorio che non le riguarda è un modulo che non si può inviare.
   //
-  // ⚠️ Quello che il DATABASE NON fa, contrariamente a quanto questo commento ha
-  // dichiarato fino al 2026-08-10. Il CHECK in tabella è
-  // `array_length(gradi, 1) >= 1`, e su un array vuoto `array_length` vale NULL:
-  // un CHECK che vale NULL PASSA. Misurato in produzione, non dedotto:
-  //     select (array_length('{}'::text[],1) >= 1)                    →  NULL
-  //     create temp table t (g text[] not null default '{}'
-  //                          check (array_length(g,1) >= 1));
-  //     insert into t default values;                                 →  1 riga, `{}`
-  // Sommato al `gradi ... not null default '{}'` della migrazione, il confine dei
-  // due non coincide affatto: il modulo tiene, la tabella no.
+  // Renderlo `required: false` sarebbe stato il rimedio sbagliato: sarebbe
+  // diventato la casella che le insegnanti dimenticano di spuntare, e la
+  // segreteria l'avrebbe scoperto aprendo una candidatura senza fascia — cioè lo
+  // stesso difetto di prima, spostato dal modulo alla scrivania. La fascia è
+  // stata FUSA nella posizione: «Insegnante — Nido (0-3)» dice tutte e due le
+  // cose insieme, e `gradiDallePosizioni()` la ricava.
   //
-  // Perciò la route `POST /api/iscrizione/insegnanti` DEVE, e non è facoltativo:
-  //   1. passare `gradi` SEMPRE ESPLICITO nell'INSERT — ometterlo non fa errore,
-  //      fa entrare una candidatura con zero fasce, in silenzio, che la segreteria
-  //      non sa a chi smistare;
-  //   2. FILTRARE i valori ricevuti contro `GRADI_OPTIONS` prima di scrivere —
-  //      `validateField` sulla checkbox controlla solo il VUOTO, non
-  //      l'appartenenza (il ramo «Selezione non valida» di `validate-fields.ts` è
-  //      scritto per `select` e `radio`), e un valore fuori enum arriva
-  //      all'INSERT e prende `22P02`: su un modulo pubblico, un 500 opaco.
-  // Entrambe le difese sono sorvegliate in `__tests__/lib/insegnanti-template.test.ts`.
-  { id: 'gradi', type: 'checkbox', label: 'Per quali fasce ti proponi', required: true, db_mapping: 'candidature_insegnanti.gradi', options: GRADI_OPTIONS },
+  // LA COLONNA `gradi` RESTA, e resta popolata: è ciò che
+  // `admin/candidature-insegnanti:PATCH` travasa in `utenti.gradi` quando
+  // approva. Cambia CHI la scrive — non più il client, che potrebbe dichiarare
+  // qualunque cosa, ma la route, che la deriva dalle posizioni già filtrate.
+  // Cioè: il valore non arriva più da fuori affatto, e il `22P02` dell'enum
+  // diventa inesprimibile invece che difeso.
 
   { id: 'disponibilita', type: 'select', label: 'Disponibilità', required: false, db_mapping: 'candidature_insegnanti.disponibilita', options: DISPONIBILITA },
   { id: 'note', type: 'textarea', label: 'Presentati in poche righe', required: false, db_mapping: 'candidature_insegnanti.note', placeholder: 'Raccontaci il tuo percorso e perché ti piacerebbe lavorare con noi', validation: { max_length: CANDIDATURA_LIMITI.maxPresentazione } },

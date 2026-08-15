@@ -530,8 +530,19 @@ describe('email/send', () => {
 
     it('la PASSWORD TEMPORANEA non finisce più nei log (il vecchio console.log stampava il testo)', async () => {
         vi.stubEnv('RESEND_API_KEY', '');
-        const { sendEmailDetailed, credentialsEmailBody } = await carica();
-        const text = credentialsEmailBody('Maria', 'mamma@example.com', 'Segreta.2026!');
+        const { sendEmailDetailed } = await carica();
+        // Il corpo si costruisce col generatore vero, non con una stringa
+        // inventata qui: se un domani il template smettesse di scrivere la
+        // password nel testo, questa prova diventerebbe verde a vuoto.
+        const { messaggioCredenziali } = await import('@/lib/email/messaggi/credenziali');
+        const { contestoSenzaSede } = await import('@/lib/email/contesto');
+        const text = messaggioCredenziali(
+            { nome: 'Maria', email: 'mamma@example.com', password: 'Segreta.2026!', occasione: 'iscrizione-approvata' },
+            contestoSenzaSede(),
+        ).testo;
+        // Controllo POSITIVO: la password DEVE stare nel corpo (è il punto
+        // dell'email). Ciò che si misura sotto è che non finisca nei LOG.
+        expect(text).toContain('Segreta.2026!');
 
         await sendEmailDetailed({ to: 'mamma@example.com', subject: 'Credenziali', text });
 

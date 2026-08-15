@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import { axe, toHaveNoViolations } from 'jest-axe'
 import itPublic from '../../messages/it/public.json'
+import { INSEGNANTE_FIELDS, POSIZIONI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_C } from '../fixtures/sedi'
 
 /**
@@ -74,6 +75,20 @@ function mockSedi(sedi: { id: string; nome: string }[]): void {
 
 const avanti = () => fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
+/**
+ * L'etichetta della posizione con quel `value`, LETTA dal template.
+ *
+ * Dal 2026-08-15 il passo «profilo» non chiede più le fasce d'età: chiede le
+ * POSIZIONI, e la casella che si spunta per attraversarlo non si chiama più «Nido
+ * (0-3)» ma «Insegnante — Nido (0-3)». ⚠️ Quel trattino è un EM DASH (U+2014):
+ * ribattuto a mano con un trattino corto dà un selettore che non trova niente.
+ */
+function posizione(valore: string): string {
+  const o = POSIZIONI_OPTIONS.find((x) => x.value === valore)
+  if (!o) throw new Error(`posizione «${valore}» assente da POSIZIONI_OPTIONS`)
+  return String(o.label)
+}
+
 /** Compila «I tuoi dati» e passa al profilo. */
 async function passoDati(): Promise<void> {
   await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
@@ -89,7 +104,7 @@ async function passoDati(): Promise<void> {
 async function passoProfilo(): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Nido (0-3)' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: posizione('insegnante_nido') }))
   avanti()
 }
 
@@ -290,6 +305,83 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
       expect(campo, `il campo ${id} non è reso`).not.toBeNull()
       expect(campo, `${id}: scopo dichiarato`).toHaveAttribute('autocomplete', scopo)
     }
+  })
+
+  /*
+   * ─── IL PASSO «PROFILO» È CAMBIATO IL 2026-08-15, E CON LUI CIÒ CHE SI ASCOLTA ─
+   *
+   * Le tre caselle delle fasce d'età sono diventate SETTE posizioni, ed è la
+   * domanda principale del modulo; accanto è comparso il campo del curriculum, che
+   * è un `<input type="file">`. Sono le due forme che un modulo di questo tipo
+   * sbaglia più spesso: sette caselle senza un gruppo dichiarato si annunciano
+   * come sette domande separate (chi ascolta sente «Cuoca / aiuto cucina, casella
+   * di controllo» senza aver mai sentito la domanda), e un controllo di
+   * caricamento nascosto con `display: none` esce dall'albero di accessibilità e
+   * dall'ordine di tabulazione — cioè un allegato che si può consegnare solo col
+   * mouse.
+   *
+   * I numeri qui sotto sono LETTI dal template, non ribattuti: se un domani si
+   * aggiunge una posizione, questo caso continua a contarle tutte.
+   */
+  it('le SETTE posizioni sono un gruppo solo, e il curriculum resta raggiungibile da tastiera', async () => {
+    mockSedi([GAMMA])
+    render(<CandidaturaInsegnanteWizard />)
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    // 1 · Le posizioni sono un `group` con il suo nome, e le caselle stanno tutte
+    //     lì dentro: la domanda si sente UNA volta, non sette.
+    const gruppo = screen.getByRole('group', { name: /Per quali posizioni ti proponi/ })
+    const caselle = within(gruppo).getAllByRole('checkbox')
+    expect(caselle).toHaveLength(POSIZIONI_OPTIONS.length)
+    expect(POSIZIONI_OPTIONS).toHaveLength(7)
+    for (const o of POSIZIONI_OPTIONS) {
+      expect(
+        within(gruppo).getByRole('checkbox', { name: String(o.label) }),
+        `la posizione «${o.value}» non ha una casella col suo nome`,
+      ).toBeInTheDocument()
+    }
+
+    // 2 · Il curriculum: un `<input type="file">` vero, nell'albero e nel Tab.
+    //     `sr-only` e non `hidden` — è la differenza fra «fuori dalla vista» e
+    //     «fuori dall'interfaccia».
+    const cv = document.getElementById('cv_path') as HTMLInputElement | null
+    expect(cv, 'il campo del curriculum non è reso').not.toBeNull()
+    expect(cv!.type).toBe('file')
+    expect(cv!.hidden).toBe(false)
+    expect(cv!.getAttribute('class') ?? '').toContain('sr-only')
+    // Il nome accessibile porta l'etichetta del campo, non solo «Seleziona un
+    // file»: due caricamenti sulla stessa schermata sarebbero altrimenti
+    // indistinguibili.
+    expect(cv).toHaveAccessibleName(/Curriculum/)
+  })
+
+  /*
+   * LA PRIMA LOGICA CONDIZIONALE DI QUESTO MODULO, dal lato di chi ascolta.
+   *
+   * Spuntando «Altro (specifica qui sotto)» compare una casella di testo
+   * OBBLIGATORIA che un istante prima non esisteva. È lo stato del passo «profilo»
+   * che nessun controllo automatico attraversava — `jest-axe` più sotto lo
+   * esegue col campo NON visibile — ed è quello in cui un campo può nascere senza
+   * etichetta o senza il suo messaggio d'errore agganciato.
+   */
+  it('spuntando «Altro» il campo che compare ha la sua etichetta, e la schermata regge ad axe', async () => {
+    mockSedi([GAMMA])
+    const { container } = render(<CandidaturaInsegnanteWizard />)
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    const condizionato = INSEGNANTE_FIELDS.find((f) => f.id === 'posizione_altro')
+    expect(condizionato, '«posizione_altro» è sparito dal template').toBeDefined()
+    // Prima della spunta non esiste: una domanda che non è stata fatta non ha un
+    // campo da riempire.
+    expect(document.getElementById('posizione_altro')).toBeNull()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: posizione('altro') }))
+
+    await waitFor(() => expect(document.getElementById('posizione_altro')).not.toBeNull())
+    expect(screen.getByLabelText(new RegExp(String(condizionato!.label)))).toBeInTheDocument()
+    expect(await axe(container, axeOpts)).toHaveNoViolations()
   })
 
   it('il campo in errore è marcato `aria-invalid` e collegato al proprio messaggio', async () => {

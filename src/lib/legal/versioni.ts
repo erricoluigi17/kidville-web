@@ -73,8 +73,32 @@
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
 // invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// 2026-08-15 — SOLO l'informativa privacy. Aggiunta la voce di conservazione per
+// il «curriculum caricato e mai inviato»: ventiquattro ore.
+//
+// PERCHÉ È UNA MODIFICA SOSTANZIALE, e non un ritocco redazionale: dichiara il
+// termine di un trattamento che fino al 14/08 non poteva ESISTERE. Il campo del
+// curriculum era nel template ma il modulo non lo rendeva, perché nessuna rotta
+// di caricamento produceva un percorso che il server accettasse: non c'era un
+// solo file sotto quel prefisso (misurato in produzione, 0 oggetti). Dal 15/08 il
+// curriculum si allega davvero, e si allega PRIMA che la candidatura esista —
+// quindi esiste un file che è dato personale trattato e che nessuna riga nomina.
+// L'art. 13 §2 lett. a pretende che il suo termine sia comunicato, e i dodici
+// mesi della candidatura non lo coprono: quel file una valutazione non ce l'ha.
+//
+// PERCHÉ ALZARLA NON È UN FORMALISMO, ed è la stessa ragione del 10 e dell'11
+// agosto: `VERSIONE_PRIVACY` finisce dentro la PROVA di presa visione di ogni
+// candidatura (`iscrizione/insegnanti/route.ts` →
+// `consents_log.versione_informativa`), e proprio le candidature raccolte da oggi
+// sono quelle che un curriculum lo portano davvero. Lasciandola a '2026-08-11'
+// ogni riga avrebbe attestato la presa visione di un documento che non diceva
+// niente sul file appena caricato.
+//
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
+// invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-08-11'
+export const VERSIONE_PRIVACY = '2026-08-15'

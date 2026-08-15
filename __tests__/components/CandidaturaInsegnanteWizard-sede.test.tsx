@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
+import { POSIZIONI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_C } from '../fixtures/sedi'
 
 /**
@@ -41,6 +42,26 @@ const GAMMA = { id: SEDE_C, nome: NOME_SEDE_C }
 
 /** Il primo campo del modulo: la sua presenza dice «il modulo è cominciato». */
 const PRIMO_CAMPO = 'Es. Maria'
+
+/**
+ * L'etichetta della posizione con quel `value`, LETTA dal template.
+ *
+ * Dal 2026-08-15 il passo «profilo» non chiede più le fasce d'età: chiede le
+ * POSIZIONI, e la casella che questo file spunta per attraversare il modulo non
+ * si chiama più «Infanzia (3-6)» ma «Insegnante — Infanzia (3-6)». ⚠️ Quel
+ * trattino è un EM DASH (U+2014): ribattuto a mano con un trattino corto dà un
+ * selettore che non trova niente, e il rosso che ne esce parla del wizard invece
+ * che di questa riga. Qui il modulo si attraversa, non si collauda: la casella
+ * serve solo a superare il passo, e ciò che questo file misura sono le sedi.
+ */
+function posizione(valore: string): string {
+  const o = POSIZIONI_OPTIONS.find((x) => x.value === valore)
+  if (!o) throw new Error(`posizione «${valore}» assente da POSIZIONI_OPTIONS`)
+  return String(o.label)
+}
+
+/** La posizione che si spunta per attraversare il passo «profilo». */
+const POSIZIONE_SCELTA = posizione('insegnante_infanzia')
 
 const fetchMock = vi.fn()
 const corpiInviati: unknown[] = []
@@ -116,7 +137,7 @@ async function compilaFinoAlRiepilogo(): Promise<void> {
 
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'laurea_triennale' } })
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() =>
@@ -469,7 +490,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toHaveValue('Ines'))
     expect(screen.getByPlaceholderText('Es. mario.rossi@email.com')).toHaveValue('aspirante@example.test')
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' })).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA })).toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await waitFor(() =>
       expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeChecked(),
@@ -595,7 +616,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toHaveValue('Ines'))
     expect(screen.getByPlaceholderText('Es. mario.rossi@email.com')).toHaveValue('aspirante@example.test')
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' })).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA })).toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await waitFor(() =>
       expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeChecked(),

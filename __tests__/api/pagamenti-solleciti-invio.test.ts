@@ -4,6 +4,10 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   sendEmail: vi.fn(async (opts: { to: string; subject: string; text: string }) => Boolean(opts)),
+  // Dal 2026-08-15 il sollecito manda anche l'HTML, quindi passa da
+  // `sendEmailDetailed`. Il mock DEVE esporre entrambe: `vi.mock` sostituisce
+  // il modulo INTERO, e una funzione dimenticata qui diventa un 500 opaco.
+  sendEmailDetailed: vi.fn(async (opts: { to: string; subject: string; text: string; html?: string }) => ({ ok: Boolean(opts), error: null })),
   enqueueNotifiche: vi.fn(async () => {}),
   pagamenti: [] as Record<string, unknown>[],
   sollecitiEsistenti: [] as Record<string, unknown>[],
@@ -17,7 +21,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/email/send', () => ({ sendEmail: h.sendEmail }))
+vi.mock('@/lib/email/send', () => ({ sendEmail: h.sendEmail, sendEmailDetailed: h.sendEmailDetailed }))
 vi.mock('@/lib/push/enqueue', () => ({ enqueueNotifiche: h.enqueueNotifiche }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: vi.fn(async () => ['sc-1']) }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -94,7 +98,7 @@ describe('POST /api/pagamenti/solleciti', () => {
     // Importi in formato it-IT (virgola decimale), MAI in stile US col punto.
     expect(j.data[0].corpo).toContain('150,00')
     expect(j.data[0].corpo).not.toContain('150.00')
-    expect(h.sendEmail).not.toHaveBeenCalled()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
     expect(h.inserts).toHaveLength(0)
   })
 
@@ -105,8 +109,8 @@ describe('POST /api/pagamenti/solleciti', () => {
     h.pagamenti[0].importo_pagato = 0
     const res = await POST(post({ pagamento_ids: [PID] }))
     expect(res.status).toBe(200)
-    expect(h.sendEmail).toHaveBeenCalledTimes(1)
-    const text = (h.sendEmail.mock.calls[0][0] as { text: string }).text
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
+    const text = (h.sendEmailDetailed.mock.calls[0][0] as { text: string }).text
     expect(text).toContain('1.234,50')
     expect(text).not.toContain('1234.50')
     expect(text).not.toContain('1234.5')
@@ -115,8 +119,8 @@ describe('POST /api/pagamenti/solleciti', () => {
   it('invio: email al genitore, log a registro e ultimo_sollecito_il aggiornato', async () => {
     const res = await POST(post({ pagamento_ids: [PID] }))
     expect(res.status).toBe(200)
-    expect(h.sendEmail).toHaveBeenCalledTimes(1)
-    expect(h.sendEmail.mock.calls[0][0]).toMatchObject({ to: 'genitore@test.it' })
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
+    expect(h.sendEmailDetailed.mock.calls[0][0]).toMatchObject({ to: 'genitore@test.it' })
     expect(h.inserts.some((i) => i.table === 'solleciti')).toBe(true)
     expect(h.updates.some((u) => u.table === 'pagamenti' && u.row.ultimo_sollecito_il)).toBe(true)
     expect(h.enqueueNotifiche).toHaveBeenCalled()
@@ -128,8 +132,8 @@ describe('POST /api/pagamenti/solleciti', () => {
   it('causale: il corpo email contiene la causale completa (descrizione, minore, CF, sede)', async () => {
     const res = await POST(post({ pagamento_ids: [PID] }))
     expect(res.status).toBe(200)
-    expect(h.sendEmail).toHaveBeenCalledTimes(1)
-    const text = (h.sendEmail.mock.calls[0][0] as { text: string }).text
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
+    const text = (h.sendEmailDetailed.mock.calls[0][0] as { text: string }).text
     expect(text).toContain('Retta Giugno - per il minore Mario Rossi - TSTTST00T00T000T - GIUGLIANO')
     expect(text.toLowerCase()).toContain('causale')
   })
@@ -155,7 +159,7 @@ describe('POST /api/pagamenti/solleciti', () => {
     const j = await res.json()
     expect(j.data[0].ok).toBe(false)
     expect(j.data[0].motivo).toContain('cadenza')
-    expect(h.sendEmail).not.toHaveBeenCalled()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('saldato → saltato', async () => {
@@ -164,7 +168,7 @@ describe('POST /api/pagamenti/solleciti', () => {
     const res = await POST(post({ pagamento_ids: [PID] }))
     const j = await res.json()
     expect(j.data[0].ok).toBe(false)
-    expect(h.sendEmail).not.toHaveBeenCalled()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('403 non staff', async () => {
@@ -185,8 +189,8 @@ describe('POST /api/pagamenti/solleciti', () => {
     const j = await res.json()
     expect(j.data[0].ok).toBe(true)
     expect((j.data[0].destinatari as { id: string }[]).map((d) => d.id)).toEqual(['ad-1', 'ad-2'])
-    expect(h.sendEmail).toHaveBeenCalledTimes(2)
-    const to = h.sendEmail.mock.calls.map((c) => c[0].to)
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(2)
+    const to = h.sendEmailDetailed.mock.calls.map((c) => c[0].to)
     expect(to).toEqual(expect.arrayContaining(['ad1@test.it', 'ad2@test.it']))
   })
 
@@ -198,7 +202,7 @@ describe('POST /api/pagamenti/solleciti', () => {
     const j = await res.json()
     expect(j.data[0].ok).toBe(false)
     expect(j.data[0].motivo).toContain('destinatario')
-    expect(h.sendEmail).not.toHaveBeenCalled()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
   })
 })
 
@@ -216,7 +220,7 @@ describe('POST /api/pagamenti/solleciti/run', () => {
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(j.inviati).toBe(0)
-    expect(h.sendEmail).not.toHaveBeenCalled()
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
     // il run aggiorna comunque gli scaduti (sostituisce genera_solleciti SQL)
     expect(h.updates.some((u) => u.table === 'pagamenti' && u.row.stato === 'scaduto')).toBe(true)
   })
@@ -240,8 +244,8 @@ describe('POST /api/pagamenti/solleciti/run', () => {
     expect(j.esaminati).toBe(2)
     // solo il pagamento `singolo` è sollecitato; il contenitore `padre` è escluso
     expect(j.inviati).toBe(1)
-    expect(h.sendEmail).toHaveBeenCalledTimes(1)
-    expect(h.sendEmail.mock.calls[0][0]).toMatchObject({ to: 'genitore@test.it' })
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
+    expect(h.sendEmailDetailed.mock.calls[0][0]).toMatchObject({ to: 'genitore@test.it' })
     expect(h.enqueueNotifiche).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,6 +1,8 @@
 import { createHash, createHmac, randomInt, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { sendEmail } from '@/lib/email/send'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede } from '@/lib/email/contesto'
+import { messaggioCodiceVerifica, type OperazioneOtp } from '@/lib/email/messaggi/codice-verifica'
 import { logEvento } from '@/lib/logging/logger'
 
 /**
@@ -121,27 +123,59 @@ export async function getUserEmail(supabase: SupabaseClient, userId: string): Pr
 }
 
 /**
+ * Email E SEDE dell'utente, in una lettura sola.
+ *
+ * La sede serve perché l'email del codice nomina il plesso due volte — «avvisa
+ * la segreteria di …» e il piè di pagina. Con tre plessi, «avvisa la segreteria
+ * di Kidville» è la stessa frase vaga che l'audit multi-sede ha passato
+ * settimane a togliere dalle altre email. Costa una colonna in più nella
+ * `select` che c'era già: zero query aggiuntive.
+ */
+async function emailESede(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<{ email: string | null; scuolaId: string | null }> {
+  const { data } = await supabase.from('utenti').select('email, scuola_id').eq('id', userId).maybeSingle()
+  const r = data as { email?: string | null; scuola_id?: string | null } | null
+  return { email: r?.email ?? null, scuolaId: r?.scuola_id ?? null }
+}
+
+/**
  * Genera e invia un OTP all'email del genitore/utente. Ritorna i parametri da
  * rispedire in verifica (più devCode in sviluppo, quando non c'è provider email).
  */
 export async function sendOtp(
   supabase: SupabaseClient,
   userId: string,
-  opts?: { subject?: string; intro?: string }
+  opts?: { operazione?: OperazioneOtp }
 ): Promise<{ email: string; expiry: number; ticket: string; sent: boolean; devCode?: string } | { error: string }> {
-  const email = await getUserEmail(supabase, userId)
+  const { email, scuolaId } = await emailESede(supabase, userId)
   if (!email) return { error: 'Email non trovata per l’utente' }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
   const expiry = Date.now() + OTP_TTL_MS
   const ticket = makeTicket(email, code, expiry)
 
-  const intro = opts?.intro ?? 'Il tuo codice di conferma è'
-  const sent = await sendEmail({
+  // Un'unica email per tutte le occasioni: cambia solo `{operazione}`, che
+  // completa la frase «Il tuo codice per … è». Prima ogni chiamante portava il
+  // proprio `subject` e la propria `intro`, ed erano sei formulazioni diverse
+  // per lo stesso identico gesto.
+  //
+  // I minuti si dichiarano dal TTL vero: due copie dello stesso numero
+  // divergono, e qui divergere vuol dire promettere dieci minuti su un codice
+  // che ne dura cinque.
+  const sede = await risolviContestoSede(supabase, scuolaId, 'auth/otp:invio')
+  const messaggio = messaggioCodiceVerifica({
+    codice: code,
+    operazione: opts?.operazione ?? 'firmare il modulo',
+    minuti: Math.round(OTP_TTL_MS / 60_000),
+  }, sede)
+  const sent = (await sendEmailDetailed({
     to: email,
-    subject: opts?.subject ?? 'Codice di conferma — Kidville',
-    text: `${intro}: ${code}\n\nIl codice è valido per 10 minuti.`,
-  })
+    subject: messaggio.oggetto,
+    text: messaggio.testo,
+    html: messaggio.html,
+  })).ok
 
   return {
     email,

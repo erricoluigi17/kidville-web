@@ -198,6 +198,19 @@ export const EVENTI_PERSISTITI = new Set([
     // `__tests__/lib/insegnanti-template.test.ts`, che diventa rosso in ENTRAMBE
     // le direzioni: evento promosso senza battito, e battito senza promozione.
     'candidatura',
+    // `iscrizione` entra qui insieme alla ricevuta che parte alla famiglia, per
+    // la stessa ragione di `candidatura` e con la stessa forma. Il modulo
+    // pubblico d'iscrizione non ha una schermata che si riempie a vista, e una
+    // famiglia che NON riceve la ricevuta non telefona per dirlo: se ne sta
+    // zitta, esattamente come ha fatto per 381 domande. Senza persistenza,
+    // «nessuna riga» significherebbe insieme «non si iscrive nessuno» e «la
+    // ricevuta non parte più» — l'ambiguità che il logging di questo repo
+    // esiste per rompere.
+    //
+    // Sono cinque righe per domanda al massimo, su due o tre domande al giorno
+    // (misurato il 2026-08-15: 18 negli ultimi sette giorni): il volume non è
+    // un argomento contro.
+    'iscrizione',
     // `personale` entra con la route che porta il battito, per la stessa ragione e
     // con lo stesso rischio: il ramo felice di `POST /api/iscrizione/personale` emette
     // `logEvento('personale','info',…)` con `esito: 'pratica-ricevuta'`, ed è la sola

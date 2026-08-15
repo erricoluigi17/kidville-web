@@ -35,10 +35,7 @@ export const POST = withRoute('parent/primaria/note/firma/otp:POST', async (requ
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const res = await sendOtp(supabase, userId, {
-      subject: 'Codice di conferma presa visione nota — Kidville',
-      intro: 'Il tuo codice per confermare la presa visione della nota è',
-    })
+    const res = await sendOtp(supabase, userId, { operazione: 'confermare la presa visione della nota' })
     if ('error' in res) return NextResponse.json({ error: res.error }, { status: 400 })
 
     const { ip, userAgent } = extractRequestMeta(request)

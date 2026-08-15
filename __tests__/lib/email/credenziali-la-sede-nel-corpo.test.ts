@@ -1,0 +1,166 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { DBFinto } from '../../fixtures/finto-supabase'
+import { creaFintoSupabase } from '../../fixtures/finto-supabase'
+import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../../fixtures/sedi'
+
+// =============================================================================
+// W4-A / R90 — «Kidville» non è il nome di una scuola: è il nome di tre.
+//
+// ─── DA DOVE VIENE QUESTO FILE ──────────────────────────────────────────────
+// Sostituisce `__tests__/lib/email-credenziali-sede.test.ts`, che misurava la
+// stessa cosa su `credentialsEmailBody` — la funzione che scriveva l'email delle
+// credenziali in testo semplice, e che il 2026-08-15 è stata sostituita dal
+// generatore comune.
+//
+// Le FRASI che quel test cercava («la tua iscrizione a …», «Lo staff di …») non
+// esistono più, e non per una revisione di stile: l'email nuova è una sola per
+// genitori e personale insieme, quindi non può dare del «tu» né del «lei», e non
+// può dire «la tua iscrizione» a chi si è candidata per lavorare.
+//
+// L'INTENTO invece è identico, e sopravvive parola per parola nei tre `it` qui
+// sotto — sono gli stessi nomi del test vecchio, di proposito:
+//
+//   · con la sede: la frase la nomina, e la firma anche
+//   · senza la sede: nessuna sede inventata, la frase resta quella generica
+//   · due sedi diverse ⇒ due corpi diversi (è il punto di tutto)
+//
+// Il difetto che difendono è quello vero: con Giugliano, Aversa e Cesa, un
+// genitore che legge solo «Kidville» non sa a quale plesso è stato iscritto suo
+// figlio, e non ha modo di accorgersi se lo hanno registrato in quello sbagliato.
+// =============================================================================
+
+const h = vi.hoisted(() => ({ logEvento: vi.fn() }))
+vi.mock('@/lib/logging/logger', async (importActual) => {
+    const actual = await importActual<typeof import('@/lib/logging/logger')>()
+    return { ...actual, logEvento: h.logEvento }
+})
+
+import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
+import { risolviContestoSede, contestoSenzaSede } from '@/lib/email/contesto'
+import { nomeSede } from '@/lib/scuole/reali'
+
+beforeEach(() => vi.clearAllMocks())
+
+const CREDENZIALI = {
+    nome: 'Maria',
+    email: 'mamma@example.test',
+    password: 'Segreta-finta-2026',
+    occasione: 'iscrizione-approvata',
+} as const
+
+const sedeDi = (nome: string) => ({ ...contestoSenzaSede(nome), indirizzo: 'Via di Prova 1', email: 'prova@example.test' })
+
+describe('messaggioCredenziali — la sede compare nel corpo', () => {
+    it('con la sede: la frase la nomina, e la firma anche', () => {
+        const m = messaggioCredenziali(CREDENZIALI, sedeDi(NOME_SEDE_A))
+        // La frase d'apertura la nomina…
+        expect(m.testo).toContain(`area riservata di ${NOME_SEDE_A}`)
+        // …e il piè di pagina la firma, con l'indirizzo del plesso.
+        expect(m.testo).toContain(NOME_SEDE_A)
+        expect(m.html).toContain(NOME_SEDE_A)
+        // Ciò che serviva prima serve ancora.
+        expect(m.testo).toContain('mamma@example.test')
+        expect(m.testo).toContain('Segreta-finta-2026')
+        expect(m.html).toContain('Segreta-finta-2026')
+    })
+
+    it('senza la sede: nessuna sede inventata, la frase resta quella generica', () => {
+        const m = messaggioCredenziali(CREDENZIALI, contestoSenzaSede())
+        expect(m.testo).toContain('area riservata di Kidville')
+        // Meglio vaga che falsa: nessun plesso viene nominato a caso.
+        for (const plesso of ['Giugliano', 'Aversa', 'Cesa']) {
+            expect(m.testo).not.toContain(plesso)
+            expect(m.html).not.toContain(plesso)
+        }
+    })
+
+    it('due sedi diverse ⇒ due corpi diversi (è il punto di tutto)', () => {
+        const a = messaggioCredenziali(CREDENZIALI, sedeDi(NOME_SEDE_A))
+        const b = messaggioCredenziali(CREDENZIALI, sedeDi(NOME_SEDE_B))
+        expect(a.testo).not.toEqual(b.testo)
+        expect(a.html).not.toEqual(b.html)
+        expect(a.testo).not.toContain(NOME_SEDE_B)
+        expect(b.testo).not.toContain(NOME_SEDE_A)
+    })
+})
+
+describe('nomeSede — il nome si legge, non si deduce', () => {
+    const db = (): DBFinto => ({
+        schools: [
+            { id: SEDE_A, nome: NOME_SEDE_A },
+            { id: SEDE_B, nome: NOME_SEDE_B },
+        ],
+    })
+
+    it('legge il nome della sede richiesta e SOLO di quella', async () => {
+        const d = db()
+        const tabelle: string[] = []
+        expect(await nomeSede(creaFintoSupabase(d, tabelle), SEDE_B, 'test')).toBe(NOME_SEDE_B)
+        expect(tabelle).toEqual(['schools'])
+    })
+
+    it('sede nulla o sconosciuta ⇒ null, senza chiedere niente al database', async () => {
+        const tabelle: string[] = []
+        expect(await nomeSede(creaFintoSupabase(db(), tabelle), null, 'test')).toBeNull()
+        expect(tabelle).toEqual([])
+        expect(await nomeSede(creaFintoSupabase(db(), tabelle), 'sede-che-non-esiste', 'test')).toBeNull()
+    })
+
+    it('lettura in errore ⇒ null E una riga di log: un catch muto è un bug', async () => {
+        const client = creaFintoSupabase(db(), [], {
+            errori: { schools: { code: '08006', message: 'connection failure' } },
+        })
+        expect(await nomeSede(client, SEDE_A, 'test')).toBeNull()
+        expect(h.logEvento).toHaveBeenCalledWith(
+            'multi_sede',
+            'info',
+            expect.objectContaining({ operazione: 'test', esito: 'nome-sede-non-letto' }),
+            expect.anything(),
+        )
+    })
+})
+
+describe('risolviContestoSede — l\'identità del plesso, e cosa fa quando manca', () => {
+    it('sede nota ⇒ nome dal database, recapiti dall\'anagrafica', async () => {
+        const client = creaFintoSupabase({
+            schools: [{ id: SEDE_A, nome: NOME_SEDE_A }],
+            scuole: [{ id: SEDE_A, indirizzo: 'Via di Prova 1, 00000 Prova (PR)', config: { anagrafica: { email: 'prova@example.test', telefono: null } } }],
+        } as DBFinto)
+        const c = await risolviContestoSede(client, SEDE_A, 'test')
+        expect(c.nome).toBe(NOME_SEDE_A)
+        expect(c.indirizzo).toBe('Via di Prova 1, 00000 Prova (PR)')
+        expect(c.email).toBe('prova@example.test')
+        expect(c.telefono).toBeNull()
+    })
+
+    it('sede nulla ⇒ contesto generico, senza toccare il database', async () => {
+        const tabelle: string[] = []
+        const c = await risolviContestoSede(creaFintoSupabase({} as DBFinto, tabelle), null, 'test')
+        expect(c.nome).toBe('Kidville')
+        expect(tabelle).toEqual([])
+    })
+
+    it('anagrafica non leggibile ⇒ il nome resta, i recapiti si omettono, e c\'è una riga', async () => {
+        // PostgREST non lancia: ritorna `{ error }`. Senza il controllo questo
+        // ramo sarebbe muto, e «nessun recapito nelle email» sarebbe
+        // indistinguibile da «anagrafica mai compilata».
+        const client = creaFintoSupabase(
+            // `scuole` va dichiarata anche vuota: il finto database valida le
+            // chiavi di `errori` contro le tabelle che conosce, così un nome
+            // sbagliato non produce un test verde su un errore mai iniettato.
+            { schools: [{ id: SEDE_A, nome: NOME_SEDE_A }], scuole: [] } as DBFinto,
+            [],
+            { errori: { scuole: { code: '08006', message: 'connection failure' } } },
+        )
+        const c = await risolviContestoSede(client, SEDE_A, 'test')
+        expect(c.nome).toBe(NOME_SEDE_A)
+        expect(c.indirizzo).toBeNull()
+        expect(c.email).toBeNull()
+        expect(h.logEvento).toHaveBeenCalledWith(
+            'multi_sede',
+            'info',
+            expect.objectContaining({ esito: 'anagrafica-sede-non-letta' }),
+            expect.anything(),
+        )
+    })
+})

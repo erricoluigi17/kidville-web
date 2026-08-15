@@ -168,6 +168,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
             return qb
           }
         }
+        // `maybeSingle()` serve a `risolviContestoSede`, che dal 2026-08-15
+        // legge nome e recapiti del plesso per il piè di pagina delle email.
+        // Senza questo metodo il client finto lancia, e il cron risponde 500 —
+        // che è esattamente ciò che è successo la prima volta.
+        qb.maybeSingle = async () => {
+          if (tabella === 'schools') return { data: { nome: 'Kidville Prova' }, error: null }
+          if (tabella === 'scuole') return { data: { indirizzo: 'Via di Prova 1', config: { anagrafica: { email: 'prova@example.test' } } }, error: null }
+          return { data: null, error: null }
+        }
         qb.update = (valori: Record<string, unknown>) => ({
           in: (_colonna: string, ids: string[]) => {
             h.sequenza.push('update')

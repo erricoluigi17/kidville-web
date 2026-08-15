@@ -4,8 +4,9 @@ import { z } from 'zod';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertParentInScope, assertUtenteInScope } from '@/lib/auth/scope';
 import { requireEnv } from '@/lib/security/require-env';
-import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
-import { nomeSede } from '@/lib/scuole/reali';
+import { sendEmailDetailed } from '@/lib/email/send';
+import { risolviContestoSede } from '@/lib/email/contesto';
+import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali';
 import { ensureParentIdentity, firstEmail, randomPassword } from '@/lib/auth/parent-identity';
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -178,11 +179,23 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const sedeNome = await nomeSede(admin, sedeId, 'admin/regenerate-credentials:POST');
+  // `sedeNome` resta perché serve anche al PDF; l'email prende il contesto
+  // completo (indirizzo e casella del plesso per il piè di pagina).
+  const sede = await risolviContestoSede(admin, sedeId, 'admin/regenerate-credentials:POST');
+  const sedeNome = sede.nome === 'Kidville' ? null : sede.nome;
+  // Un'unica email di credenziali per tutti e quattro i momenti in cui parte, e
+  // per entrambi i pubblici: questa route serve sia un genitore sia una
+  // dipendente, e prima aveva pure un oggetto diverso dagli altri tre punti
+  // («Le tue credenziali Kidville» invece di «Credenziali di accesso — Kidville»).
+  const messaggio = messaggioCredenziali(
+    { nome, email, password, occasione: 'password-rigenerata' },
+    sede,
+  );
   const invio = await sendEmailDetailed({
     to: email,
-    subject: 'Le tue credenziali Kidville',
-    text: credentialsEmailBody(nome, email, password, sedeNome),
+    subject: messaggio.oggetto,
+    text: messaggio.testo,
+    html: messaggio.html,
   });
   const emailed = invio.ok;
 

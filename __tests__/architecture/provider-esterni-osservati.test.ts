@@ -165,7 +165,9 @@ const HOST_NON_CHIAMATI = new Map<string, string>([
     ['www.w3.org', 'namespace XSD del tracciato FatturaPA (`fatturapa-xml.ts`): è una stringa dentro un XML, non un indirizzo che si contatta.'],
     ['www.youtube-nocookie.com', 'sorgente di un `<iframe>` (`VideoEmbed.tsx`): lo carica il browser del genitore, il nostro server non ci parla.'],
     ['player.vimeo.com', 'idem, l\'altro player video di `VideoEmbed.tsx`.'],
-    ['app.kidville.it', 'il NOSTRO dominio, e nemmeno come indirizzo da contattare: in `layout.tsx` è il ripiego di `metadataBase`, cioè il prefisso con cui Next scrive gli URL assoluti di `og:image` dentro l\'HTML. Nessuna richiesta parte da qui.'],
+    ['app.kidville.it', 'il NOSTRO dominio, e nemmeno come indirizzo da contattare: in `layout.tsx` è il ripiego di `metadataBase` (il prefisso con cui Next scrive gli URL assoluti di `og:image`) e in `src/lib/email/tema.ts` è il ripiego di `appUrl()`, cioè il prefisso dei link dentro l\'HTML delle email. Nessuna richiesta parte da qui.'],
+    ['apps.apple.com', 'la scheda dell\'app sull\'App Store, `<a href>` dentro l\'HTML delle email transazionali (`src/lib/email/tema.ts`): la apre il telefono di chi legge, il nostro server non contatta Apple. Stesso caso dell\'iframe di YouTube qui sopra.'],
+    ['play.google.com', 'la scheda dell\'app su Google Play, `<a href>` dentro l\'HTML delle email (`src/lib/email/tema.ts`): la apre il telefono di chi legge. ⚠️ Al 2026-08-15 questo indirizzo risponde 404 perché l\'app è ancora nel canale di test chiuso — il bottone c\'è per decisione esplicita del titolare, che conosceva il 404 quando ha scelto. È un link che non funziona ancora, non un provider che chiamiamo.'],
 ]);
 
 /**

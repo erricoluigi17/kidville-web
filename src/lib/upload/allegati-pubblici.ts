@@ -107,6 +107,44 @@ export const FINESTRA_UPLOAD_PUBBLICO_MS = 10 * 60 * 1000
 export const TETTO_UPLOAD_PERSONALE = 30
 
 /**
+ * IL TETTO DELLA PORTA DELLE CANDIDATURE — `iscrizione/insegnanti/upload`, e solo quella.
+ *
+ * ── UN NUMERO SUO, per la ragione già imparata due volte ────────────────────
+ * I contatori sono separati per rotta da sempre; a essere condiviso era il NUMERO, ed è
+ * stato il difetto del 12/08/2026 (il fabbisogno del personale che allentava del 50% le
+ * porte delle famiglie). Qui l'aritmetica è la TERZA, ed è la più stretta di tutte.
+ *
+ * ── L'ARITMETICA (2026-08-15) ───────────────────────────────────────────────
+ * Il modulo `/lavora-con-noi` ha UN campo `file`: un curriculum per candidatura, non
+ * due facce e non 4,2 allegati. E gli INVII di quella porta sono già limitati a **3
+ * all'ora per IP** (`iscrizione/insegnanti:POST`), cioè al massimo 3 in questa finestra
+ * di 10 minuti. Il conto è quindi:
+ *
+ *     3 candidature possibili × 2 tentativi a testa = 6 caricamenti
+ *
+ * I due tentativi coprono i due modi in cui il primo caricamento fallisce davvero: il
+ * file troppo grande (413, il tetto della piattaforma è 4 MB) e il formato che il gate
+ * non ammette (415 — il caso tipico è il `.docx`, che è il formato in cui la maggioranza
+ * dei curriculum viaggia e che questo bucket NON accetta).
+ *
+ * ── PERCHÉ NON C'È UN MARGINE, a differenza delle altre due porte ────────────
+ * Perché qui il margine non comprerebbe niente. Un caricamento oltre il sesto non può
+ * diventare una candidatura — l'invio è già chiuso a 3 all'ora — quindi sarebbe soltanto
+ * un oggetto in più dentro `form_attachments`, cioè dentro il bucket che custodisce i
+ * documenti d'iscrizione dei minori. Su una porta ANONIMA che scrive lì, un tetto che
+ * eccede il numero di invii possibili è spazio regalato e nient'altro.
+ *
+ * Chi dovrà alzarlo rifaccia PRIMA il conto degli invii ammessi (`limit: 3` in
+ * `iscrizione/insegnanti:POST`): è quello il numero da cui questo discende, e alzare il
+ * secondo senza il primo non serve a nessuno.
+ *
+ * ⚠️ Stesso avvertimento dei suoi gemelli: il contatore degrada a in-memoria e PER
+ * ISTANZA (vedi `@/lib/security/rate-limit`), quindi in quel caso il tetto effettivo è
+ * N × 6.
+ */
+export const TETTO_UPLOAD_CANDIDATURE = 6
+
+/**
  * I tipi che si possono allegare a una domanda d'iscrizione o a un modulo pubblico.
  *
  * È la lista già in vigore su `public/forms/[token]/upload` — la rotta gemella sullo stesso

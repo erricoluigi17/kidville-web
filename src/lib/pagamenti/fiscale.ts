@@ -37,6 +37,20 @@ export interface FiscaleConfig extends AnagraficaCedente {
     bollo_soglia?: number
     bollo_importo?: number
     dicitura_bollo_ricevuta?: string
+    /**
+     * L'IBAN su cui le famiglie fanno il bonifico.
+     *
+     * NON è un campo del `CedentePrestatore` — infatti non sta su
+     * `AnagraficaCedente` — e non entra nella fattura elettronica: l'emissione lo
+     * ha tolto deliberatamente dal tracciato. Serve alle EMAIL di promemoria e
+     * sollecito, dove il riquadro «Dati per il bonifico» è l'unica cosa che chi
+     * legge deve poter copiare nell'home banking.
+     *
+     * Finché resta vuoto il riquadro mostra importo, causale e intestatario —
+     * cioè esattamente quello che il sollecito manda oggi. Nessuna regressione, e
+     * il giorno che qualcuno lo compila compare da solo.
+     */
+    iban?: string
     // ⚠️ NON esiste `bollo_riaddebito`, ed è una scelta: vedi il blocco qui sotto
     // a `bolloDovuto`. Una chiave rimasta in un `fiscale_config` già salvato viene
     // semplicemente ignorata (il JSONB tollera le chiavi in più).

@@ -66,8 +66,25 @@ const h = vi.hoisted(() => ({
   eccezioneClient: null as unknown,
   /** I percorsi che, INTERROGANDO lo Storage, risultano ANCORA nel bucket. */
   ancoraNelBucket: new Set<string>(),
+  /** Le verifiche PER FILE (`list` con `search`): una per percorso non uscito. */
   verifiche: [] as string[],
   erroreVerifica: null as unknown,
+  // ── LA SPAZZATA DEGLI ORFANI ──
+  // `list()` senza `search`, cioè l'elenco del PREFISSO. Fino al 2026-08-15 questo
+  // doppio non la prevedeva: la chiamata cadeva sul ramo della verifica per file e
+  // veniva contata fra le `verifiche` — è il motivo per cui «un curriculum già
+  // assente» misurava 2 verifiche invece di 1 dopo che la spazzata è entrata in
+  // coda al percorso felice.
+  /** Gli oggetti che lo Storage elenca sotto il prefisso dei curriculum. */
+  elenco: [] as { name?: string | null; id?: string | null; created_at?: string | null }[],
+  /** Le elencazioni del prefisso: cartella e opzioni, come le riceve la Storage API. */
+  elencazioni: [] as { cartella: string; opzioni: unknown }[],
+  /** Cosa risponde `list()` sul prefisso, quando fallisce. */
+  erroreElenco: null as unknown,
+  /** I `cv_path` che il database dichiara reclamati da una riga viva. */
+  reclamati: [] as string[],
+  /** L'errore della `select('cv_path')` della spazzata: è il caso fail-closed. */
+  erroreReclamati: null as unknown,
   eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
   staffNegato: null as unknown,
 }))
@@ -95,12 +112,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
     from: () => {
       const qb: Record<string, unknown> = {}
       qb.select = (colonne: string) => {
+        qb.__colonne = colonne
         h.select.push(colonne)
         return qb
       }
       for (const m of ['lt', 'in', 'eq', 'order', 'limit']) {
         qb[m] = (...argomenti: unknown[]) => {
           h.clausole.push({ metodo: m, argomenti })
+          // Il lotto dell'`IN`: la risposta contiene solo i percorsi CHIESTI, come
+          // fa PostgREST. Un doppio che restituisse tutti i reclamati a ogni lotto
+          // renderebbe verde una route che sbaglia a spezzare i lotti.
+          if (m === 'in') qb.__lotto = argomenti[1]
           return qb
         }
       }
@@ -116,8 +138,23 @@ vi.mock('@/lib/supabase/server-client', () => ({
           return Promise.resolve({ error: h.erroreDelete, count })
         },
       })
-      qb.then = (res: (v: unknown) => unknown) =>
-        Promise.resolve(h.letture.shift() ?? { data: h.righe, error: h.erroreLettura }).then(res)
+      qb.then = (res: (v: unknown) => unknown) => {
+        // DUE letture diverse passano di qui, e vanno tenute separate: quella delle
+        // candidature scadute (tutte le colonne) e quella della spazzata, che chiede
+        // la SOLA `cv_path` per sapere quali curriculum una riga nomina ancora. Con
+        // una coda sola la seconda consumerebbe le risposte preparate per la prima.
+        if (qb.__colonne === 'cv_path') {
+          const lotto = new Set((qb.__lotto as string[] | undefined) ?? [])
+          return Promise.resolve(
+            h.erroreReclamati
+              ? { data: null, error: h.erroreReclamati }
+              : { data: h.reclamati.filter((p) => lotto.has(p)).map((cv_path) => ({ cv_path })), error: null },
+          ).then(res)
+        }
+        return Promise.resolve(
+          h.letture.shift() ?? { data: h.righe, error: h.erroreLettura },
+        ).then(res)
+      }
       return qb
     },
     storage: {
@@ -128,8 +165,18 @@ vi.mock('@/lib/supabase/server-client', () => ({
             h.removeRisposta ?? { data: percorsi.map((p) => ({ name: p })), error: null },
           )
         },
+        // ⚠️ `list()` serve DUE scopi opposti, e confonderli è ciò che ha reso rosso
+        // questo file quando la spazzata degli orfani è entrata in coda al percorso
+        // felice: `rimuoviEVerifica` chiede di UN percorso passando `search`, la
+        // spazzata ELENCA il prefisso e `search` non lo passa. Il doppio li distingue
+        // sullo stesso parametro su cui li distingue la Storage API.
         list: (cartella: string, opzioni?: { search?: string }) => {
-          const nome = opzioni?.search ?? ''
+          if (typeof opzioni?.search !== 'string') {
+            h.elencazioni.push({ cartella, opzioni })
+            if (h.erroreElenco) return Promise.resolve({ data: null, error: h.erroreElenco })
+            return Promise.resolve({ data: h.elenco, error: null })
+          }
+          const nome = opzioni.search
           h.verifiche.push(`${cartella}|${nome}`)
           if (h.erroreVerifica) return Promise.resolve({ data: null, error: h.erroreVerifica })
           const completo = cartella ? `${cartella}/${nome}` : nome
@@ -168,8 +215,22 @@ function meseFa(n: number): string {
 }
 
 /**
- * Una candidatura. Il `cv_path` porta il COGNOME nel nome del file, come in
- * produzione: serve a provare che quel nome non finisce mai in un log.
+ * Una candidatura, col `cv_path` NELLA FORMA CHE IL PRODOTTO PRODUCE DAVVERO.
+ *
+ * ⚠️ Fino al 2026-08-15 questo helper scriveva `candidature/<id>/cv-rossi.pdf`, con
+ * una barra dopo il prefisso e il cognome dentro il nome del file. Era la forma che
+ * si immaginava quando nessuna rotta di caricamento esisteva; da quando esiste, il
+ * percorso è `candidature/<uuid>-cv.<ext>` e il nome scelto dal browser non
+ * sopravvive alla richiesta — `percorsoCvAmmesso` (src/lib/candidature/percorso-cv.ts)
+ * RIFIUTA la forma vecchia. Un fixture che usa una forma che il prodotto non genera
+ * più mette alla prova un caso che non può accadere, e smette di mettere alla prova
+ * quello che accade.
+ *
+ * Il cognome resta fuori dal percorso perché il prodotto lo tiene fuori: la prova che
+ * «il nome del file non finisce nei log» si è spostata dove nasce, cioè nel collaudo
+ * della rotta di caricamento (`__tests__/api/candidature-upload.test.ts`). Qui si
+ * prova che nei log non finisce il PERCORSO, che è la chiave con cui si firma un
+ * oggetto di un bucket privato.
  */
 const candidatura = (
   id: string,
@@ -179,10 +240,46 @@ const candidatura = (
   stato: 'pending',
   creata_il: meseFa(18),
   evasa_il: null,
-  cv_path: `candidature/${id}/cv-rossi.pdf`,
+  cv_path: `candidature/${id}-cv.pdf`,
   consents_log: null,
   ...extra,
 })
+
+/**
+ * Le costanti della spazzata, LETTE dalla route invece che ribattute: se il giorno
+ * in cui la soglia delle 24 ore si sposta questi test restassero verdi con il numero
+ * vecchio, misurerebbero una regola che non è più quella applicata.
+ */
+const ORE_ORFANO = Number(SORGENTE_ROUTE.match(/ORE_CURRICULUM_ORFANO\s*=\s*(\d+)/)![1])
+const TETTO_ELENCO = Number(SORGENTE_ROUTE.match(/TETTO_ELENCO_ORFANI\s*=\s*(\d+)/)![1])
+const LOTTO_VERIFICA = Number(SORGENTE_ROUTE.match(/LOTTO_VERIFICA_ORFANI\s*=\s*(\d+)/)![1])
+
+/** Una data di `n` ore fa. */
+const oreFa = (n: number): string => new Date(Date.now() - n * 60 * 60 * 1000).toISOString()
+
+type OggettoStorage = { name?: string | null; id?: string | null; created_at?: string | null }
+
+/**
+ * Un oggetto come lo elenca la Storage API sotto il prefisso: nome RELATIVO alla
+ * cartella, `id` valorizzato (le voci-cartella ce l'hanno `null`) e `created_at`.
+ * Nasce già vecchio — un'ora oltre la soglia — perché il caso da provare è quello.
+ */
+const oggetto = (nome: string, extra: OggettoStorage = {}): OggettoStorage => ({
+  name: nome,
+  id: `og-${nome}`,
+  created_at: oreFa(ORE_ORFANO + 1),
+  ...extra,
+})
+
+/**
+ * Due nomi nella forma che `costruisciPercorsoCv` produce: uuid, `-cv`, estensione.
+ * Il cognome lì dentro non c'è per costruzione — ma il percorso resta la chiave con
+ * cui si firma il curriculum di una persona, e nei log non deve comparire lo stesso.
+ */
+const CV_ORFANO = '11111111-1111-4111-8111-111111111111-cv.pdf'
+const CV_RECLAMATO = '22222222-2222-4222-8222-222222222222-cv.pdf'
+/** Il percorso pieno, come lo ricompone la route dal nome relativo. */
+const sotto = (nome: string) => `candidature/${nome}`
 
 /** Il consenso alla conservazione, nella forma con cui `estraiConsensi` lo archivia. */
 const conConsenso = (accettato: boolean) => [
@@ -226,6 +323,11 @@ beforeEach(() => {
   h.ancoraNelBucket = new Set()
   h.verifiche = []
   h.erroreVerifica = null
+  h.elenco = []
+  h.elencazioni = []
+  h.erroreElenco = null
+  h.reclamati = []
+  h.erroreReclamati = null
   h.eventi = []
   h.staffNegato = null
   process.env.CRON_SECRET = CRON_SECRET
@@ -249,8 +351,8 @@ describe('POST /api/gdpr/retention-candidature — prima i file, poi le righe', 
     // non ha niente a che vedere con la candidatura di c2. E il lotto lavorato a
     // metà si DICHIARA guasto: un 200 direbbe «fatto» a chi sorveglia.
     h.righe = [candidatura('c1'), candidatura('c2')]
-    h.removeRisposta = { data: [{ name: 'candidature/c2/cv-rossi.pdf' }], error: null }
-    h.ancoraNelBucket = new Set(['candidature/c1/cv-rossi.pdf'])
+    h.removeRisposta = { data: [{ name: 'candidature/c2-cv.pdf' }], error: null }
+    h.ancoraNelBucket = new Set(['candidature/c1-cv.pdf'])
     const res = await chiama()
     expect(res.status).toBe(500)
     expect(await res.json()).toMatchObject({
@@ -280,6 +382,12 @@ describe('POST /api/gdpr/retention-candidature — prima i file, poi le righe', 
     expect(res.status).toBe(200)
     expect(idsCancellati()).toEqual(['c1'])
     expect(h.verifiche.length, 'il percorso non uscito si verifica').toBe(1)
+    // Da quando la spazzata degli orfani gira in coda al percorso felice, questo
+    // conteggio è stato misurato a 2: la spazzata chiama `list()` a sua volta, ma
+    // sul PREFISSO e senza `search`. Sono due domande diverse allo stesso metodo —
+    // «questo file c'è ancora?» e «cosa c'è là sotto?» — e il doppio le tiene
+    // separate come le tiene separate la Storage API.
+    expect(h.elencazioni, 'l’elenco del prefisso non è una verifica per file').toHaveLength(1)
   })
 
   it('una candidatura SENZA curriculum non fa partire nessuna chiamata allo Storage', async () => {
@@ -342,7 +450,7 @@ describe('POST /api/gdpr/retention-candidature — il battito, che si scrive SEM
   it('e quando qualcosa resta indietro il battito NON dice `ok`', async () => {
     h.righe = [candidatura('c1')]
     h.removeRisposta = { data: [], error: null }
-    h.ancoraNelBucket = new Set(['candidature/c1/cv-rossi.pdf'])
+    h.ancoraNelBucket = new Set(['candidature/c1-cv.pdf'])
     const res = await chiama()
     expect(res.status).toBe(500)
     expect(battiti()).toHaveLength(1)
@@ -709,13 +817,271 @@ describe('POST /api/gdpr/retention-candidature — cosa NON finisce nei log', ()
     // `cv-<cognome>.pdf`: il nome del file È il cognome di chi si è candidato.
     h.righe = [candidatura('c1'), candidatura('c2')]
     h.removeRisposta = { data: [], error: null }
-    h.ancoraNelBucket = new Set(['candidature/c1/cv-rossi.pdf'])
+    h.ancoraNelBucket = new Set(['candidature/c1-cv.pdf'])
     await chiama()
     const tutto = JSON.stringify(h.eventi)
     for (const proibito of ['cv-rossi', '.pdf', 'candidature/c1']) {
       expect(tutto.includes(proibito), `«${proibito}» non deve stare in un log`).toBe(false)
     }
     expect(h.eventi.length, 'e comunque i log ci sono: conteggi, non nomi').toBeGreaterThan(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/gdpr/retention-candidature — i curriculum ORFANI del prefisso', () => {
+  // ───────────────────────────────────────────────────────────────────────────
+  // COSA MISURA QUESTO BLOCCO, e perché non lo misurava niente.
+  //
+  // Tutto ciò che sta sopra parte dalle RIGHE: guarda solo i curriculum che una
+  // candidatura nomina. Ma il curriculum si carica PRIMA che la candidatura
+  // esista — la rotta di caricamento scrive nel bucket e restituisce il percorso,
+  // l'invio del modulo viene dopo — e fra i due gesti c'è una persona che può
+  // chiudere la pagina. Quel file resta nell'archivio senza nessuna riga che lo
+  // nomini: invisibile, non cancellato, e nemmeno identificabile per cancellarlo
+  // se quella persona lo chiedesse. È testualmente «il modo peggiore di conservare
+  // un dato personale» scritto in testa alla route, ed è il caso NORMALE, non
+  // l'abuso.
+  //
+  // La spazzata è entrata il 2026-08-15 e questo file non la vedeva: la sola
+  // traccia che ne aveva era un conteggio di verifiche salito da 1 a 2, cioè un
+  // test rosso che diceva «qualcosa chiama lo Storage» e nient'altro.
+  //
+  // Le quattro prudenze, una per test: solo ciò che è vecchio · prima si chiede al
+  // database e poi si cancella · il troncamento si dichiara · un guasto della
+  // pulizia non diventa un giro di conservazione fallito.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it('🔴 un curriculum vecchio che NESSUNA riga nomina esce dall’archivio', async () => {
+    // Il controllo positivo del blocco: senza, tutto il resto certificherebbe una
+    // spazzata che non spazza — cioè la condizione da cui è nata.
+    h.righe = []
+    h.elenco = [oggetto(CV_ORFANO)]
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      orfani_esaminati: 1,
+      orfani_rimossi: 1,
+      orfani_esito: 'ok',
+    })
+    expect(soloRemove().map((c) => c.valore)).toEqual([[sotto(CV_ORFANO)]])
+    expect(
+      eventiDi('info').some((e) => e.campi.esito === 'orfani-rimossi'),
+      'questa pulizia non ha nessuna schermata che si riempie a vista: il successo si logga',
+    ).toBe(true)
+  })
+
+  it('🔴 un curriculum caricato DA POCO non si tocca: è di chi sta ancora compilando', async () => {
+    // Chi carica il curriculum e finisce di compilare il modulo mezz'ora dopo non
+    // deve trovarselo portato via da sotto le mani. La soglia è la stessa costante
+    // che la route dichiara, letta da lì.
+    h.righe = []
+    h.elenco = [oggetto(CV_ORFANO, { created_at: oreFa(ORE_ORFANO - 1) })]
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ orfani_esaminati: 0, orfani_rimossi: 0 })
+    expect(soloRemove()).toHaveLength(0)
+    expect(
+      clausoleDi('in'),
+      'e al database non si chiede nemmeno: non c’è niente su cui chiedere',
+    ).toHaveLength(0)
+  })
+
+  it('🔴 un curriculum vecchio ma NOMINATO da una candidatura viva non si tocca', async () => {
+    // «Sotto il prefisso» non è «orfano»: la differenza la fa il database, e la si
+    // chiede prima di cancellare, non dopo.
+    h.righe = []
+    h.elenco = [oggetto(CV_RECLAMATO)]
+    h.reclamati = [sotto(CV_RECLAMATO)]
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      orfani_esaminati: 1,
+      orfani_rimossi: 0,
+      orfani_esito: 'ok',
+    })
+    expect(soloRemove()).toHaveLength(0)
+    expect(clausoleDi('in')[0]?.argomenti, 'si chiede esattamente dei percorsi guardati').toEqual([
+      'cv_path',
+      [sotto(CV_RECLAMATO)],
+    ])
+  })
+
+  it('🔴 se non si sa quali curriculum siano reclamati, NON si rimuove niente', async () => {
+    // FAIL-CLOSED, ed è il verso di tutto il file: «non so quali file una riga
+    // nomini» vale «li nomina tutti». La rinuncia è dell'INTERA spazzata e non del
+    // solo lotto — con una parte dei reclami sconosciuta, gli orfani calcolati sui
+    // lotti riusciti comprenderebbero file che una riga nomina davvero.
+    h.righe = []
+    h.elenco = [oggetto(CV_ORFANO)]
+    h.erroreReclamati = { code: '42703', message: 'column cv_path does not exist' }
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      orfani_esaminati: 1,
+      orfani_rimossi: 0,
+      orfani_esito: 'verifica-non-riuscita',
+    })
+    expect(soloRemove(), 'una lettura che non riesce non autorizza a distruggere').toHaveLength(0)
+    const errore = eventiDi('error').find((e) => e.campi.esito === 'orfani-verifica-non-riuscita')
+    expect(errore, 'una rinuncia taciuta è una rinuncia che nessuno scopre').toBeTruthy()
+    expect(errore?.campi.error_code, 'il codice va detto: distingue i guasti fra loro').toBe('42703')
+  })
+
+  it('🔴 se l’ELENCO non si legge, la conservazione NON fallisce per questo', async () => {
+    // Le due cose sono indipendenti, e la prima risponde a una promessa scritta nel
+    // consenso: un guasto della manutenzione non può far dichiarare guasto il giro
+    // che ha cancellato ciò che doveva. L'esito della spazzata resta però scritto,
+    // ed è l'unico modo di sapere in SQL che quella pulizia non è partita.
+    h.righe = [candidatura('c1')]
+    h.erroreElenco = { message: 'storage non risponde' }
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({
+      ok: true,
+      candidature: 1,
+      orfani_esito: 'elenco-non-letto',
+    })
+    expect(idsCancellati(), 'la riga scaduta si cancella lo stesso').toEqual(['c1'])
+    expect(eventiDi('error').some((e) => e.campi.esito === 'orfani-elenco-non-letto')).toBe(true)
+    expect(battiti()[0].campi).toMatchObject({ esito: 'ok', orfani_esito: 'elenco-non-letto' })
+  })
+
+  it('🔴 le voci-CARTELLA e il segnaposto non sono oggetti: si saltano', async () => {
+    // Una voce-cartella ha `id === null` e non si può cancellare; trattarla come un
+    // percorso farebbe cercare al database righe che non esistono.
+    // `.emptyFolderPlaceholder` lo crea lo Storage da sé quando una cartella resta
+    // vuota: toglierlo farebbe sparire la cartella.
+    h.righe = []
+    h.elenco = [
+      { name: 'una-sottocartella', id: null, created_at: oreFa(ORE_ORFANO + 1) },
+      oggetto('.emptyFolderPlaceholder'),
+      oggetto(CV_ORFANO),
+    ]
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ orfani_esaminati: 1, orfani_rimossi: 1 })
+    expect(soloRemove().map((c) => c.valore)).toEqual([[sotto(CV_ORFANO)]])
+  })
+
+  it('🔴 una data di caricamento ILLEGGIBILE vale «non toccare»', async () => {
+    // Stessa regola del taglio fine sulle righe: su un'operazione irreversibile un
+    // dato che manca non è un permesso.
+    h.righe = []
+    h.elenco = [
+      oggetto(CV_RECLAMATO, { created_at: 'non-una-data' }),
+      oggetto(CV_ORFANO, { created_at: null }),
+    ]
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ orfani_esaminati: 0, orfani_rimossi: 0 })
+    expect(soloRemove()).toHaveLength(0)
+  })
+
+  it('🔴 una pagina PIENA è un elenco TRONCATO, e si dichiara', async () => {
+    // Una pagina piena significa oggetti che nessuno ha nemmeno guardato: un elenco
+    // tagliato in silenzio racconta una pulizia completa che non c'è stata.
+    // Tutti recenti apposta: qui si misura il troncamento, non la rimozione.
+    h.righe = []
+    h.elenco = Array.from({ length: TETTO_ELENCO }, (_v, i) =>
+      oggetto(`${i}-cv.pdf`, { created_at: oreFa(1) }),
+    )
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    const avviso = eventiDi('warn').find((e) => e.campi.esito === 'orfani-elenco-troncato')
+    expect(avviso, 'il taglio deve lasciare una traccia leggibile in app_log').toBeTruthy()
+    expect(avviso?.campi.n_file).toBe(TETTO_ELENCO)
+    expect(battiti()[0].campi).toMatchObject({ orfani_elenco_troncato: true })
+    // ⚠️ MISURATO: `orfani_elenco_troncato` sta nel battito e NON nel corpo della
+    // risposta, a differenza di `lotto_pieno` — che è la stessa nozione sulle righe
+    // ed è esposta a chi lancia il giro a mano proprio «per sapere se richiamarlo».
+    // Non lo si asserisce qui: bloccare l'assenza sarebbe fissarla. Riferito.
+    expect(
+      h.elencazioni[0].opzioni,
+      'i più vecchi per primi: se la pagina taglia, deve tagliare i meno in ritardo',
+    ).toMatchObject({ limit: TETTO_ELENCO, sortBy: { column: 'created_at', order: 'asc' } })
+  })
+
+  it('e un elenco NON pieno non lascia nessun avviso', async () => {
+    h.righe = []
+    h.elenco = [oggetto(CV_ORFANO)]
+    await chiama()
+    expect(eventiDi('warn').some((e) => e.campi.esito === 'orfani-elenco-troncato')).toBe(false)
+    expect(battiti()[0].campi).toMatchObject({ orfani_elenco_troncato: false })
+  })
+
+  it('🔴 la domanda al database si spezza in lotti, e ogni lotto risponde per sé', async () => {
+    // `.in()` finisce nella query string di PostgREST: una `IN` con mille valori
+    // produce un URL che nessuno garantisce venga accettato per intero. Il doppio
+    // risponde SOLO dei percorsi chiesti — se i lotti fossero spezzati male, il
+    // curriculum reclamato che sta nel secondo lotto risulterebbe orfano e uscirebbe
+    // dall'archivio mentre una candidatura viva lo nomina ancora.
+    const nomi = Array.from({ length: LOTTO_VERIFICA + 1 }, (_v, i) => `${i}-cv.pdf`)
+    h.righe = []
+    h.elenco = nomi.map((n) => oggetto(n))
+    h.reclamati = [sotto(nomi[LOTTO_VERIFICA])] // l'ultimo: cade nel secondo lotto
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    const chieste = clausoleDi('in')
+    expect(chieste.map((c) => (c.argomenti[1] as string[]).length)).toEqual([LOTTO_VERIFICA, 1])
+    expect(await res.json()).toMatchObject({
+      orfani_esaminati: LOTTO_VERIFICA + 1,
+      orfani_rimossi: LOTTO_VERIFICA,
+    })
+    const rimossi = soloRemove().flatMap((c) => c.valore as string[])
+    expect(rimossi, 'il reclamato del secondo lotto resta').not.toContain(sotto(nomi[LOTTO_VERIFICA]))
+  })
+
+  it('🔴 nei log della spazzata non compare NESSUN percorso', async () => {
+    // Il nome del file non porta più il cognome (lo butta via la rotta di
+    // caricamento), ma il percorso resta la chiave con cui si firma il curriculum di
+    // una persona, e `redact()` non lo ha in lista bianca. `app_log` si interroga in
+    // SQL per 30 giorni.
+    h.righe = []
+    h.elenco = [oggetto(CV_ORFANO), oggetto(CV_RECLAMATO)]
+    h.reclamati = [sotto(CV_RECLAMATO)]
+    await chiama()
+    const tutto = JSON.stringify(h.eventi)
+    for (const proibito of [CV_ORFANO, CV_RECLAMATO, 'candidature/', '.pdf']) {
+      expect(tutto.includes(proibito), `«${proibito}» non deve stare in un log`).toBe(false)
+    }
+    expect(h.eventi.length, 'e comunque i log ci sono: conteggi, non percorsi').toBeGreaterThan(0)
+  })
+
+  it('🔴 il battito porta i conteggi della spazzata: senza, «nessun log» direbbe due cose', async () => {
+    // Se la pulizia non lasciasse una riga anche quando non trova niente, «nessun
+    // log» non distinguerebbe «non ci sono curriculum abbandonati» da «la pulizia
+    // non parte più» — l'ambiguità contro cui è scritto l'intero file.
+    h.righe = []
+    h.elenco = [oggetto(CV_ORFANO), oggetto(CV_RECLAMATO)]
+    h.reclamati = [sotto(CV_RECLAMATO)]
+    await chiama()
+    expect(battiti()).toHaveLength(1)
+    expect(battiti()[0].campi).toMatchObject({
+      n_orfani_esaminati: 2,
+      n_orfani: 1,
+      n_orfani_rimossi: 1,
+      orfani_esito: 'ok',
+      orfani_elenco_troncato: false,
+    })
+  })
+
+  it('se il lotto principale TRATTIENE qualcosa, la spazzata salta il giro', async () => {
+    // Sta in coda al percorso felice e non prima: la conservazione delle candidature
+    // scadute è una promessa scritta nel consenso, la spazzata è manutenzione. Gira
+    // ogni notte, e ciò che oggi è orfano lo sarà anche domani.
+    h.righe = [candidatura('c1')]
+    h.removeRisposta = { data: [], error: null }
+    h.ancoraNelBucket = new Set(['candidature/c1-cv.pdf'])
+    h.elenco = [oggetto(CV_ORFANO)]
+    const res = await chiama()
+    expect(res.status).toBe(500)
+    expect(h.elencazioni, 'il prefisso non si elenca nemmeno').toHaveLength(0)
+    // ⚠️ MISURATO: in questo caso il battito scrive `orfani_esito: 'ok'` con zero
+    // esaminati, che è la stessa riga di un giro in cui la pulizia ha guardato e non
+    // ha trovato niente. A distinguerli resta l'`esito` generale, che qui non è `ok`.
+    expect(battiti()[0].campi).toMatchObject({ esito: 'candidature-trattenute', n_orfani: 0 })
   })
 })
 

@@ -646,6 +646,10 @@ beforeEach(() => {
   tetti.limitaInvioOtp.mockResolvedValue(null)
   tetti.limitaVerificaOtp.mockResolvedValue(null)
   posta.sendEmail.mockResolvedValue(true)
+  // Dal 2026-08-15 `sendOtp` passa da `sendEmailDetailed`, che ritorna un
+  // ESITO e non un booleano: senza questo default il mock restituisce
+  // `undefined` e la route esplode leggendone `.ok`.
+  posta.sendEmailDetailed.mockResolvedValue({ ok: true, error: null })
   prefillMod.caricaPrefillAlunno.mockResolvedValue({
     user: { id: GENITORE, role: 'genitore' },
     prefill: PREFILL,
@@ -875,14 +879,14 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     senzaIdentita()
     const res = await POST(reqFirma('POST', { slug: 'permesso_orario', alunnoId: ALUNNO }))
     expect(res.status).toBe(401)
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('su un bambino che non è suo risponde 403 e NON spedisce niente', async () => {
     negaLaPortata()
     const res = await POST(reqFirma('POST', { slug: 'permesso_orario', alunnoId: ALTRUI }))
     expect(res.status).toBe(403)
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('il tetto di frequenza vale PRIMA di qualunque invio', async () => {
@@ -891,7 +895,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     )
     const res = await POST(reqFirma('POST', { slug: 'permesso_orario', alunnoId: ALUNNO }))
     expect(res.status).toBe(429)
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
     expect(portata.requireParentOfStudent).not.toHaveBeenCalled()
   })
 
@@ -900,10 +904,15 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     expect(json.ticket).toBeTruthy()
     expect(json.devCode).toMatch(/^\d{6}$/)
 
-    const inviata = posta.sendEmail.mock.calls[0][0]
+    const inviata = posta.sendEmailDetailed.mock.calls[0][0]
     expect(inviata.to).toBe(EMAIL)
-    expect(inviata.subject).toContain('Codice di firma')
+    // L'oggetto è UNO SOLO per tutti i codici di verifica dal 2026-08-15: prima
+    // ce n'erano sei, uno per occasione. QUALE modulo si sta firmando non si è
+    // però perso — sta nella prima riga del corpo e nel preheader, cioè proprio
+    // dove chi legge lo cerca: nell'anteprima della notifica, senza aprire.
+    expect(inviata.subject).toBe('Il tuo codice di verifica — Kidville')
     expect(inviata.text).toContain('Permesso entrata posticipata / uscita anticipata')
+    expect(inviata.html).toContain('Permesso entrata posticipata / uscita anticipata')
   })
 
   it('senza un indirizzo in anagrafica è un 422 con codice, non un 500', async () => {
@@ -914,7 +923,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     const json = await res.json()
     expect(res.status).toBe(422)
     expect(json.codice).toBe('PRESTAMPATO_DATI_MANCANTI')
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('i due certificati non si firmano con l’OTP del genitore', async () => {
@@ -923,7 +932,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     expect(res.status).toBe(409)
     expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
     expect(json.motivoNonFirmabile).toBe('firma-della-scuola')
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
   it('l’autorizzazione all’uscita non fa partire nessun codice: la gita non esiste ancora', async () => {
@@ -938,7 +947,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     expect(res.status).toBe(409)
     expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
     expect(json.motivoNonFirmabile).toBe('uscita-non-creata')
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
     // E si rifiuta senza aver letto niente: l'anagrafica di un minore non si legge per un
     // documento che non poteva uscire.
     expect(portata.requireParentOfStudent).not.toHaveBeenCalled()
@@ -956,7 +965,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
 
     expect(res.status).toBe(409)
     expect(json.motivoNonFirmabile).toBe('seconda-firma-mancante')
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
     // Il verdetto dipende dall'anagrafica, quindi il precompilato QUI si legge — ed è il
     // solo modulo per cui si legge.
     expect(prefillMod.caricaPrefillAlunno).toHaveBeenCalledTimes(1)
@@ -976,7 +985,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     expect(res.status).toBe(409)
     expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
     expect(json.motivoNonFirmabile).toBe('allegato-non-caricabile')
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
     // Si conta, come gli altri rifiuti: è la misura che dice quanto vale la porta mancante.
     expect(campiEvento('firma-non-disponibile')?.azione).toBe('allegato-non-caricabile')
   })
@@ -990,7 +999,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     // è l'autorizzazione a somministrare un farmaco a un bambino.
     await chiediCodice('autorizzazione_farmaci')
     await chiediCodice('dieta_speciale')
-    expect(posta.sendEmail).toHaveBeenCalledTimes(2)
+    expect(posta.sendEmailDetailed).toHaveBeenCalledTimes(2)
   })
 
   it('un genitore sospeso può comunque autorizzare un farmaco (modulo essenziale)', async () => {
@@ -1052,7 +1061,7 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
 
     expect(res.status).toBe(403)
     expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
-    expect(posta.sendEmail).not.toHaveBeenCalled()
+    expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
     // E si ferma prima di tutto il resto: nessun tetto speso, nessuna anagrafica letta.
     expect(tetti.limitaInvioOtp).not.toHaveBeenCalled()
     expect(portata.requireParentOfStudent).not.toHaveBeenCalled()

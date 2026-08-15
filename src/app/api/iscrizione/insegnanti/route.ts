@@ -823,23 +823,50 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // una colonna sarebbe peggio — ma NON in silenzio, e il `warn` la NOMINA:
     // «si è degradato» senza dire *cosa* è caduto è un log che non serve a
     // nessuno il giorno in cui a cadere è la prova del consenso.
-    if (error && ['PGRST204', '42703'].includes(codiceDi(error))) {
+    //
+    // ⚠️ È UN CICLO, e fino al 2026-08-15 era UN SOLO RITENTO. La differenza si
+    // vede solo quando le colonne mancanti sono DUE, ed è esattamente ciò che è
+    // successo il giorno in cui `posizioni` e `posizione_altro` sono nate:
+    // PostgREST ne nomina UNA per volta, quindi il primo ritento cadeva sulla
+    // seconda e la rotta rispondeva 500. MISURATO in CI, non dedotto: l'E2E
+    // `public-candidatura-insegnante.spec.ts` — che su `main` era verde —
+    // aspettava 201 e ne prendeva un altro.
+    //
+    // Il tetto è cinque giri: `riga` ha 15 chiavi e un database che ne perde
+    // cinque non è «non migrato», è un altro database. Senza tetto, un errore
+    // `PGRST204` che nominasse una colonna che non stiamo scrivendo — o che non
+    // sappiamo leggere — farebbe girare l'INSERT all'infinito.
+    //
+    // ⚠️ SI LAVORA SU UNA COPIA E NON SI MUTA `riga`, e non è pulizia: `riga` è
+    // ciò che il ramo `23505` più sotto rilegge per ritrovare la candidatura viva
+    // («si rilegge con lo STESSO valore che si è provato a scrivere»). Togliendo
+    // le colonne dall'originale, quel ramo cercherebbe per `email` una chiave che
+    // nel frattempo qualcuno gli ha cancellato di sotto.
+    let daScrivere: Record<string, unknown> = riga
+    let giri = 0
+    while (error && ['PGRST204', '42703'].includes(codiceDi(error)) && giri < 5) {
       const colonna =
-        colonnaMancante((error as { message?: string }).message, Object.keys(riga)) ?? 'consents_log'
+        colonnaMancante((error as { message?: string }).message, Object.keys(daScrivere)) ??
+        'consents_log'
+      // La colonna che non si può togliere perché non c'è: senza questa uscita il
+      // ciclo ritenterebbe lo STESSO INSERT fino al tetto, per cinque volte.
+      if (!(colonna in daScrivere)) break
       logEvento('candidatura', 'warn', {
         operazione: OPERAZIONE,
         esito: `colonna-assente-${colonna}`,
         error_code: codiceDi(error),
       })
-      const ridotta = { ...riga }
+      const ridotta = { ...daScrivere }
       delete ridotta[colonna]
+      daScrivere = ridotta
       const ritento = await supabase
         .from('candidature_insegnanti')
-        .insert(ridotta)
+        .insert(daScrivere)
         .select('id')
         .single()
       creata = ritento.data
       error = ritento.error
+      giri++
     }
 
     if (error) {

@@ -1161,6 +1161,72 @@ describe('POST /api/iscrizione/insegnanti · come si traducono gli errori del da
     expect(String(avviso?.campi.esito), 'il warn deve NOMINARE la colonna caduta').toContain('consents_log')
   })
 
+  it('🔴 DUE colonne assenti ⇒ si ritenta finché non passa, e il 201 arriva lo stesso', async () => {
+    // ⚠️ NATO DA UN ROSSO VERO IN CI, il 2026-08-15. Fino a quel giorno il degrado
+    // era UN SOLO ritento: bastava perché una sola colonna poteva mancare. Nate
+    // `posizioni` e `posizione_altro`, il database della CI — che ha la tabella
+    // ma non le colonne nuove — le nominava una per volta, il primo ritento
+    // cadeva sulla seconda e la rotta rispondeva 500. L'E2E
+    // `public-candidatura-insegnante.spec.ts`, che su `main` era verde, aspettava
+    // 201 e ne prendeva un altro.
+    //
+    // Il caso non si poteva vedere con un errore solo: è la SEQUENZA a essere il
+    // difetto. Perciò qui gli errori sono due, uno per giro.
+    h.erroreInsert = {
+      code: 'PGRST204',
+      message: "Could not find the 'posizioni' column of 'candidature_insegnanti' in the schema cache",
+    }
+    h.erroriSuccessivi = [
+      {
+        code: 'PGRST204',
+        message:
+          "Could not find the 'posizione_altro' column of 'candidature_insegnanti' in the schema cache",
+      },
+    ]
+
+    const res = await inviaValida({ posizioni: ['insegnante_nido', 'altro'], posizione_altro: 'bidella' })
+    expect(res.status, 'con DUE colonne assenti la candidatura deve entrare lo stesso').toBe(201)
+    expect(h.inserts).toHaveLength(3)
+    // Ogni giro toglie UNA colonna, e le toglie in aggiunta — non ricomincia.
+    expect(h.inserts[0]).toHaveProperty('posizioni')
+    expect(h.inserts[1]).not.toHaveProperty('posizioni')
+    expect(h.inserts[1]).toHaveProperty('posizione_altro')
+    expect(h.inserts[2]).not.toHaveProperty('posizioni')
+    expect(h.inserts[2]).not.toHaveProperty('posizione_altro')
+    // …e ciò che NON è caduto resta: un degrado che perde per strada la sede
+    // sarebbe una candidatura archiviata nel plesso sbagliato.
+    expect(h.inserts[2].scuola_id).toBe(SEDE_A)
+    expect(h.inserts[2]).toHaveProperty('consents_log')
+
+    // Le due colonne sono NOMINATE, una per riga: «si è degradato» senza dire che
+    // cosa è caduto è un log che non serve a nessuno.
+    const nominate = h.eventi
+      .filter((e) => String(e.campi.esito ?? '').startsWith('colonna-assente'))
+      .map((e) => String(e.campi.esito))
+    expect(nominate).toEqual(['colonna-assente-posizioni', 'colonna-assente-posizione_altro'])
+  })
+
+  it('il degrado ha un TETTO: un `PGRST204` che si ripete non fa girare l’INSERT all’infinito', async () => {
+    // La colonna nominata non è fra quelle che si stanno scrivendo: senza
+    // l'uscita, il ciclo ritenterebbe lo STESSO record fino al tetto.
+    h.erroreInsert = {
+      code: 'PGRST204',
+      message: "Could not find the 'colonna_che_non_scriviamo' column of 'candidature_insegnanti'",
+    }
+    h.erroriSuccessivi = Array.from({ length: 10 }, () => ({
+      code: 'PGRST204',
+      message: "Could not find the 'colonna_che_non_scriviamo' column of 'candidature_insegnanti'",
+    }))
+
+    const res = await inviaValida()
+    // Non si finge un successo: il record non è entrato.
+    expect(res.status).toBe(500)
+    // ⚠️ Il numero che conta: DUE tentativi, non undici. Il primo, e un solo
+    // ritento — perché `colonnaMancante` ripiega su `consents_log`, che c'è, e al
+    // giro dopo la colonna nominata non è più nel record.
+    expect(h.inserts.length, 'l’INSERT è stato ritentato troppe volte').toBeLessThanOrEqual(6)
+  })
+
   it('un errore qualunque ⇒ 500 con codice, e il messaggio grezzo NON esce', async () => {
     h.erroreInsert = {
       code: '42501',

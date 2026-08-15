@@ -260,7 +260,10 @@ const patch = (body: unknown) =>
   })
 const approva = () => PATCH(patch({ id: CANDIDATURA_ID, action: 'approva' }))
 
-const rigaUtenti = () => h.state.inserimenti.find((i) => i.table === 'utenti')?.row
+// ⚠️ Non c'è più una `rigaUtenti()`: questa route non inserisce più in `utenti`.
+// I casi qui sotto guardano l'ASSENZA di quell'inserimento — che è il punto — e
+// una helper che pesca «la riga creata» inviterebbe a scriverne di nuovi che se
+// l'aspettano.
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -321,564 +324,74 @@ beforeEach(() => {
 })
 
 describe('candidature insegnanti · approvazione', () => {
-  it('crea l’account e la riga `utenti` con ruolo, SEDE e gradi della candidatura', async () => {
-    const res = await approva()
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.success).toBe(true)
-
-    expect(h.state.creazioniAuth).toHaveLength(1)
-    expect(h.state.creazioniAuth[0].email).toBe(EMAIL)
-
-    const u = rigaUtenti()
-    expect(u, 'nessuna riga `utenti` creata').toBeTruthy()
-    expect(u!.id).toBe('auth-1')
-    expect(u!.ruolo).toBe('educator')
-    // La sede è quella della CANDIDATURA, non `auth.user.scuola_id`.
-    expect(u!.scuola_id).toBe(SEDE_B)
-    expect(u!.gradi).toEqual(['nido', 'infanzia'])
-    expect(u!.attivo).toBe(true)
-    expect(u!.email).toBe(EMAIL)
-
-    // La candidatura risulta approvata e legata all'account.
-    const cand = h.state.tabelle.candidature_insegnanti[0]
-    expect(cand.stato).toBe('approvata')
-    expect(cand.utente_id).toBe('auth-1')
-    expect(cand.evasa_da).toBe(ADMIN.id)
-    expect(cand.evasa_il).toBeTruthy()
-
-    // La password torna UNA volta sola, nella risposta.
-    expect(body.credentials.email).toBe(EMAIL)
-    expect(typeof body.credentials.password).toBe('string')
-    expect((body.credentials.password as string).length).toBeGreaterThan(10)
-    expect(body.credentialsEmailSent).toBe(true)
-  })
-
-  it('non scrive MAI le colonne generate (`role`, `first_name`, `last_name`)', async () => {
-    await approva()
-    const u = rigaUtenti()!
-    for (const generata of ['role', 'first_name', 'last_name']) {
-      expect(generata in u, `scritta la colonna generata «${generata}»: l’INSERT fallirebbe`).toBe(false)
-    }
-    expect(u.nome).toBe('Prova')
-    expect(u.cognome).toBe('Cognome')
-  })
-
-  it('l’email delle credenziali nomina la sede della CANDIDATURA', async () => {
-    await approva()
-    expect(h.sendEmail).toHaveBeenCalledTimes(1)
-    const invio = h.sendEmail.mock.calls[0][0] as { to: string; text: string }
-    expect(invio.to).toBe(EMAIL)
-    expect(invio.text).toContain('Kidville Sede Candidatura')
-    expect(invio.text).not.toContain('Kidville Sede Operatore')
-
-    // Il SUCCESSO dell'invio lascia una riga su un canale PERSISTITO: senza,
-    // «nessun log» non distingue «tutte partite» da «non ne parte più nessuna».
-    const battito = h.logEvento.mock.calls.find(
-      (c) => c[1] === 'info' && (c[2] as { esito?: string })?.esito === 'credenziali-inviate',
-    )
-    expect(battito, 'nessun log di SUCCESSO per le credenziali inviate').toBeTruthy()
-    expect(battito![0]).toBe('candidatura')
-    expect((battito![2] as { canale?: string }).canale).toBe('email')
-    expect((battito![2] as { tipo?: string }).tipo).toBe('staff')
-  })
-
-  it('CLAIM ATOMICO: la seconda approvazione prende 409 e non nasce un secondo account', async () => {
-    expect((await approva()).status).toBe(200)
-    const res = await approva()
-    expect(res.status).toBe(409)
-    expect((await res.json()).codice).toBe('CANDIDATURA_GIA_EVASA')
-    expect(h.state.creazioniAuth, 'due account per la stessa candidatura').toHaveLength(1)
-    expect(h.state.inserimenti.filter((i) => i.table === 'utenti')).toHaveLength(1)
-  })
-
-  it('email già di uno STAFF: 409, ZERO scritture e la candidatura resta `pending`', async () => {
-    h.state.tabelle.utenti = [
-      { id: 'utente-esistente', email: EMAIL, ruolo: 'segreteria', nome: 'Altra', cognome: 'Persona', scuola_id: SEDE_A },
-    ]
-    const res = await approva()
-    expect(res.status).toBe(409)
-    expect((await res.json()).codice).toBe('CANDIDATURA_EMAIL_GIA_STAFF')
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(h.state.inserimenti).toEqual([])
-    expect(h.state.tabelle.utenti).toHaveLength(1)
-    // Uscita anticipata ⇒ lo stato torna `pending`: mai bloccata in `in_approvazione`.
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('email già di un GENITORE: 409 con codice proprio, e nessun account toccato', async () => {
-    h.state.authUsers = [{ id: 'auth-genitore', email: EMAIL }]
-    h.state.tabelle.parents = [{ id: 'parent-1', auth_user_id: 'auth-genitore' }]
-    const res = await approva()
-    expect(res.status).toBe(409)
-    expect((await res.json()).codice).toBe('CANDIDATURA_EMAIL_GIA_GENITORE')
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(h.state.inserimenti).toEqual([])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('colonna `gradi` assente (DB della CI): l’account nasce, e l’avviso lo NOMINA', async () => {
-    h.state.colonneAssenti = ['gradi']
-    const res = await approva()
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.success).toBe(true)
-    const u = rigaUtenti()!
-    expect('gradi' in u).toBe(false)
-    expect(u.ruolo).toBe('educator')
-    expect(body.warnings.join(' ')).toMatch(/gradi|fasce/i)
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('approvata')
-  })
-
-  it('email NON partita: 200, account creato, e l’operatore lo legge nei `warnings`', async () => {
-    h.sendEmail.mockResolvedValue({ ok: false, error: 'the domain is not verified' })
-    const res = await approva()
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.success).toBe(true)
-    expect(body.credentialsEmailSent).toBe(false)
-    expect(body.credentials.password).toBeTruthy()
-    expect(body.warnings.join(' ')).toMatch(/email/i)
-    // L'esito dell'invio va anche nel log, e a livello `error`: un account creato
-    // le cui credenziali non sono partite è un incidente, non una nota.
-    const righe = h.logEvento.mock.calls.filter((c) => c[0] === 'credenziali')
-    expect(righe.length).toBeGreaterThan(0)
-    expect(righe.some((c) => c[1] === 'error')).toBe(true)
-  })
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // I RAMI IN CUI QUALCOSA È GIÀ STATO SCRITTO
+  // ══════════════════════════════════════════════════════════════════════════
+  // APPROVARE UNA CANDIDATURA NON CREA NESSUN ACCESSO — nemmeno per un'insegnante.
   //
-  // Fino a oggi nessuno di questi era misurato, e sono esattamente quelli in cui
-  // la risposta HTTP può MENTIRE: un 503 con dietro un account creato, un 200 con
-  // dentro uno stato che in tabella non c'è.
-  // ───────────────────────────────────────────────────────────────────────────
+  // Fino al 2026-08-15 questo file conteneva trenta casi sul ramo opposto:
+  // l'account docente creato, la password generata, l'email spedita, l'account
+  // orfano da annullare, i due 409 sull'email già nota. Sono spariti con il ramo,
+  // e non per pigrizia: una candidatura è una domanda di lavoro, e farle produrre
+  // un account `educator` — che LEGGE L'ANAGRAFICA DEI BAMBINI — significava che
+  // «prendo in considerazione questa persona» consegnava, nello stesso clic, le
+  // chiavi del registro di 33 minori a un indirizzo arrivato da un modulo
+  // pubblico.
+  //
+  // L'accesso nasce in un posto solo, ed è l'approvazione dell'ANAGRAFICA del
+  // personale: `__tests__/api/pratiche-personale-approva.test.ts` tiene ferma
+  // quella metà, email compresa. Qui si tiene ferma questa: che da qui non esca
+  // niente.
+  // ══════════════════════════════════════════════════════════════════════════
 
-  it('INSERT `utenti` fallito: l’account appena creato viene ANNULLATO, non lasciato orfano', async () => {
-    // `scuola_id` non è fra le colonne rimovibili — e non deve esserlo: un profilo
-    // senza sede è una riga inutilizzabile spacciata per riuscita. Quindi l'INSERT
-    // fallisce davvero, e l'account nato un istante prima non deve sopravvivergli.
-    h.state.colonneAssenti = ['scuola_id']
-    const res = await approva()
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-
-    // LA PROSA DI POSTGREST NON ESCE DAL SERVER. Lo stesso file lo dichiara già
-    // sul guasto dello storage («il messaggio grezzo NON torna al client»): qui
-    // vale identico, perché `Could not find the 'scuola_id' column … schema cache`
-    // è inglese, nomina colonne e vincoli, e la legge la segreteria.
-    expect(
-      body.error,
-      'il messaggio grezzo di PostgREST è finito nella risposta HTTP',
-    ).not.toMatch(/schema cache|Could not find|column/i)
-
-    expect(h.state.creazioniAuth, 'l’account non è mai stato creato: il test non prova niente').toHaveLength(1)
-    expect(h.state.cancellazioniAuth, 'account `auth.users` ORFANO: creato e mai annullato').toEqual(['auth-1'])
-    expect(h.state.authUsers).toEqual([])
-    expect(h.state.inserimenti.filter((i) => i.table === 'utenti')).toEqual([])
-    // La candidatura torna approvabile: non resta bloccata in `in_approvazione`.
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('INSERT `utenti` fallito E annullamento fallito: il 503 DICE che un account è rimasto', async () => {
-    h.state.colonneAssenti = ['scuola_id']
-    h.state.erroreCancellazioneAuth = { message: 'admin api unreachable', status: 500 }
-    const res = await approva()
-    expect(res.status).toBe(503)
-    const body = await res.json()
-
-    // La risposta nomina l'unica via d'uscita: «Rigenera credenziali».
-    const testo = [body.error, ...(body.warnings ?? [])].join(' ')
-    expect(testo, 'un 503 con un account rimasto dietro, e non lo dice').toMatch(/Rigenera credenziali/i)
-    expect(testo).toMatch(/È RIMASTO|È STATO CREATO/)
-    // …ma senza la prosa del database dentro: l'azione per l'operatore resta,
-    // il nome della colonna caduta vive nel log.
-    expect(testo, 'la prosa di PostgREST è finita nella risposta HTTP').not.toMatch(
-      /schema cache|Could not find/i,
-    )
-
-    // …e il log lo dichiara, con l'uid: è l'unico appiglio per ripararlo a mano.
-    const orfano = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'account-orfano-lasciato',
-    )
-    expect(orfano, 'nessun log dell’account orfano').toBeTruthy()
-    expect(orfano![1]).toBe('error')
-    expect(h.state.authUsers.map((u) => u.id)).toEqual(['auth-1'])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('INSERT `utenti` fallito su un account PREESISTENTE: 503, e niente da annullare', async () => {
-    // Il terzo ramo del fallimento d'INSERT, e l'unico che non passa dal rollback:
-    // l'account c'era già, quindi NON è nato niente in questa chiamata e non c'è
-    // nulla da cancellare — cancellarlo sarebbe anzi il disastro, perché è
-    // l'accesso di qualcuno. Resta l'obbligo che vale per tutti e tre: la prosa
-    // del database non torna al client.
-    h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
-    h.state.colonneAssenti = ['scuola_id']
-    const res = await approva()
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-    expect(
-      body.error,
-      'il messaggio grezzo di PostgREST è finito nella risposta HTTP',
-    ).not.toMatch(/schema cache|Could not find|column/i)
-
-    expect(h.state.creazioniAuth, 'un account nuovo su un’email che ne aveva già uno').toEqual([])
-    expect(
-      h.state.cancellazioniAuth,
-      'annullato un account PREESISTENTE: è l’accesso di qualcuno, non un residuo',
-    ).toEqual([])
-    expect(h.state.authUsers.map((u) => u.id)).toEqual(['auth-preesistente'])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-
-    // Il nome della colonna caduta vive nel LOG, che è dove va.
-    const guasto = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'profilo-staff-non-creato',
-    )
-    expect(guasto, 'nessun log del profilo non creato').toBeTruthy()
-    expect(guasto![1]).toBe('error')
-    expect((guasto![2] as { error_code?: string }).error_code).toBe('PGRST204')
-  })
-
-  it('`createUser` fallito: 503, e la prosa del provider resta nel log', async () => {
-    // Stessa dottrina dell'INSERT: il corpo dell'errore del provider NON si butta
-    // via (AGENTS.md §3) — ma va nel LOG, non nella risposta che legge la
-    // segreteria. «A user with this email address has already been registered» è
-    // inglese, e i tre casi in cui è vero li ha già intercettati il codice sopra.
-    h.state.erroreCreazioneAuth = {
-      message: 'A user with this email address has already been registered',
-      status: 422,
-    }
-    const res = await approva()
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-    expect(
-      body.error,
-      'la prosa del provider di autenticazione è finita nella risposta HTTP',
-    ).not.toMatch(/already been registered|A user with/i)
-
-    const guasto = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'creazione-account-non-riuscita',
-    )
-    expect(guasto, 'nessun log della creazione account fallita').toBeTruthy()
-    expect(guasto![0]).toBe('auth')
-    expect(guasto![1]).toBe('error')
-    expect((guasto![2] as { stato?: number }).stato).toBe(422)
-    // Il TESTO del provider è l'ultimo argomento: è lì che deve vivere.
-    expect(String((guasto![3] as { message?: string })?.message)).toMatch(/already been registered/)
-
-    expect(h.state.inserimenti).toEqual([])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('`listUsers` fallita: 503, e la prosa di GoTrue NON esce dalla risposta', async () => {
-    // Il terzo canale da cui la prosa di terze parti può uscire, e per due cicli
-    // è rimasto aperto mentre il resto veniva chiuso: `findAuthUserIdByEmail`
-    // (parent-identity.ts) non ritorna un `{ error }` — LANCIA, con dentro il
-    // corpo grezzo di GoTrue e il numero di pagina della scansione. Quel testo
-    // finiva in `message`, e `message` è ciò che la route serve come `body.error`.
-    h.state.erroreListUsers = {
-      message: 'A user with this email address has already been registered',
-      status: 500,
-    }
-    const res = await approva()
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-    expect(
-      body.error,
-      'la prosa del provider di autenticazione è finita nella risposta HTTP',
-    ).not.toMatch(/listUsers|pagina|already been registered|A user with/i)
-
-    // Il dettaglio vive dove è giusto che viva: nel log, ultimo argomento.
-    const guasto = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'ricerca-account-non-riuscita',
-    )
-    expect(guasto, 'nessun log della ricerca account fallita').toBeTruthy()
-    expect(guasto![0]).toBe('auth')
-    expect(guasto![1]).toBe('error')
-    expect(String((guasto![3] as { message?: string })?.message)).toMatch(/listUsers/)
-
-    // Fail-closed: non sapere se l'account esiste NON autorizza a crearne uno.
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(h.state.inserimenti).toEqual([])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('ECCEZIONE dentro `ensureStaffIdentity`: 503 stabile, mai il testo del throw', async () => {
-    // Il `catch` finale prende QUALUNQUE eccezione — un guasto di rete, un bug,
-    // un errore di una libreria — e il suo `message` non è scritto da noi: può
-    // contenere una query, un header, un indirizzo. Nessuna di queste cose si
-    // mostra a chi ha premuto «Approva».
-    h.state.eccezioneCreazioneAuth =
-      'connect ECONNREFUSED 10.0.0.7:5432 — supabase_admin@db.interno password=segreta'
-    const res = await approva()
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-    expect(
-      body.error,
-      'il testo grezzo dell’eccezione è finito nella risposta HTTP',
-    ).not.toMatch(/ECONNREFUSED|10\.0\.0\.7|password|supabase_admin/i)
-
-    const guasto = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'identita-staff-non-completata',
-    )
-    expect(guasto, 'un `catch` che non logga è un bug').toBeTruthy()
-    expect(guasto![0]).toBe('auth')
-    expect(guasto![1]).toBe('error')
-    expect(String((guasto![3] as { message?: string })?.message)).toMatch(/ECONNREFUSED/)
-
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('colonna `utente_id` assente sulla CHIUSURA: l’audit NON dichiara un legame che non c’è', async () => {
-    // Il degrado su colonna assente vale anche per l'UPDATE, e lì è più insidioso
-    // che sull'INSERT: togliere `utente_id` dal patch lascia passare l'istruzione
-    // (`stato` c'è ancora), l'UPDATE ritorna una riga, e `chiusura_riuscita`
-    // resta `true`. La riga risulta «approvata» e NON è legata a nessun account,
-    // mentre l'audit — il registro immutabile — dichiara `utente_id: <uid>`.
-    // È la stessa «audit che mente» già tolta dal ramo della chiusura fallita,
-    // spostata di un ramo.
-    h.state.colonneAssentiUpdate = ['utente_id']
+  it('candidatura DOCENTE approvata: nessun account, nessuna password, nessuna email', async () => {
+    // La candidatura di partenza porta posizioni da insegnante: è esattamente il
+    // caso che PRIMA faceva nascere l'accesso.
     const res = await approva()
     expect(res.status).toBe(200)
     const body = await res.json()
 
-    // Ciò che è successo DAVVERO: lo stato è passato, il legame no.
-    const cand = h.state.tabelle.candidature_insegnanti[0]
-    expect(cand.stato).toBe('approvata')
-    expect(cand.utente_id, 'la colonna non esiste: non può esserci finita niente').toBeUndefined()
+    expect(body.stato).toBe('approvata')
+    expect(body.esitoAccount).toBe('nessuno')
+    expect(body.credentials).toBeNull()
+    expect(body.credentialsEmailSent).toBe(false)
 
-    // L'operatore lo legge, e il messaggio NOMINA la colonna caduta.
-    expect(body.warnings.join(' ')).toMatch(/utente_id/)
-
-    const audit = h.logScrittura.mock.calls[0][1] as { valoreDopo: Record<string, unknown> }
-    expect(audit.valoreDopo.stato).toBe('approvata')
+    // Le tre prove che contano, e sono sul MONDO, non sulla risposta.
+    expect(h.state.creazioniAuth, 'è nato un account di accesso').toHaveLength(0)
     expect(
-      audit.valoreDopo.utente_id,
-      'l’audit dichiara legata all’account una riga in cui `utente_id` non è stato scritto',
-    ).toBeNull()
-    // …ma l'uid dell'account NON si perde: l'account esiste, le credenziali sono
-    // partite, e questo è l'unico registro DUREVOLE (`app_log` dura 30 giorni).
-    expect(audit.valoreDopo.account_uid).toBe('auth-1')
-
-    // Il battito distingue le due cose, invece di confonderle in una sola.
-    const battito = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'candidatura-approvata',
-    )
-    expect(battito, 'lo stato È passato: il battito del successo ci va').toBeTruthy()
-    expect((battito![2] as { chiusura_riuscita?: boolean }).chiusura_riuscita).toBe(true)
-    expect((battito![2] as { utente_id_scritto?: boolean }).utente_id_scritto).toBe(false)
-
-    // E la colonna caduta si legge per nome nel log, come già per `gradi`.
-    const caduta = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'colonna-assente-rimossa',
-    )
-    expect(caduta, 'nessun log della colonna caduta sull’UPDATE').toBeTruthy()
-    expect((caduta![2] as { msg?: string }).msg).toMatch(/utente_id/)
+      h.state.inserimenti.filter((i) => i.table === 'utenti'),
+      'è nata una riga `utenti`',
+    ).toHaveLength(0)
+    expect(h.sendEmail, 'è partita un\'email').not.toHaveBeenCalled()
   })
 
-  it('lettura di `utenti` FALLITA: 503, zero account e zero righe — mai «email libera»', async () => {
-    // PostgREST non lancia: senza il controllo su `{ error }` una lettura fallita
-    // si travestirebbe da «nessuno ha questa email» e creerebbe il SECONDO account
-    // su un indirizzo che è già di qualcuno dello staff. L'email arriva da un
-    // modulo pubblico anonimo: un errore transitorio basta.
-    h.state.erroriTabella.utenti = { code: '08006', message: 'connection failure' }
-    const res = await approva()
-    expect(res.status).toBe(503)
-    expect((await res.json()).codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(h.state.inserimenti).toEqual([])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('lettura di `parents` FALLITA: 503, e nessun profilo docente sull’uid di un genitore', async () => {
-    h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
-    h.state.erroriTabella.parents = { code: '08006', message: 'connection failure' }
-    const res = await approva()
-    expect(res.status).toBe(503)
-    expect((await res.json()).codice).toBe('CANDIDATURE_OPERAZIONE_NON_RIUSCITA')
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(h.state.inserimenti).toEqual([])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('email già in `utenti` con MAIUSCOLE diverse: 409, non un 503 grezzo di PostgREST', async () => {
-    // Il confronto per email copre le forme esatte; `utenti_email_key` è UNIQUE
-    // SENSIBILE alle maiuscole, quindi non chiude il buco al posto del codice.
-    // Chi lo chiude è il confronto per UID — dove le maiuscole non esistono.
+  it('nemmeno con un’email GIÀ NOTA si tocca l’account che esiste', async () => {
+    // Il vecchio ramo qui rispondeva 409 («email già di uno staff») oppure riusava
+    // l'account e ne riscriveva il profilo. Adesso quell'account non viene nemmeno
+    // guardato: approvare una candidatura non è un'operazione sulle identità.
     h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
     h.state.tabelle.utenti = [
-      {
-        id: 'auth-preesistente',
-        email: 'Prova.Candidata@Example.test',
-        ruolo: 'segreteria',
-        nome: 'Altra',
-        cognome: 'Persona',
-        scuola_id: SEDE_A,
-      },
+      { id: 'auth-preesistente', email: EMAIL, ruolo: 'admin', scuola_id: SEDE_A, gradi: ['primaria'] },
     ]
     const res = await approva()
-    expect(res.status).toBe(409)
-    const body = await res.json()
-    expect(body.codice).toBe('CANDIDATURA_EMAIL_GIA_STAFF')
-    expect(body.ruoloEsistente).toBe('segreteria')
-    expect(h.state.inserimenti, 'un secondo profilo sullo stesso uid').toEqual([])
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
-  })
-
-  it('CHIUSURA fallita: 200 che dichiara `in_approvazione`, mai «approvata» a vuoto', async () => {
-    h.state.erroreChiusura = { code: '08006', message: 'connection failure' }
-    const res = await approva()
     expect(res.status).toBe(200)
-    const body = await res.json()
-    // Lo stato RESTITUITO è quello VERO: in tabella la riga è ferma, e dirla
-    // «approvata» sarebbe una risposta bugiarda con un account già creato dietro.
-    expect(body.stato).toBe('in_approvazione')
-    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('in_approvazione')
-    expect(body.warnings.join(' ')).toMatch(/NON ripremere/)
+    expect((await res.json()).esitoAccount).toBe('nessuno')
 
-    const marcata = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'approvazione-non-marcata',
-    )
-    expect(marcata, 'la chiusura fallita non ha loggato').toBeTruthy()
-    expect(marcata![1]).toBe('error')
-
-    // ── E ORA LA METÀ CHE MANCAVA ───────────────────────────────────────────
-    // La risposta HTTP dice la verità, ma l'AUDIT è il registro IMMUTABILE delle
-    // scritture su dati di minori: se lì dentro c'è scritto «approvata» mentre in
-    // tabella la riga è ferma su `in_approvazione` e `utente_id` è NULL, la bugia
-    // non è stata tolta — è stata spostata dove nessuno la rilegge più.
-    expect(h.logScrittura).toHaveBeenCalledTimes(1)
-    const audit = h.logScrittura.mock.calls[0][1] as { valoreDopo: Record<string, unknown> }
-    expect(
-      audit.valoreDopo.stato,
-      'l’audit dichiara «approvata» una riga rimasta in `in_approvazione`',
-    ).not.toBe('approvata')
-    expect(audit.valoreDopo.stato).toBe('in_approvazione')
-    expect(
-      audit.valoreDopo.chiusura_riuscita,
-      'l’audit non dichiara che la chiusura NON è riuscita: la riga non è più rileggibile',
-    ).toBe(false)
-
-    // Il BATTITO dell'approvazione RIUSCITA non deve uscire: è il conteggio con cui
-    // si distingue «non si approva nessuno» da «l'approvazione non parte più», e un
-    // `candidatura-approvata` emesso qui lo falserebbe di uno a ogni guasto.
-    const falsoBattito = h.logEvento.mock.calls.find(
-      (c) =>
-        c[0] === 'candidatura' &&
-        c[1] === 'info' &&
-        (c[2] as { esito?: string })?.esito === 'candidatura-approvata',
-    )
-    expect(
-      falsoBattito,
-      'battito `candidatura-approvata` a `info` su una chiusura FALLITA: il conteggio mente',
-    ).toBeFalsy()
-
-    // …ma il gesto si chiude lo stesso a registro, con un esito che lo qualifica.
-    const battitoNonMarcato = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'candidatura-approvata-non-marcata',
-    )
-    expect(battitoNonMarcato, 'nessun battito che chiuda il gesto non marcato').toBeTruthy()
-    expect(battitoNonMarcato![0]).toBe('candidatura')
-    expect(battitoNonMarcato![1]).toBe('warn')
-    expect((battitoNonMarcato![2] as { chiusura_riuscita?: boolean }).chiusura_riuscita).toBe(false)
+    expect(h.state.aggiornamenti.filter((a) => a.table === 'utenti')).toHaveLength(0)
+    expect(h.state.cancellazioniAuth).toHaveLength(0)
+    expect(h.sendEmail).not.toHaveBeenCalled()
+    // E il profilo è rimasto quello che era: ruolo, sede e fasce intatti.
+    const u = h.state.tabelle.utenti[0]
+    expect(u.ruolo).toBe('admin')
+    expect(u.scuola_id).toBe(SEDE_A)
+    expect(u.gradi).toEqual(['primaria'])
   })
 
-  it('account PREESISTENTE riusato: nessuna password, NESSUNA email, e l’avviso lo dice', async () => {
-    // C'è un accesso con quell'email, ma non è né staff né genitore: l'account si
-    // riusa. Non nasce nessuna password, quindi non c'è niente da spedire — e
-    // mandare l'email delle credenziali con una password vuota a una persona vera
-    // sarebbe il peggiore degli esiti.
-    h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
-    const res = await approva()
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.success).toBe(true)
-    expect(body.credentials, 'una password per un account che non è nato adesso').toBeNull()
-    expect(body.credentialsEmailSent).toBe(false)
-    expect(h.sendEmail, 'email delle credenziali partita senza password').not.toHaveBeenCalled()
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(body.warnings.join(' ')).toMatch(/riusato|già un accesso/i)
-
-    // …e la candidatura si chiude comunque, legata all'account esistente.
-    const cand = h.state.tabelle.candidature_insegnanti[0]
-    expect(cand.stato).toBe('approvata')
-    expect(cand.utente_id).toBe('auth-preesistente')
-    expect(rigaUtenti()!.id).toBe('auth-preesistente')
-  })
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // Le affermazioni che il file DICHIARA e che nessuno teneva ferme
-  // ───────────────────────────────────────────────────────────────────────────
-
-  it('l’email delle credenziali è quella dello STAFF, non il testo del genitore', async () => {
+  it('l’unica email che questa route può mandare è quella di ESITO, sul rifiuto', async () => {
+    // Non è una prova sull'assenza: `rifiuta` la manda davvero (il suo file la
+    // presidia). Qui conta che l'approvazione non abbia nessun canale verso la
+    // persona — chi è stato scelto lo sente dalla scuola, non da un messaggio
+    // automatico che gli consegna una password.
     await approva()
-    const invio = h.sendEmail.mock.calls[0][0] as { text: string }
-    // Il corpo del genitore dice «la tua iscrizione a <sede> è stata registrata»
-    // e manda «all'area genitori»: sarebbe partito, con la password dentro, a una
-    // persona che si è candidata per lavorare.
-    expect(invio.text, 'parte il corpo del GENITORE').not.toMatch(/iscrizione/i)
-    expect(invio.text).not.toMatch(/area genitori/i)
-    expect(invio.text).not.toMatch(/Gentile genitore/i)
-    // …e resta un'email di credenziali vera.
-    expect(invio.text).toContain('Password temporanea:')
-    expect(invio.text).toContain(EMAIL)
-  })
-
-  it('l’AUDIT del gesto c’è, con il tipo e la SEDE della candidatura', async () => {
-    await approva()
-    expect(h.logScrittura, 'il gesto che crea un account docente non è nell’audit').toHaveBeenCalledTimes(1)
-    const arg = h.logScrittura.mock.calls[0][1] as Record<string, unknown>
-    expect(arg.entitaTipo).toBe('candidatura')
-    expect(arg.entitaId).toBe(CANDIDATURA_ID)
-    expect(arg.azione).toBe('update')
-    expect(arg.scuolaId, 'l’audit archivia il gesto nella sede sbagliata').toBe(SEDE_B)
-    // Il CONTENUTO, non solo l'intestazione: senza queste due righe `valoreDopo`
-    // può dire qualunque cosa (`stato: 'boh'`) e restare verde.
-    const dopo = arg.valoreDopo as Record<string, unknown>
-    expect(dopo.stato).toBe('approvata')
-    expect(dopo.chiusura_riuscita).toBe(true)
-    expect(dopo.utente_id).toBe('auth-1')
-    expect(dopo.account_creato).toBe(true)
-  })
-
-  it('il BATTITO dell’approvazione riuscita esiste (senza, «nessun log» non dice niente)', async () => {
-    await approva()
-    const battito = h.logEvento.mock.calls.find(
-      (c) => (c[2] as { esito?: string })?.esito === 'candidatura-approvata',
-    )
-    expect(battito, 'nessun log del SUCCESSO dell’approvazione').toBeTruthy()
-    expect(battito![0]).toBe('candidatura')
-    expect(battito![1]).toBe('info')
-    expect((battito![2] as { sede_id?: string }).sede_id).toBe(SEDE_B)
-    expect((battito![2] as { chiusura_riuscita?: boolean }).chiusura_riuscita).toBe(true)
-  })
-
-  it('l’email del profilo `utenti` si archivia MINUSCOLA, com’è in `auth.users`', async () => {
-    // `utenti_email_key` è UNIQUE **sensibile alle maiuscole**, e il confronto del
-    // punto 1 di `ensureStaffIdentity` cerca solo la forma digitata e la sua
-    // minuscola. Finché questa riga scriveva l'email COM'È STATA DIGITATA, il file
-    // produceva da sé le varianti di caso che poi non sapeva più riconoscere: un
-    // secondo profilo per la stessa persona, cioè il registro diviso in due.
-    // GoTrue archivia l'indirizzo in minuscolo: scriverlo qui in un'altra forma
-    // significa anche due verità sulla stessa persona in due tabelle.
-    h.state.tabelle.candidature_insegnanti[0].email = 'Prova.Candidata@Example.test'
-    const res = await approva()
-    expect(res.status).toBe(200)
-    expect(rigaUtenti()!.email).toBe('prova.candidata@example.test')
-  })
-
-  it('le fasce FUORI enum vengono scartate: un valore inventato non arriva all’INSERT', async () => {
-    h.state.tabelle.candidature_insegnanti[0].gradi = ['nido', 'marziano', 'infanzia', 'nido']
-    await approva()
-    // Un valore fuori dall'enum `school_type_enum` prende `22P02` all'INSERT, e il
-    // duplicato è solo rumore.
-    expect(rigaUtenti()!.gradi).toEqual(['nido', 'infanzia'])
+    expect(h.sendEmail).not.toHaveBeenCalled()
   })
 
   it('ogni UPDATE della candidatura porta il filtro di SEDE nella stessa istruzione', async () => {
@@ -966,21 +479,20 @@ describe('candidature insegnanti · approvazione', () => {
     expect(h.sendEmail, 'email delle credenziali partita senza account e senza password').not.toHaveBeenCalled()
   })
 
-  it('posizioni MISTE (`cuoca` + `insegnante_nido`): una sola posizione docente basta, e l’account nasce', async () => {
-    // Chi cerca lavoro in una scuola dell'infanzia si propone spesso per più cose
-    // insieme. La domanda del ramo non è «è SOLO un'insegnante?» ma «insegna anche?»:
-    // rispondere «no» qui vorrebbe dire approvare una maestra senza darle l'accesso
-    // che le serve per lavorare, e nessun avviso lo direbbe.
+  it('posizioni MISTE (`cuoca` + `insegnante_nido`): l’esito è lo stesso delle altre — nessun account', async () => {
+    // Questo caso esisteva per provare il CONTRARIO: che una sola posizione docente
+    // bastasse a far nascere l'accesso. Dal 2026-08-15 le posizioni non decidono
+    // più niente qui, e la prova serve a impedire che il vecchio ramo rientri da
+    // una porta laterale — «ma se fra le posizioni c'è insegnante, allora…».
     conPosizioni('cuoca', 'insegnante_nido')
     h.state.tabelle.candidature_insegnanti[0].gradi = ['nido']
     const res = await approva()
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.esitoAccount).toBe('creato')
-    expect(h.state.creazioniAuth).toHaveLength(1)
-    expect(rigaUtenti()!.ruolo).toBe('educator')
-    expect(rigaUtenti()!.gradi).toEqual(['nido'])
-    expect(body.credentials.password).toBeTruthy()
+    expect(body.esitoAccount).toBe('nessuno')
+    expect(h.state.creazioniAuth).toHaveLength(0)
+    expect(body.credentials).toBeNull()
+    expect(h.sendEmail).not.toHaveBeenCalled()
   })
 
   it('senza account: UNA sola scrittura di stato, `pending → approvata`, mai `in_approvazione`', async () => {
@@ -1075,27 +587,12 @@ describe('candidature insegnanti · approvazione', () => {
     ).not.toMatch(/cuoca|altro|insegnante_/)
   })
 
-  it('ramo docente: `esitoAccount: \'creato\'`, e la lettura pre-PATCH chiede davvero `posizioni`', async () => {
+  it('`esitoAccount` è `nessuno` per TUTTE le candidature, e la risposta non ha più altre storie da raccontare', async () => {
     const body = await (await approva()).json()
-    expect(body.esitoAccount).toBe('creato')
-
-    // La colonna su cui si DECIDE deve stare nella proiezione: toglierla da
-    // `COLONNE_DECISIONE` non farebbe rossa nessuna query — farebbe rispondere
-    // «nessun account» a OGNI approvazione, in silenzio e per tutte.
-    const preLettura = h.state.letture.find((l) => l.table === 'candidature_insegnanti')
-    expect(preLettura, 'nessuna lettura della candidatura prima della PATCH').toBeTruthy()
-    expect(preLettura!.cols.split(',').map((c) => c.trim())).toContain('posizioni')
-  })
-
-  it('ramo docente: `esitoAccount: \'riusato\'` quando quell’email aveva già un accesso', async () => {
-    h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
-    const body = await (await approva()).json()
-    expect(body.esitoAccount).toBe('riusato')
-    // …che è una storia diversa da «nessuno», e le due si distinguono proprio qui:
-    // `credentials: null` vale per entrambe.
-    expect(body.credentials).toBeNull()
-    expect(h.state.creazioniAuth).toEqual([])
-    expect(rigaUtenti()!.id).toBe('auth-preesistente')
+    expect(body.esitoAccount).toBe('nessuno')
+    // `creato` e `riusato` erano le altre due storie, e non possono più accadere:
+    // se una di loro ricompare qui, è tornato un ramo che crea accessi.
+    expect(['creato', 'riusato']).not.toContain(body.esitoAccount)
   })
 
   it('riga SENZA `posizioni`: nessun account — il dubbio cade dalla parte dei bambini', async () => {

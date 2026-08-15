@@ -97,6 +97,15 @@ const h = vi.hoisted(() => ({
   logOk: vi.fn(),
   notificaEvento: vi.fn(),
   staffScuola: vi.fn(),
+  /**
+   * L'invio dell'email delle credenziali: qui si controlla se parte, e con che testo.
+   * Il parametro è TIPIZZATO anche se il corpo non lo usa: senza, `mock.calls[0][0]`
+   * è una tupla vuota e i casi non possono leggere ciò che è stato spedito.
+   */
+  sendEmail: vi.fn(
+    async (messaggio: { to: string; subject: string; text: string; html: string }) =>
+      ({ ok: true, inviatoA: messaggio.to } as { ok: boolean; error?: string; inviatoA?: string }),
+  ),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -105,6 +114,13 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: h.staffScuola }))
+// Solo `sendEmailDetailed` è finta: il GENERATORE del messaggio resta VERO, ed è
+// così che si prova che nel testo finisce davvero la sede della pratica — invece
+// di fidarsi di un parametro passato a una funzione mockata.
+vi.mock('@/lib/email/send', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/email/send')>()
+  return { ...actual, sendEmailDetailed: h.sendEmail }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => costruisciClient(h.state as unknown as StatoFinto),
   createClient: async () => costruisciClient(h.state as unknown as StatoFinto),
@@ -239,6 +255,101 @@ describe('pratiche personale · approvazione', () => {
     expect(body.credentials.email).toBe(EMAIL)
     expect(typeof body.credentials.password).toBe('string')
     expect((body.credentials.password as string).length).toBeGreaterThan(10)
+  })
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // LE CREDENZIALI PARTONO DA QUI, E DA NESSUN ALTRO POSTO.
+  //
+  // Fino al 2026-08-15 era il contrario: l'approvazione di una CANDIDATURA
+  // spediva la password, e questa — che è l'approvazione fatta guardando il
+  // documento d'identità della persona — la mostrava soltanto a schermo, in un
+  // riquadro che chiudendosi se la portava via. Decisione del titolare: la
+  // selezione non consegna accessi, l'anagrafica sì.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it('accesso NUOVO: l’email delle credenziali parte, e nomina la sede della PRATICA', async () => {
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+
+    expect(h.sendEmail).toHaveBeenCalledTimes(1)
+    const inviata = h.sendEmail.mock.calls[0][0] as { to: string; subject: string; text: string; html: string }
+    expect(inviata.to).toBe(EMAIL)
+    // Il generatore è VERO: la sede nel testo è quella della pratica (SEDE_B), non
+    // quella dell'operatore. Con tre plessi «Kidville» da solo non dice a nessuno
+    // dove è stata assunta.
+    expect(inviata.text).toContain(NOME_SEDE_B)
+    expect(inviata.text).not.toContain(NOME_SEDE_A)
+    // La password nel corpo è QUELLA tornata a schermo: due copie diverse
+    // manderebbero la persona a sbattere contro un login che non si apre.
+    expect(inviata.text).toContain(body.credentials.password)
+
+    // E la risposta lo DICE: chi guarda la password a schermo non ha nessun altro
+    // modo di sapere se la persona l'ha ricevuta.
+    expect(body.credentialsEmailSent).toBe(true)
+  })
+
+  it('accesso NUOVO: l’invio riuscito lascia un battito INTERROGABILE, non solo un log di passaggio', async () => {
+    await approva()
+    // Su `personale`, che è fra gli EVENTI_PERSISTITI: un `info` su `credenziali`
+    // vivrebbe qualche giorno sui Runtime Logs e poi sparirebbe, cioè non
+    // risponderebbe in SQL alla domanda «le credenziali di quella maestra sono
+    // partite davvero?» — l'ambiguità con cui il guasto delle email restò
+    // invisibile per mesi.
+    const battiti = h.logEvento.mock.calls.filter(
+      ([evento, , dati]) => evento === 'personale' && (dati as { esito?: string })?.esito === 'credenziali-inviate',
+    )
+    expect(battiti).toHaveLength(1)
+    const dati = battiti[0][2] as Record<string, unknown>
+    expect(dati.canale).toBe('email')
+    expect(dati.sede_id).toBe(SEDE_B)
+    // E il battito dell'approvazione porta il fatto, così una query sola risponde
+    // a «quante approvazioni hanno consegnato un accesso davvero?».
+    const approvata = h.logEvento.mock.calls.find(
+      ([, , dati]) => (dati as { esito?: string })?.esito === 'pratica-approvata',
+    )
+    expect((approvata![2] as Record<string, unknown>).credenziali_email_inviata).toBe(true)
+  })
+
+  it('email NON partita: 200, l’accesso ESISTE, e l’avviso dice che la password a schermo è l’unica copia', async () => {
+    h.sendEmail.mockResolvedValueOnce({ ok: false, error: 'dominio non verificato' })
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+
+    // L'account è nato lo stesso: tacere qui significherebbe far credere che non
+    // sia successo niente, e la persona resterebbe senza accesso senza che nessuno
+    // lo sappia.
+    expect(body.accountCreato).toBe(true)
+    expect(body.credentialsEmailSent).toBe(false)
+    expect(typeof body.credentials.password).toBe('string')
+    expect((body.warnings as { codice: string }[]).map((w) => w.codice)).toContain('credenzialiEmailNonInviata')
+
+    // Il fallimento va a `error` su `credenziali`, che è persistito PER LIVELLO.
+    const errori = h.logEvento.mock.calls.filter(
+      ([evento, livello]) => evento === 'credenziali' && livello === 'error',
+    )
+    expect(errori).toHaveLength(1)
+    expect((errori[0][2] as Record<string, unknown>).esito).toBe('credenziali-non-inviate')
+    // Il motivo tecnico resta nel log e NON esce nell'avviso, che è un codice.
+    expect(JSON.stringify(body.warnings)).not.toContain('dominio non verificato')
+  })
+
+  it('account PREESISTENTE: nessuna password generata, quindi NESSUNA email', async () => {
+    // È il caso normale di questo modulo — la maestra lavora qui da anni — ed è il
+    // caso in cui un invio sarebbe un danno: un'email di credenziali senza
+    // credenziali, a chi entra col suo accesso di sempre.
+    h.state.authUsers = [{ id: 'auth-preesistente', email: EMAIL }]
+    h.state.tabelle.utenti = [
+      { id: 'auth-preesistente', email: EMAIL, ruolo: 'admin', scuola_id: SEDE_A, gradi: ['primaria'] },
+    ]
+    const res = await approva()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+
+    expect(h.sendEmail).not.toHaveBeenCalled()
+    expect(body.credentials).toBeNull()
+    expect(body.credentialsEmailSent).toBe(false)
   })
 
   it('email SCONOSCIUTA: la DIREZIONE viene avvisata, e l’avviso non porta nomi', async () => {

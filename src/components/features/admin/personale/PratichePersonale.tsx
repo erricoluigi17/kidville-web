@@ -172,6 +172,13 @@ interface Esito {
   azione: Azione
   stato: string | null
   credentials?: { email: string; password: string } | null
+  /**
+   * La password è anche PARTITA per email? Dal 2026-08-15 l'approvazione la
+   * spedisce, e la distinzione cambia cosa deve fare chi legge: se è partita non
+   * c'è niente da consegnare a mano, se non è partita quella a schermo è l'unica
+   * copia esistente. Un riquadro che non lo dice le fa sembrare la stessa cosa.
+   */
+  credentialsEmailSent?: boolean
   accountCreato?: boolean
   spostata?: boolean
 }
@@ -319,6 +326,7 @@ function esitoDaRisposta(azione: Azione, stato: string | null, json: unknown): E
     azione,
     stato,
     credentials: (corpo.credentials as Esito['credentials']) ?? null,
+    credentialsEmailSent: corpo.credentialsEmailSent === true,
     accountCreato: corpo.accountCreato === true,
     spostata: corpo.spostata === true,
   }
@@ -1357,7 +1365,11 @@ function AvvisoEsitiScartati({ voci, onCongeda }: { voci: EsitoScartato[]; onCon
                         <code>{v.esito.credentials.password}</code>
                       </span>
                     </p>
-                    <p className="text-xs">{t('pratCredenzialiAvviso')}</p>
+                    <p className="text-xs">
+                      {v.esito.credentialsEmailSent
+                        ? t('pratCredenzialiInviate')
+                        : t('pratCredenzialiAvviso')}
+                    </p>
                   </>
                 ) : (
                   <p className="text-xs">{t('pratNessunaCredenziale')}</p>
@@ -1905,7 +1917,9 @@ function PannelloPratica({
                     <code>{esito.credentials.password}</code>
                   </span>
                 </p>
-                <p className="font-maven text-xs text-kidville-sub">{t('pratCredenzialiAvviso')}</p>
+                <p className="font-maven text-xs text-kidville-sub">
+                  {esito.credentialsEmailSent ? t('pratCredenzialiInviate') : t('pratCredenzialiAvviso')}
+                </p>
               </>
             ) : (
               <p className="font-maven text-xs text-kidville-sub">{t('pratNessunaCredenziale')}</p>

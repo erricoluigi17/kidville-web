@@ -12,6 +12,9 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede } from '@/lib/email/contesto'
+import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { GRADI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { PERSONALE_FIELDS } from '@/lib/forms/personale-template'
 import {
@@ -1565,6 +1568,77 @@ async function approva(
     warnings.push(avviso('fasceNonRegistrate', { fasce: nomiGradi }))
   }
 
+  // ── 5bis. LE CREDENZIALI, PER EMAIL ────────────────────────────────────────
+  //
+  // ⚠️ QUESTO È L'UNICO POSTO DEL PRODOTTO IN CUI UN ACCESSO DEL PERSONALE NASCE
+  // E VIENE COMUNICATO, dal 2026-08-15. Fino a quel giorno era il contrario:
+  // l'approvazione di una CANDIDATURA spediva la password, e questa — che è
+  // l'approvazione fatta guardando il documento d'identità della persona — la
+  // mostrava soltanto a schermo, una volta sola, in un riquadro che chiudendosi
+  // se la portava via. Decisione del titolare: la selezione non consegna accessi,
+  // l'anagrafica sì.
+  //
+  // La password resta ANCHE a schermo (`credentials` nella risposta) e non è una
+  // ridondanza: se l'email non parte, quella è l'unica copia esistente — non è
+  // archiviata da nessuna parte, e il ripiego è «Rigenera credenziali».
+  //
+  // Solo per un accesso NATO ORA. `createdAuth` e non `utenzaNuova`: la seconda
+  // risponde a «è nato il profilo del personale?», e nel caso più comune —
+  // accesso preesistente, riga `utenti` creata adesso — è `true` mentre nessuna
+  // password è stata generata. Spedire lì significherebbe mandare un'email vuota
+  // di credenziali a chi già entra col suo accesso di sempre.
+  let credenzialiEmailInviata = false
+  if (identita.createdAuth && identita.password) {
+    // La sede nel testo è quella della PRATICA: con tre plessi «Kidville» da solo
+    // non dice a nessuno dove è stata assunta.
+    const sede = await risolviContestoSede(supabase, sedePratica, operazione)
+    const messaggio = messaggioCredenziali({
+      nome: testo(riga.nome) || null,
+      email,
+      password: identita.password,
+      occasione: 'anagrafica-personale-approvata',
+    }, sede)
+    const invio = await sendEmailDetailed({
+      to: email,
+      subject: messaggio.oggetto,
+      text: messaggio.testo,
+      html: messaggio.html,
+    })
+    credenzialiEmailInviata = invio.ok
+    // DUE CANALI PER UN FATTO SOLO, come in `regenerate-credentials`: il SUCCESSO
+    // su `personale` (che è in `EVENTI_PERSISTITI`, quindi interrogabile in SQL
+    // fra sei mesi — «le credenziali di quella maestra sono partite davvero?»), il
+    // FALLIMENTO su `credenziali` a livello `error`, persistito per livello.
+    // `credenziali` non è fra gli eventi persistiti, e un `info` lì vivrebbe
+    // qualche giorno sui Runtime Logs e poi sparirebbe: è esattamente l'ambiguità
+    // con cui il guasto delle email è rimasto invisibile per mesi.
+    if (invio.ok) {
+      logEvento('personale', 'info', {
+        operazione,
+        esito: 'credenziali-inviate',
+        canale: 'email',
+        tipo: 'staff',
+        entita_tipo: TABELLA,
+        entita_id: riga.id,
+        sede_id: sedePratica,
+      })
+    } else {
+      logEvento('credenziali', 'error', {
+        operazione,
+        esito: 'credenziali-non-inviate',
+        canale: 'email',
+        tipo: 'staff',
+        entita_tipo: TABELLA,
+        entita_id: riga.id,
+        sede_id: sedePratica,
+      }, new Error(invio.error ?? 'motivo sconosciuto'))
+      // Il motivo tecnico NON entra nell'avviso: è un codice, e il catalogo del
+      // client ne fa una frase. Chi legge deve sapere che l'email non è partita e
+      // che la password ce l'ha davanti — il perché sta nel log.
+      warnings.push(avviso('credenzialiEmailNonInviata'))
+    }
+  }
+
   // ── 6. LA DIREZIONE VIENE AVVISATA — SOLO se è nato un accesso nuovo ───────
   //
   // «Solo in quel caso» non è una limitazione, è la ragione per cui l'avviso serve a
@@ -1916,6 +1990,10 @@ async function approva(
     // La query che, fra mesi, dice quante pratiche hanno travasato una faccia sola:
     // è lo stato in cui un oggetto rischia di restare senza nessuna riga che lo nomini.
     documento_rilasciato_a_meta: documentiRilasciati.fronte !== documentiRilasciati.retro,
+    // È nato un accesso e la sua password è partita? Senza questo campo,
+    // «l'approvazione è andata» e «la persona sa come entrare» sarebbero lo stesso
+    // battito — ed è la distinzione che il guasto delle email aveva cancellato.
+    credenziali_email_inviata: credenzialiEmailInviata,
   }
   if (chiusuraRiuscita) {
     logEvento('personale', 'info', { ...battito, esito: 'pratica-approvata' })
@@ -1936,7 +2014,13 @@ async function approva(
     documentiRilasciati,
     // La password si vede UNA volta sola, qui. Non è archiviata da nessuna parte: per
     // riaverla c'è «Rigenera credenziali», che la sostituisce e lascia traccia.
+    //
+    // Resta a schermo ANCHE ora che parte per email (§5bis): è la copia di scorta
+    // del caso in cui l'invio fallisca, e distinguere i due casi tocca al campo
+    // qui sotto — non all'operatore, che davanti alla password non ha modo di
+    // sapere se la persona l'ha ricevuta.
     credentials: identita.createdAuth && identita.password ? { email, password: identita.password } : null,
+    credentialsEmailSent: credenzialiEmailInviata,
     warnings,
   })
 }

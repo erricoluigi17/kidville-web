@@ -14,6 +14,8 @@ import { codeHash } from '@/lib/auth/otp-ticket'
 import {
   BUCKET_CERTIFICATI,
   BUCKET_FASCICOLO,
+  componiDescrizioneUscita,
+  datiUscitaDaEvento,
   fineAnnoScolastico,
   ilFileRestaNelBucket,
   magazziniAmmessi,
@@ -21,6 +23,7 @@ import {
   SCHEMA_NON_PRONTO,
   SEMPRE_FIRMABILI_PREDEFINITI,
   sempreFirmabiliDa,
+  titoloUscita,
 } from '@/app/api/parent/prestampati/banco-famiglia'
 
 /**
@@ -158,6 +161,18 @@ const h = vi.hoisted(() => {
         qb.eq = (colonna: string, valore: unknown) => {
           filtri[colonna] = valore
           return qb
+        }
+        // I confronti d'ordine tengono il filtro come `eq`, con il verso nel nome: è così
+        // che si prova che l'uscita si cerca «da oggi in avanti» e non a ritroso. Devono
+        // esserci TUTTI e quattro: un metodo mancante nel doppione non fa fallire
+        // l'asserzione — fa esplodere la route dentro il suo `try`, e il test misura un
+        // 503 del doppione credendolo un 503 del prodotto (successo il 2026-08-16 con
+        // `gte`).
+        for (const m of ['gte', 'lte', 'gt', 'lt'] as const) {
+          qb[m] = (colonna: string, valore: unknown) => {
+            filtri[`${m}:${colonna}`] = valore
+            return qb
+          }
         }
         qb.insert = (righe: unknown) => {
           state.inserimenti.push({ tabella, righe })
@@ -467,6 +482,39 @@ const RISPOSTE_DIETA = {
   validita: 'fino alla fine dell’anno scolastico',
 }
 
+/**
+ * LA GITA, come `teacher/uscite:POST` la scrive in `eventi_agenda`.
+ *
+ * Non è una riga inventata a mano: la descrizione la compone `componiDescrizioneUscita`,
+ * cioè **la stessa funzione che la route dell'insegnante chiama**. Scriverla a mano qui
+ * avrebbe reso verde il test anche il giorno in cui le due parti smettono di parlarsi —
+ * che è precisamente il guasto contro cui il codec esiste.
+ */
+const USCITA_CORPO = {
+  tipo_attivita: 'gita' as const,
+  destinazione: 'Città della Scienza inventata',
+  data: '2026-09-20',
+  ora_partenza: '08:30',
+  ora_rientro: '16:00',
+  mezzo: 'pullman_privato' as const,
+  attivita_in_acqua: false,
+}
+const USCITA_RIGA = {
+  titolo: titoloUscita(USCITA_CORPO.tipo_attivita, USCITA_CORPO.destinazione),
+  descrizione: componiDescrizioneUscita(USCITA_CORPO),
+  data: USCITA_CORPO.data,
+  orario_inizio: '08:30:00',
+  orario_fine: '16:00:00',
+}
+
+/** Il n. 10 compilato: autorizzo, con un recapito reperibile inventato. */
+const RISPOSTE_USCITA = { autorizzo: true, recapito: '0000000003' }
+
+/** Mette in coda la gita per la sezione del bambino, su tutte le letture di `eventi_agenda`. */
+function conUscitaPubblicata(riga: Record<string, unknown> = USCITA_RIGA) {
+  h.state.fissi['eventi_agenda'] = { data: [riga], error: null }
+}
+
 /** La scansione del documento del delegato: il n. 08 la pretende, e la route la verifica. */
 const SCANSIONE_DELEGATO = `${ALUNNO}/delegati/documento.pdf`
 
@@ -617,7 +665,14 @@ function campiEvento(esito: string): Record<string, unknown> | undefined {
 beforeEach(() => {
   vi.clearAllMocks()
   h.state.queues = {}
-  h.state.fissi = { utenti: { data: { email: EMAIL }, error: null } }
+  h.state.fissi = {
+    utenti: { data: { email: EMAIL }, error: null },
+    // La riga dell'alunno come la legge il POST della firma quando il precompilato non
+    // serve: sede E sezione. La sezione è ciò che lega il bambino all'uscita — senza, il
+    // n. 10 non avrebbe una gita a cui appartenere e ogni prova su quel modulo misurerebbe
+    // il doppione invece della rotta.
+    alunni: { data: { scuola_id: SCUOLA, section_id: SEZIONE }, error: null },
+  }
   h.state.used = {}
   h.state.inserimenti = []
   h.state.upload = []
@@ -726,13 +781,14 @@ describe('GET /api/parent/prestampati — chi entra e che cosa vede', () => {
     expect(per('certificato_iscrizione_frequenza').firmabileOra).toBe(false)
     expect(per('certificato_bonus_nido').motivoNonFirmabile).toBe('firma-della-scuola')
 
-    // 2. IL N. 10, che prima usciva acceso e non si generava MAI. Il modello pretende i dati
-    // dell'uscita (`DatiUscita`) e nessun punto del repo li costruisce: l'uscita la pubblica
-    // la segreteria, e quella strada non esiste ancora. Con la voce accesa il genitore
-    // compilava, chiedeva il codice — bruciando un invio di un budget da 5 ogni dieci minuti,
-    // condiviso con TUTTE le porte OTP — e si vedeva rifiutare la firma.
-    expect(per('autorizzazione_uscita').firmabileOra).toBe(false)
-    expect(per('autorizzazione_uscita').motivoNonFirmabile).toBe('uscita-non-creata')
+    // 2. IL N. 10 NON C'È AFFATTO, e questa è la parte cambiata il 2026-08-16. Prima usciva
+    // ACCESO e non si generava mai; poi è stato spento con un lucchetto e un motivo
+    // (`uscita-non-creata`) — e restava spento **anche quando la gita esisteva davvero**,
+    // perché le uscite vivono in `eventi_agenda` e nessuno costruiva `DatiUscita`. Ora la
+    // regola è: niente uscita pubblicata per la sezione di quel bambino ⇒ la voce non compare
+    // nell'elenco. Un lucchetto su una gita che non esiste è una promessa a chi non ha niente
+    // da firmare.
+    expect(json.modelli.map((m: { slug: string }) => m.slug)).not.toContain('autorizzazione_uscita')
 
     // 3. IL N. 08, che pretende la scansione del documento di ogni delegato e non ha nessuna
     // porta da cui caricarla: il documento d'identità di un TERZO non è un certificato
@@ -872,6 +928,228 @@ describe('GET /api/parent/prestampati — chi entra e che cosa vede', () => {
   })
 })
 
+// ─── Il n. 10 e l'uscita che lo accende ─────────────────────────────────────────
+
+describe('l’autorizzazione all’uscita esiste solo se esiste la gita', () => {
+  /**
+   * IL ROUND-TRIP È IL LOCK, ed è l'unica cosa che tiene insieme le due metà.
+   *
+   * `eventi_agenda` non ha una colonna `jsonb`: i dati della gita viaggiano dentro il TESTO
+   * della descrizione, scritto da `teacher/uscite:POST` e riletto dalle due porte della
+   * famiglia. Se le etichette divergono il modulo esce lo stesso, con la destinazione
+   * vuota, e nessun errore lo segnala — è il modo silenzioso in cui questo formato si
+   * rompe. Questa prova compone e rilegge, e confronta con l'input.
+   */
+  /**
+   * ⚠️ IL LOCK VERO È QUESTO, E IL ROUND-TRIP DA SOLO NON BASTAVA.
+   *
+   * Misurato il 2026-08-16: rinominando `RIGA_DESTINAZIONE` da `'Destinazione'` a `'Meta'`
+   * la suite restava **verde**, perché chi scrive e chi legge usano la stessa costante e il
+   * round-trip è coerente per costruzione. Ma in `eventi_agenda` ci sono già righe scritte
+   * con le etichette di oggi: rinominarne una le rende illeggibili, cioè **spegne il modulo
+   * n. 10 per le gite già annunciate alle famiglie**, in silenzio.
+   *
+   * Perciò qui la descrizione è una STRINGA LETTERALE, copiata dal formato che la route
+   * dell'insegnante scrive da quando esiste, e il titolo è `null`: ogni campo deve uscire
+   * dalla descrizione, senza appoggiarsi al titolo. Se un'etichetta cambia, questa prova
+   * diventa rossa — ed è l'unico posto in cui può farlo.
+   */
+  it('il formato già scritto in produzione resta leggibile, etichetta per etichetta', () => {
+    const letto = datiUscitaDaEvento({
+      titolo: null,
+      descrizione: [
+        'Tipo di attività: Corso di piscina/nuoto',
+        'Destinazione: Piscina comunale inventata',
+        'Data: 20/09/2026 · Partenza: 08:30 · Rientro previsto: 16:00',
+        'Mezzo di trasporto: Scuolabus',
+        'Attività in acqua: Sì',
+        'Accompagnatori: due maestre',
+        'Quota di partecipazione: € 12,00',
+        'Si ricorda di segnalare eventuali informazioni sanitarie rilevanti già indicate nella scheda sanitaria dell’alunno/a.',
+      ].join('\n'),
+      data: '2026-09-20',
+      orario_inizio: '08:30:00',
+      orario_fine: '16:00:00',
+    })
+    expect(letto).toEqual({
+      tipo: 'piscina',
+      destinazione: 'Piscina comunale inventata',
+      data: '2026-09-20',
+      oraPartenza: '08:30',
+      oraRientro: '16:00',
+      mezzo: 'scuolabus',
+      attivitaInAcqua: true,
+    })
+  })
+
+  it('ciò che l’insegnante scrive in agenda è ciò che il modulo rilegge', () => {
+    const letto = datiUscitaDaEvento(USCITA_RIGA)
+    expect(letto).toEqual({
+      // `gita` di qua, `gita` di là: il tipo dell'agenda si traduce in quello del modello.
+      tipo: 'gita',
+      destinazione: USCITA_CORPO.destinazione,
+      data: USCITA_CORPO.data,
+      // I secondi della `time` di Postgres non arrivano sul foglio.
+      oraPartenza: '08:30',
+      oraRientro: '16:00',
+      mezzo: 'pullman_privato',
+      attivitaInAcqua: false,
+    })
+  })
+
+  it('«corso di piscina» diventa «piscina», e l’attività in acqua sopravvive alla scrittura', () => {
+    // I due elenchi hanno cinque voci identiche e UN nome diverso per la stessa cosa
+    // (`corso_piscina` in agenda, `piscina` nel modello): senza la traduzione il foglio
+    // stamperebbe «Altro» su un corso di nuoto. E `attivitaInAcqua` è il dato che decide se
+    // il modulo chiede «sa nuotare»: prima del 2026-08-16 non veniva scritto affatto.
+    const riga = {
+      titolo: titoloUscita('corso_piscina', 'Piscina inventata'),
+      descrizione: componiDescrizioneUscita({
+        ...USCITA_CORPO,
+        tipo_attivita: 'corso_piscina',
+        destinazione: 'Piscina inventata',
+        mezzo: 'a_piedi',
+        attivita_in_acqua: true,
+      }),
+      data: USCITA_CORPO.data,
+      orario_inizio: '08:30:00',
+      orario_fine: '16:00:00',
+    }
+    const letto = datiUscitaDaEvento(riga)
+    expect(letto?.tipo).toBe('piscina')
+    expect(letto?.mezzo).toBe('a_piedi')
+    expect(letto?.attivitaInAcqua).toBe(true)
+  })
+
+  it('una riga senza destinazione, senza data o senza orari NON è un’uscita da autorizzare', () => {
+    // Le tre condizioni sono quelle che il foglio dichiara e che un ente leggerebbe: dove
+    // si va, quando si parte, quando si torna. Senza una qualunque delle tre il documento
+    // autorizzerebbe la partecipazione a un'attività che non dice dove va né quando.
+    expect(datiUscitaDaEvento(null)).toBeNull()
+    expect(datiUscitaDaEvento({ ...USCITA_RIGA, data: null })).toBeNull()
+    expect(datiUscitaDaEvento({ ...USCITA_RIGA, data: '20/09/2026' })).toBeNull()
+    expect(datiUscitaDaEvento({ ...USCITA_RIGA, orario_inizio: null })).toBeNull()
+    expect(datiUscitaDaEvento({ ...USCITA_RIGA, orario_fine: '   ' })).toBeNull()
+    // Descrizione libera E titolo senza due punti: la destinazione non si inventa.
+    expect(
+      datiUscitaDaEvento({ ...USCITA_RIGA, descrizione: 'Andiamo in gita', titolo: 'Gita' }),
+    ).toBeNull()
+  })
+
+  it('un’uscita nata dall’agenda generica si legge dal titolo, e il tipo ignoto vale «altro»', () => {
+    // `eventi_agenda` accetta `tipo='uscita'` anche da `POST /api/agenda`, dove la
+    // descrizione è testo libero: là il titolo è l'unica cosa che ha una forma.
+    const letto = datiUscitaDaEvento({
+      titolo: 'Passeggiata: Parco inventato',
+      descrizione: 'Ci vediamo davanti al cancello.',
+      data: '2026-10-01',
+      orario_inizio: '09:00:00',
+      orario_fine: '11:30:00',
+    })
+    expect(letto?.destinazione).toBe('Parco inventato')
+    expect(letto?.tipo).toBe('altro')
+    expect(letto?.mezzo).toBeNull()
+  })
+
+  it('con la gita pubblicata il n. 10 COMPARE, acceso e con destinazione, data e orari veri', async () => {
+    conUscitaPubblicata()
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const dieci = json.modelli.find((m: { slug: string }) => m.slug === 'autorizzazione_uscita')
+    expect(dieci).toBeDefined()
+    expect(dieci.firmabileOra).toBe(true)
+    expect(dieci.motivoNonFirmabile).toBeNull()
+    // E la gita esce accanto all'elenco: il genitore deve sapere che cosa sta autorizzando
+    // PRIMA di aprire il modulo.
+    expect(json.uscita).toEqual({
+      destinazione: USCITA_CORPO.destinazione,
+      data: USCITA_CORPO.data,
+      oraPartenza: '08:30',
+      oraRientro: '16:00',
+    })
+  })
+
+  it('l’uscita si cerca nella SEZIONE e nella SEDE del bambino, e solo da oggi in avanti', async () => {
+    conUscitaPubblicata()
+    await GET(reqGet(`?alunnoId=${ALUNNO}`))
+    const lettura = h.state.letture.find((l) => l.tabella === 'eventi_agenda')
+    expect(lettura?.filtri).toMatchObject({
+      section_id: SEZIONE,
+      scuola_id: SCUOLA,
+      tipo: 'uscita',
+      visibile_genitori: true,
+      // «Da oggi in avanti»: un'autorizzazione si firma PRIMA di partire, e la gita di
+      // marzo scorso non si autorizza più. La data è quella CIVILE italiana che il
+      // precompilato ha già calcolato, non `new Date()` del processo (su Vercel è UTC).
+      'gte:data': DATI.dataOggi,
+    })
+  })
+
+  it('un’uscita NON LETTA non diventa «non c’è nessuna gita»', async () => {
+    // Togliere la voce per un guasto di lettura vorrebbe dire dire alla famiglia «non c'è
+    // nessuna gita» quando la risposta vera è «non lo so» — e il giorno della partenza
+    // nessuno collegherebbe le due cose.
+    h.state.fissi['eventi_agenda'] = {
+      data: null,
+      error: { code: '42P01', message: 'relation "eventi_agenda" does not exist' },
+    }
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    expect(json.modelli.map((m: { slug: string }) => m.slug)).toContain('autorizzazione_uscita')
+    const riga = spie.chiamate.find(
+      (c) => c[0] === 'logEvento' && (c[3] as { esito?: string })?.esito === 'uscita-non-letta',
+    )
+    expect(riga?.[2]).toBe('warn')
+    expect((riga?.[3] as { error_code?: string })?.error_code).toBe('42P01')
+  })
+
+  it('senza gita il codice di firma NON parte: il budget OTP non si brucia su un modulo che non c’è', async () => {
+    // `LIMITE_OTP_INVIO` è di 5 invii per finestra di dieci minuti ed è CONDIVISO fra tutte
+    // le porte OTP: cinque tentativi su una gita inesistente lascerebbero il genitore senza
+    // modo di firmare l'autorizzazione a un farmaco.
+    const res = await POST(reqFirma('POST', { slug: 'autorizzazione_uscita', alunnoId: ALUNNO }))
+    const json = await res.json()
+    expect(res.status).toBe(404)
+    expect(json.codice).toBe('PRESTAMPATO_SCONOSCIUTO')
+    expect(posta.sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('con la gita pubblicata il n. 10 si firma davvero, e destinazione e orari finiscono SUL FOGLIO', async () => {
+    conUscitaPubblicata()
+    const { res, json } = await firma('autorizzazione_uscita', RISPOSTE_USCITA)
+    expect(res.status, JSON.stringify(json)).toBe(201)
+
+    // Il PDF si genera per davvero in questi test: si legge quello che riceve la famiglia.
+    expect(h.state.upload).toHaveLength(1)
+    const testo = await estraiTesto(h.state.upload[0].byte)
+    expect(testo).toContain(USCITA_CORPO.destinazione)
+    expect(testo).toContain('20/09/2026')
+    expect(testo).toContain('08:30')
+    expect(testo).toContain('16:00')
+  })
+
+  it('se la gita sparisce fra la richiesta del codice e la firma, il documento non nasce', async () => {
+    // Fra il POST e il PATCH passano minuti: un'uscita annullata nel frattempo non deve
+    // produrre un'autorizzazione. È il motivo per cui la lettura si rifà nel PATCH invece
+    // di fidarsi di quella del POST.
+    conUscitaPubblicata()
+    const codice = await chiediCodice('autorizzazione_uscita')
+    h.state.fissi['eventi_agenda'] = { data: [], error: null }
+
+    const res = await PATCH(
+      reqFirma('PATCH', {
+        slug: 'autorizzazione_uscita',
+        alunnoId: ALUNNO,
+        code: codice.devCode,
+        expiry: codice.expiry,
+        ticket: codice.ticket,
+        risposte: RISPOSTE_USCITA,
+      }),
+    )
+    expect(res.status).toBe(404)
+    expect(h.state.upload).toHaveLength(0)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'firme_documenti')).toBe(false)
+  })
+})
+
 // ─── POST: l'invio del codice ───────────────────────────────────────────────────
 
 describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
@@ -935,23 +1213,24 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
-  it('l’autorizzazione all’uscita non fa partire nessun codice: la gita non esiste ancora', async () => {
-    // Il n. 10 pretende `DatiUscita` — tipo, destinazione, data, mezzo — che nasce dall'uscita
-    // pubblicata dalla segreteria, e quella strada non è ancora stata scritta: il PATCH
-    // rifiuterebbe il 100% delle volte. Spedire il codice qui non era solo un giro a vuoto:
-    // cinque tentativi bruciavano il budget OTP, che è UNO per tutte le porte, e il genitore
-    // restava senza modo di firmare l'autorizzazione a un farmaco.
+  it('l’autorizzazione all’uscita non fa partire nessun codice se la gita non è pubblicata', async () => {
+    // Il n. 10 pretende `DatiUscita` — tipo, destinazione, data, mezzo — che nasce dalla gita
+    // in `eventi_agenda`. Senza quella riga il PATCH rifiuterebbe il 100% delle volte, e
+    // spedire il codice qui non sarebbe solo un giro a vuoto: cinque tentativi bruciano il
+    // budget OTP, che è UNO per tutte le porte, e il genitore resta senza modo di firmare
+    // l'autorizzazione a un farmaco.
+    //
+    // ⚠️ 404 e non 409: da quando l'uscita governa la visibilità, per QUESTO bambino e in
+    // QUESTO momento quel modulo non è nell'elenco — e la frase di `PRESTAMPATO_SCONOSCIUTO`
+    // («non è fra i prestampati disponibili alla famiglia») dice esattamente questo. Un
+    // `motivoNonFirmabile` servirebbe a spiegare un pulsante spento, e nessun pulsante è
+    // acceso.
     const res = await POST(reqFirma('POST', { slug: 'autorizzazione_uscita', alunnoId: ALUNNO }))
     const json = await res.json()
 
-    expect(res.status).toBe(409)
-    expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
-    expect(json.motivoNonFirmabile).toBe('uscita-non-creata')
+    expect(res.status).toBe(404)
+    expect(json.codice).toBe('PRESTAMPATO_SCONOSCIUTO')
     expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
-    // E si rifiuta senza aver letto niente: l'anagrafica di un minore non si legge per un
-    // documento che non poteva uscire.
-    expect(portata.requireParentOfStudent).not.toHaveBeenCalled()
-    expect(prefillMod.caricaPrefillAlunno).not.toHaveBeenCalled()
   })
 
   it('con due tutori in anagrafica la delega al ritiro si ferma PRIMA dell’email', async () => {
@@ -1366,7 +1645,10 @@ describe('PATCH /api/parent/prestampati/firma — verifica, generazione, archivi
     expect(h.state.inserimenti.some((i) => i.tabella === 'otp_ticket_consumati')).toBe(false)
   })
 
-  it('l’autorizzazione all’uscita si ferma prima della firma, invece di rifiutarla dopo', async () => {
+  it('l’autorizzazione all’uscita si ferma prima della firma quando la gita non c’è', async () => {
+    // Un client vecchio (o una scheda lasciata aperta) può insistere su un modulo che
+    // l'elenco non mostra più: qui il rifiuto arriva PRIMA che il ticket si consumi, quindi
+    // la famiglia non perde il codice.
     const codice = await chiediCodice('permesso_orario')
 
     const res = await PATCH(
@@ -1376,17 +1658,15 @@ describe('PATCH /api/parent/prestampati/firma — verifica, generazione, archivi
         code: codice.devCode,
         expiry: codice.expiry,
         ticket: codice.ticket,
-        risposte: { autorizzo: true, recapito: '0000000000' },
+        risposte: RISPOSTE_USCITA,
       }),
     )
     const json = await res.json()
 
-    expect(res.status).toBe(409)
-    expect(json.motivoNonFirmabile).toBe('uscita-non-creata')
+    expect(res.status).toBe(404)
+    expect(json.codice).toBe('PRESTAMPATO_SCONOSCIUTO')
     expect(h.state.upload).toHaveLength(0)
     expect(h.state.inserimenti.some((i) => i.tabella === 'otp_ticket_consumati')).toBe(false)
-    // Si rifiuta senza nemmeno caricare il precompilato: il verdetto non ha bisogno di dati.
-    expect(prefillMod.caricaPrefillAlunno).not.toHaveBeenCalled()
   })
 
   it('firma, archivia e NON scrive l’hash dell’OTP, l’email o l’IP sul foglio che gira', async () => {

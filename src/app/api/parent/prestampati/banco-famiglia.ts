@@ -58,7 +58,10 @@ import {
   richiedeDueFirme,
   type CampoModulo,
   type DatiPrestampato,
+  type DatiUscita,
   type ErroreCampo,
+  type MezzoTrasporto,
+  type TipoUscita,
 } from '@/lib/prestampati/modelli/genitore'
 import type { EsitoRender } from '@/lib/prestampati/render'
 
@@ -154,27 +157,8 @@ export function serveElencoDelegati(campi: readonly CampoConDelegati[]): boolean
  */
 export type MotivoNonFirmabile =
   | 'firma-della-scuola'
-  | 'uscita-non-creata'
   | 'seconda-firma-mancante'
   | 'allegato-non-caricabile'
-
-/**
- * I modelli che pretendono un CONTESTO che oggi nessuno costruisce.
- *
- * Oggi ce n'è uno: il n. 10. `DatiPrestampato.uscita` è il prefill dell'evento — tipo,
- * destinazione, data, mezzo, attività in acqua — e `prefill.ts` dice a chiare lettere che
- * «`dati` non porta `visto`, `sottoscrizioni`, `accompagnatore` e `uscita`… li aggiunge la
- * route». La route non li aggiunge, e non per dimenticanza: **l'uscita nasce dalla
- * segreteria**, che pubblica la gita per tutta la sezione, e quella strada non è ancora
- * stata scritta. Finché non c'è, il modulo si compila e la firma non si può apporre.
- *
- * Un insieme e non una regola dedotta dal modello: `verificaContesto` non è ispezionabile
- * dall'esterno (è una funzione chiusa dentro `definisciModello`), e dedurre «questo modello
- * vuole un contesto» dalla presenza di un campo sarebbe una seconda descrizione del modello
- * accanto a quella che il modello dà di sé. Il giorno in cui la segreteria pubblicherà le
- * uscite, questa riga sparisce e non cambia nient'altro.
- */
-const CONTESTO_NON_DISPONIBILE: ReadonlySet<string> = new Set(['autorizzazione_uscita'])
 
 /**
  * I modelli che pretendono un ALLEGATO che la famiglia non ha nessun modo di depositare.
@@ -243,7 +227,15 @@ export function motivoNonFirmabileSubito(voce: VocePrestampato): MotivoNonFirmab
   // funzione mappa i tre requisiti sui tre blocchi del motore, e «blocco del genitore» è vera
   // esattamente sui due requisiti OTP. Enumerarli a mano qui sarebbe la quarta copia.
   if (bloccoFirma(voce.firma) !== 'genitore') return 'firma-della-scuola'
-  if (CONTESTO_NON_DISPONIBILE.has(voce.slug)) return 'uscita-non-creata'
+  // ⚠️ IL N. 10 NON HA PIÙ UN MOTIVO, e non perché il problema sia sparito: perché la
+  // risposta è cambiata di natura. Fino al 2026-08-15 qui c'era
+  // `CONTESTO_NON_DISPONIBILE.has(voce.slug) → 'uscita-non-creata'`, cioè una voce SPENTA
+  // con un lucchetto accanto — e restava spenta anche quando la gita esisteva davvero,
+  // perché le uscite vivono in `eventi_agenda` e nessuno costruiva `DatiUscita`. Ora
+  // l'uscita si legge (`datiUscitaDaEvento`, qui sotto) e la regola è un'altra: **senza
+  // uscita pubblicata il modulo non compare affatto** nell'elenco della famiglia. Un
+  // lucchetto su una gita che non esiste è una promessa a chi non ha niente da firmare.
+  // La decisione è del GET, che l'elenco lo compone; qui non c'è più niente da dire.
   // ⚠️ `allegato-non-caricabile` NON sta qui, e non è una svista: sul n. 08 vale insieme a
   // `seconda-firma-mancante`, e dandolo subito — prima di aver guardato l'anagrafica —
   // renderebbe il verdetto della doppia firma irraggiungibile per sempre. Sta in
@@ -277,6 +269,237 @@ export function motivoNonFirmabile(
   }
   if (ALLEGATO_SENZA_PORTA.has(voce.slug)) return 'allegato-non-caricabile'
   return null
+}
+
+// ─── L'USCITA: come si scrive in agenda e come si rilegge sul modulo n. 10 ──────
+//
+// ⚠️ PERCHÉ IL CODICE CHE SCRIVE STA NEL FILE DI CHI LEGGE, che è la domanda giusta da
+// fare a questa sezione. `eventi_agenda` non ha una colonna `jsonb` (baseline, righe
+// 1427-1441: `titolo`, `descrizione`, `tipo`, `data`, `orario_inizio`, `orario_fine`,
+// `visibile_genitori`), e aggiungerne una è una migrazione. L'unico posto in cui i dati
+// dell'uscita possono viaggiare è quindi il TESTO della descrizione, e un testo è un
+// formato: chi lo scrive (`teacher/uscite:POST`) e chi lo rilegge (le due porte della
+// famiglia) devono usare le stesse etichette, o il n. 10 smette di stampare la
+// destinazione **senza che niente diventi rosso** — il foglio esce lo stesso, con una riga
+// in meno che nessuno sa di dover cercare.
+//
+// Due copie delle etichette in due file divergono al primo ritocco. Perciò stanno qui, che
+// è il file di chi si ROMPE se divergono, e la route dell'insegnante le importa. Il
+// round-trip (`componiDescrizioneUscita` → `datiUscitaDaEvento`) è verificato dal test, che
+// è la sola prova che il formato regge.
+//
+// ⚠️ E IL FORMATO NON SI PUÒ RISCRIVERE A PIACERE: in produzione esistono già uscite
+// pubblicate con queste righe. Un'etichetta cambiata rende illeggibili quelle, cioè spegne
+// il modulo per le gite già annunciate alle famiglie.
+
+/** Le cinque voci del cartaceo, nell'ordine in cui il prestampato le elenca. */
+export const TIPI_ATTIVITA_USCITA = [
+  'uscita_didattica',
+  'gita',
+  'laboratorio_esterno',
+  'corso_piscina',
+  'altro',
+] as const
+export type TipoAttivitaUscita = (typeof TIPI_ATTIVITA_USCITA)[number]
+
+export const ETICHETTA_ATTIVITA_USCITA: Record<TipoAttivitaUscita, string> = {
+  uscita_didattica: 'Uscita didattica',
+  gita: 'Gita',
+  laboratorio_esterno: 'Laboratorio esterno',
+  corso_piscina: 'Corso di piscina/nuoto',
+  altro: 'Altra attività esterna',
+}
+
+/**
+ * Il tipo dell'agenda → il tipo del MODELLO, che ha un nome diverso per la stessa cosa.
+ *
+ * `corso_piscina` di qua e `piscina` di là (`TIPI_USCITA`, `modelli/genitore.ts`): due
+ * elenchi scritti da due mani, con le stesse cinque voci e un nome che non coincide.
+ * Tradurre qui è meno pericoloso che allineare i due enumerati — l'agenda ha già righe
+ * scritte con `corso_piscina`, e rinominarle sarebbe una migrazione di dati per un refuso.
+ */
+const TIPO_USCITA_DEL_MODELLO: Record<TipoAttivitaUscita, TipoUscita> = {
+  uscita_didattica: 'uscita_didattica',
+  gita: 'gita',
+  laboratorio_esterno: 'laboratorio_esterno',
+  corso_piscina: 'piscina',
+  altro: 'altro',
+}
+
+/** Le quattro voci del cartaceo per il mezzo di trasporto. */
+export const MEZZI_USCITA = ['scuolabus', 'pullman_privato', 'a_piedi', 'altro'] as const
+export type MezzoUscita = (typeof MEZZI_USCITA)[number]
+
+export const ETICHETTA_MEZZO_USCITA: Record<MezzoUscita, string> = {
+  scuolabus: 'Scuolabus',
+  pullman_privato: 'Pullman privato',
+  a_piedi: 'A piedi',
+  altro: 'Altro',
+}
+
+/** Le etichette che fanno da chiave nella descrizione. Cambiarne una rompe il passato. */
+const RIGA_TIPO = 'Tipo di attività'
+const RIGA_DESTINAZIONE = 'Destinazione'
+const RIGA_MEZZO = 'Mezzo di trasporto'
+const RIGA_ACQUA = 'Attività in acqua'
+
+/** `2026-09-12` → `12/09/2026`, senza costruire una `Date`: nessun fuso di mezzo. */
+export function dataItalianaUscita(ymd: string): string {
+  const [anno, mese, giorno] = ymd.split('-')
+  return `${giorno}/${mese}/${anno}`
+}
+
+/** Il titolo dell'evento in agenda, e la prima metà della chiave naturale della gita. */
+export function titoloUscita(tipo: TipoAttivitaUscita, destinazione: string): string {
+  return `${ETICHETTA_ATTIVITA_USCITA[tipo]}: ${destinazione}`
+}
+
+/** Ciò che serve a comporre la descrizione dell'uscita: è il corpo della richiesta. */
+export interface DescrizioneUscitaInput {
+  tipo_attivita: TipoAttivitaUscita
+  destinazione: string
+  data: string
+  ora_partenza: string
+  ora_rientro: string
+  mezzo: MezzoUscita
+  attivita_in_acqua?: boolean
+  accompagnatori?: string | null
+  /** Già formattata in euro dal chiamante: qui non entra `formatEuro`. */
+  quota?: string | null
+}
+
+/**
+ * La «DESCRIZIONE DELL'ATTIVITÀ», tutta precompilata dall'evento.
+ *
+ * Le righe di cui la gita non porta il dato NON compaiono: è la disciplina dei prestampati
+ * («mai una riga vuota che sembri un valore»), e su un foglio che autorizza l'uscita di un
+ * minore un «Quota: —» si legge come una quota decisa.
+ *
+ * ⚠️ `Attività in acqua` compare SOLO quando è vera, ed è la riga aggiunta il 2026-08-16:
+ * senza, il dato non sopravviveva alla scrittura e il modulo non avrebbe mai chiesto «sa
+ * nuotare». Le uscite pubblicate PRIMA di oggi non ce l'hanno e rileggono `false`: è il
+ * degrado onesto — la domanda non viene posta — e non si può fare di meglio, perché quel
+ * dato in quelle righe non c'è mai stato.
+ */
+export function componiDescrizioneUscita(u: DescrizioneUscitaInput): string {
+  const righe = [
+    `${RIGA_TIPO}: ${ETICHETTA_ATTIVITA_USCITA[u.tipo_attivita]}`,
+    `${RIGA_DESTINAZIONE}: ${u.destinazione}`,
+    `Data: ${dataItalianaUscita(u.data)} · Partenza: ${u.ora_partenza} · Rientro previsto: ${u.ora_rientro}`,
+    `${RIGA_MEZZO}: ${ETICHETTA_MEZZO_USCITA[u.mezzo]}`,
+  ]
+  if (u.attivita_in_acqua) righe.push(`${RIGA_ACQUA}: Sì`)
+  if (u.accompagnatori) righe.push(`Accompagnatori: ${u.accompagnatori}`)
+  if (u.quota) righe.push(`Quota di partecipazione: ${u.quota}`)
+  righe.push(
+    'Si ricorda di segnalare eventuali informazioni sanitarie rilevanti già indicate nella scheda sanitaria dell’alunno/a.',
+  )
+  return righe.join('\n')
+}
+
+/** La riga di `eventi_agenda` come arriva da PostgREST, con i soli campi che servono. */
+export interface EventoUscita {
+  titolo?: string | null
+  descrizione?: string | null
+  data?: string | null
+  orario_inizio?: string | null
+  orario_fine?: string | null
+}
+
+/** Il valore di una riga «Etichetta: valore» della descrizione, o `null`. */
+function valoreRiga(descrizione: string, etichetta: string): string | null {
+  for (const riga of descrizione.split('\n')) {
+    const t = riga.trim()
+    if (t.startsWith(`${etichetta}:`)) return t.slice(etichetta.length + 1).trim() || null
+  }
+  return null
+}
+
+/** Il valore di un enumerato a partire dalla sua etichetta stampata, o `null`. */
+function valoreDaEtichetta<T extends string>(
+  etichette: Record<T, string>,
+  testo: string | null,
+): T | null {
+  if (!testo) return null
+  for (const [valore, etichetta] of Object.entries(etichette) as [T, string][]) {
+    if (etichetta === testo) return valore
+  }
+  return null
+}
+
+/** `09:00:00` → `09:00`. Una `time` di Postgres porta i secondi, il foglio no. */
+function oraBreve(ora: string | null | undefined): string | null {
+  const t = ora?.trim()
+  if (!t) return null
+  const m = /^([01]\d|2[0-3]):([0-5]\d)/.exec(t)
+  return m ? `${m[1]}:${m[2]}` : null
+}
+
+/**
+ * L'uscita di `eventi_agenda` → i dati che il n. 10 stampa sul foglio, o `null`.
+ *
+ * ⚠️ `null` VUOL DIRE «QUESTA RIGA NON AUTORIZZA NIENTE», e il chiamante deve trattarlo
+ * come «uscita assente»: `verificaContesto` del n. 10 rifiuta senza `dati.uscita`, ma un
+ * rifiuto del render arriva DOPO che il genitore ha compilato e speso un codice OTP. Le
+ * tre condizioni sono quelle che il foglio dichiara e che un ente leggerebbe — **dove si
+ * va, quando si parte, quando si torna** — e senza una qualunque delle tre il documento
+ * autorizzerebbe la partecipazione a un'attività che non dice dove va né quando.
+ *
+ * La data e i due orari si prendono dalle COLONNE, non dalla riga «Data: … · Partenza: …»
+ * della descrizione: quella riga è la stessa informazione scritta per gli occhi, e leggere
+ * un dato dalla sua copia formattata è il modo di ritrovarsi con due verità.
+ *
+ * `tipo` e `destinazione` degradano sul TITOLO (`Gita: Napoli`) perché un'uscita può
+ * nascere anche dall'agenda generica, dove la descrizione è testo libero: là il titolo è
+ * l'unica cosa che ha una forma. `tipo` sconosciuto vale `altro`, che è una delle cinque
+ * voci del cartaceo e non un'invenzione; `destinazione` sconosciuta invece **non si
+ * inventa** e fa cadere tutto.
+ */
+export function datiUscitaDaEvento(evento: EventoUscita | null | undefined): DatiUscita | null {
+  if (!evento) return null
+
+  const data = (evento.data ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return null
+
+  const oraPartenza = oraBreve(evento.orario_inizio)
+  const oraRientro = oraBreve(evento.orario_fine)
+  if (!oraPartenza || !oraRientro) return null
+
+  const descrizione = evento.descrizione ?? ''
+  const titolo = (evento.titolo ?? '').trim()
+  const taglio = titolo.indexOf(':')
+  const etichettaDalTitolo = taglio > 0 ? titolo.slice(0, taglio).trim() : null
+  const codaDelTitolo = taglio > 0 ? titolo.slice(taglio + 1).trim() : ''
+
+  const destinazione = valoreRiga(descrizione, RIGA_DESTINAZIONE) ?? codaDelTitolo
+  if (!destinazione) return null
+
+  const tipoAgenda =
+    valoreDaEtichetta(ETICHETTA_ATTIVITA_USCITA, valoreRiga(descrizione, RIGA_TIPO)) ??
+    valoreDaEtichetta(ETICHETTA_ATTIVITA_USCITA, etichettaDalTitolo)
+
+  return {
+    tipo: tipoAgenda ? TIPO_USCITA_DEL_MODELLO[tipoAgenda] : 'altro',
+    destinazione,
+    data,
+    oraPartenza,
+    oraRientro,
+    // Nessun `as`: `MezzoUscita` deve restare assegnabile a `MezzoTrasporto`, e se i due
+    // elenchi divergono è `tsc` a dirlo — un cast lo terrebbe verde stampando un mezzo che
+    // il modello non sa disegnare.
+    mezzo: valoreDaEtichetta<MezzoTrasporto>(ETICHETTA_MEZZO_USCITA, valoreRiga(descrizione, RIGA_MEZZO)),
+    attivitaInAcqua: valoreRiga(descrizione, RIGA_ACQUA) === 'Sì',
+  }
+}
+
+/**
+ * Questo modello si accende solo se c'è un'uscita pubblicata per la sezione del bambino?
+ *
+ * Una funzione e non un insieme perché la risposta è una sola e non cambia con la sede: il
+ * n. 10 è l'unico dei diciassette il cui contenuto arriva da un evento di calendario.
+ */
+export function dipendeDallUscita(slug: string): boolean {
+  return slug === 'autorizzazione_uscita'
 }
 
 // ─── I magazzini, e chi può nominarli ───────────────────────────────────────────
@@ -816,8 +1039,6 @@ export function sempreFirmabiliDa(config: unknown): ReadonlySet<string> {
 const SPIEGAZIONE_NON_FIRMABILE: Record<MotivoNonFirmabile, string> = {
   'firma-della-scuola':
     'Questo documento non si firma con il codice del genitore: lo sottoscrive il legale rappresentante della Scuola.',
-  'uscita-non-creata':
-    'L’autorizzazione si firma quando la scuola ha pubblicato l’uscita: destinazione, data e orari non sono ancora disponibili. Attendi la comunicazione della sezione.',
   'seconda-firma-mancante':
     'La delega al ritiro va sottoscritta da entrambi i genitori/tutori e la raccolta della seconda firma non è ancora attiva: per ora la delega si consegna in segreteria.',
   /**

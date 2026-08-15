@@ -67,6 +67,7 @@ export const CAMPI_CONTEGGIO = [
   'file_da_rimuovere',
   'pagelle',
   'certificati_medici',
+  'fascicolo_sanitario',
   'foto_solo_sue',
   'foto_di_gruppo',
   'foto_non_rimovibili',
@@ -133,6 +134,24 @@ export const OBLIO_DISTRUGGE: VoceOblio[] = [
     bucket: 'certificati-medici',
     canale: 'alunno',
     campo: 'certificati_medici',
+  },
+  // Il FASCICOLO del bambino (`student_documents` → `sensitive_documents`), terza
+  // voce dal 2026-08-16 e non per ordine d'arrivo: dentro ci sono diagnosi, PEI,
+  // PDP e verbali della legge 104 dal lato scuola, e scheda sanitaria,
+  // autorizzazione alla somministrazione di farmaci e dieta speciale dal lato
+  // famiglia. Allergeni, terapie e posologie IN CHIARO dentro il PDF: art. 9 GDPR,
+  // di un minore. Sta subito sotto pagelle e certificati medici — che il lock
+  // inchioda ai primi due posti — perché è materiale della stessa natura, e in
+  // fondo a un elenco di undici righe non lo leggerebbe nessuno.
+  //
+  // Fino al 2026-08-15 l'oblio non ci arrivava affatto e questa riga non esisteva:
+  // la Direzione confermava un'operazione irreversibile senza che nessuna schermata
+  // le dicesse che se ne andava la scheda sanitaria firmata del bambino.
+  {
+    chiave: 'oblioDistruggeFascicolo',
+    bucket: 'sensitive_documents',
+    canale: 'alunno',
+    campo: 'fascicolo_sanitario',
   },
   // Galleria: il conteggio annunciato è quello delle foto in cui il bambino è
   // l'unico taggato, perché sono le uniche che se ne vanno davvero. Le foto di

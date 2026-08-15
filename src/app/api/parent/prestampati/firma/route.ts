@@ -26,6 +26,8 @@ import {
   campiDaCorreggere,
   campoSceltaDelegato,
   campoTesto,
+  datiUscitaDaEvento,
+  dipendeDallUscita,
   emailMancante,
   fineAnnoScolastico,
   ilFileRestaNelBucket,
@@ -57,7 +59,7 @@ import { applicaCartaIntestata } from '@/lib/carta'
 import { cartaDaDati, renderPrestampatoGenitore } from '@/lib/prestampati/render'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { formattaIstante } from '@/i18n/config'
+import { dataCivile, formattaIstante } from '@/i18n/config'
 import { withRoute } from '@/lib/logging/with-route'
 import { impostaPayload, impostaPayloadEsito } from '@/lib/logging/context'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -439,11 +441,15 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
     // sarebbero dati di un minore letti per mandare un'email.
     let datiFamiglia: DatiPrestampato | null = null
     let sedeDelBambino: string | null = null
+    let sezioneDelBambino: string | null = null
+    let oggiDelBambino: string | null = null
     if (serveIlPrecompilato(voce)) {
       const esitoPrefill = await caricaPrefillAlunno(request, supabase, alunnoId)
       if (esitoPrefill.response) return esitoPrefill.response
       datiFamiglia = esitoPrefill.prefill.dati
       sedeDelBambino = esitoPrefill.prefill.scuolaId
+      sezioneDelBambino = esitoPrefill.prefill.sezioneId
+      oggiDelBambino = esitoPrefill.prefill.dati.dataOggi
     }
     const motivo = motivoNonFirmabile(voce, datiFamiglia)
     if (motivo) {
@@ -480,9 +486,14 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
     // Il precompilato, quando c'era, l'ha già portata: sul n. 08 non si rilegge.
     if (sedeDelBambino === null) {
       // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+      //
+      // `section_id` esce dalla stessa lettura, e non è una colonna in più «già che ci
+      // siamo»: serve al n. 10, che senza sezione non ha un'uscita a cui appartenere. Una
+      // seconda query sulla stessa riga per una seconda colonna sarebbe una lettura in più
+      // sull'anagrafica di un minore per niente.
       const { data: rigaSede, error: erroreSede } = await supabase
         .from('alunni')
-        .select('scuola_id')
+        .select('scuola_id, section_id')
         .eq('id', alunnoId)
         .maybeSingle()
       if (erroreSede) {
@@ -500,7 +511,89 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
           erroreSede,
         )
       }
-      sedeDelBambino = (rigaSede as unknown as { scuola_id?: string | null } | null)?.scuola_id ?? null
+      const riga = rigaSede as unknown as {
+        scuola_id?: string | null
+        section_id?: string | null
+      } | null
+      sedeDelBambino = riga?.scuola_id ?? null
+      sezioneDelBambino = riga?.section_id?.trim() || null
+    }
+
+    // ── IL N. 10 SI FIRMA SOLO SE LA GITA ESISTE DAVVERO ───────────────────────────
+    //
+    // E si guarda PRIMA di spedire il codice, che è tutto il punto: `LIMITE_OTP_INVIO` è
+    // di 5 invii per finestra di dieci minuti ed è un budget CONDIVISO fra tutte le porte
+    // OTP. Un'autorizzazione chiesta per un'uscita che non c'è, con l'email già partita, si
+    // schianterebbe al PATCH e lascerebbe il genitore senza modo di firmare
+    // l'autorizzazione a un farmaco.
+    //
+    // La risposta è un 404 «non è fra i prestampati disponibili», la stessa dell'elenco: da
+    // quando l'uscita governa la visibilità, per QUESTO bambino e in QUESTO momento quel
+    // modulo non c'è. Un motivo enumerato accanto a un pulsante spento non serve più —
+    // nessun pulsante è acceso.
+    //
+    // La query vive DENTRO l'handler, come tutte le altre di questa rotta e per la stessa
+    // ragione: è ancorata alla sezione e alla sede di UN bambino, che il gate della
+    // famiglia ha verificato in questo stesso handler. Spostarla in un helper di file
+    // renderebbe questo handler «senza scope» agli occhi del lock `isolamento-sede`, e
+    // soprattutto toglierebbe da sotto gli occhi il legame fra il permesso e la lettura.
+    if (dipendeDallUscita(voce.slug)) {
+      let uscita = null
+      if (sezioneDelBambino && sedeDelBambino) {
+        // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+        const { data: righeUscita, error: erroreUscita } = await supabase
+          .from('eventi_agenda')
+          .select('titolo, descrizione, data, orario_inizio, orario_fine')
+          .eq('scuola_id', sedeDelBambino)
+          .eq('section_id', sezioneDelBambino)
+          .eq('tipo', 'uscita')
+          .eq('visibile_genitori', true)
+          // ⚠️ `dataCivile` E NON `new Date().toISOString()`: su Vercel il processo gira in
+          // UTC, e fra mezzanotte e le due un confronto sul giorno «di oggi» indicherebbe
+          // ieri — cioè farebbe ricomparire per due ore l'uscita di ieri. È la stessa
+          // trappola che il banco di prova ha già pagato il 2026-08-09.
+          .gte('data', oggiDelBambino ?? dataCivile(new Date()))
+          .order('data', { ascending: true })
+          .limit(1)
+        if (erroreUscita) {
+          // «Non l'ho potuto leggere» non è «non c'è»: qui non si spedisce niente e non si
+          // rifiuta la firma con una frase falsa. Il codice non è stato speso.
+          logEvento(
+            'modulistica',
+            'error',
+            {
+              operazione: 'parent/prestampati/firma:POST',
+              esito: 'uscita-non-letta',
+              alunno_id: alunnoId,
+              sezione_id: sezioneDelBambino,
+              error_code: (erroreUscita as { code?: string }).code ?? null,
+            },
+            erroreUscita,
+          )
+          return NextResponse.json(
+            {
+              error:
+                'Non è stato possibile verificare l’uscita: riprova fra qualche minuto. Non è stato inviato nessun codice.',
+              codice: 'PRESTAMPATO_ANAGRAFICA_NON_LETTA',
+            },
+            { status: 503 },
+          )
+        }
+        uscita = datiUscitaDaEvento((righeUscita ?? [])[0])
+      }
+      if (!uscita) {
+        // Si conta, e serve: è la misura di quante famiglie cercano di autorizzare
+        // un'uscita che non è stata pubblicata — cioè se il modulo compare dove non deve.
+        logEvento('modulistica', 'info', {
+          operazione: 'parent/prestampati/firma:POST',
+          esito: 'firma-non-disponibile',
+          azione: 'uscita-non-pubblicata',
+          tipo: voce.slug,
+          utente: parentId,
+          alunno_id: alunnoId,
+        })
+        return sconosciuto()
+      }
     }
 
     // Morosità: chiedere il codice per firmare è un'azione di servizio. Qui lo slug è già
@@ -777,9 +870,76 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
         : null
     }
 
+    // ── L'USCITA CHE IL N. 10 AUTORIZZA, letta adesso e non dedotta ────────────────
+    //
+    // È il dato che fino al 2026-08-15 non costruiva nessuno in tutto il repo, ed è il
+    // motivo per cui quel modulo era spento: `DatiPrestampato.uscita` esisteva nel tipo e
+    // nessuna route lo valorizzava. Ora la gita si legge da `eventi_agenda` — la stessa
+    // riga che l'insegnante crea e che la famiglia vede già in agenda — e finisce sul
+    // foglio con destinazione, data e orari VERI.
+    //
+    // ⚠️ SI RILEGGE QUI, e non ci si fida di quella vista al POST: fra la richiesta del
+    // codice e la firma passano minuti, e un'uscita annullata nel frattempo non deve
+    // produrre un'autorizzazione. La query sta dentro l'handler, ancorata alla sede e alla
+    // sezione del bambino che il gate ha appena verificato.
+    //
+    // Uscita assente ⇒ 404, la stessa risposta dell'elenco e del POST: per questo bambino,
+    // adesso, quel modulo non c'è. Il codice OTP non è ancora stato consumato.
+    let uscita = null
+    if (dipendeDallUscita(voce.slug)) {
+      if (prefill.sezioneId) {
+        // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+        const { data: righeUscita, error: erroreUscita } = await supabase
+          .from('eventi_agenda')
+          .select('titolo, descrizione, data, orario_inizio, orario_fine')
+          .eq('scuola_id', prefill.scuolaId)
+          .eq('section_id', prefill.sezioneId)
+          .eq('tipo', 'uscita')
+          .eq('visibile_genitori', true)
+          .gte('data', prefill.dati.dataOggi)
+          .order('data', { ascending: true })
+          .limit(1)
+        if (erroreUscita) {
+          logEvento(
+            'modulistica',
+            'error',
+            {
+              operazione: 'parent/prestampati/firma:PATCH',
+              esito: 'uscita-non-letta',
+              alunno_id: alunnoId,
+              sezione_id: prefill.sezioneId,
+              error_code: (erroreUscita as { code?: string }).code ?? null,
+            },
+            erroreUscita,
+          )
+          return NextResponse.json(
+            {
+              error:
+                'Non è stato possibile verificare l’uscita: riprova fra qualche minuto. Il codice di firma non è stato utilizzato.',
+              codice: 'PRESTAMPATO_ANAGRAFICA_NON_LETTA',
+            },
+            { status: 503 },
+          )
+        }
+        uscita = datiUscitaDaEvento((righeUscita ?? [])[0])
+      }
+      if (!uscita) {
+        logEvento('modulistica', 'info', {
+          operazione: 'parent/prestampati/firma:PATCH',
+          esito: 'firma-non-disponibile',
+          azione: 'uscita-non-pubblicata',
+          tipo: voce.slug,
+          utente: parentId,
+          alunno_id: alunnoId,
+        })
+        return sconosciuto()
+      }
+    }
+
     const dati: DatiPrestampato = {
       ...prefill.dati,
       ...(accompagnatore ? { accompagnatore } : {}),
+      ...(uscita ? { uscita } : {}),
       // Le sottoscrizioni raccolte finora: questa, ed è **l'unica che questa rotta sa
       // raccogliere**. Il n. 08 ne pretende due quando in anagrafica ci sono due tutori, e
       // con una sola il suo `verificaContesto` rifiuta — e ha ragione: una delega al ritiro

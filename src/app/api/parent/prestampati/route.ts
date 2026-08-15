@@ -6,6 +6,8 @@ import { logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { caricaPrefillAlunno, nucleoAlunno } from '@/lib/prestampati/prefill'
 import { chiaveEtichetta, prestampatiPerRuolo } from '@/lib/prestampati/registro'
 import {
+  datiUscitaDaEvento,
+  dipendeDallUscita,
   motivoNonFirmabile,
   serveElencoDelegati,
   soloFamiglia,
@@ -223,13 +225,80 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
 
     const dati = prefill.dati
 
+    // ── L'USCITA PUBBLICATA PER LA SEZIONE DI QUESTO BAMBINO ────────────────────────
+    //
+    // È ciò che accende il n. 10, e prima del 2026-08-16 non lo accendeva niente: le gite
+    // vivono in `eventi_agenda` (`tipo='uscita'`, scritte da `teacher/uscite:POST`) e
+    // `DatiUscita` non lo costruiva nessuno in tutto il repo, quindi il modulo restava
+    // spento anche quando la gita c'era davvero. Ora: **c'è un'uscita ⇒ il modulo compare,
+    // con destinazione, data e orari veri dentro; non c'è ⇒ non compare affatto** (vedi il
+    // filtro qui sotto). Un lucchetto su una gita che non esiste è una promessa a chi non
+    // ha niente da firmare.
+    //
+    // La query sta QUI dentro e non in un helper di file, come quella dei delegati e per la
+    // stessa ragione: è ancorata alla sezione di UN bambino, che il gate della famiglia ha
+    // appena verificato in questo stesso handler.
+    //
+    // ⚠️ `gte('data', dataOggi)` e non «l'ultima creata»: un'autorizzazione si firma PRIMA
+    // di partire, e la gita di marzo scorso non si autorizza più. `dataOggi` è la data
+    // CIVILE italiana che il precompilato ha già calcolato — non `new Date()` del processo,
+    // che su Vercel è UTC e a mezzanotte e mezza indicherebbe ieri.
+    //
+    // ⚠️ `visibile_genitori` è parte della domanda, non un filtro di comodo: un'uscita non
+    // ancora annunciata alla famiglia non è un'uscita da autorizzare.
+    let uscita = null
+    let uscitaNonLetta = false
+    if (prefill.sezioneId) {
+      // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+      const { data: righeUscita, error: erroreUscita } = await supabase
+        .from('eventi_agenda')
+        .select('titolo, descrizione, data, orario_inizio, orario_fine')
+        // La sede accanto alla sezione, e non è ridondanza: `eventi_agenda` ha una colonna
+        // `scuola_id`, e una lettura che non la nomina è una lettura che si fida di un id
+        // di sezione per sapere in quale plesso sta guardando. Con tre sedi in produzione
+        // quella fiducia è ciò che il lock `isolamento-sede` esiste per non concedere.
+        .eq('scuola_id', prefill.scuolaId)
+        .eq('section_id', prefill.sezioneId)
+        .eq('tipo', 'uscita')
+        .eq('visibile_genitori', true)
+        .gte('data', dati.dataOggi)
+        .order('data', { ascending: true })
+        .limit(1)
+      if (erroreUscita) {
+        // «Non l'ho potuto leggere» NON diventa «non c'è»: il modulo sparirebbe
+        // dall'elenco proprio il giorno della gita, e nessuno collegherebbe le due cose.
+        uscitaNonLetta = true
+        logEvento(
+          'modulistica',
+          'warn',
+          {
+            operazione: 'parent/prestampati:GET',
+            esito: 'uscita-non-letta',
+            alunno_id: alunnoId,
+            sezione_id: prefill.sezioneId,
+            error_code: (erroreUscita as { code?: string }).code ?? null,
+          },
+          erroreUscita,
+        )
+      } else {
+        uscita = datiUscitaDaEvento((righeUscita ?? [])[0])
+      }
+    }
+
+    // Niente uscita ⇒ il n. 10 non compare AFFATTO. Se la lettura è fallita si lascia
+    // com'era (`uscitaNonLetta`): togliere una voce per un guasto di lettura vorrebbe dire
+    // dire alla famiglia «non c'è nessuna gita» quando la risposta vera è «non lo so».
+    const elencoModelli = disponibili.filter(
+      (v) => !dipendeDallUscita(v.slug) || uscita !== null || uscitaNonLetta,
+    )
+
     logEvento('modulistica', 'info', {
       operazione: 'parent/prestampati:GET',
       esito: 'elenco-servito',
       alunno_id: alunnoId,
       utente: utente.id,
       tipo: scelto?.slug ?? 'elenco',
-      n: disponibili.length,
+      n: elencoModelli.length,
     })
 
     return NextResponse.json({
@@ -246,7 +315,24 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
       richiedente: dati.richiedente
         ? { nomeCompleto: dati.richiedente.nomeCompleto, ruolo: dati.richiedente.ruolo ?? null }
         : null,
-      modelli: disponibili.map((v) => {
+      /**
+       * L'uscita che il n. 10 autorizza, quando c'è: destinazione, data e orari REALI.
+       *
+       * Esce dalla risposta perché il genitore deve vedere che cosa sta per autorizzare
+       * PRIMA di aprire il modulo — sul foglio ci finisce comunque, ma un modulo che si
+       * apre senza dire dove va il bambino si firma alla cieca. Niente id dell'evento e
+       * niente descrizione integrale: quella porta anche accompagnatori e quota, che sono
+       * dati di servizio della sezione e non servono a questa schermata.
+       */
+      uscita: uscita
+        ? {
+            destinazione: uscita.destinazione,
+            data: uscita.data,
+            oraPartenza: uscita.oraPartenza ?? null,
+            oraRientro: uscita.oraRientro ?? null,
+          }
+        : null,
+      modelli: elencoModelli.map((v) => {
         /**
          * ⚠️ `firmabileOra` DICE CIÒ CHE IL PATCH PRETENDE DAVVERO, non solo chi sottoscrive.
          *

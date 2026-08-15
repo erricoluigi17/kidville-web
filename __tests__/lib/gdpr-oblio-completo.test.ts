@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   scrubPersonaIscrizione,
@@ -538,6 +538,14 @@ interface CfgB {
   media?: Record<string, unknown>[]
   pagelle?: { id: string; file_url: string | null }[]
   certificati?: { id: string; file_path: string | null }[]
+  /**
+   * Il FASCICOLO del bambino (`student_documents` → bucket `sensitive_documents`):
+   * diagnosi, PEI, PDP e verbali della 104 dal lato scuola; scheda sanitaria,
+   * autorizzazione ai farmaci e dieta speciale dal lato famiglia. Due colonne per
+   * il percorso, non una — `storage_path` è arrivata dopo, e le righe più vecchie
+   * portano il solo `file_url`.
+   */
+  fascicolo?: { id: string; storage_path: string | null; file_url: string | null }[]
   threadAlunno?: { id: string }[]
   threadGenitore?: { id: string }[]
   messaggi?: { id: string; attachment_url: string | null }[]
@@ -606,6 +614,7 @@ function makeFakeBucket(cfg: CfgB) {
         if (table === 'galleria_media_v2') data = cfg.media ?? []
         if (table === 'pagelle') data = cfg.pagelle ?? []
         if (table === 'certificati_medici') data = cfg.certificati ?? []
+        if (table === 'student_documents') data = cfg.fascicolo ?? []
         // I thread di un ALUNNO si cercano per `student_id`, quelli di un
         // GENITORE per `parent_id`: sono due insiemi diversi e il finto client
         // deve saperli distinguere, altrimenti il canale genitore risulterebbe
@@ -862,7 +871,60 @@ function bucketInProduzione(): string[] {
   return foto.bucket.map((b) => b.id).sort()
 }
 
-const NOTI = [...new Set([...bucketClassificati(), ...bucketInProduzione()])].sort()
+/**
+ * I magazzini che il REPO dichiara e che in produzione non esistono ANCORA.
+ *
+ * ─── PERCHÉ QUESTO TERZO ELENCO ESISTE (2026-08-16) ─────────────────────────
+ *
+ * Le due fonti qui sopra rispondono a «quali bucket ci sono»: una legge la
+ * classificazione del repo, l'altra la fotografia del database. Nessuna delle due
+ * vede un bucket che NASCERÀ — e alcuni nascono al primo uso, creati da
+ * `garantisciBucket` dentro la route, non da una migrazione. Finché nessuno ci ha
+ * ancora archiviato niente, quel magazzino è invisibile a tutti e due gli elenchi:
+ * il registro dell'oblio che lo nomina sembra parlare di un fantasma, e la
+ * classificazione di sicurezza non lo può accogliere (`bucket-storage-dichiarati`
+ * pretende che ogni nome dei suoi `RISERVATI` esista nella fotografia, altrimenti
+ * la prova girerebbe sul vuoto).
+ *
+ * È esattamente il caso che ha prodotto il difetto: `sensitive_documents` è rimasto
+ * NON NOMINATO per mesi anche perché nessun controllo poteva nominarlo. L'elenco
+ * qui sotto chiude quel varco — e non è una scappatoia, perché la prova che lo
+ * accompagna pretende due cose insieme: che il nome sia davvero scritto nel codice
+ * che crea il bucket (un refuso nel registro non troverebbe niente in `src/`), e
+ * che in produzione NON ci sia. Il giorno in cui la prima archiviazione lo crea,
+ * quella prova diventa rossa e obbliga a spostarlo dove ora va: nella fotografia e
+ * fra i `RISERVATI`.
+ */
+const NON_ANCORA_CREATI: Record<string, string> = {
+  sensitive_documents:
+    'Il fascicolo del bambino — diagnosi, PEI, PDP e verbali della 104 dal lato scuola; scheda ' +
+    'sanitaria, autorizzazione ai farmaci e dieta speciale dal lato famiglia: dati dell’art. 9 ' +
+    'GDPR di un minore. Non lo crea nessuna migrazione: lo creano al volo `primaria/fascicolo`, ' +
+    '`parent/prestampati/firma` e `prestampati/genera` alla PRIMA archiviazione, e al 2026-08-16 ' +
+    'quella prima archiviazione non è ancora avvenuta (misurato in sola lettura su ' +
+    '`storage.buckets`: quattordici bucket, questo non c’è). Il registro dell’oblio lo copre ' +
+    'comunque, perché il giorno in cui nascerà nascerà già pieno.',
+}
+
+const NOTI = [
+  ...new Set([...bucketClassificati(), ...bucketInProduzione(), ...Object.keys(NON_ANCORA_CREATI)]),
+].sort()
+
+/** I file di `src/`, per chiedere al CODICE se un bucket lo nomina davvero. */
+function sorgentiDiSrc(cartella = join(RADICE, 'src'), acc: string[] = []): string[] {
+  for (const voce of readdirSync(cartella, { withFileTypes: true })) {
+    const percorso = join(cartella, voce.name)
+    if (voce.isDirectory()) sorgentiDiSrc(percorso, acc)
+    else if (/\.tsx?$/.test(voce.name)) acc.push(percorso)
+  }
+  return acc
+}
+
+/** `true` se il nome del bucket compare come letterale in almeno un file di `src/`. */
+function nominatoNelCodice(bucket: string): boolean {
+  const letterale = `'${bucket}'`
+  return sorgentiDiSrc().some((f) => readFileSync(f, 'utf8').includes(letterale))
+}
 
 /** Un client finto con OGNI sorgente piena: tutto ciò che l'oblio può trovare. */
 function fakePieno() {
@@ -876,6 +938,7 @@ function fakePieno() {
     media: [{ id: 'md-1', file_url: 'uploads/u1/foto.jpg', tag_students: ['al-1'] }],
     pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }],
     certificati: [{ id: 'cm-1', file_path: 'al-1/uuid.pdf' }],
+    fascicolo: [{ id: 'sd-1', storage_path: 'al-1/1700000000000-scheda.pdf', file_url: null }],
     threadAlunno: [{ id: 'th-1' }],
     threadGenitore: [{ id: 'th-9' }],
     messaggi: [{ id: 'ms-1', attachment_url: 'auth-9/uuid-referto.pdf' }],
@@ -935,6 +998,35 @@ describe('lock · l’oblio conosce OGNI magazzino dello Storage', () => {
         `rinominato, il codice che lo svuota sta puntando al posto sbagliato e non se ne ` +
         `accorge nessuno.`,
     ).toEqual([])
+  })
+
+  it('i magazzini «non ancora creati» sono nominati DAL CODICE e davvero assenti (l’elenco non è una scappatoia)', () => {
+    // Senza questa prova, `NON_ANCORA_CREATI` sarebbe il posto dove far tacere la
+    // prova qui sopra scrivendoci dentro qualunque nome — cioè il contrario di ciò
+    // per cui esiste. Le due condizioni insieme lo rendono un elenco a scadenza:
+    // il nome deve esistere nel codice che crea il bucket, e il bucket non deve
+    // (ancora) esistere in produzione. Quando nascerà, questa diventa rossa.
+    for (const [b, ragione] of Object.entries(NON_ANCORA_CREATI)) {
+      expect(
+        ragione.trim().length,
+        `\`${b}\` è dichiarato «non ancora creato» senza una ragione scritta: dove nasce, chi ` +
+          `lo crea, che cosa ci finisce dentro.`,
+      ).toBeGreaterThan(80)
+      expect(
+        nominatoNelCodice(b),
+        `Nessun file di \`src/\` nomina il bucket \`${b}\`: o è un refuso, e allora il codice ` +
+          `che dovrebbe svuotarlo sta puntando altrove, o quel magazzino non esiste in nessun ` +
+          `senso e va tolto dal registro dell'oblio.`,
+      ).toBe(true)
+      expect(
+        bucketInProduzione(),
+        `Il bucket \`${b}\` ORA esiste in produzione: toglilo da \`NON_ANCORA_CREATI\` e ` +
+          `mettilo dove va — fra i \`RISERVATI\` di ` +
+          `\`__tests__/architecture/bucket-storage-dichiarati.test.ts\`, con la fotografia ` +
+          `dello Storage rigenerata. Da questo momento la sua visibilità (pubblico/privato) è ` +
+          `una cosa che si può misurare, e va misurata: dentro ci sono dati dell'art. 9 di minori.`,
+      ).not.toContain(b)
+    }
   })
 
   it('ogni esclusione porta la sua ragione scritta, come `fatture`', () => {

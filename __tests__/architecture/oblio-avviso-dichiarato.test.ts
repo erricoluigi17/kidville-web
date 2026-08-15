@@ -474,6 +474,7 @@ describe('conteggi del dry-run · il numero annunciato è quello che l’oblio p
       err: {
         pagelle: { code: 'PGRST205' },
         certificati_medici: { code: 'PGRST205' },
+        student_documents: { code: 'PGRST205' },
         galleria_media_v2: { code: '42P01' },
         news_posts: { code: 'PGRST205' },
         chat_threads: { code: 'PGRST205' },
@@ -483,6 +484,7 @@ describe('conteggi del dry-run · il numero annunciato è quello che l’oblio p
     expect(c).toEqual({
       pagelle: 0,
       certificati_medici: 0,
+      fascicolo_sanitario: 0,
       foto_solo_sue: 0,
       foto_di_gruppo: 0,
       foto_non_rimovibili: 0,
@@ -570,6 +572,7 @@ describe('somma dei conteggi (canale delle richieste: più bambini, una conferma
   const pieno = (n: number) => ({
     pagelle: n,
     certificati_medici: n,
+    fascicolo_sanitario: n,
     foto_solo_sue: n,
     foto_di_gruppo: n,
     foto_non_rimovibili: n,

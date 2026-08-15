@@ -11,10 +11,19 @@
  * il registro presenze — oggi generato nel browser — passa a una route.
  *
  * Chi impagina non importa `applicaCartaIntestata`: gli serve `CARTA`, per sapere dove
- * può scrivere. Chi compone il documento finito importa la funzione, e la chiama **prima**
- * di `applicaSegnatura()`.
+ * può scrivere. Chi compone il documento finito importa la funzione.
+ *
+ * ⚠️ **E il documento finito esce da UNA chiamata sola.** Questa riga, fino al 2026-08-15,
+ * diceva di chiamare `applicaCartaIntestata()` «prima di `applicaSegnatura()`»: comporre
+ * in quell'ordine dipinge una fascia verde sopra il marchio della scuola, ci mette un
+ * secondo logo Kidville sopra il primo e riscala la carta di 0,924 staccando il piede a
+ * quattro colonne dal fondo del foglio. La segnatura di protocollo si passa qui —
+ * `applicaCartaIntestata(pdf, { segnatura: { righe } })` — con le stesse righe che produce
+ * `righeSegnatura()`. `applicaSegnatura()` resta il timbro dei documenti **acquisiti**,
+ * che arrivano su un foglio bianco; il lock in `__tests__/lib/carta-applica.test.ts` vieta
+ * a un modulo di importarle tutte e due.
  */
 
-export { applicaCartaIntestata } from './applica'
+export { applicaCartaIntestata, type OpzioniCarta, type SegnaturaCarta } from './applica'
 export { cartaIntestataBytes } from './asset'
 export { CARTA, type GeometriaCarta } from './geometria'

@@ -655,6 +655,155 @@ describe('buildPrestampatoPdf — blocchi firma (§3)', () => {
   })
 })
 
+/**
+ * Il certificato di iscrizione e frequenza come esce DAVVERO dalla segreteria, blocco per
+ * blocco: intestazione di sede, protocollo, corpo, firma del legale rappresentante e
+ * riquadro di verifica. Dati inventati, struttura reale (`modelloCertificatoIscrizione­
+ * Frequenza` in `src/lib/prestampati/modelli/genitore.ts`).
+ */
+function certificatoProtocollato(uso = ''): DocumentoPrestampato {
+  return documento({
+    titolo: 'CERTIFICATO DI ISCRIZIONE E FREQUENZA',
+    protocollo: 'Prot. n. 0000123/2026 del 15/08/2026',
+    blocchi: [
+      { tipo: 'paragrafo', stile: 'corsivo', testo: 'Scuola dell’Infanzia di Prova Soc. Coop. – Kidville (Nido · Infanzia · Primaria)' },
+      { tipo: 'sezione', titolo: "Dati dell'alunno/a" },
+      { tipo: 'caselle', caselle: [{ testo: 'Sede: Kidville di Prova', spuntata: true }] },
+      {
+        tipo: 'campi',
+        colonne: 2,
+        campi: [
+          { etichetta: 'Cognome', valore: 'Bianchi' },
+          { etichetta: 'Nome', valore: 'Giulia' },
+          { etichetta: 'Data di nascita', valore: '01/09/2021' },
+          { etichetta: 'Luogo di nascita', valore: 'Cittanova (XX)' },
+          { etichetta: 'Codice fiscale', valore: 'XXXXXX00X00X000X' },
+          { etichetta: 'Sezione/Classe', valore: 'Sezione A' },
+          { etichetta: 'Anno scolastico', valore: '2026/2027' },
+        ],
+      },
+      { tipo: 'spazio', mm: 4 },
+      { tipo: 'paragrafo', testo: "Si certifica che l'alunno/a Bianchi Giulia risulta regolarmente iscritto/a presso questa istituzione scolastica per l'anno scolastico 2026/2027." },
+      { tipo: 'paragrafo', testo: "Si certifica che l'alunno/a Bianchi Giulia frequenta regolarmente le attività didattiche di questa scuola nella sezione Sezione A per l'anno scolastico 2026/2027." },
+      { tipo: 'campi', colonne: 1, campi: [{ etichetta: 'Livello', valore: "Scuola dell'Infanzia" }] },
+      { tipo: 'spazio', mm: 2 },
+      { tipo: 'paragrafo', testo: 'Il presente certificato viene rilasciato, in carta libera, per gli usi consentiti dalla legge.' },
+      ...(uso ? [{ tipo: 'paragrafo' as const, testo: `Si rilascia per il seguente uso: ${uso}.` }] : []),
+      { tipo: 'sezione', titolo: 'Dati identificativi della scuola' },
+      {
+        tipo: 'campi',
+        colonne: 1,
+        campi: [
+          { etichetta: 'Denominazione', valore: 'Scuola dell’Infanzia di Prova Soc. Coop.' },
+          { etichetta: 'P.IVA/C.F.', valore: '00000000000' },
+          { etichetta: 'Sede legale', valore: 'Via delle Betulle 1, Cittanova' },
+        ],
+      },
+    ],
+    firma: { tipo: 'legaleRappresentante', nome: 'Nome Cognome Inventato' },
+    verifica: {
+      numeroProtocollo: '0000123/2026',
+      dataProtocollo: '15/08/2026',
+      indirizzoVerifica: 'esempio.invalid/verifica',
+    },
+  })
+}
+
+describe('buildPrestampatoPdf — la firma non apre una pagina per sé sola', () => {
+  it.each([
+    ['senza il campo «uso»', ''],
+    ['con il campo «uso»', 'presentazione al datore di lavoro'],
+  ])('il certificato di iscrizione e frequenza protocollato sta su UNA pagina — %s', async (_caso, uso) => {
+    // La regressione che questo lock esiste per impedire, misurata il 2026-08-15: lo
+    // stesso certificato usciva di 1 pagina prima del passaggio alla carta intestata e di
+    // 2 dopo, con la SECONDA pagina occupata dal solo blocco firma e dal riquadro di
+    // verifica — tredici centimetri di vuoto in mezzo, e la firma del legale
+    // rappresentante staccata dal testo che certifica, su un foglio che va all'INPS.
+    const pdf = buildPrestampatoPdf(certificatoProtocollato(uso))
+    expect(await numeroPagine(pdf)).toBe(1)
+
+    const elementi = await elementiTesto(pdf)
+    const qualifica = elementi.find((el) => el.testo.includes('IL LEGALE RAPPRESENTANTE'))
+    expect(qualifica?.pagina).toBe(1)
+  })
+
+  it('un certificato che una pagina non la contiene manda a capo il CONTENUTO, non la sola firma', async () => {
+    // ⚠️ Questo caso esce di DUE pagine, e va detto perché invece di nasconderlo.
+    //
+    // Con un «uso» lungo due righe il certificato non ci sta più in un foglio: il motore
+    // vecchio ce lo faceva stare soltanto perché stampava il riquadro di verifica a
+    // cavallo del piede a quattro colonne della carta (fondo a 278,8 mm, dentro
+    // 272,1→285,0), cioè sopra la ragione sociale e i recapiti delle tre sedi. Recuperare
+    // quei dodici millimetri e mezzo vorrebbe dire rimetterceli sopra.
+    //
+    // Ciò che il motore DEVE garantire è un'altra cosa: che la seconda pagina non sia la
+    // firma sospesa nel bianco. Qui la sezione «Dati identificativi della scuola» la
+    // segue, ed è il comportamento giusto.
+    const uso =
+      'presentazione al datore di lavoro ai fini della fruizione dei permessi previsti dalla legge 5 febbraio 1992 n. 104'
+    const pdf = buildPrestampatoPdf(certificatoProtocollato(uso))
+    expect(await numeroPagine(pdf)).toBe(2)
+
+    const elementi = await elementiTesto(pdf)
+    const luogoData = elementi.find((el) => el.testo.includes('Luogo e data'))!
+    expect(luogoData.pagina).toBe(2)
+    const corpoSopra = elementi.filter(
+      (el) => el.pagina === 2 && el.yMm > 60 && el.yMm < luogoData.yMm - TOLLERANZA_MM
+    )
+    expect(corpoSopra.map((el) => el.testo).join(' ')).toContain('Denominazione')
+  })
+
+  it('quando la pagina nuova serve davvero, ci arriva anche del contenuto', async () => {
+    // La regola in forma generale: il blocco firma non apre MAI una pagina che
+    // conterrebbe solo sé stesso. Si spazza la quota millimetro per millimetro perché la
+    // finestra in cui il difetto compare è stretta — un millimetro in più o in meno e il
+    // salto non scatta, o scatta con del testo appresso.
+    for (let capoversi = 24; capoversi <= 34; capoversi++) {
+      const pdf = buildPrestampatoPdf(
+        documento({
+          blocchi: riempimento(capoversi),
+          firma: { tipo: 'legaleRappresentante', nome: 'Nome Cognome Inventato' },
+          verifica: {
+            numeroProtocollo: '0000123/2026',
+            dataProtocollo: '15/08/2026',
+            indirizzoVerifica: 'esempio.invalid/verifica',
+          },
+        })
+      )
+      const elementi = await elementiTesto(pdf)
+      const luogoData = elementi.find((el) => el.testo.includes('Luogo e data'))
+      expect(luogoData, `blocco firma assente a capoversi=${capoversi}`).toBeDefined()
+
+      // Sulla pagina della firma, sopra la firma, ci deve essere del CORPO: la testata
+      // compatta delle pagine successive finisce entro i 60 mm, quindi tutto ciò che sta
+      // fra 60 mm e la firma è contenuto vero.
+      const corpoSopra = elementi.filter(
+        (el) =>
+          el.pagina === luogoData!.pagina &&
+          el.yMm > 60 &&
+          el.yMm < luogoData!.yMm - TOLLERANZA_MM
+      )
+      expect(
+        corpoSopra.length,
+        `a capoversi=${capoversi} la firma è sola sulla pagina ${luogoData!.pagina}`
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  it('lo stacco si stringe, ma non fino a incollare la firma al testo', async () => {
+    // L'altra metà della regola: comprimere non vuol dire schiacciare. Fra l'ultima riga
+    // di contenuto e la linea «Luogo e data» resta comunque uno stacco leggibile.
+    const pdf = buildPrestampatoPdf(certificatoProtocollato('presentazione al datore di lavoro'))
+    const elementi = await elementiTesto(pdf)
+    const luogoData = elementi.find((el) => el.testo.includes('Luogo e data'))!
+    const sopra = elementi
+      .filter((el) => el.pagina === luogoData.pagina && el.yMm < luogoData.yMm - TOLLERANZA_MM)
+      .reduce((piuBasso, el) => (el.yMm > piuBasso ? el.yMm : piuBasso), 0)
+
+    expect(luogoData.yMm - sopra).toBeGreaterThanOrEqual(5)
+  })
+})
+
 describe('buildPrestampatoPdf — protocollo e verifica (§4)', () => {
   it('stampa la riga di protocollo solo quando c’è', async () => {
     const conProtocollo = buildPrestampatoPdf(

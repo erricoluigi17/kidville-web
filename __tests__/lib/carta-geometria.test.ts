@@ -35,6 +35,23 @@ describe('geometria della carta intestata', () => {
     expect(CARTA.rigaServizio).toBeLessThan(CARTA.piedeInizio)
   })
 
+  it('riserva alla segnatura di protocollo l’aria fra il marchio e il contenuto', () => {
+    // La segnatura NON è una fascia in testa al foglio: quella cadrebbe sopra il marchio
+    // della scuola, che è il difetto n. 1 della specifica. Sta nell'aria che
+    // `contenutoInizio` già lascia sotto il logo — 26,8 → 40 — e nessun motore ci scrive
+    // dentro, perché `contenutoInizio` è per definizione dove l'app comincia.
+    expect(CARTA.segnaturaRiga).toBeGreaterThan(CARTA.brandFine)
+    expect(CARTA.segnaturaRiga).toBeLessThan(CARTA.contenutoInizio)
+    // Sopra la linea di scrittura ci va il corpo del carattere: 8 pt sono 2,8 mm.
+    expect(CARTA.segnaturaRiga - CARTA.brandFine).toBeGreaterThanOrEqual(3)
+  })
+
+  it('i margini laterali stanno qui, e non in una seconda copia dentro ogni motore', () => {
+    expect(CARTA.margineSx).toBeGreaterThan(0)
+    expect(CARTA.margineDx).toBeLessThan(CARTA.larghezzaPagina)
+    expect(CARTA.margineDx - CARTA.margineSx).toBe(166)
+  })
+
   it('resta un foglio A4, e le misure stanno tutte dentro', () => {
     expect(CARTA.altezzaPagina).toBe(297)
     expect(CARTA.larghezzaPagina).toBe(210)

@@ -26,12 +26,33 @@
  * di protocollo bruciato, resterebbe lì per sempre. Meglio un 500 che il genitore vede
  * subito — e ritenta — che un documento sbagliato e definitivo diretto all'INPS.
  *
- * A valle passa `applicaSegnatura()` di `src/lib/protocolli/timbro.ts`, come già oggi.
+ * ─── E LA SEGNATURA DI PROTOCOLLO PASSA DA QUI, NON DA `applicaSegnatura()` ────
+ *
+ * Questa riga, fino al 2026-08-15, diceva: *«a valle passa `applicaSegnatura()` di
+ * `src/lib/protocolli/timbro.ts`, come già oggi»*. **Era falsa, ed era il difetto.**
+ * Misurato componendo davvero i due passaggi: `applicaSegnatura()` dipinge una fascia
+ * verde alta 64 pt in testa alla prima pagina — cioè sopra il marchio della scuola, che
+ * finisce a 26,8 mm — ci mette dentro un SECONDO logo Kidville sopra il primo, e riscala
+ * la carta di 777,89/841,89 = 0,924 ricentrandola, così il piede a quattro colonne non sta
+ * più al fondo del foglio e compaiono due margini bianchi ai lati. Sono, alla lettera, i
+ * difetti n. 1 e n. 2 della specifica: quelli per cui questo modulo esiste.
+ *
+ * Non è un errore di `applicaSegnatura()`: quella funzione nasce per i documenti
+ * **acquisiti** — una scansione, una foto — che arrivano su un foglio bianco, dove la
+ * fascia non copre niente e riscalare è il modo di non nascondere una riga. Su una carta
+ * intestata la segnatura è un'altra cosa, e la fa `applicaCartaIntestata(pdf, { segnatura })`:
+ * una riga in 8 pt nell'aria che la carta lascia sotto il marchio (`CARTA.segnaturaRiga`),
+ * senza fascia, senza logo e senza toccare la scala del foglio.
+ *
+ * Il lock che lo tiene — perché una frase in un commento non ha impedito niente la prima
+ * volta — è in `__tests__/lib/carta-applica.test.ts`: nessun modulo di `src/` può importare
+ * insieme `applicaCartaIntestata` e `applicaSegnatura`.
  */
 
-import { PDFDocument, type PDFEmbeddedPage, type PDFPage } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, type PDFEmbeddedPage, type PDFFont, type PDFPage } from 'pdf-lib'
 import { logEvento } from '@/lib/logging/logger'
 import { cartaIntestataBytes } from './asset'
+import { CARTA } from './geometria'
 
 /**
  * Oltre questo scarto fra le proporzioni della pagina e quelle della carta, la carta
@@ -39,6 +60,127 @@ import { cartaIntestataBytes } from './asset'
  * Non è un motivo per far sparire un foglio, ma è un motivo per lasciare una riga.
  */
 const TOLLERANZA_PROPORZIONI = 0.02
+
+const PUNTI_PER_MM = 72 / 25.4
+/** Il grigio-inchiostro del prodotto, #2D2D2D: la segnatura si legge, non grida. */
+const INCHIOSTRO = rgb(45 / 255, 45 / 255, 45 / 255)
+const CORPO_SEGNATURA = 8
+/** Sotto questo corpo la segnatura non si legge più: meglio accorciarla che rimpicciolirla. */
+const CORPO_SEGNATURA_MINIMO = 6
+
+/**
+ * La segnatura di protocollo da apporre sul foglio.
+ *
+ * `righe` sono le stesse tre che produce `righeSegnatura()` di
+ * `src/lib/protocolli/segnatura.ts` — ente, numero e tipo, data e ora. Qui si stampano su
+ * una riga sola, unite da ` · `: l'aria sotto il marchio è alta 13,2 mm e tre righe ci
+ * starebbero solo a filo, cioè finché nessuno tocca `contenutoInizio`.
+ */
+export interface SegnaturaCarta {
+  righe: readonly string[]
+}
+
+export interface OpzioniCarta {
+  /** Assente o `null`: il foglio esce senza segnatura, che è il caso di ogni anteprima. */
+  segnatura?: SegnaturaCarta | null
+}
+
+/**
+ * Il testo che il font sa davvero scrivere.
+ *
+ * Helvetica standard codifica WinAnsi e nient'altro: su un carattere fuori tabella
+ * `drawText` **lancia**. Non è un caso di scuola con conseguenze piccole — quando si
+ * arriva qui il numero di protocollo è già stato consumato dal registro, quindi
+ * un'eccezione lascerebbe un buco nella numerazione per un ideogramma nel nome di una
+ * sede. Si ripiega su una versione senza i caratteri che il font non conosce, e lo si
+ * dice: una segnatura mutilata va vista, non subita.
+ */
+function testoSegnatura(font: PDFFont, riga: string): string {
+  try {
+    font.encodeText(riga)
+    return riga
+  } catch (errore) {
+    logEvento(
+      'modulistica',
+      'warn',
+      { operazione: 'carta/segnatura', esito: 'ripiego-ascii', n: riga.length },
+      errore
+    )
+  }
+
+  const ripiego = riga
+    .normalize('NFKD')
+    .replace(/[^ -~]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  if (!ripiego) {
+    logEvento('modulistica', 'error', {
+      operazione: 'carta/segnatura',
+      esito: 'non-stampabile',
+      n: riga.length,
+    })
+    return ''
+  }
+
+  try {
+    font.encodeText(ripiego)
+    return ripiego
+  } catch (errore) {
+    logEvento(
+      'modulistica',
+      'error',
+      { operazione: 'carta/segnatura', esito: 'non-stampabile', n: riga.length },
+      errore
+    )
+    return ''
+  }
+}
+
+/**
+ * Stampa la segnatura sulla prima pagina, allineata a destra come un timbro.
+ *
+ * Niente fascia, niente logo, niente riscalatura: il foglio resta quello che era e la
+ * segnatura si posa nell'unico spazio che la carta tiene libero per essa.
+ */
+async function stampaSegnatura(
+  documento: PDFDocument,
+  pagina: PDFPage,
+  segnatura: SegnaturaCarta
+): Promise<void> {
+  const riga = segnatura.righe
+    .map((r) => (r ?? '').trim())
+    .filter((r) => r.length > 0)
+    .join(' · ')
+  if (!riga) {
+    // Una segnatura vuota non è un foglio senza protocollo: è un chiamante che credeva di
+    // averne uno. Senza questa riga il documento uscirebbe non protocollato in silenzio.
+    logEvento('modulistica', 'warn', { operazione: 'carta/segnatura', esito: 'righe-vuote' })
+    return
+  }
+
+  const font = await documento.embedFont(StandardFonts.Helvetica)
+  let testo = testoSegnatura(font, riga)
+  if (!testo) return
+
+  const larghezzaUtile = (CARTA.margineDx - CARTA.margineSx) * PUNTI_PER_MM
+  let corpo = CORPO_SEGNATURA
+  while (corpo > CORPO_SEGNATURA_MINIMO && font.widthOfTextAtSize(testo, corpo) > larghezzaUtile) {
+    corpo -= 0.5
+  }
+  // Ultima risorsa: una segnatura lunghissima si accorcia invece di uscire dal margine.
+  // Sul foglio deve restare il NUMERO, che è la prima cosa che qualcuno andrà a cercare.
+  while (testo.length > 12 && font.widthOfTextAtSize(testo, corpo) > larghezzaUtile) {
+    testo = `${testo.slice(0, -4).trimEnd()}...`
+  }
+
+  pagina.drawText(testo, {
+    x: CARTA.margineDx * PUNTI_PER_MM - font.widthOfTextAtSize(testo, corpo),
+    y: pagina.getSize().height - CARTA.segnaturaRiga * PUNTI_PER_MM,
+    size: corpo,
+    font,
+    color: INCHIOSTRO,
+  })
+}
 
 /** Stampa la carta e poi il contenuto: prima la base, poi ciò che ci si posa sopra. */
 function componiPagina(
@@ -71,8 +213,16 @@ function haContenuto(pagina: PDFPage): boolean {
  *
  * Il formato di ciascuna pagina è conservato: la carta viene stesa sulla pagina così
  * com'è. Un documento senza pagine torna indietro immutato.
+ *
+ * Con `opzioni.segnatura` il foglio esce **già protocollato**: è l'unico modo giusto di
+ * apporre la segnatura su carta intestata, e il motivo è nel commento in testa al file.
+ * Non si compone «prima la carta, poi `applicaSegnatura()`»: quella strada ridipinge la
+ * fascia verde sopra il marchio della scuola.
  */
-export async function applicaCartaIntestata(pdfBytes: Uint8Array): Promise<Uint8Array> {
+export async function applicaCartaIntestata(
+  pdfBytes: Uint8Array,
+  opzioni: OpzioniCarta = {}
+): Promise<Uint8Array> {
   const sorgente = await PDFDocument.load(pdfBytes)
   const totale = sorgente.getPageCount()
 
@@ -110,6 +260,10 @@ export async function applicaCartaIntestata(pdfBytes: Uint8Array): Promise<Uint8
       componiPagina(pagina, cartaIncorporata, contenuti.get(i), width, height)
       if (Math.abs(width / height - proporzioneCarta) > TOLLERANZA_PROPORZIONI) deformate++
     }
+
+    // La segnatura va sulla PRIMA pagina soltanto, come il timbro sul cartaceo: è
+    // l'atto di registrazione del documento, non un piè di pagina che si ripete.
+    if (opzioni.segnatura) await stampaSegnatura(out, out.getPage(0), opzioni.segnatura)
 
     // Una riga sola per documento, non una per pagina: chi legge i log deve poterci
     // ancora leggere il resto.

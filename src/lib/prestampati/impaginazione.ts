@@ -13,10 +13,13 @@
  * tabella e riquadro fanno tutti così. Una guardia che esce e butta via i dati sarebbe
  * qui la stessa cosa che il progetto chiama incidente quando succede in un log.
  *
- * A valle passano `applicaCartaIntestata()` di `src/lib/carta/` — che stende la carta
- * REALE della scuola sotto ogni pagina — e `applicaSegnatura()` di
- * `src/lib/protocolli/timbro.ts`, che riscala la prima pagina invece di coprirla: nessuna
- * riga di questo motore viene mai nascosta.
+ * A valle passa `applicaCartaIntestata()` di `src/lib/carta/`, che stende la carta REALE
+ * della scuola sotto ogni pagina e — quando il documento è protocollato — ci apporta anche
+ * la segnatura, con l'opzione `{ segnatura }`. **Una chiamata sola, e non due.** Questa
+ * riga diceva «e poi `applicaSegnatura()` di `src/lib/protocolli/timbro.ts`, che riscala
+ * la prima pagina invece di coprirla»: su un foglio bianco è vero, sulla carta intestata
+ * quella funzione dipinge la fascia verde sopra il marchio della scuola e riscala la carta
+ * di 0,924, staccando il piede a quattro colonne dal fondo del foglio.
  *
  * ⚠️ **QUESTO MOTORE NON DISEGNA PIÙ LA TESTATA** (2026-08-15). Non c'è più la banda
  * verde, non c'è più il logo, non c'è più il piede predefinito: ce li ha già la carta
@@ -50,9 +53,12 @@ const FONDO_TABELLA: [number, number, number] = [245, 241, 234] // #F5F1EA
 
 // ─── Misure, in millimetri (§1 e §2) ────────────────────────────────────────────
 const CENTRO_PAGINA = 105
-const MARGINE_SX = 22
-const LARGHEZZA_UTILE = 166
-const MARGINE_DX = MARGINE_SX + LARGHEZZA_UTILE // 188
+// I margini si leggono da `CARTA` e non si riscrivono qui: la segnatura di protocollo si
+// allinea al margine destro, e due numeri uguali in due file diversi restano uguali
+// finché qualcuno non tocca uno solo dei due.
+const MARGINE_SX = CARTA.margineSx // 22
+const MARGINE_DX = CARTA.margineDx // 188
+const LARGHEZZA_UTILE = MARGINE_DX - MARGINE_SX // 166
 const COLONNA_DX = 110
 const LARGHEZZA_COLONNA = 78
 
@@ -114,6 +120,24 @@ const SPAZIO_SOTTO_TESTATA_COMPATTA = 6.5
 
 const FIRMA_Y_MIN = 150
 const FIRMA_Y_MAX = 240
+
+/**
+ * L'aria fra l'ultima riga di contenuto e la linea di firma — e quanto può stringersi.
+ *
+ * ⚠️ **LA REGOLA CHE MANCAVA, e che è costata un certificato in due pagine.** Fino al
+ * 2026-08-15 lo stacco era un `s.y + 12` fisso: se la firma non ci stava, si apriva una
+ * pagina nuova, punto. Bastava mezzo millimetro di troppo — misurato: 0,5 mm sul
+ * certificato di iscrizione e frequenza protocollato — perché la firma del legale
+ * rappresentante finisse da sola su un secondo foglio, con tredici centimetri di vuoto
+ * sopra, staccata dal testo che certifica, su un documento diretto all'INPS.
+ *
+ * Un foglio che finisce due millimetri più in basso non è un motivo per stampare una
+ * pagina in più: prima si stringe l'aria fino a `STACCO_FIRMA_MINIMO`, e solo se nemmeno
+ * quella basta si cambia pagina. Undici millimetri e mezzo o cinque non li nota nessuno;
+ * una firma sola in mezzo al bianco la nota chiunque.
+ */
+const STACCO_FIRMA = 12
+const STACCO_FIRMA_MINIMO = 5
 const CENTRO_COLONNA_FIRMA = 152 // colonna destra 128→176, come in documento-pdf.ts
 const X_RIQUADRO_FIRMA = 118
 const LARGHEZZA_RIQUADRO_FIRMA = MARGINE_DX - X_RIQUADRO_FIRMA // 70
@@ -149,6 +173,13 @@ interface Stato {
   testata: TestataCompatta
   /** Il riquadro di verifica già misurato, o `null` se il documento non ne ha. */
   verifica: VerificaComposta | null
+  /**
+   * Fin dove può scendere il contenuto in questo momento. Vale `LIMITE_CONTENUTO` per
+   * tutti i blocchi tranne l'ULTIMO, che si ferma prima per lasciare il posto alla firma:
+   * così la coda del testo si porta la firma sulla pagina nuova invece di lasciarla lì
+   * da sola. Vedi `limitePerUltimoBlocco()`.
+   */
+  limite: number
 }
 
 /** Il documento composto, pronto per `applicaCartaIntestata()` e `applicaSegnatura()`. */
@@ -163,11 +194,20 @@ export function buildPrestampatoPdf(documento: DocumentoPrestampato): Uint8Array
     y: 0,
     testata: componiTestataCompatta(doc, documento),
     verifica: documento.verifica ? componiVerifica(doc, documento.verifica) : null,
+    limite: LIMITE_CONTENUTO,
   }
+  // Il blocco firma si misura PRIMA di impaginare il corpo, e non è un dettaglio d'ordine:
+  // il suo ingombro decide dove l'ultimo blocco di contenuto deve fermarsi.
+  const firma = componiBloccoFirma(doc, documento, s.verifica)
 
   s.y = testataPrimaPagina(doc, documento)
-  for (const blocco of documento.blocchi) disegnaBlocco(s, blocco)
-  disegnaFirma(s)
+  const ultimo = documento.blocchi.length - 1
+  documento.blocchi.forEach((blocco, i) => {
+    s.limite = i === ultimo ? limitePerUltimoBlocco(s, firma.tetto) : LIMITE_CONTENUTO
+    disegnaBlocco(s, blocco)
+  })
+  s.limite = LIMITE_CONTENUTO
+  disegnaFirma(s, firma)
   // Il riquadro di verifica va in fondo all'ULTIMA pagina, che dopo la firma è quella
   // corrente: si disegna alla quota già misurata e non tocca il flusso.
   if (s.verifica) disegnaVerifica(doc, s.verifica)
@@ -315,7 +355,7 @@ function nuovaPagina(s: Stato): void {
  * cambiati sotto i piedi.
  */
 function cambioPagina(s: Stato, altezza: number): boolean {
-  if (s.y + altezza <= LIMITE_CONTENUTO) return false
+  if (s.y + altezza <= s.limite) return false
   nuovaPagina(s)
   return true
 }
@@ -327,10 +367,27 @@ function cambioPagina(s: Stato, altezza: number): boolean {
  * spezza comunque riga per riga: spezzato è brutto, troncato è un dato che sparisce.
  */
 function preferisciBloccoIntero(s: Stato, altezza: number): boolean {
-  if (altezza <= LIMITE_CONTENUTO - s.y) return false
-  if (altezza > LIMITE_CONTENUTO - s.testata.quotaCorpo) return false
+  if (altezza <= s.limite - s.y) return false
+  if (altezza > s.limite - s.testata.quotaCorpo) return false
   nuovaPagina(s)
   return true
+}
+
+/**
+ * Fin dove può scendere l'ULTIMO blocco di contenuto: quanto basta perché la firma stia
+ * ancora nella stessa pagina, con l'aria minima.
+ *
+ * È la metà preventiva della regola (l'altra è la compressione dello stacco in
+ * `disegnaFirma`), ed è quella che risparmia i fogli: senza, un elenco che riempie la
+ * pagina fino a 266 lascia la firma fuori e apre un secondo foglio per lei sola. Con
+ * questo limite la coda dell'elenco scavalca il salto di pagina e la firma le va dietro:
+ * la pagina nuova porta contenuto E firma, oppure non nasce affatto.
+ *
+ * Il minimo garantisce che il blocco abbia comunque una riga di spazio su una pagina
+ * vuota: un limite più alto della quota di ripartenza girerebbe a vuoto.
+ */
+function limitePerUltimoBlocco(s: Stato, tettoFirma: number): number {
+  return Math.max(tettoFirma - STACCO_FIRMA_MINIMO, s.testata.quotaCorpo + INTERLINEA)
 }
 
 // ─── Blocchi ────────────────────────────────────────────────────────────────────
@@ -820,13 +877,30 @@ function componiAttestazione(doc: jsPDF, firma: FirmaGenitore): { righe: string[
   return { righe, altezza: 4 + righe.length * 4 + 2 }
 }
 
-function disegnaFirma(s: Stato): void {
-  const { doc, documento } = s
+/** Il blocco firma misurato: quanto ingombra, e la quota più bassa a cui può cominciare. */
+interface FirmaComposta {
+  /** Righe e altezza del riquadro di attestazione, solo per la firma del genitore. */
+  attestazione: { righe: string[]; altezza: number } | null
+  /** Quanto scende il blocco sotto la propria linea di scrittura. */
+  altezza: number
+  /** La quota più bassa a cui la linea di firma può cadere. */
+  tetto: number
+}
+
+/**
+ * Misura il blocco firma prima che il corpo venga impaginato.
+ *
+ * Serve prima perché il suo ingombro decide dove l'ultimo blocco di contenuto deve
+ * fermarsi (`limitePerUltimoBlocco`). Per il genitore l'altezza è quella MISURATA del
+ * riquadro, non una stima: è l'unico numero che il disegno poi rispetta davvero.
+ */
+function componiBloccoFirma(
+  doc: jsPDF,
+  documento: DocumentoPrestampato,
+  verifica: VerificaComposta | null
+): FirmaComposta {
   const firma = documento.firma
   const attestazione = firma.tipo === 'genitore' ? componiAttestazione(doc, firma) : null
-  // Quanto scende il blocco sotto la propria linea di scrittura. Per il genitore è
-  // l'ingombro MISURATO del riquadro, non una stima: è l'unico numero che il disegno poi
-  // rispetta davvero.
   const altezza = attestazione
     ? STACCO_RIQUADRO_FIRMA + attestazione.altezza
     : firma.tipo === 'legaleRappresentante'
@@ -837,16 +911,32 @@ function disegnaFirma(s: Stato): void {
   // riquadro di verifica il fondo utile non è più il limite del contenuto ma il bordo
   // alto di quella cornice, sei millimetri più su: è ciò che garantisce che le DUE
   // CORNICI non si tocchino, non solo che l'ultima riga di testo stia più in alto.
-  const fondo = s.verifica ? s.verifica.yAlto - DISTANZA_FIRMA_VERIFICA : LIMITE_CONTENUTO
-  const tetto = Math.min(FIRMA_Y_MAX, fondo - altezza)
-  let y = Math.max(s.y + 12, FIRMA_Y_MIN)
+  const fondo = verifica ? verifica.yAlto - DISTANZA_FIRMA_VERIFICA : LIMITE_CONTENUTO
+  return { attestazione, altezza, tetto: Math.min(FIRMA_Y_MAX, fondo - altezza) }
+}
+
+function disegnaFirma(s: Stato, composta: FirmaComposta): void {
+  const { doc, documento } = s
+  const firma = documento.firma
+  const { attestazione, tetto } = composta
+
+  let y = Math.max(s.y + STACCO_FIRMA, FIRMA_Y_MIN)
   if (y > tetto) {
-    nuovaPagina(s)
-    // Sulla pagina nuova il contenuto non pesa più, ma il tetto sì: un'attestazione
-    // altissima può costringere la firma sopra y=150, e fra le due regole vince quella
-    // che non fa accavallare due cornici — una firma un po' più in alto si legge, due
-    // riquadri sovrapposti no.
-    y = Math.max(Math.min(FIRMA_Y_MIN, tetto), s.y)
+    // Prima di aprire una pagina nuova si stringe l'aria: si prende la quota più bassa
+    // che il foglio concede, non il minimo — l'aria che c'è si usa tutta. Una pagina in
+    // più costa un foglio E stacca la firma dal testo che sottoscrive; qualche
+    // millimetro di stacco in meno non costa niente a nessuno.
+    const compressa = Math.max(s.y + STACCO_FIRMA_MINIMO, FIRMA_Y_MIN)
+    if (compressa <= tetto) {
+      y = tetto
+    } else {
+      nuovaPagina(s)
+      // Sulla pagina nuova il contenuto non pesa più, ma il tetto sì: un'attestazione
+      // altissima può costringere la firma sopra y=150, e fra le due regole vince quella
+      // che non fa accavallare due cornici — una firma un po' più in alto si legge, due
+      // riquadri sovrapposti no.
+      y = Math.max(Math.min(FIRMA_Y_MIN, tetto), s.y)
+    }
   }
   s.y = y
 

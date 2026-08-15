@@ -5,16 +5,23 @@
  * Non si ispezionano i pixel di un PDF, e qui non si finge di poterlo fare: si misura ciò
  * che il formato espone davvero — i byte, il numero di pagine, per ogni pezzo di testo la
  * stringa e le coordinate del suo punto d'inizio, e per ogni percorso disegnato il suo
- * rettangolo d'ingombro. Con quelle si prova ciò che la specifica chiede: la banda verde
- * alta 30 mm col logo al suo posto, il corpo che comincia a x=22 e non esce dai 166 mm, il
- * blocco firma fra y=150 e y=240, il piede su ogni pagina, e due cornici che non si
- * accavallano.
+ * rettangolo d'ingombro. Con quelle si prova ciò che la specifica chiede: il corpo che
+ * comincia a x=22 e non esce dai 166 mm, il blocco firma fra y=150 e y=240, il piede su
+ * ogni pagina, e due cornici che non si accavallano.
+ *
+ * ⚠️ **DAL 2026-08-15 QUESTO MOTORE STAMPA SOPRA LA CARTA INTESTATA REALE.** Non disegna
+ * più né la banda verde né il logo: ce li ha già la carta, e ridisegnarli significava
+ * coprirli. Le due fasce che l'asset si tiene — il marchio fino a 26,8 mm e il piede a
+ * quattro colonne da 272,1 — sono territorio vietato: `CARTA` le dichiara, e i test qui
+ * sotto verificano che nessun elemento ci finisca dentro. Un'asserzione che pretendesse
+ * di nuovo la banda o il logo non sarebbe un test più severo, sarebbe il difetto.
  *
  * Nessun dato reale: nomi inventati, sede inventata, protocolli inventati.
  */
 import { describe, it, expect } from 'vitest'
 import { buildPrestampatoPdf } from '@/lib/prestampati/impaginazione'
 import type { BloccoPrestampato, DocumentoPrestampato } from '@/lib/prestampati/tipi'
+import { CARTA } from '@/lib/carta/geometria'
 import { estraiTesto } from '@/lib/protocolli/estrai'
 
 const MM_PER_PUNTO = 25.4 / 72
@@ -27,8 +34,13 @@ const ALTEZZA_A4_MM = 297
  */
 const TOLLERANZA_MM = 0.05
 
-/** Bordo alto del riquadro di verifica (§4.3), come lo fissa il motore. */
-const Y_RIQUADRO_VERIFICA_MM = 262
+/**
+ * Il riquadro di verifica (§4.3) non ha più un bordo ALTO fisso: si àncora col bordo
+ * BASSO a `CARTA.contenutoFine` e cresce verso l'alto quanto gli servono le sue righe.
+ * Con un bordo alto fisso a 262 e tre righe il fondo cadeva a 278,8 mm — dentro il piede
+ * a quattro colonne stampato sulla carta.
+ */
+const FONDO_RIQUADRO_VERIFICA_MM = CARTA.contenutoFine
 
 interface ElementoTesto {
   pagina: number
@@ -113,10 +125,11 @@ async function ingombriPercorsi(pdf: Uint8Array): Promise<Ingombro[]> {
 }
 
 /**
- * Dove finisce ogni immagine disegnata. Il logo è l'unica immagine del motore: contando
- * i DISEGNI (e non le risorse della pagina, che jsPDF tiene in un dizionario solo e
- * condiviso) si prova sia che la banda col logo sta solo sulla prima pagina, sia che il
- * logo è nel punto e nella misura che la specifica fissa.
+ * Dove finisce ogni immagine disegnata.
+ *
+ * Il motore non ne disegna più NESSUNA: il logo lo porta la carta intestata. Contare i
+ * DISEGNI (e non le risorse della pagina, che jsPDF tiene in un dizionario solo e
+ * condiviso) è ciò che rende misurabile quel «nessuna».
  */
 async function immaginiDisegnate(pdf: Uint8Array): Promise<Ingombro[]> {
   const { getDocumentProxy, getResolvedPDFJS } = await import('unpdf')
@@ -229,32 +242,64 @@ describe('buildPrestampatoPdf — carta e ritmo (§1 e §2)', () => {
     expect(testo).toContain('MODULO DI PROVA')
     expect(testo).toContain('Il presente modulo serve a collaudare il motore.')
     expect(testo).toContain('Cittanova, 13 agosto 2026')
-    expect(testo).toContain('Documento generato dal registro elettronico Kidville')
   })
 
-  it('la banda verde è alta 30 mm e il logo sta a 14 / 7,5 in 44 × 14,8', async () => {
-    // Punto 1 di §5, per intero: non «c'è un'immagine», ma la banda e il logo ALLE MISURE
-    // della specifica. Sono le prime a divergere in silenzio quando si rigenera l'asset,
-    // e nessuno guarda un PDF col righello.
+  it('non disegna più né banda né logo: la carta ce li ha già', async () => {
+    // L'asserzione che stava qui prima pretendeva la banda verde alta 30 mm e il logo a
+    // 14 / 7,5. Era giusta finché il foglio nasceva bianco; sulla carta vera quella banda
+    // COPRE il marchio della scuola e quel logo ne stampa un secondo sopra il primo.
     const pdf = buildPrestampatoPdf(documento())
 
-    const banda = (await ingombriPercorsi(pdf)).find(
-      (i) => i.pagina === 1 && i.xMm < TOLLERANZA_MM && i.larghezzaMm > 200
-    )
-    expect(banda).toBeDefined()
-    expect(banda!.yMm).toBeCloseTo(0, 1)
-    expect(banda!.altezzaMm).toBeCloseTo(30, 1)
-    expect(banda!.larghezzaMm).toBeCloseTo(210, 1)
+    expect(await immaginiDisegnate(pdf)).toHaveLength(0)
 
-    const immagini = await immaginiDisegnate(pdf)
-    expect(immagini).toHaveLength(1)
-    expect(immagini[0].pagina).toBe(1)
-    expect(immagini[0].xMm).toBeCloseTo(14, 1)
-    expect(immagini[0].yMm).toBeCloseTo(7.5, 1)
-    expect(immagini[0].larghezzaMm).toBeCloseTo(44, 1)
-    expect(immagini[0].altezzaMm).toBeCloseTo(14.8, 1)
-    // Il logo sta DENTRO la banda: se un giorno cambia l'una senza l'altro, si vede qui.
-    expect(immagini[0].yMm + immagini[0].altezzaMm).toBeLessThan(30)
+    const bande = (await ingombriPercorsi(pdf)).filter(
+      (i) => i.altezzaMm > 25 && i.larghezzaMm > 200
+    )
+    expect(bande).toHaveLength(0)
+  })
+
+  it('il piede predefinito non esiste più: lo scrive la carta', async () => {
+    // «Documento generato dal registro elettronico Kidville» cadeva a y=287, cioè dentro
+    // il piede a quattro colonne stampato sull'asset (272,1→285,0). La carta porta la
+    // ragione sociale e le tre sedi: l'app lì sotto non ha più niente da aggiungere.
+    const testo = await estraiTesto(buildPrestampatoPdf(documento()))
+    expect(testo).not.toContain('Documento generato dal registro elettronico')
+  })
+
+  it('nessun elemento entra nella fascia del marchio né in quella del piede', async () => {
+    // Il lock vero di tutto questo lavoro, e vale su OGNI pagina: sopra 26,8 mm c'è il
+    // marchio della scuola, sotto 272,1 il piede a quattro colonne. Sono territorio
+    // dell'asset, e ciò che ci finisce sopra non «sta stretto»: ci si stampa sopra.
+    const pdf = buildPrestampatoPdf(
+      documento({
+        titolo: 'RICHIESTA DI PERMESSO — ENTRATA POSTICIPATA / USCITA ANTICIPATA',
+        protocollo: 'Prot. n. 0000123/2026 del 13/08/2026',
+        piePagina: 'Riservato — dati di minori · 13/08/2026 · Nome Cognome Inventato',
+        blocchi: [...Object.values(UNO_PER_TIPO), ...riempimento(40)],
+        firma: { tipo: 'legaleRappresentante', nome: 'Nome Cognome Inventato' },
+        verifica: {
+          numeroProtocollo: '0000123/2026',
+          dataProtocollo: '13/08/2026',
+          indirizzoVerifica: 'esempio.invalid/verifica',
+        },
+      })
+    )
+
+    const elementi = await elementiTesto(pdf)
+    expect(await numeroPagine(pdf)).toBeGreaterThan(2)
+    for (const el of elementi) {
+      expect(el.yMm, `«${el.testo}» a y=${el.yMm.toFixed(1)}`).toBeGreaterThan(CARTA.brandFine)
+      expect(el.yMm, `«${el.testo}» a y=${el.yMm.toFixed(1)}`).toBeLessThan(CARTA.piedeInizio)
+    }
+
+    // E nemmeno le CORNICI, che il testo estratto non racconta: riquadri, filetti, caselle.
+    for (const i of await ingombriPercorsi(pdf)) {
+      expect(i.yMm, `cornice a y=${i.yMm.toFixed(1)}`).toBeGreaterThan(CARTA.brandFine)
+      expect(
+        i.yMm + i.altezzaMm,
+        `cornice fino a y=${(i.yMm + i.altezzaMm).toFixed(1)}`
+      ).toBeLessThan(CARTA.piedeInizio)
+    }
   })
 
   it('degrada senza intestazione di sede, e non stampa mai «undefined» al posto di un dato', async () => {
@@ -339,13 +384,16 @@ describe('buildPrestampatoPdf — più pagine (§2)', () => {
   })
 
   it('cresce di pagine col contenuto, e il piede sta su ognuna', async () => {
-    const pdf = buildPrestampatoPdf(documento({ blocchi: riempimento(60) }))
+    // Il piede lo porta il MODELLO, non più una costante del motore: quello predefinito
+    // cadeva dentro il piede stampato sulla carta ed è sparito con esso.
+    const PIEDE = 'Riservato — dati di minori · 13/08/2026 · Nome Cognome Inventato'
+    const pdf = buildPrestampatoPdf(documento({ blocchi: riempimento(60), piePagina: PIEDE }))
 
     const pagine = await numeroPagine(pdf)
     expect(pagine).toBeGreaterThan(1)
 
     const testo = await estraiTesto(pdf)
-    expect(occorrenze(testo, 'Documento generato dal registro elettronico Kidville')).toBe(pagine)
+    expect(occorrenze(testo, PIEDE)).toBe(pagine)
     expect(testo).toContain(`Pagina 1 di ${pagine}`)
     expect(testo).toContain(`Pagina ${pagine} di ${pagine}`)
 
@@ -360,10 +408,9 @@ describe('buildPrestampatoPdf — più pagine (§2)', () => {
       expect(secondaPagina.some((el) => el.testo.includes(riga))).toBe(true)
     }
 
-    // …e la banda verde col logo NON si ripete: è la metà della regola che il testo
-    // estratto non racconta.
-    const immagini = await immaginiDisegnate(pdf)
-    expect(immagini.map((i) => i.pagina)).toEqual([1])
+    // …e non c'è nessuna immagine da nessuna parte: il marchio sta sulla carta, e ci sta
+    // su ogni pagina senza che il motore lo ridisegni.
+    expect(await immaginiDisegnate(pdf)).toHaveLength(0)
   })
 
   it('il documento composto regge il timbro di segnatura, che passa dopo', async () => {
@@ -426,15 +473,17 @@ describe('buildPrestampatoPdf — più pagine (§2)', () => {
       // La cornice si chiude e si riapre: il titoletto si ripete come le testate di tabella.
       expect(occorrenze(testo, 'RISERVATO A SEGRETERIA')).toBeGreaterThan(1)
 
-      // Nessun campo e nessuna cornice scendono sul piè di pagina (y=287).
+      // Nessun campo e nessuna cornice scendono nell'area riservata alla carta.
       const elementi = await elementiTesto(pdf)
       for (const el of elementi.filter((e) => e.testo.startsWith('Campo '))) {
-        expect(el.yMm).toBeLessThan(273)
+        expect(el.yMm).toBeLessThan(CARTA.contenutoFine)
       }
       const cornici = (await ingombriPercorsi(pdf)).filter((i) => i.larghezzaMm > 160 && i.altezzaMm > 10)
       expect(cornici.length).toBeGreaterThan(1)
       for (const cornice of cornici) {
-        expect(cornice.yMm + cornice.altezzaMm).toBeLessThanOrEqual(272 + TOLLERANZA_MM)
+        expect(cornice.yMm + cornice.altezzaMm).toBeLessThanOrEqual(
+          CARTA.contenutoFine + TOLLERANZA_MM
+        )
       }
     }
   )
@@ -709,7 +758,10 @@ describe('buildPrestampatoPdf — protocollo e verifica (§4)', () => {
         (i) => i.pagina === ultima && Math.abs(i.xMm - 118) < 1 && i.altezzaMm > 5
       )
       const verifica = ingombri.find(
-        (i) => i.pagina === ultima && Math.abs(i.yMm - Y_RIQUADRO_VERIFICA_MM) < 1 && i.larghezzaMm > 160
+        (i) =>
+          i.pagina === ultima &&
+          i.larghezzaMm > 160 &&
+          Math.abs(i.yMm + i.altezzaMm - FONDO_RIQUADRO_VERIFICA_MM) < 1
       )
 
       expect(cornice, `riquadro di firma assente a spazio=${spazio}`).toBeDefined()
@@ -721,8 +773,8 @@ describe('buildPrestampatoPdf — protocollo e verifica (§4)', () => {
         `cornici accavallate a spazio=${spazio}`
       ).toBeLessThan(verifica!.yMm)
 
-      // E il riquadro resta nella pagina: sopra il piede, e non sotto il limite del corpo.
-      expect(cornice!.yMm + cornice!.altezzaMm).toBeLessThan(280)
+      // E il riquadro resta nella pagina: sopra il piede STAMPATO sulla carta.
+      expect(cornice!.yMm + cornice!.altezzaMm).toBeLessThan(CARTA.piedeInizio)
     }
   })
 })

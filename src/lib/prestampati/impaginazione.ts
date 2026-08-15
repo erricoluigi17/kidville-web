@@ -13,14 +13,26 @@
  * tabella e riquadro fanno tutti così. Una guardia che esce e butta via i dati sarebbe
  * qui la stessa cosa che il progetto chiama incidente quando succede in un log.
  *
- * A valle passa `applicaSegnatura()` di `src/lib/protocolli/timbro.ts`, che riscala la
- * prima pagina invece di coprirla: nessuna riga di questo motore viene mai nascosta.
+ * A valle passano `applicaCartaIntestata()` di `src/lib/carta/` — che stende la carta
+ * REALE della scuola sotto ogni pagina — e `applicaSegnatura()` di
+ * `src/lib/protocolli/timbro.ts`, che riscala la prima pagina invece di coprirla: nessuna
+ * riga di questo motore viene mai nascosta.
+ *
+ * ⚠️ **QUESTO MOTORE NON DISEGNA PIÙ LA TESTATA** (2026-08-15). Non c'è più la banda
+ * verde, non c'è più il logo, non c'è più il piede predefinito: ce li ha già la carta
+ * intestata, e ridisegnarli significava coprirli — la banda cadeva esattamente sopra il
+ * marchio della scuola, il piede dentro l'elenco stampato delle tre sedi. Qui si impagina
+ * il solo contenuto, dentro la finestra che `CARTA` dichiara: 40 → 266 mm.
+ *
+ * Si importa `carta/geometria` e non `carta/index`: il primo è una manciata di numeri
+ * senza dipendenze, il secondo porterebbe dietro pdf-lib e la lettura da disco di 1,1 MB
+ * dentro il grafo di un motore che deve restare leggero.
  *
  * Testato in `__tests__/lib/prestampati-impaginazione.test.ts`.
  */
 
 import { jsPDF } from 'jspdf'
-import { LOGO_LIGHT_PNG_BASE64 } from '@/lib/protocolli/assets'
+import { CARTA } from '@/lib/carta/geometria'
 import type {
   BloccoPrestampato,
   CampoPrestampato,
@@ -37,7 +49,6 @@ const GRIGIO: [number, number, number] = [100, 100, 100] // #646464
 const FONDO_TABELLA: [number, number, number] = [245, 241, 234] // #F5F1EA
 
 // ─── Misure, in millimetri (§1 e §2) ────────────────────────────────────────────
-const LARGHEZZA_PAGINA = 210
 const CENTRO_PAGINA = 105
 const MARGINE_SX = 22
 const LARGHEZZA_UTILE = 166
@@ -45,16 +56,14 @@ const MARGINE_DX = MARGINE_SX + LARGHEZZA_UTILE // 188
 const COLONNA_DX = 110
 const LARGHEZZA_COLONNA = 78
 
-const BANDA_ALTEZZA = 30
-const LOGO_X = 14
-const LOGO_Y = 7.5
-const LOGO_LARGHEZZA = 44 // asset 620×209 → 44 × 14,8 mm
-const LOGO_ALTEZZA = 14.8
-
-const Y_INTESTAZIONE = 38
+/**
+ * L'intestazione di sede comincia dove finisce l'area del marchio, con l'aria che ci
+ * vuole: attaccata al logo della scuola sembrerebbe una sua didascalia.
+ */
+const Y_INTESTAZIONE = CARTA.contenutoInizio // 40
 const PASSO_INTESTAZIONE = 4.5
 const Y_PROTOCOLLO = 52
-const Y_TITOLO_MIN = 58
+const Y_TITOLO_MIN = 60
 const PASSO_TITOLO = 7
 
 const INTERLINEA = 6.2 // corpo 12 pt
@@ -89,11 +98,17 @@ const PADDING_RIQUADRO = 4
 const TESTATA_RIQUADRO = 6
 
 const SPAZIO_SOTTO_TITOLO = 16
-const LIMITE_CONTENUTO = 272
-const Y_PIEDE = 287
+const LIMITE_CONTENUTO = CARTA.contenutoFine // 266
 
-// Testata delle pagine successive alla prima (§2): niente banda verde, tutto in 8 pt.
-const Y_TESTATA_COMPATTA = 14
+/**
+ * Testata delle pagine successive alla prima (§2): tutto in 8 pt.
+ *
+ * Comincia a 40 come l'intestazione della prima pagina, e non più a 14: a 14 le sue
+ * quattro righe cadevano DENTRO il marchio stampato sulla carta (12,5→26,8), cioè sopra
+ * la parola «Kidville». Costa una ventina di millimetri di contenuto per pagina, ed è il
+ * prezzo di avere il marchio della scuola su ogni foglio invece che solo sul primo.
+ */
+const Y_TESTATA_COMPATTA = CARTA.contenutoInizio // 40
 const PASSO_TESTATA_COMPATTA = 4
 const SPAZIO_SOTTO_TESTATA_COMPATTA = 6.5
 
@@ -103,10 +118,7 @@ const CENTRO_COLONNA_FIRMA = 152 // colonna destra 128→176, come in documento-
 const X_RIQUADRO_FIRMA = 118
 const LARGHEZZA_RIQUADRO_FIRMA = MARGINE_DX - X_RIQUADRO_FIRMA // 70
 const STACCO_RIQUADRO_FIRMA = 2.5 // dalla linea di scrittura al bordo alto del riquadro
-const Y_RIQUADRO_VERIFICA = 262
 const DISTANZA_FIRMA_VERIFICA = 6
-
-const PIEDE_PREDEFINITO = 'Documento generato dal registro elettronico Kidville'
 
 /**
  * Costante di legge, non un testo di prodotto: cambia solo se cambia la norma (§3b).
@@ -135,37 +147,47 @@ interface Stato {
   /** Linea di scrittura corrente (baseline), in millimetri dal bordo alto. */
   y: number
   testata: TestataCompatta
+  /** Il riquadro di verifica già misurato, o `null` se il documento non ne ha. */
+  verifica: VerificaComposta | null
 }
 
-/** Il documento composto, pronto per `applicaSegnatura()` o per lo storage. */
+/** Il documento composto, pronto per `applicaCartaIntestata()` e `applicaSegnatura()`. */
 export function buildPrestampatoPdf(documento: DocumentoPrestampato): Uint8Array {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  // La testata compatta si compone PRIMA di disegnare: la sua altezza decide quanto
-  // contenuto ci sta in una pagina vuota, e quel numero serve già al primo salto.
-  const s: Stato = { doc, documento, y: 0, testata: componiTestataCompatta(doc, documento) }
+  // Testata compatta e riquadro di verifica si compongono PRIMA di disegnare: le loro
+  // altezze decidono quanto contenuto ci sta in una pagina e dove può cadere la firma, e
+  // quei numeri servono già al primo salto.
+  const s: Stato = {
+    doc,
+    documento,
+    y: 0,
+    testata: componiTestataCompatta(doc, documento),
+    verifica: documento.verifica ? componiVerifica(doc, documento.verifica) : null,
+  }
 
   s.y = testataPrimaPagina(doc, documento)
   for (const blocco of documento.blocchi) disegnaBlocco(s, blocco)
   disegnaFirma(s)
   // Il riquadro di verifica va in fondo all'ULTIMA pagina, che dopo la firma è quella
-  // corrente: si disegna a quota fissa e non tocca il flusso.
-  if (documento.verifica) disegnaVerifica(doc, documento.verifica)
+  // corrente: si disegna alla quota già misurata e non tocca il flusso.
+  if (s.verifica) disegnaVerifica(doc, s.verifica)
 
   // I piedi si scrivono per ultimi: «Pagina n di m» pretende di sapere quante sono,
   // e prima di aver impaginato tutto non lo sa nessuno.
-  disegnaPiedi(doc, documento.piePagina?.trim() || PIEDE_PREDEFINITO)
+  disegnaPiedi(doc, documento.piePagina?.trim() ?? '')
 
   return new Uint8Array(doc.output('arraybuffer'))
 }
 
 // ─── Testate ────────────────────────────────────────────────────────────────────
 
-/** Banda verde, logo, intestazione di sede, protocollo e titolo. Ritorna la quota del corpo. */
+/**
+ * Intestazione di sede, protocollo e titolo. Ritorna la quota del corpo.
+ *
+ * Niente banda verde e niente logo: li porta la carta intestata, e ridisegnarli qui
+ * significava stamparci sopra. La banda copriva il marchio della scuola per intero.
+ */
 function testataPrimaPagina(doc: jsPDF, d: DocumentoPrestampato): number {
-  doc.setFillColor(...VERDE)
-  doc.rect(0, 0, LARGHEZZA_PAGINA, BANDA_ALTEZZA, 'F')
-  doc.addImage(LOGO_LIGHT_PNG_BASE64, 'PNG', LOGO_X, LOGO_Y, LOGO_LARGHEZZA, LOGO_ALTEZZA)
-
   let y = Y_INTESTAZIONE
   if (d.intestazione.length > 0) {
     doc.setTextColor(...GRIGIO)
@@ -250,16 +272,31 @@ function disegnaTestataCompatta(doc: jsPDF, testata: TestataCompatta): void {
   doc.line(MARGINE_SX, yFiletto, MARGINE_DX, yFiletto)
 }
 
+/**
+ * La riga di servizio: il piede del modello e «Pagina n di m», a 268,5 mm.
+ *
+ * Stavano a 287, cioè DENTRO il piede a quattro colonne stampato sulla carta
+ * (272,1→285,0): ci sarebbero finiti sopra la ragione sociale e i recapiti delle tre
+ * sedi. Ora stanno nell'aria fra il contenuto e quel piede, in 7 pt grigio.
+ *
+ * E il piede predefinito non c'è più. «Documento generato dal registro elettronico
+ * Kidville» era ciò che l'app diceva su un foglio che non aveva altro: la carta porta la
+ * ragione sociale, la partita IVA e le tre sedi, e lì sotto non c'è più niente da
+ * aggiungere. Un modello che ha qualcosa da dire — «Riservato — dati di minori» sulle
+ * stampe di sezione — lo passa in `piePagina`, come ha sempre fatto.
+ */
 function disegnaPiedi(doc: jsPDF, piede: string): void {
   const pagine = doc.getNumberOfPages()
+  if (!piede && pagine === 1) return
+
   for (let p = 1; p <= pagine; p++) {
     doc.setPage(p)
     doc.setFont('helvetica', 'italic')
-    doc.setFontSize(8)
+    doc.setFontSize(7)
     doc.setTextColor(...GRIGIO)
-    doc.text(piede, CENTRO_PAGINA, Y_PIEDE, { align: 'center' })
+    if (piede) doc.text(piede, CENTRO_PAGINA, CARTA.rigaServizio, { align: 'center' })
     if (pagine > 1) {
-      doc.text(`Pagina ${p} di ${pagine}`, MARGINE_DX, Y_PIEDE, { align: 'right' })
+      doc.text(`Pagina ${p} di ${pagine}`, MARGINE_DX, CARTA.rigaServizio, { align: 'right' })
     }
   }
 }
@@ -800,7 +837,7 @@ function disegnaFirma(s: Stato): void {
   // riquadro di verifica il fondo utile non è più il limite del contenuto ma il bordo
   // alto di quella cornice, sei millimetri più su: è ciò che garantisce che le DUE
   // CORNICI non si tocchino, non solo che l'ultima riga di testo stia più in alto.
-  const fondo = documento.verifica ? Y_RIQUADRO_VERIFICA - DISTANZA_FIRMA_VERIFICA : LIMITE_CONTENUTO
+  const fondo = s.verifica ? s.verifica.yAlto - DISTANZA_FIRMA_VERIFICA : LIMITE_CONTENUTO
   const tetto = Math.min(FIRMA_Y_MAX, fondo - altezza)
   let y = Math.max(s.y + 12, FIRMA_Y_MIN)
   if (y > tetto) {
@@ -880,20 +917,47 @@ function disegnaFirma(s: Stato): void {
  * con quella registrata. È la trappola che chi legge dopo rifarebbe, perché la specifica
  * disegna il riquadro con l'impronta dentro.
  */
-function disegnaVerifica(doc: jsPDF, verifica: VerificaPrestampato): void {
-  const PADDING = 3
+const PADDING_VERIFICA = 3
+const INTERLINEA_VERIFICA = 3.6
+
+/** Righe, altezza e bordo alto del riquadro di verifica: misurati una volta sola. */
+interface VerificaComposta {
+  righe: string[]
+  altezza: number
+  /** Bordo ALTO. Il bordo basso è ancorato a `CARTA.contenutoFine`. */
+  yAlto: number
+}
+
+/**
+ * Il riquadro si àncora col bordo BASSO al fondo dell'area libera e cresce verso l'alto.
+ *
+ * Prima aveva un bordo alto fisso a 262 e cresceva verso il basso: con tre righe il fondo
+ * cadeva a 278,8 mm, cioè dentro il piede a quattro colonne stampato sulla carta
+ * (272,1→285,0). E il numero di righe non è noto in anticipo — dipende da quanto è lungo
+ * il numero di protocollo dopo il capo automatico — quindi non c'era una costante che
+ * potesse essere giusta per tutti i documenti. Ancorare il fondo la rende inutile.
+ */
+function componiVerifica(doc: jsPDF, verifica: VerificaPrestampato): VerificaComposta {
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   const righe = [
     `Documento emesso dal registro elettronico e registrato al protocollo n. ${verifica.numeroProtocollo} del ${verifica.dataProtocollo}.`,
     `L'impronta SHA-256 di questo documento è registrata nel registro di protocollo.`,
     `Verificabile su ${verifica.indirizzoVerifica} indicando il numero di protocollo.`,
-  ].flatMap((riga) => doc.splitTextToSize(riga, LARGHEZZA_UTILE - PADDING * 2) as string[])
+  ].flatMap((riga) => doc.splitTextToSize(riga, LARGHEZZA_UTILE - PADDING_VERIFICA * 2) as string[])
 
-  const altezza = PADDING * 2 + righe.length * 3.6
+  const altezza = PADDING_VERIFICA * 2 + righe.length * INTERLINEA_VERIFICA
+  return { righe, altezza, yAlto: CARTA.contenutoFine - altezza }
+}
+
+function disegnaVerifica(doc: jsPDF, verifica: VerificaComposta): void {
   doc.setDrawColor(...GRIGIO)
   doc.setLineWidth(0.2)
-  doc.rect(MARGINE_SX, Y_RIQUADRO_VERIFICA, LARGHEZZA_UTILE, altezza)
+  doc.rect(MARGINE_SX, verifica.yAlto, LARGHEZZA_UTILE, verifica.altezza)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
   doc.setTextColor(...GRIGIO)
-  righe.forEach((riga, i) => doc.text(riga, MARGINE_SX + PADDING, Y_RIQUADRO_VERIFICA + 5 + i * 3.6))
+  verifica.righe.forEach((riga, i) =>
+    doc.text(riga, MARGINE_SX + PADDING_VERIFICA, verifica.yAlto + 5 + i * INTERLINEA_VERIFICA)
+  )
 }

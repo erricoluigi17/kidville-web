@@ -479,7 +479,6 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminStudents.detailPageRiattivatoSenzaClasse', 'nome e cognome del bambino, che rientra senza classe'],
         ['adminModulistica.modConfermaApprovazioneTesto', 'cognome della famiglia'],
         ['adminModulistica.modFamiglia', 'cognome della famiglia'],
-        ['adminModulistica.modOdtCaricato', 'nome del file'],
         ['adminPrimaria.materieNessunObiettivoDefinito', 'codice materia e livello ordinale'],
         ['diario.nannaDurata', 'orari di inizio e fine'],
         ['pagamenti.importoScaduti', 'importo in euro, già formattato'],
@@ -594,7 +593,17 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // un messaggio a un lock invece di dichiarare un'eccezione vera. Due
         // messaggi nuovi, due eccezioni dichiarate: il tetto sale di due e non di
         // più, ed è questo che rende leggibile la crescita di questo elenco.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(41)
+        //
+        // 2026-08-16 · 41 → 40, e per una volta il tetto SCENDE.
+        // `adminModulistica.modOdtCaricato` («📄 {nome} caricato») era il badge del
+        // tab «Template Certificati ODT»: un mockup: l'`onChange` teneva il NOME del
+        // file in `useState` e basta — nessun caricamento, nessuna riga nel database,
+        // e il badge spariva al primo aggiornamento della pagina. Tolto il tab, la
+        // chiave non esiste più in nessuno dei due cataloghi, e la sua eccezione va
+        // via con lei. Il tetto scende insieme: un'allowlist che non si abbassa
+        // quando una voce muore lascia un posto libero a chi verrà dopo, ed è
+        // esattamente il modo in cui questi elenchi smettono di stringere.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(40)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

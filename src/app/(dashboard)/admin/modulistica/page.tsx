@@ -5,8 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import {
-  FileText, Plus, UserCheck, Settings, Calendar, Users, IdCard,
-  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
+  FileText, Plus, UserCheck, Calendar, Users, IdCard,
+  Trash2, Download, CheckCircle, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { DateField } from '@/components/ui/DateField';
@@ -103,7 +103,7 @@ interface PreInscription {
   created_at: string;
 }
 
-type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'prestampati' | 'moduli-genitori' | 'attesa' | 'odt';
+type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'prestampati' | 'moduli-genitori';
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
@@ -134,12 +134,11 @@ function ModulisticaInner() {
   // dimentica proprio perché finché nessuno manda quel link il difetto non si vede.
   const initialTab: ModulisticaTab =
     tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'personale'
-    || tabParam === 'prestampati' || tabParam === 'moduli-genitori' || tabParam === 'odt'
+    || tabParam === 'prestampati' || tabParam === 'moduli-genitori'
       ? tabParam
       : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
   const [forms, setForms] = useState<FormTemplate[]>([]);
-  const [preInscriptions] = useState<PreInscription[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -156,16 +155,25 @@ function ModulisticaInner() {
   const [formSempreFirmabile, setFormSempreFirmabile] = useState(false);
   const [formFields, setFormFields] = useState<FormField[]>([defaultFieldForType('autorizzazione')]);
 
-  // Pre-inscription details modal
+  // Scheda della pre-iscrizione (sala d'attesa).
+  //
+  // ⚠️ NESSUNO LA APRE PIÙ, e non da oggi: l'unico punto che chiamava
+  // `setSelectedPre(pre)` era il pannello della linguetta `attesa`, che però non
+  // stava né nella barra `Tabs` né fra i valori riconosciuti di `?tab=` — quindi
+  // `activeTab` non poteva valere `attesa` e il pannello non si è mai disegnato.
+  // L'elenco che alimentava, poi, era una `useState([])` senza fetch: le
+  // pre-iscrizioni si leggono dalla linguetta «Moduli ricevuti» (`ModuliRicevuti`)
+  // dal giorno in cui quel componente è nato.
+  //
+  // Il 2026-08-16 è sparito il pannello (era codice irraggiungibile che impediva
+  // di togliere `attesa` dall'unione dei tipi). La scheda, i due gestori
+  // `handleApprovePreInscription`/`handleRejectPreInscription` e le tre finestre
+  // qui sotto restano: toglierli è una pulizia a sé — porta via una trentina di
+  // chiavi di traduzione da due cataloghi — e non entra in questo lavoro.
   const [selectedPre, setSelectedPre] = useState<PreInscription | null>(null);
   const [assignedClass, setAssignedClass] = useState('');
   const [showConfirmApproval, setShowConfirmApproval] = useState(false);
   const [showCredentials, setShowCredentials] = useState<{ email: string; pass: string } | null>(null);
-
-  // ODT State
-  const [odtLetterhead, setOdtLetterhead] = useState<string | null>(null);
-  const [odtFrequenza, setOdtFrequenza] = useState<string | null>(null);
-  const [odtIscrizione, setOdtIscrizione] = useState<string | null>(null);
 
   // Notifications
   const [toast, setToast] = useState('');
@@ -549,7 +557,6 @@ function ModulisticaInner() {
           { id: 'personale', label: t('modTabPersonale'), icon: IdCard },
           { id: 'prestampati', label: tPrestampati('titolo'), icon: Stamp },
           { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
-          { id: 'odt', label: t('modTabOdt'), icon: Settings },
         ]}
       />
 
@@ -669,138 +676,6 @@ function ModulisticaInner() {
                   </div>
                 ))
               )}
-            </div>
-          )}
-
-          {/* TAB 2: Sala d'Attesa */}
-          {activeTab === 'attesa' && (
-            <div className="space-y-4">
-              {preInscriptions.filter(p => p.status === 'pending').length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
-                  <UserCheck className="mx-auto text-kidville-muted mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">{t('modNessunaPreiscrizione')}</p>
-                </div>
-              ) : (
-                preInscriptions.filter(p => p.status === 'pending').map(pre => (
-                  <div key={pre.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
-                          {t('modFamiglia', { cognome: pre.parent_last_name })}
-                        </h3>
-                        <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          {t('modNuovo')}
-                        </span>
-                      </div>
-
-                      <p className="font-maven text-xs text-kidville-muted mt-1">
-                        {t('modGenitoreRiga', { nome: pre.parent_first_name, cognome: pre.parent_last_name, email: pre.parent_email, telefono: pre.parent_phone || t('modNd') })}
-                      </p>
-
-                      <div className="mt-3 flex items-center gap-1 text-xs text-kidville-green font-semibold">
-                        <Users size={14} /> {t('modFigliDaIscrivere', { figli: pre.students?.map(s => `${s.cognome} ${s.nome}`).join(', ') ?? '' })}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        setSelectedPre(pre);
-                        setAssignedClass('');
-                        setShowConfirmApproval(false);
-                      }}
-                      className="flex items-center gap-1.5 px-4.5 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase text-xs sm:text-sm tracking-wider hover:opacity-90 transition-opacity shadow-sm self-start md:self-auto"
-                    >
-                      {t('modGestisci')} <ArrowRight size={16} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: Template ODT */}
-          {activeTab === 'odt' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Carta Intestata */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
-                <Settings className="mx-auto text-kidville-green/20 mb-4" size={48} />
-                <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  {t('modCartaIntestata')}
-                </h3>
-                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  {t('modCartaIntestataDesc')}
-                </p>
-
-                {odtLetterhead ? (
-                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    {t('modOdtCaricato', { nome: odtLetterhead })}
-                  </div>
-                ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> {t('modCaricaOdt')}
-                    <input
-                      type="file"
-                      accept=".odt"
-                      className="hidden"
-                      onChange={e => setOdtLetterhead(e.target.files?.[0]?.name || null)}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Certificato di Frequenza */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
-                <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
-                <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  {t('modCertFrequenza')}
-                </h3>
-                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  {t('modCertFrequenzaDesc')} `{"{nome}"}`, `{"{cognome}"}`, `{"{data_nascita}"}`.
-                </p>
-
-                {odtFrequenza ? (
-                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    {t('modOdtCaricato', { nome: odtFrequenza })}
-                  </div>
-                ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> {t('modCaricaOdt')}
-                    <input
-                      type="file"
-                      accept=".odt"
-                      className="hidden"
-                      onChange={e => setOdtFrequenza(e.target.files?.[0]?.name || null)}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Certificato di Iscrizione */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
-                <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
-                <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  {t('modCertIscrizione')}
-                </h3>
-                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  {t('modCertIscrizioneDesc')}
-                </p>
-
-                {odtIscrizione ? (
-                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    {t('modOdtCaricato', { nome: odtIscrizione })}
-                  </div>
-                ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> {t('modCaricaOdt')}
-                    <input
-                      type="file"
-                      accept=".odt"
-                      className="hidden"
-                      onChange={e => setOdtIscrizione(e.target.files?.[0]?.name || null)}
-                    />
-                  </label>
-                )}
-              </div>
             </div>
           )}
         </>

@@ -349,11 +349,15 @@ it('nessun elemento entra nella fascia del marchio né in quella del piede', () 
 **Files:**
 - Create: `supabase/migrations/20260815T2100_document_type_prestampati.sql`
 
-I 17 slug, presi da `src/lib/prestampati/registro.ts` (non inventati):
+**Tredici slug, non diciassette.** Misurato su `src/lib/prestampati/registro.ts`: dei 17 modelli,
+solo 13 hanno `archiviazione: 'student_documents'`. Gli altri quattro vanno altrove —
+`richiesta_disponibilita`→`protocolli`, `certificato_servizio`→`fascicolo_personale`,
+`sollecito_pagamento` e `stampe_sezione`→nessuna. Aggiungere all'enum valori che nessuno userà mai
+sarebbe **irreversibile e inutile**.
+
 `scheda_sanitaria`, `autorizzazione_farmaci`, `dieta_speciale`, `delega_ritiro`, `permesso_orario`,
 `autorizzazione_uscita`, `certificato_iscrizione_frequenza`, `certificato_bonus_nido`, `nulla_osta`,
-`richiesta_disponibilita`, `sollecito_pagamento`, `verbale_infortunio`, `valutazione_infanzia`,
-`certificato_competenze`, `certificato_servizio`, `stampe_sezione`, `registro_presenze`.
+`verbale_infortunio`, `valutazione_infanzia`, `certificato_competenze`, `registro_presenze`.
 
 - [ ] **Step 1:** scrivi la migrazione con `ALTER TYPE document_type_enum ADD VALUE IF NOT EXISTS '…'`
       per ciascuno. **Postgres non ammette l'uso di un valore aggiunto nella stessa transazione che

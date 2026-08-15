@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Building2, Loader2, Pencil, Check, X, Plus, Power, ShieldCheck, FileText } from 'lucide-react';
 import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { CampiAnagraficaSede } from './CampiAnagraficaSede';
 
 interface Scuola {
   id: string;
@@ -150,22 +151,21 @@ export function SchoolsPanel({ userId }: { userId: string }) {
             </div>
             </div>
 
-            {/* Anagrafica di sede: indirizzo completo, codice meccanografico, contatti.
+            {/* Anagrafica di sede: indirizzo completo, codice meccanografico, contatti,
+                legale rappresentante, autorizzazione al nido. I campi vivono in
+                `CampiAnagraficaSede` e sono gli stessi che la Segreteria vede in
+                Impostazioni → Sede: due copie dello stesso form finiscono per non
+                avere più gli stessi campi, ed è così che il legale rappresentante
+                è rimasto fuori dal prodotto.
                 Dati in scuole.config.anagrafica (merge server-side, solo Direzione). */}
             {anagId === s.id && (
               <div className="border-t border-kidville-line pt-3 space-y-2">
-                <input value={draftAnag.denominazione ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, denominazione: e.target.value }))} placeholder={t('scDenominazioneUfficiale')} className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                <div className="grid grid-cols-2 gap-2">
-                  <input value={draftSede.citta} onChange={(e) => setDraftSede(prev => ({ ...prev, citta: e.target.value }))} placeholder={t('scCitta')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftSede.indirizzo} onChange={(e) => setDraftSede(prev => ({ ...prev, indirizzo: e.target.value }))} placeholder={t('scIndirizzo')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.cap ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, cap: e.target.value }))} placeholder={t('scCap')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.provincia ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, provincia: e.target.value }))} placeholder={t('scProvincia')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.codice_meccanografico ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, codice_meccanografico: e.target.value }))} placeholder={t('scCodiceMeccanografico')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.piva_cf ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, piva_cf: e.target.value }))} placeholder={t('scPivaCf')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.telefono ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, telefono: e.target.value }))} placeholder={t('scTelefono')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.email ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, email: e.target.value }))} placeholder={t('scEmail')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                </div>
-                <input value={draftAnag.pec ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, pec: e.target.value }))} placeholder={t('scPec')} className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                <CampiAnagraficaSede
+                  anagrafica={draftAnag}
+                  onAnagrafica={setDraftAnag}
+                  sede={draftSede}
+                  onSede={setDraftSede}
+                />
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => setAnagId(null)} className="px-3 py-1.5 text-sm rounded-pill border border-kidville-line text-kidville-muted">{t('annulla')}</button>
                   <button

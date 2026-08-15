@@ -1847,9 +1847,11 @@ function estremiAutorizzazioneNido(sede: DatiSede): string {
  * documento che l'ente rifiuta e che la famiglia scopre di non avere quando le serve.
  *
  * La data si pretende LEGGIBILE, non solo presente: `autorizzazione_nido` vive in
- * `scuole.config.anagrafica` e non passa da nessuno schema `zod` (`zAnagraficaSede` non
- * lo conosce), quindi ci arriva dentro qualunque cosa qualcuno abbia digitato — «01/09/2024»
- * in formato italiano supererebbe qualsiasi `trim()` e poi si stamperebbe come vuoto.
+ * `scuole.config.anagrafica`, cioè in un JSONB che nessun vincolo del database sorveglia.
+ * Dal 2026-08-15 `zAnagraficaSede` conosce la chiave e il form usa un `input type="date"`
+ * (quindi ISO), ma questa guardia resta: le righe scritte prima di quel giorno, e
+ * qualunque scrittura che non passi dal form, possono ancora portare «01/09/2024» in
+ * formato italiano — che supererebbe qualsiasi `trim()` e poi si stamperebbe come vuoto.
  */
 export function autorizzazioneNidoCompleta(sede: DatiSede): boolean {
   const a = sede.autorizzazioneNido

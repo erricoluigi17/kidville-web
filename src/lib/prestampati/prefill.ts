@@ -737,12 +737,18 @@ export function componiScuola(
 /**
  * Il legale rappresentante da `scuole.config.anagrafica.legale_rappresentante`.
  *
- * Si legge a mano e non con `parseAnagraficaSede()`, che è la funzione giusta per tutto il
- * resto: `zAnagraficaSede` non dichiara questa chiave e `zod` la SCARTA in silenzio
- * (`safeParse` di un oggetto non-strict butta le chiavi in più). Allargare quello schema
- * significherebbe toccare un file condiviso — che il pannello Impostazioni scrive — per
- * un campo che nessuno ha ancora salvato: la lettura sta qui, additiva, finché quella
- * decisione non la prende chi possiede quel pannello.
+ * Si leggeva a mano perché `zAnagraficaSede` non dichiarava questa chiave e `zod` la
+ * SCARTAVA in silenzio; la lettura additiva doveva reggere «finché la decisione non la
+ * prende chi possiede quel pannello». 🔴 QUELLA ATTESA È COSTATA: lo schema non è solo
+ * un filtro in lettura — `normalizzaAnagraficaSede` ricostruisce l'oggetto dai campi che
+ * conosce, quindi una chiave fuori schema non era «ignorata», era CANCELLATA al primo
+ * salvataggio dell'anagrafica. Il campo non è mai potuto esistere, e la Segreteria si è
+ * vista rifiutare cinque prestampati su sei con l'istruzione di compilare qualcosa che
+ * non c'era.
+ *
+ * Dal 2026-08-15 la chiave sta in `zAnagraficaSede` e il campo in Impostazioni → Sede &
+ * Intestazione. Questa funzione resta a lettura diretta perché è ciò che serve qui — una
+ * stringa, o `null` — e perché non deve dipendere dalla normalizzazione di un form.
  */
 function leggiLegaleRappresentante(config: unknown): string | null {
   return stringaDaAnagrafica(config, 'legale_rappresentante')
@@ -762,6 +768,10 @@ function leggiLegaleRappresentante(config: unknown): string | null {
  * Si legge lo stesso, invece di scrivere `null` fisso, perché il giorno in cui qualcuno
  * salva quei tre valori nelle impostazioni di sede il certificato deve cominciare a
  * uscire — senza una migrazione e senza toccare questo file.
+ *
+ * Dal 2026-08-15 quel giorno è possibile: i tre campi stanno in Impostazioni → Sede &
+ * Intestazione. Restano da COMPILARE, sede per sede, e sono tre autorizzazioni diverse:
+ * finché non lo si fa, il rifiuto qui sopra resta quello giusto.
  */
 export function leggiAutorizzazioneNido(config: unknown): AutorizzazioneNido | null {
   const anagrafica = (config as { anagrafica?: unknown } | null | undefined)?.anagrafica

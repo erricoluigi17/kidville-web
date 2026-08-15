@@ -141,6 +141,16 @@ const h = vi.hoisted(() => {
     }[],
     /** Le letture fatte, con i loro filtri: è così che si prova CHE COSA è stato filtrato. */
     letture: [] as { tabella: string; filtri: Record<string, unknown> }[],
+    /**
+     * Le chiamate a `prossimo_numero_protocollo`, e il numero che restituisce.
+     *
+     * Si CONTANO, e il conto è il punto: il registro di protocollo è WORM, e la regola del
+     * riscarico dice che riprendere un certificato già emesso non deve consumare un secondo
+     * numero. «Zero chiamate» è l'unica prova che quel numero non è stato bruciato — la
+     * riga di `protocolli` mancante direbbe solo che non è stata scritta.
+     */
+    rpc: [] as { funzione: string; parametri: unknown }[],
+    prossimoProtocollo: { data: 41 as unknown, error: null as unknown },
   }
   function prendi(tabella: string) {
     const q = state.queues[tabella] ?? []
@@ -150,6 +160,10 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
+      rpc(funzione: string, parametri: unknown) {
+        state.rpc.push({ funzione, parametri })
+        return Promise.resolve(state.prossimoProtocollo)
+      },
       from(tabella: string) {
         const qb: Record<string, unknown> = {}
         const filtri: Record<string, unknown> = {}
@@ -375,7 +389,7 @@ vi.mock('@/lib/prestampati/prefill', () => prefillMod)
  * rifiuto di OGGI, che è ciò che le famiglie incontrano.
  */
 
-import { GET } from '@/app/api/parent/prestampati/route'
+import { GET, POST as CHIEDI_DOCUMENTO } from '@/app/api/parent/prestampati/route'
 import { POST, PATCH } from '@/app/api/parent/prestampati/firma/route'
 
 // ─── Dati inventati (repository pubblico) ───────────────────────────────────────
@@ -438,6 +452,29 @@ const PREFILL = {
   sezioneId: SEZIONE,
   dati: DATI,
   legaleRappresentante: null,
+}
+
+/**
+ * La sede che ha compilato le proprie impostazioni: c'è chi firma per la Scuola.
+ *
+ * Non è un dettaglio del banco di prova: misurato in produzione il 2026-08-14, su 4 righe
+ * di `scuole` **nessuna** aveva `legale_rappresentante`, e senza quel nome il render
+ * rifiuta i sei fogli che escono dalla scuola. Le prove che generano davvero partono da una
+ * sede a posto; quella incompleta ha la sua prova, separata.
+ */
+const PREFILL_CON_FIRMA = { ...PREFILL, legaleRappresentante: 'Cesario Inventato' }
+
+/** Lo stesso bambino iscritto al NIDO, con l'autorizzazione al funzionamento configurata. */
+const PREFILL_NIDO = {
+  ...PREFILL_CON_FIRMA,
+  dati: {
+    ...DATI,
+    alunno: { ...DATI.alunno, livello: 'nido' as const },
+    sede: {
+      ...DATI.sede,
+      autorizzazioneNido: { numero: '000/2020', data: '2020-01-15', comune: 'Comune Inventato' },
+    },
+  },
 }
 
 /** Lo stesso bambino con DUE tutori in anagrafica: è ciò che fa scattare la doppia firma dell'08. */
@@ -573,6 +610,43 @@ function reqGet(qs: string) {
   })
 }
 
+/** La richiesta di un documento al POST dell'elenco: certificato o riscarico. */
+function reqDocumento(corpo: unknown) {
+  return new NextRequest('http://localhost/api/parent/prestampati', {
+    method: 'POST',
+    headers: { 'x-user-id': GENITORE, 'content-type': 'application/json' },
+    body: JSON.stringify(corpo),
+  })
+}
+
+/**
+ * Un documento di quel tipo GIÀ nel fascicolo del bambino: è ciò che il riscarico ritrova.
+ *
+ * Si scrive nella CODA e non fra i valori fissi: la coda ha la precedenza, e la stessa
+ * tabella qui serve due domande diverse — la prima lettura dice «che cosa c'è già», l'INSERT
+ * che segue risponde con la riga creata. Un valore fisso avrebbe risposto la stessa cosa a
+ * tutt'e due, e la prova avrebbe misurato il doppione.
+ */
+function conDocumentoInArchivio(slug: string, id = DOCUMENTO) {
+  h.state.queues['student_documents'] = [
+    {
+      data: [
+        {
+          id,
+          document_type: slug,
+          storage_path: `${ALUNNO}/prestampati/${slug}-gia-emesso.pdf`,
+          descrizione: 'Documento già emesso',
+          created_at: '2026-08-15T09:00:00.000Z',
+        },
+      ],
+      error: null,
+    },
+    // Il secondo posto serve al ramo «Generane uno nuovo», che dopo la lettura archivia.
+    { data: { id: 'd0000000-0000-4000-8000-00000000000d' }, error: null },
+  ]
+  h.state.used['student_documents'] = 0
+}
+
 function reqFirma(metodo: 'POST' | 'PATCH', corpo: unknown) {
   return new NextRequest('http://localhost/api/parent/prestampati/firma', {
     method: metodo,
@@ -678,6 +752,8 @@ beforeEach(() => {
   h.state.upload = []
   h.state.rimossi = []
   h.state.jti = new Set()
+  h.state.rpc = []
+  h.state.prossimoProtocollo = { data: 41, error: null }
   h.state.bucketElenco = { data: [{ name: 'sensitive_documents' }], error: null }
   h.state.bucketCreazione = { data: null, error: null }
   h.state.bucketCreati = []
@@ -925,6 +1001,253 @@ describe('GET /api/parent/prestampati — chi entra e che cosa vede', () => {
     const vuoto = await (await GET(reqGet(`?alunnoId=${ALUNNO}&slug=permesso_orario`))).json()
     expect(vuoto.delegati).toEqual([])
     expect(vuoto.delegatiNonLetti).toBe(false)
+  })
+})
+
+// ─── POST /api/parent/prestampati: il certificato che la famiglia si prende da sé ──
+
+describe('il certificato del genitore: dal motore vero, protocollato, e sempre lo stesso', () => {
+  beforeEach(() => {
+    comeGenitore()
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL_CON_FIRMA,
+    })
+    // L'INSERT in `student_documents` risponde con la riga creata: è il ramo felice.
+    h.state.queues['student_documents'] = [
+      { data: null, error: null },
+      { data: { id: DOCUMENTO }, error: null },
+    ]
+    h.state.used['student_documents'] = 0
+  })
+
+  it('non è del genitore ⇒ non esce: né dal ruolo sbagliato né dal bambino sbagliato', async () => {
+    auth.requireUser.mockResolvedValue({ user: { id: 'u-segreteria', role: 'segreteria' } })
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect(res.status).toBe(403)
+    expect(h.state.rpc).toHaveLength(0)
+
+    comeGenitore()
+    negaLaPortata()
+    const altrui = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALTRUI, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect(altrui.status).toBe(403)
+    // Nessun numero consumato, nessun file caricato: il registro è WORM e chi sonda id
+    // altrui non deve poterlo far avanzare di uno.
+    expect(h.state.rpc).toHaveLength(0)
+    expect(h.state.upload).toHaveLength(0)
+  })
+
+  it('genera il 26·27 dal motore vero: carta intestata, protocollo in uscita, fascicolo', async () => {
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.riuso).toBe(false)
+    expect(json.protocollo).toMatch(/^\d{7}\/\d{4}$/)
+
+    // Il numero si chiede UNA volta sola, e per la sede del bambino.
+    expect(h.state.rpc).toHaveLength(1)
+    expect(h.state.rpc[0].funzione).toBe('prossimo_numero_protocollo')
+    expect(h.state.rpc[0].parametri).toMatchObject({ p_scuola: SCUOLA })
+
+    // La riga di registro c'è, e porta l'impronta del file consegnato.
+    const registro = h.state.inserimenti.find((i) => i.tabella === 'protocolli')
+    expect(registro?.righe).toMatchObject({ scuola_id: SCUOLA, numero: 41, tipo: 'uscita' })
+    expect(String((registro?.righe as { impronta_sha256: string }).impronta_sha256)).toMatch(/^SHA256-/)
+
+    // E il fascicolo del bambino: è la copia che si riscarica.
+    const archivio = h.state.inserimenti.find((i) => i.tabella === 'student_documents')
+    expect(archivio?.righe).toMatchObject({
+      student_id: ALUNNO,
+      document_type: 'certificato_iscrizione_frequenza',
+      section_id: SEZIONE,
+    })
+  })
+
+  it('sul foglio non c’è più «Il Dirigente Scolastico», e c’è chi firma davvero', async () => {
+    // ⚠️ È IL DIFETTO DA CUI NASCE TUTTO IL LAVORO, e si misura sul PDF vero: il generatore
+    // vecchio stampava una banda verde con «KIDVILLE SCHOOLS» in giallo e chiudeva con «Il
+    // Dirigente Scolastico» — una figura che in una società cooperativa NON ESISTE e che
+    // comunque non è chi firma. Il PDF qui si genera per davvero: si legge quello che
+    // riceve la famiglia.
+    await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }))
+    const caricato = h.state.upload.find((u) => u.percorso.includes('/prestampati/'))
+    expect(caricato).toBeDefined()
+    const testo = await estraiTesto((caricato as { byte: Uint8Array }).byte)
+
+    expect(testo).not.toMatch(/Dirigente Scolastico/i)
+    expect(testo).not.toMatch(/KIDVILLE SCHOOLS/i)
+    expect(testo).toMatch(/LEGALE RAPPRESENTANTE/i)
+    expect(testo).toContain('Cesario Inventato')
+    // La segnatura di protocollo è sul foglio: è ciò che lo rende spendibile davanti a un ente.
+    expect(testo).toMatch(/0000041/)
+  })
+
+  it('riscaricandolo torna LO STESSO file: stesso protocollo, nessun numero bruciato', async () => {
+    // La regola, testuale dal titolare: «una volta che il genitore ha scaricato il suo
+    // certificato, quel certificato resta salvato, e quando lo va a riprendere riscarica
+    // sempre lo stesso». Il registro è WORM: un numero consumato non torna indietro, e
+    // rigenerare a ogni download vorrebbe dire bruciarne uno per ogni clic.
+    conDocumentoInArchivio('certificato_iscrizione_frequenza')
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.riuso).toBe(true)
+    expect(json.documentoId).toBe(DOCUMENTO)
+    expect(json.url).toBeTruthy()
+    // LE TRE PROVE CHE CONTANO: nessun numero chiesto, nessuna riga nel registro, nessun
+    // file nuovo. Da sola, «nessuna riga in `protocolli`» direbbe solo che non è stata
+    // scritta — il numero poteva essere già stato consumato dalla RPC.
+    expect(h.state.rpc).toHaveLength(0)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(false)
+    expect(h.state.upload).toHaveLength(0)
+  })
+
+  it('«Generane uno nuovo» emette data e protocollo nuovi, e il precedente resta', async () => {
+    // ⚠️ CON `nuovo: true` LA LETTURA DELL'ARCHIVIO NON SI FA AFFATTO — è il gesto esplicito
+    // «voglio un altro certificato», e chiedere che cosa c'è già non cambierebbe la
+    // risposta. Quindi la prima cosa che la rotta consuma è l'INSERT, non la SELECT.
+    h.state.queues['student_documents'] = [
+      { data: { id: 'd0000000-0000-4000-8000-00000000000d' }, error: null },
+    ]
+    h.state.used['student_documents'] = 0
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza', nuovo: true }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.riuso).toBe(false)
+    expect(h.state.rpc).toHaveLength(1)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(true)
+    // Il precedente non si tocca: nessuna cancellazione, nessuna sovrascrittura.
+    expect(h.state.rimossi).toEqual([])
+  })
+
+  it('il corpo senza `nuovo` vale RISCARICO, non emissione', async () => {
+    // La direzione in cui si sbaglia si sceglie: un client che dimentica il campo deve
+    // ottenere il file di prima, non un numero di protocollo bruciato.
+    conDocumentoInArchivio('certificato_iscrizione_frequenza')
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect((await res.json()).riuso).toBe(true)
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('il Bonus Nido senza autorizzazione è un 422 leggibile, MAI un 500 e MAI un numero', async () => {
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: {
+        ...PREFILL_NIDO,
+        dati: { ...PREFILL_NIDO.dati, sede: { ...DATI.sede, autorizzazioneNido: null } },
+      },
+    })
+    const res = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_bonus_nido' }))
+    const json = await res.json()
+
+    expect(res.status).toBe(422)
+    expect(json.codice).toBe('PRESTAMPATO_DATI_MANCANTI')
+    // Enumerato e non prosa: l'app è bilingue e il server no.
+    expect(json.motivo).toBe('autorizzazione-nido-mancante')
+    // Un certificato con «N. ______ del ______» l'INPS lo rifiuta: meglio non emetterlo. E
+    // il numero non si consuma per un motivo che si conosceva prima di comporre.
+    expect(h.state.rpc).toHaveLength(0)
+    // Configurazione mancante = `error`, mai `info` (AGENTS.md §4).
+    const riga = spie.chiamate.find(
+      (c) =>
+        c[0] === 'logEvento' &&
+        (c[3] as { esito?: string })?.esito === 'autorizzazione-nido-non-configurata',
+    )
+    expect(riga?.[2]).toBe('error')
+  })
+
+  it('il Bonus Nido a un bambino che il nido non lo frequenta non si emette', async () => {
+    // `dati.alunno.livello` è `infanzia` nel precompilato predefinito: il Bonus Asilo Nido
+    // spetta a un servizio 0-3, e un certificato emesso per un altro livello è una
+    // dichiarazione falsa a un ente pubblico.
+    const res = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_bonus_nido' }))
+    const json = await res.json()
+    expect(res.status).toBe(422)
+    expect(json.motivo).toBe('livello-non-nido')
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('senza il nome di chi firma il certificato non esce, e lo dice con un motivo suo', async () => {
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL,
+    })
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+    expect(res.status).toBe(422)
+    expect(json.motivo).toBe('legale-rappresentante-assente')
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('i moduli firmati si riscaricano SEMPRE, e quelli non firmati non si generano da qui', async () => {
+    // 🔴 IL DIFETTO CHE CHIUDE: il PDF della scheda sanitaria firmata viveva solo dentro la
+    // risposta 201 della firma. Chi chiudeva la pagina lo perdeva, e nessun elenco lo
+    // nominava più.
+    conDocumentoInArchivio('scheda_sanitaria')
+    const riscarico = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'scheda_sanitaria' }),
+    )
+    const json = await riscarico.json()
+    expect(riscarico.status).toBe(200)
+    expect(json.riuso).toBe(true)
+    expect(json.url).toBeTruthy()
+    // Un riscarico è una lettura del fascicolo, e lascia la sua riga d'audit.
+    const audit = h.state.inserimenti.filter((i) => i.tabella === 'fascicolo_accessi_audit')
+    expect(audit).toHaveLength(1)
+    expect(audit[0].righe).toMatchObject({ azione: 'download', alunno_id: ALUNNO })
+
+    // E se non è firmato non si genera da qui: la firma è l'altra porta, e la frase di
+    // catalogo di `PRESTAMPATO_FIRMA_NON_VALIDA` dice esattamente questo. Fascicolo vuoto:
+    // la coda si azzera, e la lettura torna il `null` predefinito.
+    h.state.queues['student_documents'] = []
+    h.state.used['student_documents'] = 0
+    const senza = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'scheda_sanitaria' }))
+    expect(senza.status).toBe(409)
+    expect((await senza.json()).codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’archivio non letto NON diventa «non ce n’è»: non si emette un secondo numero al buio', async () => {
+    // «Non so se ce n'è già uno» + «genero» = un secondo numero di protocollo bruciato su
+    // un registro WORM per un guasto di lettura. Meglio un 503 che si ritenta.
+    h.state.queues['student_documents'] = [
+      { data: null, error: { code: '42703', message: 'column does not exist' } },
+    ]
+    h.state.used['student_documents'] = 0
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect(res.status).toBe(503)
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’elenco dice quali documenti sono già nel fascicolo', async () => {
+    conDocumentoInArchivio('scheda_sanitaria')
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const per = (slug: string) =>
+      json.modelli.find((m: { slug: string }) => m.slug === slug) as {
+        documentoArchiviatoId: string | null
+      }
+    expect(per('scheda_sanitaria').documentoArchiviatoId).toBe(DOCUMENTO)
+    // Gli altri no: il documento è per TIPO, non per bambino.
+    expect(per('permesso_orario').documentoArchiviatoId).toBeNull()
   })
 })
 

@@ -31,7 +31,6 @@
   },
 
   "nonFirmabileFirmaDellaScuola": "Questo documento non si firma con il tuo codice: lo sottoscrive il legale rappresentante della Scuola.",
-  "nonFirmabileUscitaNonCreata": "L’autorizzazione si firma quando la scuola ha pubblicato l’uscita: destinazione, data e orari non ci sono ancora. Aspetta la comunicazione della sezione.",
   "nonFirmabileSecondaFirmaMancante": "La delega al ritiro la firmano entrambi i genitori o tutori, e la raccolta della seconda firma non è ancora attiva: per ora la delega si consegna in segreteria.",
   "nonFirmabileAllegatoNonCaricabile": "La delega al ritiro chiede la scansione del documento di ogni persona delegata, e dall’app non si può ancora caricare: consegnala in segreteria.",
 
@@ -119,6 +118,20 @@
   "erroreGenerazione": "Il modulo non è stato generato: riprova fra qualche minuto.",
   "erroreFirma": "La firma non è andata a buon fine: il modulo non è stato inviato.",
   "erroreDatiMancanti": "Mancano dei dati che il modulo deve riportare: scrivi alla segreteria della scuola.",
+
+  "certificatoProtocollato": "Rilasciato con numero di protocollo e firmato dal legale rappresentante.",
+  "certificatoGenera": "Genera il certificato",
+  "certificatoScarica": "Scarica il certificato",
+  "certificatoInCorso": "Preparazione in corso…",
+  "certificatoNuovo": "Generane uno nuovo",
+  "certificatoNuovoAiuto": "Il pulsante qui accanto riscarica sempre lo stesso certificato, con lo stesso numero di protocollo. «Generane uno nuovo» ne emette un altro, con data e numero nuovi: serve quando un ente lo vuole recente.",
+  "certificatoLegaleRappresentanteAssente": "Nelle impostazioni della sede manca il nome di chi firma per la Scuola: segnalalo alla segreteria, il certificato si emette appena c’è.",
+  "certificatoAutorizzazioneNidoMancante": "Per questa sede non risultano gli estremi dell’autorizzazione al funzionamento del nido: senza, l’INPS rifiuterebbe il certificato. Segnalalo alla segreteria.",
+  "certificatoLivelloNonNido": "Il certificato per il Bonus Asilo Nido si rilascia solo a chi frequenta il nido: per gli altri serve il certificato di iscrizione e frequenza.",
+  "erroreCertificato": "Il certificato non è stato generato: riprova fra qualche minuto.",
+  "documentoScarica": "Scarica il modulo firmato",
+  "documentoArchiviatoIl": "Nel fascicolo dal {data}.",
+  "uscitaRiga": "Uscita del {data} — {destinazione} · partenza {partenza}, rientro {rientro}.",
 
   "copiaFamiglia": "Copia a uso della famiglia — non protocollata",
   "certificatoAvviso": "Quello che scarichi qui è una copia a uso della famiglia: se un ente lo vuole protocollato, chiedilo in segreteria.",

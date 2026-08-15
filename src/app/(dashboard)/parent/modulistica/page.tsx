@@ -16,8 +16,6 @@ import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
-import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -92,35 +90,6 @@ interface SignedArchiveItem {
   };
 }
 
-/**
- * «Copia a uso della famiglia — non protocollata», sui due riquadri da cui il certificato
- * esce davvero.
- *
- * La dicitura stava soltanto sulle schede SPENTE del pannello dei prestampati — quelle che un
- * PDF non lo producono affatto — mentre i due pulsanti «Scarica PDF» qui sotto sono l'unica
- * strada da cui una famiglia ottiene un certificato, e non dicevano niente. Nemmeno il foglio
- * lo dice: `generateSelfServiceCertificate` (jsPDF, più su in questo file) non stampa la
- * dicitura da nessuna parte, verificato riga per riga. Chi portava quel PDF a un ente lo
- * scopriva allo sportello.
- *
- * Le due frasi vengono dal catalogo dei prestampati e non da `parentServizi`: sono le stesse
- * parole del pannello che sta sopra, nella stessa scheda. Una dicitura che compare in due
- * punti si scrive una volta sola, o al primo ritocco i due punti divergono — ed è la §4.1 di
- * `docs/prestampati/00-impaginazione.md`, cioè una regola sola con due luoghi d'uso.
- */
-function NotaCopiaFamiglia() {
-  const t = useTranslations('prestampatiGenitore');
-  return (
-    <>
-      {/* Niente `mt-*`: la spaziatura la mette lo `space-y-2` del riquadro che le ospita. */}
-      <p className="inline-flex rounded-pill bg-kidville-yellow-light px-2.5 py-1 font-maven text-[11px] font-bold text-kidville-green">
-        {t('copiaFamiglia')}
-      </p>
-      <p className="font-maven text-xs leading-relaxed text-kidville-sub">{t('certificatoAvviso')}</p>
-    </>
-  );
-}
-
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function ParentModulisticaPage() {
   const t = useTranslations('parentServizi');
@@ -148,22 +117,6 @@ export default function ParentModulisticaPage() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpSession, setOtpSession] = useState<{ email: string | null; expiry: number; ticket: string; devCode?: string } | null>(null);
 
-  /**
-   * Il figlio scelto nella scheda «Certificati Self-Service», e il difetto che chiude.
-   *
-   * Quella scheda ha sempre lavorato su `children[0]`: il primo figlio dell'elenco, mai
-   * chiesto a nessuno. Su un certificato scaricato era un fastidio — il PDF sbagliato si
-   * vede e si rifà — ma da oggi in quella stessa scheda si FIRMA: scheda sanitaria,
-   * autorizzazione a somministrare un farmaco, richiesta di dieta. Con due figli il genitore
-   * avrebbe firmato le allergie di uno sul fascicolo dell'altro, e se ne sarebbe accorto —
-   * ammesso che se ne accorgesse — a documento già archiviato, quando non si modifica più.
-   *
-   * Il selettore vero vive dentro `PrestampatiGenitore` (che con un figlio solo non chiede
-   * niente e da due in su non preseleziona nessuno); qui si tiene la sua scelta, così anche
-   * i due certificati scaricabili qui sotto smettono di indovinare. Vuoto = nessuna scelta
-   * ancora fatta: si ricade sul primo, che è il comportamento di prima.
-   */
-  const [certificatiChildId, setCertificatiChildId] = useState('');
 
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
@@ -448,79 +401,24 @@ export default function ParentModulisticaPage() {
     doc.save(`Ricevuta_${title.replace(/\s+/g, '_')}.pdf`);
   };
 
-  // Self-Service Certificates Generator
-  const generateSelfServiceCertificate = (type: 'iscrizione' | 'frequenza') => {
-    if (!parentInfo || children.length === 0) return;
-    
-    showToastMsg(t('modulisticaGenerazioneInCorso'));
-    setTimeout(async () => {
-      const { jsPDF } = await import('jspdf');
-      const doc = new jsPDF();
-      // Il figlio scelto nel pannello dei prestampati, che è il selettore di questa scheda.
-      // `children[0]` resta solo come ripiego per chi non ha ancora scelto — vedi
-      // `certificatiChildId`.
-      const currentStudent = children.find(c => c.id === certificatiChildId) ?? children[0];
-      const anno = annoScolasticoCorrente();
-
-      // Header Letterhead
-      doc.setFillColor(0, 106, 95); // Kidville Green
-      doc.rect(0, 0, 210, 40, 'F');
-      doc.setTextColor(253, 196, 0); // Kidville Yellow
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(22);
-      doc.text('KIDVILLE SCHOOLS', 20, 25);
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(10);
-      doc.text('Servizio Rilascio Certificati Automatici', 130, 25);
-
-      // Intestazione sede reale (dal DB, per-figlio): righe omesse se mancanti.
-      const intestazione = buildIntestazioneSede(currentStudent);
-      if (intestazione.length > 0) {
-        doc.setTextColor(100, 100, 100);
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(9);
-        intestazione.forEach((riga, i) => doc.text(riga, 20, 47 + i * 5));
-      }
-
-      // Certificate content
-      doc.setTextColor(0, 106, 95);
-      doc.setFontSize(18);
-      const mainTitle = type === 'iscrizione' ? 'CERTIFICATO DI ISCRIZIONE' : 'CERTIFICATO DI FREQUENZA';
-      doc.text(mainTitle, 105, 65, { align: 'center' });
-
-      doc.setDrawColor(0, 106, 95);
-      doc.line(40, 70, 170, 70);
-
-      doc.setTextColor(50, 50, 50);
-      doc.setFont('Helvetica', 'normal');
-      doc.setFontSize(12);
-      
-      // Testo dal builder puro (testato): sezione reale dell'alunno e anno
-      // scolastico calcolato — nessun valore cablato.
-      const bodyText = buildCertificatoBody(type, currentStudent, anno);
-
-      const splitText = doc.splitTextToSize(bodyText, 160);
-      doc.text(splitText, 25, 90);
-
-      doc.text(`Rilasciato su richiesta del genitore ${parentInfo.nome} ${parentInfo.cognome} ad uso consentito dalla legge.`, 25, 130);
-
-      // Luogo reale della sede del figlio (scuole.citta), degrado a sola data.
-      doc.text(rigaLuogoData(currentStudent.scuola_citta, formattaIstante(new Date(), 'it')), 25, 160);
-
-      // Signature stamp
-      doc.setFont('Helvetica', 'bold');
-      doc.text('Il Dirigente Scolastico', 130, 180);
-      
-      doc.setFont('Helvetica', 'oblique');
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text('Firma digitale apposta ai sensi', 125, 195);
-      doc.text('dell\'art. 21 CAD (D.Lgs. 82/2005)', 125, 200);
-
-      doc.save(`Certificato_${mainTitle.replace(/\s+/g, '_')}.pdf`);
-      showToastMsg(t('modulisticaCertScaricato'));
-    }, 1000);
-  };
+  // ⚠️ QUI C'ERA `generateSelfServiceCertificate`, e con lui i due pulsanti «Scarica PDF»
+  // della scheda Certificati. Rimossi il 2026-08-16, ed è utile dire che cosa producevano
+  // — perché era l'unica strada da cui una famiglia otteneva un certificato:
+  //
+  //  · una banda verde inventata dal codice al posto della carta intestata vera;
+  //  · «KIDVILLE SCHOOLS» in giallo, che non è la ragione sociale, non è il marchio e non è
+  //    niente;
+  //  · «Il Dirigente Scolastico» in calce: in una società cooperativa quella figura NON
+  //    ESISTE, e comunque non è chi firma — firma il legale rappresentante, che sta in
+  //    anagrafica su tutte e tre le sedi;
+  //  · nessun numero di protocollo e nessuna archiviazione: il foglio nasceva nel browser,
+  //    si scaricava e spariva.
+  //
+  // Il certificato ora lo emette `POST /api/parent/prestampati` dal motore vero — carta
+  // intestata della scuola, firma del legale rappresentante, protocollo in uscita,
+  // archiviazione nel fascicolo — e il pannello che lo chiede è `PrestampatiGenitore`, che
+  // vive nella stessa scheda. Il selettore del figlio è suo, e per questo `certificatiChildId`
+  // non serve più: là dentro la scelta è già fatta prima di premere qualunque cosa.
 
   // Punto d'ingresso unico per il file del certificato: lo usano sia l'<input>
   // (che accetta anche PDF) sia il bottone «Scatta foto» nativo. Il documento può
@@ -838,55 +736,14 @@ export default function ParentModulisticaPage() {
             </div>
           )}
 
-          {/* TAB 3: Certificati Self-Service */}
+          {/* TAB 3: Certificati e moduli della famiglia */}
           {activeTab === 'certificati' && (
             <div className="space-y-8">
-              {/* I prestampati della famiglia: si compilano, si firmano con l'OTP e si
-                  scaricano. Il selettore del figlio è suo, e la sua scelta arriva ai due
-                  certificati qui sotto — vedi `certificatiChildId`. */}
-              <PrestampatiGenitore figli={children} onAlunnoScelto={setCertificatiChildId} />
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Certificato Frequenza */}
-                <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <Award className="text-kidville-green/20 mb-2" size={32} />
-                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertFrequenzaTitolo')}</h3>
-                    <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                      {t('modulisticaCertFrequenzaTesto')}
-                    </p>
-                    <NotaCopiaFamiglia />
-                  </div>
-                  <Btn
-                    variant="primary"
-                    size="md"
-                    onClick={() => generateSelfServiceCertificate('frequenza')}
-                    className="mt-6 w-full"
-                  >
-                    <Download size={16} /> {t('modulisticaScaricaPdf')}
-                  </Btn>
-                </div>
-
-                {/* Certificato Iscrizione */}
-                <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <Award className="text-kidville-green/20 mb-2" size={32} />
-                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertIscrizioneTitolo')}</h3>
-                    <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                      {t('modulisticaCertIscrizioneTesto')}
-                    </p>
-                    <NotaCopiaFamiglia />
-                  </div>
-                  <Btn
-                    variant="primary"
-                    size="md"
-                    onClick={() => generateSelfServiceCertificate('iscrizione')}
-                    className="mt-6 w-full"
-                  >
-                    <Download size={16} /> {t('modulisticaScaricaPdf')}
-                  </Btn>
-                </div>
-              </div>
+              {/* I prestampati della famiglia: si compilano, si firmano con l'OTP, si
+                  generano e si riscaricano — tutto da qui dentro, dove il figlio si sceglie
+                  una volta sola. I due riquadri «Scarica PDF» che stavano sotto sono spariti
+                  insieme al loro generatore: vedi il blocco più su in questo file. */}
+              <PrestampatiGenitore figli={children} />
             </div>
           )}
 

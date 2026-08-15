@@ -127,6 +127,21 @@ const MODELLO_SANITARIO = {
   motivoNonFirmabile: null,
 }
 
+/** Il certificato di iscrizione e frequenza: lo firma la Scuola, e consuma un protocollo. */
+const MODELLO_CERTIFICATO = {
+  slug: 'certificato_iscrizione_frequenza',
+  etichetta: 'Certificato di iscrizione e frequenza',
+  chiaveEtichetta: 'modelli.certificatoIscrizioneFrequenza',
+  firma: 'legale_rappresentante',
+  soggetto: 'alunno',
+  protocollo: 'uscita',
+  archiviazione: 'student_documents',
+  firmabileOra: false,
+  motivoNonFirmabile: 'firma-della-scuola',
+  documentoArchiviatoId: null,
+  documentoArchiviatoIl: null,
+}
+
 /** Un campo solo, obbligatorio: quel che basta a percorrere compila → rivedi → firma. */
 const CAMPO_PEDIATRA = {
   nome: 'pediatraNome',
@@ -135,7 +150,7 @@ const CAMPO_PEDIATRA = {
   obbligatorio: true,
 }
 
-function elencoServito(alunnoId: string) {
+function elencoServito(alunnoId: string, modelli: unknown[] = [MODELLO_SANITARIO]) {
   return {
     success: true,
     alunno: {
@@ -151,7 +166,8 @@ function elencoServito(alunnoId: string) {
     },
     sede: { nome: 'Sede di prova', citta: 'Città di Prova' },
     annoScolastico: '2026/2027',
-    modelli: [MODELLO_SANITARIO],
+    uscita: null,
+    modelli,
     modello: null,
     delegati: null,
     delegatiNonLetti: false,
@@ -205,6 +221,7 @@ function armaFetch(banco: {
   dettaglio?: Risposta[]
   otp?: Risposta
   firma?: Risposta
+  documento?: Risposta
 }): void {
   const contati: Record<'elenco' | 'dettaglio', number> = { elenco: 0, dettaglio: 0 }
   fetchMock.mockImplementation((url: string, init?: RequestInit) => {
@@ -213,6 +230,13 @@ function armaFetch(banco: {
     if (url.startsWith('/api/parent/prestampati/firma')) {
       const scelta = (init?.method ?? 'GET') === 'POST' ? banco.otp : banco.firma
       return comeRisposta(scelta ?? { ok: true, status: 200, corpo: { success: true } })
+    }
+    // Il POST sull'elenco è la porta del certificato: stesso URL della lettura, metodo
+    // diverso. Si guarda PRIMA del ramo delle letture, o finirebbe nella loro coda.
+    if (url.startsWith('/api/parent/prestampati') && (init?.method ?? 'GET') === 'POST') {
+      return comeRisposta(
+        banco.documento ?? { ok: true, status: 201, corpo: { success: true, url: null } },
+      )
     }
     if (url.startsWith('/api/parent/prestampati')) {
       const quale = url.includes('&slug=') ? 'dettaglio' : 'elenco'
@@ -501,5 +525,126 @@ describe('PrestampatiGenitore — quello che va detto, si dice anche a chi non g
     // `DOCUMENT_POSITION_FOLLOWING` = il campo viene DOPO l'avviso: chi legge dall'alto lo
     // incontra prima di digitare, e chi tabula lo incontra prima di arrivarci.
     expect(avviso.compareDocumentPosition(campo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+describe('PrestampatiGenitore — il certificato si riprende, non si riemette', () => {
+  /** Il certificato già emesso una volta: nel fascicolo c'è, con la sua data. */
+  const CERTIFICATO_IN_ARCHIVIO = {
+    ...MODELLO_CERTIFICATO,
+    documentoArchiviatoId: 'c0000000-0000-4000-8000-00000000000c',
+    documentoArchiviatoIl: '2026-08-15T09:00:00.000Z',
+  }
+
+  /** Il corpo di una richiesta al POST dell'elenco, per leggere `nuovo`. */
+  function corpoDocumento(i: number): Record<string, unknown> {
+    const chiamata = fetchMock.mock.calls.filter(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'POST' && !String(c[0]).includes('/firma'),
+    )[i]
+    return JSON.parse(String((chiamata?.[1] as RequestInit).body))
+  }
+
+  it('mai emesso: il pulsante GENERA, e «Generane uno nuovo» non esiste', async () => {
+    // Prima della prima emissione non c'è niente da riscaricare, e offrire «generane uno
+    // nuovo» chiederebbe di scegliere fra due cose di cui una non esiste.
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    expect(await screen.findByRole('button', { name: itGenitore.certificatoGenera })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itGenitore.certificatoNuovo })).toBeNull()
+  })
+
+  it('già emesso: il gesto normale RISCARICA, e «uno nuovo» è un secondo comando esplicito', async () => {
+    // La regola del titolare: «quando lo va a riprendere riscarica sempre lo stesso». Il
+    // pulsante grande manda quindi `nuovo: false` — e il registro di protocollo è WORM,
+    // quindi un numero consumato per sbaglio non torna indietro.
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [CERTIFICATO_IN_ARCHIVIO]) }],
+      documento: { ok: true, status: 200, corpo: { success: true, riuso: true, url: null } },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoScarica }))
+    await waitFor(() => expect(corpoDocumento(0)).toMatchObject({ nuovo: false }))
+
+    fireEvent.click(screen.getByRole('button', { name: itGenitore.certificatoNuovo }))
+    await waitFor(() => expect(corpoDocumento(1)).toMatchObject({ nuovo: true }))
+  })
+
+  it('«Generane uno nuovo» pesa MENO del riscarico, e il peso è la difesa', async () => {
+    // ⚠️ NON È UNA PREFERENZA DI STILE. Quel comando emette un numero di protocollo su un
+    // registro WORM: con lo stesso peso visivo del riscarico, il genitore ne brucerebbe uno
+    // ogni volta che vuole rivedere il proprio certificato, e il registro finirebbe per
+    // contare i clic invece dei documenti. Si misura sulle classi, che sono ciò che l'occhio
+    // vede: il riscarico è pieno (fondo verde), «uno nuovo» è un collegamento sottolineato.
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [CERTIFICATO_IN_ARCHIVIO]) }],
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    const riscarico = await screen.findByRole('button', { name: itGenitore.certificatoScarica })
+    const nuovo = screen.getByRole('button', { name: itGenitore.certificatoNuovo })
+
+    expect(riscarico.className).toMatch(/bg-kidville-green/)
+    expect(nuovo.className).not.toMatch(/bg-kidville-green/)
+    expect(nuovo.className).toMatch(/underline/)
+    // E la differenza è anche DETTA, non solo dipinta: chi non vede il colore legge perché
+    // esistono due comandi.
+    expect(screen.getByText(itGenitore.certificatoNuovoAiuto)).toBeInTheDocument()
+  })
+
+  it('il modulo firmato si riscarica dall’elenco, con parole sue', async () => {
+    // 🔴 IL DIFETTO CHE CHIUDE: il PDF della scheda sanitaria firmata viveva solo dentro la
+    // risposta della firma, e chi chiudeva la pagina lo perdeva. E l'etichetta non dice
+    // «certificato»: su una scheda sanitaria sarebbe la parola sbagliata.
+    armaFetch({
+      elenco: [
+        {
+          ok: true,
+          status: 200,
+          corpo: elencoServito(FIGLIO_A.id, [
+            {
+              ...MODELLO_SANITARIO,
+              documentoArchiviatoId: 'd0000000-0000-4000-8000-00000000000d',
+              documentoArchiviatoIl: '2026-08-15T09:00:00.000Z',
+            },
+          ]),
+        },
+      ],
+      documento: { ok: true, status: 200, corpo: { success: true, riuso: true, url: null } },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    const scarica = await screen.findByRole('button', { name: itGenitore.documentoScarica })
+    expect(screen.queryByRole('button', { name: itGenitore.certificatoNuovo })).toBeNull()
+    fireEvent.click(scarica)
+    await waitFor(() =>
+      expect(corpoDocumento(0)).toMatchObject({ slug: 'scheda_sanitaria', nuovo: false }),
+    )
+  })
+
+  it('il certificato che non si può emettere lo dice con le parole del catalogo', async () => {
+    // Il server risponde in italiano e l'app è bilingue: la frase la sceglie il `motivo`
+    // enumerato, non la prosa del server (difetto F1 del collaudo del 2026-07-31).
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }],
+      documento: {
+        ok: false,
+        status: 422,
+        corpo: {
+          error: 'Gli estremi dell’autorizzazione al funzionamento del nido non sono configurati…',
+          codice: 'PRESTAMPATO_DATI_MANCANTI',
+          motivo: 'autorizzazione-nido-mancante',
+        },
+      },
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: itGenitore.certificatoGenera }))
+    expect(
+      await screen.findByText(itGenitore.certificatoAutorizzazioneNidoMancante),
+    ).toBeInTheDocument()
   })
 })

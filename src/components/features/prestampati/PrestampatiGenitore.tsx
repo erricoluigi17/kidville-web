@@ -108,6 +108,16 @@ interface ModelloElencoDTO {
   archiviazione: string;
   firmabileOra: boolean;
   motivoNonFirmabile: string | null;
+  /**
+   * Il documento di questo modello già nel fascicolo del bambino, quando c'è.
+   *
+   * È ciò che rende i moduli firmati riscaricabili SEMPRE: prima il PDF viveva solo dentro
+   * la risposta 201 della firma, e chi chiudeva la pagina lo perdeva. Sui due certificati
+   * dice anche un'altra cosa — che un numero di protocollo per questo bambino è già stato
+   * consumato, quindi il pulsante normale RISCARICA invece di emetterne un altro.
+   */
+  documentoArchiviatoId?: string | null;
+  documentoArchiviatoIl?: string | null;
 }
 
 interface DelegatoDTO {
@@ -129,6 +139,13 @@ interface RispostaPrestampati {
   };
   sede?: { nome: string | null; citta: string | null };
   annoScolastico?: string | null;
+  /** La gita pubblicata per la sezione del bambino: è ciò che accende il n. 10. */
+  uscita?: {
+    destinazione: string;
+    data: string;
+    oraPartenza: string | null;
+    oraRientro: string | null;
+  } | null;
   modelli?: ModelloElencoDTO[];
   modello?: { slug: string; etichetta: string; chiaveEtichetta: string; firma: string; campi: CampoDTO[] } | null;
   delegati?: DelegatoDTO[] | null;
@@ -220,9 +237,22 @@ const RINVIO_DOPO_SECONDI = 60;
 /** Gli enumerati del server → le chiavi del catalogo. Espliciti: un valore nuovo si vede. */
 const CHIAVE_NON_FIRMABILE: Record<string, string> = {
   'firma-della-scuola': 'nonFirmabileFirmaDellaScuola',
-  'uscita-non-creata': 'nonFirmabileUscitaNonCreata',
   'seconda-firma-mancante': 'nonFirmabileSecondaFirmaMancante',
   'allegato-non-caricabile': 'nonFirmabileAllegatoNonCaricabile',
+};
+
+/**
+ * I motivi per cui un certificato NON si emette, e la frase che li spiega.
+ *
+ * Enumerati e non prosa: il server risponde in italiano, l'app è bilingue, e mandare la
+ * frase del server dentro una schermata inglese è il difetto F1 del collaudo del
+ * 2026-07-31. Tutti e tre chiedono all'utente cose diverse — due sono da segnalare alla
+ * segreteria, il terzo dice che quel certificato non è il suo.
+ */
+const CHIAVE_MOTIVO_CERTIFICATO: Record<string, string> = {
+  'legale-rappresentante-assente': 'certificatoLegaleRappresentanteAssente',
+  'autorizzazione-nido-mancante': 'certificatoAutorizzazioneNidoMancante',
+  'livello-non-nido': 'certificatoLivelloNonNido',
 };
 
 const CHIAVE_MANCATO_ARCHIVIO: Record<string, string> = {
@@ -463,6 +493,10 @@ export function PrestampatiGenitore({
   const [avviso, setAvviso] = useState<string | null>(null);
 
   const [esito, setEsito] = useState<EsitoFirma | null>(null);
+
+  /** Lo slug del certificato in lavorazione: spegne il suo pulsante, non tutta la pagina. */
+  const [certificatoInCorso, setCertificatoInCorso] = useState<string | null>(null);
+  const [erroreCertificato, setErroreCertificato] = useState<string | null>(null);
 
   /**
    * L'elenco dei figli arriva da chi ospita il pannello e di norma è già in mano al primo
@@ -783,6 +817,59 @@ export function PrestampatiGenitore({
     return chiave ? t(chiave) : t('erroreFirma');
   }
 
+  /**
+   * «Dammi il documento di questo modello», ed è UN solo gesto per tre casi.
+   *
+   * ─── LA REGOLA DEL TITOLARE, E PERCHÉ `nuovo` HA UN PULSANTE SUO ────────────────
+   *
+   * > «Una volta che il genitore ha scaricato il suo certificato, quel certificato resta
+   * > salvato, e quando lo va a riprendere riscarica sempre lo stesso.»
+   *
+   * Quindi il gesto normale — quello grande, quello che si preme senza pensarci —
+   * **riscarica**: stesso file, stesso numero di protocollo, nessuna riga nuova nel
+   * registro. `nuovo: true` è l'altro pulsante, secondario e visivamente più leggero, e
+   * ne emette uno con data e protocollo nuovi. Se i due avessero lo stesso peso il
+   * genitore brucerebbe numeri di protocollo per sbaglio, su un registro che è WORM: un
+   * numero consumato non torna indietro.
+   *
+   * ⚠️ IL DOWNLOAD NON PASSA DA UN `<a href>` COSTRUITO A MANO: l'URL è firmato e dura un
+   * minuto, quindi lo si apre appena arriva. Quando l'archiviazione non è riuscita il
+   * server consegna i byte dentro la risposta (`pdfBase64`), perché il numero di
+   * protocollo è già stato consumato e la famiglia ha diritto al foglio comunque.
+   */
+  const chiediDocumento = async (m: ModelloElencoDTO, nuovo: boolean) => {
+    if (!userId || !alunnoId || certificatoInCorso) return;
+    setCertificatoInCorso(m.slug);
+    setErroreCertificato(null);
+    const r = await chiedi<{
+      success?: boolean;
+      url?: string | null;
+      pdfBase64?: string | null;
+      riuso?: boolean;
+      motivo?: string;
+    }>('/api/parent/prestampati', userId, {
+      method: 'POST',
+      body: JSON.stringify({ alunnoId, slug: m.slug, nuovo }),
+    });
+    setCertificatoInCorso(null);
+
+    if (!r.ok || !r.corpo?.success) {
+      const chiave = r.corpo?.motivo ? CHIAVE_MOTIVO_CERTIFICATO[r.corpo.motivo] : undefined;
+      setErroreCertificato(
+        chiave ? t(chiave) : soloCatalogoDaCorpo(r.corpo, t('erroreCertificato')),
+      );
+      return;
+    }
+
+    if (r.corpo.url) window.open(r.corpo.url, '_blank', 'noopener,noreferrer');
+    else if (r.corpo.pdfBase64) scaricaBase64(r.corpo.pdfBase64, `${m.slug}.pdf`);
+
+    // L'elenco si ricarica: dopo la prima emissione il modello ha un documento in archivio,
+    // e il pulsante deve cambiare da «Genera» a «Scarica» — o il gesto dopo emetterebbe un
+    // secondo numero di protocollo credendo di riscaricare il primo.
+    void caricaElenco();
+  };
+
   // ── Il disegno ───────────────────────────────────────────────────────────────
 
   const alunno = elenco?.alunno;
@@ -841,6 +928,7 @@ export function PrestampatiGenitore({
           <h4 className="font-barlow text-base font-bold uppercase tracking-wide text-kidville-green">
             {t('scegliModulo')}
           </h4>
+          {erroreCertificato && <Avviso tono="errore" testo={erroreCertificato} />}
           {modelli.length === 0 ? (
             <p className="rounded-card border border-dashed border-kidville-line px-4 py-8 text-center font-maven text-sm text-kidville-sub">
               {t('vuotoModuli')}
@@ -855,6 +943,10 @@ export function PrestampatiGenitore({
                     descrizione={descrizioneModulo(m)}
                     motivo={testoNonFirmabile(m.motivoNonFirmabile)}
                     onScegli={() => scegliModulo(m)}
+                    onDocumento={(nuovo) => chiediDocumento(m, nuovo)}
+                    inCorso={certificatoInCorso === m.slug}
+                    uscita={m.slug === 'autorizzazione_uscita' ? (elenco?.uscita ?? null) : null}
+                    dataBreve={dataBreve}
                   />
                 </li>
               ))}
@@ -1108,13 +1200,31 @@ function IntestazioneModulo({
  * Una voce dell'elenco dei modelli.
  *
  * Il pulsante spento DICE PERCHÉ: `motivoNonFirmabile` è un enumerato e la frase viene dal
- * catalogo, non dalla prosa del server. E i due certificati portano la dicitura «copia a uso
- * della famiglia» già qui, prima che qualcuno li apra: chi ne ha bisogno per un ente deve
- * poter sapere subito che questa non è la copia protocollata.
+ * catalogo, non dalla prosa del server.
  *
- * La delega al ritiro dichiara le sue DUE firme sulla scheda e non dentro il modulo, ed è
- * l'unico posto in cui può farlo: quel modello oggi non si apre affatto — la seconda firma
- * non si raccoglie — quindi un avviso nel form sarebbe una frase che nessuno legge mai.
+ * ─── I DUE CERTIFICATI NON SONO PIÙ «UNA COPIA NON PROTOCOLLATA» ────────────────
+ *
+ * Qui c'erano il bollino «Copia a uso della famiglia — non protocollata» e l'avviso «se un
+ * ente lo vuole protocollato, chiedilo in segreteria». Erano veri quando il certificato
+ * nasceva da jsPDF nel browser, senza numero e senza archivio; dal 2026-08-16 lo emette
+ * `POST /api/parent/prestampati` — carta intestata, firma del legale rappresentante,
+ * numero di protocollo in uscita, copia nel fascicolo — e quelle due frasi sarebbero
+ * diventate **false su un foglio diretto all'INPS o a un datore di lavoro**. Al loro posto
+ * c'è ciò che il foglio è davvero.
+ *
+ * ─── PERCHÉ LE AZIONI STANNO FUORI DALLA SCHEDA ─────────────────────────────────
+ *
+ * La scheda di un modulo firmabile È un pulsante (aprire il modulo è il gesto principale),
+ * e un pulsante dentro un pulsante non è HTML valido: un clic su «Scarica» aprirebbe anche
+ * il modulo. Le azioni sono quindi una riga sorella, sotto la scheda.
+ *
+ * ─── IL PESO VISIVO È LA PARTE CHE CONTA ────────────────────────────────────────
+ *
+ * «Generane uno nuovo» è un `ghost` piccolo e non un `primary`: emette un numero di
+ * protocollo, e il registro è WORM — un numero consumato non torna indietro. Se avesse lo
+ * stesso peso del riscarico, il genitore ne brucerebbe uno ogni volta che vuole rivedere
+ * il proprio certificato. Non è un dettaglio di stile: è la differenza fra un registro che
+ * conta i documenti emessi e uno che conta i clic.
  */
 function SchedaModello({
   modello,
@@ -1122,16 +1232,25 @@ function SchedaModello({
   descrizione,
   motivo,
   onScegli,
+  onDocumento,
+  inCorso,
+  uscita,
+  dataBreve,
 }: {
   modello: ModelloElencoDTO;
   titolo: string;
   descrizione: string;
   motivo: string;
   onScegli: () => void;
+  onDocumento: (nuovo: boolean) => void;
+  inCorso: boolean;
+  uscita: { destinazione: string; data: string; oraPartenza: string | null; oraRientro: string | null } | null;
+  dataBreve: (v: string | null) => string;
 }) {
   const t = useTranslations('prestampatiGenitore');
   const certificato = modello.protocollo === 'uscita';
   const dueFirme = modello.firma === 'otp_due_genitori';
+  const archiviato = !!modello.documentoArchiviatoId;
 
   const corpo = (
     <>
@@ -1150,7 +1269,20 @@ function SchedaModello({
 
       {certificato && (
         <p className="mt-3 inline-flex rounded-pill bg-kidville-yellow-light px-2.5 py-1 font-maven text-[11px] font-bold text-kidville-green">
-          {t('copiaFamiglia')}
+          {t('certificatoProtocollato')}
+        </p>
+      )}
+
+      {/* La gita che si sta autorizzando, prima di aprire il modulo: dove si va e quando.
+          Un'autorizzazione che non dice la destinazione si firma alla cieca. */}
+      {uscita && (
+        <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-ink">
+          {t('uscitaRiga', {
+            destinazione: uscita.destinazione,
+            data: dataBreve(uscita.data),
+            partenza: uscita.oraPartenza ?? '',
+            rientro: uscita.oraRientro ?? '',
+          })}
         </p>
       )}
 
@@ -1160,25 +1292,19 @@ function SchedaModello({
         </p>
       )}
 
-      {!modello.firmabileOra && (
+      {!modello.firmabileOra && !certificato && (
         <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">{motivo}</p>
       )}
 
-      {certificato && (
-        <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">{t('certificatoAvviso')}</p>
+      {archiviato && modello.documentoArchiviatoIl && (
+        <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
+          {t('documentoArchiviatoIl', { data: dataBreve(modello.documentoArchiviatoIl) })}
+        </p>
       )}
     </>
   );
 
-  if (!modello.firmabileOra) {
-    return (
-      <div className="rounded-card border border-dashed border-kidville-line bg-kidville-neutral-soft p-4 text-left">
-        {corpo}
-      </div>
-    );
-  }
-
-  return (
+  const scheda = modello.firmabileOra ? (
     <button
       type="button"
       onClick={onScegli}
@@ -1186,6 +1312,54 @@ function SchedaModello({
     >
       {corpo}
     </button>
+  ) : (
+    <div className="rounded-card border border-dashed border-kidville-line bg-kidville-neutral-soft p-4 text-left">
+      {corpo}
+    </div>
+  );
+
+  // I due certificati si generano da qui; gli altri sei si riscaricano solo se firmati.
+  const mostraAzioni = certificato || archiviato;
+  if (!mostraAzioni) return scheda;
+
+  return (
+    <div className="space-y-2">
+      {scheda}
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        <Btn
+          variant={certificato ? 'primary' : 'ghost'}
+          size="sm"
+          aria-disabled={inCorso || undefined}
+          onClick={() => onDocumento(false)}
+        >
+          <Download size={15} aria-hidden="true" />
+          {/* Tre etichette e non due: «Scarica il certificato» su una scheda sanitaria
+              firmata sarebbe una parola sbagliata su un documento sanitario. */}
+          {inCorso
+            ? t('certificatoInCorso')
+            : !certificato
+              ? t('documentoScarica')
+              : archiviato
+                ? t('certificatoScarica')
+                : t('certificatoGenera')}
+        </Btn>
+        {certificato && archiviato && (
+          <button
+            type="button"
+            onClick={() => onDocumento(true)}
+            aria-disabled={inCorso || undefined}
+            className="font-maven text-xs font-semibold text-kidville-sub underline underline-offset-2 hover:text-kidville-green"
+          >
+            {t('certificatoNuovo')}
+          </button>
+        )}
+        {certificato && archiviato && (
+          <span className="basis-full font-maven text-[11px] leading-relaxed text-kidville-sub">
+            {t('certificatoNuovoAiuto')}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

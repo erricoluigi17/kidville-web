@@ -4,16 +4,13 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { ensureStaffIdentity, type Grado } from '@/lib/auth/staff-identity'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
-import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { messaggioEsitoCandidatura } from '@/lib/email/messaggi/esito-candidatura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { GRADI_OPTIONS, comprendeInsegnamento } from '@/lib/forms/insegnanti-template'
 import { BUCKET_CURRICULUM } from '@/lib/candidature/percorso-cv'
 import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 
@@ -72,8 +69,11 @@ const CODICE_NON_TROVATA = 'CANDIDATURA_NON_TROVATA'
  */
 const CODICE_OPERAZIONE_NON_RIUSCITA = 'CANDIDATURE_OPERAZIONE_NON_RIUSCITA'
 const CODICE_GIA_EVASA = 'CANDIDATURA_GIA_EVASA'
-const CODICE_EMAIL_GIA_STAFF = 'CANDIDATURA_EMAIL_GIA_STAFF'
-const CODICE_EMAIL_GIA_GENITORE = 'CANDIDATURA_EMAIL_GIA_GENITORE'
+// ⚠️ `CANDIDATURA_EMAIL_GIA_STAFF` e `CANDIDATURA_EMAIL_GIA_GENITORE` non si
+// dichiarano più qui: erano i due 409 di `ensureStaffIdentity`, e questa route non
+// crea più nessun account (vedi `approva`). I codici restano nel catalogo del
+// client — `src/lib/ui/esito-fetch.ts` — perché li produce ancora
+// `admin/pratiche-personale:PATCH`, che è il posto dove un accesso nasce davvero.
 
 /**
  * UN SOLO messaggio per «non esiste» e per «è di un'altra sede».
@@ -204,14 +204,9 @@ const patchBodySchema = z.object({
   inviaEmailEsito: z.boolean().optional(),
 })
 
-/** Le fasce ammesse, dall'unico posto che le dichiara (enum `school_type_enum`). */
-const GRADI_AMMESSI = new Set(GRADI_OPTIONS.map((o) => String(o.value)))
-
-/** Le fasce della candidatura, ripulite: un valore fuori enum prende `22P02` all'INSERT. */
-function gradiValidi(grezzi: unknown): Grado[] {
-  if (!Array.isArray(grezzi)) return []
-  return [...new Set(grezzi.map((g) => String(g)).filter((g) => GRADI_AMMESSI.has(g)))] as Grado[]
-}
+// Le fasce della candidatura non si ripuliscono più qui: servivano a creare
+// l'account docente, e questa route non lo crea più. Restano nella riga, le legge
+// il cockpit, e chi assume le assegna dal pannello Personale guardando la persona.
 
 // ─── GET ─────────────────────────────────────────────────────────────────────
 export const GET = withRoute('admin/candidature-insegnanti:GET', async (request: NextRequest) => {
@@ -607,34 +602,19 @@ async function cambiaStato(
   return { righe: (esito.data ?? []) as Record<string, unknown>[], error: esito.error, colonneCadute }
 }
 
-/**
- * Rimette `pending` una candidatura CLAIMATA e non conclusa.
- *
- * Ogni uscita anticipata dell'approvazione passa di qui, e non è una cortesia:
- * una candidatura ferma in `in_approvazione` non è più approvabile da nessuno —
- * il claim pretende `pending` — e nessuno saprebbe perché. Il fallimento del
- * ripristino si logga a `error`: da lì in poi serve una mano umana.
- */
-async function rimettiPending(
-  supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  args: { id: string; scuole: string[] },
-): Promise<void> {
-  const esito = await cambiaStato(supabase, 'admin/candidature-insegnanti:PATCH', {
-    id: args.id,
-    scuole: args.scuole,
-    da: ['in_approvazione'],
-    patch: { stato: 'pending', aggiornata_il: new Date().toISOString() },
-  })
-  if (esito.error || esito.righe.length === 0) {
-    logEvento('candidatura', 'error', {
-      operazione: 'admin/candidature-insegnanti:PATCH',
-      esito: 'ripristino-pending-non-riuscito',
-      entita_tipo: TABELLA,
-      entita_id: args.id,
-      error_code: codiceDi(esito.error),
-    }, esito.error ?? undefined)
-  }
-}
+// ⚠️ `rimettiPending` NON C'È PIÙ, e con essa il claim in due tempi
+// (`pending → in_approvazione → approvata`). Esisteva per una ragione sola:
+// chiudere la corsa fra due clic MENTRE si creava un account e si spediva una
+// password. Da quando approvare non crea niente e non spedisce niente, quel
+// doppio passo non protegge nulla e costa: un guasto fra i due tempi lasciava la
+// candidatura in `in_approvazione`, cioè in uno stato che l'interfaccia racconta
+// come «l'account docente È STATO CREATO» e che spegne per sempre i due pulsanti.
+// Un `cambiaStato` unico `da: ['pending'] → 'approvata'` è già atomico: lo stato
+// di partenza sta nel WHERE.
+//
+// Misurato il 2026-08-15 prima di rimuoverla: nessuna riga di
+// `candidature_insegnanti` si trova in `in_approvazione`, quindi non resta
+// nessuna candidatura che avesse bisogno del ripristino.
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -774,363 +754,47 @@ async function approvaSenzaAccount(
   })
 }
 
-/** APPROVA: claim atomico → account → credenziali → chiusura. In quest'ordine. */
+/**
+ * APPROVA — e dal 2026-08-15 approvare NON crea nessun accesso.
+ *
+ * Questa funzione era lunga duecento righe: claim in due tempi, creazione
+ * dell'account docente, generazione della password, invio dell'email, chiusura.
+ * Adesso è una riga, e la riga è la decisione.
+ *
+ * ── PERCHÉ ──────────────────────────────────────────────────────────────────
+ *
+ * Una candidatura è una domanda di lavoro, non un'assunzione. Farle produrre un
+ * account `educator` — che LEGGE L'ANAGRAFICA DEI BAMBINI, con nomi, allergie e
+ * note mediche — significava che il gesto di «prendo in considerazione questa
+ * persona» consegnava, nello stesso clic, le chiavi del registro di 33 minori,
+ * spedite a un indirizzo email arrivato da un modulo pubblico.
+ *
+ * L'accesso ora nasce in UN POSTO SOLO: l'approvazione dell'ANAGRAFICA del
+ * personale (`admin/pratiche-personale:PATCH`), che è il momento in cui la
+ * Direzione ha davanti il documento d'identità, il codice fiscale e la persona
+ * assunta davvero — e da lì parte l'email con le credenziali.
+ *
+ * ── COSA RESTA A CHI SI CANDIDA ─────────────────────────────────────────────
+ *
+ * L'email di CONFERMA, che parte già alla ricezione del modulo
+ * (`iscrizione/insegnanti:POST` → `messaggioConfermaCandidatura`), e in caso di
+ * rifiuto l'email di esito. L'approvazione, di suo, non scrive a nessuno: chi è
+ * stato scelto lo sente dalla scuola, con una telefonata, non da un messaggio
+ * automatico che gli consegna una password.
+ *
+ * ⚠️ Il ramo esisteva già dal 2026-08-15 mattina per le posizioni NON docenti
+ * (cucina, collaboratrice scolastica, segreteria): la ragione scritta lì —
+ * «l'account, se serve, lo crea la Direzione a mano guardando la persona» — vale
+ * parola per parola anche per le insegnanti. Adesso vale per tutte, e
+ * `comprendeInsegnamento` non serve più a decidere niente qui.
+ */
 async function approva(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   user: AppUser,
   scuole: string[],
   riga: CandidaturaDiLavoro,
 ): Promise<NextResponse> {
-  const operazione = 'admin/candidature-insegnanti:PATCH'
-  const warnings: string[] = []
-  const adesso = new Date().toISOString()
-
-  // ── 0. QUESTA CANDIDATURA FA NASCERE UN ACCOUNT? ────────────────────────────
-  //
-  // PRIMA di qualunque scrittura, e prima del claim: la risposta cambia l'intera
-  // procedura, non un suo dettaglio. Il predicato vive nel TEMPLATE
-  // (`comprendeInsegnamento`) perché è l'elenco delle posizioni a dire quali sono
-  // docenti: un secondo elenco qui dentro sarebbe quello che un giorno resta
-  // indietro di una voce — e il verso dell'errore, qui, è un accesso
-  // all'anagrafica dei bambini concesso a chi non doveva averlo.
-  //
-  // ⚠️ SU UNA RIGA SENZA `posizioni` LA RISPOSTA È «NO». Succede su un database
-  // in cui quella colonna non esiste (`conResilienza` la toglie dalla proiezione
-  // e lo NOMINA in un `warn`): «non so per quale posizione si è candidata» non
-  // può voler dire «creale l'account docente».
-  if (!comprendeInsegnamento(riga.posizioni)) {
-    return await approvaSenzaAccount(supabase, user, scuole, riga)
-  }
-
-  // 1. CLAIM ATOMICO. Senza, due clic (o due schede) creano DUE account per la
-  //    stessa persona: il secondo `createUser` fallirebbe sull'email, ma solo
-  //    dopo aver marcato la candidatura una seconda volta — e con due password
-  //    spedite. Zero righe ⇒ qualcuno è arrivato prima.
-  const claim = await cambiaStato(supabase, operazione, {
-    id: riga.id,
-    scuole,
-    da: ['pending'],
-    patch: { stato: 'in_approvazione', aggiornata_il: adesso },
-  })
-  if (claim.error) {
-    logEvento('candidatura', 'error', {
-      operazione, esito: 'claim-non-riuscito', entita_tipo: TABELLA, entita_id: riga.id,
-      error_code: codiceDi(claim.error),
-    }, claim.error)
-    return nonDisponibile('Non è stato possibile prendere in carico la candidatura: riprovare fra poco.')
-  }
-  if (claim.righe.length === 0) {
-    logEvento('candidatura', 'warn', {
-      operazione, esito: 'candidatura-gia-evasa', azione: 'approva',
-      entita_tipo: TABELLA, entita_id: riga.id, stato: riga.stato,
-    })
-    return giaEvasa()
-  }
-  const presa = claim.righe[0] as unknown as CandidaturaDiLavoro
-  const email = (presa.email ?? riga.email ?? '').trim()
-  const sedeCandidatura = presa.scuola_id ?? riga.scuola_id
-
-  if (!email) {
-    await rimettiPending(supabase, { id: riga.id, scuole })
-    logEvento('candidatura', 'error', {
-      operazione, esito: 'candidatura-senza-email', entita_tipo: TABELLA, entita_id: riga.id,
-    })
-    return nonDisponibile('Questa candidatura non ha un indirizzo email: non è possibile creare l\'account.')
-  }
-
-  const gradi = gradiValidi(presa.gradi ?? riga.gradi)
-  if (gradi.length === 0) {
-    warnings.push(
-      'La candidatura non porta nessuna fascia d\'età valida: assegnarle dal pannello Personale.',
-    )
-  }
-
-  // 2. L'IDENTITÀ. Le due porte chiuse (email già staff, email già di un genitore)
-  //    tornano un esito, non un'eccezione: qui si rimette `pending` e si risponde
-  //    con il codice che dice alla segreteria cosa fare.
-  const identita = await ensureStaffIdentity(supabase, {
-    email,
-    nome: (presa.nome ?? riga.nome ?? '').trim(),
-    cognome: (presa.cognome ?? riga.cognome ?? '').trim(),
-    cellulare: presa.telefono ?? riga.telefono ?? null,
-    ruolo: 'educator',
-    // LA SEDE È QUELLA DELLA CANDIDATURA, mai `user.scuola_id`: l'unico admin
-    // reale ha Giugliano come sede primaria e gestisce tutti e tre i plessi.
-    scuolaId: sedeCandidatura,
-    gradi,
-  })
-  if (!identita.ok) {
-    await rimettiPending(supabase, { id: riga.id, scuole })
-    if (identita.reason === 'email_gia_staff') {
-      return NextResponse.json(
-        { error: identita.message, codice: CODICE_EMAIL_GIA_STAFF, ruoloEsistente: identita.ruoloEsistente ?? null },
-        { status: 409 },
-      )
-    }
-    if (identita.reason === 'email_gia_genitore') {
-      return NextResponse.json(
-        { error: identita.message, codice: CODICE_EMAIL_GIA_GENITORE },
-        { status: 409 },
-      )
-    }
-    // UN 503 CON QUALCOSA DI SCRITTO DIETRO va detto, non lasciato indovinare.
-    // `accountOrfano` è vero solo quando l'account è nato in questa chiamata, la
-    // riga `utenti` non è riuscita e nemmeno l'annullamento: la prossima
-    // «Approva» riuserà quell'account e non produrrà nessuna password.
-    if (identita.accountOrfano) {
-      logEvento('candidatura', 'error', {
-        operazione,
-        esito: 'account-orfano-lasciato',
-        entita_tipo: TABELLA,
-        entita_id: riga.id,
-        utente: identita.authUserIdOrfano ?? null,
-        sede_id: sedeCandidatura,
-      })
-      return NextResponse.json(
-        {
-          error: identita.message,
-          codice: CODICE_OPERAZIONE_NON_RIUSCITA,
-          warnings: [
-            'Un account di accesso È RIMASTO creato senza profilo: ripremere «Approva» NON genererà ' +
-            'nessuna password. Le credenziali si ottengono solo con «Rigenera credenziali» dal ' +
-            'pannello Personale — segnalarlo all\'assistenza.',
-          ],
-        },
-        { status: 503 },
-      )
-    }
-    logEvento('candidatura', 'error', {
-      operazione, esito: 'account-non-creato', entita_tipo: TABELLA, entita_id: riga.id,
-    })
-    return nonDisponibile(identita.message)
-  }
-  if (!identita.gradiScritti && gradi.length > 0) {
-    warnings.push(
-      'Le fasce d\'età (gradi) non sono state registrate su questo ambiente: assegnarle dal pannello Personale.',
-    )
-  }
-  if (!identita.createdAuth) {
-    warnings.push(
-      'Esisteva già un accesso con questa email: l\'account è stato riusato e NON è stata generata una nuova password.',
-    )
-  }
-
-  // 3. LE CREDENZIALI. La sede nel testo è quella della candidatura: con tre
-  //    plessi «Kidville» da solo non dice a nessuno dove è stata assunta.
-  let credentialsEmailSent = false
-  if (identita.createdAuth && identita.password) {
-    // Un'unica email di credenziali, in forma IMPERSONALE, per genitori e
-    // personale insieme. Prima ce n'erano due — una col «tu» per le famiglie e
-    // una col «lei» per lo staff — separate per una ragione giusta: riusare
-    // quella del genitore avrebbe scritto «Gentile genitore … la tua iscrizione»
-    // a chi si candida per lavorare. La forma impersonale risolve lo stesso
-    // problema senza tenere in vita due copie destinate a divergere.
-    const sede = await risolviContestoSede(supabase, sedeCandidatura, operazione)
-    const messaggio = messaggioCredenziali({
-      nome: presa.nome ?? riga.nome ?? null,
-      email,
-      password: identita.password,
-      occasione: 'candidatura-accolta',
-    }, sede)
-    const invio = await sendEmailDetailed({
-      to: email,
-      subject: messaggio.oggetto,
-      text: messaggio.testo,
-      html: messaggio.html,
-    })
-    credentialsEmailSent = invio.ok
-    // L'esito dell'invio va nella risposta HTTP, nel log E a schermo: se l'email
-    // non parte, l'account esiste comunque e l'operatore DEVE saperlo.
-    //
-    // ⚠️ DUE CANALI PER UN FATTO SOLO, e non è una distrazione. Il FALLIMENTO va
-    // su `credenziali` a livello `error` — persistito PER LIVELLO, come già fa
-    // `regenerate-credentials`. Il SUCCESSO va su `candidatura`, che è in
-    // `EVENTI_PERSISTITI`: `credenziali` NON lo è, e un `logEvento('credenziali',
-    // 'info', …)` vivrebbe qualche giorno sui Runtime Logs di Vercel e poi
-    // sparirebbe — cioè il battito non sarebbe interrogabile in SQL proprio
-    // quando serve («le credenziali di quella maestra sono partite davvero?»),
-    // che è l'ambiguità con cui il guasto delle email è rimasto invisibile per
-    // mesi. Il lock `__tests__/architecture/eventi-log.test.ts` lo impone, e ha
-    // ragione. Il giorno in cui `credenziali` entrerà in `EVENTI_PERSISTITI`
-    // (`src/lib/logging/logger.ts`) queste due righe tornano a essere una sola.
-    if (invio.ok) {
-      logEvento('candidatura', 'info', {
-        operazione,
-        esito: 'credenziali-inviate',
-        canale: 'email',
-        tipo: 'staff',
-        entita_tipo: TABELLA,
-        entita_id: riga.id,
-        sede_id: sedeCandidatura,
-      })
-    } else {
-      logEvento('credenziali', 'error', {
-        operazione,
-        esito: 'credenziali-non-inviate',
-        canale: 'email',
-        tipo: 'staff',
-        entita_tipo: TABELLA,
-        entita_id: riga.id,
-        sede_id: sedeCandidatura,
-      }, new Error(invio.error ?? 'motivo sconosciuto'))
-      warnings.push(
-        `Email delle credenziali NON inviata: ${invio.error ?? 'motivo sconosciuto'} — comunicarle a voce e poi rigenerarle dal pannello Personale.`,
-      )
-    }
-  }
-
-  // 4. LA CHIUSURA. Se fallisce QUI l'account esiste già: non si torna indietro e
-  //    non si tace — si dice all'operatore di NON ripremere Approva.
-  const chiusura = await cambiaStato(supabase, operazione, {
-    id: riga.id,
-    scuole,
-    da: ['in_approvazione'],
-    patch: {
-      stato: 'approvata',
-      evasa_il: adesso,
-      evasa_da: user.id,
-      utente_id: identita.authUserId,
-      aggiornata_il: adesso,
-    },
-  })
-  /**
-   * L'UNICA VERITÀ SU COM'È FINITA, e da qui in giù la leggono tutti e tre i
-   * canali — la risposta HTTP, l'audit e il battito.
-   *
-   * Prima esisteva solo dentro la `return`: l'audit e il battito la ignoravano e
-   * dichiaravano «approvata» anche quando questo ramo aveva appena loggato
-   * `approvazione-non-marcata` a `error`. Cioè la stessa bugia che la risposta
-   * HTTP non racconta più, spostata nel registro IMMUTABILE delle scritture su
-   * dati di minori e nel battito che il commento qui sotto dichiara essere
-   * l'unico modo per distinguere «non si approva nessuno» da «l'approvazione non
-   * parte più» — mentre lo falsava di uno a ogni guasto.
-   */
-  const chiusuraRiuscita = !chiusura.error && chiusura.righe.length > 0
-  /**
-   * …E LA CHIUSURA NON È UNA COSA SOLA. `chiusuraRiuscita` risponde a «la riga è
-   * passata ad `approvata`?»; questo risponde a «la riga è LEGATA all'account?».
-   * Sono due domande diverse dal giorno in cui il degrado su colonna assente può
-   * togliere `utente_id` dal patch: l'istruzione passa lo stesso (solo `stato` è
-   * protetto), l'UPDATE ritorna una riga, e una misura sola direbbe di sì a
-   * entrambe le domande mentre la seconda risposta è no.
-   *
-   * Perché NON si è fatto il contrario — cioè `chiusuraRiuscita = false` quando
-   * cade una colonna: sarebbe stata la bugia speculare. Lo stato in tabella È
-   * `approvata`, e un audit che dicesse `in_approvazione` mentirebbe su ciò che
-   * si legge nella riga. E perché non si è protetto `utente_id` come `stato`:
-   * quel ramo lascerebbe la candidatura ferma in `in_approvazione` — non più
-   * approvabile da nessuno, il claim pretende `pending` — con l'account già
-   * creato e le credenziali già partite. Si scrive ciò che si può, e si DICE
-   * che cosa non si è scritto: è la stessa scelta già presa per `gradi`.
-   */
-  const utenteIdScritto = chiusuraRiuscita && !chiusura.colonneCadute.includes('utente_id')
-  if (chiusura.colonneCadute.length > 0) {
-    warnings.push(
-      `Chiusura registrata solo in parte: su questo ambiente mancano le colonne ${chiusura.colonneCadute.join(', ')}.` +
-        (utenteIdScritto
-          ? ''
-          : ' La candidatura NON risulta legata all\'account creato: NON ripremere «Approva» — segnalarlo all\'assistenza.'),
-    )
-  }
-  if (!chiusuraRiuscita) {
-    logEvento('candidatura', 'error', {
-      operazione,
-      esito: 'approvazione-non-marcata',
-      entita_tipo: TABELLA,
-      entita_id: riga.id,
-      utente: identita.authUserId,
-      error_code: codiceDi(chiusura.error),
-    }, chiusura.error ?? undefined)
-    warnings.push(
-      'L\'account È STATO CREATO ma la candidatura non risulta marcata come approvata: NON ripremere «Approva» — segnalarlo all\'assistenza.',
-    )
-  }
-
-  await logScrittura(supabase, {
-    attore: user,
-    entitaTipo: 'candidatura',
-    entitaId: riga.id,
-    azione: 'update',
-    scuolaId: sedeCandidatura,
-    // L'audit dice CHE COSA è stato fatto, non è una copia della candidatura:
-    // niente email, niente nome, niente curriculum.
-    //
-    // `stato` è quello VERO in tabella, e `utente_id` è quello VERO NELLA RIGA:
-    // `null` quando il legame non è stato scritto — chiusura fallita, oppure
-    // colonna assente su questo database. Prima portava sempre l'uid, e chi a
-    // mesi di distanza leggesse `valore_dopo->>'utente_id'` per sapere a quale
-    // account è legata quella candidatura avrebbe trovato un uid che nella riga
-    // non c'è mai stato: un registro immutabile che risponde una cosa falsa.
-    //
-    // L'uid però NON si perde, ed è la ragione della chiave separata: l'account
-    // ESISTE (le credenziali sono partite) e questo è l'unico registro DUREVOLE
-    // in cui ritrovarlo — `app_log` si cancella a 30 giorni. `account_uid` dice
-    // «l'account è questo», senza spacciarlo per una colonna della candidatura.
-    valoreDopo: {
-      stato: chiusuraRiuscita ? 'approvata' : 'in_approvazione',
-      chiusura_riuscita: chiusuraRiuscita,
-      utente_id: utenteIdScritto ? identita.authUserId : null,
-      account_uid: identita.authUserId,
-      account_creato: identita.createdAuth,
-    },
-  })
-
-  // Evento critico → si logga anche il SUCCESSO: senza, «nessun log» non
-  // distinguerebbe «non si approva nessuno» da «l'approvazione non parte più».
-  //
-  // Due esiti DIVERSI, e non un campo in più su uno solo: `candidatura-approvata`
-  // è il conteggio delle approvazioni VERE («quante insegnanti sono state
-  // assunte questo mese?»), e una riga emessa su una chiusura fallita lo
-  // gonfierebbe proprio quando il sistema sta sbagliando. Il gesto si chiude
-  // comunque a registro, ma con il suo nome e a `warn`.
-  const battito = {
-    operazione,
-    entita_tipo: TABELLA,
-    entita_id: riga.id,
-    sede_id: sedeCandidatura,
-    utente: identita.authUserId,
-    account_creato: identita.createdAuth,
-    gradi_scritti: identita.gradiScritti,
-    email_inviata: credentialsEmailSent,
-    chiusura_riuscita: chiusuraRiuscita,
-    // Le due domande restano due anche nel battito: «lo stato è passato?» e «la
-    // riga è legata all'account?». Un `chiusura_riuscita: true` da solo non
-    // distingue una chiusura intera da una a cui manca il legame.
-    utente_id_scritto: utenteIdScritto,
-  }
-  if (chiusuraRiuscita) {
-    logEvento('candidatura', 'info', { ...battito, esito: 'candidatura-approvata' })
-  } else {
-    logEvento('candidatura', 'warn', { ...battito, esito: 'candidatura-approvata-non-marcata' })
-  }
-
-  return NextResponse.json({
-    success: true,
-    id: riga.id,
-    stato: chiusuraRiuscita ? 'approvata' : 'in_approvazione',
-    // La password si vede UNA volta sola, qui. Non viene archiviata da nessuna
-    // parte: per riaverla c'è «Rigenera credenziali», che la sostituisce e lascia
-    // traccia.
-    credentials: identita.createdAuth && identita.password ? { email, password: identita.password } : null,
-    credentialsEmailSent,
-    /**
-     * QUALE DELLE TRE STORIE È SUCCESSA — e da oggi il client la legge da qui,
-     * invece di dedurla.
-     *
-     * Fino al 2026-08-15 le storie erano due e si distinguevano da
-     * `credentials === null`: password mostrata (account nuovo) oppure «Nessuna
-     * password generata: esisteva già un accesso con questa email» (account
-     * riusato). Con l'approvazione senza account le storie diventano TRE, e
-     * `credentials === null` ne coprirebbe due — cioè manderebbe la Segreteria a
-     * cercare un accesso esistente che non esiste, dentro l'avviso nato apposta
-     * per non far perdere le credenziali.
-     *
-     * Un enumerato e non un booleano: `accountCreato: false` avrebbe risposto
-     * `false` anche all'account riusato, che è la storia numero due.
-     */
-    esitoAccount: identita.createdAuth ? 'creato' : 'riusato',
-    warnings,
-  })
+  return await approvaSenzaAccount(supabase, user, scuole, riga)
 }
 
 /** RIFIUTA: nessun account, nessuna riga `utenti`, e il motivo resta una nota interna. */

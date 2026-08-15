@@ -94,6 +94,72 @@
 
 ---
 
+## 🔑 Changelog — Le credenziali cambiano porta: la selezione non consegna più accessi, l'anagrafica sì 2026-08-15 (branch `feat/credenziali-dallanagrafica-personale`)
+
+Domanda del titolare: *«quando un insegnante compila l'anagrafica e io la accetto, la mail con le
+credenziali parte in automatico?»*. Misurato: **no**, e partiva invece dall'altro modulo.
+
+I due percorsi si comportavano al contrario di come devono:
+
+| | prima | adesso |
+|---|---|---|
+| Candidatura inviata (`/lavora-con-noi`) | email di conferma ✅ | invariato |
+| **Candidatura approvata** | crea un account `educator` + **spedisce la password** | **non crea niente, non spedisce niente** |
+| Anagrafica del personale inviata | nessuna email | invariato |
+| **Anagrafica approvata** | password mostrata a schermo **una volta sola** | crea l'accesso + **spedisce la password** |
+
+### Perché non era un dettaglio di comodità
+
+L'unico account che l'approvazione di una candidatura sapeva creare è `educator`, e un account
+educator **legge l'anagrafica dei bambini** — nomi, allergie, note mediche. Il gesto «prendo in
+considerazione questa persona» consegnava nello stesso clic le chiavi del registro di 33 minori,
+spedite a un indirizzo arrivato da un **modulo pubblico e anonimo**. L'approvazione
+dell'ANAGRAFICA, che è il momento in cui la Direzione ha davanti il documento d'identità e il
+codice fiscale della persona assunta davvero, non spediva niente: la password compariva in un
+riquadro che chiudendosi se la portava via.
+
+Da oggi **un accesso del personale nasce e si comunica in un posto solo**, ed è quello dove
+qualcuno ha guardato i documenti.
+
+### Cosa cambia nel codice
+
+- `admin/candidature-insegnanti:PATCH` → `approva` è ora **una riga**: chiama `approvaSenzaAccount`,
+  il ramo che dal 15/08 mattina esisteva già per le posizioni non docenti. Con lui spariscono la
+  creazione dell'identità, la generazione della password, l'invio, i due 409 sull'email già nota e
+  **il claim in due tempi** (`pending → in_approvazione → approvata`): quel doppio passo esisteva
+  per chiudere la corsa fra due clic *mentre si crea un account e si spedisce una password*, e
+  senza quell'operazione non protegge niente — mentre un guasto a metà lasciava la candidatura in
+  uno stato che l'interfaccia racconta come «l'account È STATO CREATO» e che spegne per sempre i
+  due pulsanti. Verificato prima di rimuoverlo: **nessuna riga in `in_approvazione`**.
+- `admin/pratiche-personale:PATCH` → invia le credenziali quando nasce un accesso nuovo, con il
+  contesto della **sede della pratica** nel testo (tre plessi «Kidville», e il nome da solo non dice
+  dove). La password resta **anche** a schermo: se l'email non parte, quella è l'unica copia.
+- L'occasione `candidatura-accolta` esce dall'unione chiusa di `messaggioCredenziali` e al suo posto
+  entra `anagrafica-personale-approvata`: un chiamante che sparisce si porta via la sua voce,
+  invece di lasciarla pronta a essere riusata per sbaglio.
+- **Log su due canali, come già fa `regenerate-credentials`**: il successo su `personale` (che è in
+  `EVENTI_PERSISTITI`, quindi fra sei mesi risponde in SQL a «le credenziali di quella maestra sono
+  partite davvero?»), il fallimento su `credenziali` a livello `error`. Il battito
+  dell'approvazione porta `credenziali_email_inviata`.
+- A schermo la differenza si legge: «Sono state inviate anche per email» quando è partita, e
+  l'avviso `credenzialiEmailNonInviata` quando no — perché davanti a una password l'operatore non
+  ha nessun altro modo di sapere se la persona l'ha ricevuta.
+
+### Cosa resta a chi si candida
+
+L'email di **conferma**, che parte già alla ricezione del modulo, e in caso di rifiuto quella di
+esito. L'approvazione non scrive a nessuno: chi è stato scelto lo sente dalla scuola, con una
+telefonata, non da un messaggio automatico che gli consegna una password.
+
+Trenta casi di test sul ramo rimosso sono stati sostituiti da tre che tengono ferma la regola
+nuova (nessun account, nessuna email, nemmeno per una candidatura docente), e quattro nuovi
+presidiano l'invio dall'anagrafica — invio riuscito, invio fallito, account preesistente che non
+deve ricevere niente.
+
+Gate: `eslint` 0 · `tsc --noEmit` 0 · **11376 test verdi** · `npm run build` ok. Nessuna migrazione.
+
+---
+
 ## 🏛️ Changelog — «Aggiungilo nelle impostazioni della sede»: un campo che il prodotto prometteva e non aveva 2026-08-15 (branch `feat/anagrafica-sede-legale-rappresentante`)
 
 Provando a stampare un prestampato, la Segreteria riceveva questo rifiuto: *«Questo documento lo

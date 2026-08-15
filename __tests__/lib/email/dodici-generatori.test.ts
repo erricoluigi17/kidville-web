@@ -189,7 +189,7 @@ describe('i dodici generatori — niente si apre', () => {
     /** Gli stessi dodici, ma con il payload in OGNI campo stringa. */
     function tuttiOstili(): { nome: string; m: Messaggio }[] {
         return [
-            { nome: '01', m: messaggioCredenziali({ nome: OSTILE, email: OSTILE, password: OSTILE, occasione: 'candidatura-accolta' }, sede) },
+            { nome: '01', m: messaggioCredenziali({ nome: OSTILE, email: OSTILE, password: OSTILE, occasione: 'anagrafica-personale-approvata' }, sede) },
             { nome: '02', m: messaggioCodiceVerifica({ codice: OSTILE, operazione: { libera: OSTILE }, minuti: 10 }, sede) },
             {
                 nome: '03', m: messaggioSollecito({
@@ -265,13 +265,13 @@ describe('riservatezza — cosa non entra mai in un\'email', () => {
 
 describe('01 credenziali — la forma impersonale, che è il requisito più duro', () => {
     const m = (nome?: string | null) =>
-        messaggioCredenziali({ nome, email: 'a@b.test', password: 'Segreta-finta-2026', occasione: 'candidatura-accolta' }, GIUGLIANO)
+        messaggioCredenziali({ nome, email: 'a@b.test', password: 'Segreta-finta-2026', occasione: 'anagrafica-personale-approvata' }, GIUGLIANO)
 
     it('nessuna seconda persona singolare, in nessuna delle quattro occasioni', () => {
         // Questa email va a un genitore (a cui diamo del «tu») E a una maestra (a
         // cui diamo del «lei»). Non può fare né l'uno né l'altro. Il test guarda
         // il gemello testuale, che è il corpo senza marcatori intorno.
-        const occasioni = ['iscrizione-approvata', 'inserimento-anagrafica', 'password-rigenerata', 'candidatura-accolta'] as const
+        const occasioni = ['iscrizione-approvata', 'inserimento-anagrafica', 'password-rigenerata', 'anagrafica-personale-approvata'] as const
         for (const occasione of occasioni) {
             const t = messaggioCredenziali({ nome: 'Maria', email: 'a@b.test', password: 'x', occasione }, GIUGLIANO).testo
             // Il corpo, senza il piè di pagina (che porta «Ricevi questo messaggio»
@@ -294,7 +294,9 @@ describe('01 credenziali — la forma impersonale, che è il requisito più duro
     })
 
     it('l\'occasione sta nella tab, non dentro una frase che dovrebbe reggerne quattro', () => {
-        expect(m().html).toContain('La candidatura è stata accolta')
+        // Senza l'apostrofo iniziale: `esc()` lo rende `&#39;`, e cercarlo qui
+        // proverebbe la codifica dell'HTML invece dell'etichetta.
+        expect(m().html).toContain('anagrafica è stata approvata')
         // E il corpo non afferma niente sull'occasione.
         expect(m().testo).not.toContain('benvenuto')
     })

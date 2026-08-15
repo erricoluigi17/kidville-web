@@ -53,18 +53,26 @@ export type OccasioneCredenziali =
     | 'iscrizione-approvata'
     | 'inserimento-anagrafica'
     | 'password-rigenerata'
-    | 'candidatura-accolta'
+    | 'anagrafica-personale-approvata'
 
 /**
  * L'etichetta dell'occasione. Sta nel sottotitolo della tab gialla, dove è una
  * didascalia — non una frase del corpo, che dovrebbe reggere quattro verità
  * diverse.
+ *
+ * ⚠️ `candidatura-accolta` NON C'È PIÙ, dal 2026-08-15, e non è un rinomino.
+ * Approvare una candidatura non fa più nascere nessun account e non spedisce
+ * nessuna password: la selezione si chiude e basta. L'accesso nasce in un posto
+ * solo — l'approvazione dell'ANAGRAFICA del personale, dove la Direzione ha in
+ * mano i documenti della persona — e l'occasione qui sotto è quella. Un'unione
+ * chiusa serve proprio a questo: il chiamante che sparisce si porta via la sua
+ * voce, invece di lasciarla in giro pronta a essere riusata per sbaglio.
  */
 const ETICHETTA: Record<OccasioneCredenziali, string> = {
     'iscrizione-approvata': 'L\'iscrizione è stata approvata: l\'area genitori è ora attiva.',
     'inserimento-anagrafica': 'L\'anagrafica è stata completata: l\'area genitori è ora attiva.',
     'password-rigenerata': 'La password è stata rigenerata come richiesto.',
-    'candidatura-accolta': 'La candidatura è stata accolta: l\'area del personale è ora attiva.',
+    'anagrafica-personale-approvata': 'L\'anagrafica è stata approvata: l\'area del personale è ora attiva.',
 }
 
 export interface DatiCredenziali {

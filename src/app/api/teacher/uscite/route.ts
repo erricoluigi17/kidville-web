@@ -497,8 +497,14 @@ export const POST = withRoute('teacher/uscite:POST', async (request: NextRequest
           scuolaId,
           utenteIds: destinatari,
           titolo,
-          corpo: `Da autorizzare entro il ${dataItalianaUscita(termine)}. Il modulo è in Modulistica → Moduli da compilare.`,
-          link: '/parent/modulistica?tab=certificati',
+          // ⚠️ IL TESTO NOMINA LA SCHEDA GIUSTA, e il link NON porta un `?tab=`:
+          // `parent/modulistica/page.tsx` tiene la linguetta in `useState('compilare')` e
+          // non legge nessun parametro d'indirizzo (misurato). Un `?tab=certificati` sarebbe
+          // una promessa che la pagina non mantiene — si aprirebbe su «Da Compilare» e il
+          // genitore cercherebbe un modulo dove non c'è. La scheda si nomina a parole, che
+          // è ciò che oggi funziona davvero.
+          corpo: `Da autorizzare entro il ${dataItalianaUscita(termine)}. Il modulo è in Modulistica, scheda «Certificati».`,
+          link: '/parent/modulistica',
           entitaTipo: 'eventi_agenda',
           entitaId: create[0].id,
           bufferMin: 0,

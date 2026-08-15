@@ -82,6 +82,28 @@ interface StesuraForm {
   scalaY: number
   spostamentoX: number
   spostamentoY: number
+  /** La matrice per intero: con una rotazione la scala non sta più in `a` e `d`. */
+  matrice: number[]
+}
+
+/**
+ * Quanto una matrice DEFORMA ciò che trasporta, misurato sui due assi del form.
+ *
+ * Una matrice `[a b c d]` porta il vettore orizzontale in `(a,b)` e quello verticale in
+ * `(c,d)`. La forma è conservata quando i due restano perpendicolari e della stessa
+ * lunghezza: allora è una rotazione con una scala uniforme, e il logotipo «Kidville»
+ * resta il logotipo «Kidville». Se le lunghezze divergono, le lettere si allargano su un
+ * asse e si schiacciano sull'altro — che è il difetto misurato sull'A4 orizzontale, dove
+ * la carta veniva stirata di 1,414× in larghezza e compressa di 0,707× in altezza.
+ */
+function deformazione(m: number[]): { anisotropia: number; nonOrtogonale: number } {
+  const [a, b, c, d] = m
+  const lungoX = Math.hypot(a, b)
+  const lungoY = Math.hypot(c, d)
+  return {
+    anisotropia: Math.abs(lungoX - lungoY),
+    nonOrtogonale: Math.abs(a * c + b * d),
+  }
 }
 
 interface ComposizionePagina {
@@ -100,6 +122,27 @@ interface ComposizionePagina {
  * profondità 0 l'ha disegnato chi ha composto il foglio — ed è l'unica cosa che può
  * finire SOPRA il marchio della scuola.
  */
+/**
+ * `A × B` fra due matrici PDF, nella convenzione a vettore-riga del formato.
+ *
+ * Serve perché `cm` **pre-concatena**: pdf-lib emette traslazione, rotazione e scala come
+ * tre operatori distinti, e leggere solo l'ultimo — come faceva questo file finché la
+ * carta non veniva mai girata — restituisce la sola scala. Con una rotazione in mezzo
+ * quella lettura direbbe che il foglio non è ruotato, cioè misurerebbe l'esatto contrario.
+ */
+function per(a: number[], b: number[]): number[] {
+  return [
+    a[0] * b[0] + a[1] * b[2],
+    a[0] * b[1] + a[1] * b[3],
+    a[2] * b[0] + a[3] * b[2],
+    a[2] * b[1] + a[3] * b[3],
+    a[4] * b[0] + a[5] * b[2] + b[4],
+    a[4] * b[1] + a[5] * b[3] + b[5],
+  ]
+}
+
+const IDENTITA = [1, 0, 0, 1, 0, 0]
+
 async function composizione(pdf: Uint8Array, pagina = 1): Promise<ComposizionePagina> {
   const { getDocumentProxy, getResolvedPDFJS } = await import('unpdf')
   const { OPS } = await getResolvedPDFJS()
@@ -113,8 +156,9 @@ async function composizione(pdf: Uint8Array, pagina = 1): Promise<ComposizionePa
   const disegniDellApp: DisegnoDellApp[] = []
   const forme: StesuraForm[] = []
   let profondita = 0
-  // La matrice corrente a profondità 0: pdf-lib emette `cm` subito prima di `Do`.
-  let corrente: number[] = [1, 0, 0, 1, 0, 0]
+  // La matrice corrente a profondità 0, ACCUMULATA: pdf-lib emette fino a tre `cm`
+  // consecutivi prima di `Do` (traslazione, rotazione, scala) e vanno composti tutti.
+  let corrente: number[] = IDENTITA
 
   for (let i = 0; i < fn.length; i++) {
     if (fn[i] === OPS.paintFormXObjectEnd) {
@@ -126,9 +170,7 @@ async function composizione(pdf: Uint8Array, pagina = 1): Promise<ComposizionePa
       continue
     }
     if (fn[i] === OPS.transform) {
-      const m = args[i] as number[]
-      // Solo le matrici che dicono qualcosa: le identità che pdf-lib intercala no.
-      if (m[0] !== 1 || m[3] !== 1 || m[4] !== 0 || m[5] !== 0) corrente = m
+      corrente = per(args[i] as number[], corrente)
       continue
     }
     if (fn[i] === OPS.paintFormXObjectBegin) {
@@ -137,8 +179,9 @@ async function composizione(pdf: Uint8Array, pagina = 1): Promise<ComposizionePa
         scalaY: corrente[3],
         spostamentoX: corrente[4],
         spostamentoY: corrente[5],
+        matrice: corrente,
       })
-      corrente = [1, 0, 0, 1, 0, 0]
+      corrente = IDENTITA
       profondita++
       continue
     }
@@ -147,13 +190,24 @@ async function composizione(pdf: Uint8Array, pagina = 1): Promise<ComposizionePa
       if (!limiti || limiti.length < 4) continue
       // Il riquadro d'ingombro arriva nello spazio del tracciato: la `cm` che lo precede
       // lo sposta sul foglio, ed è proprio quella che porta la fascia in testa alla pagina.
-      const basso = limiti[1] + corrente[5]
-      const alto = limiti[3] + corrente[5]
+      // I quattro angoli si mappano tutti, non solo la quota: con una matrice ruotata
+      // sommare `f` a `y` darebbe un ingombro che sul foglio non esiste.
+      const [a, b, c, d, , f] = corrente
+      const quote = [
+        [limiti[0], limiti[1]],
+        [limiti[2], limiti[1]],
+        [limiti[0], limiti[3]],
+        [limiti[2], limiti[3]],
+      ].map(([x, y]) => b * x + d * y + f)
+      void a
+      void c
+      const basso = Math.min(...quote)
+      const alto = Math.max(...quote)
       disegniDellApp.push({
         yMm: (altezzaFoglio - alto) * MM_PER_PUNTO,
         altezzaMm: (alto - basso) * MM_PER_PUNTO,
       })
-      corrente = [1, 0, 0, 1, 0, 0]
+      corrente = IDENTITA
       continue
     }
     if (fn[i] === OPS.paintImageXObject) {
@@ -163,7 +217,7 @@ async function composizione(pdf: Uint8Array, pagina = 1): Promise<ComposizionePa
         altezzaMm: Math.abs(altezza) * MM_PER_PUNTO,
       })
       void larghezza
-      corrente = [1, 0, 0, 1, 0, 0]
+      corrente = IDENTITA
     }
   }
   return { disegniDellApp, forme }
@@ -334,15 +388,20 @@ describe('applicaCartaIntestata — la segnatura di protocollo', () => {
 })
 
 /**
- * Il lock che rende il contratto ESEGUIBILE invece che raccomandato.
+ * IL LOCK CHE SORVEGLIA IL RISCHIO VERO — e la versione che non lo sorvegliava.
  *
- * La prima versione di questo modulo diceva ai chiamanti «a valle passa
- * `applicaSegnatura()`, come già oggi». Non era vero: quella funzione ridipinge la fascia
- * verde sopra il marchio, ne aggiunge un secondo logo e riscala la carta — cioè ricrea i
- * due difetti per cui questo lavoro è nato. Una frase in un commento non l'avrebbe mai
- * impedito; questo test sì.
+ * ⚠️ Fino al 2026-08-15 questo blocco conteneva un test **vacuo**: pretendeva che nessun
+ * file importasse insieme `applicaCartaIntestata` e `applicaSegnatura`. Siccome
+ * `applicaCartaIntestata` non era importata da NESSUN file di `src/`, il primo congiunto
+ * era falso ovunque e il test passava a vuoto su tutto il repository — mentre il
+ * certificato vero usciva senza carta intestata. Misurava la composizione sbagliata, non
+ * l'assenza della carta.
+ *
+ * Il predicato qui sotto è **invertito**: non «chi la applica non faccia altro», ma
+ * **«chi consegna un prestampato DEVE applicarla»**. Ed è verificabile: le rotte sono il
+ * confine oltre il quale i byte diventano un foglio in mano a una famiglia o a un ente.
  */
-describe('nessun modulo compone la carta e poi la segnatura a fascia', () => {
+describe('ogni rotta che consegna un prestampato stende la carta intestata', () => {
   function sorgenti(cartella: string, raccolti: string[] = []): string[] {
     for (const voce of readdirSync(cartella, { withFileTypes: true })) {
       const completo = path.join(cartella, voce.name)
@@ -369,29 +428,128 @@ describe('nessun modulo compone la carta e poi la segnatura a fascia', () => {
     return nomi
   }
 
-  it('chi applica la carta usa l’opzione `segnatura`, non `applicaSegnatura`', () => {
+  /** Le porte da cui esce un PDF di prestampato: chi importa una di queste, consegna. */
+  const PORTE_DEL_MOTORE = [
+    'buildPrestampatoPdf',
+    'componiPrestampato',
+    'renderPrestampatoGenitore',
+    'renderPrestampatoSegreteria',
+  ]
+
+  /**
+   * Le ROTTE che consegnano un prestampato, dedotte invece che elencate.
+   *
+   * Un elenco scritto a mano invecchia al primo file nuovo, e invecchia in silenzio: chi
+   * aggiunge una rotta non va a cercare un test per aggiungercela. Qui l'insieme si
+   * ricava dagli import, quindi una rotta nuova entra nel lock da sola.
+   *
+   * Solo i `route.ts`: `banco.ts` e `render.ts` **passano** i byte a qualcun altro, e
+   * `applicaCartaIntestata` va chiamata UNA volta sola — la seconda incollerebbe una
+   * seconda carta sopra il contenuto.
+   */
+  function rotteCheConsegnano(): { file: string; nomi: Set<string> }[] {
     const radice = path.join(process.cwd(), 'src')
-    const colpevoli = sorgenti(radice).filter((file) => {
-      const nomi = nomiImportati(readFileSync(file, 'utf8'))
-      return nomi.has('applicaCartaIntestata') && nomi.has('applicaSegnatura')
-    })
+    return sorgenti(radice)
+      .filter((file) => /[\\/]route\.tsx?$/.test(file))
+      .map((file) => ({ file: path.relative(radice, file), nomi: nomiImportati(readFileSync(file, 'utf8')) }))
+      .filter(({ nomi }) => PORTE_DEL_MOTORE.some((porta) => nomi.has(porta)))
+  }
+
+  it('esistono davvero delle rotte che consegnano prestampati (o questo lock è vacuo)', () => {
+    // La riga che impedisce a questo blocco di tornare a passare per assenza di soggetti,
+    // che è esattamente il modo in cui la versione precedente diceva il falso.
+    expect(rotteCheConsegnano().map((r) => r.file).sort()).not.toEqual([])
+  })
+
+  it('nessuna rotta consegna un prestampato senza `applicaCartaIntestata`', () => {
+    const nude = rotteCheConsegnano()
+      .filter(({ nomi }) => !nomi.has('applicaCartaIntestata'))
+      .map((r) => r.file)
     expect(
-      colpevoli.map((f) => path.relative(radice, f)),
-      'la segnatura sulla carta intestata si passa a applicaCartaIntestata({ segnatura }): ' +
+      nude,
+      'queste rotte consegnano un prestampato NUDO: senza il marchio della scuola, senza ' +
+        'la riga «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO», senza filigrana e senza il ' +
+        'piede a quattro colonne con la P.IVA e le tre sedi. Il motore non disegna più la ' +
+        'testata (impaginazione.ts): se nessuno stende la carta al suo posto, il foglio ' +
+        'esce PEGGIO di prima. Si ripara con applicaCartaIntestata(pdf, { segnatura })'
+    ).toEqual([])
+  })
+
+  it('e nessuna la timbra con la fascia dei documenti acquisiti', () => {
+    // `applicaSegnatura()` dipinge una fascia verde alta 64 pt in testa alla prima pagina,
+    // ci mette dentro un SECONDO logo Kidville e riscala il foglio di 777,89/841,89 =
+    // 0,924 ricentrandolo. Su una scansione arrivata su foglio bianco è la scelta giusta:
+    // non copre niente. Sulla carta intestata cade ESATTAMENTE sul marchio della scuola
+    // (0 → 26,8 mm) — cioè ricrea i difetti n. 1 e n. 2 della specifica.
+    const timbrate = rotteCheConsegnano()
+      .filter(({ nomi }) => nomi.has('applicaSegnatura'))
+      .map((r) => r.file)
+    expect(
+      timbrate,
+      'la segnatura su carta intestata si passa a applicaCartaIntestata({ segnatura }): ' +
         'applicaSegnatura() è il timbro dei documenti ACQUISITI, su foglio bianco'
     ).toEqual([])
   })
 })
 
 describe('applicaCartaIntestata — formati', () => {
+  const ORIZZONTALE: [number, number] = [841.89, 595.276]
+
   it('non si mangia le pagine di formato diverso: le impagina lo stesso', async () => {
-    // Il registro presenze è in orizzontale. Che la carta ci stia stretta è un problema di
-    // resa, non un motivo per far sparire un foglio.
-    const orizzontale: [number, number] = [841.89, 595.276]
-    const doc = await PDFDocument.load(await applicaCartaIntestata(await pdfDiProva(1, orizzontale)))
+    // Il registro presenze è in orizzontale.
+    const doc = await PDFDocument.load(await applicaCartaIntestata(await pdfDiProva(1, ORIZZONTALE)))
     expect(doc.getPageCount()).toBe(1)
     const { width, height } = doc.getPage(0).getSize()
     expect(width).toBeCloseTo(841.89, 2)
     expect(height).toBeCloseTo(595.276, 2)
+  })
+
+  it('sulla pagina orizzontale il marchio della scuola NON si deforma', async () => {
+    // ⚠️ Il difetto che questo test esiste per impedire, reso e guardato il 2026-08-15: su
+    // A4 orizzontale la carta veniva stesa `drawPage(carta, {width: 841,89, height:
+    // 595,276})`, cioè allargata di 1,414× e schiacciata di 0,707×. Il logotipo «Kidville»
+    // diventava grasso e piatto, la riga «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO» si
+    // comprimeva e il piede a quattro colonne arrivava al limite della leggibilità.
+    //
+    // Non era un caso di scuola: la spec §1.5 manda il REGISTRO PRESENZE — che è in
+    // orizzontale — dentro questo stesso motore. Il modulo se ne accorgeva da sé e
+    // consegnava lo stesso, con un `warn` che nessuno avrebbe letto prima della segretaria
+    // che stampa. **Il marchio di una scuola non si stira, mai.**
+    const { forme } = await composizione(await applicaCartaIntestata(await pdfDiProva(1, ORIZZONTALE)))
+    expect(forme.length).toBeGreaterThanOrEqual(1)
+
+    const carta = deformazione(forme[0].matrice)
+    expect(carta.anisotropia, 'la carta è stirata su un asse').toBeLessThan(1e-6)
+    expect(carta.nonOrtogonale, 'la carta è stata inclinata').toBeLessThan(1e-6)
+  })
+
+  it("sull'A4 orizzontale la carta si gira invece di rimpicciolirsi: copre il foglio intero", async () => {
+    // La carta è un foglio FISICO, e il foglio fisico è A4 verticale: un contenuto
+    // orizzontale ci si stampa sopra di traverso. Perciò la scelta giusta non è
+    // rimpicciolire la carta al 70,7% lasciando due fasce bianche ai lati, è girarla di
+    // 90°: l'asset è vettoriale, la rotazione non costa un byte, e sul foglio stampato il
+    // marchio torna in testa.
+    const { forme } = await composizione(await applicaCartaIntestata(await pdfDiProva(1, ORIZZONTALE)))
+    const [a, b, c, d] = forme[0].matrice
+    // Scala 1 su entrambi gli assi: la carta copre l'A4 girato senza margini bianchi.
+    expect(Math.hypot(a, b)).toBeCloseTo(1, 6)
+    expect(Math.hypot(c, d)).toBeCloseTo(1, 6)
+    // Ed è davvero girata: l'asse orizzontale del form non è più orizzontale.
+    expect(Math.abs(a)).toBeLessThan(1e-6)
+  })
+
+  it('su un formato che non è A4 la carta resta intera e centrata, mai deformata', async () => {
+    // Formato inventato e sgraziato di proposito: qui nessuna rotazione fa combaciare i
+    // bordi, quindi la carta si stende «contain» e resta dell'aria. Ciò che NON può
+    // succedere è che si deformi per riempire.
+    const strano: [number, number] = [500, 700]
+    const { forme } = await composizione(await applicaCartaIntestata(await pdfDiProva(1, strano)))
+    const carta = deformazione(forme[0].matrice)
+    expect(carta.anisotropia).toBeLessThan(1e-6)
+    expect(carta.nonOrtogonale).toBeLessThan(1e-6)
+
+    // «Contain» vuol dire che ci sta tutta: la scala è quella del lato più stretto.
+    const scala = Math.hypot(forme[0].matrice[0], forme[0].matrice[1])
+    expect(scala).toBeCloseTo(Math.min(500 / 595.276, 700 / 841.89), 6)
   })
 })

@@ -640,7 +640,20 @@ describe('render — i fogli che escono davvero', () => {
     expect(protocollato.ok).toBe(true)
     if (!protocollato.ok) return
     const testoProtocollato = await estraiTesto(protocollato.pdf)
-    expect(testoProtocollato).toContain('Prot. n. 0000123/2026 del 14/08/2026')
+
+    // ⚠️ Il numero c'è, e c'è UNA VOLTA SOLA. L'asserzione che stava qui pretendeva la
+    // riga di corpo «Prot. n. 0000123/2026 del 14/08/2026» del §4.1: era giusta finché
+    // quella riga era l'unico posto in cui il numero compariva. Sulla carta intestata la
+    // segnatura di protocollo si stampa a 34 mm — «SCUOLA … · Prot. n. 0000123/2026 ·
+    // Uscita · del 14/08/2026 ore 10:24» — e per un giorno le due cose sono uscite
+    // insieme, a diciotto millimetri di distanza, sullo stesso certificato per l'INPS.
+    // Ora il corpo tace (`OpzioniStampa.protocolloInSegnatura`) e il numero viaggia nella
+    // segnatura, che lo dice per intero e nel posto che il DPR 445 gli assegna.
+    expect(testoProtocollato).not.toContain('Prot. n. 0000123/2026 del 14/08/2026')
+    // Ma il numero NON sparisce dal foglio: il riquadro di verifica (§4.3) lo porta, ed è
+    // la rete che impedisce all'altro difetto — un certificato senza il proprio numero —
+    // di prendere il posto di quello appena tolto.
+    expect(testoProtocollato).toContain('protocollo n. 0000123/2026 del 14/08/2026')
     expect(testoProtocollato).toContain('esempio.invalid/verifica')
   })
 

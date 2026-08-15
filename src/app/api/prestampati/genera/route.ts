@@ -8,13 +8,12 @@ import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { parseBody, validationError } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { annoFiscale } from '@/lib/format/fiscal-date'
-import { logoLightBytes } from '@/lib/protocolli/assets'
+import { applicaCartaIntestata } from '@/lib/carta'
 import {
   dataOraItaliana,
   formatNumeroProtocollo,
   righeSegnatura,
 } from '@/lib/protocolli/segnatura'
-import { applicaSegnatura } from '@/lib/protocolli/timbro'
 import {
   ensureBucket,
   pathDefinitivi,
@@ -83,15 +82,14 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  * `registraProtocollo()` fa tutto in una chiamata — prende il numero, timbra, carica,
  * inserisce — e quindi PRETENDE il PDF già fatto. Va benissimo per le tre route del
  * registro protocolli, dove il numero compare solo nella fascia di segnatura apposta dopo.
- * Qui no: §4.1 della specifica vuole il numero DENTRO il foglio (la riga «Prot. n.
- * 0000123/2026 del …» sopra il titolo) e §4.3 il riquadro di verifica che lo ripete — e
- * `render.ts` rifiuta di comporre un documento in uscita che non dichiari il proprio numero.
+ * Qui no: §4.3 della specifica vuole nel foglio il riquadro di verifica che dichiara il
+ * numero, e `render.ts` rifiuta di comporre un documento in uscita che non lo dichiari.
  * Il numero deve quindi esistere PRIMA del PDF, e prenderlo con una seconda chiamata alla
  * RPC ne brucerebbe uno a ogni foglio, con il PDF che dice `0000123` e il registro che dice
  * `0000124`.
  *
  * Perciò qui la stessa sequenza è aperta attorno al render, con gli stessi pezzi
- * (`prossimo_numero_protocollo`, `righeSegnatura`, `applicaSegnatura`, `pathDefinitivi`,
+ * (`prossimo_numero_protocollo`, `righeSegnatura`, `applicaCartaIntestata`, `pathDefinitivi`,
  * `sha256Impronta`) e lo stesso rollback: non una numerazione nuova, la stessa smontata di
  * un passo. **La riparazione vera sta in `src/lib/protocolli/store.ts`** — un
  * `registraProtocollo` che accetti il numero già preso, o che si divida in
@@ -399,10 +397,22 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
       protocollo = esito
     }
 
-    const reso =
+    const composto =
       protocollo?.reso ??
       componiPrestampato(voce, contesto, risposte, { carta, legaleRappresentante }, operatore)
-    if (!reso.ok) return rispostaRifiuto(reso)
+    if (!composto.ok) return rispostaRifiuto(composto)
+
+    // ── 5bis. LA CARTA DELLA SCUOLA, SU OGNI FOGLIO CHE ESCE DA QUI ───────────
+    //
+    // Il ramo protocollato l'ha già stesa insieme alla segnatura (una chiamata sola: vedi
+    // `protocollaEComponi`). Gli altri diciassette modelli — la scheda sanitaria, la
+    // delega al ritiro, la stampa di sezione — passano di qui, e senza questa riga
+    // uscirebbero NUDI: `impaginazione.ts` non disegna più né banda né logo né piede,
+    // perché ce li ha la carta vera, e un foglio a cui nessuno la stende esce **peggio**
+    // di com'era prima di questo lavoro.
+    const reso = protocollo
+      ? composto
+      : { ...composto, pdf: await applicaCartaIntestata(composto.pdf) }
 
     // ── 6. L'archiviazione nel fascicolo ──────────────────────────────────────
     // I fogli di SEZIONE non si archiviano: `student_documents` è il fascicolo di UN
@@ -457,24 +467,26 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
       n: reso.pdf.byteLength,
     })
 
-    // ─── QUELLO CHE ESCE È L'ORIGINALE, NON IL TIMBRATO — e va detto ──────────
+    // ─── QUI ORIGINALE E TIMBRATO SONO LO STESSO FOGLIO — e va detto ──────────
     //
-    // La route sorella (`admin/protocolli/genera-documento`) restituisce il PDF con la
-    // fascia di segnatura (`downloadTimbrato`), e questa no: è una divergenza deliberata,
-    // non una dimenticanza, e queste righe esistono perché nessuno la «ripari».
+    // Fino al 2026-08-15 queste righe spiegavano una divergenza deliberata: la route
+    // sorella (`admin/protocolli/genera-documento`) restituisce il PDF con la fascia di
+    // segnatura, questa restituiva l'originale senza. La ragione era il §4.3 — il riquadro
+    // di verifica afferma «l'impronta SHA-256 di QUESTO documento è registrata nel registro
+    // di protocollo», e l'impronta registrata era quella dei byte PRIMA della fascia,
+    // quindi consegnare il timbrato rendeva falsa una frase stampata su un atto diretto a
+    // un ente.
     //
-    //  · §4.1 — su questi fogli il numero di protocollo è DENTRO il documento, nella riga
-    //    «Prot. n. 0000123/2026 del …» sopra il titolo. Sulla route sorella il numero
-    //    compare solo nella fascia, e senza quella il foglio non direbbe il proprio numero:
-    //    lì il timbrato è l'unica copia leggibile, qui no;
-    //  · §4.3 — il riquadro di verifica stampato in fondo afferma «l'impronta SHA-256 di
-    //    QUESTO documento è registrata nel registro di protocollo». L'impronta registrata
-    //    (`protocolli.impronta_sha256`) è quella dei byte PRIMA della fascia — `applicaSegnatura`
-    //    passa dopo — quindi consegnare il timbrato renderebbe falsa una frase stampata su
-    //    un atto destinato a un ente, e chi provasse a verificarlo troverebbe un'impronta
-    //    che non torna.
+    // Sulla carta intestata quella distinzione non esiste più, ed è un miglioramento:
+    // `applicaCartaIntestata(pdf, { segnatura })` stende carta e segnatura in una passata
+    // sola, quindi il foglio che esce da qui, quello archiviato come originale, quello
+    // archiviato come timbrato e quello di cui si registra l'impronta **sono lo stesso
+    // file**. La frase del §4.3 è finalmente vera per chi il foglio ce l'ha in mano: se
+    // ricalcola lo SHA-256 di ciò che ha scaricato, trova esattamente ciò che il registro
+    // ha scritto.
     //
-    // Il timbrato resta dov'è utile: nel bucket del protocollo, che è la copia dell'archivio.
+    // E il numero di protocollo è sul foglio una volta sola, nella segnatura: la riga di
+    // corpo del §4.1 tace quando la segnatura c'è (`OpzioniStampa.protocolloInSegnatura`).
     const nomeFile = `${slugNomeFile(reso.titolo)}.pdf`
     return new NextResponse(Buffer.from(reso.pdf), {
       status: 201,
@@ -726,11 +738,36 @@ async function protocollaEComponi(
     return { response: rispostaRifiuto(reso) }
   }
 
+  // ─── LA CARTA DELLA SCUOLA, E LA SEGNATURA, IN UNA CHIAMATA SOLA ──────────────
+  //
+  // Fino al 2026-08-15 qui c'era `applicaSegnatura(reso.pdf, { righe, logoPng })`, e
+  // andava bene quando il motore disegnava da sé una banda verde in cima al foglio. Ora
+  // non la disegna più — ce l'ha la carta intestata vera — e comporre le due cose in
+  // sequenza produceva, misurato: la fascia verde di `applicaSegnatura` **sopra il
+  // marchio della scuola** (che finisce a 26,8 mm), un SECONDO logo Kidville sopra il
+  // primo, e la carta riscalata di 777,89/841,89 = 0,924 e ricentrata — cioè il piede a
+  // quattro colonne staccato dal fondo del foglio, con due margini bianchi ai lati.
+  // Sono, alla lettera, i difetti n. 1 e n. 2 della specifica.
+  //
+  // `applicaSegnatura()` resta il timbro dei documenti **acquisiti** (una scansione, una
+  // foto), che arrivano su un foglio bianco dove la fascia non copre niente. Il lock che
+  // lo tiene è in `__tests__/lib/carta-applica.test.ts`.
+  //
+  // Il numero di protocollo esce da qui una volta sola: `assembla()` spegne la riga
+  // «Prot. n. …» nel corpo quando il documento è protocollato, perché la segnatura la
+  // contiene già (`OpzioniStampa.protocolloInSegnatura`). Prima ci stava due volte, a
+  // diciotto millimetri di distanza, su un certificato diretto all'INPS.
   const denominazione = await denominazioneScuola(supabase, input.scuolaId)
-  const timbrato = await applicaSegnatura(reso.pdf, {
-    righe: righeSegnatura({ denominazione, numero, anno, tipo: 'uscita', quando }),
-    logoPng: logoLightBytes(),
+  const suCarta = await applicaCartaIntestata(reso.pdf, {
+    segnatura: { righe: righeSegnatura({ denominazione, numero, anno, tipo: 'uscita', quando }) },
   })
+  // Da qui in giù il documento È questo: quello che si consegna, quello che si archivia e
+  // quello di cui si registra l'impronta sono lo stesso file. È un miglioramento e va
+  // detto: il riquadro di verifica stampato in fondo afferma «l'impronta SHA-256 di
+  // QUESTO documento è registrata nel registro di protocollo», e prima l'impronta
+  // registrata era quella dei byte PRIMA della fascia — cioè di un file che nessuno aveva
+  // in mano. Ora quella frase è vera per chi tiene il foglio.
+  const documento = { ...reso, pdf: suCarta }
 
   const percorsi = pathDefinitivi(input.scuolaId, anno, numero)
   const pathOriginale = percorsi.originale('pdf')
@@ -740,9 +777,16 @@ async function protocollaEComponi(
   await ensureBucket(supabase)
 
   try {
+    // Due percorsi, gli STESSI byte: il documento generato nasce già segnato — il
+    // registro protocolli ha due colonne (`file_originale`, `file_timbrato`) perché su un
+    // documento ACQUISITO l'originale è la scansione com'è arrivata e il timbrato è la
+    // copia con la fascia. Qui l'una e l'altra sono lo stesso foglio, e scriverlo due
+    // volte è meno pericoloso che far puntare due colonne allo stesso file: la rettifica
+    // di un protocollo sostituisce l'originale e rigenera il timbrato, e con un percorso
+    // solo si sovrascriverebbero a vicenda.
     for (const [path, bytes] of [
-      [pathOriginale, reso.pdf],
-      [percorsi.timbrato, timbrato],
+      [pathOriginale, documento.pdf],
+      [percorsi.timbrato, documento.pdf],
     ] as const) {
       const { error } = await storage.upload(path, Buffer.from(bytes), {
         contentType: MIME_PDF,
@@ -771,13 +815,13 @@ async function protocollaEComponi(
         // Una funzione sola per i due campi, e non è uno sfizio: sono le due metà della
         // stessa frase — «a chi va» e «come ci arriva» — e finiscono su una riga di
         // registro WORM che nessuno rettificherà. Vedi `destinazioneProtocollo`.
-        ...destinazioneProtocollo(input.voce, input.contesto, reso.risposte),
-        impronta_sha256: sha256Impronta(reso.pdf),
+        ...destinazioneProtocollo(input.voce, input.contesto, documento.risposte),
+        impronta_sha256: sha256Impronta(documento.pdf),
         file_originale: pathOriginale,
         file_timbrato: percorsi.timbrato,
-        file_nome_originale: `${slugNomeFile(reso.titolo)}.pdf`,
+        file_nome_originale: `${slugNomeFile(documento.titolo)}.pdf`,
         file_mime: MIME_PDF,
-        file_size: reso.pdf.byteLength,
+        file_size: documento.pdf.byteLength,
         created_by: input.createdBy,
       })
     if (erroreInsert) {
@@ -786,7 +830,7 @@ async function protocollaEComponi(
       throw new Error(`Registrazione a protocollo non riuscita: ${erroreInsert.message}`)
     }
 
-    return { numero, anno, numeroFormattato, reso }
+    return { numero, anno, numeroFormattato, reso: documento }
   } catch (err) {
     // Rollback best-effort dei soli FILE: la riga di registro, se c'è, non è mai da
     // disfare (vedi sopra). Se anche la rimozione fallisce resta un file orfano nel

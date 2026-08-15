@@ -13,13 +13,19 @@
  * tabella e riquadro fanno tutti così. Una guardia che esce e butta via i dati sarebbe
  * qui la stessa cosa che il progetto chiama incidente quando succede in un log.
  *
- * A valle passa `applicaCartaIntestata()` di `src/lib/carta/`, che stende la carta REALE
- * della scuola sotto ogni pagina e — quando il documento è protocollato — ci apporta anche
- * la segnatura, con l'opzione `{ segnatura }`. **Una chiamata sola, e non due.** Questa
- * riga diceva «e poi `applicaSegnatura()` di `src/lib/protocolli/timbro.ts`, che riscala
- * la prima pagina invece di coprirla»: su un foglio bianco è vero, sulla carta intestata
+ * ⚠️ **QUESTI BYTE NON SONO UN DOCUMENTO FINITO.** A valle DEVE passare
+ * `applicaCartaIntestata()` di `src/lib/carta/`, che stende la carta REALE della scuola
+ * sotto ogni pagina e — quando il documento è protocollato — ci apporta anche la
+ * segnatura, con l'opzione `{ segnatura }`. **Una chiamata sola, e non due.** Questa riga
+ * diceva «e poi `applicaSegnatura()` di `src/lib/protocolli/timbro.ts`, che riscala la
+ * prima pagina invece di coprirla»: su un foglio bianco è vero, sulla carta intestata
  * quella funzione dipinge la fascia verde sopra il marchio della scuola e riscala la carta
  * di 0,924, staccando il piede a quattro colonne dal fondo del foglio.
+ *
+ * Che il passo a valle ci sia davvero non è affidato a questo commento: per un giorno il
+ * commento c'era e la chiamata no, e il certificato usciva senza marchio, senza filigrana
+ * e senza il piede con la P.IVA e le tre sedi — cioè peggio di prima. Lo verifica il lock
+ * in `__tests__/lib/carta-applica.test.ts`, rotta per rotta.
  *
  * ⚠️ **QUESTO MOTORE NON DISEGNA PIÙ LA TESTATA** (2026-08-15). Non c'è più la banda
  * verde, non c'è più il logo, non c'è più il piede predefinito: ce li ha già la carta
@@ -142,7 +148,22 @@ const CENTRO_COLONNA_FIRMA = 152 // colonna destra 128→176, come in documento-
 const X_RIQUADRO_FIRMA = 118
 const LARGHEZZA_RIQUADRO_FIRMA = MARGINE_DX - X_RIQUADRO_FIRMA // 70
 const STACCO_RIQUADRO_FIRMA = 2.5 // dalla linea di scrittura al bordo alto del riquadro
-const DISTANZA_FIRMA_VERIFICA = 6
+
+/**
+ * L'aria fra il fondo del blocco firma e il bordo alto del riquadro di verifica.
+ *
+ * Era 6 mm, ed è scesa a 3,5 il 2026-08-15 — non per far passare un test, ma per PAGARE i
+ * 2,5 mm che `CARTA.contenutoFine` ha dovuto cedere alla riga di servizio (prima chiudeva
+ * a 0,7 mm da «Pagina n di m»). Quei millimetri, dice `carta/geometria.ts`, «si trovano
+ * nel motore, non nella geometria della carta»: eccoli.
+ *
+ * 3,5 mm è la stessa aria che il riquadro di verifica ha DENTRO di sé
+ * (`PADDING_VERIFICA` = 3), quindi due cornici restano due cornici anche a occhio. Il
+ * numero tocca solo i documenti che hanno **entrambi** i blocchi — i certificati
+ * protocollati — e senza di lui il certificato di iscrizione e frequenza con il campo
+ * «uso» passava da una pagina a due, con la seconda occupata dalla sola firma.
+ */
+const DISTANZA_FIRMA_VERIFICA = 3.5
 
 /**
  * Costante di legge, non un testo di prodotto: cambia solo se cambia la norma (§3b).
@@ -180,10 +201,54 @@ interface Stato {
    * da sola. Vedi `limitePerUltimoBlocco()`.
    */
   limite: number
+  /**
+   * Il titolo di sezione che aspetta di sapere dove finirà il suo contenuto.
+   *
+   * Vedi `disegnaSezione`: un titoletto non si disegna quando arriva, si disegna insieme
+   * al blocco che lo segue, così i due non si separano mai.
+   */
+  sezioneSospesa: string | null
 }
 
-/** Il documento composto, pronto per `applicaCartaIntestata()` e `applicaSegnatura()`. */
-export function buildPrestampatoPdf(documento: DocumentoPrestampato): Uint8Array {
+/**
+ * Come il chiamante intende consegnare questo foglio.
+ *
+ * Una sola opzione, e riguarda **dove vive il numero di protocollo**. Vedi
+ * `protocolloInSegnatura`.
+ */
+export interface OpzioniStampa {
+  /**
+   * ⚠️ **UNA SOLA SEDE PER IL NUMERO DI PROTOCOLLO.**
+   *
+   * Il numero può stare in due posti su questo foglio, e per un giorno ci è stato in
+   * tutti e due: la segnatura che `applicaCartaIntestata()` stampa a 34 mm («SCUOLA … ·
+   * Prot. n. 0000123/2026 · Uscita · del 15/08/2026 ore 10:24») e la riga di corpo a 52 mm
+   * («Prot. n. 0000123/2026 del 15/08/2026»). Diciotto millimetri di distanza, lo stesso
+   * numero due volte, sul certificato che va all'INPS e al datore di lavoro.
+   *
+   * Non è un difetto di una delle due: è un difetto della composizione, e quindi si
+   * risolve dove la composizione si decide — nel chiamante. Chi passa `segnatura` a
+   * `applicaCartaIntestata()` passa `protocolloInSegnatura: true` qui, e il corpo tace.
+   *
+   * La segnatura è la sede giusta delle due (art. 55 DPR 445/2000: ente, numero, tipo,
+   * data e ora) e sta esattamente nell'aria che la carta lascia sotto il marchio. La riga
+   * di corpo del §4.1 resta per i fogli che una segnatura non ce l'hanno.
+   *
+   * ⚠️ Spegne SOLO la riga di protocollo vera. La dicitura «Copia a uso della famiglia —
+   * non protocollata» viaggia nello stesso campo ma non è un numero, nessuna segnatura la
+   * ripete, e toglierla vorrebbe dire consegnare una copia che non dice più di esserlo.
+   */
+  protocolloInSegnatura?: boolean
+}
+
+/** Quello che `protocolloInSegnatura` spegne, e quello che non tocca mai. */
+const PREFISSO_PROTOCOLLO = 'Prot. n.'
+
+/** Il documento composto, pronto per `applicaCartaIntestata()`. */
+export function buildPrestampatoPdf(
+  documento: DocumentoPrestampato,
+  opzioni: OpzioniStampa = {}
+): Uint8Array {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   // Testata compatta e riquadro di verifica si compongono PRIMA di disegnare: le loro
   // altezze decidono quanto contenuto ci sta in una pagina e dove può cadere la firma, e
@@ -195,18 +260,23 @@ export function buildPrestampatoPdf(documento: DocumentoPrestampato): Uint8Array
     testata: componiTestataCompatta(doc, documento),
     verifica: documento.verifica ? componiVerifica(doc, documento.verifica) : null,
     limite: LIMITE_CONTENUTO,
+    sezioneSospesa: null,
   }
   // Il blocco firma si misura PRIMA di impaginare il corpo, e non è un dettaglio d'ordine:
   // il suo ingombro decide dove l'ultimo blocco di contenuto deve fermarsi.
   const firma = componiBloccoFirma(doc, documento, s.verifica)
 
-  s.y = testataPrimaPagina(doc, documento)
+  s.y = testataPrimaPagina(doc, documento, opzioni)
   const ultimo = documento.blocchi.length - 1
   documento.blocchi.forEach((blocco, i) => {
     s.limite = i === ultimo ? limitePerUltimoBlocco(s, firma.tetto) : LIMITE_CONTENUTO
     disegnaBlocco(s, blocco)
   })
   s.limite = LIMITE_CONTENUTO
+  // Un titolo di sezione senza NIENTE dopo di sé: il documento finisce lì. Si stampa lo
+  // stesso — un blocco che sparisce in silenzio è la cosa che questo motore non fa mai —
+  // e ci pensa la firma, che viene dopo, a non lasciarlo solo in cima a un foglio.
+  scaricaSezione(s, 0)
   disegnaFirma(s, firma)
   // Il riquadro di verifica va in fondo all'ULTIMA pagina, che dopo la firma è quella
   // corrente: si disegna alla quota già misurata e non tocca il flusso.
@@ -227,7 +297,11 @@ export function buildPrestampatoPdf(documento: DocumentoPrestampato): Uint8Array
  * Niente banda verde e niente logo: li porta la carta intestata, e ridisegnarli qui
  * significava stamparci sopra. La banda copriva il marchio della scuola per intero.
  */
-function testataPrimaPagina(doc: jsPDF, d: DocumentoPrestampato): number {
+function testataPrimaPagina(
+  doc: jsPDF,
+  d: DocumentoPrestampato,
+  opzioni: OpzioniStampa
+): number {
   let y = Y_INTESTAZIONE
   if (d.intestazione.length > 0) {
     doc.setTextColor(...GRIGIO)
@@ -242,7 +316,14 @@ function testataPrimaPagina(doc: jsPDF, d: DocumentoPrestampato): number {
   // Riga di protocollo (§4.1): a y=52 con l'intestazione consueta di tre righe, più in
   // basso quando la sede ne ha di più. Il massimo non è pignoleria: una sede con cinque
   // righe si stamperebbe il protocollo sopra il proprio indirizzo.
-  const protocollo = d.protocollo?.trim()
+  //
+  // …a meno che il numero non viaggi già nella segnatura sulla carta: allora qui tace, e
+  // il perché sta tutto in `OpzioniStampa.protocolloInSegnatura`. Il confronto è sul
+  // PREFISSO e non sul contenuto del campo: «Copia a uso della famiglia — non
+  // protocollata» passa dallo stesso campo, non è un numero, e non si spegne mai.
+  const grezzo = d.protocollo?.trim()
+  const protocollo =
+    opzioni.protocolloInSegnatura && grezzo?.startsWith(PREFISSO_PROTOCOLLO) ? '' : grezzo
   if (protocollo) {
     const yProtocollo = Math.max(y, Y_PROTOCOLLO)
     doc.setTextColor(...INCHIOSTRO)
@@ -360,17 +441,51 @@ function cambioPagina(s: Stato, altezza: number): boolean {
   return true
 }
 
+/** Quanto ingombra un titoletto di sezione: l'aria sopra, il filetto, l'aria sotto. */
+const ALTEZZA_SEZIONE = SPAZIO_PRIMA_SEZIONE + 2 + SPAZIO_DOPO_FILETTO
+
 /**
  * Salto per BLOCCHI INTERI (§2): se il blocco non ci sta qui ma ci starebbe tutto in una
  * pagina vuota, si va a capo pagina prima di cominciare. Se non ci sta nemmeno lì — un
  * paragrafo lunghissimo, una tabella di cinquanta righe — si torna `false` e il blocco si
  * spezza comunque riga per riga: spezzato è brutto, troncato è un dato che sparisce.
+ *
+ * ⚠️ **E QUI SI DECIDE ANCHE DOVE VA IL TITOLO DI SEZIONE che aspetta.** È l'unico punto
+ * del motore che sa, tutto insieme, quanto è alto il blocco che sta per cominciare e quanto
+ * spazio resta: quindi è l'unico che può tenere insieme un titoletto e il suo contenuto.
+ * Il titolo entra nel conto (`ALTEZZA_SEZIONE`) e si stampa **dopo** l'eventuale salto —
+ * mai prima, o resterebbe sulla pagina che il suo contenuto ha appena lasciato.
  */
 function preferisciBloccoIntero(s: Stato, altezza: number): boolean {
-  if (altezza <= s.limite - s.y) return false
-  if (altezza > s.limite - s.testata.quotaCorpo) return false
-  nuovaPagina(s)
-  return true
+  const conTitolo = altezza + (s.sezioneSospesa ? ALTEZZA_SEZIONE : 0)
+  const saltato =
+    conTitolo > s.limite - s.y && conTitolo <= s.limite - s.testata.quotaCorpo
+  if (saltato) nuovaPagina(s)
+  scaricaSezione(s, saltato ? 0 : SPAZIO_PRIMA_SEZIONE)
+  return saltato
+}
+
+/**
+ * Stampa il titolo di sezione rimasto in sospeso, se c'è, e lo toglie dalla coda.
+ *
+ * `ariaSopra` è zero in cima a una pagina nuova: dieci millimetri di stacco sotto la
+ * testata compatta sarebbero un buco, non un respiro.
+ */
+function scaricaSezione(s: Stato, ariaSopra: number): void {
+  const titolo = s.sezioneSospesa
+  if (titolo === null) return
+  s.sezioneSospesa = null
+
+  const { doc } = s
+  s.y += ariaSopra
+  doc.setTextColor(...VERDE)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.text(titolo.toUpperCase(), MARGINE_SX, s.y, { charSpace: SPAZIATURA_TITOLI })
+  doc.setDrawColor(...GRIGIO)
+  doc.setLineWidth(0.2)
+  doc.line(MARGINE_SX, s.y + 2, MARGINE_DX, s.y + 2)
+  s.y += 2 + SPAZIO_DOPO_FILETTO
 }
 
 /**
@@ -410,7 +525,9 @@ function disegnaBlocco(s: Stato, blocco: BloccoPrestampato): void {
       return disegnaRiquadro(s, blocco.titolo, blocco.campi)
     case 'spazio':
       // Lo spazio non provoca mai un salto: uno spazio in cima a una pagina nuova è
-      // un buco, e il blocco che segue il salto se lo farà da sé.
+      // un buco, e il blocco che segue il salto se lo farà da sé. Un titolo in coda però
+      // si scarica prima, o lo spazio finirebbe SOPRA il titoletto invece che sotto.
+      scaricaSezione(s, SPAZIO_PRIMA_SEZIONE)
       s.y += Math.max(blocco.mm, 0)
       return
     default: {
@@ -444,22 +561,33 @@ function disegnaParagrafo(s: Stato, testo: string, stile: 'normale' | 'corsivo' 
   }
 }
 
+/**
+ * Un titoletto di sezione NON SI DISEGNA QUANDO ARRIVA: si mette in coda.
+ *
+ * ⚠️ **La regola che mancava, e che è costata un titolo orfano con 68 mm di bianco
+ * sotto.** Misurato il 2026-08-15 su un certificato di iscrizione e frequenza con un «uso»
+ * del tutto ordinario («Da presentare al datore di lavoro per la richiesta del congedo
+ * parentale…»): pagina 1 chiudeva con «DATI IDENTIFICATIVI DELLA SCUOLA» e il suo filetto
+ * a 197,6 mm, e poi più niente fino a «Pagina 1 di 2». I tre campi — Denominazione, P.IVA,
+ * Sede legale — stavano a pagina 2, che il titolo non lo ripete.
+ *
+ * La versione precedente ci provava, e non poteva funzionare: chiedeva spazio «per sé e
+ * per due righe». Ma i blocchi non arrivano a righe — `preferisciBloccoIntero` sposta un
+ * blocco INTERO quando non ci sta — quindi il titolo che aveva prenotato tredici
+ * millimetri restava lì mentre i suoi tre campi (19,5 mm) traslocavano in massa. Riservare
+ * di più sarebbe stato indovinare: l'altezza vera del blocco seguente la conosce solo il
+ * blocco seguente, e la conosce dopo aver mandato a capo i propri valori coi font veri.
+ *
+ * Perciò non si indovina: il titolo aspetta. Lo stampa `preferisciBloccoIntero`, che è
+ * l'unico punto in cui altezza del contenuto e spazio residuo si incontrano — e lo stampa
+ * **dopo** l'eventuale salto di pagina. Un titolo e il suo contenuto o stanno insieme, o
+ * cambiano pagina insieme.
+ */
 function disegnaSezione(s: Stato, titolo: string): void {
-  const { doc } = s
-  const altezza = SPAZIO_PRIMA_SEZIONE + 2 + SPAZIO_DOPO_FILETTO
-  // Il titolo chiede spazio anche per le due righe che lo seguono: un titolo di sezione
-  // orfano in fondo alla pagina è peggio di una pagina che finisce prima.
-  const saltato = preferisciBloccoIntero(s, altezza + INTERLINEA * 2)
-  if (!saltato) s.y += SPAZIO_PRIMA_SEZIONE
-
-  doc.setTextColor(...VERDE)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10)
-  doc.text(titolo.toUpperCase(), MARGINE_SX, s.y, { charSpace: SPAZIATURA_TITOLI })
-  doc.setDrawColor(...GRIGIO)
-  doc.setLineWidth(0.2)
-  doc.line(MARGINE_SX, s.y + 2, MARGINE_DX, s.y + 2)
-  s.y += 2 + SPAZIO_DOPO_FILETTO
+  // Due sezioni di fila senza niente in mezzo: la prima non si perde, si stampa subito e
+  // la seconda prende il suo posto in coda.
+  scaricaSezione(s, SPAZIO_PRIMA_SEZIONE)
+  s.sezioneSospesa = titolo
 }
 
 interface CellaCampo {

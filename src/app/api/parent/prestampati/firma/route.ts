@@ -53,6 +53,7 @@ import {
   modelloGenitore,
   type DatiPrestampato,
 } from '@/lib/prestampati/modelli/genitore'
+import { applicaCartaIntestata } from '@/lib/carta'
 import { cartaDaDati, renderPrestampatoGenitore } from '@/lib/prestampati/render'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -972,7 +973,20 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
       signedAt: adesso.toISOString(),
     })
 
-    const pdf = esito.pdf
+    // ─── LA CARTA DELLA SCUOLA, SOTTO OGNI PAGINA ────────────────────────────────────
+    //
+    // `impaginazione.ts` non disegna più né banda verde né logo né piede: ce li ha la
+    // carta intestata vera, e ridisegnarli significava stamparci sopra. Senza questa riga
+    // il modulo firmato dalla famiglia — la scheda sanitaria, la delega al ritiro, il
+    // certificato di iscrizione — uscirebbe NUDO, cioè peggio di com'era prima.
+    //
+    // Va PRIMA dell'impronta, e non è un dettaglio d'ordine: `impronta` finisce nella riga
+    // FEA ed è ciò con cui si verifica il documento archiviato. Calcolarla sui byte senza
+    // carta vorrebbe dire registrare l'impronta di un file che nessuno ha mai avuto.
+    //
+    // Nessuna `segnatura`: questi fogli non consumano numerazione e portano la dicitura
+    // «Copia a uso della famiglia — non protocollata» (§4.1).
+    const pdf = await applicaCartaIntestata(esito.pdf)
     const impronta = createHash('sha256').update(pdf).digest('hex')
 
     // ── 1. La traccia FEA, prima di tutto il resto ───────────────────────────────────

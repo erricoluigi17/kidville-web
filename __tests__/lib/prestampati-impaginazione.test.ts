@@ -927,3 +927,139 @@ describe('buildPrestampatoPdf — protocollo e verifica (§4)', () => {
     }
   })
 })
+
+describe('buildPrestampatoPdf — niente titoli orfani, niente collisioni col piede', () => {
+  it('un titolo di sezione non chiude mai la pagina lasciandosi il contenuto dietro', async () => {
+    // ⚠️ Il difetto misurato il 2026-08-15 sul certificato con un «uso» ordinario — «Da
+    // presentare al datore di lavoro per la richiesta del congedo parentale e per la
+    // detrazione fiscale»: pagina 1 si chiudeva col titoletto «DATI IDENTIFICATIVI DELLA
+    // SCUOLA» e il suo filetto (195,07→198,33 mm), e poi 68 mm di bianco fino a «Pagina 1
+    // di 2». I tre campi stavano a pagina 2, che il titolo non lo ripete.
+    //
+    // La causa non era la mancanza della regola — `disegnaSezione` chiedeva già spazio per
+    // due righe — ma il fatto che la chiedesse al limite SBAGLIATO: il titolo misurava
+    // contro `LIMITE_CONTENUTO`, mentre il blocco che lo segue, se è l'ultimo, si ferma
+    // molto più in alto per lasciare il posto alla firma. Il titolo credeva di avere 68 mm
+    // e il suo contenuto ne trovava zero.
+    const uso =
+      'Da presentare al datore di lavoro per la richiesta del congedo parentale e per la detrazione fiscale'
+    const pdf = buildPrestampatoPdf(certificatoProtocollato(uso))
+    const elementi = await elementiTesto(pdf)
+
+    const titoli = elementi.filter((el) => el.testo.includes('DATI IDENTIFICATIVI'))
+    expect(titoli.length, 'il titolo di sezione non è sul foglio').toBeGreaterThan(0)
+
+    for (const titolo of titoli) {
+      const sotto = elementi.filter(
+        (el) =>
+          el.pagina === titolo.pagina &&
+          el.yMm > titolo.yMm + TOLLERANZA_MM &&
+          el.yMm < CARTA.contenutoFine &&
+          !el.testo.startsWith('Pagina ')
+      )
+      expect(
+        sotto.map((el) => el.testo).join(' | '),
+        `titolo orfano a pagina ${titolo.pagina}, y=${titolo.yMm.toFixed(2)}`
+      ).toContain('Denominazione')
+    }
+  })
+
+  it('la regola vale su tutta la finestra in cui il difetto compare, non su un caso solo', async () => {
+    // Un titolo di sezione seguito da campi, spinto giù millimetro per millimetro: in
+    // nessuna posizione il titolo può restare l'ultima cosa della pagina.
+    for (let capoversi = 20; capoversi <= 32; capoversi++) {
+      const pdf = buildPrestampatoPdf(
+        documento({
+          blocchi: [
+            ...riempimento(capoversi),
+            { tipo: 'sezione', titolo: 'Dati identificativi della scuola' },
+            {
+              tipo: 'campi',
+              colonne: 1,
+              campi: [
+                { etichetta: 'Denominazione', valore: 'Scuola di Prova Soc. Coop.' },
+                { etichetta: 'P.IVA/C.F.', valore: '00000000000' },
+              ],
+            },
+          ],
+          firma: { tipo: 'legaleRappresentante', nome: 'Nome Cognome Inventato' },
+        })
+      )
+      const elementi = await elementiTesto(pdf)
+      const titolo = elementi.find((el) => el.testo.includes('DATI IDENTIFICATIVI'))!
+      const sotto = elementi.filter(
+        (el) =>
+          el.pagina === titolo.pagina &&
+          el.yMm > titolo.yMm + TOLLERANZA_MM &&
+          !el.testo.startsWith('Pagina ')
+      )
+      expect(
+        sotto.map((el) => el.testo).join(' | '),
+        `titolo orfano a capoversi=${capoversi}`
+      ).toContain('Denominazione')
+    }
+  })
+
+  it('niente tocca la riga di servizio: fra il contenuto e «Pagina n di m» resta aria', async () => {
+    // Misurato il 2026-08-15: il bordo basso del riquadro di verifica cadeva a 266,00 mm e
+    // «Pagina 2 di 2» cominciava a 266,73 — 0,7 mm, cioè a occhio si toccavano. Sulla
+    // stampa di sezione il filetto dell'ultima riga di tabella cadeva a 265,5 e la riga
+    // «Riservato — dati di minori · …» a 266,8: sembrava una riga della tabella.
+    const uso =
+      'Da presentare al datore di lavoro per la richiesta del congedo parentale e per la detrazione fiscale'
+    const pdf = buildPrestampatoPdf({
+      ...certificatoProtocollato(uso),
+      piePagina: 'Riservato — dati di minori · 15/08/2026 · Nome Inventato',
+    })
+
+    const elementi = await elementiTesto(pdf)
+    const servizio = elementi.filter(
+      (el) => el.testo.startsWith('Pagina ') || el.testo.startsWith('Riservato —')
+    )
+    expect(servizio.length, 'la riga di servizio non è sul foglio').toBeGreaterThan(0)
+
+    // In 7 pt le maiuscole cominciano 2,47 mm sopra la linea di scrittura.
+    const cimaServizio = Math.min(...servizio.map((el) => el.yMm)) - 7 * 0.716 * MM_PER_PUNTO * 72 / 72
+    for (const ingombro of await ingombriPercorsi(pdf)) {
+      expect(
+        ingombro.yMm + ingombro.altezzaMm,
+        `un tracciato arriva a ${(ingombro.yMm + ingombro.altezzaMm).toFixed(2)} mm, la riga di servizio comincia a ${cimaServizio.toFixed(2)}`
+      ).toBeLessThanOrEqual(cimaServizio - 2)
+    }
+  })
+})
+
+describe('buildPrestampatoPdf — una sola sede per il numero di protocollo', () => {
+  it('col numero nella segnatura sulla carta, il corpo non lo ripete', async () => {
+    // ⚠️ Il difetto: sullo stesso foglio, a 18 mm di distanza, la segnatura a 34 mm diceva
+    // «SCUOLA … · Prot. n. 0000123/2026 · Uscita · del 15/08/2026 ore 10:24» e la riga di
+    // corpo a 52 mm ripeteva «Prot. n. 0000123/2026 del 15/08/2026». È il documento che va
+    // all'INPS e al datore di lavoro: un difetto estetico su un certificato protocollato
+    // conta quanto uno funzionale.
+    const pdf = buildPrestampatoPdf(certificatoProtocollato(), { protocolloInSegnatura: true })
+    const testo = await estraiTesto(pdf)
+
+    expect(testo).not.toContain('Prot. n. 0000123/2026 del')
+    // Il numero resta comunque sul foglio: lo stampa il riquadro di verifica (§4.3), e lo
+    // stamperà la segnatura sulla carta. Sparire del tutto sarebbe l'altro difetto.
+    expect(testo).toContain('0000123/2026')
+  })
+
+  it('senza segnatura la riga di corpo resta dov’era: il numero non sparisce mai', async () => {
+    const testo = await estraiTesto(buildPrestampatoPdf(certificatoProtocollato()))
+    expect(testo).toContain('Prot. n. 0000123/2026 del 15/08/2026')
+  })
+
+  it('la dicitura della copia di famiglia non è un numero e non si spegne', async () => {
+    // «Copia a uso della famiglia — non protocollata» passa dallo stesso campo, ma non è
+    // un numero di protocollo: nessuna segnatura la ripete, e toglierla vorrebbe dire
+    // consegnare una copia che non dice più di esserlo (§4.1).
+    const testo = await estraiTesto(
+      buildPrestampatoPdf(
+        documento({ protocollo: 'Copia a uso della famiglia — non protocollata' }),
+        { protocolloInSegnatura: true }
+      )
+    )
+    expect(testo).toContain('Copia a uso della famiglia')
+  })
+})

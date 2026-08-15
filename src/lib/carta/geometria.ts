@@ -18,25 +18,35 @@
  *        │
  *        │   area libera, con la filigrana mascotte (#F4F4F4) sotto il testo
  *        │
- * 266,0  ├─  ← contenutoFine
- * 268,5  ├─  ← rigaServizio: piede dell'app e «Pagina n di m», 7 pt grigio
+ * 263,5  ├─  ← contenutoFine
+ * 266,0  ┆   ← qui cominciano le maiuscole di «Pagina n di m» (7 pt)
+ * 268,5  ├─  ← rigaServizio: LINEA DI SCRITTURA del piede dell'app, 7 pt grigio
  * 272,1  ├─  piede STAMPATO sulla carta: ragione sociale · Giugliano · Aversa · Cesa
  * 285,0  ┴─
  * 297,0     ─────────────────────────────────────────────
  * ```
  *
  * `contenutoInizio` è 40 e non 27: sotto il marchio ci vuole aria, altrimenti
- * l'intestazione di sede sembra appiccicata al logo della scuola. `contenutoFine` è 266
- * e non 272,1: 6,1 mm di margine sopra il piede stampato, perché il fondo di una cornice
- * o la coda di un descender non arrivino a toccarlo.
+ * l'intestazione di sede sembra appiccicata al logo della scuola.
  *
- * ⚠️ **`contenutoFine` non si abbassa per guadagnare millimetri**, ed è stato misurato
- * invece che dedotto (2026-08-15). Portarlo a 270 sembra gratis — restano 2,1 mm d'aria
- * sopra il piede stampato — ma quei 6,1 mm non sono margine di cortesia: dentro ci sta
- * `rigaServizio`. «Pagina n di m» ha la linea di scrittura a 268,5 e in 7 pt le sue
- * lettere cominciano a 266,0. Un riquadro che scendesse a 270 ci finirebbe SOPRA. I
- * millimetri per far stare la firma nella pagina si trovano nel motore — che stringe lo
- * stacco prima di aprire un foglio nuovo — non qui.
+ * ⚠️ **`contenutoFine` è 263,5 e non 266, e i 2,5 mm di differenza sono stati PAGATI.**
+ * Fino al 2026-08-15 valeva 266, e questa stessa testata dichiarava che i millimetri fino
+ * al piede stampato bastavano «perché dentro ci sta `rigaServizio`». Non bastavano, ed è
+ * stato misurato invece che dedotto: `rigaServizio` è la **linea di scrittura**, non la
+ * cima delle lettere. In 7 pt le maiuscole cominciano 2,47 mm più su, cioè a 266,03 — e un
+ * riquadro di verifica ancorato a 266 chiudeva a **0,73 mm** da «Pagina 2 di 2»: a occhio
+ * si toccano. Sulla stampa di sezione il filetto dell'ultima riga di tabella cadeva a
+ * 265,5 e «Riservato — dati di minori · …» cominciava a 266,8, cioè sembrava una riga
+ * della tabella.
+ *
+ * Un commento che promette un'aria che il codice non lascia è la classe di difetto che
+ * questo progetto chiama incidente. Ora l'aria c'è davvero: 2,5 mm fra il fondo di ciò che
+ * l'app disegna e la cima di ciò che l'app stampa nella riga di servizio, verificati da
+ * `__tests__/lib/carta-geometria.test.ts`.
+ *
+ * E **non si risale a 266 per guadagnare millimetri**: i millimetri per far stare la firma
+ * nella pagina si trovano nel motore — che stringe lo stacco prima di aprire un foglio
+ * nuovo — non qui.
  *
  * Testato in `__tests__/lib/carta-geometria.test.ts`.
  */
@@ -76,14 +86,25 @@ export const CARTA = {
    */
   segnaturaRiga: 34,
 
-  /** Dove l'app può cominciare a scrivere, e dove deve avere finito. */
+  /**
+   * Dove l'app può cominciare a scrivere, e dove deve avere finito.
+   *
+   * `contenutoFine` vale per TUTTO ciò che l'app disegna — il flusso del testo, il bordo
+   * basso di un riquadro ancorato al fondo, l'ultimo filetto di una tabella — e lascia
+   * 2,5 mm liberi sopra la cima delle lettere di `rigaServizio`. Vedi la testata.
+   */
   contenutoInizio: 40,
-  contenutoFine: 266,
+  contenutoFine: 263.5,
 
   /**
    * La riga di servizio dell'app: il piede per modello e «Pagina n di m». Sta SOPRA il
    * piede stampato, nell'aria fra i due — non a 287, che cade dentro l'elenco delle tre
    * sedi già presente sulla carta.
+   *
+   * ⚠️ È la **linea di scrittura**, non la cima del testo: in 7 pt le maiuscole
+   * cominciano 2,47 mm più su. Chi confronta una quota con questo numero sta misurando
+   * dal posto sbagliato di 2,47 mm — ed è esattamente l'errore che ha fatto chiudere il
+   * riquadro di verifica a 0,73 mm da «Pagina 2 di 2».
    */
   rigaServizio: 268.5,
 

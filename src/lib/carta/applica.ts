@@ -44,22 +44,34 @@
  * una riga in 8 pt nell'aria che la carta lascia sotto il marchio (`CARTA.segnaturaRiga`),
  * senza fascia, senza logo e senza toccare la scala del foglio.
  *
- * Il lock che lo tiene — perché una frase in un commento non ha impedito niente la prima
- * volta — è in `__tests__/lib/carta-applica.test.ts`: nessun modulo di `src/` può importare
- * insieme `applicaCartaIntestata` e `applicaSegnatura`.
+ * Il lock che lo tiene è in `__tests__/lib/carta-applica.test.ts`, e vale la pena dire come
+ * NON funziona: la sua prima versione vietava a un file di importare insieme
+ * `applicaCartaIntestata` e `applicaSegnatura`, e passava a vuoto su tutto il repository
+ * perché nessun file importava la prima delle due. Sorvegliava la composizione sbagliata
+ * invece dell'assenza della carta. Ora il predicato è invertito: **ogni `route.ts` che
+ * compone un prestampato deve importare `applicaCartaIntestata`**, e nessuna può importare
+ * `applicaSegnatura`.
  */
 
-import { PDFDocument, StandardFonts, rgb, type PDFEmbeddedPage, type PDFFont, type PDFPage } from 'pdf-lib'
+import {
+  PDFDocument,
+  StandardFonts,
+  degrees,
+  rgb,
+  type PDFEmbeddedPage,
+  type PDFFont,
+  type PDFPage,
+} from 'pdf-lib'
 import { logEvento } from '@/lib/logging/logger'
 import { cartaIntestataBytes } from './asset'
 import { CARTA } from './geometria'
 
 /**
- * Oltre questo scarto fra le proporzioni della pagina e quelle della carta, la carta
- * arriva sul foglio visibilmente deformata (il caso vero: una pagina in orizzontale).
- * Non è un motivo per far sparire un foglio, ma è un motivo per lasciare una riga.
+ * Sotto questa frazione di foglio coperto, la carta lascia fasce bianche visibili: il
+ * formato non è un A4 né un A4 girato, e chi stampa se ne accorgerà. Non è un motivo per
+ * far sparire un foglio — è un motivo per lasciare una riga di log.
  */
-const TOLLERANZA_PROPORZIONI = 0.02
+const COPERTURA_MINIMA = 0.98
 
 const PUNTI_PER_MM = 72 / 25.4
 /** Il grigio-inchiostro del prodotto, #2D2D2D: la segnatura si legge, non grida. */
@@ -182,6 +194,75 @@ async function stampaSegnatura(
   })
 }
 
+/**
+ * Come stendere la carta su UNA pagina, senza mai deformarla.
+ *
+ * ⚠️ **IL MARCHIO DI UNA SCUOLA NON SI STIRA, MAI.** Fino al 2026-08-15 questa funzione
+ * diceva `drawPage(carta, { width: larghezza, height: altezza })`, cioè «riempi il
+ * foglio»: su A4 verticale era esatto per coincidenza — le proporzioni combaciano — e su
+ * A4 **orizzontale** allargava la carta di 1,414× e la schiacciava di 0,707×. Reso e
+ * guardato: il logotipo «Kidville» con le lettere grasse e piatte, la riga «NIDO ·
+ * INFANZIA / PRIMARIA · CAMPO ESTIVO» compressa, il piede a quattro colonne al limite
+ * della leggibilità. E non era un caso di scuola: il REGISTRO PRESENZE è in orizzontale e
+ * passa da qui (spec §1.5).
+ *
+ * Due regole, in quest'ordine:
+ *
+ *  1. **la scala è uniforme** — mai due fattori diversi sui due assi;
+ *  2. **fra dritta e girata di 90° vince quella che copre di più**. La carta è un foglio
+ *     FISICO, e il foglio fisico è A4 verticale: un contenuto orizzontale ci si stampa
+ *     sopra di traverso, quindi girare la carta è ciò che rimette il marchio in testa al
+ *     foglio stampato. L'asset è vettoriale: la rotazione non costa un byte né un pixel.
+ *
+ * Il VERSO della rotazione è +90° (antiorario nelle coordinate PDF), e non è indifferente:
+ * porta il bordo alto della carta sul bordo SINISTRO della pagina. Chi stampa un foglio
+ * orizzontale su carta A4 lo gira in senso orario per leggerlo — è il gesto naturale, ed è
+ * anche ciò che fa l'auto-rotazione delle stampanti — e in quel momento il marchio torna
+ * in alto a sinistra, la riga «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO» in alto a destra
+ * e il piede a quattro colonne al fondo. Girata di -90° si otterrebbe la carta capovolta.
+ * Verificato rendendo la pagina e guardandola (2026-08-15).
+ *
+ * Su un formato che non è né A4 né A4 girato non c'è una risposta giusta: la carta si
+ * stende «contain» e centrata, e resta dell'aria ai lati. Aria bianca si vede e si
+ * corregge; un marchio stirato passa per una scelta grafica.
+ */
+function stesuraCarta(
+  carta: PDFEmbeddedPage,
+  larghezza: number,
+  altezza: number
+): { x: number; y: number; larghezza: number; altezza: number; giro: 0 | 90; copertura: number } {
+  const { width: w, height: h } = carta
+  if (w <= 0 || h <= 0) return { x: 0, y: 0, larghezza, altezza, giro: 0, copertura: 0 }
+
+  const dritta = Math.min(larghezza / w, altezza / h)
+  const girata = Math.min(larghezza / h, altezza / w)
+  const area = larghezza * altezza
+
+  if (girata > dritta) {
+    // Con `rotate: 90°` pdf-lib compone traslazione → rotazione → scala, quindi il form
+    // ruota attorno al punto (x, y): la carta finisce a sinistra di `x`, e per riportarla
+    // sul foglio `x` va spostato di tutta la sua altezza scalata.
+    const usata = girata * h * girata * w
+    return {
+      x: (larghezza + girata * h) / 2,
+      y: (altezza - girata * w) / 2,
+      larghezza: girata * w,
+      altezza: girata * h,
+      giro: 90,
+      copertura: usata / area,
+    }
+  }
+
+  return {
+    x: (larghezza - dritta * w) / 2,
+    y: (altezza - dritta * h) / 2,
+    larghezza: dritta * w,
+    altezza: dritta * h,
+    giro: 0,
+    copertura: (dritta * w * dritta * h) / area,
+  }
+}
+
 /** Stampa la carta e poi il contenuto: prima la base, poi ciò che ci si posa sopra. */
 function componiPagina(
   pagina: PDFPage,
@@ -189,9 +270,18 @@ function componiPagina(
   contenuto: PDFEmbeddedPage | undefined,
   larghezza: number,
   altezza: number
-): void {
-  pagina.drawPage(carta, { x: 0, y: 0, width: larghezza, height: altezza })
+): number {
+  const stesa = stesuraCarta(carta, larghezza, altezza)
+  pagina.drawPage(carta, {
+    x: stesa.x,
+    y: stesa.y,
+    width: stesa.larghezza,
+    height: stesa.altezza,
+    rotate: degrees(stesa.giro),
+  })
+  // Il contenuto, invece, si stende 1:1 sulla sua pagina: è nato con quel formato.
   if (contenuto) pagina.drawPage(contenuto, { x: 0, y: 0, width: larghezza, height: altezza })
+  return stesa.copertura
 }
 
 /**
@@ -251,14 +341,13 @@ export async function applicaCartaIntestata(
     // e leggerle da qui restituisce `undefined` — che è esattamente il caso previsto.
     const contenuti = new Map(daIncorporare.map((indice, posto) => [indice, incorporate[posto]]))
 
-    const proporzioneCarta = cartaIncorporata.width / cartaIncorporata.height
-    let deformate = 0
+    let scoperte = 0
 
     for (let i = 0; i < totale; i++) {
       const { width, height } = sorgente.getPage(i).getSize()
       const pagina = out.addPage([width, height])
-      componiPagina(pagina, cartaIncorporata, contenuti.get(i), width, height)
-      if (Math.abs(width / height - proporzioneCarta) > TOLLERANZA_PROPORZIONI) deformate++
+      const copertura = componiPagina(pagina, cartaIncorporata, contenuti.get(i), width, height)
+      if (copertura < COPERTURA_MINIMA) scoperte++
     }
 
     // La segnatura va sulla PRIMA pagina soltanto, come il timbro sul cartaceo: è
@@ -268,10 +357,13 @@ export async function applicaCartaIntestata(
     // Una riga sola per documento, non una per pagina: chi legge i log deve poterci
     // ancora leggere il resto.
     const bianche = totale - daIncorporare.length
-    if (deformate > 0 || bianche > 0) {
+    if (scoperte > 0 || bianche > 0) {
       logEvento('modulistica', 'warn', {
         pagine: totale,
-        pagine_deformate: deformate,
+        // Non più «deformate»: la carta non si deforma mai. Queste sono le pagine di un
+        // formato che non è né A4 né A4 girato, dove la carta ci sta intera ma lascia
+        // delle fasce bianche — e chi stampa se ne accorge.
+        pagine_scoperte: scoperte,
         pagine_bianche: bianche,
       })
     }

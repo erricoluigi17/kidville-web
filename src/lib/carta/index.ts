@@ -11,7 +11,9 @@
  * il registro presenze — oggi generato nel browser — passa a una route.
  *
  * Chi impagina non importa `applicaCartaIntestata`: gli serve `CARTA`, per sapere dove
- * può scrivere. Chi compone il documento finito importa la funzione.
+ * può scrivere. **Chi CONSEGNA importa la funzione, e deve chiamarla**: il motore dei
+ * prestampati non disegna più né banda né logo né piede, quindi una rotta che restituisce
+ * i suoi byte così com'escono manda alla famiglia un foglio più nudo di quello di prima.
  *
  * ⚠️ **E il documento finito esce da UNA chiamata sola.** Questa riga, fino al 2026-08-15,
  * diceva di chiamare `applicaCartaIntestata()` «prima di `applicaSegnatura()`»: comporre
@@ -20,8 +22,12 @@
  * quattro colonne dal fondo del foglio. La segnatura di protocollo si passa qui —
  * `applicaCartaIntestata(pdf, { segnatura: { righe } })` — con le stesse righe che produce
  * `righeSegnatura()`. `applicaSegnatura()` resta il timbro dei documenti **acquisiti**,
- * che arrivano su un foglio bianco; il lock in `__tests__/lib/carta-applica.test.ts` vieta
- * a un modulo di importarle tutte e due.
+ * che arrivano su un foglio bianco.
+ *
+ * Il lock è in `__tests__/lib/carta-applica.test.ts`, e la sua prima versione era **vacua**
+ * — vietava di importare le due funzioni insieme, cosa che nessun file faceva perché
+ * nessun file importava la prima. Ora il predicato è invertito e verifica la cosa che
+ * conta: **ogni `route.ts` che compone un prestampato importa `applicaCartaIntestata`**.
  */
 
 export { applicaCartaIntestata, type OpzioniCarta, type SegnaturaCarta } from './applica'

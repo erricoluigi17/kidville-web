@@ -18,24 +18,37 @@
  *
  * `src/lib/protocolli/assets.ts` porta il logo in base64 dentro il sorgente proprio
  * perché «la lettura fs da `public/` non è tracciata dal bundler su Vercel»: la stessa
- * trappola qui costerebbe un 500 in produzione e nient'altro in locale. Quindi la strada
- * è stata **misurata** invece che scelta (2026-08-15, Next 16.3):
+ * trappola qui costerebbe un 500 in produzione e nient'altro in locale.
  *
- *   1. una sonda che chiama `cartaIntestataBytes()` dal motore prestampati;
- *   2. `npm run build`;
- *   3. `.next/server/app/api/parent/prestampati/firma/route.js.nft.json` →
- *      `"../../../../../../../src/lib/carta/asset/carta-intestata.pdf"`, che risolve al
- *      file vero, 1.097.589 byte. Stessa voce nei manifest di `/api/prestampati` e
- *      `/api/prestampati/genera`.
+ * ⚠️ **LA PRIMA VERSIONE DI QUESTO COMMENTO RIPORTAVA UNA MISURA CHE NON ERA STATA
+ * FATTA.** Diceva di aver trovato l'asset nei manifest di tre rotte; rimisurato sullo
+ * stesso `.next/`, le occorrenze erano **zero**, e l'unica in tutta la cartella era una
+ * riga dentro una source-map. Non era un dettaglio sbagliato: era coerente col difetto
+ * vero di quel giorno — **nessuna rotta importava la carta**, quindi il bundler non aveva
+ * niente da tracciare. Una prova che non prova niente è peggio di nessuna prova, perché
+ * chiude l'indagine.
  *
- * Il file finisce dunque nel bundle serverless: il tracciamento di Next valuta
- * staticamente questo `path.join(process.cwd(), …)`. Un base64 inline sarebbe 1,46 MB di
- * sorgente da far leggere a eslint, tsc e al bundler a ogni build, per risolvere un
- * problema che la misura dice non esserci.
+ * La misura vera, **dopo** aver collegato le rotte (2026-08-15, Next 16.3, `rm -rf .next
+ * && npm run build`):
+ *
+ * ```
+ * .next/server/app/api/prestampati/genera/route.js.nft.json
+ *   → "../../../../../../src/lib/carta/asset/carta-intestata.pdf"      1.097.589 byte ✓
+ * .next/server/app/api/parent/prestampati/firma/route.js.nft.json
+ *   → "../../../../../../../src/lib/carta/asset/carta-intestata.pdf"   1.097.589 byte ✓
+ * ```
+ *
+ * Sono le due sole rotte che oggi importano la carta, e in entrambe il percorso relativo
+ * risolve al file vero. Il tracciamento di Next valuta staticamente questo
+ * `path.join(process.cwd(), …)`, quindi il file **entra nel bundle serverless**: un base64
+ * inline sarebbe 1,46 MB di sorgente da far leggere a eslint, a tsc e al bundler a ogni
+ * build, per risolvere un problema che la misura dice non esserci.
  *
  * ⚠️ Se un giorno il percorso diventa dinamico (una variabile, un `if`), il tracciamento
  * smette di vederlo **in silenzio**: la build resta verde e il guasto compare solo in
- * produzione. La stringa qui sotto resta letterale per questo.
+ * produzione. La stringa qui sotto resta letterale per questo. E la misura si rifà a ogni
+ * rotta nuova che importa la carta — `grep -rl carta-intestata.pdf .next/server` — perché
+ * è la voce nel manifest, non questo commento, a decidere che cosa parte per Vercel.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'

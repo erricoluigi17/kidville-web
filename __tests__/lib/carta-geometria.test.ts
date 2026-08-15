@@ -28,6 +28,24 @@ describe('geometria della carta intestata', () => {
     expect(CARTA.piedeInizio - CARTA.contenutoFine).toBeGreaterThanOrEqual(5)
   })
 
+  it('lascia aria anche fra il fondo del contenuto e le LETTERE della riga di servizio', () => {
+    // ⚠️ Il difetto che questo test esiste per impedire, misurato il 2026-08-15 su pagina 2
+    // di un certificato reale: il riquadro di verifica chiudeva a 266,00 mm e «Pagina 2 di
+    // 2» cominciava a 266,73 — **0,73 mm**, cioè si toccavano a occhio. Sulla stampa di
+    // sezione era peggio: il filetto dell'ultima riga di tabella a 265,5 e la riga
+    // «Riservato — dati di minori · …» a 266,8, che sembrava una riga della tabella.
+    //
+    // La causa non era un errore di calcolo: `contenutoFine` valeva 266 e la testata di
+    // questo file prometteva che i millimetri fra lui e il piede stampato bastassero
+    // «perché dentro ci sta rigaServizio». Non bastavano: `rigaServizio` è la LINEA DI
+    // SCRITTURA, e le maiuscole di 7 pt cominciano 2,47 mm più su. Un documento che
+    // descrive una protezione che non c'è è la classe di difetto che questo progetto
+    // chiama incidente.
+    const ALTEZZA_MAIUSCOLA_7PT = 7 * 0.716 * (25.4 / 72) // ≈ 2,47 mm
+    const cimaRigaServizio = CARTA.rigaServizio - ALTEZZA_MAIUSCOLA_7PT
+    expect(cimaRigaServizio - CARTA.contenutoFine).toBeGreaterThanOrEqual(2)
+  })
+
   it('la riga di servizio sta fra il contenuto e il piede della carta, non dentro nessuno dei due', () => {
     // Il piede dell'app — «Riservato — dati di minori · data · nome» e «Pagina n di m» —
     // stava a y=287, cioè DENTRO il piede a quattro colonne della carta (272,1→285,0).

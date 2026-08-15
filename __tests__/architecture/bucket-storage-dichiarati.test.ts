@@ -399,13 +399,22 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
   })
 
   describe('in produzione i bucket riservati sono davvero privati (fotografia versionata)', () => {
-    it('la fotografia non è stata addomesticata a mano (sha256)', () => {
-      // Stesse chiavi e stesso ordine di `normalizza()` in
-      // `__tests__/fixtures/bucket-storage-fotografia.mjs`: l'impronta copre il
-      // contenuto, non i metadati. Senza questa prova basterebbe correggere un
-      // `true` in `false` nel JSON per far tacere il lock su un bucket riaperto.
+    it('la fotografia non è stata addomesticata a mano (sha256, DATA COMPRESA)', () => {
+      // Stesse chiavi e stesso ordine di `impronta()` in
+      // `__tests__/fixtures/bucket-storage-fotografia.mjs`. Senza questa prova
+      // basterebbe correggere un `true` in `false` nel JSON per far tacere il lock
+      // su un bucket riaperto.
+      //
+      // ⚠️ `generato_il` È DENTRO L'IMPRONTA dal 2026-08-16, e non è un dettaglio di
+      // forma. `gdpr-oblio-completo.test.ts` concede una deroga a un bucket che «in
+      // produzione non esiste ancora» — dentro ci andranno diagnosi, PEI, schede
+      // sanitarie e posologie di minori — e quella deroga scade quando la fotografia
+      // invecchia. Con la data fuori dall'impronta, la scadenza si spostava
+      // riscrivendo dieci caratteri: una protezione che si disattiva da sé. Ora
+      // l'unico modo di ringiovanire la fotografia è rigenerarla, cioè eseguire
+      // davvero la query su `storage.buckets` — che è la misura che si voleva.
       const atteso = createHash('sha256')
-        .update(JSON.stringify({ bucket: foto.bucket }))
+        .update(JSON.stringify({ generato_il: foto.generato_il, bucket: foto.bucket }))
         .digest('hex')
       expect(
         foto.sha256,

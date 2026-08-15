@@ -192,11 +192,20 @@ export const BUCKET_CREDENZIALI = 'credenziali'
  * farebbe girare questa prova sul vuoto». Misurato il 2026-08-16 con una SELECT su
  * `storage.buckets`: quattordici bucket, e questo non c'è. Aggiungerlo lì oggi non
  * proteggerebbe niente, renderebbe ROSSO il lock.
- * Il giorno in cui la prima archiviazione lo crea, la fotografia rigenerata lo farà
- * comparire e sarà la prova «nessun bucket sfugge alla classificazione» a diventare
- * rossa da sola: è lei che ne pretenderà la voce, ed è lì che va aggiunto — insieme
- * al limite di dimensione e ai MIME, che oggi vivono solo dentro le route che lo
- * creano al volo.
+ *
+ * ⚠️ E NESSUN CONTROLLO DIVENTERÀ ROSSO DA SOLO IL GIORNO IN CUI NASCE. Questa riga
+ * il 2026-08-15 diceva il contrario, e diceva il falso: la «fotografia» è un file
+ * statico che una persona rigenera a mano incollando la risposta di una SELECT, non
+ * una query che gira. Il bucket può nascere — lo crea la prima famiglia che firma un
+ * prestampato — e ogni prova resterebbe verde a tempo indeterminato, con
+ * `sensitive_documents` fuori dai `RISERVATI` e la sua visibilità pubblico/privato
+ * mai misurata. Quello che esiste davvero, dal 2026-08-16, è una SCADENZA sul
+ * calendario: la deroga in `__tests__/lib/gdpr-oblio-completo.test.ts` porta uno
+ * `scadeIl` e pretende una fotografia non più vecchia di trenta giorni; la data di
+ * rigenerazione è dentro lo `sha256` della fotografia, quindi l'unico modo di far
+ * tacere la scadenza è rifare la misura — ed è la misura che risponderà se il bucket
+ * è nato. Quando lo sarà, va aggiunto fra i `RISERVATI` insieme al limite di
+ * dimensione e ai MIME, che oggi vivono solo dentro le route che lo creano al volo.
  */
 export const BUCKET_FASCICOLO = 'sensitive_documents'
 

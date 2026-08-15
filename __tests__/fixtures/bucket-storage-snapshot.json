@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/bucket-storage-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/bucket-storage-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-11",
-  "sha256": "e82868d5900e1cd23a05bcbadb2ea8b31b520b4d12d02b2902a57a454172bf65",
+  "generato_il": "2026-08-15",
+  "sha256": "3f567411d12dbdf600d3a0425a73a37377083802c3df412585b0cc14d313ea60",
   "bucket": [
     {
       "id": "avvisi_allegati",

@@ -94,6 +94,83 @@
 
 ---
 
+## 🩻 Changelog — Il fascicolo sanitario del bambino entra nell'oblio, e la deroga che lo copriva impara a scadere 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Il bucket **`sensitive_documents`** non era in `REGISTRO_BUCKET_OBLIO`. Non era un'esclusione
+motivata: era un magazzino **non nominato**, cioè la forma in cui il dato di un minore resta per
+sempre senza che nessuno lo abbia deciso. `grep -c sensitive_documents src/lib/gdpr/esegui.ts`
+rispondeva **0**, e il registro elencava quattordici magazzini senza questo.
+
+Dentro ci arrivano, da due porte diverse: dal lato scuola diagnosi, PEI, PDP e verbali della legge
+104 (`POST /api/primaria/fascicolo`); dal lato famiglia **scheda sanitaria, autorizzazione alla
+somministrazione di farmaci e dieta speciale** (`parent/prestampati/firma`, `prestampati/genera`).
+Allergeni, terapie e posologie in chiaro dentro il PDF, di un bambino: **dati dell'art. 9 GDPR**.
+Dopo una richiesta di cancellazione restavano nel bucket **e** restavano indicizzati in
+`student_documents`. Questo stesso lavoro **raddoppia** ciò che ci finisce dentro.
+
+### Che cosa cambia
+
+| | prima | adesso |
+|---|---|---|
+| `sensitive_documents` nel registro dell'oblio | assente (14 magazzini) | **quindicesimo**, `coperto`, canale `alunno` |
+| Aggancio | — | `student_documents.student_id`; percorso da `storage_path` **con ripiego su `file_url`** |
+| Righe storiche (solo `file_url`) | indice cancellato, PDF rimasto | file **e** riga escono insieme |
+| Avviso «cosa distrugge» in `/admin/gdpr` | due voci | **terza voce** `oblioDistruggeFascicolo`, col conteggio del dry-run |
+| Conteggio non leggibile | — | **`null` = «non misurato»**, mai zero: uno zero su una lettura fallita rassicura e basta |
+| Log del percorso di cancellazione | solo errori | **anche il successo**: `oblio-file-rimossi` e `oblio-indice-rimosso` |
+
+Il canale **genitore non tocca il fascicolo**, ed è una decisione scritta, non una lacuna: il
+fascicolo è del **bambino**, e la richiesta di un adulto non cancella i dati sanitari di un minore
+che resta iscritto.
+
+Perché `storage_path` **oppure** `file_url`: la colonna `storage_path` è stata aggiunta dopo, e i
+lettori del fascicolo leggono già l'una col ripiego sull'altra. Un oblio che guardasse la sola
+colonna nuova tratterebbe le righe scritte prima come «senza allegato» — indice cancellato, PDF
+rimasto nell'archivio: il guasto invisibile, quello a cui si risponde «fatto».
+
+Perché il log di successo: con i soli errori, *«nessun log» non distingue «tutto ok» da «non è mai
+partito niente»*. È l'ambiguità che ha nascosto per mesi il guasto delle email, e su un archivio di
+dati sanitari di minori costa di più. Vale anche per l'indice **senza file**: una riga di
+`student_documents` senza allegato porta comunque `document_type`, cioè la frase «questo bambino ha
+una dieta speciale», e veniva cancellata in totale silenzio.
+
+### La deroga, e perché ora scade da sola
+
+`sensitive_documents` **non esiste ancora** in produzione: non lo crea nessuna migrazione, lo creano
+al volo le route alla prima archiviazione. Misurato in sola lettura su `storage.buckets` il
+2026-08-16: **quattordici bucket, questo non c'è**. Perciò non può stare fra i `RISERVATI` di
+`bucket-storage-dichiarati.test.ts` — quel lock pretende che ogni nome esista nella fotografia — e
+vive in un elenco a parte, `NON_ANCORA_CREATI`.
+
+Due difetti di quella deroga, entrambi chiusi qui:
+
+- **La guardia si dimostrava da sola.** Pretendeva che il nome fosse «scritto nel codice che crea il
+  bucket», e lo cercava in tutto `src/` — dove lo trovava dentro `src/lib/gdpr/esegui.ts`, cioè
+  dentro il registro che stava verificando. Si potevano cancellare tutte le route che il bucket lo
+  creano e la prova restava **verde**. Ora il letterale vale solo **fuori dai commenti**, in un file
+  che tocca davvero lo Storage (`createBucket`/`garantisciBucket`/`storage.from`) e che **non** è il
+  registro. Misurato: quattro consumatori; simulandone la cancellazione, la prova diventa rossa.
+- **L'«auto-annullamento» non esisteva.** Il commento prometteva che il giorno della nascita del
+  bucket la prova sarebbe diventata rossa da sola. Falso: la «fotografia» della produzione è un file
+  **statico**, rigenerato a mano. Il bucket poteva nascere e ogni prova restare verde a tempo
+  indeterminato. Ora la deroga porta uno **`scadeIl`** e pretende una fotografia non più vecchia di
+  **30 giorni**; e la data di rigenerazione è **dentro lo `sha256`** della fotografia, così non si
+  può ringiovanire a mano — l'unico modo di far tacere la scadenza è **rifare la misura**, che è
+  esattamente la domanda a cui si voleva rispondere.
+
+> Un lock che dichiara di controllare X e controlla Y è peggio dell'assenza del lock: chi lo legge
+> smette di cercare la prova vera. È la lezione già pagata in questo repo — *«un documento che
+> descrive una protezione che non c'è più è peggio di nessun documento»* — e qui riguardava il
+> magazzino dei dati dell'art. 9 di minori.
+
+**Prove:** `__tests__/lib/gdpr-bucket-sensitive.test.ts` (registro, oblio reale su archivio finto
+con controllo negativo su un altro bambino, riga storica col solo `file_url`, storage che non
+toglie, conteggio dell'avviso, log di successo e silenzio informativo, nessun percorso nei log),
+`__tests__/lib/gdpr-oblio-completo.test.ts` (guardia dei consumatori + scadenza della deroga),
+`__tests__/architecture/bucket-storage-dichiarati.test.ts` (sha256 con la data dentro).
+
+---
+
 ## 🔑 Changelog — Le credenziali cambiano porta: la selezione non consegna più accessi, l'anagrafica sì 2026-08-15 (branch `feat/credenziali-dallanagrafica-personale`)
 
 Domanda del titolare: *«quando un insegnante compila l'anagrafica e io la accetto, la mail con le

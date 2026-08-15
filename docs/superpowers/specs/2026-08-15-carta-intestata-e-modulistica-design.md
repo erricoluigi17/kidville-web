@@ -93,10 +93,18 @@ Rilievo a 150 dpi sul rendering del file reale, non stimato a occhio:
 
 | Elemento | Estensione verticale |
 |---|---|
-| Logo «Kidville» + riga «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO» | **12,5 → 26,8 mm** |
+| Logo «Kidville» + riga «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO» | **12,5 → 27,05 mm** |
 | Filigrana mascotte | tutta la pagina, grigio **#F4F4F4** (≈4%) |
-| Piede a 4 colonne (ragione sociale · Giugliano · Aversa · Cesa · social) | **272,1 → 285,0 mm** |
-| **Area libera** | **27,0 → 272,1 mm** |
+| Piede a 4 colonne (ragione sociale · Giugliano · Aversa · Cesa · social) | **272,1 → 285,1 mm** |
+| **Area libera** | **27,05 → 272,1 mm** |
+
+⚠️ **Corretto in implementazione (2026-08-16): il marchio finiva a 26,8 e finisce a 27,05.** I
+150 dpi sono pixel contati su un'immagine; rimisurato sui TRACCIATI vettoriali dell'asset —
+riquadro d'ingombro di PDF.js e calcolo analitico degli estremi delle cubiche di Bézier, che danno
+lo stesso numero — l'inchiostro arriva a **27,026 mm**, e il piede a **285,085**. Erano 0,23 mm in
+cui la fascia dichiarata diceva «libero» e la carta aveva il logotipo. I limiti si arrotondano
+verso l'ESTERNO della fascia. Ora `__tests__/lib/carta-geometria.test.ts` li rimisura sull'asset
+invece di ricopiarli.
 
 Colori dell'asset: verde **#246A5F**, giallo **#FABC17**. Il testo che l'app scrive sopra usa i
 token del prodotto (`#006A5F`, `#2D2D2D`, `#646464`): la differenza è impercettibile sul foglio e
@@ -113,9 +121,16 @@ Il motore attuale (`src/lib/prestampati/impaginazione.ts`) è incompatibile con 
 | `LOGO_*` + `addImage(LOGO_LIGHT_PNG_BASE64)` | logo bianco a 14 / 7,5 | doppio logo | **eliminato** |
 | `Y_PIEDE` | 287 | cade **dentro** il piede della carta (272→285) | **eliminato** |
 | `PIEDE_PREDEFINITO` | «Documento generato dal registro elettronico Kidville» | idem | **eliminato**: la carta lo sostituisce |
-| `LIMITE_CONTENUTO` | 272 | tocca il piede della carta | **266** |
+| `LIMITE_CONTENUTO` | 272 | tocca il piede della carta | **263,5** (era 266: vedi sotto) |
 | `Y_INTESTAZIONE` | 38 | ok, ma sale l'aria sotto il logo | **40** |
 | `Y_TITOLO_MIN` | 58 | — | **60** |
+
+⚠️ **`LIMITE_CONTENUTO` è 263,5 e non 266, e i 2,5 mm sono stati pagati** (misurato in
+implementazione, 2026-08-15). `rigaServizio` a 268,5 è la LINEA DI SCRITTURA, non la cima delle
+lettere: le maiuscole di 7 pt cominciano 1,77 mm più su, cioè a 266,73, e il riquadro di verifica
+ancorato a 266 chiudeva a **0,73 mm** da «Pagina n di m» — a occhio si toccano. Il valore vero vive
+in `src/lib/carta/geometria.ts` (`contenutoFine`), che spiega anche perché non si risale a 266 per
+guadagnare millimetri.
 
 `piePagina` per modello **resta**, ma si sposta: `modelloStampeSezione` stampa oggi
 `Riservato — dati di minori · <data> · <nome>` a `y=287`. Va a **`y=268,5`**, sopra il piede della
@@ -357,7 +372,7 @@ risultato non è tripla A:
 
 | Occhio | Cosa guarda |
 |---|---|
-| **PDF** | Ogni prestampato generato davvero, convertito in immagine e confrontato con la carta reale: nessuna collisione col piede (272,1 mm), nessun testo sopra il logo (26,8 mm), filigrana leggibile sotto il testo, margini, allineamenti |
+| **PDF** | Ogni prestampato generato davvero, convertito in immagine e confrontato con la carta reale: nessuna collisione col piede (272,1 mm), nessun testo sopra il logo (27,05 mm), filigrana leggibile sotto il testo, margini, allineamenti |
 | **Browser** | Modulistica segreteria e genitore in Chrome vero: stati vuoto/caricamento/errore, token Clay Village, console pulita |
 | **Nativo** | iOS e Android via Maestro: i PDF si aprono davvero, niente sotto il piede dello schermo |
 | **Accessibilità e lingua** | Contrasto, tastiera, screen reader; **nessun «Dirigente Scolastico», nessun «KIDVILLE SCHOOLS»**, date e numeri all'italiana |

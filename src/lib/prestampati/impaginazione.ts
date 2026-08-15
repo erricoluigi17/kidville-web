@@ -31,7 +31,8 @@
  * verde, non c'è più il logo, non c'è più il piede predefinito: ce li ha già la carta
  * intestata, e ridisegnarli significava coprirli — la banda cadeva esattamente sopra il
  * marchio della scuola, il piede dentro l'elenco stampato delle tre sedi. Qui si impagina
- * il solo contenuto, dentro la finestra che `CARTA` dichiara: 40 → 266 mm.
+ * il solo contenuto, dentro la finestra che `CARTA` dichiara — da `contenutoInizio` a
+ * `contenutoFine`, che sono l'unico posto dove quei due millimetraggi vivono.
  *
  * Si importa `carta/geometria` e non `carta/index`: il primo è una manciata di numeri
  * senza dipendenze, il secondo porterebbe dietro pdf-lib e la lettura da disco di 1,1 MB
@@ -62,9 +63,16 @@ const CENTRO_PAGINA = 105
 // I margini si leggono da `CARTA` e non si riscrivono qui: la segnatura di protocollo si
 // allinea al margine destro, e due numeri uguali in due file diversi restano uguali
 // finché qualcuno non tocca uno solo dei due.
-const MARGINE_SX = CARTA.margineSx // 22
-const MARGINE_DX = CARTA.margineDx // 188
-const LARGHEZZA_UTILE = MARGINE_DX - MARGINE_SX // 166
+//
+// ⚠️ E accanto a questi alias NON si scrive il valore in un commento — «// 22», «// 266».
+// Fino al 2026-08-16 `LIMITE_CONTENUTO` ne aveva uno che diceva 266 mentre il valore era
+// 263,5: quei 2,5 mm erano stati pagati per non far chiudere il riquadro di verifica a
+// 0,73 mm da «Pagina n di m», e chi avesse letto il commento sarebbe andato a rimetterli
+// disfacendo la riparazione senza accorgersene. La misura vive in `carta/geometria.ts`,
+// che spiega anche perché vale quel che vale. Un posto solo.
+const MARGINE_SX = CARTA.margineSx
+const MARGINE_DX = CARTA.margineDx
+const LARGHEZZA_UTILE = MARGINE_DX - MARGINE_SX
 const COLONNA_DX = 110
 const LARGHEZZA_COLONNA = 78
 
@@ -72,7 +80,7 @@ const LARGHEZZA_COLONNA = 78
  * L'intestazione di sede comincia dove finisce l'area del marchio, con l'aria che ci
  * vuole: attaccata al logo della scuola sembrerebbe una sua didascalia.
  */
-const Y_INTESTAZIONE = CARTA.contenutoInizio // 40
+const Y_INTESTAZIONE = CARTA.contenutoInizio
 const PASSO_INTESTAZIONE = 4.5
 const Y_PROTOCOLLO = 52
 const Y_TITOLO_MIN = 60
@@ -110,17 +118,17 @@ const PADDING_RIQUADRO = 4
 const TESTATA_RIQUADRO = 6
 
 const SPAZIO_SOTTO_TITOLO = 16
-const LIMITE_CONTENUTO = CARTA.contenutoFine // 266
+const LIMITE_CONTENUTO = CARTA.contenutoFine
 
 /**
  * Testata delle pagine successive alla prima (§2): tutto in 8 pt.
  *
  * Comincia a 40 come l'intestazione della prima pagina, e non più a 14: a 14 le sue
- * quattro righe cadevano DENTRO il marchio stampato sulla carta (12,5→26,8), cioè sopra
+ * quattro righe cadevano DENTRO il marchio stampato sulla carta (12,5→27,05), cioè sopra
  * la parola «Kidville». Costa una ventina di millimetri di contenuto per pagina, ed è il
  * prezzo di avere il marchio della scuola su ogni foglio invece che solo sul primo.
  */
-const Y_TESTATA_COMPATTA = CARTA.contenutoInizio // 40
+const Y_TESTATA_COMPATTA = CARTA.contenutoInizio
 const PASSO_TESTATA_COMPATTA = 4
 const SPAZIO_SOTTO_TESTATA_COMPATTA = 6.5
 
@@ -397,7 +405,7 @@ function disegnaTestataCompatta(doc: jsPDF, testata: TestataCompatta): void {
  * La riga di servizio: il piede del modello e «Pagina n di m», a 268,5 mm.
  *
  * Stavano a 287, cioè DENTRO il piede a quattro colonne stampato sulla carta
- * (272,1→285,0): ci sarebbero finiti sopra la ragione sociale e i recapiti delle tre
+ * (272,1→285,1): ci sarebbero finiti sopra la ragione sociale e i recapiti delle tre
  * sedi. Ora stanno nell'aria fra il contenuto e quel piede, in 7 pt grigio.
  *
  * E il piede predefinito non c'è più. «Documento generato dal registro elettronico
@@ -494,7 +502,8 @@ function scaricaSezione(s: Stato, ariaSopra: number): void {
  *
  * È la metà preventiva della regola (l'altra è la compressione dello stacco in
  * `disegnaFirma`), ed è quella che risparmia i fogli: senza, un elenco che riempie la
- * pagina fino a 266 lascia la firma fuori e apre un secondo foglio per lei sola. Con
+ * pagina fino a `CARTA.contenutoFine` lascia la firma fuori e apre un secondo foglio per
+ * lei sola. Con
  * questo limite la coda dell'elenco scavalca il salto di pagina e la firma le va dietro:
  * la pagina nuova porta contenuto E firma, oppure non nasce affatto.
  *
@@ -1127,13 +1136,29 @@ function disegnaFirma(s: Stato, composta: FirmaComposta): void {
  * Protocollo e indirizzo di verifica, sopra il piede dell'ultima pagina.
  *
  * ⚠️ L'IMPRONTA SHA-256 NON SI STAMPA QUI, e non è una svista: l'impronta si calcola sui
- * byte del PDF, quindi scriverla dentro il PDF cambierebbe i byte di cui è l'impronta —
- * è circolare, e non tornerebbe mai a chi prova a verificarla. `protocolli.impronta_sha256`
- * contiene infatti l'impronta dei byte PRECEDENTI alla banda di segnatura (`applicaSegnatura()`
- * passa dopo). Sul foglio si dichiara che l'impronta è registrata al protocollo e si rimanda
- * alla pagina pubblica, dove chi ha ricevuto il documento confronta il file che ha in mano
- * con quella registrata. È la trappola che chi legge dopo rifarebbe, perché la specifica
- * disegna il riquadro con l'impronta dentro.
+ * byte del PDF, quindi scriverla dentro il PDF cambierebbe i byte di cui è l'impronta — è
+ * circolare, e non tornerebbe mai a chi prova a verificarla. Sul foglio si dichiara che
+ * l'impronta è registrata al protocollo e si rimanda alla pagina pubblica, dove chi ha
+ * ricevuto il documento confronta il file che ha in mano con quella registrata. È la
+ * trappola che chi legge dopo rifarebbe, perché la specifica disegna il riquadro con
+ * l'impronta dentro.
+ *
+ * ⚠️ **E l'impronta registrata è quella del FILE CONSEGNATO, carta e segnatura comprese.**
+ * Fino al 2026-08-16 questo commento diceva il contrario — «l'impronta dei byte PRECEDENTI
+ * alla banda di segnatura, perché `applicaSegnatura()` passa dopo» — ed era rimasto vero
+ * per i documenti ACQUISITI e falso per questi. Sui prestampati generati non c'è più un
+ * «dopo»: `applicaCartaIntestata(pdf, { segnatura })` stende carta e segnatura in una
+ * passata sola, e `src/app/api/prestampati/genera/route.ts` calcola
+ * `sha256Impronta(documento.pdf)` su quel risultato. La frase stampata qui sopra —
+ * «l'impronta SHA-256 di QUESTO documento è registrata nel registro di protocollo», su un
+ * foglio che va all'INPS e al datore di lavoro — è quindi vera per chi il foglio ce l'ha in
+ * mano: se ne ricalcola lo SHA-256, trova ciò che il registro ha scritto.
+ *
+ * Chi «allineasse» il codice a quel vecchio commento, spostando il calcolo dell'impronta
+ * PRIMA di `applicaCartaIntestata`, rimetterebbe una dichiarazione falsa su un atto diretto
+ * a un ente. Il test che lo ferma lega le due cose invece di descriverle:
+ * `__tests__/api/prestampati-segreteria.test.ts` ricalcola lo SHA-256 dei byte che la rotta
+ * restituisce e pretende che sia quello scritto in `protocolli.impronta_sha256`.
  */
 const PADDING_VERIFICA = 3
 const INTERLINEA_VERIFICA = 3.6
@@ -1151,7 +1176,7 @@ interface VerificaComposta {
  *
  * Prima aveva un bordo alto fisso a 262 e cresceva verso il basso: con tre righe il fondo
  * cadeva a 278,8 mm, cioè dentro il piede a quattro colonne stampato sulla carta
- * (272,1→285,0). E il numero di righe non è noto in anticipo — dipende da quanto è lungo
+ * (272,1→285,1). E il numero di righe non è noto in anticipo — dipende da quanto è lungo
  * il numero di protocollo dopo il capo automatico — quindi non c'era una costante che
  * potesse essere giusta per tutti i documenti. Ancorare il fondo la rende inutile.
  */

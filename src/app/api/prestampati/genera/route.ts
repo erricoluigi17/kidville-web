@@ -622,9 +622,20 @@ interface EsitoProtocollo {
 }
 
 /**
- * Numero → render → segnatura → upload → riga di registro, nell'ordine che la specifica
- * impone (§4.1: la fascia si appone DOPO la generazione; §4.3: l'impronta è quella del PDF
- * PRIMA della fascia, la stessa che finisce in `protocolli.impronta_sha256`).
+ * Numero → render → carta e segnatura → upload → riga di registro, nell'ordine che la
+ * specifica impone (§4.1: la segnatura si appone DOPO la generazione).
+ *
+ * ⚠️ **L'impronta è quella del FILE CONSEGNATO, non dei byte che lo precedono.** Fino al
+ * 2026-08-16 questa riga diceva «§4.3: l'impronta è quella del PDF PRIMA della fascia», ed
+ * era la descrizione di un codice che non c'è più: su carta intestata non esiste un «prima
+ * della fascia», perché `applicaCartaIntestata(pdf, { segnatura })` stende carta e
+ * segnatura in una passata sola e `impronta_sha256` si calcola su quel risultato (più
+ * sotto, `sha256Impronta(documento.pdf)`). La premessa vecchia resta vera solo per i
+ * documenti ACQUISITI, dove `applicaSegnatura()` passa davvero dopo
+ * (`src/lib/protocolli/store.ts`). Tenerla scritta qui costava una dichiarazione falsa
+ * STAMPATA sul foglio — «l'impronta SHA-256 di questo documento è registrata nel registro
+ * di protocollo» — su un atto che va all'INPS e al datore di lavoro. Il test che lega le
+ * due cose è in `__tests__/api/prestampati-segreteria.test.ts`.
  *
  * ⚠️ LA PROVA A VUOTO, prima di toccare la numerazione. Il render viene chiamato una volta
  * in più con `copiaFamiglia` — che è l'altra forma legittima dello stesso foglio (§4.1) e

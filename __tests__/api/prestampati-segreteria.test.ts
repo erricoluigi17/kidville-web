@@ -1800,11 +1800,25 @@ describe('POST /api/prestampati/genera — il percorso felice', () => {
     expect(numerazioni[0].args).toMatchObject({ p_scuola: SEDE })
     expect(res.headers.get('x-prestampato-protocollo')).toMatch(/^0000123\/\d{4}$/)
 
-    // La riga di registro dichiara la sua sede e conserva l'impronta del PDF originale,
-    // cioè quello PRIMA della fascia di segnatura (§4.3 della specifica).
+    // 🔴 L'IMPRONTA REGISTRATA È QUELLA DEI BYTE CONSEGNATI, e questo test è l'unica cosa
+    // che lo tiene. Sul foglio è STAMPATA la frase «l'impronta SHA-256 di questo documento
+    // è registrata nel registro di protocollo», e quel foglio va all'INPS e al datore di
+    // lavoro: se il registro conservasse l'impronta di un file diverso da quello scaricato
+    // — per esempio quella dei byte PRIMA della carta e della segnatura, come faceva la
+    // route sorella e come due commenti hanno continuato a dichiarare fino al 2026-08-16 —
+    // chi la verifica troverebbe due valori diversi e la frase sarebbe falsa.
+    //
+    // Su carta intestata non c'è più un «dopo»: `applicaCartaIntestata(pdf, { segnatura })`
+    // stende carta e segnatura in una passata sola, quindi consegnato, archiviato e
+    // registrato sono lo stesso file. Chi spostasse il calcolo dell'impronta prima della
+    // carta romperebbe QUESTA riga, che è il punto.
     const protocollo = h.state.inserimenti.find((i) => i.tabella === 'protocolli')
     expect(protocollo?.valori).toMatchObject({ scuola_id: SEDE, numero: 123, tipo: 'uscita' })
     expect(String(protocollo?.valori.impronta_sha256)).toMatch(/^SHA256-[0-9A-F]{64}$/)
+    const { createHash } = await import('node:crypto')
+    expect(protocollo?.valori.impronta_sha256).toBe(
+      `SHA256-${createHash('sha256').update(byte).digest('hex').toUpperCase()}`
+    )
     // 🔴 DESTINATARIO E MEZZO DEVONO DESCRIVERE LO STESSO ATTO. Il nulla osta ha il campo
     // «Istituto di destinazione», ma quell'istituto è l'OGGETTO del documento, non chi lo
     // riceve: il foglio lo prende la famiglia, che lo porta alla scuola nuova (§«Dopo la

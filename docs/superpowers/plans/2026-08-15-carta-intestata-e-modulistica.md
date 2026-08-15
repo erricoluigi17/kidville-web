@@ -57,7 +57,7 @@ npm run build
 |---|---|
 | `src/lib/carta/asset/carta-intestata.pdf` | ✅ già in repo. Il PDF reale, byte per byte. **Non si modifica.** |
 | `src/lib/carta/asset.ts` | Carica l'asset come `Uint8Array`, una volta sola (memoizzato). Nient'altro. |
-| `src/lib/carta/geometria.ts` | Le misure della carta in mm, in un posto solo: banda brand 12,5→26,8 · piede 272,1→285,0 · area libera 27→272. |
+| `src/lib/carta/geometria.ts` | Le misure della carta in mm, in un posto solo: banda brand 12,5→**27,05** · piede 272,1→**285,1** · area libera 40→**263,5**. Più `stesuraCarta()`/`fasceVietate()`, che dicono dove cadono le due fasce su un foglio ORIZZONTALE (girate: due colonne, non due fasce). ⚠️ I due valori corretti in implementazione: vedi le note qui sotto. |
 | `src/lib/carta/applica.ts` | `applicaCartaIntestata(pdfBytes): Promise<Uint8Array>` — pdf-lib, la carta come base, il contenuto sopra. |
 | `src/lib/carta/index.ts` | Superficie pubblica del modulo. |
 | `supabase/migrations/20260815T2100_document_type_prestampati.sql` | `ALTER TYPE document_type_enum ADD VALUE` × 17. |
@@ -71,7 +71,7 @@ npm run build
 
 | File | Cosa cambia |
 |---|---|
-| `src/lib/prestampati/impaginazione.ts:164-265` | Via banda verde, logo e piede predefinito. `LIMITE_CONTENUTO` 272→266, `Y_INTESTAZIONE` 38→40, `Y_TITOLO_MIN` 58→60, `piePagina` 287→268,5. |
+| `src/lib/prestampati/impaginazione.ts:164-265` | Via banda verde, logo e piede predefinito. `LIMITE_CONTENUTO` 272→**263,5** (non 266: vedi la nota di Task 1.2), `Y_INTESTAZIONE` 38→40, `Y_TITOLO_MIN` 58→60, `piePagina` 287→268,5. |
 | `src/lib/protocolli/documento-pdf.ts:26-48` | Smette di ridisegnare la testata: chiama il motore comune. |
 | `src/lib/fea/receipt-pdf.ts` | Applica la carta. |
 | `src/app/api/admin/merch/ordini-fornitore/pdf/route.ts` | Applica la carta. |
@@ -210,8 +210,25 @@ describe('geometria della carta intestata', () => {
 })
 ```
 
-- [ ] **Step 2-5:** falla fallire, implementa (`contenutoInizio: 40`, `contenutoFine: 266`,
+- [x] **Step 2-5:** falla fallire, implementa (`contenutoInizio: 40`, `contenutoFine: 263.5`,
       `rigaServizio: 268.5`), falla passare, committa.
+
+> ⚠️ **DUE DEVIAZIONI DAL PIANO, misurate in implementazione e da leggere prima di «correggerle».**
+>
+> 1. **`contenutoFine` è 263,5, non 266.** `rigaServizio` a 268,5 è la LINEA DI SCRITTURA: le
+>    maiuscole di 7 pt cominciano 1,77 mm più su (266,73), e il riquadro di verifica ancorato a 266
+>    chiudeva a **0,73 mm** da «Pagina n di m». I 2,5 mm sono stati pagati apposta; chi legge «266»
+>    da qualche parte e li rimette, disfa la riparazione senza saperlo.
+> 2. **`brandFine` è 27,05, non 26,8** (e `piedeFine` 285,1, non 285,0). Il rilievo a 150 dpi conta
+>    pixel; l'inchiostro vero dei tracciati vettoriali arriva a **27,026 mm** e a **285,085**. Ora
+>    `__tests__/lib/carta-geometria.test.ts` rimisura le due fasce SULL'ASSET invece di ricopiare i
+>    numeri, e pretende anche che non siano dichiarate più larghe del vero di oltre 0,5 mm.
+>
+> E la geometria ha due funzioni in più, `stesuraCarta()` e `fasceVietate()`: sull'A4 ORIZZONTALE la
+> carta si gira di 90°, quindi il marchio non è una fascia in cima ma una **colonna** a 12,5→27,05
+> dal bordo sinistro, col piede stampato a 272,1→285,1 (11,9 mm dal bordo destro). Fra le due
+> restano 245 mm utili — quanto basta al registro presenze, che oggi ne usa 281 e dovrà stringere in
+> W9.2. `CARTA.brandFine` da solo, su un foglio girato, non vuol dire più niente.
 
 ### Task 1.3: `applicaCartaIntestata`
 

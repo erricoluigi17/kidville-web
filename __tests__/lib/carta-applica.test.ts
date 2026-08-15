@@ -16,7 +16,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { applicaCartaIntestata } from '@/lib/carta/applica'
-import { CARTA } from '@/lib/carta/geometria'
+import { cartaIntestataBytes } from '@/lib/carta/asset'
+import { CARTA, fasceVietate, ingombroTesto, type Rettangolo } from '@/lib/carta/geometria'
 
 const A4: [number, number] = [595.276, 841.89]
 const MM_PER_PUNTO = 25.4 / 72
@@ -294,13 +295,20 @@ describe('applicaCartaIntestata', () => {
     // banda verde: su un foglio bianco è una scelta gentile — non copre niente — ma sulla
     // carta della scuola stacca il piede a quattro colonne dal fondo del foglio e apre due
     // margini bianchi ai lati. Una carta intestata riscalata non è più carta intestata.
+    //
+    // ⚠️ La tolleranza è 10⁻⁴ pt e non 10⁻⁷ per una ragione misurabile, non per far
+    // passare il test: l'A4 in punti (595,276) non è esattamente 210 mm (595,2755906), e
+    // la stesura si calcola in millimetri da quando la regola vive in `geometria.ts`.
+    // Il residuo è 1,2·10⁻⁴ pt, cioè **4 nanometri** sul foglio. Sopra questa soglia
+    // c'è una riscalatura vera, sotto c'è la settima cifra di un `double`.
+    const NULLA = 1e-3
     const { forme } = await composizione(await applicaCartaIntestata(await pdfDiProva(2)))
     expect(forme.length).toBeGreaterThanOrEqual(2)
     for (const forma of forme) {
       expect(forma.scalaX).toBeCloseTo(1, 6)
       expect(forma.scalaY).toBeCloseTo(1, 6)
-      expect(forma.spostamentoX).toBeCloseTo(0, 6)
-      expect(forma.spostamentoY).toBeCloseTo(0, 6)
+      expect(Math.abs(forma.spostamentoX)).toBeLessThan(NULLA)
+      expect(Math.abs(forma.spostamentoY)).toBeLessThan(NULLA)
     }
   })
 
@@ -322,7 +330,7 @@ describe('applicaCartaIntestata — la segnatura di protocollo', () => {
     // ACQUISITI — una scansione, una foto — che arrivano su un foglio bianco: lì la banda
     // verde alta 64 pt col logo bianco è la segnatura, e riscalare la pagina è il modo di
     // non coprire niente. Sulla carta intestata quella stessa banda cade ESATTAMENTE sul
-    // marchio della scuola (0 → 26,8 mm) e ne stampa un secondo sopra il primo.
+    // marchio della scuola (0 → 27,05 mm) e ne stampa un secondo sopra il primo.
     //
     // Perciò la segnatura sulla carta la mette questo modulo, e la mette dove la carta ha
     // lasciato l'aria per farlo.
@@ -331,7 +339,8 @@ describe('applicaCartaIntestata — la segnatura di protocollo', () => {
     const { disegniDellApp, forme } = await composizione(out)
     for (const forma of forme) {
       expect(forma.scalaX, 'la carta è stata riscalata').toBeCloseTo(1, 6)
-      expect(forma.spostamentoX, 'la carta è stata ricentrata').toBeCloseTo(0, 6)
+      // 10⁻³ pt = 0,35 µm: `applicaSegnatura()` sposterebbe di 22,8 pt, non di un micron.
+      expect(Math.abs(forma.spostamentoX), 'la carta è stata ricentrata').toBeLessThan(1e-3)
     }
     for (const disegno of disegniDellApp) {
       expect(
@@ -480,7 +489,7 @@ describe('ogni rotta che consegna un prestampato stende la carta intestata', () 
     // ci mette dentro un SECONDO logo Kidville e riscala il foglio di 777,89/841,89 =
     // 0,924 ricentrandolo. Su una scansione arrivata su foglio bianco è la scelta giusta:
     // non copre niente. Sulla carta intestata cade ESATTAMENTE sul marchio della scuola
-    // (0 → 26,8 mm) — cioè ricrea i difetti n. 1 e n. 2 della specifica.
+    // (0 → 27,05 mm) — cioè ricrea i difetti n. 1 e n. 2 della specifica.
     const timbrate = rotteCheConsegnano()
       .filter(({ nomi }) => nomi.has('applicaSegnatura'))
       .map((r) => r.file)
@@ -491,6 +500,112 @@ describe('ogni rotta che consegna un prestampato stende la carta intestata', () 
     ).toEqual([])
   })
 })
+
+/**
+ * Ogni pezzo d'inchiostro sul foglio composto, e DA CHI ci è stato messo.
+ *
+ * `composizione()` qui sopra guarda solo la profondità 0 — ciò che disegna il compositore —
+ * e per l'A4 verticale basta. Sull'orizzontale no: lì la domanda è dove finisce il MARCHIO
+ * (che sta dentro il form della carta) rispetto a ciò che disegna il CONTENUTO (che sta
+ * dentro il proprio), e nessuno dei due sta a profondità 0. La distinzione è l'indice del
+ * form più esterno che li contiene: 0 è la carta, 1 è il contenuto, perché è l'ordine in cui
+ * `componiPagina` li stende — ed è lo stesso ordine che il test sulla z già pretende.
+ */
+interface Pezzo extends Rettangolo {
+  forma: number
+}
+
+async function inchiostro(pdf: Uint8Array, pagina = 1): Promise<Pezzo[]> {
+  const { getDocumentProxy, getResolvedPDFJS } = await import('unpdf')
+  const { OPS } = await getResolvedPDFJS()
+  const doc = await getDocumentProxy(pdf.slice())
+  const p = await doc.getPage(pagina)
+  const altezzaFoglio = p.getViewport({ scale: 1 }).height
+  const lista = await p.getOperatorList()
+  const fn = lista.fnArray as number[]
+  const args = lista.argsArray as unknown[]
+
+  const pezzi: Pezzo[] = []
+  const pila: { ctm: number[]; forma: number }[] = []
+  let ctm = IDENTITA
+  let forma = -1
+  let quanteForme = 0
+
+  for (let i = 0; i < fn.length; i++) {
+    if (fn[i] === OPS.save) {
+      pila.push({ ctm, forma })
+      continue
+    }
+    if (fn[i] === OPS.restore) {
+      const stato = pila.pop()
+      if (stato) {
+        ctm = stato.ctm
+        forma = stato.forma
+      }
+      continue
+    }
+    if (fn[i] === OPS.transform) {
+      ctm = per(args[i] as number[], ctm)
+      continue
+    }
+    if (fn[i] === OPS.paintFormXObjectBegin) {
+      pila.push({ ctm, forma })
+      // Il form porta con sé la propria matrice, oltre alla `cm` che lo colloca.
+      ctm = per(((args[i] as unknown[])[0] as number[] | undefined) ?? IDENTITA, ctm)
+      if (forma < 0) forma = quanteForme++
+      continue
+    }
+    if (fn[i] === OPS.paintFormXObjectEnd) {
+      const stato = pila.pop()
+      if (stato) {
+        ctm = stato.ctm
+        forma = stato.forma
+      }
+      continue
+    }
+    if (fn[i] !== OPS.constructPath) continue
+    const limiti = (args[i] as unknown[])[2] as ArrayLike<number> | undefined
+    if (!limiti || limiti.length < 4) continue
+    const [a, b, c, d, e, f] = ctm
+    const angoli = [
+      [limiti[0], limiti[1]],
+      [limiti[2], limiti[1]],
+      [limiti[0], limiti[3]],
+      [limiti[2], limiti[3]],
+    ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f])
+    const xs = angoli.map((q) => q[0] * MM_PER_PUNTO)
+    const ys = angoli.map((q) => (altezzaFoglio - q[1]) * MM_PER_PUNTO)
+    pezzi.push({
+      forma,
+      sinistra: Math.min(...xs),
+      alto: Math.min(...ys),
+      larghezza: Math.max(...xs) - Math.min(...xs),
+      altezza: Math.max(...ys) - Math.min(...ys),
+    })
+  }
+  return pezzi
+}
+
+/** Le coordinate tornano dal PDF con qualche decimale di rumore: 0,05 mm non è un tocco. */
+const SFIORO_MM = 0.05
+
+function separati(a: Rettangolo, b: Rettangolo): boolean {
+  return (
+    a.sinistra + a.larghezza <= b.sinistra + SFIORO_MM ||
+    b.sinistra + b.larghezza <= a.sinistra + SFIORO_MM ||
+    a.alto + a.altezza <= b.alto + SFIORO_MM ||
+    b.alto + b.altezza <= a.alto + SFIORO_MM
+  )
+}
+
+function dentro(a: Rettangolo, b: Rettangolo): boolean {
+  return (
+    a.sinistra >= b.sinistra - SFIORO_MM &&
+    a.alto >= b.alto - SFIORO_MM &&
+    a.sinistra + a.larghezza <= b.sinistra + b.larghezza + SFIORO_MM &&
+    a.alto + a.altezza <= b.alto + b.altezza + SFIORO_MM
+  )
+}
 
 describe('applicaCartaIntestata — formati', () => {
   const ORIZZONTALE: [number, number] = [841.89, 595.276]
@@ -525,10 +640,14 @@ describe('applicaCartaIntestata — formati', () => {
 
   it("sull'A4 orizzontale la carta si gira invece di rimpicciolirsi: copre il foglio intero", async () => {
     // La carta è un foglio FISICO, e il foglio fisico è A4 verticale: un contenuto
-    // orizzontale ci si stampa sopra di traverso. Perciò la scelta giusta non è
-    // rimpicciolire la carta al 70,7% lasciando due fasce bianche ai lati, è girarla di
-    // 90°: l'asset è vettoriale, la rotazione non costa un byte, e sul foglio stampato il
-    // marchio torna in testa.
+    // orizzontale ci si stampa sopra di traverso. Perciò la scelta è girarla di 90° —
+    // l'asset è vettoriale, la rotazione non costa un byte — invece di rimpicciolirla al
+    // 70,7% lasciando 74 mm di bianco per lato.
+    //
+    // ⚠️ Girata, il marchio NON è più «in alto»: è una colonna sul bordo sinistro, e il
+    // piede stampato una colonna sul bordo destro. È la metà che questo blocco taceva, e
+    // che il contenuto dell'app pagava. Dove finiscono lo dice `fasceVietate()`, e i due
+    // test in fondo al file lo verificano sul foglio composto invece di dedurlo.
     const { forme } = await composizione(await applicaCartaIntestata(await pdfDiProva(1, ORIZZONTALE)))
     const [a, b, c, d] = forme[0].matrice
     // Scala 1 su entrambi gli assi: la carta copre l'A4 girato senza margini bianchi.
@@ -551,5 +670,184 @@ describe('applicaCartaIntestata — formati', () => {
     // «Contain» vuol dire che ci sta tutta: la scala è quella del lato più stretto.
     const scala = Math.hypot(forme[0].matrice[0], forme[0].matrice[1])
     expect(scala).toBeCloseTo(Math.min(500 / 595.276, 700 / 841.89), 6)
+  })
+})
+
+/**
+ * ⚠️ IL DIFETTO CHE QUESTO BLOCCO ESISTE PER IMPEDIRE, e che i tre test qui sopra NON
+ * vedevano.
+ *
+ * Fino al 2026-08-16, sull'A4 orizzontale, il contenuto dell'app stampava SOPRA la riga
+ * «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO»: reso e guardato, la «R» di «REGISTRO
+ * PRESENZE» cadeva esattamente sulle lettere di «PRIMARIA ·». I test sull'orizzontale
+ * misuravano soltanto che la carta non si deformasse — anisotropia, scala, ortogonalità —
+ * e **nessuno guardava dove finisse il contenuto**. Peggio: `CARTA.brandFine` è una quota
+ * verticale, e sul foglio girato non vuol più dire niente.
+ *
+ * Qui si misura l'unica cosa che conta davvero: dove cade l'INCHIOSTRO del marchio sul
+ * foglio composto, e se qualcosa dell'app gli finisce sopra. Le fasce non sono ricopiate a
+ * mano: le calcola `fasceVietate()`, cioè la stessa geometria che stende la carta, e il
+ * primo test verifica che quella dichiarazione corrisponda ai tracciati veri della carta.
+ * Un lock che ricopiasse i numeri non sorveglierebbe niente.
+ */
+describe('le due fasce della carta, misurate sul foglio composto', () => {
+  const ORIZZONTALE: [number, number] = [841.89, 595.276]
+  const VERTICALE: [number, number] = [595.276, 841.89]
+  const PUNTI_PER_MM = 72 / 25.4
+
+  /**
+   * Una pagina orizzontale fatta come il registro presenze: un titolo in alto e i filetti
+   * di una tabella che occupa tutta la larghezza utile.
+   *
+   * `sinistra` è la leva: a 28 mm il contenuto rispetta la colonna del marchio, a 8 mm —
+   * il margine che il registro presenze usa oggi — ci finisce dentro. Serve a provare che
+   * questo test sa dire di no: una guardia che non ha mai visto un fallimento è una
+   * guardia che non si sa se funzioni.
+   */
+  async function paginaComeIlRegistro(sinistra: number, destra = 271): Promise<Uint8Array> {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const p = doc.addPage(ORIZZONTALE)
+    const alto = p.getHeight()
+    p.drawText('REGISTRO PRESENZE', {
+      x: sinistra * PUNTI_PER_MM,
+      y: alto - 46 * PUNTI_PER_MM,
+      size: 14,
+      font,
+    })
+    for (let riga = 0; riga < 8; riga++) {
+      const y = alto - (55 + riga * 15) * PUNTI_PER_MM
+      p.drawLine({
+        start: { x: sinistra * PUNTI_PER_MM, y },
+        end: { x: destra * PUNTI_PER_MM, y },
+        thickness: 0.5,
+      })
+    }
+    return doc.save()
+  }
+
+  it('sull’A4 verticale il marchio della carta cade dentro la fascia dichiarata', async () => {
+    const nuda = await inchiostro(cartaIntestataBytes())
+    const composta = await inchiostro(await applicaCartaIntestata(await pdfDiProva(1, VERTICALE)))
+    const carta = composta.filter((p) => p.forma === 0)
+    // Stesso flusso di contenuto, stesso ordine: l'indice i della carta nuda è l'indice i
+    // della carta stesa. È ciò che permette di sapere QUALI tracciati sono il marchio
+    // senza dedurlo dalla posizione che si sta verificando.
+    expect(carta).toHaveLength(nuda.length)
+
+    const { marchio, piede } = fasceVietate(CARTA.larghezzaPagina, CARTA.altezzaPagina)
+    const testa = nuda.flatMap((p, i) => (p.alto + p.altezza < 60 ? [i] : []))
+    expect(testa.length).toBeGreaterThan(30)
+    for (const i of testa) expect(dentro(carta[i], marchio), `tracciato ${i}`).toBe(true)
+
+    const coda = nuda.flatMap((p, i) => (p.alto > 250 ? [i] : []))
+    expect(coda.length).toBeGreaterThan(100)
+    for (const i of coda) expect(dentro(carta[i], piede), `tracciato ${i}`).toBe(true)
+  })
+
+  it('sull’A4 orizzontale il marchio finisce nella COLONNA che `fasceVietate` dichiara', async () => {
+    // La prova che il verso del giro è quello che la geometria racconta: +90° porta il
+    // bordo alto della carta sul bordo SINISTRO del foglio. Dedurlo dal segno di una
+    // matrice è come dedurre da che parte si apre una porta guardando i cardini in
+    // fotografia — qui invece si guarda dove è finito l'inchiostro.
+    const nuda = await inchiostro(cartaIntestataBytes())
+    const composta = await inchiostro(
+      await applicaCartaIntestata(await paginaComeIlRegistro(28))
+    )
+    const carta = composta.filter((p) => p.forma === 0)
+    expect(carta).toHaveLength(nuda.length)
+
+    const { marchio, piede } = fasceVietate(297, 210)
+    for (const i of nuda.flatMap((p, i) => (p.alto + p.altezza < 60 ? [i] : []))) {
+      expect(dentro(carta[i], marchio), `tracciato ${i} del marchio`).toBe(true)
+    }
+    for (const i of nuda.flatMap((p, i) => (p.alto > 250 ? [i] : []))) {
+      expect(dentro(carta[i], piede), `tracciato ${i} del piede`).toBe(true)
+    }
+    // E la colonna è davvero una colonna: alta quanto il foglio, larga 14,5 mm.
+    expect(marchio.altezza).toBeCloseTo(210, 6)
+    expect(marchio.larghezza).toBeCloseTo(CARTA.brandFine - CARTA.brandInizio, 6)
+  })
+
+  it('sul foglio orizzontale nessun disegno dell’app entra nelle due fasce', async () => {
+    const composta = await inchiostro(
+      await applicaCartaIntestata(await paginaComeIlRegistro(28), {
+        segnatura: { righe: ['SCUOLA DI PROVA', 'Prot. n. 0000123/2026'] },
+      })
+    )
+    const { marchio, piede } = fasceVietate(297, 210)
+    // Il contenuto (form 1) e ciò che il compositore disegna sul foglio (form -1).
+    for (const pezzo of composta.filter((p) => p.forma !== 0)) {
+      expect(separati(pezzo, marchio), `disegno a ${pezzo.sinistra.toFixed(1)} mm`).toBe(true)
+      expect(separati(pezzo, piede), `disegno a ${pezzo.sinistra.toFixed(1)} mm`).toBe(true)
+    }
+  })
+
+  it('e se il contenuto ci entra, il test se ne accorge (altrimenti non sorveglia niente)', async () => {
+    // 8 mm è il margine sinistro che il registro presenze usa oggi
+    // (`MonthlyAttendanceTable.tsx`): sul foglio girato cade dentro la colonna del
+    // marchio. Questa riga non è un caso di scuola — è il motivo per cui W9.2 dovrà
+    // stringere i margini prima di mandare il registro dentro questo motore.
+    const composta = await inchiostro(await applicaCartaIntestata(await paginaComeIlRegistro(8)))
+    const { marchio } = fasceVietate(297, 210)
+    const dentroIlMarchio = composta
+      .filter((p) => p.forma !== 0)
+      .filter((p) => !separati(p, marchio))
+    expect(dentroIlMarchio.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * L'ingombro d'INCHIOSTRO di ogni pezzo di testo del foglio, segnatura compresa.
+   *
+   * `drawText(…, y)` mette a `y` la linea di scrittura: confrontare quella con una fascia
+   * vietata lascia fuori dal conto le maiuscole (che stanno sopra) e le discendenti (che
+   * stanno sotto) — in 14 pt sono 4,6 mm di maglie larghe. L'altezza la dà
+   * `ingombroTesto`, la larghezza la dà PDF.js.
+   */
+  async function testoSulFoglio(pdf: Uint8Array): Promise<(Rettangolo & { testo: string })[]> {
+    const { getDocumentProxy } = await import('unpdf')
+    const doc = await getDocumentProxy(pdf.slice())
+    const pagina = await doc.getPage(1)
+    const altezza = pagina.getViewport({ scale: 1 }).height
+    const items = (await pagina.getTextContent()).items as Array<{
+      str?: string
+      width?: number
+      height?: number
+      transform?: number[]
+    }>
+    return items
+      .filter((i) => i.str?.trim())
+      .map((i) => {
+        const t = i.transform ?? [0, 0, 0, 0, 0, 0]
+        const baseline = (altezza - t[5]) * MM_PER_PUNTO
+        const ingombro = ingombroTesto(baseline, i.height ?? 0)
+        return {
+          testo: i.str ?? '',
+          sinistra: t[4] * MM_PER_PUNTO,
+          larghezza: (i.width ?? 0) * MM_PER_PUNTO,
+          alto: ingombro.cima,
+          altezza: ingombro.fondo - ingombro.cima,
+        }
+      })
+  }
+
+  it('anche il TESTO dell’app resta fuori dalle fasce, sul verticale e sull’orizzontale', async () => {
+    const RIGHE = ['SCUOLA DI PROVA', 'Prot. n. 0000123/2026 · Uscita']
+    const prove: [string, Uint8Array, [number, number]][] = [
+      ['verticale', await pdfDiProva(1, VERTICALE), [210, 297]],
+      ['orizzontale', await paginaComeIlRegistro(28), [297, 210]],
+    ]
+    for (const [nome, contenuto, [larghezza, altezza]] of prove) {
+      const out = await applicaCartaIntestata(contenuto, { segnatura: { righe: RIGHE } })
+      const fasce = fasceVietate(larghezza, altezza)
+      const testi = await testoSulFoglio(out)
+      // La segnatura è testo dell'app quanto il resto: se finisse sul marchio sarebbe il
+      // difetto n. 1 della specifica, stampato dal modulo che esiste per impedirlo.
+      expect(testi.some((t) => t.testo.includes('0000123/2026')), nome).toBe(true)
+      for (const pezzo of testi) {
+        expect(separati(pezzo, fasce.marchio), `${nome}: «${pezzo.testo}» sul marchio`).toBe(true)
+        expect(separati(pezzo, fasce.piede), `${nome}: «${pezzo.testo}» sul piede`).toBe(true)
+      }
+    }
   })
 })

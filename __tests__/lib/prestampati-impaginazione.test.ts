@@ -11,17 +11,19 @@
  *
  * ⚠️ **DAL 2026-08-15 QUESTO MOTORE STAMPA SOPRA LA CARTA INTESTATA REALE.** Non disegna
  * più né la banda verde né il logo: ce li ha già la carta, e ridisegnarli significava
- * coprirli. Le due fasce che l'asset si tiene — il marchio fino a 26,8 mm e il piede a
- * quattro colonne da 272,1 — sono territorio vietato: `CARTA` le dichiara, e i test qui
- * sotto verificano che nessun elemento ci finisca dentro. Un'asserzione che pretendesse
- * di nuovo la banda o il logo non sarebbe un test più severo, sarebbe il difetto.
+ * coprirli. Le due fasce che l'asset si tiene — il marchio fino a 27,05 mm e il piede a
+ * quattro colonne da 272,1 — sono territorio vietato: `CARTA` le dichiara (e i suoi test
+ * le RIMISURANO sull'asset), e i test qui sotto verificano che nessun elemento ci finisca
+ * dentro — confrontando l'INCHIOSTRO, non la linea di scrittura. Un'asserzione che
+ * pretendesse di nuovo la banda o il logo non sarebbe un test più severo, sarebbe il
+ * difetto.
  *
  * Nessun dato reale: nomi inventati, sede inventata, protocolli inventati.
  */
 import { describe, it, expect } from 'vitest'
 import { buildPrestampatoPdf } from '@/lib/prestampati/impaginazione'
 import type { BloccoPrestampato, DocumentoPrestampato } from '@/lib/prestampati/tipi'
-import { CARTA } from '@/lib/carta/geometria'
+import { CARTA, ingombroTesto } from '@/lib/carta/geometria'
 import { estraiTesto } from '@/lib/protocolli/estrai'
 
 const MM_PER_PUNTO = 25.4 / 72
@@ -47,8 +49,16 @@ interface ElementoTesto {
   testo: string
   xMm: number
   larghezzaMm: number
-  /** Millimetri dal bordo ALTO, come nella specifica (il PDF li conta dal basso). */
+  /**
+   * Millimetri dal bordo ALTO, come nella specifica (il PDF li conta dal basso).
+   *
+   * ⚠️ È la LINEA DI SCRITTURA, non la cima delle lettere: chi la confronta con una fascia
+   * vietata sta misurando dal posto sbagliato di due o tre millimetri. Si passa da
+   * `ingombroTesto(yMm, corpoPt)`.
+   */
   yMm: number
+  /** Il corpo in punti, che è ciò che serve per sapere quanto sale e scende l'inchiostro. */
+  corpoPt: number
 }
 
 /** Ogni pezzo di testo del PDF con la sua posizione, pagina per pagina. */
@@ -61,7 +71,12 @@ async function elementiTesto(pdf: Uint8Array): Promise<ElementoTesto[]> {
   for (let p = 1; p <= doc.numPages; p++) {
     const pagina = await doc.getPage(p)
     const contenuto = await pagina.getTextContent()
-    for (const item of contenuto.items as Array<{ str?: string; width?: number; transform?: number[] }>) {
+    for (const item of contenuto.items as Array<{
+      str?: string
+      width?: number
+      height?: number
+      transform?: number[]
+    }>) {
       if (typeof item.str !== 'string' || !item.str.trim()) continue
       const t = item.transform ?? [0, 0, 0, 0, 0, 0]
       elementi.push({
@@ -70,6 +85,9 @@ async function elementiTesto(pdf: Uint8Array): Promise<ElementoTesto[]> {
         xMm: t[4] * MM_PER_PUNTO,
         larghezzaMm: (item.width ?? 0) * MM_PER_PUNTO,
         yMm: ALTEZZA_A4_MM - t[5] * MM_PER_PUNTO,
+        // `height` di PDF.js è il corpo del carattere nello spazio del foglio: misurato
+        // sul PDF vero, torna 7 sui 7 pt del piede e 16 sui 16 pt del titolo.
+        corpoPt: item.height ?? 0,
       })
     }
   }
@@ -260,14 +278,14 @@ describe('buildPrestampatoPdf — carta e ritmo (§1 e §2)', () => {
 
   it('il piede predefinito non esiste più: lo scrive la carta', async () => {
     // «Documento generato dal registro elettronico Kidville» cadeva a y=287, cioè dentro
-    // il piede a quattro colonne stampato sull'asset (272,1→285,0). La carta porta la
+    // il piede a quattro colonne stampato sull'asset (272,1→285,1). La carta porta la
     // ragione sociale e le tre sedi: l'app lì sotto non ha più niente da aggiungere.
     const testo = await estraiTesto(buildPrestampatoPdf(documento()))
     expect(testo).not.toContain('Documento generato dal registro elettronico')
   })
 
   it('nessun elemento entra nella fascia del marchio né in quella del piede', async () => {
-    // Il lock vero di tutto questo lavoro, e vale su OGNI pagina: sopra 26,8 mm c'è il
+    // Il lock vero di tutto questo lavoro, e vale su OGNI pagina: sopra `brandFine` c'è il
     // marchio della scuola, sotto 272,1 il piede a quattro colonne. Sono territorio
     // dell'asset, e ciò che ci finisce sopra non «sta stretto»: ci si stampa sopra.
     const pdf = buildPrestampatoPdf(
@@ -288,11 +306,21 @@ describe('buildPrestampatoPdf — carta e ritmo (§1 e §2)', () => {
     const elementi = await elementiTesto(pdf)
     expect(await numeroPagine(pdf)).toBeGreaterThan(2)
     for (const el of elementi) {
-      expect(el.yMm, `«${el.testo}» a y=${el.yMm.toFixed(1)}`).toBeGreaterThan(CARTA.brandFine)
-      expect(el.yMm, `«${el.testo}» a y=${el.yMm.toFixed(1)}`).toBeLessThan(CARTA.piedeInizio)
+      // ⚠️ SI CONFRONTA L'INCHIOSTRO, NON LA LINEA DI SCRITTURA. Fino al 2026-08-16 queste
+      // due righe misuravano `el.yMm`, cioè la baseline: una riga in 12 pt ha le maiuscole
+      // 3,3 mm più su e le discendenti 0,8 mm più giù, quindi una baseline a 27,5 mm
+      // passava il test con le maiuscole DENTRO il marchio della scuola, e una a 272,0 lo
+      // passava con le «g» dentro «Ragione sociale». Maglie larghe proprio dentro la
+      // guardia che deve impedire il difetto n. 1 della specifica — ed è lo stesso errore
+      // di misura che `geometria.ts` aveva già diagnosticato in fondo alla pagina.
+      const { cima, fondo } = ingombroTesto(el.yMm, el.corpoPt)
+      expect(cima, `«${el.testo}» comincia a y=${cima.toFixed(1)}`).toBeGreaterThan(CARTA.brandFine)
+      expect(fondo, `«${el.testo}» finisce a y=${fondo.toFixed(1)}`).toBeLessThan(CARTA.piedeInizio)
     }
 
     // E nemmeno le CORNICI, che il testo estratto non racconta: riquadri, filetti, caselle.
+    // Queste erano già misurate per intero — bordo alto E bordo basso — ed è il confronto
+    // che al testo mancava.
     for (const i of await ingombriPercorsi(pdf)) {
       expect(i.yMm, `cornice a y=${i.yMm.toFixed(1)}`).toBeGreaterThan(CARTA.brandFine)
       expect(
@@ -300,6 +328,21 @@ describe('buildPrestampatoPdf — carta e ritmo (§1 e §2)', () => {
         `cornice fino a y=${(i.yMm + i.altezzaMm).toFixed(1)}`
       ).toBeLessThan(CARTA.piedeInizio)
     }
+  })
+
+  it('la guardia sa dire di no: una baseline «libera» con le maiuscole dentro il marchio', () => {
+    // La prova che il test qui sopra è diventato più severo, e non solo più lungo. Una
+    // riga di titolo in 12 pt appoggiata a 28 mm: la baseline è sotto `brandFine` — la
+    // vecchia misura l'avrebbe fatta passare — ma le maiuscole cominciano a 24,7 mm, cioè
+    // sopra il logotipo «Kidville». Stessa storia in fondo: una baseline a 272 con le «g»
+    // dentro «Ragione sociale».
+    const titolo = ingombroTesto(28, 12)
+    expect(28).toBeGreaterThan(CARTA.brandFine)
+    expect(titolo.cima).toBeLessThan(CARTA.brandFine)
+
+    const piede = ingombroTesto(272, 12)
+    expect(272).toBeLessThan(CARTA.piedeInizio)
+    expect(piede.fondo).toBeGreaterThan(CARTA.piedeInizio)
   })
 
   it('degrada senza intestazione di sede, e non stampa mai «undefined» al posto di un dato', async () => {
@@ -733,7 +776,7 @@ describe('buildPrestampatoPdf — la firma non apre una pagina per sé sola', ()
     // Con un «uso» lungo due righe il certificato non ci sta più in un foglio: il motore
     // vecchio ce lo faceva stare soltanto perché stampava il riquadro di verifica a
     // cavallo del piede a quattro colonne della carta (fondo a 278,8 mm, dentro
-    // 272,1→285,0), cioè sopra la ragione sociale e i recapiti delle tre sedi. Recuperare
+    // 272,1→285,1), cioè sopra la ragione sociale e i recapiti delle tre sedi. Recuperare
     // quei dodici millimetri e mezzo vorrebbe dire rimetterceli sopra.
     //
     // Ciò che il motore DEVE garantire è un'altra cosa: che la seconda pagina non sia la

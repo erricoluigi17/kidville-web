@@ -15,6 +15,13 @@
  * prestampati non disegna più né banda né logo né piede, quindi una rotta che restituisce
  * i suoi byte così com'escono manda alla famiglia un foglio più nudo di quello di prima.
  *
+ * ⚠️ **E chi impagina su un formato che non sia l'A4 VERTICALE non legga `CARTA` a mano:
+ * chieda a `fasceVietate(larghezza, altezza)`.** Sull'orizzontale la carta si gira di 90°,
+ * e il marchio della scuola non è più una fascia in cima al foglio ma una colonna sul bordo
+ * sinistro (12,5→27,05 mm), col piede stampato sul bordo destro. `CARTA.brandFine` è una
+ * quota verticale: su un foglio girato non vuol dire più niente, e il registro presenze —
+ * che è orizzontale — ci stampava sopra.
+ *
  * ⚠️ **E il documento finito esce da UNA chiamata sola.** Questa riga, fino al 2026-08-15,
  * diceva di chiamare `applicaCartaIntestata()` «prima di `applicaSegnatura()`»: comporre
  * in quell'ordine dipinge una fascia verde sopra il marchio della scuola, ci mette un
@@ -32,4 +39,13 @@
 
 export { applicaCartaIntestata, type OpzioniCarta, type SegnaturaCarta } from './applica'
 export { cartaIntestataBytes } from './asset'
-export { CARTA, type GeometriaCarta } from './geometria'
+export {
+  CARTA,
+  fasceVietate,
+  ingombroTesto,
+  stesuraCarta,
+  type GeometriaCarta,
+  type IngombroTesto,
+  type Rettangolo,
+  type StesuraCarta,
+} from './geometria'

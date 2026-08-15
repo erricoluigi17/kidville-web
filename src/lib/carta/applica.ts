@@ -32,7 +32,7 @@
  * `src/lib/protocolli/timbro.ts`, come già oggi»*. **Era falsa, ed era il difetto.**
  * Misurato componendo davvero i due passaggi: `applicaSegnatura()` dipinge una fascia
  * verde alta 64 pt in testa alla prima pagina — cioè sopra il marchio della scuola, che
- * finisce a 26,8 mm — ci mette dentro un SECONDO logo Kidville sopra il primo, e riscala
+ * finisce a 27,05 mm — ci mette dentro un SECONDO logo Kidville sopra il primo, e riscala
  * la carta di 777,89/841,89 = 0,924 ricentrandola, così il piede a quattro colonne non sta
  * più al fondo del foglio e compaiono due margini bianchi ai lati. Sono, alla lettera, i
  * difetti n. 1 e n. 2 della specifica: quelli per cui questo modulo esiste.
@@ -64,7 +64,7 @@ import {
 } from 'pdf-lib'
 import { logEvento } from '@/lib/logging/logger'
 import { cartaIntestataBytes } from './asset'
-import { CARTA } from './geometria'
+import { CARTA, stesuraCarta } from './geometria'
 
 /**
  * Sotto questa frazione di foglio coperto, la carta lascia fasce bianche visibili: il
@@ -153,6 +153,15 @@ function testoSegnatura(font: PDFFont, riga: string): string {
  *
  * Niente fascia, niente logo, niente riscalatura: il foglio resta quello che era e la
  * segnatura si posa nell'unico spazio che la carta tiene libero per essa.
+ *
+ * ⚠️ Le quote (`segnaturaRiga`, `margineDx`) sono contate dal foglio, non dalla carta, e
+ * sull'A4 ORIZZONTALE le due cose non coincidono più: lì la carta è girata, quindi l'aria
+ * che riserva alla segnatura è una colonna verticale, mentre questa riga resta orizzontale
+ * a 34 mm dal bordo alto. Misurato: su 297×210 finisce comunque fra le due fasce vietate
+ * (x da ~120 a 188, la colonna del marchio si ferma a 27,05 e quella del piede comincia a
+ * 272,1), quindi non tocca niente della carta — ma cade in mezzo all'area di lavoro, e un
+ * motore orizzontale che protocolla deve lasciarle la riga libera. Il lock che lo misura è
+ * in `__tests__/lib/carta-applica.test.ts`, sul verticale e sull'orizzontale.
  */
 async function stampaSegnatura(
   documento: PDFDocument,
@@ -195,71 +204,43 @@ async function stampaSegnatura(
 }
 
 /**
- * Come stendere la carta su UNA pagina, senza mai deformarla.
+ * Dove posare la carta su UNA pagina, tradotto nei termini che vuole `drawPage`.
  *
- * ⚠️ **IL MARCHIO DI UNA SCUOLA NON SI STIRA, MAI.** Fino al 2026-08-15 questa funzione
- * diceva `drawPage(carta, { width: larghezza, height: altezza })`, cioè «riempi il
- * foglio»: su A4 verticale era esatto per coincidenza — le proporzioni combaciano — e su
- * A4 **orizzontale** allargava la carta di 1,414× e la schiacciava di 0,707×. Reso e
- * guardato: il logotipo «Kidville» con le lettere grasse e piatte, la riga «NIDO ·
- * INFANZIA / PRIMARIA · CAMPO ESTIVO» compressa, il piede a quattro colonne al limite
- * della leggibilità. E non era un caso di scuola: il REGISTRO PRESENZE è in orizzontale e
- * passa da qui (spec §1.5).
+ * ⚠️ **LA REGOLA NON STA PIÙ QUI.** Fino al 2026-08-16 questa funzione decideva da sola
+ * scala e rotazione, e il difetto non era la scelta: era che **la scelta non usciva da
+ * questo file**. Sull'A4 orizzontale la carta viene girata di 90°, quindi il marchio non è
+ * più una fascia in cima al foglio ma una colonna sul bordo sinistro — e chi impagina il
+ * registro presenze (che è orizzontale, spec §1.5) leggeva `CARTA.brandFine`, una quota
+ * verticale che sul foglio girato non vuol più dire niente, e ci stampava sopra. Reso e
+ * guardato: la «R» di «REGISTRO PRESENZE» esattamente sulle lettere di «PRIMARIA ·».
  *
- * Due regole, in quest'ordine:
+ * Ora la regola vive in `geometria.ts` — `stesuraCarta()` per dove va la carta,
+ * `fasceVietate()` per dove NON può andare il contenuto — e qui resta solo la traduzione
+ * in coordinate PDF. Un motore che deve impaginare su un formato qualunque chiede lì, senza
+ * importare pdf-lib e senza i suoi 1,1 MB di asset.
  *
- *  1. **la scala è uniforme** — mai due fattori diversi sui due assi;
- *  2. **fra dritta e girata di 90° vince quella che copre di più**. La carta è un foglio
- *     FISICO, e il foglio fisico è A4 verticale: un contenuto orizzontale ci si stampa
- *     sopra di traverso, quindi girare la carta è ciò che rimette il marchio in testa al
- *     foglio stampato. L'asset è vettoriale: la rotazione non costa un byte né un pixel.
- *
- * Il VERSO della rotazione è +90° (antiorario nelle coordinate PDF), e non è indifferente:
- * porta il bordo alto della carta sul bordo SINISTRO della pagina. Chi stampa un foglio
- * orizzontale su carta A4 lo gira in senso orario per leggerlo — è il gesto naturale, ed è
- * anche ciò che fa l'auto-rotazione delle stampanti — e in quel momento il marchio torna
- * in alto a sinistra, la riga «NIDO · INFANZIA / PRIMARIA · CAMPO ESTIVO» in alto a destra
- * e il piede a quattro colonne al fondo. Girata di -90° si otterrebbe la carta capovolta.
- * Verificato rendendo la pagina e guardandola (2026-08-15).
- *
- * Su un formato che non è né A4 né A4 girato non c'è una risposta giusta: la carta si
- * stende «contain» e centrata, e resta dell'aria ai lati. Aria bianca si vede e si
- * corregge; un marchio stirato passa per una scelta grafica.
+ * La traduzione, che è l'unica cosa non ovvia rimasta: `width`/`height` di `drawPage` sono
+ * misurati sugli assi DELLA CARTA, non del foglio, quindi non si scambiano quando c'è il
+ * giro; `x`/`y` sono il perno della rotazione, e con `rotate: 90°` pdf-lib compone
+ * traslazione → rotazione → scala, cioè il form finisce a SINISTRA di `x`. Perciò `x` è il
+ * bordo destro del riquadro quando la carta è girata, e quello sinistro quando è dritta.
+ * Che questa traduzione corrisponda alla dichiarazione di `geometria.ts` non è affidato a
+ * questo commento: `__tests__/lib/carta-applica.test.ts` misura dove finisce l'INCHIOSTRO
+ * del marchio sul foglio composto e lo confronta con `fasceVietate()`.
  */
-function stesuraCarta(
-  carta: PDFEmbeddedPage,
+function posaCarta(
   larghezza: number,
   altezza: number
 ): { x: number; y: number; larghezza: number; altezza: number; giro: 0 | 90; copertura: number } {
-  const { width: w, height: h } = carta
-  if (w <= 0 || h <= 0) return { x: 0, y: 0, larghezza, altezza, giro: 0, copertura: 0 }
-
-  const dritta = Math.min(larghezza / w, altezza / h)
-  const girata = Math.min(larghezza / h, altezza / w)
-  const area = larghezza * altezza
-
-  if (girata > dritta) {
-    // Con `rotate: 90°` pdf-lib compone traslazione → rotazione → scala, quindi il form
-    // ruota attorno al punto (x, y): la carta finisce a sinistra di `x`, e per riportarla
-    // sul foglio `x` va spostato di tutta la sua altezza scalata.
-    const usata = girata * h * girata * w
-    return {
-      x: (larghezza + girata * h) / 2,
-      y: (altezza - girata * w) / 2,
-      larghezza: girata * w,
-      altezza: girata * h,
-      giro: 90,
-      copertura: usata / area,
-    }
-  }
-
+  const stesa = stesuraCarta(larghezza / PUNTI_PER_MM, altezza / PUNTI_PER_MM)
+  const { riquadro } = stesa
   return {
-    x: (larghezza - dritta * w) / 2,
-    y: (altezza - dritta * h) / 2,
-    larghezza: dritta * w,
-    altezza: dritta * h,
-    giro: 0,
-    copertura: (dritta * w * dritta * h) / area,
+    x: (stesa.giro === 90 ? riquadro.sinistra + riquadro.larghezza : riquadro.sinistra) * PUNTI_PER_MM,
+    y: (altezza / PUNTI_PER_MM - (riquadro.alto + riquadro.altezza)) * PUNTI_PER_MM,
+    larghezza: stesa.scala * CARTA.larghezzaPagina * PUNTI_PER_MM,
+    altezza: stesa.scala * CARTA.altezzaPagina * PUNTI_PER_MM,
+    giro: stesa.giro,
+    copertura: stesa.copertura,
   }
 }
 
@@ -271,7 +252,7 @@ function componiPagina(
   larghezza: number,
   altezza: number
 ): number {
-  const stesa = stesuraCarta(carta, larghezza, altezza)
+  const stesa = posaCarta(larghezza, altezza)
   pagina.drawPage(carta, {
     x: stesa.x,
     y: stesa.y,
@@ -332,6 +313,24 @@ export async function applicaCartaIntestata(
     // non si moltiplichi per le pagine, il contenuto perché pdf-lib possa condividere le
     // risorse fra le pagine che le condividono già (font in testa).
     const [cartaIncorporata] = await out.embedPdf(carta, [0])
+    // Tutta la geometria — la stesura, le due fasce vietate, il giro sull'orizzontale — è
+    // calcolata sulle misure che `CARTA` dichiara, non su quelle dell'asset che si sta
+    // stendendo. Finché coincidono è la stessa cosa; se un giorno non coincidessero,
+    // `fasceVietate()` direbbe il falso a ogni motore che la interroga, e lo direbbe in
+    // silenzio. Il lock sul SHA-256 dell'asset dovrebbe arrivare prima: questa riga è la
+    // seconda rete, e costa un confronto per documento.
+    const attesaX = CARTA.larghezzaPagina * PUNTI_PER_MM
+    const attesaY = CARTA.altezzaPagina * PUNTI_PER_MM
+    if (
+      Math.abs(cartaIncorporata.width - attesaX) > 0.5 ||
+      Math.abs(cartaIncorporata.height - attesaY) > 0.5
+    ) {
+      logEvento('modulistica', 'error', {
+        operazione: 'carta/asset-fuori-misura',
+        larghezza: Math.round(cartaIncorporata.width),
+        altezza: Math.round(cartaIncorporata.height),
+      })
+    }
     const daIncorporare = sorgente
       .getPages()
       .map((pagina, i) => (haContenuto(pagina) ? i : -1))

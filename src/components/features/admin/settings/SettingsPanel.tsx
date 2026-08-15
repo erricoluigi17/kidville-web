@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock, BellRing, Receipt } from 'lucide-react';
 import { livelliEffettivi, type LivelloSollecito, type SollecitiConfig } from '@/lib/pagamenti/solleciti';
+// Da `iban.ts` e non da `fiscale.ts`: quest'ultimo importa il logger, che
+// trascina `node:crypto` — e questo è un componente client.
+import { ibanValido, normalizzaIban } from '@/lib/pagamenti/iban';
 import {
     CEDENTE_COOPERATIVA, LUNGHEZZE_CEDENTE, cedenteCompleto, validaCedente,
     type AnagraficaCedente, type CampoCedente,
@@ -162,6 +165,8 @@ function SollecitiSettings({ userId }: Props) {
 interface FiscaleCfg extends AnagraficaCedente {
     bollo_enabled?: boolean; bollo_soglia?: number; bollo_importo?: number;
     dicitura_bollo_ricevuta?: string;
+    /** L'IBAN del bonifico: NON è un campo del cedente, e infatti sta qui e non in `CAMPI_FISCALI`. */
+    iban?: string;
 }
 
 /**
@@ -257,7 +262,11 @@ function FiscaleSettings({ userId, scuolaId }: Props) {
     if (!cfg) return null;
     const set = (k: keyof FiscaleCfg, v: unknown) => setCfg({ ...cfg, [k]: v });
     const errori = validaCedente(cfg);
-    const invalido = Object.keys(errori).length > 0;
+    // Un IBAN vuoto va bene — il riquadro bonifico delle email lo omette e resta
+    // com'è oggi. Un IBAN SBAGLIATO no: quel numero finisce in un promemoria di
+    // pagamento, e chi lo legge lo incolla nell'home banking.
+    const ibanSbagliato = (cfg.iban ?? '').trim() !== '' && !ibanValido(cfg.iban);
+    const invalido = Object.keys(errori).length > 0 || ibanSbagliato;
     const save = async () => {
         // Stessa validazione del server: una sede senza CAP non deve nemmeno
         // partire, così l'operatore vede QUALE campo, non un 500 generico.
@@ -315,6 +324,26 @@ function FiscaleSettings({ userId, scuolaId }: Props) {
                         </div>
                     );
                 })}
+            </div>
+            {/* L'IBAN sta fuori dalla griglia del cedente perché NON è un campo del
+                cedente: non entra nel tracciato della fattura elettronica. Serve al
+                riquadro «Dati per il bonifico» dei promemoria e dei solleciti, ed è
+                l'unica cosa di quelle email che si copia dentro l'home banking. */}
+            <div className="mt-4">
+                <label className={label} htmlFor="fiscale-iban">{t('spFiscaleIban')}</label>
+                <input
+                    id="fiscale-iban"
+                    value={cfg.iban ?? ''}
+                    maxLength={34}
+                    placeholder={t('spFiscaleIbanPlaceholder')}
+                    aria-invalid={ibanSbagliato}
+                    aria-describedby={ibanSbagliato ? 'fiscale-iban-errore' : 'fiscale-iban-hint'}
+                    onChange={e => set('iban', normalizzaIban(e.target.value))}
+                    className={`${input} w-full font-mono ${ibanSbagliato ? 'border-kidville-error' : ''}`}
+                />
+                {ibanSbagliato
+                    ? <p id="fiscale-iban-errore" className="font-maven text-[10px] text-kidville-error-strong mt-0.5">{t('spFiscaleErrIban')}</p>
+                    : <p id="fiscale-iban-hint" className="font-maven text-[11px] text-kidville-sub mt-0.5">{t('spFiscaleIbanHint')}</p>}
             </div>
             <div className="mt-4 rounded-xl border-2 border-kidville-line p-3">
                 <label className="flex items-start gap-2 cursor-pointer">

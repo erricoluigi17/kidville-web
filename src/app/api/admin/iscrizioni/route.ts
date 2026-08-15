@@ -7,8 +7,9 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { riassuntoCampi } from '@/lib/audit/riassunto'
 import { ensureParentIdentity } from '@/lib/auth/parent-identity'
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
-import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send'
-import { nomeSede } from '@/lib/scuole/reali'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede } from '@/lib/email/contesto'
+import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -989,11 +990,18 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
             // dell'iscrizione che si sta approvando, la stessa che finisce
             // sull'alunno. «Kidville» da solo, con tre plessi, non dice al
             // genitore a quale scuola sia stato iscritto suo figlio.
-            const sedeNome = await nomeSede(supabase, scuolaId, 'admin/iscrizioni:POST')
+            const sede = await risolviContestoSede(supabase, scuolaId, 'admin/iscrizioni:POST')
+            const messaggio = messaggioCredenziali({
+              nome: a.first_name != null ? String(a.first_name) : null,
+              email: adultEmail,
+              password: identita.password,
+              occasione: 'iscrizione-approvata',
+            }, sede)
             const invio = await sendEmailDetailed({
               to: adultEmail,
-              subject: 'Le tue credenziali di accesso — Kidville',
-              text: credentialsEmailBody(a.first_name != null ? String(a.first_name) : null, adultEmail, identita.password, sedeNome),
+              subject: messaggio.oggetto,
+              text: messaggio.testo,
+              html: messaggio.html,
             })
             credentialsEmailSent = invio.ok
             if (!invio.ok) {

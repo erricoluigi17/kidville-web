@@ -6,6 +6,12 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { sendEmailDetailed } from '@/lib/email/send'
+import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
+import {
+  messaggioDocumentoDipendente,
+  messaggioDocumentoSegreteria,
+} from '@/lib/email/messaggi/documento-personale'
+import type { Messaggio } from '@/lib/email/messaggi/tipi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
@@ -262,46 +268,22 @@ interface Persona {
 }
 
 /** Il testo che legge l'interessata. Niente numero del documento, niente CF. */
-function corpoInteressata(nome: string | null, tipo: string | null, scadenza: string, soglia: number): string {
-  const saluto = nome ? `Gentile ${nome},` : 'Gentile collega,'
-  const doc = etichettaDocumento(tipo).toLowerCase()
-  const fatto =
-    soglia === SOGLIA_SCADUTO
-      ? `il ${doc} che hai depositato in Segreteria risulta SCADUTO dal ${dataIT(scadenza)}.`
-      : `il ${doc} che hai depositato in Segreteria scade il ${dataIT(scadenza)}.`
-  return [
-    saluto,
-    '',
-    fatto,
-    '',
-    'Quando avrai il documento rinnovato, portalo o inviane una copia alla Segreteria: ' +
-      'serve per gli adempimenti obbligatori legati al tuo rapporto di lavoro.',
-    '',
-    'Grazie,',
-    'La Segreteria',
-  ].join('\n')
-}
-
-/** Il testo che legge la segreteria: il nome serve, il numero del documento no. */
-function corpoSegreteria(
-  request: Request,
-  persona: Persona,
-  tipo: string | null,
-  scadenza: string,
-  soglia: number,
-): string {
+/**
+ * La riga della notifica IN-APP alla segreteria: una frase, senza link.
+ *
+ * Prima era il primo rigo del corpo dell'email, ritagliato con uno
+ * `split('\n')[0]`. Due canali diversi tenuti insieme da un indice: cambiare
+ * una parola nell'email cambiava anche il testo della campanella, e nessuno dei
+ * due test se ne sarebbe accorto. Qui la frase è sua.
+ *
+ * Come nell'email, mai il numero del documento e mai il codice fiscale.
+ */
+function rigaNotificaSegreteria(persona: Persona, tipo: string | null, scadenza: string, soglia: number): string {
   const chi = [persona.nome, persona.cognome].filter(Boolean).join(' ') || 'una persona in servizio'
   const doc = etichettaDocumento(tipo).toLowerCase()
-  return [
-    soglia === SOGLIA_SCADUTO
-      ? `Il ${doc} di ${chi} è SCADUTO dal ${dataIT(scadenza)}.`
-      : `Il ${doc} di ${chi} scade il ${dataIT(scadenza)}.`,
-    '',
-    'Finché il documento non viene aggiornato la persona non è identificabile per gli ' +
-      'adempimenti obbligatori del datore di lavoro.',
-    '',
-    `Anagrafica del personale: ${linkAssoluto(request, soglia)}`,
-  ].join('\n')
+  return soglia === SOGLIA_SCADUTO
+    ? `Il ${doc} di ${chi} è SCADUTO dal ${dataIT(scadenza)}.`
+    : `Il ${doc} di ${chi} scade il ${dataIT(scadenza)}.`
 }
 
 export const POST = withRoute('notifiche/scadenze-documenti:POST', async (request: Request) => {
@@ -312,6 +294,12 @@ export const POST = withRoute('notifiche/scadenze-documenti:POST', async (reques
   // Senza, «nessun log» non distingue «nessuna scadenza» da «il cron non parte
   // più» — e su un allarme la seconda è l'unica ipotesi che conta.
   let esitoBattito = 'ok'
+  /**
+   * Identità di sede per il piè di pagina delle email: una lettura per plesso.
+   * La chiave ammette `null` perché una persona senza sede è un caso reale, e
+   * merita il suo contesto generico — cachato una volta come gli altri.
+   */
+  const sediRisolte = new Map<string | null, ContestoSede>()
   let nLette = 0
   let nDaAvvisare = 0
   let nAvvisate = 0
@@ -707,7 +695,7 @@ export const POST = withRoute('notifiche/scadenze-documenti:POST', async (reques
             soglia === SOGLIA_SCADUTO
               ? 'Documento del personale scaduto'
               : 'Documento del personale in scadenza',
-          corpo: corpoSegreteria(request, persona, riga.document_type, scadenza, soglia).split('\n')[0],
+          corpo: rigaNotificaSegreteria(persona, riga.document_type, scadenza, soglia),
           link: linkPannello(soglia),
           entitaTipo: 'anagrafica_personale',
           entitaId: persona.id,
@@ -748,16 +736,27 @@ export const POST = withRoute('notifiche/scadenze-documenti:POST', async (reques
         oggiYMD: oggi,
       })
       if (!emailDovuta) nEmailOltreIlTetto += 1
-      const invii: { a: string; oggetto: string; testo: string; chi: 'interessata' | 'segreteria' }[] = []
+      const invii: { a: string; messaggio: Messaggio; chi: 'interessata' | 'segreteria' }[] = []
+      // Il contesto di sede — nome, indirizzo, casella per il piè di pagina —
+      // si risolve UNA VOLTA PER PLESSO, non per riga: questo è un cron che
+      // scorre l'intera anagrafica, e due query per persona sarebbero due query
+      // per persona.
+      let contestoSede = sediRisolte.get(sede)
+      if (!contestoSede) {
+        contestoSede = await risolviContestoSede(supabase, sede, JOB)
+        sediRisolte.set(sede, contestoSede)
+      }
+      const datiDoc = {
+        nome: [persona.nome, persona.cognome].filter(Boolean).join(' ') || 'collega',
+        tipoDocumento: etichettaDocumento(riga.document_type),
+        scadenza: dataIT(scadenza),
+        scaduto: soglia === SOGLIA_SCADUTO,
+      }
       if (emailDovuta && SOGLIE_EMAIL_INTERESSATA.has(soglia)) {
         if (persona.email) {
           invii.push({
             a: persona.email,
-            oggetto:
-              soglia === SOGLIA_SCADUTO
-                ? 'Il tuo documento d’identità risulta scaduto'
-                : `Il tuo documento d’identità scade il ${dataIT(scadenza)}`,
-            testo: corpoInteressata(persona.nome, riga.document_type, scadenza, soglia),
+            messaggio: messaggioDocumentoDipendente(datiDoc, contestoSede),
             chi: 'interessata',
           })
         } else {
@@ -779,18 +778,22 @@ export const POST = withRoute('notifiche/scadenze-documenti:POST', async (reques
           if (!indirizzo) continue
           invii.push({
             a: indirizzo,
-            oggetto:
-              soglia === SOGLIA_SCADUTO
-                ? 'Personale: documento d’identità scaduto'
-                : 'Personale: documento d’identità in scadenza',
-            testo: corpoSegreteria(request, persona, riga.document_type, scadenza, soglia),
+            messaggio: messaggioDocumentoSegreteria(
+              { ...datiDoc, urlAnagrafica: linkAssoluto(request, soglia) },
+              contestoSede,
+            ),
             chi: 'segreteria',
           })
         }
       }
 
       for (const invio of invii) {
-        const esito = await sendEmailDetailed({ to: invio.a, subject: invio.oggetto, text: invio.testo })
+        const esito = await sendEmailDetailed({
+          to: invio.a,
+          subject: invio.messaggio.oggetto,
+          text: invio.messaggio.testo,
+          html: invio.messaggio.html,
+        })
         if (esito.ok) {
           nEmail += 1
           contaSede(sede, 'email')

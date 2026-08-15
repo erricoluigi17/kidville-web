@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { sendEmail } from '@/lib/email/send'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { contestoSenzaSede } from '@/lib/email/contesto'
+import { messaggioCancellazioneAccount } from '@/lib/email/messaggi/cancellazione-account'
 import { parseBody } from '@/lib/validation/http'
 import {
+  CANCELLAZIONE_LINK_TTL_MS,
   creaTicketCancellazione,
   costruisciLinkConferma,
   risolviGenitorePerEmail,
@@ -87,35 +90,23 @@ export const POST = withRoute('public/cancellazione-account:POST', async (reques
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin
     const link = costruisciLinkConferma({ baseUrl, email, code, expiry, ticket })
 
-    const inviata = await sendEmail({
+    // Nessun contesto di sede, ed è una scelta: chi chiede la cancellazione sta
+    // ripudiando il rapporto, e affermare a quale plesso apparteneva non aggiunge
+    // niente. Risparmia anche una query in una route pubblica e senza sessione.
+    //
+    // La validità si legge dal TTL vero e non si scrive a mano: due copie dello
+    // stesso numero divergono, e quando divergono vince quella sbagliata —
+    // qui vorrebbe dire promettere un'ora su un link già scaduto.
+    const messaggio = messaggioCancellazioneAccount(
+      { urlConferma: link, oreValidita: Math.round(CANCELLAZIONE_LINK_TTL_MS / 3_600_000) },
+      contestoSenzaSede(),
+    )
+    const inviata = (await sendEmailDetailed({
       to: email,
-      subject: 'Conferma la richiesta di cancellazione — Kidville',
-      text: [
-        'Gentile utente,',
-        '',
-        'abbiamo ricevuto una richiesta di cancellazione del tuo account Kidville.',
-        'Per confermarla, apri questo link (valido per 1 ora):',
-        '',
-        link,
-        '',
-        'Se non hai richiesto tu la cancellazione, ignora questo messaggio: senza',
-        'conferma non verrà avviata alcuna richiesta.',
-        '',
-        '— — —',
-        '',
-        'Dear user,',
-        '',
-        'we received a request to delete your Kidville account.',
-        'To confirm it, open this link (valid for 1 hour):',
-        '',
-        link,
-        '',
-        'If you did not request this, ignore this message: without confirmation no',
-        'request will be started.',
-        '',
-        'Lo staff Kidville',
-      ].join('\n'),
-    })
+      subject: messaggio.oggetto,
+      text: messaggio.testo,
+      html: messaggio.html,
+    })).ok
 
     // Evento critico: si logga anche il successo. Nessuna PII (né email né link).
     logEvento('gdpr', inviata ? 'info' : 'error', {

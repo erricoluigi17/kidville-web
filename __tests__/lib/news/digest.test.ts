@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { SEDE_A, NOME_SEDE_A } from '../../fixtures/sedi'
+import type { ContestoSede } from '@/lib/email/contesto'
 import { componiDigest, type PostDigest } from '@/lib/news/digest'
 
 // =============================================================================
@@ -9,6 +10,17 @@ import { componiDigest, type PostDigest } from '@/lib/news/digest'
 // =============================================================================
 
 const SEDE = SEDE_A
+
+// Dal 2026-08-15 il digest usa il layout comune delle email transazionali, che
+// nomina il plesso e ne porta i recapiti: `nomeSede` da solo non basta più.
+const CONTESTO: ContestoSede = {
+  nome: NOME_SEDE_A,
+  indirizzo: 'Via di Prova 1, 00000 Prova (PR)',
+  email: 'prova@example.test',
+  telefono: null,
+  app: 'https://esempio.invalid',
+  privacy: 'https://esempio.invalid/privacy',
+}
 
 const posts: PostDigest[] = [
   { id: 'a', titolo: 'Festa di fine anno', stato: 'pubblicata', pinned: false, pubblicata_il: '2026-06-10T09:00:00Z', contenuto_testo: 'Una grande festa', categoria_nome: 'Eventi e feste', target_scope: 'globale' },
@@ -21,31 +33,31 @@ const posts: PostDigest[] = [
 
 describe('componiDigest', () => {
   it('include i soli pubblicati del mese, ordinati pinned poi data DESC', () => {
-    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, nomeSede: NOME_SEDE_A })
+    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })
     expect(res).not.toBeNull()
     expect(res!.post_ids).toEqual(['b', 'f', 'a'])
   })
 
   it('include anche i post a target classi (decisione 14)', () => {
-    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, nomeSede: NOME_SEDE_A })
+    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })
     expect(res!.post_ids).toContain('f')
   })
 
   it('esclude bozze, nascoste e post di altri mesi', () => {
-    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, nomeSede: NOME_SEDE_A })
+    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })
     expect(res!.post_ids).not.toContain('c') // bozza
     expect(res!.post_ids).not.toContain('d') // nascosta
     expect(res!.post_ids).not.toContain('e') // maggio
   })
 
   it('titolo con mese in italiano e anno', () => {
-    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, nomeSede: NOME_SEDE_A })
+    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })
     expect(res!.titolo).toContain('Giugno')
     expect(res!.titolo).toContain('2026')
   })
 
   it('html è una stringa che contiene i titoli dei post e la sede', () => {
-    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, nomeSede: NOME_SEDE_A })
+    const res = componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })
     expect(typeof res!.html).toBe('string')
     expect(res!.html).toContain('Festa di fine anno')
     expect(res!.html).toContain('Comunicato in evidenza')
@@ -53,7 +65,7 @@ describe('componiDigest', () => {
   })
 
   it('mese senza post pubblicati → null (nessuna edizione)', () => {
-    expect(componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 1, nomeSede: NOME_SEDE_A })).toBeNull()
-    expect(componiDigest([], { scuolaId: SEDE, anno: 2026, mese: 6, nomeSede: NOME_SEDE_A })).toBeNull()
+    expect(componiDigest(posts, { scuolaId: SEDE, anno: 2026, mese: 1, sede: CONTESTO })).toBeNull()
+    expect(componiDigest([], { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })).toBeNull()
   })
 })

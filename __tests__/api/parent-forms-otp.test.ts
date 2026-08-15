@@ -65,6 +65,13 @@ vi.mock('@/lib/email/send', () => ({
     h.emailCalls++
     return true
   }),
+  // Dal 2026-08-15 l'OTP manda anche l'HTML: è QUESTA che la route chiama, e il
+  // contatore va tenuto qui — altrimenti «zero email» sarebbe indistinguibile
+  // da «mock incompleto».
+  sendEmailDetailed: vi.fn().mockImplementation(async () => {
+    h.emailCalls++
+    return { ok: true, error: null }
+  }),
 }))
 
 import { POST, PATCH } from '@/app/api/parent/forms/otp/route'

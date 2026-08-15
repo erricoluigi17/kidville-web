@@ -65,10 +65,7 @@ export const POST = withRoute('parent/forms/otp:POST', async (request: NextReque
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
 
-    const res = await sendOtp(supabase, parentId, {
-      subject: 'Codice di firma elettronica — Kidville',
-      intro: 'Il tuo codice di firma è',
-    })
+    const res = await sendOtp(supabase, parentId, { operazione: 'firmare il modulo' })
     if ('error' in res) return NextResponse.json({ error: 'Email del genitore non trovata' }, { status: 400 })
 
     return NextResponse.json(res)

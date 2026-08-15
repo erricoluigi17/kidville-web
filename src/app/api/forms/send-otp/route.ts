@@ -5,7 +5,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { sendEmail } from '@/lib/email/send'
+import { sendEmailDetailed } from '@/lib/email/send'
+import { contestoSenzaSede } from '@/lib/email/contesto'
+import { messaggioCodiceVerifica } from '@/lib/email/messaggi/codice-verifica'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { limitaVerificaOtpOggetto } from '@/lib/security/otp-rate-limit'
 import { getUserEmail, OTP_TTL_MS } from '@/lib/auth/otp-ticket'
@@ -337,13 +339,30 @@ async function salvaOtpSecret(
   return { error: res.error }
 }
 
-// Invio email: usa Resend se configurato, altrimenti log server-side (modalità dev)
+/**
+ * L'email del codice per la firma del modulo pubblico d'iscrizione.
+ *
+ * ⚠️ Prima diceva «valido per pochi minuti» mentre il TTL vero è `OTP_TTL_MS`,
+ * cioè dieci. Una promessa vaga è più comoda da scrivere e più difficile da
+ * usare: chi legge non sa se ha trenta secondi o mezz'ora, e riparte da capo.
+ * Adesso il numero viene dal TTL, quindi i due non possono più divergere.
+ *
+ * Nessun contesto di sede: questa è la firma del modulo PUBBLICO, e chi la
+ * riceve non è ancora iscritto da nessuna parte — la domanda è appena partita e
+ * la sede la conferma la segreteria. Il piè di pagina resta quello generico.
+ */
 async function deliverOtp(email: string, code: string): Promise<boolean> {
-  return sendEmail({
+  const messaggio = messaggioCodiceVerifica({
+    codice: code,
+    operazione: 'firmare la domanda d\'iscrizione',
+    minuti: Math.round(OTP_TTL_MS / 60_000),
+  }, contestoSenzaSede())
+  return (await sendEmailDetailed({
     to: email,
-    subject: 'Codice di firma elettronica — Kidville',
-    text: `Il tuo codice di firma è: ${code}\n\nInseriscilo per completare la firma del modulo. Il codice è valido per pochi minuti.`,
-  })
+    subject: messaggio.oggetto,
+    text: messaggio.testo,
+    html: messaggio.html,
+  })).ok
 }
 
 // ── POST: crea la submission (pending_signature) e invia l'OTP ──

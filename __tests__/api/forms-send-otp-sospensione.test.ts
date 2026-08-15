@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: () => ({ ok: true }), clientIp: () => '1.2.3.4' }))
-vi.mock('@/lib/email/send', () => ({ sendEmail: async () => true }))
+vi.mock('@/lib/email/send', () => ({ sendEmail: async () => true, sendEmailDetailed: async () => ({ ok: true, error: null }) }))
 vi.mock('@/lib/auth/require-staff', () => ({
   // Gate d'identità della route (2026-08-02): qui il chiamante è l'intestatario
   // della submission — il caso anonimo/estraneo sta nel test dedicato.

@@ -30,6 +30,7 @@ import {
   decidi,
   preferibile,
   type AdultoDomanda,
+  type DecisioniDellaDomanda,
   type BambinoDomanda,
   type Decisione,
   type Domanda,
@@ -227,6 +228,53 @@ export async function caricaElenco(
 }
 
 /**
+ * Le decisioni già prese da una persona, per domanda.
+ *
+ * Si leggono a ogni giro e non si «consumano»: una decisione è una risposta che
+ * resta valida finché qualcuno non la cambia, non un gettone che si spende.
+ */
+export async function caricaDecisioni(
+  supabase: SupabaseClient,
+  submissionIds: string[],
+): Promise<Map<string, DecisioniDellaDomanda>> {
+  const per = new Map<string, DecisioniDellaDomanda>()
+  if (submissionIds.length === 0) return per
+
+  const { data, error } = await supabase
+    .from('iscrizioni_decisioni')
+    .select('submission_id, bambino_norm, classe, retta, a_carico_di, nota')
+    .in('submission_id', submissionIds)
+  // PostgREST non lancia. Su un ambiente che non conosce ancora la tabella
+  // (`PGRST205`/`42P01`, il DB di collaudo della CI) si degrada in silenzio: non
+  // avere decisioni significa solo che nessun caso è stato risolto a mano.
+  if (error) {
+    const codice = (error as { code?: string }).code
+    if (codice === 'PGRST205' || codice === '42P01') return per
+    throw new Error(`decisioni non leggibili: ${error.message}`)
+  }
+
+  for (const r of data ?? []) {
+    const o = r as {
+      submission_id: string
+      bambino_norm: string
+      classe: string | null
+      retta: string | number | null
+      a_carico_di: string | null
+      nota: string | null
+    }
+    const dellaDomanda = per.get(o.submission_id) ?? new Map()
+    dellaDomanda.set(normalizzaNome(o.bambino_norm), {
+      classe: o.classe,
+      retta: o.retta === null ? null : Number(o.retta),
+      aCaricoDi: o.a_carico_di,
+      nota: o.nota,
+    })
+    per.set(o.submission_id, dellaDomanda)
+  }
+  return per
+}
+
+/**
  * La PROVA A VUOTO: decide su ogni domanda in attesa e riporta cosa avrebbe
  * fatto. Nessuna scrittura, nessun invio, nessun claim — si può eseguire tutte
  * le volte che si vuole senza conseguenze.
@@ -249,6 +297,7 @@ export async function analizzaLotto(
   const tutte = (data ?? []).map((r) => domandaDaRiga(r as unknown as RigaSubmission))
   const famiglie = costruisciFamiglie(tutte)
   const duplicati = trovaDuplicati(tutte)
+  const decisioni = await caricaDecisioni(supabase, tutte.map((d) => d.id))
 
   const esiti: EsitoDomanda[] = []
   let daInviare = 0
@@ -259,7 +308,13 @@ export async function analizzaLotto(
     // Il tetto vale sugli INVII, non sull'esame: fermarsi a 90 domande
     // esaminate lascerebbe invisibile tutto ciò che sta oltre, e la segreteria
     // non saprebbe mai quante correzioni ha davanti.
-    const decisione = decidi(d, righe, fratelliDi(d, famiglie, righe), duplicati.get(d.id))
+    const decisione = decidi(
+      d,
+      righe,
+      fratelliDi(d, famiglie, righe),
+      duplicati.get(d.id),
+      decisioni.get(d.id),
+    )
     if (decisione.tipo === 'invia') daInviare++
     else if (decisione.tipo === 'duplicata') duplicate++
     else daControllare++

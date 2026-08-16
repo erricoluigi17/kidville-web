@@ -191,3 +191,94 @@ describe('referenteDi', () => {
     expect(referenteDi(domanda({ adulti: [] }))).toBeNull()
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LE DECISIONI DELLA SEGRETERIA
+//
+// Quando la risposta non sta nei dati, la dà una persona — e resta scritta.
+// I due casi qui sotto sono quelli veri, decisi dal titolare il 2026-08-16:
+//   · PALMA ANDREA: due bambini omonimi, «indifferente uno in B e uno in C».
+//     La retta NON era in dubbio (entrambe le righe dicono 300 €): manca la sola
+//     sezione, e infatti la decisione porta solo quella.
+//   · CIOFFO RITA: tre mesi, non è nell'elenco, «va nel micronido». Qui manca
+//     tutto, e la decisione deve portare anche la retta.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('decidi — quando ha deciso una persona', () => {
+  const dueOmonimi = [
+    riga({ id: 'b', nome: 'PALMA ANDREA', classe: '2 ANNI B', riga: 15, retta: 300 }),
+    riga({ id: 'c', nome: 'PALMA ANDREA', classe: '2 ANNI C', riga: 15, retta: 300 }),
+  ]
+  const domandaPalma = domanda({
+    bambini: [{ nome: 'Andrea', cognome: 'Palma', codiceFiscale: null, dataNascita: '2024-07-04' }],
+  })
+
+  it('senza decisione resta ambiguo: è il comportamento di prima', () => {
+    expect(decidi(domandaPalma, dueOmonimi, nessunFratello).tipo).toBe('da_controllare')
+  })
+
+  it('con la sola SEZIONE decisa procede, e la retta continua a venire dal foglio', () => {
+    const d = decidi(domandaPalma, dueOmonimi, nessunFratello, undefined,
+      new Map([['PALMA ANDREA', { classe: '2 ANNI B' }]]))
+    expect(d.tipo).toBe('invia')
+    if (d.tipo === 'invia') {
+      expect(d.assegnazioni[0].classe).toBe('2 ANNI B')
+      expect(d.assegnazioni[0].retta).toBe(300)   // dal foglio, non dalla decisione
+    }
+  })
+
+  it('una sezione decisa che nell\'elenco non esiste NON passa', () => {
+    const d = decidi(domandaPalma, dueOmonimi, nessunFratello, undefined,
+      new Map([['PALMA ANDREA', { classe: '5 anni a' }]]))
+    expect(d.tipo).toBe('da_controllare')
+    if (d.tipo === 'da_controllare') expect(d.motivo).toMatch(/5 anni a/)
+  })
+
+  it('un bambino che nell\'elenco NON c\'è entra solo con classe E retta insieme', () => {
+    const rita = domanda({
+      bambini: [{ nome: 'Rita', cognome: 'Cioffo', codiceFiscale: null, dataNascita: '2026-05-14' }],
+    })
+    // solo la classe: non basta, la retta non si inventa
+    expect(decidi(rita, [], nessunFratello, undefined,
+      new Map([['CIOFFO RITA', { classe: 'MICRONIDO' }]])).tipo).toBe('da_controllare')
+
+    // classe + retta: si procede
+    const d = decidi(rita, [], nessunFratello, undefined,
+      new Map([['CIOFFO RITA', { classe: 'MICRONIDO', retta: 330 }]]))
+    expect(d.tipo).toBe('invia')
+    if (d.tipo === 'invia') {
+      expect(d.assegnazioni[0]).toMatchObject({ classe: 'MICRONIDO', retta: 330, aCaricoDi: null })
+    }
+  })
+
+  it('una decisione può anche dire «paga suo fratello», e allora la retta è 0 con il nome', () => {
+    const rita = domanda({
+      bambini: [{ nome: 'Rita', cognome: 'Cioffo', codiceFiscale: null, dataNascita: '2026-05-14' }],
+    })
+    const d = decidi(rita, [], nessunFratello, undefined,
+      new Map([['CIOFFO RITA', { classe: 'MICRONIDO', aCaricoDi: 'CIOFFO ANTONIO' }]]))
+    expect(d.tipo).toBe('invia')
+    if (d.tipo === 'invia') {
+      expect(d.assegnazioni[0].retta).toBe(0)
+      expect(d.assegnazioni[0].aCaricoDi).toBe('CIOFFO ANTONIO')
+    }
+  })
+
+  it('la decisione vale per il bambino nominato, non per i suoi fratelli', () => {
+    const due = domanda({
+      bambini: [
+        { nome: 'Rita', cognome: 'Cioffo', codiceFiscale: null, dataNascita: '2026-05-14' },
+        { nome: 'Ignoto', cognome: 'Cioffo', codiceFiscale: null, dataNascita: null },
+      ],
+    })
+    const d = decidi(due, [], nessunFratello, undefined,
+      new Map([['CIOFFO RITA', { classe: 'MICRONIDO', retta: 330 }]]))
+    expect(d.tipo).toBe('da_controllare')
+  })
+
+  it('il nome della decisione si confronta normalizzato, come tutto il resto', () => {
+    const d = decidi(domandaPalma, dueOmonimi, nessunFratello, undefined,
+      new Map([['PALMA  ANDREA', { classe: '2 ANNI C' }]]))
+    // «PALMA  ANDREA» con due spazi non è una chiave diversa
+    expect(d.tipo).toBe('invia')
+  })
+})

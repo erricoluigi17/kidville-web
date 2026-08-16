@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
   "generato_il": "2026-08-16",
-  "generato_alle": "2026-08-16T20:29:57Z",
-  "sha256": "2dbc46549fd62a3e50c35c0047e8e1eb6f8a3dfb7253404c6448db258cb7b013",
+  "generato_alle": "2026-08-16T20:55:56Z",
+  "sha256": "8afdc451a3a99ad86dcd7a40e6f670d0889fb0d4dadb882bf0bed98c74b3f928",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -601,6 +601,7 @@
     "giustifiche_didattiche",
     "gruppi_mensa",
     "incassi",
+    "iscrizioni_decisioni",
     "iscrizioni_elenco_caricamenti",
     "iscrizioni_elenco_righe",
     "iscrizioni_import_esiti",

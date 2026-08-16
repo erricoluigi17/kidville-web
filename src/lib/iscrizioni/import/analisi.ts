@@ -19,6 +19,7 @@
  * avrei fatto», senza fare nulla.
  */
 import { abbina, type RigaElenco } from './abbinamento'
+import { normalizzaNome } from './normalizza'
 import { risolviRetta } from './retta'
 
 export interface BambinoDomanda {
@@ -107,11 +108,41 @@ export function preferibile(a: Domanda, b: Domanda): boolean {
   return a.creataIl >= b.creataIl
 }
 
+/**
+ * Una decisione presa da una PERSONA su un bambino che il programma non sapeva
+ * risolvere da solo.
+ *
+ * ─── PERCHÉ ESISTE, E PERCHÉ NON È UN'ECCEZIONE NEL CODICE ──────────────────
+ * Alcuni casi non hanno una risposta dentro i dati, e non l'avranno mai: due
+ * bambini omonimi in due sezioni, un fratellino che nell'elenco non c'è ancora,
+ * un nome che nel foglio è scritto in un altro modo. La risposta ce l'ha la
+ * segreteria, ed è giusto che ce l'abbia lei.
+ *
+ * La regola resta intatta: **il programma continua a non indovinare**. Cambia
+ * che ora esiste il posto in cui una persona scrive la risposta, e resta scritto
+ * chi l'ha data e quando. Un `if` nel codice per il caso «Palma» sarebbe la
+ * stessa decisione presa peggio: invisibile, senza data e senza nome.
+ */
+export interface DecisioneSegreteria {
+  /** La classe decisa. Se assente, si continua a cercarla nell'elenco. */
+  classe?: string | null
+  /** La retta decisa. Se assente, si continua a leggerla dall'elenco. */
+  retta?: number | null
+  /** Il nome del fratello che paga per lui, se è il suo caso. */
+  aCaricoDi?: string | null
+  /** Perché: la legge chi rilegge fra sei mesi. */
+  nota?: string | null
+}
+
+/** Le decisioni, per nome normalizzato del bambino dentro quella domanda. */
+export type DecisioniDellaDomanda = Map<string, DecisioneSegreteria>
+
 export function decidi(
   domanda: Domanda,
   elenco: readonly RigaElenco[],
   righeDeiFratelli: RigheDeiFratelli,
   duplicatoDi?: { id: string; motivo: string },
+  decisioni?: DecisioniDellaDomanda,
 ): Decisione {
   if (duplicatoDi) {
     return { tipo: 'duplicata', di: duplicatoDi.id, motivo: duplicatoDi.motivo }
@@ -132,10 +163,61 @@ export function decidi(
 
   const assegnazioni: AssegnazioneBambino[] = []
 
+  // Le chiavi delle decisioni si normalizzano QUI, non si pretende che arrivino
+  // già pulite: chi le scrive è una persona che copia un nome da un foglio, e
+  // uno spazio di troppo non deve far ricadere un caso già risolto fra i «da
+  // controllare» — che è precisamente il difetto che le decisioni chiudono.
+  const decise = new Map<string, DecisioneSegreteria>()
+  if (decisioni) for (const [k, v] of decisioni) decise.set(normalizzaNome(k), v)
+
   for (let i = 0; i < domanda.bambini.length; i++) {
     const b = domanda.bambini[i]
     const chi = `${b.cognome} ${b.nome}`.trim()
+    const decisa = decise.get(normalizzaNome(chi))
+
+    // Una decisione COMPLETA (classe + come si paga) chiude il caso senza
+    // nemmeno guardare l'elenco: è il posto in cui una persona ha già risposto
+    // alla domanda che il programma non sapeva risolvere.
+    if (decisa?.classe && (decisa.retta != null || decisa.aCaricoDi)) {
+      assegnazioni.push({
+        indice: i,
+        nome: b.nome,
+        cognome: b.cognome,
+        classe: decisa.classe,
+        retta: decisa.aCaricoDi ? 0 : Number(decisa.retta),
+        aCaricoDi: decisa.aCaricoDi ?? null,
+      })
+      continue
+    }
+
     const esito = abbina(b.nome, b.cognome, elenco)
+
+    // Una decisione sulla SOLA classe (il caso degli omonimi: l'elenco ha la
+    // retta, ma non sa dire quale delle due righe sia la sua) lascia che la
+    // retta continui a venire dal foglio — purché le righe candidate concordino.
+    if (decisa?.classe && decisa.retta == null && !decisa.aCaricoDi) {
+      const candidate = esito.tipo === 'unico' ? [esito.riga] : esito.tipo === 'ambiguo' ? esito.righe : []
+      const suaClasse = candidate.filter((r) => normalizzaNome(r.classe) === normalizzaNome(decisa.classe as string))
+      if (suaClasse.length === 1) {
+        const rettaDecisa = risolviRetta(suaClasse[0], righeDeiFratelli(b))
+        if (rettaDecisa.tipo === 'da_controllare') {
+          return { tipo: 'da_controllare', motivo: `${chi} (${decisa.classe}): ${rettaDecisa.motivo}` }
+        }
+        assegnazioni.push({
+          indice: i,
+          nome: b.nome,
+          cognome: b.cognome,
+          classe: suaClasse[0].classe,
+          retta: rettaDecisa.tipo === 'importo' ? rettaDecisa.importo : 0,
+          aCaricoDi: rettaDecisa.tipo === 'a_carico' ? rettaDecisa.aCaricoDi.nome : null,
+        })
+        continue
+      }
+      return {
+        tipo: 'da_controllare',
+        motivo: `Per ${chi} è stata indicata la classe ${decisa.classe}, ma nell'elenco non c'è esattamente una riga sua in quella classe (ne risultano ${suaClasse.length}). La decisione va rivista, oppure va corretto il foglio.`,
+      }
+    }
 
     if (esito.tipo === 'ambiguo') {
       const dove = esito.righe.map((r) => `${r.classe} (riga ${r.riga})`).join(', ')

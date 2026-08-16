@@ -117,6 +117,7 @@ riga per riga:
 | Chiavi di `adminModulistica` che nessuna riga di `src/` nomina | **33** per lingua, **66** in due lingue | **0** |
 | Isola morta in `admin/modulistica/page.tsx` | interfaccia + 4 `useState` + 2 gestori + 3 finestre | rimossa (**1137 → 895** righe, contando anche il tab ODT) |
 | `certificati_templates` sotto `src/` | `CREATE TABLE` + indice + RLS + `POLICY … FOR ALL USING (true)` | nessuna riga eseguibile |
+| `pre_inscriptions` sotto `src/` (il blocco **gemello**, nove righe più giù nello stesso SQL) | `CREATE TABLE` + 2 indici + RLS + `POLICY … FOR ALL USING (true)` su nome, cognome, email, telefono, CF e indirizzo del genitore + i dati dei figli | nessuna riga che la **crei**; restano le letture della route, dichiarate |
 | Voci di `NON_CONTATORI` che puntavano a chiavi inesistenti | 2, verdi | 0, e il tetto scende 40 → **38** |
 | Cataloghi montati nel mock di next-intl | **34 su 38**, elencati a mano | tutti, letti dalla cartella |
 
@@ -134,12 +135,14 @@ descrive il codice morto non è una rimozione.*
   (`adminModulistica`) e misurato: acceso su tutti e 38 i cataloghi darebbe ~380 falsi positivi,
   chiavi risolte a runtime (`etichette`: 171 su 199).
 - **`__tests__/architecture/residuo-odt-assente.test.ts`** — sotto `src/` non torna né la tabella né
-  l'estensione né il tipo MIME. La lezione per iscritto: **«zero righe la leggono» non è «zero righe
-  la nominano»** — un residuo che *crea* è più vivo di uno che legge. Il divieto vale **anche per i
-  commenti**, perché il criterio è `grep -rn … src/` e una riga di commento è una riga: il nome esatto
-  vive nel lock, e là dove il blocco è stato tolto si scrive in italiano che cosa c'era.
+  l'estensione né il tipo MIME né l'acronimo, **e nemmeno la DDL che rifà la tabella gemella**. La
+  lezione per iscritto: **«zero righe la leggono» non è «zero righe la nominano»** — un residuo che
+  *crea* è più vivo di uno che legge. Il divieto vale **anche per i commenti**, perché il criterio è
+  `grep -rn … src/` e una riga di commento è una riga: il nome esatto vive nel lock, e là dove il
+  blocco è stato tolto si scrive in italiano che cosa c'era.
 - **`__tests__/pages/admin-modulistica-linguette.test.tsx`** — la barra si monta e si legge: **sei**
-  linguette, col testo italiano preso dai cataloghi, e nessuna che mostri il nome di una chiave.
+  linguette, col testo italiano preso dai cataloghi, nessuna che mostri il nome di una chiave, e
+  `?tab=odt` / `?tab=attesa` che atterrano su «Moduli inviabili» **col pannello disegnato**.
 - **`messaggi-plurali-e-glossario`** — ogni eccezione di `NON_CONTATORI` deve puntare a una chiave che
   **esiste ancora**: un elenco di eccezioni non sa da solo che il suo bersaglio è morto.
 
@@ -168,13 +171,47 @@ zero righe di codice», ma la riga che la **creava** era in `src/`, dentro
 presente. Tolta di lì, il repo non si porta più dietro la macchina per rifare la tabella che dichiara
 morta. **Zero migrazioni applicate in produzione per questo lavoro.**
 
+### La seconda passata: la stessa lezione, mancata nove righe più giù
+
+La riparazione qui sopra ha lasciato dentro **il caso gemello**. Nello stesso SQL da cui era uscito
+il punto 5 è rimasto intero il punto 3: `CREATE TABLE pre_inscriptions`, due indici, RLS e
+`CREATE POLICY … FOR ALL USING (true)` — la macchina per rifare la tabella della «Sala d'Attesa»
+smontata **da quello stesso lavoro**, con dentro nome, cognome, email, telefono, codice fiscale e
+indirizzo del genitore più i dati dei figli, leggibile e scrivibile da chiunque. Misurato:
+`to_regclass('public.pre_inscriptions')` → null, 0 oggetti in qualunque schema.
+
+Il lock non se n'era accorto perché **la rete era tesa attorno a un caso invece che attorno alla
+classe**: vietava un *nome* (`certificati_templates`), non la *forma* del guasto. Adesso vieta la
+DDL — `CREATE TABLE`/`INDEX`/`POLICY`, `ALTER TABLE`, `DROP POLICY` — e lascia passare di proposito
+`.from('pre_inscriptions')`, perché «chi legge una tabella morta» è un debito dichiarato e «chi la
+ricrea» è il guasto. Il confine è scritto invece che sottinteso: restano **13 `CREATE TABLE`** in
+altre cinque route `apply-*-migration`, e le sei tabelle che nominano **esistono in produzione** —
+ridondanza, non resurrezione.
+
+Due bugie di misura sono cadute con lo stesso colpo:
+
+- il lock **prometteva più di quanto misurasse** («non deve restare NIENTE» mentre vietava tre
+  parole): l'acronimo era ancora in `src/`, in due righe di commento, una delle quali dichiarava che
+  una riga di commento sarebbe stata una traccia. Ora l'acronimo esce e **il divieto lo misura**, con
+  la parola intera e non la sottostringa — sui 998 sorgenti la sottostringa prende 63 righe innocenti
+  (`modToast…`, `z.ZodType`, un blocco base64), la parola ne prende zero. Il lock porta scritto il
+  `grep` con cui si rimisura a mano, e **a mano e in automatico rispondono la stessa cosa: 0 righe**;
+- `?tab=odt` e `?tab=attesa` sono link **veri, già circolati**, verso linguette che non esistono più.
+  Il ripiego che li salva vive in un ternario e **nessuna prova lo eseguiva**: quella di pagina
+  montava sempre `URLSearchParams('')`, e il lock delle linguette cerca il ripiego nel *testo* del
+  sorgente. Rotto il ripiego a mano, i tre casi nuovi diventano rossi e i tre vecchi restano verdi:
+  è la misura che il buco c'era.
+
 ### Cosa NON è stato toccato, e perché è scritto
 
 `src/app/api/admin/pre-inscriptions/route.ts` **resta**, con zero chiamanti raggiungibili. Il suo
 `POST` è **pubblico** e scrive su `pre_inscriptions`, che in produzione **non esiste**
 (`to_regclass` → null): fallisce chiuso, non espone niente. Cancellarlo tocca tre lock d'architettura
 (`gate-coverage`, `isolamento-sede-coverage`, `auth-gaps-m9`) e un'allowlist di documentazione, cioè
-file di altri workstream aperti in questo momento. È un debito **dichiarato**, non una dimenticanza.
+file di altri workstream aperti in questo momento. È un debito **dichiarato**, non una dimenticanza —
+e il lock lo tratta come tale: le sue **letture** restano ammesse, la **DDL** no. Il giorno in cui
+quella route sparirà, il divieto si promuove da «niente DDL» a «niente affatto», e la tabella non
+potrà rientrare dalla porta di servizio.
 Fuori scope per decisione esplicita del piano anche le voci di checklist «Moduli Esterni» e
 «Iscrizioni Nuovi Alunni».
 

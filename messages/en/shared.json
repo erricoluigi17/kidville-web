@@ -281,5 +281,13 @@
   "erroreAutorizzazioniUscitaNonLette": "We couldn’t load who has signed the authorisation: please try again in a few minutes, the list shown would be incomplete",
   "erroreRegistroAlunniNonLetti": "We couldn’t load the list of children in this class: the register was not printed. Please try again in a few minutes.",
   "erroreRegistroSezioneVuota": "There are no children in this class: there is nothing to print.",
-  "erroreRegistroNonGenerato": "The register was not generated: please try again in a few minutes."
+  "erroreRegistroNonGenerato": "The register was not generated: please try again in a few minutes.",
+  "erroreCronNonAutorizzato": "This operation is reserved for the platform’s automated jobs",
+  "erroreImportIscrizioniNonEseguito": "The automated enrolment run did not complete: please try again in a few minutes",
+  "erroreElencoClassiNonLetto": "The class list could not be read: please try again in a moment",
+  "erroreElencoClassiNonSalvato": "The uploaded list was not saved: the file was discarded, please try again in a moment",
+  "erroreElencoClassiTipoNonAmmesso": "This file type cannot be uploaded: an Excel spreadsheet (.xlsx or .xls) is required",
+  "erroreElencoClassiTroppoGrande": "This spreadsheet is too large: it can weigh up to 4 MB",
+  "erroreElencoClassiIlleggibile": "The file arrived but cannot be opened as a spreadsheet: check that it is the right file and try again",
+  "erroreElencoClassiAssente": "No class list has been uploaded for this location yet"
 }

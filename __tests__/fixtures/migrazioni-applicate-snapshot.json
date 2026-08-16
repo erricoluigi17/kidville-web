@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-12",
-  "generato_alle": "2026-08-12T22:47:00Z",
-  "sha256": "9e89edea46ff630f523db9cac849aabb5b94391fd1cdc6932188efc5ade45a85",
+  "generato_il": "2026-08-16",
+  "generato_alle": "2026-08-16T22:32:49Z",
+  "sha256": "24b58a48b8626d172e35aecb3ac077b2f84544d558780d0d285c81379be73196",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -471,6 +471,34 @@
     {
       "version": "20260812224407",
       "name": "presenze_retention_allowlist_stato"
+    },
+    {
+      "version": "20260814224957",
+      "name": "anagrafica_sede_per_email"
+    },
+    {
+      "version": "20260814225302",
+      "name": "candidature_posizioni_cv"
+    },
+    {
+      "version": "20260815200244",
+      "name": "document_type_prestampati"
+    },
+    {
+      "version": "20260816200528",
+      "name": "retta_a_carico_di_fratello"
+    },
+    {
+      "version": "20260816201223",
+      "name": "iscrizioni_import_massivo"
+    },
+    {
+      "version": "20260816205459",
+      "name": "iscrizioni_decisioni_segreteria"
+    },
+    {
+      "version": "20260816223133",
+      "name": "iscrizioni_rinvia"
     }
   ]
 }

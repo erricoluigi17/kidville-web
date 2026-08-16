@@ -857,6 +857,8 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     let credentials: { email: string; password: string } | null = null
     let credentialsEmailSent = false
     let referenteUserId: string | null = null
+    /** Quante credenziali sono partite davvero: dal 2026-08-16 può essere >1. */
+    let credenzialiInviate = 0
 
     // 2. ADULTI → parents (dedup per CF) + account per il referente
     // `accountId` è l'`utenti.id` (spazio-id ACCOUNT) dell'adulto, quando ne ha uno:
@@ -955,14 +957,29 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         })
       }
 
-      // Account di accesso per il referente (se ha email) — S6bis: identità
-      // COMPLETA (auth.users + riga `utenti` + ponte parents.auth_user_id) via
-      // helper condiviso. Il vecchio blocco creava solo auth+utenti senza ponte
-      // (genitore che entrava ma non risolveva i figli) e upsertava `utenti` con
-      // una colonna inesistente in prod (password_segreta → PGRST204 silenzioso)
-      // rischiando pure di sovrascrivere il ruolo di uno staff omonimo.
+      // ─── ACCOUNT DI ACCESSO PER **OGNI** ADULTO CON EMAIL ─────────────────
+      //
+      // Fino al 2026-08-16 questo blocco girava sotto `if (isReferente && …)`, e
+      // il commento che lo seguiva dichiarava la cosa a chiare lettere: gli
+      // adulti NON referenti non ricevevano un account, perché crearne uno
+      // avrebbe prodotto «login impossibile, e nessuno se ne accorgerebbe» — una
+      // password casuale che nessuno riceve mai.
+      //
+      // Il ragionamento era giusto e la conclusione è invecchiata: il difetto non
+      // era l'account, era che l'email partiva al solo referente. Misurato sulle
+      // 390 domande già arrivate, 100 hanno DUE genitori con un indirizzo: cento
+      // persone reali — quasi sempre l'altro genitore — restavano fuori dall'app,
+      // senza diario, presenze o pagamenti del proprio figlio.
+      //
+      // Decisione del titolare (2026-08-16): ogni genitore con un'email ha il suo
+      // account e riceve le sue credenziali. `ensureParentIdentity` era già
+      // idempotente: la modifica è il CICLO, non la funzione.
+      //
+      // Resta al REFERENTE ciò che è davvero suo e di nessun altro:
+      // `intestatario_fattura` e `percentuale_pagamento` (punto 3 più sotto).
+      // Chi paga è un'altra cosa da chi vede.
       const adultEmail = a.email ? String(a.email) : ''
-      if (isReferente && adultEmail && parentId) {
+      if (adultEmail && parentId) {
         const identita = await ensureParentIdentity(supabase, {
           id: parentId,
           auth_user_id: parentAuthId,
@@ -972,9 +989,11 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           phone: a.phone != null ? String(a.phone) : null,
         }, { scuolaId })
         if (identita.ok) {
-          referenteUserId = identita.authUserId
           parentAuthId = identita.authUserId
-          credentials = { email: adultEmail, password: identita.password ?? '(account già esistente)' }
+          if (isReferente) {
+            referenteUserId = identita.authUserId
+            credentials = { email: adultEmail, password: identita.password ?? '(account già esistente)' }
+          }
 
           // Il genitore ha ORA un account: è il momento in cui i suoi legami
           // anagrafici PREESISTENTI (dedup per CF: un fratello già iscritto) possono
@@ -1003,24 +1022,31 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
               text: messaggio.testo,
               html: messaggio.html,
             })
-            credentialsEmailSent = invio.ok
-            if (!invio.ok) {
-              warnings.push(`Email credenziali NON inviata a ${adultEmail}: ${invio.error ?? 'motivo sconosciuto'} — comunicarle manualmente al referente.`)
+            if (isReferente) credentialsEmailSent = invio.ok
+            if (invio.ok) {
+              credenzialiInviate++
+            } else {
+              warnings.push(`Email credenziali NON inviata a ${adultEmail}: ${invio.error ?? 'motivo sconosciuto'} — comunicarle manualmente.`)
             }
           }
+        } else if (identita.reason === 'email_conflict' && !isReferente) {
+          // I due genitori hanno indicato la STESSA casella (11 domande su 390) —
+          // oppure quell'indirizzo è già di un'altra anagrafica. Non è un errore
+          // da correggere qui e non è un avviso da mostrare a chi approva: è la
+          // realtà di quella famiglia, che condivide un accesso. `utenti.email` è
+          // UNIQUE e GoTrue rifiuta un indirizzo già registrato: due account su
+          // una casella sola non esistono.
+          logEvento('iscrizione', 'info', {
+            operazione: 'admin/iscrizioni:PATCH',
+            esito: 'genitore-casella-condivisa',
+            entita_id: parentId,
+            sede_id: scuolaId,
+          })
         } else if (identita.reason !== 'no_email') {
-          warnings.push(`Account referente: ${identita.message}`)
+          warnings.push(`Account ${isReferente ? 'referente' : 'genitore'}: ${identita.message}`)
         }
       }
 
-      // Account degli adulti NON referenti: si RIUSA il ponte `parents.auth_user_id`
-      // già presente (dedup per CF), non si chiama `ensureParentIdentity`.
-      // Perché: `ensureParentIdentity` CREA l'account `auth.users` quando manca, e
-      // l'invio credenziali qui sopra è — e deve restare — riservato al solo
-      // referente. Chiamarla per tutti creerebbe account con password casuale che
-      // nessuno riceverà mai: login impossibile, e nessuno se ne accorgerebbe.
-      // Un adulto senza ponte semplicemente non ha un `utenti.id`, e senza quello
-      // la riga in `legame_genitori_alunni` (FK su `utenti.id`) non è scrivibile.
       if (parentId) parentLinks.push({ parentId, accountId: parentAuthId, role: a.ruolo || 'delegate', isReferente })
     }
 
@@ -1347,10 +1373,21 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }, e)
     }
 
+    // Il SUCCESSO si logga, non solo l'errore: senza questa riga «nessuna
+    // credenziale è partita» e «non le ha chieste nessuno» si somigliano. Qui il
+    // numero conta davvero, perché dal 2026-08-16 può essere maggiore di uno.
+    logEvento('iscrizione', 'info', {
+      operazione: 'admin/iscrizioni:PATCH',
+      esito: 'credenziali-inviate',
+      sede_id: scuolaId,
+      n: credenzialiInviate,
+    })
+
     return NextResponse.json({
       success: true,
       credentials,
       credentialsEmailSent,
+      credenzialiInviate,
       created_students: createdStudents,
       linked_parents: parentLinks.length,
       warnings,

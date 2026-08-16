@@ -16,6 +16,7 @@ import {
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { EMAIL_RIPETUTA_FRA_GENITORI, indiciEmailRipetute } from '@/lib/iscrizioni/email-genitori'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import type { FormField, EnrollmentSubmissionData } from '@/types/database.types'
 
@@ -339,6 +340,44 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       const primo = fields.find(f => validateField(f, getValues(f.id)))
       if (primo) setFocus(primo.id)
       return
+    }
+
+    // ── UN GENITORE, UNA CASELLA ──────────────────────────────────────────
+    // `validateField` guarda un campo per volta e `trigger` un passo per volta:
+    // nessuno dei due può vedere che questo indirizzo è lo stesso di un altro
+    // genitore. Si guarda uscendo dal passo, contro i genitori GIÀ compilati, e
+    // si segnala su questo campo — che è quello da cambiare.
+    if (current.kind === 'adult') {
+      const finQui = Array.from({ length: current.index + 1 }, (_, i) => getValues(`adults.${i}.email`))
+      if (indiciEmailRipetute(finQui).includes(current.index)) {
+        const id = `adults.${current.index}.email`
+        setError(id, { type: 'validate', message: EMAIL_RIPETUTA_FRA_GENITORI })
+        setFocus(id)
+        return
+      }
+    }
+
+    if (isLast) {
+      // Rete di sicurezza: se il genitore è tornato indietro e ha cambiato la
+      // casella del PRIMO adulto facendola coincidere con quella del secondo, il
+      // controllo all'uscita del passo non l'ha vista — guarda solo all'indietro.
+      // Qui si guardano tutti insieme, un istante prima dell'invio.
+      //
+      // ⚠️ In quel caso si finisce sul campo del SECONDO adulto, non su quello
+      // appena modificato: `indiciEmailRipetute` segnala per contratto la seconda
+      // occorrenza, e da qui non si sa quale dei due campi sia stato toccato per
+      // ultimo. Non è la stessa cosa che portarlo dove ha appena scritto, ma
+      // l'esito è comunque risolvibile — cambiare l'una o l'altra casella scioglie
+      // il duplicato — e la frase spiega il perché su entrambe.
+      const tutte = Array.from({ length: adultCount }, (_, i) => getValues(`adults.${i}.email`))
+      const ripetute = indiciEmailRipetute(tutte)
+      if (ripetute.length > 0) {
+        const primo = ripetute[0]
+        setError(`adults.${primo}.email`, { type: 'validate', message: EMAIL_RIPETUTA_FRA_GENITORI })
+        setDirection(-1)
+        setStep(offset + childCount + primo)
+        return
+      }
     }
     if (isLast) {
       // Ultima difesa lato client: se il passo sede esiste ma nessuna sede è stata
@@ -744,6 +783,19 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           <Info className="w-4 h-4 text-kidville-info-strong flex-shrink-0 mt-0.5" />
                           <p className="text-xs text-kidville-info-strong leading-relaxed">
                             {t('wizardAdultoInfo')}
+                          </p>
+                        </div>
+                      )}
+                      {/* Dal secondo adulto in poi si dice PRIMA perché serve una
+                          casella diversa: scoprirlo con un errore, dopo aver
+                          scritto l'indirizzo di famiglia, fa pensare a un
+                          capriccio del modulo — e la reazione naturale sarebbe
+                          inventare un indirizzo pur di andare avanti. */}
+                      {current.index > 0 && (
+                        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-kidville-info-soft border border-kidville-info/20">
+                          <Info className="w-4 h-4 text-kidville-info-strong flex-shrink-0 mt-0.5" />
+                          <p className="text-xs text-kidville-info-strong leading-relaxed">
+                            {t('wizardAdultoEmailPropria')}
                           </p>
                         </div>
                       )}

@@ -142,6 +142,7 @@
   "persDocRetroAiuto": "The other side of the same document: on an identity card it carries the address and signature, on a driving licence the categories.",
   "wizardAdulto": "Adult",
   "wizardAdultoInfo": "At least one adult is required. If you are already the parent of an enrolled child, use the same tax code: the new child will be automatically linked to your profile.",
+  "wizardAdultoEmailPropria": "Each parent gets their own personal access to the app — their child’s diary, attendance and payments — and that access opens with the email address. This is why each adult must enter a different mailbox: two parents on the same address would share a single account.",
   "wizardAdultoObbligatorioSuffix": " (required)",
   "wizardAdultoSub": "Parent, guardian or delegate",
   "wizardAggiungiAdulto": "Add adult / guardian",

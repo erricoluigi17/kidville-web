@@ -115,3 +115,30 @@ e2e/collaudo-giornata/report/*.html
 
 # Referti dei collaudi manuali: possono contenere estratti del DB di produzione
 scripts/collaudo/referto.txt*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GLI ELENCHI DI CLASSE — nomi di bambini, e il repository è PUBBLICO
+#
+# Misurato il 2026-08-16: `elenco alunni/ISCRIZIONE 26_27 Giugliano.xlsx` era
+# comparso nella radice del repo, NON tracciato ma nemmeno escluso — cioè a un
+# `git add -A` di distanza dall'essere pubblicato. Dentro: 338 nomi e cognomi di
+# minori, la loro classe e la retta mensile della famiglia. Gli altri due fogli
+# (Aversa, Cesa) devono ancora arrivare, e arriveranno allo stesso modo.
+#
+# È la stessa lezione del blocco qui sopra, su una strada nuova: l'elenco di
+# classe non è «un file di lavoro», è un'anagrafica di minori. La sua casa è il
+# bucket PRIVATO su Supabase (`iscrizioni_elenchi`), mai il codice del sito.
+#
+# I pattern sono senza `/`: valgono a QUALUNQUE profondità, così l'elenco della
+# prossima sede — che avrà un altro nome di cartella — nasce già coperto. Al
+# 2026-08-16 nel repo non è tracciato NESSUN file con queste estensioni
+# (`git ls-files | grep -iE '\.(xlsx|xls|csv|zip)$'` → vuoto): escluderle tutte
+# non nasconde niente che oggi esista.
+# La strada è dichiarata anche in `__tests__/architecture/pii-nei-file-tracciati.test.ts` (P1).
+elenco alunni/
+elenchi-alunni/
+elenchi-classi/
+*.xlsx
+*.xls
+*.csv
+*.zip

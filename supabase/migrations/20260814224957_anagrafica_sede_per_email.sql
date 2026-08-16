@@ -1,6 +1,18 @@
 -- =============================================================================
--- Anagrafica di sede: l'indirizzo e la casella di ogni plesso, per il piè di
+-- 20260814224957 — Anagrafica di sede: l'indirizzo e la casella di ogni plesso, per il piè di
 -- pagina delle dodici email transazionali.
+--
+-- ✅ APPLICATA il 2026-08-15, version 20260814224957.
+--
+-- ⚠️ IL FILE SI CHIAMAVA `20260815010000_...` E QUELLA VERSION NON È MAI
+--    ESISTITA. `apply_migration` assegna la version da sé, e in produzione la
+--    riga è `20260814224957`; il nome era stato scelto a mano, dopo. Rinominato
+--    il 2026-08-17 sulla version vera: il CLI applica i file in ordine
+--    ALFABETICO di nome, quindi un timestamp inventato fa ricostruire il
+--    database in un ordine che in produzione non è mai avvenuto — e si rompe
+--    sulla prima dipendenza (un ALTER prima del CREATE che lo giustifica).
+--    Il difetto era invisibile finché la fotografia delle migrazioni è rimasta
+--    ferma al 2026-08-12.
 --
 -- ─── COSA C'ERA PRIMA, MISURATO IL 2026-08-15 ───────────────────────────────
 --   scuole.indirizzo    Giugliano → NULL

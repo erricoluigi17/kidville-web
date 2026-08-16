@@ -281,5 +281,13 @@
   "erroreAutorizzazioniUscitaNonLette": "Non siamo riusciti a leggere chi ha firmato l’autorizzazione: riprova fra qualche minuto, l’elenco mostrato sarebbe incompleto",
   "erroreRegistroAlunniNonLetti": "Non siamo riusciti a leggere l’elenco degli alunni della sezione: il registro non è stato stampato. Riprova fra qualche minuto.",
   "erroreRegistroSezioneVuota": "In questa sezione non risulta nessun alunno: non c’è niente da stampare.",
-  "erroreRegistroNonGenerato": "Il registro non è stato generato: riprova fra qualche minuto."
+  "erroreRegistroNonGenerato": "Il registro non è stato generato: riprova fra qualche minuto.",
+  "erroreCronNonAutorizzato": "Operazione riservata ai lavori automatici della piattaforma",
+  "erroreImportIscrizioniNonEseguito": "Il giro automatico delle iscrizioni non è stato eseguito: riprova fra qualche minuto",
+  "erroreElencoClassiNonLetto": "Non è stato possibile leggere l’elenco delle classi: riprova fra qualche istante",
+  "erroreElencoClassiNonSalvato": "L’elenco caricato non è stato salvato: il file è stato scartato, riprova fra qualche istante",
+  "erroreElencoClassiTipoNonAmmesso": "Questo tipo di file non si può caricare: serve un foglio di calcolo Excel (.xlsx o .xls)",
+  "erroreElencoClassiTroppoGrande": "Il foglio è troppo grande: può pesare al massimo 4 MB",
+  "erroreElencoClassiIlleggibile": "Il file è arrivato ma non si apre come foglio di calcolo: controlla che sia il file giusto e riprova",
+  "erroreElencoClassiAssente": "Per questa sede non è stato ancora caricato nessun elenco delle classi"
 }

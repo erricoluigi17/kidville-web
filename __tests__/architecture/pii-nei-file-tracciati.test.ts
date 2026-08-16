@@ -121,6 +121,20 @@ const STRADE_DEGLI_ESITI: { esempio: string; chi: string }[] = [
     esempio: 'e2e/collaudo-giornata/RISULTATI-2026-08.md',
     chi: 'stessa strada, altro nome: chi scrive un report non sceglie sempre la stessa parola',
   },
+  {
+    esempio: 'elenco alunni/ISCRIZIONE 26_27 Giugliano.xlsx',
+    chi:
+      'gli elenchi di classe che la segreteria prepara per le iscrizioni (2026-08-16): 338 nomi e ' +
+      'cognomi di minori con classe e retta di famiglia, comparsi nella radice del repo NON ' +
+      'tracciati ma nemmeno esclusi — a un `git add -A` dall\'essere pubblicati. La loro casa è il ' +
+      'bucket privato `iscrizioni_elenchi`, non il codice del sito',
+  },
+  {
+    esempio: 'elenchi-classi/ISCRIZIONE 26_27 Aversa.xlsx',
+    chi:
+      'stessa strada, sede diversa: Aversa e Cesa devono ancora arrivare e arriveranno con un ' +
+      'altro nome di cartella — il pattern è senza `/` apposta',
+  },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

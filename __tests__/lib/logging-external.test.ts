@@ -503,8 +503,12 @@ describe('email/send', () => {
         const { sendEmailDetailed } = await carica();
         globalThis.fetch = rispondi('{"id":"1"}', 200);
 
+        // Dal 2026-08-16 l'esito porta anche `messageId`: l'id che Resend
+        // assegna al messaggio, letto dal corpo che `externalFetch` restituisce
+        // intatto. Il battito in tabella resta UNO SOLO — quello di
+        // `externalFetch` — ed è ciò che le righe qui sotto continuano a provare.
         expect(await sendEmailDetailed({ to: 'mamma@example.com', subject: 'S', text: 'T' }))
-            .toEqual({ ok: true, error: null });
+            .toEqual({ ok: true, error: null, messageId: '1' });
 
         const r = await rigaPersistita();
         expect(r.evento).toBe('email');

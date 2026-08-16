@@ -151,8 +151,29 @@ describe('import iscrizioni — legame runtime oltre a student_parents', () => {
     expect(legami()[0].payload).toMatchObject({ genitore_id: 'acc-ref' })
   })
 
-  it('adulto NON referente già dotato di account: legame sì, credenziali no', async () => {
+  // 🔺 RISCRITTO IL 2026-08-17. Fin qui questo test si chiamava «adulto NON
+  // referente già dotato di account: legame sì, credenziali no» e pretendeva
+  // `ensureParentIdentity` chiamata UNA volta sola — cioè fissava la regola per
+  // cui l'account nasceva al solo referente.
+  //
+  // La regola è cambiata per decisione del titolare (2026-08-16): misurato sulle
+  // 390 domande arrivate, 100 hanno DUE genitori con un'email, e con la vecchia
+  // regola cento persone reali restavano fuori dall'app. Il test non è stato
+  // «aggiustato per farlo passare»: dice l'opposto di prima perché il prodotto fa
+  // l'opposto di prima, e ciò che NON è cambiato — l'intestazione della fattura —
+  // è rimasto asserito uguale.
+  it('OGNI adulto con email ha il suo account; la fattura resta al referente', async () => {
     h.parentsByCf.CF2 = { id: 'p-esistente', auth_user_id: 'acc-altro' }
+    // L'account esistente si RIUSA: è ciò che fa la funzione vera quando il ponte
+    // `parents.auth_user_id` è già scritto. Col mock fisso di prima entrambi gli
+    // adulti sarebbero finiti sullo stesso account e il test non avrebbe potuto
+    // distinguere «due account» da «uno contato due volte».
+    h.ensureParentIdentity.mockImplementation(async (_admin: unknown, parent: { auth_user_id?: string | null }) => ({
+      ok: true,
+      authUserId: parent.auth_user_id ?? 'acc-ref',
+      email: 'x@example.test',
+      createdAuth: false, createdUtenti: false, boundNow: false, password: null,
+    }))
     h.sub = {
       id: SUB_ID,
       scuola_id: 'sc-1',
@@ -167,17 +188,50 @@ describe('import iscrizioni — legame runtime oltre a student_parents', () => {
     const res = await importa()
     expect(res.status).toBe(200)
 
-    // ensureParentIdentity resta riservata al REFERENTE: le credenziali non
-    // devono partire per il secondo adulto.
-    expect(h.ensureParentIdentity).toHaveBeenCalledTimes(1)
+    // Due adulti con email ⇒ due identità garantite, non una.
+    expect(h.ensureParentIdentity).toHaveBeenCalledTimes(2)
+    // E i legami runtime di ENTRAMBI: un account che non vede suo figlio è il
+    // modo peggiore di dare un accesso a qualcuno.
+    expect(h.sincronizzaLegamiRuntime).toHaveBeenCalledTimes(2)
 
     const scritti = legami().map((u) => u.payload.genitore_id).sort()
     expect(scritti).toEqual(['acc-altro', 'acc-ref'])
-    // Un solo intestatario al 100%: le quote di fatturazione non cambiano.
+    // Chi paga è un'altra cosa da chi vede: un solo intestatario al 100%.
     const referente = legami().find((u) => u.payload.genitore_id === 'acc-ref')
     const altro = legami().find((u) => u.payload.genitore_id === 'acc-altro')
     expect(referente?.payload).toMatchObject({ intestatario_fattura: true, percentuale_pagamento: 100 })
     expect(altro?.payload).toMatchObject({ intestatario_fattura: false, percentuale_pagamento: 0 })
+  })
+
+  // Gli 11 casi misurati in cui i due genitori hanno indicato la STESSA casella.
+  // `utenti.email` è UNIQUE e GoTrue rifiuta un indirizzo già registrato: il
+  // secondo account non può nascere, e non è un guasto da segnalare a chi approva.
+  it('due genitori sulla stessa casella: nessun avviso, l\'import riesce lo stesso', async () => {
+    h.ensureParentIdentity
+      .mockResolvedValueOnce({
+        ok: true, authUserId: 'acc-ref', email: 'unica@example.test',
+        createdAuth: false, createdUtenti: false, boundNow: false, password: null,
+      })
+      .mockResolvedValueOnce({ ok: false, reason: 'email_conflict', message: 'già collegata' })
+    h.sub = {
+      id: SUB_ID,
+      scuola_id: 'sc-1',
+      data: {
+        children: [{ nome: 'Bimbo', codice_fiscale: 'CFC1' }],
+        adults: [
+          { first_name: 'Anna', fiscal_code: 'CF1', email: 'unica@example.test', ruolo: 'mother' },
+          { first_name: 'Bruno', fiscal_code: 'CF2', email: 'unica@example.test', ruolo: 'father' },
+        ],
+      },
+    }
+    const res = await importa()
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo).toMatchObject({ success: true })
+    // Nessun avviso: è la realtà di quella famiglia, non un errore da correggere.
+    expect(corpo.warnings ?? []).toEqual([])
+    // Un solo legame runtime, quello dell'unico account che esiste.
+    expect(legami().map((u) => u.payload.genitore_id)).toEqual(['acc-ref'])
   })
 
   it('upsert idempotente: non sovrascrive un legame già configurato', async () => {

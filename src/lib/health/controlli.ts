@@ -218,6 +218,25 @@ export const JOB_CRON: readonly JobCron[] = [
     // «job senza battito» permanente su un lavoro che gira benissimo — cioè un
     // allarme che suona da solo, e che qualcuno spegnerà.
     { nome: 'retention-personale', finestraMs: 26 * ORA },
+    // `iscrizioni-import-invio` (`POST /api/iscrizione/import-massivo`): il giro
+    // che ogni mattina alle 10:10 di Roma porta le domande d'iscrizione dentro le
+    // classi e manda a ogni genitore le sue credenziali.
+    //
+    // ⚠️ È STAGIONALE, e sta qui lo stesso — anzi, ci sta PROPRIO perché è
+    // stagionale. La finestra 22/08–10/09 la tiene la ROUTE, non lo schedule: il
+    // job è programmato tutti i giorni dell'anno e fuori da quelle date esce
+    // subito scrivendo il battito a zero. Se un domani qualcuno togliesse quel
+    // battito «perché tanto non fa niente», questa voce manderebbe /api/health in
+    // `degradato` da settembre a luglio, e la voce andrebbe spostata in
+    // `JOB_CRON_NON_SORVEGLIATI` con la ragione.
+    //
+    // La sorveglianza serve nei venti giorni che contano: un giro saltato lì
+    // dentro sono decine di famiglie che aspettano credenziali che non arrivano,
+    // e non se ne accorgerebbe nessuno — le domande restano `pending`, che è
+    // esattamente com'erano prima.
+    //
+    // 26 h come gli altri giornalieri: assorbe un giro saltato, non due.
+    { nome: 'iscrizioni-import-invio', finestraMs: 26 * ORA },
 ]
 
 /**

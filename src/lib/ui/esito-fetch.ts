@@ -1186,6 +1186,36 @@ export const CODICI_ERRORE = {
      * che sembra completo.
      */
     AUTORIZZAZIONI_USCITA_NON_LETTE: 'erroreAutorizzazioniUscitaNonLette',
+    /**
+     * 500 — l'elenco degli alunni della sezione non si è potuto leggere, e quindi il
+     * registro mensile non si stampa (`admin/registro-presenze/pdf:GET`).
+     *
+     * NON degrada a «nessun alunno», ed è l'unica ragione per cui non riusa
+     * `REGISTRO_SEZIONE_VUOTA`: PostgREST non lancia, quindi una lettura caduta
+     * lascerebbe un elenco vuoto e il PDF uscirebbe con le colonne dei giorni e
+     * NESSUNA riga. Un registro senza nomi non sembra un guasto: sembra un mese in
+     * cui non è venuto nessuno, e verrebbe firmato così.
+     */
+    REGISTRO_ALUNNI_NON_LETTI: 'erroreRegistroAlunniNonLetti',
+    /**
+     * 404 — la sezione esiste ma non ha alunni da stampare
+     * (`admin/registro-presenze/pdf:GET`).
+     *
+     * È un 404 e non un PDF vuoto: un foglio con la testata, le colonne dei giorni e
+     * nessuna riga è indistinguibile da un guasto, e chi lo tiene in mano non ha modo
+     * di sapere quale dei due sia.
+     */
+    REGISTRO_SEZIONE_VUOTA: 'erroreRegistroSezioneVuota',
+    /**
+     * 500 — il registro mensile non è stato generato
+     * (`admin/registro-presenze/pdf:GET`): la composizione del PDF o la carta
+     * intestata sono fallite.
+     *
+     * Non si consegna il foglio nudo: senza la carta uscirebbe un registro senza il
+     * marchio della scuola, senza il piede con la P.IVA e le tre sedi — cioè un
+     * documento che sembra della scuola e non lo è.
+     */
+    REGISTRO_NON_GENERATO: 'erroreRegistroNonGenerato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

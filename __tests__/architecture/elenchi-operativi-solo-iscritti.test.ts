@@ -491,6 +491,20 @@ const AMMESSE: Record<string, Esenzione> = {
       'registro delle presenze del MESE: un bambino ritirato il 20 ha frequentato dall’1 al 19, e filtrarlo qui cancellerebbe quelle presenze dal registro — che si conserva dieci anni',
   },
 
+  // La STAMPA dello stesso registro (2026-08-16). Legge gli alunni della sezione
+  // esattamente come la rotta qui sopra, e la decisione non poteva che essere la
+  // stessa — ma per una ragione in più, che vale la pena scrivere: il foglio che
+  // esce dalla stampante deve dire ciò che la maestra ha appena guardato sullo
+  // schermo. Un PDF più severo dei dati che lo generano non è un PDF più
+  // corretto: è una seconda verità, e chi firma il registro non saprebbe quale
+  // delle due ha in mano. Se un giorno si decidesse di filtrare, si filtra nelle
+  // DUE rotte nello stesso lavoro.
+  'src/app/api/admin/registro-presenze/pdf/route.ts::admin/registro-presenze/pdf:GET': {
+    scoperte: 1,
+    ragione:
+      'stampa del registro mensile: legge gli stessi alunni di `attendance/monthly:GET` e deve dire ciò che la maestra ha appena visto a schermo — un foglio più severo dei dati che lo generano sarebbe una seconda verità',
+  },
+
   'src/app/api/diary/entries/route.ts::diary/entries:GET': {
     scoperte: 1,
     ragione:
@@ -595,10 +609,13 @@ describe('elenchi operativi: chi legge `alunni` per sede intera dichiara lo stat
 
   it('le esenzioni PER SEZIONE sono esattamente quelle dichiarate (non più un ramo di regex)', () => {
     // Il ramo `perSezione` esentava in silenzio; ora le letture per sezione che
-    // restano scoperte devono essere le SEI decise a mano. Se qualcuno ne
+    // restano scoperte devono essere quelle decise a mano. Se qualcuno ne
     // aggiunge una, questo test la nomina — che è tutto ciò che serviva.
+    // Erano sei; dal 2026-08-16 sono sette, ed è la STAMPA del registro mensile,
+    // che legge gli stessi alunni della rotta che alimenta lo schermo.
     const DICHIARATE = [
       'src/app/api/admin/documents-merge/route.ts::admin/documents-merge:GET',
+      'src/app/api/admin/registro-presenze/pdf/route.ts::admin/registro-presenze/pdf:GET',
       'src/app/api/attendance/monthly/route.ts::attendance/monthly:GET',
       'src/app/api/diary/entries/route.ts::diary/entries:GET',
       'src/app/api/diary/students/route.ts::diary/students:GET',

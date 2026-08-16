@@ -4,7 +4,11 @@
  *   download esclusivamente via signed URL nelle route (mai getPublicUrl).
  * - Path: staging/{uuid}-{nome} → {scuolaId}/{anno}/{numero7}-originale.{ext},
  *   …-timbrato.pdf, …-allegati/{n}-{nome}.
- * - `registraProtocollo`: rpc numero atomico → fascia → upload → INSERT;
+ * - `registraProtocollo`: rpc numero atomico → segnatura → upload → INSERT;
+ *   la segnatura è una FASCIA sui documenti acquisiti (`applicaSegnatura`) e una riga
+ *   sulla carta intestata su quelli generati dall'app (`componiTimbrato`, che le rotte
+ *   riempiono con `applicaCartaIntestata(pdf, { segnatura })`): sulla carta la fascia
+ *   cadrebbe sopra il marchio della scuola;
  *   in caso di errore dopo l'INSERT il rollback usa protocollo_elimina()
  *   (unica via di DELETE ammessa dal trigger WORM). Il numero "bruciato" da
  *   un fallimento pre-INSERT resta un buco ammesso dal design (rischio #3).
@@ -130,6 +134,27 @@ export type RegistraInput = {
   originale: { bytes: Uint8Array; nomeFile: string; mime: string }
   /** PDF su cui apporre la fascia: l'originale se è PDF, la conversione se immagine. */
   pdfDaTimbrare: Uint8Array
+  /**
+   * COME si compone il documento timbrato — e perché non è sempre una fascia.
+   *
+   * Senza questa funzione si applica `applicaSegnatura()`: una fascia verde alta 64 pt in
+   * testa alla prima pagina, col logo bianco dentro, e il foglio riscalato di 0,924 per
+   * farle posto. Su un documento ACQUISITO — una scansione, una foto — è la scelta giusta:
+   * arriva su un foglio bianco, la fascia non copre niente e riscalare è il modo di non
+   * nascondere una riga.
+   *
+   * Su un documento che GENERA l'app è il contrario. Quel foglio esce sulla carta
+   * intestata reale della scuola, e la fascia cadrebbe esattamente sul marchio
+   * (0 → 27,05 mm), ci metterebbe sopra un secondo logo Kidville e staccherebbe dal fondo
+   * il piede a quattro colonne con la P.IVA e le tre sedi — cioè i difetti n. 1 e n. 2
+   * della specifica, quelli per cui il modulo `src/lib/carta/` esiste. La rotta che genera
+   * passa allora `applicaCartaIntestata(pdf, { segnatura: { righe } })`, che stende carta e
+   * segnatura **in una passata sola**, senza fascia e senza toccare la scala del foglio.
+   *
+   * Il callback riceve le righe della segnatura perché il NUMERO nasce qui dentro, dopo la
+   * `rpc` atomica: chi chiama non può comporle prima di sapere quale numero gli tocca.
+   */
+  componiTimbrato?: (pdf: Uint8Array, righe: readonly string[]) => Promise<Uint8Array>
   allegati?: AllegatoInput[]
 }
 
@@ -178,10 +203,12 @@ export async function registraProtocollo(
     tipo: input.tipo,
     quando,
   })
-  const timbrato = await applicaSegnatura(input.pdfDaTimbrare, {
-    righe,
-    logoPng: logoLightBytes(),
-  })
+  const timbrato = input.componiTimbrato
+    ? await input.componiTimbrato(input.pdfDaTimbrare, righe)
+    : await applicaSegnatura(input.pdfDaTimbrare, {
+        righe,
+        logoPng: logoLightBytes(),
+      })
 
   const impronta = sha256Impronta(input.originale.bytes)
   const percorsi = pathDefinitivi(input.scuolaId, anno, numero)

@@ -14,6 +14,7 @@ import {
   type TipoDocumentoRichiesta,
 } from '@/lib/protocolli/documenti'
 import { buildDocumentoRichiestaPdf } from '@/lib/protocolli/documento-pdf'
+import { applicaCartaIntestata } from '@/lib/carta'
 import { dataOraItaliana } from '@/lib/protocolli/segnatura'
 import { registraProtocollo, slugNomeFile } from '@/lib/protocolli/store'
 import {
@@ -148,6 +149,18 @@ export const POST = withRoute('admin/protocolli/genera-documento:POST', async (r
           mime: 'application/pdf',
         },
         pdfDaTimbrare: pdf,
+        // ─── LA CARTA DELLA SCUOLA, E LA SEGNATURA, IN UNA CHIAMATA SOLA ───────
+        //
+        // `buildDocumentoRichiestaPdf` non disegna più né banda né logo né piede: li ha
+        // già la carta intestata reale, e ridisegnarli significava coprirli. Questi byte
+        // sono quindi il solo CONTENUTO, e senza questa riga uscirebbero nudi — un
+        // certificato su foglio bianco, cioè peggio di prima.
+        //
+        // Non `applicaSegnatura()`, che è il timbro dei documenti ACQUISITI: la sua
+        // fascia verde alta 64 pt cadrebbe esattamente sul marchio della scuola (fino a
+        // 27,05 mm), ci metterebbe sopra un secondo logo Kidville e riscalerebbe il foglio
+        // di 0,924 staccando dal fondo il piede con la P.IVA e le tre sedi.
+        componiTimbrato: (bytes, righe) => applicaCartaIntestata(bytes, { segnatura: { righe } }),
         allegati: [],
       })
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
-import { buildReceiptPdf } from '@/lib/fea/receipt-pdf'
+import { buildReceiptPdfSuCarta } from '@/lib/fea/receipt-pdf'
 import { parseQuery } from '@/lib/validation/http'
 import type { ReceiptPayload, SignatureLog } from '@/lib/fea/types'
 import { withRoute } from '@/lib/logging/with-route'
@@ -100,7 +100,11 @@ export const GET = withRoute('fea/receipt:GET', async (request: NextRequest) => 
       signature: resolved.signature,
       documentPayload: resolved.documentPayload,
     }
-    const pdf = buildReceiptPdf(payload)
+    // Il generatore impagina il solo CONTENUTO: la testata — marchio, filigrana, piede
+    // con la P.IVA e le tre sedi — è stampata sulla carta reale della scuola, e la stende
+    // `buildReceiptPdfSuCarta`. Chiamare `buildReceiptPdf` da qui consegnerebbe un foglio
+    // bianco con sopra otto righe di metadati.
+    const pdf = await buildReceiptPdfSuCarta(payload)
 
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,

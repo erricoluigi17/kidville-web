@@ -278,5 +278,8 @@
   "errorePrestampatoFirmaNonValida": "La firma non risulta raccolta o non è valida: il documento non si genera prima della firma.",
   "errorePrestampatoProtocolloDaDichiarare": "Questo documento esce dalla scuola: va protocollato, oppure marcato come copia a uso della famiglia.",
   "erroreUscitaClasseFuoriSede": "Una delle sezioni indicate non appartiene alla sede scelta per l’uscita: controlla le sezioni coinvolte",
-  "erroreAutorizzazioniUscitaNonLette": "Non siamo riusciti a leggere chi ha firmato l’autorizzazione: riprova fra qualche minuto, l’elenco mostrato sarebbe incompleto"
+  "erroreAutorizzazioniUscitaNonLette": "Non siamo riusciti a leggere chi ha firmato l’autorizzazione: riprova fra qualche minuto, l’elenco mostrato sarebbe incompleto",
+  "erroreRegistroAlunniNonLetti": "Non siamo riusciti a leggere l’elenco degli alunni della sezione: il registro non è stato stampato. Riprova fra qualche minuto.",
+  "erroreRegistroSezioneVuota": "In questa sezione non risulta nessun alunno: non c’è niente da stampare.",
+  "erroreRegistroNonGenerato": "Il registro non è stato generato: riprova fra qualche minuto."
 }

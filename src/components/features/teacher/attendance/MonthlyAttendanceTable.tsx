@@ -2,26 +2,12 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { formattaIstante, intlDateTime } from '@/i18n/config';
+import { intlDateTime } from '@/i18n/config';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
 import { calcolaOreAssenza } from '@/lib/primaria/oreAssenza';
-
-// Etichette testuali passate all'export PDF: le stringhe utente vengono dal
-// namespace i18n (risolte nel componente), non da letterali qui dentro.
-interface PdfLabels {
-    titolo: string;
-    meta: string;
-    studente: string;
-    abbrevP: string;
-    abbrevA: string;
-    abbrevR: string;
-    simboli: Record<string, string>;
-    giorni: string[];
-    piePagina: (n: number, tot: number) => string;
-    nomeFile: string;
-}
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
@@ -188,129 +174,21 @@ function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeeke
 }
 
 // ─── Export PDF ───────────────────────────────────────────────────────────────
-
-async function exportPDF(students: StudentMonthData[], days: Date[], labels: PdfLabels) {
-    const { default: jsPDF } = await import('jspdf');
-    const { default: autoTable } = await import('jspdf-autotable');
-
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-
-    // A4 landscape: 297 × 210 mm. Margini 8mm → area utile 281mm.
-    const PAGE_W = 281;
-    const NAME_COL  = 42;   // nome studente
-    const SUMM_COLS = 7;    // P, A, R (3 colonne × 7mm)
-    const SUMM_N    = 3;
-    const dayColW   = Math.max(5.5, Math.floor((PAGE_W - NAME_COL - SUMM_N * SUMM_COLS) / days.length));
-
-    // ── Banner intestazione ──────────────────────────────────────────
-    doc.setFillColor(0, 106, 95);
-    doc.rect(0, 0, 297, 20, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(15);
-    doc.setFont('helvetica', 'bold');
-    doc.text(labels.titolo, 10, 13);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.text(labels.meta, 289, 13, { align: 'right' });
-
-    // ── Intestazioni colonne giorni ───────────────────────────────────
-    const dayHeaders = days.map(d => {
-        const dow = d.getDay();
-        const isWe = dow === 0 || dow === 6;
-        return {
-            content: `${labels.giorni[dow][0]}\n${d.getDate()}`,
-            styles: {
-                halign: 'center' as const,
-                fontSize: 7,
-                cellWidth: dayColW,
-                fillColor: isWe ? [230, 230, 230] as [number,number,number] : [0, 106, 95] as [number,number,number],
-                textColor: isWe ? [100, 100, 100] as [number,number,number] : [255, 255, 255] as [number,number,number],
-            }
-        };
-    });
-
-    const head = [[
-        { content: labels.studente, styles: { halign: 'left' as const, fontSize: 8, cellWidth: NAME_COL } },
-        ...dayHeaders,
-        { content: labels.abbrevP, styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [46,125,50]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
-        { content: labels.abbrevA, styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [183,28,28]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
-        { content: labels.abbrevR, styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [230,119,0]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
-    ]];
-
-    // Simboli-lettera localizzati per le celle (P/A/R/U → localizzati).
-    const SIMBOLO: Record<string, string> = labels.simboli;
-    const COLORE_STATO: Record<string, [number,number,number]> = {
-        presente:          [200, 230, 201],
-        assente:           [255, 205, 210],
-        ritardo:           [255, 236, 179],
-        uscita_anticipata: [187, 222, 251],
-    };
-
-    const body = students.map(student => {
-        const s = calcSummary(student);
-        const dayCells = days.map(d => {
-            const record = student.byDate[toISO(d)];
-            const isWe = d.getDay() === 0 || d.getDay() === 6;
-            return {
-                content: record ? SIMBOLO[record.stato] ?? '' : '',
-                styles: {
-                    halign: 'center' as const,
-                    fontSize: 8,
-                    fontStyle: 'bold' as const,
-                    fillColor: record
-                        ? COLORE_STATO[record.stato]
-                        : isWe ? [240, 240, 240] as [number,number,number] : undefined,
-                    textColor: record?.stato === 'presente' ? [27,94,32] as [number,number,number]
-                        : record?.stato === 'assente'  ? [183,28,28] as [number,number,number]
-                        : record?.stato === 'ritardo'  ? [230,119,0] as [number,number,number]
-                        : [80,80,80] as [number,number,number],
-                }
-            };
-        });
-        return [
-            { content: `${student.student_cognome} ${student.student_nome}`, styles: { fontSize: 9, fontStyle: 'bold' as const } },
-            ...dayCells,
-            { content: String(s.presenze), styles: { halign: 'center' as const, fontSize: 10, fontStyle: 'bold' as const, textColor: [46,125,50]  as [number,number,number] } },
-            { content: String(s.assenze),  styles: { halign: 'center' as const, fontSize: 10, fontStyle: 'bold' as const, textColor: [183,28,28] as [number,number,number] } },
-            { content: String(s.ritardi),  styles: { halign: 'center' as const, fontSize: 10, fontStyle: 'bold' as const, textColor: [230,119,0]  as [number,number,number] } },
-        ];
-    });
-
-    autoTable(doc, {
-        startY: 24,
-        head,
-        body,
-        theme: 'grid',
-        styles: {
-            cellPadding: { top: 1.5, bottom: 1.5, left: 1, right: 1 },
-            lineColor: [200, 200, 200],
-            lineWidth: 0.2,
-            minCellHeight: 7,
-            overflow: 'hidden',
-        },
-        headStyles: {
-            fillColor: [0, 106, 95],
-            textColor: [255, 255, 255],
-            fontStyle: 'bold',
-            fontSize: 8,
-            minCellHeight: 10,
-        },
-        alternateRowStyles: { fillColor: [252, 250, 248] },
-        columnStyles: { 0: { cellWidth: NAME_COL } },
-        margin: { left: 8, right: 8, bottom: 12 },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        didDrawPage: (data: any) => {
-            doc.setFontSize(7);
-            doc.setTextColor(160, 160, 160);
-            doc.text(
-                labels.piePagina(data.pageNumber, data.pageCount),
-                148, 207, { align: 'center' }
-            );
-        },
-    });
-
-    doc.save(labels.nomeFile);
-}
+//
+// ⚠️ **IL PDF NON SI GENERA PIÙ QUI (2026-08-16).** Fino a ieri questo file importava
+// `jspdf` e `jspdf-autotable` a richiesta e componeva il registro nel browser, con una
+// banda verde a tutta larghezza in cima al foglio.
+//
+// Il registro esce ora sulla CARTA INTESTATA reale della scuola, e quell'asset pesa
+// **1,1 MB**: importarlo da un componente client vorrebbe dire scaricarlo su ogni tablet
+// della scuola, a ogni apertura della pagina, anche per chi il PDF non lo stampa mai.
+// Servire l'asset da una rotta e comporre qui è l'alternativa scartata: scaricherebbe
+// quegli stessi 1,1 MB a ogni stampa e lascerebbe un sesto motore PDF fuori dal motore
+// comune della carta.
+//
+// La generazione è passata a `/api/admin/registro-presenze/pdf`, che rilegge i dati coi
+// propri gate — `requireDocente` e la sezione ASSEGNATA — invece di fidarsi di ciò che il
+// browser ha già in memoria. Qui resta lo scarico del file, e basta.
 
 // ─── Componente Principale ───────────────────────────────────────────────────
 
@@ -373,27 +251,56 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
         if (month === 12) { setYear(y => y + 1); setMonth(1); } else { setMonth(m => m + 1); }
     };
 
+    // Il nome del file lo decide il SERVER (`Content-Disposition`): è lui che conosce il
+    // mese nella lingua richiesta ed è lui a doverlo ripulire dei caratteri che un header
+    // HTTP non ammette. Qui resta un ripiego, per il caso in cui l'header non arrivi.
+    const nomeFileDaHeader = (header: string | null): string =>
+        header?.match(/filename="([^"]+)"/)?.[1] ??
+        `${t('pdfPrefissoFile')}_${sezione}_${MESI[month - 1].toLowerCase()}_${year}.pdf`;
+
     const handleExport = async () => {
         setIsExporting(true);
-        const labels: PdfLabels = {
-            titolo: t('pdfTitolo', { mese: MESI[month - 1].toUpperCase(), anno: year }),
-            meta: t('pdfMeta', { sezione, data: formattaIstante(new Date(), locale) }),
-            studente: t('studente'),
-            abbrevP: t('abbrevP'),
-            abbrevA: t('abbrevA'),
-            abbrevR: t('abbrevR'),
-            simboli: {
-                presente: t('abbrevP'),
-                assente: t('abbrevA'),
-                ritardo: t('abbrevR'),
-                uscita_anticipata: t('abbrevU'),
-            },
-            giorni: GIORNI,
-            piePagina: (n, tot) => t('pdfPiePagina', { n, tot }),
-            nomeFile: `${t('pdfPrefissoFile')}_${sezione}_${MESI[month - 1].toLowerCase()}_${year}.pdf`,
-        };
-        try { await exportPDF(students, days, labels); }
-        finally { setIsExporting(false); }
+        setError(null);
+        let url: string | null = null;
+        try {
+            const res = await fetch(
+                `/api/admin/registro-presenze/pdf?year=${year}&month=${month}` +
+                    `&sezione=${encodeURIComponent(sezione)}&locale=${encodeURIComponent(locale)}`,
+                { cache: 'no-store' },
+            );
+            if (!res.ok) {
+                // Un `catch` (o un ramo d'errore) che non logga è un bug: senza questa riga
+                // un registro che non esce non lascia traccia da nessuna parte, e la
+                // maestra ha solo un pulsante che non fa niente. Nessun dato personale:
+                // rotta della pagina e stato HTTP.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'registro-presenze-pdf-non-generato', route: '/teacher/attendance', stato: res.status });
+                setError(t('erroreCaricamento'));
+                return;
+            }
+            const blob = await res.blob();
+            url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = nomeFileDaHeader(res.headers.get('Content-Disposition'));
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (e) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `registro-presenze-pdf-rete:${nomeErrore(e)}`, route: '/teacher/attendance' });
+            setError(t('erroreCaricamento'));
+        } finally {
+            // L'URL dell'oggetto si revoca SEMPRE — un blob da oltre 1 MB per stampa che
+            // resta appeso al documento è memoria che il tablet della sezione non riprende
+            // finché non si chiude la scheda — ma NON nello stesso giro di eventi del
+            // click: nella WebView di Capacitor lo scarico parte in modo asincrono, e un
+            // `revokeObjectURL` immediato lo annulla lasciando un pulsante che sembra
+            // funzionare e non scarica niente.
+            if (url) {
+                const daRevocare = url;
+                setTimeout(() => URL.revokeObjectURL(daRevocare), 60_000);
+            }
+            setIsExporting(false);
+        }
     };
 
     const todayPresenti = students.filter(s => s.byDate[todayISO]?.stato === 'presente').length;

@@ -8,6 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { buildOrdineFornitorePdf } from '@/lib/merch/pdf'
+import { applicaCartaIntestata } from '@/lib/carta'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { formattaIstante } from '@/i18n/config'
@@ -55,7 +56,13 @@ export const GET = withRoute('admin/merch/ordini-fornitore/pdf:GET', async (requ
       .filter((r) => String(r.stato) !== 'annullato')
       .map((r) => ({ articolo: String(r.articolo_nome), taglia: String(r.taglia ?? ''), quantita: Number(r.quantita) }))
 
-    const pdf = buildOrdineFornitorePdf({
+    // ─── LA CARTA DELLA SCUOLA VA STESA QUI ──────────────────────────────────
+    //
+    // `buildOrdineFornitorePdf` impagina il solo CONTENUTO: la ragione sociale completa,
+    // la P.IVA della cooperativa e le tre sedi sono stampate sulla carta intestata reale,
+    // e questo è l'unico documento del lotto che esce verso un TERZO — un fornitore che di
+    // Kidville vede solo questo foglio. Senza questa riga partirebbe nudo.
+    const contenuto = buildOrdineFornitorePdf({
       numero: po.numero as string,
       data: po.creato_il ? formattaIstante(new Date(po.creato_il as string), 'it') : null,
       committente: {
@@ -74,8 +81,9 @@ export const GET = withRoute('admin/merch/ordini-fornitore/pdf:GET', async (requ
       righe: righeValide,
       note: (po.note as string) ?? null,
     })
+    const pdf = await applicaCartaIntestata(new Uint8Array(contenuto))
 
-    return new NextResponse(pdf, {
+    return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',

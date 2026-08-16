@@ -192,7 +192,21 @@ const h = vi.hoisted(() => {
             Promise.resolve(esito).then(res, rej)
           return ib
         }
-        const risolvi = () => (tabella === 'firme_documenti' ? registroFea(miei) : take(tabella))
+        /**
+         * ⚠️ IL `.limit` SI APPLICA DAVVERO, e non è pignoleria: finché questo doppio lo
+         * registrava soltanto, una finestra di query troppo stretta era **invisibile ai
+         * test**. È esattamente com'è passato il difetto del tetto unico sulla copia
+         * firmata — `.limit(5)` sulla QUERY, cioè cinque righe più recenti bastavano a
+         * rendere irraggiungibile la copia firmata vera — con tutto verde.
+         */
+        const risolvi = () => {
+          const esito = tabella === 'firme_documenti' ? registroFea(miei) : take(tabella)
+          const limite = miei.find((f) => f.metodo === 'limit')?.args[0]
+          if (typeof limite === 'number' && Array.isArray(esito.data)) {
+            return { ...esito, data: (esito.data as unknown[]).slice(0, limite) }
+          }
+          return esito
+        }
         qb.single = () => Promise.resolve(risolvi())
         qb.maybeSingle = () => Promise.resolve(risolvi())
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
@@ -266,14 +280,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { GET } from '@/app/api/prestampati/route'
 import { POST } from '@/app/api/prestampati/genera/route'
 import {
+  aiutoDaStampare,
   blocchiModuloVuoto,
   caricaSezione,
   cartaDelContesto,
+  CHIAVI_AIUTO_SU_CARTA,
   componiPrestampato,
   dicituraModuloSuCarta,
   letturaPerStampa,
   scadenzaDaRisposte,
-  STILE_NON_RESO,
 } from '@/app/api/prestampati/banco'
 import { prestampato } from '@/lib/prestampati/registro'
 import { modelloGenitore } from '@/lib/prestampati/modelli/genitore'
@@ -2859,6 +2874,200 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     expect(accessiTracciati().filter((r) => r.azione === 'download')).toEqual([])
   })
 
+  // ─── Il tetto che limitava la correttezza, non il costo ───────────────────────
+
+  /** Una riga marcata come trascrizione, cioè con la `descrizione` che questa route stessa scrive. */
+  function trascrizioneSuCarta(id: string, slug = 'permesso_orario') {
+    return { ...nelFascicoloSenzaFirma(id, slug), descrizione: `Permesso — modulo consegnato su carta` }
+  }
+
+  it('🔴 copia firmata: la finestra letta è più larga del tetto sugli scaricamenti', async () => {
+    // ⚠️ FINO AL 2026-08-16 UN NUMERO SOLO governava le due cose, e il `.limit(5)` stava
+    // sulla QUERY: ma leggere i metadati di una riga non costa un download, e cinque righe
+    // più recenti bastavano a rendere la copia firmata vera irraggiungibile per sempre.
+    alunnoIn()
+    copiaFirmataInArchivio()
+
+    await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+
+    const limite = h.state.filtri.find(
+      (f) => f.tabella === 'student_documents' && f.metodo === 'limit',
+    )?.args[0] as number | undefined
+    expect(limite, 'nessun .limit su student_documents').toBeTypeOf('number')
+    // Il numero esatto non è il punto e non si incide qui: il punto è che la finestra dei
+    // metadati non sia la stessa cosa del budget di scaricamenti.
+    expect(limite!).toBeGreaterThan(5)
+    // E il caso normale continua a costare UN download solo.
+    expect(h.state.scaricati.length).toBe(1)
+  })
+
+  it('🔴 copia firmata: la copia vera esce anche da dietro sei trascrizioni su carta', async () => {
+    // Il caso che il tetto unico rendeva impossibile: `permesso_orario` e `delega_ritiro` si
+    // firmano più volte in un anno, e sei trascrizioni `su_carta` successive nascondevano la
+    // copia firmata vera oltre la sesta riga. Col vecchio `.limit(5)` questa riga non veniva
+    // nemmeno letta, e la risposta era un 422 che suonava come una constatazione.
+    alunnoIn()
+    const percorsoFirmato = `${ALUNNO}/prestampati/permesso_orario-firmato.pdf`
+    h.state.fileScaricabili[percorsoFirmato] = BYTE_COPIA_FIRMATA
+    h.state.firmeFea['permesso_orario'] = [improntaFea(BYTE_COPIA_FIRMATA)]
+    h.state.risposte['student_documents'] = [
+      {
+        data: [
+          ...Array.from({ length: 6 }, (_, i) => trascrizioneSuCarta(`doc-carta-${i}`)),
+          { id: 'doc-firmato-1', file_name: 'Permesso_firmato.pdf', storage_path: percorsoFirmato },
+        ],
+        error: null,
+      },
+    ]
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('X-Prestampato-Documento')).toBe('doc-firmato-1')
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([...BYTE_COPIA_FIRMATA])
+    // E non è costato sette download: le trascrizioni riconoscibili vanno in coda, quindi il
+    // primo candidato scaricato è già quello giusto.
+    expect(h.state.scaricati).toEqual([percorsoFirmato])
+  })
+
+  it('🔴 copia firmata: il marchio delle trascrizioni è QUELLO che la route stessa scrive', async () => {
+    // La messa in coda delle trascrizioni si regge su una stringa condivisa fra due punti del
+    // file: `descrizioneArchivio`, che la scrive, e `MARCHIO_SU_CARTA`, che la riconosce.
+    // Due copie della stessa stringa divergono alla prima modifica, e la divergenza non
+    // romperebbe niente in modo visibile: le trascrizioni tornerebbero in testa alla coda e si
+    // mangerebbero il budget, in silenzio.
+    //
+    // Qui la `descrizione` non si scrive a mano: si fa archiviare un modulo su carta dalla
+    // ROTTA e si riusa quella che ha scritto lei.
+    alunnoIn()
+    await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'su_carta',
+        consegnatoIl: '2026-08-10',
+        risposte: RISPOSTE_PERMESSO,
+      }),
+    )
+    const descrizioneVera = String(
+      h.state.inserimenti.find((i) => i.tabella === 'student_documents')?.valori.descrizione ?? '',
+    )
+    expect(descrizioneVera, 'la rotta non ha archiviato niente').not.toBe('')
+
+    const percorsoFirmato = `${ALUNNO}/prestampati/permesso_orario-firmato.pdf`
+    h.state.fileScaricabili[percorsoFirmato] = BYTE_COPIA_FIRMATA
+    h.state.firmeFea['permesso_orario'] = [improntaFea(BYTE_COPIA_FIRMATA)]
+    h.state.risposte['student_documents'] = [
+      {
+        data: [
+          ...Array.from({ length: 6 }, (_, i) => ({
+            ...nelFascicoloSenzaFirma(`doc-vero-carta-${i}`),
+            descrizione: descrizioneVera,
+          })),
+          { id: 'doc-firmato-1', file_name: 'Permesso_firmato.pdf', storage_path: percorsoFirmato },
+        ],
+        error: null,
+      },
+    ]
+    h.state.scaricati.length = 0
+
+    alunnoIn()
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('X-Prestampato-Documento')).toBe('doc-firmato-1')
+    // UN download solo: le sei trascrizioni sono state riconosciute e spostate in coda.
+    expect(h.state.scaricati).toEqual([percorsoFirmato])
+  })
+
+  it('🔴 copia firmata: se il budget finisce prima delle righe, il rifiuto NON dice «nessuno di essi»', async () => {
+    // «Non li ho guardati tutti» non è «nessuno è firmato». È lo stesso ragionamento che la
+    // route applica al registro FEA illeggibile, e vale qui per lo stesso motivo: senza, il
+    // pannello dichiarerebbe alla segreteria un fatto che il server non ha misurato.
+    //
+    // Nessuna riga porta il marchio delle trascrizioni: sono scansioni caricate a mano, cioè
+    // il caso in cui l'ordinamento non può aiutare e il budget si esaurisce davvero.
+    alunnoIn()
+    h.state.risposte['student_documents'] = [
+      {
+        data: Array.from({ length: 9 }, (_, i) => nelFascicoloSenzaFirma(`doc-scansione-${i}`)),
+        error: null,
+      },
+    ]
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+    const json = (await res.json()) as { motivo?: string; error?: string }
+
+    expect(res.status).toBe(422)
+    expect(json.motivo).toBe('copia_firmata_non_esaminata')
+    // La frase dice «fra quelli esaminati», non «nessuno di essi».
+    expect(json.error).toContain('fra quelli esaminati')
+    // Il budget è stato speso tutto e non di più: cinque scaricamenti, non nove.
+    expect(h.state.scaricati.length).toBe(5)
+    // E nessun foglio è uscito lo stesso.
+    expect(res.headers.get('X-Prestampato-Modalita')).toBeNull()
+  })
+
+  it('copia firmata: esaminate TUTTE le righe, il rifiuto torna a essere «nessuno di essi»', async () => {
+    // Il caso simmetrico, senza il quale il test qui sopra non proverebbe niente: quando le
+    // righe stanno dentro il budget, «nessuno di essi risulta firmato» è una constatazione
+    // vera e il motivo deve restare quello di prima.
+    alunnoIn()
+    h.state.risposte['student_documents'] = [
+      {
+        data: Array.from({ length: 3 }, (_, i) => nelFascicoloSenzaFirma(`doc-scansione-${i}`)),
+        error: null,
+      },
+    ]
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+
+    expect(res.status).toBe(422)
+    expect((await res.json()).motivo).toBe('copia_firmata_non_elettronica')
+    expect(h.state.scaricati.length).toBe(3)
+  })
+
   // ─── Il foglio di carta: cosa ci finisce sopra, e su quante pagine ─────────────
 
   it('🔴 copia vuota: l’ultima pagina porta contenuto del modulo, non la sola firma sospesa nel vuoto', async () => {
@@ -2933,20 +3142,64 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     }
   })
 
-  it('🔴 copia vuota: la microcopy scritta per lo SCHERMO non finisce sul foglio di carta', async () => {
-    // `campo.aiuto` è la microcopy del form dentro l'app. Stampata parola per parola su un
-    // modulo che una madre compila a penna produce frasi che parlano del canale sbagliato —
-    // «Sul cartaceo si dava per scontato "oggi": in app va detto…» si contraddice da sola, e
-    // «È il motivo per cui questa scheda esiste.» è una giustificazione interna di progetto.
+  it('🔴 copia vuota: nessuna istruzione resta ORFANA su una pagina senza la sua domanda', async () => {
+    // ⚠️ QUESTO DIFETTO L'HA TROVATO LA PROVA VISIVA, non i test: rimettere le istruzioni ha
+    // portato `dieta_speciale` da una pagina a due, e la seconda conteneva SOLO «Una data di
+    // scadenza, oppure la dicitura riportata sul certificato…» — cioè la nota di un campo che
+    // era rimasto sull'altro foglio, sopra due terzi di pagina bianca. Un'istruzione separata
+    // dalla domanda che spiega non spiega più niente.
+    //
+    // Il lock che c'era — «l'ultima pagina porta contenuto del modulo» — restava VERDE:
+    // un'istruzione è contenuto. Qui si chiede di più, cioè che sull'ultima pagina ci sia
+    // qualcosa da COMPILARE, e non solo qualcosa da leggere.
+    for (const slug of SEI_MODULI) {
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: slug,
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'copia_vuota',
+          risposte: {},
+        }),
+      )
+      const pagine = await testoPerPagina(new Uint8Array(await res.arrayBuffer()))
+      if (pagine.length < 2) continue
+
+      const istruzioni = (modelloGenitore(slug)?.campi ?? [])
+        .map((c) => aiutoDaStampare(c, slug))
+        .filter((a): a is string => !!a)
+        .map((a) => normalizza(a))
+      const daCompilare = moduloSullUltimaPagina(pagine).filter(
+        (riga) => !istruzioni.some((i) => i.includes(riga) || riga.includes(i)),
+      )
+      expect(
+        daCompilare,
+        `${slug} — l'ultima pagina porta solo istruzioni, nessun campo da compilare`,
+      ).not.toEqual([])
+    }
+  })
+
+  it('🔴 copia vuota: OGNI istruzione di compilazione arriva sul foglio', async () => {
+    // ⚠️ IL DIFETTO CHE QUESTO TEST ESISTE PER NON FAR RIPETERE: il 2026-08-16 le istruzioni
+    // sono state tolte TUTTE per ripararne poche. Il foglio stampa tutti i campi
+    // condizionali, quindi `dieta_speciale` finiva per dire «Certificato medico: da allegare
+    // al modulo.» senza il suo unico qualificatore — «Obbligatorio quando la dieta ha natura
+    // sanitaria» — a una madre che chiede una dieta vegetariana. Sono fogli su farmaci,
+    // diete e chi può portare via un bambino, compilati a casa senza nessuno a cui chiedere.
+    //
+    // Il test conta gli aiuti dai MODELLI e li cerca sul PDF: così il numero (oggi 14) vive
+    // nella misura e non in un commento che invecchia.
+    let controllate = 0
     for (const slug of SEI_MODULI) {
       const modello = modelloGenitore(slug)
       expect(modello, slug).toBeTruthy()
-      const aiuti = (modello?.campi ?? [])
-        .map((c) => (c as { aiuto?: string }).aiuto?.trim())
+      const istruzioni = (modello?.campi ?? [])
+        .map((c) => aiutoDaStampare(c, slug))
         .filter((a): a is string => !!a)
-      // Se un giorno nessun campo avesse più un aiuto, questo test smetterebbe di poter
-      // fallire: lo si dichiara rosso invece di lasciarlo passare a vuoto.
-      expect(aiuti.length, `${slug} — nessun aiuto da controllare`).toBeGreaterThan(0)
+      // Senza questo, il giorno in cui un modello perdesse tutti gli aiuti il ciclo qui sotto
+      // girerebbe a vuoto e il test passerebbe senza aver provato niente.
+      expect(istruzioni.length, `${slug} — nessuna istruzione da controllare`).toBeGreaterThan(0)
 
       alunnoIn()
       const res = await POST(
@@ -2960,32 +3213,238 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
       )
       const testo = normalizza(await estraiTesto(new Uint8Array(await res.arrayBuffer())))
 
-      for (const aiuto of aiuti) {
+      for (const istruzione of istruzioni) {
         // I primi 40 caratteri bastano e non dipendono da come l'impaginatore manda a capo.
-        expect(testo, `${slug} — «${aiuto.slice(0, 40)}…»`).not.toContain(
-          normalizza(aiuto).slice(0, 40),
+        expect(testo, `${slug} — «${istruzione.slice(0, 40)}…»`).toContain(
+          normalizza(istruzione).slice(0, 40),
+        )
+        controllate += 1
+      }
+    }
+    // I sei moduli di famiglia portano più di una decina di istruzioni: se domani ne
+    // restassero due, il conto lo dice invece di lasciarlo credere.
+    expect(controllate).toBeGreaterThanOrEqual(14)
+  })
+
+  it('🔴 copia vuota: le frasi che parlano dell’APP restano fuori dal foglio', async () => {
+    // L'altra metà della stessa regola. «Sul cartaceo si dava per scontato "oggi": in app va
+    // detto…» stampata su un modulo di carta si contraddice da sola; «È il motivo per cui
+    // questa scheda esiste» è una giustificazione interna di progetto. Il foglio non le porta
+    // perché `AIUTO_SU_CARTA` le riscrive — e questo test è ciò che tiene ferme le
+    // riscritture: toglierne una fa tornare la frase dell'app sulla carta.
+    //
+    // ⚠️ LA PRIMA VERSIONE DI QUESTO TEST NON POTEVA FALLIRE, ed è stato scoperto rompendo il
+    // codice apposta: cercava le frasi dell'app **solo sui campi che la tabella riscrive**,
+    // quindi togliere una riscrittura toglieva anche il controllo su quel campo e il test
+    // restava verde. Il criterio ora è INDIPENDENTE dalla tabella: un elenco di frammenti che
+    // sullo schermo hanno senso e sulla carta no, cercati su tutto il foglio.
+    //
+    // I frammenti sono copiati alla lettera da `modelli/genitore.ts`, e il primo blocco
+    // verifica che ognuno esista ancora là dentro: il giorno in cui il modello riscrivesse un
+    // aiuto, un frammento diventerebbe irraggiungibile e questo elenco marcirebbe in silenzio.
+    const FRAMMENTI_DELL_APP = [
+      'in app va detto',
+      'sparisce dalla sezione',
+      'È il motivo per cui questa scheda esiste',
+      'I delegati diventano attivi',
+      'si disattivano da soli',
+      'non sulle risposte',
+    ]
+    const TUTTI_GLI_AIUTI = normalizza(
+      SEI_MODULI.flatMap((s) =>
+        (modelloGenitore(s)?.campi ?? []).map((c) => (c as { aiuto?: string }).aiuto ?? ''),
+      ).join(' | '),
+    )
+    for (const frammento of FRAMMENTI_DELL_APP) {
+      expect(
+        TUTTI_GLI_AIUTI,
+        `«${frammento}» non è più in modelli/genitore.ts: l'elenco va aggiornato`,
+      ).toContain(normalizza(frammento))
+    }
+
+    for (const slug of SEI_MODULI) {
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: slug,
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'copia_vuota',
+          risposte: {},
+        }),
+      )
+      const foglio = normalizza(await estraiTesto(new Uint8Array(await res.arrayBuffer())))
+      for (const frammento of FRAMMENTI_DELL_APP) {
+        expect(foglio, `${slug} — «${frammento}» è finito sul foglio`).not.toContain(
+          normalizza(frammento),
         )
       }
     }
+    /**
+     * Il pezzo che la riscrittura ha buttato via: tutto ciò che segue il prefisso in comune
+     * fra la frase dello schermo e quella della carta.
+     *
+     * Non si cerca l'intera frase originale, e il perché è un difetto che questo test ha
+     * avuto per davvero: quasi tutte le riscritture sono TRONCAMENTI, quindi la frase della
+     * carta è un prefisso di quella dello schermo — cercare l'originale «dai primi 40
+     * caratteri» trovava il prefisso legittimo e falliva sempre. Il pezzo scartato, invece,
+     * è esattamente ciò che non deve arrivare sul foglio.
+     */
+    function codaScartata(originale: string, suCarta: string): string {
+      let i = 0
+      while (i < originale.length && i < suCarta.length && originale[i] === suCarta[i]) i += 1
+      return originale.slice(i).replace(/^[\s.,;:—-]+/, '').trim()
+    }
+
+    let riscritte = 0
+    for (const slug of SEI_MODULI) {
+      const modello = modelloGenitore(slug)!
+      const daRiscrivere = modello.campi.filter((c) => {
+        const originale = (c as { aiuto?: string }).aiuto?.trim()
+        return !!originale && aiutoDaStampare(c, slug) !== originale
+      })
+      if (daRiscrivere.length === 0) continue
+
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: slug,
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'copia_vuota',
+          risposte: {},
+        }),
+      )
+      const testo = normalizza(await estraiTesto(new Uint8Array(await res.arrayBuffer())))
+
+      for (const campo of daRiscrivere) {
+        const originale = normalizza((campo as { aiuto?: string }).aiuto!.trim())
+        const coda = codaScartata(originale, normalizza(aiutoDaStampare(campo, slug)!))
+        // Una coda vuota vorrebbe dire «riscrittura che non toglie niente»: il test non
+        // avrebbe niente da cercare e passerebbe a vuoto.
+        expect(coda.length, `${slug}.${campo.nome} — la riscrittura non toglie niente`).toBeGreaterThan(10)
+        expect(testo, `${slug}.${campo.nome} — «${coda.slice(0, 50)}…»`).not.toContain(coda)
+        riscritte += 1
+      }
+    }
+    expect(riscritte, 'nessuna riscrittura verificata').toBeGreaterThan(0)
   })
 
-  it('🔴 copia vuota: nessun blocco affida un significato al corsivo, che la pagina non rende', async () => {
-    // `disegnaParagrafo` traduce `'corsivo'` in `setFont('helvetica','italic')` e jsPDF lo
-    // scrive davvero (`/F3 12 Tf`, dove `/F3` è `Helvetica-Oblique`), ma i quattordici font
-    // standard non sono incorporati e il rasterizzatore sostituisce una faccia dritta:
-    // ritagliata a 400 dpi, la riga chiesta in corsivo non ha un grado di inclinazione.
+  it('🔴 AIUTO_SU_CARTA non ha voci morte: ogni riscrittura punta a un campo che esiste', () => {
+    // Una chiave orfana — il modello rinomina il campo, la riscrittura resta lì — non
+    // romperebbe niente: farebbe tornare in silenzio sul foglio la frase dell'app che quella
+    // riscrittura serviva a togliere.
+    expect(CHIAVI_AIUTO_SU_CARTA.length, 'la tabella è vuota').toBeGreaterThan(0)
+    for (const chiave of CHIAVI_AIUTO_SU_CARTA) {
+      const [slug, nome] = chiave.split('.')
+      const modello = modelloGenitore(slug!)
+      expect(modello, `${chiave} — modello inesistente`).toBeTruthy()
+      const campo = modello!.campi.find((c) => c.nome === nome)
+      expect(campo, `${chiave} — campo inesistente`).toBeTruthy()
+      // E deve avere un aiuto da riscrivere: riscrivere il nulla è una voce morta anche
+      // quando il campo esiste.
+      expect((campo as { aiuto?: string }).aiuto?.trim(), `${chiave} — nessun aiuto`).toBeTruthy()
+      expect(aiutoDaStampare(campo!, slug!), `${chiave} — riscrittura identica`).not.toBe(
+        (campo as { aiuto?: string }).aiuto!.trim(),
+      )
+    }
+  })
+
+  it('🔴 copia vuota: l’istruzione è SUBORDINATA alla domanda, non più nera di lei', () => {
+    // ⚠️ QUESTO TEST NASCE DA UNA MISURA SBAGLIATA, e il modo in cui è stata sbagliata conta
+    // più del risultato. Una costante `STILE_NON_RESO = 'corsivo'` vietava il corsivo
+    // «perché la pagina non lo rende, mentre il grassetto arriva». Rimisurato con DUE
+    // rasterizzatori sullo stesso PDF: sotto `pdftoppm -r 300` (poppler) le quattro varianti
+    // di Helvetica escono IDENTICHE — nemmeno il grassetto arriva — e sotto `qlmanage -t`
+    // (CoreGraphics: Anteprima, Quick Look, la stampa di macOS) il corsivo esce inclinato e
+    // il grassetto nero. La premessa descriveva un rasterizzatore, non il documento.
     //
-    // Il test guarda l'ALBERO DEI BLOCCHI e non il PDF, e non per comodità: sul PDF si può
-    // provare che una frase non c'è, non che uno stile non è stato chiesto — `corsivo` e
-    // `normale` arrivano sulla pagina identici, ed è esattamente il motivo per cui il difetto
-    // è passato con tutto verde.
+    // Il rimpiazzo aveva quindi reso l'introduzione e le righe degli allegati il testo più
+    // pesante del foglio: cioè l'errore che il commento condannava due paragrafi più su.
+    // Quello che si verifica qui è la GERARCHIA, che non dipende dal rasterizzatore: chi
+    // riempie un modulo legge prima la domanda e poi la nota.
+    let domandeInGrassetto = 0
+    let istruzioniViste = 0
     for (const slug of SEI_MODULI) {
       const modello = modelloGenitore(slug)!
       const blocchi = blocchiModuloVuoto(modello, DATI_PER_MODULO_VUOTO)
-      const inCorsivo = blocchi.filter(
-        (b) => b.tipo === 'paragrafo' && b.stile === STILE_NON_RESO,
+      const paragrafi = blocchi.filter(
+        (b): b is Extract<typeof b, { tipo: 'paragrafo' }> => b.tipo === 'paragrafo',
       )
-      expect(inCorsivo, slug).toEqual([])
+
+      // L'introduzione — «Modulo da compilare e firmare a penna…» — è un'istruzione di
+      // servizio: in grassetto sarebbe più vistosa dei titoli di sezione.
+      const intro = paragrafi[0]
+      expect(intro?.testo, slug).toContain('Modulo da compilare e firmare a penna')
+      expect(intro?.stile, `${slug} — l'introduzione non può essere il testo più nero`).toBe(
+        'corsivo',
+      )
+
+      // Le righe degli allegati sono istruzioni, non domande a cui si risponde sul foglio.
+      for (const p of paragrafi.filter((p) => p.testo.includes('da allegare al modulo'))) {
+        expect(p.stile, `${slug} — «${p.testo}»`).toBe('corsivo')
+      }
+
+      // E ogni istruzione stampata è subordinata: mai in grassetto.
+      const istruzioni = new Set(
+        modello.campi.map((c) => aiutoDaStampare(c, slug)).filter((a): a is string => !!a),
+      )
+      expect(istruzioni.size, `${slug} — nessuna istruzione sul foglio`).toBeGreaterThan(0)
+      const inGrassetto = paragrafi.filter((p) => p.stile === 'grassetto' && istruzioni.has(p.testo))
+      expect(inGrassetto, `${slug} — istruzioni in grassetto`).toEqual([])
+      istruzioniViste += paragrafi.filter((p) => istruzioni.has(p.testo)).length
+
+      domandeInGrassetto += paragrafi.filter(
+        (p) => p.stile === 'grassetto' && p.testo.endsWith(':'),
+      ).length
+    }
+
+    // I due presidi simmetrici, senza i quali il test non potrebbe diventare rosso: le
+    // istruzioni arrivano davvero sui blocchi (non è passato a vuoto su un foglio che non ne
+    // ha), e il grassetto NON è sparito dal modulo — le domande lo portano ancora. Il conto è
+    // sui sei moduli insieme perché `autorizzazione_farmaci` non ha nessuna domanda a
+    // caselle: è tutto date, testo e allegati.
+    expect(istruzioniViste, 'nessuna istruzione stampata sui sei moduli').toBeGreaterThan(0)
+    expect(domandeInGrassetto, 'il grassetto è sparito dalle domande').toBeGreaterThan(0)
+  })
+
+  it('🔴 copia vuota: dieta e farmaci non ORDINANO un allegato senza dire quando serve', async () => {
+    // I due casi concreti, scritti a mano perché sono quelli che fanno danno a una famiglia.
+    // Sul foglio della dieta i campi condizionali si stampano tutti: senza il qualificatore,
+    // «Certificato medico: da allegare al modulo.» è un ordine rivolto anche a chi chiede una
+    // dieta vegetariana o etico-religiosa, cioè un'affermazione falsa su un foglio sanitario.
+    const casi = [
+      {
+        slug: 'dieta_speciale',
+        allegato: 'Certificato medico: da allegare al modulo.',
+        condizione: 'Obbligatorio quando la dieta ha natura sanitaria.',
+        governo: 'Governa il resto del modulo: solo un motivo sanitario richiede il certificato medico.',
+      },
+      {
+        slug: 'autorizzazione_farmaci',
+        allegato: 'Prescrizione medica / piano terapeutico del pediatra: da allegare al modulo.',
+        condizione: "Senza la prescrizione nessuno può somministrare nulla: l'allegato è bloccante.",
+        governo: null,
+      },
+    ] as const
+
+    for (const caso of casi) {
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: caso.slug,
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'copia_vuota',
+          risposte: {},
+        }),
+      )
+      const testo = normalizza(await estraiTesto(new Uint8Array(await res.arrayBuffer())))
+      expect(testo, `${caso.slug} — la riga dell'allegato`).toContain(normalizza(caso.allegato))
+      expect(testo, `${caso.slug} — la condizione dell'allegato`).toContain(
+        normalizza(caso.condizione),
+      )
+      if (caso.governo) expect(testo, `${caso.slug} — il campo che governa`).toContain(normalizza(caso.governo))
     }
   })
 

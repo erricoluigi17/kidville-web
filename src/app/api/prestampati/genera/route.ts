@@ -718,20 +718,42 @@ async function tracciaStampaSezione(
 // ─── La copia firmata, dal fascicolo ────────────────────────────────────────────
 
 /**
- * Quante righe del fascicolo si guardano prima di dire «non c'è».
+ * DUE SOGLIE, E NON UNA, perché i due costi non sono lo stesso costo.
  *
- * Una sola non basta, e il perché è la sequenza naturale di questo stesso ramo: la famiglia
+ * Una riga sola non basta, e il perché è la sequenza naturale di questo ramo: la famiglia
  * firma nell'app, poi qualcuno consegna a mano un secondo foglio e la segreteria lo
  * trascrive con `su_carta`. Le due righe hanno lo STESSO `document_type` e la trascrizione è
  * più recente, quindi «l'ultima di quel tipo» sarebbe sempre lei — e la copia firmata vera,
  * che sta una riga più sotto, non uscirebbe mai.
  *
- * Il tetto esiste perché ogni candidato costa uno scaricamento dal bucket. Nel caso normale
- * ne costa **uno**: la copia firmata è quasi sempre la più recente, e il ciclo si ferma al
- * primo confronto riuscito. Cinque è il numero di volte che si è disposti a pagare quel
- * costo prima di rispondere «non c'è», che è comunque una risposta vera.
+ * ⚠️ FINO AL 2026-08-16 UN NUMERO SOLO (`CANDIDATI_COPIA_FIRMATA = 5`) GOVERNAVA ENTRAMBE
+ * le cose, ed era un limite alla CORRETTEZZA travestito da limite di costo: il `.limit(5)`
+ * stava sulla QUERY, ma leggere i metadati di una riga non costa un download. Su un modello
+ * per-occasione — `permesso_orario` e `delega_ritiro` si firmano più volte in un anno —
+ * cinque trascrizioni `su_carta` successive coprivano per sempre la copia firmata vera, che
+ * diventava irraggiungibile dal pannello. E l'esito non era un guasto: era un 422 che suona
+ * come una constatazione.
+ *
+ * Ora la finestra dei METADATI è larga e il tetto sta sui soli SCARICAMENTI, che è dove il
+ * costo c'è davvero. Nel caso normale si paga **un** download: la copia firmata è quasi
+ * sempre la più recente e il ciclo si ferma al primo riscontro.
  */
-const CANDIDATI_COPIA_FIRMATA = 5
+const RIGHE_COPIA_FIRMATA = 50
+
+/** Quanti candidati si è disposti a scaricare dal bucket prima di fermarsi. */
+const SCARICAMENTI_COPIA_FIRMATA = 5
+
+/**
+ * Il suffisso che questa stessa route scrive nella `descrizione` di un modulo tornato su
+ * carta (`descrizioneArchivio`). Una riga così marcata è, per costruzione, una trascrizione:
+ * non può essere il PDF che la famiglia ha sottoscritto nell'app.
+ *
+ * Non si SCARTA, si mette in coda — il marchio è una convenzione nostra, non una garanzia
+ * del database, e una riga con una `descrizione` riscritta a mano resta esaminabile. Ma
+ * mettere in coda ciò che sappiamo essere una trascrizione è ciò che rende utile la finestra
+ * larga: i cinque scaricamenti vanno ai candidati che possono davvero essere l'originale.
+ */
+const MARCHIO_SU_CARTA = 'modulo consegnato su carta'
 
 /**
  * IL PDF CHE IL GENITORE HA SOTTOSCRITTO, ripreso dal fascicolo e riconsegnato tale e quale.
@@ -789,11 +811,11 @@ async function consegnaCopiaFirmata(
 ): Promise<NextResponse> {
   const { data, error } = await supabase
     .from('student_documents')
-    .select('id, file_name, storage_path, created_at')
+    .select('id, file_name, storage_path, created_at, descrizione')
     .eq('student_id', input.alunnoId)
     .eq('document_type', input.voce.slug)
     .order('created_at', { ascending: false })
-    .limit(CANDIDATI_COPIA_FIRMATA)
+    .limit(RIGHE_COPIA_FIRMATA)
 
   if (error) {
     // PostgREST non lancia: il valore di ritorno va controllato, sempre.
@@ -810,9 +832,20 @@ async function consegnaCopiaFirmata(
     return rispostaCopiaFirmataAssente()
   }
 
-  const righe = (
-    (data as unknown as { id: string; file_name: string | null; storage_path: string | null }[] | null) ?? []
-  ).filter((r) => !!r.storage_path?.trim())
+  type RigaFascicolo = {
+    id: string
+    file_name: string | null
+    storage_path: string | null
+    descrizione?: string | null
+  }
+  const lette = ((data as unknown as RigaFascicolo[] | null) ?? []).filter(
+    (r) => !!r.storage_path?.trim(),
+  )
+  // Le trascrizioni riconoscibili in coda: vedi `MARCHIO_SU_CARTA`. `sort` è stabile, quindi
+  // dentro i due gruppi l'ordine per `created_at` decrescente resta quello della query.
+  const trascrizione = (r: RigaFascicolo): boolean =>
+    (r.descrizione ?? '').toLowerCase().includes(MARCHIO_SU_CARTA)
+  const righe = [...lette].sort((a, b) => Number(trascrizione(a)) - Number(trascrizione(b)))
 
   if (righe.length === 0) {
     // Non è un guasto: è un modulo che la famiglia non ha ancora firmato, ed è la risposta
@@ -832,8 +865,19 @@ async function consegnaCopiaFirmata(
   let guasto = false
   /** Candidati letti la cui impronta NON è nel registro FEA: trascrizioni, scansioni. */
   let senzaFirma = 0
+  /** Scaricamenti spesi: il tetto è su questi, non sulle righe lette. */
+  let scaricati = 0
+  /** Righe rimaste fuori perché il budget di scaricamenti è finito prima. */
+  let nonEsaminate = 0
 
   for (const riga of righe) {
+    if (scaricati >= SCARICAMENTI_COPIA_FIRMATA) {
+      // Non si dice «non c'è» di una riga che non si è guardata: si conta, e più sotto la
+      // risposta lo dichiara.
+      nonEsaminate += 1
+      continue
+    }
+    scaricati += 1
     const percorso = riga.storage_path!.trim()
     const { data: file, error: erroreDownload } = await supabase.storage
       .from(BUCKET_FASCICOLO)
@@ -922,11 +966,44 @@ async function consegnaCopiaFirmata(
     )
   }
 
+  if (nonEsaminate > 0) {
+    // 🔴 IL BUDGET È FINITO PRIMA DELLE RIGHE, e questo NON è «nessuno di essi è firmato»:
+    // è «non li ho guardati tutti». È lo stesso ragionamento che si applica dieci righe più
+    // su a `non-verificabile` — «non ho potuto verificare» non è «non è firmato» — e vale
+    // qui esattamente per lo stesso motivo, altrimenti il pannello dichiarerebbe un fatto
+    // che il server non ha misurato.
+    //
+    // Il log lo dice per esteso: senza, il giorno in cui accade non c'è modo di distinguere
+    // un 422 sospetto da un 422 vero.
+    logEvento('modulistica', 'warn', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'copia-firmata-finestra-esaurita',
+      tipo: input.voce.slug,
+      alunno_id: input.alunnoId,
+      scuola_id: input.scuolaId,
+      // Righe lette, righe scaricate, righe rimaste fuori: i tre numeri che servono per
+      // capire se il tetto va alzato o se il fascicolo ha un problema suo.
+      totale: righe.length,
+      scaricati,
+      n: nonEsaminate,
+    })
+    return NextResponse.json(
+      {
+        error:
+          'Nel fascicolo ci sono più documenti di questo tipo di quanti se ne possano controllare in una volta, e fra quelli esaminati nessuno risulta firmato elettronicamente dalla famiglia.',
+        codice: 'PRESTAMPATO_DATI_MANCANTI',
+        motivo: 'copia_firmata_non_esaminata',
+      },
+      { status: 422 },
+    )
+  }
+
   if (senzaFirma > 0) {
     // 🔴 IL CASO CHE QUESTA FUNZIONE ESISTE PER RIFIUTARE: nel fascicolo ci sono documenti di
-    // questo tipo, e nessuno porta la firma elettronica della famiglia. Sono trascrizioni
-    // `su_carta`, scansioni caricate a mano, fogli rigenerati. Consegnarne uno come «copia
-    // firmata» significherebbe dare a un ente un foglio che nessuno ha sottoscritto.
+    // questo tipo, TUTTI sono stati esaminati, e nessuno porta la firma elettronica della
+    // famiglia. Sono trascrizioni `su_carta`, scansioni caricate a mano, fogli rigenerati.
+    // Consegnarne uno come «copia firmata» significherebbe dare a un ente un foglio che
+    // nessuno ha sottoscritto.
     logEvento('modulistica', 'warn', {
       operazione: 'prestampati/genera:POST',
       esito: 'copia-firmata-senza-riscontro-fea',

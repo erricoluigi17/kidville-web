@@ -232,7 +232,19 @@ const ROTTA = '/admin/modulistica'
  * primo dice «nel fascicolo non c'è niente»; il secondo dice «c'è qualcosa, e nessuno di
  * quei fogli l'ha firmato elettronicamente la famiglia» — trascrizioni `su_carta`,
  * scansioni. Appiattirli manderebbe la segreteria a far firmare di nuovo un modulo che la
- * famiglia ha già firmato, su carta, e che sta agli atti.
+ * famiglia ha già firmato.
+ *
+ * ⚠️ FINO AL 2026-08-16 IL SECONDO CHIUDEVA CON «L'originale firmato è quello di carta, agli
+ * atti», ed era un fatto che il server non aveva misurato: sa soltanto che nessuna impronta
+ * ha combaciato, e fra i casi possibili — trascrizioni `su_carta`, scansioni caricate a
+ * mano, fogli rigenerati — negli ultimi due un originale di carta agli atti **non esiste**.
+ * Era, in piccolo, esattamente ciò che questo ramo esiste per impedire: dichiarare avvenuto
+ * un fatto che nessuno ha verificato. Ora la frase dice ciò che si sa e si ferma lì.
+ *
+ * 🔴 `copia_firmata_non_esaminata` È IL TERZO, e nasce da quella stessa disciplina: quando i
+ * documenti di quel tipo sono più di quanti la route ne possa scaricare in una volta,
+ * «nessuno di essi è firmato» sarebbe di nuovo un'affermazione su righe che nessuno ha
+ * guardato. Dice quindi solo «fra quelli esaminati», che è la verità.
  */
 const CHIAVE_MOTIVO: Record<string, string> = {
   firma_senza_flusso: 'motivoFirmaSenzaFlusso',
@@ -240,6 +252,7 @@ const CHIAVE_MOTIVO: Record<string, string> = {
   legale_rappresentante_assente: 'motivoLegaleRappresentanteAssente',
   copia_firmata_assente: 'motivoCopiaFirmataAssente',
   copia_firmata_non_elettronica: 'motivoCopiaFirmataNonElettronica',
+  copia_firmata_non_esaminata: 'motivoCopiaFirmataNonEsaminata',
 }
 
 /** Che sottoscrizione pretende il foglio (`FirmaPrestampatoRichiesta`). */

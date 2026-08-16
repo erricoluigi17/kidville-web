@@ -52,7 +52,8 @@
   "motivoFonteDatiAssente": "The data this document must carry is not available in the records yet.",
   "motivoLegaleRappresentanteAssente": "The legal representative’s name is missing: add it under Settings → Location & Letterhead and try again.",
   "motivoCopiaFirmataAssente": "There is no signed copy of this form in the child’s file: the family has not signed it yet.",
-  "motivoCopiaFirmataNonElettronica": "The child’s file does hold documents of this type, but none carries the family’s electronic signature: they are transcriptions or scans. The signed original is the paper one, on file.",
+  "motivoCopiaFirmataNonElettronica": "The child’s file does hold documents of this type, but none of them turns out to be electronically signed by the family.",
+  "motivoCopiaFirmataNonEsaminata": "The child’s file holds more documents of this type than can be checked in one go: none of the ones examined turns out to be electronically signed by the family.",
 
   "modalitaTitolo": "How you are working on this form",
   "modalitaSottotitolo": "These are three different sheets: choose before filling anything in, because it changes what you are asked for.",

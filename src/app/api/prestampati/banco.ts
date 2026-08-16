@@ -1579,23 +1579,39 @@ function rifiutoSoggetto(): EsitoRender<unknown> {
 
 // ─── I moduli di famiglia allo sportello ────────────────────────────────────────
 
-/**
- * LO STILE CHE IL CODICE CHIEDE E LA PAGINA NON MOSTRA.
+/*
+ * ─── COME ARRIVA IL CORSIVO SUL FOGLIO ──────────────────────────────────────────
  *
- * `disegnaParagrafo` (`src/lib/prestampati/impaginazione.ts`) traduce `'corsivo'` in
- * `setFont('helvetica', 'italic')`, e jsPDF lo scrive davvero nel PDF: misurato il
- * 2026-08-16 sul flusso di contenuto del modulo vuoto della delega, la riga d'introduzione
- * esce selezionata con `/F3 12 Tf` e `/F3` è `Helvetica-Oblique`. Solo che **i caratteri
- * arrivano sul foglio perfettamente dritti**: i quattordici font standard non sono
- * incorporati, e il rasterizzatore sostituisce una faccia non inclinata. Ritagliato a 400
- * dpi, «Modulo da compilare e firmare a penna…» non ha un grado di inclinazione.
+ * ⚠️ QUI, FINO AL 2026-08-16, C'ERA UNA COSTANTE `STILE_NON_RESO = 'corsivo'`, e sopra la
+ * frase «i caratteri arrivano sul foglio perfettamente dritti … il grassetto invece
+ * arriva». **Era falsa, ed era falsa per un motivo solo: misurata con un rasterizzatore
+ * solo.** Sulla sua parola `corsivo` era stato spento in tutto il foglio e sostituito da
+ * `grassetto`, cioè l'istruzione di servizio era diventata il testo più pesante della
+ * pagina.
  *
- * Il grassetto invece arriva. Quindi, finché quel difetto vive nel motore — che non è di
- * questa mano, ed è segnalato all'orchestratore — **`corsivo` non può essere l'unico
- * portatore di un significato**: un testo subordinato marcato solo così è, sulla carta,
- * indistinguibile dal corpo del testo. Qui non si usa, e il lock lo tiene fermo.
+ * LA RIMISURA, stesso PDF (jsPDF, le quattro varianti di Helvetica, nessun font
+ * incorporato), reso in due modi:
+ *
+ *  · `pdftoppm -r 300 -png` (poppler) → NORMALE, GRASSETTO, CORSIVO e GRASSETTO CORSIVO
+ *    escono IDENTICI: poppler li sostituisce tutti e quattro con un'unica faccia dritta e
+ *    regolare. Sotto lo strumento con cui la misura originale dice di essere stata fatta
+ *    **nemmeno il grassetto arriva** — quindi la frase che giustificava il rimpiazzo non
+ *    poteva venire da lì;
+ *  · `qlmanage -t -s 2400` (CoreGraphics: Anteprima, Quick Look, la catena di stampa di
+ *    macOS) → il corsivo esce inclinato, il grassetto nero, il grassetto corsivo entrambi.
+ *
+ * La premessa descriveva dunque il comportamento di *un* rasterizzatore, non una proprietà
+ * del documento. Sui lettori che la segreteria usa davvero — Anteprima, Acrobat, il driver
+ * di stampa — i quattro stili si distinguono, e `corsivo` torna a essere quello che è
+ * sempre stato: il modo di dire «questa riga è un'istruzione, non una domanda».
+ *
+ * Resta vero il fatto neutro da cui la bugia era partita: **i quattordici font standard non
+ * sono incorporati**, quindi la faccia esatta la sceglie il lettore. Volendo lo stesso
+ * disegno anche sotto poppler la strada è incorporare i font — una scelta di robustezza,
+ * non la riparazione di un guasto. Nel frattempo vale la regola tipografica, che di
+ * rasterizzatori non sa nulla: **nessuno stile è l'unico portatore di un significato**.
+ * Ogni istruzione stampata qui è una frase compiuta, che si legge anche uscendo dritta.
  */
-export const STILE_NON_RESO = 'corsivo' as const
 
 /**
  * LA RIGA DA FIRMARE A PENNA, e il motivo per cui viaggia dentro `luogoData` invece che
@@ -1831,12 +1847,12 @@ function rigaSeValorizzata(etichetta: string, valore: string | null | undefined)
  * risposta di un altro campo li rende inutili; sulla carta nessuno sa ancora cosa la famiglia
  * risponderà, e una domanda tolta è una domanda che non tornerà più.
  *
- * È **esportata** per una ragione sola, e non è la comodità: i due presidi che questo foglio
- * ha — «nessuna microcopy dello schermo» e «nessuno stile che la pagina non rende» — si
- * verificano sull'albero dei blocchi, non sul PDF. Sul PDF si può provare che una frase non
- * c'è; non si può provare che uno STILE non è stato chiesto, perché `corsivo` e `normale`
- * arrivano sulla pagina identici (vedi `STILE_NON_RESO`), ed è precisamente la ragione per
- * cui il difetto è passato inosservato.
+ * È **esportata** per una ragione sola, e non è la comodità: la gerarchia tipografica del
+ * foglio — quali righe sono domande e quali istruzioni — si verifica sull'albero dei
+ * blocchi, non sul PDF. Sul PDF si prova che una frase c'è o non c'è; non si prova quale
+ * stile è stato chiesto, perché il testo estratto è lo stesso e perché la faccia che il
+ * lettore disegna dipende dal lettore (vedi la nota «Come arriva il corsivo sul foglio»).
+ * È esattamente il varco da cui è passato il difetto che questo blocco documenta.
  */
 export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): BloccoPrestampato[] {
   const a = dati.alunno
@@ -1847,9 +1863,11 @@ export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampa
       tipo: 'paragrafo',
       testo:
         'Modulo da compilare e firmare a penna, e da riconsegnare in segreteria. I dati del bambino sono già stampati: controllali e correggili se qualcosa non torna.',
-      // `grassetto` e non `corsivo`: vedi `STILE_NON_RESO`. È l'unica riga del foglio che
-      // dice cosa farne, e deve staccarsi dalle domande.
-      stile: 'grassetto',
+      // `corsivo` e non `grassetto`: è un'istruzione di servizio, e un'istruzione non può
+      // essere il testo più nero del foglio. Il grassetto resta ai titoli di sezione, alle
+      // domande e alla dicitura del modulo tornato su carta — le uniche righe che devono
+      // gridare. Per il rasterizzatore, vedi «Come arriva il corsivo sul foglio».
+      stile: 'corsivo',
     },
     { tipo: 'sezione', titolo: "Dati dell'alunno/a" },
     ...(nomeSede
@@ -1878,7 +1896,7 @@ export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampa
   const perLaFamiglia = modello.campi.filter((c) => c.chiestoA !== 'segreteria')
   const perLUfficio = modello.campi.filter((c) => c.chiestoA === 'segreteria')
 
-  for (const campo of perLaFamiglia) blocchi.push(...blocchiDelCampo(campo))
+  for (const campo of perLaFamiglia) blocchi.push(...blocchiDelCampo(campo, modello.slug))
 
   // ⚠️ QUI NON C'È PIÙ LA RIGA DA FIRMARE A PENNA, e la riga tolta vale il commento: era un
   // BLOCCO di contenuto e per questo scorreva col testo, mentre l'altra metà della stessa
@@ -1910,40 +1928,41 @@ export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampa
  * parametro è `CampoPrestampato` del REGISTRO — l'unione dei due contratti — e un ramo
  * mancante lì dentro non è un errore di compilazione: è un campo che sparisce dal foglio.
  *
- * ─── 🔴 `campo.aiuto` NON SI STAMPA, ED È UNA DECISIONE, NON UNA DIMENTICANZA ────
+ * ─── 🔴 L'ISTRUZIONE DI COMPILAZIONE SI STAMPA, E QUANDO PARLA DELL'APP SI RISCRIVE ─
  *
- * Fino al 2026-08-16 questa funzione stampava `campo.aiuto` parola per parola, in coda a
- * ogni domanda. Ma `aiuto` è la **microcopy della schermata**, scritta per il form dentro
- * l'app, e riusarla su carta senza rileggerla ci porta frasi che parlano del canale
- * sbagliato. Letto sui PDF veri, non nel sorgente:
+ * `campo.aiuto` (`src/lib/prestampati/modelli/genitore.ts`) è la microcopy del form dentro
+ * l'app. Quasi sempre è anche l'istruzione giusta sul foglio — «Senza la prescrizione
+ * nessuno può somministrare nulla: l'allegato è bloccante» vale identica in mano a una
+ * madre — ma qualche frase parla del canale sbagliato, e stampata su carta dice il falso.
  *
- *  · permesso d'orario → «Sul cartaceo si dava per scontato "oggi": in app va detto, perché
- *    il permesso si compila anche la sera prima.» — una frase che, stampata sul cartaceo, si
- *    contraddice da sola;
- *  · scheda sanitaria → «… È il motivo per cui questa scheda esiste.» — una giustificazione
- *    interna di progetto, su un foglio che una madre compila a penna;
- *  · delega al ritiro → «I delegati diventano attivi solo dopo la firma di questo modulo,
- *    non prima.» — vero dell'app, non del foglio che sta per firmare.
+ * ⚠️ IL 2026-08-16 SONO STATE TOLTE TUTTE PER RIPARARNE POCHE, ed è il difetto che
+ * `AIUTO_SU_CARTA` esiste per non rifare. Il foglio stampa TUTTI i campi condizionali —
+ * sulla carta nessuno sa ancora cosa la famiglia risponderà — quindi senza il suo
+ * qualificatore la riga di `dieta_speciale` diventava «Certificato medico: da allegare al
+ * modulo.» e basta: una madre che chiede una dieta vegetariana o etico-religiosa leggeva
+ * l'ordine di allegare un certificato medico che non le serve. Erano fogli che si compilano
+ * a casa, da soli, su somministrazione di farmaci, diete e chi può portare via un bambino.
  *
- * Un modulo di carta che dice «in app va detto» fa esattamente ciò che questo ramo esiste
- * per evitare: dichiara sul foglio qualcosa che sul foglio non è vero. E c'era un secondo
- * danno, misurato: l'aiuto usciva come paragrafo a 12 pt in nero a tutta larghezza, cioè più
- * vistoso dell'etichetta della domanda a cui si riferiva — chi riempiva il foglio leggeva
- * prima la nota e poi la domanda.
- *
- * La riparazione vera è un campo distinto nel descrittore (`aiutoStampa`, l'istruzione di
- * compilazione che vale anche su carta), che vive in `src/lib/prestampati/modelli/` e non in
- * questo file: **segnalata all'orchestratore, non fatta qui**. Finché non c'è, sul foglio
- * restano la domanda e lo spazio per rispondere — che è comunque un modulo, mentre un modulo
- * con addosso la microcopy di uno schermo è un modulo sbagliato.
+ * Un `aiutoStampa` distinto nel descrittore resta la forma più pulita, ma vive in
+ * `src/lib/prestampati/modelli/` — file di un'altra mano — e finché non c'è **la perdita non
+ * si rilascia**: la riscrittura per la carta la tiene questo file, che della carta è il
+ * compositore, ed è comunque qui che la decisione «cosa va stampato su un foglio» appartiene.
  */
-function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
+function blocchiDelCampo(campo: DescrittoreCampo, slug: string): BloccoPrestampato[] {
   const etichetta = campo.etichetta.trim()
+  const istruzione = aiutoDaStampare(campo, slug)
+  // `corsivo`: subordinata alla domanda a cui si riferisce. Chi riempie un modulo deve
+  // leggere prima la domanda e poi la nota, non il contrario — ed è l'errore che il
+  // rimpiazzo con `grassetto` aveva introdotto proprio mentre lo condannava.
+  const aiuto: BloccoPrestampato[] = istruzione
+    ? [{ tipo: 'paragrafo', testo: istruzione, stile: 'corsivo' }]
+    : []
 
   if (campo.tipo === 'siNo' || campo.tipo === 'conferma') {
     return [
       { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
       { tipo: 'caselle', caselle: [{ testo: 'Sì' }, { testo: 'No' }] },
+      ...aiuto,
     ]
   }
 
@@ -1952,11 +1971,12 @@ function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
     // Un elenco CHIUSO rimasto senza voci è quello che l'app costruisce a runtime dai
     // delegati attivi: sulla carta non c'è un runtime, quindi si scrive a penna.
     if (caselle.length === 0) {
-      return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }]
+      return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }, ...aiuto]
     }
     return [
       { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
       { tipo: 'caselle', caselle },
+      ...aiuto,
     ]
   }
 
@@ -1969,6 +1989,7 @@ function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
         intestazioni: ['', ...(campo.valoriAmmessi ?? []).map((v) => v.etichetta)],
         righe,
       },
+      ...aiuto,
     ]
   }
 
@@ -1983,23 +2004,102 @@ function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
         // perché un modulo consegnato deve poter essere completato a penna.
         righeVuote: 3,
       },
+      ...aiuto,
     ]
   }
 
   if (campo.tipo === 'file') {
-    // `grassetto` come le altre domande, e NON `corsivo`: vedi `STILE_NON_RESO`.
-    return [{ tipo: 'paragrafo', testo: `${etichetta}: da allegare al modulo.`, stile: 'grassetto' }]
+    // Un allegato non è una domanda a cui si risponde sul foglio: è un'istruzione, e sta
+    // col resto delle istruzioni. In `grassetto` sarebbe la riga più nera del modulo.
+    //
+    // ⚠️ UN PARAGRAFO SOLO, e non due: «Certificato medico: da allegare al modulo.» e il suo
+    // «Obbligatorio quando la dieta ha natura sanitaria.» sono la stessa istruzione, e due
+    // blocchi distinti l'impaginatore può separarli su due pagine — la condizione di qua, il
+    // certificato di là. Cucite insieme, non hanno più il modo di staccarsi.
+    const riga = [`${etichetta}: da allegare al modulo.`, istruzione].filter(Boolean).join(' ')
+    return [{ tipo: 'paragrafo', testo: riga, stile: 'corsivo' }]
   }
 
   if (campo.tipo === 'testoLungo') {
     // Tre righe e non una: un testo lungo scritto su un filetto solo finisce nel margine.
     return [
+      ...aiuto,
       { tipo: 'campi', colonne: 1, campi: [{ etichetta }, { etichetta: '' }, { etichetta: '' }] },
     ]
   }
 
-  return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }]
+  // ⚠️ QUI L'ISTRUZIONE STA SOPRA LA RIGA, e non è una preferenza: è la riparazione di una
+  // PAGINA ORFANA misurata sui PDF veri. Un campo di una riga è «etichetta + filetto» sulla
+  // stessa riga, e una nota messa sotto non ha niente che la leghi visivamente alla riga di
+  // prima: si legge come la didascalia del campo che SEGUE. Sopra, invece, introduce la riga
+  // che le sta sotto — che è come i moduli di carta hanno sempre fatto.
+  //
+  // E c'è la ragione misurata. L'impaginatore stringe il limite SOLO per l'ULTIMO blocco
+  // (`limitePerUltimoBlocco`, più in alto di `CARTA.contenutoFine`) per riservare il posto
+  // alla firma. Con la nota in coda, su `dieta_speciale` il foglio arrivava pieno fin lì e la
+  // nota di «Validità del certificato» sfondava quel limite da sola: finiva su una seconda
+  // pagina VUOTA, staccata dal campo che spiega, rimasto sull'altra. Sopra la riga la nota
+  // sta sotto il limite normale, e se qualcosa deve traboccare trabocca il CAMPO — che sulla
+  // pagina nuova è qualcosa da compilare, non una nota sospesa.
+  //
+  // I millimetri non si ricopiano qui apposta: invecchierebbero. È il lock «nessuna
+  // istruzione resta orfana su una pagina senza la sua domanda» a misurarlo, sui PDF veri e
+  // a ogni esecuzione.
+  return [...aiuto, { tipo: 'campi', colonne: 1, campi: [{ etichetta }] }]
 }
+
+/**
+ * LE FRASI CHE SULLO SCHERMO SONO VERE E SULLA CARTA NO.
+ *
+ * Ogni voce riscrive per il foglio un `aiuto` che parla dell'app. Nessuna aggiunge un fatto
+ * che il modello non dicesse già: tutte dicono meno, o lo dicono col vocabolario della
+ * carta. Il resto degli aiuti si stampa parola per parola, perché parola per parola è
+ * giusto.
+ *
+ * La chiave è `slug.campo` e non il solo nome del campo: `al` esiste in due moduli diversi
+ * con due significati diversi, e una tabella che li confondesse stamperebbe sul foglio dei
+ * farmaci l'istruzione della delega.
+ *
+ * Il lock `AIUTO_SU_CARTA non ha voci morte` verifica che ogni chiave punti a un campo che
+ * esiste e che un `aiuto` ce l'ha davvero: una riscrittura orfana, il giorno in cui il
+ * modello cambia il nome del campo, sarebbe una frase dell'app tornata sul foglio in
+ * silenzio.
+ */
+const AIUTO_SU_CARTA: Record<string, string> = {
+  // «È il motivo per cui questa scheda esiste» è una giustificazione interna di progetto.
+  'scheda_sanitaria.contattiEmergenza':
+    'Chi chiamare, e in che ordine, quando non si riesce a raggiungere i genitori.',
+  // «sparisce dalla sezione» è una schermata dell'app.
+  'autorizzazione_farmaci.al': 'Alla scadenza l’autorizzazione decade da sola.',
+  // «i delegati diventano attivi» è lo stato che l'app tiene; il fatto è lo stesso, detto
+  // con le parole di chi il bambino lo viene a prendere.
+  'delega_ritiro.delegati':
+    'Le persone indicate possono ritirare il bambino/a solo dopo la firma di questo modulo, non prima.',
+  'delega_ritiro.al':
+    'Diventa la scadenza della delega: passata quella data la delega a termine non vale più.',
+  // «Diventa la scadenza del documento» è la riga del fascicolo dentro l'app: il foglio che la
+  // famiglia riporta in segreteria una scadenza propria non ce l'ha. Resta l'istruzione, che
+  // è l'unica parte che chi compila deve sapere.
+  'dieta_speciale.validita':
+    'Una data di scadenza, oppure la dicitura riportata sul certificato.',
+  // «in app va detto» stampato su un modulo di carta si contraddice da solo; il fatto utile
+  // — che il permesso si compila anche il giorno prima — resta.
+  'permesso_orario.giorno':
+    'Il giorno a cui il permesso si riferisce: si può compilare anche il giorno prima.',
+  // «la condizione sta sull'uscita creata dalla segreteria, non sulle risposte» descrive il
+  // form, non il foglio.
+  'autorizzazione_uscita.saNuotare': 'Chiesto solo per le attività in acqua.',
+}
+
+/** L'istruzione da stampare per questo campo: la riscrittura per la carta, o l'aiuto com'è. */
+export function aiutoDaStampare(campo: DescrittoreCampo, slug: string): string | null {
+  const riscritto = AIUTO_SU_CARTA[`${slug}.${campo.nome}`]
+  if (riscritto !== undefined) return riscritto.trim() || null
+  return campo.aiuto?.trim() || null
+}
+
+/** Le chiavi delle riscritture, per il lock che verifica che nessuna sia orfana. */
+export const CHIAVI_AIUTO_SU_CARTA = Object.keys(AIUTO_SU_CARTA)
 
 /** La carta intestata del soggetto, qualunque esso sia. */
 export function cartaDelContesto(contesto: ContestoPrestampato): OpzioniRender['carta'] {

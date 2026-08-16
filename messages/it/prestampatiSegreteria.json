@@ -52,7 +52,8 @@
   "motivoFonteDatiAssente": "I dati che questo documento deve riportare non sono ancora disponibili in anagrafica.",
   "motivoLegaleRappresentanteAssente": "Manca il nome del legale rappresentante: aggiungilo in Impostazioni → Sede & Intestazione e riprova.",
   "motivoCopiaFirmataAssente": "Nel fascicolo non c’è una copia firmata di questo modulo: la famiglia non l’ha ancora firmato.",
-  "motivoCopiaFirmataNonElettronica": "Nel fascicolo ci sono documenti di questo tipo, ma nessuno porta la firma elettronica della famiglia: sono trascrizioni o scansioni. L’originale firmato è quello di carta, agli atti.",
+  "motivoCopiaFirmataNonElettronica": "Nel fascicolo ci sono documenti di questo tipo, ma nessuno di essi risulta firmato elettronicamente dalla famiglia.",
+  "motivoCopiaFirmataNonEsaminata": "Nel fascicolo ci sono più documenti di questo tipo di quanti se ne possano controllare in una volta: fra quelli esaminati nessuno risulta firmato elettronicamente dalla famiglia.",
 
   "modalitaTitolo": "Come stai lavorando su questo modulo",
   "modalitaSottotitolo": "Sono tre fogli diversi: scegli prima di compilare, perché cambia quello che ti viene chiesto.",

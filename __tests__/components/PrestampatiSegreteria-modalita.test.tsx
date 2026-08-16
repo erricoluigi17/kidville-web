@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 
 import itPrestampati from '../../messages/it/prestampatiSegreteria.json'
+import enPrestampati from '../../messages/en/prestampatiSegreteria.json'
 
 /**
  * IL BANCO DEI PRESTAMPATI — le TRE MODALITÀ sui moduli di famiglia, dalla parte dello
@@ -350,6 +351,63 @@ describe('PrestampatiSegreteria — le tre modalità', () => {
     expect(avviso).toHaveTextContent(itPrestampati.motivoCopiaFirmataAssente)
     expect(screen.queryByText(PROSA_DEL_SERVER)).not.toBeInTheDocument()
     expect(screen.queryByText(itPrestampati.confermaGenerato)).not.toBeInTheDocument()
+  })
+
+  it('🔴 il rifiuto «copia non elettronica» NON dichiara un originale di carta che nessuno ha visto', async () => {
+    // ⚠️ FINO AL 2026-08-16 LA FRASE CHIUDEVA CON «L'originale firmato è quello di carta,
+    // agli atti.» La route quel fatto non lo sa: sa soltanto che nessuna impronta ha
+    // combaciato, e il suo stesso commento elenca i casi possibili — trascrizioni `su_carta`,
+    // scansioni caricate a mano, fogli rigenerati. Negli ultimi due un originale di carta
+    // agli atti **non esiste**.
+    //
+    // Era, in piccolo, il difetto che tutta questa catena esiste per impedire: un pannello
+    // che dichiara alla segreteria come avvenuto un fatto che nessuno ha misurato.
+    const VIETATE = ['originale firmato', 'agli atti', 'signed original', 'on file']
+    for (const [lingua, frase] of [
+      ['it', itPrestampati.motivoCopiaFirmataNonElettronica],
+      ['en', enPrestampati.motivoCopiaFirmataNonElettronica],
+      ['it', itPrestampati.motivoCopiaFirmataNonEsaminata],
+      ['en', enPrestampati.motivoCopiaFirmataNonEsaminata],
+    ] as const) {
+      expect(frase, `${lingua} — la frase manca dal catalogo`).toBeTruthy()
+      for (const vietata of VIETATE) {
+        expect(frase.toLowerCase(), `${lingua} — «${vietata}»`).not.toContain(vietata)
+      }
+    }
+
+    // E il presidio simmetrico: la frase deve comunque dire che QUALCOSA nel fascicolo c'è —
+    // altrimenti non si distinguerebbe da `copia_firmata_assente`, e la segreteria andrebbe a
+    // far firmare di nuovo un modulo che la famiglia ha già firmato.
+    expect(itPrestampati.motivoCopiaFirmataNonElettronica).toContain('ci sono documenti di questo tipo')
+    // Quella «esaminata» dichiara il limite invece di nasconderlo.
+    expect(itPrestampati.motivoCopiaFirmataNonEsaminata).toContain('fra quelli esaminati')
+  })
+
+  it('il pannello traduce anche il rifiuto «non li ho guardati tutti»', async () => {
+    // Senza la chiave nella tabella dei motivi, il pannello mostrerebbe la prosa del server:
+    // il motivo esiste proprio perché a tradurlo sia il catalogo.
+    await finoAlModello()
+    fireEvent.click(screen.getByRole('radio', { name: new RegExp(itPrestampati.modalitaCopiaFirmata) }))
+
+    const PROSA_DEL_SERVER = 'Nel fascicolo ci sono più documenti di questo tipo di quanti…'
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return ok(
+          {
+            error: PROSA_DEL_SERVER,
+            codice: 'PRESTAMPATO_DATI_MANCANTI',
+            motivo: 'copia_firmata_non_esaminata',
+          },
+          422,
+        )
+      }
+      return ok(rispostaPredefinita(String(url)))
+    })
+    fireEvent.click(screen.getByRole('button', { name: itPrestampati.genera }))
+
+    const avviso = await screen.findByRole('alert')
+    expect(avviso).toHaveTextContent(itPrestampati.motivoCopiaFirmataNonEsaminata)
+    expect(screen.queryByText(PROSA_DEL_SERVER)).not.toBeInTheDocument()
   })
 
   it('passando a un ALTRO modulo la modalità di prima non si porta dietro niente', async () => {

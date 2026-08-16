@@ -92,11 +92,21 @@ export const GET = withRoute('fea/receipt:GET', async (request: NextRequest) => 
       return NextResponse.json({ error: 'Accesso non consentito' }, { status: 403 })
     }
 
+    // Il NOME del firmatario, non la sua email — ed è gratis: il gate qui sopra ha appena
+    // stabilito che `resolved.signerId === userId`, quindi `auth.user` È il firmatario e
+    // porta già nome e cognome dalla tabella `utenti`. Nessuna query in più.
+    //
+    // L'email resta nel payload perché entra nell'HASH documentale (`computeContentHash`),
+    // che è ciò che rende la ricevuta verificabile; sul foglio stampato non ci finisce, e
+    // il generatore ha comunque la propria rete di sicurezza sul nome.
     const payload: ReceiptPayload = {
       title: resolved.title,
       entitaTipo: entita,
       entitaId: id,
-      signer: { email: resolved.signature.email },
+      signer: {
+        name: [auth.user.nome, auth.user.cognome].filter(Boolean).join(' ').trim() || null,
+        email: resolved.signature.email,
+      },
       signature: resolved.signature,
       documentPayload: resolved.documentPayload,
     }

@@ -7,6 +7,15 @@
  * quello che diverge per primo, e il giorno in cui qualcuno gli mette un pulsante davanti
  * scopre di avere in mano l'unico PDF dell'app con una banda verde inventata dal codice.
  *
+ * ⚠️ **METÀ DI QUESTO FILE MISURA CIÒ CHE NEL FOGLIO NON DEVE ESSERCI.** Fino al
+ * 2026-08-16 questi stessi test PRETENDEVANO l'email del firmatario e il suo indirizzo IP
+ * dentro il PDF (`expect(testo).toContain('maria@esempio.invalid')`), cioè blindavano il
+ * difetto invece del rimedio: la ricevuta è un foglio che esce dall'app, si scarica, si
+ * allega e si stampa, e ci finivano due identificativi personali più l'impronta del
+ * dispositivo (`Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 …)`). Le asserzioni sono invertite,
+ * e non è una perdita di valore probatorio: `computeContentHash()` impasta email e metadati
+ * firma DENTRO l'hash stampato sul foglio, e l'audit immutabile resta la fonte.
+ *
  * Nessun dato reale: firmatario, hash e indirizzi sono inventati.
  */
 import { describe, it, expect } from 'vitest'
@@ -81,10 +90,88 @@ describe('buildReceiptPdf — il contenuto', () => {
   it('riporta firmatario, metodo, hash e conformità', async () => {
     const { estraiTesto } = await import('@/lib/protocolli/estrai')
     const testo = (await estraiTesto(new Uint8Array(buildReceiptPdf(payload)))).replace(/\s+/g, ' ')
-    expect(testo).toContain('maria@esempio.invalid')
+    expect(testo).toContain('Maria Bianchi')
     expect(testo).toContain('OTP_EMAIL')
-    expect(testo).toContain('203.0.113.7')
+    expect(testo).toContain('SHA256-')
     expect(testo).toContain('CAD Art. 20')
+  })
+})
+
+describe('buildReceiptPdf — quello che sul foglio NON ci finisce', () => {
+  const testoDi = async (p: ReceiptPayload) => {
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    return (await estraiTesto(new Uint8Array(buildReceiptPdf(p)))).replace(/\s+/g, ' ')
+  }
+
+  it("non stampa l'email del firmatario, né l'IP, né il dispositivo da cui ha firmato", async () => {
+    const testo = await testoDi(payload)
+    expect(testo).not.toContain('@')
+    expect(testo).not.toMatch(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)
+    expect(testo).not.toContain('Mozilla/')
+    expect(testo.toLowerCase()).not.toContain('user-agent')
+    expect(testo.toLowerCase()).not.toContain('indirizzo ip')
+  })
+
+  it('un nome che si porti dietro un recapito viene ripulito lo stesso', async () => {
+    // Rete di sicurezza, non teoria: la rotta `fea/receipt:GET` costruiva `signer` con la
+    // SOLA email e nessun nome, quindi un chiamante che riempia `name` con ciò che ha in
+    // mano è lo scenario probabile, non quello improbabile.
+    const testo = await testoDi({
+      ...payload,
+      signer: { name: 'Maria Bianchi <maria@esempio.invalid> 203.0.113.7', email: 'maria@esempio.invalid' },
+    })
+    expect(testo).toContain('Maria Bianchi')
+    expect(testo).not.toContain('@')
+    expect(testo).not.toMatch(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)
+  })
+
+  it("l'email resta però DENTRO l'hash documentale: il valore probatorio non si perde", () => {
+    const conUna = computeContentHash(payload.documentPayload, {
+      method: 'OTP_EMAIL',
+      email: 'maria@esempio.invalid',
+      signed_at: payload.signature.signed_at,
+      hash: payload.signature.hash,
+    })
+    const conUnAltra = computeContentHash(payload.documentPayload, {
+      method: 'OTP_EMAIL',
+      email: 'altro@esempio.invalid',
+      signed_at: payload.signature.signed_at,
+      hash: payload.signature.hash,
+    })
+    expect(conUna).not.toBe(conUnAltra)
+  })
+})
+
+describe('buildReceiptPdf — le date', () => {
+  it("scrive l'istante della firma all'italiana e nel fuso della scuola, non in ISO UTC", async () => {
+    // È l'unico dato che la ricevuta esiste per certificare: QUANDO si è firmato. In ISO
+    // UTC («2026-06-25T10:00:00.000Z») chi legge il foglio in mano legge un'ora che non è
+    // quella in cui ha firmato — d'estate sono due ore di scarto.
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const testo = (await estraiTesto(new Uint8Array(buildReceiptPdf(payload)))).replace(/\s+/g, ' ')
+    expect(testo).toContain('25/06/2026, 12:00')
+    expect(testo).not.toContain('2026-06-25T10:00:00.000Z')
+    expect(testo).not.toMatch(/\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('anche le firme congiunte portano data e ora leggibili, non il campo grezzo', async () => {
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const conSlot: ReceiptPayload = {
+      ...payload,
+      slots: [0, 1].map((i) => ({
+        entita_tipo: 'pagella',
+        entita_id: 'e-1',
+        slot_index: i,
+        signer_user_id: null,
+        stato: 'signed' as const,
+        completion_policy: 'all-required' as const,
+        signature_log: null,
+        firmato_il: '2026-06-25T10:00:00.000Z',
+      })),
+    }
+    const testo = (await estraiTesto(new Uint8Array(buildReceiptPdf(conSlot)))).replace(/\s+/g, ' ')
+    expect(testo).toContain('25/06/2026, 12:00')
+    expect(testo).not.toMatch(/\d{4}-\d{2}-\d{2}T/)
   })
 })
 
@@ -159,7 +246,16 @@ describe('buildReceiptPdfSuCarta — il foglio consegnato', () => {
   it('non perde il contenuto della ricevuta per strada', async () => {
     const { estraiTesto } = await import('@/lib/protocolli/estrai')
     const testo = (await estraiTesto(await buildReceiptPdfSuCarta(payload))).replace(/\s+/g, ' ')
-    expect(testo).toContain('maria@esempio.invalid')
+    expect(testo).toContain('Maria Bianchi')
     expect(testo).toContain('CAD Art. 20')
+    expect(testo).toContain('25/06/2026, 12:00')
+  })
+
+  it('e non porta sulla carta della scuola ciò che dal contenuto è stato tolto', async () => {
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const testo = (await estraiTesto(await buildReceiptPdfSuCarta(payload))).replace(/\s+/g, ' ')
+    expect(testo).not.toContain('@')
+    expect(testo).not.toMatch(/\b\d{1,3}(?:\.\d{1,3}){3}\b/)
+    expect(testo).not.toContain('Mozilla/')
   })
 })

@@ -47,7 +47,9 @@ const firma = {
 beforeEach(() => {
   vi.clearAllMocks()
   h.state.rows = {}
-  h.requireUser.mockResolvedValue({ user: { id: 'u-1', role: 'genitore' } })
+  h.requireUser.mockResolvedValue({
+    user: { id: 'u-1', role: 'genitore', nome: 'Maria', cognome: 'Bianchi' },
+  })
 })
 
 describe('GET /api/fea/receipt', () => {
@@ -98,5 +100,23 @@ describe('GET /api/fea/receipt', () => {
     expect(res.headers.get('Content-Type')).toBe('application/pdf')
     const buf = Buffer.from(await res.arrayBuffer())
     expect(buf.subarray(0, 4).toString('latin1')).toBe('%PDF')
+  })
+
+  it('il foglio consegnato NOMINA il firmatario e non stampa email, IP né dispositivo', async () => {
+    // La rotta costruiva `signer` con la sola email, quindi il PDF finiva per essere
+    // l'unico posto del prodotto dove l'indirizzo di posta di un genitore veniva
+    // STAMPATO. Il nome ce l'ha già `auth.user` — il gate qui sopra ha appena stabilito
+    // che il chiamante È il firmatario — e non costa nemmeno una query.
+    h.state.rows = {
+      pagella_ricezioni: { data: { id: 'e-1', scrutinio_id: 's', alunno_id: 'a', genitore_id: 'u-1', firma }, error: null },
+    }
+    const res = await GET(req('entita=pagella&id=e-1'))
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const testo = (await estraiTesto(new Uint8Array(await res.arrayBuffer()))).replace(/\s+/g, ' ')
+    expect(testo).toContain('Maria Bianchi')
+    expect(testo).toContain('25/06/2026, 12:00')
+    expect(testo).not.toContain('maria@example.it')
+    expect(testo).not.toContain('203.0.113.7')
+    expect(testo).not.toContain('Moz/5')
   })
 })

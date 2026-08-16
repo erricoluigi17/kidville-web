@@ -168,4 +168,101 @@ describe('/admin/modulistica — la barra delle linguette', () => {
       });
     }
   });
+
+  /**
+   * ─── E LO DICE, INVECE DI TACERLO ───────────────────────────────────────────────
+   *
+   * Il gruppo qui sopra prova che la pagina non si rompe. È metà del lavoro, e la metà
+   * facile: il ripiego era **corretto e muto**. Chi apriva un vecchio segnalibro della
+   * Segreteria si ritrovava su «Moduli inviabili» senza una parola di spiegazione, e la
+   * conclusione naturale — davanti a una schermata che ha appena perso due linguette — non
+   * è «mi hanno spostato», è «il mio lavoro è sparito».
+   *
+   * Questo è il difetto che nessun lock poteva vedere e nessun test misurava: una pagina
+   * che funziona e non si spiega passa qualunque verifica automatica. Da qui in poi non
+   * più.
+   */
+  describe('un `?tab=` che non esiste più lo DICE, invece di tacerlo', () => {
+    /** L'avviso, come lo trova chi guarda: `role="status"`, cioè ciò che legge anche un lettore di schermo. */
+    const avviso = (container: HTMLElement) => container.querySelector('[role="status"]');
+
+    for (const parola of ['odt', 'attesa', 'linguetta-mai-esistita']) {
+      it(`?tab=${parola} → spiega dove sono finite le domande di iscrizione`, () => {
+        h.query = `tab=${parola}`;
+        const { container } = render(<AdminModulisticaPage />);
+
+        const riquadro = avviso(container);
+        expect(
+          riquadro,
+          `«?tab=${parola}» riporta su un'altra linguetta SENZA dirlo: è la schermata che ` +
+            'funziona e non si spiega, cioè il difetto che questo gruppo di prove esiste per chiudere.',
+        ).toBeTruthy();
+        // Il testo è quello del catalogo ITALIANO vero, non una stringa scritta qui: un
+        // avviso che dice la cosa sbagliata è peggio di nessun avviso.
+        expect(riquadro?.textContent ?? '').toContain(itAdminModulistica.modTabSconosciutaAvviso);
+        // E manda in un posto che ESISTE: la linguetta nominata è una delle sei della barra.
+        expect(etichetteDellaBarra(container)).toContain(itAdminModulistica.modTabRicevuti);
+      });
+    }
+
+    it('senza `?tab=` non compare nessun avviso (chi entra dalla porta principale non ha sbagliato niente)', () => {
+      h.query = '';
+      const { container } = render(<AdminModulisticaPage />);
+      expect(avviso(container)).toBeNull();
+    });
+
+    for (const parola of ['ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori']) {
+      it(`?tab=${parola} è una linguetta VERA: apre la sua e non avvisa di niente`, () => {
+        h.query = `tab=${parola}`;
+        const { container } = render(<AdminModulisticaPage />);
+        expect(
+          avviso(container),
+          `«?tab=${parola}» è una linguetta viva: un avviso qui direbbe il falso a chi ha ` +
+            'seguito un collegamento perfettamente valido — ed è così che si impara a non leggerli.',
+        ).toBeNull();
+      });
+    }
+
+    it("l'avviso si può chiudere, e resta chiuso", async () => {
+      // Un avviso che non si toglie di mezzo è un avviso che si impara a scavalcare con
+      // gli occhi. Chi ha capito il messaggio deve poterlo far sparire.
+      const { fireEvent } = await import('@testing-library/react');
+      h.query = 'tab=linguetta-mai-esistita';
+      const { container } = render(<AdminModulisticaPage />);
+
+      const chiudi = container.querySelector<HTMLButtonElement>(
+        `[role="status"] button[aria-label="${itAdminModulistica.modTabSconosciutaChiudi}"]`,
+      );
+      expect(chiudi, "l'avviso non ha un modo per essere chiuso").toBeTruthy();
+      fireEvent.click(chiudi as HTMLButtonElement);
+      expect(container.querySelector('[role="status"]')).toBeNull();
+      // …e la schermata sotto è rimasta quella giusta.
+      expect(linguettaAttiva(container)).toBe(itAdminModulistica.modTabInviabili);
+    });
+  });
+
+  /**
+   * LA BARRA E LA SUA UNICA FONTE. Le sei linguette nascono da `TAB_ORDINE`, in cima alla
+   * pagina, e `?tab=` si confronta con lo stesso elenco. Prima vivevano in quattro punti
+   * diversi dello stesso file, e due volte su due un `?tab=` è finito sulla linguetta
+   * sbagliata in silenzio perché il quarto punto non era stato aggiornato.
+   *
+   * Questa prova è la misura che l'elenco è UNO: ogni linguetta della barra è anche un
+   * `?tab=` che si apre, e nessuna è raggiungibile solo con il mouse.
+   */
+  it('ogni linguetta della barra è raggiungibile anche da `?tab=`', () => {
+    const valori = ['inviabili', 'ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori'];
+    expect(valori).toHaveLength(LINGUETTE.length);
+
+    for (const [i, valore] of valori.entries()) {
+      h.query = `tab=${valore}`;
+      const { container, unmount } = render(<AdminModulisticaPage />);
+      expect(
+        linguettaAttiva(container),
+        `«?tab=${valore}» non accende «${LINGUETTE[i]}»: è la forma del difetto che ha già ` +
+          "colpito due volte — la parola c'è nella barra e manca nel riconoscimento di `?tab=`.",
+      ).toBe(LINGUETTE[i]);
+      unmount();
+    }
+  });
 });

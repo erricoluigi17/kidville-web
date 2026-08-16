@@ -83,7 +83,24 @@ function fallbackFesHash(): string {
   return 'FES-OK-' + Math.random().toString(16).substring(2, 10).toUpperCase();
 }
 
-type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'prestampati' | 'moduli-genitori';
+/**
+ * Le linguette della schermata, nell'ordine in cui la barra le mostra — in UN posto solo.
+ *
+ * Fino al 2026-08-16 questa parola viveva in QUATTRO punti del file (il tipo, la barra, lo
+ * switch dei pannelli e il riconoscimento di `?tab=`), e il commento che stava qui accanto
+ * lo diceva: le prime tre senza la quarta fanno un collegamento che atterra sulla linguetta
+ * sbagliata in silenzio. È già successo due volte — `?tab=personale` e `?tab=prestampati` —
+ * e la cura era ricordarsene. Ora l'elenco è uno: il tipo si deriva da qui, la barra si
+ * disegna da qui, e `?tab=` si confronta con questo.
+ */
+const TAB_ORDINE = ['inviabili', 'ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori'] as const;
+
+type ModulisticaTab = (typeof TAB_ORDINE)[number];
+
+/** Il valore di `?tab=` è una linguetta di questa schermata? */
+function eTabDiQuestaPagina(v: string | null): v is ModulisticaTab {
+  return v !== null && (TAB_ORDINE as readonly string[]).includes(v);
+}
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
@@ -96,28 +113,29 @@ function ModulisticaInner() {
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
-  // `candidature` è nell'elenco perché è il bersaglio del collegamento della
-  // notifica di una nuova candidatura (`/admin/modulistica?tab=candidature`):
-  // senza, quel collegamento aprirebbe la linguetta sbagliata in silenzio.
-  //
-  // `personale` è nell'elenco per la STESSA ragione, e va detto perché è una riga che
-  // si dimentica: `iscrizione/personale:POST` manda alla Segreteria una notifica con
-  // link `/admin/modulistica?tab=personale`, e i collegamenti profondi del cockpit
-  // (`?tab=personale&pratica=<uuid>`) partono da lì. Senza questa parola, ogni avviso
-  // di anagrafica del personale aprirebbe «Moduli inviabili» — cioè la linguetta
-  // sbagliata, senza nessun errore da nessuna parte.
-  //
-  // `prestampati` oggi non è il bersaglio di nessuna notifica, e ci sta lo stesso: la
-  // parola della linguetta vive in QUATTRO punti di questo file — il tipo, la barra, lo
-  // switch e questa riga — e le prime tre senza la quarta fanno un `?tab=prestampati` che
-  // atterra su «Moduli inviabili» in silenzio. È la riga che si dimentica, e la si
-  // dimentica proprio perché finché nessuno manda quel link il difetto non si vede.
-  const initialTab: ModulisticaTab =
-    tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'personale'
-    || tabParam === 'prestampati' || tabParam === 'moduli-genitori'
-      ? tabParam
-      : 'inviabili';
+  // Le linguette raggiungibili da `?tab=` sono ESATTAMENTE quelle della barra
+  // (`TAB_ORDINE`, in cima al file): `candidature` e `personale` sono il bersaglio dei
+  // collegamenti delle notifiche (`/admin/modulistica?tab=candidature`, e i link profondi
+  // del cockpit `?tab=personale&pratica=<uuid>`), le altre di segnalibri e cronologia.
+  const initialTab: ModulisticaTab = eTabDiQuestaPagina(tabParam) ? tabParam : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
+
+  /**
+   * IL SEGNALIBRO CHE NON PORTA PIÙ DA NESSUNA PARTE.
+   *
+   * `?tab=` con una parola che questa schermata non ha più (i due pannelli smontati il
+   * 2026-08-16, o un link storpiato) apriva «Moduli inviabili» **senza dire niente**: chi
+   * arrivava da un vecchio segnalibro si trovava su un'altra linguetta e concludeva che il
+   * suo lavoro fosse sparito, invece che spostato. Il ripiego era corretto e muto, ed è la
+   * differenza fra una schermata che non si rompe e una che si spiega.
+   *
+   * Le due parole morte non sono elencate qui di proposito: il divieto d'architettura sui
+   * residui delle due tabelle morte non le ammette sotto `src/` nemmeno in prosa. E non
+   * servono — la domanda a cui rispondere non è «quale linguetta cercavi», è «dov'è finito
+   * quello che cercavi», e la risposta è la stessa per tutte.
+   */
+  const tabRichiestaSconosciuta = tabParam !== null && tabParam !== '' && !eTabDiQuestaPagina(tabParam);
+  const [avvisoTabChiuso, setAvvisoTabChiuso] = useState(false);
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -451,18 +469,50 @@ function ModulisticaInner() {
         }
       />
 
-      {/* Tabs (pillole, linguaggio dell'app) */}
+      {/* Il vecchio collegamento che non porta più da nessuna parte: si dice, non si tace. */}
+      {tabRichiestaSconosciuta && !avvisoTabChiuso && (
+        <div
+          role="status"
+          className="mb-4 flex items-start gap-3 rounded-2xl bg-kidville-cream px-4 py-3 ring-[1.5px] ring-inset ring-kidville-line"
+        >
+          <Inbox size={18} className="mt-0.5 shrink-0 text-kidville-green" aria-hidden />
+          <p className="flex-1 font-barlow text-sm leading-snug text-kidville-ink/80">{t('modTabSconosciutaAvviso')}</p>
+          <button
+            type="button"
+            onClick={() => setAvvisoTabChiuso(true)}
+            aria-label={t('modTabSconosciutaChiudi')}
+            className="shrink-0 rounded-pill p-1 text-kidville-ink/50 outline-none transition-colors hover:text-kidville-green focus-visible:ring-2 focus-visible:ring-kidville-green"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* Tabs (pillole, linguaggio dell'app) — le etichette stanno in un `Record` per
+          linguetta, non in un elenco a parte: TypeScript pretende che ci siano tutte e
+          sei e nessuna in più, così la barra non può divergere da `TAB_ORDINE`. */}
       <Tabs
         value={activeTab}
         onChange={(id) => setActiveTab(id as ModulisticaTab)}
-        options={[
-          { id: 'inviabili', label: t('modTabInviabili'), icon: Send },
-          { id: 'ricevuti', label: t('modTabRicevuti'), icon: Inbox },
-          { id: 'candidature', label: t('modTabCandidature'), icon: UserCheck },
-          { id: 'personale', label: t('modTabPersonale'), icon: IdCard },
-          { id: 'prestampati', label: tPrestampati('titolo'), icon: Stamp },
-          { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
-        ]}
+        options={TAB_ORDINE.map((id) => ({
+          id,
+          label: {
+            inviabili: t('modTabInviabili'),
+            ricevuti: t('modTabRicevuti'),
+            candidature: t('modTabCandidature'),
+            personale: t('modTabPersonale'),
+            prestampati: tPrestampati('titolo'),
+            'moduli-genitori': t('modTabModuliGenitori'),
+          }[id],
+          icon: {
+            inviabili: Send,
+            ricevuti: Inbox,
+            candidature: UserCheck,
+            personale: IdCard,
+            prestampati: Stamp,
+            'moduli-genitori': Users,
+          }[id],
+        }))}
       />
 
       {/* Moduli inviabili / ricevuti / candidature / personale: operano multi-sede —

@@ -272,5 +272,7 @@
   "sdsChiudi": "Close application detail",
   "builderTornaIndietro": "Back to forms",
   "modTabCandidature": "Applications",
-  "modTabPersonale": "Staff"
+  "modTabPersonale": "Staff",
+  "modTabSconosciutaAvviso": "The link you opened asks for a tab this page no longer has, so we took you to “Sendable forms”. Enrolment applications are under “Received forms”; the school letterhead is no longer uploaded by hand, because the app now prints it on every document itself.",
+  "modTabSconosciutaChiudi": "Hide this notice"
 }

@@ -194,7 +194,8 @@ riga per riga:
 | Chiavi di `adminModulistica` che nessuna riga di `src/` nomina | **33** per lingua, **66** in due lingue | **0** |
 | Isola morta in `admin/modulistica/page.tsx` | interfaccia + 4 `useState` + 2 gestori + 3 finestre | rimossa (**1137 → 895** righe, contando anche il tab ODT) |
 | `certificati_templates` sotto `src/` | `CREATE TABLE` + indice + RLS + `POLICY … FOR ALL USING (true)` | nessuna riga eseguibile |
-| `pre_inscriptions` sotto `src/` (il blocco **gemello**, nove righe più giù nello stesso SQL) | `CREATE TABLE` + 2 indici + RLS + `POLICY … FOR ALL USING (true)` su nome, cognome, email, telefono, CF e indirizzo del genitore + i dati dei figli | nessuna riga che la **crei**; restano le letture della route, dichiarate |
+| `pre_inscriptions` sotto `src/` (il blocco **gemello**, nove righe più giù nello stesso SQL) | `CREATE TABLE` + 2 indici + RLS + `POLICY … FOR ALL USING (true)` su nome, cognome, email, telefono, CF e indirizzo del genitore + i dati dei figli, **più la rotta intera che la interrogava** | **0 righe**: né la DDL né le letture né la rotta (terza passata, sotto) |
+| Porte anonime senza gate (`PUBBLICHE` di `gate-coverage`) | 20, una delle quali difesa da una motivazione **falsa** | **19**, e ognuna deve avere un chiamante vivo |
 | Voci di `NON_CONTATORI` che puntavano a chiavi inesistenti | 2, verdi | 0, e il tetto scende 40 → **38** |
 | Cataloghi montati nel mock di next-intl | **34 su 38**, elencati a mano | tutti, letti dalla cartella |
 
@@ -212,14 +213,16 @@ descrive il codice morto non è una rimozione.*
   (`adminModulistica`) e misurato: acceso su tutti e 38 i cataloghi darebbe ~380 falsi positivi,
   chiavi risolte a runtime (`etichette`: 171 su 199).
 - **`__tests__/architecture/residuo-odt-assente.test.ts`** — sotto `src/` non torna né la tabella né
-  l'estensione né il tipo MIME né l'acronimo, **e nemmeno la DDL che rifà la tabella gemella**. La
+  l'estensione né il tipo MIME né l'acronimo, **e nemmeno la DDL che rifà la tabella gemella** — e
+  dalla terza passata (sotto) nemmeno il suo **nome**, letture comprese. La
   lezione per iscritto: **«zero righe la leggono» non è «zero righe la nominano»** — un residuo che
   *crea* è più vivo di uno che legge. Il divieto vale **anche per i commenti**, perché il criterio è
   `grep -rn … src/` e una riga di commento è una riga: il nome esatto vive nel lock, e là dove il
   blocco è stato tolto si scrive in italiano che cosa c'era.
 - **`__tests__/pages/admin-modulistica-linguette.test.tsx`** — la barra si monta e si legge: **sei**
   linguette, col testo italiano preso dai cataloghi, nessuna che mostri il nome di una chiave, e
-  `?tab=odt` / `?tab=attesa` che atterrano su «Moduli inviabili» **col pannello disegnato**.
+  `?tab=odt` / `?tab=attesa` che atterrano su «Moduli inviabili» **col pannello disegnato** — e, dalla
+  terza passata, con l'**avviso** che dice dove sono finite le domande di iscrizione.
 - **`messaggi-plurali-e-glossario`** — ogni eccezione di `NON_CONTATORI` deve puntare a una chiave che
   **esiste ancora**: un elenco di eccezioni non sa da solo che il suo bersaglio è morto.
 
@@ -279,21 +282,89 @@ Due bugie di misura sono cadute con lo stesso colpo:
   sorgente. Rotto il ripiego a mano, i tre casi nuovi diventano rossi e i tre vecchi restano verdi:
   è la misura che il buco c'era.
 
-### Cosa NON è stato toccato, e perché è scritto
+### La terza passata: chiusa la DDL, restava la porta
 
-`src/app/api/admin/pre-inscriptions/route.ts` **resta**, con zero chiamanti raggiungibili. Il suo
-`POST` è **pubblico** e scrive su `pre_inscriptions`, che in produzione **non esiste**
-(`to_regclass` → null): fallisce chiuso, non espone niente. Cancellarlo tocca tre lock d'architettura
-(`gate-coverage`, `isolamento-sede-coverage`, `auth-gaps-m9`) e un'allowlist di documentazione, cioè
-file di altri workstream aperti in questo momento. È un debito **dichiarato**, non una dimenticanza —
-e il lock lo tratta come tale: le sue **letture** restano ammesse, la **DDL** no. Il giorno in cui
-quella route sparirà, il divieto si promuove da «niente DDL» a «niente affatto», e la tabella non
-potrà rientrare dalla porta di servizio.
-Fuori scope per decisione esplicita del piano anche le voci di checklist «Moduli Esterni» e
+Il paragrafo che stava qui si intitolava «Cosa NON è stato toccato, e perché è scritto», e diceva che
+`src/app/api/admin/pre-inscriptions/route.ts` restava in piedi perché cancellarla avrebbe toccato tre
+lock e file di altri workstream. Era una scelta **dichiarata**, e dichiararla non l'ha resa giusta:
+*la metà rimasta era quella pericolosa.*
+
+Il `POST` di quella rotta era **pubblico e senza nessun perimetro** — nessun `requireStaff`, nessun
+tetto per IP, nessun honeypot, mentre `iscrizione/personale:POST`, due voci più su nella **stessa**
+allowlist, ne porta cinque — e accettava `parent_fiscal_code`, `parent_address` e `students`: codice
+fiscale e indirizzo del genitore più i dati dei minori. Falliva chiuso solo perché la tabella non
+c'è, e nel fallire rimandava all'anonimo il messaggio di PostgREST **verbatim**, cioè il nome della
+relazione mancante. Il `PATCH`, dall'altro lato, creava account auth e restituiva una password in
+chiaro.
+
+È la **stessa classe di guasto** che questo capitolo denuncia due sezioni più su — *una rete tesa
+attorno a un caso lascia passare il caso gemello* — applicata un piano più in alto: chiusa la DDL,
+restava la porta. E la difesa era la stessa che il lock rifiutava per l'altro blocco: «tanto la
+tabella non esiste». **«Inerte» non basta a giustificare una macchina che ricrea, e non basta per una
+porta anonima che scrive.**
+
+Misura, prima di cancellare: `grep -rn "admin/pre-inscriptions" src/ __tests__/ e2e/ public/ scripts/`
+→ la rotta stessa, dei test e dei commenti, **nessuna `fetch`**. Il portale che la usava non esiste
+più (`/onboarding` è un `redirect('/iscrizione')`) e le domande di iscrizione arrivano da
+`/api/iscrizione` → `enrollment_submissions` (**389 righe vere** il 2026-08-16: erano 302 il 4 agosto).
+
+Cancellata la rotta, sono uscite con lei **quattro** voci di allowlist e il lock si è promosso:
+
+| Dove | Prima | Adesso |
+|---|---|---|
+| `gate-coverage` · `PUBBLICHE` | `admin/pre-inscriptions:POST`, motivazione *«sottomissione del portale onboarding pubblico»* | voce rimossa, tetto **20 → 19** |
+| `isolamento-sede-coverage` | `admin/pre-inscriptions:PATCH` esentata | rimossa; i tre numeri **297→296 · 462→459 · 95→94**, misurati |
+| `auth-gaps-m9` | un test che titolava *«il POST pubblico resta senza gate»* | rimosso: era la denuncia che nessuno leggeva |
+| `errori-senza-codice-allowlist.json` | 13 risposte senza codice, 280 file | 279 file, totale **1455 → 1442** |
+| `residuo-odt-assente` | vietava la **DDL** su `pre_inscriptions`, ammetteva le letture | vieta **il nome**, in qualunque forma |
+
+### La rete che avrebbe reso rossa da sola quella riga
+
+Il difetto non era la porta: era che **nessuna prova poteva vederla**. «Voci morte» chiede se
+l'*handler* esiste, e l'handler esisteva; il tetto chiede se il *numero* è cambiato, e non era
+cambiato. Mancava la terza domanda — ***qualcuno la chiama ancora?*** — ed è la stessa che, lo stesso
+giorno e nello stesso ramo, era stata aggiunta a `NON_CONTATORI` per i messaggi (*«un tetto scende
+solo se qualcuno RIMISURA»*). Era stata applicata ai testi e non ai gate.
+
+Ora `gate-coverage` la fa: per ogni porta senza gate cerca un chiamante vivo sotto `src/`, **coi
+commenti spenti** — `/api/health` e `/api/logs` compaiono in una ventina di commenti, e una rete
+tesa sul testo grezzo sarebbe verde per prosa. Delle 19 porte, **18 hanno un chiamante nel codice**;
+la sola `health:GET` non ce l'ha e non deve averlo — a interrogarla sono il controllo del deploy e il
+monitoraggio esterno — quindi è dichiarata a mano, con la ragione scritta, in un elenco che a sua
+volta non ammette bersagli morti e ha tetto **1**. La prova che la rete non è decorativa: togliendo
+quella dichiarazione il lock diventa rosso su `health:GET`.
+
+### Il vecchio segnalibro adesso trova una spiegazione, non solo una pagina
+
+`?tab=` con una parola che la schermata non ha più apriva «Moduli inviabili» **senza dire niente**.
+Il ripiego era corretto e **muto**, ed è la differenza fra una schermata che non si rompe e una che
+si spiega: chi arrivava da un segnalibro della Segreteria concludeva che il suo lavoro fosse sparito,
+invece che spostato. Ora compare un avviso (`role="status"`, chiudibile) che dice dove sono finite le
+domande di iscrizione e perché la carta intestata non si carica più a mano. Nessun avviso quando
+`?tab=` nomina una linguetta viva, e nessuno per chi entra dalla porta principale.
+
+Con lo stesso colpo, la parola di una linguetta smette di vivere in **quattro** punti del file: c'è
+`TAB_ORDINE`, e da lì si derivano il tipo, la barra e il riconoscimento di `?tab=`. Le tre volte in
+cui un collegamento profondo è atterrato sulla linguetta sbagliata (`candidature`, `personale`,
+`prestampati`) erano tre volte la stessa riga dimenticata. `modulistica-linguette-raggiungibili` si è
+spostato di conseguenza: non sorveglia più tre copie che non esistono, sorveglia ciò che resta
+davvero duplicato — la catena dei pannelli — e **vieta il ritorno** del confronto a mano.
+
+### `certificati_templates`: nessun `DROP`, e la ragione resta una misura
+
+Rimisurato il 2026-08-16 prima di toccare qualunque cosa: `SELECT count(*) FROM certificati_templates`
+→ `42P01`, la relazione non esiste; `pg_class × pg_namespace` su tutti gli schemi → **0 oggetti**, e
+**0** anche per `pre_inscriptions`. Non c'è niente da droppare e nessuna migrazione da applicare:
+scriverne una sarebbe una DDL a vuoto che afferma il falso sulla storia di questo database.
+`get_advisors(security)` → **0 ERROR** (restano gli `INFO`/`WARN` preesistenti, non di questo lavoro).
+**Zero migrazioni applicate in produzione per questo lavoro.**
+
+Fuori scope per decisione esplicita del piano le voci di checklist «Moduli Esterni» e
 «Iscrizioni Nuovi Alunni».
 
 **Prove:** `messaggi-chiavi-orfane` · `residuo-odt-assente` · `admin-modulistica-linguette` ·
-`messaggi-plurali-e-glossario` · `messaggi-parita-cataloghi` · `modulistica-linguette-raggiungibili`.
+`messaggi-plurali-e-glossario` · `messaggi-parita-cataloghi` · `modulistica-linguette-raggiungibili` ·
+`gate-coverage` · `isolamento-sede-coverage` · `auth-gaps-m9`.
 
 ---
 

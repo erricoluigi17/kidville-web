@@ -441,7 +441,26 @@ const PUBBLICHE: Record<string, string> = {
     'iscrizione/personale/upload:POST':
         'modulo pubblico «Anagrafica del personale»: la scansione del documento d’identità di chi già lavora qui, su un bucket PRIVATO e separato da quello dei documenti dei minori (`documenti_personale`, migrazione 20260811205643). Perimetro: tetto per IP condiviso con le altre porte di caricamento + limite di dimensione della piattaforma (413) + `verificaAllegatoPubblico` sui tipi. Il percorso è `documenti/<uuid>/<uuid>.<ext>`: due identificativi generati dal server, e del nome scelto dal browser non sopravvive un byte — su questa porta si chiama «carta-identita-<cognome>»',
 
-    'admin/pre-inscriptions:POST': "sottomissione del portale onboarding pubblico (il GET e il PATCH della stessa route sono `requireStaff`: qui la porta è aperta di proposito, ed è dichiarato nel file). Scrive una riga `pending`, non legge niente",
+    // ⚰️ QUI C'ERA `admin/pre-inscriptions:POST`, e la sua motivazione diceva:
+    // «sottomissione del portale onboarding pubblico … qui la porta è aperta di
+    // proposito». Il portale onboarding non esisteva più: `/onboarding` è un
+    // `redirect('/iscrizione')` da mesi, e la rotta aveva ZERO chiamanti — nessuna
+    // `fetch`, in nessun sorgente. Cioè questa riga spiegava una porta anonima con
+    // un consumatore inesistente, ed è il modo esatto in cui un'allowlist di
+    // sicurezza smette di essere documentazione e diventa un lock che dice il falso:
+    // chi la leggeva concludeva che la porta servisse.
+    //
+    // La porta, intanto, era la più larga dell'elenco: nessun tetto per IP, nessun
+    // honeypot, e accettava `parent_fiscal_code`, `parent_address` e `students` —
+    // codice fiscale e indirizzo del genitore più i dati dei minori — mentre
+    // `iscrizione/personale:POST`, due voci più su, ne porta cinque di presidi.
+    // Falliva chiuso solo perché la tabella non c'è, e nel fallire rimandava
+    // all'anonimo il messaggio di PostgREST verbatim.
+    //
+    // La rotta è stata CANCELLATA il 2026-08-16 (le domande di iscrizione arrivano
+    // da `/api/iscrizione` → `enrollment_submissions`), e con lei questa voce. La
+    // rete che avrebbe reso rossa da sola una riga così — «un'eccezione che nessuno
+    // invoca» — è l'ultimo test di questo file, ed è nata da qui.
 
     // ── Modulistica pubblica: il gate è un TOKEN, non una sessione ───────────
     'public/forms/[token]/submit:POST': 'token pubblico del modello (capability): il modello deve esistere ed essere pubblicato, + tetto 20/10 min per IP',
@@ -772,12 +791,17 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // pretende il `withRoute`. Sono presidi di FORMA: dicono che i controlli ci sono
         // scritti, non che rispondano 429 e 415 quando devono. Finché quel test di rotta non
         // esiste, questa voce è la meno sorvegliata delle venti.
+        //
+        // 🔻 20 → 19 il 2026-08-16, ed è una DISCESA: via `admin/pre-inscriptions:POST`,
+        // cancellata insieme alla sua rotta. La ragione per esteso sta lassù, al posto
+        // della voce; qui basta il verso, che è quello giusto — un handler pubblico in
+        // meno, e non un'esenzione riscritta meglio.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(20)
+        ).toBe(19)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {
@@ -800,6 +824,150 @@ describe('coverage-lock dei gate di autenticazione', () => {
             'cambiata, si rimette il numero. Una voce di allowlist che descrive un perimetro ' +
             'che non esiste è peggio di nessuna voce: spegne il sospetto su una porta anonima.',
         ).toContain(`tetto ${TETTO_UPLOAD_CANDIDATURE} caricamenti/10 min per IP`)
+    })
+
+    /**
+     * ─── LA PORTA CHE NESSUNO BUSSA PIÙ ─────────────────────────────────────────
+     *
+     * Il test qui sopra chiede a una motivazione se dice il vero su un NUMERO. Questo
+     * chiede a una voce intera se il suo consumatore esiste ancora.
+     *
+     * IL DIFETTO CHE LO FA NASCERE, per esteso perché è già costato. `admin/pre-inscriptions:POST`
+     * è stata in questo elenco fino al 2026-08-16 con la motivazione «sottomissione del
+     * portale onboarding pubblico … qui la porta è aperta di proposito». Il portale
+     * onboarding era stato sostituito da mesi (`/onboarding` è un `redirect('/iscrizione')`)
+     * e la rotta non aveva NESSUNA `fetch` che la chiamasse, in nessun sorgente. Restava
+     * una porta anonima che accettava il codice fiscale e l'indirizzo di un genitore più i
+     * dati dei suoi figli, difesa da una frase che nominava un consumatore inesistente — e
+     * un'allowlist di sicurezza che spiega una porta aperta con qualcosa che non c'è più
+     * non è documentazione: è un lock che dice il falso, e chi la rilegge conclude che la
+     * porta serva.
+     *
+     * Nessuno dei test qui sopra poteva vederlo. «Voci morte» chiede se l'HANDLER esiste —
+     * e l'handler esisteva; il tetto chiede se il NUMERO è cambiato — e non era cambiato.
+     * Mancava la terza domanda, che è quella che conta: *qualcuno la chiama ancora?*
+     *
+     * LA STESSA RETE, DALL'ALTRA PARTE DEL REPO. Lo stesso giorno
+     * `messaggi-plurali-e-glossario.test.ts` ha aggiunto a `NON_CONTATORI` il controllo dei
+     * «bersagli morti» — due eccezioni valevano per chiavi che nessun catalogo conteneva
+     * più — e ci ha scritto sopra la lezione: *«un tetto scende solo se qualcuno
+     * RIMISURA»*. Era stata applicata ai messaggi e non ai gate. Questa è la stessa rete,
+     * tesa dove pesa di più.
+     */
+
+    /** La radice dei sorgenti: qui si cerca chi chiama. */
+    const SRC_ROOT = path.join(process.cwd(), 'src')
+
+    /**
+     * Il percorso HTTP di una chiave `<rotta>:<METODO>`, come lo scriverebbe un chiamante:
+     * `/api/<rotta>`, coi segmenti dinamici (`[token]`) aperti a qualunque cosa che non sia
+     * uno slash. Il confine finale (`'`, `"`, backtick, `?`) è ciò che distingue
+     * `/api/iscrizione` da `/api/iscrizione/insegnanti`: senza, la porta del wizard si
+     * certificherebbe da sola col chiamante della porta accanto.
+     */
+    function urlDellaRotta(chiave: string): RegExp {
+        const rotta = chiave.slice(0, chiave.lastIndexOf(':'))
+        const corpo = rotta
+            .split('/')
+            .map((s) => (s.startsWith('[') ? String.raw`[^/'"\`\s]+` : s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+            .join('/')
+        return new RegExp(String.raw`/api/${corpo}(?=['"\`?])`)
+    }
+
+    /**
+     * L'UNICA porta di questo elenco il cui chiamante NON è nel codice, dichiarata a mano
+     * e con la ragione — perché «nessuno la chiama da dentro» qui non significa «è morta».
+     *
+     * Chi entra in questa mappa deve poter rispondere a una domanda sola: *chi bussa, se
+     * non l'app?* Una risposta vaga («la chiamano da fuori») è precisamente la forma che
+     * questo lock esiste per rifiutare.
+     */
+    const CHIAMATA_DA_FUORI: Record<string, string> = {
+        'health:GET':
+            "l'endpoint di salute non ha e non deve avere un chiamante dentro l'app: a interrogarlo " +
+            'sono il controllo del deploy e il monitoraggio esterno, che vivono fuori da questo ' +
+            'repository. È la sola porta di questo elenco per cui «nessuna `fetch` in `src/`» è la ' +
+            'forma corretta e non il sintomo di un pannello cancellato — una pagina che si chiedesse ' +
+            'da sola se sta bene risponderebbe di sì proprio quando è caduta.',
+    }
+
+    it('ogni porta senza gate ha ancora qualcuno che la chiama', () => {
+        // I sorgenti si leggono con i COMMENTI SPENTI, e non è un dettaglio: `/api/health` e
+        // `/api/logs` compaiono in una ventina di commenti che li spiegano, e su quelli una
+        // rete tesa sul testo grezzo sarebbe verde per prosa. Le stringhe restano leggibili
+        // — è lì che i chiamanti veri scrivono l'indirizzo.
+        const sorgenti = fileSorgente(SRC_ROOT).map(
+            (f) =>
+                [
+                    path.relative(process.cwd(), f).replace(/\\/g, '/'),
+                    mascheraSorgente(fs.readFileSync(f, 'utf8')).senzaCommenti,
+                ] as const,
+        )
+        expect(sorgenti.length, 'Nessun sorgente letto: la rete non sta guardando niente').toBeGreaterThan(500)
+
+        const orfane: string[] = []
+        for (const chiave of Object.keys(PUBBLICHE)) {
+            if (chiave in CHIAMATA_DA_FUORI) continue
+            const url = urlDellaRotta(chiave)
+            const propria = `src/app/api/${chiave.slice(0, chiave.lastIndexOf(':'))}/route.`
+            // La rotta non si certifica da sola: il proprio file non conta come chiamante.
+            const chiamanti = sorgenti.filter(([f, t]) => !f.startsWith(propria) && url.test(t))
+            if (chiamanti.length === 0) orfane.push(`${chiave}  (cercato: ${url.source})`)
+        }
+
+        expect(
+            orfane,
+            'Porte ANONIME che nessun sorgente di `src/` chiama più. Non sono «inerti»: sono ' +
+            'aperte e senza padrone, e la loro voce in PUBBLICHE le difende con una ragione che ' +
+            'parla di un consumatore che non esiste. Delle due l’una: si CANCELLA la rotta (con ' +
+            'la sua voce), oppure — se a bussare è qualcosa che vive fuori da questo repository — ' +
+            'si dichiara in `CHIAMATA_DA_FUORI` dicendo CHI bussa.',
+        ).toEqual([])
+    })
+
+    it("…e l'eccezione «chiamata da fuori» non sopravvive alla porta che protegge", () => {
+        // La stessa domanda, un piano più su. Senza questa riga, il giorno in cui `health:GET`
+        // prendesse un gate o sparisse, la sua deroga resterebbe qui a tenere caldo il posto
+        // per la prossima rotta che nascesse con quel nome — che è esattamente il difetto che
+        // il test qui sopra è nato per chiudere, ricomparso nella sua rete.
+        expect(
+            Object.keys(CHIAMATA_DA_FUORI).filter((k) => !(k in PUBBLICHE)),
+            'Deroghe che valgono per porte che non stanno più in PUBBLICHE: vanno tolte.',
+        ).toEqual([])
+
+        // E ogni deroga porta una ragione scritta, non una riga muta.
+        for (const [chiave, motivo] of Object.entries(CHIAMATA_DA_FUORI)) {
+            expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(80)
+        }
+
+        // Il tetto delle deroghe, che è una fotografia come quello di PUBBLICHE: se sale,
+        // qualcuno ha appena spiegato una porta orfana invece di chiuderla.
+        expect(
+            Object.keys(CHIAMATA_DA_FUORI).length,
+            'Il numero di porte «chiamate da fuori» è cambiato. Se è SALITO, fermati: la ' +
+            'risposta facile a questa rete è aggiungere una riga qui, ed è la risposta ' +
+            'sbagliata in tutti i casi tranne quello del monitoraggio.',
+        ).toBe(1)
+    })
+
+    it('la rete riconosce una porta orfana anche quando la sua voce è impeccabile', () => {
+        // CONTROLLO POSITIVO. Senza, questo lock sarebbe verde anche con una regexp che non
+        // prende niente — cioè su una rete che non guarda. Si simula il caso vero: la chiave
+        // di una rotta che nessuno chiama, cercata dentro un sorgente che parla d'altro.
+        const finta = urlDellaRotta('admin/porta-che-nessuno-chiama:POST')
+        expect(finta.test("await fetch('/api/admin/porta-che-nessuno-chiama', { method: 'POST' })")).toBe(true)
+        expect(finta.test("await fetch('/api/admin/students')")).toBe(false)
+
+        // E il confine finale fa il suo mestiere: la porta figlia non certifica la madre.
+        const madre = urlDellaRotta('iscrizione:POST')
+        expect(madre.test("await fetch('/api/iscrizione/insegnanti', …)")).toBe(false)
+        expect(madre.test("await fetch('/api/iscrizione', …)")).toBe(true)
+        expect(madre.test('await fetch(`/api/iscrizione?sede=${id}`)')).toBe(true)
+
+        // E il segmento dinamico resta un segmento solo.
+        const conToken = urlDellaRotta('public/forms/[token]/submit:POST')
+        expect(conToken.test('await fetch(`/api/public/forms/${token}/submit`, …)')).toBe(true)
+        expect(conToken.test("await fetch('/api/public/forms/submit')")).toBe(false)
     })
 })
 

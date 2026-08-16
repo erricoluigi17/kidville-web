@@ -272,5 +272,7 @@
   "sdsChiudi": "Chiudi dettaglio domanda",
   "builderTornaIndietro": "Torna alla modulistica",
   "modTabCandidature": "Candidature",
-  "modTabPersonale": "Personale"
+  "modTabPersonale": "Personale",
+  "modTabSconosciutaAvviso": "Il collegamento che hai aperto chiede una scheda che questa pagina non ha più: ti abbiamo portato su «Moduli inviabili». Le domande di iscrizione si leggono in «Moduli ricevuti»; la carta intestata della scuola non si carica più a mano, perché ora l’app la stampa da sé su ogni documento.",
+  "modTabSconosciutaChiudi": "Nascondi l’avviso"
 }

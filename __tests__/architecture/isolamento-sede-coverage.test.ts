@@ -1039,7 +1039,12 @@ const AMMESSE: Record<string, string> = {
     // SOLO `scuola_id`, mai il resto della riga, e non produce mai un riuso.
     'admin/import/anagrafiche:POST': 'ricerca del CF nelle altre sedi (solo `scuola_id`) per non fondere due bambini omonimi',
     'admin/iscrizioni:PATCH': "idem in fase di approvazione + aggiornamento della classe sull'alunno già dedotto in sede",
-    'admin/pre-inscriptions:PATCH': "recupero dell'account genitore per email quando l'utente auth esiste già",
+    // ⚰️ Qui c'era `admin/pre-inscriptions:PATCH` («recupero dell'account genitore per
+    // email quando l'utente auth esiste già»). La rotta è stata CANCELLATA il 2026-08-16:
+    // il pannello «Sala d'Attesa» che la usava non esiste più e non aveva nessun altro
+    // chiamante. Non è un debito pagato — è un handler che non esiste più, e va detto
+    // così, perché `handlerEsentati` qui sotto scende di 1 e questo lock esiste anche per
+    // impedire che un numero cali per la ragione sbagliata.
 
     // ── Protocollo (DPR 445): registro WORM, numerazione per sede ────────────
     'admin/protocolli:GET': 'catena delle risposte di un protocollo già verificato (`collegato_a_id`)',
@@ -1411,7 +1416,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `routeConServiceRole: 296` e `handlerControllati: 461`: il delta di questa
             // rotta è esattamente +1 e +1, e NON copre il 460 → 461 che si vede qui sotto —
             // quello c'era già prima, e non è di questo lavoro.
-            routeConServiceRole: 297,
+            //
+            // 🔻 297 → 296 il 2026-08-16: è USCITA `admin/pre-inscriptions`, cancellata
+            // perché non aveva più nessun chiamante (il portale che la usava è un
+            // `redirect('/iscrizione')` da mesi) e perché la metà rimasta era la peggiore:
+            // un `POST` anonimo che accettava codice fiscale e indirizzo del genitore più
+            // i dati dei figli. Non è un presidio tolto: è un file che non esiste più.
+            routeConServiceRole: 296,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1483,7 +1494,18 @@ describe('coverage-lock isolamento fra sedi', () => {
             // perché questo lock esiste per non far tornare i conti per caso: chi ha aggiunto
             // quel secondo handler dichiari qui quale sia, invece di lasciarlo coperto da
             // questa riga.
-            handlerControllati: 462,
+            //
+            // 🔻 462 → 459 il 2026-08-16, ed è una DISCESA di 3: sono i tre handler
+            // (`GET`, `POST`, `PATCH`) di `admin/pre-inscriptions`, cancellata insieme al
+            // pannello «Sala d'Attesa». Il numero sopra scende di 1 nello stesso passaggio
+            // perché il file era uno solo; qui i due passi NON coincidono, ed è il caso
+            // opposto della coincidenza dichiarata l'11/08 e il 15/08 — vale la pena
+            // notarlo, perché è la stessa riga di prosa a doverli spiegare entrambi.
+            //
+            // ⚠️ IL −3 È MISURATO, NON DEDOTTO: eseguendo questo lock col solo file
+            // cancellato si legge esattamente `{296, 459, 94}`, cioè i tre valori qui
+            // scritti, e nessun altro pezzo dell'albero si è mosso in questo passaggio.
+            handlerControllati: 459,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1573,7 +1595,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // quando la `select('cv_path')` fallisce (nessun orfano rimosso). Se un giorno
             // quel file smettesse di coprire la spazzata, questa voce resterebbe verde
             // sull'esenzione e cieca sul comportamento.
-            handlerEsentati: 95,
+            //
+            // 95 → 94 il 2026-08-16: via `admin/pre-inscriptions:PATCH`. Il commento in
+            // testa a questo numero dice che «CALA solo quando un debito viene pagato», e
+            // qui non è così: cala perché l'handler è stato CANCELLATO. La distinzione va
+            // scritta invece che lasciata al verso del numero — un debito pagato lascia
+            // dietro di sé un presidio nuovo, una cancellazione no, e chi rilegge questa
+            // riga fra un mese non può dedurre quale dei due sia guardando un «−1».
+            handlerEsentati: 94,
         })
     })
 })

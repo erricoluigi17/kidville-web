@@ -3,7 +3,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 /**
- * LOCK · sotto `src/` non deve restare la MACCHINA che rifà le due tabelle morte.
+ * LOCK · sotto `src/` non deve restare niente delle due tabelle morte: né la MACCHINA
+ * che le rifà, né — dal 2026-08-16, terza passata — la loro semplice lettura.
  *
  * ─── COSA ERA ───────────────────────────────────────────────────────────────────
  *
@@ -18,6 +19,30 @@ import { join, relative } from 'node:path'
  * Accanto, nella stessa schermata, la linguetta «Sala d'Attesa» leggeva `pre_inscriptions`.
  * È stata smontata lo stesso giorno: le domande di iscrizione si leggono da «Moduli
  * ricevuti», e quel pannello duplicava un lavoro che c'era già.
+ *
+ * ─── LA TERZA VOLTA, ED È QUELLA CHE PESAVA ─────────────────────────────────────
+ *
+ * Tolto il pannello, era rimasta in piedi la sua ROTTA INTERA
+ * (`src/app/api/admin/pre-inscriptions/route.ts`), e la metà rimasta era quella
+ * pericolosa: il `POST` era **pubblico e senza gate** — nessun `requireStaff`, nessun
+ * tetto per IP, nessun honeypot — e accettava codice fiscale e indirizzo del genitore
+ * più i dati dei figli. Falliva chiuso solo perché la tabella non c'è, e nel fallire
+ * rimandava all'anonimo il messaggio di PostgREST verbatim, cioè il nome della
+ * relazione mancante. Il `PATCH`, dall'altra parte, creava account auth e restituiva
+ * una password in chiaro.
+ *
+ * Era la stessa classe di guasto del punto 2 qui sotto — «una rete tesa attorno a UN
+ * CASO lascia passare il caso gemello» — applicata al livello sopra: chiusa la DDL,
+ * restava la porta. E la difesa era la stessa che questo file rifiutava dieci righe
+ * più giù per l'altro blocco: «tanto la tabella non esiste». *«Inerte» non basta a
+ * giustificare la permanenza di una macchina che ricrea; non basta nemmeno per una
+ * porta anonima che scrive.*
+ *
+ * La rotta è stata CANCELLATA il 2026-08-16. Aveva **zero chiamanti**: misurato con
+ * `grep -rn "admin/pre-inscriptions" src/ __tests__/ e2e/ public/ scripts/` — solo la
+ * rotta stessa, dei test e dei commenti, nessuna `fetch`. Il portale che la usava non
+ * esiste più (`/onboarding` è un `redirect('/iscrizione')`) e le domande di iscrizione
+ * arrivano da `/api/iscrizione` → `enrollment_submissions`.
  *
  * ─── PERCHÉ IL LOCK, E NON SOLO LA CANCELLAZIONE ────────────────────────────────
  *
@@ -61,7 +86,7 @@ import { join, relative } from 'node:path'
  *
  * ─── COME SI RIMISURA A MANO (e deve dare la STESSA risposta) ───────────────────
  *
- *   grep -rniE 'certificati_templates|\bodt\b|vnd\.oasis\.opendocument|(create (table|index|policy)|alter table|drop (table|policy)).*\bpre_inscriptions\b' src/
+ *   grep -rniE 'certificati_templates|\bodt\b|vnd\.oasis\.opendocument|pre_inscriptions' src/
  *
  * → **zero righe**. Verificato su `grep` di macOS (BSD) il 2026-08-16: `\b` è supportato.
  * Questa riga esiste perché la prima versione del lock prometteva «dei template non deve
@@ -82,8 +107,8 @@ const RADICE = process.cwd()
 /**
  * Le tracce che, sotto `src/`, non devono più comparire — e perché.
  *
- * Sono le MACCHINE: le due tabelle, l'estensione che il campo di caricamento accettava, il
- * tipo MIME che gli faceva da filtro, l'acronimo che li nominava.
+ * Le due tabelle, l'estensione che il campo di caricamento accettava, il tipo MIME che gli
+ * faceva da filtro, l'acronimo che li nominava.
  */
 const RESIDUI_VIETATI: readonly { nome: string; pattern: RegExp; motivo: string }[] = [
   {
@@ -110,32 +135,21 @@ const RESIDUI_VIETATI: readonly { nome: string; pattern: RegExp; motivo: string 
     motivo: 'filtrava il caricamento che non caricava niente',
   },
   {
-    nome: 'la DDL che rifà la tabella delle pre-iscrizioni',
-    // Vietata la MACCHINA, non il nome: `.from('pre_inscriptions')` resta ammesso di
-    // proposito. Vedi l'esenzione qui sotto.
-    pattern:
-      /(?:CREATE\s+(?:TABLE|INDEX|POLICY)|ALTER\s+TABLE|DROP\s+(?:TABLE|POLICY)).*\bpre_inscriptions\b/i,
+    nome: 'il nome della tabella delle pre-iscrizioni, in qualunque forma',
+    // PROMOSSO il 2026-08-16 da «niente DDL» a «niente affatto», che è la riga che la
+    // versione precedente di questo file si era già scritta per il giorno in cui la
+    // rotta fosse sparita. È sparita, e il divieto vale ora anche per le LETTURE:
+    // `.from('pre_inscriptions')` non ha più nessun chiamante da proteggere, e
+    // un'esenzione che nessuno invoca è solo un posto tenuto caldo per il prossimo.
+    pattern: /pre_inscriptions/i,
     motivo:
-      'CREATE/INDEX/RLS/POLICY ricreerebbero una tabella che la produzione non ha, destinata ' +
-      'a nome, cognome, email, telefono, codice fiscale e indirizzo del genitore più i dati ' +
-      "dei figli, con una policy `FOR ALL USING (true)` — cioè leggibile e scrivibile da chiunque",
+      'la tabella non esiste in produzione e nessuna schermata la nomina più. CREATE/INDEX/' +
+      'RLS/POLICY la ricreerebbero — destinata a nome, cognome, email, telefono, codice ' +
+      "fiscale e indirizzo del genitore più i dati dei figli, con una policy `FOR ALL USING " +
+      "(true)` — e una LETTURA `.from('pre_inscriptions')` è la traccia della rotta anonima " +
+      'che è stata cancellata: chi la riscrive riapre la porta insieme alla query',
   },
 ]
-
-/**
- * L'ESENZIONE, esplicita e motivata: le LETTURE di `pre_inscriptions` restano ammesse.
- *
- * `src/app/api/admin/pre-inscriptions/route.ts` interroga ancora quella tabella in cinque
- * punti (e `src/app/onboarding/page.tsx` la nomina in un commento). Contro una tabella che
- * non esiste, quelle query non possono che fallire: è un debito **dichiarato**, non una cosa
- * che questo lock finge di non vedere. Vietarne il nome oggi renderebbe il lock rosso su un
- * file che nessuno di questo ramo ha il mandato di cancellare — e un lock rosso per
- * impostazione predefinita è un lock che si disattiva.
- *
- * Il giorno in cui quella route sparirà, la riga giusta da scrivere qui è `/pre_inscriptions/`
- * senza qualificazioni: promossa da «niente DDL» a «niente affatto».
- */
-const ESENZIONE_LETTURE_VIVE = ".from('pre_inscriptions')"
 
 function sorgenti(): string[] {
   const trovati: string[] = []
@@ -168,9 +182,10 @@ describe('lock architettura · nessun residuo delle due tabelle morte sotto src/
   })
 
   /**
-   * Il controllo positivo: un campione di ciò che è stato tolto, riga per riga, più le due
-   * righe che devono restare AMMESSE. Senza, i divieti sarebbero verdi anche con regexp che
-   * non prendono niente — cioè su un lock che non vieta.
+   * Il controllo positivo: un campione di ciò che è stato tolto, riga per riga. Senza, i
+   * divieti sarebbero verdi anche con regexp che non prendono niente — cioè su un lock che
+   * non vieta. L'ultima riga è il controllo NEGATIVO: codice innocente, che nessuno dei
+   * quattro divieti deve toccare.
    */
   const CAMPIONE = [
     /* 1 */ '    CREATE TABLE IF NOT EXISTS certificati_templates (',
@@ -182,30 +197,41 @@ describe('lock architettura · nessun residuo delle due tabelle morte sotto src/
     /* 7 */ '    ALTER TABLE pre_inscriptions ENABLE ROW LEVEL SECURITY;',
     /* 8 */ '    DROP POLICY IF EXISTS "Pre-iscrizioni accessibili a tutti" ON pre_inscriptions;',
     /* 9 */ '    CREATE POLICY "Pre-iscrizioni accessibili a tutti" ON pre_inscriptions FOR ALL USING (true);',
-    /* 10 */ `      ${ESENZIONE_LETTURE_VIVE}`,
+    /* 10 */ "      .from('pre_inscriptions')",
     /* 11 */ '    const nienteDaVedere = 1',
   ].join('\n')
 
   it('riconosce il residuo dov’era davvero: le due tabelle, la prosa, il campo, il filtro', () => {
-    const [tabella, acronimo, mime, ddl] = RESIDUI_VIETATI.map((r) => r.pattern)
+    const [tabella, acronimo, mime, preIscrizioni] = RESIDUI_VIETATI.map((r) => r.pattern)
     expect(righeColResiduo(CAMPIONE, tabella)).toEqual([1])
     // la stessa parola nella prosa (riga 2) e nell'estensione del campo (riga 3)
     expect(righeColResiduo(CAMPIONE, acronimo)).toEqual([2, 3])
     expect(righeColResiduo(CAMPIONE, mime)).toEqual([4])
-    expect(righeColResiduo(CAMPIONE, ddl)).toEqual([5, 6, 7, 8, 9])
+    // 5-9 sono la MACCHINA che ricrea la tabella; la 10 è la LETTURA, e dal 2026-08-16
+    // è vietata anche quella — è la riga che distingue questo lock da quello di ieri.
+    expect(righeColResiduo(CAMPIONE, preIscrizioni)).toEqual([5, 6, 7, 8, 9, 10])
   })
 
-  it('lascia passare la LETTURA viva: il divieto è sulla macchina, non sul nome', () => {
-    // Se un giorno questa riga diventasse rossa, il lock avrebbe smesso di distinguere «chi
-    // legge una tabella morta» (debito dichiarato) da «chi la ricrea» (il guasto), e la
-    // squadra lo spegnerebbe invece di ripararlo.
+  it('la lettura della tabella morta NON è più esentata (e il divieto resta chirurgico)', () => {
+    // Fino al 2026-08-15 questo test asseriva l'ESATTO CONTRARIO: che `.from('pre_inscriptions')`
+    // dovesse passare, perché una rotta viva la interrogava e un lock rosso per impostazione
+    // predefinita è un lock che si spegne. Quella rotta è stata cancellata, quindi l'esenzione
+    // non protegge più nessun chiamante — proteggerebbe solo il prossimo che la riscrive.
+    const lettura = "      .from('pre_inscriptions')"
+    expect(RESIDUI_VIETATI[3].pattern.test(lettura)).toBe(true)
+
+    // E il divieto resta CHIRURGICO: gli altri tre non devono prendere una riga che non è
+    // loro, o il messaggio d'errore manderebbe chi lo legge a cercare la cosa sbagliata.
+    for (const { nome, pattern } of RESIDUI_VIETATI.slice(0, 3)) {
+      expect(pattern.test(lettura), `«${nome}» non c'entra con questa riga`).toBe(false)
+    }
+    // Controllo negativo vero e proprio: codice innocente, nessun divieto lo tocca.
     for (const { nome, pattern } of RESIDUI_VIETATI) {
       expect(
-        pattern.test(`      ${ESENZIONE_LETTURE_VIVE}`),
-        `«${nome}» non deve prendere una lettura`,
+        pattern.test('    const nienteDaVedere = 1'),
+        `«${nome}» diventa rosso su codice innocente`,
       ).toBe(false)
     }
-    expect(righeColResiduo(CAMPIONE, RESIDUI_VIETATI[3].pattern)).not.toContain(10)
   })
 
   for (const { nome, pattern, motivo } of RESIDUI_VIETATI) {

@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 
 // M9 — regression-lock sui gap auth PRE-esistenti segnalati in M3 e chiusi in M9:
-// forms/export (pdf+xlsx), admin/forms, admin/parents/[id], admin/adults,
-// admin/pre-inscriptions (GET/PATCH; il POST è il portale pubblico), chat
+// forms/export (pdf+xlsx), admin/forms, admin/parents/[id], admin/adults, chat
 // (config/contacts/threads), notes/sign, teacher/modulistica GET.
+// (`admin/pre-inscriptions` stava in questo elenco: la rotta è stata cancellata il
+// 2026-08-16 — vedi la nota accanto al test tolto, più sotto.)
 // Verifica: (a) ogni handler propaga la response del gate (401 in anonimo);
 // (b) chat usa l'identità del GATE e ignora il ?userId= legacy (anti-spoof);
 // (c) threads POST rifiuta i non-partecipanti; (d) notes/sign esige il legame
@@ -79,7 +80,6 @@ import { GET as pdfGET } from '@/app/api/forms/export/pdf/route'
 import { GET as formsGET, POST as formsPOST } from '@/app/api/admin/forms/route'
 import { GET as parentByIdGET } from '@/app/api/admin/parents/[id]/route'
 import { GET as adultsGET } from '@/app/api/admin/adults/route'
-import { GET as preInsGET, PATCH as preInsPATCH } from '@/app/api/admin/pre-inscriptions/route'
 import { GET as chatConfigGET } from '@/app/api/chat/config/route'
 import { GET as chatContactsGET } from '@/app/api/chat/contacts/route'
 import { GET as chatThreadsGET, POST as chatThreadsPOST } from '@/app/api/chat/threads/route'
@@ -144,12 +144,18 @@ describe('M9 — gate propagati (401 in anonimo)', () => {
   it('GET /api/admin/adults → 401', async () => {
     expect((await adultsGET(req('http://x/api/admin/adults') as never)).status).toBe(401)
   })
-  it('GET/PATCH /api/admin/pre-inscriptions → 401 (il POST pubblico resta senza gate)', async () => {
-    expect((await preInsGET(req('http://x/api/admin/pre-inscriptions') as never)).status).toBe(401)
-    expect(
-      (await preInsPATCH(jsonReq('http://x/api/admin/pre-inscriptions', 'PATCH', { id: UUID_A, status: 'rejected' }) as never)).status
-    ).toBe(401)
-  })
+  // QUI C'ERA il test di `GET/PATCH /api/admin/pre-inscriptions`, col titolo «il POST
+  // pubblico resta senza gate». La rotta INTERA è stata cancellata il 2026-08-16, e il
+  // titolo di quel test era la denuncia che nessuno aveva letto: due metodi sorvegliati e
+  // il terzo — l'unico ANONIMO, quello che accettava codice fiscale e indirizzo del
+  // genitore più i dati dei figli — messo fra parentesi come un fatto della vita.
+  //
+  // Non c'è niente da misurare al suo posto: la sala d'attesa non esiste più (le domande
+  // di iscrizione si leggono da «Moduli ricevuti», e arrivano da `/api/iscrizione`), il
+  // pannello che la chiamava è stato smontato e la rotta non aveva nessun altro chiamante.
+  // Che non torni lo tengono fermo due lock d'architettura: `gate-coverage` (ogni porta
+  // senza gate deve avere qualcuno che la chiama) e quello sui residui delle due tabelle
+  // morte, che sotto `src/` vieta persino il nome della tabella.
   it('GET /api/chat/config|contacts|threads → 401', async () => {
     expect((await chatConfigGET(req('http://x/api/chat/config'))).status).toBe(401)
     expect((await chatContactsGET(req('http://x/api/chat/contacts'))).status).toBe(401)

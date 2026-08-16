@@ -51,6 +51,27 @@ function pagine(): string[] {
 /** `[id]` in un segmento del percorso: quella rotta statica non è mai. */
 const haSegmentoDinamico = (percorso: string): boolean => /\[[^\]]+\]/.test(percorso)
 
+/**
+ * Il codice senza commenti: `/* … *\/` e `// …`. Stessa forma dell'omonima in
+ * `ricevuta-firma-un-motore-solo.test.ts`, e per lo stesso motivo.
+ *
+ * ⚠️ QUI È LA PARTE CHE FA LA DIFFERENZA FRA UN LOCK E UNA RIGA VERDE.
+ *
+ * Fino al 2026-08-16 questo test cercava la STRINGA `Suspense` nel sorgente intero. Il
+ * commento che spiega perché il confine di sospensione serve — scritto dentro la pagina
+ * che il lock sorveglia — contiene la parola due volte: la pagina si immunizzava con la
+ * propria documentazione. Misurato togliendo il wrapper e lasciando i commenti: il test
+ * restava VERDE.
+ *
+ * È il modo peggiore in cui una protezione muore, perché muore in silenzio e per mano di
+ * chi la stava spiegando.
+ */
+const senzaCommenti = (codice: string): string =>
+  codice.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+/** Il JSX vero, non la parola: `<Suspense>` o `<Suspense …>`. */
+const haConfineDiSospensione = (codice: string): boolean => /<Suspense[\s/>]/.test(senzaCommenti(codice))
+
 describe('lock architettura · `useSearchParams()` dentro un confine di sospensione', () => {
   const tutte = pagine()
 
@@ -65,7 +86,7 @@ describe('lock architettura · `useSearchParams()` dentro un confine di sospensi
     const scoperte = tutte.filter((percorso) => {
       if (haSegmentoDinamico(percorso)) return false
       const sorgente = fs.readFileSync(percorso, 'utf8')
-      return sorgente.includes('useSearchParams') && !sorgente.includes('Suspense')
+      return senzaCommenti(sorgente).includes('useSearchParams') && !haConfineDiSospensione(sorgente)
     })
     expect(
       scoperte,

@@ -293,6 +293,11 @@ import {
 import { prestampato } from '@/lib/prestampati/registro'
 import { modelloGenitore } from '@/lib/prestampati/modelli/genitore'
 import { estraiTesto } from '@/lib/protocolli/estrai'
+// Solo per il CONTROLLO NEGATIVO del lock sulle istruzioni orfane: serve a spostare la
+// quota di partenza di un foglio e provare che il criterio sa vedere un caso NUOVO. Il
+// motore non si modifica in questo lavoro, si misura.
+import { buildPrestampatoPdf } from '@/lib/prestampati/impaginazione'
+import type { BloccoPrestampato } from '@/lib/prestampati/tipi'
 
 // ─── Un mondo inventato ─────────────────────────────────────────────────────────
 
@@ -3142,16 +3147,21 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     }
   })
 
-  it('🔴 copia vuota: nessuna istruzione resta ORFANA su una pagina senza la sua domanda', async () => {
+  it('🔴 copia vuota: l’ULTIMA pagina porta qualcosa da COMPILARE, non solo da leggere', async () => {
     // ⚠️ QUESTO DIFETTO L'HA TROVATO LA PROVA VISIVA, non i test: rimettere le istruzioni ha
     // portato `dieta_speciale` da una pagina a due, e la seconda conteneva SOLO «Una data di
     // scadenza, oppure la dicitura riportata sul certificato…» — cioè la nota di un campo che
-    // era rimasto sull'altro foglio, sopra due terzi di pagina bianca. Un'istruzione separata
-    // dalla domanda che spiega non spiega più niente.
+    // era rimasto sull'altro foglio, sopra due terzi di pagina bianca.
     //
-    // Il lock che c'era — «l'ultima pagina porta contenuto del modulo» — restava VERDE:
+    // Il lock precedente — «l'ultima pagina porta contenuto del modulo» — restava VERDE:
     // un'istruzione è contenuto. Qui si chiede di più, cioè che sull'ultima pagina ci sia
-    // qualcosa da COMPILARE, e non solo qualcosa da leggere.
+    // qualcosa da COMPILARE.
+    //
+    // ⚠️ E IL NOME DI QUESTO TEST È STATO CORRETTO. Si chiamava «nessuna istruzione resta
+    // ORFANA su una pagina senza la sua domanda» e non poteva accorgersene: guarda l'ULTIMA
+    // pagina, quindi una nota rimasta sola in fondo a una pagina INTERMEDIA gli è invisibile
+    // per costruzione — ed è esattamente il difetto che il foglio aveva mentre lui era
+    // verde. Quel controllo esiste adesso davvero, ed è il test qui sotto.
     for (const slug of SEI_MODULI) {
       alunnoIn()
       const res = await POST(
@@ -3178,6 +3188,159 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
         `${slug} — l'ultima pagina porta solo istruzioni, nessun campo da compilare`,
       ).not.toEqual([])
     }
+  })
+
+  it('🔴 copia vuota: nessuna istruzione resta ORFANA su una pagina senza la sua domanda', async () => {
+    // IL CONTROLLO CHE IL NOME PROMETTE, e che per due giorni non è stato fatto: **su OGNI
+    // pagina**, non solo sull'ultima. Per ciascuna istruzione stampata si guarda la pagina
+    // che la contiene e ci si chiede se contiene anche l'ETICHETTA del campo a cui
+    // appartiene. Una nota separata dalla domanda che spiega non spiega più niente, e non
+    // conta se il salto cade sull'ultima pagina o su una intermedia: su `dieta_speciale` il
+    // difetto è stato prima sulla seconda pagina, poi — «riparato» — in fondo alla prima.
+    //
+    // ─── LA CAUSA, MISURATA E NON DEDOTTA ──────────────────────────────────────────
+    //
+    // `buildPrestampatoPdf` dà all'ULTIMO blocco di contenuto un limite più stretto che a
+    // tutti gli altri (`limitePerUltimoBlocco`, per riservare il posto alla firma). Nota e
+    // campo sono DUE blocchi: quello che capita per ultimo viene misurato contro un limite
+    // diverso dal suo compagno, e la coppia si spacca **per costruzione** ogni volta che il
+    // foglio arriva pieno fin lì. Provato in laboratorio sui blocchi veri di
+    // `dieta_speciale`: con un blocco qualunque aggiunto in coda — cioè col campo che non è
+    // più l'ultimo — nota e campo restano insieme; fondendo i due in UN SOLO blocco si
+    // spostano insieme sulla pagina nuova, che così porta anche qualcosa da compilare.
+    // Invertire l'ordine non serve: si sposta di lato lo stesso difetto.
+    //
+    // ⚠️ LA RIPARAZIONE VERA È QUINDI UN BLOCCO `{ tipo: 'gruppo', blocchi: [...] }` in
+    // `src/lib/prestampati/tipi.ts` + `preferisciBloccoIntero` sull'insieme in
+    // `src/lib/prestampati/impaginazione.ts` — il motore, che non appartiene a questo
+    // workstream. Finché non c'è, il residuo MISURATO sta scritto qui sotto invece che
+    // dichiarato riparato: l'elenco è esatto, quindi questo test diventa rosso sia se
+    // l'orfana si moltiplica sia il giorno in cui il `gruppo` arriva e la lista va svuotata.
+    const ATTESE_ORFANE = ['dieta_speciale.validita']
+
+    const orfane: string[] = []
+    let controllate = 0
+    for (const slug of SEI_MODULI) {
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: slug,
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'copia_vuota',
+          risposte: {},
+        }),
+      )
+      expect(res.status, slug).toBe(201)
+      const pagine = (await testoPerPagina(new Uint8Array(await res.arrayBuffer()))).map((p) =>
+        normalizza(p),
+      )
+
+      for (const campo of modelloGenitore(slug)?.campi ?? []) {
+        const istruzione = aiutoDaStampare(campo, slug)
+        if (!istruzione) continue
+        // I primi 40 caratteri: bastano a riconoscerla e non dipendono da come
+        // l'impaginatore manda a capo (il testo di pagina è già normalizzato).
+        const ago = normalizza(istruzione).slice(0, 40)
+        const conNota = pagine.filter((p) => p.includes(ago))
+        expect(conNota.length, `${slug}.${campo.nome} — istruzione non stampata`).toBeGreaterThan(0)
+        controllate += 1
+        // L'etichetta esce sempre coi due punti, che il modello li scriva o no
+        // (`preparaCella`): si cerca la sola etichetta, che è il pezzo stabile.
+        const domanda = normalizza(campo.etichetta.trim().replace(/:+$/, ''))
+        if (!conNota.every((p) => p.includes(domanda))) orfane.push(`${slug}.${campo.nome}`)
+      }
+    }
+
+    // Senza questo, il giorno in cui gli aiuti sparissero dai modelli il ciclo girerebbe a
+    // vuoto e l'elenco vuoto sembrerebbe una vittoria.
+    expect(controllate, 'nessuna istruzione controllata').toBeGreaterThanOrEqual(14)
+    expect(orfane.sort(), 'istruzioni separate dalla loro domanda da un salto pagina').toEqual(
+      ATTESE_ORFANE,
+    )
+
+    // ─── CONTROLLO NEGATIVO ────────────────────────────────────────────────────────
+    //
+    // Un criterio che non trova mai niente è indistinguibile da un foglio sano, ed è il modo
+    // in cui il lock precedente è rimasto verde su un difetto vero. Qui si prova che sa
+    // vedere un caso NUOVO: si sposta in basso la quota di partenza della delega — come
+    // farebbe un'intestazione di sede più alta, un nome di scuola che va a capo, un campo in
+    // più — e si pretende che l'orfana salti fuori. Vale anche come misura di quanto il
+    // difetto sia LATENTE: non è un incidente di `dieta_speciale`, è la coppia nota/campo che
+    // si spacca ovunque il foglio arrivi pieno al confine.
+    const modelloDelega = modelloGenitore('delega_ritiro')!
+    const trovateSpostando: string[] = []
+    for (const mm of [12, 18, 24, 30, 36]) {
+      const base = blocchiModuloVuoto(modelloDelega, DATI_PER_MODULO_VUOTO)
+      const spostati: BloccoPrestampato[] = [base[0]!, { tipo: 'spazio', mm }, ...base.slice(1)]
+      const pdf = buildPrestampatoPdf({
+        intestazione: ['Scuola Inventata', 'Napoli'],
+        titolo: modelloDelega.titolo,
+        protocollo: null,
+        blocchi: spostati,
+        luogoData: 'Napoli, lì ____________  Firma del genitore/tutore ____________________',
+        firma: { tipo: 'nessuna' },
+        verifica: null,
+      })
+      const pg = (await testoPerPagina(pdf)).map((p) => normalizza(p))
+      for (const campo of modelloDelega.campi) {
+        const istruzione = aiutoDaStampare(campo, 'delega_ritiro')
+        if (!istruzione) continue
+        const conNota = pg.filter((p) => p.includes(normalizza(istruzione).slice(0, 40)))
+        const domanda = normalizza(campo.etichetta.trim().replace(/:+$/, ''))
+        if (conNota.length > 0 && !conNota.every((p) => p.includes(domanda))) {
+          trovateSpostando.push(`${mm}mm:${campo.nome}`)
+        }
+      }
+    }
+    expect(
+      trovateSpostando,
+      'il criterio non ha trovato NESSUNA orfana nemmeno spostando il foglio: non può fallire',
+    ).not.toEqual([])
+  })
+
+  it('🔴 copia vuota: la nota di una domanda di una riga sta IMMEDIATAMENTE SOPRA di lei', () => {
+    // 🔴 SULLO STESSO FOGLIO LA NOTA STAVA SOPRA PER UN CAMPO E SOTTO PER UN ALTRO, benché i
+    // due si disegnino identici — etichetta e filetto sulla stessa riga. Su
+    // `permesso_orario`, «Il giorno a cui il permesso si riferisce…» stava sopra «Giorno del
+    // permesso», mentre «Solo il genitore o una persona già delegata…» stava SOTTO «Chi
+    // accompagna o ritira il bambino/a» e finiva incollata alla domanda successiva
+    // («Permesso ricorrente — giorni»), di cui sembrava la didascalia. Il ramo dimenticato
+    // era quello dei campi a elenco CHIUSO rimasti senza voci — cioè, sul foglio, proprio le
+    // righe che dicono chi può portare via un minore.
+    //
+    // Si misura sull'ALBERO DEI BLOCCHI e non sul PDF: sul foglio «sopra» e «sotto» sono due
+    // quote, e a cavallo di un salto pagina la nota di sopra finisce sotto tutto. L'indice
+    // dei blocchi è la stessa regola senza l'ambiguità.
+    let controllati = 0
+    for (const slug of SEI_MODULI) {
+      const modello = modelloGenitore(slug)!
+      const blocchi = blocchiModuloVuoto(modello, DATI_PER_MODULO_VUOTO)
+
+      for (const campo of modello.campi) {
+        const istruzione = aiutoDaStampare(campo, slug)
+        if (!istruzione) continue
+        const etichetta = campo.etichetta.trim()
+        // «Si disegna come una riga sola» = c'è un blocco `campi` che porta questa etichetta.
+        // Le domande a caselle, le tabelle e gli allegati hanno altre forme e altre regole.
+        const iCampo = blocchi.findIndex(
+          (b) => b.tipo === 'campi' && b.campi.some((c) => c.etichetta.trim() === etichetta),
+        )
+        if (iCampo < 0) continue
+        const iNota = blocchi.findIndex((b) => b.tipo === 'paragrafo' && b.testo === istruzione)
+
+        expect(iNota, `${slug}.${campo.nome} — la nota non è un blocco a sé`).toBeGreaterThanOrEqual(0)
+        expect(
+          iCampo,
+          `${slug}.${campo.nome} — la nota è all'indice ${iNota}, la domanda al ${iCampo}: ` +
+            'sotto il filetto si legge come didascalia della domanda che segue',
+        ).toBe(iNota + 1)
+        controllati += 1
+      }
+    }
+    // Cinque campi di una riga portano una nota sui sei moduli (misurato, non dichiarato):
+    // sotto questa soglia il ciclo ha girato a vuoto e il test non ha provato niente.
+    expect(controllati, 'nessun campo di una riga con nota').toBeGreaterThanOrEqual(5)
   })
 
   it('🔴 copia vuota: OGNI istruzione di compilazione arriva sul foglio', async () => {
@@ -3242,6 +3405,19 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     // I frammenti sono copiati alla lettera da `modelli/genitore.ts`, e il primo blocco
     // verifica che ognuno esista ancora là dentro: il giorno in cui il modello riscrivesse un
     // aiuto, un frammento diventerebbe irraggiungibile e questo elenco marcirebbe in silenzio.
+    // ⚠️ E LA SECONDA VERSIONE NON POTEVA TROVARE UN CASO **NUOVO**: i sei frammenti erano
+    // presi tutti dalle sei riscritture già fatte, quindi l'elenco copriva esattamente ciò
+    // che era già riparato e nient'altro. Quattro frasi dell'app arrivavano intatte sul
+    // foglio col test verde — fra cui «Governa il resto del modulo», che descrive la
+    // visibilità condizionale di un form davanti a una madre con un foglio stampato per
+    // intero, e «Chi non risponde entro il termine non è nell'elenco dei partecipanti», che
+    // rimanda a una scadenza e a un elenco che sul foglio non esistono.
+    //
+    // I frammenti sotto la riga sono il criterio INDIPENDENTE dalla tabella: parole che
+    // nominano una schermata, uno stato interno o una scadenza che il foglio non porta.
+    // Sono stati scelti guardando gli aiuti che NON erano riscritti, non quelli che lo
+    // erano, ed è questa la differenza fra un elenco che accompagna una riparazione e un
+    // elenco che ne trova una nuova.
     const FRAMMENTI_DELL_APP = [
       'in app va detto',
       'sparisce dalla sezione',
@@ -3249,6 +3425,18 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
       'I delegati diventano attivi',
       'si disattivano da soli',
       'non sulle risposte',
+      // ─── il criterio indipendente dalla tabella ───
+      /** Descrive la visibilità condizionale del form: sulla carta non governa niente. */
+      'Governa il resto del modulo',
+      /** Un elenco di partecipanti e un termine che sul foglio non sono scritti da nessuna parte. */
+      'elenco dei partecipanti',
+      'entro il termine',
+      /** «bloccante» è il vocabolario di un campo di form, non di un modulo di carta. */
+      'è bloccante',
+      /** «attivo» è lo stato che l'app tiene sui delegati: sul foglio esiste la delega firmata. */
+      'delegato attivo',
+      /** La riga del fascicolo dentro l'app: il foglio una scadenza propria non ce l'ha. */
+      'scadenza del documento',
     ]
     const TUTTI_GLI_AIUTI = normalizza(
       SEI_MODULI.flatMap((s) =>
@@ -3350,19 +3538,24 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     }
   })
 
-  it('🔴 copia vuota: l’istruzione è SUBORDINATA alla domanda, non più nera di lei', () => {
-    // ⚠️ QUESTO TEST NASCE DA UNA MISURA SBAGLIATA, e il modo in cui è stata sbagliata conta
-    // più del risultato. Una costante `STILE_NON_RESO = 'corsivo'` vietava il corsivo
-    // «perché la pagina non lo rende, mentre il grassetto arriva». Rimisurato con DUE
-    // rasterizzatori sullo stesso PDF: sotto `pdftoppm -r 300` (poppler) le quattro varianti
-    // di Helvetica escono IDENTICHE — nemmeno il grassetto arriva — e sotto `qlmanage -t`
-    // (CoreGraphics: Anteprima, Quick Look, la stampa di macOS) il corsivo esce inclinato e
-    // il grassetto nero. La premessa descriveva un rasterizzatore, non il documento.
+  it('🔴 copia vuota: l’istruzione non è in GRASSETTO, e il grassetto resta alle domande', () => {
+    // ⚠️ IL NOME DI QUESTO TEST DICEVA UNA COSA E L'ASSERZIONE NE FACEVA UN'ALTRA. Si
+    // chiamava «l'istruzione è SUBORDINATA alla domanda, non più nera di lei» e verificava
+    // soltanto `stile !== 'grassetto'`: cioè la FACCIA del carattere, non il corpo e non il
+    // colore. La subordinazione non la misurava nessuno — e infatti non c'è: la misura vera
+    // sta nel test qui sotto, che legge corpo e colore dal PDF. Qui resta ciò che questo
+    // controllo sa davvero fare, col nome che lo dice.
+    //
+    // ⚠️ IL TEST NASCE DA UNA MISURA SBAGLIATA, e il modo in cui è stata sbagliata conta più
+    // del risultato. Una costante `STILE_NON_RESO = 'corsivo'` vietava il corsivo «perché la
+    // pagina non lo rende, mentre il grassetto arriva». Rimisurato con DUE rasterizzatori
+    // sullo stesso PDF: sotto `pdftoppm -r 300` (poppler) le quattro varianti di Helvetica
+    // escono IDENTICHE — nemmeno il grassetto arriva — e sotto `qlmanage -t` (CoreGraphics:
+    // Anteprima, Quick Look, la stampa di macOS) il corsivo esce inclinato e il grassetto
+    // nero. La premessa descriveva un rasterizzatore, non il documento.
     //
     // Il rimpiazzo aveva quindi reso l'introduzione e le righe degli allegati il testo più
     // pesante del foglio: cioè l'errore che il commento condannava due paragrafi più su.
-    // Quello che si verifica qui è la GERARCHIA, che non dipende dal rasterizzatore: chi
-    // riempie un modulo legge prima la domanda e poi la nota.
     let domandeInGrassetto = 0
     let istruzioniViste = 0
     for (const slug of SEI_MODULI) {
@@ -3408,22 +3601,110 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     expect(domandeInGrassetto, 'il grassetto è sparito dalle domande').toBeGreaterThan(0)
   })
 
+  it('🔴 copia vuota: l’istruzione esce PIÙ GRANDE e PIÙ NERA della domanda — gerarchia capovolta', async () => {
+    // LA MISURA CHE MANCAVA, e che il nome del test qui sopra prometteva senza farla. Corpo e
+    // colore si leggono dal PDF vero della rotta, dagli operatori di disegno: `setFont` porta
+    // il corpo in punti, `setFillRGBColor` il colore con cui la riga successiva viene scritta.
+    // Non è una lettura del codice che l'ha prodotto — quella resterebbe verde anche se il
+    // foglio uscisse diverso.
+    //
+    // ⚠️ QUESTO TEST PINNA UN DIFETTO, NON UNA RIPARAZIONE. `BloccoPrestampato` ammette tre
+    // stili — `normale`, `corsivo`, `grassetto` — e tutti e tre escono a 12 pt in `INCHIOSTRO`
+    // (`disegnaParagrafo`), mentre l'etichetta di una domanda di una riga esce a 10 pt in
+    // `GRIGIO` (`disegnaCella`). Passare da `grassetto` a `corsivo` cambia la faccia e basta:
+    // l'occhio di chi compila cade sulla nota prima che sulla domanda, che è l'opposto di
+    // ciò che serve su un modulo di dieta compilato a casa.
+    //
+    // La leva vera è uno `stile: 'nota'` a 10 pt `GRIGIO` in
+    // `src/lib/prestampati/impaginazione.ts` — il motore, che non appartiene a questo
+    // workstream. Finché non c'è, la gerarchia capovolta sta scritta qui come misura invece
+    // che dichiarata riparata: il giorno in cui la nota diventa più piccola e più chiara
+    // della domanda questo test diventa rosso e va riscritto al contrario, che è esattamente
+    // ciò che deve succedere.
+    alunnoIn()
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_vuota',
+        risposte: {},
+      }),
+    )
+    expect(res.status).toBe(201)
+
+    const { getDocumentProxy } = await import('unpdf')
+    const { OPS } = await import('unpdf/pdfjs')
+    const doc = await getDocumentProxy(new Uint8Array(await res.arrayBuffer()).slice())
+    const operatori = await (await doc.getPage(1)).getOperatorList()
+    const nomeOp: Record<number, string> = {}
+    for (const [k, v] of Object.entries(OPS as Record<string, number>)) nomeOp[v] = k
+
+    /** Ogni stringa disegnata sulla pagina, col corpo e il colore con cui è stata scritta. */
+    const scritte: { testo: string; corpo: number; colore: string }[] = []
+    let colore = ''
+    let corpo = 0
+    operatori.fnArray.forEach((fn: number, i: number) => {
+      const op = nomeOp[fn]
+      const args = operatori.argsArray[i] as unknown[]
+      if (op === 'setFillRGBColor') colore = String(args[0]).toLowerCase()
+      if (op === 'setFont') corpo = Number(args[1])
+      if (op === 'showText') {
+        const glifi = (args[0] ?? []) as { unicode?: string }[]
+        scritte.push({ testo: normalizza(glifi.map((g) => g.unicode ?? '').join('')), corpo, colore })
+      }
+    })
+    expect(scritte.length, 'nessuna scritta letta dal PDF').toBeGreaterThan(20)
+
+    const cerca = (inizio: string) => {
+      const trovata = scritte.find((s) => s.testo.startsWith(normalizza(inizio)))
+      expect(trovata, `«${inizio}» non è sulla prima pagina`).toBeTruthy()
+      return trovata!
+    }
+    // Le due righe stanno una sopra l'altra sul foglio, e sono la coppia nota/domanda del
+    // primo campo del permesso.
+    const nota = cerca('Il giorno a cui il permesso si riferisce')
+    const domanda = cerca('Giorno del permesso:')
+
+    // La misura, oggi: la nota è più grande e più scura della domanda che spiega.
+    expect(nota.corpo, 'corpo della nota').toBe(12)
+    expect(domanda.corpo, 'corpo della domanda').toBe(10)
+    expect(nota.corpo, 'la nota non è più grande della domanda: la gerarchia è cambiata').toBeGreaterThan(
+      domanda.corpo,
+    )
+    expect(nota.colore, 'colore della nota (INCHIOSTRO)').toBe('#2d2d2d')
+    expect(domanda.colore, 'colore della domanda (GRIGIO)').toBe('#646464')
+    expect(nota.colore, 'nota e domanda hanno lo stesso colore: la gerarchia è cambiata').not.toBe(
+      domanda.colore,
+    )
+  })
+
   it('🔴 copia vuota: dieta e farmaci non ORDINANO un allegato senza dire quando serve', async () => {
     // I due casi concreti, scritti a mano perché sono quelli che fanno danno a una famiglia.
     // Sul foglio della dieta i campi condizionali si stampano tutti: senza il qualificatore,
     // «Certificato medico: da allegare al modulo.» è un ordine rivolto anche a chi chiede una
     // dieta vegetariana o etico-religiosa, cioè un'affermazione falsa su un foglio sanitario.
+    //
+    // ⚠️ LE FRASI QUI SOTTO SONO QUELLE DELLA CARTA, non quelle dello schermo, e due sono
+    // cambiate il 2026-08-16. Prima questo test PRETENDEVA sul foglio «Governa il resto del
+    // modulo: …» e «l'allegato è bloccante»: la prima descrive la visibilità condizionale di
+    // un form davanti a chi ha in mano il modulo stampato per intero, la seconda è il
+    // vocabolario di un campo. Erano il difetto scritto dentro il suo stesso lock — che così
+    // impediva la riparazione invece di chiederla. Restano scritte a mano, e non lette da
+    // `aiutoDaStampare`: sono i due casi che fanno danno a una famiglia, e un test che le
+    // rileggesse dalla stessa tabella che le produce non proverebbe niente.
     const casi = [
       {
         slug: 'dieta_speciale',
         allegato: 'Certificato medico: da allegare al modulo.',
         condizione: 'Obbligatorio quando la dieta ha natura sanitaria.',
-        governo: 'Governa il resto del modulo: solo un motivo sanitario richiede il certificato medico.',
+        governo: 'Solo un motivo sanitario richiede il certificato medico.',
       },
       {
         slug: 'autorizzazione_farmaci',
         allegato: 'Prescrizione medica / piano terapeutico del pediatra: da allegare al modulo.',
-        condizione: "Senza la prescrizione nessuno può somministrare nulla: l'allegato è bloccante.",
+        condizione:
+          "Senza la prescrizione nessuno può somministrare nulla: senza l'allegato il modulo non si può accettare.",
         governo: null,
       },
     ] as const

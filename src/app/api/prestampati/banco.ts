@@ -1611,6 +1611,22 @@ function rifiutoSoggetto(): EsitoRender<unknown> {
  * non la riparazione di un guasto. Nel frattempo vale la regola tipografica, che di
  * rasterizzatori non sa nulla: **nessuno stile è l'unico portatore di un significato**.
  * Ogni istruzione stampata qui è una frase compiuta, che si legge anche uscendo dritta.
+ *
+ * ─── 🔴 E `corsivo` NON RENDE L'ISTRUZIONE SUBORDINATA. Va detto qui, perché per un giorno
+ * un messaggio di commit ha sostenuto il contrario («Introduzione e righe degli allegati
+ * tornano subordinate»): `grassetto` → `corsivo` cambia la FACCIA, non il CORPO né il
+ * COLORE. I tre stili che `BloccoPrestampato` ammette escono tutti a 12 pt e tutti in
+ * `INCHIOSTRO`, mentre l'etichetta di una domanda di una riga esce a 10 pt in `GRIGIO`
+ * (`disegnaParagrafo` contro `disegnaCella`, `src/lib/prestampati/impaginazione.ts`).
+ * Misurato sul PDF vero della rotta e tenuto fermo dal lock «l'istruzione esce PIÙ GRANDE e
+ * PIÙ NERA della domanda», che legge corpo e colore dal documento: finché quel lock
+ * descrive questa gerarchia, la gerarchia è **capovolta**, e l'occhio di chi compila cade
+ * sulla nota prima che sulla domanda.
+ *
+ * La leva vera è un corpo e un colore per le note — uno `stile: 'nota'` a 10 pt `GRIGIO` in
+ * `disegnaParagrafo` — e vive in `impaginazione.ts`/`tipi.ts`, che non appartengono a questo
+ * workstream: qui non si finge di averlo fatto. `corsivo` resta perché è il meno peggio fra
+ * i tre disponibili, non perché risolva.
  */
 
 /**
@@ -1863,10 +1879,11 @@ export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampa
       tipo: 'paragrafo',
       testo:
         'Modulo da compilare e firmare a penna, e da riconsegnare in segreteria. I dati del bambino sono già stampati: controllali e correggili se qualcosa non torna.',
-      // `corsivo` e non `grassetto`: è un'istruzione di servizio, e un'istruzione non può
-      // essere il testo più nero del foglio. Il grassetto resta ai titoli di sezione, alle
-      // domande e alla dicitura del modulo tornato su carta — le uniche righe che devono
-      // gridare. Per il rasterizzatore, vedi «Come arriva il corsivo sul foglio».
+      // `corsivo` e non `grassetto`: il grassetto resta ai titoli di sezione, alle domande e
+      // alla dicitura del modulo tornato su carta — le uniche righe che devono gridare.
+      // ⚠️ Ma NON basta a renderla subordinata: esce comunque a 12 pt in `INCHIOSTRO`, cioè
+      // più grande e più nera delle domande di una riga (10 pt `GRIGIO`). Vedi «Come arriva
+      // il corsivo sul foglio», in fondo a questa sezione.
       stile: 'corsivo',
     },
     { tipo: 'sezione', titolo: "Dati dell'alunno/a" },
@@ -1951,9 +1968,11 @@ export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampa
 function blocchiDelCampo(campo: DescrittoreCampo, slug: string): BloccoPrestampato[] {
   const etichetta = campo.etichetta.trim()
   const istruzione = aiutoDaStampare(campo, slug)
-  // `corsivo`: subordinata alla domanda a cui si riferisce. Chi riempie un modulo deve
-  // leggere prima la domanda e poi la nota, non il contrario — ed è l'errore che il
-  // rimpiazzo con `grassetto` aveva introdotto proprio mentre lo condannava.
+  // `corsivo` è il meno peggio dei tre stili disponibili, NON la subordinazione: corpo e
+  // colore restano quelli di ogni altro paragrafo (12 pt `INCHIOSTRO`), cioè più grandi e
+  // più neri della domanda che spiega (10 pt `GRIGIO`). Chi riempie un modulo deve leggere
+  // prima la domanda e poi la nota, e oggi sul foglio succede il contrario: la leva è uno
+  // `stile: 'nota'` in `impaginazione.ts`. Vedi «Come arriva il corsivo sul foglio».
   const aiuto: BloccoPrestampato[] = istruzione
     ? [{ tipo: 'paragrafo', testo: istruzione, stile: 'corsivo' }]
     : []
@@ -1970,8 +1989,18 @@ function blocchiDelCampo(campo: DescrittoreCampo, slug: string): BloccoPrestampa
     const caselle: CasellaPrestampato[] = (campo.opzioni ?? []).map((o) => ({ testo: o.etichetta }))
     // Un elenco CHIUSO rimasto senza voci è quello che l'app costruisce a runtime dai
     // delegati attivi: sulla carta non c'è un runtime, quindi si scrive a penna.
+    //
+    // ⚠️ QUESTO RAMO DISEGNA UNA RIGA SOLA, quindi segue la regola delle righe (in fondo a
+    // questa funzione) e NON quella delle caselle: la nota sta SOPRA. Per due giorni ha
+    // fatto il contrario mentre il ramo generale faceva il giusto — stesso disegno sul
+    // foglio, due regole opposte — e ci cade ogni campo il cui elenco l'app costruisce a
+    // runtime dai delegati (`opzioniDaApp`), cioè proprio la riga che dice chi può portare
+    // via un bambino. Sul PDF vero la nota finiva sotto il filetto e incollata alla domanda
+    // successiva, di cui sembrava la didascalia: «Solo il genitore o una persona già
+    // delegata…» letto come spiegazione di «Permesso ricorrente — giorni». Il lock «la nota
+    // di una domanda di una riga sta IMMEDIATAMENTE SOPRA di lei» misura i due rami insieme.
     if (caselle.length === 0) {
-      return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }, ...aiuto]
+      return [...aiuto, { tipo: 'campi', colonne: 1, campi: [{ etichetta }] }]
     }
     return [
       { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
@@ -2071,12 +2100,20 @@ const AIUTO_SU_CARTA: Record<string, string> = {
     'Chi chiamare, e in che ordine, quando non si riesce a raggiungere i genitori.',
   // «sparisce dalla sezione» è una schermata dell'app.
   'autorizzazione_farmaci.al': 'Alla scadenza l’autorizzazione decade da sola.',
+  // «l'allegato è bloccante» è il vocabolario di un form: sul foglio nessuno blocca niente,
+  // e chi compila a casa ha bisogno di sapere cosa succede al modulo, non al campo.
+  'autorizzazione_farmaci.prescrizionePath':
+    'Senza la prescrizione nessuno può somministrare nulla: senza l’allegato il modulo non si può accettare.',
   // «i delegati diventano attivi» è lo stato che l'app tiene; il fatto è lo stesso, detto
   // con le parole di chi il bambino lo viene a prendere.
   'delega_ritiro.delegati':
     'Le persone indicate possono ritirare il bambino/a solo dopo la firma di questo modulo, non prima.',
   'delega_ritiro.al':
     'Diventa la scadenza della delega: passata quella data la delega a termine non vale più.',
+  // «Governa il resto del modulo» descrive la visibilità condizionale del form: sulla carta
+  // il modulo è stampato per intero e non governa niente. Resta il fatto, che è l'unica
+  // parte che chi compila deve sapere.
+  'dieta_speciale.motivo': 'Solo un motivo sanitario richiede il certificato medico.',
   // «Diventa la scadenza del documento» è la riga del fascicolo dentro l'app: il foglio che la
   // famiglia riporta in segreteria una scadenza propria non ce l'ha. Resta l'istruzione, che
   // è l'unica parte che chi compila deve sapere.
@@ -2086,6 +2123,15 @@ const AIUTO_SU_CARTA: Record<string, string> = {
   // — che il permesso si compila anche il giorno prima — resta.
   'permesso_orario.giorno':
     'Il giorno a cui il permesso si riferisce: si può compilare anche il giorno prima.',
+  // «delegato attivo» è lo stato che l'app tiene sui delegati, la stessa parola già riscritta
+  // sull'08: chi legge il foglio sa cos'è una delega firmata, non cos'è un delegato «attivo».
+  'permesso_orario.accompagnatore':
+    'Solo il genitore o una persona già delegata per iscritto. Se non lo è, va prima firmata la delega al ritiro.',
+  // «Chi non risponde entro il termine non è nell'elenco dei partecipanti» rimanda a una
+  // scadenza e a un elenco che sul foglio non esistono — e la copia vuota non porta nemmeno
+  // destinazione e data dell'uscita. Il fatto che serve resta, ed è lo stesso.
+  'autorizzazione_uscita.autorizzo':
+    'Senza questo modulo firmato il bambino/a non partecipa: non esistono autorizzazioni verbali.',
   // «la condizione sta sull'uscita creata dalla segreteria, non sulle risposte» descrive il
   // form, non il foglio.
   'autorizzazione_uscita.saNuotare': 'Chiesto solo per le attività in acqua.',

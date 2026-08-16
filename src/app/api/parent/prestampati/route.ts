@@ -262,9 +262,14 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
     // vivono in `eventi_agenda` (`tipo='uscita'`, scritte da `teacher/uscite:POST`) e
     // `DatiUscita` non lo costruiva nessuno in tutto il repo, quindi il modulo restava
     // spento anche quando la gita c'era davvero. Ora: **c'è un'uscita ⇒ il modulo compare,
-    // con destinazione, data e orari veri dentro; non c'è ⇒ non compare affatto** (vedi il
+    // con destinazione e data veri dentro; non c'è ⇒ non compare affatto** (vedi il
     // filtro qui sotto). Un lucchetto su una gita che non esiste è una promessa a chi non
     // ha niente da firmare.
+    //
+    // ⚠️ «DESTINAZIONE E DATA», e gli orari solo quando ci sono: `agenda:POST` — l'unica
+    // strada da cui in questo prodotto nasce un'uscita — li salva `null`, e pretenderli
+    // qui è ciò che ha tenuto spento il n. 10 anche dopo che tutto il resto funzionava.
+    // La regola sta in `datiUscitaDaEvento`, con la misura che la giustifica.
     //
     // La query sta QUI dentro e non in un helper di file, come quella dei delegati e per la
     // stessa ragione: è ancorata alla sezione di UN bambino, che il gate della famiglia ha
@@ -406,7 +411,9 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
         ? { nomeCompleto: dati.richiedente.nomeCompleto, ruolo: dati.richiedente.ruolo ?? null }
         : null,
       /**
-       * L'uscita che il n. 10 autorizza, quando c'è: destinazione, data e orari REALI.
+       * L'uscita che il n. 10 autorizza, quando c'è: destinazione e data reali, più i due
+       * orari **se l'evento li porta** — `agenda:POST` li salva `null`, quindi il caso
+       * normale in produzione è senza. La scheda ha due frasi, una per caso.
        *
        * Esce dalla risposta perché il genitore deve vedere che cosa sta per autorizzare
        * PRIMA di aprire il modulo — sul foglio ci finisce comunque, ma un modulo che si

@@ -866,7 +866,8 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // motivo per cui quel modulo era spento: `DatiPrestampato.uscita` esisteva nel tipo e
     // nessuna route lo valorizzava. Ora la gita si legge da `eventi_agenda` — la stessa
     // riga che l'insegnante crea e che la famiglia vede già in agenda — e finisce sul
-    // foglio con destinazione, data e orari VERI.
+    // foglio con destinazione e data VERE, più gli orari quando l'evento li porta
+    // (`agenda:POST` li salva `null`: vedi `datiUscitaDaEvento`, che è dove la regola vive).
     //
     // ⚠️ SI RILEGGE QUI, e non ci si fida di quella vista al POST: fra la richiesta del
     // codice e la firma passano minuti, e un'uscita annullata nel frattempo non deve

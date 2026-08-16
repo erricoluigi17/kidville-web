@@ -1,5 +1,5 @@
 {
-  "titolo": "Moduli da compilare",
+  "titolo": "Certificati e moduli della famiglia",
   "sottotitolo": "Compila e firma dal telefono: i dati che la scuola ha già non te li richiede nessuno.",
 
   "scegliFiglio": "Per chi",
@@ -134,6 +134,7 @@
   "documentoArchiviatoIl": "Nel fascicolo dal {data}.",
   "certificatoNumero": "Protocollo n. {numero}.",
   "uscitaRiga": "Uscita del {data} — {destinazione} · partenza {partenza}, rientro {rientro}.",
+  "uscitaRigaSenzaOrari": "Uscita del {data} — {destinazione}.",
 
   "avvisoSanitario": "Quello che scrivi qui riguarda la salute di tuo figlio: lo leggono la segreteria e le insegnanti della sua sezione, nessun altro."
 }

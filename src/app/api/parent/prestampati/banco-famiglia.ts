@@ -19,11 +19,8 @@
  * (`otp-rate-limit.ts`) — cioè cinque tentativi a vuoto su una gita lascerebbero il genitore
  * senza modo di firmare l'autorizzazione a un farmaco.
  *
- * I due che oggi non si firmano, con la misura che lo dice:
+ * Quello che oggi non si firma, con la misura che lo dice:
  *
- *  · **n. 10, autorizzazione all'uscita**: nessuno costruisce `DatiUscita` in tutto il repo —
- *    `grep -rn "DatiUscita" src/` dà tre occorrenze, tutte dentro `modelli/genitore.ts` — e
- *    senza quel dato `verificaContesto` del modello dice no;
  *  · **n. 08, delega al ritiro**: `richiedeDueFirme()` è vera quando in anagrafica ci sono due
  *    tutori (o l'alunno ha `genitori_separati`), il modello pretende due `sottoscrizioni` e
  *    questa rotta ne raccoglie una sola. Misurato in sola lettura sul database di produzione
@@ -551,20 +548,40 @@ function oraBreve(ora: string | null | undefined): string | null {
  *
  * ⚠️ `null` VUOL DIRE «QUESTA RIGA NON AUTORIZZA NIENTE», e il chiamante deve trattarlo
  * come «uscita assente»: `verificaContesto` del n. 10 rifiuta senza `dati.uscita`, ma un
- * rifiuto del render arriva DOPO che il genitore ha compilato e speso un codice OTP. Le
- * tre condizioni sono quelle che il foglio dichiara e che un ente leggerebbe — **dove si
- * va, quando si parte, quando si torna** — e senza una qualunque delle tre il documento
- * autorizzerebbe la partecipazione a un'attività che non dice dove va né quando.
+ * rifiuto del render arriva DOPO che il genitore ha compilato e speso un codice OTP.
+ *
+ * ─── LE DUE CONDIZIONI SONO DUE, E FINO AL 2026-08-16 ERANO QUATTRO ─────────────
+ *
+ * 🔴 Questa funzione pretendeva anche i DUE ORARI, e quella riga spegneva la funzione
+ * intera. Misurato, non dedotto: `grep -rn "orario_inizio" src/components src/app` non
+ * trova **nessuno** che li scriva su `eventi_agenda` fuori da `agenda:POST`, che li
+ * accetta opzionali e li salva `null` (`route.ts:338-339`); l'unica schermata che crea
+ * uscite è `TeacherAgendaCard`, e il corpo che manda è
+ * `{section_id, titolo, data, tipo, visibile_genitori}` — senza orari. `teacher/uscite:POST`
+ * li scrive, ma `grep -rn "api/teacher/uscite" src/` dà **zero** chiamanti. Esito: la
+ * segreteria apriva l'agenda, sceglieva «Uscita», salvava, e il n. 10 non compariva **mai**
+ * a nessuna famiglia — per costruzione, senza che niente diventasse rosso. La prova in
+ * produzione: l'uscita `Gita al museo E2E` ha `orario_fine = NULL`.
+ *
+ * Le condizioni che restano sono quelle che un ente leggerebbe e che il foglio DICHIARA:
+ * **dove si va** e **quando**. Gli orari sono una riga in più quando ci sono, e quando non
+ * ci sono il modello non la stampa affatto (`campo()` in `modelli/genitore.ts` salta i
+ * valori vuoti, e `blocchiCampi` fa sparire il blocco intero): è la disciplina dei
+ * prestampati — «mai una riga vuota che sembri un valore» — che qui vale al contrario, cioè
+ * un dato mancante toglie una riga, non un documento.
  *
  * La data e i due orari si prendono dalle COLONNE, non dalla riga «Data: … · Partenza: …»
  * della descrizione: quella riga è la stessa informazione scritta per gli occhi, e leggere
  * un dato dalla sua copia formattata è il modo di ritrovarsi con due verità.
  *
- * `tipo` e `destinazione` degradano sul TITOLO (`Gita: Napoli`) perché un'uscita può
- * nascere anche dall'agenda generica, dove la descrizione è testo libero: là il titolo è
- * l'unica cosa che ha una forma. `tipo` sconosciuto vale `altro`, che è una delle cinque
- * voci del cartaceo e non un'invenzione; `destinazione` sconosciuta invece **non si
- * inventa** e fa cadere tutto.
+ * `tipo` e `destinazione` degradano sul TITOLO perché un'uscita nasce quasi sempre
+ * dall'agenda generica, dove la descrizione è testo libero: là il titolo è l'unica cosa che
+ * ha una forma. `Gita: Napoli` porta tipo e destinazione; un titolo senza due punti —
+ * `Gita al museo`, che è come una maestra lo scrive — vale **per intero** come
+ * destinazione, perché è la frase con cui la scuola quell'uscita l'ha annunciata alle
+ * famiglie, e non è un'invenzione di questa funzione. `tipo` sconosciuto vale `altro`, che
+ * è una delle cinque voci del cartaceo. Un evento **senza titolo e senza destinazione**
+ * resta `null`: lì non c'è niente da scrivere sul foglio.
  */
 export function datiUscitaDaEvento(evento: EventoUscita | null | undefined): DatiUscita | null {
   if (!evento) return null
@@ -572,15 +589,17 @@ export function datiUscitaDaEvento(evento: EventoUscita | null | undefined): Dat
   const data = (evento.data ?? '').trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return null
 
+  // Opzionali entrambi, e indipendenti: un'uscita che dichiara l'ora di partenza e non
+  // quella di rientro stampa la prima. Prima bastava che ne mancasse uno per far sparire
+  // il modulo.
   const oraPartenza = oraBreve(evento.orario_inizio)
   const oraRientro = oraBreve(evento.orario_fine)
-  if (!oraPartenza || !oraRientro) return null
 
   const descrizione = evento.descrizione ?? ''
   const titolo = (evento.titolo ?? '').trim()
   const taglio = titolo.indexOf(':')
   const etichettaDalTitolo = taglio > 0 ? titolo.slice(0, taglio).trim() : null
-  const codaDelTitolo = taglio > 0 ? titolo.slice(taglio + 1).trim() : ''
+  const codaDelTitolo = taglio > 0 ? titolo.slice(taglio + 1).trim() : titolo
 
   const destinazione = valoreRiga(descrizione, RIGA_DESTINAZIONE) ?? codaDelTitolo
   if (!destinazione) return null

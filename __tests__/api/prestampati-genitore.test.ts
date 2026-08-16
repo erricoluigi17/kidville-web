@@ -1530,19 +1530,112 @@ describe('l’autorizzazione all’uscita esiste solo se esiste la gita', () => 
     expect(letto?.attivitaInAcqua).toBe(true)
   })
 
-  it('una riga senza destinazione, senza data o senza orari NON è un’uscita da autorizzare', () => {
-    // Le tre condizioni sono quelle che il foglio dichiara e che un ente leggerebbe: dove
-    // si va, quando si parte, quando si torna. Senza una qualunque delle tre il documento
-    // autorizzerebbe la partecipazione a un'attività che non dice dove va né quando.
+  it('una riga senza destinazione o senza data NON è un’uscita da autorizzare', () => {
+    // Le due condizioni sono quelle che il foglio dichiara e che un ente leggerebbe: dove
+    // si va e quando. Senza una delle due il documento autorizzerebbe la partecipazione a
+    // un'attività che non dice dove va né quando.
     expect(datiUscitaDaEvento(null)).toBeNull()
     expect(datiUscitaDaEvento({ ...USCITA_RIGA, data: null })).toBeNull()
     expect(datiUscitaDaEvento({ ...USCITA_RIGA, data: '20/09/2026' })).toBeNull()
-    expect(datiUscitaDaEvento({ ...USCITA_RIGA, orario_inizio: null })).toBeNull()
-    expect(datiUscitaDaEvento({ ...USCITA_RIGA, orario_fine: '   ' })).toBeNull()
-    // Descrizione libera E titolo senza due punti: la destinazione non si inventa.
+    // Né descrizione strutturata né titolo: non c'è niente da scrivere sul foglio.
     expect(
-      datiUscitaDaEvento({ ...USCITA_RIGA, descrizione: 'Andiamo in gita', titolo: 'Gita' }),
+      datiUscitaDaEvento({ ...USCITA_RIGA, descrizione: 'Andiamo in gita', titolo: null }),
     ).toBeNull()
+    expect(
+      datiUscitaDaEvento({ ...USCITA_RIGA, descrizione: 'Andiamo in gita', titolo: '   ' }),
+    ).toBeNull()
+  })
+
+  /**
+   * 🔴 LA RIGA CHE SPEGNEVA LA FUNZIONE INTERA, e la misura che lo dimostra.
+   *
+   * Fino al 2026-08-16 `datiUscitaDaEvento` pretendeva ENTRAMBI gli orari
+   * (`if (!oraPartenza || !oraRientro) return null`). Nessuna schermata di questo prodotto
+   * li scrive: l'unico composer di `eventi_agenda` è `TeacherAgendaCard`, che manda
+   * `{section_id, titolo, data, tipo, visibile_genitori}` a `agenda:POST`, il quale salva
+   * `orario_inizio`/`orario_fine` a `null`. Esito: la segreteria creava la gita, e il n. 10
+   * non compariva **mai** — per costruzione, con tutti i test verdi.
+   *
+   * Queste tre prove sono rosse sul codice di prima, una per forma del difetto.
+   */
+  it('la gita creata dall’agenda — senza orari, titolo senza due punti — accende il n. 10', () => {
+    // È la riga che `TeacherAgendaCard` produce davvero: titolo scritto a mano dalla
+    // maestra, nessun orario, descrizione vuota.
+    const letto = datiUscitaDaEvento({
+      titolo: 'Gita al museo',
+      descrizione: null,
+      data: '2026-10-01',
+      orario_inizio: null,
+      orario_fine: null,
+    })
+    expect(letto).not.toBeNull()
+    // Il titolo per intero: è la frase con cui la scuola l'uscita l'ha annunciata alle
+    // famiglie, non un'invenzione di chi legge.
+    expect(letto?.destinazione).toBe('Gita al museo')
+    expect(letto?.data).toBe('2026-10-01')
+    // ⚠️ `null` e non `''`: il modello salta le righe-campo vuote (`campo()`), quindi sul
+    // foglio «Orario partenza» non compare affatto. Una stringa vuota stamperebbe
+    // l'etichetta con il valore in bianco, che su un'autorizzazione si legge come un
+    // orario deciso e non comunicato.
+    expect(letto?.oraPartenza).toBeNull()
+    expect(letto?.oraRientro).toBeNull()
+  })
+
+  it('un solo orario resta un’uscita valida, e stampa quello che sa', () => {
+    const soloPartenza = datiUscitaDaEvento({ ...USCITA_RIGA, orario_fine: null })
+    expect(soloPartenza?.oraPartenza).toBe('08:30')
+    expect(soloPartenza?.oraRientro).toBeNull()
+    const soloRientro = datiUscitaDaEvento({ ...USCITA_RIGA, orario_inizio: '   ' })
+    expect(soloRientro?.oraPartenza).toBeNull()
+    expect(soloRientro?.oraRientro).toBe('16:00')
+  })
+
+  /**
+   * ⚠️ IL LOCK: il n. 10 dipende SOLO da ciò che una schermata di questo repo sa scrivere.
+   *
+   * Il difetto non era «manca un dato»: era che il lettore chiedeva campi che nessuno
+   * scriveva, e la prova di questo non poteva stare in una fixture inventata — una fixture
+   * la scrive chi scrive il test, e infatti tutte le fixture avevano gli orari. Qui la riga
+   * di `eventi_agenda` si costruisce **dalle chiavi che il composer vero manda**, lette dal
+   * suo sorgente: se domani qualcuno rimette una pretesa su un campo che quel corpo non
+   * porta, questa prova diventa rossa da sola.
+   *
+   * È dinamico apposta: il giorno in cui il composer imparerà a mandare gli orari, la riga
+   * qui costruita li avrà e la prova resterà verde. Un lock che diventasse rosso su un
+   * miglioramento non sarebbe un lock, sarebbe un freno.
+   */
+  it('il n. 10 si accende con le SOLE chiavi che il composer dell’agenda manda davvero', () => {
+    const composer = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/features/teacher/TeacherAgendaCard.tsx'),
+      'utf8',
+    )
+    // Il corpo del POST verso `/api/agenda`: `body: JSON.stringify({ … })`. Si taglia per
+    // RIGHE e non con una regex golosa: dentro il corpo c'è già un `}),` (lo spread
+    // ternario della sezione), e un `[\s\S]*?` si fermerebbe lì leggendo mezzo oggetto.
+    const righe = composer.split('\n')
+    const inizio = righe.findIndex((r) => r.includes('body: JSON.stringify({'))
+    expect(inizio, 'il composer dell’agenda non è più riconoscibile: il lock guarda nel vuoto').toBeGreaterThan(-1)
+    const resto = righe.slice(inizio + 1)
+    const fine = resto.findIndex((r) => /^\s{8}\}\),\s*$/.test(r))
+    expect(fine, 'il corpo del POST non si chiude dove il lock lo cerca').toBeGreaterThan(-1)
+    const corpo = resto.slice(0, fine).join('\n')
+    const chiavi = new Set([...corpo.matchAll(/^\s*([a-z_]+)[,:]/gm)].map((m) => m[1]))
+    // Il lock sta guardando qualcosa: senza queste due, le prove qui sotto sarebbero verdi
+    // su una regex che non trova niente.
+    expect(chiavi.has('titolo')).toBe(true)
+    expect(chiavi.has('data')).toBe(true)
+
+    const evento = {
+      titolo: chiavi.has('titolo') ? 'Gita al museo' : null,
+      descrizione: chiavi.has('descrizione') ? componiDescrizioneUscita(USCITA_CORPO) : null,
+      data: chiavi.has('data') ? '2026-10-01' : null,
+      orario_inizio: chiavi.has('orario_inizio') ? '08:30:00' : null,
+      orario_fine: chiavi.has('orario_fine') ? '16:00:00' : null,
+    }
+    expect(
+      datiUscitaDaEvento(evento),
+      'il n. 10 pretende un campo che nessuna schermata di questo repo scrive: sarebbe invisibile a ogni famiglia',
+    ).not.toBeNull()
   })
 
   it('un’uscita nata dall’agenda generica si legge dal titolo, e il tipo ignoto vale «altro»', () => {
@@ -1574,6 +1667,30 @@ describe('l’autorizzazione all’uscita esiste solo se esiste la gita', () => 
       data: USCITA_CORPO.data,
       oraPartenza: '08:30',
       oraRientro: '16:00',
+    })
+  })
+
+  it('anche la gita SENZA ORARI fa comparire il n. 10 nell’elenco, e la scheda non finge un orario', async () => {
+    // Il caso normale in produzione, non un limite: `agenda:POST` gli orari li salva
+    // `null`. Prima di oggi questa richiesta tornava l'elenco SENZA il n. 10 — cioè la
+    // funzione consegnata non si vedeva da nessuna famiglia.
+    conUscitaPubblicata({
+      titolo: 'Gita al museo',
+      descrizione: null,
+      data: '2026-10-01',
+      orario_inizio: null,
+      orario_fine: null,
+    })
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const dieci = json.modelli.find((m: { slug: string }) => m.slug === 'autorizzazione_uscita')
+    expect(dieci).toBeDefined()
+    expect(dieci.firmabileOra).toBe(true)
+    expect(json.uscita).toEqual({
+      destinazione: 'Gita al museo',
+      data: '2026-10-01',
+      // `null`, non `''`: la scheda ha una frase apposta per questo caso.
+      oraPartenza: null,
+      oraRientro: null,
     })
   })
 

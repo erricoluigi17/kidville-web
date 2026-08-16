@@ -1,5 +1,5 @@
 {
-  "titolo": "Forms to fill in",
+  "titolo": "Family certificates and forms",
   "sottotitolo": "Fill in and sign from your phone: nobody will ask you again for the data the school already has.",
 
   "scegliFiglio": "Who it is for",
@@ -134,6 +134,7 @@
   "documentoArchiviatoIl": "In the file since {data}.",
   "certificatoNumero": "Protocol no. {numero}.",
   "uscitaRiga": "Trip on {data} — {destinazione} · leaving {partenza}, back {rientro}.",
+  "uscitaRigaSenzaOrari": "Trip on {data} — {destinazione}.",
 
   "avvisoSanitario": "What you write here concerns your child’s health: it is read by the school office and by the teachers of their class, and by nobody else."
 }

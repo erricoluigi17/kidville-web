@@ -311,6 +311,18 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
 // della famiglia SOLO se quell'uscita esiste. L'autorizzazione passa quindi dalla
 // carta intestata, dalla firma OTP e dal fascicolo, come tutti gli altri sedici.
 //
+// ⚠️ QUESTO POST OGGI NON LO CHIAMA NESSUNO, e va detto qui invece che scoperto
+// fra sei mesi: `grep -rn "api/teacher/uscite" src/` non trova nessun chiamante
+// fuori da questo file. Le uscite vere nascono da `TeacherAgendaCard` →
+// `agenda:POST`, che scrive `{section_id, titolo, data, tipo, visibile_genitori}`
+// e lascia gli orari a `null`. Perciò il n. 10 **non può dipendere dagli orari**
+// (la regola sta in `datiUscitaDaEvento`, con la misura accanto), e la
+// descrizione strutturata che questa route compone è oggi la forma RICCA che il
+// prodotto sa leggere ma non ancora scrivere da nessuna schermata. La schermata
+// che la scriverà — due `<input type="time">` nel composer dell'agenda, oppure il
+// pannello della segreteria che chiama questo POST — è dichiarata
+// all'orchestratore: sta in file che non appartengono a questa catena.
+//
 // ⚠️ **SI SPEGNE LA CREAZIONE, NON LA LETTURA.** Le gite già pubblicate hanno la
 // loro riga in `forms_templates` e le famiglie l'hanno già ricevuta: quei moduli
 // restano proposti da `GET /api/parent/forms`, si firmano da lì e si leggono

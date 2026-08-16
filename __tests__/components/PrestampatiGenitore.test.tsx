@@ -151,7 +151,24 @@ const CAMPO_PEDIATRA = {
   obbligatorio: true,
 }
 
-function elencoServito(alunnoId: string, modelli: unknown[] = [MODELLO_SANITARIO]) {
+/** Il n. 10: compare nell'elenco SOLO quando una gita esiste, e la scheda la descrive. */
+const MODELLO_USCITA = {
+  slug: 'autorizzazione_uscita',
+  etichetta: 'Autorizzazione uscita didattica / gita',
+  chiaveEtichetta: 'modelli.autorizzazioneUscita',
+  firma: 'otp_genitore',
+  soggetto: 'alunno',
+  protocollo: 'nessuno',
+  archiviazione: 'student_documents',
+  firmabileOra: true,
+  motivoNonFirmabile: null,
+}
+
+function elencoServito(
+  alunnoId: string,
+  modelli: unknown[] = [MODELLO_SANITARIO],
+  uscita: unknown = null,
+) {
   return {
     success: true,
     alunno: {
@@ -167,7 +184,7 @@ function elencoServito(alunnoId: string, modelli: unknown[] = [MODELLO_SANITARIO
     },
     sede: { nome: 'Sede di prova', citta: 'Città di Prova' },
     annoScolastico: '2026/2027',
-    uscita: null,
+    uscita,
     modelli,
     modello: null,
     delegati: null,
@@ -776,6 +793,67 @@ describe('PrestampatiGenitore — il certificato si riprende, non si riemette', 
     expect(voce).toBe(bottone.closest('li'))
     // E la scheda sanitaria, che non c'entra niente, resta pulita.
     expect(screen.getAllByText(itGenitore.certificatoLivelloNonNido)).toHaveLength(1)
+  })
+})
+
+// ─── La gita: che cosa dice la scheda del n. 10 ─────────────────────────────────
+
+describe('PrestampatiGenitore — la gita si legge PRIMA di aprire il modulo', () => {
+  it('con i due orari li stampa entrambi', async () => {
+    armaFetch({
+      elenco: [
+        {
+          ok: true,
+          status: 200,
+          corpo: elencoServito(FIGLIO_A.id, [MODELLO_USCITA], {
+            destinazione: 'Museo di Prova',
+            data: '2026-10-01',
+            oraPartenza: '08:30',
+            oraRientro: '16:00',
+          }),
+        },
+      ],
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    await screen.findByText(/Museo di Prova/)
+    expect(screen.getByText(/partenza 08:30/)).toBeInTheDocument()
+    expect(screen.getByText(/rientro 16:00/)).toBeInTheDocument()
+  })
+
+  /**
+   * 🔴 È IL CASO NORMALE IN PRODUZIONE, non il limite: l'unica schermata che crea uscite
+   * (`TeacherAgendaCard` → `agenda:POST`) gli orari non li scrive, e il server li serve
+   * `null`. Prima del 2026-08-16 questa scheda non esisteva affatto per quel caso — il
+   * modulo non compariva — e la frase unica avrebbe stampato «· partenza , rientro .», che
+   * su un'autorizzazione si legge come un orario deciso e non comunicato.
+   */
+  it('senza orari dice dove si va e quando, e NON lascia due valori vuoti in mezzo', async () => {
+    armaFetch({
+      elenco: [
+        {
+          ok: true,
+          status: 200,
+          corpo: elencoServito(FIGLIO_A.id, [MODELLO_USCITA], {
+            destinazione: 'Museo di Prova',
+            data: '2026-10-01',
+            oraPartenza: null,
+            oraRientro: null,
+          }),
+        },
+      ],
+    })
+    render(<PrestampatiGenitore figli={[FIGLIO_A]} />)
+
+    const riga = await screen.findByText(/Museo di Prova/)
+    expect(riga.textContent).not.toMatch(/partenza/)
+    expect(riga.textContent).not.toMatch(/rientro/)
+    // La frase è quella del catalogo, non un pezzo dell'altra rimasto a metà.
+    expect(riga.textContent).toBe(
+      itGenitore.uscitaRigaSenzaOrari
+        .replace('{destinazione}', 'Museo di Prova')
+        .replace('{data}', '01/10/2026'),
+    )
   })
 })
 

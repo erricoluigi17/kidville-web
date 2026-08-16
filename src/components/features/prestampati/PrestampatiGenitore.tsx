@@ -1343,17 +1343,26 @@ function SchedaModello({
 
       {/* La gita che si sta autorizzando, prima di aprire il modulo: dove si va e quando.
           Un'autorizzazione che non dice la destinazione si firma alla cieca.
-          I due orari non sono mai vuoti quando `uscita` c'è: `datiUscitaDaEvento()` (server)
-          restituisce `null` se ne manca uno, ed è la stessa condizione per cui il modulo non
-          comparirebbe affatto. I `?? ''` sono solo per il tipo, non un ramo che si percorre. */}
+
+          ⚠️ DUE FRASI E NON UNA, perché gli orari POSSONO mancare: l'unica schermata che crea
+          uscite (`TeacherAgendaCard` → `agenda:POST`) non li scrive, e fino al 2026-08-16 il
+          server rispondeva a quel caso con «nessuna gita», cioè il modulo non compariva mai.
+          Ora compare, e la riga dice ciò che si sa: `partenza , rientro` con due valori vuoti
+          si legge come un orario deciso e non comunicato — è la stessa disciplina dei
+          prestampati, «mai una riga vuota che sembri un valore». */}
       {uscita && (
         <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-ink">
-          {t('uscitaRiga', {
-            destinazione: uscita.destinazione,
-            data: dataBreve(uscita.data),
-            partenza: uscita.oraPartenza ?? '',
-            rientro: uscita.oraRientro ?? '',
-          })}
+          {uscita.oraPartenza && uscita.oraRientro
+            ? t('uscitaRiga', {
+                destinazione: uscita.destinazione,
+                data: dataBreve(uscita.data),
+                partenza: uscita.oraPartenza,
+                rientro: uscita.oraRientro,
+              })
+            : t('uscitaRigaSenzaOrari', {
+                destinazione: uscita.destinazione,
+                data: dataBreve(uscita.data),
+              })}
         </p>
       )}
 

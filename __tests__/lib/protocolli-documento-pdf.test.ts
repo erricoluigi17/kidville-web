@@ -195,3 +195,69 @@ describe('buildDocumentoRichiestaPdf — il testo lungo non finisce nel piede', 
     expect(luogo?.pagina).toBe(pagine)
   })
 })
+
+describe('buildDocumentoRichiestaPdf — la firma non finisce mai su un foglio da sola', () => {
+  /**
+   * ⚠️ **IL DIFETTO CHE QUESTO SCANDAGLIO HA TROVATO (riparato il 2026-08-16).**
+   *
+   * Lo stacco fra il corpo e il blocco firma era un `+18` fisso: se la firma non ci
+   * stava, si apriva una pagina nuova, punto. **Scandagliato da 1 a 70 righe di corpo, il
+   * difetto cadeva a 25-30 e 61-66**: dodici lunghezze su settanta, una finestra di sei
+   * righe ogni trentasei. Il conto sulla prima: il corpo chiudeva a 244,4 → `max(250,6 +
+   * 18, 150) = 268,6`, e il tetto della firma è `263,5 − 14 = 249,5` → pagina nuova.
+   *
+   * Il risultato era un secondo foglio di carta intestata — marchio, filigrana, le tre
+   * sedi — con sopra soltanto «Giugliano, lì … — La Direzione — ______». È un CERTIFICATO
+   * PROTOCOLLATO che va a una famiglia o all'INPS: la pagina della firma non portava una
+   * sola parola del documento che firma, e chi la separa dal fascicolo ha in mano una firma
+   * senza atto.
+   *
+   * E `carta/geometria.ts` lo prometteva per iscritto: «i millimetri per far stare la firma
+   * nella pagina si trovano nel motore — che stringe lo stacco prima di aprire un foglio
+   * nuovo». `impaginazione.ts` lo faceva davvero; questo motore no. Un commento che promette
+   * un'aria che il codice non lascia è la classe di difetto che questo progetto chiama
+   * incidente — e adesso la scelta la fa una funzione sola, `quotaBloccoFinale()`.
+   *
+   * ⚠️ **Stringere l'aria da solo non bastava**, ed è la parte che il conto qui sopra non
+   * dice: a 28 righe il corpo chiude così in basso che nemmeno lo stacco minimo entra
+   * (250,6 + 5 = 255,6 > 249,5). Serviva anche il «tieni insieme» sull'ULTIMA RIGA di
+   * corpo, come nell'ordine al fornitore: quando è lei a riempire la pagina, scende sul
+   * foglio nuovo insieme alla firma.
+   */
+  const corpoDi = (righe: number) =>
+    Array.from({ length: righe }, (_, k) => `Riga di collaudo numero ${k + 1} del documento.`).join(
+      '\n'
+    )
+
+  it('su qualunque lunghezza del corpo, sul foglio della firma c’è anche il documento', async () => {
+    for (let n = 1; n <= 70; n++) {
+      const elementi = await elementiTesto(documento({ corpo: corpoDi(n) }))
+      const utili = elementi.filter((t) => !eRigaDiServizio(t))
+      const ultima = Math.max(...utili.map((t) => t.pagina))
+      const suUltima = utili.filter((t) => t.pagina === ultima)
+      const corpoSuUltima = suUltima.filter((t) => /^Riga di collaudo numero/.test(t.testo))
+      expect(
+        `${n} righe → p${ultima}: ${
+          corpoSuUltima.length > 0
+            ? 'porta anche il documento'
+            : `SOLO FIRMA (${suUltima.map((t) => t.testo).join(' | ')})`
+        }`
+      ).toBe(`${n} righe → p${ultima}: porta anche il documento`)
+    }
+  })
+
+  it('e la firma non sfonda comunque il limite del contenuto', async () => {
+    // Le sei lunghezze su cui il difetto si vedeva a occhio, più i due estremi delle due
+    // finestre: se qualcuno «recupera» millimetri stringendo ancora, qui si accorge.
+    for (const n of [24, 25, 28, 30, 31, 60, 61, 66, 67]) {
+      const pdf = documento({ corpo: corpoDi(n) })
+      const fuori = (await elementiTesto(pdf))
+        .filter((t) => !eRigaDiServizio(t))
+        .filter((t) => ingombroTesto(t.yMm, t.corpoPt).fondo > CARTA.contenutoFine)
+      expect(fuori.map((t) => `${n} righe: ${t.testo} @ ${t.yMm.toFixed(1)}`)).toEqual([])
+
+      const filetti = (await ingombriPercorsi(pdf)).filter((p) => sovrapposti(p, PIEDE_STAMPATO))
+      expect(filetti.map((p) => `${n} righe: filetto @ y=${p.yMm.toFixed(1)}`)).toEqual([])
+    }
+  })
+})

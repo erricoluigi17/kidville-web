@@ -44,6 +44,7 @@
 
 import { jsPDF } from 'jspdf'
 import { CARTA, ingombroTesto } from '@/lib/carta/geometria'
+import { quotaBloccoFinale } from '@/lib/carta/blocco-finale'
 
 const VERDE: [number, number, number] = [0, 106, 95]
 const GRIGIO: [number, number, number] = [100, 100, 100]
@@ -69,6 +70,30 @@ const ALTEZZA_FIRMA = 14
 const X_FIRMA = 152
 const FIRMA_TRATTO_SX = 128
 const FIRMA_TRATTO_DX = 176
+
+/**
+ * L'aria fra la fine del corpo e il luogo/data, e quanto la si può stringere.
+ *
+ * ⚠️ **FINO AL 2026-08-16 ERA UN `+18` FISSO, E MANDAVA LA FIRMA SU UN FOGLIO DA SOLA.**
+ * Scandagliato da 1 a 70 righe di corpo, succedeva a **25-30 e 61-66**: dodici lunghezze
+ * su settanta, cioè una finestra di sei righe ogni trentasei. L'ultima pagina portava
+ * soltanto «Giugliano, lì … — La Direzione — ______» su un foglio di carta intestata con
+ * marchio, filigrana e le tre sedi. Su un CERTIFICATO PROTOCOLLATO diretto a una famiglia
+ * o all'INPS, quel foglio non porta una sola parola dell'atto che firma.
+ *
+ * La regola — prima stringi l'aria, poi al limite cambia foglio — non è scritta qui: la
+ * compie `quotaBloccoFinale()` in `@/lib/carta`, che è la stessa che usa il motore dei
+ * prestampati. Erano due copie, e una delle due non c'era.
+ */
+const STACCO_FIRMA = 18
+const STACCO_FIRMA_MINIMO = 5
+/** Il blocco firma non risale mai sopra questa quota: sotto il testo ci vuole respiro. */
+const FIRMA_Y_MIN = 150
+/**
+ * La quota più bassa a cui il blocco firma può COMINCIARE: il tratto su cui si firma cade
+ * `ALTEZZA_FIRMA` più giù, e deve restare dentro la finestra della carta.
+ */
+const TETTO_FIRMA = CARTA.contenutoFine - ALTEZZA_FIRMA
 
 /** `true` se una riga scritta a `y` con quel corpo ha ancora l'inchiostro dentro la finestra. */
 function ciSta(y: number, corpoPt: number): boolean {
@@ -133,8 +158,27 @@ export function buildDocumentoRichiestaPdf(input: {
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(CORPO_TESTO)
   const righeCorpo = doc.splitTextToSize(input.corpo, LARGHEZZA_UTILE) as string[]
-  for (const riga of righeCorpo) {
-    if (!ciSta(y, CORPO_TESTO)) {
+
+  /**
+   * `true` se, con l'ultima riga di corpo scritta a `y`, il blocco firma resta su questo
+   * foglio — anche a costo di stringere l'aria fino a `STACCO_FIRMA_MINIMO`.
+   *
+   * ⚠️ Stringere l'aria non basta da solo: quando è l'ULTIMA RIGA DI CORPO a riempire la
+   * pagina, la firma trasloca comunque, e allora sull'ultimo foglio non resta niente del
+   * documento. Perciò sull'ultima riga il conto non è «ci sta la riga» ma «ci stanno la
+   * riga E la sua firma»: se non ci stanno, si cambia foglio PRIMA di scriverla, e
+   * l'ultima riga del documento scende insieme a chi la sottoscrive.
+   */
+  const firmaSegueLaRigaA = (quota: number): boolean =>
+    Math.max(quota + INTERLINEA + STACCO_FIRMA_MINIMO, FIRMA_Y_MIN) <= TETTO_FIRMA
+
+  for (let k = 0; k < righeCorpo.length; k++) {
+    const eUltima = k === righeCorpo.length - 1
+    // Il salto anticipato si fa solo se sul foglio nuovo riga e firma ci starebbero
+    // davvero: altrimenti costerebbe una pagina senza rimediare a niente.
+    const trascinaLaFirma =
+      eUltima && !firmaSegueLaRigaA(y) && firmaSegueLaRigaA(CARTA.contenutoInizio)
+    if (!ciSta(y, CORPO_TESTO) || trascinaLaFirma) {
       doc.addPage()
       y = CARTA.contenutoInizio
       // Su una pagina nuova jsPDF non conserva lo stato del testo impostato sopra.
@@ -142,16 +186,23 @@ export function buildDocumentoRichiestaPdf(input: {
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(CORPO_TESTO)
     }
-    doc.text(riga, CARTA.margineSx, y)
+    doc.text(righeCorpo[k], CARTA.margineSx, y)
     y += INTERLINEA
   }
 
   // ─── Luogo, data e firma: un blocco solo, sull'ultimo foglio ──────────────────
-  y = Math.max(y + 18, 150)
-  if (y + ALTEZZA_FIRMA > CARTA.contenutoFine) {
-    doc.addPage()
-    y = 150
-  }
+  // Il tratto su cui si firma cade a `y + ALTEZZA_FIRMA`: il tetto del blocco è quindi il
+  // fondo della finestra meno quell'altezza, non la finestra intera.
+  const firma = quotaBloccoFinale({
+    dopoIlContenuto: y,
+    stacco: STACCO_FIRMA,
+    staccoMinimo: STACCO_FIRMA_MINIMO,
+    quotaMinima: FIRMA_Y_MIN,
+    tetto: TETTO_FIRMA,
+    inizioPagina: CARTA.contenutoInizio,
+  })
+  if (firma.paginaNuova) doc.addPage()
+  y = firma.y
   doc.setTextColor(...INCHIOSTRO)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(CORPO_FIRMA)

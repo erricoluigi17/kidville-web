@@ -85,13 +85,19 @@ const ARIA = 4
 
 const { marchio, piede } = fasceVietate(LARGHEZZA_FOGLIO, ALTEZZA_FOGLIO)
 /** Il bordo sinistro del contenuto: dove finisce la colonna del marchio, più l'aria. */
-const X_SX = marchio.sinistra + marchio.larghezza + ARIA
+export const X_SX = marchio.sinistra + marchio.larghezza + ARIA
 /** Il bordo destro: dove comincia la colonna del piede stampato, meno l'aria. */
-const X_DX = piede.sinistra - ARIA
-const LARGHEZZA_UTILE = X_DX - X_SX
+export const X_DX = piede.sinistra - ARIA
+export const LARGHEZZA_UTILE = X_DX - X_SX
 
+const CORPO_TITOLO = 15
+const CORPO_META = 9
 const Y_TITOLO = 16
-const Y_TABELLA = 24
+/** Dove la riga di contesto va a capo quando accanto al titolo non ci sta. */
+const Y_META_SOTTO = 21
+/** L'aria minima fra la fine del titolo e l'inizio della riga di contesto. */
+const ARIA_TESTATA = 6
+export const Y_TABELLA = 24
 /**
  * La riga di servizio, in fondo al foglio orizzontale: la LINEA DI SCRITTURA di
  * «Pagina n di m». Esportata perché il lock la misura invece di ricopiarla — un test che
@@ -107,11 +113,39 @@ const MARGINE_BASSO = ALTEZZA_FOGLIO - RIGA_SERVIZIO + 4
  */
 export const FONDO_TABELLA = ALTEZZA_FOGLIO - MARGINE_BASSO
 
-const COLONNA_NOME = 38
+/**
+ * La colonna del nome, e perché è 42 e non 38.
+ *
+ * ⚠️ **W9 l'aveva stretta a 38 mm, e la stretta si pagava in nomi tagliati.** 42 mm era il
+ * valore del vecchio `NAME_COL` del componente browser; passando alla carta intestata
+ * questa colonna ha ceduto quattro millimetri insieme al resto, con `overflow: 'hidden'`,
+ * cioè un troncamento netto a metà parola, senza puntini e senza avviso. Misurato a 9 pt
+ * grassetto, un cognome composto con un nome doppio supera i 40 mm utili: il registro
+ * usciva con «Di Girolamo Alessandr».
+ *
+ * È un documento che serve a **una cosa sola**: dire quale bambino era presente. E i
+ * quattro millimetri non erano nemmeno necessari — con 42 la colonna-giorno resta a 5,61
+ * mm su 31 giorni, sopra il minimo che questo file stesso dichiara qui sotto.
+ */
+export const COLONNA_NOME = 42
 const COLONNA_RIEPILOGO = 7
 const COLONNE_RIEPILOGO = 3
 /** Sotto questa larghezza una colonna-giorno non tiene più due caratteri. */
-const COLONNA_GIORNO_MINIMA = 5
+export const COLONNA_GIORNO_MINIMA = 5
+
+/**
+ * Quanto resta a ciascun giorno del mese, con la colonna del nome e le tre del riepilogo
+ * già tolte. Esportata perché il lock rifà il conto invece di ricopiarne il risultato: chi
+ * domani stringe di nuovo la colonna del nome — o allarga il riepilogo — vede subito se
+ * l'ha pagata la griglia dei giorni.
+ */
+export function larghezzaColonnaGiorno(numeroGiorni: number): number {
+  return Math.max(
+    COLONNA_GIORNO_MINIMA,
+    (LARGHEZZA_UTILE - COLONNA_NOME - COLONNE_RIEPILOGO * COLONNA_RIEPILOGO) /
+      Math.max(1, numeroGiorni)
+  )
+}
 
 const VERDE: [number, number, number] = [0, 106, 95]
 const GRIGIO: [number, number, number] = [100, 100, 100]
@@ -147,28 +181,72 @@ function numeroDelGiorno(iso: string): string {
   return String(Number(iso.slice(8, 10)))
 }
 
+/**
+ * Un testo che sta dentro una larghezza data, col taglio DICHIARATO se serve tagliare.
+ *
+ * `maxWidth` di jsPDF non taglia: manda a capo, e una riga in più in testa a questo foglio
+ * finisce dentro la tabella. Qui il testo si accorcia con i puntini di sospensione, che è
+ * l'unico modo onesto di dire «qui manca qualcosa» — a differenza di `overflow: 'hidden'`,
+ * che taglia a metà parola e sembra il nome vero.
+ */
+function accorcia(doc: jsPDF, testo: string, larghezzaMax: number): string {
+  if (larghezzaMax <= 0) return ''
+  if (doc.getTextWidth(testo) <= larghezzaMax) return testo
+  let taglio = testo
+  while (taglio.length > 0 && doc.getTextWidth(`${taglio}...`) > larghezzaMax) {
+    taglio = taglio.slice(0, -1)
+  }
+  return `${taglio.trimEnd()}...`
+}
+
 export function buildRegistroPresenzePdf(input: RegistroPresenzeInput): Uint8Array {
   const { giorni, righe, etichette } = input
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
 
-  const larghezzaGiorno = Math.max(
-    COLONNA_GIORNO_MINIMA,
-    (LARGHEZZA_UTILE - COLONNA_NOME - COLONNE_RIEPILOGO * COLONNA_RIEPILOGO) /
-      Math.max(1, giorni.length)
-  )
+  const larghezzaGiorno = larghezzaColonnaGiorno(giorni.length)
 
-  // ── Testata: testo, non una banda ────────────────────────────────────────────
-  // La banda verde `rect(0, 0, 297, 20)` attraversava ENTRAMBE le colonne vietate della
-  // carta girata: copriva il marchio della scuola a sinistra e il piede con la P.IVA a
-  // destra. Qui restano il titolo e la riga di contesto, dentro l'area libera.
-  doc.setTextColor(...VERDE)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(15)
-  doc.text(etichette.titolo, X_SX, Y_TITOLO, { maxWidth: LARGHEZZA_UTILE })
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9)
-  doc.setTextColor(...GRIGIO)
-  doc.text(etichette.meta, X_DX, Y_TITOLO, { align: 'right' })
+  /**
+   * ── Testata: testo, non una banda, e SU OGNI FOGLIO ──────────────────────────
+   *
+   * La banda verde `rect(0, 0, 297, 20)` attraversava ENTRAMBE le colonne vietate della
+   * carta girata: copriva il marchio della scuola a sinistra e il piede con la P.IVA a
+   * destra. Qui restano il titolo e la riga di contesto, dentro l'area libera.
+   *
+   * ⚠️ **E si ridisegnano a ogni pagina, non una volta sola (2026-08-16).** Titolo e meta
+   * si stampavano prima di `autoTable`, quindi vivevano solo sul primo foglio: dalla
+   * seconda pagina restava una griglia di lettere senza nome, senza mese e senza classe.
+   * Non è un caso limite — la tabella tiene 23 righe per pagina e la sezione più numerosa
+   * in produzione ne ha 33, quindi **ogni registro vero è a due fogli**, che si stampano,
+   * si firmano e si archiviano: due fogli spillati si separano, e il secondo diventa
+   * illeggibile per chiunque non fosse presente alla stampa.
+   *
+   * ⚠️ **E la riga di contesto non ha più licenza di crescere verso sinistra.** Il titolo
+   * aveva `maxWidth`, la meta no: con un nome di sezione lungo — e nessuno lo vincola —
+   * la meta finiva stampata SOPRA il titolo, entrambi illeggibili. Misurato: il titolo
+   * andava da 31,0 a 132,2 mm e la meta cominciava a 66,7. Ora lo spazio si misura, e se
+   * sulla riga del titolo non ci sta, la meta va a capo sotto — mai addosso.
+   */
+  const disegnaTestata = (): void => {
+    doc.setTextColor(...VERDE)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(CORPO_TITOLO)
+    const titolo = accorcia(doc, etichette.titolo, LARGHEZZA_UTILE)
+    doc.text(titolo, X_SX, Y_TITOLO)
+    const larghezzaTitolo = doc.getTextWidth(titolo)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(CORPO_META)
+    doc.setTextColor(...GRIGIO)
+    const accantoAlTitolo = LARGHEZZA_UTILE - larghezzaTitolo - ARIA_TESTATA
+    const staSullaRiga = doc.getTextWidth(etichette.meta) <= accantoAlTitolo
+    const larghezzaMeta = staSullaRiga ? accantoAlTitolo : LARGHEZZA_UTILE
+    doc.text(
+      accorcia(doc, etichette.meta, larghezzaMeta),
+      X_DX,
+      staSullaRiga ? Y_TITOLO : Y_META_SOTTO,
+      { align: 'right' }
+    )
+  }
 
   const intestazioniGiorni = giorni.map((iso) => {
     const dow = giornoSettimana(iso)
@@ -267,10 +345,21 @@ export function buildRegistroPresenzePdf(input: RegistroPresenzeInput): Uint8Arr
       minCellHeight: 10,
     },
     alternateRowStyles: { fillColor: [252, 250, 248] },
-    columnStyles: { 0: { cellWidth: COLONNA_NOME } },
+    // `linebreak` e non `ellipsize`: su un registro di scuola un nome tagliato — anche coi
+    // puntini — è un bambino identificato a metà. Se il cognome composto non ci sta, va a
+    // capo dentro la sua cella e la riga si alza di qualche decimo: costa una riga in meno
+    // per pagina, non un nome.
+    columnStyles: { 0: { cellWidth: COLONNA_NOME, overflow: 'linebreak' } },
     // I margini SONO le due colonne vietate della carta girata: qui la tabella smette di
     // usare 281 mm di foglio e ne usa 245, che è ciò che la carta lascia libero.
-    margin: { left: X_SX, right: LARGHEZZA_FOGLIO - X_DX, bottom: MARGINE_BASSO },
+    //
+    // ⚠️ `top` DEVE valere quanto `startY`: senza, dalla seconda pagina autoTable riparte
+    // dal margine di default (~14 mm) e la prima riga finisce addosso alla testata che il
+    // gancio qui sotto ha appena ristampato.
+    margin: { top: Y_TABELLA, left: X_SX, right: LARGHEZZA_FOGLIO - X_DX, bottom: MARGINE_BASSO },
+    // Il gancio è libero perché il piede si stampa in una passata finale: qui ci va la
+    // testata, che è l'unica cosa che deve comparire su OGNI foglio.
+    didDrawPage: disegnaTestata,
   })
 
   // ─── Il piede di servizio, in UNA passata sola e alla fine ───────────────────
@@ -298,7 +387,12 @@ export function buildRegistroPresenzePdf(input: RegistroPresenzeInput): Uint8Arr
     doc.setFont('helvetica', 'italic')
     doc.setFontSize(7)
     doc.setTextColor(...GRIGIO)
-    doc.text(etichette.piePagina(p, pagine), (X_SX + X_DX) / 2, RIGA_SERVIZIO, { align: 'center' })
+    // A destra, come negli altri quattro motori: era l'unico centrato, e l'unico che
+    // scriveva qualcosa ACCANTO al numero di pagina. Quel qualcosa era «Registro
+    // Elettronico Kidville» — il nome del prodotto su un foglio la cui carta porta già
+    // ragione sociale, P.IVA e le tre sedi. La spec lo dice due volte: nel piede l'app non
+    // scrive nulla. Ora la stringa `pdfPiePagina` è «Pagina {n} di {tot}» e basta.
+    doc.text(etichette.piePagina(p, pagine), X_DX, RIGA_SERVIZIO, { align: 'right' })
   }
 
   return new Uint8Array(doc.output('arraybuffer'))

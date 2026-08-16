@@ -48,6 +48,23 @@ const X_ARTICOLO = CARTA.margineSx
 const X_TAGLIA = 132
 const X_QUANTITA = CARTA.margineDx
 
+/** Il passo di una riga articolo. */
+const PASSO_RIGA = 6
+/** L'aria fra l'ultima riga di merce e il filetto di chiusura. */
+const STACCO_CHIUSURA = 2
+/** Dal filetto di chiusura alla riga «Totale pezzi». */
+const ALTEZZA_TOTALE = 6
+/** Da «Totale pezzi» alla prima riga di nota, e il passo fra le righe di nota. */
+const STACCO_NOTE = 9
+const PASSO_NOTE = 4.5
+/** Dall'intestazione delle colonne al suo filetto. */
+const STACCO_FILETTO_TESTATA = 3
+/**
+ * Quanto costa ripetere l'intestazione delle colonne in cima a una pagina nuova: serve a
+ * sapere, PRIMA di saltare, dove cadrebbe la prima riga sul foglio successivo.
+ */
+const ALTEZZA_TESTATA_TABELLA = STACCO_FILETTO_TESTATA + PASSO_RIGA
+
 export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   let y = CARTA.contenutoInizio
@@ -108,18 +125,78 @@ export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
     doc.text('Taglia', X_TAGLIA, y)
     doc.text('Q.tà', X_QUANTITA, y, { align: 'right' })
     doc.setTextColor(NERO)
-    y += 3
+    y += STACCO_FILETTO_TESTATA
     doc.setDrawColor(200)
     doc.line(X_ARTICOLO, y, X_QUANTITA, y)
-    y += 6
+    y += PASSO_RIGA
   }
   spazioPer(10)
   intestazioneTabella()
 
+  // ── Chiusura: filetto, totale e note sono UN BLOCCO SOLO ─────────────────────
+  //
+  // ⚠️ **QUI LA NOTA FINIVA DA SOLA SU UNA PAGINA (riparato il 2026-08-16).** Il limite di
+  // pagina si chiedeva riga per riga, quindi il totale entrava sull'ultimo foglio e la nota
+  // ne apriva un altro: misurato su un ordine reale, pag. 2 chiudeva con «Totale pezzi:
+  // 1830» a 252,21 mm e pag. 3 conteneva la SOLA riga «Note: …» a 37,72 mm. Il salto
+  // scattava per mezzo millimetro (264,01 contro un limite di 263,5), e il risultato era un
+  // foglio di carta intestata della scuola — marchio, filigrana, le tre sedi — spedito a un
+  // FORNITORE con sopra una riga.
+  //
+  // ⚠️ **E LA PRIMA RIPARAZIONE NON BASTAVA: TENEVA INSIEME LA CHIUSURA, NON L'ULTIMA
+  // RIGA DI MERCE.** Il blocco filetto+totale+note viaggiava compatto, ma quando era
+  // l'ultima riga articolo a riempire esattamente la pagina, il blocco intero traslocava
+  // da solo: misurato su questo stesso ordine, a 23 · 24 · 25 · 26 · 59 · 60 articoli
+  // l'ultimo foglio portava «Totale pezzi: 46» e «Note: …» e nient'altro. Da un foglio con
+  // una riga sola a un foglio con due righe: lo stesso foglio di carta intestata spedito a
+  // un terzo.
+  //
+  // La regola vera non è «totale e note insieme», è **una pagina non può portare solo la
+  // chiusura**. Perciò l'altezza del blocco si calcola PRIMA di entrare nella tabella, e
+  // sull'ULTIMA riga articolo il conto non è più «ci sta la riga» ma «ci stanno la riga E
+  // la sua chiusura»: se non ci stanno, si va a pagina nuova prima di stampare la riga, e
+  // l'ultimo articolo scende insieme al suo totale.
+  // `splitTextToSize` misura col corpo CORRENTE: senza questa riga spezzerebbe la nota
+  // sulle larghezze di 10 pt e ne verrebbe fuori un numero di righe che non è quello vero.
+  doc.setFontSize(9)
+  const righeNote = i.note
+    ? (doc.splitTextToSize(`Note: ${i.note}`, CARTA.margineDx - CARTA.margineSx) as string[])
+    : []
+
+  /** Il fondo dell'inchiostro del blocco di chiusura, se il filetto cadesse a `cima`. */
+  const fondoBlocco = (cima: number): number => {
+    const yTotale = cima + ALTEZZA_TOTALE
+    const fondoTotale = ingombroTesto(yTotale, 11).fondo
+    if (righeNote.length === 0) return fondoTotale
+    const ultimaNota = yTotale + STACCO_NOTE + (righeNote.length - 1) * PASSO_NOTE
+    return Math.max(fondoTotale, ingombroTesto(ultimaNota, 9).fondo)
+  }
+
+  /**
+   * Il salto anticipato ha senso solo se sulla pagina nuova la riga e la chiusura ci
+   * stanno DAVVERO insieme: con una nota di quaranta righe non ci starebbero comunque, e
+   * allora spostare l'ultimo articolo costerebbe un foglio senza rimediare a niente. In
+   * quel caso si lascia lavorare la rete che spezza la nota, più sotto.
+   *
+   * Il conto parte da dove cadrebbe davvero la riga sul foglio nuovo: dopo l'intestazione
+   * delle colonne, che si ripete, non da `contenutoInizio`.
+   */
+  const chiusuraViaggiaConUnaRiga =
+    fondoBlocco(
+      CARTA.contenutoInizio + ALTEZZA_TESTATA_TABELLA + PASSO_RIGA + STACCO_CHIUSURA
+    ) <= CARTA.contenutoFine
+
   let totaleQ = 0
   doc.setFontSize(10)
-  for (const r of i.righe) {
-    if (ingombroTesto(y, 10).fondo > CARTA.contenutoFine) {
+  for (let k = 0; k < i.righe.length; k++) {
+    const r = i.righe[k]
+    const eUltima = k === i.righe.length - 1
+    const fondoRiga = ingombroTesto(y, 10).fondo
+    const trascinaLaChiusura =
+      eUltima &&
+      chiusuraViaggiaConUnaRiga &&
+      fondoBlocco(y + PASSO_RIGA + STACCO_CHIUSURA) > CARTA.contenutoFine
+    if (fondoRiga > CARTA.contenutoFine || trascinaLaChiusura) {
       doc.addPage()
       y = CARTA.contenutoInizio
       // L'intestazione delle colonne si ripete: una pagina di quantità senza il nome
@@ -131,43 +208,10 @@ export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
     doc.text(r.taglia || '—', X_TAGLIA, y)
     doc.text(String(r.quantita), X_QUANTITA, y, { align: 'right' })
     totaleQ += r.quantita
-    y += 6
-  }
-  // ── Chiusura: filetto, totale e note sono UN BLOCCO SOLO ─────────────────────
-  //
-  // ⚠️ **QUI LA NOTA FINIVA DA SOLA SU UNA PAGINA (riparato il 2026-08-16).** Il limite di
-  // pagina si chiedeva riga per riga, quindi il totale entrava sull'ultimo foglio e la nota
-  // ne apriva un altro: misurato su un ordine reale, pag. 2 chiudeva con «Totale pezzi:
-  // 1830» a 252,21 mm e pag. 3 conteneva la SOLA riga «Note: …» a 37,72 mm. Il salto
-  // scattava per mezzo millimetro (264,01 contro un limite di 263,5), e il risultato era un
-  // foglio di carta intestata della scuola — marchio, filigrana, le tre sedi — spedito a un
-  // FORNITORE con sopra una riga.
-  //
-  // La regola del limite era giusta: mancava il «tieni insieme» che il motore dei
-  // protocolli ha già per il blocco firma (`ALTEZZA_FIRMA`, `documento-pdf.ts`). Qui
-  // l'altezza del blocco si calcola PRIMA di stamparlo e il salto si chiede una volta sola:
-  // o ci stanno insieme, o vanno insieme sulla pagina nuova.
-  const ALTEZZA_TOTALE = 6
-  const STACCO_NOTE = 9
-  const PASSO_NOTE = 4.5
-
-  // `splitTextToSize` misura col corpo CORRENTE: senza questa riga spezzerebbe la nota
-  // sulle larghezze di 10 pt e ne verrebbe fuori un numero di righe che non è quello vero.
-  doc.setFontSize(9)
-  const righeNote = i.note
-    ? (doc.splitTextToSize(`Note: ${i.note}`, CARTA.margineDx - CARTA.margineSx) as string[])
-    : []
-
-  /** Il fondo dell'inchiostro del blocco, se il filetto cadesse a `cima`. */
-  const fondoBlocco = (cima: number): number => {
-    const yTotale = cima + ALTEZZA_TOTALE
-    const fondoTotale = ingombroTesto(yTotale, 11).fondo
-    if (righeNote.length === 0) return fondoTotale
-    const ultimaNota = yTotale + STACCO_NOTE + (righeNote.length - 1) * PASSO_NOTE
-    return Math.max(fondoTotale, ingombroTesto(ultimaNota, 9).fondo)
+    y += PASSO_RIGA
   }
 
-  y += 2
+  y += STACCO_CHIUSURA
   if (fondoBlocco(y) > CARTA.contenutoFine) {
     doc.addPage()
     y = CARTA.contenutoInizio

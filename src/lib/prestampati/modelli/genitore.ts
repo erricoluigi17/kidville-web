@@ -660,11 +660,16 @@ function periodo(dalIso?: string | null, alIso?: string | null): string {
 /**
  * Rete di sicurezza sui nomi che finiscono nel PDF: mai un'email, mai un indirizzo IP.
  *
- * `buildReceiptPdf()` formatta il firmatario come «Nome <email>», e un chiamante che
- * riusasse quella stringa qui infilerebbe l'email in un foglio che la famiglia stampa e
- * consegna. `impaginazione.ts` ha la stessa guardia sul riquadro di firma, ma le
- * sottoscrizioni del doc. 08 passano dal CORPO del documento e quella guardia non le
- * vede: è la porta che resta aperta se si dà per scontato che il chiamante sia gentile.
+ * ⚠️ **La motivazione scritta qui fino al 2026-08-16 era diventata falsa.** Diceva che
+ * `buildReceiptPdf()` formatta il firmatario come «Nome <email>»: dal 2026-08-16 quella
+ * funzione stampa `senzaRecapiti(payload.signer.name)` e un'email non la produce più. La
+ * guardia **resta**, perché la ragione vera è un'altra e non scade: `nome` lo riempie il
+ * CHIAMANTE con ciò che ha in mano, e un'email non deve poter arrivare in nessun caso su
+ * un foglio che la famiglia stampa e consegna.
+ *
+ * `impaginazione.ts` ha la stessa guardia sul riquadro di firma, ma le sottoscrizioni del
+ * doc. 08 passano dal CORPO del documento e quella guardia non le vede: è la porta che
+ * resta aperta se si dà per scontato che il chiamante sia gentile.
  */
 function nomeSenzaRecapiti(riga: string): string {
   return riga

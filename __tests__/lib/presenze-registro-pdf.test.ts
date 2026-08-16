@@ -20,8 +20,14 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildRegistroPresenzePdf,
+  COLONNA_GIORNO_MINIMA,
+  COLONNA_NOME,
   FONDO_TABELLA,
+  larghezzaColonnaGiorno,
   RIGA_SERVIZIO,
+  X_DX,
+  X_SX,
+  Y_TABELLA,
   type EtichetteRegistro,
   type RigaRegistro,
 } from '@/lib/presenze/registro-pdf'
@@ -47,7 +53,9 @@ const ETICHETTE: EtichetteRegistro = {
   abbrevR: 'R',
   simboli: { presente: 'P', assente: 'A', ritardo: 'R', uscita_anticipata: 'U' },
   giorni: ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'],
-  piePagina: (n, tot) => `Pagina ${n} di ${tot} — Registro Elettronico Kidville`,
+  // Il piede dell'app dice SOLO a che pagina siamo: ragione sociale, P.IVA e le tre sedi
+  // sono già stampate sulla carta, e il nome del prodotto non è il nome della scuola.
+  piePagina: (n, tot) => `Pagina ${n} di ${tot}`,
 }
 
 /** Trentun giorni: il mese più lungo, cioè il caso peggiore per la larghezza. */
@@ -227,5 +235,163 @@ describe('buildRegistroPresenzePdf — il piede di servizio non cancella la cart
     expect(await numeroPagine(unaSola)).toBe(1)
     const { estraiTesto } = await import('@/lib/protocolli/estrai')
     expect((await estraiTesto(unaSola)).replace(/\s+/g, ' ')).not.toContain('Pagina')
+  })
+
+  it("nel piede l'app non scrive il proprio nome: il marchio è già sulla carta", async () => {
+    // ⚠️ Il piede stampato era «Pagina 1 di 2 — Registro Elettronico Kidville», su un
+    // foglio la cui carta porta GIÀ ragione sociale, P.IVA e le tre sedi. La spec decide il
+    // contrario in due punti: «l'app nel piede NON SCRIVE NULLA» e §1.3 elimina
+    // `PIEDE_PREDEFINITO` («Documento generato dal registro elettronico Kidville») perché
+    // «la carta lo sostituisce». La frase era sopravvissuta in un motore solo — proprio
+    // quello riscritto da capo in W9 — senza che una riga la dichiarasse eccezione. Questo
+    // lavoro nasce per togliere il nome inventato dal codice sopra la carta vera:
+    // lasciarne uno su cinque è la divergenza da cui riparte.
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const testo = (await estraiTesto(registro(60))).replace(/\s+/g, ' ')
+    expect(testo).toMatch(/Pagina 1 di \d/)
+    expect(testo).not.toContain('Kidville')
+    expect(testo).not.toContain('Registro Elettronico')
+  })
+
+  it('e il numero di pagina è allineato a destra, come negli altri quattro motori', async () => {
+    const servizio = (await elementiTesto(registro(60))).filter(
+      (t) => Math.abs(t.yMm - RIGA_SERVIZIO) < 0.1
+    )
+    expect(servizio.length).toBeGreaterThan(0)
+    for (const riga of servizio) {
+      // Tre decimi di millimetro: la larghezza che pdf.js riconsegna è quella del testo
+      // reso, non quella con cui jsPDF ha allineato, e le due differiscono di un pelo.
+      expect(Math.abs(riga.xMm + riga.larghezzaMm - X_DX)).toBeLessThan(0.3)
+    }
+  })
+})
+
+describe('buildRegistroPresenzePdf — il nome del bambino non si taglia', () => {
+  /**
+   * ⚠️ **W9 AVEVA STRETTO PROPRIO QUESTA COLONNA, E LA STRETTA SI PAGAVA IN NOMI TAGLIATI.**
+   *
+   * `COLONNA_NOME` era passata da 42 mm (il vecchio `NAME_COL` del componente browser) a
+   * 38, con `overflow: 'hidden'`: troncamento netto a metà parola, senza puntini e senza
+   * avviso. I 36 mm di foglio che la carta intestata si prende erano stati fatti pagare
+   * anche al nome, e il registro serve a una cosa sola — dire quale bambino era presente.
+   *
+   * Non era nemmeno necessario: con 42 mm la colonna-giorno resta a 5,61 mm su 31 giorni,
+   * sopra il `COLONNA_GIORNO_MINIMA` = 5 che il file stesso dichiara. È il conto che il
+   * primo test qui sotto rifà invece di ricopiarlo.
+   *
+   * Nomi inventati: di reale c'è solo la LUNGHEZZA, che è quella dei cognomi composti e dei
+   * doppi nomi con cui un registro italiano ha a che fare tutti i giorni.
+   */
+  const LUNGHI: RigaRegistro[] = [
+    { cognome: 'Dellagiovanna', nome: 'Alessandro', giorni: {}, riepilogo: { presenze: 1, assenze: 0, ritardi: 0 } },
+    { cognome: 'Di Bartolomeo', nome: 'Maria Giovanna', giorni: {}, riepilogo: { presenze: 1, assenze: 0, ritardi: 0 } },
+    { cognome: 'Santangelo Vitiello', nome: 'Massimiliano', giorni: {}, riepilogo: { presenze: 1, assenze: 0, ritardi: 0 } },
+  ]
+  const conNomiLunghi = () =>
+    buildRegistroPresenzePdf({ giorni: GIORNI, righe: LUNGHI, etichette: ETICHETTE })
+
+  it('la colonna-giorno regge lo stesso a 31 giorni, che è il caso peggiore', () => {
+    expect(larghezzaColonnaGiorno(31)).toBeGreaterThanOrEqual(COLONNA_GIORNO_MINIMA)
+    expect(COLONNA_NOME).toBeGreaterThanOrEqual(42)
+  })
+
+  it('nessun nome esce dalla colonna…', async () => {
+    // Solo le celle della tabella: il titolo comincia alla stessa ascissa e occupa
+    // legittimamente tutta la larghezza del foglio.
+    const fuori = (await elementiTesto(conNomiLunghi())).filter(
+      (t) =>
+        t.yMm > Y_TABELLA &&
+        t.xMm >= X_SX - 0.05 &&
+        t.xMm < X_SX + COLONNA_NOME &&
+        t.larghezzaMm > COLONNA_NOME - 2
+    )
+    expect(fuori.map((t) => `«${t.testo}» larga ${t.larghezzaMm.toFixed(2)} mm`)).toEqual([])
+  })
+
+  it('…e nessun nome viene tagliato in silenzio', async () => {
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const testo = (await estraiTesto(conNomiLunghi())).replace(/\s+/g, ' ')
+    for (const riga of LUNGHI) {
+      expect(testo).toContain(`${riga.cognome} ${riga.nome}`)
+    }
+  })
+})
+
+describe('buildRegistroPresenzePdf — la testata regge e si ripete', () => {
+  /** Un nome di sezione che nessuno ha vincolato: `z.string().default('')`, nessun `max`. */
+  const META_LUNGA =
+    'Sezione: PRIMAVERA SPERIMENTALE BILINGUE — GRUPPO DEI GRANDI — PLESSO DI VIA DELLE MIMOSE   |   Esportato il 16/08/2026'
+
+  const conMetaLunga = (quanti = 12) =>
+    buildRegistroPresenzePdf({
+      giorni: GIORNI,
+      righe: righe(quanti, GIORNI),
+      etichette: { ...ETICHETTE, meta: META_LUNGA },
+    })
+
+  /**
+   * L'ingombro d'inchiostro di un pezzo di testo, come rettangolo confrontabile.
+   *
+   * ⚠️ pdf.js spezza una stessa `doc.text()` in più elementi adiacenti: due pezzi che si
+   * toccano al bordo NON sono una sovrapposizione, e senza la tolleranza questo lock
+   * fallirebbe su ogni riga scritta. Tre decimi di millimetro è meno del tratto di una
+   * lettera e più di qualunque arrotondamento.
+   */
+  const TOLLERANZA = 0.3
+  const riquadro = (t: { xMm: number; larghezzaMm: number; yMm: number; corpoPt: number }) => {
+    const { cima, fondo } = ingombroTesto(t.yMm, t.corpoPt)
+    return { x1: t.xMm, x2: t.xMm + t.larghezzaMm, y1: cima, y2: fondo }
+  }
+  const siSovrappongono = (a: ReturnType<typeof riquadro>, b: ReturnType<typeof riquadro>) =>
+    Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1) > TOLLERANZA &&
+    Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1) > TOLLERANZA
+
+  it('la riga di contesto non finisce MAI sopra il titolo', async () => {
+    // ⚠️ Il titolo aveva `maxWidth`, la meta no: cresceva verso sinistra senza limite e
+    // finiva stampata SOPRA «REGISTRO PRESENZE — MAGGIO 2026», entrambe illeggibili. Coi
+    // nomi di sezione brevi restavano 30-63 mm d'aria — cioè era latente, non assente, e
+    // il margine si consuma con un nome di sezione che nessuno ha vincolato. Misurato con
+    // questa meta: il titolo andava da 31,0 a 132,2 mm e la meta cominciava a **66,7**.
+    const testata = (await elementiTesto(conMetaLunga())).filter((t) => t.yMm < 24)
+    expect(testata.length).toBeGreaterThan(1)
+    const scontri: string[] = []
+    for (let i = 0; i < testata.length; i++) {
+      for (let k = i + 1; k < testata.length; k++) {
+        if (siSovrappongono(riquadro(testata[i]), riquadro(testata[k]))) {
+          scontri.push(`«${testata[i].testo}» × «${testata[k].testo}»`)
+        }
+      }
+    }
+    expect(scontri).toEqual([])
+  })
+
+  it('e nessun elemento della testata scende dentro la tabella', async () => {
+    const dentro = (await elementiTesto(conMetaLunga())).filter(
+      (t) => t.pagina === 1 && t.yMm < 24 && ingombroTesto(t.yMm, t.corpoPt).fondo > 23.5
+    )
+    expect(dentro.map((t) => `«${t.testo}» @ ${t.yMm.toFixed(1)}`)).toEqual([])
+  })
+
+  it('dalla seconda pagina in poi il registro dice ancora che registro sia', async () => {
+    // ⚠️ Titolo e meta si disegnavano UNA volta sola, prima di `autoTable`: vivevano solo
+    // sulla pagina 1. Dalla seconda restava una griglia di lettere senza nome, senza mese e
+    // senza classe — e non è un caso limite, perché la tabella tiene 23 righe per pagina e
+    // la sezione più numerosa in produzione ne ha 33: OGNI registro vero è a due fogli.
+    const molti = await elementiTesto(registro(60))
+    const pagine = Math.max(...molti.map((t) => t.pagina))
+    expect(pagine).toBeGreaterThan(1)
+    for (let p = 1; p <= pagine; p++) {
+      const suQuesta = molti.filter((t) => t.pagina === p)
+      expect(`p${p}: ${suQuesta.some((t) => t.testo.includes('REGISTRO PRESENZE')) ? 'titolo' : 'SENZA titolo'}`).toBe(`p${p}: titolo`)
+      expect(`p${p}: ${suQuesta.some((t) => t.testo.includes('Sezione:')) ? 'sezione' : 'SENZA sezione'}`).toBe(`p${p}: sezione`)
+    }
+  })
+
+  it('e dalla seconda pagina la tabella non risale sotto il titolo', async () => {
+    // `margin.top` deve valere quanto `startY`: altrimenti dalla seconda pagina autoTable
+    // riparte da ~14 mm e la prima riga finisce addosso alla testata appena ristampata.
+    const percorsi = (await ingombriPercorsi(registro(60))).filter((p) => p.pagina > 1)
+    const piuAlto = Math.min(...percorsi.map((p) => p.yMm))
+    expect(piuAlto).toBeGreaterThanOrEqual(23.5)
   })
 })

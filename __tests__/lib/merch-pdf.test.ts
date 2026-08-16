@@ -109,17 +109,28 @@ describe('buildOrdineFornitorePdf — sta dentro la carta', () => {
     expect(filetti).toEqual([])
   })
 
-  it('non manda mai la nota da sola su una pagina: totale e note viaggiano insieme', async () => {
+  it("nessuna pagina porta la sola chiusura: l'ultima riga di merce scende col suo totale", async () => {
     // Misurato su un ordine reale: pag. 2 chiudeva con «Totale pezzi: 1830» a 252,21 mm e
     // pag. 3 conteneva la SOLA riga «Note: …» a 37,72 mm. Il salto scattava per mezzo
     // millimetro (l'ingombro chiudeva a 264,01 contro un limite di 263,5) — e il risultato
     // era un foglio di carta intestata della scuola, con marchio, filigrana e le tre sedi,
     // spedito a un FORNITORE con sopra una riga sola.
     //
-    // La regola del limite era giusta: mancava il «tieni insieme» che il motore dei
-    // protocolli ha già per il blocco firma (`ALTEZZA_FIRMA`). Si scandisce un intervallo
-    // invece di un solo numero perché il confine si sposta al primo millimetro che qualcuno
-    // tocca: un test tarato su «61 righe» smetterebbe di guardare il confine vero.
+    // ⚠️ **QUESTO LOCK È STATO RIFATTO IL 2026-08-16, ED È LA PARTE CHE CONTA.** La prima
+    // versione vietava «1 solo elemento sull'ultima pagina» e assolveva il due: passava
+    // verde proprio mentre l'ultimo foglio portava «Totale pezzi: 46» e «Note: …» e
+    // nient'altro. Un lock tarato sul SINTOMO — quante righe c'erano — invece che sulla
+    // REGOLA si ferma un millimetro prima del difetto, e allora dichiara che il difetto non
+    // c'è: è peggio di nessun test.
+    //
+    // La regola non è «totale e note insieme»: è **una pagina non può portare solo la
+    // chiusura**. Il «tieni insieme» deve prendere anche l'ULTIMA RIGA ARTICOLO, perché
+    // quando è lei a riempire esattamente la pagina il blocco trasloca da solo.
+    //
+    // Si scandisce un intervallo invece di un solo numero perché il confine si sposta al
+    // primo millimetro che qualcuno tocca: un test tarato su «61 righe» smetterebbe di
+    // guardare il confine vero. Con questi dati il difetto cadeva a n = 23, 24, 25, 26,
+    // 59 e 60 — cioè dentro l'intervallo che il lock precedente scandiva già.
     for (let n = 20; n <= 60; n++) {
       const elementi = await elementiTesto(
         ordine({
@@ -140,9 +151,14 @@ describe('buildOrdineFornitorePdf — sta dentro la carta', () => {
 
       const ultima = Math.max(...utili.map((t) => t.pagina))
       const suUltima = utili.filter((t) => t.pagina === ultima)
-      expect(`${n} righe → ${suUltima.length} elementi sull'ultima pagina`).not.toBe(
-        `${n} righe → 1 elementi sull'ultima pagina`
-      )
+      const merce = suUltima.filter((t) => /^Articolo di prova numero/.test(t.testo))
+      expect(
+        `${n} righe → p${ultima}: ${
+          merce.length > 0
+            ? 'porta anche merce'
+            : `SOLO CHIUSURA (${suUltima.map((t) => t.testo).join(' | ')})`
+        }`
+      ).toBe(`${n} righe → p${ultima}: porta anche merce`)
     }
   })
 

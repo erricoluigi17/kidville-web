@@ -236,6 +236,58 @@ describe('buildReceiptPdf — la testata la porta la carta', () => {
   })
 })
 
+describe('buildReceiptPdf — nessuna pagina porta la sola nota di chiusura', () => {
+  /**
+   * ⚠️ **LO STESSO DIFETTO RIPARATO LO STESSO GIORNO SUGLI ALTRI DUE MOTORI.**
+   *
+   * Il salto di pagina si chiedeva riga per riga, quindi l'ultima riga di contenuto entrava
+   * sull'ultimo foglio e la nota «Ricevuta generata automaticamente…» ne apriva un altro:
+   * misurato su questo stesso documento, capitava a **16, 17, 48 e 49 firme congiunte**. Un
+   * foglio di carta intestata della scuola — marchio, filigrana, le tre sedi — con sopra due
+   * righe di boilerplate.
+   *
+   * La regola non è «la nota non si spezza», è **una pagina non può portare solo la
+   * chiusura**: sull'ultima riga di contenuto il conto diventa «ci stanno la riga E la sua
+   * nota». Si scandisce un intervallo perché il confine si sposta al primo millimetro che
+   * qualcuno tocca.
+   */
+  const conSlot = (quanti: number): ReceiptPayload => ({
+    ...payload,
+    slots: Array.from({ length: quanti }, (_, k) => ({
+      slot_index: k,
+      stato: 'signed',
+      firmato_il: '2026-06-25T10:00:00.000Z',
+    })) as ReceiptPayload['slots'],
+  })
+
+  it('con qualunque numero di firme congiunte, sull’ultimo foglio c’è anche il contenuto', async () => {
+    for (let n = 2; n <= 52; n++) {
+      const elementi = (await elementiTesto(new Uint8Array(buildReceiptPdf(conSlot(n))))).filter(
+        (t) => !/^Pagina \d+ di \d+$/.test(t.testo)
+      )
+      const ultima = Math.max(...elementi.map((t) => t.pagina))
+      const suUltima = elementi.filter((t) => t.pagina === ultima)
+      const contenuto = suUltima.filter((t) => !/^Ricevuta generata|^documentale|^immutabile/.test(t.testo))
+      expect(
+        `${n} slot → p${ultima}: ${
+          contenuto.length > 0
+            ? 'porta anche contenuto'
+            : `SOLO NOTA (${suUltima.map((t) => t.testo).join(' | ')})`
+        }`
+      ).toBe(`${n} slot → p${ultima}: porta anche contenuto`)
+    }
+  })
+
+  it('e la nota non sfonda comunque il limite del contenuto', async () => {
+    for (const n of [16, 17, 48, 49]) {
+      const fuori = (await elementiTesto(new Uint8Array(buildReceiptPdf(conSlot(n)))))
+        .filter((t) => !/^Pagina \d+ di \d+$/.test(t.testo))
+        .filter((t) => ingombroTesto(t.yMm, t.corpoPt).fondo > CARTA.contenutoFine)
+      expect(fuori.map((t) => `${n} slot: ${t.testo} @ ${t.yMm.toFixed(1)}`)).toEqual([])
+    }
+  })
+})
+
 describe('buildReceiptPdfSuCarta — il foglio consegnato', () => {
   it('porta la carta intestata reale, non un foglio bianco', async () => {
     const pdf = await buildReceiptPdfSuCarta(payload)

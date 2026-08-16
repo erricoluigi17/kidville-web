@@ -93,6 +93,13 @@ const CORPO_TESTO = 11
 const PASSO_RIGA = 9
 const INTERLINEA = 5.5
 
+/** La nota di chiusura: l'aria che la precede, il passo fra le sue righe, il suo corpo. */
+const STACCO_NOTA = 6
+const PASSO_NOTA = 4
+const CORPO_NOTA = 8
+const TESTO_NOTA =
+  'Ricevuta generata automaticamente. La validità della firma è garantita dall’hash documentale e dall’audit immutabile.'
+
 /** `true` se una riga scritta a `y` con quel corpo ha ancora l'inchiostro dentro la finestra. */
 function ciSta(y: number, corpoPt: number): boolean {
   return ingombroTesto(y, corpoPt).fondo <= CARTA.contenutoFine
@@ -164,10 +171,34 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
 
   let y = CARTA.contenutoInizio
 
+  // La nota di chiusura si misura PRIMA di impaginare il contenuto: serve a sapere, riga
+  // per riga, se l'ultima riga del documento può ancora portarsela dietro.
+  doc.setFontSize(CORPO_NOTA)
+  const nota = doc.splitTextToSize(TESTO_NOTA, CARTA.margineDx - CARTA.margineSx) as string[]
+  doc.setFontSize(CORPO_TESTO)
+
+  /** Il fondo dell'inchiostro della nota, se il contenuto avesse finito a `quota`. */
+  const fondoNota = (quota: number) =>
+    ingombroTesto(quota + STACCO_NOTA + (nota.length - 1) * PASSO_NOTA, CORPO_NOTA).fondo
+
+  /**
+   * ⚠️ **UNA PAGINA NON PUÒ PORTARE SOLO LA CHIUSURA** (riparato il 2026-08-16).
+   *
+   * Con 16, 17, 48 o 49 firme congiunte l'ultimo foglio conteneva le due righe di «Ricevuta
+   * generata automaticamente…» e nient'altro: un foglio di carta intestata della scuola —
+   * marchio, filigrana, le tre sedi — con sopra una nota di servizio. È lo stesso difetto
+   * riparato lo stesso giorno sull'ordine al fornitore e sul documento protocollato, e la
+   * regola è la stessa: sull'ULTIMA riga di contenuto il conto non è «ci sta la riga» ma
+   * «ci stanno la riga E la sua chiusura».
+   */
+  const notaCiStaDaSola = fondoNota(CARTA.contenutoInizio + PASSO_RIGA) <= CARTA.contenutoFine
+
   /**
    * Una pagina nuova quando l'ULTIMA riga del blocco che sta per essere scritto non ci
-   * starebbe più. Il parametro è lo scostamento fra `y` e la baseline di quella riga:
-   * **zero** per un blocco di una riga sola.
+   * starebbe più. Il primo parametro è lo scostamento fra `y` e la baseline di quella riga:
+   * **zero** per un blocco di una riga sola. Il secondo, quando c'è, è l'avanzamento del
+   * blocco: si passa **solo sull'ultima riga di contenuto**, e chiede che dopo di lei ci
+   * stia anche la nota di chiusura.
    *
    * ⚠️ Prima riceveva l'ALTEZZA del blocco e ne sottraeva `PASSO_RIGA`, che è il conto
    * giusto solo se l'altezza è quella che `line()` calcola. Il ciclo delle firme congiunte
@@ -176,8 +207,13 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
    * con le discendenti. Non è teoria — è emerso appena il contenuto si è accorciato di tre
    * righe. Un parametro che vuol dire una cosa sola non ha questo problema.
    */
-  const spazioPer = (scostamentoUltimaRiga: number) => {
-    if (ciSta(y + scostamentoUltimaRiga, CORPO_TESTO)) return
+  const spazioPer = (scostamentoUltimaRiga: number, avanzamentoConNota: number | null = null) => {
+    const staLaRiga = ciSta(y + scostamentoUltimaRiga, CORPO_TESTO)
+    const staAncheLaNota =
+      avanzamentoConNota === null ||
+      !notaCiStaDaSola ||
+      fondoNota(y + avanzamentoConNota) <= CARTA.contenutoFine
+    if (staLaRiga && staAncheLaNota) return
     doc.addPage()
     y = CARTA.contenutoInizio
   }
@@ -203,43 +239,50 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
   // ── Corpo ────────────────────────────────────────────────────────────────────
   doc.setTextColor(...INCHIOSTRO)
   doc.setFontSize(CORPO_TESTO)
-  const line = (label: string, value: string) => {
+  const line = (label: string, value: string, tieneLaNota = false) => {
     const righe = doc.splitTextToSize(value, LARGHEZZA_VALORE) as string[]
-    spazioPer((righe.length - 1) * INTERLINEA)
+    const avanzamento = Math.max(PASSO_RIGA, righe.length * INTERLINEA + 3.5)
+    spazioPer((righe.length - 1) * INTERLINEA, tieneLaNota ? avanzamento : null)
     doc.setTextColor(...INCHIOSTRO)
     doc.setFontSize(CORPO_TESTO)
     doc.setFont('helvetica', 'bold')
     doc.text(label, CARTA.margineSx, y)
     doc.setFont('helvetica', 'normal')
     doc.text(righe, COLONNA_VALORE, y)
-    y += Math.max(PASSO_RIGA, righe.length * INTERLINEA + 3.5)
+    y += avanzamento
   }
 
   // Il NOME e basta. L'email sta nell'hash documentale due righe più giù; IP e User-Agent
   // stanno nell'audit immutabile, che è il posto dove servono e l'unico dove sono
   // consultabili da chi ha titolo. Senza nome resta un trattino: un foglio che non nomina
   // nessuno è meno grave di un foglio che stampa l'indirizzo di chi ha firmato.
+  // ── Tabella firmatari (firma congiunta) se più di uno slot ───────────────────
+  const slots = payload.slots ?? []
+  const PASSO_SLOT = 7
+  const conElenco = slots.length > 1
+
   line('Firmatario:', senzaRecapiti(payload.signer.name ?? '') || '—')
   line('Documento:', `${payload.entitaTipo} · ${payload.entitaId}`)
   line('Metodo:', `${s.method} — ${s.provider}`)
   line('Data/ora firma:', istante(s.signed_at))
   if (s.hash) line('Hash OTP:', s.hash)
   line('Hash documento:', contentHash)
-  line('Conformità:', s.compliance)
+  // Senza l'elenco delle firme congiunte, «Conformità» è l'ULTIMA riga di contenuto: è lei
+  // a doversi portare dietro la nota di chiusura.
+  line('Conformità:', s.compliance, !conElenco)
 
-  // ── Tabella firmatari (firma congiunta) se più di uno slot ───────────────────
-  const slots = payload.slots ?? []
-  if (slots.length > 1) {
+  if (conElenco) {
     y += 4
     spazioPer(0)
     doc.setTextColor(...INCHIOSTRO)
     doc.setFontSize(CORPO_TESTO)
     doc.setFont('helvetica', 'bold')
     doc.text('Firme raccolte', CARTA.margineSx, y)
-    y += 7
+    y += PASSO_SLOT
     doc.setFont('helvetica', 'normal')
-    for (const slot of slots) {
-      spazioPer(0)
+    for (let k = 0; k < slots.length; k++) {
+      const slot = slots[k]
+      spazioPer(0, k === slots.length - 1 ? PASSO_SLOT : null)
       doc.setTextColor(...INCHIOSTRO)
       doc.setFontSize(CORPO_TESTO)
       doc.setFont('helvetica', 'normal')
@@ -249,7 +292,7 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
         CARTA.margineSx + 4,
         y
       )
-      y += 7
+      y += PASSO_SLOT
     }
   }
 
@@ -258,17 +301,17 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
   // Stava a y=285, cioè DENTRO il piede a quattro colonne stampato sulla carta: ci
   // sarebbe finita sopra la ragione sociale e i recapiti delle tre sedi. Ora chiude il
   // contenuto, dove le sue due righe hanno lo spazio che serve.
-  y += 6
-  const nota = doc.splitTextToSize(
-    'Ricevuta generata automaticamente. La validità della firma è garantita dall’hash documentale e dall’audit immutabile.',
-    CARTA.margineDx - CARTA.margineSx
-  ) as string[]
-  if (!ciSta(y + (nota.length - 1) * 4, 8)) {
+  //
+  // Il salto qui sotto resta come RETE: se la nota non ci sta nemmeno dopo che l'ultima
+  // riga di contenuto se l'è portata dietro — una nota che un domani diventasse lunga
+  // quanto una pagina — si spezza il blocco invece di sfondare il piede della carta.
+  y += STACCO_NOTA
+  if (!ciSta(y + (nota.length - 1) * PASSO_NOTA, CORPO_NOTA)) {
     doc.addPage()
     y = CARTA.contenutoInizio
   }
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
+  doc.setFontSize(CORPO_NOTA)
   doc.setTextColor(...GRIGIO)
   doc.text(nota, CARTA.margineSx, y)
 

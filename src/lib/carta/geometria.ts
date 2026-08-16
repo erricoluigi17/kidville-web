@@ -58,6 +58,14 @@
  * nella pagina si trovano nel motore — che stringe lo stacco prima di aprire un foglio
  * nuovo — non qui.
  *
+ * ⚠️ **E adesso quella promessa ha un nome**: `quotaBloccoFinale()`, in
+ * `carta/blocco-finale.ts`. Fino al 2026-08-16 questa riga descriveva un comportamento che
+ * **un motore su due** aveva davvero: `prestampati/impaginazione.ts` stringeva lo stacco,
+ * `protocolli/documento-pdf.ts` aveva un `+18` fisso e mandava la firma da sola su un foglio
+ * di carta intestata. Un commento che promette un'aria che il codice non lascia è la classe
+ * di difetto che questo progetto chiama incidente — e la cura non è cancellare la frase, è
+ * far esistere la funzione che la mantiene per tutti.
+ *
  * Testato in `__tests__/lib/carta-geometria.test.ts`, che le due fasce **le rimisura
  * sull'asset** invece di riscrivere questi numeri: un lock che ricopia il valore che
  * sorveglia non sorveglia niente.

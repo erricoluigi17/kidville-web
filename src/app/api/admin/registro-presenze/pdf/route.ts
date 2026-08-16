@@ -60,7 +60,12 @@ const getQuerySchema = z.object({
   year: zIntParseInt(z.number().int().min(2000).max(2100)).optional(),
   month: zIntParseInt(z.number().int().min(1).max(12)).optional(),
   // Nessun default a un nome sezione reale: param omesso → '' → 400 dal gate di scope.
-  sezione: z.string().default(''),
+  // Il `max` non è decorazione: il nome della sezione finisce nella riga di contesto in
+  // testa a OGNI pagina del PDF, e una stringa senza limite è una stringa che prima o poi
+  // arriva. Il motore la manda a capo e al limite la accorcia coi puntini, ma un modulo
+  // che accetta duemila caratteri e poi li butta via è una cortesia che non serve a
+  // nessuno: qui si rifiuta, con un 400 che dice cosa non va.
+  sezione: z.string().max(120).default(''),
   locale: z.enum(LOCALES).default(DEFAULT_LOCALE),
 })
 

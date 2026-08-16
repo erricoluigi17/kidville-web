@@ -94,6 +94,106 @@
 
 ---
 
+## 📄 Changelog — Tre fogli di carta intestata spediti con sopra due righe, e un registro che dalla seconda pagina non diceva più di chi fosse 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Correzione del lotto qui sotto («Quattro fogli che uscivano dalla scuola con qualcosa di troppo»):
+un critico l'ha ripreso e ha misurato che **tre dei quattro motori erano stati riparati a metà**.
+
+### «Una pagina non può portare solo la chiusura» — la regola che mancava, in tre motori
+
+La riparazione precedente teneva insieme il **blocco di chiusura** ma non l'**ultima riga di
+contenuto**: quando è quella a riempire esattamente la pagina, il blocco intero trasloca lo stesso.
+Il risultato è identico a prima, con una riga in più sopra.
+
+| Motore | Dove cadeva, misurato | Cosa portava l'ultimo foglio |
+|---|---|---|
+| Ordine al fornitore | 23 · 24 · 25 · 26 · 59 · 60 articoli | «Totale pezzi: 46» e «Note: …» |
+| Documento protocollato | 25-30 e 61-66 righe di corpo (12 lunghezze su 70) | «Giugliano, lì … — La Direzione — ______» |
+| Ricevuta FEA | 16 · 17 · 48 · 49 firme congiunte | «Ricevuta generata automaticamente…» |
+
+Tre fogli di carta intestata — marchio, filigrana mascotte, ragione sociale, P.IVA, le tre sedi —
+spediti a un **fornitore**, consegnati a una **famiglia** o allegati a un **ente**, con sopra due
+righe di conteggio. Sul certificato protocollato è peggio che brutto: la pagina della firma non
+portava una sola parola dell'atto che firma, e chi la separa dal fascicolo ha in mano una firma
+senza documento.
+
+Ora, sull'ultima riga di contenuto, il conto non è più «ci sta la riga» ma «ci stanno la riga **e**
+la sua chiusura»: se non ci stanno, si cambia foglio prima di scriverla.
+
+> **E il lock precedente era tarato sul sintomo.** Vietava «1 solo elemento sull'ultima pagina» e
+> assolveva il due, quindi passava **verde** proprio dentro l'intervallo 20→60 che l'esecutore
+> citava come prova. Un test che si ferma un millimetro prima del difetto è peggio di nessun test:
+> dichiara che il difetto non c'è. I tre lock ora chiedono la regola — «sull'ultima pagina c'è
+> almeno una riga di merce / di documento / di contenuto» — e sono stati visti ROSSI prima di
+> essere riparati.
+
+### La politica di salto pagina diventa una funzione sola
+
+`src/lib/carta/geometria.ts` prometteva per iscritto che «i millimetri per far stare la firma nella
+pagina si trovano nel motore — che stringe lo stacco prima di aprire un foglio nuovo».
+`prestampati/impaginazione.ts` lo faceva davvero; `protocolli/documento-pdf.ts` aveva un `+18`
+fisso. Era la stessa doppia manutenzione che W9.1 esisteva per finire — la testata è stata
+unificata, la politica di salto pagina no.
+
+Nuovo modulo **`src/lib/carta/blocco-finale.ts`** (`quotaBloccoFinale()`): prova con l'aria piena,
+poi con l'aria stretta appoggiandosi alla quota più bassa concessa, e apre la pagina solo se
+nemmeno quella basta. Lo chiamano **entrambi** i motori. Lock: `__tests__/lib/carta-blocco-finale.test.ts`.
+
+### Il registro presenze smette di tagliare i nomi dei bambini
+
+`COLONNA_NOME` era passata da 42 mm a **38**, con `overflow: 'hidden'`: troncamento netto a metà
+parola, senza puntini e senza avviso, su un documento che serve a una cosa sola — dire quale bambino
+era presente. I 36 mm che la carta si prende erano stati fatti pagare anche al nome, e non era
+necessario: a 42 mm la colonna-giorno resta a **5,61 mm** su 31 giorni, sopra il minimo di 5 che il
+file stesso dichiara. Ora la colonna è 42 e va a `linebreak`: un cognome composto va a capo dentro
+la sua cella invece di perdere metà nome.
+
+### Il registro presenze dice di chi è anche a pagina 2, e nel piede non scrive il nome dell'app
+
+- **Titolo e riga di contesto si ristampano su ogni foglio** (gancio `didDrawPage`, con `margin.top`
+  allineato a `startY`). Prima vivevano solo sulla pagina 1: dalla seconda restava una griglia di
+  lettere senza nome, senza mese e senza classe. Non è un caso limite — la tabella tiene 23 righe
+  per pagina e la sezione più numerosa in produzione ne ha 33, quindi **ogni registro vero** è a
+  due fogli, che si stampano, si firmano e si archiviano.
+- **La riga di contesto non cresce più senza limite.** Il titolo aveva `maxWidth`, la meta no: con
+  un nome di sezione lungo finiva stampata **sopra** il titolo (misurato: titolo 31,0 → 132,2 mm,
+  meta a partire da 66,7). Ora lo spazio si misura e, se non ci sta accanto, la meta va a capo
+  sotto. `sezione` ha anche un `max(120)` nello schema zod della rotta.
+- **`pdfPiePagina` è «Pagina {n} di {tot}»**, allineato a destra come negli altri quattro motori.
+  Era «Pagina 1 di 2 — Registro Elettronico Kidville»: il nome del prodotto su un foglio la cui
+  carta porta già ragione sociale, P.IVA e le tre sedi. La specifica lo dice in due punti («l'app
+  nel piede non scrive nulla», e §1.3 toglie `PIEDE_PREDEFINITO` «perché la carta lo sostituisce»):
+  la frase era sopravvissuta in un motore solo, senza che una riga la dichiarasse eccezione.
+
+### Due commenti che descrivevano una protezione con la ragione sbagliata
+
+`prestampati/impaginazione.ts` e `prestampati/modelli/genitore.ts` motivavano la guardia sui
+recapiti dicendo che «`buildReceiptPdf()` formatta il firmatario come *Nome \<email\>*» — cosa che
+il commit `a36512ff` di questo stesso ramo ha reso **falsa**. La guardia resta (difesa in
+profondità), ma la motivazione è ora quella vera e non scade: `name` lo riempie il chiamante con ciò
+che ha in mano, e un'email non deve poter arrivare sul foglio in nessun caso. In un repository la
+cui lezione pagata è «un documento che descrive una protezione che non c'è più è peggio di nessun
+documento», lasciare in piedi la motivazione sbagliata di una guardia giusta è il modo in cui la
+guardia viene tolta dal prossimo che la legge.
+
+### 🔻 Rettifica di attribuzione: cosa c'è davvero dentro il commit `a36512ff`
+
+Il messaggio di quel commit parla **soltanto** della ricevuta FEA («La ricevuta di firma smette di
+stampare email, IP e dispositivo»), ma i file che porta sono **tredici**, non quattro. I nove che
+non appartengono a W9 — e che vanno cercati sotto il lavoro a cui appartengono, non sotto quel
+titolo — sono:
+
+`src/lib/gdpr/esegui.ts` · `src/app/api/admin/gdpr/erase/route.ts` ·
+`src/app/api/admin/gdpr/richieste/route.ts` · i quattro test GDPR ·
+`src/app/api/parent/prestampati/banco-famiglia.ts` · `src/app/api/parent/prestampati/firma/route.ts` ·
+`src/app/api/prestampati/genera/route.ts`
+
+La storia **non si riscrive** — altri agenti lavorano sullo stesso albero e un rebase porterebbe via
+il loro lavoro a metà — quindi la rettifica sta qui: chi domani leggerà `git log -- src/lib/gdpr/esegui.ts`
+troverà quelle righe attribuite alla ricevuta di firma, e questa riga gli dice perché.
+
+---
+
 ## 🧾 Changelog — Quattro fogli che uscivano dalla scuola con qualcosa di troppo 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
 
 Rifinitura dei **motori PDF residui** (protocolli · ricevuta FEA · ordine al fornitore · registro

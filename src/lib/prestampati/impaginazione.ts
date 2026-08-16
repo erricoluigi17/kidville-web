@@ -43,6 +43,7 @@
 
 import { jsPDF } from 'jspdf'
 import { CARTA } from '@/lib/carta/geometria'
+import { quotaBloccoFinale } from '@/lib/carta/blocco-finale'
 import type {
   BloccoPrestampato,
   CampoPrestampato,
@@ -966,9 +967,23 @@ function testoCentratoSpaziato(doc: jsPDF, testo: string, centro: number, y: num
 /**
  * Rete di sicurezza sul riquadro di attestazione (§3a): nel PDF non finiscono MAI email
  * né indirizzo IP — stanno nella ricevuta FEA, che è un altro documento e si scarica a
- * parte. Non è teoria: `buildReceiptPdf()` formatta il firmatario come «Nome <email>», e
- * un chiamante che riusa quella stringa qui infilerebbe l'email in un foglio che la
- * famiglia stampa e consegna a un ente. Meglio toglierla che fidarsi della convenzione.
+ * parte.
+ *
+ * ⚠️ **La motivazione scritta qui fino al 2026-08-16 era diventata falsa, e va detto
+ * invece di cancellarla in silenzio.** Diceva: «`buildReceiptPdf()` formatta il firmatario
+ * come "Nome <email>", e un chiamante che riusa quella stringa qui infilerebbe l'email in
+ * un foglio…». Dal 2026-08-16 quella funzione stampa `senzaRecapiti(payload.signer.name)` e
+ * un'email non la produce più: la frase indicava una porta che nel frattempo è stata
+ * chiusa. **La guardia resta lo stesso**, e la ragione vera è un'altra e non scade: `nome`
+ * lo riempie il CHIAMANTE con ciò che ha in mano — una riga costruita a mano, un campo
+ * concatenato, un dato che passa da una rotta nuova — e l'email non deve poter arrivare
+ * su un foglio che la famiglia stampa e consegna a un ente. In nessun caso, e senza
+ * fidarsi della convenzione.
+ *
+ * Lasciare in piedi la motivazione sbagliata di una guardia giusta è il modo in cui la
+ * guardia viene tolta dal prossimo che la legge («tanto non serve più»): in questo
+ * repository la lezione «un documento che descrive una protezione che non c'è più è peggio
+ * di nessun documento» è già stata pagata una volta.
  *
  * L'IPv6 si riconosce da quattro gruppi in su, non da tre: `10:24:33` è un orario, e una
  * regola più larga cancellerebbe l'istante della firma dal riquadro che serve ad attestarla.
@@ -1057,24 +1072,29 @@ function disegnaFirma(s: Stato, composta: FirmaComposta): void {
   const firma = documento.firma
   const { attestazione, tetto } = composta
 
-  let y = Math.max(s.y + STACCO_FIRMA, FIRMA_Y_MIN)
-  if (y > tetto) {
-    // Prima di aprire una pagina nuova si stringe l'aria: si prende la quota più bassa
-    // che il foglio concede, non il minimo — l'aria che c'è si usa tutta. Una pagina in
-    // più costa un foglio E stacca la firma dal testo che sottoscrive; qualche
-    // millimetro di stacco in meno non costa niente a nessuno.
-    const compressa = Math.max(s.y + STACCO_FIRMA_MINIMO, FIRMA_Y_MIN)
-    if (compressa <= tetto) {
-      y = tetto
-    } else {
-      nuovaPagina(s)
-      // Sulla pagina nuova il contenuto non pesa più, ma il tetto sì: un'attestazione
-      // altissima può costringere la firma sopra y=150, e fra le due regole vince quella
-      // che non fa accavallare due cornici — una firma un po' più in alto si legge, due
-      // riquadri sovrapposti no.
-      y = Math.max(Math.min(FIRMA_Y_MIN, tetto), s.y)
-    }
-  }
+  // Prima di aprire una pagina nuova si stringe l'aria, e ci si appoggia alla quota più
+  // bassa che il foglio concede invece che al minimo: l'aria che c'è si usa tutta. Una
+  // pagina in più costa un foglio E stacca la firma dal testo che sottoscrive.
+  //
+  // ⚠️ **Questa scelta NON è scritta qui: la compie `quotaBloccoFinale()`**, in
+  // `@/lib/carta`. Fino al 2026-08-16 stava scritta anche in `protocolli/documento-pdf.ts`
+  // — anzi, là NON stava: quel motore aveva un `+18` fisso e apriva il foglio nuovo,
+  // mandando la firma da sola su una pagina di carta intestata. Due copie della stessa
+  // regola divergono sempre, e questa era già divergente prima ancora di essere copiata.
+  const scelta = quotaBloccoFinale({
+    dopoIlContenuto: s.y,
+    stacco: STACCO_FIRMA,
+    staccoMinimo: STACCO_FIRMA_MINIMO,
+    quotaMinima: FIRMA_Y_MIN,
+    tetto,
+    // Sulla pagina nuova il contenuto non pesa più, ma il tetto sì: un'attestazione
+    // altissima può costringere la firma sopra y=150, e fra le due regole vince quella
+    // che non fa accavallare due cornici. La quota di ripartenza è quella sotto la
+    // testata compatta, che `nuovaPagina()` ristampa in cima a ogni foglio.
+    inizioPagina: s.testata.quotaCorpo,
+  })
+  if (scelta.paginaNuova) nuovaPagina(s)
+  const y = scelta.y
   s.y = y
 
   doc.setTextColor(...GRIGIO)

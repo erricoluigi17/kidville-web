@@ -92,9 +92,20 @@ const LARGHEZZA_UTILE = X_DX - X_SX
 
 const Y_TITOLO = 16
 const Y_TABELLA = 24
-/** La riga di servizio, in fondo al foglio orizzontale. */
-const Y_SERVIZIO = 201
-const MARGINE_BASSO = ALTEZZA_FOGLIO - Y_SERVIZIO + 4
+/**
+ * La riga di servizio, in fondo al foglio orizzontale: la LINEA DI SCRITTURA di
+ * «Pagina n di m». Esportata perché il lock la misura invece di ricopiarla — un test che
+ * riscrive il numero che sorveglia non sorveglia niente.
+ */
+export const RIGA_SERVIZIO = 201
+const MARGINE_BASSO = ALTEZZA_FOGLIO - RIGA_SERVIZIO + 4
+/**
+ * Dove la tabella ha l'obbligo di aver finito: è il margine basso che si passa ad
+ * autoTable, letto dall'altra parte. **Sotto questa quota il motore non disegna nulla**, e
+ * ci sono due ragioni, non una: sotto c'è la riga di servizio, e sotto ancora c'è la carta
+ * intestata della scuola con la sua filigrana.
+ */
+export const FONDO_TABELLA = ALTEZZA_FOGLIO - MARGINE_BASSO
 
 const COLONNA_NOME = 38
 const COLONNA_RIEPILOGO = 7
@@ -260,36 +271,34 @@ export function buildRegistroPresenzePdf(input: RegistroPresenzeInput): Uint8Arr
     // I margini SONO le due colonne vietate della carta girata: qui la tabella smette di
     // usare 281 mm di foglio e ne usa 245, che è ciò che la carta lascia libero.
     margin: { left: X_SX, right: LARGHEZZA_FOGLIO - X_DX, bottom: MARGINE_BASSO },
-    didDrawPage: (dati) => {
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(...GRIGIO)
-      doc.text(
-        etichette.piePagina(dati.pageNumber, doc.getNumberOfPages()),
-        (X_SX + X_DX) / 2,
-        Y_SERVIZIO,
-        { align: 'center' }
-      )
-    },
   })
 
-  // ⚠️ `didDrawPage` scrive «Pagina 1 di 1» sul primo foglio anche quando i fogli
-  // saranno tre: quando quel gancio scatta, le pagine successive non esistono ancora.
-  // Il totale si riscrive alla fine, quando è noto — prima di questa passata il registro
-  // di una sezione numerosa dichiarava un totale che non era il suo.
+  // ─── Il piede di servizio, in UNA passata sola e alla fine ───────────────────
+  //
+  // ⚠️ **QUI C'ERA UNA BANDA BIANCA CHE MANGIAVA LA CARTA (riparata il 2026-08-16).**
+  //
+  // Il piede si scriveva due volte: una dentro `didDrawPage`, che non può conoscere il
+  // totale delle pagine mentre lo stampa, e una qui col totale vero. Per non ritrovarsi
+  // due testi sovrapposti, questa seconda passata copriva la prima con un rettangolo
+  // BIANCO OPACO di 237 × 6 mm — e su carta intestata quel rettangolo non copriva una riga
+  // di testo: copriva la CARTA. Misurato a 200 dpi sul documento composto, il grigio della
+  // filigrana mascotte (#F4F4F4, valore 244) diventava 255 puro fra 196,9 e 202,9 mm, con
+  // le sagome del nastro «KIDVILLE» tagliate da un bordo orizzontale netto. E non era un
+  // caso limite: la tabella tiene 23 righe per pagina, la sezione più numerosa ne ha 33,
+  // quindi OGNI registro vero è a due pagine e portava la banda.
+  //
+  // Si toglie la CAUSA, non il sintomo: il gancio non scrive più niente, il piede si
+  // stampa solo qui, e non c'è più niente da coprire. Sotto le due pagine non si scrive
+  // affatto — come negli altri quattro motori di questo lavoro: il numero di pagina di una
+  // pagina sola è rumore su un documento di scuola.
   const pagine = doc.getNumberOfPages()
-  if (pagine > 1) {
-    for (let p = 1; p <= pagine; p++) {
-      doc.setPage(p)
-      // Il rettangolo bianco copre la riga scritta dal gancio: senza, la nuova si
-      // stamperebbe SOPRA la vecchia e resterebbero due testi sovrapposti.
-      doc.setFillColor(...BIANCO)
-      doc.rect(X_SX, Y_SERVIZIO - 4, LARGHEZZA_UTILE, 6, 'F')
-      doc.setFont('helvetica', 'italic')
-      doc.setFontSize(7)
-      doc.setTextColor(...GRIGIO)
-      doc.text(etichette.piePagina(p, pagine), (X_SX + X_DX) / 2, Y_SERVIZIO, { align: 'center' })
-    }
+  if (pagine < 2) return new Uint8Array(doc.output('arraybuffer'))
+  for (let p = 1; p <= pagine; p++) {
+    doc.setPage(p)
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(7)
+    doc.setTextColor(...GRIGIO)
+    doc.text(etichette.piePagina(p, pagine), (X_SX + X_DX) / 2, RIGA_SERVIZIO, { align: 'center' })
   }
 
   return new Uint8Array(doc.output('arraybuffer'))

@@ -20,11 +20,19 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildRegistroPresenzePdf,
+  FONDO_TABELLA,
+  RIGA_SERVIZIO,
   type EtichetteRegistro,
   type RigaRegistro,
 } from '@/lib/presenze/registro-pdf'
 import { fasceVietate, ingombroTesto } from '@/lib/carta/geometria'
-import { dimensioniPagina, elementiTesto, immaginiDisegnate, ingombriPercorsi } from '../fixtures/misure-pdf'
+import {
+  dimensioniPagina,
+  elementiTesto,
+  immaginiDisegnate,
+  ingombriPercorsi,
+  numeroPagine,
+} from '../fixtures/misure-pdf'
 
 const LARGHEZZA = 297
 const ALTEZZA = 210
@@ -138,11 +146,7 @@ describe('buildRegistroPresenzePdf — le pagine', () => {
     )
     expect(fuori.map((t) => `p${t.pagina} «${t.testo}»`)).toEqual([])
 
-    // E anche i RIEMPIMENTI: sul documento di più pagine il piede si riscrive alla fine —
-    // il gancio `didDrawPage` non può conoscere il totale mentre lo stampa — e per farlo
-    // copre la riga vecchia con un rettangolo bianco. Quel rettangolo è l'unico disegno di
-    // questo motore che nasce da una misura invece che da autoTable: se prendesse tutta la
-    // larghezza del foglio, cancellerebbe una striscia del marchio della scuola.
+    // E anche i RIEMPIMENTI e i filetti.
     const percorsiFuori = (await ingombriPercorsi(molti)).filter(
       (p) =>
         p.xMm < marchio.sinistra + marchio.larghezza - 0.05 ||
@@ -164,5 +168,64 @@ describe('buildRegistroPresenzePdf — le pagine', () => {
     const testo = (await estraiTesto(registro(60))).replace(/\s+/g, ' ')
     expect(testo).toContain('Cognome01')
     expect(testo).toContain('Cognome60')
+  })
+})
+
+describe('buildRegistroPresenzePdf — il piede di servizio non cancella la carta', () => {
+  /**
+   * ⚠️ **LA BANDA BIANCA CHE MANGIAVA LA FILIGRANA.**
+   *
+   * Fino al 2026-08-16 il piede si scriveva DUE volte: una dentro `didDrawPage`, che non
+   * può conoscere il totale delle pagine mentre lo stampa, e una alla fine col totale
+   * vero. Per non ritrovarsi due testi sovrapposti, la seconda passata copriva la prima
+   * con un rettangolo BIANCO OPACO di 237 × 6 mm — e su carta intestata quel rettangolo
+   * non copriva una riga di testo: copriva la CARTA. Misurato a 200 dpi sul documento
+   * composto, il grigio della filigrana mascotte (#F4F4F4, valore 244) diventava 255 puro
+   * fra 196,9 e 202,9 mm, con le sagome del nastro «KIDVILLE» tagliate di netto.
+   *
+   * Il rimedio è alla causa: il piede si scrive **solo** nella passata finale, quando il
+   * totale è noto — e allora non c'è più niente da coprire.
+   *
+   * **Perché questo lock misura i PERCORSI e non i pixel.** Nel documento composto la
+   * carta è lo strato di FONDO e il contenuto dell'app si stampa sopra: l'unico modo che
+   * l'app ha di cancellare la filigrana è disegnarci sopra qualcosa di opaco. «Nessun
+   * percorso dell'app sotto la tabella» e «la filigrana sopravvive» sono quindi la stessa
+   * affermazione — e questa si misura senza rasterizzare, cioè anche in CI, dove nessun
+   * rasterizzatore è installato.
+   */
+  it('sotto la tabella il motore non disegna NIENTE: solo la riga di testo del piede', async () => {
+    const sotto = (await ingombriPercorsi(registro(60))).filter(
+      (p) => p.yMm + p.altezzaMm > FONDO_TABELLA + 0.05
+    )
+    expect(
+      sotto.map(
+        (p) =>
+          `p${p.pagina} x=${p.xMm.toFixed(1)}→${(p.xMm + p.larghezzaMm).toFixed(1)} y=${p.yMm.toFixed(1)}→${(p.yMm + p.altezzaMm).toFixed(1)}`
+      )
+    ).toEqual([])
+  })
+
+  it('e la striscia che quel rettangolo cancellava è carta stampata, non foglio bianco', async () => {
+    // Senza questa misura il lock qui sopra sarebbe vacuo: proverebbe che l'app non
+    // disegna dove non c'è niente da proteggere. Qui si guarda il documento COMPOSTO e si
+    // conta l'inchiostro della carta nella striscia 197 → 203 mm — la filigrana mascotte,
+    // che è esattamente ciò che la banda bianca stava cancellando.
+    const { applicaCartaIntestata } = await import('@/lib/carta')
+    const composto = await applicaCartaIntestata(registro(60))
+    const nellaStriscia = (await ingombriPercorsi(composto)).filter(
+      (p) => p.yMm + p.altezzaMm > FONDO_TABELLA && p.yMm < RIGA_SERVIZIO + 2
+    )
+    expect(nellaStriscia.length).toBeGreaterThan(0)
+  })
+
+  it('su un foglio solo non scrive «Pagina 1 di 1»', async () => {
+    // Gli altri quattro motori toccati da questo lavoro tacciono sotto le due pagine
+    // (`if (pagine < 2) return`): il numero di pagina di una pagina sola è rumore su un
+    // documento di scuola. Qui la regola era diversa senza che nessuno l'avesse decisa —
+    // ed è la doppia manutenzione che questo lavoro esiste per finire.
+    const unaSola = registro(8)
+    expect(await numeroPagine(unaSola)).toBe(1)
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    expect((await estraiTesto(unaSola)).replace(/\s+/g, ' ')).not.toContain('Pagina')
   })
 })

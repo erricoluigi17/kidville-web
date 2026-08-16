@@ -208,6 +208,35 @@ describe('POST /api/agenda', () => {
     expect(h.enqueue.mock.calls[0][1]).toMatchObject({ alunnoIds: ['al-1', 'al-2'], tipo: 'agenda_evento' })
   })
 
+  // Misurato il 2026-08-16: la notifica di un'uscita apriva `/parent`, cioè la home.
+  // Ma un'uscita pubblicata accende il prestampato n. 10 — l'autorizzazione che la
+  // famiglia deve FIRMARE perché il bambino parta. «C'è una gita» senza la porta della
+  // firma è un avviso che arriva e una firma che non arriva, e il giorno della gita
+  // l'autorizzazione manca senza che nessuno abbia sbagliato niente.
+  it("l'uscita porta il genitore alla modulistica, dove si firma", async () => {
+    h.rows['sections'] = [{ id: SEZIONE, scuola_id: 'sc-1' }]
+    h.rows['alunni'] = [{ id: 'al-1' }]
+    expect((await POST(postReq(bodyOk))).status).toBe(201)
+    expect(h.enqueue.mock.calls[0][1]).toMatchObject({ link: '/parent/modulistica' })
+  })
+
+  it('gli altri tipi non hanno un modulo da firmare e restano sulla home', async () => {
+    h.rows['sections'] = [{ id: SEZIONE, scuola_id: 'sc-1' }]
+    h.rows['alunni'] = [{ id: 'al-1' }]
+    expect((await POST(postReq({ ...bodyOk, tipo: 'riunione' }))).status).toBe(201)
+    expect(h.enqueue.mock.calls[0][1]).toMatchObject({ link: '/parent' })
+  })
+
+  // I due orari sono i campi che il prestampato n. 10 stampa sul foglio firmato.
+  // `/api/agenda` li accettava già nello schema, ma nessuna schermata li mandava: il
+  // foglio usciva con «Orario partenza» e «Orario rientro previsto» vuoti.
+  it("salva gli orari dell'uscita, che finiscono sul foglio da firmare", async () => {
+    h.rows['sections'] = [{ id: SEZIONE, scuola_id: 'sc-1' }]
+    const res = await POST(postReq({ ...bodyOk, orario_inizio: '08:30', orario_fine: '16:00' }))
+    expect(res.status).toBe(201)
+    expect(h.inserted[0]?.payload).toMatchObject({ orario_inizio: '08:30', orario_fine: '16:00' })
+  })
+
   it('201 con visibile_genitori=false SENZA notifiche', async () => {
     h.rows['sections'] = [{ id: SEZIONE, scuola_id: 'sc-1' }]
     const res = await POST(postReq({ ...bodyOk, visibile_genitori: false }))

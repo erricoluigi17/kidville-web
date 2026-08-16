@@ -109,6 +109,8 @@
   "agendaNuovoEvento": "Nuovo evento",
   "agendaTitoloPlaceholder": "Titolo (es. Uscita al parco)",
   "agendaVisibileGenitori": "Visibile ai genitori",
+  "agendaOraPartenza": "Orario partenza",
+  "agendaOraRientro": "Rientro previsto",
   "agendaSalvataggio": "Salvataggio…",
   "agendaAggiungi": "Aggiungi",
   "agendaErroreSalvataggio": "Salvataggio non riuscito. Riprova."

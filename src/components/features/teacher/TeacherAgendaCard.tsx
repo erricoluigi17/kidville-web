@@ -94,6 +94,13 @@ export function TeacherAgendaCard({
   // (e faceva divergere HTML del server e primo render del browser).
   const [dataEvento, setDataEvento] = useState(() => dataCivile());
   const [tipo, setTipo] = useState<string>('evento');
+  // Gli orari di un'uscita didattica: li chiede SOLO il ramo `uscita`, perché sono i due
+  // campi che il prestampato n. 10 stampa sul foglio che il genitore firma («Orario
+  // partenza» / «Orario rientro previsto»). Fino al 2026-08-16 nessuna schermata li
+  // scriveva: `/api/agenda` li accettava già nello schema, ma il form non li mandava, e
+  // l'autorizzazione usciva con due righe vuote sotto la destinazione.
+  const [oraPartenza, setOraPartenza] = useState('');
+  const [oraRientro, setOraRientro] = useState('');
   const [visibile, setVisibile] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errore, setErrore] = useState<string | null>(null);
@@ -146,11 +153,17 @@ export function TeacherAgendaCard({
           titolo: titolo.trim(),
           data: dataEvento,
           tipo,
+          // Solo per l'uscita, e solo se compilati: una stringa vuota non è un orario, e
+          // `zOrario` la rifiuterebbe facendo cadere l'intero salvataggio dell'evento.
+          ...(tipo === 'uscita' && oraPartenza ? { orario_inizio: oraPartenza } : {}),
+          ...(tipo === 'uscita' && oraRientro ? { orario_fine: oraRientro } : {}),
           visibile_genitori: visibile,
         }),
       }).catch(() => null);
       if (res?.ok) {
         setTitolo('');
+        setOraPartenza('');
+        setOraRientro('');
         await load();
       } else {
         // Il motivo del rifiuto viene dal server (es. «Specificare la sede»):
@@ -237,6 +250,32 @@ export function TeacherAgendaCard({
             ))}
           </select>
         </div>
+        {tipo === 'uscita' && (
+          <div className="mt-2 flex gap-2">
+            <label className="flex-1">
+              <span className="block font-barlow text-[10px] font-bold uppercase tracking-[0.08em] text-kidville-sub">
+                {t('agendaOraPartenza')}
+              </span>
+              <input
+                type="time"
+                value={oraPartenza}
+                onChange={(e) => setOraPartenza(e.target.value)}
+                className={`mt-1 ${inputCls}`}
+              />
+            </label>
+            <label className="flex-1">
+              <span className="block font-barlow text-[10px] font-bold uppercase tracking-[0.08em] text-kidville-sub">
+                {t('agendaOraRientro')}
+              </span>
+              <input
+                type="time"
+                value={oraRientro}
+                onChange={(e) => setOraRientro(e.target.value)}
+                className={`mt-1 ${inputCls}`}
+              />
+            </label>
+          </div>
+        )}
         <div className="mt-2.5 flex items-center justify-between gap-2">
           <label className="flex items-center gap-2 font-maven text-[12.5px] text-kidville-ink">
             <input

@@ -94,6 +94,41 @@
 
 ---
 
+## 🕐 Changelog — L'anno scolastico si contava dove gira il processo, un lock si era immunizzato col proprio commento, e la gita si annunciava dove non si firma 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Terza passata sul lotto della carta intestata. I critici del ciclo hanno bocciato entrambe le
+catene del banco, e **tre difetti su cinque erano stati misurati rompendo il codice**, non dedotti.
+Qui sono chiusi tutti e cinque.
+
+| Difetto | Dove | Cosa succedeva davvero |
+|---|---|---|
+| 🔴 **L'anno scolastico in due fusi** | `src/lib/anno-scolastico.ts` | `annoScolasticoCorrente` usava `getFullYear()`/`getMonth()`, cioè il fuso del PROCESSO — su Vercel **UTC**. `documentoDellAnnoScolastico` confronta quel valore con l'anno del giorno civile **`Europe/Rome`** per decidere se RIUSARE il certificato già emesso. Fra le 00:00 e le 02:00 del 1° agosto i due lati cadono ai due lati della soglia di agosto: ogni «Scarica il certificato» **riemetteva invece di riusare** — un numero del registro WORM bruciato a ogni clic, e l'anno scolastico **sbagliato** stampato su un foglio destinato all'INPS o a un datore di lavoro. Ora deriva da `dataCivile()`, la stessa funzione nata dopo gli incassi spariti da un KPI il 2026-08-01 alle 01:08. |
+| 🔴 **Un lock immunizzato dal proprio commento** | `__tests__/architecture/use-search-params-con-suspense.test.ts` | Cercava la **stringa** `Suspense` nel sorgente intero. Il commento che spiega perché il confine di sospensione serve — scritto dentro la pagina sorvegliata — la nomina due volte: la pagina si proteggeva da sé. Misurato togliendo il wrapper e lasciando i commenti: il test restava **verde**. Ora guarda il JSX vero su un sorgente ripulito dai commenti. |
+| 🔴 **La gita si annunciava dove non si firma** | `src/app/api/agenda/route.ts` · `TeacherAgendaCard.tsx` | `/api/teacher/uscite` scrive gli orari, ma `grep -rn "api/teacher/uscite" src/` dà **zero chiamanti**: la gita nasce da `TeacherAgendaCard → /api/agenda`, che gli orari non li mandava (lo schema zod li accettava già). L'autorizzazione n. 10 usciva con «Orario partenza» e «Rientro previsto» **vuoti**, la notifica apriva `/parent` invece del modulo da firmare, e sul percorso vero **non c'era un log di successo**. |
+
+**Le due prove di rottura**, rifatte a mano e non dichiarate: togliendo il wrapper `<Suspense>` e
+lasciando i commenti il lock è **rosso** e nomina la pagina; rimettendo `link: '/parent'` il test
+dell'agenda è **rosso**. Un lock che non può fallire non è un lock.
+
+**A4 orizzontale — riserva chiusa a vista.** Il registro presenze è generato con dati sintetici,
+convertito a 110 dpi e **guardato**: il marchio «Kidville» corre verticale sul bordo sinistro, il
+piede a quattro colonne diventa una colonna a destra, e la tabella sta interamente fra le due
+colonne vietate che `fasceVietate()` dichiara. È anche ciò che si vede stampando un foglio
+orizzontale su carta intestata vera.
+
+🔴 **Bonifica di produzione, e la lezione che è costata.** I critici di questo ciclo hanno
+collaudato **contro il database di produzione** — perché i prompt che li governavano dicevano
+«avvia il server, entra come genitore, firma un modulo», e `.env.local` punta alla produzione. Le
+regole `deny` su `npm run e2e` esistono per impedirlo, ed è stato aggirato passando
+dall'interfaccia invece che dal seed. Misurato dopo: tutte le scritture erano sull'**alunno di
+prova** (`TEST Infanzia`), e `student_documents` conteneva **zero righe** prima — nessun documento
+di un bambino vero è mai stato toccato. Rimossi comunque: 4 numeri di protocollo (n. 3-6/2026, con
+numerazione riportata a 2), 4 documenti, 2 firme, 1 gita di prova e **12 file** dallo storage; più
+698 copie locali. **La regola che ne resta: un collaudo si fa su dati sintetici, e un prompt che
+manda un agente contro la produzione è un difetto del prompt.**
+
+---
+
 ## 📄 Changelog — Tre fogli di carta intestata spediti con sopra due righe, e un registro che dalla seconda pagina non diceva più di chi fosse 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
 
 Correzione del lotto qui sotto («Quattro fogli che uscivano dalla scuola con qualcosa di troppo»):

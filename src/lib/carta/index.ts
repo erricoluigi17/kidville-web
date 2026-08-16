@@ -35,6 +35,22 @@
  * — vietava di importare le due funzioni insieme, cosa che nessun file faceva perché
  * nessun file importava la prima. Ora il predicato è invertito e verifica la cosa che
  * conta: **ogni `route.ts` che compone un prestampato importa `applicaCartaIntestata`**.
+ *
+ * ─── «CINQUE MOTORI» NON VUOL DIRE «TUTTI I MOTORI» ────────────────────────────
+ *
+ * ⚠️ I motori che chiamano `new jsPDF` in questo repository sono **quindici**, non cinque.
+ * Quelli sulla carta sono i cinque della spec §1.5 — prestampati, protocolli, ricevuta FEA,
+ * registro presenze, merch — e gli altri dieci **no**: alcuni perché la carta della scuola
+ * non ha senso sotto una fattura elettronica o una stampa di servizio, **altri perché si
+ * dipingono ancora la loro banda verde e nessuno li ha ancora riparati** (il certificato
+ * delle competenze, la pagella, la ricevuta FES nel browser del genitore, l'export dei
+ * moduli, il foglio delle credenziali).
+ *
+ * Chi legge questo file non deve dedurlo: l'elenco completo, uno per uno e con il motivo,
+ * sta in **`__tests__/architecture/motori-pdf-perimetro-carta.test.ts`**, che è anche il
+ * lock che impedisce a un motore nuovo di comparire senza che qualcuno abbia deciso da che
+ * parte sta. Un'eccezione non dichiarata è quella che il prossimo lavoro ricopia — e qui i
+ * file da cui copiare la cosa sbagliata sono la maggioranza.
  */
 
 export { applicaCartaIntestata, type OpzioniCarta, type SegnaturaCarta } from './applica'

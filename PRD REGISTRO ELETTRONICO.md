@@ -94,6 +94,83 @@
 
 ---
 
+## 🧾 Changelog — Quattro fogli che uscivano dalla scuola con qualcosa di troppo 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Rifinitura dei **motori PDF residui** (protocolli · ricevuta FEA · ordine al fornitore · registro
+presenze) dopo il passaggio alla carta intestata reale. Quattro difetti misurati sui file
+consegnati, non ipotizzati, più una sesta cosa che mancava: la lista di chi *non* sta sulla carta.
+
+### La ricevuta di firma non stampa più chi sei e da dove
+
+`src/lib/fea/receipt-pdf.ts` scriveva sul foglio **l'email del firmatario**, il suo **indirizzo
+IP** e l'**intero User-Agent**. Sono due identificativi personali e l'impronta del dispositivo, su
+un documento che si scarica, si allega e si stampa.
+
+Il valore probatorio non ci ha perso niente, ed è il punto: `computeContentHash()` impasta email e
+metadati di firma **dentro** l'hash documentale che resta sul foglio, e chi contesta la ricevuta la
+verifica ricalcolando quell'hash dalla riga dell'audit immutabile — che è, ed è sempre stata, la
+fonte. Resta il **nome**, che la rotta ora passa davvero: la guardia ha appena stabilito che il
+chiamante *è* il firmatario, quindi `auth.user` porta già nome e cognome, senza una query in più.
+
+Nella stessa ricevuta, **l'istante della firma** — l'unico dato che quel foglio esiste per
+certificare — usciva in ISO UTC (`2026-06-25T10:00:00.000Z`): formato macchina, e d'estate due ore
+di scarto rispetto all'ora in cui il genitore ha firmato davvero. Ora passa da `formattaIstante`,
+ancorata a `Europe/Rome`, colonna delle firme congiunte compresa.
+
+> Accorciare il contenuto di tre righe ha fatto emergere un difetto **latente**: `spazioPer()`
+> riceveva l'altezza del blocco e ne sottraeva `PASSO_RIGA` — conto giusto solo per `line()`. Il
+> ciclo delle firme congiunte passava `7`, e `7 - 9` faceva verificare un punto **2 mm sopra** la
+> riga che stava per scrivere. Il parametro ora vuol dire una cosa sola.
+
+### La banda bianca che mangiava la filigrana
+
+Il registro presenze scriveva il piede **due volte** — una in `didDrawPage`, che non può conoscere
+il totale delle pagine mentre lo stampa, e una alla fine col totale vero — e per non sovrapporre i
+due testi copriva il primo con un rettangolo **bianco opaco** di 237 × 6 mm. Su carta intestata
+quel rettangolo non copriva una riga di testo: copriva la **carta**.
+
+Misurato a 200 dpi sul documento composto, pagina 2, striscia 196,92 → 202,89 mm:
+
+| | media dei pixel |
+|---|---|
+| prima | **253,63** — bianco pieno, filigrana cancellata |
+| dopo | **246,28** — il grigio della mascotte è tornato |
+| striscia di controllo (185 → 191 mm) | **239,07** in entrambi: la differenza è solo lì |
+
+Non era un caso limite: la tabella tiene 23 righe per pagina e la sezione più numerosa ne ha 33,
+quindi **ogni registro vero** è a due pagine e portava la banda. Si è tolta la causa — il piede si
+stampa solo nella passata finale, quando non c'è più niente da coprire — e con essa è arrivata la
+guardia `pagine < 2` che gli altri quattro motori avevano già: «Pagina 1 di 1» su un foglio solo è
+rumore su un documento di scuola.
+
+### La nota dell'ordine non finisce più da sola su un foglio
+
+Sull'ordine al fornitore lungo — l'unico documento del lotto che esce verso un **terzo** — la nota
+finale apriva una pagina tutta per sé: pag. 2 chiudeva con «Totale pezzi: 1830» a 252,21 mm e pag. 3
+conteneva la sola riga «Note: …» a 37,72 mm. Il salto scattava per **mezzo millimetro**. La regola
+del limite era giusta: mancava il «tieni insieme» che il motore dei protocolli ha già per il blocco
+firma. Filetto, totale e note sono ora un blocco solo, con la guardia per riga conservata sotto,
+così una nota di quaranta righe si spezza invece di sfondare il piede.
+
+### E la lista di chi sulla carta **non** sta
+
+I motori che chiamano `new jsPDF` in questo repository sono **quindici**, non cinque: sulla carta
+ci sono i cinque della specifica, e degli altri dieci **sei si dipingono ancora la banda verde** —
+certificato delle competenze, pagella, ricevuta FES nel browser del genitore, export dei moduli,
+foglio delle credenziali, export del registro protocolli. Il difetto non era che fossero sei: era
+che **non stava scritto da nessuna parte**, e i file da cui copiare la cosa sbagliata sono la
+maggioranza.
+
+Nuovo lock **`__tests__/architecture/motori-pdf-perimetro-carta.test.ts`**: enumera i motori sul
+disco e pretende che ognuno stia in una delle due tabelle — `SULLA_CARTA` o `FUORI_PERIMETRO`, con
+scritto **perché**. Un motore nuovo fa fallire il test finché qualcuno non decide. Le righe di
+`FUORI_PERIMETRO` non sono assoluzioni: quelle che descrivono un difetto noto lo dicono, a partire
+da `generateReceiptPDF` in `parent/modulistica/page.tsx`, che stampa **codice fiscale, IP e
+User-Agent** del genitore — lo stesso difetto tolto oggi dalla ricevuta di server, nel gemello che
+gira nel browser.
+
+---
+
 ## 🧹 Changelog — La linguetta che prometteva la carta intestata, e le trentatré frasi rimaste senza schermo 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
 
 **«Template Certificati ODT» era un mockup, e in modo misurabile**: i tre `onChange` salvavano il

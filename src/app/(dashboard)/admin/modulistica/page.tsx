@@ -5,8 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import {
-  FileText, Plus, UserCheck, Settings, Calendar, Users, IdCard,
-  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
+  FileText, Plus, UserCheck, Calendar, Users, IdCard,
+  Trash2, Download, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { DateField } from '@/components/ui/DateField';
@@ -83,27 +83,24 @@ function fallbackFesHash(): string {
   return 'FES-OK-' + Math.random().toString(16).substring(2, 10).toUpperCase();
 }
 
-interface PreInscription {
-  id: string;
-  parent_first_name: string;
-  parent_last_name: string;
-  parent_email: string;
-  parent_phone: string;
-  parent_fiscal_code: string;
-  parent_address: string;
-  students: {
-    nome: string;
-    cognome: string;
-    data_nascita: string;
-    codice_fiscale: string;
-    note_mediche: string;
-  }[];
-  status: 'pending' | 'approved' | 'rejected';
-  assigned_class?: string;
-  created_at: string;
-}
+/**
+ * Le linguette della schermata, nell'ordine in cui la barra le mostra — in UN posto solo.
+ *
+ * Fino al 2026-08-16 questa parola viveva in QUATTRO punti del file (il tipo, la barra, lo
+ * switch dei pannelli e il riconoscimento di `?tab=`), e il commento che stava qui accanto
+ * lo diceva: le prime tre senza la quarta fanno un collegamento che atterra sulla linguetta
+ * sbagliata in silenzio. È già successo due volte — `?tab=personale` e `?tab=prestampati` —
+ * e la cura era ricordarsene. Ora l'elenco è uno: il tipo si deriva da qui, la barra si
+ * disegna da qui, e `?tab=` si confronta con questo.
+ */
+const TAB_ORDINE = ['inviabili', 'ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori'] as const;
 
-type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'prestampati' | 'moduli-genitori' | 'attesa' | 'odt';
+type ModulisticaTab = (typeof TAB_ORDINE)[number];
+
+/** Il valore di `?tab=` è una linguetta di questa schermata? */
+function eTabDiQuestaPagina(v: string | null): v is ModulisticaTab {
+  return v !== null && (TAB_ORDINE as readonly string[]).includes(v);
+}
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
@@ -116,30 +113,30 @@ function ModulisticaInner() {
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
-  // `candidature` è nell'elenco perché è il bersaglio del collegamento della
-  // notifica di una nuova candidatura (`/admin/modulistica?tab=candidature`):
-  // senza, quel collegamento aprirebbe la linguetta sbagliata in silenzio.
-  //
-  // `personale` è nell'elenco per la STESSA ragione, e va detto perché è una riga che
-  // si dimentica: `iscrizione/personale:POST` manda alla Segreteria una notifica con
-  // link `/admin/modulistica?tab=personale`, e i collegamenti profondi del cockpit
-  // (`?tab=personale&pratica=<uuid>`) partono da lì. Senza questa parola, ogni avviso
-  // di anagrafica del personale aprirebbe «Moduli inviabili» — cioè la linguetta
-  // sbagliata, senza nessun errore da nessuna parte.
-  //
-  // `prestampati` oggi non è il bersaglio di nessuna notifica, e ci sta lo stesso: la
-  // parola della linguetta vive in QUATTRO punti di questo file — il tipo, la barra, lo
-  // switch e questa riga — e le prime tre senza la quarta fanno un `?tab=prestampati` che
-  // atterra su «Moduli inviabili» in silenzio. È la riga che si dimentica, e la si
-  // dimentica proprio perché finché nessuno manda quel link il difetto non si vede.
-  const initialTab: ModulisticaTab =
-    tabParam === 'ricevuti' || tabParam === 'candidature' || tabParam === 'personale'
-    || tabParam === 'prestampati' || tabParam === 'moduli-genitori' || tabParam === 'odt'
-      ? tabParam
-      : 'inviabili';
+  // Le linguette raggiungibili da `?tab=` sono ESATTAMENTE quelle della barra
+  // (`TAB_ORDINE`, in cima al file): `candidature` e `personale` sono il bersaglio dei
+  // collegamenti delle notifiche (`/admin/modulistica?tab=candidature`, e i link profondi
+  // del cockpit `?tab=personale&pratica=<uuid>`), le altre di segnalibri e cronologia.
+  const initialTab: ModulisticaTab = eTabDiQuestaPagina(tabParam) ? tabParam : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
+
+  /**
+   * IL SEGNALIBRO CHE NON PORTA PIÙ DA NESSUNA PARTE.
+   *
+   * `?tab=` con una parola che questa schermata non ha più (i due pannelli smontati il
+   * 2026-08-16, o un link storpiato) apriva «Moduli inviabili» **senza dire niente**: chi
+   * arrivava da un vecchio segnalibro si trovava su un'altra linguetta e concludeva che il
+   * suo lavoro fosse sparito, invece che spostato. Il ripiego era corretto e muto, ed è la
+   * differenza fra una schermata che non si rompe e una che si spiega.
+   *
+   * Le due parole morte non sono elencate qui di proposito: il divieto d'architettura sui
+   * residui delle due tabelle morte non le ammette sotto `src/` nemmeno in prosa. E non
+   * servono — la domanda a cui rispondere non è «quale linguetta cercavi», è «dov'è finito
+   * quello che cercavi», e la risposta è la stessa per tutte.
+   */
+  const tabRichiestaSconosciuta = tabParam !== null && tabParam !== '' && !eTabDiQuestaPagina(tabParam);
+  const [avvisoTabChiuso, setAvvisoTabChiuso] = useState(false);
   const [forms, setForms] = useState<FormTemplate[]>([]);
-  const [preInscriptions] = useState<PreInscription[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -155,17 +152,6 @@ function ModulisticaInner() {
   // genitore sospeso per morosità (eccezione alla matrice sospensione).
   const [formSempreFirmabile, setFormSempreFirmabile] = useState(false);
   const [formFields, setFormFields] = useState<FormField[]>([defaultFieldForType('autorizzazione')]);
-
-  // Pre-inscription details modal
-  const [selectedPre, setSelectedPre] = useState<PreInscription | null>(null);
-  const [assignedClass, setAssignedClass] = useState('');
-  const [showConfirmApproval, setShowConfirmApproval] = useState(false);
-  const [showCredentials, setShowCredentials] = useState<{ email: string; pass: string } | null>(null);
-
-  // ODT State
-  const [odtLetterhead, setOdtLetterhead] = useState<string | null>(null);
-  const [odtFrequenza, setOdtFrequenza] = useState<string | null>(null);
-  const [odtIscrizione, setOdtIscrizione] = useState<string | null>(null);
 
   // Notifications
   const [toast, setToast] = useState('');
@@ -313,61 +299,6 @@ function ModulisticaInner() {
       }
     } catch {
       showToastMsg(t('modToastErroreEliminazione'));
-    }
-  };
-
-  const handleApprovePreInscription = async () => {
-    if (!selectedPre || !assignedClass) return;
-
-    try {
-      const res = await fetch('/api/admin/pre-inscriptions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: selectedPre.id,
-          status: 'approved',
-          assigned_class: assignedClass
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || t('modErroreApprovazione'));
-
-      showToastMsg(t('modToastPreApprovata'));
-      setShowConfirmApproval(false);
-      setSelectedPre(null);
-      setAssignedClass('');
-
-      // Show temporary credentials modal
-      if (data.credentials) {
-        setShowCredentials(data.credentials);
-      }
-
-      fetchInitialData();
-    } catch (err) {
-      showToastMsg(`❌ ${(err as { message?: string })?.message || t('modErroreApprovazione')}`);
-      setShowConfirmApproval(false);
-    }
-  };
-
-  const handleRejectPreInscription = async (id: string) => {
-    if (!confirm(t('modConfermaRifiuto'))) return;
-    try {
-      const res = await fetch('/api/admin/pre-inscriptions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id,
-          status: 'rejected'
-        })
-      });
-      if (res.ok) {
-        showToastMsg(t('modToastPreRifiutata'));
-        fetchInitialData();
-        setSelectedPre(null);
-      }
-    } catch {
-      showToastMsg(t('modToastErroreAzione'));
     }
   };
 
@@ -538,19 +469,50 @@ function ModulisticaInner() {
         }
       />
 
-      {/* Tabs (pillole, linguaggio dell'app) */}
+      {/* Il vecchio collegamento che non porta più da nessuna parte: si dice, non si tace. */}
+      {tabRichiestaSconosciuta && !avvisoTabChiuso && (
+        <div
+          role="status"
+          className="mb-4 flex items-start gap-3 rounded-2xl bg-kidville-cream px-4 py-3 ring-[1.5px] ring-inset ring-kidville-line"
+        >
+          <Inbox size={18} className="mt-0.5 shrink-0 text-kidville-green" aria-hidden />
+          <p className="flex-1 font-barlow text-sm leading-snug text-kidville-ink/80">{t('modTabSconosciutaAvviso')}</p>
+          <button
+            type="button"
+            onClick={() => setAvvisoTabChiuso(true)}
+            aria-label={t('modTabSconosciutaChiudi')}
+            className="shrink-0 rounded-pill p-1 text-kidville-ink/50 outline-none transition-colors hover:text-kidville-green focus-visible:ring-2 focus-visible:ring-kidville-green"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* Tabs (pillole, linguaggio dell'app) — le etichette stanno in un `Record` per
+          linguetta, non in un elenco a parte: TypeScript pretende che ci siano tutte e
+          sei e nessuna in più, così la barra non può divergere da `TAB_ORDINE`. */}
       <Tabs
         value={activeTab}
         onChange={(id) => setActiveTab(id as ModulisticaTab)}
-        options={[
-          { id: 'inviabili', label: t('modTabInviabili'), icon: Send },
-          { id: 'ricevuti', label: t('modTabRicevuti'), icon: Inbox },
-          { id: 'candidature', label: t('modTabCandidature'), icon: UserCheck },
-          { id: 'personale', label: t('modTabPersonale'), icon: IdCard },
-          { id: 'prestampati', label: tPrestampati('titolo'), icon: Stamp },
-          { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
-          { id: 'odt', label: t('modTabOdt'), icon: Settings },
-        ]}
+        options={TAB_ORDINE.map((id) => ({
+          id,
+          label: {
+            inviabili: t('modTabInviabili'),
+            ricevuti: t('modTabRicevuti'),
+            candidature: t('modTabCandidature'),
+            personale: t('modTabPersonale'),
+            prestampati: tPrestampati('titolo'),
+            'moduli-genitori': t('modTabModuliGenitori'),
+          }[id],
+          icon: {
+            inviabili: Send,
+            ricevuti: Inbox,
+            candidature: UserCheck,
+            personale: IdCard,
+            prestampati: Stamp,
+            'moduli-genitori': Users,
+          }[id],
+        }))}
       />
 
       {/* Moduli inviabili / ricevuti / candidature / personale: operano multi-sede —
@@ -669,138 +631,6 @@ function ModulisticaInner() {
                   </div>
                 ))
               )}
-            </div>
-          )}
-
-          {/* TAB 2: Sala d'Attesa */}
-          {activeTab === 'attesa' && (
-            <div className="space-y-4">
-              {preInscriptions.filter(p => p.status === 'pending').length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
-                  <UserCheck className="mx-auto text-kidville-muted mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">{t('modNessunaPreiscrizione')}</p>
-                </div>
-              ) : (
-                preInscriptions.filter(p => p.status === 'pending').map(pre => (
-                  <div key={pre.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
-                          {t('modFamiglia', { cognome: pre.parent_last_name })}
-                        </h3>
-                        <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          {t('modNuovo')}
-                        </span>
-                      </div>
-
-                      <p className="font-maven text-xs text-kidville-muted mt-1">
-                        {t('modGenitoreRiga', { nome: pre.parent_first_name, cognome: pre.parent_last_name, email: pre.parent_email, telefono: pre.parent_phone || t('modNd') })}
-                      </p>
-
-                      <div className="mt-3 flex items-center gap-1 text-xs text-kidville-green font-semibold">
-                        <Users size={14} /> {t('modFigliDaIscrivere', { figli: pre.students?.map(s => `${s.cognome} ${s.nome}`).join(', ') ?? '' })}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        setSelectedPre(pre);
-                        setAssignedClass('');
-                        setShowConfirmApproval(false);
-                      }}
-                      className="flex items-center gap-1.5 px-4.5 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase text-xs sm:text-sm tracking-wider hover:opacity-90 transition-opacity shadow-sm self-start md:self-auto"
-                    >
-                      {t('modGestisci')} <ArrowRight size={16} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: Template ODT */}
-          {activeTab === 'odt' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Carta Intestata */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
-                <Settings className="mx-auto text-kidville-green/20 mb-4" size={48} />
-                <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  {t('modCartaIntestata')}
-                </h3>
-                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  {t('modCartaIntestataDesc')}
-                </p>
-
-                {odtLetterhead ? (
-                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    {t('modOdtCaricato', { nome: odtLetterhead })}
-                  </div>
-                ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> {t('modCaricaOdt')}
-                    <input
-                      type="file"
-                      accept=".odt"
-                      className="hidden"
-                      onChange={e => setOdtLetterhead(e.target.files?.[0]?.name || null)}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Certificato di Frequenza */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
-                <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
-                <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  {t('modCertFrequenza')}
-                </h3>
-                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  {t('modCertFrequenzaDesc')} `{"{nome}"}`, `{"{cognome}"}`, `{"{data_nascita}"}`.
-                </p>
-
-                {odtFrequenza ? (
-                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    {t('modOdtCaricato', { nome: odtFrequenza })}
-                  </div>
-                ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> {t('modCaricaOdt')}
-                    <input
-                      type="file"
-                      accept=".odt"
-                      className="hidden"
-                      onChange={e => setOdtFrequenza(e.target.files?.[0]?.name || null)}
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Certificato di Iscrizione */}
-              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
-                <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
-                <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  {t('modCertIscrizione')}
-                </h3>
-                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  {t('modCertIscrizioneDesc')}
-                </p>
-
-                {odtIscrizione ? (
-                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    {t('modOdtCaricato', { nome: odtIscrizione })}
-                  </div>
-                ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> {t('modCaricaOdt')}
-                    <input
-                      type="file"
-                      accept=".odt"
-                      className="hidden"
-                      onChange={e => setOdtIscrizione(e.target.files?.[0]?.name || null)}
-                    />
-                  </label>
-                )}
-              </div>
             </div>
           )}
         </>
@@ -1026,153 +856,6 @@ function ModulisticaInner() {
                 {t('modSalvaModulo')}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Pre-Inscription / Sala d'Attesa Details */}
-      {selectedPre && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between border-b border-kidville-line pb-3 mb-4">
-              <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide">
-                {t('modSchedaOnboarding')}
-              </h2>
-              <button 
-                onClick={() => setSelectedPre(null)}
-                className="text-kidville-muted hover:text-kidville-ink font-maven text-lg p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-6 pr-1">
-              {/* Genitore info */}
-              <div className="bg-kidville-cream/30 p-4 rounded-xl border border-kidville-green/5">
-                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-2">{t('modContattiGenitore')}</h4>
-                <div className="grid grid-cols-2 gap-y-2 text-xs font-maven text-kidville-ink">
-                  <div><strong>{t('modLabelNome')}</strong> {selectedPre.parent_first_name} {selectedPre.parent_last_name}</div>
-                  <div><strong>{t('modLabelEmail')}</strong> {selectedPre.parent_email}</div>
-                  <div><strong>{t('modLabelTelefono')}</strong> {selectedPre.parent_phone || t('modNd')}</div>
-                  <div><strong>{t('modLabelCf')}</strong> {selectedPre.parent_fiscal_code || t('modNd')}</div>
-                  <div className="col-span-2"><strong>{t('modLabelIndirizzo')}</strong> {selectedPre.parent_address || t('modNd')}</div>
-                </div>
-              </div>
-
-              {/* Figli */}
-              <div>
-                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-3">{t('modFigliDaRegistrare')}</h4>
-                <div className="space-y-3">
-                  {selectedPre.students?.map((s, idx) => (
-                    <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
-                      <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
-                      <div className="text-kidville-muted mt-1">{t('modDataNascitaCf', { data: f.dataBreve(s.data_nascita), cf: s.codice_fiscale || t('modNd') })}</div>
-                      {s.note_mediche && (
-                        <div className="mt-2 text-kidville-error bg-kidville-error-soft p-1.5 rounded-lg font-semibold flex items-start gap-1">
-                          {t('modAllergieNote')} {s.note_mediche}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Assegnazione Classe */}
-              <div className="border-t border-kidville-line pt-4">
-                <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                  {t('modAssegnaSezione')}
-                </label>
-                <select
-                  value={assignedClass}
-                  onChange={e => setAssignedClass(e.target.value)}
-                  className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-ink focus:outline-none bg-white"
-                >
-                  <option value="">{t('modSelezionaSezione')}</option>
-                  {sections.map(sec => (
-                    <option key={sec.id} value={sec.name}>{sec.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-between gap-3 border-t border-kidville-line pt-4 mt-4">
-              <button
-                onClick={() => handleRejectPreInscription(selectedPre.id)}
-                className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-kidville-error-soft text-kidville-error hover:bg-kidville-error-soft"
-              >
-                {t('modRifiutaIscrizione')}
-              </button>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setSelectedPre(null)}
-                  className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
-                >
-                  {t('annulla')}
-                </button>
-                <button
-                  disabled={!assignedClass}
-                  onClick={() => setShowConfirmApproval(true)}
-                  className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 disabled:opacity-50 transition-all shadow-md"
-                >
-                  {t('modApprovaImporta')}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Secondary confirmation for Approval */}
-      {showConfirmApproval && selectedPre && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">{t('modConfermaApprovazione')}</h3>
-            <p className="font-maven text-sm text-kidville-muted mb-6">
-              {t.rich('modConfermaApprovazioneTesto', {
-                cognome: selectedPre.parent_last_name,
-                n: selectedPre.students?.length ?? 0,
-                sezione: assignedClass,
-                strong: (c) => <strong>{c}</strong>,
-              })}
-            </p>
-            <div className="flex gap-3 justify-center">
-              <button
-                onClick={() => setShowConfirmApproval(false)}
-                className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
-              >
-                {t('modIndietro')}
-              </button>
-              <button
-                onClick={handleApprovePreInscription}
-                className="px-6 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90"
-              >
-                {t('modSiApprova')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Generated Credentials Modal */}
-      {showCredentials && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center border-t-4 border-kidville-green">
-            <CheckCircle className="text-kidville-success mx-auto mb-3" size={48} />
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">{t('modAccountCreato')}</h3>
-            <p className="font-maven text-xs text-kidville-muted mb-6">
-              {t('modInviaCredenziali')}
-            </p>
-            <div className="bg-kidville-cream p-4 rounded-xl text-left font-maven text-sm border border-kidville-line mb-6 space-y-2 select-all">
-              <div><strong>{t('modLabelEmail')}</strong> {showCredentials.email}</div>
-              <div><strong>{t('modLabelPassword')}</strong> {showCredentials.pass}</div>
-            </div>
-            <button
-              onClick={() => setShowCredentials(null)}
-              className="w-full h-11 font-barlow font-black uppercase tracking-wider rounded-pill bg-kidville-green text-kidville-yellow hover:opacity-90 transition-opacity"
-            >
-              {t('modFattoChiudi')}
-            </button>
           </div>
         </div>
       )}

@@ -6,15 +6,14 @@ import { requireDocente, type AppUser } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { parseBody, validationError } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { annoFiscale } from '@/lib/format/fiscal-date'
-import { logoLightBytes } from '@/lib/protocolli/assets'
+import { applicaCartaIntestata } from '@/lib/carta'
 import {
   dataOraItaliana,
   formatNumeroProtocollo,
   righeSegnatura,
 } from '@/lib/protocolli/segnatura'
-import { applicaSegnatura } from '@/lib/protocolli/timbro'
 import {
   ensureBucket,
   pathDefinitivi,
@@ -37,11 +36,14 @@ import {
   cartaDelContesto,
   componiPrestampato,
   letturaPerStampa,
+  modalitaDelModello,
   motivoNonGenerabile,
   scadenzaDaRisposte,
+  MODALITA_MODULO_FAMIGLIA,
   SPIEGAZIONE_NON_GENERABILE,
   type ContestoPrestampato,
   type ContestoSezione,
+  type ModalitaModuloFamiglia,
 } from '../banco'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -83,15 +85,14 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  * `registraProtocollo()` fa tutto in una chiamata — prende il numero, timbra, carica,
  * inserisce — e quindi PRETENDE il PDF già fatto. Va benissimo per le tre route del
  * registro protocolli, dove il numero compare solo nella fascia di segnatura apposta dopo.
- * Qui no: §4.1 della specifica vuole il numero DENTRO il foglio (la riga «Prot. n.
- * 0000123/2026 del …» sopra il titolo) e §4.3 il riquadro di verifica che lo ripete — e
- * `render.ts` rifiuta di comporre un documento in uscita che non dichiari il proprio numero.
+ * Qui no: §4.3 della specifica vuole nel foglio il riquadro di verifica che dichiara il
+ * numero, e `render.ts` rifiuta di comporre un documento in uscita che non lo dichiari.
  * Il numero deve quindi esistere PRIMA del PDF, e prenderlo con una seconda chiamata alla
  * RPC ne brucerebbe uno a ogni foglio, con il PDF che dice `0000123` e il registro che dice
  * `0000124`.
  *
  * Perciò qui la stessa sequenza è aperta attorno al render, con gli stessi pezzi
- * (`prossimo_numero_protocollo`, `righeSegnatura`, `applicaSegnatura`, `pathDefinitivi`,
+ * (`prossimo_numero_protocollo`, `righeSegnatura`, `applicaCartaIntestata`, `pathDefinitivi`,
  * `sha256Impronta`) e lo stesso rollback: non una numerazione nuova, la stessa smontata di
  * un passo. **La riparazione vera sta in `src/lib/protocolli/store.ts`** — un
  * `registraProtocollo` che accetti il numero già preso, o che si divida in
@@ -115,6 +116,21 @@ const postBodySchema = z
     scuolaId: zUuid.optional(),
     /** Le risposte del form. Le valida lo schema del MODELLO, non questo: sono diciassette. */
     risposte: z.record(z.string(), z.unknown()).default({}),
+    /**
+     * COME si sta lavorando su un modulo di famiglia: copia firmata dal fascicolo, copia
+     * vuota da firmare a penna, oppure modulo tornato compilato su carta. Facoltativa QUI e
+     * obbligatoria di fatto sui sei che una scelta ce l'hanno — la pretende il `superRefine`.
+     */
+    modalita: z.enum(MODALITA_MODULO_FAMIGLIA).optional(),
+    /**
+     * Il giorno in cui il modulo firmato è arrivato in segreteria (`su_carta`).
+     *
+     * ⚠️ NON viaggia dentro `risposte`, e non è una preferenza: gli schemi `zod` dei modelli
+     * sono `z.object` senza `passthrough`, quindi una chiave che non conoscono viene TOLTA
+     * in silenzio — il campo sarebbe arrivato fin qui per sparire un millimetro prima di
+     * essere letto, e la dicitura sarebbe uscita senza data.
+     */
+    consegnatoIl: zDataYMD.optional(),
   })
   .superRefine((v, ctx) => {
     const voce = prestampato(v.modello)
@@ -131,6 +147,35 @@ const postBodySchema = z
         code: 'custom',
         path: ['sezioneId'],
         message: 'Indicare la sezione di cui generare la stampa',
+      })
+    }
+    // LA MODALITÀ SI DICHIARA, non si indovina, ed è la stessa disciplina della sede: fra
+    // «la copia che il genitore ha firmato» e «un modulo vuoto da firmare a penna» non c'è
+    // un valore predefinito ragionevole — il primo attesta una firma, il secondo no, e
+    // sceglierne uno al posto di chi sta allo sportello è il modo di mettere nel fascicolo
+    // di un minore un foglio che dice una cosa diversa da quella che voleva.
+    const modi = modalitaDelModello(voce)
+    if (modi && !v.modalita) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['modalita'],
+        message: 'Indicare se serve la copia firmata, la copia vuota o il modulo tornato su carta',
+      })
+    }
+    if (!modi && v.modalita) {
+      // Un modello che di modi non ne ha e riceve una modalità: non si ignora in silenzio —
+      // chi l'ha mandata crede di aver chiesto qualcos'altro da quello che riceverà.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['modalita'],
+        message: 'Questo prestampato non si genera in modalità: si genera e basta',
+      })
+    }
+    if (v.modalita === 'su_carta' && !v.consegnatoIl) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['consegnatoIl'],
+        message: 'Indicare il giorno in cui il modulo firmato è arrivato in segreteria',
       })
     }
   })
@@ -193,7 +238,7 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
-    const { modello, alunnoId, sezioneId, scuolaId, risposte } = b.data
+    const { modello, alunnoId, sezioneId, scuolaId, risposte, modalita, consegnatoIl } = b.data
 
     // ── 1. Il modello dal registro ────────────────────────────────────────────
     // Come nel GET, questo ramo è IRRAGGIUNGIBILE: lo slug è già ristretto dallo schema, e
@@ -217,28 +262,23 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
     // Un foglio che allo sportello non nasce si rifiuta PRIMA di leggere l'anagrafica di
     // un minore. Il render arriverebbe alla stessa conclusione: qui si anticipa soltanto.
     const motivo = motivoNonGenerabile(voce)
-    if (motivo === 'firma_da_raccogliere' || motivo === 'firma_senza_flusso') {
-      // DUE MOTIVI, UNA SOLA RISPOSTA, e la differenza sta tutta nella frase. Lo status è
-      // lo stesso — il foglio non esce perché la firma del genitore non c'è — ma il primo
-      // dice dove andare a prenderla e il secondo dice che non c'è ancora dove andare.
-      // Mandare un'educatrice al flusso della famiglia per il verbale di un infortunio, che
-      // quel flusso non contiene, è peggio che dirle che oggi quel foglio non nasce.
+    if (motivo === 'firma_senza_flusso') {
+      // 🔴 ERANO DUE MOTIVI CON UNA SOLA RISPOSTA, e ne è rimasto uno: fino al 2026-08-16
+      // qui cadevano anche i sei moduli di famiglia, con la frase «si genera dal flusso di
+      // firma della famiglia, non dallo sportello». Ora quei sei nascono davvero da qui, in
+      // una delle tre modalità — e due delle tre non dichiarano nessuna firma elettronica.
+      // Restano il verbale di infortunio e il documento di valutazione: si chiudono con la
+      // firma del genitore e nessuna schermata la raccoglie, quindi il foglio non nasce da
+      // nessuna parte. Mandare un'educatrice al flusso della famiglia per il verbale di un
+      // infortunio, che quel flusso non contiene, è peggio che dirle che oggi non nasce.
       //
       // 🔴 E LA FRASE, DA SOLA, NON ARRIVAVA A SCHERMO. `messaggioDaCorpo`
       // (`src/lib/ui/esito-fetch.ts`) mostra il testo di CATALOGO del `codice` e butta via
       // `error`, tranne per i codici dichiarati in `CODICI_CON_DETTAGLIO` — che oggi
-      // contiene solo `CLASSI_FUORI_SEDE`. Con lo stesso codice sui due motivi, il pannello
-      // mostrava a tutti e due «La firma non risulta raccolta o non è valida…»: cioè la
-      // distinzione appena descritta viaggiava fino al client per non essere letta da
-      // nessuno, ed è precisamente il difetto che `banco.ts` argomenta tre volte contro.
-      //
-      // Il rimedio economico è questo: il MOTIVO viaggia in un campo suo, enumerato e
-      // stabile, e a tradurlo è il pannello — che ha un catalogo per lingua. Le tre chiavi
-      // (`motivoFirmaDaRaccogliere`, `motivoFirmaSenzaFlusso`, `motivoFonteDatiAssente`) sono
-      // CHIESTE in `messages/it|en/prestampatiSegreteria.json`: quei due file non sono di
-      // questa mano, e la richiesta è nelle note del lavoro. `error` resta la prosa del
-      // server, che è il ripiego quando un codice non è ancora dichiarato — non il canale
-      // principale.
+      // contiene solo `CLASSI_FUORI_SEDE`. Perciò il MOTIVO viaggia in un campo suo,
+      // enumerato e stabile, e a tradurlo è il pannello — che ha un catalogo per lingua.
+      // `error` resta la prosa del server, che è il ripiego quando un codice non è ancora
+      // dichiarato: non il canale principale.
       return NextResponse.json(
         {
           error: SPIEGAZIONE_NON_GENERABILE[motivo],
@@ -328,10 +368,41 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
       })
     }
 
+    // ── 3quater. LA COPIA FIRMATA NON SI GENERA: SI RIPESCA ───────────────────
+    //
+    // È la prima delle tre modalità, ed è l'unica che non passa da nessun motore PDF: il
+    // foglio che il genitore ha sottoscritto esiste già, sta nel fascicolo, e rigenerarlo
+    // produrrebbe un documento diverso da quello che la famiglia ha firmato — stessa carta,
+    // stesse parole, altri byte, altra impronta. Chi lo consegna a un ente consegnerebbe la
+    // copia di un originale che nessuno ha visto.
+    //
+    // Sta QUI, dopo i gate e dopo la riga `view` del registro accessi, e prima di tutto il
+    // resto: la numerazione, il render e l'archiviazione non hanno niente da fare su un
+    // documento che è già archiviato.
+    if (modalita === 'copia_firmata') {
+      if (contesto.soggetto !== 'alunno') {
+        // Irraggiungibile: `modalitaDelModello` risponde solo per modelli il cui soggetto è
+        // un bambino. Resta perché il ramo non si fidi di una garanzia scritta altrove.
+        return NextResponse.json(
+          { error: 'Questo prestampato non parla di un bambino.', codice: 'PRESTAMPATO_DATI_MANCANTI' },
+          { status: 422 },
+        )
+      }
+      return await consegnaCopiaFirmata(supabase, request, {
+        voce,
+        alunnoId: contesto.prefill.alunnoId,
+        utenteId: user.id,
+        ruolo: user.role,
+        scuolaId: sedeScrittura,
+      })
+    }
+
     const carta = cartaDelContesto(contesto)
     const legaleRappresentante =
       contesto.soggetto === 'alunno' ? contesto.prefill.legaleRappresentante : null
     const operatore = [user.cognome, user.nome].map((p) => p?.trim()).filter(Boolean).join(' ') || null
+    /** La scelta dello sportello, nella forma che `componiPrestampato` legge. */
+    const moduloFamiglia = modalita ? { modalita, consegnatoIl } : undefined
 
     // ── 3ter. IL MOTIVO CHE SI SCOPRE SOLO ADESSO ─────────────────────────────
     //
@@ -339,11 +410,18 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
     // con la frase sbagliata. Cinque dei sei fogli che questo sportello dichiara generabili
     // si chiudono con la firma del legale rappresentante, e `componiFirma` (`render.ts`) li
     // rifiuta quando quel nome manca in `scuole.config.anagrafica.legale_rappresentante`.
-    // Misurato in sola lettura il 2026-08-14: `SELECT count(*) FROM scuole` → 4, righe con
-    // quella chiave → **0**. Il rifiuto del render porta `PRESTAMPATO_FIRMA_NON_VALIDA`, la
-    // cui frase di catalogo dice «La firma non risulta raccolta o non è valida: il documento
-    // non si genera prima della firma» — e mandava la segreteria a cercare la firma di un
-    // GENITORE mentre a mancare era un campo delle impostazioni di sede.
+    //
+    // ⚠️ QUI STAVA SCRITTO «righe con quella chiave → 0», misurato il 2026-08-14, ed è un
+    // numero che è invecchiato: dal 2026-08-15 il campo esiste in Impostazioni → Sede &
+    // Intestazione e i valori veri sono stati scritti. Un commento che dichiara un conteggio
+    // dice il falso il giorno dopo; la query invece risponde sempre, ed è in `banco.ts`
+    // accanto a `MotivoNonGenerabile`. Il ramo resta perché una sede nuova nasce senza quel
+    // campo, e perché con tre plessi la stessa domanda può avere tre risposte.
+    //
+    // Il rifiuto del render porta `PRESTAMPATO_FIRMA_NON_VALIDA`, la cui frase di catalogo
+    // dice «La firma non risulta raccolta o non è valida: il documento non si genera prima
+    // della firma» — e mandava la segreteria a cercare la firma di un GENITORE mentre a
+    // mancare era un campo delle impostazioni di sede.
     //
     // Qui il rifiuto arriva col codice giusto (`PRESTAMPATO_DATI_MANCANTI` → «completali in
     // anagrafica e riprova», che è l'istruzione eseguibile) e col suo `motivo` enumerato,
@@ -399,22 +477,49 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
       protocollo = esito
     }
 
-    const reso =
+    const composto =
       protocollo?.reso ??
-      componiPrestampato(voce, contesto, risposte, { carta, legaleRappresentante }, operatore)
-    if (!reso.ok) return rispostaRifiuto(reso)
+      componiPrestampato(
+        voce,
+        contesto,
+        risposte,
+        { carta, legaleRappresentante },
+        operatore,
+        moduloFamiglia,
+      )
+    if (!composto.ok) return rispostaRifiuto(composto)
+
+    // ── 5bis. LA CARTA DELLA SCUOLA, SU OGNI FOGLIO CHE ESCE DA QUI ───────────
+    //
+    // Il ramo protocollato l'ha già stesa insieme alla segnatura (una chiamata sola: vedi
+    // `protocollaEComponi`). Gli altri diciassette modelli — la scheda sanitaria, la
+    // delega al ritiro, la stampa di sezione — passano di qui, e senza questa riga
+    // uscirebbero NUDI: `impaginazione.ts` non disegna più né banda né logo né piede,
+    // perché ce li ha la carta vera, e un foglio a cui nessuno la stende esce **peggio**
+    // di com'era prima di questo lavoro.
+    const reso = protocollo
+      ? composto
+      : { ...composto, pdf: await applicaCartaIntestata(composto.pdf) }
 
     // ── 6. L'archiviazione nel fascicolo ──────────────────────────────────────
     // I fogli di SEZIONE non si archiviano: `student_documents` è il fascicolo di UN
     // bambino, e un elenco di venticinque non appartiene a nessuno di loro. Si consegna
     // e basta — che è anche ciò che dice il registro (`archiviazione: 'nessuna'`).
+    //
+    // ⚠️ E NON SI ARCHIVIA LA COPIA VUOTA. È un modulo da compilare, non un documento: nel
+    // fascicolo di un bambino sarebbe una scheda sanitaria con tutte le risposte in bianco,
+    // indistinguibile — nell'elenco che la famiglia e la segreteria leggono — da quella vera.
+    // La modalità `su_carta` invece si archivia eccome: è la trascrizione di un modulo
+    // firmato che esiste su carta, e il fascicolo è il posto in cui deve stare.
     const archivio =
-      contesto.soggetto === 'alunno' && voce.archiviazione === 'student_documents'
+      contesto.soggetto === 'alunno' &&
+      voce.archiviazione === 'student_documents' &&
+      modalita !== 'copia_vuota'
         ? await archiviaNelFascicolo(supabase, request, {
             prefillAlunnoId: contesto.prefill.alunnoId,
             sezioneId: contesto.prefill.sezioneId,
             slug: voce.slug,
-            descrizione: descrizioneArchivio(voce, protocollo?.numeroFormattato ?? null),
+            descrizione: descrizioneArchivio(voce, protocollo?.numeroFormattato ?? null, modalita),
             titolo: reso.titolo,
             pdf: reso.pdf,
             scadenza: scadenzaDaRisposte(reso.risposte),
@@ -444,6 +549,11 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
       utente: user.id,
       ruolo: user.role,
       tipo: voce.slug,
+      // La modalità viaggia sotto `evento`, che è una delle chiavi in chiaro di `redact`:
+      // sotto un nome suo (`modalita`) uscirebbe `[redatto:…]`, perché la lista bianca è
+      // chiusa per default e per chiave. È l'unica colonna che, in SQL, distingue un modulo
+      // vuoto consegnato a mano da uno trascritto da un originale firmato.
+      ...(modalita ? { evento: `modalita:${modalita}` } : {}),
       scuola_id: sedeScrittura,
       alunno_id: contesto.soggetto === 'alunno' ? contesto.prefill.alunnoId : undefined,
       sezione_id: contesto.soggetto === 'sezione' ? contesto.sezione.sezioneId : undefined,
@@ -457,24 +567,26 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
       n: reso.pdf.byteLength,
     })
 
-    // ─── QUELLO CHE ESCE È L'ORIGINALE, NON IL TIMBRATO — e va detto ──────────
+    // ─── QUI ORIGINALE E TIMBRATO SONO LO STESSO FOGLIO — e va detto ──────────
     //
-    // La route sorella (`admin/protocolli/genera-documento`) restituisce il PDF con la
-    // fascia di segnatura (`downloadTimbrato`), e questa no: è una divergenza deliberata,
-    // non una dimenticanza, e queste righe esistono perché nessuno la «ripari».
+    // Fino al 2026-08-15 queste righe spiegavano una divergenza deliberata: la route
+    // sorella (`admin/protocolli/genera-documento`) restituisce il PDF con la fascia di
+    // segnatura, questa restituiva l'originale senza. La ragione era il §4.3 — il riquadro
+    // di verifica afferma «l'impronta SHA-256 di QUESTO documento è registrata nel registro
+    // di protocollo», e l'impronta registrata era quella dei byte PRIMA della fascia,
+    // quindi consegnare il timbrato rendeva falsa una frase stampata su un atto diretto a
+    // un ente.
     //
-    //  · §4.1 — su questi fogli il numero di protocollo è DENTRO il documento, nella riga
-    //    «Prot. n. 0000123/2026 del …» sopra il titolo. Sulla route sorella il numero
-    //    compare solo nella fascia, e senza quella il foglio non direbbe il proprio numero:
-    //    lì il timbrato è l'unica copia leggibile, qui no;
-    //  · §4.3 — il riquadro di verifica stampato in fondo afferma «l'impronta SHA-256 di
-    //    QUESTO documento è registrata nel registro di protocollo». L'impronta registrata
-    //    (`protocolli.impronta_sha256`) è quella dei byte PRIMA della fascia — `applicaSegnatura`
-    //    passa dopo — quindi consegnare il timbrato renderebbe falsa una frase stampata su
-    //    un atto destinato a un ente, e chi provasse a verificarlo troverebbe un'impronta
-    //    che non torna.
+    // Sulla carta intestata quella distinzione non esiste più, ed è un miglioramento:
+    // `applicaCartaIntestata(pdf, { segnatura })` stende carta e segnatura in una passata
+    // sola, quindi il foglio che esce da qui, quello archiviato come originale, quello
+    // archiviato come timbrato e quello di cui si registra l'impronta **sono lo stesso
+    // file**. La frase del §4.3 è finalmente vera per chi il foglio ce l'ha in mano: se
+    // ricalcola lo SHA-256 di ciò che ha scaricato, trova esattamente ciò che il registro
+    // ha scritto.
     //
-    // Il timbrato resta dov'è utile: nel bucket del protocollo, che è la copia dell'archivio.
+    // E il numero di protocollo è sul foglio una volta sola, nella segnatura: la riga di
+    // corpo del §4.1 tace quando la segnatura c'è (`OpzioniStampa.protocolloInSegnatura`).
     const nomeFile = `${slugNomeFile(reso.titolo)}.pdf`
     return new NextResponse(Buffer.from(reso.pdf), {
       status: 201,
@@ -484,6 +596,10 @@ export const POST = withRoute('prestampati/genera:POST', async (request: NextReq
         // Un documento con i dati di un minore non si lascia nella cache di nessuno.
         'Cache-Control': 'no-store',
         'X-Prestampato-Modello': voce.slug,
+        // Quale dei tre fogli è uscito. Il pannello lo rilegge per dire la frase giusta — la
+        // copia vuota non è nel fascicolo e non deve dichiararlo — e chi guarda un PDF
+        // scaricato mesi dopo lo sa da un header invece che dedurlo dal contenuto.
+        ...(modalita ? { 'X-Prestampato-Modalita': modalita } : {}),
         // L'esito dell'archiviazione viaggia con il foglio, e non è un dettaglio: quando è
         // `fallita` il documento È stato generato (e magari protocollato) ma NON è nel
         // fascicolo. Dirlo in un header è meno di dirlo in un JSON — che qui non c'è, perché
@@ -599,6 +715,395 @@ async function tracciaStampaSezione(
   )
 }
 
+// ─── La copia firmata, dal fascicolo ────────────────────────────────────────────
+
+/**
+ * DUE SOGLIE, E NON UNA, perché i due costi non sono lo stesso costo.
+ *
+ * Una riga sola non basta, e il perché è la sequenza naturale di questo ramo: la famiglia
+ * firma nell'app, poi qualcuno consegna a mano un secondo foglio e la segreteria lo
+ * trascrive con `su_carta`. Le due righe hanno lo STESSO `document_type` e la trascrizione è
+ * più recente, quindi «l'ultima di quel tipo» sarebbe sempre lei — e la copia firmata vera,
+ * che sta una riga più sotto, non uscirebbe mai.
+ *
+ * ⚠️ FINO AL 2026-08-16 UN NUMERO SOLO (`CANDIDATI_COPIA_FIRMATA = 5`) GOVERNAVA ENTRAMBE
+ * le cose, ed era un limite alla CORRETTEZZA travestito da limite di costo: il `.limit(5)`
+ * stava sulla QUERY, ma leggere i metadati di una riga non costa un download. Su un modello
+ * per-occasione — `permesso_orario` e `delega_ritiro` si firmano più volte in un anno —
+ * cinque trascrizioni `su_carta` successive coprivano per sempre la copia firmata vera, che
+ * diventava irraggiungibile dal pannello. E l'esito non era un guasto: era un 422 che suona
+ * come una constatazione.
+ *
+ * Ora la finestra dei METADATI è larga e il tetto sta sui soli SCARICAMENTI, che è dove il
+ * costo c'è davvero. Nel caso normale si paga **un** download: la copia firmata è quasi
+ * sempre la più recente e il ciclo si ferma al primo riscontro.
+ */
+const RIGHE_COPIA_FIRMATA = 50
+
+/** Quanti candidati si è disposti a scaricare dal bucket prima di fermarsi. */
+const SCARICAMENTI_COPIA_FIRMATA = 5
+
+/**
+ * Il suffisso che questa stessa route scrive nella `descrizione` di un modulo tornato su
+ * carta (`descrizioneArchivio`). Una riga così marcata è, per costruzione, una trascrizione:
+ * non può essere il PDF che la famiglia ha sottoscritto nell'app.
+ *
+ * Non si SCARTA, si mette in coda — il marchio è una convenzione nostra, non una garanzia
+ * del database, e una riga con una `descrizione` riscritta a mano resta esaminabile. Ma
+ * mettere in coda ciò che sappiamo essere una trascrizione è ciò che rende utile la finestra
+ * larga: i cinque scaricamenti vanno ai candidati che possono davvero essere l'originale.
+ */
+const MARCHIO_SU_CARTA = 'modulo consegnato su carta'
+
+/**
+ * IL PDF CHE IL GENITORE HA SOTTOSCRITTO, ripreso dal fascicolo e riconsegnato tale e quale.
+ *
+ * ⚠️ NON SI RIGENERA, e la differenza non è di efficienza: quel foglio porta il riquadro
+ * «Firmato da …, codice OTP verificato, riferimento …», e l'unico documento su cui quella
+ * frase è vera è quello composto nel momento della firma. Ricomporlo darebbe stesse parole e
+ * byte diversi — cioè un file di cui la ricevuta FEA non è più la ricevuta.
+ *
+ * ─── 🔴 IL TIPO DI DOCUMENTO NON DICE CHI HA FIRMATO ────────────────────────────
+ *
+ * Fino al 2026-08-16 questa funzione prendeva «l'ultima riga di `student_documents` con quel
+ * `document_type`» e la consegnava. Era il vincolo di tutto il ramo rovesciato: **un foglio
+ * non deve MAI dichiarare una firma elettronica che non è avvenuta**, e qui la firma
+ * inesistente la dichiaravano l'interfaccia («il foglio porta il riquadro della firma
+ * elettronica, perché quella firma c'è stata davvero») e il registro degli accessi, mentre la
+ * segretaria consegnava a un ente un foglio che credeva l'originale sottoscritto.
+ *
+ * `student_documents` NON ha una colonna che distingua l'originale firmato dalla famiglia da
+ * una trascrizione della segreteria o da una scansione caricata a mano — misurato su
+ * `information_schema`: `id, student_id, document_type, file_url, expiry_date, created_at,
+ * section_id, caricato_da, descrizione, file_name, storage_path`. Prendere una riga per tipo
+ * significa quindi prendere una riga QUALUNQUE.
+ *
+ * La colonna che quel fatto ce l'ha sta in un'altra tabella: `firme_documenti.
+ * impronta_digitale` è lo SHA-256 dei byte che il genitore ha davvero sottoscritto — la
+ * scrive `parent/prestampati/firma` PRIMA di caricare il file, e su quegli stessi byte. Il
+ * confronto è quindi un'uguaglianza fra impronte, non un'inferenza: si consegna solo il file
+ * la cui impronta è nel registro FEA per quel tipo di documento. Una trascrizione `su_carta`,
+ * una scansione, un foglio ricomposto hanno per costruzione un'impronta diversa.
+ *
+ * ⚠️ LE DUE FORME DELL'IMPRONTA SI CERCANO ENTRAMBE, e non è una cautela di stile: le due
+ * mani che scrivono quel campo non concordano. `parent/prestampati/firma` scrive
+ * `SHA256-` + `createHash(…).digest('hex')`, cioè **minuscolo**; `sha256Impronta`
+ * (`@/lib/protocolli/store`), che è la funzione con cui qui si ricalcola, restituisce lo
+ * stesso hex in **maiuscolo**. Misurato in produzione il 2026-08-16: le righe esistenti sono
+ * tutte in minuscolo. Cercare una forma sola vorrebbe dire rifiutare una copia firmata vera.
+ *
+ * ⚠️ IL DEGRADO SULLO SCHEMA NON MIGRATO È PREVISTO. Il DB E2E della CI è un progetto
+ * separato: `.eq('document_type', slug)` su un enumerato che quel valore non ce l'ha risponde
+ * `22P02`, e la tabella o la colonna assenti rispondono `42703`/`42P01`/`PGRST204`/`PGRST205`.
+ * In tutti quei casi la risposta è la stessa che si dà quando la copia non c'è — perché
+ * DAVVERO non c'è — e il log distingue i due fatti per chi indaga.
+ */
+async function consegnaCopiaFirmata(
+  supabase: SupabaseClient,
+  request: NextRequest,
+  input: {
+    voce: VocePrestampato
+    alunnoId: string
+    utenteId: string
+    ruolo: string
+    scuolaId: string
+  },
+): Promise<NextResponse> {
+  const { data, error } = await supabase
+    .from('student_documents')
+    .select('id, file_name, storage_path, created_at, descrizione')
+    .eq('student_id', input.alunnoId)
+    .eq('document_type', input.voce.slug)
+    .order('created_at', { ascending: false })
+    .limit(RIGHE_COPIA_FIRMATA)
+
+  if (error) {
+    // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+    const codice = (error as { code?: string }).code ?? null
+    const schemaNonPronto = SCHEMA_NON_PRONTO.has(codice ?? '')
+    logEvento('modulistica', schemaNonPronto ? 'info' : 'error', {
+      operazione: 'prestampati/genera:POST',
+      esito: schemaNonPronto ? 'copia-firmata-schema-non-pronto' : 'copia-firmata-non-cercata',
+      entita_tipo: 'student_documents',
+      tipo: input.voce.slug,
+      alunno_id: input.alunnoId,
+      error_code: codice,
+    }, error)
+    return rispostaCopiaFirmataAssente()
+  }
+
+  type RigaFascicolo = {
+    id: string
+    file_name: string | null
+    storage_path: string | null
+    descrizione?: string | null
+  }
+  const lette = ((data as unknown as RigaFascicolo[] | null) ?? []).filter(
+    (r) => !!r.storage_path?.trim(),
+  )
+  // Le trascrizioni riconoscibili in coda: vedi `MARCHIO_SU_CARTA`. `sort` è stabile, quindi
+  // dentro i due gruppi l'ordine per `created_at` decrescente resta quello della query.
+  const trascrizione = (r: RigaFascicolo): boolean =>
+    (r.descrizione ?? '').toLowerCase().includes(MARCHIO_SU_CARTA)
+  const righe = [...lette].sort((a, b) => Number(trascrizione(a)) - Number(trascrizione(b)))
+
+  if (righe.length === 0) {
+    // Non è un guasto: è un modulo che la famiglia non ha ancora firmato, ed è la risposta
+    // più frequente di questa modalità. `info` e non `warn`: un livello più alto renderebbe
+    // illeggibile il canale proprio dove serve.
+    logEvento('modulistica', 'info', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'copia-firmata-assente',
+      tipo: input.voce.slug,
+      alunno_id: input.alunnoId,
+      scuola_id: input.scuolaId,
+    })
+    return rispostaCopiaFirmataAssente()
+  }
+
+  /** Almeno un candidato non si è potuto nemmeno guardare: è un guasto, non un'assenza. */
+  let guasto = false
+  /** Candidati letti la cui impronta NON è nel registro FEA: trascrizioni, scansioni. */
+  let senzaFirma = 0
+  /** Scaricamenti spesi: il tetto è su questi, non sulle righe lette. */
+  let scaricati = 0
+  /** Righe rimaste fuori perché il budget di scaricamenti è finito prima. */
+  let nonEsaminate = 0
+
+  for (const riga of righe) {
+    if (scaricati >= SCARICAMENTI_COPIA_FIRMATA) {
+      // Non si dice «non c'è» di una riga che non si è guardata: si conta, e più sotto la
+      // risposta lo dichiara.
+      nonEsaminate += 1
+      continue
+    }
+    scaricati += 1
+    const percorso = riga.storage_path!.trim()
+    const { data: file, error: erroreDownload } = await supabase.storage
+      .from(BUCKET_FASCICOLO)
+      .download(percorso)
+    if (erroreDownload || !file) {
+      // Il CORPO dell'errore dello storage arriva dal parametro `err` e `descriviErrore` lo
+      // scrive per esteso: qui fra i campi finirebbe solo redatto.
+      logEvento('storage', 'error', {
+        operazione: 'prestampati/genera:POST',
+        esito: 'copia-firmata-non-scaricata',
+        bucket: BUCKET_FASCICOLO,
+        tipo: input.voce.slug,
+        alunno_id: input.alunnoId,
+      }, erroreDownload)
+      guasto = true
+      continue
+    }
+
+    const byte = Buffer.from(await file.arrayBuffer())
+    const firmata = await improntaNelRegistroFea(supabase, byte, input.voce.slug, input.alunnoId)
+    if (firmata === 'non-verificabile') {
+      // Il registro FEA non risponde: NON si consegna. «Non ho potuto verificare» non è
+      // «è firmato», e questo foglio va a un ente dichiarando una sottoscrizione.
+      guasto = true
+      continue
+    }
+    if (!firmata) {
+      senzaFirma += 1
+      continue
+    }
+
+    // IL REGISTRO DEGLI ACCESSI: `download`, non `view`. Sono due fatti diversi — «ho aperto
+    // l'anagrafica» (già registrato al passo 3bis) e «mi sono portato via il documento
+    // firmato» — e il giorno in cui una famiglia chiede chi ha toccato il fascicolo di suo
+    // figlio i due si leggono in modo diverso. Si scrive solo per il documento CONSEGNATO:
+    // un candidato letto dal server e scartato non se l'è portato via nessuno.
+    await logAccessoFascicolo(supabase, {
+      alunnoId: input.alunnoId,
+      utenteId: input.utenteId,
+      azione: 'download',
+      documentoId: riga.id,
+      finalita: `Copia firmata ${input.voce.slug} ripresa dal fascicolo`,
+      request,
+    })
+
+    // Il successo si logga, non solo l'errore: senza, «nessun log» non distingue «tutto bene»
+    // da «non è mai partito niente».
+    logEvento('modulistica', 'info', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'copia-firmata-consegnata',
+      utente: input.utenteId,
+      ruolo: input.ruolo,
+      tipo: input.voce.slug,
+      evento: 'modalita:copia_firmata',
+      scuola_id: input.scuolaId,
+      alunno_id: input.alunnoId,
+      n: byte.byteLength,
+    })
+
+    const nomeFile = riga.file_name?.trim() || `${slugNomeFile(input.voce.etichetta)}.pdf`
+    return new NextResponse(byte, {
+      // 200 e non 201: non è stato creato niente. È il documento che c'era già.
+      status: 200,
+      headers: {
+        'Content-Type': MIME_PDF,
+        'Content-Disposition': `attachment; filename="${nomeFile}"`,
+        'Cache-Control': 'no-store',
+        'X-Prestampato-Modello': input.voce.slug,
+        'X-Prestampato-Modalita': 'copia_firmata',
+        'X-Prestampato-Archiviato': 'archiviato',
+        'X-Prestampato-Documento': riga.id,
+      },
+    })
+  }
+
+  if (guasto) {
+    // Un guasto non si traveste da assenza: «non ho potuto guardare» e «non c'è» mandano la
+    // segreteria in due direzioni diverse — riprovare, o far firmare il modulo alla famiglia.
+    return NextResponse.json(
+      {
+        error:
+          'Non è stato possibile riprendere la copia firmata dal fascicolo. Riprova fra qualche minuto.',
+        codice: 'PRESTAMPATO_NON_GENERATO',
+      },
+      { status: 503 },
+    )
+  }
+
+  if (nonEsaminate > 0) {
+    // 🔴 IL BUDGET È FINITO PRIMA DELLE RIGHE, e questo NON è «nessuno di essi è firmato»:
+    // è «non li ho guardati tutti». È lo stesso ragionamento che si applica dieci righe più
+    // su a `non-verificabile` — «non ho potuto verificare» non è «non è firmato» — e vale
+    // qui esattamente per lo stesso motivo, altrimenti il pannello dichiarerebbe un fatto
+    // che il server non ha misurato.
+    //
+    // Il log lo dice per esteso: senza, il giorno in cui accade non c'è modo di distinguere
+    // un 422 sospetto da un 422 vero.
+    logEvento('modulistica', 'warn', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'copia-firmata-finestra-esaurita',
+      tipo: input.voce.slug,
+      alunno_id: input.alunnoId,
+      scuola_id: input.scuolaId,
+      // Righe lette, righe scaricate, righe rimaste fuori: i tre numeri che servono per
+      // capire se il tetto va alzato o se il fascicolo ha un problema suo.
+      totale: righe.length,
+      scaricati,
+      n: nonEsaminate,
+    })
+    return NextResponse.json(
+      {
+        error:
+          'Nel fascicolo ci sono più documenti di questo tipo di quanti se ne possano controllare in una volta, e fra quelli esaminati nessuno risulta firmato elettronicamente dalla famiglia.',
+        codice: 'PRESTAMPATO_DATI_MANCANTI',
+        motivo: 'copia_firmata_non_esaminata',
+      },
+      { status: 422 },
+    )
+  }
+
+  if (senzaFirma > 0) {
+    // 🔴 IL CASO CHE QUESTA FUNZIONE ESISTE PER RIFIUTARE: nel fascicolo ci sono documenti di
+    // questo tipo, TUTTI sono stati esaminati, e nessuno porta la firma elettronica della
+    // famiglia. Sono trascrizioni `su_carta`, scansioni caricate a mano, fogli rigenerati.
+    // Consegnarne uno come «copia firmata» significherebbe dare a un ente un foglio che
+    // nessuno ha sottoscritto.
+    logEvento('modulistica', 'warn', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'copia-firmata-senza-riscontro-fea',
+      tipo: input.voce.slug,
+      alunno_id: input.alunnoId,
+      scuola_id: input.scuolaId,
+      n: senzaFirma,
+    })
+    return NextResponse.json(
+      {
+        error:
+          'Nel fascicolo ci sono documenti di questo tipo, ma nessuno porta la firma elettronica della famiglia: quella firma non risulta nel registro.',
+        codice: 'PRESTAMPATO_DATI_MANCANTI',
+        motivo: 'copia_firmata_non_elettronica',
+      },
+      { status: 422 },
+    )
+  }
+
+  logEvento('modulistica', 'info', {
+    operazione: 'prestampati/genera:POST',
+    esito: 'copia-firmata-assente',
+    tipo: input.voce.slug,
+    alunno_id: input.alunnoId,
+    scuola_id: input.scuolaId,
+  })
+  return rispostaCopiaFirmataAssente()
+}
+
+/**
+ * L'impronta di questi byte è nel registro FEA per questo tipo di documento?
+ *
+ * È l'unica domanda che distingue l'originale sottoscritto da tutto il resto, e ha una
+ * risposta a tre valori: `true` (firmato), `false` (non firmato), `'non-verificabile'` (il
+ * registro non ha risposto). Il terzo NON si appiattisce sul secondo: «non ho potuto
+ * verificare» non è «non è firmato», e le due cose portano la segreteria in due direzioni
+ * diverse. In nessuno dei due casi però il foglio esce — un documento che dichiara una
+ * sottoscrizione si consegna solo quando quella sottoscrizione è provata.
+ *
+ * ⚠️ NON si filtra per `utente_id`: `firme_documenti` lega la firma al GENITORE, e allo
+ * sportello si conosce il bambino. L'impronta però è uno SHA-256 dei byte, cioè già un
+ * identificatore univoco di QUEL foglio: `tipo_documento` accanto è una cintura, non la
+ * prova.
+ */
+async function improntaNelRegistroFea(
+  supabase: SupabaseClient,
+  byte: Uint8Array,
+  slug: string,
+  alunnoId: string,
+): Promise<boolean | 'non-verificabile'> {
+  // `SHA256-<hex maiuscolo>`; la forma minuscola è quella che la route della famiglia scrive.
+  const maiuscola = sha256Impronta(byte)
+  const minuscola = `SHA256-${maiuscola.slice('SHA256-'.length).toLowerCase()}`
+
+  const { data, error } = await supabase
+    .from('firme_documenti')
+    .select('id')
+    .eq('tipo_documento', slug)
+    .in('impronta_digitale', [maiuscola, minuscola])
+    .limit(1)
+
+  if (error) {
+    // PostgREST non lancia: il valore di ritorno va controllato, sempre. Il corpo dell'errore
+    // arriva dal parametro `err`, non dai campi — che sono a lista bianca.
+    const codice = (error as { code?: string }).code ?? null
+    logEvento('modulistica', 'error', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'registro-fea-non-interrogabile',
+      entita_tipo: 'firme_documenti',
+      tipo: slug,
+      alunno_id: alunnoId,
+      error_code: codice,
+    }, error)
+    return 'non-verificabile'
+  }
+
+  return ((data as unknown as { id: string }[] | null) ?? []).length > 0
+}
+
+/**
+ * La copia firmata non c'è nel fascicolo.
+ *
+ * Il codice è `PRESTAMPATO_DATI_MANCANTI` — 422, «completali in anagrafica e riprova» — e il
+ * MOTIVO viaggia in un campo suo, che il pannello traduce: è lo stesso meccanismo con cui
+ * questa route dice le altre tre cose che il catalogo dei codici non sa dire. Un codice
+ * nuovo sarebbe più preciso ma vive in `src/lib/ui/esito-fetch.ts`, che non è di questa mano:
+ * segnalato, non fatto.
+ */
+function rispostaCopiaFirmataAssente(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        'Nel fascicolo di questo bambino non c’è una copia firmata di questo modulo: la famiglia non l’ha ancora firmato.',
+      codice: 'PRESTAMPATO_DATI_MANCANTI',
+      motivo: 'copia_firmata_assente',
+    },
+    { status: 422 },
+  )
+}
+
 // ─── Il protocollo in uscita ────────────────────────────────────────────────────
 
 interface EsitoProtocollo {
@@ -610,9 +1115,20 @@ interface EsitoProtocollo {
 }
 
 /**
- * Numero → render → segnatura → upload → riga di registro, nell'ordine che la specifica
- * impone (§4.1: la fascia si appone DOPO la generazione; §4.3: l'impronta è quella del PDF
- * PRIMA della fascia, la stessa che finisce in `protocolli.impronta_sha256`).
+ * Numero → render → carta e segnatura → upload → riga di registro, nell'ordine che la
+ * specifica impone (§4.1: la segnatura si appone DOPO la generazione).
+ *
+ * ⚠️ **L'impronta è quella del FILE CONSEGNATO, non dei byte che lo precedono.** Fino al
+ * 2026-08-16 questa riga diceva «§4.3: l'impronta è quella del PDF PRIMA della fascia», ed
+ * era la descrizione di un codice che non c'è più: su carta intestata non esiste un «prima
+ * della fascia», perché `applicaCartaIntestata(pdf, { segnatura })` stende carta e
+ * segnatura in una passata sola e `impronta_sha256` si calcola su quel risultato (più
+ * sotto, `sha256Impronta(documento.pdf)`). La premessa vecchia resta vera solo per i
+ * documenti ACQUISITI, dove `applicaSegnatura()` passa davvero dopo
+ * (`src/lib/protocolli/store.ts`). Tenerla scritta qui costava una dichiarazione falsa
+ * STAMPATA sul foglio — «l'impronta SHA-256 di questo documento è registrata nel registro
+ * di protocollo» — su un atto che va all'INPS e al datore di lavoro. Il test che lega le
+ * due cose è in `__tests__/api/prestampati-segreteria.test.ts`.
  *
  * ⚠️ LA PROVA A VUOTO, prima di toccare la numerazione. Il render viene chiamato una volta
  * in più con `copiaFamiglia` — che è l'altra forma legittima dello stesso foglio (§4.1) e
@@ -726,11 +1242,36 @@ async function protocollaEComponi(
     return { response: rispostaRifiuto(reso) }
   }
 
+  // ─── LA CARTA DELLA SCUOLA, E LA SEGNATURA, IN UNA CHIAMATA SOLA ──────────────
+  //
+  // Fino al 2026-08-15 qui c'era `applicaSegnatura(reso.pdf, { righe, logoPng })`, e
+  // andava bene quando il motore disegnava da sé una banda verde in cima al foglio. Ora
+  // non la disegna più — ce l'ha la carta intestata vera — e comporre le due cose in
+  // sequenza produceva, misurato: la fascia verde di `applicaSegnatura` **sopra il
+  // marchio della scuola** (che finisce a 26,8 mm), un SECONDO logo Kidville sopra il
+  // primo, e la carta riscalata di 777,89/841,89 = 0,924 e ricentrata — cioè il piede a
+  // quattro colonne staccato dal fondo del foglio, con due margini bianchi ai lati.
+  // Sono, alla lettera, i difetti n. 1 e n. 2 della specifica.
+  //
+  // `applicaSegnatura()` resta il timbro dei documenti **acquisiti** (una scansione, una
+  // foto), che arrivano su un foglio bianco dove la fascia non copre niente. Il lock che
+  // lo tiene è in `__tests__/lib/carta-applica.test.ts`.
+  //
+  // Il numero di protocollo esce da qui una volta sola: `assembla()` spegne la riga
+  // «Prot. n. …» nel corpo quando il documento è protocollato, perché la segnatura la
+  // contiene già (`OpzioniStampa.protocolloInSegnatura`). Prima ci stava due volte, a
+  // diciotto millimetri di distanza, su un certificato diretto all'INPS.
   const denominazione = await denominazioneScuola(supabase, input.scuolaId)
-  const timbrato = await applicaSegnatura(reso.pdf, {
-    righe: righeSegnatura({ denominazione, numero, anno, tipo: 'uscita', quando }),
-    logoPng: logoLightBytes(),
+  const suCarta = await applicaCartaIntestata(reso.pdf, {
+    segnatura: { righe: righeSegnatura({ denominazione, numero, anno, tipo: 'uscita', quando }) },
   })
+  // Da qui in giù il documento È questo: quello che si consegna, quello che si archivia e
+  // quello di cui si registra l'impronta sono lo stesso file. È un miglioramento e va
+  // detto: il riquadro di verifica stampato in fondo afferma «l'impronta SHA-256 di
+  // QUESTO documento è registrata nel registro di protocollo», e prima l'impronta
+  // registrata era quella dei byte PRIMA della fascia — cioè di un file che nessuno aveva
+  // in mano. Ora quella frase è vera per chi tiene il foglio.
+  const documento = { ...reso, pdf: suCarta }
 
   const percorsi = pathDefinitivi(input.scuolaId, anno, numero)
   const pathOriginale = percorsi.originale('pdf')
@@ -740,9 +1281,16 @@ async function protocollaEComponi(
   await ensureBucket(supabase)
 
   try {
+    // Due percorsi, gli STESSI byte: il documento generato nasce già segnato — il
+    // registro protocolli ha due colonne (`file_originale`, `file_timbrato`) perché su un
+    // documento ACQUISITO l'originale è la scansione com'è arrivata e il timbrato è la
+    // copia con la fascia. Qui l'una e l'altra sono lo stesso foglio, e scriverlo due
+    // volte è meno pericoloso che far puntare due colonne allo stesso file: la rettifica
+    // di un protocollo sostituisce l'originale e rigenera il timbrato, e con un percorso
+    // solo si sovrascriverebbero a vicenda.
     for (const [path, bytes] of [
-      [pathOriginale, reso.pdf],
-      [percorsi.timbrato, timbrato],
+      [pathOriginale, documento.pdf],
+      [percorsi.timbrato, documento.pdf],
     ] as const) {
       const { error } = await storage.upload(path, Buffer.from(bytes), {
         contentType: MIME_PDF,
@@ -771,13 +1319,13 @@ async function protocollaEComponi(
         // Una funzione sola per i due campi, e non è uno sfizio: sono le due metà della
         // stessa frase — «a chi va» e «come ci arriva» — e finiscono su una riga di
         // registro WORM che nessuno rettificherà. Vedi `destinazioneProtocollo`.
-        ...destinazioneProtocollo(input.voce, input.contesto, reso.risposte),
-        impronta_sha256: sha256Impronta(reso.pdf),
+        ...destinazioneProtocollo(input.voce, input.contesto, documento.risposte),
+        impronta_sha256: sha256Impronta(documento.pdf),
         file_originale: pathOriginale,
         file_timbrato: percorsi.timbrato,
-        file_nome_originale: `${slugNomeFile(reso.titolo)}.pdf`,
+        file_nome_originale: `${slugNomeFile(documento.titolo)}.pdf`,
         file_mime: MIME_PDF,
-        file_size: reso.pdf.byteLength,
+        file_size: documento.pdf.byteLength,
         created_by: input.createdBy,
       })
     if (erroreInsert) {
@@ -786,7 +1334,7 @@ async function protocollaEComponi(
       throw new Error(`Registrazione a protocollo non riuscita: ${erroreInsert.message}`)
     }
 
-    return { numero, anno, numeroFormattato, reso }
+    return { numero, anno, numeroFormattato, reso: documento }
   } catch (err) {
     // Rollback best-effort dei soli FILE: la riga di registro, se c'è, non è mai da
     // disfare (vedi sopra). Se anche la rimozione fallisce resta un file orfano nel
@@ -881,9 +1429,21 @@ function destinazioneProtocollo(
 
 type EsitoArchiviazione = { esito: 'archiviato' | 'fallita' | 'non-previsto'; documentoId: string | null }
 
-/** La descrizione che l'elenco del fascicolo mostra. Nessun dato personale: c'è già il PDF. */
-function descrizioneArchivio(voce: VocePrestampato, numeroFormattato: string | null): string {
-  return numeroFormattato ? `${voce.etichetta} — Prot. n. ${numeroFormattato}` : voce.etichetta
+/**
+ * La descrizione che l'elenco del fascicolo mostra. Nessun dato personale: c'è già il PDF.
+ *
+ * ⚠️ LA MODALITÀ ENTRA NELLA DESCRIZIONE, e non è un ornamento: nel fascicolo di un bambino
+ * un modulo trascritto dallo sportello e uno firmato dalla famiglia nell'app hanno lo stesso
+ * titolo e lo stesso tipo di documento. Chi apre l'elenco fra sei mesi deve poter sapere,
+ * senza aprire il PDF, che di quel foglio esiste un originale di carta agli atti.
+ */
+function descrizioneArchivio(
+  voce: VocePrestampato,
+  numeroFormattato: string | null,
+  modalita: ModalitaModuloFamiglia | undefined,
+): string {
+  const base = numeroFormattato ? `${voce.etichetta} — Prot. n. ${numeroFormattato}` : voce.etichetta
+  return modalita === 'su_carta' ? `${base} — modulo consegnato su carta` : base
 }
 
 /**
@@ -902,20 +1462,25 @@ const SCHEMA_NON_PRONTO = new Set(['22P02', 'PGRST204', '42703', '42P01', 'PGRST
  * Il PDF nel fascicolo del bambino: file nel bucket privato già in uso, riga in
  * `student_documents` con il `document_type` del modello.
  *
- * 🔴 `document_type` È UN ENUMERATO, E NESSUNO DEI DICIASSETTE SLUG CI STA DENTRO.
- * Misurato in produzione il 2026-08-14, in sola lettura:
- * `SELECT e.enumlabel FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid WHERE
- * t.typname = 'document_type_enum'` → `diagnosi`, `pei`, `104`, `pdp`. Sono i quattro del
- * baseline (`supabase/migrations/20260704120000_baseline.sql:43`) e nessuna migrazione ne
- * ha aggiunti. Postgres rifiuta quindi l'INSERT con `22P02 invalid input value for enum`,
- * e dal codice non si aggira: allargare l'enumerato è una migrazione, e le migrazioni su
- * questo database sono vietate dal titolare.
+ * ⚠️ `document_type` È UN ENUMERATO, E QUI STAVA SCRITTO UN CONTEGGIO CHE È INVECCHIATO.
+ * Fino al 2026-08-16 questa testata diceva, in maiuscolo, «NESSUNO DEI DICIASSETTE SLUG CI
+ * STA DENTRO — misurato il 2026-08-14: `diagnosi`, `pei`, `104`, `pdp`», e concludeva che
+ * ogni archiviazione usciva con `X-Prestampato-Archiviato: fallita`. Era vero per due
+ * giorni: la migrazione che allarga l'enumerato è stata applicata il 2026-08-15, e chi
+ * leggesse ancora quel paragrafo crederebbe rotto un percorso che funziona — smettendo di
+ * cercare la causa vera di un'archiviazione fallita.
  *
- * Perciò OGGI, in produzione, tutti e quattro i modelli archiviabili che nascono qui
- * (`nulla_osta`, `certificato_competenze`, `certificato_iscrizione_frequenza`,
- * `certificato_bonus_nido`) escono con `X-Prestampato-Archiviato: fallita`. Va detto qui,
- * dove qualcuno lo legge, invece di lasciarlo scoprire a chi apre l'«Archivio firmati» e lo
- * trova vuoto.
+ * Qui non si rimette un numero nuovo, che invecchierebbe allo stesso modo: si lascia la
+ * query, che risponde sempre.
+ *
+ * ```sql
+ * SELECT e.enumlabel FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+ *  WHERE t.typname = 'document_type_enum' ORDER BY e.enumsortorder;
+ * ```
+ *
+ * Il degrado resta comunque scritto nel codice, e non per prudenza: il DB E2E della CI è un
+ * progetto separato e **non è migrato**, quindi lì l'INSERT risponde davvero `22P02 invalid
+ * input value for enum`. Ciò che segue descrive cosa succede in quel caso.
  *
  * Le due strade sbagliate, dette perché nessuno le prenda credendole ovvie — sono le stesse
  * che ha scritto la route gemella della famiglia (`parent/prestampati/firma`), e le due
@@ -1067,12 +1632,18 @@ async function archiviaNelFascicolo(
  * nessuno riverifica.
  *
  * 🔴 E NON ERA UN'IPOTESI: in produzione quel bucket **non esiste ancora**. La fotografia
- * dello storage — `__tests__/fixtures/bucket-storage-snapshot.json`, generata l'11/08 — ne
- * elenca quattordici e `sensitive_documents` non è fra loro, perché `primaria/fascicolo` lo
- * crea alla prima scansione caricata e quella prima volta non è mai avvenuta. Chi lo avrebbe
- * creato, quindi, era questa route: al primo nulla osta generato allo sportello, con i tipi
- * MIME sbagliati, e da lì in poi il fascicolo di tutte e tre le sedi avrebbe accettato solo
- * PDF.
+ * dello storage — `__tests__/fixtures/bucket-storage-snapshot.json` — ne elenca quattordici e
+ * `sensitive_documents` non è fra loro, perché `primaria/fascicolo` lo crea alla prima
+ * scansione caricata e quella prima volta non è mai avvenuta. Chi lo avrebbe creato, quindi,
+ * era questa route: al primo nulla osta generato allo sportello, con i tipi MIME sbagliati, e
+ * da lì in poi il fascicolo di tutte e tre le sedi avrebbe accettato solo PDF.
+ *
+ * ⚠️ La data della misura NON si ricopia qui, e non è pigrizia: la fotografia la porta dentro
+ * di sé (`generato_il`, in UTC, dentro il suo `sha256`) e una data ricopiata a mano invecchia
+ * senza che nessuno se ne accorga — questa riga diceva «generata l'11/08» quando la
+ * fotografia era già stata rifatta. Chi vuole sapere quando è stata misurata legga il file;
+ * chi vuole sapere se è ancora recente non deve fare niente, perché
+ * `__tests__/lib/gdpr-oblio-completo.test.ts` diventa rosso da solo dopo trenta giorni.
  *
  * La strada di ricopiare i quattro tipi è stata scartata: sarebbe una terza copia di una
  * configurazione che vive già in due file (`primaria/fascicolo` e la route gemella della

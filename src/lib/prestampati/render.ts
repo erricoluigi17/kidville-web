@@ -294,7 +294,13 @@ function assembla<R>(
 
   let pdf: Uint8Array
   try {
-    pdf = buildPrestampatoPdf(documento)
+    // ⚠️ UNA SOLA SEDE PER IL NUMERO DI PROTOCOLLO. Un documento protocollato riceve la
+    // segnatura sulla carta intestata — «SCUOLA … · Prot. n. 0000123/2026 · Uscita · del
+    // 15/08/2026 ore 10:24», a 34 mm — e allora la riga di corpo del §4.1 tace: per un
+    // giorno ci sono state tutte e due, a diciotto millimetri di distanza, sul certificato
+    // che va all'INPS e al datore di lavoro. Il flag NON tocca «Copia a uso della famiglia
+    // — non protocollata», che passa dallo stesso campo ma non è un numero.
+    pdf = buildPrestampatoPdf(documento, { protocolloInSegnatura: Boolean(opzioni.protocollo) })
   } catch (err) {
     // jsPDF lancia per davvero (un'immagine illeggibile, un font mancante), e senza
     // questo ramo l'eccezione risalirebbe alla route come 500 nudo. Nel log lo slug e il

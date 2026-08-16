@@ -37,6 +37,8 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 
 import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { risolviContestoSede, contestoSenzaSede } from '@/lib/email/contesto'
+import { piedeTesto } from '@/lib/email/componenti'
+import { buildIntestazioneSede } from '@/lib/certificati/self-service'
 import { nomeSede } from '@/lib/scuole/reali'
 
 beforeEach(() => vi.clearAllMocks())
@@ -124,13 +126,94 @@ describe('risolviContestoSede — l\'identità del plesso, e cosa fa quando manc
     it('sede nota ⇒ nome dal database, recapiti dall\'anagrafica', async () => {
         const client = creaFintoSupabase({
             schools: [{ id: SEDE_A, nome: NOME_SEDE_A }],
-            scuole: [{ id: SEDE_A, indirizzo: 'Via di Prova 1, 00000 Prova (PR)', config: { anagrafica: { email: 'prova@example.test', telefono: null } } }],
+            // `scuole.indirizzo` è la SOLA VIA dal 2026-08-16 (spec §2.2): CAP,
+            // città e provincia stanno nei propri campi e vanno ricomposti.
+            scuole: [{
+                id: SEDE_A,
+                indirizzo: 'Via di Prova 1',
+                citta: 'Prova',
+                config: { anagrafica: { email: 'prova@example.test', telefono: null, cap: '00000', provincia: 'PR' } },
+            }],
         } as DBFinto)
         const c = await risolviContestoSede(client, SEDE_A, 'test')
         expect(c.nome).toBe(NOME_SEDE_A)
-        expect(c.indirizzo).toBe('Via di Prova 1, 00000 Prova (PR)')
+        expect(c.indirizzo).toBe('Via di Prova 1 — 00000 Prova (PR)')
         expect(c.email).toBe('prova@example.test')
         expect(c.telefono).toBeNull()
+    })
+
+    // =========================================================================
+    // LA REGRESSIONE CHE LA RIDUZIONE DEL CAMPO HA CAUSATO
+    //
+    // Il Task 3.1 (spec §2.2) chiedeva di censire OGNI lettore di
+    // `scuole.indirizzo` prima di ridurlo alla sola via. Il censimento la vittima
+    // l'aveva trovata — questo file — e l'aveva lasciata rotta: `piede()` stampa
+    // `ContestoSede.indirizzo` come riga unica in fondo a TUTTE le email (undici
+    // generatori), e la colonna grezza da quel giorno non contiene più il luogo.
+    //
+    // Concretamente, prima della riduzione il piede di Cesa firmava
+    //     Via Filippo Turati 2, 81030 Cesa (CE)
+    // e dopo avrebbe firmato
+    //     Via Filippo Turati 2
+    //
+    // Il difetto non si vedeva nella suite perché il test del piè di pagina
+    // (`pie-di-pagina-senza-buchi.test.ts`) imbocca un `ContestoSede` a mano
+    // invece di costruirlo dal database: la regressione stava a monte, in
+    // `risolviContestoSede`, che è l'UNICO punto in cui quel campo nasce da una
+    // riga vera. Per questo il test sta qui.
+    // =========================================================================
+    it('il piè di pagina porta il luogo, non la sola via: CAP, città e provincia ricomposti', async () => {
+        const client = creaFintoSupabase({
+            schools: [{ id: SEDE_A, nome: NOME_SEDE_A }],
+            scuole: [{
+                id: SEDE_A,
+                indirizzo: 'Via Filippo Turati 2',
+                citta: 'Cesa',
+                config: { anagrafica: { cap: '81030', provincia: 'CE', email: 'cesa@example.test' } },
+            }],
+        } as DBFinto)
+        const c = await risolviContestoSede(client, SEDE_A, 'test')
+        expect(c.indirizzo).toBe('Via Filippo Turati 2 — 81030 Cesa (CE)')
+        // La riga che va in fondo all'email la porta per intero.
+        expect(piedeTesto(c, 'Motivo di prova')).toContain('Via Filippo Turati 2 — 81030 Cesa (CE)')
+    })
+
+    it('la stessa riga che stampa il certificato: le due testate non divergono', async () => {
+        // Il certificato compone `via — CAP CITTÀ (PROV)` con `buildIntestazioneSede`.
+        // Se un giorno l'email e il certificato scrivessero l'indirizzo in due modi
+        // diversi, la scuola avrebbe due indirizzi — e nessuno saprebbe quale.
+        const client = creaFintoSupabase({
+            schools: [{ id: SEDE_A, nome: NOME_SEDE_A }],
+            scuole: [{
+                id: SEDE_A,
+                indirizzo: 'Via Prima Traversa Antica Giardini 5',
+                citta: 'Giugliano in Campania',
+                config: { anagrafica: { cap: '80014', provincia: 'NA' } },
+            }],
+        } as DBFinto)
+        const c = await risolviContestoSede(client, SEDE_A, 'test')
+        const testataCertificato = buildIntestazioneSede({
+            scuola_nome: NOME_SEDE_A,
+            scuola_indirizzo: 'Via Prima Traversa Antica Giardini 5',
+            scuola_cap: '80014',
+            scuola_citta: 'Giugliano in Campania',
+            scuola_provincia: 'NA',
+        })
+        expect(c.indirizzo).toBe(testataCertificato[1])
+    })
+
+    it('senza il luogo resta la sola via, e senza nulla la riga non esiste', async () => {
+        // Degrado dichiarato: un'anagrafica a metà non produce «Via X — » con il
+        // trattino sospeso, e una sede senza indirizzo non produce una riga vuota.
+        const client = creaFintoSupabase({
+            schools: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],
+            scuole: [
+                { id: SEDE_A, indirizzo: 'Via Solitaria 1', citta: null, config: {} },
+                { id: SEDE_B, indirizzo: null, citta: null, config: {} },
+            ],
+        } as DBFinto)
+        expect((await risolviContestoSede(client, SEDE_A, 'test')).indirizzo).toBe('Via Solitaria 1')
+        expect((await risolviContestoSede(client, SEDE_B, 'test')).indirizzo).toBeNull()
     })
 
     it('sede nulla ⇒ contesto generico, senza toccare il database', async () => {

@@ -347,10 +347,15 @@ describe('nessuna scrittura su `utenti` tocca le colonne GENERATE', () => {
 
         // CONTROLLO POSITIVO, prima di quello negativo. Un rilevatore che non trova più
         // NESSUNA scrittura su `utenti` non è un repo pulito: è un rilevatore rotto — la
-        // catena `.from('utenti').upsert(…)` esiste eccome (`admin/pre-inscriptions`,
-        // `admin/staff`, `lib/auth/parent-identity`). Senza questa riga, il giorno in cui
-        // il camminatore di catena smettesse di funzionare il lock resterebbe verde e non
-        // guarderebbe più niente.
+        // catena di scrittura su `utenti` esiste eccome (`admin/staff` in `update`,
+        // `lib/auth/staff-identity` e `lib/auth/parent-identity` in `insert`). Senza questa
+        // riga, il giorno in cui il camminatore di catena smettesse di funzionare il lock
+        // resterebbe verde e non guarderebbe più niente.
+        //
+        // ⚠️ I tre nomi qui sopra sono stati RIMISURATI il 2026-08-16, non ricopiati: il
+        // primo dell'elenco precedente era `admin/pre-inscriptions`, che quel giorno è
+        // stata cancellata. Un controllo positivo che elenca un esempio morto smette di
+        // essere una prova di vitalità e diventa una didascalia.
         expect(
             scrittureViste.length,
             'Il rilevatore non vede più NESSUNA scrittura su `utenti`: prima di credere al ' +

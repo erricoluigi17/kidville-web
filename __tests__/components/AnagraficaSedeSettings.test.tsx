@@ -55,7 +55,7 @@ describe('Impostazioni → Sede: il legale rappresentante ha finalmente un campo
   it('il campo esiste, e con lui gli estremi dell’autorizzazione al nido', async () => {
     render(<AnagraficaSedeSettings userId={USER} scuolaId={SEDE_A} />)
     expect(await screen.findByLabelText(itSettings.scLegaleRappresentante)).toBeInTheDocument()
-    for (const etichetta of [itSettings.scAutNumero, itSettings.scAutData, itSettings.scAutComune]) {
+    for (const etichetta of [itSettings.scAutNumero, itSettings.scAutData, itSettings.scAutEnte]) {
       expect(screen.getByLabelText(etichetta)).toBeInTheDocument()
     }
   })
@@ -92,6 +92,42 @@ describe('Impostazioni → Sede: il legale rappresentante ha finalmente un campo
     // propria versione, mostrerebbe salvato un valore diverso da quello salvato.
     await waitFor(() => expect((screen.getByLabelText(itSettings.scProvincia) as HTMLInputElement).value).toBe('NA'))
     expect(await screen.findByText(itSettings.salvato)).toBeInTheDocument()
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // L'ETICHETTA CHE CONTRADDICEVA IL DOCUMENTO
+  //
+  // Il terzo campo dell'autorizzazione chiedeva «Comune che l'ha rilasciata»,
+  // sotto un titolo che diceva «Autorizzazione comunale al nido». Per due sedi su
+  // tre la risposta giusta NON è un comune: è un Ambito socio-sanitario (spec
+  // §2.1), e i valori corretti finiti in archivio il 2026-08-16 ci sono NONOSTANTE
+  // l'etichetta, non grazie a essa. Alla prima ricompilazione l'etichetta vince
+  // sulla decisione e il difetto torna, sul foglio che va all'INPS.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('il campo chiede un ENTE, non un Comune, e accetta un Ambito socio-sanitario', async () => {
+    render(<AnagraficaSedeSettings userId={USER} scuolaId={SEDE_A} />)
+    const campo = await screen.findByLabelText(itSettings.scAutEnte)
+    expect(itSettings.scAutEnte).toMatch(/ambito socio-sanitario/i)
+    expect(itSettings.scAutorizzazioneNido).not.toMatch(/comunale/i)
+
+    fireEvent.change(campo, { target: { value: 'Ambito Socio-Sanitario C06 — Comune capofila Aversa' } })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itSettings.salva, 'i') }))
+    await waitFor(() => expect(ultimoPatch()).not.toBeNull())
+    const corpo = ultimoPatch() as { anagrafica: { autorizzazione_nido: Record<string, unknown> } }
+    expect(corpo.anagrafica.autorizzazione_nido.ente).toBe('Ambito Socio-Sanitario C06 — Comune capofila Aversa')
+  })
+
+  it('una riga salvata con la chiave vecchia mostra il suo valore, e non un campo vuoto', async () => {
+    // Fra la rinomina e il primo salvataggio, le tre righe di produzione portano
+    // ancora `comune`. Un form che le mostra vuote invita a ridigitare — e chi non
+    // ridigita cancella, perché lo schema è lista bianca in scrittura.
+    riga = {
+      ...riga,
+      config: { anagrafica: { autorizzazione_nido: { numero: '17', data: '2024-10-01', comune: 'Ambito Socio-Sanitario C06 — Comune capofila Aversa' } } },
+    }
+    render(<AnagraficaSedeSettings userId={USER} scuolaId={SEDE_A} />)
+    const campo = (await screen.findByLabelText(itSettings.scAutEnte)) as HTMLInputElement
+    expect(campo.value).toBe('Ambito Socio-Sanitario C06 — Comune capofila Aversa')
   })
 
   it('a chi non è Direzione il 403 si DICE, non si nasconde', async () => {

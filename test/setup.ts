@@ -72,51 +72,47 @@ if (typeof fetchNudo === 'function') {
 // Mock globale di next-intl per i test. I componenti migrati usano
 // useTranslations/useLocale, che senza il NextIntlClientProvider (vive nel
 // RootLayout, non montato negli unit test) lancerebbero. Il mock risolve le
-// chiavi contro i messaggi ITALIANI reali (messages/it.json), così i test che
+// chiavi contro i messaggi ITALIANI reali (`messages/it/*.json`), così i test che
 // asseriscono sui testi italiani continuano a passare senza wrapper. Scalabile a
 // tutta la migrazione i18n: nessun test esistente va toccato per il provider.
+//
+// ─── PERCHÉ I CATALOGHI SI LEGGONO DALLA CARTELLA, E NON PIÙ A UNO A UNO ────────
+//
+// Fino al 2026-08-16 questo oggetto era un ELENCO SCRITTO A MANO, e un elenco scritto a
+// mano dimentica. Il ripiego del `resolve` qui sotto è il NOME DELLA CHIAVE: un catalogo
+// non elencato non dà nessun errore, dà `namespace.chiave` a schermo — e ogni asserzione
+// sul testo di quella schermata resta verde su una stringa che nessun utente leggerà mai.
+//
+// È successo due volte. La prima con `parentAssenze`, e l'avviso è rimasto scritto qui per
+// giorni. La seconda con `prestampatiSegreteria`, nato il 2026-08-14: la quinta linguetta
+// di «Modulistica» si misurava `prestampatiSegreteria.titolo` invece di «Prestampati»
+// (`__tests__/pages/admin-modulistica-linguette.test.tsx`). Un avviso non è un meccanismo:
+// finché l'elenco è a mano, la terza volta è solo questione di tempo.
+//
+// Ora si legge la cartella. Un catalogo nuovo è montato dal momento in cui il file esiste,
+// e la classe intera del difetto è chiusa per costruzione — non c'è più niente da ricordare.
 vi.mock('next-intl', async () => {
-  const it: Record<string, Record<string, string>> = {
-    common: (await import('../messages/it/common.json')).default,
-    auth: (await import('../messages/it/auth.json')).default,
-    nav: (await import('../messages/it/nav.json')).default,
-    home: (await import('../messages/it/home.json')).default,
-    avvisi: (await import('../messages/it/avvisi.json')).default,
-    diario: (await import('../messages/it/diario.json')).default,
-    mensa: (await import('../messages/it/mensa.json')).default,
-    pagamenti: (await import('../messages/it/pagamenti.json')).default,
-    profilo: (await import('../messages/it/profilo.json')).default,
-    teacherNav: (await import('../messages/it/teacherNav.json')).default,
-    teacherDiario: (await import('../messages/it/teacherDiario.json')).default,
-    teacherPresenze: (await import('../messages/it/teacherPresenze.json')).default,
-    teacherComunicazioni: (await import('../messages/it/teacherComunicazioni.json')).default,
-    teacherPrimaria: (await import('../messages/it/teacherPrimaria.json')).default,
-    teacherTasks: (await import('../messages/it/teacherTasks.json')).default,
-    teacherServizi: (await import('../messages/it/teacherServizi.json')).default,
-    adminNav: (await import('../messages/it/adminNav.json')).default,
-    adminStudents: (await import('../messages/it/adminStudents.json')).default,
-    adminContabilita: (await import('../messages/it/adminContabilita.json')).default,
-    adminMensa: (await import('../messages/it/adminMensa.json')).default,
-    adminModulistica: (await import('../messages/it/adminModulistica.json')).default,
-    adminComunicazioni: (await import('../messages/it/adminComunicazioni.json')).default,
-    adminPrimaria: (await import('../messages/it/adminPrimaria.json')).default,
-    adminSettings: (await import('../messages/it/adminSettings.json')).default,
-    adminAltro: (await import('../messages/it/adminAltro.json')).default,
-    shared: (await import('../messages/it/shared.json')).default,
-    etichette: (await import('../messages/it/etichette.json')).default,
-    parentNews: (await import('../messages/it/parentNews.json')).default,
-    parentChat: (await import('../messages/it/parentChat.json')).default,
-    parentPrimaria: (await import('../messages/it/parentPrimaria.json')).default,
-    parentServizi: (await import('../messages/it/parentServizi.json')).default,
-    // Le frasi che le DUE schermate dell'assenza condividono. Senza questa riga
-    // ogni test che monta `/parent/attendance` o `ComunicaAssenzaCard` mostrava a
-    // schermo `parentAssenze.motivoPrivacy` — cioè il nome della chiave — e
-    // qualunque asserzione sul testo sarebbe stata verde su una stringa che
-    // nessun genitore leggerà mai.
-    parentAssenze: (await import('../messages/it/parentAssenze.json')).default,
-    parentForms: (await import('../messages/it/parentForms.json')).default,
-    public: (await import('../messages/it/public.json')).default,
-  };
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  // `process.cwd()` è la radice del repo sotto vitest, ed è l'ancora che usano già i lock
+  // di `__tests__/architecture/`. `import.meta.url` qui NON serve: dentro la trasformazione
+  // di Vite non è un URL `file:`, e `readdirSync` rifiuta gli altri schemi.
+  const cartella = join(process.cwd(), 'messages/it');
+  const it: Record<string, Record<string, string>> = {};
+  for (const file of readdirSync(cartella)) {
+    if (!file.endsWith('.json')) continue;
+    it[file.slice(0, -'.json'.length)] = JSON.parse(
+      readFileSync(join(cartella, file), 'utf8'),
+    ) as Record<string, string>;
+  }
+  // Se la cartella non si legge, il mock risolverebbe OGNI chiave nel suo nome e la suite
+  // diventerebbe verde su testi finti in mille punti: meglio un errore che lo dice.
+  if (Object.keys(it).length === 0) {
+    throw new Error(
+      `Nessun catalogo italiano trovato in ${cartella}: il mock di next-intl mostrerebbe ` +
+        'il nome delle chiavi al posto dei testi, e le asserzioni sui testi sarebbero finte.',
+    );
+  }
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;
     return (gruppo && gruppo[key]) ?? (ns ? `${ns}.${key}` : key);

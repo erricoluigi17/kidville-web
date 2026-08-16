@@ -54,7 +54,7 @@
   "abbrevOre": "HRS",
   "pdfTitolo": "ATTENDANCE REGISTER — {mese} {anno}",
   "pdfMeta": "Section: {sezione}   |   Exported on {data}",
-  "pdfPiePagina": "Page {n} of {tot}  —  Kidville Electronic Register",
+  "pdfPiePagina": "Page {n} of {tot}",
   "pdfPrefissoFile": "attendance",
   "delegatiAutorizzati": "Authorized delegates",
   "nessunDelegato": "No registered delegates.",

@@ -365,6 +365,12 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     let ricon = 0
     let incassi = 0
     let cassa = 0
+    // Gli archivi che non si sono potuti nemmeno GUARDARE, i due canali sommati.
+    // Vedi `anonimizzaAlunno.lettureFallite`: senza questo numero, un `42501` su
+    // `student_documents` faceva marcare la richiesta come `evasa` — con un esito
+    // che diceva zero file non rimossi — mentre il fascicolo sanitario del bambino
+    // non era stato nemmeno letto.
+    let lettureFallite = rParent.lettureFallite ?? 0
     for (const f of nonIscritti) {
       const r = await anonimizzaAlunno(admin, f as AlunnoOblio, at, op)
       ricon += r.riconciliazione
@@ -379,17 +385,20 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       sospensioni += r.sospensioniBonificate
       presenzeBonificate += r.presenzeBonificate ?? 0
       notificheRimosse += r.notificheRimosse ?? 0
+      lettureFallite += r.lettureFallite ?? 0
     }
 
     // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
     // che quei file non ci sono più. Riga PERSISTITA (`gdpr` è in
-    // EVENTI_PERSISTITI), solo conteggi e uuid.
-    if (fileNonRimossi > 0) {
+    // EVENTI_PERSISTITI), solo conteggi e uuid. «Incompleto» sono DUE cose: file
+    // rimasti dentro, e archivi che nessuno ha potuto aprire.
+    if (fileNonRimossi > 0 || lettureFallite > 0) {
       logEvento('gdpr', 'error', {
         operazione: op,
         esito: 'oblio-parziale',
         richiesta: id,
         n_file: fileNonRimossi,
+        n_letture_fallite: lettureFallite,
       })
     }
 
@@ -406,6 +415,10 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       cassa_bonificati: cassa,
       file_rimossi: file,
       n_file_non_rimossi: fileNonRimossi,
+      // Sopravvive alla richiesta come gli altri conteggi: chi la rilegge fra un
+      // mese deve poter sapere che quell'oblio è stato marcato «evaso» senza che
+      // qualcuno abbia potuto guardare dentro N archivi.
+      letture_fallite: lettureFallite,
       iscrizioni_scrubbate: iscrizioni,
       foto_rimosse: fotoRimosse,
       foto_sganciate: fotoSganciate,

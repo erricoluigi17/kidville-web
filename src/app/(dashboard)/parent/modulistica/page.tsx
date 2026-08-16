@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { formattaIstante } from '@/i18n/config';
 import {
@@ -16,8 +17,6 @@ import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
-import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -56,16 +55,6 @@ interface AssignedForm {
 // Valore di risposta di un campo modulo (testo, rating numerico, consenso).
 type AnswerValue = string | number | boolean;
 
-// Log di firma FES restituito dal server (campi usati nella ricevuta PDF).
-interface SignatureLogInfo {
-  timestamp?: string;
-  ip?: string;
-  user_agent?: string;
-  provider?: string;
-  hash?: string;
-  parent_details?: { nome?: string | null; cognome?: string | null; cf?: string | null } | null;
-}
-
 interface MedCert {
   id: string;
   fileName?: string | null;
@@ -79,7 +68,6 @@ interface SignedArchiveItem {
   id: string;
   answers: Record<string, unknown>;
   is_signed: boolean;
-  signature_log: SignatureLogInfo | null;
   pdf_path: string;
   created_at: string;
   forms_templates: {
@@ -92,41 +80,43 @@ interface SignedArchiveItem {
   };
 }
 
-/**
- * «Copia a uso della famiglia — non protocollata», sui due riquadri da cui il certificato
- * esce davvero.
- *
- * La dicitura stava soltanto sulle schede SPENTE del pannello dei prestampati — quelle che un
- * PDF non lo producono affatto — mentre i due pulsanti «Scarica PDF» qui sotto sono l'unica
- * strada da cui una famiglia ottiene un certificato, e non dicevano niente. Nemmeno il foglio
- * lo dice: `generateSelfServiceCertificate` (jsPDF, più su in questo file) non stampa la
- * dicitura da nessuna parte, verificato riga per riga. Chi portava quel PDF a un ente lo
- * scopriva allo sportello.
- *
- * Le due frasi vengono dal catalogo dei prestampati e non da `parentServizi`: sono le stesse
- * parole del pannello che sta sopra, nella stessa scheda. Una dicitura che compare in due
- * punti si scrive una volta sola, o al primo ritocco i due punti divergono — ed è la §4.1 di
- * `docs/prestampati/00-impaginazione.md`, cioè una regola sola con due luoghi d'uso.
- */
-function NotaCopiaFamiglia() {
-  const t = useTranslations('prestampatiGenitore');
-  return (
-    <>
-      {/* Niente `mt-*`: la spaziatura la mette lo `space-y-2` del riquadro che le ospita. */}
-      <p className="inline-flex rounded-pill bg-kidville-yellow-light px-2.5 py-1 font-maven text-[11px] font-bold text-kidville-green">
-        {t('copiaFamiglia')}
-      </p>
-      <p className="font-maven text-xs leading-relaxed text-kidville-sub">{t('certificatoAvviso')}</p>
-    </>
-  );
-}
-
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
-export default function ParentModulisticaPage() {
+function ContenutoModulistica() {
   const t = useTranslations('parentServizi');
   const { userId: parentId } = useSessionIdentity();
   const f = useDateFormat();
-  const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>('compilare');
+  /**
+   * La linguetta d'apertura, che ora si può DICHIARARE nell'indirizzo.
+   *
+   * 🔴 Misurato in un browser vero il 2026-08-16: la notifica della gita portava a
+   * `/parent/modulistica`, la pagina si apriva su «DA COMPILARE» e a quel genitore diceva
+   * «Ottimo lavoro! Non hai moduli da compilare» — mentre il modulo della gita stava nella
+   * terza scheda. Il testo della notifica per giunta nominava una linguetta con un'etichetta
+   * che nell'app non esiste. Un avviso che porta a una schermata che dice «non hai niente da
+   * fare» è peggio di nessun avviso.
+   *
+   * Stesso identico schema di `/admin/modulistica`, che i suoi `?tab=` li legge già: le
+   * quattro parole ammesse sono scritte QUI, e sono le stesse del tipo e della barra. È la
+   * riga che si dimentica — finché nessuno manda quel link, il difetto non si vede — ed è il
+   * motivo per cui il collegamento della notifica ha un test suo nella route che lo compone.
+   *
+   * ⚠️ E `useSearchParams()` VUOLE UN `<Suspense>` SOPRA, che sta in fondo a questo file.
+   * Qui prima c'era scritto il contrario — «non serve, tanto `/admin/modulistica` usa lo
+   * stesso schema e compila» — ed era falso in tutte e due le metà: quella pagina il
+   * `<Suspense fallback={null}>` ce l'ha da prima di questo ramo, e la build passava solo
+   * perché `src/app/layout.tsx` fa `await cookies()`, che rende dinamica ogni rotta. Cioè
+   * un appoggio non dichiarato su una riga di un altro file: il giorno in cui quella
+   * `cookies()` sparisce, `npm run build` cade con `missing-suspense-with-csr-bailout`
+   * (`node_modules/next/dist/docs/…/use-search-params.md`). Tre righe, e la dipendenza non
+   * c'è più.
+   */
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const initialTab: 'compilare' | 'archivio' | 'certificati' | 'medici' =
+    tabParam === 'archivio' || tabParam === 'certificati' || tabParam === 'medici'
+      ? tabParam
+      : 'compilare';
+  const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>(initialTab);
   const [assignedForms, setAssignedForms] = useState<AssignedForm[]>([]);
   const [archive, setArchive] = useState<SignedArchiveItem[]>([]);
   const [medCerts, setMedCerts] = useState<MedCert[]>([]);
@@ -148,22 +138,6 @@ export default function ParentModulisticaPage() {
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpSession, setOtpSession] = useState<{ email: string | null; expiry: number; ticket: string; devCode?: string } | null>(null);
 
-  /**
-   * Il figlio scelto nella scheda «Certificati Self-Service», e il difetto che chiude.
-   *
-   * Quella scheda ha sempre lavorato su `children[0]`: il primo figlio dell'elenco, mai
-   * chiesto a nessuno. Su un certificato scaricato era un fastidio — il PDF sbagliato si
-   * vede e si rifà — ma da oggi in quella stessa scheda si FIRMA: scheda sanitaria,
-   * autorizzazione a somministrare un farmaco, richiesta di dieta. Con due figli il genitore
-   * avrebbe firmato le allergie di uno sul fascicolo dell'altro, e se ne sarebbe accorto —
-   * ammesso che se ne accorgesse — a documento già archiviato, quando non si modifica più.
-   *
-   * Il selettore vero vive dentro `PrestampatiGenitore` (che con un figlio solo non chiede
-   * niente e da due in su non preseleziona nessuno); qui si tiene la sua scelta, così anche
-   * i due certificati scaricabili qui sotto smettono di indovinare. Vuoto = nessuna scelta
-   * ancora fatta: si ricade sul primo, che è il comportamento di prima.
-   */
-  const [certificatiChildId, setCertificatiChildId] = useState('');
 
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
@@ -344,8 +318,12 @@ export default function ParentModulisticaPage() {
       // cui esiste il locale, quindi la traduzione avviene qui e non lì (T10-F1).
       if (!res.ok) return { ok: false, error: soloCatalogoDaCorpo(json, t('modulisticaVerificaFallita')) };
 
-      // Ricevuta PDF con il signature_log autorevole restituito dal server
-      generateReceiptPDF(compilingForm, formAnswers, json.signature_log);
+      // La ricevuta la DISEGNA IL SERVER, sulla carta intestata vera: qui si chiede
+      // soltanto, con l'id della submission appena creata. Se il server non lo
+      // restituisce non si inventa niente — la ricevuta resta nell'Archivio firmati,
+      // dove ha il suo pulsante.
+      const submissionId = (json?.submission as { id?: string } | undefined)?.id;
+      if (submissionId) void apriRicevutaFirma(submissionId);
 
       // La modale mostra l'esito; chiudiamo e ricarichiamo dopo un attimo
       setTimeout(() => {
@@ -361,166 +339,77 @@ export default function ParentModulisticaPage() {
     }
   };
 
-  // Receipt PDF Generator
-  // M9.4: async per caricare jsPDF on-demand; i chiamanti sono fire-and-forget
-  // (onClick e post-firma), nessuno dipende dal completamento sincrono.
-  const generateReceiptPDF = async (form: AssignedForm | SignedArchiveItem, answers: Record<string, unknown>, log: SignatureLogInfo | null) => {
-    const isArchive = 'forms_templates' in form;
-    const title = isArchive ? (form as SignedArchiveItem).forms_templates.title : (form as AssignedForm).title;
-    const desc = isArchive ? (form as SignedArchiveItem).forms_templates.description : (form as AssignedForm).description;
-    const studentName = isArchive ? `${(form as SignedArchiveItem).alunni.nome} ${(form as SignedArchiveItem).alunni.cognome}` : `${(form as AssignedForm).student.nome} ${(form as AssignedForm).student.cognome}`;
-
-    const { jsPDF } = await import('jspdf');
-    const doc = new jsPDF();
-    
-    // School Letterhead Simulation
-    doc.setFillColor(0, 106, 95); // Kidville Green
-    doc.rect(0, 0, 210, 40, 'F');
-    
-    doc.setTextColor(253, 196, 0); // Kidville Yellow
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(22);
-    doc.text('KIDVILLE SCHOOLS', 20, 25);
-    
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(10);
-    doc.text('Registro Elettronico & Modulistica Legale AgID', 120, 25);
-
-    // Body
-    doc.setTextColor(0, 106, 95);
-    doc.setFontSize(16);
-    doc.text('RICEVUTA DI FIRMA ELETTRONICA SEMPLICE (FES)', 20, 55);
-    
-    doc.setDrawColor(0, 106, 95);
-    doc.setLineWidth(0.5);
-    doc.line(20, 58, 190, 58);
-
-    doc.setTextColor(50, 50, 50);
-    doc.setFontSize(11);
-    doc.setFont('Helvetica', 'normal');
-    doc.text(`Documento: ${title}`, 20, 68);
-    doc.text(`Descrizione: ${desc || 'Nessuna'}`, 20, 75);
-    doc.text(`Alunno: ${studentName}`, 20, 82);
-    doc.text(`Firmatario: ${log?.parent_details?.nome || ''} ${log?.parent_details?.cognome || ''} (${log?.parent_details?.cf || 'CF non disponibile'})`.trim(), 20, 89);
-    
-    doc.setFont('Helvetica', 'bold');
-    doc.text('RISPOSTE FORNITE:', 20, 102);
-    
-    doc.setFont('Helvetica', 'normal');
-    let yOffset = 110;
-    
-    const fieldsList = isArchive 
-      ? Object.entries(answers).map(([key, val]) => ({ label: key, val })) 
-      : (form as AssignedForm).fields.map(f => ({ label: f.label, val: answers[f.id] }));
-
-    fieldsList.forEach((field) => {
-      const displayVal = typeof field.val === 'boolean' ? (field.val ? 'SÌ (Acconsentito)' : 'NO') : field.val;
-      doc.text(`• ${field.label}: ${displayVal}`, 25, yOffset);
-      yOffset += 8;
-    });
-
-    // Legal Shield section
-    yOffset += 10;
-    doc.setFillColor(254, 241, 228); // Soft Cream
-    doc.rect(20, yOffset, 170, 45, 'F');
-    doc.setDrawColor(253, 196, 0);
-    doc.rect(20, yOffset, 170, 45, 'D');
-
-    doc.setTextColor(0, 106, 95);
-    doc.setFont('Helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('CRISTALLIZZAZIONE LOG COMPLIANCE (CAD Art. 20 / DPR 445/2000)', 25, yOffset + 7);
-    
-    doc.setTextColor(80, 80, 80);
-    doc.setFont('Helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.text(`Marca temporale (UTC): ${log?.timestamp ? new Date(log.timestamp).toISOString() : 'N.D.'}`, 25, yOffset + 15);
-    doc.text(`Indirizzo IP Firmatario: ${log?.ip || '192.168.1.45'}`, 25, yOffset + 21);
-    doc.text(`User Agent: ${log?.user_agent?.substring(0, 80) || 'N.D.'}`, 25, yOffset + 27);
-    doc.text(`Identity Provider SPID/CIE: ${log?.provider || 'Aruba SPID'}`, 25, yOffset + 33);
-    doc.text(`SHA-256 Impronta Digitale: ${log?.hash || 'N.D.'}`, 25, yOffset + 39);
-
-    // Footer
-    doc.setTextColor(150, 150, 150);
-    doc.setFontSize(8);
-    doc.text('Questo documento costituisce ricevuta inattaccabile del consenso ed è archiviato digitalmente.', 20, 280);
-
-    doc.save(`Ricevuta_${title.replace(/\s+/g, '_')}.pdf`);
-  };
-
-  // Self-Service Certificates Generator
-  const generateSelfServiceCertificate = (type: 'iscrizione' | 'frequenza') => {
-    if (!parentInfo || children.length === 0) return;
-    
-    showToastMsg(t('modulisticaGenerazioneInCorso'));
-    setTimeout(async () => {
-      const { jsPDF } = await import('jspdf');
-      const doc = new jsPDF();
-      // Il figlio scelto nel pannello dei prestampati, che è il selettore di questa scheda.
-      // `children[0]` resta solo come ripiego per chi non ha ancora scelto — vedi
-      // `certificatiChildId`.
-      const currentStudent = children.find(c => c.id === certificatiChildId) ?? children[0];
-      const anno = annoScolasticoCorrente();
-
-      // Header Letterhead
-      doc.setFillColor(0, 106, 95); // Kidville Green
-      doc.rect(0, 0, 210, 40, 'F');
-      doc.setTextColor(253, 196, 0); // Kidville Yellow
-      doc.setFont('Helvetica', 'bold');
-      doc.setFontSize(22);
-      doc.text('KIDVILLE SCHOOLS', 20, 25);
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(10);
-      doc.text('Servizio Rilascio Certificati Automatici', 130, 25);
-
-      // Intestazione sede reale (dal DB, per-figlio): righe omesse se mancanti.
-      const intestazione = buildIntestazioneSede(currentStudent);
-      if (intestazione.length > 0) {
-        doc.setTextColor(100, 100, 100);
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(9);
-        intestazione.forEach((riga, i) => doc.text(riga, 20, 47 + i * 5));
+  /**
+   * LA RICEVUTA DI FIRMA LA DISEGNA IL SERVER — `GET /api/fea/receipt`.
+   *
+   * ⚠️ QUI C'ERA UN SECONDO MOTORE, `generateReceiptPDF`, e produceva un documento che
+   * una famiglia poteva scaricare. Rimosso il 2026-08-16, con l'elenco di ciò che
+   * stampava, perché è la ragione per cui non deve tornare:
+   *
+   *  · una banda verde disegnata dal codice al posto della carta intestata vera;
+   *  · «KIDVILLE SCHOOLS» in giallo — che non è la ragione sociale, non è il marchio, e
+   *    non è niente — e «Registro Elettronico & Modulistica Legale AgID», una conformità
+   *    AgID che nessuno ha certificato;
+   *  · il **codice fiscale** del firmatario, il suo **indirizzo IP** e lo **User Agent**,
+   *    sotto la frase «ricevuta inattaccabile del consenso»;
+   *  · e la parte peggiore: quando il log quei dati non li aveva, **li inventava** —
+   *    `log?.ip || '192.168.1.45'` e `log?.provider || 'Aruba SPID'`. Un foglio che
+   *    dichiara un indirizzo IP e un identity provider che nessuno ha mai registrato non
+   *    è una ricevuta: è un dato fabbricato, scaricabile da un genitore.
+   *
+   * Il gemello lato server era già stato ripulito su questo ramo («il nome del firmatario
+   * senza recapiti: mai un'email, mai un indirizzo IP», `src/lib/fea/receipt-pdf.ts`) e
+   * disegna sulla carta reale della scuola. Restava questa copia nel browser: due motori
+   * per lo stesso foglio divergono al primo ritocco, e questo era già divergente.
+   *
+   * `entita=forms`: la ricevuta è ancorata alla riga di `forms_submissions`, e la rotta
+   * la serve **solo al firmatario** (gate `requireUser` + confronto con `parent_id`).
+   * Nessun `x-user-id`: quell'header là non è accettato come prova d'identità.
+   */
+  const apriRicevutaFirma = async (submissionId: string) => {
+    try {
+      const res = await fetch(`/api/fea/receipt?entita=forms&id=${encodeURIComponent(submissionId)}`);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        // Niente prosa del server: è italiana per costruzione (T10-F1). Una frase sua
+        // per «la ricevuta non si è aperta» andrebbe in `parentServizi`, che è catalogo
+        // di un'altra mano: dichiarato all'orchestratore.
+        showToastMsg(`❌ ${soloCatalogoDaCorpo(j, t('modulisticaErrRete'))}`);
+        return;
       }
-
-      // Certificate content
-      doc.setTextColor(0, 106, 95);
-      doc.setFontSize(18);
-      const mainTitle = type === 'iscrizione' ? 'CERTIFICATO DI ISCRIZIONE' : 'CERTIFICATO DI FREQUENZA';
-      doc.text(mainTitle, 105, 65, { align: 'center' });
-
-      doc.setDrawColor(0, 106, 95);
-      doc.line(40, 70, 170, 70);
-
-      doc.setTextColor(50, 50, 50);
-      doc.setFont('Helvetica', 'normal');
-      doc.setFontSize(12);
-      
-      // Testo dal builder puro (testato): sezione reale dell'alunno e anno
-      // scolastico calcolato — nessun valore cablato.
-      const bodyText = buildCertificatoBody(type, currentStudent, anno);
-
-      const splitText = doc.splitTextToSize(bodyText, 160);
-      doc.text(splitText, 25, 90);
-
-      doc.text(`Rilasciato su richiesta del genitore ${parentInfo.nome} ${parentInfo.cognome} ad uso consentito dalla legge.`, 25, 130);
-
-      // Luogo reale della sede del figlio (scuole.citta), degrado a sola data.
-      doc.text(rigaLuogoData(currentStudent.scuola_citta, formattaIstante(new Date(), 'it')), 25, 160);
-
-      // Signature stamp
-      doc.setFont('Helvetica', 'bold');
-      doc.text('Il Dirigente Scolastico', 130, 180);
-      
-      doc.setFont('Helvetica', 'oblique');
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text('Firma digitale apposta ai sensi', 125, 195);
-      doc.text('dell\'art. 21 CAD (D.Lgs. 82/2005)', 125, 200);
-
-      doc.save(`Certificato_${mainTitle.replace(/\s+/g, '_')}.pdf`);
-      showToastMsg(t('modulisticaCertScaricato'));
-    }, 1000);
+      // Stesso schema di `PrestampatiGenitore.scaricaBase64`: un `<a download>` invece di
+      // `window.open`, che dopo un `await` il blocco pop-up del browser ferma.
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ricevuta-firma-${submissionId.slice(0, 8)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Un catch che non logga è un bug: qui il canale è il genitore, e il messaggio è
+      // l'unica traccia che vede chi sta aspettando il file.
+      showToastMsg(t('modulisticaErrRete'));
+    }
   };
+
+  // ⚠️ QUI C'ERA `generateSelfServiceCertificate`, e con lui i due pulsanti «Scarica PDF»
+  // della scheda Certificati. Rimossi il 2026-08-16, ed è utile dire che cosa producevano
+  // — perché era l'unica strada da cui una famiglia otteneva un certificato:
+  //
+  //  · una banda verde inventata dal codice al posto della carta intestata vera;
+  //  · «KIDVILLE SCHOOLS» in giallo, che non è la ragione sociale, non è il marchio e non è
+  //    niente;
+  //  · «Il Dirigente Scolastico» in calce: in una società cooperativa quella figura NON
+  //    ESISTE, e comunque non è chi firma — firma il legale rappresentante, che sta in
+  //    anagrafica su tutte e tre le sedi;
+  //  · nessun numero di protocollo e nessuna archiviazione: il foglio nasceva nel browser,
+  //    si scaricava e spariva.
+  //
+  // Il certificato ora lo emette `POST /api/parent/prestampati` dal motore vero — carta
+  // intestata della scuola, firma del legale rappresentante, protocollo in uscita,
+  // archiviazione nel fascicolo — e il pannello che lo chiede è `PrestampatiGenitore`, che
+  // vive nella stessa scheda. Il selettore del figlio è suo, e per questo `certificatiChildId`
+  // non serve più: là dentro la scelta è già fatta prima di premere qualunque cosa.
 
   // Punto d'ingresso unico per il file del certificato: lo usano sia l'<input>
   // (che accetta anche PDF) sia il bottone «Scatta foto» nativo. Il documento può
@@ -827,7 +716,7 @@ export default function ParentModulisticaPage() {
                     <Btn
                       variant="ghost"
                       size="sm"
-                      onClick={() => generateReceiptPDF(item, item.answers, item.signature_log)}
+                      onClick={() => void apriRicevutaFirma(item.id)}
                       className="self-start md:self-auto"
                     >
                       <Download size={14} /> {t('modulisticaRicevutaPdf')}
@@ -838,55 +727,14 @@ export default function ParentModulisticaPage() {
             </div>
           )}
 
-          {/* TAB 3: Certificati Self-Service */}
+          {/* TAB 3: Certificati e moduli della famiglia */}
           {activeTab === 'certificati' && (
             <div className="space-y-8">
-              {/* I prestampati della famiglia: si compilano, si firmano con l'OTP e si
-                  scaricano. Il selettore del figlio è suo, e la sua scelta arriva ai due
-                  certificati qui sotto — vedi `certificatiChildId`. */}
-              <PrestampatiGenitore figli={children} onAlunnoScelto={setCertificatiChildId} />
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Certificato Frequenza */}
-                <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <Award className="text-kidville-green/20 mb-2" size={32} />
-                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertFrequenzaTitolo')}</h3>
-                    <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                      {t('modulisticaCertFrequenzaTesto')}
-                    </p>
-                    <NotaCopiaFamiglia />
-                  </div>
-                  <Btn
-                    variant="primary"
-                    size="md"
-                    onClick={() => generateSelfServiceCertificate('frequenza')}
-                    className="mt-6 w-full"
-                  >
-                    <Download size={16} /> {t('modulisticaScaricaPdf')}
-                  </Btn>
-                </div>
-
-                {/* Certificato Iscrizione */}
-                <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <Award className="text-kidville-green/20 mb-2" size={32} />
-                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertIscrizioneTitolo')}</h3>
-                    <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                      {t('modulisticaCertIscrizioneTesto')}
-                    </p>
-                    <NotaCopiaFamiglia />
-                  </div>
-                  <Btn
-                    variant="primary"
-                    size="md"
-                    onClick={() => generateSelfServiceCertificate('iscrizione')}
-                    className="mt-6 w-full"
-                  >
-                    <Download size={16} /> {t('modulisticaScaricaPdf')}
-                  </Btn>
-                </div>
-              </div>
+              {/* I prestampati della famiglia: si compilano, si firmano con l'OTP, si
+                  generano e si riscaricano — tutto da qui dentro, dove il figlio si sceglie
+                  una volta sola. I due riquadri «Scarica PDF» che stavano sotto sono spariti
+                  insieme al loro generatore: vedi il blocco più su in questo file. */}
+              <PrestampatiGenitore figli={children} />
             </div>
           )}
 
@@ -1047,5 +895,19 @@ export default function ParentModulisticaPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+/**
+ * Il confine di sospensione attorno a `useSearchParams()` — tre righe, e non una scelta di
+ * stile: è quello che fanno TUTTE le altre pagine statiche di questo repo (misurato:
+ * `parent/modulistica` era l'unica rotta senza segmento dinamico che ne facesse a meno).
+ * Vedi la nota accanto a `useSearchParams()`, sopra, per che cosa la reggeva finora.
+ */
+export default function ParentModulisticaPage() {
+  return (
+    <Suspense fallback={null}>
+      <ContenutoModulistica />
+    </Suspense>
   );
 }

@@ -83,18 +83,36 @@ export function normalizza(f) {
     return { bucket }
 }
 
-/** Impronta del solo contenuto: `generato_il` e `sha256` restano fuori. */
-export function impronta(normalizzata) {
-    return createHash('sha256').update(JSON.stringify(normalizzata)).digest('hex')
+/**
+ * Impronta del contenuto E DELLA DATA in cui e' stato misurato.
+ *
+ * La data e' dentro dal 2026-08-16, e non e' una rifinitura. `gdpr-oblio-completo`
+ * concede una deroga a `sensitive_documents` — il fascicolo sanitario del bambino,
+ * art. 9 GDPR — perche' «in produzione non esiste ancora», e fa scadere quella
+ * deroga quando questa fotografia invecchia. Finche' `generato_il` restava fuori
+ * dall'impronta, la scadenza si spostava riscrivendo dieci caratteri a mano: una
+ * protezione che si disattiva da se', cioe' peggio di nessuna protezione, perche'
+ * chi la legge smette di cercare quella vera. Ora l'unico modo di ringiovanire la
+ * fotografia e' rigenerarla — cioe' eseguire davvero la query su `storage.buckets`,
+ * che e' la misura che si voleva.
+ *
+ * `sha256` e `_come_si_rigenera` restano fuori: il primo non puo' coprire se stesso,
+ * il secondo e' un'istruzione per chi legge, non un fatto misurato.
+ */
+export function impronta(normalizzata, generatoIl) {
+    return createHash('sha256')
+        .update(JSON.stringify({ generato_il: generatoIl, bucket: normalizzata.bucket }))
+        .digest('hex')
 }
 
 const stdin = readFileSync(0, 'utf8')
 const normalizzata = normalizza(estrai(stdin))
+const generatoIl = new Date().toISOString().slice(0, 10)
 const uscita = {
     _come_si_rigenera:
         'node __tests__/fixtures/bucket-storage-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/bucket-storage-fotografia.mjs < risposta.json',
-    generato_il: new Date().toISOString().slice(0, 10),
-    sha256: impronta(normalizzata),
+    generato_il: generatoIl,
+    sha256: impronta(normalizzata, generatoIl),
     ...normalizzata,
 }
 

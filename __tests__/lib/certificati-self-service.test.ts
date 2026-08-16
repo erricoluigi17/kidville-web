@@ -1,7 +1,68 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service'
+import { componiIndirizzoSede, normalizzaAnagraficaSede, zAnagraficaSede } from '@/lib/scuole/anagrafica'
 
 const anna = { nome: 'Anna', cognome: 'Bianchi', classe_sezione: 'TEST 1A' }
+
+// I valori della spec §2.1, scritti in produzione dalla UI il 2026-08-16.
+// Questa tabella è la testata che esce DAVVERO sui certificati delle tre sedi:
+// se un giorno qualcuno rimette CAP e città dentro `indirizzo`, il carattere in
+// più si vede qui prima che su un documento firmato che va all'INPS.
+//
+// Sta a livello di modulo perché la usano due blocchi: quello che verifica la
+// testata e quello che verifica il compositore comune.
+const TRE_SEDI = [
+  {
+    sede: 'Giugliano',
+    input: {
+      scuola_nome: 'Kidville Giugliano',
+      scuola_indirizzo: 'Via Prima Traversa Antica Giardini 5',
+      scuola_cap: '80014',
+      scuola_citta: 'Giugliano in Campania',
+      scuola_provincia: 'NA',
+      scuola_codice_meccanografico: 'NA1A079004 · NA1E094004',
+    },
+    atteso: [
+      'Kidville Giugliano',
+      'Via Prima Traversa Antica Giardini 5 — 80014 Giugliano in Campania (NA)',
+      'Cod. Mecc. NA1A079004 · NA1E094004',
+    ],
+  },
+  {
+    sede: 'Aversa',
+    input: {
+      scuola_nome: 'Kidville Aversa',
+      scuola_indirizzo: "Via dell'Archeologia 54",
+      scuola_cap: '81031',
+      scuola_citta: 'Aversa',
+      scuola_provincia: 'CE',
+      scuola_codice_meccanografico: 'CE1A178007',
+    },
+    atteso: [
+      'Kidville Aversa',
+      "Via dell'Archeologia 54 — 81031 Aversa (CE)",
+      'Cod. Mecc. CE1A178007',
+    ],
+  },
+  {
+    sede: 'Cesa',
+    input: {
+      scuola_nome: 'Kidville Cesa',
+      scuola_indirizzo: 'Via Filippo Turati 2',
+      scuola_cap: '81030',
+      scuola_citta: 'Cesa',
+      scuola_provincia: 'CE',
+      scuola_codice_meccanografico: 'CE1AE75008 · CE1E05400Q',
+    },
+    atteso: [
+      'Kidville Cesa',
+      'Via Filippo Turati 2 — 81030 Cesa (CE)',
+      'Cod. Mecc. CE1AE75008 · CE1E05400Q',
+    ],
+  },
+] as const
 
 describe('buildCertificatoBody', () => {
   it('frequenza: sezione reale, niente partitivo, niente Girasoli', () => {
@@ -50,6 +111,247 @@ describe('buildIntestazioneSede (multi-sede)', () => {
   it('dati mancanti → righe omesse, mai inventate', () => {
     expect(buildIntestazioneSede({})).toEqual([])
     expect(buildIntestazioneSede({ scuola_nome: 'Solo Nome' })).toEqual(['Solo Nome'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L'indirizzo stampato due volte — il difetto che è FINITO SU CARTA
+//
+// Il 15/08/2026 il titolare ha generato il primo certificato dall'app e la
+// seconda riga della testata diceva:
+//
+//     Via Prima Traversa Antica Giardini 5, 80014 Giugliano in Campania (NA) — Giugliano
+//
+// Non è un'ipotesi: è la riga stampata sul PDF reale. La causa NON è in questa
+// funzione — che compone `via — CAP CITTÀ (PROV)` correttamente — ma nel dato:
+// `scuole.indirizzo` conteneva già CAP, città e provincia, e `scuole.citta`
+// diceva «Giugliano» invece di «Giugliano in Campania». La funzione ci appendeva
+// la città una seconda volta, che è esattamente il suo mestiere.
+//
+// La riparazione è ALLA FONTE (spec §2.2): `indirizzo` torna a essere la sola
+// via. Nessuna logica di confronto stringhe qui dentro: sarebbe fragile — «Via
+// Roma 1, Roma» e «Roma» non si riconoscono con una `includes()` senza falsi
+// positivi — e soprattutto NASCONDEREBBE il dato sporco invece di toglierlo,
+// lasciandolo intatto per il prossimo lettore (l'email lo legge davvero).
+//
+// Questi test tengono fermi i due capi del contratto: che cosa deve entrare
+// (`scuola_indirizzo` = la sola via) e che cosa deve uscire (la riga esatta che
+// va stampata sui certificati delle tre sedi vere).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildIntestazioneSede — l'indirizzo non si stampa due volte", () => {
+  it("non ripete città e provincia quando l'indirizzo è la sola via", () => {
+    const righe = buildIntestazioneSede({
+      scuola_nome: 'Kidville Giugliano',
+      scuola_indirizzo: 'Via Prima Traversa Antica Giardini 5',
+      scuola_cap: '80014',
+      scuola_citta: 'Giugliano in Campania',
+      scuola_provincia: 'NA',
+      scuola_codice_meccanografico: 'NA1A079004 · NA1E094004',
+    })
+    expect(righe[1]).toBe('Via Prima Traversa Antica Giardini 5 — 80014 Giugliano in Campania (NA)')
+    // il difetto stampato sul certificato reale del 15/08/2026:
+    expect(righe[1]).not.toMatch(/\(NA\).*Giugliano/)
+  })
+
+  it.each(TRE_SEDI)('$sede: testata esatta, nessun pezzo ripetuto', ({ input, atteso }) => {
+    const righe = buildIntestazioneSede(input)
+    expect(righe).toEqual(atteso)
+    // Nessun pezzo del luogo compare due volte nella riga dell'indirizzo.
+    for (const pezzo of [input.scuola_cap, input.scuola_citta, input.scuola_provincia]) {
+      expect(righe[1].split(pezzo).length - 1).toBe(1)
+    }
+  })
+
+  // La diagnosi, tenuta ferma: la funzione è innocente, il dato era colpevole.
+  // Se un giorno questo test diventa rosso vuol dire che qualcuno ha messo una
+  // deduplicazione a valle — cioè ha curato il sintomo e lasciato in archivio il
+  // campo sporco, che l'email continua a leggere per intero (`lib/email/contesto.ts`).
+  it('col campo sporco che stava in produzione, la duplicazione ricompare: la colpa era del dato', () => {
+    const righe = buildIntestazioneSede({
+      scuola_nome: 'Kidville Giugliano',
+      // Il valore che `scuole.indirizzo` conteneva DAVVERO fino al 2026-08-16.
+      scuola_indirizzo: 'Via Prima Traversa Antica Giardini 5, 80014 Giugliano in Campania (NA)',
+      scuola_citta: 'Giugliano',
+    })
+    expect(righe[1]).toBe(
+      'Via Prima Traversa Antica Giardini 5, 80014 Giugliano in Campania (NA) — Giugliano'
+    )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UN COMPOSITORE SOLO, PERCHÉ I LETTORI DEL CAMPO SONO DUE
+//
+// Ridurre `scuole.indirizzo` alla sola via (spec §2.2) non ha tolto il problema:
+// l'ha SPOSTATO DI POSTO. Prima la riga completa stava NEL DATO, e chiunque
+// leggesse la colonna se la ritrovava già scritta; da oggi la riga completa è un
+// CALCOLO, e chi non lo fa stampa mezzo indirizzo.
+//
+// Il censimento del Task 3.1 la vittima l'aveva già trovata e nominata:
+// `lib/email/contesto.ts` legge `scuole.indirizzo` grezzo e lo passa a `piede()`,
+// che lo stampa come riga unica in fondo a TUTTE le email (undici generatori).
+// Prima della riduzione il piede di Cesa diceva «Via Filippo Turati 2, 81030
+// Cesa (CE)»; dopo, «Via Filippo Turati 2». Un censimento che elenca una vittima
+// e non la cura ha misurato il danno, non l'ha evitato.
+//
+// La composizione quindi vive in UN posto solo — `componiIndirizzoSede`, in
+// `lib/scuole/anagrafica`, accanto ai campi che compone. È lo stesso argomento
+// con cui la spec §1.5 fonde le due testate PDF in una funzione sola: due copie
+// della stessa regola divergono sempre, prima o poi.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('la riga dell\'indirizzo si compone in un posto solo', () => {
+  it('la testata del certificato non compone per conto suo: usa il compositore comune', () => {
+    for (const { input } of TRE_SEDI) {
+      expect(buildIntestazioneSede(input)[1]).toBe(
+        componiIndirizzoSede({
+          indirizzo: input.scuola_indirizzo,
+          cap: input.scuola_cap,
+          citta: input.scuola_citta,
+          provincia: input.scuola_provincia,
+        })
+      )
+    }
+  })
+
+  it('la sola via non basta: CAP, città e provincia entrano nella riga', () => {
+    expect(
+      componiIndirizzoSede({
+        indirizzo: 'Via Filippo Turati 2',
+        cap: '81030',
+        citta: 'Cesa',
+        provincia: 'CE',
+      })
+    ).toBe('Via Filippo Turati 2 — 81030 Cesa (CE)')
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // «IN UN POSTO SOLO» ERA UN TITOLO, NON UN VINCOLO: I COMPOSITORI ERANO DUE
+  //
+  // Il test qui sopra prova che `buildIntestazioneSede` non compone per conto
+  // suo. Non prova che NESSUN ALTRO lo faccia — e qualcun altro lo faceva.
+  //
+  // `indirizzoOperativo` (`lib/prestampati/modelli/genitore.ts`) riscriveva le
+  // stesse quattro righe di `componiIndirizzoSede` per stampare «Sede operativa
+  // del Nido» sul certificato Bonus Asilo Nido. Byte per byte lo stesso
+  // risultato, quindi nessuna asserzione sull'uscita poteva accorgersene: è la
+  // duplicazione stessa il difetto, e la si misura sulla FORMA del codice.
+  //
+  // Non è un timore astratto. Sulla STESSA pagina del Bonus Nido c'era un terzo
+  // compositore scritto a mano, `componiScuola`, e quello era già divergente:
+  // univa tre parti con ` — ` e staccava la sigla dal comune, stampando
+  //
+  //     Sede legale:             Via Silvio Pellico 7 — 81030 Cesa — (CE)
+  //     Sede operativa del Nido: Via Filippo Turati 2 — 81030 Cesa (CE)
+  //
+  // due righe sopra l'altra, su un foglio che va all'INPS. È stato riportato al
+  // compositore comune; questo qui era rimasto, con la stessa forma e lo stesso
+  // destino davanti. Due copie della stessa regola divergono sempre, prima o poi
+  // — è l'argomento con cui la spec §1.5 fonde in una le due testate PDF.
+  //
+  // IL LOCK. Si scandiscono i tre alberi che stampano indirizzi di sede su
+  // documenti e messaggi (prestampati · certificati · email) e si vieta a
+  // ciascuno di comporre da sé la provincia fra parentesi: quella parentesi è la
+  // firma inconfondibile di questa riga. Fuori da quei tre alberi la stessa
+  // forma ha usi legittimi che non c'entrano niente con un indirizzo — la
+  // targhetta «Napoli (NA)» del comune di NASCITA nel wizard del personale, gli
+  // esempi nei messaggi di validazione — e per questo lo scandaglio si ferma
+  // dove si stampano documenti, invece di allargarsi e chiedere un'allowlist che
+  // fra sei mesi conterrebbe anche il difetto che deve fermare.
+  it('nessun generatore di documenti o messaggi compone da sé la provincia fra parentesi', () => {
+    const radice = join(__dirname, '..', '..', 'src', 'lib')
+    const alberi = ['prestampati', 'certificati', 'email']
+    const CASA = join('scuole', 'anagrafica.ts') // l'unico posto dove quella riga si scrive
+
+    const sorgenti: string[] = []
+    const raccogli = (dir: string) => {
+      for (const voce of readdirSync(dir, { withFileTypes: true })) {
+        const percorso = join(dir, voce.name)
+        if (voce.isDirectory()) raccogli(percorso)
+        else if (/\.tsx?$/.test(voce.name)) sorgenti.push(percorso)
+      }
+    }
+    for (const albero of alberi) raccogli(join(radice, albero))
+    // Se lo scandaglio non trova più i file, il lock passerebbe a vuoto.
+    expect(sorgenti.length).toBeGreaterThan(10)
+
+    const colpevoli: string[] = []
+    for (const file of sorgenti) {
+      if (file.endsWith(CASA)) continue
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .forEach((riga, i) => {
+          if (/\(\$\{[^}]*[Pp]rovincia[^}]*\}\)/.test(riga)) {
+            colpevoli.push(`${file.slice(radice.length + 1)}:${i + 1}`)
+          }
+        })
+    }
+    expect(colpevoli).toEqual([])
+  })
+
+  it('ciò che manca si omette, non si stampa vuoto né si inventa', () => {
+    expect(componiIndirizzoSede({})).toBeNull()
+    expect(componiIndirizzoSede({ indirizzo: '   ' })).toBeNull()
+    // Solo la via: nessun trattino sospeso in coda.
+    expect(componiIndirizzoSede({ indirizzo: 'Via Filippo Turati 2' })).toBe('Via Filippo Turati 2')
+    // Senza via ma con il luogo: la riga esiste lo stesso, senza trattino in testa.
+    expect(componiIndirizzoSede({ citta: 'Cesa', provincia: 'CE' })).toBe('Cesa (CE)')
+    // Provincia senza città: la sigla resta, fra parentesi. È il comportamento
+    // che la testata aveva già e che l'estrazione conserva tale e quale — questo
+    // test lo fissa perché sia una scelta e non un residuo. Nelle tre sedi vere
+    // non capita: città e provincia sono sempre compilate insieme.
+    expect(componiIndirizzoSede({ indirizzo: 'Via Filippo Turati 2', provincia: 'CE' }))
+      .toBe('Via Filippo Turati 2 — (CE)')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Una testata che si stampa dev'essere anche SALVABILE
+//
+// I test qui sopra dimostrano che `buildIntestazioneSede` sa comporre la terza
+// riga — «Cod. Mecc. NA1A079004 · NA1E094004». Non dimostrano che quel valore si
+// possa mettere in archivio, e per due sedi su tre NON si poteva: misurato il
+// 2026-08-16 compilando Impostazioni → Sede & Intestazione, `PATCH
+// /api/admin/schools` rispondeva
+//
+//     400 {"error":"Dati non validi","details":[{"path":"anagrafica.codice_meccanografico",
+//          "message":"Too big: expected string to have <=20 characters"}]}
+//
+// perché `zAnagraficaSede` fissava il campo a 20 caratteri. Il tetto era giusto
+// per UN codice meccanografico (ne sono 10 esatti) e sbagliato per la decisione
+// presa in intervista — «i due codici in un campo solo, separati da ` · `» — che
+// ne fa 23. Giugliano e Cesa hanno due codici a testa: nido/infanzia e primaria.
+//
+// Il test vive accanto ai certificati e non accanto allo schema di proposito: il
+// tetto non è un vincolo astratto sulla lunghezza di una stringa, è ciò che
+// decide se la terza riga della testata esce stampata o sparisce. Un valore che
+// il form rifiuta è una riga che il certificato non stampa, e la conseguenza si
+// legge qui, non là.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('il codice meccanografico della testata entra nello schema di sede', () => {
+  // I valori veri delle tre sedi (spec §2.1). Giugliano e Cesa ne portano due.
+  const CODICI = [
+    { sede: 'Giugliano', codice: 'NA1A079004 · NA1E094004' },
+    { sede: 'Aversa', codice: 'CE1A178007' },
+    { sede: 'Cesa', codice: 'CE1AE75008 · CE1E05400Q' },
+  ] as const
+
+  it.each(CODICI)('$sede: il valore che la testata stampa è accettato in scrittura', ({ codice }) => {
+    const esito = zAnagraficaSede.safeParse({ codice_meccanografico: codice })
+    expect(esito.success).toBe(true)
+    // E sopravvive alla normalizzazione, che è lista bianca e RICOSTRUISCE l'oggetto:
+    // un campo che non passa di lì non è «ignorato», è cancellato al primo salvataggio.
+    expect(normalizzaAnagraficaSede({ codice_meccanografico: codice }).codice_meccanografico).toBe(codice)
+  })
+
+  it('la stessa riga esce dalla testata del certificato', () => {
+    for (const { codice } of CODICI) {
+      expect(buildIntestazioneSede({ scuola_codice_meccanografico: codice })).toEqual([`Cod. Mecc. ${codice}`])
+    }
+  })
+
+  // Il tetto resta un tetto: si è allargato per due codici, non tolto.
+  it('resta un limite: una stringa lunghissima è ancora rifiutata', () => {
+    expect(zAnagraficaSede.safeParse({ codice_meccanografico: 'A'.repeat(200) }).success).toBe(false)
   })
 })
 

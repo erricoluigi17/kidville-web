@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
 import { nomeSede } from '@/lib/scuole/reali'
-import { parseAnagraficaSede } from '@/lib/scuole/anagrafica'
+import { componiIndirizzoSede, parseAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { appUrl } from './tema'
 
 // =============================================================================
@@ -29,18 +29,26 @@ import { appUrl } from './tema'
 //
 // ─── LE DUE COLONNE `indirizzo`, E QUALE DELLE DUE È LA FONTE ───────────────
 // Esistono due tabelle di sede — `schools` e `scuole` — ed entrambe hanno una
-// colonna `indirizzo`. Non contengono la stessa cosa. Misurato il 2026-08-15:
+// colonna `indirizzo`. La fonte è `scuole`. `schools.indirizzo` NON si legge, e
+// la differenza non è pignoleria: fino al 2026-08-15 conteneva «Via Roma 1» per
+// Giugliano, un SEGNAPOSTO, e stamparlo in fondo a ogni email del plesso più
+// grande è peggio che non stampare niente — un dato falso non si distingue da
+// uno vero, mentre un dato assente sì.
 //
-//     schools.indirizzo   Giugliano → «Via Roma 1»   ← SEGNAPOSTO
-//     scuole.indirizzo    Giugliano → NULL           ← vuoto, ma onesto
-//                         Aversa    → «Via Dell'Archeologia 54, 81031 Aversa (CE)»
-//                         Cesa      → «Via Filippo Turati 2, 81030 Cesa (CE)»
+// ─── E `scuole.indirizzo` NON È PIÙ L'INDIRIZZO: È LA SOLA VIA ──────────────
+// Fino al 2026-08-16 quella colonna conteneva la riga già scritta per esteso
+// («Via Filippo Turati 2, 81030 Cesa (CE)»), e questo file la stampava tale e
+// quale. Poi la spec §2.2 l'ha ridotta alla sola via — conteneva CAP, città e
+// provincia, e `buildIntestazioneSede` ce li appendeva una seconda volta,
+// producendo il «…Giugliano in Campania (NA) — Giugliano» finito stampato su un
+// certificato vero.
 //
-// La fonte è `scuole.indirizzo`: è già la stringa come si scrive in fondo a una
-// lettera, ed è vera dove è valorizzata. `schools.indirizzo` NON si legge, e la
-// differenza non è pignoleria: stampare «Via Roma 1» in fondo a ogni email del
-// plesso più grande è peggio che non stampare niente, perché un dato falso non
-// si distingue da uno vero mentre un dato assente sì.
+// Quella riduzione ha spostato il problema qui: la riga completa da DATO è
+// diventata CALCOLO, e questo file, leggendo la colonna grezza, avrebbe firmato
+// tutte le email con mezzo indirizzo. Per questo si legge anche `citta` e si
+// compone con `componiIndirizzoSede`, la stessa funzione che scrive la testata
+// dei certificati: la scuola ha un indirizzo solo, e deve scriverlo in un modo
+// solo.
 // =============================================================================
 
 export interface ContestoSede {
@@ -99,7 +107,7 @@ export async function risolviContestoSede(
 
     const { data, error } = await supabase
         .from('scuole')
-        .select('indirizzo, config')
+        .select('indirizzo, citta, config')
         .eq('id', scuolaId)
         .maybeSingle()
 
@@ -112,12 +120,20 @@ export async function risolviContestoSede(
         return { ...base, nome }
     }
 
-    const riga = data as { indirizzo?: string | null; config?: unknown } | null
+    const riga = data as { indirizzo?: string | null; citta?: string | null; config?: unknown } | null
     const a = parseAnagraficaSede(riga?.config)
     return {
         ...base,
         nome,
-        indirizzo: nonVuoto(riga?.indirizzo),
+        // La colonna da sola NON è più l'indirizzo: è la sola via. La riga
+        // completa si compone, e si compone con la stessa funzione che scrive la
+        // testata dei certificati — vedi il commento sopra.
+        indirizzo: componiIndirizzoSede({
+            indirizzo: riga?.indirizzo,
+            cap: a.cap,
+            citta: riga?.citta,
+            provincia: a.provincia,
+        }),
         email: nonVuoto(a.email),
         telefono: nonVuoto(a.telefono),
     }

@@ -21,12 +21,50 @@ export const zAutorizzazioneNido = z.object({
   numero: z.string().max(60).nullish(),
   /** ISO `aaaa-mm-gg`: il modello INPS rifiuta una data che non sa rileggere. */
   data: z.string().max(10).nullish(),
+  /**
+   * L'ente che ha EMESSO il provvedimento: un Comune **oppure** un Ambito
+   * socio-sanitario. Si scrive per intero e già come va stampato — il codice non
+   * ci antepone niente.
+   *
+   * ⚠️ Fino al 2026-08-16 questa chiave si chiamava `comune`, e il nome ha fatto
+   * danno tre volte nello stesso rilascio: l'etichetta del form chiedeva «Comune
+   * che l'ha rilasciata», il certificato stampava «rilasciata dal Comune di …», e
+   * su due sedi vere su tre l'autorizzazione è di un **Ambito socio-sanitario**
+   * (spec §2.1). Il foglio arrivava all'INPS dicendo che un Ambito è un Comune,
+   * cioè mandava un funzionario a cercare un provvedimento comunale inesistente.
+   * Un nome di campo che contraddice il dato che contiene non è cosmesi.
+   */
+  ente: z.string().max(120).nullish(),
+  /**
+   * @deprecated Il nome VECCHIO della stessa chiave, accettato in ingresso e mai
+   * riscritto in uscita.
+   *
+   * Non è cortesia verso il passato: al momento della rinomina le tre sedi di
+   * produzione avevano l'autorizzazione salvata sotto `comune`, e uno schema che è
+   * anche lista bianca in scrittura (vedi sopra) l'avrebbe **cancellata** al primo
+   * salvataggio — spegnendo il certificato per il Bonus Nido su tutte e tre nello
+   * stesso istante. `normalizzaAutorizzazioneNido` la travasa in `ente` e la lascia
+   * fuori dall'oggetto salvato: la riga si migra da sé al primo `PATCH`.
+   */
   comune: z.string().max(120).nullish(),
 })
 
 export const zAnagraficaSede = z.object({
   denominazione: z.string().max(160).nullish(), // denominazione ufficiale/ragione sociale
-  codice_meccanografico: z.string().max(20).nullish(),
+  /**
+   * UNO O PIÙ codici meccanografici, separati da ` · `.
+   *
+   * Il tetto era 20, cioè su misura per un codice solo (ne sono 10 esatti), e ha
+   * respinto con un 400 il primo salvataggio vero: Giugliano e Cesa ne hanno DUE
+   * a testa — nido/infanzia e primaria sono due plessi distinti per il MIM — e
+   * «NA1A079004 · NA1E094004» sono 23 caratteri. La decisione presa in intervista
+   * è di stamparli in un campo solo, separati da ` · `, così come escono sulla
+   * testata del certificato.
+   *
+   * 60 e non «senza limite»: quattro codici uniti stanno in 49, e un campo di
+   * testa che nessuno delimita finisce prima o poi per contenere una frase.
+   */
+  codice_meccanografico: z.string().max(60).nullish(),
   cap: z.string().max(10).nullish(),
   provincia: z.string().max(4).nullish(), // sigla, es. NA
   telefono: z.string().max(30).nullish(),
@@ -35,7 +73,7 @@ export const zAnagraficaSede = z.object({
   piva_cf: z.string().max(20).nullish(), // P.IVA / CF ente gestore
   /** Nome e cognome di chi firma i documenti della scuola (§3b impaginazione). */
   legale_rappresentante: z.string().max(120).nullish(),
-  /** Estremi dell'autorizzazione comunale al nido: uno per sede, servono al Bonus INPS. */
+  /** Estremi dell'autorizzazione al funzionamento del nido: una per sede, servono al Bonus INPS. */
   autorizzazione_nido: zAutorizzazioneNido.nullish(),
 })
 export type AnagraficaSede = z.infer<typeof zAnagraficaSede>
@@ -54,17 +92,23 @@ const clean = (v: string | null | undefined): string | null => {
 /**
  * Gli estremi dell'autorizzazione, o `null`.
  *
- * Tre campi vuoti danno `null` e non `{numero:null,data:null,comune:null}`: un
+ * Tre campi vuoti danno `null` e non `{numero:null,data:null,ente:null}`: un
  * oggetto di soli `null` è indistinguibile da un dato presente finché non lo si
  * apre, e `leggiAutorizzazioneNido` (prefill) fa già la stessa scelta in lettura.
+ *
+ * L'uscita porta `ente` e MAI `comune`: il valore vecchio si travasa, la chiave
+ * vecchia non si riscrive. È la migrazione del dato, fatta dal salvataggio invece
+ * che da una `UPDATE` sul JSONB di produzione.
  */
 function normalizzaAutorizzazioneNido(
   input: AutorizzazioneNidoConfig | null | undefined,
 ): AutorizzazioneNidoConfig | null {
   const numero = clean(input?.numero)
   const data = clean(input?.data)
-  const comune = clean(input?.comune)
-  return numero || data || comune ? { numero, data, comune } : null
+  // `ente` vince su `comune` quando ci sono entrambi: è il nome nuovo, ed è quello
+  // che il form manda. `comune` resta solo per le righe scritte prima del 2026-08-16.
+  const ente = clean(input?.ente) ?? clean(input?.comune)
+  return numero || data || ente ? { numero, data, ente } : null
 }
 
 /** Trim; stringhe vuote → null; codice meccanografico e sigla provincia in
@@ -76,6 +120,46 @@ export function normalizzaAnagraficaSede(input: AnagraficaSede): AnagraficaSede 
   if (out.provincia) out.provincia = (out.provincia as string).toUpperCase()
   out.autorizzazione_nido = normalizzaAutorizzazioneNido(input.autorizzazione_nido)
   return out as AnagraficaSede
+}
+
+/**
+ * La riga d'indirizzo completa di una sede: `via — CAP CITTÀ (PROV)`.
+ *
+ * ⚠️ ESISTE PERCHÉ I LETTORI SONO DUE, E UNO SOLO SAPEVA COMPORLA.
+ *
+ * Fino al 2026-08-16 `scuole.indirizzo` conteneva la riga già scritta per esteso
+ * («Via Filippo Turati 2, 81030 Cesa (CE)»), e chiunque leggesse la colonna se la
+ * ritrovava pronta. La spec §2.2 l'ha ridotta alla sola via — era la causa del
+ * «…Giugliano in Campania (NA) — Giugliano» finito stampato su un certificato
+ * vero — ma così la riga completa da DATO è diventata CALCOLO, e chi non lo fa
+ * stampa mezzo indirizzo.
+ *
+ * Le vittime erano due, e non è teoria: il piè di pagina di tutte le email
+ * (`lib/email/contesto.ts` → `piede()`, undici generatori) leggeva la colonna
+ * grezza e da quel giorno avrebbe firmato «Via Filippo Turati 2» senza CAP né
+ * città. La composizione vive quindi in un posto SOLO — qui, accanto ai campi che
+ * compone — per lo stesso motivo per cui la spec §1.5 fonde le due testate PDF in
+ * una funzione sola: due copie della stessa regola divergono sempre, prima o poi.
+ *
+ * `cap` e `provincia` stanno in `config.anagrafica`, `indirizzo` e `citta` sono
+ * colonne di `scuole`: la funzione attraversa le due fonti di proposito, ed è la
+ * ragione per cui sta in questo modulo e non in `certificati/` o in `email/`.
+ *
+ * Vale la regola dell'omissione: ciò che manca non compare, e non lascia dietro
+ * di sé un trattino sospeso o un separatore spaiato. Tutto vuoto ⇒ `null`, così
+ * il chiamante può non stampare la riga affatto invece di stamparla vuota.
+ */
+export function componiIndirizzoSede(p: {
+  indirizzo?: string | null
+  cap?: string | null
+  citta?: string | null
+  provincia?: string | null
+}): string | null {
+  const capCitta = [clean(p.cap), clean(p.citta)].filter(Boolean).join(' ')
+  const provincia = clean(p.provincia)
+  const luogo = [capCitta, provincia ? `(${provincia})` : ''].filter(Boolean).join(' ')
+  const riga = [clean(p.indirizzo), luogo].filter(Boolean).join(' — ')
+  return riga === '' ? null : riga
 }
 
 /**

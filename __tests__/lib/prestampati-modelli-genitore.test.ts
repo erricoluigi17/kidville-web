@@ -81,7 +81,13 @@ function dati(override: Partial<DatiPrestampato> = {}): DatiPrestampato {
       scuola_citta: 'Cittaprova',
       scuola_provincia: 'ZZ',
       scuola_codice_meccanografico: 'ZZ1A000001',
-      autorizzazioneNido: { numero: '77/2024', data: '2024-09-01', comune: 'Cittaprova' },
+      // ⚠️ «Comune di Cittaprova», non «Cittaprova»: il valore porta già dentro il
+      // nome dell'ente, come i tre valori veri (vedi AUTORIZZAZIONI_VERE). La
+      // fixture di prima diceva «Cittaprova» — un nome di comune nudo — ed era il
+      // solo dato al mondo su cui il prefisso cablato «rilasciata dal Comune di»
+      // sembrava giusto: 146 test verdi mentre il PDF di Giugliano stampava
+      // «rilasciata dal Comune di Comune di Giugliano in Campania».
+      autorizzazioneNido: { numero: '77/2024', data: '2024-09-01', ente: 'Comune di Cittaprova' },
     },
     scuola: {
       ragioneSociale: 'Cooperativa di Prova Soc. Coop.',
@@ -1140,7 +1146,7 @@ describe('28 — certificato Bonus Asilo Nido', () => {
     expect(
       autorizzazioneNidoCompleta({
         ...dati().sede,
-        autorizzazioneNido: { numero: '77/2024', data: '2024-09-01', comune: '  ' },
+        autorizzazioneNido: { numero: '77/2024', data: '2024-09-01', ente: '  ' },
       })
     ).toBe(false)
     // Una data in formato italiano supera qualunque `trim()` e poi non si stampa:
@@ -1149,18 +1155,18 @@ describe('28 — certificato Bonus Asilo Nido', () => {
     expect(
       autorizzazioneNidoCompleta({
         ...dati().sede,
-        autorizzazioneNido: { numero: '77/2024', data: '01/09/2024', comune: 'Cittaprova' },
+        autorizzazioneNido: { numero: '77/2024', data: '01/09/2024', ente: 'Comune di Cittaprova' },
       })
     ).toBe(false)
   })
 
   it('o gli estremi escono interi, o il certificato non esce: nessun «N. 77/2024 del  » monco', () => {
     const varianti = [
-      { numero: '77/2024', data: '2024-09-01', comune: 'Cittaprova' }, // completi
-      { numero: '77/2024', data: '01/09/2024', comune: 'Cittaprova' }, // data in formato italiano
-      { numero: '77/2024', data: 'settembre 2024', comune: 'Cittaprova' }, // data a parole
-      { numero: '  ', data: '2024-09-01', comune: 'Cittaprova' }, // numero vuoto
-      { numero: '77/2024', data: '2024-09-01' }, // comune assente
+      { numero: '77/2024', data: '2024-09-01', ente: 'Comune di Cittaprova' }, // completi
+      { numero: '77/2024', data: '01/09/2024', ente: 'Comune di Cittaprova' }, // data in formato italiano
+      { numero: '77/2024', data: 'settembre 2024', ente: 'Comune di Cittaprova' }, // data a parole
+      { numero: '  ', data: '2024-09-01', ente: 'Comune di Cittaprova' }, // numero vuoto
+      { numero: '77/2024', data: '2024-09-01' }, // ente assente
     ]
     for (const autorizzazioneNido of varianti) {
       const esito = modelloCertificatoBonusNido.componi(
@@ -1168,9 +1174,9 @@ describe('28 — certificato Bonus Asilo Nido', () => {
         {}
       )
       if (!esito.ok) continue
-      // Se è passata, la riga porta tutti e tre i pezzi: numero, data leggibile, Comune.
+      // Se è passata, la riga porta tutti e tre i pezzi: numero, data leggibile, ente.
       expect(valoreDi(esito.blocchi, 'Autorizzazione al funzionamento')).toMatch(
-        /^N\. \S.* del \d{2}\/\d{2}\/\d{4} rilasciata dal Comune di \S/
+        /^N\. \S.* del \d{2}\/\d{2}\/\d{4} rilasciata da \S/
       )
     }
     // Riprova di non-vacuità: la prima variante DEVE passare, o il ciclo non ha misurato
@@ -1204,6 +1210,8 @@ describe('28 — certificato Bonus Asilo Nido', () => {
       {}
     )
     expect(erroriDi(esito)[0].messaggio).toMatch(/autorizzazione al funzionamento/i)
+    // Il messaggio non manda a cercare un «Comune»: per due sedi su tre non c'è.
+    expect(erroriDi(esito)[0].messaggio).not.toMatch(/comune/i)
   })
 
   it('riporta il testo del `.docx` e gli estremi dell’autorizzazione della sede', () => {
@@ -1215,10 +1223,77 @@ describe('28 — certificato Bonus Asilo Nido', () => {
       'Il presente certificato viene rilasciato per gli usi consentiti dalla legge, ivi compresa la richiesta del Bonus Asilo Nido INPS.'
     )
     expect(valoreDi(blocchi, 'Autorizzazione al funzionamento')).toBe(
-      'N. 77/2024 del 01/09/2024 rilasciata dal Comune di Cittaprova'
+      'N. 77/2024 del 01/09/2024 rilasciata da Comune di Cittaprova'
     )
     expect(valoreDi(blocchi, 'Sede operativa del Nido')).toBe('Via delle Prove 1 — 80000 Cittaprova (ZZ)')
     expect(caselle(blocchi)).toContainEqual({ testo: 'Sede del Nido: Kidville Prova', spuntata: true })
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // I TRE VALORI VERI, PERCHÉ NESSUNO DEI TRE È UN NOME DI COMUNE
+  //
+  // Questo blocco esiste per un test che non poteva fallire. Fino al 2026-08-16 la
+  // fixture qui sopra diceva `comune: 'Cittaprova'` e la riga attesa era «…
+  // rilasciata dal Comune di Cittaprova»: con quel dato — un nome di comune nudo,
+  // che in produzione non esiste — il prefisso cablato «dal Comune di» sembrava
+  // corretto. Verde su cinque suite, 146 test, mentre i PDF veri stampavano:
+  //
+  //   Giugliano  «rilasciata dal Comune di Comune di Giugliano in Campania»
+  //   Aversa     «rilasciata dal Comune di Ambito Socio-Sanitario C06 — …»
+  //   Cesa       «rilasciata dal Comune di Ambito Socio-Sanitario C6 — …»
+  //
+  // Il primo ripete «Comune di»; gli altri due dichiarano all'INPS che un Ambito
+  // socio-sanitario è un Comune — e annullano al passo della stampa la decisione
+  // della spec §2.1, che è di riportare l'ente che ha EMESSO davvero il
+  // provvedimento, perché è quello che un funzionario cerca se controlla.
+  //
+  // I valori sono quelli scritti in produzione (spec §2.1, tabella): due su tre
+  // NON sono comuni. Un test che gira su un nome inventato non è una rete.
+  // ───────────────────────────────────────────────────────────────────────────
+  const AUTORIZZAZIONI_VERE = [
+    {
+      sede: 'Giugliano',
+      aut: { numero: '102A', data: '2025-10-29', ente: 'Comune di Giugliano in Campania' },
+      riga: 'N. 102A del 29/10/2025 rilasciata da Comune di Giugliano in Campania',
+    },
+    {
+      sede: 'Aversa',
+      aut: { numero: '17', data: '2024-10-01', ente: 'Ambito Socio-Sanitario C06 — Comune capofila Aversa' },
+      riga: 'N. 17 del 01/10/2024 rilasciata da Ambito Socio-Sanitario C06 — Comune capofila Aversa',
+    },
+    {
+      sede: 'Cesa',
+      aut: { numero: '6/2018', data: '2018-04-12', ente: 'Ambito Socio-Sanitario C6 — Comune capofila Casaluce' },
+      riga: 'N. 6/2018 del 12/04/2018 rilasciata da Ambito Socio-Sanitario C6 — Comune capofila Casaluce',
+    },
+  ] as const
+
+  it.each(AUTORIZZAZIONI_VERE)(
+    '$sede: la riga stampata è quella del provvedimento vero, senza etichette aggiunte dal codice',
+    ({ aut, riga }) => {
+      const blocchi = componiOk(
+        modelloCertificatoBonusNido,
+        dati({ sede: { ...dati().sede, autorizzazioneNido: aut } }),
+        {}
+      )
+      const stampata = valoreDi(blocchi, 'Autorizzazione al funzionamento') ?? ''
+      expect(stampata).toBe(riga)
+      // Il dato è già completo: il codice non ci antepone niente.
+      expect(stampata).not.toContain('Comune di Comune')
+      expect(stampata).not.toMatch(/dal Comune di (Comune|Ambito)/)
+      // E l'ente compare una volta sola, per intero.
+      expect(stampata.split(aut.ente).length - 1).toBe(1)
+    }
+  )
+
+  it('nessuno dei tre valori veri è un nome di comune nudo: è il motivo per cui la fixture di prima non poteva fallire', () => {
+    // Controllo di non-vacuità del blocco qui sopra: se un domani qualcuno
+    // «semplificasse» questi valori in «Giugliano», «Aversa», «Cesa», il test
+    // tornerebbe a misurare un dato che in produzione non esiste.
+    for (const { ente } of AUTORIZZAZIONI_VERE.map((v) => v.aut)) {
+      expect(ente).toMatch(/^(Comune di|Ambito Socio-Sanitario) /)
+    }
+    expect(AUTORIZZAZIONI_VERE.filter((v) => v.aut.ente.startsWith('Ambito'))).toHaveLength(2)
   })
 
   it('degrada dentro la frase: senza luogo di nascita e senza codice fiscale niente incisi vuoti', () => {

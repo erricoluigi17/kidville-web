@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import {
   scrubPersonaIscrizione,
   scrubDomandaIscrizione,
@@ -538,6 +538,14 @@ interface CfgB {
   media?: Record<string, unknown>[]
   pagelle?: { id: string; file_url: string | null }[]
   certificati?: { id: string; file_path: string | null }[]
+  /**
+   * Il FASCICOLO del bambino (`student_documents` → bucket `sensitive_documents`):
+   * diagnosi, PEI, PDP e verbali della 104 dal lato scuola; scheda sanitaria,
+   * autorizzazione ai farmaci e dieta speciale dal lato famiglia. Due colonne per
+   * il percorso, non una — `storage_path` è arrivata dopo, e le righe più vecchie
+   * portano il solo `file_url`.
+   */
+  fascicolo?: { id: string; storage_path: string | null; file_url: string | null }[]
   threadAlunno?: { id: string }[]
   threadGenitore?: { id: string }[]
   messaggi?: { id: string; attachment_url: string | null }[]
@@ -606,6 +614,7 @@ function makeFakeBucket(cfg: CfgB) {
         if (table === 'galleria_media_v2') data = cfg.media ?? []
         if (table === 'pagelle') data = cfg.pagelle ?? []
         if (table === 'certificati_medici') data = cfg.certificati ?? []
+        if (table === 'student_documents') data = cfg.fascicolo ?? []
         // I thread di un ALUNNO si cercano per `student_id`, quelli di un
         // GENITORE per `parent_id`: sono due insiemi diversi e il finto client
         // deve saperli distinguere, altrimenti il canale genitore risulterebbe
@@ -854,15 +863,227 @@ function bucketClassificati(): string[] {
   return [...new Set(nomi)].sort()
 }
 
-/** I bucket che ESISTONO davvero, dalla fotografia versionata della produzione. */
-function bucketInProduzione(): string[] {
-  const foto = JSON.parse(
-    readFileSync(join(RADICE, '__tests__', 'fixtures', 'bucket-storage-snapshot.json'), 'utf8'),
-  ) as { bucket: { id: string }[] }
-  return foto.bucket.map((b) => b.id).sort()
+const FOTOGRAFIA = join(RADICE, '__tests__', 'fixtures', 'bucket-storage-snapshot.json')
+const COME_RIGENERARE_FOTOGRAFIA =
+  'Rigenera la fotografia: `node __tests__/fixtures/bucket-storage-fotografia.mjs --sql` → esegui ' +
+  'la query sul DB di produzione (SOLA LETTURA, una tabella, due colonne) → ' +
+  '`node __tests__/fixtures/bucket-storage-fotografia.mjs < risposta.json`.'
+
+/**
+ * La fotografia versionata dello Storage di produzione.
+ *
+ * ⚠️ È UN FILE STATICO. Non interroga niente: la rigenera una persona, a mano,
+ * incollando la risposta di una SELECT in sola lettura su `storage.buckets`
+ * (`__tests__/fixtures/bucket-storage-fotografia.mjs`). Dice che cosa c'era il
+ * giorno di `generato_il`, non che cosa c'è adesso — ed è la ragione per cui la
+ * deroga qui sotto ha una scadenza sul CALENDARIO invece che una promessa.
+ */
+function fotografia(): { generato_il: string; bucket: { id: string }[] } {
+  return JSON.parse(readFileSync(FOTOGRAFIA, 'utf8'))
 }
 
-const NOTI = [...new Set([...bucketClassificati(), ...bucketInProduzione()])].sort()
+/** I bucket che ESISTONO davvero, dalla fotografia versionata della produzione. */
+function bucketInProduzione(): string[] {
+  return fotografia().bucket.map((b) => b.id).sort()
+}
+
+/**
+ * Da quanti giorni la fotografia non viene rigenerata dal database.
+ *
+ * ⚠️ TUTTO IN UTC, e di proposito: `bucket-storage-fotografia.mjs` scrive
+ * `generato_il` con `toISOString()`, cioè in UTC. Chi «correggesse» questo lato a
+ * `Europe/Rome` farebbe misurare a due orologi diversi la stessa distanza, e fra
+ * mezzanotte e le due italiane la fotografia risulterebbe di un giorno più
+ * giovane del vero. È già costato quattro punti di un collaudo, il 2026-08-09.
+ */
+function etaFotografiaInGiorni(oggi = new Date()): number {
+  const [a, m, g] = fotografia().generato_il.split('-').map(Number)
+  const generata = Date.UTC(a, m - 1, g)
+  const adesso = Date.UTC(oggi.getUTCFullYear(), oggi.getUTCMonth(), oggi.getUTCDate())
+  return Math.floor((adesso - generata) / 86_400_000)
+}
+
+/**
+ * I magazzini che il REPO dichiara e che in produzione non esistono ANCORA.
+ *
+ * ─── PERCHÉ QUESTO TERZO ELENCO ESISTE (2026-08-16) ─────────────────────────
+ *
+ * Le due fonti qui sopra rispondono a «quali bucket ci sono»: una legge la
+ * classificazione del repo, l'altra la fotografia del database. Nessuna delle due
+ * vede un bucket che NASCERÀ — e alcuni nascono al primo uso, creati da
+ * `garantisciBucket` dentro la route, non da una migrazione. Finché nessuno ci ha
+ * ancora archiviato niente, quel magazzino è invisibile a tutti e due gli elenchi:
+ * il registro dell'oblio che lo nomina sembra parlare di un fantasma, e la
+ * classificazione di sicurezza non lo può accogliere (`bucket-storage-dichiarati`
+ * pretende che ogni nome dei suoi `RISERVATI` esista nella fotografia, altrimenti
+ * la prova girerebbe sul vuoto).
+ *
+ * È esattamente il caso che ha prodotto il difetto: `sensitive_documents` è rimasto
+ * NON NOMINATO per mesi anche perché nessun controllo poteva nominarlo. L'elenco
+ * qui sotto chiude quel varco.
+ *
+ * ─── CHE COSA PRETENDE DAVVERO LA PROVA CHE LO ACCOMPAGNA ───────────────────
+ *
+ * Detto senza abbellimenti, perché la prima stesura di questo commento prometteva
+ * più di quanto la prova facesse — ed è il difetto peggiore che possa avere un
+ * lock: chi lo legge smette di cercare la prova vera.
+ *
+ *  1. Il nome è scritto, FUORI DAI COMMENTI, in almeno un file di `src/` che
+ *     tocca davvero lo Storage (`createBucket`, `garantisciBucket`,
+ *     `storage.from`) e che NON fa parte del registro dell'oblio. L'esclusione
+ *     dei file del registro è il punto: `src/lib/gdpr/esegui.ts` contiene il
+ *     letterale e contiene `supabase.storage`, quindi senza escluderlo la prova
+ *     troverebbe se stessa e resterebbe verde anche cancellando tutte le route
+ *     che il bucket lo creano. Una prova che accetta la propria dichiarazione
+ *     come prova non prova niente.
+ *  2. Nella fotografia versionata della produzione il bucket NON c'è.
+ *  3. La fotografia non è più vecchia di `GIORNI_VALIDITA_FOTOGRAFIA` giorni, e
+ *     la deroga non ha superato la sua scadenza.
+ *
+ * Il punto 3 esiste perché il punto 2 da solo NON scade. La fotografia è un file
+ * statico che qualcuno rigenera a mano: il bucket può nascere in produzione e
+ * questa prova resterebbe verde a tempo indeterminato. Non c'è nessun
+ * automatismo che la faccia diventare rossa il giorno della nascita, e scriverlo
+ * qui è più utile che fingere il contrario. Quello che c'è è una SCADENZA: il
+ * calendario rende rossa la deroga da solo, e per rifarla verde bisogna
+ * rigenerare la fotografia — cioè eseguire davvero la query su `storage.buckets`
+ * e guardare se quel bucket è nato. La data di rigenerazione è dentro lo `sha256`
+ * della fotografia (`bucket-storage-fotografia.mjs`), quindi non si può spostare
+ * a mano senza far cadere `bucket-storage-dichiarati.test.ts`: l'unico modo di
+ * far tacere la scadenza è la misura.
+ *
+ * ⚠️ E LA SCADENZA NON SI DIGITA: SI DERIVA. Nella prima stesura (2026-08-16) la
+ * deroga portava uno `scadeIl` scritto a mano, `2026-09-15`, calcolato come
+ * «misura + 30 giorni» partendo però dalla data della PROSA (2026-08-16, ora di
+ * Roma) invece che da quella della PROVA (`generato_il` = 2026-08-15, UTC, perché
+ * il generatore usa `toISOString()` e la misura è stata fatta dopo la mezzanotte
+ * italiana). Un giorno di sfasamento, e le due guardie del punto 3 non potevano
+ * più scattare insieme: misurato giorno per giorno, il 2026-09-15 il controllo
+ * sull'età era già rosso (31 > 30) mentre la scadenza era ancora verde. La
+ * seconda delle due era, di fatto, inerte — l'altra la anticipava sempre. Ora la
+ * scadenza è `generato_il + GIORNI_VALIDITA_FOTOGRAFIA` e le due non si possono
+ * più separare, nemmeno alla prossima rigenerazione: c'è una prova che lo verifica
+ * («le due guardie scattano lo STESSO giorno»).
+ */
+
+/**
+ * Quanto vale una fotografia dello Storage prima di dover essere rifatta, quando
+ * c'è una deroga che ci si appoggia. Trenta giorni: abbastanza da non diventare
+ * rumore su un repo dove si lavora tutti i giorni, abbastanza poco da non far
+ * dormire per un trimestre un bucket con dentro l'art. 9 di un minore.
+ */
+const GIORNI_VALIDITA_FOTOGRAFIA = 30
+
+/**
+ * Il giorno in cui la deroga smette di valere: `generato_il` + la validità della
+ * fotografia, e non un letterale.
+ *
+ * ⚠️ DERIVATA, NON DIGITATA, e la ragione sta nel commentone qui sopra: una data
+ * scritta a mano si sfasa dalla fotografia al primo rinnovo, e le due guardie che
+ * dovrebbero scattare insieme smettono di farlo — in silenzio, perché quella che
+ * scatta per prima tiene comunque rosso il gate e nessuno si accorge che l'altra è
+ * inerte. Tutto in UTC come `etaFotografiaInGiorni`: due orologi diversi sulla stessa
+ * distanza sono già costati quattro punti di un collaudo, il 2026-08-09.
+ */
+function scadenzaDeroga(): string {
+  const [a, m, g] = fotografia().generato_il.split('-').map(Number)
+  return new Date(Date.UTC(a, m - 1, g) + GIORNI_VALIDITA_FOTOGRAFIA * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+}
+
+/**
+ * Le due guardie del punto 3, valutate a una data qualunque.
+ *
+ * Stanno in una funzione sola perché la prova che le riguarda deve poterle
+ * interrogare LO STESSO GIORNO: è l'unico modo di dimostrare che non si separano.
+ */
+function statoDeroga(oggi: Date): { fotografiaRecente: boolean; nonScaduta: boolean } {
+  return {
+    fotografiaRecente: etaFotografiaInGiorni(oggi) <= GIORNI_VALIDITA_FOTOGRAFIA,
+    nonScaduta: scadenzaDeroga() >= oggi.toISOString().slice(0, 10),
+  }
+}
+
+const NON_ANCORA_CREATI: Record<string, { ragione: string }> = {
+  sensitive_documents: {
+    // Misurato in sola lettura su `storage.buckets` la notte fra il 15 e il 16 agosto
+    // 2026: quattordici bucket, questo non c'è. La data che conta è quella della PROVA
+    // — `generato_il` nella fotografia versionata, cioè `2026-08-15` in UTC, che alle
+    // due di notte italiane è già il 16 — perché è quella dentro lo `sha256` e quella
+    // da cui si deriva la scadenza. La deroga vale finché quella misura è recente.
+    ragione:
+      'Il fascicolo del bambino — diagnosi, PEI, PDP e verbali della 104 dal lato scuola; scheda ' +
+      'sanitaria, autorizzazione ai farmaci e dieta speciale dal lato famiglia: dati dell’art. 9 ' +
+      'GDPR di un minore. Non lo crea nessuna migrazione: lo creano al volo `primaria/fascicolo`, ' +
+      '`parent/prestampati/firma` e `prestampati/genera` alla PRIMA archiviazione, e alla data ' +
+      'della fotografia (`generato_il`, in UTC) quella prima archiviazione non è ancora avvenuta ' +
+      '(misurato in sola lettura su `storage.buckets`: quattordici bucket, questo non c’è). Il ' +
+      'registro dell’oblio lo copre comunque, perché il giorno in cui nascerà nascerà già pieno.',
+  },
+}
+
+const NOTI = [
+  ...new Set([...bucketClassificati(), ...bucketInProduzione(), ...Object.keys(NON_ANCORA_CREATI)]),
+].sort()
+
+/** I file di `src/`, per chiedere al CODICE se un bucket lo nomina davvero. */
+function sorgentiDiSrc(cartella = join(RADICE, 'src'), acc: string[] = []): string[] {
+  for (const voce of readdirSync(cartella, { withFileTypes: true })) {
+    const percorso = join(cartella, voce.name)
+    if (voce.isDirectory()) sorgentiDiSrc(percorso, acc)
+    else if (/\.tsx?$/.test(voce.name)) acc.push(percorso)
+  }
+  return acc
+}
+
+/**
+ * I file che DICHIARANO il registro dell'oblio. Non possono valere come prova di
+ * sé stessi: il registro è ciò che si sta verificando, non l'evidenza.
+ *
+ * Senza questa esclusione la guardia era auto-soddisfacente. Misurato: il
+ * letterale `'sensitive_documents'` sta in `esegui.ts` (`BUCKET_FASCICOLO`) e in
+ * `cosa-distrugge-voci.ts`, e `esegui.ts` contiene pure `supabase.storage` —
+ * quindi si sarebbe trovata da sola, e cancellare tutte e cinque le route che il
+ * bucket lo creano avrebbe lasciato la prova VERDE.
+ */
+const FILE_DEL_REGISTRO = ['src/lib/gdpr/esegui.ts', 'src/lib/gdpr/cosa-distrugge-voci.ts']
+
+/** Il segno che un file tocca DAVVERO lo Storage, non che ne parla. */
+const USO_DELLO_STORAGE = /\.storage\s*\.\s*(from|createBucket|listBuckets)\s*\(|garantisciBucket/
+
+/**
+ * Il testo senza commenti. Un nome citato in un commento non è «scritto nel
+ * codice»: `parent/prestampati/firma` nomina `sensitive_documents` solo in due
+ * commenti, e contarlo vorrebbe dire accettare la prosa al posto del codice.
+ */
+function senzaCommenti(testo: string): string {
+  return testo.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+}
+
+/**
+ * I file di `src/` che il bucket lo CREANO o lo USANO: il letterale fuori dai
+ * commenti, un uso reale dello Storage nello stesso file, e non il registro.
+ *
+ * Percorsi relativi alla radice, con `/`, per poterli leggere in un messaggio
+ * d'errore e confrontarli su qualunque sistema.
+ */
+function fileCheUsanoIlBucket(bucket: string): string[] {
+  const letterale = `'${bucket}'`
+  return sorgentiDiSrc()
+    .map((f) => f.slice(RADICE.length + 1).split(sep).join('/'))
+    .filter((rel) => !FILE_DEL_REGISTRO.includes(rel))
+    .filter((rel) => {
+      // Il testo senza commenti vale per TUTTE E DUE le condizioni. Se il
+      // marcatore si cercasse nel testo grezzo, un file che nomina
+      // `garantisciBucket` solo in un commento passerebbe per consumatore: è
+      // successo, misurato su `banco-famiglia.ts`, ed è la stessa prosa-al-posto-
+      // del-codice che questa guardia esiste per non accettare.
+      const codice = senzaCommenti(readFileSync(join(RADICE, rel), 'utf8'))
+      return codice.includes(letterale) && USO_DELLO_STORAGE.test(codice)
+    })
+    .sort()
+}
 
 /** Un client finto con OGNI sorgente piena: tutto ciò che l'oblio può trovare. */
 function fakePieno() {
@@ -876,6 +1097,7 @@ function fakePieno() {
     media: [{ id: 'md-1', file_url: 'uploads/u1/foto.jpg', tag_students: ['al-1'] }],
     pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf' }],
     certificati: [{ id: 'cm-1', file_path: 'al-1/uuid.pdf' }],
+    fascicolo: [{ id: 'sd-1', storage_path: 'al-1/1700000000000-scheda.pdf', file_url: null }],
     threadAlunno: [{ id: 'th-1' }],
     threadGenitore: [{ id: 'th-9' }],
     messaggi: [{ id: 'ms-1', attachment_url: 'auth-9/uuid-referto.pdf' }],
@@ -935,6 +1157,138 @@ describe('lock · l’oblio conosce OGNI magazzino dello Storage', () => {
         `rinominato, il codice che lo svuota sta puntando al posto sbagliato e non se ne ` +
         `accorge nessuno.`,
     ).toEqual([])
+  })
+
+  it('la guardia distingue il CONSUMATORE dal registro (senza questo controllo si prova da sola)', () => {
+    // Il difetto della prima stesura, ed è il motivo per cui questa prova viene
+    // prima di quella che se ne serve: `nominatoNelCodice` cercava il letterale in
+    // tutto `src/` e lo trovava dentro `src/lib/gdpr/esegui.ts`, cioè dentro il
+    // registro che stava verificando. Cancellare o rinominare tutte e cinque le
+    // route che il bucket lo creano avrebbe lasciato la prova VERDE.
+    const consumatori = fileCheUsanoIlBucket('sensitive_documents')
+
+    // POSITIVO — le route che il bucket lo creano e lo leggono ci sono davvero.
+    expect(
+      consumatori,
+      'nessun consumatore trovato: se le route del fascicolo sono state spostate, aggiorna qui ' +
+        'il percorso invece di allargare la guardia',
+    ).toContain('src/app/api/primaria/fascicolo/route.ts')
+    expect(consumatori.length).toBeGreaterThan(1)
+
+    // NEGATIVO 1 — il registro non vale come prova di sé stesso.
+    expect(
+      consumatori.filter((f) => f.startsWith('src/lib/gdpr/')),
+      'la guardia sta contando i file del registro dell’oblio: è di nuovo auto-soddisfacente',
+    ).toEqual([])
+
+    // NEGATIVO 2 — un nome inventato non lo nomina nessuno (se questo trovasse
+    // qualcosa, il filtro sarebbe rotto e tutte le prove qui sotto verdi sul vuoto).
+    expect(fileCheUsanoIlBucket('bucket_che_non_esiste_da_nessuna_parte')).toEqual([])
+
+    // NEGATIVO 3 — la prosa non conta come codice: il riconoscitore dei commenti
+    // funziona, altrimenti basterebbe nominare un bucket in un commento.
+    expect(senzaCommenti("const A = 'x' // 'sensitive_documents'")).not.toContain(
+      "'sensitive_documents'",
+    )
+    expect(senzaCommenti("/* 'sensitive_documents' */ const A = 'x'")).not.toContain(
+      "'sensitive_documents'",
+    )
+    expect(senzaCommenti("const B = 'sensitive_documents'")).toContain("'sensitive_documents'")
+  })
+
+  it('i magazzini «non ancora creati» sono nominati DAL CODICE che li usa e davvero assenti', () => {
+    // Senza questa prova, `NON_ANCORA_CREATI` sarebbe il posto dove far tacere la
+    // prova qui sopra scrivendoci dentro qualunque nome — cioè il contrario di ciò
+    // per cui esiste.
+    for (const [b, deroga] of Object.entries(NON_ANCORA_CREATI)) {
+      expect(
+        deroga.ragione.trim().length,
+        `\`${b}\` è dichiarato «non ancora creato» senza una ragione scritta: dove nasce, chi ` +
+          `lo crea, che cosa ci finisce dentro.`,
+      ).toBeGreaterThan(80)
+      expect(
+        fileCheUsanoIlBucket(b),
+        `Nessun file di \`src/\` CREA o USA il bucket \`${b}\` (il letterale fuori dai commenti, ` +
+          `in un file che chiama \`createBucket\`/\`garantisciBucket\`/\`storage.from\`, e che non ` +
+          `sia il registro dell'oblio stesso): o è un refuso, e allora il codice che dovrebbe ` +
+          `svuotarlo sta puntando altrove, o quel magazzino non esiste in nessun senso e va ` +
+          `tolto dal registro dell'oblio.`,
+      ).not.toEqual([])
+      expect(
+        bucketInProduzione(),
+        `Il bucket \`${b}\` ORA esiste in produzione: toglilo da \`NON_ANCORA_CREATI\` e ` +
+          `mettilo dove va — fra i \`RISERVATI\` di ` +
+          `\`__tests__/architecture/bucket-storage-dichiarati.test.ts\`, con la fotografia ` +
+          `dello Storage rigenerata. Da questo momento la sua visibilità (pubblico/privato) è ` +
+          `una cosa che si può misurare, e va misurata: dentro ci sono dati dell'art. 9 di minori.`,
+      ).not.toContain(b)
+    }
+  })
+
+  it('la deroga scade sul CALENDARIO: la fotografia che la sostiene non può invecchiare in silenzio', () => {
+    // ⚠️ LA PARTE CHE MANCAVA, e senza la quale la deroga era a tempo indeterminato.
+    //
+    // `bucketInProduzione()` non interroga la produzione: legge un file statico che
+    // qualcuno rigenera a mano. Quindi «il bucket non c'è» è una frase vera il
+    // giorno della misura e ignota tutti gli altri giorni, e il bucket può nascere
+    // — lo crea la prima famiglia che firma un prestampato — lasciando questa prova
+    // verde per sempre, con `sensitive_documents` fuori dai `RISERVATI` e la sua
+    // visibilità pubblico/privato MAI misurata.
+    //
+    // Il calendario è l'unica cosa che si muove da sola. Quando questa diventa
+    // rossa NON si sposta la data: si rifà la misura, e la misura risponderà anche
+    // alla domanda vera, cioè se quel bucket è nato.
+    if (!Object.keys(NON_ANCORA_CREATI).length) return
+
+    const eta = etaFotografiaInGiorni()
+    expect(
+      eta,
+      `La fotografia dello Storage è di ${eta} giorni fa e c'è una deroga che ci si appoggia ` +
+        `(${Object.keys(NON_ANCORA_CREATI).join(', ')}): «non esiste in produzione» è una frase ` +
+        `che nessuno sta più verificando. ${COME_RIGENERARE_FOTOGRAFIA}`,
+    ).toBeLessThanOrEqual(GIORNI_VALIDITA_FOTOGRAFIA)
+
+    const scadenza = scadenzaDeroga()
+    const oggi = new Date().toISOString().slice(0, 10)
+    for (const b of Object.keys(NON_ANCORA_CREATI)) {
+      expect(
+        scadenza >= oggi,
+        `La deroga su \`${b}\` è scaduta il ${scadenza}. Rimisura lo Storage di ` +
+          `produzione: se il bucket è nato, toglilo da \`NON_ANCORA_CREATI\` e mettilo fra i ` +
+          `\`RISERVATI\` di \`bucket-storage-dichiarati.test.ts\`; se non è ancora nato, ` +
+          `rigenera la fotografia — e la scadenza si sposta da sé, perché è DERIVATA da ` +
+          `\`generato_il\`. Non c'è nessuna data da spostare a mano, ed è voluto: la data di ` +
+          `rigenerazione è dentro lo sha256 della fotografia. ${COME_RIGENERARE_FOTOGRAFIA}`,
+      ).toBe(true)
+    }
+  })
+
+  it('le due guardie della deroga scattano lo STESSO giorno: non si possono separare', () => {
+    // ⚠️ LA PARTE CHE ERA SFASATA DI UN GIORNO, e che rendeva inerte la seconda.
+    //
+    // «Fotografia non più vecchia di trenta giorni» e «deroga non scaduta» sono
+    // presentate come due presidi coordinati. Con la scadenza scritta a mano non lo
+    // erano: `scadeIl` era `2026-09-15` mentre la fotografia porta `2026-08-15`, e
+    // misurato giorno per giorno il controllo sull'età diventava rosso il 2026-09-15
+    // (31 > 30) mentre la scadenza restava verde fino al 16. Una scadenza che non può
+    // MAI scattare per prima è una guardia che non guarda niente — e il commento che
+    // la descriveva accanto all'altra affermava un coordinamento inesistente.
+    //
+    // Questa prova non guarda il calendario di oggi: costruisce i due giorni che
+    // contano a partire dalla fotografia, quindi resta valida a ogni rigenerazione.
+    const [a, m, g] = fotografia().generato_il.split('-').map(Number)
+    const giornoDopoLaMisura = (n: number) => new Date(Date.UTC(a, m - 1, g) + n * 86_400_000)
+
+    expect(
+      statoDeroga(giornoDopoLaMisura(GIORNI_VALIDITA_FOTOGRAFIA)),
+      'ultimo giorno di validità: le due guardie devono essere ANCORA verdi tutte e due',
+    ).toEqual({ fotografiaRecente: true, nonScaduta: true })
+
+    expect(
+      statoDeroga(giornoDopoLaMisura(GIORNI_VALIDITA_FOTOGRAFIA + 1)),
+      'primo giorno oltre la validità: le due guardie devono diventare rosse INSIEME. Se una ' +
+        'sola è rossa, l’altra è inerte — e il file dichiara due presidi mentre ne ha uno.',
+    ).toEqual({ fotografiaRecente: false, nonScaduta: false })
   })
 
   it('ogni esclusione porta la sua ragione scritta, come `fatture`', () => {

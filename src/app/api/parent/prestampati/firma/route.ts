@@ -26,8 +26,11 @@ import {
   campiDaCorreggere,
   campoSceltaDelegato,
   campoTesto,
+  datiUscitaDaEvento,
+  dipendeDallUscita,
   emailMancante,
   fineAnnoScolastico,
+  garantisciBucketFascicolo,
   ilFileRestaNelBucket,
   motivoMancatoArchivioDa,
   motivoNonFirmabile,
@@ -53,10 +56,11 @@ import {
   modelloGenitore,
   type DatiPrestampato,
 } from '@/lib/prestampati/modelli/genitore'
+import { applicaCartaIntestata } from '@/lib/carta'
 import { cartaDaDati, renderPrestampatoGenitore } from '@/lib/prestampati/render'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { formattaIstante } from '@/i18n/config'
+import { dataCivile, formattaIstante } from '@/i18n/config'
 import { withRoute } from '@/lib/logging/with-route'
 import { impostaPayload, impostaPayloadEsito } from '@/lib/logging/context'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -158,36 +162,25 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  */
 
 /**
- * Il bucket privato del fascicolo, con la sua dichiarazione — 🔴 compresa la lacuna
- * dell'oblio, che è bloccante — in testa a `BUCKET_FASCICOLO` (`banco-famiglia.ts`).
+ * Il bucket privato del fascicolo, con la sua dichiarazione — ✅ oblio compreso, dal
+ * 2026-08-15 — in testa a `BUCKET_FASCICOLO` (`banco-famiglia.ts`).
  *
  * Sta là e non qui perché lo nominano tutte e due le porte della famiglia e perché la scelta
  * dei magazzini ammessi è una regola, non una costante di questa rotta. L'alias locale resta
  * per leggibilità: in questo file `BUCKET` è il bucket in cui si SCRIVE.
  *
- * Ciò che invece È coperto dall'oblio, e vale la pena saperlo: gli ALLEGATI che la famiglia
- * carica — la prescrizione del n. 06, il certificato del n. 07 — vivono in `certificati-medici`
- * (`BUCKET_CERTIFICATI`), che l'oblio raggiunge davvero. La lacuna riguarda il PDF firmato,
- * non i documenti che porta con sé.
+ * Coperti dall'oblio sono tutti e due i pezzi che escono da qui: il PDF FIRMATO, per
+ * `student_documents.student_id` (`obliaFascicoloAlunno`), e gli ALLEGATI che la famiglia
+ * carica — la prescrizione del n. 06, il certificato del n. 07 — che vivono in
+ * `certificati-medici` (`BUCKET_CERTIFICATI`). Fino al 14/08 il primo dei due non era
+ * raggiunto da nessun canale, e questo commento lo diceva: ora non è più vero, e la
+ * differenza sta in `REGISTRO_BUCKET_OBLIO` più la chiamata dentro `anonimizzaAlunno`.
+ *
+ * ⚠️ Con un limite che riguarda proprio questa rotta: **l'oblio passa dall'INDICE**. Il PDF
+ * si cancella perché una riga di `student_documents` lo nomina; se quella riga non nasce
+ * (ramo `documentoId === null`, più sotto) il file resta nel bucket e nessun oblio lo trova.
  */
 const BUCKET = BUCKET_FASCICOLO
-
-/**
- * I parametri del bucket CONDIVISO, copiati da `primaria/fascicolo:POST` — e il motivo per
- * cui una rotta che carica solo PDF dichiara anche tre tipi di immagine.
- *
- * `sensitive_documents` non esiste ancora in produzione (misurato in sola lettura il
- * 2026-08-14: `storage.buckets` ha quattordici righe e nessuna è questa), quindi lo crea
- * **chi arriva primo**, e i parametri di quel primo restano per tutti. Se a crearlo fosse
- * questa rotta con `['application/pdf']`, il fascicolo della primaria — che carica
- * documenti d'identità in JPEG/PNG/WebP con `contentType: file.type` — comincerebbe a
- * prendere un rifiuto dallo storage e a rispondere 500, per una scelta fatta qui dentro.
- *
- * Un bucket condiviso è una risorsa di tutti: o si dichiara in un posto solo, o chi lo
- * crea lo crea per il caso di tutti. Finché il primo non c'è, vale il secondo.
- */
-const BUCKET_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
-const BUCKET_DIMENSIONE_MAX = 15 * 1024 * 1024
 
 /** Il tempo di aprire il file appena firmato, non di girarlo. */
 const TTL_LINK = 60
@@ -438,11 +431,15 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
     // sarebbero dati di un minore letti per mandare un'email.
     let datiFamiglia: DatiPrestampato | null = null
     let sedeDelBambino: string | null = null
+    let sezioneDelBambino: string | null = null
+    let oggiDelBambino: string | null = null
     if (serveIlPrecompilato(voce)) {
       const esitoPrefill = await caricaPrefillAlunno(request, supabase, alunnoId)
       if (esitoPrefill.response) return esitoPrefill.response
       datiFamiglia = esitoPrefill.prefill.dati
       sedeDelBambino = esitoPrefill.prefill.scuolaId
+      sezioneDelBambino = esitoPrefill.prefill.sezioneId
+      oggiDelBambino = esitoPrefill.prefill.dati.dataOggi
     }
     const motivo = motivoNonFirmabile(voce, datiFamiglia)
     if (motivo) {
@@ -479,9 +476,14 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
     // Il precompilato, quando c'era, l'ha già portata: sul n. 08 non si rilegge.
     if (sedeDelBambino === null) {
       // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+      //
+      // `section_id` esce dalla stessa lettura, e non è una colonna in più «già che ci
+      // siamo»: serve al n. 10, che senza sezione non ha un'uscita a cui appartenere. Una
+      // seconda query sulla stessa riga per una seconda colonna sarebbe una lettura in più
+      // sull'anagrafica di un minore per niente.
       const { data: rigaSede, error: erroreSede } = await supabase
         .from('alunni')
-        .select('scuola_id')
+        .select('scuola_id, section_id')
         .eq('id', alunnoId)
         .maybeSingle()
       if (erroreSede) {
@@ -499,7 +501,89 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
           erroreSede,
         )
       }
-      sedeDelBambino = (rigaSede as unknown as { scuola_id?: string | null } | null)?.scuola_id ?? null
+      const riga = rigaSede as unknown as {
+        scuola_id?: string | null
+        section_id?: string | null
+      } | null
+      sedeDelBambino = riga?.scuola_id ?? null
+      sezioneDelBambino = riga?.section_id?.trim() || null
+    }
+
+    // ── IL N. 10 SI FIRMA SOLO SE LA GITA ESISTE DAVVERO ───────────────────────────
+    //
+    // E si guarda PRIMA di spedire il codice, che è tutto il punto: `LIMITE_OTP_INVIO` è
+    // di 5 invii per finestra di dieci minuti ed è un budget CONDIVISO fra tutte le porte
+    // OTP. Un'autorizzazione chiesta per un'uscita che non c'è, con l'email già partita, si
+    // schianterebbe al PATCH e lascerebbe il genitore senza modo di firmare
+    // l'autorizzazione a un farmaco.
+    //
+    // La risposta è un 404 «non è fra i prestampati disponibili», la stessa dell'elenco: da
+    // quando l'uscita governa la visibilità, per QUESTO bambino e in QUESTO momento quel
+    // modulo non c'è. Un motivo enumerato accanto a un pulsante spento non serve più —
+    // nessun pulsante è acceso.
+    //
+    // La query vive DENTRO l'handler, come tutte le altre di questa rotta e per la stessa
+    // ragione: è ancorata alla sezione e alla sede di UN bambino, che il gate della
+    // famiglia ha verificato in questo stesso handler. Spostarla in un helper di file
+    // renderebbe questo handler «senza scope» agli occhi del lock `isolamento-sede`, e
+    // soprattutto toglierebbe da sotto gli occhi il legame fra il permesso e la lettura.
+    if (dipendeDallUscita(voce.slug)) {
+      let uscita = null
+      if (sezioneDelBambino && sedeDelBambino) {
+        // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+        const { data: righeUscita, error: erroreUscita } = await supabase
+          .from('eventi_agenda')
+          .select('titolo, descrizione, data, orario_inizio, orario_fine')
+          .eq('scuola_id', sedeDelBambino)
+          .eq('section_id', sezioneDelBambino)
+          .eq('tipo', 'uscita')
+          .eq('visibile_genitori', true)
+          // ⚠️ `dataCivile` E NON `new Date().toISOString()`: su Vercel il processo gira in
+          // UTC, e fra mezzanotte e le due un confronto sul giorno «di oggi» indicherebbe
+          // ieri — cioè farebbe ricomparire per due ore l'uscita di ieri. È la stessa
+          // trappola che il banco di prova ha già pagato il 2026-08-09.
+          .gte('data', oggiDelBambino ?? dataCivile(new Date()))
+          .order('data', { ascending: true })
+          .limit(1)
+        if (erroreUscita) {
+          // «Non l'ho potuto leggere» non è «non c'è»: qui non si spedisce niente e non si
+          // rifiuta la firma con una frase falsa. Il codice non è stato speso.
+          logEvento(
+            'modulistica',
+            'error',
+            {
+              operazione: 'parent/prestampati/firma:POST',
+              esito: 'uscita-non-letta',
+              alunno_id: alunnoId,
+              sezione_id: sezioneDelBambino,
+              error_code: (erroreUscita as { code?: string }).code ?? null,
+            },
+            erroreUscita,
+          )
+          return NextResponse.json(
+            {
+              error:
+                'Non è stato possibile verificare l’uscita: riprova fra qualche minuto. Non è stato inviato nessun codice.',
+              codice: 'PRESTAMPATO_ANAGRAFICA_NON_LETTA',
+            },
+            { status: 503 },
+          )
+        }
+        uscita = datiUscitaDaEvento((righeUscita ?? [])[0])
+      }
+      if (!uscita) {
+        // Si conta, e serve: è la misura di quante famiglie cercano di autorizzare
+        // un'uscita che non è stata pubblicata — cioè se il modulo compare dove non deve.
+        logEvento('modulistica', 'info', {
+          operazione: 'parent/prestampati/firma:POST',
+          esito: 'firma-non-disponibile',
+          azione: 'uscita-non-pubblicata',
+          tipo: voce.slug,
+          utente: parentId,
+          alunno_id: alunnoId,
+        })
+        return sconosciuto()
+      }
     }
 
     // Morosità: chiedere il codice per firmare è un'azione di servizio. Qui lo slug è già
@@ -776,9 +860,77 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
         : null
     }
 
+    // ── L'USCITA CHE IL N. 10 AUTORIZZA, letta adesso e non dedotta ────────────────
+    //
+    // È il dato che fino al 2026-08-15 non costruiva nessuno in tutto il repo, ed è il
+    // motivo per cui quel modulo era spento: `DatiPrestampato.uscita` esisteva nel tipo e
+    // nessuna route lo valorizzava. Ora la gita si legge da `eventi_agenda` — la stessa
+    // riga che l'insegnante crea e che la famiglia vede già in agenda — e finisce sul
+    // foglio con destinazione e data VERE, più gli orari quando l'evento li porta
+    // (`agenda:POST` li salva `null`: vedi `datiUscitaDaEvento`, che è dove la regola vive).
+    //
+    // ⚠️ SI RILEGGE QUI, e non ci si fida di quella vista al POST: fra la richiesta del
+    // codice e la firma passano minuti, e un'uscita annullata nel frattempo non deve
+    // produrre un'autorizzazione. La query sta dentro l'handler, ancorata alla sede e alla
+    // sezione del bambino che il gate ha appena verificato.
+    //
+    // Uscita assente ⇒ 404, la stessa risposta dell'elenco e del POST: per questo bambino,
+    // adesso, quel modulo non c'è. Il codice OTP non è ancora stato consumato.
+    let uscita = null
+    if (dipendeDallUscita(voce.slug)) {
+      if (prefill.sezioneId) {
+        // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+        const { data: righeUscita, error: erroreUscita } = await supabase
+          .from('eventi_agenda')
+          .select('titolo, descrizione, data, orario_inizio, orario_fine')
+          .eq('scuola_id', prefill.scuolaId)
+          .eq('section_id', prefill.sezioneId)
+          .eq('tipo', 'uscita')
+          .eq('visibile_genitori', true)
+          .gte('data', prefill.dati.dataOggi)
+          .order('data', { ascending: true })
+          .limit(1)
+        if (erroreUscita) {
+          logEvento(
+            'modulistica',
+            'error',
+            {
+              operazione: 'parent/prestampati/firma:PATCH',
+              esito: 'uscita-non-letta',
+              alunno_id: alunnoId,
+              sezione_id: prefill.sezioneId,
+              error_code: (erroreUscita as { code?: string }).code ?? null,
+            },
+            erroreUscita,
+          )
+          return NextResponse.json(
+            {
+              error:
+                'Non è stato possibile verificare l’uscita: riprova fra qualche minuto. Il codice di firma non è stato utilizzato.',
+              codice: 'PRESTAMPATO_ANAGRAFICA_NON_LETTA',
+            },
+            { status: 503 },
+          )
+        }
+        uscita = datiUscitaDaEvento((righeUscita ?? [])[0])
+      }
+      if (!uscita) {
+        logEvento('modulistica', 'info', {
+          operazione: 'parent/prestampati/firma:PATCH',
+          esito: 'firma-non-disponibile',
+          azione: 'uscita-non-pubblicata',
+          tipo: voce.slug,
+          utente: parentId,
+          alunno_id: alunnoId,
+        })
+        return sconosciuto()
+      }
+    }
+
     const dati: DatiPrestampato = {
       ...prefill.dati,
       ...(accompagnatore ? { accompagnatore } : {}),
+      ...(uscita ? { uscita } : {}),
       // Le sottoscrizioni raccolte finora: questa, ed è **l'unica che questa rotta sa
       // raccogliere**. Il n. 08 ne pretende due quando in anagrafica ci sono due tutori, e
       // con una sola il suo `verificaContesto` rifiuta — e ha ragione: una delega al ritiro
@@ -823,15 +975,23 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // n. 06 e il certificato del n. 07, non il documento d'identità di un terzo. È la riga
     // che rende vera la ragione per cui il n. 08 è spento — vedi `magazziniAmmessi`.
     //
-    // `garantisciBucket` UNA VOLTA SOLA, e qui: `sensitive_documents` in produzione non
-    // esiste ancora (misurato il 2026-08-14), e senza, `list()` risponderebbe «Bucket not
-    // found» — cioè `non-verificabile`, cioè 503 — su ogni modulo con allegato, per sempre.
-    // Prima ce n'erano due — una qui dentro e una prima dell'upload — cioè due `listBuckets()`
-    // per ogni firma con allegati. È idempotente e non scrive nessun dato: chiamarla anche
-    // per i moduli che allegati non ne hanno costa la stessa `listBuckets()` che l'upload
-    // avrebbe fatto tre passi più giù, e garantisce il bucket a tutti e due i punti che ne
-    // hanno bisogno.
-    await garantisciBucket(supabase)
+    // `garantisciBucketFascicolo` UNA VOLTA SOLA, e qui: fino al 2026-08-16
+    // `sensitive_documents` in produzione non esisteva, e senza, `list()` risponderebbe
+    // «Bucket not found» — cioè `non-verificabile`, cioè 503 — su ogni modulo con allegato,
+    // per sempre. Prima ce n'erano due — una qui dentro e una prima dell'upload — cioè due
+    // `listBuckets()` per ogni firma con allegati. È idempotente e non scrive nessun dato:
+    // chiamarla anche per i moduli che allegati non ne hanno costa la stessa `listBuckets()`
+    // che l'upload avrebbe fatto tre passi più giù, e garantisce il bucket a tutti e due i
+    // punti che ne hanno bisogno.
+    //
+    // ⚠️ IL VERDETTO SI IGNORA DI PROPOSITO, ed è l'unica differenza con la porta del
+    // certificato — che invece si ferma. Là il passo successivo consumerebbe un numero di
+    // protocollo su un registro WORM; qui non c'è nessuna numerazione da proteggere, e il
+    // foglio firmato ha valore anche se l'archivio non lo accoglie: la risposta lo consegna
+    // alla famiglia dicendole che è l'unica copia rimasta (`mancatoArchivio*`). Fermarsi
+    // butterebbe via una firma valida per un guasto del magazzino. La funzione ha già
+    // registrato il perché, col corpo dell'errore del provider.
+    await garantisciBucketFascicolo(supabase, 'parent/prestampati/firma:PATCH')
 
     const allegati = riferimentiAllegati(percorsiAllegati(modello.campi, esito.risposte))
     if (allegati.length > 0) {
@@ -972,7 +1132,20 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
       signedAt: adesso.toISOString(),
     })
 
-    const pdf = esito.pdf
+    // ─── LA CARTA DELLA SCUOLA, SOTTO OGNI PAGINA ────────────────────────────────────
+    //
+    // `impaginazione.ts` non disegna più né banda verde né logo né piede: ce li ha la
+    // carta intestata vera, e ridisegnarli significava stamparci sopra. Senza questa riga
+    // il modulo firmato dalla famiglia — la scheda sanitaria, la delega al ritiro, il
+    // certificato di iscrizione — uscirebbe NUDO, cioè peggio di com'era prima.
+    //
+    // Va PRIMA dell'impronta, e non è un dettaglio d'ordine: `impronta` finisce nella riga
+    // FEA ed è ciò con cui si verifica il documento archiviato. Calcolarla sui byte senza
+    // carta vorrebbe dire registrare l'impronta di un file che nessuno ha mai avuto.
+    //
+    // Nessuna `segnatura`: questi fogli non consumano numerazione e portano la dicitura
+    // «Copia a uso della famiglia — non protocollata» (§4.1).
+    const pdf = await applicaCartaIntestata(esito.pdf)
     const impronta = createHash('sha256').update(pdf).digest('hex')
 
     // ── 1. La traccia FEA, prima di tutto il resto ───────────────────────────────────
@@ -1021,11 +1194,22 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // durevole nominerebbe quel percorso. `student_documents` non si scrive, `firme_documenti`
     // non ha una colonna di percorso (misurato) e `app_log` ha trenta giorni di ritenzione.
     // Passati quelli, il file — farmaco, dosaggio e riferimento alla prescrizione di un
-    // minore, art. 9 — sarebbe irraggiungibile **e** incancellabile, in un bucket che l'oblio
-    // non raggiunge (testata di `BUCKET_FASCICOLO`). Non sarebbe il caso raro: è il 100% delle
-    // firme del n. 06. La copia che la famiglia riceve è `pdfBase64`, che è comunque l'unica
-    // certa; la copia della Direzione nascerà con la schermata che la accetta, insieme alla
-    // riga che la nomina — dichiarato all'orchestratore fra le funzioni mancanti.
+    // minore, art. 9 — sarebbe irraggiungibile **e** incancellabile. Non sarebbe il caso raro:
+    // è il 100% delle firme del n. 06.
+    //
+    // ⚠️ QUESTA DECISIONE È STATA RILETTA IL 2026-08-16, quando la sua premessa è cambiata.
+    // Fino al 14/08 la frase qui sopra finiva con «in un bucket che l'oblio non raggiunge», e
+    // quella frase oggi è falsa: `sensitive_documents` è nel registro dell'oblio ed è svuotato
+    // da `obliaFascicoloAlunno`. La decisione però NON cambia, e il motivo è più stringente di
+    // prima: l'oblio raggiunge il bucket **attraverso l'indice**, cioè cancella i file che una
+    // riga di `student_documents` nomina. Un PDF caricato senza quella riga — che è
+    // esattamente questo ramo — resterebbe fuori portata lo stesso. Caricarlo qui non
+    // produrrebbe un file cancellabile: produrrebbe un orfano dell'art. 9 in un archivio che
+    // ora ha un meccanismo di pulizia e continuerebbe a non vederlo.
+    //
+    // La copia che la famiglia riceve è `pdfBase64`, che è comunque l'unica certa; la copia
+    // della Direzione nascerà con la schermata che la accetta, insieme alla riga che la
+    // nomina — dichiarato all'orchestratore fra le funzioni mancanti.
     if (attesaAccettazioneDirezione(voce.slug)) {
       // `info` e non `warn`: `modulistica` è in `EVENTI_PERSISTITI` (`logger.ts:188`), quindi
       // la riga va in tabella lo stesso — ed è la stessa scelta della riga di successo in
@@ -1117,10 +1301,13 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // Un PDF che resta nel bucket senza una riga che lo nomini è un documento invisibile:
     // nessun elenco lo mostra, nessuna query lo ritrova (`firme_documenti` non ha una
     // colonna di percorso — misurato: `id, utente_id, tipo_documento, impronta_digitale,
-    // indirizzo_ip, user_agent, firmato_il`), e l'oblio non lo raggiunge — vedi la
-    // dichiarazione in testa a `BUCKET_FASCICOLO`, che è la lacuna vera e non un dettaglio di
-    // questo ramo. Su questa rotta quel file contiene una scheda sanitaria, una terapia o una dieta
-    // di un minore: dati dell'art. 9 che nessuno sa di avere e nessuno sa cancellare.
+    // indirizzo_ip, user_agent, firmato_il`), e **nemmeno l'oblio lo raggiunge**. Dal
+    // 2026-08-15 `sensitive_documents` è coperto (`obliaFascicoloAlunno`, testata di
+    // `BUCKET_FASCICOLO`), ma la copertura passa dall'INDICE: cancella i file che una riga di
+    // `student_documents` nomina. Senza quella riga il file è fuori portata comunque — non
+    // per una lacuna del registro, ma perché non esiste niente da cui risalire a lui. Su
+    // questa rotta quel file contiene una scheda sanitaria, una terapia o una dieta di un
+    // minore: dati dell'art. 9 che nessuno sa di avere e nessuno sa cancellare.
     //
     // Che cosa se ne fa del file, quando la riga non nasce, NON lo decide questa rotta: lo
     // decide `ilFileRestaNelBucket` (`banco-famiglia.ts`), che porta la stessa regola della
@@ -1239,10 +1426,13 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     if (documentoId === null) {
       // ⚠️ IL FILE RESTA QUANDO È LO SCHEMA A NON REGGERE, e se ne va quando ritentare ha
       // senso: la regola è quella della gemella (`ilFileRestaNelBucket`). Il costo del ramo
-      // «resta» è dichiarato e non è piccolo: quel file è un orfano dell'art. 9 in un bucket
-      // che l'oblio non raggiunge (testata di `BUCKET_FASCICOLO`), e la riga di log qui sotto
-      // è ciò che permette di ritrovarlo — `alunno_id`, `tipo` e `riferimento` SONO il
-      // percorso (`<alunno_id>/prestampati/<tipo>-<riferimento>.pdf`).
+      // «resta» è dichiarato e non è piccolo: quel file è un orfano dell'art. 9 — il bucket
+      // è coperto dall'oblio dal 2026-08-15, ma la copertura passa dalla riga di
+      // `student_documents`, che qui non è nata (testata di `BUCKET_FASCICOLO`). Senza
+      // indice non c'è aggancio, quindi nemmeno una richiesta di cancellazione lo troverebbe:
+      // la riga di log qui sotto è ciò che permette di ritrovarlo a mano — `alunno_id`,
+      // `tipo` e `riferimento` SONO il percorso
+      // (`<alunno_id>/prestampati/<tipo>-<riferimento>.pdf`).
       const motivoMancatoArchivio = motivoMancatoArchivioDa(codiceArchivio)
       const restaNelBucket = ilFileRestaNelBucket(motivoMancatoArchivio)
       if (!restaNelBucket) await togliDalBucket(supabase, percorso, voce.slug, firmaId)
@@ -1426,56 +1616,6 @@ async function consumoSmentito(supabase: SupabaseClient, ticket: string): Promis
 }
 
 // ─── L'archiviazione ────────────────────────────────────────────────────────────
-
-/**
- * Il bucket privato esiste, o si crea — con i parametri di TUTTI, non con i propri.
- *
- * ⚠️ L'ESITO SI CONTROLLA: `listBuckets()` e `createBucket()` **ritornano `{ data, error }`**,
- * non lanciano — stessa forma di PostgREST, AGENTS.md regola 7. Un `try/catch` da solo non
- * scatterebbe mai su quel caso, e la causa che spiega i caricamenti falliti («il bucket non
- * c'era e non si è potuto creare») andrebbe persa insieme al corpo dell'errore del provider,
- * che è il difetto che AGENTS.md §3 nomina per nome. Il `try/catch` resta per ciò che
- * un'eccezione la solleva davvero (rete, fetch interrotta).
- *
- * L'errore non ferma la richiesta: l'upload subito dopo ha il proprio, e sarà quello a
- * decidere. Qui si registra soltanto.
- */
-async function garantisciBucket(supabase: SupabaseClient): Promise<void> {
-  try {
-    const { data: elenco, error: erroreElenco } = await supabase.storage.listBuckets()
-    if (erroreElenco) {
-      logEvento(
-        'storage',
-        'error',
-        { operazione: 'parent/prestampati/firma:PATCH', bucket: BUCKET, esito: 'bucket-non-elencato' },
-        erroreElenco,
-      )
-      return
-    }
-    if (elenco?.some((b) => b.name === BUCKET)) return
-
-    const { error: erroreCreazione } = await supabase.storage.createBucket(BUCKET, {
-      public: false,
-      allowedMimeTypes: BUCKET_MIME,
-      fileSizeLimit: BUCKET_DIMENSIONE_MAX,
-    })
-    if (erroreCreazione) {
-      logEvento(
-        'storage',
-        'error',
-        { operazione: 'parent/prestampati/firma:PATCH', bucket: BUCKET, esito: 'bucket-non-creato' },
-        erroreCreazione,
-      )
-    }
-  } catch (e) {
-    logEvento(
-      'storage',
-      'warn',
-      { operazione: 'parent/prestampati/firma:PATCH', bucket: BUCKET, esito: 'bucket-non-verificato' },
-      e,
-    )
-  }
-}
 
 /**
  * Toglie dal bucket il PDF che nessuna riga nominerà.

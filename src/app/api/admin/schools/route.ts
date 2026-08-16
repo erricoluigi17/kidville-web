@@ -407,6 +407,10 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
 
     await logScrittura(supabase, {
       attore: auth.user,
+      // La sede dell'audit è quella APPENA CREATA, non quella di casa di chi
+      // l'ha creata — l'unico plesso a cui la sede nuova non appartiene. Vedi la
+      // nota estesa sulla stessa riga del PATCH.
+      scuolaId: sedeId,
       entitaTipo: 'multi_sede',
       entitaId: sedeId,
       azione: 'insert',
@@ -482,14 +486,32 @@ export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) =
       return NextResponse.json({ error: error?.message ?? 'Aggiornamento fallito' }, { status: 500 })
     }
 
-    // Propaga nome/citta/indirizzo anche al tenant `schools` (upsert per coprire
-    // eventuali sedi orfane residue). Best-effort: `scuole` è la fonte anagrafica,
-    // ma `schools` è ciò che vede il SedeSelector e va tenuto allineato.
-    const schoolPatch: Record<string, unknown> = { id }
-    if (nome !== undefined) schoolPatch.nome = String(nome).trim()
-    if (citta !== undefined) schoolPatch.citta = citta ? String(citta).trim() : null
-    if (indirizzo !== undefined) schoolPatch.indirizzo = indirizzo ? String(indirizzo).trim() : null
-    if (Object.keys(schoolPatch).length > 1) {
+    // ── Propagazione su `schools`, e perché si legge da `data` e non dal corpo ──
+    // Best-effort: `scuole` è la fonte anagrafica, ma `schools` è ciò che vede il
+    // SedeSelector ed è il ripiego da cui prestampati, prefill e protocolli
+    // leggono nome/città/indirizzo quando manca la riga `scuole`.
+    //
+    // La riga si compone dai valori AUTORITATIVI appena scritti (`data`), non da
+    // quelli arrivati nel corpo. `schools.nome` è NOT NULL senza default, e un
+    // `upsert` propone comunque un INSERT: Postgres valida i NOT NULL sulla tupla
+    // proposta PRIMA di risolvere `ON CONFLICT`. Costruire il payload dal corpo
+    // significava quindi mandare `nome` assente ogni volta che il chiamante non
+    // lo includeva — cioè SEMPRE, perché Impostazioni → Sede & Intestazione manda
+    // `{id, citta, indirizzo, anagrafica}` e il nome non lo mostra nemmeno.
+    //
+    // Misurato in produzione (`app_log`, 2026-08-15 17:50:41Z, sede Aversa):
+    //   23502 «null value in column "nome" of relation "schools"»
+    // `scuole` si aggiornava, `schools` restava indietro, e le due tabelle
+    // divergevano in silenzio dietro un `warn` che nessuno rileggeva.
+    const toccaAnagrafica = nome !== undefined || citta !== undefined || indirizzo !== undefined
+    if (toccaAnagrafica) {
+      const riga = data as { nome?: string | null; citta?: string | null; indirizzo?: string | null }
+      const schoolPatch: Record<string, unknown> = {
+        id,
+        nome: riga.nome,
+        citta: riga.citta ?? null,
+        indirizzo: riga.indirizzo ?? null,
+      }
       try {
         const { error: schoolsErr } = await supabase
           .from('schools')
@@ -505,8 +527,27 @@ export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) =
       }
     }
 
+    // ── L'audit dichiara la sede su cui si è scritto ─────────────────────────
+    // `logScrittura` ripiega su `attore.scuola_id` quando il chiamante tace
+    // (audit/scrittura.ts:112), e per un `admin` multi-sede quella è la sede DI
+    // CASA, non quella appena modificata. Qui si taceva, e le due coincidevano
+    // per caso una volta su tre.
+    //
+    // Misurato in produzione (2026-08-16, `audit_scritture_docente`, entità
+    // `multi_sede`): otto righe su dodici attribuivano a Giugliano un
+    // salvataggio avvenuto su Aversa o su Cesa — comprese quelle lasciate dai
+    // `PATCH` con cui l'anagrafica delle tre sedi è stata compilata dal
+    // pannello, cioè proprio le righe che dovevano PROVARE che il percorso
+    // applicativo lascia una traccia.
+    //
+    // Su `multi_sede` l'entità modificata È una sede, quindi «quale plesso» non
+    // è un contorno del record: è il record. Un registro immodificabile che
+    // nomina il plesso sbagliato è peggio di uno che tace, perché chi rilegge
+    // gli crede. È la regola di AGENTS.md — «ogni scrittura dichiara la sua
+    // sede» — applicata alla scrittura che ha per oggetto una sede.
     await logScrittura(supabase, {
       attore: auth.user,
+      scuolaId: id,
       entitaTipo: 'multi_sede',
       entitaId: id,
       azione: 'update',

@@ -43,6 +43,7 @@ import {
   type SedeCertificato,
 } from '@/lib/certificati/self-service'
 import { isoToIt } from '@/lib/format/data'
+import { componiIndirizzoSede } from '@/lib/scuole/anagrafica'
 import { zDataYMD } from '@/lib/validation/common'
 import type { BloccoPrestampato, CampoPrestampato } from '@/lib/prestampati/tipi'
 
@@ -184,19 +185,28 @@ export interface DatiGenitore {
  * certificati, non una seconda versione che fra sei mesi degrada in modo diverso.
  */
 export interface DatiSede extends SedeCertificato {
-  /** Estremi dell'autorizzazione comunale al funzionamento del nido (doc. 28). */
+  /** Estremi dell'autorizzazione al funzionamento del nido (doc. 28). */
   autorizzazioneNido?: AutorizzazioneNido | null
 }
 
 /**
- * Uno per ciascuna delle tre sedi: sono tre autorizzazioni comunali diverse, con numeri,
- * date e Comuni diversi. Vivono in `scuole.config.anagrafica`, mai in codice.
+ * Uno per ciascuna delle tre sedi: sono tre autorizzazioni diverse, con numeri, date ed
+ * enti emittenti diversi. Vivono in `scuole.config.anagrafica`, mai in codice.
  */
 export interface AutorizzazioneNido {
   numero?: string | null
   /** ISO `aaaa-mm-gg`. */
   data?: string | null
-  comune?: string | null
+  /**
+   * L'ente che ha EMESSO il provvedimento, per intero e già scritto come va stampato.
+   *
+   * ⚠️ Si chiamava `comune`, e il nome non era un dettaglio: sulle tre sedi vere due
+   * autorizzazioni su tre le ha rilasciate un **Ambito socio-sanitario**, non un Comune
+   * (spec §2.1). Finché il campo si chiamava così, tre punti diversi della catena — la
+   * chiave in configurazione, l'etichetta del form, il testo stampato — affermavano che
+   * l'emittente fosse un Comune, e il certificato lo dichiarava all'INPS.
+   */
+  ente?: string | null
 }
 
 /**
@@ -650,11 +660,16 @@ function periodo(dalIso?: string | null, alIso?: string | null): string {
 /**
  * Rete di sicurezza sui nomi che finiscono nel PDF: mai un'email, mai un indirizzo IP.
  *
- * `buildReceiptPdf()` formatta il firmatario come «Nome <email>», e un chiamante che
- * riusasse quella stringa qui infilerebbe l'email in un foglio che la famiglia stampa e
- * consegna. `impaginazione.ts` ha la stessa guardia sul riquadro di firma, ma le
- * sottoscrizioni del doc. 08 passano dal CORPO del documento e quella guardia non le
- * vede: è la porta che resta aperta se si dà per scontato che il chiamante sia gentile.
+ * ⚠️ **La motivazione scritta qui fino al 2026-08-16 era diventata falsa.** Diceva che
+ * `buildReceiptPdf()` formatta il firmatario come «Nome <email>»: dal 2026-08-16 quella
+ * funzione stampa `senzaRecapiti(payload.signer.name)` e un'email non la produce più. La
+ * guardia **resta**, perché la ragione vera è un'altra e non scade: `nome` lo riempie il
+ * CHIAMANTE con ciò che ha in mano, e un'email non deve poter arrivare in nessun caso su
+ * un foglio che la famiglia stampa e consegna.
+ *
+ * `impaginazione.ts` ha la stessa guardia sul riquadro di firma, ma le sottoscrizioni del
+ * doc. 08 passano dal CORPO del documento e quella guardia non le vede: è la porta che
+ * resta aperta se si dà per scontato che il chiamante sia gentile.
  */
 function nomeSenzaRecapiti(riga: string): string {
   return riga
@@ -1816,15 +1831,23 @@ export const modelloCertificatoIscrizioneFrequenza = definisciModello({
 // ─── 28 — Certificato di iscrizione e frequenza — Nido (Bonus Asilo Nido INPS) ──
 
 /**
- * Gli estremi dell'autorizzazione comunale, in una riga sola e con lo stesso degrado del
- * resto del file: ogni pezzo compare solo se il dato c'è, e senza nessun pezzo la riga non
- * nasce affatto.
+ * Gli estremi dell'autorizzazione al funzionamento, in una riga sola e con lo stesso
+ * degrado del resto del file: ogni pezzo compare solo se il dato c'è, e senza nessun pezzo
+ * la riga non nasce affatto.
  *
- * Interpolarli in una stringa unica — `N. ${numero} del ${data} rilasciata dal Comune di
- * ${comune}` — sembra la stessa cosa e non lo è: con una data che `isoToIt()` non sa
- * leggere ne esce «N. 77/2024 del  rilasciata dal Comune di …», cioè esattamente il
- * «N. ______ del ______» che la specifica vieta di mandare all'INPS, e ne esce **senza
- * che nessuna guardia se ne accorga**, perché una stringa montata a mano non è mai vuota.
+ * Interpolarli in una stringa unica — `N. ${numero} del ${data} rilasciata da ${ente}` —
+ * sembra la stessa cosa e non lo è: con una data che `isoToIt()` non sa leggere ne esce
+ * «N. 77/2024 del  rilasciata da …», cioè esattamente il «N. ______ del ______» che la
+ * specifica vieta di mandare all'INPS, e ne esce **senza che nessuna guardia se ne
+ * accorga**, perché una stringa montata a mano non è mai vuota.
+ *
+ * ⚠️ «rilasciata **da**», e mai «rilasciata dal Comune di»: il prefisso cablato che stava
+ * qui è finito su tre PDF veri il 2026-08-16. Su Giugliano stampava «rilasciata dal Comune
+ * di Comune di Giugliano in Campania» (il dato porta già l'ente per intero); su Aversa e
+ * Cesa stampava «dal Comune di Ambito Socio-Sanitario …», che oltre a non essere italiano
+ * dichiara a un ente pubblico che un Ambito è un Comune. È lo stesso difetto dell'indirizzo
+ * stampato due volte (spec §2.2) spostato in un altro campo: **dato già completo più
+ * decorazione aggiunta dal codice**. Ciò che si stampa è il valore, e basta.
  */
 function estremiAutorizzazioneNido(sede: DatiSede): string {
   const a = sede.autorizzazioneNido
@@ -1832,14 +1855,14 @@ function estremiAutorizzazioneNido(sede: DatiSede): string {
   return [
     a?.numero?.trim() ? `N. ${a.numero.trim()}` : '',
     data ? `del ${data}` : '',
-    a?.comune?.trim() ? `rilasciata dal Comune di ${a.comune.trim()}` : '',
+    a?.ente?.trim() ? `rilasciata da ${a.ente.trim()}` : '',
   ]
     .filter(Boolean)
     .join(' ')
 }
 
 /**
- * Gli estremi dell'autorizzazione comunale ci sono tutti e tre, e sono leggibili?
+ * Gli estremi dell'autorizzazione al funzionamento ci sono tutti e tre, e sono leggibili?
  *
  * Sono tre autorizzazioni diverse, una per sede, e sono l'unico dato che questo
  * certificato porta e che nessun altro documento ha. Se mancano, **il pulsante non
@@ -1855,7 +1878,7 @@ function estremiAutorizzazioneNido(sede: DatiSede): string {
  */
 export function autorizzazioneNidoCompleta(sede: DatiSede): boolean {
   const a = sede.autorizzazioneNido
-  return Boolean(a?.numero?.trim() && isoToIt(a?.data ?? '') && a?.comune?.trim())
+  return Boolean(a?.numero?.trim() && isoToIt(a?.data ?? '') && a?.ente?.trim())
 }
 
 const zCertificatoBonusNido = z.object({})
@@ -1869,16 +1892,29 @@ export type RisposteCertificatoBonusNido = z.infer<typeof zCertificatoBonusNido>
  * ma qui servono come VALORE di un campo e non come riga di intestazione: chiamare
  * quella funzione e pescarne la riga per posizione sarebbe un legame che si rompe in
  * silenzio il giorno in cui una sede non ha il nome.
+ *
+ * ⚠️ La RIGA però si compone in un posto solo, e fino al 2026-08-16 non era così: qui
+ * stavano riscritte a mano le stesse quattro righe di `componiIndirizzoSede`. Il
+ * risultato coincideva byte per byte, quindi nessuna asserzione sull'uscita poteva
+ * accorgersene — ed è precisamente la condizione in cui una copia sopravvive fino al
+ * giorno in cui diverge.
+ *
+ * Che quel giorno arrivi non è un timore astratto: sulla STESSA pagina di questo
+ * certificato c'era una terza copia scritta a mano, `componiScuola` in `prefill.ts`, e
+ * quella era già divergente. Univa tre parti con ` — ` e staccava la sigla dal comune,
+ * stampando «Sede legale: Via Silvio Pellico 7 — 81030 Cesa — (CE)» due righe sopra
+ * «Sede operativa del Nido: Via Filippo Turati 2 — 81030 Cesa (CE)», su un foglio che
+ * va all'INPS. Ora entrambe passano di lì.
  */
 function indirizzoOperativo(sede: DatiSede): string {
-  const capCitta = [sede.scuola_cap?.trim(), sede.scuola_citta?.trim()].filter(Boolean).join(' ')
-  const provincia = sede.scuola_provincia?.trim()
-  return [
-    sede.scuola_indirizzo?.trim(),
-    [capCitta, provincia ? `(${provincia})` : ''].filter(Boolean).join(' '),
-  ]
-    .filter(Boolean)
-    .join(' — ')
+  return (
+    componiIndirizzoSede({
+      indirizzo: sede.scuola_indirizzo,
+      cap: sede.scuola_cap,
+      citta: sede.scuola_citta,
+      provincia: sede.scuola_provincia,
+    }) ?? ''
+  )
 }
 
 export const modelloCertificatoBonusNido = definisciModello({

@@ -1,5 +1,5 @@
 {
-  "titolo": "Forms to fill in",
+  "titolo": "Family certificates and forms",
   "sottotitolo": "Fill in and sign from your phone: nobody will ask you again for the data the school already has.",
 
   "scegliFiglio": "Who it is for",
@@ -31,7 +31,6 @@
   },
 
   "nonFirmabileFirmaDellaScuola": "This document is not signed with your own code: the legal representative of the school signs it.",
-  "nonFirmabileUscitaNonCreata": "The authorisation can be signed once the school has published the trip: destination, date and times are not available yet. Wait for the class announcement.",
   "nonFirmabileSecondaFirmaMancante": "The pick-up authorisation is signed by both parents or guardians, and collecting the second signature is not available yet: for now, hand the authorisation in at the school office.",
   "nonFirmabileAllegatoNonCaricabile": "The pick-up authorisation asks for a scan of the ID of every authorised person, and it cannot be uploaded from the app yet: hand it in at the school office.",
 
@@ -120,7 +119,22 @@
   "erroreFirma": "The signature did not go through: the form was not sent.",
   "erroreDatiMancanti": "Some data the form must carry is missing: please write to the school office.",
 
-  "copiaFamiglia": "Copy for the family — not recorded in the protocol register",
-  "certificatoAvviso": "What you download here is a copy for the family: if an office wants it recorded in the protocol register, ask the school office for it.",
+  "certificatoProtocollato": "Issued with a protocol number and signed by the legal representative.",
+  "certificatoGenera": "Generate the certificate",
+  "certificatoScarica": "Download the certificate",
+  "certificatoInCorso": "Preparing…",
+  "certificatoNuovo": "Generate a new one",
+  "certificatoNuovoAiuto": "The button next to this one always downloads the same certificate, with the same protocol number, for the whole current school year. Next year a new one is issued on its own, because the certificate states the year. “Generate a new one” is only needed if an office wants a more recent date.",
+  "certificatoLegaleRappresentanteAssente": "The name of the person who signs for the school is missing from the location settings: let the office know, the certificate will be issued as soon as it is there.",
+  "certificatoAutorizzazioneNidoMancante": "This location has no recorded nursery operating licence details: without them INPS would reject the certificate. Let the office know.",
+  "certificatoLivelloNonNido": "The INPS Nursery Bonus certificate is only issued for children attending the nursery: for the others you need the enrolment and attendance certificate.",
+  "erroreCertificato": "The certificate was not generated: try again in a few minutes.",
+  "certificatoNonArchiviato": "The certificate was issued, but it did not make it into the school archive: keep it now, it is the only copy you have. Do not press “Generate” again: that would issue another one with a new protocol number. Please let the school office know.",
+  "documentoScarica": "Download the signed form",
+  "documentoArchiviatoIl": "In the file since {data}.",
+  "certificatoNumero": "Protocol no. {numero}.",
+  "uscitaRiga": "Trip on {data} — {destinazione} · leaving {partenza}, back {rientro}.",
+  "uscitaRigaSenzaOrari": "Trip on {data} — {destinazione}.",
+
   "avvisoSanitario": "What you write here concerns your child’s health: it is read by the school office and by the teachers of their class, and by nobody else."
 }

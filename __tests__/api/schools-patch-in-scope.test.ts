@@ -266,3 +266,115 @@ describe('POST /api/admin/schools — creare un plesso è atto della Direzione m
     expect((h.db.scuole ?? []).map((r) => r.id)).toEqual([SEDE_A, SEDE_B, SEDE_E2E])
   })
 })
+
+// =============================================================================
+// LA PROPAGAZIONE SU `schools`, CHE FALLIVA OGNI VOLTA E LO DICEVA PIANO
+//
+// `schools.nome` è NOT NULL senza default (misurato su `information_schema`), e
+// la propagazione usa `upsert(..., {onConflict:'id'})`. Un upsert è comunque un
+// INSERT proposto: Postgres valida i NOT NULL sulla TUPLA PROPOSTA **prima** di
+// risolvere `ON CONFLICT`. Quindi un payload senza `nome` fallisce con 23502
+// anche quando la riga esiste già e sarebbe finita in UPDATE.
+//
+// Non è teoria. In produzione, `app_log` del 2026-08-15 17:50:41Z:
+//
+//   livello warn · multi_sede · admin/schools:PATCH
+//   esito «propagazione-schools-fallita» · sede 429da920… (Aversa)
+//   «null value in column "nome" of relation "schools" violates not-null constraint»
+//   Failing row contains (429da920-…, null, Via Dell'Archeologia 54, …)
+//
+// Il corpo era `{id, citta, indirizzo, anagrafica}` — cioè esattamente ciò che
+// manda Impostazioni → Sede & Intestazione, che il nome non lo mostra e non lo
+// tocca. Perciò NON era un caso limite: era il caso NORMALE, e falliva sempre.
+//
+// L'effetto: `scuole` si aggiornava, `schools` restava indietro, e le due
+// tabelle divergevano in silenzio. `schools` non è decorativa — è ciò che vede
+// il SedeSelector ed è il RIPIEGO da cui prestampati (`banco.ts:1411`), prefill
+// (`prefill.ts:502`) e protocolli (`genera-documento:96`) leggono nome, città e
+// indirizzo quando manca la riga `scuole`. Un ripiego fermo a un valore vecchio
+// stampa il valore vecchio.
+//
+// Perché l'asserzione è sul PAYLOAD e non su un errore: il finto database non
+// impone i vincoli NOT NULL, quindi non può riprodurre il 23502. Ciò che si può
+// provare — ed è la causa radice — è che la riga proposta sia SEMPRE completa.
+// =============================================================================
+describe('PATCH /api/admin/schools — `schools` resta allineata a `scuole`', () => {
+  /** L'upsert su `schools`, se c'è stato. */
+  const propagazione = () =>
+    (h.scritture as Scrittura[]).find((s) => s.tabella === 'schools' && s.operazione === 'upsert')
+
+  it('il corpo di Sede & Intestazione (senza `nome`) propaga lo stesso: la riga proposta è completa', async () => {
+    comeAdminDiAeB()
+    // Il corpo esatto che manda `AnagraficaSedeSettings`: id, citta, indirizzo,
+    // anagrafica. Nessun `nome` — il form non lo mostra nemmeno.
+    const res = await PATCH(patch({
+      id: SEDE_A,
+      citta: 'Giugliano in Campania',
+      indirizzo: 'Via Prima Traversa Antica Giardini 5',
+      anagrafica: { cap: '80014', provincia: 'NA' },
+    }))
+    expect(res.status).toBe(200)
+
+    const p = propagazione()
+    expect(p).toBeDefined()
+    // ⬇️ È QUESTA la riparazione: il nome c'è, quindi l'INSERT proposto è valido.
+    expect(p!.valori[0].nome).toBe(NOME_SEDE_A)
+    expect(p!.valori[0].nome).not.toBeNull()
+    expect(p!.valori[0]).toMatchObject({
+      id: SEDE_A,
+      citta: 'Giugliano in Campania',
+      indirizzo: 'Via Prima Traversa Antica Giardini 5',
+    })
+
+    // E l'effetto c'è davvero: la riga di `schools` porta i valori nuovi.
+    const school = (h.db.schools ?? []).find((r) => r.id === SEDE_A)
+    expect(school).toMatchObject({
+      nome: NOME_SEDE_A,
+      citta: 'Giugliano in Campania',
+      indirizzo: 'Via Prima Traversa Antica Giardini 5',
+    })
+  })
+
+  it('le due tabelle finiscono con gli stessi nome, città e indirizzo', async () => {
+    comeAdminDiAeB()
+    await PATCH(patch({ id: SEDE_B, citta: 'Cesa', indirizzo: 'Via Filippo Turati 2' }))
+
+    const scuola = riga(SEDE_B) as Record<string, unknown>
+    const school = (h.db.schools ?? []).find((r) => r.id === SEDE_B) as Record<string, unknown>
+    for (const campo of ['nome', 'citta', 'indirizzo']) {
+      expect(school[campo]).toBe(scuola[campo])
+    }
+  })
+
+  it('un rinomino esplicito vince: si propaga il nome NUOVO, non quello vecchio', async () => {
+    comeAdminDiAeB()
+    await PATCH(patch({ id: SEDE_A, nome: 'Kidville Giugliano Centro' }))
+
+    expect(propagazione()!.valori[0].nome).toBe('Kidville Giugliano Centro')
+    const school = (h.db.schools ?? []).find((r) => r.id === SEDE_A)
+    expect(school!.nome).toBe('Kidville Giugliano Centro')
+  })
+
+  it('una PATCH che non tocca l\'anagrafica non scrive su `schools`', async () => {
+    // `attiva` vive solo su `scuole`: propagare qui sarebbe una scrittura inutile
+    // su una tabella che nessuno ha chiesto di cambiare.
+    comeAdminDiAeB()
+    await PATCH(patch({ id: SEDE_A, attiva: false }))
+
+    expect(propagazione()).toBeUndefined()
+  })
+
+  it('se la propagazione fallisce davvero, la richiesta riesce ma il guasto si legge', async () => {
+    // Best-effort resta best-effort: `scuole` è la fonte e l'utente non perde il
+    // salvataggio. Ma un `catch` muto è un bug — deve restare la riga di log.
+    comeAdminDiAeB()
+    h.errori = { 'schools:upsert': { code: '23502', message: 'null value in column "nome"' } }
+    const res = await PATCH(patch({ id: SEDE_A, citta: 'Aversa' }))
+
+    expect(res.status).toBe(200)
+    expect(riga(SEDE_A).citta).toBe('Aversa')
+    expect(warn()).toContainEqual(
+      expect.objectContaining({ esito: 'propagazione-schools-fallita', sede_id: SEDE_A }),
+    )
+  })
+})

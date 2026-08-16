@@ -11,16 +11,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { estraiTesto } from '@/lib/protocolli/estrai'
 import { redact, redactInput } from '@/lib/logging/redact'
 import { codeHash } from '@/lib/auth/otp-ticket'
+import { formatNumeroProtocollo } from '@/lib/protocolli/segnatura'
 import {
+  annoScolasticoDelGiorno,
   BUCKET_CERTIFICATI,
   BUCKET_FASCICOLO,
+  componiDescrizioneUscita,
+  datiUscitaDaEvento,
+  descrizioneArchivioProtocollata,
+  documentoDellAnnoScolastico,
   fineAnnoScolastico,
   ilFileRestaNelBucket,
   magazziniAmmessi,
   motivoMancatoArchivioDa,
+  numeroProtocolloDaDescrizione,
+  riusoLegatoAllAnnoScolastico,
+  voceDelGenitore,
   SCHEMA_NON_PRONTO,
   SEMPRE_FIRMABILI_PREDEFINITI,
   sempreFirmabiliDa,
+  titoloUscita,
 } from '@/app/api/parent/prestampati/banco-famiglia'
 
 /**
@@ -89,6 +99,16 @@ const h = vi.hoisted(() => {
     bucketCreazione: { data: null as unknown, error: null as unknown },
     bucketCreati: [] as { nome: string; opzioni: unknown }[],
     /**
+     * I bucket che ESISTONO davvero, cioè quelli su cui un `upload()` può riuscire.
+     *
+     * ⚠️ NON È `bucketCreati`, ed è la distinzione che rende questo doppione capace di
+     * vedere il difetto del 2026-08-16: `bucketCreati` registra i TENTATIVI (serve alle
+     * prove sui parametri con cui il bucket nasce), qui ci finiscono solo le creazioni
+     * riuscite. Con `bucketCreazione.error` valorizzato il bucket resta assente, ed è
+     * esattamente il caso in cui la rotta non deve consumare un numero di protocollo.
+     */
+    bucketPresenti: new Set<string>(),
+    /**
      * Quante volte `listBuckets()` è stata chiamata in una richiesta.
      *
      * Si conta perché `garantisciBucket` serviva due punti — il controllo degli allegati e
@@ -138,6 +158,16 @@ const h = vi.hoisted(() => {
     }[],
     /** Le letture fatte, con i loro filtri: è così che si prova CHE COSA è stato filtrato. */
     letture: [] as { tabella: string; filtri: Record<string, unknown> }[],
+    /**
+     * Le chiamate a `prossimo_numero_protocollo`, e il numero che restituisce.
+     *
+     * Si CONTANO, e il conto è il punto: il registro di protocollo è WORM, e la regola del
+     * riscarico dice che riprendere un certificato già emesso non deve consumare un secondo
+     * numero. «Zero chiamate» è l'unica prova che quel numero non è stato bruciato — la
+     * riga di `protocolli` mancante direbbe solo che non è stata scritta.
+     */
+    rpc: [] as { funzione: string; parametri: unknown }[],
+    prossimoProtocollo: { data: 41 as unknown, error: null as unknown },
   }
   function prendi(tabella: string) {
     const q = state.queues[tabella] ?? []
@@ -147,6 +177,10 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
+      rpc(funzione: string, parametri: unknown) {
+        state.rpc.push({ funzione, parametri })
+        return Promise.resolve(state.prossimoProtocollo)
+      },
       from(tabella: string) {
         const qb: Record<string, unknown> = {}
         const filtri: Record<string, unknown> = {}
@@ -158,6 +192,18 @@ const h = vi.hoisted(() => {
         qb.eq = (colonna: string, valore: unknown) => {
           filtri[colonna] = valore
           return qb
+        }
+        // I confronti d'ordine tengono il filtro come `eq`, con il verso nel nome: è così
+        // che si prova che l'uscita si cerca «da oggi in avanti» e non a ritroso. Devono
+        // esserci TUTTI e quattro: un metodo mancante nel doppione non fa fallire
+        // l'asserzione — fa esplodere la route dentro il suo `try`, e il test misura un
+        // 503 del doppione credendolo un 503 del prodotto (successo il 2026-08-16 con
+        // `gte`).
+        for (const m of ['gte', 'lte', 'gt', 'lt'] as const) {
+          qb[m] = (colonna: string, valore: unknown) => {
+            filtri[`${m}:${colonna}`] = valore
+            return qb
+          }
         }
         qb.insert = (righe: unknown) => {
           state.inserimenti.push({ tabella, righe })
@@ -216,10 +262,32 @@ const h = vi.hoisted(() => {
         },
         createBucket: (nome: string, opzioni: unknown) => {
           state.bucketCreati.push({ nome, opzioni })
+          // Un tentativo respinto non fa esistere niente: vedi `bucketPresenti`.
+          if (!state.bucketCreazione.error) state.bucketPresenti.add(nome)
           return Promise.resolve(state.bucketCreazione)
         },
-        from: () => ({
+        from: (bucket: string) => ({
           upload: (percorso: string, byte: Uint8Array) => {
+            /**
+             * 🔴 LO STORAGE VERO RIFIUTA L'UPLOAD SU UN BUCKET CHE NON C'È, e fino al
+             * 2026-08-16 questo doppione rispondeva `{ data, error: null }` a qualunque
+             * percorso su qualunque magazzino.
+             *
+             * Era la ragione per cui nessun test poteva vedere il difetto misurato in
+             * produzione: `sensitive_documents` non esisteva, ogni «Scarica» del genitore
+             * bruciava un numero di protocollo e rispondeva 201 con `archiviato: false`, e
+             * la suite restava verde. Un doppione che non sa dire di no non è un doppione:
+             * è un lasciapassare.
+             */
+            if (
+              !(state.bucketElenco.data ?? []).some((b) => b.name === bucket) &&
+              !state.bucketPresenti.has(bucket)
+            ) {
+              return Promise.resolve({
+                data: null,
+                error: { message: 'Bucket not found', statusCode: '404' },
+              })
+            }
             // COPIA, e non il `Buffer` che la rotta ha passato: `Buffer.from()` alloca
             // dentro il pool di Node, e PDF.js — che «trasferisce» (detacha) l'ArrayBuffer
             // che riceve — su una memoria condivisa fallisce. `estraiTesto` inghiotte
@@ -360,7 +428,7 @@ vi.mock('@/lib/prestampati/prefill', () => prefillMod)
  * rifiuto di OGGI, che è ciò che le famiglie incontrano.
  */
 
-import { GET } from '@/app/api/parent/prestampati/route'
+import { GET, POST as CHIEDI_DOCUMENTO } from '@/app/api/parent/prestampati/route'
 import { POST, PATCH } from '@/app/api/parent/prestampati/firma/route'
 
 // ─── Dati inventati (repository pubblico) ───────────────────────────────────────
@@ -425,6 +493,31 @@ const PREFILL = {
   legaleRappresentante: null,
 }
 
+/**
+ * La sede che ha compilato le proprie impostazioni: c'è chi firma per la Scuola.
+ *
+ * Non è un dettaglio del banco di prova: misurato in produzione il 2026-08-14, su 4 righe
+ * di `scuole` **nessuna** aveva `legale_rappresentante`, e senza quel nome il render
+ * rifiuta i sei fogli che escono dalla scuola. Le prove che generano davvero partono da una
+ * sede a posto; quella incompleta ha la sua prova, separata.
+ */
+const PREFILL_CON_FIRMA = { ...PREFILL, legaleRappresentante: 'Cesario Inventato' }
+
+/** Lo stesso bambino iscritto al NIDO, con l'autorizzazione al funzionamento configurata. */
+const PREFILL_NIDO = {
+  ...PREFILL_CON_FIRMA,
+  dati: {
+    ...DATI,
+    alunno: { ...DATI.alunno, livello: 'nido' as const },
+    sede: {
+      ...DATI.sede,
+      // L'ente per intero, come sui tre provvedimenti veri: il codice stampa il
+      // valore e non ci antepone «Comune di».
+      autorizzazioneNido: { numero: '000/2020', data: '2020-01-15', ente: 'Ambito Socio-Sanitario Inventato' },
+    },
+  },
+}
+
 /** Lo stesso bambino con DUE tutori in anagrafica: è ciò che fa scattare la doppia firma dell'08. */
 const PREFILL_DUE_TUTORI = {
   ...PREFILL,
@@ -465,6 +558,39 @@ const RISPOSTE_DIETA = {
   motivo: 'scelta_alimentare',
   alimenti: [{ alimento: 'Radicchio inventato', sostituzione: 'Zucchina inventata' }],
   validita: 'fino alla fine dell’anno scolastico',
+}
+
+/**
+ * LA GITA, come `teacher/uscite:POST` la scrive in `eventi_agenda`.
+ *
+ * Non è una riga inventata a mano: la descrizione la compone `componiDescrizioneUscita`,
+ * cioè **la stessa funzione che la route dell'insegnante chiama**. Scriverla a mano qui
+ * avrebbe reso verde il test anche il giorno in cui le due parti smettono di parlarsi —
+ * che è precisamente il guasto contro cui il codec esiste.
+ */
+const USCITA_CORPO = {
+  tipo_attivita: 'gita' as const,
+  destinazione: 'Città della Scienza inventata',
+  data: '2026-09-20',
+  ora_partenza: '08:30',
+  ora_rientro: '16:00',
+  mezzo: 'pullman_privato' as const,
+  attivita_in_acqua: false,
+}
+const USCITA_RIGA = {
+  titolo: titoloUscita(USCITA_CORPO.tipo_attivita, USCITA_CORPO.destinazione),
+  descrizione: componiDescrizioneUscita(USCITA_CORPO),
+  data: USCITA_CORPO.data,
+  orario_inizio: '08:30:00',
+  orario_fine: '16:00:00',
+}
+
+/** Il n. 10 compilato: autorizzo, con un recapito reperibile inventato. */
+const RISPOSTE_USCITA = { autorizzo: true, recapito: '0000000003' }
+
+/** Mette in coda la gita per la sezione del bambino, su tutte le letture di `eventi_agenda`. */
+function conUscitaPubblicata(riga: Record<string, unknown> = USCITA_RIGA) {
+  h.state.fissi['eventi_agenda'] = { data: [riga], error: null }
 }
 
 /** La scansione del documento del delegato: il n. 08 la pretende, e la route la verifica. */
@@ -523,6 +649,49 @@ function reqGet(qs: string) {
   return new NextRequest(`http://localhost/api/parent/prestampati${qs}`, {
     headers: { 'x-user-id': GENITORE },
   })
+}
+
+/** La richiesta di un documento al POST dell'elenco: certificato o riscarico. */
+function reqDocumento(corpo: unknown) {
+  return new NextRequest('http://localhost/api/parent/prestampati', {
+    method: 'POST',
+    headers: { 'x-user-id': GENITORE, 'content-type': 'application/json' },
+    body: JSON.stringify(corpo),
+  })
+}
+
+/**
+ * Un documento di quel tipo GIÀ nel fascicolo del bambino: è ciò che il riscarico ritrova.
+ *
+ * Si scrive nella CODA e non fra i valori fissi: la coda ha la precedenza, e la stessa
+ * tabella qui serve due domande diverse — la prima lettura dice «che cosa c'è già», l'INSERT
+ * che segue risponde con la riga creata. Un valore fisso avrebbe risposto la stessa cosa a
+ * tutt'e due, e la prova avrebbe misurato il doppione.
+ */
+function conDocumentoInArchivio(
+  slug: string,
+  id = DOCUMENTO,
+  descrizione = 'Documento già emesso',
+  // Dentro l'anno scolastico di `DATI` (`2026/2027`), che comincia il 1° agosto 2026.
+  creatoIl = '2026-08-15T09:00:00.000Z',
+) {
+  h.state.queues['student_documents'] = [
+    {
+      data: [
+        {
+          id,
+          document_type: slug,
+          storage_path: `${ALUNNO}/prestampati/${slug}-gia-emesso.pdf`,
+          descrizione,
+          created_at: creatoIl,
+        },
+      ],
+      error: null,
+    },
+    // Il secondo posto serve al ramo «Generane uno nuovo», che dopo la lettura archivia.
+    { data: { id: 'd0000000-0000-4000-8000-00000000000d' }, error: null },
+  ]
+  h.state.used['student_documents'] = 0
 }
 
 function reqFirma(metodo: 'POST' | 'PATCH', corpo: unknown) {
@@ -617,15 +786,27 @@ function campiEvento(esito: string): Record<string, unknown> | undefined {
 beforeEach(() => {
   vi.clearAllMocks()
   h.state.queues = {}
-  h.state.fissi = { utenti: { data: { email: EMAIL }, error: null } }
+  h.state.fissi = {
+    utenti: { data: { email: EMAIL }, error: null },
+    // La riga dell'alunno come la legge il POST della firma quando il precompilato non
+    // serve: sede E sezione. La sezione è ciò che lega il bambino all'uscita — senza, il
+    // n. 10 non avrebbe una gita a cui appartenere e ogni prova su quel modulo misurerebbe
+    // il doppione invece della rotta.
+    alunni: { data: { scuola_id: SCUOLA, section_id: SEZIONE }, error: null },
+  }
   h.state.used = {}
   h.state.inserimenti = []
   h.state.upload = []
   h.state.rimossi = []
   h.state.jti = new Set()
+  h.state.rpc = []
+  h.state.prossimoProtocollo = { data: 41, error: null }
   h.state.bucketElenco = { data: [{ name: 'sensitive_documents' }], error: null }
   h.state.bucketCreazione = { data: null, error: null }
   h.state.bucketCreati = []
+  // Il bucket del PROTOCOLLO non è nell'elenco predefinito: se lo crea `ensureBucket`, come
+  // in produzione. Le prove sul fascicolo partono quindi da un magazzino che c'è già.
+  h.state.bucketPresenti = new Set<string>()
   h.state.bucketElencati = 0
   // Gli allegati che i moduli dichiarano CI SONO: è il caso normale, e le prove che
   // misurano il contrario li tolgono di mezzo una alla volta. Due magazzini, due insiemi:
@@ -726,13 +907,14 @@ describe('GET /api/parent/prestampati — chi entra e che cosa vede', () => {
     expect(per('certificato_iscrizione_frequenza').firmabileOra).toBe(false)
     expect(per('certificato_bonus_nido').motivoNonFirmabile).toBe('firma-della-scuola')
 
-    // 2. IL N. 10, che prima usciva acceso e non si generava MAI. Il modello pretende i dati
-    // dell'uscita (`DatiUscita`) e nessun punto del repo li costruisce: l'uscita la pubblica
-    // la segreteria, e quella strada non esiste ancora. Con la voce accesa il genitore
-    // compilava, chiedeva il codice — bruciando un invio di un budget da 5 ogni dieci minuti,
-    // condiviso con TUTTE le porte OTP — e si vedeva rifiutare la firma.
-    expect(per('autorizzazione_uscita').firmabileOra).toBe(false)
-    expect(per('autorizzazione_uscita').motivoNonFirmabile).toBe('uscita-non-creata')
+    // 2. IL N. 10 NON C'È AFFATTO, e questa è la parte cambiata il 2026-08-16. Prima usciva
+    // ACCESO e non si generava mai; poi è stato spento con un lucchetto e un motivo
+    // (`uscita-non-creata`) — e restava spento **anche quando la gita esisteva davvero**,
+    // perché le uscite vivono in `eventi_agenda` e nessuno costruiva `DatiUscita`. Ora la
+    // regola è: niente uscita pubblicata per la sezione di quel bambino ⇒ la voce non compare
+    // nell'elenco. Un lucchetto su una gita che non esiste è una promessa a chi non ha niente
+    // da firmare.
+    expect(json.modelli.map((m: { slug: string }) => m.slug)).not.toContain('autorizzazione_uscita')
 
     // 3. IL N. 08, che pretende la scansione del documento di ogni delegato e non ha nessuna
     // porta da cui caricarla: il documento d'identità di un TERZO non è un certificato
@@ -872,6 +1054,833 @@ describe('GET /api/parent/prestampati — chi entra e che cosa vede', () => {
   })
 })
 
+// ─── POST /api/parent/prestampati: il certificato che la famiglia si prende da sé ──
+
+describe('il certificato del genitore: dal motore vero, protocollato, e sempre lo stesso', () => {
+  beforeEach(() => {
+    comeGenitore()
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL_CON_FIRMA,
+    })
+    // L'INSERT in `student_documents` risponde con la riga creata: è il ramo felice.
+    h.state.queues['student_documents'] = [
+      { data: null, error: null },
+      { data: { id: DOCUMENTO }, error: null },
+    ]
+    h.state.used['student_documents'] = 0
+  })
+
+  it('non è del genitore ⇒ non esce: né dal ruolo sbagliato né dal bambino sbagliato', async () => {
+    auth.requireUser.mockResolvedValue({ user: { id: 'u-segreteria', role: 'segreteria' } })
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect(res.status).toBe(403)
+    expect(h.state.rpc).toHaveLength(0)
+
+    comeGenitore()
+    negaLaPortata()
+    const altrui = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALTRUI, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect(altrui.status).toBe(403)
+    // Nessun numero consumato, nessun file caricato: il registro è WORM e chi sonda id
+    // altrui non deve poterlo far avanzare di uno.
+    expect(h.state.rpc).toHaveLength(0)
+    expect(h.state.upload).toHaveLength(0)
+  })
+
+  it('genera il 26·27 dal motore vero: carta intestata, protocollo in uscita, fascicolo', async () => {
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.riuso).toBe(false)
+    expect(json.protocollo).toMatch(/^\d{7}\/\d{4}$/)
+
+    // Il numero si chiede UNA volta sola, e per la sede del bambino.
+    expect(h.state.rpc).toHaveLength(1)
+    expect(h.state.rpc[0].funzione).toBe('prossimo_numero_protocollo')
+    expect(h.state.rpc[0].parametri).toMatchObject({ p_scuola: SCUOLA })
+
+    // La riga di registro c'è, e porta l'impronta del file consegnato.
+    const registro = h.state.inserimenti.find((i) => i.tabella === 'protocolli')
+    expect(registro?.righe).toMatchObject({ scuola_id: SCUOLA, numero: 41, tipo: 'uscita' })
+    expect(String((registro?.righe as { impronta_sha256: string }).impronta_sha256)).toMatch(/^SHA256-/)
+
+    // E il fascicolo del bambino: è la copia che si riscarica.
+    const archivio = h.state.inserimenti.find((i) => i.tabella === 'student_documents')
+    expect(archivio?.righe).toMatchObject({
+      student_id: ALUNNO,
+      document_type: 'certificato_iscrizione_frequenza',
+      section_id: SEZIONE,
+    })
+  })
+
+  it('sul foglio non c’è più «Il Dirigente Scolastico», e c’è chi firma davvero', async () => {
+    // ⚠️ È IL DIFETTO DA CUI NASCE TUTTO IL LAVORO, e si misura sul PDF vero: il generatore
+    // vecchio stampava una banda verde con «KIDVILLE SCHOOLS» in giallo e chiudeva con «Il
+    // Dirigente Scolastico» — una figura che in una società cooperativa NON ESISTE e che
+    // comunque non è chi firma. Il PDF qui si genera per davvero: si legge quello che
+    // riceve la famiglia.
+    await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }))
+    const caricato = h.state.upload.find((u) => u.percorso.includes('/prestampati/'))
+    expect(caricato).toBeDefined()
+    const testo = await estraiTesto((caricato as { byte: Uint8Array }).byte)
+
+    expect(testo).not.toMatch(/Dirigente Scolastico/i)
+    expect(testo).not.toMatch(/KIDVILLE SCHOOLS/i)
+    expect(testo).toMatch(/LEGALE RAPPRESENTANTE/i)
+    expect(testo).toContain('Cesario Inventato')
+    // La segnatura di protocollo è sul foglio: è ciò che lo rende spendibile davanti a un ente.
+    expect(testo).toMatch(/0000041/)
+  })
+
+  it('riscaricandolo torna LO STESSO file: stesso protocollo, nessun numero bruciato', async () => {
+    // La regola, testuale dal titolare: «una volta che il genitore ha scaricato il suo
+    // certificato, quel certificato resta salvato, e quando lo va a riprendere riscarica
+    // sempre lo stesso». Il registro è WORM: un numero consumato non torna indietro, e
+    // rigenerare a ogni download vorrebbe dire bruciarne uno per ogni clic.
+    conDocumentoInArchivio('certificato_iscrizione_frequenza')
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.riuso).toBe(true)
+    expect(json.documentoId).toBe(DOCUMENTO)
+    expect(json.url).toBeTruthy()
+    // LE TRE PROVE CHE CONTANO: nessun numero chiesto, nessuna riga nel registro, nessun
+    // file nuovo. Da sola, «nessuna riga in `protocolli`» direbbe solo che non è stata
+    // scritta — il numero poteva essere già stato consumato dalla RPC.
+    expect(h.state.rpc).toHaveLength(0)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(false)
+    expect(h.state.upload).toHaveLength(0)
+  })
+
+  /**
+   * 🔴 IL DIFETTO CHE SI SAREBBE VISTO SOLO FRA UN ANNO, e su un foglio diretto all'INPS.
+   *
+   * Il riuso cercava il documento col SOLO `document_type`, sulla riga più recente di
+   * sempre. Ma il certificato dichiara l'anno — «risulta regolarmente iscritto/a … per
+   * l'anno scolastico 2026/2027», letto sul PDF vero archiviato in produzione (prot.
+   * 0000006/2026) — quindi a settembre 2027 il pulsante primario, che si chiama «Scarica il
+   * certificato», avrebbe riconsegnato una dichiarazione falsa sull'anno in corso.
+   *
+   * Qui l'archivio porta un certificato del **2025/2026** mentre il precompilato dice
+   * `2026/2027`: la rotta deve emetterne uno nuovo, con numero nuovo.
+   */
+  it('il certificato dell’anno SCORSO non si riscarica: se ne emette uno nuovo', async () => {
+    conDocumentoInArchivio(
+      'certificato_iscrizione_frequenza',
+      DOCUMENTO,
+      'Certificato di iscrizione e frequenza — Prot. n. 0000006/2026',
+      // 10 settembre 2025: anno scolastico 2025/2026, non quello di `DATI`.
+      '2025-09-10T09:00:00.000Z',
+    )
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.riuso).toBe(false)
+    // Il numero si chiede davvero: è un'emissione, non un riscarico travestito.
+    expect(h.state.rpc).toHaveLength(1)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(true)
+    // E lo scarto si LOGGA: senza, «gli è arrivato un certificato nuovo» e «il riscarico si
+    // è rotto» sarebbero indistinguibili in `app_log`, e la differenza si vedrebbe a
+    // settembre. Nessun dato personale nella riga.
+    const riga = spie.chiamate.find(
+      (c) =>
+        c[0] === 'logEvento' &&
+        (c[3] as { esito?: string })?.esito === 'riuso-scartato-altro-anno',
+    )
+    expect(riga?.[2]).toBe('info')
+    expect((riga?.[3] as { anno?: string })?.anno).toBe(DATI.annoScolastico)
+  })
+
+  it('il modulo FIRMATO dell’anno scorso invece si riscarica: è il fatto di quel giorno', async () => {
+    // Il vincolo dell'anno vale solo su ciò che la SCUOLA certifica. Una scheda sanitaria
+    // firmata a settembre 2025 resta la scheda firmata a settembre 2025: toglierla
+    // dall'archivio sarebbe il difetto opposto (W4.4, «riscaricabili SEMPRE»).
+    conDocumentoInArchivio(
+      'scheda_sanitaria',
+      DOCUMENTO,
+      'Scheda sanitaria',
+      '2025-09-10T09:00:00.000Z',
+    )
+    const res = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'scheda_sanitaria' }))
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(200)
+    expect(json.riuso).toBe(true)
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’elenco non promette «Scarica» su un certificato dell’anno scorso', async () => {
+    // Una regola valida per due strade vive in un posto solo: se il GET tenesse la riga
+    // vecchia, la scheda direbbe «Scarica il certificato» e il POST emetterebbe un numero
+    // nuovo — cioè la schermata mentirebbe al genitore sul gesto che sta per fare.
+    h.state.queues['student_documents'] = [
+      {
+        data: [
+          {
+            id: DOCUMENTO,
+            document_type: 'certificato_iscrizione_frequenza',
+            descrizione: 'Certificato di iscrizione e frequenza — Prot. n. 0000006/2026',
+            created_at: '2025-09-10T09:00:00.000Z',
+          },
+          {
+            id: 'd1000000-0000-4000-8000-00000000000d',
+            document_type: 'scheda_sanitaria',
+            descrizione: 'Scheda sanitaria',
+            created_at: '2025-09-10T09:00:00.000Z',
+          },
+        ],
+        error: null,
+      },
+    ]
+    h.state.used['student_documents'] = 0
+
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const per = (slug: string) =>
+      (json.modelli as { slug: string; documentoArchiviatoId: string | null }[]).find(
+        (m) => m.slug === slug,
+      )!
+    expect(per('certificato_iscrizione_frequenza').documentoArchiviatoId).toBeNull()
+    // Il modulo firmato dell'anno scorso resta riscaricabile, nello stesso elenco.
+    expect(per('scheda_sanitaria').documentoArchiviatoId).toBe('d1000000-0000-4000-8000-00000000000d')
+  })
+
+  it('«Generane uno nuovo» emette data e protocollo nuovi, e il precedente resta', async () => {
+    // ⚠️ CON `nuovo: true` LA LETTURA DELL'ARCHIVIO NON SI FA AFFATTO — è il gesto esplicito
+    // «voglio un altro certificato», e chiedere che cosa c'è già non cambierebbe la
+    // risposta. Quindi la prima cosa che la rotta consuma è l'INSERT, non la SELECT.
+    h.state.queues['student_documents'] = [
+      { data: { id: 'd0000000-0000-4000-8000-00000000000d' }, error: null },
+    ]
+    h.state.used['student_documents'] = 0
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza', nuovo: true }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.riuso).toBe(false)
+    expect(h.state.rpc).toHaveLength(1)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(true)
+    // Il precedente non si tocca: nessuna cancellazione, nessuna sovrascrittura.
+    expect(h.state.rimossi).toEqual([])
+  })
+
+  it('il corpo senza `nuovo` vale RISCARICO, non emissione', async () => {
+    // La direzione in cui si sbaglia si sceglie: un client che dimentica il campo deve
+    // ottenere il file di prima, non un numero di protocollo bruciato.
+    conDocumentoInArchivio('certificato_iscrizione_frequenza')
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect((await res.json()).riuso).toBe(true)
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('il Bonus Nido senza autorizzazione è un 422 leggibile, MAI un 500 e MAI un numero', async () => {
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: {
+        ...PREFILL_NIDO,
+        dati: { ...PREFILL_NIDO.dati, sede: { ...DATI.sede, autorizzazioneNido: null } },
+      },
+    })
+    const res = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_bonus_nido' }))
+    const json = await res.json()
+
+    expect(res.status).toBe(422)
+    expect(json.codice).toBe('PRESTAMPATO_DATI_MANCANTI')
+    // Enumerato e non prosa: l'app è bilingue e il server no.
+    expect(json.motivo).toBe('autorizzazione-nido-mancante')
+    // Un certificato con «N. ______ del ______» l'INPS lo rifiuta: meglio non emetterlo. E
+    // il numero non si consuma per un motivo che si conosceva prima di comporre.
+    expect(h.state.rpc).toHaveLength(0)
+    // Configurazione mancante = `error`, mai `info` (AGENTS.md §4).
+    const riga = spie.chiamate.find(
+      (c) =>
+        c[0] === 'logEvento' &&
+        (c[3] as { esito?: string })?.esito === 'autorizzazione-nido-non-configurata',
+    )
+    expect(riga?.[2]).toBe('error')
+  })
+
+  it('il Bonus Nido a un bambino che il nido non lo frequenta non si emette', async () => {
+    // `dati.alunno.livello` è `infanzia` nel precompilato predefinito: il Bonus Asilo Nido
+    // spetta a un servizio 0-3, e un certificato emesso per un altro livello è una
+    // dichiarazione falsa a un ente pubblico.
+    const res = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_bonus_nido' }))
+    const json = await res.json()
+    expect(res.status).toBe(422)
+    expect(json.motivo).toBe('livello-non-nido')
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('senza il nome di chi firma il certificato non esce, e lo dice con un motivo suo', async () => {
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL,
+    })
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+    expect(res.status).toBe(422)
+    expect(json.motivo).toBe('legale-rappresentante-assente')
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('i moduli firmati si riscaricano SEMPRE, e quelli non firmati non si generano da qui', async () => {
+    // 🔴 IL DIFETTO CHE CHIUDE: il PDF della scheda sanitaria firmata viveva solo dentro la
+    // risposta 201 della firma. Chi chiudeva la pagina lo perdeva, e nessun elenco lo
+    // nominava più.
+    conDocumentoInArchivio('scheda_sanitaria')
+    const riscarico = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'scheda_sanitaria' }),
+    )
+    const json = await riscarico.json()
+    expect(riscarico.status).toBe(200)
+    expect(json.riuso).toBe(true)
+    expect(json.url).toBeTruthy()
+    // Un riscarico è una lettura del fascicolo, e lascia la sua riga d'audit.
+    const audit = h.state.inserimenti.filter((i) => i.tabella === 'fascicolo_accessi_audit')
+    expect(audit).toHaveLength(1)
+    expect(audit[0].righe).toMatchObject({ azione: 'download', alunno_id: ALUNNO })
+
+    // E se non è firmato non si genera da qui: la firma è l'altra porta, e la frase di
+    // catalogo di `PRESTAMPATO_FIRMA_NON_VALIDA` dice esattamente questo. Fascicolo vuoto:
+    // la coda si azzera, e la lettura torna il `null` predefinito.
+    h.state.queues['student_documents'] = []
+    h.state.used['student_documents'] = 0
+    const senza = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'scheda_sanitaria' }))
+    expect(senza.status).toBe(409)
+    expect((await senza.json()).codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’archivio non letto NON diventa «non ce n’è»: non si emette un secondo numero al buio', async () => {
+    // «Non so se ce n'è già uno» + «genero» = un secondo numero di protocollo bruciato su
+    // un registro WORM per un guasto di lettura. Meglio un 503 che si ritenta.
+    h.state.queues['student_documents'] = [
+      { data: null, error: { code: '42703', message: 'column does not exist' } },
+    ]
+    h.state.used['student_documents'] = 0
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    expect(res.status).toBe(503)
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’elenco dice quali documenti sono già nel fascicolo', async () => {
+    conDocumentoInArchivio('scheda_sanitaria')
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const per = (slug: string) =>
+      json.modelli.find((m: { slug: string }) => m.slug === slug) as {
+        documentoArchiviatoId: string | null
+      }
+    expect(per('scheda_sanitaria').documentoArchiviatoId).toBe(DOCUMENTO)
+    // Gli altri no: il documento è per TIPO, non per bambino.
+    expect(per('permesso_orario').documentoArchiviatoId).toBeNull()
+  })
+
+  // ── Il magazzino prima del numero ─────────────────────────────────────────────
+
+  it('senza il magazzino del fascicolo NON si consuma un numero: prima il bucket, poi il protocollo', async () => {
+    /**
+     * 🔴 IL DIFETTO MISURATO IN PRODUZIONE IL 2026-08-16, e la ragione per cui questa prova
+     * esiste. `sensitive_documents` non c'era (`storage.buckets` aveva quattordici righe e
+     * nessuna era quella), e questa rotta caricava nel fascicolo senza garantirlo: due POST
+     * identici del certificato hanno risposto 201 con `documentoId: null`, non hanno lasciato
+     * nessuna riga in `student_documents` e hanno bruciato **due numeri di protocollo** — il
+     * 3 e il 4, sullo stesso bambino e sullo stesso oggetto. Il registro è WORM: quei due
+     * numeri non tornano indietro.
+     *
+     * La regola che ne esce è una sola riga: **un numero non si consuma se il magazzino in
+     * cui il foglio deve finire non c'è.** Qui la creazione del bucket viene respinta, e ciò
+     * che si misura è che la numerazione non sia stata nemmeno chiesta.
+     */
+    h.state.bucketElenco = { data: [], error: null }
+    h.state.bucketCreazione = { data: null, error: { message: 'permission denied for table buckets' } }
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(503)
+    expect(h.state.rpc).toHaveLength(0)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(false)
+    expect(h.state.upload).toHaveLength(0)
+
+    // E il CORPO dell'errore del provider resta nel log: `403` non dice niente, `403
+    // "permission denied for table buckets"` dice tutto (AGENTS.md §3).
+    const riga = spie.chiamate.find(
+      (c) => c[0] === 'logEvento' && (c[3] as { esito?: string })?.esito === 'bucket-non-creato',
+    )
+    expect(riga?.[2]).toBe('error')
+    expect(JSON.stringify(riga?.[4])).toContain('permission denied')
+  })
+
+  it('il bucket del fascicolo, se manca, lo crea anche QUESTA porta — e coi parametri di tutti', async () => {
+    // Fino al 2026-08-16 lo garantiva solo la rotta della firma, e il certificato del
+    // genitore dipendeva quindi da un effetto collaterale di un'altra porta: finiva in
+    // archivio solo se qualcun altro aveva già firmato qualcosa. I parametri sono quelli
+    // condivisi — il bucket lo usa anche il fascicolo della primaria, che carica immagini.
+    h.state.bucketElenco = { data: [], error: null }
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.archiviato).toBe(true)
+    expect(json.documentoId).toBe(DOCUMENTO)
+
+    const creato = h.state.bucketCreati.find((b) => b.nome === 'sensitive_documents')
+    expect(creato, JSON.stringify(h.state.bucketCreati)).toBeDefined()
+    expect(creato?.opzioni).toMatchObject({
+      public: false,
+      allowedMimeTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+      fileSizeLimit: 15 * 1024 * 1024,
+    })
+  })
+
+  it('il riscarico DICE quale numero riconsegna: la promessa non resta a metà', async () => {
+    // Il pannello promette «riscarica sempre lo stesso certificato, con lo stesso numero di
+    // protocollo» e poi rispondeva `protocollo: null` pur avendo il numero già in mano: per
+    // sapere se il foglio che sta per mandare all'INPS è il 5 o il 6, il genitore doveva
+    // aprire il PDF.
+    conDocumentoInArchivio(
+      'certificato_iscrizione_frequenza',
+      DOCUMENTO,
+      'Certificato di iscrizione e frequenza — Prot. n. 0000005/2026',
+    )
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(json.riuso).toBe(true)
+    expect(json.protocollo).toBe('0000005/2026')
+    // E resta vero ciò che conta: nessun numero nuovo chiesto.
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’elenco porta il numero del certificato già in archivio, non solo la sua data', async () => {
+    conDocumentoInArchivio(
+      'certificato_iscrizione_frequenza',
+      DOCUMENTO,
+      'Certificato di iscrizione e frequenza — Prot. n. 0000005/2026',
+    )
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const voce = json.modelli.find(
+      (m: { slug: string }) => m.slug === 'certificato_iscrizione_frequenza',
+    )
+    expect(voce.protocolloArchiviato).toBe('0000005/2026')
+  })
+
+  // ── Il certificato che per QUESTO bambino non si può emettere ─────────────────
+
+  it('il Bonus Nido arriva SPENTO a chi il nido non lo frequenta, e non promette un pulsante che fallirà', async () => {
+    /**
+     * 🔴 Misurato su un telefono (430×900): il pulsante «GENERA IL CERTIFICATO» del Bonus
+     * Nido stava a `y≈768`, si premeva, e il rifiuto veniva disegnato a `y = -777` — cioè
+     * fuori dallo schermo. Al genitore sembrava che il clic non avesse fatto niente.
+     *
+     * Il rifiuto però era prevedibile senza chiedere niente al server: il GET carica già il
+     * precompilato e conosce `dati.alunno.livello`. La regola è la stessa che usa il POST
+     * (`motivoNonGenerabile`), perché una regola valida per due strade vive in un posto solo.
+     */
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL_CON_FIRMA,
+    })
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const per = (slug: string) =>
+      json.modelli.find((m: { slug: string }) => m.slug === slug) as {
+        generabileOra: boolean
+        motivoNonGenerabile: string | null
+      }
+
+    expect(per('certificato_bonus_nido').generabileOra).toBe(false)
+    expect(per('certificato_bonus_nido').motivoNonGenerabile).toBe('livello-non-nido')
+    // L'altro certificato invece si emette: la sede ha chi firma e il livello non c'entra.
+    expect(per('certificato_iscrizione_frequenza').generabileOra).toBe(true)
+    expect(per('certificato_iscrizione_frequenza').motivoNonGenerabile).toBeNull()
+    // E sui moduli che la famiglia firma il campo non inventa un divieto che non esiste.
+    expect(per('scheda_sanitaria').generabileOra).toBe(false)
+    expect(per('scheda_sanitaria').motivoNonGenerabile).toBeNull()
+  })
+
+  it('senza il nome di chi firma per la Scuola nessuno dei due certificati arriva acceso', async () => {
+    // `PREFILL` (predefinito del `beforeEach` esterno) non ha il legale rappresentante:
+    // misurato in produzione il 2026-08-14, su 4 righe di `scuole` nessuna ce l'aveva.
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL,
+    })
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    for (const slug of ['certificato_iscrizione_frequenza', 'certificato_bonus_nido']) {
+      const voce = json.modelli.find((m: { slug: string }) => m.slug === slug)
+      expect(voce.generabileOra, slug).toBe(false)
+      expect(voce.motivoNonGenerabile, slug).toBe('legale-rappresentante-assente')
+    }
+  })
+})
+
+// ─── Il n. 10 e l'uscita che lo accende ─────────────────────────────────────────
+
+describe('l’autorizzazione all’uscita esiste solo se esiste la gita', () => {
+  /**
+   * IL ROUND-TRIP È IL LOCK, ed è l'unica cosa che tiene insieme le due metà.
+   *
+   * `eventi_agenda` non ha una colonna `jsonb`: i dati della gita viaggiano dentro il TESTO
+   * della descrizione, scritto da `teacher/uscite:POST` e riletto dalle due porte della
+   * famiglia. Se le etichette divergono il modulo esce lo stesso, con la destinazione
+   * vuota, e nessun errore lo segnala — è il modo silenzioso in cui questo formato si
+   * rompe. Questa prova compone e rilegge, e confronta con l'input.
+   */
+  /**
+   * ⚠️ IL LOCK VERO È QUESTO, E IL ROUND-TRIP DA SOLO NON BASTAVA.
+   *
+   * Misurato il 2026-08-16: rinominando `RIGA_DESTINAZIONE` da `'Destinazione'` a `'Meta'`
+   * la suite restava **verde**, perché chi scrive e chi legge usano la stessa costante e il
+   * round-trip è coerente per costruzione. Ma in `eventi_agenda` ci sono già righe scritte
+   * con le etichette di oggi: rinominarne una le rende illeggibili, cioè **spegne il modulo
+   * n. 10 per le gite già annunciate alle famiglie**, in silenzio.
+   *
+   * Perciò qui la descrizione è una STRINGA LETTERALE, copiata dal formato che la route
+   * dell'insegnante scrive da quando esiste, e il titolo è `null`: ogni campo deve uscire
+   * dalla descrizione, senza appoggiarsi al titolo. Se un'etichetta cambia, questa prova
+   * diventa rossa — ed è l'unico posto in cui può farlo.
+   */
+  it('il formato già scritto in produzione resta leggibile, etichetta per etichetta', () => {
+    const letto = datiUscitaDaEvento({
+      titolo: null,
+      descrizione: [
+        'Tipo di attività: Corso di piscina/nuoto',
+        'Destinazione: Piscina comunale inventata',
+        'Data: 20/09/2026 · Partenza: 08:30 · Rientro previsto: 16:00',
+        'Mezzo di trasporto: Scuolabus',
+        'Attività in acqua: Sì',
+        'Accompagnatori: due maestre',
+        'Quota di partecipazione: € 12,00',
+        'Si ricorda di segnalare eventuali informazioni sanitarie rilevanti già indicate nella scheda sanitaria dell’alunno/a.',
+      ].join('\n'),
+      data: '2026-09-20',
+      orario_inizio: '08:30:00',
+      orario_fine: '16:00:00',
+    })
+    expect(letto).toEqual({
+      tipo: 'piscina',
+      destinazione: 'Piscina comunale inventata',
+      data: '2026-09-20',
+      oraPartenza: '08:30',
+      oraRientro: '16:00',
+      mezzo: 'scuolabus',
+      attivitaInAcqua: true,
+    })
+  })
+
+  it('ciò che l’insegnante scrive in agenda è ciò che il modulo rilegge', () => {
+    const letto = datiUscitaDaEvento(USCITA_RIGA)
+    expect(letto).toEqual({
+      // `gita` di qua, `gita` di là: il tipo dell'agenda si traduce in quello del modello.
+      tipo: 'gita',
+      destinazione: USCITA_CORPO.destinazione,
+      data: USCITA_CORPO.data,
+      // I secondi della `time` di Postgres non arrivano sul foglio.
+      oraPartenza: '08:30',
+      oraRientro: '16:00',
+      mezzo: 'pullman_privato',
+      attivitaInAcqua: false,
+    })
+  })
+
+  it('«corso di piscina» diventa «piscina», e l’attività in acqua sopravvive alla scrittura', () => {
+    // I due elenchi hanno cinque voci identiche e UN nome diverso per la stessa cosa
+    // (`corso_piscina` in agenda, `piscina` nel modello): senza la traduzione il foglio
+    // stamperebbe «Altro» su un corso di nuoto. E `attivitaInAcqua` è il dato che decide se
+    // il modulo chiede «sa nuotare»: prima del 2026-08-16 non veniva scritto affatto.
+    const riga = {
+      titolo: titoloUscita('corso_piscina', 'Piscina inventata'),
+      descrizione: componiDescrizioneUscita({
+        ...USCITA_CORPO,
+        tipo_attivita: 'corso_piscina',
+        destinazione: 'Piscina inventata',
+        mezzo: 'a_piedi',
+        attivita_in_acqua: true,
+      }),
+      data: USCITA_CORPO.data,
+      orario_inizio: '08:30:00',
+      orario_fine: '16:00:00',
+    }
+    const letto = datiUscitaDaEvento(riga)
+    expect(letto?.tipo).toBe('piscina')
+    expect(letto?.mezzo).toBe('a_piedi')
+    expect(letto?.attivitaInAcqua).toBe(true)
+  })
+
+  it('una riga senza destinazione o senza data NON è un’uscita da autorizzare', () => {
+    // Le due condizioni sono quelle che il foglio dichiara e che un ente leggerebbe: dove
+    // si va e quando. Senza una delle due il documento autorizzerebbe la partecipazione a
+    // un'attività che non dice dove va né quando.
+    expect(datiUscitaDaEvento(null)).toBeNull()
+    expect(datiUscitaDaEvento({ ...USCITA_RIGA, data: null })).toBeNull()
+    expect(datiUscitaDaEvento({ ...USCITA_RIGA, data: '20/09/2026' })).toBeNull()
+    // Né descrizione strutturata né titolo: non c'è niente da scrivere sul foglio.
+    expect(
+      datiUscitaDaEvento({ ...USCITA_RIGA, descrizione: 'Andiamo in gita', titolo: null }),
+    ).toBeNull()
+    expect(
+      datiUscitaDaEvento({ ...USCITA_RIGA, descrizione: 'Andiamo in gita', titolo: '   ' }),
+    ).toBeNull()
+  })
+
+  /**
+   * 🔴 LA RIGA CHE SPEGNEVA LA FUNZIONE INTERA, e la misura che lo dimostra.
+   *
+   * Fino al 2026-08-16 `datiUscitaDaEvento` pretendeva ENTRAMBI gli orari
+   * (`if (!oraPartenza || !oraRientro) return null`). Nessuna schermata di questo prodotto
+   * li scrive: l'unico composer di `eventi_agenda` è `TeacherAgendaCard`, che manda
+   * `{section_id, titolo, data, tipo, visibile_genitori}` a `agenda:POST`, il quale salva
+   * `orario_inizio`/`orario_fine` a `null`. Esito: la segreteria creava la gita, e il n. 10
+   * non compariva **mai** — per costruzione, con tutti i test verdi.
+   *
+   * Queste tre prove sono rosse sul codice di prima, una per forma del difetto.
+   */
+  it('la gita creata dall’agenda — senza orari, titolo senza due punti — accende il n. 10', () => {
+    // È la riga che `TeacherAgendaCard` produce davvero: titolo scritto a mano dalla
+    // maestra, nessun orario, descrizione vuota.
+    const letto = datiUscitaDaEvento({
+      titolo: 'Gita al museo',
+      descrizione: null,
+      data: '2026-10-01',
+      orario_inizio: null,
+      orario_fine: null,
+    })
+    expect(letto).not.toBeNull()
+    // Il titolo per intero: è la frase con cui la scuola l'uscita l'ha annunciata alle
+    // famiglie, non un'invenzione di chi legge.
+    expect(letto?.destinazione).toBe('Gita al museo')
+    expect(letto?.data).toBe('2026-10-01')
+    // ⚠️ `null` e non `''`: il modello salta le righe-campo vuote (`campo()`), quindi sul
+    // foglio «Orario partenza» non compare affatto. Una stringa vuota stamperebbe
+    // l'etichetta con il valore in bianco, che su un'autorizzazione si legge come un
+    // orario deciso e non comunicato.
+    expect(letto?.oraPartenza).toBeNull()
+    expect(letto?.oraRientro).toBeNull()
+  })
+
+  it('un solo orario resta un’uscita valida, e stampa quello che sa', () => {
+    const soloPartenza = datiUscitaDaEvento({ ...USCITA_RIGA, orario_fine: null })
+    expect(soloPartenza?.oraPartenza).toBe('08:30')
+    expect(soloPartenza?.oraRientro).toBeNull()
+    const soloRientro = datiUscitaDaEvento({ ...USCITA_RIGA, orario_inizio: '   ' })
+    expect(soloRientro?.oraPartenza).toBeNull()
+    expect(soloRientro?.oraRientro).toBe('16:00')
+  })
+
+  /**
+   * ⚠️ IL LOCK: il n. 10 dipende SOLO da ciò che una schermata di questo repo sa scrivere.
+   *
+   * Il difetto non era «manca un dato»: era che il lettore chiedeva campi che nessuno
+   * scriveva, e la prova di questo non poteva stare in una fixture inventata — una fixture
+   * la scrive chi scrive il test, e infatti tutte le fixture avevano gli orari. Qui la riga
+   * di `eventi_agenda` si costruisce **dalle chiavi che il composer vero manda**, lette dal
+   * suo sorgente: se domani qualcuno rimette una pretesa su un campo che quel corpo non
+   * porta, questa prova diventa rossa da sola.
+   *
+   * È dinamico apposta: il giorno in cui il composer imparerà a mandare gli orari, la riga
+   * qui costruita li avrà e la prova resterà verde. Un lock che diventasse rosso su un
+   * miglioramento non sarebbe un lock, sarebbe un freno.
+   */
+  it('il n. 10 si accende con le SOLE chiavi che il composer dell’agenda manda davvero', () => {
+    const composer = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/features/teacher/TeacherAgendaCard.tsx'),
+      'utf8',
+    )
+    // Il corpo del POST verso `/api/agenda`: `body: JSON.stringify({ … })`. Si taglia per
+    // RIGHE e non con una regex golosa: dentro il corpo c'è già un `}),` (lo spread
+    // ternario della sezione), e un `[\s\S]*?` si fermerebbe lì leggendo mezzo oggetto.
+    const righe = composer.split('\n')
+    const inizio = righe.findIndex((r) => r.includes('body: JSON.stringify({'))
+    expect(inizio, 'il composer dell’agenda non è più riconoscibile: il lock guarda nel vuoto').toBeGreaterThan(-1)
+    const resto = righe.slice(inizio + 1)
+    const fine = resto.findIndex((r) => /^\s{8}\}\),\s*$/.test(r))
+    expect(fine, 'il corpo del POST non si chiude dove il lock lo cerca').toBeGreaterThan(-1)
+    const corpo = resto.slice(0, fine).join('\n')
+    const chiavi = new Set([...corpo.matchAll(/^\s*([a-z_]+)[,:]/gm)].map((m) => m[1]))
+    // Il lock sta guardando qualcosa: senza queste due, le prove qui sotto sarebbero verdi
+    // su una regex che non trova niente.
+    expect(chiavi.has('titolo')).toBe(true)
+    expect(chiavi.has('data')).toBe(true)
+
+    const evento = {
+      titolo: chiavi.has('titolo') ? 'Gita al museo' : null,
+      descrizione: chiavi.has('descrizione') ? componiDescrizioneUscita(USCITA_CORPO) : null,
+      data: chiavi.has('data') ? '2026-10-01' : null,
+      orario_inizio: chiavi.has('orario_inizio') ? '08:30:00' : null,
+      orario_fine: chiavi.has('orario_fine') ? '16:00:00' : null,
+    }
+    expect(
+      datiUscitaDaEvento(evento),
+      'il n. 10 pretende un campo che nessuna schermata di questo repo scrive: sarebbe invisibile a ogni famiglia',
+    ).not.toBeNull()
+  })
+
+  it('un’uscita nata dall’agenda generica si legge dal titolo, e il tipo ignoto vale «altro»', () => {
+    // `eventi_agenda` accetta `tipo='uscita'` anche da `POST /api/agenda`, dove la
+    // descrizione è testo libero: là il titolo è l'unica cosa che ha una forma.
+    const letto = datiUscitaDaEvento({
+      titolo: 'Passeggiata: Parco inventato',
+      descrizione: 'Ci vediamo davanti al cancello.',
+      data: '2026-10-01',
+      orario_inizio: '09:00:00',
+      orario_fine: '11:30:00',
+    })
+    expect(letto?.destinazione).toBe('Parco inventato')
+    expect(letto?.tipo).toBe('altro')
+    expect(letto?.mezzo).toBeNull()
+  })
+
+  it('con la gita pubblicata il n. 10 COMPARE, acceso e con destinazione, data e orari veri', async () => {
+    conUscitaPubblicata()
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const dieci = json.modelli.find((m: { slug: string }) => m.slug === 'autorizzazione_uscita')
+    expect(dieci).toBeDefined()
+    expect(dieci.firmabileOra).toBe(true)
+    expect(dieci.motivoNonFirmabile).toBeNull()
+    // E la gita esce accanto all'elenco: il genitore deve sapere che cosa sta autorizzando
+    // PRIMA di aprire il modulo.
+    expect(json.uscita).toEqual({
+      destinazione: USCITA_CORPO.destinazione,
+      data: USCITA_CORPO.data,
+      oraPartenza: '08:30',
+      oraRientro: '16:00',
+    })
+  })
+
+  it('anche la gita SENZA ORARI fa comparire il n. 10 nell’elenco, e la scheda non finge un orario', async () => {
+    // Il caso normale in produzione, non un limite: `agenda:POST` gli orari li salva
+    // `null`. Prima di oggi questa richiesta tornava l'elenco SENZA il n. 10 — cioè la
+    // funzione consegnata non si vedeva da nessuna famiglia.
+    conUscitaPubblicata({
+      titolo: 'Gita al museo',
+      descrizione: null,
+      data: '2026-10-01',
+      orario_inizio: null,
+      orario_fine: null,
+    })
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const dieci = json.modelli.find((m: { slug: string }) => m.slug === 'autorizzazione_uscita')
+    expect(dieci).toBeDefined()
+    expect(dieci.firmabileOra).toBe(true)
+    expect(json.uscita).toEqual({
+      destinazione: 'Gita al museo',
+      data: '2026-10-01',
+      // `null`, non `''`: la scheda ha una frase apposta per questo caso.
+      oraPartenza: null,
+      oraRientro: null,
+    })
+  })
+
+  it('l’uscita si cerca nella SEZIONE e nella SEDE del bambino, e solo da oggi in avanti', async () => {
+    conUscitaPubblicata()
+    await GET(reqGet(`?alunnoId=${ALUNNO}`))
+    const lettura = h.state.letture.find((l) => l.tabella === 'eventi_agenda')
+    expect(lettura?.filtri).toMatchObject({
+      section_id: SEZIONE,
+      scuola_id: SCUOLA,
+      tipo: 'uscita',
+      visibile_genitori: true,
+      // «Da oggi in avanti»: un'autorizzazione si firma PRIMA di partire, e la gita di
+      // marzo scorso non si autorizza più. La data è quella CIVILE italiana che il
+      // precompilato ha già calcolato, non `new Date()` del processo (su Vercel è UTC).
+      'gte:data': DATI.dataOggi,
+    })
+  })
+
+  it('un’uscita NON LETTA non diventa «non c’è nessuna gita»', async () => {
+    // Togliere la voce per un guasto di lettura vorrebbe dire dire alla famiglia «non c'è
+    // nessuna gita» quando la risposta vera è «non lo so» — e il giorno della partenza
+    // nessuno collegherebbe le due cose.
+    h.state.fissi['eventi_agenda'] = {
+      data: null,
+      error: { code: '42P01', message: 'relation "eventi_agenda" does not exist' },
+    }
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    expect(json.modelli.map((m: { slug: string }) => m.slug)).toContain('autorizzazione_uscita')
+    const riga = spie.chiamate.find(
+      (c) => c[0] === 'logEvento' && (c[3] as { esito?: string })?.esito === 'uscita-non-letta',
+    )
+    expect(riga?.[2]).toBe('warn')
+    expect((riga?.[3] as { error_code?: string })?.error_code).toBe('42P01')
+  })
+
+  it('senza gita il codice di firma NON parte: il budget OTP non si brucia su un modulo che non c’è', async () => {
+    // `LIMITE_OTP_INVIO` è di 5 invii per finestra di dieci minuti ed è CONDIVISO fra tutte
+    // le porte OTP: cinque tentativi su una gita inesistente lascerebbero il genitore senza
+    // modo di firmare l'autorizzazione a un farmaco.
+    const res = await POST(reqFirma('POST', { slug: 'autorizzazione_uscita', alunnoId: ALUNNO }))
+    const json = await res.json()
+    expect(res.status).toBe(404)
+    expect(json.codice).toBe('PRESTAMPATO_SCONOSCIUTO')
+    expect(posta.sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('con la gita pubblicata il n. 10 si firma davvero, e destinazione e orari finiscono SUL FOGLIO', async () => {
+    conUscitaPubblicata()
+    const { res, json } = await firma('autorizzazione_uscita', RISPOSTE_USCITA)
+    expect(res.status, JSON.stringify(json)).toBe(201)
+
+    // Il PDF si genera per davvero in questi test: si legge quello che riceve la famiglia.
+    expect(h.state.upload).toHaveLength(1)
+    const testo = await estraiTesto(h.state.upload[0].byte)
+    expect(testo).toContain(USCITA_CORPO.destinazione)
+    expect(testo).toContain('20/09/2026')
+    expect(testo).toContain('08:30')
+    expect(testo).toContain('16:00')
+  })
+
+  it('se la gita sparisce fra la richiesta del codice e la firma, il documento non nasce', async () => {
+    // Fra il POST e il PATCH passano minuti: un'uscita annullata nel frattempo non deve
+    // produrre un'autorizzazione. È il motivo per cui la lettura si rifà nel PATCH invece
+    // di fidarsi di quella del POST.
+    conUscitaPubblicata()
+    const codice = await chiediCodice('autorizzazione_uscita')
+    h.state.fissi['eventi_agenda'] = { data: [], error: null }
+
+    const res = await PATCH(
+      reqFirma('PATCH', {
+        slug: 'autorizzazione_uscita',
+        alunnoId: ALUNNO,
+        code: codice.devCode,
+        expiry: codice.expiry,
+        ticket: codice.ticket,
+        risposte: RISPOSTE_USCITA,
+      }),
+    )
+    expect(res.status).toBe(404)
+    expect(h.state.upload).toHaveLength(0)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'firme_documenti')).toBe(false)
+  })
+})
+
 // ─── POST: l'invio del codice ───────────────────────────────────────────────────
 
 describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
@@ -935,23 +1944,24 @@ describe('POST /api/parent/prestampati/firma — l’invio del codice', () => {
     expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
   })
 
-  it('l’autorizzazione all’uscita non fa partire nessun codice: la gita non esiste ancora', async () => {
-    // Il n. 10 pretende `DatiUscita` — tipo, destinazione, data, mezzo — che nasce dall'uscita
-    // pubblicata dalla segreteria, e quella strada non è ancora stata scritta: il PATCH
-    // rifiuterebbe il 100% delle volte. Spedire il codice qui non era solo un giro a vuoto:
-    // cinque tentativi bruciavano il budget OTP, che è UNO per tutte le porte, e il genitore
-    // restava senza modo di firmare l'autorizzazione a un farmaco.
+  it('l’autorizzazione all’uscita non fa partire nessun codice se la gita non è pubblicata', async () => {
+    // Il n. 10 pretende `DatiUscita` — tipo, destinazione, data, mezzo — che nasce dalla gita
+    // in `eventi_agenda`. Senza quella riga il PATCH rifiuterebbe il 100% delle volte, e
+    // spedire il codice qui non sarebbe solo un giro a vuoto: cinque tentativi bruciano il
+    // budget OTP, che è UNO per tutte le porte, e il genitore resta senza modo di firmare
+    // l'autorizzazione a un farmaco.
+    //
+    // ⚠️ 404 e non 409: da quando l'uscita governa la visibilità, per QUESTO bambino e in
+    // QUESTO momento quel modulo non è nell'elenco — e la frase di `PRESTAMPATO_SCONOSCIUTO`
+    // («non è fra i prestampati disponibili alla famiglia») dice esattamente questo. Un
+    // `motivoNonFirmabile` servirebbe a spiegare un pulsante spento, e nessun pulsante è
+    // acceso.
     const res = await POST(reqFirma('POST', { slug: 'autorizzazione_uscita', alunnoId: ALUNNO }))
     const json = await res.json()
 
-    expect(res.status).toBe(409)
-    expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
-    expect(json.motivoNonFirmabile).toBe('uscita-non-creata')
+    expect(res.status).toBe(404)
+    expect(json.codice).toBe('PRESTAMPATO_SCONOSCIUTO')
     expect(posta.sendEmailDetailed).not.toHaveBeenCalled()
-    // E si rifiuta senza aver letto niente: l'anagrafica di un minore non si legge per un
-    // documento che non poteva uscire.
-    expect(portata.requireParentOfStudent).not.toHaveBeenCalled()
-    expect(prefillMod.caricaPrefillAlunno).not.toHaveBeenCalled()
   })
 
   it('con due tutori in anagrafica la delega al ritiro si ferma PRIMA dell’email', async () => {
@@ -1366,7 +2376,10 @@ describe('PATCH /api/parent/prestampati/firma — verifica, generazione, archivi
     expect(h.state.inserimenti.some((i) => i.tabella === 'otp_ticket_consumati')).toBe(false)
   })
 
-  it('l’autorizzazione all’uscita si ferma prima della firma, invece di rifiutarla dopo', async () => {
+  it('l’autorizzazione all’uscita si ferma prima della firma quando la gita non c’è', async () => {
+    // Un client vecchio (o una scheda lasciata aperta) può insistere su un modulo che
+    // l'elenco non mostra più: qui il rifiuto arriva PRIMA che il ticket si consumi, quindi
+    // la famiglia non perde il codice.
     const codice = await chiediCodice('permesso_orario')
 
     const res = await PATCH(
@@ -1376,17 +2389,15 @@ describe('PATCH /api/parent/prestampati/firma — verifica, generazione, archivi
         code: codice.devCode,
         expiry: codice.expiry,
         ticket: codice.ticket,
-        risposte: { autorizzo: true, recapito: '0000000000' },
+        risposte: RISPOSTE_USCITA,
       }),
     )
     const json = await res.json()
 
-    expect(res.status).toBe(409)
-    expect(json.motivoNonFirmabile).toBe('uscita-non-creata')
+    expect(res.status).toBe(404)
+    expect(json.codice).toBe('PRESTAMPATO_SCONOSCIUTO')
     expect(h.state.upload).toHaveLength(0)
     expect(h.state.inserimenti.some((i) => i.tabella === 'otp_ticket_consumati')).toBe(false)
-    // Si rifiuta senza nemmeno caricare il precompilato: il verdetto non ha bisogno di dati.
-    expect(prefillMod.caricaPrefillAlunno).not.toHaveBeenCalled()
   })
 
   it('firma, archivia e NON scrive l’hash dell’OTP, l’email o l’IP sul foglio che gira', async () => {
@@ -2381,6 +3392,49 @@ describe('PATCH — il delegato che ritira il bambino, risolto in un nome', () =
 // ─── Le due regole che non hanno bisogno di una richiesta ───────────────────────
 
 describe('banco-famiglia — le regole pure che le due porte condividono', () => {
+  it('l’anno scolastico di un giorno cambia il 1° AGOSTO, non a settembre né a gennaio', () => {
+    // Stesso confine di `annoScolasticoCorrente()`: «agosto fa già da ponte verso il nuovo
+    // anno». Un confine diverso qui vorrebbe dire che per qualche settimana il certificato
+    // dichiara un anno e il riuso ne conta un altro, sullo stesso documento.
+    expect(annoScolasticoDelGiorno('2026-07-31')).toBe('2025/2026')
+    expect(annoScolasticoDelGiorno('2026-08-01')).toBe('2026/2027')
+    expect(annoScolasticoDelGiorno('2027-01-15')).toBe('2026/2027')
+    expect(annoScolasticoDelGiorno('non è una data')).toBeNull()
+    expect(annoScolasticoDelGiorno(null)).toBeNull()
+  })
+
+  it('il giorno di un documento è quello ITALIANO, non quello UTC', () => {
+    // 🔴 La trappola già pagata in questo repo (2026-08-01, 01:08): il runtime gira in UTC.
+    // Un certificato emesso il 1° agosto alle 00:30 italiane è `2026-07-31T22:30Z`: contato
+    // in UTC sarebbe dell'anno scolastico SCORSO, e il riscarico ne emetterebbe uno nuovo
+    // il giorno stesso in cui è stato fatto. Due ore, un numero di protocollo.
+    expect(documentoDellAnnoScolastico('2026-07-31T22:30:00.000Z', '2026/2027')).toBe(true)
+    // E il verso opposto: le 23:30 italiane del 31 luglio sono ancora l'anno vecchio.
+    expect(documentoDellAnnoScolastico('2026-07-31T21:30:00.000Z', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('2026-07-31T21:30:00.000Z', '2025/2026')).toBe(true)
+  })
+
+  it('un istante illeggibile vale «non è di quest’anno», e il verso è dichiarato', () => {
+    // Fra riemettere un certificato e consegnarne uno che dichiara l'anno sbagliato a un
+    // ente pubblico, il costo del primo è un numero di protocollo.
+    expect(documentoDellAnnoScolastico(null, '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('   ', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('non è un istante', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('2026-09-10T09:00:00.000Z', null)).toBe(false)
+  })
+
+  it('il vincolo dell’anno vale sui certificati della SCUOLA, non sui moduli della famiglia', () => {
+    // Il criterio è chi sottoscrive: se firma il legale rappresentante, la Scuola sta
+    // certificando qualcosa dell'anno in corso. I moduli firmati dalla famiglia sono il
+    // fatto del giorno in cui sono stati firmati, e si riscaricano sempre.
+    const per = (slug: string) => voceDelGenitore(slug)!
+    expect(riusoLegatoAllAnnoScolastico(per('certificato_iscrizione_frequenza'))).toBe(true)
+    expect(riusoLegatoAllAnnoScolastico(per('certificato_bonus_nido'))).toBe(true)
+    expect(riusoLegatoAllAnnoScolastico(per('scheda_sanitaria'))).toBe(false)
+    expect(riusoLegatoAllAnnoScolastico(per('dieta_speciale'))).toBe(false)
+    expect(riusoLegatoAllAnnoScolastico(per('permesso_orario'))).toBe(false)
+  })
+
   it('l’archivio dei certificati sanitari del bambino lo nominano SOLO i certificati sanitari', async () => {
     // 🔴 LA CONTRADDIZIONE CHE QUESTA REGOLA CHIUDE. Il banco spegne il n. 08 dicendo che la
     // scansione del documento di un delegato «non ha una porta»; la verifica degli allegati,
@@ -2414,5 +3468,34 @@ describe('banco-famiglia — le regole pure che le due porte condividono', () =>
     for (const config of [{}, null, { prestampati_sempre_firmabili: 'scheda_sanitaria' }]) {
       expect([...sempreFirmabiliDa(config)].sort()).toEqual([...SEMPRE_FIRMABILI_PREDEFINITI].sort())
     }
+  })
+
+  it('il numero di protocollo si rilegge dalla descrizione che l’archivio ha scritto', () => {
+    /**
+     * ⚠️ È UN ROUND-TRIP, come quello dell'uscita, e per la stessa ragione: `student_documents`
+     * non ha una colonna per il numero di protocollo — misurato sullo schema di produzione il
+     * 2026-08-16 — quindi l'unico posto in cui quel numero può viaggiare è il TESTO della
+     * descrizione. Chi lo scrive e chi lo rilegge devono usare lo stesso formato, o il
+     * riscarico torna a non sapere quale foglio sta riconsegnando **senza che niente diventi
+     * rosso**: la risposta resterebbe valida, con un campo in meno che nessuno sa di cercare.
+     */
+    const scritta = descrizioneArchivioProtocollata(
+      'Certificato di iscrizione e frequenza',
+      formatNumeroProtocollo(5, 2026),
+    )
+    expect(numeroProtocolloDaDescrizione(scritta)).toBe('0000005/2026')
+
+    // Il formato dello SPORTELLO, che aggiunge una coda propria dopo il numero
+    // (`descrizioneArchivio` in `prestampati/genera/route.ts`): si rilegge lo stesso.
+    expect(
+      numeroProtocolloDaDescrizione('Delega al ritiro — Prot. n. 0000012/2026 — modulo consegnato su carta'),
+    ).toBe('0000012/2026')
+
+    // Ciò che un numero non ce l'ha non se ne inventa uno: i sei moduli firmati dalla
+    // famiglia si archiviano con la sola etichetta.
+    expect(numeroProtocolloDaDescrizione('Scheda sanitaria')).toBeNull()
+    expect(numeroProtocolloDaDescrizione(null)).toBeNull()
+    // E una forma che NON è quella del registro non passa per buona: sette cifre e l'anno.
+    expect(numeroProtocolloDaDescrizione('Prot. n. 5/2026')).toBeNull()
   })
 })

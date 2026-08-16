@@ -383,10 +383,32 @@ export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
           tipo: 'agenda_evento',
           titolo: `${TIPO_LABEL[body.tipo]} in agenda: ${body.titolo}`,
           corpo: `${body.data}${body.orario_inizio ? ` · ore ${body.orario_inizio.slice(0, 5)}` : ''}`,
-          link: '/parent',
+          // ⚠️ L'uscita porta alla MODULISTICA, non alla home del genitore.
+          //
+          // Un'uscita pubblicata accende il prestampato n. 10 — l'autorizzazione che la
+          // famiglia deve FIRMARE perché il bambino possa partire. Una notifica che dice
+          // «c'è una gita» e apre `/parent` lascia al genitore il compito di indovinare
+          // dove si firma: l'avviso arriva e la firma no, e il giorno della gita manca
+          // l'autorizzazione senza che nessuno abbia sbagliato niente.
+          // Gli altri tipi (riunione, scadenza, evento) non hanno un modulo da firmare e
+          // restano sulla home.
+          link: body.tipo === 'uscita' ? '/parent/modulistica' : '/parent',
           entitaTipo: 'agenda',
           entitaId: evento?.id as string | undefined,
           scuolaId,
+        })
+        // Il SUCCESSO si logga, non solo l'errore: con i soli errori «nessun log» non
+        // distingue «tutte le famiglie avvisate» da «non è mai partito niente» — ed è
+        // esattamente l'ambiguità che ha tenuto nascosto per mesi il guasto delle email
+        // di credenziali. Nessun dato personale: conteggio, tipo e uuid.
+        logEvento('notifica', 'info', {
+          operazione: 'agenda:POST',
+          esito: 'uscita-annunciata',
+          tipo: body.tipo,
+          sede_id: scuolaId,
+          evento_id: evento?.id as string | undefined,
+          destinatari: (alunni ?? []).length,
+          con_orari: Boolean(body.orario_inizio && body.orario_fine),
         })
       } catch (e) {
         // `error` e non `warn` benché la richiesta risponda 201: qui non è «saltato un

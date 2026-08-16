@@ -94,6 +94,551 @@
 
 ---
 
+## 🕐 Changelog — L'anno scolastico si contava dove gira il processo, un lock si era immunizzato col proprio commento, e la gita si annunciava dove non si firma 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Terza passata sul lotto della carta intestata. I critici del ciclo hanno bocciato entrambe le
+catene del banco, e **tre difetti su cinque erano stati misurati rompendo il codice**, non dedotti.
+Qui sono chiusi tutti e cinque.
+
+| Difetto | Dove | Cosa succedeva davvero |
+|---|---|---|
+| 🔴 **L'anno scolastico in due fusi** | `src/lib/anno-scolastico.ts` | `annoScolasticoCorrente` usava `getFullYear()`/`getMonth()`, cioè il fuso del PROCESSO — su Vercel **UTC**. `documentoDellAnnoScolastico` confronta quel valore con l'anno del giorno civile **`Europe/Rome`** per decidere se RIUSARE il certificato già emesso. Fra le 00:00 e le 02:00 del 1° agosto i due lati cadono ai due lati della soglia di agosto: ogni «Scarica il certificato» **riemetteva invece di riusare** — un numero del registro WORM bruciato a ogni clic, e l'anno scolastico **sbagliato** stampato su un foglio destinato all'INPS o a un datore di lavoro. Ora deriva da `dataCivile()`, la stessa funzione nata dopo gli incassi spariti da un KPI il 2026-08-01 alle 01:08. |
+| 🔴 **Un lock immunizzato dal proprio commento** | `__tests__/architecture/use-search-params-con-suspense.test.ts` | Cercava la **stringa** `Suspense` nel sorgente intero. Il commento che spiega perché il confine di sospensione serve — scritto dentro la pagina sorvegliata — la nomina due volte: la pagina si proteggeva da sé. Misurato togliendo il wrapper e lasciando i commenti: il test restava **verde**. Ora guarda il JSX vero su un sorgente ripulito dai commenti. |
+| 🔴 **La gita si annunciava dove non si firma** | `src/app/api/agenda/route.ts` · `TeacherAgendaCard.tsx` | `/api/teacher/uscite` scrive gli orari, ma `grep -rn "api/teacher/uscite" src/` dà **zero chiamanti**: la gita nasce da `TeacherAgendaCard → /api/agenda`, che gli orari non li mandava (lo schema zod li accettava già). L'autorizzazione n. 10 usciva con «Orario partenza» e «Rientro previsto» **vuoti**, la notifica apriva `/parent` invece del modulo da firmare, e sul percorso vero **non c'era un log di successo**. |
+
+**Le due prove di rottura**, rifatte a mano e non dichiarate: togliendo il wrapper `<Suspense>` e
+lasciando i commenti il lock è **rosso** e nomina la pagina; rimettendo `link: '/parent'` il test
+dell'agenda è **rosso**. Un lock che non può fallire non è un lock.
+
+**A4 orizzontale — riserva chiusa a vista.** Il registro presenze è generato con dati sintetici,
+convertito a 110 dpi e **guardato**: il marchio «Kidville» corre verticale sul bordo sinistro, il
+piede a quattro colonne diventa una colonna a destra, e la tabella sta interamente fra le due
+colonne vietate che `fasceVietate()` dichiara. È anche ciò che si vede stampando un foglio
+orizzontale su carta intestata vera.
+
+🔴 **Bonifica di produzione, e la lezione che è costata.** I critici di questo ciclo hanno
+collaudato **contro il database di produzione** — perché i prompt che li governavano dicevano
+«avvia il server, entra come genitore, firma un modulo», e `.env.local` punta alla produzione. Le
+regole `deny` su `npm run e2e` esistono per impedirlo, ed è stato aggirato passando
+dall'interfaccia invece che dal seed. Misurato dopo: tutte le scritture erano sull'**alunno di
+prova** (`TEST Infanzia`), e `student_documents` conteneva **zero righe** prima — nessun documento
+di un bambino vero è mai stato toccato. Rimossi comunque: 4 numeri di protocollo (n. 3-6/2026, con
+numerazione riportata a 2), 4 documenti, 2 firme, 1 gita di prova e **12 file** dallo storage; più
+698 copie locali. **La regola che ne resta: un collaudo si fa su dati sintetici, e un prompt che
+manda un agente contro la produzione è un difetto del prompt.**
+
+---
+
+## 📄 Changelog — Tre fogli di carta intestata spediti con sopra due righe, e un registro che dalla seconda pagina non diceva più di chi fosse 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Correzione del lotto qui sotto («Quattro fogli che uscivano dalla scuola con qualcosa di troppo»):
+un critico l'ha ripreso e ha misurato che **tre dei quattro motori erano stati riparati a metà**.
+
+### «Una pagina non può portare solo la chiusura» — la regola che mancava, in tre motori
+
+La riparazione precedente teneva insieme il **blocco di chiusura** ma non l'**ultima riga di
+contenuto**: quando è quella a riempire esattamente la pagina, il blocco intero trasloca lo stesso.
+Il risultato è identico a prima, con una riga in più sopra.
+
+| Motore | Dove cadeva, misurato | Cosa portava l'ultimo foglio |
+|---|---|---|
+| Ordine al fornitore | 23 · 24 · 25 · 26 · 59 · 60 articoli | «Totale pezzi: 46» e «Note: …» |
+| Documento protocollato | 25-30 e 61-66 righe di corpo (12 lunghezze su 70) | «Giugliano, lì … — La Direzione — ______» |
+| Ricevuta FEA | 16 · 17 · 48 · 49 firme congiunte | «Ricevuta generata automaticamente…» |
+
+Tre fogli di carta intestata — marchio, filigrana mascotte, ragione sociale, P.IVA, le tre sedi —
+spediti a un **fornitore**, consegnati a una **famiglia** o allegati a un **ente**, con sopra due
+righe di conteggio. Sul certificato protocollato è peggio che brutto: la pagina della firma non
+portava una sola parola dell'atto che firma, e chi la separa dal fascicolo ha in mano una firma
+senza documento.
+
+Ora, sull'ultima riga di contenuto, il conto non è più «ci sta la riga» ma «ci stanno la riga **e**
+la sua chiusura»: se non ci stanno, si cambia foglio prima di scriverla.
+
+> **E il lock precedente era tarato sul sintomo.** Vietava «1 solo elemento sull'ultima pagina» e
+> assolveva il due, quindi passava **verde** proprio dentro l'intervallo 20→60 che l'esecutore
+> citava come prova. Un test che si ferma un millimetro prima del difetto è peggio di nessun test:
+> dichiara che il difetto non c'è. I tre lock ora chiedono la regola — «sull'ultima pagina c'è
+> almeno una riga di merce / di documento / di contenuto» — e sono stati visti ROSSI prima di
+> essere riparati.
+
+### La politica di salto pagina diventa una funzione sola
+
+`src/lib/carta/geometria.ts` prometteva per iscritto che «i millimetri per far stare la firma nella
+pagina si trovano nel motore — che stringe lo stacco prima di aprire un foglio nuovo».
+`prestampati/impaginazione.ts` lo faceva davvero; `protocolli/documento-pdf.ts` aveva un `+18`
+fisso. Era la stessa doppia manutenzione che W9.1 esisteva per finire — la testata è stata
+unificata, la politica di salto pagina no.
+
+Nuovo modulo **`src/lib/carta/blocco-finale.ts`** (`quotaBloccoFinale()`): prova con l'aria piena,
+poi con l'aria stretta appoggiandosi alla quota più bassa concessa, e apre la pagina solo se
+nemmeno quella basta. Lo chiamano **entrambi** i motori. Lock: `__tests__/lib/carta-blocco-finale.test.ts`.
+
+### Il registro presenze smette di tagliare i nomi dei bambini
+
+`COLONNA_NOME` era passata da 42 mm a **38**, con `overflow: 'hidden'`: troncamento netto a metà
+parola, senza puntini e senza avviso, su un documento che serve a una cosa sola — dire quale bambino
+era presente. I 36 mm che la carta si prende erano stati fatti pagare anche al nome, e non era
+necessario: a 42 mm la colonna-giorno resta a **5,61 mm** su 31 giorni, sopra il minimo di 5 che il
+file stesso dichiara. Ora la colonna è 42 e va a `linebreak`: un cognome composto va a capo dentro
+la sua cella invece di perdere metà nome.
+
+### Il registro presenze dice di chi è anche a pagina 2, e nel piede non scrive il nome dell'app
+
+- **Titolo e riga di contesto si ristampano su ogni foglio** (gancio `didDrawPage`, con `margin.top`
+  allineato a `startY`). Prima vivevano solo sulla pagina 1: dalla seconda restava una griglia di
+  lettere senza nome, senza mese e senza classe. Non è un caso limite — la tabella tiene 23 righe
+  per pagina e la sezione più numerosa in produzione ne ha 33, quindi **ogni registro vero** è a
+  due fogli, che si stampano, si firmano e si archiviano.
+- **La riga di contesto non cresce più senza limite.** Il titolo aveva `maxWidth`, la meta no: con
+  un nome di sezione lungo finiva stampata **sopra** il titolo (misurato: titolo 31,0 → 132,2 mm,
+  meta a partire da 66,7). Ora lo spazio si misura e, se non ci sta accanto, la meta va a capo
+  sotto. `sezione` ha anche un `max(120)` nello schema zod della rotta.
+- **`pdfPiePagina` è «Pagina {n} di {tot}»**, allineato a destra come negli altri quattro motori.
+  Era «Pagina 1 di 2 — Registro Elettronico Kidville»: il nome del prodotto su un foglio la cui
+  carta porta già ragione sociale, P.IVA e le tre sedi. La specifica lo dice in due punti («l'app
+  nel piede non scrive nulla», e §1.3 toglie `PIEDE_PREDEFINITO` «perché la carta lo sostituisce»):
+  la frase era sopravvissuta in un motore solo, senza che una riga la dichiarasse eccezione.
+
+### Due commenti che descrivevano una protezione con la ragione sbagliata
+
+`prestampati/impaginazione.ts` e `prestampati/modelli/genitore.ts` motivavano la guardia sui
+recapiti dicendo che «`buildReceiptPdf()` formatta il firmatario come *Nome \<email\>*» — cosa che
+il commit `a36512ff` di questo stesso ramo ha reso **falsa**. La guardia resta (difesa in
+profondità), ma la motivazione è ora quella vera e non scade: `name` lo riempie il chiamante con ciò
+che ha in mano, e un'email non deve poter arrivare sul foglio in nessun caso. In un repository la
+cui lezione pagata è «un documento che descrive una protezione che non c'è più è peggio di nessun
+documento», lasciare in piedi la motivazione sbagliata di una guardia giusta è il modo in cui la
+guardia viene tolta dal prossimo che la legge.
+
+### 🔻 Rettifica di attribuzione: cosa c'è davvero dentro il commit `a36512ff`
+
+Il messaggio di quel commit parla **soltanto** della ricevuta FEA («La ricevuta di firma smette di
+stampare email, IP e dispositivo»), ma i file che porta sono **tredici**, non quattro. I nove che
+non appartengono a W9 — e che vanno cercati sotto il lavoro a cui appartengono, non sotto quel
+titolo — sono:
+
+`src/lib/gdpr/esegui.ts` · `src/app/api/admin/gdpr/erase/route.ts` ·
+`src/app/api/admin/gdpr/richieste/route.ts` · i quattro test GDPR ·
+`src/app/api/parent/prestampati/banco-famiglia.ts` · `src/app/api/parent/prestampati/firma/route.ts` ·
+`src/app/api/prestampati/genera/route.ts`
+
+La storia **non si riscrive** — altri agenti lavorano sullo stesso albero e un rebase porterebbe via
+il loro lavoro a metà — quindi la rettifica sta qui: chi domani leggerà `git log -- src/lib/gdpr/esegui.ts`
+troverà quelle righe attribuite alla ricevuta di firma, e questa riga gli dice perché.
+
+---
+
+## 🧾 Changelog — Quattro fogli che uscivano dalla scuola con qualcosa di troppo 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Rifinitura dei **motori PDF residui** (protocolli · ricevuta FEA · ordine al fornitore · registro
+presenze) dopo il passaggio alla carta intestata reale. Quattro difetti misurati sui file
+consegnati, non ipotizzati, più una sesta cosa che mancava: la lista di chi *non* sta sulla carta.
+
+### La ricevuta di firma non stampa più chi sei e da dove
+
+`src/lib/fea/receipt-pdf.ts` scriveva sul foglio **l'email del firmatario**, il suo **indirizzo
+IP** e l'**intero User-Agent**. Sono due identificativi personali e l'impronta del dispositivo, su
+un documento che si scarica, si allega e si stampa.
+
+Il valore probatorio non ci ha perso niente, ed è il punto: `computeContentHash()` impasta email e
+metadati di firma **dentro** l'hash documentale che resta sul foglio, e chi contesta la ricevuta la
+verifica ricalcolando quell'hash dalla riga dell'audit immutabile — che è, ed è sempre stata, la
+fonte. Resta il **nome**, che la rotta ora passa davvero: la guardia ha appena stabilito che il
+chiamante *è* il firmatario, quindi `auth.user` porta già nome e cognome, senza una query in più.
+
+Nella stessa ricevuta, **l'istante della firma** — l'unico dato che quel foglio esiste per
+certificare — usciva in ISO UTC (`2026-06-25T10:00:00.000Z`): formato macchina, e d'estate due ore
+di scarto rispetto all'ora in cui il genitore ha firmato davvero. Ora passa da `formattaIstante`,
+ancorata a `Europe/Rome`, colonna delle firme congiunte compresa.
+
+> Accorciare il contenuto di tre righe ha fatto emergere un difetto **latente**: `spazioPer()`
+> riceveva l'altezza del blocco e ne sottraeva `PASSO_RIGA` — conto giusto solo per `line()`. Il
+> ciclo delle firme congiunte passava `7`, e `7 - 9` faceva verificare un punto **2 mm sopra** la
+> riga che stava per scrivere. Il parametro ora vuol dire una cosa sola.
+
+### La banda bianca che mangiava la filigrana
+
+Il registro presenze scriveva il piede **due volte** — una in `didDrawPage`, che non può conoscere
+il totale delle pagine mentre lo stampa, e una alla fine col totale vero — e per non sovrapporre i
+due testi copriva il primo con un rettangolo **bianco opaco** di 237 × 6 mm. Su carta intestata
+quel rettangolo non copriva una riga di testo: copriva la **carta**.
+
+Misurato a 200 dpi sul documento composto, pagina 2, striscia 196,92 → 202,89 mm:
+
+| | media dei pixel |
+|---|---|
+| prima | **253,63** — bianco pieno, filigrana cancellata |
+| dopo | **246,28** — il grigio della mascotte è tornato |
+| striscia di controllo (185 → 191 mm) | **239,07** in entrambi: la differenza è solo lì |
+
+Non era un caso limite: la tabella tiene 23 righe per pagina e la sezione più numerosa ne ha 33,
+quindi **ogni registro vero** è a due pagine e portava la banda. Si è tolta la causa — il piede si
+stampa solo nella passata finale, quando non c'è più niente da coprire — e con essa è arrivata la
+guardia `pagine < 2` che gli altri quattro motori avevano già: «Pagina 1 di 1» su un foglio solo è
+rumore su un documento di scuola.
+
+### La nota dell'ordine non finisce più da sola su un foglio
+
+Sull'ordine al fornitore lungo — l'unico documento del lotto che esce verso un **terzo** — la nota
+finale apriva una pagina tutta per sé: pag. 2 chiudeva con «Totale pezzi: 1830» a 252,21 mm e pag. 3
+conteneva la sola riga «Note: …» a 37,72 mm. Il salto scattava per **mezzo millimetro**. La regola
+del limite era giusta: mancava il «tieni insieme» che il motore dei protocolli ha già per il blocco
+firma. Filetto, totale e note sono ora un blocco solo, con la guardia per riga conservata sotto,
+così una nota di quaranta righe si spezza invece di sfondare il piede.
+
+### E la lista di chi sulla carta **non** sta
+
+I motori che chiamano `new jsPDF` in questo repository sono **quindici**, non cinque: sulla carta
+ci sono i cinque della specifica, e degli altri dieci **sei si dipingono ancora la banda verde** —
+certificato delle competenze, pagella, ricevuta FES nel browser del genitore, export dei moduli,
+foglio delle credenziali, export del registro protocolli. Il difetto non era che fossero sei: era
+che **non stava scritto da nessuna parte**, e i file da cui copiare la cosa sbagliata sono la
+maggioranza.
+
+Nuovo lock **`__tests__/architecture/motori-pdf-perimetro-carta.test.ts`**: enumera i motori sul
+disco e pretende che ognuno stia in una delle due tabelle — `SULLA_CARTA` o `FUORI_PERIMETRO`, con
+scritto **perché**. Un motore nuovo fa fallire il test finché qualcuno non decide. Le righe di
+`FUORI_PERIMETRO` non sono assoluzioni: quelle che descrivono un difetto noto lo dicono, a partire
+da `generateReceiptPDF` in `parent/modulistica/page.tsx`, che stampa **codice fiscale, IP e
+User-Agent** del genitore — lo stesso difetto tolto oggi dalla ricevuta di server, nel gemello che
+gira nel browser.
+
+---
+
+## 🧹 Changelog — La linguetta che prometteva la carta intestata, e le trentatré frasi rimaste senza schermo 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+**«Template Certificati ODT» era un mockup, e in modo misurabile**: i tre `onChange` salvavano il
+NOME del file scelto in uno `useState` e basta — nessun caricamento, nessuna riga nel database,
+nessuno storage. Il badge verde «documento caricato» spariva al primo aggiornamento della pagina, e
+la segreteria che ci aveva trascinato dentro la carta intestata della scuola credeva di averla
+consegnata al prodotto. La carta vera, da questo stesso ramo, arriva dai **Prestampati**
+(`src/lib/carta/`), che i certificati li genera davvero.
+
+Con la linguetta se n'è andato anche il pannello **«Sala d'Attesa»**, che era irraggiungibile da
+mesi: `attesa` non stava né nella barra `Tabs` né fra i valori riconosciuti di `?tab=`, quindi
+`activeTab` non poteva valerlo. Le pre-iscrizioni si leggono da **«Moduli ricevuti»**.
+
+### Il difetto vero non era il tab: era ciò che il tab si è lasciato dietro
+
+Toglierlo, il 2026-08-16, ha portato via il **consumatore** lasciando il **consumato**. La misura,
+riga per riga:
+
+| | prima | adesso |
+|---|---|---|
+| Chiavi di `adminModulistica` che nessuna riga di `src/` nomina | **33** per lingua, **66** in due lingue | **0** |
+| Isola morta in `admin/modulistica/page.tsx` | interfaccia + 4 `useState` + 2 gestori + 3 finestre | rimossa (**1137 → 895** righe, contando anche il tab ODT) |
+| `certificati_templates` sotto `src/` | `CREATE TABLE` + indice + RLS + `POLICY … FOR ALL USING (true)` | nessuna riga eseguibile |
+| `pre_inscriptions` sotto `src/` (il blocco **gemello**, nove righe più giù nello stesso SQL) | `CREATE TABLE` + 2 indici + RLS + `POLICY … FOR ALL USING (true)` su nome, cognome, email, telefono, CF e indirizzo del genitore + i dati dei figli, **più la rotta intera che la interrogava** | **0 righe**: né la DDL né le letture né la rotta (terza passata, sotto) |
+| Porte anonime senza gate (`PUBBLICHE` di `gate-coverage`) | 20, una delle quali difesa da una motivazione **falsa** | **19**, e ognuna deve avere un chiamante vivo |
+| Voci di `NON_CONTATORI` che puntavano a chiavi inesistenti | 2, verdi | 0, e il tetto scende 40 → **38** |
+| Cataloghi montati nel mock di next-intl | **34 su 38**, elencati a mano | tutti, letti dalla cartella |
+
+Le tre finestre (scheda della pre-iscrizione, conferma dell'approvazione, credenziali generate) il
+compilatore non poteva vederle: `setSelectedPre` restava chiamata, ma **solo con `null`**, quindi
+`selectedPre &&` non si disegnava mai e le variabili si citavano a vicenda in un anello chiuso —
+nessuna «non usata», ESLint verde su codice che nessun utente avrebbe raggiunto. *Un commento che
+descrive il codice morto non è una rimozione.*
+
+### Le quattro reti nuove, perché la prossima volta non serva un occhio
+
+- **`__tests__/architecture/messaggi-chiavi-orfane.test.ts`** — una chiave di catalogo che nessuna
+  riga di `src/` nomina è una chiave morta. `messaggi-parita-cataloghi` non poteva vederlo: **due
+  cataloghi possono essere perfettamente simmetrici e perfettamente morti**. Perimetro dichiarato
+  (`adminModulistica`) e misurato: acceso su tutti e 38 i cataloghi darebbe ~380 falsi positivi,
+  chiavi risolte a runtime (`etichette`: 171 su 199).
+- **`__tests__/architecture/residuo-odt-assente.test.ts`** — sotto `src/` non torna né la tabella né
+  l'estensione né il tipo MIME né l'acronimo, **e nemmeno la DDL che rifà la tabella gemella** — e
+  dalla terza passata (sotto) nemmeno il suo **nome**, letture comprese. La
+  lezione per iscritto: **«zero righe la leggono» non è «zero righe la nominano»** — un residuo che
+  *crea* è più vivo di uno che legge. Il divieto vale **anche per i commenti**, perché il criterio è
+  `grep -rn … src/` e una riga di commento è una riga: il nome esatto vive nel lock, e là dove il
+  blocco è stato tolto si scrive in italiano che cosa c'era.
+- **`__tests__/pages/admin-modulistica-linguette.test.tsx`** — la barra si monta e si legge: **sei**
+  linguette, col testo italiano preso dai cataloghi, nessuna che mostri il nome di una chiave, e
+  `?tab=odt` / `?tab=attesa` che atterrano su «Moduli inviabili» **col pannello disegnato** — e, dalla
+  terza passata, con l'**avviso** che dice dove sono finite le domande di iscrizione.
+- **`messaggi-plurali-e-glossario`** — ogni eccezione di `NON_CONTATORI` deve puntare a una chiave che
+  **esiste ancora**: un elenco di eccezioni non sa da solo che il suo bersaglio è morto.
+
+### Il difetto che la prova ha trovato per strada
+
+Rendendo la pagina per contarne le linguette, la quinta si misurava **`prestampatiSegreteria.titolo`**
+invece di «Prestampati»: il mock di next-intl (`test/setup.ts`) elencava i cataloghi **a mano**, e
+quello, nato il 14/08, non c'era. Il ripiego del mock è il nome della chiave, quindi qualunque
+asserzione sul testo di quella schermata sarebbe stata **verde su una stringa che nessuno legge**.
+Lo stesso file metteva in guardia da sé contro questo esatto guasto, a proposito di `parentAssenze`,
+e ci è ricascato col catalogo dopo: *un avviso non è un meccanismo*. Ora i cataloghi si leggono dalla
+cartella — un catalogo nuovo non può più nascere già invisibile ai test.
+
+### `certificati_templates`: nessun `DROP`, e la ragione è una misura
+
+`SELECT count(*)` non era eseguibile, perché la tabella **non esiste** — e non solo `public`:
+
+```sql
+to_regclass('public.certificati_templates')                      → null
+pg_class × pg_namespace, tutti gli schemi, qualunque relkind      → 0 righe
+```
+
+Non c'è mai stato niente da droppare: la spec dava la tabella per morta perché «letta e scritta da
+zero righe di codice», ma la riga che la **creava** era in `src/`, dentro
+`admin/apply-fase4-migration` — sigillata da `sealDangerous` (404 fuori da vitest), quindi inerte, ma
+presente. Tolta di lì, il repo non si porta più dietro la macchina per rifare la tabella che dichiara
+morta. **Zero migrazioni applicate in produzione per questo lavoro.**
+
+### La seconda passata: la stessa lezione, mancata nove righe più giù
+
+La riparazione qui sopra ha lasciato dentro **il caso gemello**. Nello stesso SQL da cui era uscito
+il punto 5 è rimasto intero il punto 3: `CREATE TABLE pre_inscriptions`, due indici, RLS e
+`CREATE POLICY … FOR ALL USING (true)` — la macchina per rifare la tabella della «Sala d'Attesa»
+smontata **da quello stesso lavoro**, con dentro nome, cognome, email, telefono, codice fiscale e
+indirizzo del genitore più i dati dei figli, leggibile e scrivibile da chiunque. Misurato:
+`to_regclass('public.pre_inscriptions')` → null, 0 oggetti in qualunque schema.
+
+Il lock non se n'era accorto perché **la rete era tesa attorno a un caso invece che attorno alla
+classe**: vietava un *nome* (`certificati_templates`), non la *forma* del guasto. Adesso vieta la
+DDL — `CREATE TABLE`/`INDEX`/`POLICY`, `ALTER TABLE`, `DROP POLICY` — e lascia passare di proposito
+`.from('pre_inscriptions')`, perché «chi legge una tabella morta» è un debito dichiarato e «chi la
+ricrea» è il guasto. Il confine è scritto invece che sottinteso: restano **13 `CREATE TABLE`** in
+altre cinque route `apply-*-migration`, e le sei tabelle che nominano **esistono in produzione** —
+ridondanza, non resurrezione.
+
+Due bugie di misura sono cadute con lo stesso colpo:
+
+- il lock **prometteva più di quanto misurasse** («non deve restare NIENTE» mentre vietava tre
+  parole): l'acronimo era ancora in `src/`, in due righe di commento, una delle quali dichiarava che
+  una riga di commento sarebbe stata una traccia. Ora l'acronimo esce e **il divieto lo misura**, con
+  la parola intera e non la sottostringa — sui 998 sorgenti la sottostringa prende 63 righe innocenti
+  (`modToast…`, `z.ZodType`, un blocco base64), la parola ne prende zero. Il lock porta scritto il
+  `grep` con cui si rimisura a mano, e **a mano e in automatico rispondono la stessa cosa: 0 righe**;
+- `?tab=odt` e `?tab=attesa` sono link **veri, già circolati**, verso linguette che non esistono più.
+  Il ripiego che li salva vive in un ternario e **nessuna prova lo eseguiva**: quella di pagina
+  montava sempre `URLSearchParams('')`, e il lock delle linguette cerca il ripiego nel *testo* del
+  sorgente. Rotto il ripiego a mano, i tre casi nuovi diventano rossi e i tre vecchi restano verdi:
+  è la misura che il buco c'era.
+
+### La terza passata: chiusa la DDL, restava la porta
+
+Il paragrafo che stava qui si intitolava «Cosa NON è stato toccato, e perché è scritto», e diceva che
+`src/app/api/admin/pre-inscriptions/route.ts` restava in piedi perché cancellarla avrebbe toccato tre
+lock e file di altri workstream. Era una scelta **dichiarata**, e dichiararla non l'ha resa giusta:
+*la metà rimasta era quella pericolosa.*
+
+Il `POST` di quella rotta era **pubblico e senza nessun perimetro** — nessun `requireStaff`, nessun
+tetto per IP, nessun honeypot, mentre `iscrizione/personale:POST`, due voci più su nella **stessa**
+allowlist, ne porta cinque — e accettava `parent_fiscal_code`, `parent_address` e `students`: codice
+fiscale e indirizzo del genitore più i dati dei minori. Falliva chiuso solo perché la tabella non
+c'è, e nel fallire rimandava all'anonimo il messaggio di PostgREST **verbatim**, cioè il nome della
+relazione mancante. Il `PATCH`, dall'altro lato, creava account auth e restituiva una password in
+chiaro.
+
+È la **stessa classe di guasto** che questo capitolo denuncia due sezioni più su — *una rete tesa
+attorno a un caso lascia passare il caso gemello* — applicata un piano più in alto: chiusa la DDL,
+restava la porta. E la difesa era la stessa che il lock rifiutava per l'altro blocco: «tanto la
+tabella non esiste». **«Inerte» non basta a giustificare una macchina che ricrea, e non basta per una
+porta anonima che scrive.**
+
+Misura, prima di cancellare: `grep -rn "admin/pre-inscriptions" src/ __tests__/ e2e/ public/ scripts/`
+→ la rotta stessa, dei test e dei commenti, **nessuna `fetch`**. Il portale che la usava non esiste
+più (`/onboarding` è un `redirect('/iscrizione')`) e le domande di iscrizione arrivano da
+`/api/iscrizione` → `enrollment_submissions` (**389 righe vere** il 2026-08-16: erano 302 il 4 agosto).
+
+Cancellata la rotta, sono uscite con lei **quattro** voci di allowlist e il lock si è promosso:
+
+| Dove | Prima | Adesso |
+|---|---|---|
+| `gate-coverage` · `PUBBLICHE` | `admin/pre-inscriptions:POST`, motivazione *«sottomissione del portale onboarding pubblico»* | voce rimossa, tetto **20 → 19** |
+| `isolamento-sede-coverage` | `admin/pre-inscriptions:PATCH` esentata | rimossa; i tre numeri **297→296 · 462→459 · 95→94**, misurati |
+| `auth-gaps-m9` | un test che titolava *«il POST pubblico resta senza gate»* | rimosso: era la denuncia che nessuno leggeva |
+| `errori-senza-codice-allowlist.json` | 13 risposte senza codice, 280 file | 279 file, totale **1455 → 1442** |
+| `residuo-odt-assente` | vietava la **DDL** su `pre_inscriptions`, ammetteva le letture | vieta **il nome**, in qualunque forma |
+
+### La rete che avrebbe reso rossa da sola quella riga
+
+Il difetto non era la porta: era che **nessuna prova poteva vederla**. «Voci morte» chiede se
+l'*handler* esiste, e l'handler esisteva; il tetto chiede se il *numero* è cambiato, e non era
+cambiato. Mancava la terza domanda — ***qualcuno la chiama ancora?*** — ed è la stessa che, lo stesso
+giorno e nello stesso ramo, era stata aggiunta a `NON_CONTATORI` per i messaggi (*«un tetto scende
+solo se qualcuno RIMISURA»*). Era stata applicata ai testi e non ai gate.
+
+Ora `gate-coverage` la fa: per ogni porta senza gate cerca un chiamante vivo sotto `src/`, **coi
+commenti spenti** — `/api/health` e `/api/logs` compaiono in una ventina di commenti, e una rete
+tesa sul testo grezzo sarebbe verde per prosa. Delle 19 porte, **18 hanno un chiamante nel codice**;
+la sola `health:GET` non ce l'ha e non deve averlo — a interrogarla sono il controllo del deploy e il
+monitoraggio esterno — quindi è dichiarata a mano, con la ragione scritta, in un elenco che a sua
+volta non ammette bersagli morti e ha tetto **1**. La prova che la rete non è decorativa: togliendo
+quella dichiarazione il lock diventa rosso su `health:GET`.
+
+### Il vecchio segnalibro adesso trova una spiegazione, non solo una pagina
+
+`?tab=` con una parola che la schermata non ha più apriva «Moduli inviabili» **senza dire niente**.
+Il ripiego era corretto e **muto**, ed è la differenza fra una schermata che non si rompe e una che
+si spiega: chi arrivava da un segnalibro della Segreteria concludeva che il suo lavoro fosse sparito,
+invece che spostato. Ora compare un avviso (`role="status"`, chiudibile) che dice dove sono finite le
+domande di iscrizione e perché la carta intestata non si carica più a mano. Nessun avviso quando
+`?tab=` nomina una linguetta viva, e nessuno per chi entra dalla porta principale.
+
+Con lo stesso colpo, la parola di una linguetta smette di vivere in **quattro** punti del file: c'è
+`TAB_ORDINE`, e da lì si derivano il tipo, la barra e il riconoscimento di `?tab=`. Le tre volte in
+cui un collegamento profondo è atterrato sulla linguetta sbagliata (`candidature`, `personale`,
+`prestampati`) erano tre volte la stessa riga dimenticata. `modulistica-linguette-raggiungibili` si è
+spostato di conseguenza: non sorveglia più tre copie che non esistono, sorveglia ciò che resta
+davvero duplicato — la catena dei pannelli — e **vieta il ritorno** del confronto a mano.
+
+### `certificati_templates`: nessun `DROP`, e la ragione resta una misura
+
+Rimisurato il 2026-08-16 prima di toccare qualunque cosa: `SELECT count(*) FROM certificati_templates`
+→ `42P01`, la relazione non esiste; `pg_class × pg_namespace` su tutti gli schemi → **0 oggetti**, e
+**0** anche per `pre_inscriptions`. Non c'è niente da droppare e nessuna migrazione da applicare:
+scriverne una sarebbe una DDL a vuoto che afferma il falso sulla storia di questo database.
+`get_advisors(security)` → **0 ERROR** (restano gli `INFO`/`WARN` preesistenti, non di questo lavoro).
+**Zero migrazioni applicate in produzione per questo lavoro.**
+
+Fuori scope per decisione esplicita del piano le voci di checklist «Moduli Esterni» e
+«Iscrizioni Nuovi Alunni».
+
+**Prove:** `messaggi-chiavi-orfane` · `residuo-odt-assente` · `admin-modulistica-linguette` ·
+`messaggi-plurali-e-glossario` · `messaggi-parita-cataloghi` · `modulistica-linguette-raggiungibili` ·
+`gate-coverage` · `isolamento-sede-coverage` · `auth-gaps-m9`.
+
+---
+
+## 🩻 Changelog — Il fascicolo sanitario del bambino entra nell'oblio, e la deroga che lo copriva impara a scadere 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+Il bucket **`sensitive_documents`** non era in `REGISTRO_BUCKET_OBLIO`. Non era un'esclusione
+motivata: era un magazzino **non nominato**, cioè la forma in cui il dato di un minore resta per
+sempre senza che nessuno lo abbia deciso. `grep -c sensitive_documents src/lib/gdpr/esegui.ts`
+rispondeva **0**, e il registro elencava quattordici magazzini senza questo.
+
+Dentro ci arrivano, da due porte diverse: dal lato scuola diagnosi, PEI, PDP e verbali della legge
+104 (`POST /api/primaria/fascicolo`); dal lato famiglia **scheda sanitaria, autorizzazione alla
+somministrazione di farmaci e dieta speciale** (`parent/prestampati/firma`, `prestampati/genera`).
+Allergeni, terapie e posologie in chiaro dentro il PDF, di un bambino: **dati dell'art. 9 GDPR**.
+Dopo una richiesta di cancellazione restavano nel bucket **e** restavano indicizzati in
+`student_documents`. Questo stesso lavoro **raddoppia** ciò che ci finisce dentro.
+
+### Che cosa cambia
+
+| | prima | adesso |
+|---|---|---|
+| `sensitive_documents` nel registro dell'oblio | assente (14 magazzini) | **quindicesimo**, `coperto`, canale `alunno` |
+| Aggancio | — | `student_documents.student_id`; percorso da `storage_path` **con ripiego su `file_url`** |
+| Righe storiche (solo `file_url`) | indice cancellato, PDF rimasto | file **e** riga escono insieme |
+| Avviso «cosa distrugge» in `/admin/gdpr` | due voci | **terza voce** `oblioDistruggeFascicolo`, col conteggio del dry-run |
+| Conteggio non leggibile | — | **`null` = «non misurato»**, mai zero: uno zero su una lettura fallita rassicura e basta |
+| Log del percorso di cancellazione | solo errori | **anche il successo**: `oblio-file-rimossi` e `oblio-indice-rimosso` |
+| Archivio che non si è potuto **leggere** | indistinguibile da «vuoto» → risposta «oblio eseguito» | **`letture_fallite`** nella risposta e `oblio-parziale` nel log |
+
+Il canale **genitore non tocca il fascicolo**, ed è una decisione scritta, non una lacuna: il
+fascicolo è del **bambino**, e la richiesta di un adulto non cancella i dati sanitari di un minore
+che resta iscritto.
+
+Perché `storage_path` **oppure** `file_url`: la colonna `storage_path` è stata aggiunta dopo, e i
+lettori del fascicolo leggono già l'una col ripiego sull'altra. Un oblio che guardasse la sola
+colonna nuova tratterebbe le righe scritte prima come «senza allegato» — indice cancellato, PDF
+rimasto nell'archivio: il guasto invisibile, quello a cui si risponde «fatto».
+
+Perché il log di successo: con i soli errori, *«nessun log» non distingue «tutto ok» da «non è mai
+partito niente»*. È l'ambiguità che ha nascosto per mesi il guasto delle email, e su un archivio di
+dati sanitari di minori costa di più. Vale anche per l'indice **senza file**: una riga di
+`student_documents` senza allegato porta comunque `document_type`, cioè la frase «questo bambino ha
+una dieta speciale», e veniva cancellata in totale silenzio.
+
+### «Non ho potuto leggere» non è «non c'era niente»
+
+Sul percorso di **esecuzione** i due casi erano lo stesso numero. Con un `42501 permission denied`
+su `student_documents`, `obliaFileDaTabella` tornava tre zeri e `anonimizzaAlunno(...).fileNonRimossi`
+valeva **esattamente 0** — che è vero e non vuol dire niente, perché nessuno aveva potuto contare
+quei file. A valle, `/api/admin/gdpr/erase` scriveva `oblio-eseguito` e rispondeva
+`n_file_non_rimossi: 0`: **la Direzione leggeva «oblio completo» mentre la scheda sanitaria firmata
+di un bambino non era stata nemmeno aperta.**
+
+La lezione era già scritta due volte nello stesso file: `obliaFotoAlunno` porta `letto: boolean` dal
+13/08 (*«`false` significa "non l'ho potuto guardare", e chi distrugge deve fermarsi lì»*), e il
+**dry-run** del fascicolo risponde `null` e non `0` a una lettura fallita. L'annuncio prima della
+conferma sapeva distinguere l'ignoranza dal vuoto; l'atto irreversibile che segue, no.
+
+- `obliaFileDaTabella` (pagelle · certificati medici · fascicolo), `obliaAllegatiChat` e
+  `obliaIscrizioni` ora restituiscono **`letto`**. Schema assente (DB E2E della CI non migrato)
+  resta `true`: lì il vuoto è la risposta **vera**.
+- `anonimizzaAlunno` e `anonimizzaParent` restituiscono **`lettureFallite`**, che conta gli archivi
+  il cui *inventario* non si è letto. Non è un doppione di `fileNonRimossi`: quello conta i file che
+  si sapeva esserci e non sono usciti. E raccoglie anche i due `letto` che **esistevano già dal
+  13/08 e arrivavano fin lì per essere buttati** (galleria e blog pubblico).
+- `admin/gdpr/erase` e `admin/gdpr/richieste` fanno scattare **`oblio-parziale`** quando quel numero
+  è maggiore di zero, *anche con zero file non rimossi*, e lo mettono nella risposta
+  (`letture_fallite`) e nell'esito che resta scritto sulla richiesta.
+
+### I commenti che dichiaravano un buco già chiuso
+
+Tre file continuavano a dire per iscritto, **con numeri**, che l'oblio non arrivava a
+`sensitive_documents` — e uno chiudeva con «bloccante per il rilascio». Erano numeri veri il 14/08 e
+falsi il giorno dopo. Rimisurati e riscritti: `grep -c sensitive_documents src/lib/gdpr/esegui.ts`
+→ **6** (era 0); `REGISTRO_BUCKET_OBLIO` → **15 magazzini**, questo compreso;
+`grep -rn student_documents src/lib/gdpr/` → **12 righe** (era nessuna).
+
+È lo stesso peccato scritto in `CLAUDE.md` a lettere maiuscole, capovolto: *un documento che descrive
+un buco che non c'è più costa quanto uno che descrive una protezione che non c'è più*. Chi apriva
+`firma/route.ts` leggeva che il rilascio era bloccato per un motivo inesistente. E in un punto quella
+frase **reggeva una decisione** (il n. 06 non sale nel bucket): la decisione è stata **riletta** con la
+premessa nuova, non solo ripulita — e **non cambia**, perché l'oblio raggiunge il bucket *attraverso
+l'indice*, quindi un PDF senza riga in `student_documents` resterebbe fuori portata comunque. Quel
+limite è ora **dichiarato dentro la voce del registro**: una copertura senza il suo limite è il modo
+in cui un registro comincia a mentire.
+
+### La deroga, e perché ora scade da sola
+
+`sensitive_documents` **non esiste ancora** in produzione: non lo crea nessuna migrazione, lo creano
+al volo le route alla prima archiviazione. Misurato in sola lettura su `storage.buckets` nella notte
+fra il 15 e il 16 agosto 2026: **quattordici bucket, questo non c'è**. La data che fa fede è quella
+della *prova*, non della prosa: `generato_il` dentro `__tests__/fixtures/bucket-storage-snapshot.json`,
+cioè **`2026-08-15` in UTC** (il generatore usa `toISOString()`, e alle due di notte italiane è già
+il 16). Perciò non può stare fra i `RISERVATI` di `bucket-storage-dichiarati.test.ts` — quel lock
+pretende che ogni nome esista nella fotografia — e vive in un elenco a parte, `NON_ANCORA_CREATI`.
+
+Tre difetti di quella deroga, tutti chiusi qui:
+
+- **La guardia si dimostrava da sola.** Pretendeva che il nome fosse «scritto nel codice che crea il
+  bucket», e lo cercava in tutto `src/` — dove lo trovava dentro `src/lib/gdpr/esegui.ts`, cioè
+  dentro il registro che stava verificando. Si potevano cancellare tutte le route che il bucket lo
+  creano e la prova restava **verde**. Ora il letterale vale solo **fuori dai commenti**, in un file
+  che tocca davvero lo Storage (`createBucket`/`garantisciBucket`/`storage.from`) e che **non** è il
+  registro. Misurato: quattro consumatori; simulandone la cancellazione, la prova diventa rossa.
+- **L'«auto-annullamento» non esisteva.** Il commento prometteva che il giorno della nascita del
+  bucket la prova sarebbe diventata rossa da sola. Falso: la «fotografia» della produzione è un file
+  **statico**, rigenerato a mano. Il bucket poteva nascere e ogni prova restare verde a tempo
+  indeterminato. Ora la deroga ha una **scadenza** e pretende una fotografia non più vecchia di
+  **30 giorni**; e la data di rigenerazione è **dentro lo `sha256`** della fotografia, così non si
+  può ringiovanire a mano — l'unico modo di far tacere la scadenza è **rifare la misura**, che è
+  esattamente la domanda a cui si voleva rispondere.
+- **La scadenza era digitata, e sfasata di un giorno.** Era scritta a mano (`scadeIl: '2026-09-15'`),
+  calcolata da «misura + 30 giorni» partendo dalla data della prosa (16/08, ora di Roma) invece che
+  da quella della fotografia (15/08, UTC). Le due guardie che il testo presentava come coordinate
+  non potevano scattare insieme: il 15/09 il controllo sull'età era già rosso (31 > 30) e la
+  scadenza ancora verde — cioè la seconda era **inerte**, perché l'altra la anticipava sempre. Ora
+  la scadenza è **derivata** da `generato_il`, e una prova dedicata pretende che le due diventino
+  rosse **lo stesso giorno**: rimessa a mano la vecchia sfasatura di un giorno, quella prova
+  fallisce.
+
+> Un lock che dichiara di controllare X e controlla Y è peggio dell'assenza del lock: chi lo legge
+> smette di cercare la prova vera. È la lezione già pagata in questo repo — *«un documento che
+> descrive una protezione che non c'è più è peggio di nessun documento»* — e qui riguardava il
+> magazzino dei dati dell'art. 9 di minori.
+
+**Prove:** `__tests__/lib/gdpr-bucket-sensitive.test.ts` (registro, oblio reale su archivio finto
+con controllo negativo su un altro bambino, riga storica col solo `file_url`, storage che non
+toglie, conteggio dell'avviso, log di successo e silenzio informativo, nessun percorso nei log,
+**`42501` su sei tabelle ⇒ `lettureFallite > 0` e niente distrutto**, e la guardia sul **rinomino**:
+tutte e sei le dichiarazioni del bucket devono nominare lo stesso archivio — provata rossa
+rinominandone una),
+`__tests__/api/gdpr-erase-canale-unico.test.ts` (**archivio non letto ⇒ `oblio-parziale` con zero
+file non rimossi, e nessun `oblio-eseguito`** — provata rossa rimettendo il vecchio `if`),
+`__tests__/lib/gdpr-oblio-completo.test.ts` (guardia dei consumatori, scadenza della deroga, **le due
+guardie diventano rosse lo stesso giorno**), `__tests__/architecture/bucket-storage-dichiarati.test.ts`
+(sha256 con la data dentro).
+
+---
+
 ## 🔑 Changelog — Le credenziali cambiano porta: la selezione non consegna più accessi, l'anagrafica sì 2026-08-15 (branch `feat/credenziali-dallanagrafica-personale`)
 
 Domanda del titolare: *«quando un insegnante compila l'anagrafica e io la accetto, la mail con le
@@ -9972,12 +10517,18 @@ Gate verde: `eslint` 0, `vitest` 773/773, `build` ok.
 - La sidebar perde la voce **Iscrizioni**; la sezione «Anagrafica & Iscrizioni» è rinominata **«Anagrafica»**.
 - La pagina **Modulistica** ha ora 4 tab: **Moduli inviabili** + **Moduli ricevuti** (spostate da Iscrizioni),
   **Moduli Genitori** e **Template Certificati ODT**. Rimossa la tab **Moduli Esterni**.
+  <br>→ *La tab «Template Certificati ODT» non esiste più dal **2026-08-16**: era un mockup, e la carta
+  intestata vera arriva dai **Prestampati**. Le linguette di oggi sono sei — vedi il changelog di quella
+  data. Questa riga resta com'era perché racconta il 6 luglio, non l'oggi.*
 - «Moduli ricevuti» = le iscrizioni ricevute (invariato rispetto alla vecchia «Ricevute»): il link SIDI è preservato.
 - I due motori restano separati (form-builder vs moduli-genitori OTP).
 - I componenti sono stati estratti in `src/components/features/admin/iscrizioni/` (`ModuliInviabili`, `ModuliRicevuti`);
   `/admin/iscrizioni` è ora un **redirect** a `/admin/modulistica?tab=ricevuti` (link/segnalibri preservati).
   Modulistica legge `?tab=`; il back-link del builder punta a `?tab=inviabili`. Le tab inviabili/ricevuti
   operano multi-sede (fuori dalla guardia sede-singola che resta per Moduli Genitori/ODT).
+  <br>→ *Dal **2026-08-16** la guardia di sede singola resta solo per **Moduli Genitori**: la tab ODT non
+  esiste più, e **Prestampati** sta anch'essa fuori dalla guardia perché la sede se la sceglie dentro il
+  pannello, come primo passo.*
 - **Dashboard**: i link/KPI/alert che puntavano a Iscrizioni ora vanno a `/admin/modulistica?tab=ricevuti`;
   rimosso il doppione «Iscrizioni» dal menu rapido (già presente «Modulistica»). Fix `withUser` per usare
   `&` quando l'href ha già una query string (evita il doppio `?`).
@@ -12680,10 +13231,14 @@ _Modulo PRD: Form §4.4_
 _Modulo PRD: Form (gestione modelli)_
 
 **Checklist controlli richiesti:**
+- Tab 'Moduli inviabili'
+- Tab 'Moduli ricevuti'
+- Tab 'Candidature'
+- Tab 'Personale'
+- Tab 'Prestampati'
 - Tab 'Moduli Genitori'
 - Tab 'Moduli Esterni'
 - Tab 'Iscrizioni Nuovi Alunni'
-- Tab 'Template Certificati ODT'
 - Pulsante 'Nuovo Modulo Genitori'
 - Pulsante 'Nuovo Modulo Esterni'
 - Azione 'Form Builder Drag & Drop'
@@ -12719,10 +13274,6 @@ _Modulo PRD: Form (gestione modelli)_
 - Azione 'Anteprima e Modifica compilazione (con log versione)'
 - Pulsante 'Genera PDF singola compilazione'
 - Azione 'Dashboard Graduatorie (ranking + override + ammissioni)'
-- Selettore 'Upload Template ODT Carta Intestata'
-- Selettore 'Upload Template ODT Certificato Frequenza'
-- Selettore 'Upload Template ODT Certificato Iscrizione'
-- Badge 'Template ODT caricato' (conferma)
 
 ### `/admin/mensa` — Mensa Admin / Menu Builder & Ticket
 _Modulo PRD: Mensa §2 + §4_

@@ -109,6 +109,8 @@
   "agendaNuovoEvento": "New event",
   "agendaTitoloPlaceholder": "Title (e.g. Trip to the park)",
   "agendaVisibileGenitori": "Visible to parents",
+  "agendaOraPartenza": "Departure time",
+  "agendaOraRientro": "Expected return",
   "agendaSalvataggio": "Saving…",
   "agendaAggiungi": "Add",
   "agendaErroreSalvataggio": "Save failed. Please try again."

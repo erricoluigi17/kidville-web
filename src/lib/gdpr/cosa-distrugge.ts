@@ -28,6 +28,14 @@ export interface ConteggiOblio {
   pagelle: number | null
   certificati_medici: number | null
   /**
+   * I documenti del FASCICOLO (`student_documents` → bucket `sensitive_documents`):
+   * diagnosi, PEI, PDP e verbali della 104 dal lato scuola; scheda sanitaria,
+   * autorizzazione ai farmaci e dieta speciale dal lato famiglia. Art. 9 GDPR, di
+   * un minore. Si contano le RIGHE, che è ciò che l'oblio cancella — e con esse
+   * escono i PDF, uno per riga.
+   */
+  fascicolo_sanitario: number | null
+  /**
    * Foto e video in cui il bambino è l'UNICO taggato **e che l'oblio riesce a
    * togliere davvero**: file e riga se ne vanno. Non è la stessa cosa di «foto in
    * cui è l'unico ritratto» — vedi `foto_non_rimovibili` — e la differenza è
@@ -52,6 +60,7 @@ export interface ConteggiOblio {
 const NON_MISURATI: ConteggiOblio = {
   pagelle: null,
   certificati_medici: null,
+  fascicolo_sanitario: null,
   foto_solo_sue: null,
   foto_di_gruppo: null,
   foto_non_rimovibili: null,
@@ -118,6 +127,15 @@ export async function contaCosaDistrugge(
     'dryrun_certificati_medici',
     op,
   )
+  // Il FASCICOLO: si contano le righe, e si legge il solo `id`. Il resto della
+  // riga — `document_type`, il percorso, le note — non serve a un conteggio e
+  // porterebbe in memoria (e a un passo dai log) la frase «questo bambino ha una
+  // dieta speciale». L'aggancio è `student_id`, come nell'esecuzione.
+  const fascicolo = await leggi<{ id: string }>(
+    supabase.from('student_documents').select('id').eq('student_id', id),
+    'dryrun_fascicolo',
+    op,
+  )
 
   // Galleria: la stessa FUNZIONE che usa `obliaFotoAlunno`, non la stessa domanda
   // riscritta. Serve anche `file_url`, perché la sorte di una foto dipende pure
@@ -177,6 +195,7 @@ export async function contaCosaDistrugge(
   const conteggi: ConteggiOblio = {
     pagelle: pag.letto ? pag.righe.length : null,
     certificati_medici: cert.letto ? cert.righe.length : null,
+    fascicolo_sanitario: fascicolo.letto ? fascicolo.righe.length : null,
     foto_solo_sue: media.letto ? soloSue : null,
     foto_di_gruppo: media.letto ? diGruppo : null,
     foto_non_rimovibili: media.letto ? nonRimovibili : null,
@@ -196,6 +215,7 @@ export async function contaCosaDistrugge(
     entita_id: id,
     n_pagelle: conteggi.pagelle,
     n_certificati: conteggi.certificati_medici,
+    n_fascicolo: conteggi.fascicolo_sanitario,
     n_foto: conteggi.foto_solo_sue,
     n_foto_gruppo: conteggi.foto_di_gruppo,
     n_foto_trattenute: conteggi.foto_non_rimovibili,

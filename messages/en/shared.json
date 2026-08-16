@@ -278,5 +278,8 @@
   "errorePrestampatoFirmaNonValida": "The signature was not collected or is not valid: the document is not generated before it is signed.",
   "errorePrestampatoProtocolloDaDichiarare": "This document leaves the school: it must be given a protocol number, or marked as a copy for the family.",
   "erroreUscitaClasseFuoriSede": "One of the selected classes does not belong to the location chosen for the trip: please check the classes involved",
-  "erroreAutorizzazioniUscitaNonLette": "We couldn’t load who has signed the authorisation: please try again in a few minutes, the list shown would be incomplete"
+  "erroreAutorizzazioniUscitaNonLette": "We couldn’t load who has signed the authorisation: please try again in a few minutes, the list shown would be incomplete",
+  "erroreRegistroAlunniNonLetti": "We couldn’t load the list of children in this class: the register was not printed. Please try again in a few minutes.",
+  "erroreRegistroSezioneVuota": "There are no children in this class: there is nothing to print.",
+  "erroreRegistroNonGenerato": "The register was not generated: please try again in a few minutes."
 }

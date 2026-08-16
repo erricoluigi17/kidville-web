@@ -19,11 +19,8 @@
  * (`otp-rate-limit.ts`) — cioè cinque tentativi a vuoto su una gita lascerebbero il genitore
  * senza modo di firmare l'autorizzazione a un farmaco.
  *
- * I due che oggi non si firmano, con la misura che lo dice:
+ * Quello che oggi non si firma, con la misura che lo dice:
  *
- *  · **n. 10, autorizzazione all'uscita**: nessuno costruisce `DatiUscita` in tutto il repo —
- *    `grep -rn "DatiUscita" src/` dà tre occorrenze, tutte dentro `modelli/genitore.ts` — e
- *    senza quel dato `verificaContesto` del modello dice no;
  *  · **n. 08, delega al ritiro**: `richiedeDueFirme()` è vera quando in anagrafica ci sono due
  *    tutori (o l'alunno ha `genitori_separati`), il modello pretende due `sottoscrizioni` e
  *    questa rotta ne raccoglie una sola. Misurato in sola lettura sul database di produzione
@@ -44,23 +41,40 @@
  * ancorate ad `alunnoId`, perché il lock `isolamento-sede-coverage` riconosce i presidi dai
  * nomi delle funzioni chiamate NELL'handler: spostando una lettura di `delegates` o di
  * `certificati_medici` in un helper di file, quell'handler diventa «handler-senza-scope»
- * (misurato). Il criterio è uno solo, e si legge dagli import di questo file: qui non entra
- * `SupabaseClient`.
+ * (misurato).
  *
- * Non fa I/O: né Supabase né `next/server` oltre a `NextResponse`. È il motivo per cui il
- * verdetto si può interrogare tre volte in tre punti diversi senza pagare una query.
+ * ⚠️ IL CRITERIO, dal 2026-08-16, NON È PIÙ «qui non entra Supabase» — che era la formula
+ * precedente, e diceva una regola più stretta di quella vera. È: **qui non entra nessuna
+ * query ancorata a un bambino.** L'unica funzione che tocca il client è
+ * `garantisciBucketFascicolo`, che non legge dati di nessuno: chiede allo storage se il
+ * magazzino dichiarato in questo stesso file esiste, e se non c'è lo crea. Stava scritta
+ * due volte — privata dentro `firma/route.ts` e assente dall'altra porta — e la porta senza
+ * copia caricava in un bucket che in produzione non esisteva: 201 all'apparenza, zero righe
+ * in `student_documents`, e un numero di protocollo bruciato a ogni «Scarica».
+ *
+ * Il resto del file non fa I/O, ed è il motivo per cui il verdetto si può interrogare tre
+ * volte in tre punti diversi senza pagare una query.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { bloccoFirma, prestampatiPerRuolo, type VocePrestampato } from '@/lib/prestampati/registro'
 import {
+  autorizzazioneNidoCompleta,
   richiedeDueFirme,
   type CampoModulo,
   type DatiPrestampato,
+  type DatiUscita,
   type ErroreCampo,
+  type MezzoTrasporto,
+  type TipoUscita,
 } from '@/lib/prestampati/modelli/genitore'
 import type { EsitoRender } from '@/lib/prestampati/render'
+// Il giorno civile ITALIANO di un istante: il runtime gira in UTC, e sul confine fra due
+// anni scolastici (1° agosto) due ore decidono a quale anno appartiene un certificato.
+import { dataCivile } from '@/i18n/config'
+import { logEvento } from '@/lib/logging/logger'
 
 // ─── Il cancello dello slug ─────────────────────────────────────────────────────
 
@@ -154,27 +168,8 @@ export function serveElencoDelegati(campi: readonly CampoConDelegati[]): boolean
  */
 export type MotivoNonFirmabile =
   | 'firma-della-scuola'
-  | 'uscita-non-creata'
   | 'seconda-firma-mancante'
   | 'allegato-non-caricabile'
-
-/**
- * I modelli che pretendono un CONTESTO che oggi nessuno costruisce.
- *
- * Oggi ce n'è uno: il n. 10. `DatiPrestampato.uscita` è il prefill dell'evento — tipo,
- * destinazione, data, mezzo, attività in acqua — e `prefill.ts` dice a chiare lettere che
- * «`dati` non porta `visto`, `sottoscrizioni`, `accompagnatore` e `uscita`… li aggiunge la
- * route». La route non li aggiunge, e non per dimenticanza: **l'uscita nasce dalla
- * segreteria**, che pubblica la gita per tutta la sezione, e quella strada non è ancora
- * stata scritta. Finché non c'è, il modulo si compila e la firma non si può apporre.
- *
- * Un insieme e non una regola dedotta dal modello: `verificaContesto` non è ispezionabile
- * dall'esterno (è una funzione chiusa dentro `definisciModello`), e dedurre «questo modello
- * vuole un contesto» dalla presenza di un campo sarebbe una seconda descrizione del modello
- * accanto a quella che il modello dà di sé. Il giorno in cui la segreteria pubblicherà le
- * uscite, questa riga sparisce e non cambia nient'altro.
- */
-const CONTESTO_NON_DISPONIBILE: ReadonlySet<string> = new Set(['autorizzazione_uscita'])
 
 /**
  * I modelli che pretendono un ALLEGATO che la famiglia non ha nessun modo di depositare.
@@ -243,7 +238,15 @@ export function motivoNonFirmabileSubito(voce: VocePrestampato): MotivoNonFirmab
   // funzione mappa i tre requisiti sui tre blocchi del motore, e «blocco del genitore» è vera
   // esattamente sui due requisiti OTP. Enumerarli a mano qui sarebbe la quarta copia.
   if (bloccoFirma(voce.firma) !== 'genitore') return 'firma-della-scuola'
-  if (CONTESTO_NON_DISPONIBILE.has(voce.slug)) return 'uscita-non-creata'
+  // ⚠️ IL N. 10 NON HA PIÙ UN MOTIVO, e non perché il problema sia sparito: perché la
+  // risposta è cambiata di natura. Fino al 2026-08-15 qui c'era
+  // `CONTESTO_NON_DISPONIBILE.has(voce.slug) → 'uscita-non-creata'`, cioè una voce SPENTA
+  // con un lucchetto accanto — e restava spenta anche quando la gita esisteva davvero,
+  // perché le uscite vivono in `eventi_agenda` e nessuno costruiva `DatiUscita`. Ora
+  // l'uscita si legge (`datiUscitaDaEvento`, qui sotto) e la regola è un'altra: **senza
+  // uscita pubblicata il modulo non compare affatto** nell'elenco della famiglia. Un
+  // lucchetto su una gita che non esiste è una promessa a chi non ha niente da firmare.
+  // La decisione è del GET, che l'elenco lo compone; qui non c'è più niente da dire.
   // ⚠️ `allegato-non-caricabile` NON sta qui, e non è una svista: sul n. 08 vale insieme a
   // `seconda-firma-mancante`, e dandolo subito — prima di aver guardato l'anagrafica —
   // renderebbe il verdetto della doppia firma irraggiungibile per sempre. Sta in
@@ -279,6 +282,359 @@ export function motivoNonFirmabile(
   return null
 }
 
+// ─── I certificati: quelli che la Scuola emette, e per chi ──────────────────────
+
+/**
+ * I tre motivi per cui un CERTIFICATO non si emette, e sono cose diverse dal non-firmabile.
+ *
+ * `MotivoNonFirmabile` risponde a «questa famiglia può sottoscrivere questo foglio?»; questo
+ * risponde a «la Scuola può emetterlo, per QUESTO bambino, adesso?». Due su tre sono lacune
+ * della SEDE (si segnalano alla segreteria e si sistemano in Impostazioni), il terzo è una
+ * proprietà del bambino e non si sistema affatto: il Bonus Asilo Nido spetta a chi il nido lo
+ * frequenta, e per gli altri esiste il certificato di iscrizione e frequenza.
+ *
+ * In kebab come tutti gli altri enumerati di queste risposte, e con gli stessi valori che il
+ * POST già restituiva in `motivo`: il client ha una mappa sola verso il catalogo bilingue.
+ */
+export type MotivoNonGenerabile =
+  | 'legale-rappresentante-assente'
+  | 'livello-non-nido'
+  | 'autorizzazione-nido-mancante'
+
+/**
+ * Il verdetto sull'emissione, o `null` se quel certificato per quel bambino si può fare.
+ *
+ * ─── PERCHÉ ESISTE, E PERCHÉ NON STA DENTRO LA ROTTA ────────────────────────────
+ *
+ * 🔴 Misurato su una finestra 430×900 — la misura di un telefono, che è come questa app si
+ * usa. Il Bonus Nido offriva a chiunque un pulsante `primary`, si premeva, e il rifiuto
+ * («si rilascia solo a chi frequenta il nido») veniva disegnato **777 px sopra la finestra**:
+ * gli screenshot prima e dopo il clic erano identici, e al genitore sembrava che il pulsante
+ * non rispondesse. Sulla sede di Giugliano la maggioranza dei bambini non è al nido, quindi
+ * quel pulsante era acceso e destinato a fallire per la maggioranza di chi lo vedeva.
+ *
+ * Il rifiuto però era prevedibile **senza chiedere niente al server**: il GET carica già il
+ * precompilato e conosce livello, sede e legale rappresentante. Quindi la stessa regola serve
+ * a due strade — il GET, per far arrivare la scheda spenta con il suo motivo scritto sopra, e
+ * il POST, per rifiutare con un 422 chi ci prova lo stesso — e una regola valida per due
+ * strade vive in un posto solo. Se le due divergessero, il pannello accenderebbe un pulsante
+ * che la rotta rifiuta: cioè esattamente il difetto di partenza, con un giro di rete in più.
+ *
+ * ⚠️ Vale SOLO sui certificati (`firma === 'legale_rappresentante'`). Sugli altri sei
+ * risponde `null` — «niente da dire» — e non `'firma-della-scuola'`: quella è la risposta di
+ * `motivoNonFirmabile`, e ripeterla qui vorrebbe dire due campi che dicono la stessa cosa in
+ * modo leggermente diverso nello stesso oggetto JSON.
+ */
+export function motivoNonGenerabile(
+  voce: VocePrestampato,
+  dati: DatiPrestampato,
+  legaleRappresentante: string | null | undefined,
+): MotivoNonGenerabile | null {
+  if (voce.firma !== 'legale_rappresentante') return null
+  // Chi firma per la Scuola non c'è: nessuno dei due certificati esce, e non è colpa del
+  // bambino. Si guarda per PRIMO perché vale su tutti e due e non dipende dal modello.
+  if (!legaleRappresentante?.trim()) return 'legale-rappresentante-assente'
+  if (voce.slug === 'certificato_bonus_nido') {
+    if (dati.alunno.livello !== 'nido') return 'livello-non-nido'
+    if (!autorizzazioneNidoCompleta(dati.sede)) return 'autorizzazione-nido-mancante'
+  }
+  return null
+}
+
+// ─── Il numero di protocollo dentro la riga d'archivio ──────────────────────────
+
+/**
+ * La descrizione con cui un documento PROTOCOLLATO entra nel fascicolo.
+ *
+ * ⚠️ È UN FORMATO, non una frase, ed è l'unico posto in cui il numero di protocollo può
+ * viaggiare: `student_documents` non ha una colonna per il protocollo — misurato sullo
+ * schema di produzione il 2026-08-16, undici colonne e nessuna è quella — e aggiungerne una
+ * è una migrazione che il DB E2E della CI non ha. Chi scrive e chi rilegge devono quindi
+ * usare le stesse parole, ed è lo stesso patto che tiene insieme l'uscita in agenda
+ * (`componiDescrizioneUscita` → `datiUscitaDaEvento`), per la stessa ragione e con lo stesso
+ * lock: senza round-trip verificato, il riscarico torna a non sapere quale foglio sta
+ * riconsegnando **e niente diventa rosso**.
+ *
+ * Nessun dato personale: c'è già il PDF. Etichetta del modello e numero, nient'altro.
+ */
+export function descrizioneArchivioProtocollata(
+  etichetta: string,
+  numeroFormattato: string | null,
+): string {
+  return numeroFormattato ? `${etichetta} — Prot. n. ${numeroFormattato}` : etichetta
+}
+
+/**
+ * Il numero di protocollo riletto da una descrizione d'archivio, o `null` se non ce n'è uno.
+ *
+ * ⚠️ LA FORMA È QUELLA DEL REGISTRO, e il rigore è la parte utile: sette cifre, barra, quattro
+ * dell'anno (`formatNumeroProtocollo`). Un'espressione più larga (`\d+/\d+`) accetterebbe
+ * qualunque frazione capitata in una descrizione scritta a mano e la mostrerebbe al genitore
+ * come «il numero del tuo certificato», che è peggio del campo vuoto: un numero sbagliato lo
+ * si trascrive su un modulo INPS senza dubitarne.
+ *
+ * Regge anche il formato dello SPORTELLO, che dopo il numero può aggiungere una coda propria
+ * (`— modulo consegnato su carta`): il numero si cerca dov'è, non si pretende che la
+ * descrizione finisca lì.
+ */
+export function numeroProtocolloDaDescrizione(descrizione: string | null | undefined): string | null {
+  if (!descrizione) return null
+  return /Prot\. n\. (\d{7}\/\d{4})/.exec(descrizione)?.[1] ?? null
+}
+
+// ─── L'USCITA: come si scrive in agenda e come si rilegge sul modulo n. 10 ──────
+//
+// ⚠️ PERCHÉ IL CODICE CHE SCRIVE STA NEL FILE DI CHI LEGGE, che è la domanda giusta da
+// fare a questa sezione. `eventi_agenda` non ha una colonna `jsonb` (baseline, righe
+// 1427-1441: `titolo`, `descrizione`, `tipo`, `data`, `orario_inizio`, `orario_fine`,
+// `visibile_genitori`), e aggiungerne una è una migrazione. L'unico posto in cui i dati
+// dell'uscita possono viaggiare è quindi il TESTO della descrizione, e un testo è un
+// formato: chi lo scrive (`teacher/uscite:POST`) e chi lo rilegge (le due porte della
+// famiglia) devono usare le stesse etichette, o il n. 10 smette di stampare la
+// destinazione **senza che niente diventi rosso** — il foglio esce lo stesso, con una riga
+// in meno che nessuno sa di dover cercare.
+//
+// Due copie delle etichette in due file divergono al primo ritocco. Perciò stanno qui, che
+// è il file di chi si ROMPE se divergono, e la route dell'insegnante le importa. Il
+// round-trip (`componiDescrizioneUscita` → `datiUscitaDaEvento`) è verificato dal test, che
+// è la sola prova che il formato regge.
+//
+// ⚠️ E IL FORMATO NON SI PUÒ RISCRIVERE A PIACERE: in produzione esistono già uscite
+// pubblicate con queste righe. Un'etichetta cambiata rende illeggibili quelle, cioè spegne
+// il modulo per le gite già annunciate alle famiglie.
+
+/** Le cinque voci del cartaceo, nell'ordine in cui il prestampato le elenca. */
+export const TIPI_ATTIVITA_USCITA = [
+  'uscita_didattica',
+  'gita',
+  'laboratorio_esterno',
+  'corso_piscina',
+  'altro',
+] as const
+export type TipoAttivitaUscita = (typeof TIPI_ATTIVITA_USCITA)[number]
+
+export const ETICHETTA_ATTIVITA_USCITA: Record<TipoAttivitaUscita, string> = {
+  uscita_didattica: 'Uscita didattica',
+  gita: 'Gita',
+  laboratorio_esterno: 'Laboratorio esterno',
+  corso_piscina: 'Corso di piscina/nuoto',
+  altro: 'Altra attività esterna',
+}
+
+/**
+ * Il tipo dell'agenda → il tipo del MODELLO, che ha un nome diverso per la stessa cosa.
+ *
+ * `corso_piscina` di qua e `piscina` di là (`TIPI_USCITA`, `modelli/genitore.ts`): due
+ * elenchi scritti da due mani, con le stesse cinque voci e un nome che non coincide.
+ * Tradurre qui è meno pericoloso che allineare i due enumerati — l'agenda ha già righe
+ * scritte con `corso_piscina`, e rinominarle sarebbe una migrazione di dati per un refuso.
+ */
+const TIPO_USCITA_DEL_MODELLO: Record<TipoAttivitaUscita, TipoUscita> = {
+  uscita_didattica: 'uscita_didattica',
+  gita: 'gita',
+  laboratorio_esterno: 'laboratorio_esterno',
+  corso_piscina: 'piscina',
+  altro: 'altro',
+}
+
+/** Le quattro voci del cartaceo per il mezzo di trasporto. */
+export const MEZZI_USCITA = ['scuolabus', 'pullman_privato', 'a_piedi', 'altro'] as const
+export type MezzoUscita = (typeof MEZZI_USCITA)[number]
+
+export const ETICHETTA_MEZZO_USCITA: Record<MezzoUscita, string> = {
+  scuolabus: 'Scuolabus',
+  pullman_privato: 'Pullman privato',
+  a_piedi: 'A piedi',
+  altro: 'Altro',
+}
+
+/** Le etichette che fanno da chiave nella descrizione. Cambiarne una rompe il passato. */
+const RIGA_TIPO = 'Tipo di attività'
+const RIGA_DESTINAZIONE = 'Destinazione'
+const RIGA_MEZZO = 'Mezzo di trasporto'
+const RIGA_ACQUA = 'Attività in acqua'
+
+/** `2026-09-12` → `12/09/2026`, senza costruire una `Date`: nessun fuso di mezzo. */
+export function dataItalianaUscita(ymd: string): string {
+  const [anno, mese, giorno] = ymd.split('-')
+  return `${giorno}/${mese}/${anno}`
+}
+
+/** Il titolo dell'evento in agenda, e la prima metà della chiave naturale della gita. */
+export function titoloUscita(tipo: TipoAttivitaUscita, destinazione: string): string {
+  return `${ETICHETTA_ATTIVITA_USCITA[tipo]}: ${destinazione}`
+}
+
+/** Ciò che serve a comporre la descrizione dell'uscita: è il corpo della richiesta. */
+export interface DescrizioneUscitaInput {
+  tipo_attivita: TipoAttivitaUscita
+  destinazione: string
+  data: string
+  ora_partenza: string
+  ora_rientro: string
+  mezzo: MezzoUscita
+  attivita_in_acqua?: boolean
+  accompagnatori?: string | null
+  /** Già formattata in euro dal chiamante: qui non entra `formatEuro`. */
+  quota?: string | null
+}
+
+/**
+ * La «DESCRIZIONE DELL'ATTIVITÀ», tutta precompilata dall'evento.
+ *
+ * Le righe di cui la gita non porta il dato NON compaiono: è la disciplina dei prestampati
+ * («mai una riga vuota che sembri un valore»), e su un foglio che autorizza l'uscita di un
+ * minore un «Quota: —» si legge come una quota decisa.
+ *
+ * ⚠️ `Attività in acqua` compare SOLO quando è vera, ed è la riga aggiunta il 2026-08-16:
+ * senza, il dato non sopravviveva alla scrittura e il modulo non avrebbe mai chiesto «sa
+ * nuotare». Le uscite pubblicate PRIMA di oggi non ce l'hanno e rileggono `false`: è il
+ * degrado onesto — la domanda non viene posta — e non si può fare di meglio, perché quel
+ * dato in quelle righe non c'è mai stato.
+ */
+export function componiDescrizioneUscita(u: DescrizioneUscitaInput): string {
+  const righe = [
+    `${RIGA_TIPO}: ${ETICHETTA_ATTIVITA_USCITA[u.tipo_attivita]}`,
+    `${RIGA_DESTINAZIONE}: ${u.destinazione}`,
+    `Data: ${dataItalianaUscita(u.data)} · Partenza: ${u.ora_partenza} · Rientro previsto: ${u.ora_rientro}`,
+    `${RIGA_MEZZO}: ${ETICHETTA_MEZZO_USCITA[u.mezzo]}`,
+  ]
+  if (u.attivita_in_acqua) righe.push(`${RIGA_ACQUA}: Sì`)
+  if (u.accompagnatori) righe.push(`Accompagnatori: ${u.accompagnatori}`)
+  if (u.quota) righe.push(`Quota di partecipazione: ${u.quota}`)
+  righe.push(
+    'Si ricorda di segnalare eventuali informazioni sanitarie rilevanti già indicate nella scheda sanitaria dell’alunno/a.',
+  )
+  return righe.join('\n')
+}
+
+/** La riga di `eventi_agenda` come arriva da PostgREST, con i soli campi che servono. */
+export interface EventoUscita {
+  titolo?: string | null
+  descrizione?: string | null
+  data?: string | null
+  orario_inizio?: string | null
+  orario_fine?: string | null
+}
+
+/** Il valore di una riga «Etichetta: valore» della descrizione, o `null`. */
+function valoreRiga(descrizione: string, etichetta: string): string | null {
+  for (const riga of descrizione.split('\n')) {
+    const t = riga.trim()
+    if (t.startsWith(`${etichetta}:`)) return t.slice(etichetta.length + 1).trim() || null
+  }
+  return null
+}
+
+/** Il valore di un enumerato a partire dalla sua etichetta stampata, o `null`. */
+function valoreDaEtichetta<T extends string>(
+  etichette: Record<T, string>,
+  testo: string | null,
+): T | null {
+  if (!testo) return null
+  for (const [valore, etichetta] of Object.entries(etichette) as [T, string][]) {
+    if (etichetta === testo) return valore
+  }
+  return null
+}
+
+/** `09:00:00` → `09:00`. Una `time` di Postgres porta i secondi, il foglio no. */
+function oraBreve(ora: string | null | undefined): string | null {
+  const t = ora?.trim()
+  if (!t) return null
+  const m = /^([01]\d|2[0-3]):([0-5]\d)/.exec(t)
+  return m ? `${m[1]}:${m[2]}` : null
+}
+
+/**
+ * L'uscita di `eventi_agenda` → i dati che il n. 10 stampa sul foglio, o `null`.
+ *
+ * ⚠️ `null` VUOL DIRE «QUESTA RIGA NON AUTORIZZA NIENTE», e il chiamante deve trattarlo
+ * come «uscita assente»: `verificaContesto` del n. 10 rifiuta senza `dati.uscita`, ma un
+ * rifiuto del render arriva DOPO che il genitore ha compilato e speso un codice OTP.
+ *
+ * ─── LE DUE CONDIZIONI SONO DUE, E FINO AL 2026-08-16 ERANO QUATTRO ─────────────
+ *
+ * 🔴 Questa funzione pretendeva anche i DUE ORARI, e quella riga spegneva la funzione
+ * intera. Misurato, non dedotto: `grep -rn "orario_inizio" src/components src/app` non
+ * trova **nessuno** che li scriva su `eventi_agenda` fuori da `agenda:POST`, che li
+ * accetta opzionali e li salva `null` (`route.ts:338-339`); l'unica schermata che crea
+ * uscite è `TeacherAgendaCard`, e il corpo che manda è
+ * `{section_id, titolo, data, tipo, visibile_genitori}` — senza orari. `teacher/uscite:POST`
+ * li scrive, ma `grep -rn "api/teacher/uscite" src/` dà **zero** chiamanti. Esito: la
+ * segreteria apriva l'agenda, sceglieva «Uscita», salvava, e il n. 10 non compariva **mai**
+ * a nessuna famiglia — per costruzione, senza che niente diventasse rosso. La prova in
+ * produzione: l'uscita `Gita al museo E2E` ha `orario_fine = NULL`.
+ *
+ * Le condizioni che restano sono quelle che un ente leggerebbe e che il foglio DICHIARA:
+ * **dove si va** e **quando**. Gli orari sono una riga in più quando ci sono, e quando non
+ * ci sono il modello non la stampa affatto (`campo()` in `modelli/genitore.ts` salta i
+ * valori vuoti, e `blocchiCampi` fa sparire il blocco intero): è la disciplina dei
+ * prestampati — «mai una riga vuota che sembri un valore» — che qui vale al contrario, cioè
+ * un dato mancante toglie una riga, non un documento.
+ *
+ * La data e i due orari si prendono dalle COLONNE, non dalla riga «Data: … · Partenza: …»
+ * della descrizione: quella riga è la stessa informazione scritta per gli occhi, e leggere
+ * un dato dalla sua copia formattata è il modo di ritrovarsi con due verità.
+ *
+ * `tipo` e `destinazione` degradano sul TITOLO perché un'uscita nasce quasi sempre
+ * dall'agenda generica, dove la descrizione è testo libero: là il titolo è l'unica cosa che
+ * ha una forma. `Gita: Napoli` porta tipo e destinazione; un titolo senza due punti —
+ * `Gita al museo`, che è come una maestra lo scrive — vale **per intero** come
+ * destinazione, perché è la frase con cui la scuola quell'uscita l'ha annunciata alle
+ * famiglie, e non è un'invenzione di questa funzione. `tipo` sconosciuto vale `altro`, che
+ * è una delle cinque voci del cartaceo. Un evento **senza titolo e senza destinazione**
+ * resta `null`: lì non c'è niente da scrivere sul foglio.
+ */
+export function datiUscitaDaEvento(evento: EventoUscita | null | undefined): DatiUscita | null {
+  if (!evento) return null
+
+  const data = (evento.data ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return null
+
+  // Opzionali entrambi, e indipendenti: un'uscita che dichiara l'ora di partenza e non
+  // quella di rientro stampa la prima. Prima bastava che ne mancasse uno per far sparire
+  // il modulo.
+  const oraPartenza = oraBreve(evento.orario_inizio)
+  const oraRientro = oraBreve(evento.orario_fine)
+
+  const descrizione = evento.descrizione ?? ''
+  const titolo = (evento.titolo ?? '').trim()
+  const taglio = titolo.indexOf(':')
+  const etichettaDalTitolo = taglio > 0 ? titolo.slice(0, taglio).trim() : null
+  const codaDelTitolo = taglio > 0 ? titolo.slice(taglio + 1).trim() : titolo
+
+  const destinazione = valoreRiga(descrizione, RIGA_DESTINAZIONE) ?? codaDelTitolo
+  if (!destinazione) return null
+
+  const tipoAgenda =
+    valoreDaEtichetta(ETICHETTA_ATTIVITA_USCITA, valoreRiga(descrizione, RIGA_TIPO)) ??
+    valoreDaEtichetta(ETICHETTA_ATTIVITA_USCITA, etichettaDalTitolo)
+
+  return {
+    tipo: tipoAgenda ? TIPO_USCITA_DEL_MODELLO[tipoAgenda] : 'altro',
+    destinazione,
+    data,
+    oraPartenza,
+    oraRientro,
+    // Nessun `as`: `MezzoUscita` deve restare assegnabile a `MezzoTrasporto`, e se i due
+    // elenchi divergono è `tsc` a dirlo — un cast lo terrebbe verde stampando un mezzo che
+    // il modello non sa disegnare.
+    mezzo: valoreDaEtichetta<MezzoTrasporto>(ETICHETTA_MEZZO_USCITA, valoreRiga(descrizione, RIGA_MEZZO)),
+    attivitaInAcqua: valoreRiga(descrizione, RIGA_ACQUA) === 'Sì',
+  }
+}
+
+/**
+ * Questo modello si accende solo se c'è un'uscita pubblicata per la sezione del bambino?
+ *
+ * Una funzione e non un insieme perché la risposta è una sola e non cambia con la sede: il
+ * n. 10 è l'unico dei diciassette il cui contenuto arriva da un evento di calendario.
+ */
+export function dipendeDallUscita(slug: string): boolean {
+  return slug === 'autorizzazione_uscita'
+}
+
 // ─── I magazzini, e chi può nominarli ───────────────────────────────────────────
 
 /**
@@ -288,42 +644,136 @@ export function motivoNonFirmabile(
  * documento di fonte `fascicolo` leggendo da `sensitive_documents`. Metterlo altrove
  * vorrebbe dire archiviare un PDF che l'Archivio firmati elenca e non riesce ad aprire.
  *
- * ─── 🔴 LA REGOLA 6 OGGI NON È RISPETTATA, E IL POSTO PER DIRLO È QUESTO ─────────
+ * ─── ✅ LA REGOLA 6 ORA È RISPETTATA — e prima di questo blocco leggi la data ────
  *
  * `docs/prestampati/README.md` chiede per 05, 06, 07 e 42 — dati sanitari di minori,
- * art. 9 GDPR — un **«bucket con oblio»**. Questo non lo è, e non lo diventa scegliendolo:
- * la copertura non è una proprietà del bucket, è una riga di registro più una chiamata.
- * Misurato in sola lettura il 2026-08-14:
+ * art. 9 GDPR — un **«bucket con oblio»**. Fino al 2026-08-15 questo non lo era, e non lo
+ * diventava scegliendolo: la copertura non è una proprietà del bucket, è una riga di
+ * registro più una chiamata. Le due cose ora ci sono, e questo blocco le cita perché la
+ * versione precedente dichiarava per iscritto, con tre numeri, il contrario — numeri veri
+ * il 14/08 e falsi il giorno dopo. **Rimisurato il 2026-08-16:**
  *
- *  · `grep -c sensitive_documents src/lib/gdpr/esegui.ts` → **0**;
- *  · `REGISTRO_BUCKET_OBLIO` (`esegui.ts`) elenca **quattordici** magazzini e nessuno è
- *    questo — la quattordicesima è `documenti_personale`, aperta l'11/08/2026 e dichiarata
- *    `coperto-fuori-oblio`, che è uno stato e non un'assenza;
- *  · `grep -rn student_documents src/lib/gdpr/ src/app/api/gdpr/` → **nessun risultato**:
- *    le tabelle che `anonimizzaAlunno` tocca non comprendono l'archivio del fascicolo.
+ *  · `grep -c sensitive_documents src/lib/gdpr/esegui.ts` → **6** (era 0);
+ *  · `REGISTRO_BUCKET_OBLIO` (`esegui.ts:296`) elenca **quindici** magazzini e questo è uno
+ *    di quelli: `stato: 'coperto'`, canale `alunno`;
+ *  · `grep -rn student_documents src/lib/gdpr/` → **12 righe** (era nessuna), fra cui
+ *    `obliaFascicoloAlunno` e la sua chiamata dentro `anonimizzaAlunno` (`esegui.ts:1821`).
  *
- * Conseguenza esatta, senza attenuanti: dopo una richiesta di oblio la scheda sanitaria
- * firmata di quel bambino — allergeni, terapie, farmaci in chiaro DENTRO il PDF — resta nel
- * bucket **e** resta indicizzata in `student_documents`. Il lock
- * `__tests__/lib/gdpr-oblio-completo.test.ts` non se ne accorge perché il suo inventario è
- * la fotografia dei bucket ESISTENTI, e questo in produzione non esiste ancora (lo crea
- * `garantisciBucket`): è precisamente il terzo caso che quel registro dichiara di voler
- * rendere impossibile — «un bucket nuovo resta rosso finché qualcuno non dice chi lo svuota».
+ * Che cosa fa, per non doverlo dedurre: l'aggancio è `student_documents.student_id`, esce il
+ * PDF (percorso letto da `storage_path` **oppure** da `file_url`, nell'ordine dei lettori del
+ * fascicolo) e sparisce la riga che lo indicizza; il canale GENITORE non lo tocca, ed è una
+ * decisione scritta — il fascicolo è del BAMBINO, e la richiesta di un adulto non cancella i
+ * dati sanitari di un minore che resta iscritto. Le prove stanno in
+ * `__tests__/lib/gdpr-bucket-sensitive.test.ts`, su un archivio finto che toglie davvero.
  *
- * 🔴 E LA LACUNA NON È RARA: finché `document_type_enum` non contiene i diciassette slug —
- * cioè oggi, sul 100% delle firme — il PDF resta nel bucket senza nessuna riga che lo nomini
- * (vedi `ilFileRestaNelBucket`). È anche la ragione per cui il n. 06, che in archivio non
- * entra per scelta, nel bucket non ci sale affatto (vedi `attesaAccettazioneDirezione`).
- *
- * NON si ripara da qui, e va detto perché: `esegui.ts` è file di un'altra mano e il bucket
- * è condiviso con `documenti-firmati/dettaglio` e `primaria/fascicolo`, quindi la decisione
- * («coperto» o «escluso») vale per tutti e tre e non per questa rotta. Ciò che serve, scritto
- * per chi lo farà: una voce `sensitive_documents` in `REGISTRO_BUCKET_OBLIO` — `coperto`
- * con l'aggancio `student_documents.student_id` → `rimuoviFileOblio(storage_path)` — e la
- * chiamata dentro `anonimizzaAlunno`. Fino ad allora è **bloccante per il rilascio**, non
- * una nota: dichiarato all'orchestratore in quei termini.
+ * ⚠️ IL LIMITE CHE RESTA, ed è la parte da non dimenticare: **la copertura passa
+ * dall'INDICE**. Un PDF che finisce nel bucket senza una riga in `student_documents` non
+ * viene raggiunto da nessun oblio — nessuna query lo nomina. Non è teorico: è ciò che
+ * produce `ilFileRestaNelBucket` quando l'archiviazione non riesce, ed è il motivo per cui
+ * quella regola («il file si toglie solo quando ritentare ha senso») va letta come una
+ * decisione di privacy e non solo di robustezza. Chi carica in questo bucket scriva sempre
+ * anche la riga, o accetti di lasciare un orfano dell'art. 9.
  */
 export const BUCKET_FASCICOLO = 'sensitive_documents'
+
+/**
+ * I parametri con cui il bucket CONDIVISO nasce — e il motivo per cui un magazzino che
+ * riceve solo PDF dichiara anche tre tipi di immagine.
+ *
+ * `sensitive_documents` lo usano in cinque (le due porte della famiglia, lo sportello, il
+ * fascicolo della primaria e il suo lettore), e lo crea **chi arriva primo**: i parametri di
+ * quel primo restano per tutti. Se a crearlo fosse una rotta che carica solo certificati con
+ * `['application/pdf']`, il fascicolo della primaria — che carica documenti d'identità in
+ * JPEG/PNG/WebP con `contentType: file.type` — comincerebbe a prendere un rifiuto dallo
+ * storage per una scelta fatta altrove.
+ *
+ * Un bucket condiviso è una risorsa di tutti: o si dichiara in un posto solo, o chi lo crea
+ * lo crea per il caso di tutti. Questo è il posto solo.
+ */
+export const BUCKET_FASCICOLO_MIME: readonly string[] = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]
+export const BUCKET_FASCICOLO_MAX = 15 * 1024 * 1024
+
+/**
+ * Il magazzino del fascicolo esiste, o si crea — e la risposta dice se ci si può contare.
+ *
+ * ─── PERCHÉ NON È PIÙ PRIVATA DI UNA ROTTA SOLA ─────────────────────────────────
+ *
+ * 🔴 Misurato in produzione il 2026-08-16, non dedotto. `storage.buckets` aveva quattordici
+ * righe e nessuna era `sensitive_documents`. La rotta della FIRMA garantiva il bucket; quella
+ * del CERTIFICATO no, e caricava lo stesso: due POST identici hanno risposto **201** con
+ * `documentoId: null`, non hanno lasciato nessuna riga in `student_documents` e hanno
+ * consumato **due numeri di protocollo** sullo stesso oggetto e sullo stesso bambino. Il
+ * registro è WORM: quei due numeri non tornano indietro. Il certificato ha ricominciato a
+ * entrare in archivio solo quando la firma di un altro modulo ha creato il bucket per caso.
+ *
+ * Una porta che funziona per l'effetto collaterale di un'altra non funziona: funziona finché
+ * l'altra viene usata per prima. Da qui la funzione condivisa.
+ *
+ * ─── L'ESITO SI CONTROLLA, E ORA SI RESTITUISCE ─────────────────────────────────
+ *
+ * `listBuckets()` e `createBucket()` **ritornano `{ data, error }`** e non lanciano — stessa
+ * forma di PostgREST, AGENTS.md regola 7. Un `try/catch` da solo non scatterebbe mai su quel
+ * caso, e il corpo dell'errore del provider — la sola cosa che spieghi *perché* i
+ * caricamenti falliscono — andrebbe perso (AGENTS.md §3). Il `try/catch` resta per ciò che
+ * un'eccezione la solleva davvero (rete, fetch interrotta).
+ *
+ * ⚠️ IL VALORE DI RITORNO NON OBBLIGA I DUE CHIAMANTI ALLA STESSA REAZIONE, ed è deliberato:
+ *
+ *  · la porta del **certificato** si ferma, perché il passo successivo consumerebbe un numero
+ *    di protocollo che nessuno può restituire — e senza magazzino quel numero servirebbe solo
+ *    a bruciarne un altro al clic dopo;
+ *  · la porta della **firma** prosegue, perché lì non c'è nessuna numerazione da proteggere e
+ *    il foglio firmato ha valore anche non archiviato: la risposta lo consegna alla famiglia
+ *    dicendo che è l'unica copia rimasta (`mancatoArchivio*`). Fermarsi butterebbe via una
+ *    firma valida per un guasto dell'archivio.
+ */
+export async function garantisciBucketFascicolo(
+  supabase: SupabaseClient,
+  operazione: string,
+): Promise<boolean> {
+  try {
+    const { data: elenco, error: erroreElenco } = await supabase.storage.listBuckets()
+    if (erroreElenco) {
+      logEvento(
+        'storage',
+        'error',
+        { operazione, bucket: BUCKET_FASCICOLO, esito: 'bucket-non-elencato' },
+        erroreElenco,
+      )
+      return false
+    }
+    if (elenco?.some((b) => b.name === BUCKET_FASCICOLO)) return true
+
+    const { error: erroreCreazione } = await supabase.storage.createBucket(BUCKET_FASCICOLO, {
+      public: false,
+      allowedMimeTypes: [...BUCKET_FASCICOLO_MIME],
+      fileSizeLimit: BUCKET_FASCICOLO_MAX,
+    })
+    if (erroreCreazione) {
+      logEvento(
+        'storage',
+        'error',
+        { operazione, bucket: BUCKET_FASCICOLO, esito: 'bucket-non-creato' },
+        erroreCreazione,
+      )
+      return false
+    }
+    return true
+  } catch (e) {
+    logEvento(
+      'storage',
+      'warn',
+      { operazione, bucket: BUCKET_FASCICOLO, esito: 'bucket-non-verificato' },
+      e,
+    )
+    return false
+  }
+}
 
 /**
  * Il magazzino CON OBLIO in cui la famiglia sa già depositare un allegato, ed è quello che
@@ -730,6 +1180,79 @@ export function fineAnnoScolastico(annoScolastico: string | null | undefined): s
   return `${fine}-07-31`
 }
 
+// ─── Il riscarico e l'anno scolastico ───────────────────────────────────────────
+
+/**
+ * L'anno scolastico di un giorno civile `YYYY-MM-DD`, o `null` se non è una data.
+ *
+ * Stessa regola di `annoScolasticoCorrente()` (`src/lib/anno-scolastico.ts`): il confine è
+ * il **1° agosto**, «agosto fa già da ponte verso il nuovo anno». Qui però si parte da una
+ * data invece che da `new Date()`, perché la domanda è su un documento del passato.
+ */
+export function annoScolasticoDelGiorno(giorno: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec((giorno ?? '').trim())
+  if (!m) return null
+  const anno = Number(m[1])
+  const mese = Number(m[2])
+  return mese >= 8 ? `${anno}/${anno + 1}` : `${anno - 1}/${anno}`
+}
+
+/**
+ * Il riscarico di questo modello è legato all'anno scolastico?
+ *
+ * 🔴 IL DIFETTO CHE QUESTA FUNZIONE CHIUDE, ed è un difetto che si vede solo fra un anno.
+ * Il riuso cercava il documento archiviato **col solo `document_type`**, sulla riga più
+ * recente di sempre. Ma il certificato di iscrizione e frequenza DICE l'anno: «risulta
+ * regolarmente iscritto/a … per l'anno scolastico 2026/2027» — letto sul PDF vero
+ * `certificato_iscrizione_frequenza` archiviato in produzione, prot. 0000006/2026. A
+ * settembre 2027 lo stesso genitore avrebbe premuto «Scarica il certificato», il pulsante
+ * primario, e ottenuto quel foglio: una dichiarazione falsa sull'anno in corso, diretta a
+ * un datore di lavoro o all'INPS. Il testo d'aiuto scaricava la responsabilità sul genitore
+ * («generane uno nuovo se un ente lo vuole recente»), cioè affidava a una scelta umana un
+ * fatto che il server conosce già.
+ *
+ * ⚠️ VALE SOLO SUI CERTIFICATI, e la distinzione è la parte importante: i sei moduli che
+ * firma la FAMIGLIA (05 scheda sanitaria, 07 dieta, 09 permesso…) restano riscaricabili
+ * **sempre**, perché sono il fatto di quel giorno — una scheda sanitaria firmata a marzo
+ * resta la scheda sanitaria firmata a marzo, e toglierla dall'archivio l'anno dopo sarebbe
+ * il difetto opposto (W4.4: «riscaricabili SEMPRE dall'elenco»). Il criterio è chi
+ * sottoscrive: se firma il legale rappresentante, la Scuola sta CERTIFICANDO qualcosa
+ * dell'anno in corso.
+ */
+export function riusoLegatoAllAnnoScolastico(voce: VocePrestampato): boolean {
+  return voce.firma === 'legale_rappresentante'
+}
+
+/**
+ * Il documento archiviato appartiene all'anno scolastico indicato?
+ *
+ * `student_documents` non ha una colonna per l'anno — undici colonne, misurate sullo schema
+ * di produzione il 2026-08-16 — quindi si passa da `created_at`, che è l'istante in cui il
+ * certificato è stato emesso e stampato in calce sul foglio stesso.
+ *
+ * ⚠️ IL GIORNO È QUELLO CIVILE ITALIANO (`dataCivile`, `Europe/Rome`), non `iso.slice(0,10)`:
+ * il runtime su Vercel gira in UTC, e fra mezzanotte e le due sono due giorni diversi. Sul
+ * 1° agosto — cioè esattamente il confine fra due anni scolastici — quelle due ore
+ * deciderebbero se un certificato è di quest'anno o dell'anno scorso. È la stessa misura già
+ * pagata in questo repo il 2026-08-01 alle 01:08 (un incasso vero sparito da un KPI perché
+ * il server contava in UTC).
+ *
+ * Un istante illeggibile risponde `false`, cioè «non è di quest'anno»: il verso in cui si
+ * sbaglia si sceglie, e fra riemettere un certificato e consegnarne uno che dichiara l'anno
+ * sbagliato a un ente pubblico, il costo del primo è un numero di protocollo.
+ */
+export function documentoDellAnnoScolastico(
+  creatoIl: string | null | undefined,
+  annoScolastico: string | null | undefined,
+): boolean {
+  const atteso = (annoScolastico ?? '').trim()
+  if (!atteso) return false
+  if (typeof creatoIl !== 'string' || creatoIl.trim() === '') return false
+  const istante = new Date(creatoIl)
+  if (Number.isNaN(istante.getTime())) return false
+  return annoScolasticoDelGiorno(dataCivile(istante)) === atteso
+}
+
 // ─── I moduli che la morosità non blocca ────────────────────────────────────────
 
 /**
@@ -816,8 +1339,6 @@ export function sempreFirmabiliDa(config: unknown): ReadonlySet<string> {
 const SPIEGAZIONE_NON_FIRMABILE: Record<MotivoNonFirmabile, string> = {
   'firma-della-scuola':
     'Questo documento non si firma con il codice del genitore: lo sottoscrive il legale rappresentante della Scuola.',
-  'uscita-non-creata':
-    'L’autorizzazione si firma quando la scuola ha pubblicato l’uscita: destinazione, data e orari non sono ancora disponibili. Attendi la comunicazione della sezione.',
   'seconda-firma-mancante':
     'La delega al ritiro va sottoscritta da entrambi i genitori/tutori e la raccolta della seconda firma non è ancora attiva: per ora la delega si consegna in segreteria.',
   /**

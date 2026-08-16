@@ -42,10 +42,19 @@ export function CampiAnagraficaSede({
   const aut = anagrafica.autorizzazione_nido ?? {};
 
   /** Un campo dell'autorizzazione: l'oggetto annidato si riscrive intero. */
-  const setAut = (chiave: 'numero' | 'data' | 'comune', valore: string) =>
+  const setAut = (chiave: 'numero' | 'data' | 'ente', valore: string) =>
     onAnagrafica((prev) => ({
       ...prev,
-      autorizzazione_nido: { ...(prev.autorizzazione_nido ?? {}), [chiave]: valore },
+      autorizzazione_nido: {
+        ...(prev.autorizzazione_nido ?? {}),
+        [chiave]: valore,
+        // Chi digita nel campo dell'ente comanda, anche quando lo SVUOTA. La
+        // normalizzazione travasa la chiave vecchia `comune` in `ente` quando
+        // quest'ultima è vuota: senza questa riga, cancellare il valore lo
+        // farebbe ricomparire al salvataggio, e il form direbbe una cosa mentre
+        // l'archivio ne tiene un'altra.
+        ...(chiave === 'ente' ? { comune: null } : {}),
+      },
     }));
 
   return (
@@ -87,8 +96,16 @@ export function CampiAnagraficaSede({
         <p className="font-maven text-xs text-kidville-sub">{t('scLegaleRappresentanteAiuto')}</p>
       </div>
 
-      {/* Autorizzazione comunale al nido: una per sede, e i tre pezzi servono
-          tutti — il certificato per il Bonus INPS non esce se ne manca uno. */}
+      {/* Autorizzazione al funzionamento del nido: una per sede, e i tre pezzi
+          servono tutti — il certificato per il Bonus INPS non esce se ne manca uno.
+
+          ⚠️ Il terzo campo chiedeva «Comune che l'ha rilasciata», e per due sedi
+          su tre la risposta giusta NON è un comune: è un Ambito socio-sanitario
+          (spec §2.1). I valori corretti erano già in archivio nonostante
+          l'etichetta, non grazie a essa — e un'etichetta che contraddice la regola
+          del documento riporta il difetto alla prima ricompilazione. Il valore si
+          stampa sul certificato così com'è: qui si scrive per intero l'ente del
+          provvedimento. */}
       <div className="space-y-1.5">
         <p className="font-barlow font-bold text-[11px] text-kidville-sub uppercase tracking-wider">
           {t('scAutorizzazioneNido')}
@@ -96,7 +113,10 @@ export function CampiAnagraficaSede({
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input value={aut.numero ?? ''} onChange={(e) => setAut('numero', e.target.value)} placeholder={t('scAutNumero')} aria-label={t('scAutNumero')} className={CLASSE_INPUT} />
           <input type="date" value={aut.data ?? ''} onChange={(e) => setAut('data', e.target.value)} aria-label={t('scAutData')} className={CLASSE_INPUT} />
-          <input value={aut.comune ?? ''} onChange={(e) => setAut('comune', e.target.value)} placeholder={t('scAutComune')} aria-label={t('scAutComune')} className={CLASSE_INPUT} />
+          {/* `?? aut.comune` per le righe salvate prima del 2026-08-16: senza,
+              riaprendo il form si vedrebbe il campo VUOTO su un dato che c'è, e
+              il primo salvataggio lo cancellerebbe. */}
+          <input value={aut.ente ?? aut.comune ?? ''} onChange={(e) => setAut('ente', e.target.value)} placeholder={t('scAutEnte')} aria-label={t('scAutEnte')} className={CLASSE_INPUT} />
         </div>
         <p className="font-maven text-xs text-kidville-sub">{t('scAutorizzazioneNidoAiuto')}</p>
       </div>

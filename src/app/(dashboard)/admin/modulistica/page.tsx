@@ -6,13 +6,14 @@ import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import {
   FileText, Plus, UserCheck, Calendar, Users, IdCard,
-  Trash2, Download, Shield, Inbox, Send, Stamp, X
+  Trash2, Download, Shield, Inbox, Send, Stamp, X, FileSpreadsheet
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { DateField } from '@/components/ui/DateField';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
+import { ElencoClassi } from '@/components/features/admin/iscrizioni/ElencoClassi';
 import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
 import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale';
 import { PrestampatiSegreteria } from '@/components/features/prestampati/PrestampatiSegreteria';
@@ -93,7 +94,7 @@ function fallbackFesHash(): string {
  * e la cura era ricordarsene. Ora l'elenco è uno: il tipo si deriva da qui, la barra si
  * disegna da qui, e `?tab=` si confronta con questo.
  */
-const TAB_ORDINE = ['inviabili', 'ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori'] as const;
+const TAB_ORDINE = ['inviabili', 'ricevuti', 'elenco-classi', 'candidature', 'personale', 'prestampati', 'moduli-genitori'] as const;
 
 type ModulisticaTab = (typeof TAB_ORDINE)[number];
 
@@ -499,6 +500,7 @@ function ModulisticaInner() {
           label: {
             inviabili: t('modTabInviabili'),
             ricevuti: t('modTabRicevuti'),
+            'elenco-classi': t('modTabElencoClassi'),
             candidature: t('modTabCandidature'),
             personale: t('modTabPersonale'),
             prestampati: tPrestampati('titolo'),
@@ -507,6 +509,7 @@ function ModulisticaInner() {
           icon: {
             inviabili: Send,
             ricevuti: Inbox,
+            'elenco-classi': FileSpreadsheet,
             candidature: UserCheck,
             personale: IdCard,
             prestampati: Stamp,
@@ -529,6 +532,8 @@ function ModulisticaInner() {
         <ModuliInviabili />
       ) : activeTab === 'ricevuti' ? (
         <ModuliRicevuti />
+      ) : activeTab === 'elenco-classi' ? (
+        <ElencoClassi />
       ) : activeTab === 'candidature' ? (
         <CandidatureInsegnanti />
       ) : activeTab === 'personale' ? (

@@ -872,6 +872,16 @@ const AMMESSE: Record<string, string> = {
     'news/cron/run:<modulo>': 'cron: digest per sede, iterazione esplicita su `sediReali`',
     'pagamenti/solleciti/run:POST': "cron dei solleciti: gira su tutte le sedi e ogni sollecito nasce con la sede del pagamento; l'invocazione è protetta dal segreto del cron, non da un utente",
     'mensa/allergie-check:POST': "due rami: cron globale (segreto del cron, itera su tutte le sedi) e chiamata di staff (requireStaff, sede dell'alunno controllato)",
+    'iscrizione/import-massivo:POST':
+      "cron delle iscrizioni: itera ESPLICITAMENTE per sede — il ciclo esterno è " +
+      "`for (const scuolaId of sedi)` e ogni lettura dentro il ciclo porta il suo " +
+      "`.eq('scuola_id', scuolaId)`. Le tre chiamate a `iscrizioni_sospendi` segnalate " +
+      'dal lock ricevono un `submission_id` che viene dal lotto di QUELLA sede ' +
+      "(`iscrizioni_prendi_in_carico(p_scuola_id, …)`): la riga è già stata verificata " +
+      'quando la si è presa in carico, e la funzione non fa altro che scriverci sopra ' +
+      'lo stato. Passarle di nuovo la sede sarebbe una seconda verifica della stessa ' +
+      "cosa; NON passargliela e prendere l'id da una fonte non filtrata sarebbe il " +
+      'difetto — ed è per questo che il claim e la sospensione stanno nello stesso ciclo.',
 
     // ── Sigillati in produzione da sealDangerous() → 404 ─────────────────────
     // Non girano mai fuori dallo sviluppo. (`admin/seed-full` e `seed-db` NON
@@ -1422,7 +1432,30 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `redirect('/iscrizione')` da mesi) e perché la metà rimasta era la peggiore:
             // un `POST` anonimo che accettava codice fiscale e indirizzo del genitore più
             // i dati dei figli. Non è un presidio tolto: è un file che non esiste più.
-            routeConServiceRole: 296,
+            //
+            // 🔺 296 → 297 il 2026-08-16: è ENTRATA `iscrizione/import-massivo`, il giro
+            // giornaliero che porta le domande d'iscrizione dentro le classi. Usa il
+            // service-role perché nessun utente la invoca — la chiama `pg_cron` col suo
+            // segreto — e itera ESPLICITAMENTE per sede, con `.eq('scuola_id', scuolaId)`
+            // su ogni lettura dentro il ciclo. È in `AMMESSE` per le tre chiamate a
+            // `iscrizioni_sospendi`, che scrivono su una riga già verificata dal claim.
+            //
+            // 🔺 297 → 299 il 2026-08-17: sono ENTRATE le due porte dell'elenco di classe,
+            // `admin/iscrizioni/elenco` e `admin/iscrizioni/elenco/export`. Usano il
+            // service-role perché le cinque tabelle `iscrizioni_*` hanno RLS abilitata e
+            // NESSUNA policy (dentro ci sono nomi di minori, la loro classe e la retta
+            // della famiglia: non deve leggerle nessuna sessione autenticata, nemmeno una
+            // docente). Il perimetro di sede non è delegato a RLS ma DICHIARATO: il POST e
+            // l'export passano da `resolveScuolaScrittura` — che con tre sedi risponde 400
+            // se nessuna è indicata — e il GET da `resolveScuoleAttive` con `.in('scuola_id',
+            // sedi)` e lo scope vuoto che NEGA. Per questo `handlerEsentati` non si muove:
+            // nessuno dei tre handler è in `AMMESSE`.
+            //
+            // ⚠️ IL +2 È MISURATO, NON DEDOTTO: eseguendo questo lock con la sola cartella
+            // `src/app/api/admin/iscrizioni/elenco/` spostata FUORI dall'albero si legge
+            // esattamente `{297, 460, 95}`, cioè i tre valori precedenti, e nessun altro
+            // pezzo dell'albero si è mosso in questo passaggio.
+            routeConServiceRole: 299,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1505,7 +1538,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // ⚠️ IL −3 È MISURATO, NON DEDOTTO: eseguendo questo lock col solo file
             // cancellato si legge esattamente `{296, 459, 94}`, cioè i tre valori qui
             // scritti, e nessun altro pezzo dell'albero si è mosso in questo passaggio.
-            handlerControllati: 459,
+            // 459 → 460 il 2026-08-16: il POST di `iscrizione/import-massivo` (v. sopra).
+            // 🔺 460 → 463 il 2026-08-17, ed è una SALITA di 3 a fronte di +2 file: le
+            // due route nuove dell'elenco di classe portano tre handler — `elenco:POST`,
+            // `elenco:GET` e `elenco/export:GET`. I due passi non coincidono, ed è il caso
+            // normale: un file può esporre più di un metodo.
+            handlerControllati: 463,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1602,7 +1640,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // scritta invece che lasciata al verso del numero — un debito pagato lascia
             // dietro di sé un presidio nuovo, una cancellazione no, e chi rilegge questa
             // riga fra un mese non può dedurre quale dei due sia guardando un «−1».
-            handlerEsentati: 94,
+            // 94 → 95 il 2026-08-16: `iscrizione/import-massivo:POST`, con la ragione
+            // scritta accanto alla voce in `AMMESSE`. È un cron che itera per sede, come i
+            // quattro che lo precedono in quel blocco: non è un debito nuovo, è la stessa
+            // forma già ammessa quattro volte.
+            handlerEsentati: 95,
         })
     })
 })

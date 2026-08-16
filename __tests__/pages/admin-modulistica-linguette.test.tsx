@@ -84,10 +84,14 @@ beforeEach(() => {
 
 import AdminModulisticaPage from '@/app/(dashboard)/admin/modulistica/page';
 
-/** Le sei linguette, nell'ordine in cui la barra le mostra, con il testo dei cataloghi. */
+/** Le sette linguette, nell'ordine in cui la barra le mostra, con il testo dei cataloghi. */
 const LINGUETTE = [
   itAdminModulistica.modTabInviabili,
   itAdminModulistica.modTabRicevuti,
+  // 🔺 Entrata il 2026-08-17, terza e non in coda: sta accanto a «Moduli ricevuti»
+  // perché è la sua altra metà — le domande arrivano da lì, la classe e la retta
+  // da qui, e il giro automatico non parte finché mancano.
+  itAdminModulistica.modTabElencoClassi,
   itAdminModulistica.modTabCandidature,
   itAdminModulistica.modTabPersonale,
   itPrestampatiSegreteria.titolo,
@@ -108,7 +112,7 @@ function linguettaAttiva(container: HTMLElement): string | null {
 }
 
 describe('/admin/modulistica — la barra delle linguette', () => {
-  it('mostra SEI linguette, e ognuna col suo testo italiano vero', () => {
+  it('mostra SETTE linguette, e ognuna col suo testo italiano vero', () => {
     const { container } = render(<AdminModulisticaPage />);
     expect(etichetteDellaBarra(container)).toEqual(LINGUETTE);
   });
@@ -130,7 +134,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
 
   it('la «Sala d’Attesa» non è più una linguetta di questa schermata', () => {
     // Il pannello delle pre-iscrizioni è stato smontato il 2026-08-16: le domande di
-    // iscrizione si leggono da «Moduli ricevuti». Se un giorno riapparisse una settima
+    // iscrizione si leggono da «Moduli ricevuti». Se un giorno riapparisse una linguetta
     // linguetta con quel nome, sarebbe un pannello che duplica un lavoro che c'è già.
     const { container } = render(<AdminModulisticaPage />);
     expect(etichetteDellaBarra(container).filter((e) => /attesa/i.test(e))).toEqual([]);
@@ -153,7 +157,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
    */
   describe('un `?tab=` che non esiste più non lascia la pagina vuota', () => {
     for (const parola of ['odt', 'attesa', 'linguetta-mai-esistita']) {
-      it(`?tab=${parola} → sei linguette, «Moduli inviabili» accesa e il suo pannello disegnato`, () => {
+      it(`?tab=${parola} → sette linguette, «Moduli inviabili» accesa e il suo pannello disegnato`, () => {
         h.query = `tab=${parola}`;
         const { container, getByTestId } = render(<AdminModulisticaPage />);
 
@@ -242,7 +246,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
   });
 
   /**
-   * LA BARRA E LA SUA UNICA FONTE. Le sei linguette nascono da `TAB_ORDINE`, in cima alla
+   * LA BARRA E LA SUA UNICA FONTE. Le sette linguette nascono da `TAB_ORDINE`, in cima alla
    * pagina, e `?tab=` si confronta con lo stesso elenco. Prima vivevano in quattro punti
    * diversi dello stesso file, e due volte su due un `?tab=` è finito sulla linguetta
    * sbagliata in silenzio perché il quarto punto non era stato aggiornato.
@@ -251,7 +255,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
    * `?tab=` che si apre, e nessuna è raggiungibile solo con il mouse.
    */
   it('ogni linguetta della barra è raggiungibile anche da `?tab=`', () => {
-    const valori = ['inviabili', 'ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori'];
+    const valori = ['inviabili', 'ricevuti', 'elenco-classi', 'candidature', 'personale', 'prestampati', 'moduli-genitori'];
     expect(valori).toHaveLength(LINGUETTE.length);
 
     for (const [i, valore] of valori.entries()) {

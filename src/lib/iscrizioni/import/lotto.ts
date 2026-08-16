@@ -55,7 +55,24 @@ export interface RapportoLotto {
   esiti: EsitoDomanda[]
 }
 
-/** Il tetto giornaliero di inviti: è il limite del provider, non un capriccio. */
+/**
+ * IL TETTO GIORNALIERO, IN EMAIL — non in domande.
+ *
+ * Novanta è il numero che il titolare ha fissato il 2026-08-16 sulla risorsa
+ * scarsa, cioè la quota del provider (100 al giorno; il riepilogo di fine giro è
+ * la novantunesima e ci sta dentro).
+ *
+ * Non è un tetto sulle DOMANDE, e la differenza è tutta pratica: dal 2026-08-16
+ * ogni genitore con un'email ha il suo account, e 100 domande su 390 ne portano
+ * due. Contare le domande vorrebbe dire non sapere quante email escono — «48
+ * domande» sarebbe un consumo qualsiasi fra 48 e 96.
+ *
+ * Resa misurata sul vero: 479 account su 390 domande = 1,23 email a domanda;
+ * 437 bambini su 390 domande = 1,12. Novanta email valgono quindi circa 73
+ * famiglie e 82 bambini al giorno: Giugliano da sola (196 domande, 241 account)
+ * si esaurisce in tre giri, tutte e tre le sedi in sei. La finestra è di venti
+ * giorni.
+ */
 export const INVITI_AL_GIORNO = 90
 
 interface RigaSubmission {

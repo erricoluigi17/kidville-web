@@ -18,6 +18,7 @@ import {
   STANDARD_ENROLLMENT_MODEL_ID,
 } from '@/lib/forms/enrollment-default-schema'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { EMAIL_RIPETUTA_FRA_GENITORI, indiciEmailRipetute } from '@/lib/iscrizioni/email-genitori'
 import { sediReali } from '@/lib/scuole/reali'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
@@ -246,6 +247,21 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
 
     const children = normalizza(data.children, childFields, 'children')
     const adults = normalizza(data.adults, adultFields, 'adults')
+
+    // ── UN GENITORE, UNA CASELLA ──────────────────────────────────────────
+    // `validatePage` guarda un record per volta e non può vedere questo: è un
+    // confronto FRA adulti, non dentro un adulto. Sta qui e non in uno zod
+    // `superRefine` per una ragione di forma, non di gusto — un errore zod esce
+    // come `{ error, details }` da `validationError`, mentre il wizard sa
+    // mappare solo `campi.adults[i][campo]`, e un messaggio che non si attacca
+    // a nessun campo è un modulo che rifiuta senza dire dove.
+    for (const i of indiciEmailRipetute(adults.map((a) => a.email))) {
+      ;(campi.adults ??= {})[String(i)] = {
+        ...(campi.adults?.[String(i)] ?? {}),
+        email: EMAIL_RIPETUTA_FRA_GENITORI,
+      }
+      camposFalliti.push(`adults.${i}.email`)
+    }
 
     if (camposFalliti.length > 0) {
       // warn: la difesa ha funzionato ma qualcosa è passato dal client malformato

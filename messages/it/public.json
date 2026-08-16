@@ -142,6 +142,7 @@
   "persDocRetroAiuto": "L’altro lato dello stesso documento: sulla carta d’identità ci sono residenza e firma, sulla patente le categorie.",
   "wizardAdulto": "Adulto",
   "wizardAdultoInfo": "È obbligatorio almeno un adulto. Se sei già genitore di un bambino iscritto, usa lo stesso codice fiscale: il nuovo figlio verrà collegato automaticamente alla tua anagrafica.",
+  "wizardAdultoEmailPropria": "Ogni genitore riceve il suo accesso personale all’app — diario, presenze e pagamenti del proprio figlio — e l’accesso si apre con l’indirizzo email. Per questo ogni adulto deve indicare una casella diversa: due genitori sullo stesso indirizzo avrebbero un accesso solo, in comune.",
   "wizardAdultoObbligatorioSuffix": " (obbligatorio)",
   "wizardAdultoSub": "Genitore, tutore o delegato",
   "wizardAggiungiAdulto": "Aggiungi adulto / tutore",

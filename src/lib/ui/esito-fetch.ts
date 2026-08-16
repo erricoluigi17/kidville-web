@@ -1216,6 +1216,43 @@ export const CODICI_ERRORE = {
      * documento che sembra della scuola e non lo è.
      */
     REGISTRO_NON_GENERATO: 'erroreRegistroNonGenerato',
+    /**
+     * 401 — una porta di cron chiamata senza (o con il) `x-cron-secret` sbagliato.
+     *
+     * Non la legge nessun essere umano in un'interfaccia: la chiama `pg_cron`. Il
+     * codice esiste lo stesso perché il lock `errori-con-codice` non ammette
+     * eccezioni per destinatario, e la ragione è buona — il giorno in cui
+     * qualcuno costruisce un pannello «esegui adesso» la frase c'è già, invece di
+     * nascere in inglese in quel momento.
+     */
+    CRON_NON_AUTORIZZATO: 'erroreCronNonAutorizzato',
+    /**
+     * 500 — il giro giornaliero delle iscrizioni non è stato eseguito
+     * (`iscrizione/import-massivo:POST`): elenchi non leggibili, lotto non preso,
+     * oppure un'eccezione.
+     *
+     * Il motivo vero resta nel log con il codice PostgREST: farlo uscire da qui
+     * significherebbe mandare il nome di una tabella a chi legge la risposta.
+     */
+    IMPORT_ISCRIZIONI_NON_ESEGUITO: 'erroreImportIscrizioniNonEseguito',
+    /** 500 — l'elenco di classe della sede non si è potuto leggere. */
+    ELENCO_CLASSI_NON_LETTO: 'erroreElencoClassiNonLetto',
+    /** 500 — l'elenco caricato non si è potuto salvare: il file è stato ritirato. */
+    ELENCO_CLASSI_NON_SALVATO: 'erroreElencoClassiNonSalvato',
+    /**
+     * 415 — il file caricato non è un foglio di calcolo.
+     *
+     * Codice suo e non `ALLEGATO_TIPO_NON_AMMESSO`: lì si accettano immagini, PDF
+     * e Word, qui SOLO `.xlsx`/`.xls`. Dire a una segretaria «sono ammessi anche i
+     * PDF» le farebbe caricare un file che verrebbe respinto lo stesso.
+     */
+    ELENCO_CLASSI_TIPO_NON_AMMESSO: 'erroreElencoClassiTipoNonAmmesso',
+    /** 413 — il foglio supera il tetto della piattaforma (4 MB). */
+    ELENCO_CLASSI_TROPPO_GRANDE: 'erroreElencoClassiTroppoGrande',
+    /** 400 — il file è arrivato ma non si apre come foglio di calcolo. */
+    ELENCO_CLASSI_ILLEGGIBILE: 'erroreElencoClassiIlleggibile',
+    /** 404 — per questa sede non c'è nessun elenco attivo da riscaricare. */
+    ELENCO_CLASSI_ASSENTE: 'erroreElencoClassiAssente',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

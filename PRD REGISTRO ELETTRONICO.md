@@ -94,6 +94,96 @@
 
 ---
 
+## ✉️ Changelog — L'automazione degli inviti si arma, e l'altro genitore smette di restare fuori 2026-08-17 (branch `feat/iscrizioni-import-2026-27`)
+
+La passata di ieri sapeva **decidere** e si fermava prima di spedire. Questa spedisce: il giro
+gira ogni mattina alle **10:10 di Roma, dal 22 agosto al 10 settembre**, con un tetto di **90
+email al giorno**. Il `cron.schedule` è armato, e da qui in avanti le password arrivano a
+famiglie vere.
+
+🔴 **Cento persone reali sarebbero rimaste fuori dall'app.** Fino a ieri l'account nasceva al solo
+genitore **referente** — il primo adulto della domanda con un'email. Misurato sulle domande già
+arrivate: **494 adulti** hanno lasciato un indirizzo e **100 domande ne portano due**. Quelle cento
+persone — quasi sempre l'altro genitore — non avrebbero avuto diario, presenze né pagamenti del
+proprio figlio. Da oggi **ogni genitore con un'email ha il suo account**: gli account da creare
+passano da 390 a **479**. `ensureParentIdentity` era già idempotente e già non lanciava — la
+modifica era il **ciclo**, non la funzione. Corretto su **entrambe** le strade: l'import automatico
+e l'approvazione manuale (`admin/iscrizioni:PATCH`), dove il commento dichiarava a chiare lettere
+la regola vecchia ed è stato riscritto insieme al codice.
+
+🔑 **Il referente è bloccante, gli altri sono best-effort — ed è l'ordine a rendere la regola
+mantenibile.** «Se l'email non parte, l'iscrizione non deve restare fatta a metà» vale finché
+**nessuna email è ancora uscita**: perciò il referente si serve per primo e, se il suo invito non
+parte, si disfa tutto e la domanda torna in coda. Gli altri genitori vengono dopo la chiusura,
+quando disfare significherebbe togliere a una famiglia un accesso che già funziona. Il loro invito
+fallito resta scritto, e una **ripresa** (`riprendiInvitiSospesi`) ci riprova ogni mattina — senza,
+quella persona sarebbe persa per sempre, perché la domanda ormai è `approved` e il lotto non la
+ripescherebbe mai più.
+
+🔴 **Il 429 di Resend non è un fallimento: è «non oggi».** Col tetto tirato a 90, il giorno in cui
+qualcos'altro mangia la quota il provider risponde `429` a tutti allo stesso modo. Trattarlo come
+rifiuto definitivo avrebbe bruciato i tentativi di domande **buone**, e dopo tre giorni le avrebbe
+messe in `bloccata`: si sarebbero perse iscrizioni valide per un limite di piano. Ora un 429 non
+consuma un tentativo, non sporca il registro e ferma il giro in modo pulito — serviva una funzione
+nuova (`iscrizioni_rinvia`), perché `iscrizioni_annulla` disfa ma conta il tentativo e
+`iscrizioni_sospendi` non conta il tentativo ma non disfa.
+
+🔑 **Il tetto è sulle EMAIL, non sulle domande.** Con due genitori una domanda costa il doppio:
+«48 domande» sarebbe stato un consumo qualsiasi fra 48 e 96 che nessuno conosce in anticipo. Si
+stima il costo **prima** di cominciare una domanda e, se non ci sta, la si rinvia **intera** — mai
+a metà, perché una famiglia con un genitore dentro e uno fuori è l'unico esito che non si può
+spiegare a nessuno. Con una guardia: se non è ancora uscita nessuna email si procede comunque,
+altrimenti una domanda più cara del tetto non partirebbe **mai**.
+
+🔴 **Nel form, due genitori non possono più indicare la stessa casella.** L'email *è* l'identità con
+cui si entra: due account sullo stesso indirizzo vorrebbero dire che chi lo apre entra come l'uno o
+come l'altro, mai come sé — e comunque `utenti.email` è UNIQUE e GoTrue rifiuta un indirizzo già
+registrato. Validazione **client e server** (il modulo è anonimo) su email normalizzata, con una
+regola scritta in un posto solo. ⚠️ Per le **11 domande già arrivate** con la casella condivisa
+(3 Giugliano, 8 Cesa) la segreteria dovrà chiedere il secondo indirizzo: intanto quella coppia
+condivide un accesso, ed è un esito **previsto** che l'import tratta come tale, non come un guasto
+da riprovare tre volte.
+
+**Nuovo in Segreteria → Modulistica → «Elenco classi»**: si carica l'xlsx (bucket privato, il file
+non entra mai nel repo), le **difformità si vedono all'istante** invece che il giorno in cui
+bloccano un invio, e si riscarica il foglio con dentro **cosa è successo** a ogni riga. Sul file
+vero: 338 righe, 16 classi, 29 rette vuote, 1 non numerica, 4 nomi ripetuti, 36 nomi con spazi di
+troppo, 46 rette fuori scala (quasi tutte legittime — si mostrano, non bloccano).
+
+**La prova a vuoto col codice definitivo**, su Giugliano:
+
+| | |
+|---|---|
+| domande che partirebbero | **170** |
+| da controllare a mano | **22** |
+| doppioni chiusi da soli | **4** |
+| email che costerebbero in tutto | **213** (1,25 a domanda) |
+| in una giornata da 90 email | **71 domande** — Giugliano si esaurisce in 3 giri |
+
+🔑 **Cinque difetti trovati dai test nuovi, nel codice appena scritto**: il battito del cron si
+scriveva anche sul ramo 401 (una porta pubblica senza tetto di frequenza: un bot avrebbe riempito
+`app_log` di produzione); un giro morto scriveva `esito:'ok'` e sarebbe stato contato come riuscito
+da chiunque avesse copiato la query di famiglia; una domanda che costa **zero** email veniva
+rinviata a domani con scritto «sarebbero servite 0 email»; la prova a vuoto sovrastimava il costo
+dal secondo giorno, cioè sbagliava proprio il numero per cui esiste; e il riepilogo di fine giro
+andava a **una sola sede** con dentro i numeri di tutte e tre.
+
+⚠️ **Due derive del database, precedenti a questo lavoro, che la fotografia scaduta nascondeva**:
+una migrazione applicata in produzione senza il suo file nel repo (`document_type_prestampati`,
+ricostruita dallo statement vero, non riscritta a memoria) e una col nome battezzato a mano su una
+version mai esistita (`anagrafica_sede_per_email`, rinominata). Il database non era più
+ricostruibile dai file, e nessun lock lo vedeva perché la fotografia era ferma al 12 agosto.
+
+🔻 **DA PORTARE AL TITOLARE — il digest delle news sfonderà il tetto Resend il 1° settembre.** Non è
+causato da questo lavoro, ma questo lavoro lo rende inevitabile: `news-digest` scrive a **tutti** i
+genitori di tutte le sedi, e dopo questo import gli account genitore saranno **479 in più**. Il
+picco misurato negli ultimi 21 giorni è di **33 email in un giorno**; il 1° settembre il digest ne
+tenterà **~500 in un colpo** contro un tetto di **100 al giorno**. Lo spostamento del cron a 10:10
+risolve la *corsa* fra i due lavori, non questo. La decisione — alzare il piano Resend o mettere
+mano al digest — è del titolare.
+
+---
+
 ## 🎓 Changelog — Le iscrizioni 2026/27 si leggono da sole, e lo zero che valeva 150 € 2026-08-16 (branch `feat/iscrizioni-import-2026-27`)
 
 Le domande d'iscrizione arrivano da due parti che non si parlavano: il **form pubblico** ne ha

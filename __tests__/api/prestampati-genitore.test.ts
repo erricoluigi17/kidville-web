@@ -13,16 +13,20 @@ import { redact, redactInput } from '@/lib/logging/redact'
 import { codeHash } from '@/lib/auth/otp-ticket'
 import { formatNumeroProtocollo } from '@/lib/protocolli/segnatura'
 import {
+  annoScolasticoDelGiorno,
   BUCKET_CERTIFICATI,
   BUCKET_FASCICOLO,
   componiDescrizioneUscita,
   datiUscitaDaEvento,
   descrizioneArchivioProtocollata,
+  documentoDellAnnoScolastico,
   fineAnnoScolastico,
   ilFileRestaNelBucket,
   magazziniAmmessi,
   motivoMancatoArchivioDa,
   numeroProtocolloDaDescrizione,
+  riusoLegatoAllAnnoScolastico,
+  voceDelGenitore,
   SCHEMA_NON_PRONTO,
   SEMPRE_FIRMABILI_PREDEFINITI,
   sempreFirmabiliDa,
@@ -664,7 +668,13 @@ function reqDocumento(corpo: unknown) {
  * che segue risponde con la riga creata. Un valore fisso avrebbe risposto la stessa cosa a
  * tutt'e due, e la prova avrebbe misurato il doppione.
  */
-function conDocumentoInArchivio(slug: string, id = DOCUMENTO, descrizione = 'Documento già emesso') {
+function conDocumentoInArchivio(
+  slug: string,
+  id = DOCUMENTO,
+  descrizione = 'Documento già emesso',
+  // Dentro l'anno scolastico di `DATI` (`2026/2027`), che comincia il 1° agosto 2026.
+  creatoIl = '2026-08-15T09:00:00.000Z',
+) {
   h.state.queues['student_documents'] = [
     {
       data: [
@@ -673,7 +683,7 @@ function conDocumentoInArchivio(slug: string, id = DOCUMENTO, descrizione = 'Doc
           document_type: slug,
           storage_path: `${ALUNNO}/prestampati/${slug}-gia-emesso.pdf`,
           descrizione,
-          created_at: '2026-08-15T09:00:00.000Z',
+          created_at: creatoIl,
         },
       ],
       error: null,
@@ -1150,6 +1160,101 @@ describe('il certificato del genitore: dal motore vero, protocollato, e sempre l
     expect(h.state.rpc).toHaveLength(0)
     expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(false)
     expect(h.state.upload).toHaveLength(0)
+  })
+
+  /**
+   * 🔴 IL DIFETTO CHE SI SAREBBE VISTO SOLO FRA UN ANNO, e su un foglio diretto all'INPS.
+   *
+   * Il riuso cercava il documento col SOLO `document_type`, sulla riga più recente di
+   * sempre. Ma il certificato dichiara l'anno — «risulta regolarmente iscritto/a … per
+   * l'anno scolastico 2026/2027», letto sul PDF vero archiviato in produzione (prot.
+   * 0000006/2026) — quindi a settembre 2027 il pulsante primario, che si chiama «Scarica il
+   * certificato», avrebbe riconsegnato una dichiarazione falsa sull'anno in corso.
+   *
+   * Qui l'archivio porta un certificato del **2025/2026** mentre il precompilato dice
+   * `2026/2027`: la rotta deve emetterne uno nuovo, con numero nuovo.
+   */
+  it('il certificato dell’anno SCORSO non si riscarica: se ne emette uno nuovo', async () => {
+    conDocumentoInArchivio(
+      'certificato_iscrizione_frequenza',
+      DOCUMENTO,
+      'Certificato di iscrizione e frequenza — Prot. n. 0000006/2026',
+      // 10 settembre 2025: anno scolastico 2025/2026, non quello di `DATI`.
+      '2025-09-10T09:00:00.000Z',
+    )
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.riuso).toBe(false)
+    // Il numero si chiede davvero: è un'emissione, non un riscarico travestito.
+    expect(h.state.rpc).toHaveLength(1)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(true)
+    // E lo scarto si LOGGA: senza, «gli è arrivato un certificato nuovo» e «il riscarico si
+    // è rotto» sarebbero indistinguibili in `app_log`, e la differenza si vedrebbe a
+    // settembre. Nessun dato personale nella riga.
+    const riga = spie.chiamate.find(
+      (c) =>
+        c[0] === 'logEvento' &&
+        (c[3] as { esito?: string })?.esito === 'riuso-scartato-altro-anno',
+    )
+    expect(riga?.[2]).toBe('info')
+    expect((riga?.[3] as { anno?: string })?.anno).toBe(DATI.annoScolastico)
+  })
+
+  it('il modulo FIRMATO dell’anno scorso invece si riscarica: è il fatto di quel giorno', async () => {
+    // Il vincolo dell'anno vale solo su ciò che la SCUOLA certifica. Una scheda sanitaria
+    // firmata a settembre 2025 resta la scheda firmata a settembre 2025: toglierla
+    // dall'archivio sarebbe il difetto opposto (W4.4, «riscaricabili SEMPRE»).
+    conDocumentoInArchivio(
+      'scheda_sanitaria',
+      DOCUMENTO,
+      'Scheda sanitaria',
+      '2025-09-10T09:00:00.000Z',
+    )
+    const res = await CHIEDI_DOCUMENTO(reqDocumento({ alunnoId: ALUNNO, slug: 'scheda_sanitaria' }))
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(200)
+    expect(json.riuso).toBe(true)
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’elenco non promette «Scarica» su un certificato dell’anno scorso', async () => {
+    // Una regola valida per due strade vive in un posto solo: se il GET tenesse la riga
+    // vecchia, la scheda direbbe «Scarica il certificato» e il POST emetterebbe un numero
+    // nuovo — cioè la schermata mentirebbe al genitore sul gesto che sta per fare.
+    h.state.queues['student_documents'] = [
+      {
+        data: [
+          {
+            id: DOCUMENTO,
+            document_type: 'certificato_iscrizione_frequenza',
+            descrizione: 'Certificato di iscrizione e frequenza — Prot. n. 0000006/2026',
+            created_at: '2025-09-10T09:00:00.000Z',
+          },
+          {
+            id: 'd1000000-0000-4000-8000-00000000000d',
+            document_type: 'scheda_sanitaria',
+            descrizione: 'Scheda sanitaria',
+            created_at: '2025-09-10T09:00:00.000Z',
+          },
+        ],
+        error: null,
+      },
+    ]
+    h.state.used['student_documents'] = 0
+
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const per = (slug: string) =>
+      (json.modelli as { slug: string; documentoArchiviatoId: string | null }[]).find(
+        (m) => m.slug === slug,
+      )!
+    expect(per('certificato_iscrizione_frequenza').documentoArchiviatoId).toBeNull()
+    // Il modulo firmato dell'anno scorso resta riscaricabile, nello stesso elenco.
+    expect(per('scheda_sanitaria').documentoArchiviatoId).toBe('d1000000-0000-4000-8000-00000000000d')
   })
 
   it('«Generane uno nuovo» emette data e protocollo nuovi, e il precedente resta', async () => {
@@ -3287,6 +3392,49 @@ describe('PATCH — il delegato che ritira il bambino, risolto in un nome', () =
 // ─── Le due regole che non hanno bisogno di una richiesta ───────────────────────
 
 describe('banco-famiglia — le regole pure che le due porte condividono', () => {
+  it('l’anno scolastico di un giorno cambia il 1° AGOSTO, non a settembre né a gennaio', () => {
+    // Stesso confine di `annoScolasticoCorrente()`: «agosto fa già da ponte verso il nuovo
+    // anno». Un confine diverso qui vorrebbe dire che per qualche settimana il certificato
+    // dichiara un anno e il riuso ne conta un altro, sullo stesso documento.
+    expect(annoScolasticoDelGiorno('2026-07-31')).toBe('2025/2026')
+    expect(annoScolasticoDelGiorno('2026-08-01')).toBe('2026/2027')
+    expect(annoScolasticoDelGiorno('2027-01-15')).toBe('2026/2027')
+    expect(annoScolasticoDelGiorno('non è una data')).toBeNull()
+    expect(annoScolasticoDelGiorno(null)).toBeNull()
+  })
+
+  it('il giorno di un documento è quello ITALIANO, non quello UTC', () => {
+    // 🔴 La trappola già pagata in questo repo (2026-08-01, 01:08): il runtime gira in UTC.
+    // Un certificato emesso il 1° agosto alle 00:30 italiane è `2026-07-31T22:30Z`: contato
+    // in UTC sarebbe dell'anno scolastico SCORSO, e il riscarico ne emetterebbe uno nuovo
+    // il giorno stesso in cui è stato fatto. Due ore, un numero di protocollo.
+    expect(documentoDellAnnoScolastico('2026-07-31T22:30:00.000Z', '2026/2027')).toBe(true)
+    // E il verso opposto: le 23:30 italiane del 31 luglio sono ancora l'anno vecchio.
+    expect(documentoDellAnnoScolastico('2026-07-31T21:30:00.000Z', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('2026-07-31T21:30:00.000Z', '2025/2026')).toBe(true)
+  })
+
+  it('un istante illeggibile vale «non è di quest’anno», e il verso è dichiarato', () => {
+    // Fra riemettere un certificato e consegnarne uno che dichiara l'anno sbagliato a un
+    // ente pubblico, il costo del primo è un numero di protocollo.
+    expect(documentoDellAnnoScolastico(null, '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('   ', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('non è un istante', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('2026-09-10T09:00:00.000Z', null)).toBe(false)
+  })
+
+  it('il vincolo dell’anno vale sui certificati della SCUOLA, non sui moduli della famiglia', () => {
+    // Il criterio è chi sottoscrive: se firma il legale rappresentante, la Scuola sta
+    // certificando qualcosa dell'anno in corso. I moduli firmati dalla famiglia sono il
+    // fatto del giorno in cui sono stati firmati, e si riscaricano sempre.
+    const per = (slug: string) => voceDelGenitore(slug)!
+    expect(riusoLegatoAllAnnoScolastico(per('certificato_iscrizione_frequenza'))).toBe(true)
+    expect(riusoLegatoAllAnnoScolastico(per('certificato_bonus_nido'))).toBe(true)
+    expect(riusoLegatoAllAnnoScolastico(per('scheda_sanitaria'))).toBe(false)
+    expect(riusoLegatoAllAnnoScolastico(per('dieta_speciale'))).toBe(false)
+    expect(riusoLegatoAllAnnoScolastico(per('permesso_orario'))).toBe(false)
+  })
+
   it('l’archivio dei certificati sanitari del bambino lo nominano SOLO i certificati sanitari', async () => {
     // 🔴 LA CONTRADDIZIONE CHE QUESTA REGOLA CHIUDE. Il banco spegne il n. 08 dicendo che la
     // scansione del documento di un delegato «non ha una porta»; la verifica degli allegati,

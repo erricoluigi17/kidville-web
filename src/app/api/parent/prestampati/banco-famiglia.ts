@@ -71,6 +71,9 @@ import {
   type TipoUscita,
 } from '@/lib/prestampati/modelli/genitore'
 import type { EsitoRender } from '@/lib/prestampati/render'
+// Il giorno civile ITALIANO di un istante: il runtime gira in UTC, e sul confine fra due
+// anni scolastici (1° agosto) due ore decidono a quale anno appartiene un certificato.
+import { dataCivile } from '@/i18n/config'
 import { logEvento } from '@/lib/logging/logger'
 
 // ─── Il cancello dello slug ─────────────────────────────────────────────────────
@@ -1175,6 +1178,79 @@ export function fineAnnoScolastico(annoScolastico: string | null | undefined): s
   // scolastico e la scadenza sarebbe una data scelta a caso.
   if (fine !== inizio + 1) return null
   return `${fine}-07-31`
+}
+
+// ─── Il riscarico e l'anno scolastico ───────────────────────────────────────────
+
+/**
+ * L'anno scolastico di un giorno civile `YYYY-MM-DD`, o `null` se non è una data.
+ *
+ * Stessa regola di `annoScolasticoCorrente()` (`src/lib/anno-scolastico.ts`): il confine è
+ * il **1° agosto**, «agosto fa già da ponte verso il nuovo anno». Qui però si parte da una
+ * data invece che da `new Date()`, perché la domanda è su un documento del passato.
+ */
+export function annoScolasticoDelGiorno(giorno: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec((giorno ?? '').trim())
+  if (!m) return null
+  const anno = Number(m[1])
+  const mese = Number(m[2])
+  return mese >= 8 ? `${anno}/${anno + 1}` : `${anno - 1}/${anno}`
+}
+
+/**
+ * Il riscarico di questo modello è legato all'anno scolastico?
+ *
+ * 🔴 IL DIFETTO CHE QUESTA FUNZIONE CHIUDE, ed è un difetto che si vede solo fra un anno.
+ * Il riuso cercava il documento archiviato **col solo `document_type`**, sulla riga più
+ * recente di sempre. Ma il certificato di iscrizione e frequenza DICE l'anno: «risulta
+ * regolarmente iscritto/a … per l'anno scolastico 2026/2027» — letto sul PDF vero
+ * `certificato_iscrizione_frequenza` archiviato in produzione, prot. 0000006/2026. A
+ * settembre 2027 lo stesso genitore avrebbe premuto «Scarica il certificato», il pulsante
+ * primario, e ottenuto quel foglio: una dichiarazione falsa sull'anno in corso, diretta a
+ * un datore di lavoro o all'INPS. Il testo d'aiuto scaricava la responsabilità sul genitore
+ * («generane uno nuovo se un ente lo vuole recente»), cioè affidava a una scelta umana un
+ * fatto che il server conosce già.
+ *
+ * ⚠️ VALE SOLO SUI CERTIFICATI, e la distinzione è la parte importante: i sei moduli che
+ * firma la FAMIGLIA (05 scheda sanitaria, 07 dieta, 09 permesso…) restano riscaricabili
+ * **sempre**, perché sono il fatto di quel giorno — una scheda sanitaria firmata a marzo
+ * resta la scheda sanitaria firmata a marzo, e toglierla dall'archivio l'anno dopo sarebbe
+ * il difetto opposto (W4.4: «riscaricabili SEMPRE dall'elenco»). Il criterio è chi
+ * sottoscrive: se firma il legale rappresentante, la Scuola sta CERTIFICANDO qualcosa
+ * dell'anno in corso.
+ */
+export function riusoLegatoAllAnnoScolastico(voce: VocePrestampato): boolean {
+  return voce.firma === 'legale_rappresentante'
+}
+
+/**
+ * Il documento archiviato appartiene all'anno scolastico indicato?
+ *
+ * `student_documents` non ha una colonna per l'anno — undici colonne, misurate sullo schema
+ * di produzione il 2026-08-16 — quindi si passa da `created_at`, che è l'istante in cui il
+ * certificato è stato emesso e stampato in calce sul foglio stesso.
+ *
+ * ⚠️ IL GIORNO È QUELLO CIVILE ITALIANO (`dataCivile`, `Europe/Rome`), non `iso.slice(0,10)`:
+ * il runtime su Vercel gira in UTC, e fra mezzanotte e le due sono due giorni diversi. Sul
+ * 1° agosto — cioè esattamente il confine fra due anni scolastici — quelle due ore
+ * deciderebbero se un certificato è di quest'anno o dell'anno scorso. È la stessa misura già
+ * pagata in questo repo il 2026-08-01 alle 01:08 (un incasso vero sparito da un KPI perché
+ * il server contava in UTC).
+ *
+ * Un istante illeggibile risponde `false`, cioè «non è di quest'anno»: il verso in cui si
+ * sbaglia si sceglie, e fra riemettere un certificato e consegnarne uno che dichiara l'anno
+ * sbagliato a un ente pubblico, il costo del primo è un numero di protocollo.
+ */
+export function documentoDellAnnoScolastico(
+  creatoIl: string | null | undefined,
+  annoScolastico: string | null | undefined,
+): boolean {
+  const atteso = (annoScolastico ?? '').trim()
+  if (!atteso) return false
+  if (typeof creatoIl !== 'string' || creatoIl.trim() === '') return false
+  const istante = new Date(creatoIl)
+  if (Number.isNaN(istante.getTime())) return false
+  return annoScolasticoDelGiorno(dataCivile(istante)) === atteso
 }
 
 // ─── I moduli che la morosità non blocca ────────────────────────────────────────

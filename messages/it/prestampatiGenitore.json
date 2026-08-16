@@ -124,7 +124,7 @@
   "certificatoScarica": "Scarica il certificato",
   "certificatoInCorso": "Preparazione in corso…",
   "certificatoNuovo": "Generane uno nuovo",
-  "certificatoNuovoAiuto": "Il pulsante qui accanto riscarica sempre lo stesso certificato, con lo stesso numero di protocollo. «Generane uno nuovo» ne emette un altro, con data e numero nuovi: serve quando un ente lo vuole recente.",
+  "certificatoNuovoAiuto": "Il pulsante qui accanto riscarica sempre lo stesso certificato, con lo stesso numero di protocollo, per tutto l’anno scolastico in corso. Dall’anno prossimo ne esce uno nuovo da sé, perché il certificato dichiara l’anno. «Generane uno nuovo» serve solo se un ente lo vuole con una data più recente.",
   "certificatoLegaleRappresentanteAssente": "Nelle impostazioni della sede manca il nome di chi firma per la Scuola: segnalalo alla segreteria, il certificato si emette appena c’è.",
   "certificatoAutorizzazioneNidoMancante": "Per questa sede non risultano gli estremi dell’autorizzazione al funzionamento del nido: senza, l’INPS rifiuterebbe il certificato. Segnalalo alla segreteria.",
   "certificatoLivelloNonNido": "Il certificato per il Bonus Asilo Nido si rilascia solo a chi frequenta il nido: per gli altri serve il certificato di iscrizione e frequenza.",

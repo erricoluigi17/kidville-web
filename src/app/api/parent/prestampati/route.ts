@@ -29,6 +29,7 @@ import {
   datiUscitaDaEvento,
   descrizioneArchivioProtocollata,
   dipendeDallUscita,
+  documentoDellAnnoScolastico,
   garantisciBucketFascicolo,
   ilFileRestaNelBucket,
   motivoMancatoArchivioDa,
@@ -37,6 +38,7 @@ import {
   type MotivoNonGenerabile,
   numeroProtocolloDaDescrizione,
   rifiutoDelRender,
+  riusoLegatoAllAnnoScolastico,
   serveElencoDelegati,
   soloFamiglia,
   sconosciuto,
@@ -368,6 +370,27 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
         created_at: string | null
       }[]) {
         const tipo = riga.document_type?.trim()
+        /**
+         * ⚠️ IL CERTIFICATO DELL'ANNO SCORSO NON CONTA COME «già in archivio».
+         *
+         * La stessa regola del POST, e sta scritta in un posto solo (`banco-famiglia.ts`)
+         * perché qui si decide che cosa PROMETTE la scheda: con la riga dell'anno scorso in
+         * questa mappa, il pulsante primario direbbe «Scarica il certificato» e la rotta
+         * emetterebbe invece un numero nuovo — la scheda mentirebbe, e il genitore
+         * crederebbe di riprendere il foglio di prima. Il certificato dichiara l'anno
+         * scolastico: fuori dall'anno non è un riscarico, è un documento scaduto.
+         *
+         * I sei moduli firmati dalla famiglia passano sempre: quelli sono il fatto del
+         * giorno in cui sono stati firmati (W4.4, «riscaricabili SEMPRE»).
+         */
+        const vocePerTipo = tipo ? voceDelGenitore(tipo) : null
+        if (
+          vocePerTipo &&
+          riusoLegatoAllAnnoScolastico(vocePerTipo) &&
+          !documentoDellAnnoScolastico(riga.created_at, dati.annoScolastico)
+        ) {
+          continue
+        }
         // `order` è discendente: la prima riga di ogni tipo è la più recente, e le altre
         // non la sostituiscono. È il documento che il genitore riscarica.
         if (tipo && !archiviati.has(tipo)) {
@@ -707,13 +730,51 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
           { status: 503 },
         )
       }
-      documentoInArchivio =
-        ((righe ?? []) as unknown as {
-          id: string
-          document_type: string | null
-          storage_path: string | null
-          descrizione: string | null
-        }[]).find((r) => r.document_type?.trim() === voce.slug) ?? null
+      /**
+       * ⚠️ NON BASTA `document_type`, e la differenza si vede solo fra un anno.
+       *
+       * Sul certificato di iscrizione e frequenza c'è scritto l'ANNO: «risulta regolarmente
+       * iscritto/a … per l'anno scolastico 2026/2027». Cercando il documento col solo tipo,
+       * a settembre 2027 il pulsante primario — che si chiama «Scarica il certificato» —
+       * avrebbe riconsegnato il foglio dell'anno prima: una dichiarazione falsa sull'anno in
+       * corso, diretta a un datore di lavoro o all'INPS. La regola sta in
+       * `riusoLegatoAllAnnoScolastico` + `documentoDellAnnoScolastico`, che vale anche per il
+       * GET dell'elenco: se le due strade divergessero, la scheda direbbe «Scarica» e la
+       * rotta emetterebbe un numero nuovo.
+       *
+       * Sui sei moduli firmati dalla FAMIGLIA il vincolo non c'è: una scheda sanitaria
+       * firmata a marzo resta il fatto di quel giorno, e si riscarica sempre.
+       */
+      const candidati = ((righe ?? []) as unknown as {
+        id: string
+        document_type: string | null
+        storage_path: string | null
+        descrizione: string | null
+        created_at: string | null
+      }[]).filter((r) => r.document_type?.trim() === voce.slug)
+      // L'ordine della query è `created_at` discendente: il primo che passa il vincolo è il
+      // più recente, ed è quello che il genitore si aspetta di riprendere.
+      const riusabili = riusoLegatoAllAnnoScolastico(voce)
+        ? candidati.filter((r) =>
+            documentoDellAnnoScolastico(r.created_at, prefill.dati.annoScolastico),
+          )
+        : candidati
+      documentoInArchivio = riusabili[0] ?? null
+
+      // Un rifiuto di riuso si logga anche quando è la cosa giusta: senza questa riga,
+      // «il certificato dell'anno scorso è stato scartato» e «il riscarico si è rotto»
+      // sarebbero indistinguibili in `app_log`, e la differenza si vedrebbe solo a
+      // settembre. Nessun dato personale: slug, conteggio, anno.
+      if (candidati.length > riusabili.length) {
+        logEvento('modulistica', 'info', {
+          operazione: 'parent/prestampati:POST',
+          esito: 'riuso-scartato-altro-anno',
+          tipo: voce.slug,
+          alunno_id: alunnoId,
+          anno: prefill.dati.annoScolastico,
+          n: candidati.length - riusabili.length,
+        })
+      }
     }
 
     if (documentoInArchivio?.storage_path) {

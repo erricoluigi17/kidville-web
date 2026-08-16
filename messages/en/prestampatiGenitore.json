@@ -124,7 +124,7 @@
   "certificatoScarica": "Download the certificate",
   "certificatoInCorso": "Preparing…",
   "certificatoNuovo": "Generate a new one",
-  "certificatoNuovoAiuto": "The button next to this one always downloads the same certificate, with the same protocol number. “Generate a new one” issues another, with a new date and number: use it when an office wants a recent one.",
+  "certificatoNuovoAiuto": "The button next to this one always downloads the same certificate, with the same protocol number, for the whole current school year. Next year a new one is issued on its own, because the certificate states the year. “Generate a new one” is only needed if an office wants a more recent date.",
   "certificatoLegaleRappresentanteAssente": "The name of the person who signs for the school is missing from the location settings: let the office know, the certificate will be issued as soon as it is there.",
   "certificatoAutorizzazioneNidoMancante": "This location has no recorded nursery operating licence details: without them INPS would reject the certificate. Let the office know.",
   "certificatoLivelloNonNido": "The INPS Nursery Bonus certificate is only issued for children attending the nursery: for the others you need the enrolment and attendance certificate.",

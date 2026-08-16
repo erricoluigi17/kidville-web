@@ -308,7 +308,10 @@ export async function caricaPrefillAlunno(
     // padre sotto la firma della madre non si vede e non si corregge.
     richiedente: famiglia.richiedente,
     sede: datiSede,
-    scuola: componiScuola(anagrafica.denominazione, anagrafica.piva_cf, fiscale),
+    // `anagrafica.denominazione` NON entra qui: è il nome della struttura («Kidville
+    // Giugliano»), che sta già in `datiSede.scuola_nome` due righe più su. La ragione
+    // sociale dell'ente gestore è un altro dato e ha un'altra sorgente.
+    scuola: componiScuola(anagrafica.piva_cf, fiscale),
     annoScolastico: annoScolasticoCorrente(opzioni.oggi),
     dataOggi: dataCivile(opzioni.oggi ?? new Date()),
   }
@@ -701,17 +704,32 @@ export function componiAlunno(riga: RigaAlunno, sezione: RigaSezione | null): Da
 }
 
 /**
- * L'ente gestore: `scuole.config.anagrafica` prima, `admin_settings.fiscale_config` poi.
+ * L'ENTE GESTORE — che non è la struttura, e per due giorni lo è stato.
  *
- * L'ordine non è casuale ed è quello che la specifica chiede («mai cablati nel codice:
- * vengono da `scuole.config.anagrafica`»), ma il ripiego non è teorico: misurato il
- * 2026-08-14, `config.anagrafica` esiste su UNA sede su quattro, mentre `fiscale_config`
- * porta denominazione, P.IVA e domicilio fiscale su tre righe. Senza il ripiego, il
- * certificato per il Bonus Nido uscirebbe senza i dati identificativi della struttura —
- * cioè senza la parte che l'INPS legge.
+ * La ragione sociale arriva da `admin_settings.fiscale_config`, e da lì soltanto. È il
+ * nome con cui la cooperativa è iscritta al registro: quello che sta nel piede della carta
+ * intestata, quello che l'INPS confronta con la P.IVA e con la sede legale che gli
+ * stampiamo accanto nel blocco DATI IDENTIFICATIVI.
+ *
+ * ⚠️ QUESTA FUNZIONE PRENDEVA ANCHE `scuole.config.anagrafica.denominazione`, E LO
+ * PREFERIVA. Reggeva per un motivo che è scaduto: quel campo era vuoto su tre sedi su
+ * quattro, quindi vinceva sempre il ripiego. Il 2026-08-16 la spec §2.1 l'ha riempito con
+ * «Kidville Giugliano / Aversa / Cesa» — il nome del plesso, che serve alla testata — e il
+ * certificato ha cominciato a dichiarare «Denominazione: Kidville Giugliano» sopra la
+ * P.IVA e la sede legale della cooperativa, mentre il piede della stessa pagina diceva
+ * «Ragione sociale: Scuola dell'infanzia la favola soc. coop.». La riga sotto il titolo
+ * balbettava «Kidville Giugliano – Kidville (Nido · Infanzia · Primaria)».
+ *
+ * Il parametro è stato TOLTO invece che retrocesso a ripiego: una precedenza invertita
+ * torna a vincere il giorno in cui `fiscale_config` è vuota su una sede nuova, e ci torna
+ * in silenzio. Il nome della struttura ha già la sua strada — `DatiSede.scuola_nome` — e
+ * chi ha bisogno di questa riga senza `fiscale_config` compilata la vede sparire, che è il
+ * degrado di tutto il resto del file.
+ *
+ * `pivaSede` resta, e non è un'incoerenza: `anagrafica.piva_cf` è dichiarata «P.IVA / CF
+ * **ente gestore**», cioè lo stesso soggetto, non la struttura.
  */
 export function componiScuola(
-  denominazioneSede: string | null | undefined,
   pivaSede: string | null | undefined,
   fiscale: Partial<FiscaleConfig>,
 ): DatiScuola {
@@ -724,7 +742,7 @@ export function componiScuola(
     .filter(Boolean)
     .join(' — ')
   return {
-    ragioneSociale: primoNonVuoto(denominazioneSede, fiscale.denominazione) || null,
+    ragioneSociale: primoNonVuoto(fiscale.denominazione) || null,
     piva: primoNonVuoto(pivaSede, fiscale.piva, fiscale.codice_fiscale) || null,
     sedeLegale: sedeLegale || null,
     // Il nome di chi firma NON sta qui: lo porta `PrefillPrestampato.legaleRappresentante`
@@ -755,23 +773,21 @@ function leggiLegaleRappresentante(config: unknown): string | null {
 }
 
 /**
- * Gli estremi dell'autorizzazione comunale al funzionamento del nido (n. 28), da
+ * Gli estremi dell'autorizzazione al funzionamento del nido (n. 28), da
  * `scuole.config.anagrafica.autorizzazione_nido`.
  *
- * ⚠️ MISURATO IL 2026-08-14: quella chiave oggi non esiste su nessuna delle quattro
- * righe di `scuole`, e sono tre autorizzazioni diverse — numero, data e Comune diversi
- * per Giugliano, Aversa e Cesa. Finché restano fuori dalla configurazione, il modello del
+ * Sono tre autorizzazioni diverse — numero, data ed **ente emittente** diversi per
+ * Giugliano, Aversa e Cesa. Finché restano fuori dalla configurazione, il modello del
  * Bonus Asilo Nido RIFIUTA di emettere il certificato, ed è la cosa giusta: un modulo
  * INPS con «N. ______ del ______» viene respinto allo sportello, e la famiglia lo scopre
  * in coda.
  *
- * Si legge lo stesso, invece di scrivere `null` fisso, perché il giorno in cui qualcuno
- * salva quei tre valori nelle impostazioni di sede il certificato deve cominciare a
- * uscire — senza una migrazione e senza toccare questo file.
+ * ⚠️ L'ente NON è sempre un Comune, e per questo il campo non si chiama più `comune`:
+ * su due sedi su tre l'autorizzazione l'ha rilasciata un **Ambito socio-sanitario**
+ * (spec §2.1). Il valore si stampa così com'è — chi lo legge non ci antepone niente.
  *
- * Dal 2026-08-15 quel giorno è possibile: i tre campi stanno in Impostazioni → Sede &
- * Intestazione. Restano da COMPILARE, sede per sede, e sono tre autorizzazioni diverse:
- * finché non lo si fa, il rifiuto qui sopra resta quello giusto.
+ * Dal 2026-08-15 i tre campi stanno in Impostazioni → Sede & Intestazione, e dal
+ * 2026-08-16 sono compilati in produzione su tutte e tre le sedi.
  */
 export function leggiAutorizzazioneNido(config: unknown): AutorizzazioneNido | null {
   const anagrafica = (config as { anagrafica?: unknown } | null | undefined)?.anagrafica
@@ -784,10 +800,15 @@ export function leggiAutorizzazioneNido(config: unknown): AutorizzazioneNido | n
   }
   const numero = stringa('numero')
   const data = stringa('data')
-  const comune = stringa('comune')
+  // `ente` è il nome dal 2026-08-16; `comune` è quello che le tre righe di produzione
+  // portavano prima, e resta letto finché non le si risalva. Questa funzione legge il
+  // JSONB GREZZO — non passa da `normalizzaAnagraficaSede`, che il travaso lo fa già —
+  // quindi se il ripiego non stesse anche qui il certificato per il Bonus Nido
+  // smetterebbe di uscire sulle tre sedi vere fino al primo salvataggio del form.
+  const ente = stringa('ente') ?? stringa('comune')
   // Nessuno dei tre pezzi = nessuna autorizzazione, non un oggetto di `null` che il
   // modello dovrebbe imparare a riconoscere.
-  return numero || data || comune ? { numero, data, comune } : null
+  return numero || data || ente ? { numero, data, ente } : null
 }
 
 /** Una stringa non vuota da `config.anagrafica`, o `null`. Il JSONB non è tipizzato: mai `throw`. */

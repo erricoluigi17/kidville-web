@@ -184,19 +184,28 @@ export interface DatiGenitore {
  * certificati, non una seconda versione che fra sei mesi degrada in modo diverso.
  */
 export interface DatiSede extends SedeCertificato {
-  /** Estremi dell'autorizzazione comunale al funzionamento del nido (doc. 28). */
+  /** Estremi dell'autorizzazione al funzionamento del nido (doc. 28). */
   autorizzazioneNido?: AutorizzazioneNido | null
 }
 
 /**
- * Uno per ciascuna delle tre sedi: sono tre autorizzazioni comunali diverse, con numeri,
- * date e Comuni diversi. Vivono in `scuole.config.anagrafica`, mai in codice.
+ * Uno per ciascuna delle tre sedi: sono tre autorizzazioni diverse, con numeri, date ed
+ * enti emittenti diversi. Vivono in `scuole.config.anagrafica`, mai in codice.
  */
 export interface AutorizzazioneNido {
   numero?: string | null
   /** ISO `aaaa-mm-gg`. */
   data?: string | null
-  comune?: string | null
+  /**
+   * L'ente che ha EMESSO il provvedimento, per intero e già scritto come va stampato.
+   *
+   * ⚠️ Si chiamava `comune`, e il nome non era un dettaglio: sulle tre sedi vere due
+   * autorizzazioni su tre le ha rilasciate un **Ambito socio-sanitario**, non un Comune
+   * (spec §2.1). Finché il campo si chiamava così, tre punti diversi della catena — la
+   * chiave in configurazione, l'etichetta del form, il testo stampato — affermavano che
+   * l'emittente fosse un Comune, e il certificato lo dichiarava all'INPS.
+   */
+  ente?: string | null
 }
 
 /**
@@ -1816,15 +1825,23 @@ export const modelloCertificatoIscrizioneFrequenza = definisciModello({
 // ─── 28 — Certificato di iscrizione e frequenza — Nido (Bonus Asilo Nido INPS) ──
 
 /**
- * Gli estremi dell'autorizzazione comunale, in una riga sola e con lo stesso degrado del
- * resto del file: ogni pezzo compare solo se il dato c'è, e senza nessun pezzo la riga non
- * nasce affatto.
+ * Gli estremi dell'autorizzazione al funzionamento, in una riga sola e con lo stesso
+ * degrado del resto del file: ogni pezzo compare solo se il dato c'è, e senza nessun pezzo
+ * la riga non nasce affatto.
  *
- * Interpolarli in una stringa unica — `N. ${numero} del ${data} rilasciata dal Comune di
- * ${comune}` — sembra la stessa cosa e non lo è: con una data che `isoToIt()` non sa
- * leggere ne esce «N. 77/2024 del  rilasciata dal Comune di …», cioè esattamente il
- * «N. ______ del ______» che la specifica vieta di mandare all'INPS, e ne esce **senza
- * che nessuna guardia se ne accorga**, perché una stringa montata a mano non è mai vuota.
+ * Interpolarli in una stringa unica — `N. ${numero} del ${data} rilasciata da ${ente}` —
+ * sembra la stessa cosa e non lo è: con una data che `isoToIt()` non sa leggere ne esce
+ * «N. 77/2024 del  rilasciata da …», cioè esattamente il «N. ______ del ______» che la
+ * specifica vieta di mandare all'INPS, e ne esce **senza che nessuna guardia se ne
+ * accorga**, perché una stringa montata a mano non è mai vuota.
+ *
+ * ⚠️ «rilasciata **da**», e mai «rilasciata dal Comune di»: il prefisso cablato che stava
+ * qui è finito su tre PDF veri il 2026-08-16. Su Giugliano stampava «rilasciata dal Comune
+ * di Comune di Giugliano in Campania» (il dato porta già l'ente per intero); su Aversa e
+ * Cesa stampava «dal Comune di Ambito Socio-Sanitario …», che oltre a non essere italiano
+ * dichiara a un ente pubblico che un Ambito è un Comune. È lo stesso difetto dell'indirizzo
+ * stampato due volte (spec §2.2) spostato in un altro campo: **dato già completo più
+ * decorazione aggiunta dal codice**. Ciò che si stampa è il valore, e basta.
  */
 function estremiAutorizzazioneNido(sede: DatiSede): string {
   const a = sede.autorizzazioneNido
@@ -1832,14 +1849,14 @@ function estremiAutorizzazioneNido(sede: DatiSede): string {
   return [
     a?.numero?.trim() ? `N. ${a.numero.trim()}` : '',
     data ? `del ${data}` : '',
-    a?.comune?.trim() ? `rilasciata dal Comune di ${a.comune.trim()}` : '',
+    a?.ente?.trim() ? `rilasciata da ${a.ente.trim()}` : '',
   ]
     .filter(Boolean)
     .join(' ')
 }
 
 /**
- * Gli estremi dell'autorizzazione comunale ci sono tutti e tre, e sono leggibili?
+ * Gli estremi dell'autorizzazione al funzionamento ci sono tutti e tre, e sono leggibili?
  *
  * Sono tre autorizzazioni diverse, una per sede, e sono l'unico dato che questo
  * certificato porta e che nessun altro documento ha. Se mancano, **il pulsante non
@@ -1855,7 +1872,7 @@ function estremiAutorizzazioneNido(sede: DatiSede): string {
  */
 export function autorizzazioneNidoCompleta(sede: DatiSede): boolean {
   const a = sede.autorizzazioneNido
-  return Boolean(a?.numero?.trim() && isoToIt(a?.data ?? '') && a?.comune?.trim())
+  return Boolean(a?.numero?.trim() && isoToIt(a?.data ?? '') && a?.ente?.trim())
 }
 
 const zCertificatoBonusNido = z.object({})

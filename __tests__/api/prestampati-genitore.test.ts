@@ -472,7 +472,9 @@ const PREFILL_NIDO = {
     alunno: { ...DATI.alunno, livello: 'nido' as const },
     sede: {
       ...DATI.sede,
-      autorizzazioneNido: { numero: '000/2020', data: '2020-01-15', comune: 'Comune Inventato' },
+      // L'ente per intero, come sui tre provvedimenti veri: il codice stampa il
+      // valore e non ci antepone «Comune di».
+      autorizzazioneNido: { numero: '000/2020', data: '2020-01-15', ente: 'Ambito Socio-Sanitario Inventato' },
     },
   },
 }

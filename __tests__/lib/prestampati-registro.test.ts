@@ -914,10 +914,37 @@ describe('prefill — l’alunno che finisce sul foglio', () => {
   })
 })
 
-describe('prefill — l’ente gestore, e il ripiego che lo tiene in piedi', () => {
-  it('la sede vince sulla configurazione fiscale, che resta il ripiego', () => {
-    const scuola = componiScuola('Cooperativa dalla sede', '11111111111', {
-      denominazione: 'Cooperativa dal fiscale',
+// ─────────────────────────────────────────────────────────────────────────────
+// LA RAGIONE SOCIALE NON È IL NOME DELLA STRUTTURA
+//
+// `componiScuola` prendeva `scuole.config.anagrafica.denominazione` come PRIMA
+// scelta per la ragione sociale dell'ente gestore. Reggeva finché quel campo era
+// vuoto su tre sedi su quattro e il ripiego su `fiscale_config` faceva il lavoro.
+//
+// Il 2026-08-16 la spec §2.1 ha riempito quel campo con «Kidville Giugliano /
+// Aversa / Cesa» — il nome del plesso, che serve alla testata e alla casella
+// «Sede del Nido» — e il blocco DATI IDENTIFICATIVI DELLA SCUOLA ha cominciato a
+// stampare:
+//
+//   Denominazione: Kidville Giugliano · P.IVA/C.F.: 03394870616
+//   Sede legale: Via Silvio Pellico 7 — 81030 Cesa (CE)
+//
+// cioè un nome commerciale accostato alla P.IVA e alla sede legale della
+// cooperativa, su un foglio firmato dal legale rappresentante — mentre il piede
+// della carta intestata, sulla STESSA pagina, diceva «Ragione sociale: Scuola
+// dell'infanzia la favola soc. coop.». E la riga sotto il titolo balbettava:
+// «Kidville Giugliano – Kidville (Nido · Infanzia · Primaria)».
+//
+// I due concetti sono due, e da qui in avanti hanno due sorgenti: il nome della
+// struttura sta in `DatiSede.scuola_nome`, la ragione sociale in `fiscale_config`.
+// `componiScuola` non riceve più il nome della sede: non è una precedenza da
+// invertire, è un parametro che non deve esistere — altrimenti torna a vincere il
+// giorno in cui `fiscale_config` è vuota su una sede nuova, e ci torna in silenzio.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('prefill — l’ente gestore, che non è il nome della struttura', () => {
+  it('la ragione sociale viene dalla configurazione fiscale, non dal nome del plesso', () => {
+    const scuola = componiScuola('11111111111', {
+      denominazione: "SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA",
       piva: '22222222222',
       indirizzo: 'Via Inventata',
       numero_civico: '1',
@@ -925,7 +952,9 @@ describe('prefill — l’ente gestore, e il ripiego che lo tiene in piedi', () 
       comune: 'Cittàfinta',
       provincia: 'xx',
     })
-    expect(scuola.ragioneSociale).toBe('Cooperativa dalla sede')
+    expect(scuola.ragioneSociale).toBe("SCUOLA DELL'INFANZIA LA FAVOLA SOCIETA' COOPERATIVA")
+    // La P.IVA della sede resta una precedenza legittima: è lo STESSO ente, e
+    // `anagrafica.piva_cf` è dichiarata «P.IVA / CF ente gestore».
     expect(scuola.piva).toBe('11111111111')
     expect(scuola.sedeLegale).toBe('Via Inventata 1 — 80000 Cittàfinta — (XX)')
     // Il nome di chi firma NON sta qui: lo porta `legaleRappresentante` e lo consuma il
@@ -934,20 +963,29 @@ describe('prefill — l’ente gestore, e il ripiego che lo tiene in piedi', () 
     expect(scuola.legaleRappresentante).toBeNull()
   })
 
-  it('senza i dati di sede si legge la configurazione fiscale', () => {
-    const scuola = componiScuola(null, null, {
+  it('senza configurazione fiscale la riga sparisce: non ripiega sul nome della sede', () => {
+    // Il degrado giusto è l'omissione. Stampare «Kidville Aversa» accanto alla P.IVA
+    // della cooperativa è un'attestazione sbagliata su un documento firmato, e — a
+    // differenza di una riga che manca — ha l'aria di essere completa.
+    const scuola = componiScuola('03394870616', {})
+    expect(scuola.ragioneSociale).toBeNull()
+    expect(scuola.piva).toBe('03394870616')
+  })
+
+  it('il codice fiscale è il terzo ripiego della P.IVA', () => {
+    const scuola = componiScuola(null, {
       denominazione: 'Cooperativa dal fiscale',
       codice_fiscale: '33333333333',
     })
     expect(scuola.ragioneSociale).toBe('Cooperativa dal fiscale')
-    // Il codice fiscale è il terzo ripiego della P.IVA: una cooperativa che non ha la
-    // seconda ha comunque il primo, e su un certificato serve un identificativo.
+    // Una cooperativa che non ha la seconda ha comunque il primo, e su un certificato
+    // serve un identificativo.
     expect(scuola.piva).toBe('33333333333')
     expect(scuola.sedeLegale).toBeNull()
   })
 
   it('senza niente non inventa: quattro `null` e quattro righe che spariscono', () => {
-    expect(componiScuola(null, null, {})).toEqual({
+    expect(componiScuola(null, {})).toEqual({
       ragioneSociale: null,
       piva: null,
       sedeLegale: null,
@@ -961,8 +999,21 @@ describe('prefill — gli estremi dell’autorizzazione del nido (JSONB non tipi
 
   it('legge i tre pezzi quando ci sono', () => {
     expect(
-      leggiAutorizzazioneNido(config({ numero: '123', data: '2024-09-01', comune: 'Cittàfinta' })),
-    ).toEqual({ numero: '123', data: '2024-09-01', comune: 'Cittàfinta' })
+      leggiAutorizzazioneNido(config({ numero: '123', data: '2024-09-01', ente: 'Comune di Cittàfinta' })),
+    ).toEqual({ numero: '123', data: '2024-09-01', ente: 'Comune di Cittàfinta' })
+  })
+
+  it('la chiave vecchia `comune` si legge ancora, e finisce in `ente`', () => {
+    // ⚠️ NON è cortesia verso il passato. Al momento della rinomina (2026-08-16) le tre
+    // sedi di produzione avevano l'autorizzazione salvata sotto `comune`: senza questo
+    // ripiego il certificato per il Bonus Nido sarebbe sparito su tutte e tre nello
+    // stesso istante, e sarebbe tornato solo dopo che qualcuno avesse riaperto e
+    // risalvato il form — cioè dopo che una famiglia se n'era accorta allo sportello.
+    expect(
+      leggiAutorizzazioneNido(config({ numero: '102A', data: '2025-10-29', comune: 'Comune di Giugliano in Campania' })),
+    ).toEqual({ numero: '102A', data: '2025-10-29', ente: 'Comune di Giugliano in Campania' })
+    // Con entrambe vince il nome nuovo: è quello che il form manda.
+    expect(leggiAutorizzazioneNido(config({ ente: 'Ambito C06', comune: 'Aversa' }))?.ente).toBe('Ambito C06')
   })
 
   it('con UN pezzo solo restituisce comunque l’oggetto: gli altri due li nega il modello', () => {
@@ -973,14 +1024,15 @@ describe('prefill — gli estremi dell’autorizzazione del nido (JSONB non tipi
     expect(leggiAutorizzazioneNido(config({ numero: '123' }))).toEqual({
       numero: '123',
       data: null,
-      comune: null,
+      ente: null,
     })
   })
 
   it('con zero pezzi utili è `null`, non un oggetto di `null`', () => {
     for (const vuota of [
       config({}),
-      config({ numero: '   ', data: '', comune: null }),
+      config({ numero: '   ', data: '', ente: null }),
+      config({ numero: '   ', data: '', comune: '  ' }),
       config({ numero: 42, data: true }),
       config(null),
       config('non un oggetto'),

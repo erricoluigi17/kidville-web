@@ -21,6 +21,31 @@ export const zAutorizzazioneNido = z.object({
   numero: z.string().max(60).nullish(),
   /** ISO `aaaa-mm-gg`: il modello INPS rifiuta una data che non sa rileggere. */
   data: z.string().max(10).nullish(),
+  /**
+   * L'ente che ha EMESSO il provvedimento: un Comune **oppure** un Ambito
+   * socio-sanitario. Si scrive per intero e già come va stampato — il codice non
+   * ci antepone niente.
+   *
+   * ⚠️ Fino al 2026-08-16 questa chiave si chiamava `comune`, e il nome ha fatto
+   * danno tre volte nello stesso rilascio: l'etichetta del form chiedeva «Comune
+   * che l'ha rilasciata», il certificato stampava «rilasciata dal Comune di …», e
+   * su due sedi vere su tre l'autorizzazione è di un **Ambito socio-sanitario**
+   * (spec §2.1). Il foglio arrivava all'INPS dicendo che un Ambito è un Comune,
+   * cioè mandava un funzionario a cercare un provvedimento comunale inesistente.
+   * Un nome di campo che contraddice il dato che contiene non è cosmesi.
+   */
+  ente: z.string().max(120).nullish(),
+  /**
+   * @deprecated Il nome VECCHIO della stessa chiave, accettato in ingresso e mai
+   * riscritto in uscita.
+   *
+   * Non è cortesia verso il passato: al momento della rinomina le tre sedi di
+   * produzione avevano l'autorizzazione salvata sotto `comune`, e uno schema che è
+   * anche lista bianca in scrittura (vedi sopra) l'avrebbe **cancellata** al primo
+   * salvataggio — spegnendo il certificato per il Bonus Nido su tutte e tre nello
+   * stesso istante. `normalizzaAutorizzazioneNido` la travasa in `ente` e la lascia
+   * fuori dall'oggetto salvato: la riga si migra da sé al primo `PATCH`.
+   */
   comune: z.string().max(120).nullish(),
 })
 
@@ -48,7 +73,7 @@ export const zAnagraficaSede = z.object({
   piva_cf: z.string().max(20).nullish(), // P.IVA / CF ente gestore
   /** Nome e cognome di chi firma i documenti della scuola (§3b impaginazione). */
   legale_rappresentante: z.string().max(120).nullish(),
-  /** Estremi dell'autorizzazione comunale al nido: uno per sede, servono al Bonus INPS. */
+  /** Estremi dell'autorizzazione al funzionamento del nido: una per sede, servono al Bonus INPS. */
   autorizzazione_nido: zAutorizzazioneNido.nullish(),
 })
 export type AnagraficaSede = z.infer<typeof zAnagraficaSede>
@@ -67,17 +92,23 @@ const clean = (v: string | null | undefined): string | null => {
 /**
  * Gli estremi dell'autorizzazione, o `null`.
  *
- * Tre campi vuoti danno `null` e non `{numero:null,data:null,comune:null}`: un
+ * Tre campi vuoti danno `null` e non `{numero:null,data:null,ente:null}`: un
  * oggetto di soli `null` è indistinguibile da un dato presente finché non lo si
  * apre, e `leggiAutorizzazioneNido` (prefill) fa già la stessa scelta in lettura.
+ *
+ * L'uscita porta `ente` e MAI `comune`: il valore vecchio si travasa, la chiave
+ * vecchia non si riscrive. È la migrazione del dato, fatta dal salvataggio invece
+ * che da una `UPDATE` sul JSONB di produzione.
  */
 function normalizzaAutorizzazioneNido(
   input: AutorizzazioneNidoConfig | null | undefined,
 ): AutorizzazioneNidoConfig | null {
   const numero = clean(input?.numero)
   const data = clean(input?.data)
-  const comune = clean(input?.comune)
-  return numero || data || comune ? { numero, data, comune } : null
+  // `ente` vince su `comune` quando ci sono entrambi: è il nome nuovo, ed è quello
+  // che il form manda. `comune` resta solo per le righe scritte prima del 2026-08-16.
+  const ente = clean(input?.ente) ?? clean(input?.comune)
+  return numero || data || ente ? { numero, data, ente } : null
 }
 
 /** Trim; stringhe vuote → null; codice meccanografico e sigla provincia in

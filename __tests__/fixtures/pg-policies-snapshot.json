@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-11",
-  "generato_alle": "2026-08-11T23:45:31Z",
-  "sha256": "25125adc07fa10d17e6bc431422826d30d4b094a5bb90e1870beebd2a90a7ada",
+  "generato_il": "2026-08-16",
+  "generato_alle": "2026-08-16T20:29:57Z",
+  "sha256": "2dbc46549fd62a3e50c35c0047e8e1eb6f8a3dfb7253404c6448db258cb7b013",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -507,6 +507,9 @@
     "giudizi_sintetici_scala",
     "giudizio_template",
     "gruppi_mensa",
+    "iscrizioni_elenco_caricamenti",
+    "iscrizioni_elenco_righe",
+    "iscrizioni_import_esiti",
     "materie",
     "mensa_alternative",
     "mensa_class_menu_assignment",
@@ -598,6 +601,11 @@
     "giustifiche_didattiche",
     "gruppi_mensa",
     "incassi",
+    "iscrizioni_elenco_caricamenti",
+    "iscrizioni_elenco_righe",
+    "iscrizioni_import_esiti",
+    "iscrizioni_import_tentativi",
+    "iscrizioni_inviti_credenziali",
     "iscrizioni_retention_esecuzioni",
     "legame_genitori_alunni",
     "locker_config",

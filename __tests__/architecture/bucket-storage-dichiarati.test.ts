@@ -191,6 +191,21 @@ const RISERVATI = [
   'fatture',
   'form_attachments',
   'gallery',
+  // Gli ELENCHI DI CLASSE della segreteria (2026-08-16): i fogli Excel su cui è
+  // scritto, per ogni bambino, in che classe va e quanto paga la sua famiglia.
+  // Il file di Giugliano da solo porta 338 nomi di minori. Sta in un bucket e non
+  // nel repository per la ragione più semplice che ci sia: il repository è
+  // pubblico, e un file lasciato nella cartella di lavoro è a un `git add -A` di
+  // distanza dall'esserlo anche lui. La strada è chiusa due volte — qui e in
+  // `.gitignore`, dichiarata nel lock `pii-nei-file-tracciati`.
+  'iscrizioni_elenchi',
+  // ⚠️ TROVATO, NON CREATO da questo lavoro. È comparso in produzione fra la
+  // fotografia dell'11/08 e quella del 16/08, e nel repository non c'è nessuna
+  // migrazione che lo dichiari né nessuna route che lo nomini: è nato dalla
+  // console, come otto degli altri. Lo si classifica come riservato perché è
+  // privato e il nome dice cosa contiene; ma resta un bucket di cui il codice non
+  // sa niente, e andrebbe capito a chi serve prima che qualcuno ci scriva dentro.
+  'sensitive_documents',
   // Area di sosta dei media delle News (2026-08-01). Ci stanno le foto **prima**
   // che il consenso fotografico sia verificato: fino a oggi finivano dritte in
   // `news`, che è pubblico, e restavano leggibili da chiunque senza login anche se

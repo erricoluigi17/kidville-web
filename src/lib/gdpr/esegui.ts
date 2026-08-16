@@ -380,6 +380,24 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
     motivo:
       'Allegati degli incarichi interni allo staff: riguardano l’organizzazione del lavoro fra colleghi, non la famiglia, e nessuna colonna li lega a un alunno o a un genitore. La cancellazione dell’account di un membro dello staff è un percorso diverso da questo, che è l’oblio dell’interessato-famiglia.',
   },
+  iscrizioni_elenchi: {
+    stato: 'escluso',
+    motivo:
+      'Gli elenchi di classe che la segreteria prepara in Excel (dal 2026-08-16): un foglio per ' +
+      'classe, e accanto a ogni nome la retta della famiglia. NON è un archivio, è il documento di ' +
+      'lavoro con cui si formano le sezioni, e per costruzione ne esiste UNO SOLO attivo per sede ' +
+      '(indice `iscrizioni_elenco_uno_attivo_per_sede`): il caricamento successivo sostituisce il ' +
+      'precedente e con lui, in cascata, tutte le sue righe. ' +
+      'Non è «coperto» perché non c’è nessuna colonna che leghi una riga del foglio a un `alunni.id` ' +
+      'o a un `parents.id` — l’aggancio è il NOME scritto a mano, cioè proprio la cosa che l’oblio ' +
+      'deve far sparire; e non è «coperto-fuori-oblio» perché nessun cron lo fa scadere. ' +
+      '⚠️ LIMITE DICHIARATO, e va detto invece che nascosto: fra la richiesta di oblio di una ' +
+      'famiglia e il primo ricaricamento dell’elenco, il nome di quel bambino resta nel foglio e ' +
+      'nelle righe che ne derivano. La chiusura vera è una riga in `anonimizzaAlunno` che cancelli ' +
+      'da `iscrizioni_elenco_righe` le righe il cui nome normalizzato corrisponde al minore — ' +
+      'scriverla è un lavoro a sé, e finché non c’è questo registro dice la verità: non le cancella ' +
+      'nessuno.',
+  },
   news_bozze: {
     stato: 'escluso',
     motivo:

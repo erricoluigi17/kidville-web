@@ -187,10 +187,11 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
     // eslint-disable-next-line prefer-const -- alunniRaw è riassegnato nel retry
     let { data: alunniRaw, error: errAlunni } = await supabase
       .from('alunni')
-      .select(`${COLONNE_ALUNNI}, data_iscrizione`)
+      .select(`${COLONNE_ALUNNI}, data_iscrizione, retta_a_carico_di`)
       .eq('stato', 'iscritto')
       .eq('scuola_id', scuolaId)
-    // retry senza data_iscrizione sui DB non migrati (e2e CI): colonna ignorata
+    // retry senza data_iscrizione né retta_a_carico_di sui DB non migrati (e2e CI):
+    // colonne ignorate, e il filtro qui sotto degrada da sé (undefined == null).
     if (errAlunni && (errAlunni as { code?: string }).code === '42703') {
       const retry = await supabase
         .from('alunni')
@@ -199,7 +200,15 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
         .eq('scuola_id', scuolaId)
       alunniRaw = (retry.data ?? null) as unknown as typeof alunniRaw
     }
-    const alunni = (alunniRaw || []).filter((a) => a.classe_sezione != null || a.section_id != null)
+    const alunni = (alunniRaw || [])
+      .filter((a) => a.classe_sezione != null || a.section_id != null)
+      // RETTA A CARICO DI UN FRATELLO — lo stesso filtro che ha la RPC dal
+      // 2026-08-16 (`AND al.retta_a_carico_di IS NULL`). Deve stare in ENTRAMBE
+      // le strade: se lo avesse solo la RPC, questa anteprima prometterebbe rette
+      // che la conferma non genera, e il totale mostrato alla segreteria sarebbe
+      // più alto di quello vero — il tipo di divergenza fra GET e POST che questa
+      // route ha già pagato una volta (v. commento «LA SEDE DELLE RETTE»).
+      .filter((a) => (a as { retta_a_carico_di?: string | null }).retta_a_carico_di == null)
 
     // NB: la lista dei «già fatti» NON si filtra per sede. La deduplica della RPC
     // è per (alunno, periodo) a prescindere dal plesso: filtrando qui, un bambino

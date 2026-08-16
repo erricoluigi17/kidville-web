@@ -1005,7 +1005,26 @@ function statoDeroga(oggi: Date): { fotografiaRecente: boolean; nonScaduta: bool
   }
 }
 
-const NON_ANCORA_CREATI: Record<string, { ragione: string }> = {
+// ⚠️ SVUOTATO IL 2026-08-16, ed è una buona notizia misurata, non una rinuncia.
+//
+// Qui dentro stava `sensitive_documents` — il fascicolo del bambino — con la
+// ragione che alla fotografia del 15 agosto quel bucket ancora non esisteva:
+// nessuna migrazione lo crea, lo creano al volo le route alla PRIMA
+// archiviazione. Rigenerando la fotografia dello Storage il 16 agosto (16 bucket
+// contro i 14 di allora) il bucket C'È: la prima archiviazione è avvenuta.
+//
+// Quindi la deroga è finita da sola, come doveva: `sensitive_documents` è
+// passato fra i `RISERVATI` di `bucket-storage-dichiarati`, dove la sua
+// visibilità non è più una promessa ma una misura — ed è privato.
+//
+// L'oggetto resta perché il caso si ripeterà: il prossimo bucket creato da una
+// route invece che da una migrazione nascerà anche lui invisibile alla
+// fotografia, e questo è il posto in cui dichiararlo finché non esiste.
+const NON_ANCORA_CREATI: Record<string, { ragione: string }> = {}
+
+/** Conservato per memoria: la voce che stava qui fino al 2026-08-16. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const DEROGA_STORICA_SENSITIVE_DOCUMENTS: Record<string, { ragione: string }> = {
   sensitive_documents: {
     // Misurato in sola lettura su `storage.buckets` la notte fra il 15 e il 16 agosto
     // 2026: quattordici bucket, questo non c'è. La data che conta è quella della PROVA

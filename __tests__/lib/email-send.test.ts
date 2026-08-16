@@ -28,12 +28,31 @@ describe('sendEmailDetailed', () => {
     expect(r.error).toMatch(/provider email non configurato/);
   });
 
-  it('200 → ok senza errore', async () => {
+  it('200 → ok senza errore, e con l\'id del messaggio Resend', async () => {
     global.fetch = vi.fn(async () => new Response('{"id":"1"}', { status: 200 })) as typeof fetch;
     const r = await sendEmailDetailed(params);
-    expect(r).toEqual({ ok: true, error: null });
+    // Dal 2026-08-16 l'esito porta anche `messageId`: è l'unica prova d'invio che
+    // sopravvive al giorno dopo, e la scrive chi manda gli inviti alle famiglie.
+    expect(r).toEqual({ ok: true, error: null, messageId: '1' });
     const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer test-key' });
+  });
+
+  it('200 con ricevuta illeggibile → resta OK, messageId null (l\'email È partita)', async () => {
+    // Degradare a «fallito» un invio riuscito perché la ricevuta è illeggibile
+    // farebbe rispedire l'email: il rimedio sarebbe peggiore del sintomo.
+    global.fetch = vi.fn(async () => new Response('non-json', { status: 200 })) as typeof fetch;
+    const r = await sendEmailDetailed(params);
+    expect(r.ok).toBe(true);
+    expect(r.error).toBeNull();
+    expect(r.messageId).toBeNull();
+  });
+
+  it('200 senza campo id → OK con messageId null', async () => {
+    global.fetch = vi.fn(async () => new Response('{"ok":true}', { status: 200 })) as typeof fetch;
+    const r = await sendEmailDetailed(params);
+    expect(r.ok).toBe(true);
+    expect(r.messageId).toBeNull();
   });
 
   it('403 con message JSON → il motivo del provider è propagato (caso sandbox Resend)', async () => {

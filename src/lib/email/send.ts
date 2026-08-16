@@ -52,6 +52,20 @@ export interface SendEmailResult {
   ok: boolean
   /** Motivo del fallimento, già leggibile (per warning UI/audit). Null se ok. */
   error: string | null
+  /**
+   * L'identificativo che Resend assegna al messaggio quando lo accetta.
+   *
+   * Serve a rispondere, fra sei mesi, alla sola domanda che conta davvero
+   * quando una famiglia dice «non mi è mai arrivata niente»: quel messaggio è
+   * stato consegnato al provider, sì o no, e con che numero. Senza, l'unica
+   * risposta possibile è «il nostro log dice che è partita», che è esattamente
+   * ciò che si diceva anche quando NON partiva nulla.
+   *
+   * `null` — e non un errore — quando l'invio è riuscito ma l'id non si è
+   * potuto leggere: un invio andato a buon fine non diventa un fallimento
+   * perché la ricevuta era illeggibile.
+   */
+  messageId?: string | null
 }
 
 const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
@@ -108,7 +122,34 @@ export async function sendEmailDetailed({ to, subject, text, html }: SendEmailPa
     }
   )
 
-  if (esito.ok) return { ok: true, error: null }
+  if (esito.ok) {
+    // `externalFetch` restituisce la Response col corpo INTATTO proprio perché
+    // chi chiama possa leggerselo (src/lib/logging/external.ts:170-176). Fino al
+    // 2026-08-16 qui la si buttava via, e con lei l'unica prova d'invio esistente.
+    //
+    // Il `catch` NON è muto e non è nemmeno un errore: è il caso in cui il
+    // messaggio è PARTITO ma la ricevuta non si è potuta leggere (corpo già
+    // consumato, JSON inatteso, campo assente). Si logga a `info` col perché —
+    // AGENTS regola 6 — e si va avanti, perché degradare un invio riuscito a
+    // fallito farebbe rispedire l'email: il danno sarebbe peggiore del sintomo.
+    let messageId: string | null = null
+    try {
+      const corpo = (await esito.res?.json()) as { id?: unknown } | undefined
+      messageId = typeof corpo?.id === 'string' ? corpo.id : null
+    } catch (err) {
+      logEvento(
+        'email',
+        'info',
+        {
+          operazione: 'sendEmail',
+          esito: 'id-messaggio-non-letto',
+          msg: 'email accettata dal provider, ricevuta non leggibile: l\'invio resta valido',
+        },
+        err,
+      )
+    }
+    return { ok: true, error: null, messageId }
+  }
 
   // `stato: 0` = una risposta non c'è stata affatto (rete giù, DNS, TLS).
   if (esito.stato === 0) {

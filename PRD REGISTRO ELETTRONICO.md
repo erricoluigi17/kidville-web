@@ -94,6 +94,63 @@
 
 ---
 
+## 🎓 Changelog — Le iscrizioni 2026/27 si leggono da sole, e lo zero che valeva 150 € 2026-08-16 (branch `feat/iscrizioni-import-2026-27`)
+
+Le domande d'iscrizione arrivano da due parti che non si parlavano: il **form pubblico** ne ha
+depositate **393 (437 bambini)** tutte ferme su `pending`, e un **file Excel per sede** dice l'unica
+cosa che il form non chiede — in quale classe va il bambino e quanto paga. Aprirle a mano una per
+una non era un piano. Questa passata mette in piedi il ragionamento che le legge, e si ferma
+prima di spedire: **nessun invito è ancora partito**.
+
+**Cosa è stato misurato, non dedotto** (file di Giugliano, 338 righe in 16 fogli, contro le 221
+domande già arrivate):
+
+| | |
+|---|---|
+| domande che partirebbero oggi | **167** (181 bambini, di cui **14** con la retta a carico di un fratello) |
+| da controllare a mano | **25** — 8 senza retta, 8 col nome che non torna, 5 senza email, 3 omonimi, 1 col `?` |
+| doppioni chiusi da soli | **4** (stesso bambino, stesso codice fiscale, due domande) |
+
+🔴 **Lo zero che valeva 150 €.** Nel foglio 36 righe su 338 non hanno una cifra ma «vedi fratello»:
+la retta scritta accanto a un figlio è quella di tutta la famiglia. Sembrava scriversi
+`importo_retta_mensile = 0` — e sarebbe stato il contrario di quel che si voleva. La generazione
+delle rette fa `COALESCE(NULLIF(importo, 0), retta_default_importo, 150)`: **lo zero viene annullato
+e sostituito dal default della sede, 150 € su tutte e tre**. Quattordici bambini avrebbero ricevuto
+150 € al mese per dieci mesi, senza un errore da nessuna parte. Da qui la colonna
+`alunni.retta_a_carico_di` e il filtro che la rispetta — **su entrambe le strade**, la RPC SQL e
+l'anteprima TypeScript, tenute insieme dal lock `retta-a-carico-due-strade`.
+
+🔑 **La famiglia si riconosce dal codice fiscale del genitore, mai dal cognome.** Raggruppando per
+CF adulto si formano 37 famiglie a Giugliano, e il legame regge dove il cognome fallirebbe: due
+sorelle in *due domande separate*, e una famiglia con un figlio `MAZZEI` e uno `TESONE` sotto lo
+stesso genitore.
+
+🔑 **Il confronto approssimato non decide mai una classe.** Si abbina solo per uguaglianza — esatta,
+a parole invertite (`Njambe Charmant` = `CHARMANT NJAMBE`), o con gli spazi altrove
+(`De Sio Giunto` = `DESIO GIUNTO`). Un refuso vero come `DIECO` per `DIEGO` va alla segreteria coi
+tre nomi più somiglianti allegati, non indovinato: un bambino nella classe sbagliata non produce
+nessun errore, se ne accorge la maestra a settembre.
+
+🔑 **Un difetto trovato dalla prova a vuoto, non da un test**: i fratelli si cercavano nell'elenco
+con un metro più stretto di quello del bambino, e `DE SIO GIUNTO IDA` risultava «rimando cieco» pur
+avendo il fratello in elenco. Corretto: un solo metro, `abbina`.
+
+🔴 **Il file con 338 nomi di minori era nella radice del repo, non tracciato ma nemmeno escluso** —
+a un `git add -A` dall'essere pubblicato su un repository pubblico. Chiuso in `.gitignore` a
+qualunque profondità e dichiarato nel lock `pii-nei-file-tracciati`; la sua casa è il bucket privato
+`iscrizioni_elenchi`.
+
+**Altro, per strada**: `sendEmailDetailed` restituisce finalmente l'**id del messaggio Resend** (lo
+buttava via: era l'unica prova d'invio possibile); `sensitive_documents` è **nato davvero** e la sua
+deroga «non ancora creato» è finita da sola; `iscrizioni_elenchi` è entrato nel registro dell'oblio
+**fra gli esclusi, col limite scritto**.
+
+**⏳ Non ancora fatto, e va detto**: la route cron, il caricamento dell'elenco dalla segreteria,
+l'invio vero con la sua compensazione e il riepilogo. Il `cron.schedule` **non è stato creato**:
+nessun invito partirà finché non lo si arma.
+
+---
+
 ## 🕐 Changelog — L'anno scolastico si contava dove gira il processo, un lock si era immunizzato col proprio commento, e la gita si annunciava dove non si firma 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
 
 Terza passata sul lotto della carta intestata. I critici del ciclo hanno bocciato entrambe le

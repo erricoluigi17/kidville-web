@@ -94,6 +94,94 @@
 
 ---
 
+## 🧹 Changelog — La linguetta che prometteva la carta intestata, e le trentatré frasi rimaste senza schermo 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
+
+**«Template Certificati ODT» era un mockup, e in modo misurabile**: i tre `onChange` salvavano il
+NOME del file scelto in uno `useState` e basta — nessun caricamento, nessuna riga nel database,
+nessuno storage. Il badge verde «documento caricato» spariva al primo aggiornamento della pagina, e
+la segreteria che ci aveva trascinato dentro la carta intestata della scuola credeva di averla
+consegnata al prodotto. La carta vera, da questo stesso ramo, arriva dai **Prestampati**
+(`src/lib/carta/`), che i certificati li genera davvero.
+
+Con la linguetta se n'è andato anche il pannello **«Sala d'Attesa»**, che era irraggiungibile da
+mesi: `attesa` non stava né nella barra `Tabs` né fra i valori riconosciuti di `?tab=`, quindi
+`activeTab` non poteva valerlo. Le pre-iscrizioni si leggono da **«Moduli ricevuti»**.
+
+### Il difetto vero non era il tab: era ciò che il tab si è lasciato dietro
+
+Toglierlo, il 2026-08-16, ha portato via il **consumatore** lasciando il **consumato**. La misura,
+riga per riga:
+
+| | prima | adesso |
+|---|---|---|
+| Chiavi di `adminModulistica` che nessuna riga di `src/` nomina | **33** per lingua, **66** in due lingue | **0** |
+| Isola morta in `admin/modulistica/page.tsx` | interfaccia + 4 `useState` + 2 gestori + 3 finestre | rimossa (**1137 → 895** righe, contando anche il tab ODT) |
+| `certificati_templates` sotto `src/` | `CREATE TABLE` + indice + RLS + `POLICY … FOR ALL USING (true)` | nessuna riga eseguibile |
+| Voci di `NON_CONTATORI` che puntavano a chiavi inesistenti | 2, verdi | 0, e il tetto scende 40 → **38** |
+| Cataloghi montati nel mock di next-intl | **34 su 38**, elencati a mano | tutti, letti dalla cartella |
+
+Le tre finestre (scheda della pre-iscrizione, conferma dell'approvazione, credenziali generate) il
+compilatore non poteva vederle: `setSelectedPre` restava chiamata, ma **solo con `null`**, quindi
+`selectedPre &&` non si disegnava mai e le variabili si citavano a vicenda in un anello chiuso —
+nessuna «non usata», ESLint verde su codice che nessun utente avrebbe raggiunto. *Un commento che
+descrive il codice morto non è una rimozione.*
+
+### Le quattro reti nuove, perché la prossima volta non serva un occhio
+
+- **`__tests__/architecture/messaggi-chiavi-orfane.test.ts`** — una chiave di catalogo che nessuna
+  riga di `src/` nomina è una chiave morta. `messaggi-parita-cataloghi` non poteva vederlo: **due
+  cataloghi possono essere perfettamente simmetrici e perfettamente morti**. Perimetro dichiarato
+  (`adminModulistica`) e misurato: acceso su tutti e 38 i cataloghi darebbe ~380 falsi positivi,
+  chiavi risolte a runtime (`etichette`: 171 su 199).
+- **`__tests__/architecture/residuo-odt-assente.test.ts`** — sotto `src/` non torna né la tabella né
+  l'estensione né il tipo MIME. La lezione per iscritto: **«zero righe la leggono» non è «zero righe
+  la nominano»** — un residuo che *crea* è più vivo di uno che legge. I commenti sono esenti: un lock
+  che vieta anche di *parlare* della cosa morta obbliga a cancellarla in silenzio.
+- **`__tests__/pages/admin-modulistica-linguette.test.tsx`** — la barra si monta e si legge: **sei**
+  linguette, col testo italiano preso dai cataloghi, e nessuna che mostri il nome di una chiave.
+- **`messaggi-plurali-e-glossario`** — ogni eccezione di `NON_CONTATORI` deve puntare a una chiave che
+  **esiste ancora**: un elenco di eccezioni non sa da solo che il suo bersaglio è morto.
+
+### Il difetto che la prova ha trovato per strada
+
+Rendendo la pagina per contarne le linguette, la quinta si misurava **`prestampatiSegreteria.titolo`**
+invece di «Prestampati»: il mock di next-intl (`test/setup.ts`) elencava i cataloghi **a mano**, e
+quello, nato il 14/08, non c'era. Il ripiego del mock è il nome della chiave, quindi qualunque
+asserzione sul testo di quella schermata sarebbe stata **verde su una stringa che nessuno legge**.
+Lo stesso file metteva in guardia da sé contro questo esatto guasto, a proposito di `parentAssenze`,
+e ci è ricascato col catalogo dopo: *un avviso non è un meccanismo*. Ora i cataloghi si leggono dalla
+cartella — un catalogo nuovo non può più nascere già invisibile ai test.
+
+### `certificati_templates`: nessun `DROP`, e la ragione è una misura
+
+`SELECT count(*)` non era eseguibile, perché la tabella **non esiste** — e non solo `public`:
+
+```sql
+to_regclass('public.certificati_templates')                      → null
+pg_class × pg_namespace, tutti gli schemi, qualunque relkind      → 0 righe
+```
+
+Non c'è mai stato niente da droppare: la spec dava la tabella per morta perché «letta e scritta da
+zero righe di codice», ma la riga che la **creava** era in `src/`, dentro
+`admin/apply-fase4-migration` — sigillata da `sealDangerous` (404 fuori da vitest), quindi inerte, ma
+presente. Tolta di lì, il repo non si porta più dietro la macchina per rifare la tabella che dichiara
+morta. **Zero migrazioni applicate in produzione per questo lavoro.**
+
+### Cosa NON è stato toccato, e perché è scritto
+
+`src/app/api/admin/pre-inscriptions/route.ts` **resta**, con zero chiamanti raggiungibili. Il suo
+`POST` è **pubblico** e scrive su `pre_inscriptions`, che in produzione **non esiste**
+(`to_regclass` → null): fallisce chiuso, non espone niente. Cancellarlo tocca tre lock d'architettura
+(`gate-coverage`, `isolamento-sede-coverage`, `auth-gaps-m9`) e un'allowlist di documentazione, cioè
+file di altri workstream aperti in questo momento. È un debito **dichiarato**, non una dimenticanza.
+Fuori scope per decisione esplicita del piano anche le voci di checklist «Moduli Esterni» e
+«Iscrizioni Nuovi Alunni».
+
+**Prove:** `messaggi-chiavi-orfane` · `residuo-odt-assente` · `admin-modulistica-linguette` ·
+`messaggi-plurali-e-glossario` · `messaggi-parita-cataloghi` · `modulistica-linguette-raggiungibili`.
+
+---
+
 ## 🩻 Changelog — Il fascicolo sanitario del bambino entra nell'oblio, e la deroga che lo copriva impara a scadere 2026-08-16 (branch `feat/carta-intestata-e-modulistica`)
 
 Il bucket **`sensitive_documents`** non era in `REGISTRO_BUCKET_OBLIO`. Non era un'esclusione
@@ -10049,12 +10137,18 @@ Gate verde: `eslint` 0, `vitest` 773/773, `build` ok.
 - La sidebar perde la voce **Iscrizioni**; la sezione «Anagrafica & Iscrizioni» è rinominata **«Anagrafica»**.
 - La pagina **Modulistica** ha ora 4 tab: **Moduli inviabili** + **Moduli ricevuti** (spostate da Iscrizioni),
   **Moduli Genitori** e **Template Certificati ODT**. Rimossa la tab **Moduli Esterni**.
+  <br>→ *La tab «Template Certificati ODT» non esiste più dal **2026-08-16**: era un mockup, e la carta
+  intestata vera arriva dai **Prestampati**. Le linguette di oggi sono sei — vedi il changelog di quella
+  data. Questa riga resta com'era perché racconta il 6 luglio, non l'oggi.*
 - «Moduli ricevuti» = le iscrizioni ricevute (invariato rispetto alla vecchia «Ricevute»): il link SIDI è preservato.
 - I due motori restano separati (form-builder vs moduli-genitori OTP).
 - I componenti sono stati estratti in `src/components/features/admin/iscrizioni/` (`ModuliInviabili`, `ModuliRicevuti`);
   `/admin/iscrizioni` è ora un **redirect** a `/admin/modulistica?tab=ricevuti` (link/segnalibri preservati).
   Modulistica legge `?tab=`; il back-link del builder punta a `?tab=inviabili`. Le tab inviabili/ricevuti
   operano multi-sede (fuori dalla guardia sede-singola che resta per Moduli Genitori/ODT).
+  <br>→ *Dal **2026-08-16** la guardia di sede singola resta solo per **Moduli Genitori**: la tab ODT non
+  esiste più, e **Prestampati** sta anch'essa fuori dalla guardia perché la sede se la sceglie dentro il
+  pannello, come primo passo.*
 - **Dashboard**: i link/KPI/alert che puntavano a Iscrizioni ora vanno a `/admin/modulistica?tab=ricevuti`;
   rimosso il doppione «Iscrizioni» dal menu rapido (già presente «Modulistica»). Fix `withUser` per usare
   `&` quando l'href ha già una query string (evita il doppio `?`).
@@ -12757,10 +12851,14 @@ _Modulo PRD: Form §4.4_
 _Modulo PRD: Form (gestione modelli)_
 
 **Checklist controlli richiesti:**
+- Tab 'Moduli inviabili'
+- Tab 'Moduli ricevuti'
+- Tab 'Candidature'
+- Tab 'Personale'
+- Tab 'Prestampati'
 - Tab 'Moduli Genitori'
 - Tab 'Moduli Esterni'
 - Tab 'Iscrizioni Nuovi Alunni'
-- Tab 'Template Certificati ODT'
 - Pulsante 'Nuovo Modulo Genitori'
 - Pulsante 'Nuovo Modulo Esterni'
 - Azione 'Form Builder Drag & Drop'
@@ -12796,10 +12894,6 @@ _Modulo PRD: Form (gestione modelli)_
 - Azione 'Anteprima e Modifica compilazione (con log versione)'
 - Pulsante 'Genera PDF singola compilazione'
 - Azione 'Dashboard Graduatorie (ranking + override + ammissioni)'
-- Selettore 'Upload Template ODT Carta Intestata'
-- Selettore 'Upload Template ODT Certificato Frequenza'
-- Selettore 'Upload Template ODT Certificato Iscrizione'
-- Badge 'Template ODT caricato' (conferma)
 
 ### `/admin/mensa` — Mensa Admin / Menu Builder & Ticket
 _Modulo PRD: Mensa §2 + §4_

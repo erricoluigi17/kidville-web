@@ -477,8 +477,6 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminStudents.detailPageArchiviato', 'nome e cognome del bambino appena archiviato'],
         ['adminStudents.detailPageRiattivato', 'nome e cognome del bambino appena riportato fra gli iscritti'],
         ['adminStudents.detailPageRiattivatoSenzaClasse', 'nome e cognome del bambino, che rientra senza classe'],
-        ['adminModulistica.modConfermaApprovazioneTesto', 'cognome della famiglia'],
-        ['adminModulistica.modFamiglia', 'cognome della famiglia'],
         ['adminPrimaria.materieNessunObiettivoDefinito', 'codice materia e livello ordinale'],
         ['diario.nannaDurata', 'orari di inizio e fine'],
         ['pagamenti.importoScaduti', 'importo in euro, già formattato'],
@@ -603,11 +601,41 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // via con lei. Il tetto scende insieme: un'allowlist che non si abbassa
         // quando una voce muore lascia un posto libero a chi verrà dopo, ed è
         // esattamente il modo in cui questi elenchi smettono di stringere.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(40)
+        //
+        // 2026-08-16 (poche ore dopo) · 40 → 38, e sono le DUE voci che quella regola
+        // aveva mancato lo stesso giorno in cui la scriveva. `modFamiglia`
+        // («Famiglia {cognome}») e `modConfermaApprovazioneTesto` erano le frasi della
+        // «Sala d'Attesa»: la prima è morta col pannello — irraggiungibile da mesi,
+        // cancellato quel giorno — la seconda con la finestra di conferma
+        // dell'approvazione, smontata insieme alla scheda della pre-iscrizione e ai suoi
+        // due gestori. Il difetto non era il tetto: era che un tetto scende solo se
+        // qualcuno RIMISURA, e finora nessuno chiedeva a questo elenco se i suoi
+        // bersagli fossero ancora vivi. Ora glielo si chiede, tre righe più giù.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(38)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)
         }
+        // …e punta a una chiave che nel catalogo ESISTE ANCORA.
+        //
+        // La riga che mancava, e che rende il tetto una misura invece di un numero. Due
+        // voci hanno continuato a valere — verdi, sotto il tetto — per chiavi che nessuno
+        // dei due cataloghi conteneva più: un'eccezione non sa da sola che il suo bersaglio
+        // è morto, e finché nessuno lo chiede tiene occupato un posto che a quel punto
+        // eredita chi verrà dopo. È la stessa forma del difetto che questo elenco è nato
+        // per chiudere: una regola giusta appoggiata a una lista che nessuno rimisura.
+        const indirizziVivi = new Set(
+            Object.entries(CATALOGHI.it).flatMap(([ns, gruppo]) =>
+                vociPiatte(gruppo).map(([chiave]) => `${ns}.${chiave}`),
+            ),
+        )
+        const bersagliMorti = [...NON_CONTATORI.keys()].filter((k) => !indirizziVivi.has(k))
+        expect(
+            bersagliMorti,
+            'Queste eccezioni valgono per chiavi che nel catalogo italiano non esistono più:\n  ' +
+                bersagliMorti.join('\n  ') +
+                '\nVanno tolte da NON_CONTATORI, e il tetto qui sopra va abbassato di altrettanto.',
+        ).toEqual([])
     })
 })
 

@@ -6,7 +6,7 @@ import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import {
   FileText, Plus, UserCheck, Calendar, Users, IdCard,
-  Trash2, Download, CheckCircle, Shield, Inbox, Send, Stamp, X
+  Trash2, Download, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { DateField } from '@/components/ui/DateField';
@@ -83,26 +83,6 @@ function fallbackFesHash(): string {
   return 'FES-OK-' + Math.random().toString(16).substring(2, 10).toUpperCase();
 }
 
-interface PreInscription {
-  id: string;
-  parent_first_name: string;
-  parent_last_name: string;
-  parent_email: string;
-  parent_phone: string;
-  parent_fiscal_code: string;
-  parent_address: string;
-  students: {
-    nome: string;
-    cognome: string;
-    data_nascita: string;
-    codice_fiscale: string;
-    note_mediche: string;
-  }[];
-  status: 'pending' | 'approved' | 'rejected';
-  assigned_class?: string;
-  created_at: string;
-}
-
 type ModulisticaTab = 'inviabili' | 'ricevuti' | 'candidature' | 'personale' | 'prestampati' | 'moduli-genitori';
 
 function ModulisticaInner() {
@@ -154,26 +134,6 @@ function ModulisticaInner() {
   // genitore sospeso per morosità (eccezione alla matrice sospensione).
   const [formSempreFirmabile, setFormSempreFirmabile] = useState(false);
   const [formFields, setFormFields] = useState<FormField[]>([defaultFieldForType('autorizzazione')]);
-
-  // Scheda della pre-iscrizione (sala d'attesa).
-  //
-  // ⚠️ NESSUNO LA APRE PIÙ, e non da oggi: l'unico punto che chiamava
-  // `setSelectedPre(pre)` era il pannello della linguetta `attesa`, che però non
-  // stava né nella barra `Tabs` né fra i valori riconosciuti di `?tab=` — quindi
-  // `activeTab` non poteva valere `attesa` e il pannello non si è mai disegnato.
-  // L'elenco che alimentava, poi, era una `useState([])` senza fetch: le
-  // pre-iscrizioni si leggono dalla linguetta «Moduli ricevuti» (`ModuliRicevuti`)
-  // dal giorno in cui quel componente è nato.
-  //
-  // Il 2026-08-16 è sparito il pannello (era codice irraggiungibile che impediva
-  // di togliere `attesa` dall'unione dei tipi). La scheda, i due gestori
-  // `handleApprovePreInscription`/`handleRejectPreInscription` e le tre finestre
-  // qui sotto restano: toglierli è una pulizia a sé — porta via una trentina di
-  // chiavi di traduzione da due cataloghi — e non entra in questo lavoro.
-  const [selectedPre, setSelectedPre] = useState<PreInscription | null>(null);
-  const [assignedClass, setAssignedClass] = useState('');
-  const [showConfirmApproval, setShowConfirmApproval] = useState(false);
-  const [showCredentials, setShowCredentials] = useState<{ email: string; pass: string } | null>(null);
 
   // Notifications
   const [toast, setToast] = useState('');
@@ -321,61 +281,6 @@ function ModulisticaInner() {
       }
     } catch {
       showToastMsg(t('modToastErroreEliminazione'));
-    }
-  };
-
-  const handleApprovePreInscription = async () => {
-    if (!selectedPre || !assignedClass) return;
-
-    try {
-      const res = await fetch('/api/admin/pre-inscriptions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: selectedPre.id,
-          status: 'approved',
-          assigned_class: assignedClass
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || t('modErroreApprovazione'));
-
-      showToastMsg(t('modToastPreApprovata'));
-      setShowConfirmApproval(false);
-      setSelectedPre(null);
-      setAssignedClass('');
-
-      // Show temporary credentials modal
-      if (data.credentials) {
-        setShowCredentials(data.credentials);
-      }
-
-      fetchInitialData();
-    } catch (err) {
-      showToastMsg(`❌ ${(err as { message?: string })?.message || t('modErroreApprovazione')}`);
-      setShowConfirmApproval(false);
-    }
-  };
-
-  const handleRejectPreInscription = async (id: string) => {
-    if (!confirm(t('modConfermaRifiuto'))) return;
-    try {
-      const res = await fetch('/api/admin/pre-inscriptions', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id,
-          status: 'rejected'
-        })
-      });
-      if (res.ok) {
-        showToastMsg(t('modToastPreRifiutata'));
-        fetchInitialData();
-        setSelectedPre(null);
-      }
-    } catch {
-      showToastMsg(t('modToastErroreAzione'));
     }
   };
 
@@ -901,153 +806,6 @@ function ModulisticaInner() {
                 {t('modSalvaModulo')}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Pre-Inscription / Sala d'Attesa Details */}
-      {selectedPre && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between border-b border-kidville-line pb-3 mb-4">
-              <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide">
-                {t('modSchedaOnboarding')}
-              </h2>
-              <button 
-                onClick={() => setSelectedPre(null)}
-                className="text-kidville-muted hover:text-kidville-ink font-maven text-lg p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-6 pr-1">
-              {/* Genitore info */}
-              <div className="bg-kidville-cream/30 p-4 rounded-xl border border-kidville-green/5">
-                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-2">{t('modContattiGenitore')}</h4>
-                <div className="grid grid-cols-2 gap-y-2 text-xs font-maven text-kidville-ink">
-                  <div><strong>{t('modLabelNome')}</strong> {selectedPre.parent_first_name} {selectedPre.parent_last_name}</div>
-                  <div><strong>{t('modLabelEmail')}</strong> {selectedPre.parent_email}</div>
-                  <div><strong>{t('modLabelTelefono')}</strong> {selectedPre.parent_phone || t('modNd')}</div>
-                  <div><strong>{t('modLabelCf')}</strong> {selectedPre.parent_fiscal_code || t('modNd')}</div>
-                  <div className="col-span-2"><strong>{t('modLabelIndirizzo')}</strong> {selectedPre.parent_address || t('modNd')}</div>
-                </div>
-              </div>
-
-              {/* Figli */}
-              <div>
-                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-3">{t('modFigliDaRegistrare')}</h4>
-                <div className="space-y-3">
-                  {selectedPre.students?.map((s, idx) => (
-                    <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
-                      <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
-                      <div className="text-kidville-muted mt-1">{t('modDataNascitaCf', { data: f.dataBreve(s.data_nascita), cf: s.codice_fiscale || t('modNd') })}</div>
-                      {s.note_mediche && (
-                        <div className="mt-2 text-kidville-error bg-kidville-error-soft p-1.5 rounded-lg font-semibold flex items-start gap-1">
-                          {t('modAllergieNote')} {s.note_mediche}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Assegnazione Classe */}
-              <div className="border-t border-kidville-line pt-4">
-                <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                  {t('modAssegnaSezione')}
-                </label>
-                <select
-                  value={assignedClass}
-                  onChange={e => setAssignedClass(e.target.value)}
-                  className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-ink focus:outline-none bg-white"
-                >
-                  <option value="">{t('modSelezionaSezione')}</option>
-                  {sections.map(sec => (
-                    <option key={sec.id} value={sec.name}>{sec.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-between gap-3 border-t border-kidville-line pt-4 mt-4">
-              <button
-                onClick={() => handleRejectPreInscription(selectedPre.id)}
-                className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-kidville-error-soft text-kidville-error hover:bg-kidville-error-soft"
-              >
-                {t('modRifiutaIscrizione')}
-              </button>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setSelectedPre(null)}
-                  className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
-                >
-                  {t('annulla')}
-                </button>
-                <button
-                  disabled={!assignedClass}
-                  onClick={() => setShowConfirmApproval(true)}
-                  className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 disabled:opacity-50 transition-all shadow-md"
-                >
-                  {t('modApprovaImporta')}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Secondary confirmation for Approval */}
-      {showConfirmApproval && selectedPre && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">{t('modConfermaApprovazione')}</h3>
-            <p className="font-maven text-sm text-kidville-muted mb-6">
-              {t.rich('modConfermaApprovazioneTesto', {
-                cognome: selectedPre.parent_last_name,
-                n: selectedPre.students?.length ?? 0,
-                sezione: assignedClass,
-                strong: (c) => <strong>{c}</strong>,
-              })}
-            </p>
-            <div className="flex gap-3 justify-center">
-              <button
-                onClick={() => setShowConfirmApproval(false)}
-                className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
-              >
-                {t('modIndietro')}
-              </button>
-              <button
-                onClick={handleApprovePreInscription}
-                className="px-6 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90"
-              >
-                {t('modSiApprova')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Generated Credentials Modal */}
-      {showCredentials && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center border-t-4 border-kidville-green">
-            <CheckCircle className="text-kidville-success mx-auto mb-3" size={48} />
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">{t('modAccountCreato')}</h3>
-            <p className="font-maven text-xs text-kidville-muted mb-6">
-              {t('modInviaCredenziali')}
-            </p>
-            <div className="bg-kidville-cream p-4 rounded-xl text-left font-maven text-sm border border-kidville-line mb-6 space-y-2 select-all">
-              <div><strong>{t('modLabelEmail')}</strong> {showCredentials.email}</div>
-              <div><strong>{t('modLabelPassword')}</strong> {showCredentials.pass}</div>
-            </div>
-            <button
-              onClick={() => setShowCredentials(null)}
-              className="w-full h-11 font-barlow font-black uppercase tracking-wider rounded-pill bg-kidville-green text-kidville-yellow hover:opacity-90 transition-opacity"
-            >
-              {t('modFattoChiudi')}
-            </button>
           </div>
         </div>
       )}

@@ -8,6 +8,23 @@ import { logErrore } from '@/lib/logging/logger';
 
 const querySchema = z.object({}); // nessun parametro in ingresso
 
+/**
+ * ⚠️ Questo SQL non è più la copia fedele di
+ * `supabase/migrations_archive/20260526_fase4_modulistica_legal.sql`, e la differenza è
+ * voluta: il 2026-08-16 ne è uscito il punto 5, la tabella `certificati_templates` dei
+ * «Template Certificati ODT» — CREATE, indice, RLS e la sua `CREATE POLICY … FOR ALL
+ * USING (true)`.
+ *
+ * Il tab che quella tabella avrebbe dovuto alimentare era un mockup e non ci ha mai scritto
+ * niente; in produzione la tabella non esiste in nessuno schema (`to_regclass` → null,
+ * misurato il 2026-08-16), quindi non c'è nessun `DROP` da applicare. Restava solo qui: la
+ * macchina per RIFARE una tabella che tutti davano per morta. Lock:
+ * `__tests__/architecture/residuo-odt-assente.test.ts`.
+ *
+ * Chi rimettesse questo blocco «per riallineare con l'archivio» disferebbe la pulizia: la
+ * fonte di verità dello storico è l'archivio, non questa route, che è sigillata
+ * (`sealDangerous` → 404 fuori da vitest) e non gira in nessun ambiente.
+ */
 async function runMigration() {
   const supabase = await createAdminClient();
   const sql = `
@@ -77,37 +94,22 @@ async function runMigration() {
 
     CREATE INDEX IF NOT EXISTS idx_certificati_medici_alunno ON certificati_medici(alunno_id);
 
-    -- 5. Tabella Template Certificati (Certificati ODT Templates)
-    CREATE TABLE IF NOT EXISTS certificati_templates (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        scuola_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-        type VARCHAR(50) NOT NULL,
-        file_name VARCHAR(255),
-        file_path TEXT,
-        uploaded_at TIMESTAMPTZ DEFAULT now()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_certificati_templates_scuola ON certificati_templates(scuola_id);
-
     -- Abilitazione RLS
     ALTER TABLE forms_templates ENABLE ROW LEVEL SECURITY;
     ALTER TABLE forms_submissions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE pre_inscriptions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE certificati_medici ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE certificati_templates ENABLE ROW LEVEL SECURITY;
 
     -- Policy RLS
     DROP POLICY IF EXISTS "Moduli accessibili a tutti" ON forms_templates;
     DROP POLICY IF EXISTS "Sottomissioni accessibili a tutti" ON forms_submissions;
     DROP POLICY IF EXISTS "Pre-iscrizioni accessibili a tutti" ON pre_inscriptions;
     DROP POLICY IF EXISTS "Certificati medici accessibili a tutti" ON certificati_medici;
-    DROP POLICY IF EXISTS "Certificati templates accessibili a tutti" ON certificati_templates;
 
     CREATE POLICY "Moduli accessibili a tutti" ON forms_templates FOR ALL USING (true);
     CREATE POLICY "Sottomissioni accessibili a tutti" ON forms_submissions FOR ALL USING (true);
     CREATE POLICY "Pre-iscrizioni accessibili a tutti" ON pre_inscriptions FOR ALL USING (true);
     CREATE POLICY "Certificati medici accessibili a tutti" ON certificati_medici FOR ALL USING (true);
-    CREATE POLICY "Certificati templates accessibili a tutti" ON certificati_templates FOR ALL USING (true);
   `;
 
   const { error } = await supabase.rpc('exec_sql', { sql });
